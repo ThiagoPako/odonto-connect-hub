@@ -202,6 +202,9 @@ function SidebarUserFooter({ collapsed }: { collapsed: boolean }) {
         <LogOut className="h-[18px] w-[18px] shrink-0" />
         {!collapsed && <span>Sair</span>}
       </button>
+      {!collapsed && (
+        <p className="text-[10px] text-muted-foreground text-center mt-1">v1.0.0</p>
+      )}
     </div>
   );
 }
