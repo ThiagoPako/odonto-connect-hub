@@ -14,6 +14,7 @@ export interface Dentista {
 export interface Atendimento {
   id: string;
   dentistaId: string;
+  pacienteId?: string;
   pacienteNome: string;
   pacienteIniciais: string;
   horario: string;
@@ -26,6 +27,7 @@ export interface Atendimento {
 export interface AgendaDentista {
   id: string;
   dentistaId: string;
+  pacienteId?: string;
   pacienteNome: string;
   data: Date;
   horario: string;
@@ -38,6 +40,7 @@ export interface AgendaDentista {
 export interface OrcamentoDentista {
   id: string;
   dentistaId: string;
+  pacienteId?: string;
   pacienteNome: string;
   itens: { procedimento: string; valor: number; quantidade: number }[];
   total: number;
@@ -48,6 +51,7 @@ export interface OrcamentoDentista {
 export interface ProntuarioDentista {
   id: string;
   dentistaId: string;
+  pacienteId?: string;
   pacienteNome: string;
   pacienteIniciais: string;
   ultimaConsulta: Date;
