@@ -14,7 +14,6 @@ import cors from 'cors';
 import pg from 'pg';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
-import nodemailer from 'nodemailer';
 
 const { Pool } = pg;
 const app = express();
