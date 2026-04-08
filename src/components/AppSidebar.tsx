@@ -168,3 +168,40 @@ export function AppSidebar() {
     </aside>
   );
 }
+
+function SidebarUserFooter({ collapsed }: { collapsed: boolean }) {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+
+  const initials = user?.name
+    ? user.name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase()
+    : "??";
+
+  const handleLogout = () => {
+    logout();
+    navigate({ to: "/login" });
+  };
+
+  return (
+    <div className="p-3 border-t border-sidebar-border shrink-0 space-y-2">
+      {!collapsed && (
+        <div className="flex items-center gap-3 px-2 py-2">
+          <div className="h-8 w-8 rounded-lg gradient-primary flex items-center justify-center text-[11px] font-bold text-primary-foreground shadow-sm">
+            {initials}
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-semibold text-sidebar-foreground leading-tight truncate">{user?.name ?? "Usuário"}</p>
+            <p className="text-[10px] text-muted-foreground capitalize">{user?.role ?? ""}</p>
+          </div>
+        </div>
+      )}
+      <button
+        onClick={handleLogout}
+        className="flex items-center gap-3 px-3 py-2 rounded-xl text-[13px] text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-foreground transition-all w-full"
+      >
+        <LogOut className="h-[18px] w-[18px] shrink-0" />
+        {!collapsed && <span>Sair</span>}
+      </button>
+    </div>
+  );
+}
