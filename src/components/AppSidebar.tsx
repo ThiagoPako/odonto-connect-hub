@@ -29,60 +29,86 @@ import { useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import logoImg from "@/assets/logo.png";
 
+type Role = "admin" | "dentista" | "recepcionista" | "user";
+
+interface NavItem {
+  title: string;
+  url: string;
+  icon: typeof LayoutDashboard;
+  badge?: number;
+  roles?: Role[]; // undefined = all roles can see
+}
+
 interface NavSection {
   label: string;
-  items: { title: string; url: string; icon: typeof LayoutDashboard; badge?: number }[];
+  items: NavItem[];
 }
 
 const navSections: NavSection[] = [
   {
     label: "Principal",
     items: [
-      { title: "Dashboard", url: "/", icon: LayoutDashboard },
+      { title: "Dashboard", url: "/" },
       { title: "Agenda", url: "/agenda", icon: CalendarDays },
       { title: "Chat", url: "/chat", icon: MessageSquare },
-    ],
+    ].map((i) => ({ icon: LayoutDashboard, ...i })) as NavItem[],
   },
   {
     label: "Clínico",
     items: [
       { title: "Pacientes", url: "/pacientes", icon: UserRound },
-      { title: "Dentistas", url: "/dentistas", icon: Stethoscope },
-      { title: "Prontuário", url: "/prontuario", icon: FileHeart },
+      { title: "Dentistas", url: "/dentistas", icon: Stethoscope, roles: ["admin"] as Role[] },
+      { title: "Prontuário", url: "/prontuario", icon: FileHeart, roles: ["admin", "dentista"] as Role[] },
       { title: "Orçamentos", url: "/orcamentos", icon: Receipt },
-      { title: "Tratamentos", url: "/tratamentos", icon: ClipboardList },
+      { title: "Tratamentos", url: "/tratamentos", icon: ClipboardList, roles: ["admin", "dentista"] as Role[] },
     ],
   },
   {
     label: "Comercial",
     items: [
-      { title: "CRM", url: "/crm", icon: Users, badge: 12 },
-      { title: "Funil de Vendas", url: "/funil", icon: Kanban },
-      { title: "Automações", url: "/automacoes", icon: Zap },
-      { title: "Disparos", url: "/disparos", icon: Send },
-      { title: "Reativação", url: "/reativacao", icon: RefreshCcw, badge: 5 },
+      { title: "CRM", url: "/crm", icon: Users, badge: 12, roles: ["admin", "recepcionista"] as Role[] },
+      { title: "Funil de Vendas", url: "/funil", icon: Kanban, roles: ["admin"] as Role[] },
+      { title: "Automações", url: "/automacoes", icon: Zap, roles: ["admin"] as Role[] },
+      { title: "Disparos", url: "/disparos", icon: Send, roles: ["admin"] as Role[] },
+      { title: "Reativação", url: "/reativacao", icon: RefreshCcw, badge: 5, roles: ["admin", "recepcionista"] as Role[] },
     ],
   },
   {
     label: "Marketing",
     items: [
-      { title: "Campanhas", url: "/campanhas", icon: Megaphone },
-      { title: "Integrações Ads", url: "/integracoes", icon: Plug },
-      { title: "ROI & Analytics", url: "/analytics", icon: BarChart3 },
+      { title: "Campanhas", url: "/campanhas", icon: Megaphone, roles: ["admin"] as Role[] },
+      { title: "Integrações Ads", url: "/integracoes", icon: Plug, roles: ["admin"] as Role[] },
+      { title: "ROI & Analytics", url: "/analytics", icon: BarChart3, roles: ["admin"] as Role[] },
     ],
   },
   {
     label: "Gestão",
     items: [
-      { title: "Financeiro", url: "/financeiro", icon: DollarSign },
-      { title: "Comissões", url: "/comissoes", icon: Percent },
-      { title: "Estoque", url: "/estoque", icon: Package },
-      { title: "Canais", url: "/canais", icon: Radio },
-      { title: "Equipe", url: "/equipe", icon: UserCog },
-      { title: "Configurações", url: "/configuracoes", icon: Settings },
+      { title: "Financeiro", url: "/financeiro", icon: DollarSign, roles: ["admin"] as Role[] },
+      { title: "Comissões", url: "/comissoes", icon: Percent, roles: ["admin"] as Role[] },
+      { title: "Estoque", url: "/estoque", icon: Package, roles: ["admin", "recepcionista"] as Role[] },
+      { title: "Canais", url: "/canais", icon: Radio, roles: ["admin"] as Role[] },
+      { title: "Equipe", url: "/equipe", icon: UserCog, roles: ["admin"] as Role[] },
+      { title: "Configurações", url: "/configuracoes", icon: Settings, roles: ["admin"] as Role[] },
     ],
   },
 ];
+
+// Fix Dashboard icon
+navSections[0].items[0].icon = LayoutDashboard;
+navSections[0].items[1].icon = CalendarDays;
+navSections[0].items[2].icon = MessageSquare;
+
+function filterByRole(sections: NavSection[], role: string): NavSection[] {
+  return sections
+    .map((section) => ({
+      ...section,
+      items: section.items.filter(
+        (item) => !item.roles || item.roles.includes(role as Role)
+      ),
+    }))
+    .filter((section) => section.items.length > 0);
+}
 
 export function AppSidebar() {
   const [collapsed, setCollapsed] = useState(false);
