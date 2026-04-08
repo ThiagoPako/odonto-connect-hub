@@ -40,18 +40,6 @@ const JWT_EXPIRES_IN = '7d';
 const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL || 'https://api.odontoconnect.tech';
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY;
 
-// ─── SMTP (Nodemailer) ─────────────────────────────────────
-const APP_URL = process.env.APP_URL || 'https://odontoconnect.tech';
-let smtpTransporter = null;
-if (process.env.SMTP_HOST) {
-  smtpTransporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: Number(process.env.SMTP_PORT) || 587,
-    secure: Number(process.env.SMTP_PORT) === 465,
-    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-  });
-  smtpTransporter.verify().then(() => console.log('📧 SMTP connected')).catch(e => console.error('SMTP error:', e.message));
-}
 
 // ─── Auth helpers ───────────────────────────────────────────
 function signToken(payload) {
