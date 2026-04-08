@@ -37,6 +37,7 @@ const navSections: NavSection[] = [
     items: [
       { title: "CRM", url: "/crm", icon: Users, badge: 12 },
       { title: "Funil de Vendas", url: "/funil", icon: Kanban },
+      { title: "Automações", url: "/automacoes", icon: Zap },
       { title: "Reativação", url: "/reativacao", icon: RefreshCcw, badge: 5 },
     ],
   },
