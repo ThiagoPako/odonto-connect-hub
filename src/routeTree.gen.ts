@@ -10,9 +10,12 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as ReativacaoRouteImport } from './routes/reativacao'
+import { Route as ProntuarioRouteImport } from './routes/prontuario'
+import { Route as OrcamentosRouteImport } from './routes/orcamentos'
 import { Route as IntegracoesRouteImport } from './routes/integracoes'
 import { Route as FunilRouteImport } from './routes/funil'
 import { Route as FinanceiroRouteImport } from './routes/financeiro'
+import { Route as EstoqueRouteImport } from './routes/estoque'
 import { Route as EquipeRouteImport } from './routes/equipe'
 import { Route as CrmRouteImport } from './routes/crm'
 import { Route as ConfiguracoesRouteImport } from './routes/configuracoes'
@@ -21,11 +24,22 @@ import { Route as CanaisRouteImport } from './routes/canais'
 import { Route as CampanhasRouteImport } from './routes/campanhas'
 import { Route as AutomacoesRouteImport } from './routes/automacoes'
 import { Route as AnalyticsRouteImport } from './routes/analytics'
+import { Route as AgendaRouteImport } from './routes/agenda'
 import { Route as IndexRouteImport } from './routes/index'
 
 const ReativacaoRoute = ReativacaoRouteImport.update({
   id: '/reativacao',
   path: '/reativacao',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProntuarioRoute = ProntuarioRouteImport.update({
+  id: '/prontuario',
+  path: '/prontuario',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OrcamentosRoute = OrcamentosRouteImport.update({
+  id: '/orcamentos',
+  path: '/orcamentos',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IntegracoesRoute = IntegracoesRouteImport.update({
@@ -41,6 +55,11 @@ const FunilRoute = FunilRouteImport.update({
 const FinanceiroRoute = FinanceiroRouteImport.update({
   id: '/financeiro',
   path: '/financeiro',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EstoqueRoute = EstoqueRouteImport.update({
+  id: '/estoque',
+  path: '/estoque',
   getParentRoute: () => rootRouteImport,
 } as any)
 const EquipeRoute = EquipeRouteImport.update({
@@ -83,6 +102,11 @@ const AnalyticsRoute = AnalyticsRouteImport.update({
   path: '/analytics',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AgendaRoute = AgendaRouteImport.update({
+  id: '/agenda',
+  path: '/agenda',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -91,6 +115,7 @@ const IndexRoute = IndexRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/agenda': typeof AgendaRoute
   '/analytics': typeof AnalyticsRoute
   '/automacoes': typeof AutomacoesRoute
   '/campanhas': typeof CampanhasRoute
@@ -99,13 +124,17 @@ export interface FileRoutesByFullPath {
   '/configuracoes': typeof ConfiguracoesRoute
   '/crm': typeof CrmRoute
   '/equipe': typeof EquipeRoute
+  '/estoque': typeof EstoqueRoute
   '/financeiro': typeof FinanceiroRoute
   '/funil': typeof FunilRoute
   '/integracoes': typeof IntegracoesRoute
+  '/orcamentos': typeof OrcamentosRoute
+  '/prontuario': typeof ProntuarioRoute
   '/reativacao': typeof ReativacaoRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/agenda': typeof AgendaRoute
   '/analytics': typeof AnalyticsRoute
   '/automacoes': typeof AutomacoesRoute
   '/campanhas': typeof CampanhasRoute
@@ -114,14 +143,18 @@ export interface FileRoutesByTo {
   '/configuracoes': typeof ConfiguracoesRoute
   '/crm': typeof CrmRoute
   '/equipe': typeof EquipeRoute
+  '/estoque': typeof EstoqueRoute
   '/financeiro': typeof FinanceiroRoute
   '/funil': typeof FunilRoute
   '/integracoes': typeof IntegracoesRoute
+  '/orcamentos': typeof OrcamentosRoute
+  '/prontuario': typeof ProntuarioRoute
   '/reativacao': typeof ReativacaoRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/agenda': typeof AgendaRoute
   '/analytics': typeof AnalyticsRoute
   '/automacoes': typeof AutomacoesRoute
   '/campanhas': typeof CampanhasRoute
@@ -130,15 +163,19 @@ export interface FileRoutesById {
   '/configuracoes': typeof ConfiguracoesRoute
   '/crm': typeof CrmRoute
   '/equipe': typeof EquipeRoute
+  '/estoque': typeof EstoqueRoute
   '/financeiro': typeof FinanceiroRoute
   '/funil': typeof FunilRoute
   '/integracoes': typeof IntegracoesRoute
+  '/orcamentos': typeof OrcamentosRoute
+  '/prontuario': typeof ProntuarioRoute
   '/reativacao': typeof ReativacaoRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/agenda'
     | '/analytics'
     | '/automacoes'
     | '/campanhas'
@@ -147,13 +184,17 @@ export interface FileRouteTypes {
     | '/configuracoes'
     | '/crm'
     | '/equipe'
+    | '/estoque'
     | '/financeiro'
     | '/funil'
     | '/integracoes'
+    | '/orcamentos'
+    | '/prontuario'
     | '/reativacao'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/agenda'
     | '/analytics'
     | '/automacoes'
     | '/campanhas'
@@ -162,13 +203,17 @@ export interface FileRouteTypes {
     | '/configuracoes'
     | '/crm'
     | '/equipe'
+    | '/estoque'
     | '/financeiro'
     | '/funil'
     | '/integracoes'
+    | '/orcamentos'
+    | '/prontuario'
     | '/reativacao'
   id:
     | '__root__'
     | '/'
+    | '/agenda'
     | '/analytics'
     | '/automacoes'
     | '/campanhas'
@@ -177,14 +222,18 @@ export interface FileRouteTypes {
     | '/configuracoes'
     | '/crm'
     | '/equipe'
+    | '/estoque'
     | '/financeiro'
     | '/funil'
     | '/integracoes'
+    | '/orcamentos'
+    | '/prontuario'
     | '/reativacao'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AgendaRoute: typeof AgendaRoute
   AnalyticsRoute: typeof AnalyticsRoute
   AutomacoesRoute: typeof AutomacoesRoute
   CampanhasRoute: typeof CampanhasRoute
@@ -193,9 +242,12 @@ export interface RootRouteChildren {
   ConfiguracoesRoute: typeof ConfiguracoesRoute
   CrmRoute: typeof CrmRoute
   EquipeRoute: typeof EquipeRoute
+  EstoqueRoute: typeof EstoqueRoute
   FinanceiroRoute: typeof FinanceiroRoute
   FunilRoute: typeof FunilRoute
   IntegracoesRoute: typeof IntegracoesRoute
+  OrcamentosRoute: typeof OrcamentosRoute
+  ProntuarioRoute: typeof ProntuarioRoute
   ReativacaoRoute: typeof ReativacaoRoute
 }
 
@@ -206,6 +258,20 @@ declare module '@tanstack/react-router' {
       path: '/reativacao'
       fullPath: '/reativacao'
       preLoaderRoute: typeof ReativacaoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/prontuario': {
+      id: '/prontuario'
+      path: '/prontuario'
+      fullPath: '/prontuario'
+      preLoaderRoute: typeof ProntuarioRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/orcamentos': {
+      id: '/orcamentos'
+      path: '/orcamentos'
+      fullPath: '/orcamentos'
+      preLoaderRoute: typeof OrcamentosRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/integracoes': {
@@ -227,6 +293,13 @@ declare module '@tanstack/react-router' {
       path: '/financeiro'
       fullPath: '/financeiro'
       preLoaderRoute: typeof FinanceiroRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/estoque': {
+      id: '/estoque'
+      path: '/estoque'
+      fullPath: '/estoque'
+      preLoaderRoute: typeof EstoqueRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/equipe': {
@@ -285,6 +358,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AnalyticsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/agenda': {
+      id: '/agenda'
+      path: '/agenda'
+      fullPath: '/agenda'
+      preLoaderRoute: typeof AgendaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -297,6 +377,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AgendaRoute: AgendaRoute,
   AnalyticsRoute: AnalyticsRoute,
   AutomacoesRoute: AutomacoesRoute,
   CampanhasRoute: CampanhasRoute,
@@ -305,9 +386,12 @@ const rootRouteChildren: RootRouteChildren = {
   ConfiguracoesRoute: ConfiguracoesRoute,
   CrmRoute: CrmRoute,
   EquipeRoute: EquipeRoute,
+  EstoqueRoute: EstoqueRoute,
   FinanceiroRoute: FinanceiroRoute,
   FunilRoute: FunilRoute,
   IntegracoesRoute: IntegracoesRoute,
+  OrcamentosRoute: OrcamentosRoute,
+  ProntuarioRoute: ProntuarioRoute,
   ReativacaoRoute: ReativacaoRoute,
 }
 export const routeTree = rootRouteImport
