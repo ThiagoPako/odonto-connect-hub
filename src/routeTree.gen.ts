@@ -13,6 +13,7 @@ import { Route as TratamentosRouteImport } from './routes/tratamentos'
 import { Route as ReativacaoRouteImport } from './routes/reativacao'
 import { Route as ProntuarioRouteImport } from './routes/prontuario'
 import { Route as PainelDentistaRouteImport } from './routes/painel-dentista'
+import { Route as PacientesRouteImport } from './routes/pacientes'
 import { Route as OrcamentosRouteImport } from './routes/orcamentos'
 import { Route as IntegracoesRouteImport } from './routes/integracoes'
 import { Route as FunilRouteImport } from './routes/funil'
@@ -49,6 +50,11 @@ const ProntuarioRoute = ProntuarioRouteImport.update({
 const PainelDentistaRoute = PainelDentistaRouteImport.update({
   id: '/painel-dentista',
   path: '/painel-dentista',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PacientesRoute = PacientesRouteImport.update({
+  id: '/pacientes',
+  path: '/pacientes',
   getParentRoute: () => rootRouteImport,
 } as any)
 const OrcamentosRoute = OrcamentosRouteImport.update({
@@ -155,6 +161,7 @@ export interface FileRoutesByFullPath {
   '/funil': typeof FunilRoute
   '/integracoes': typeof IntegracoesRoute
   '/orcamentos': typeof OrcamentosRoute
+  '/pacientes': typeof PacientesRoute
   '/painel-dentista': typeof PainelDentistaRoute
   '/prontuario': typeof ProntuarioRoute
   '/reativacao': typeof ReativacaoRoute
@@ -178,6 +185,7 @@ export interface FileRoutesByTo {
   '/funil': typeof FunilRoute
   '/integracoes': typeof IntegracoesRoute
   '/orcamentos': typeof OrcamentosRoute
+  '/pacientes': typeof PacientesRoute
   '/painel-dentista': typeof PainelDentistaRoute
   '/prontuario': typeof ProntuarioRoute
   '/reativacao': typeof ReativacaoRoute
@@ -202,6 +210,7 @@ export interface FileRoutesById {
   '/funil': typeof FunilRoute
   '/integracoes': typeof IntegracoesRoute
   '/orcamentos': typeof OrcamentosRoute
+  '/pacientes': typeof PacientesRoute
   '/painel-dentista': typeof PainelDentistaRoute
   '/prontuario': typeof ProntuarioRoute
   '/reativacao': typeof ReativacaoRoute
@@ -227,6 +236,7 @@ export interface FileRouteTypes {
     | '/funil'
     | '/integracoes'
     | '/orcamentos'
+    | '/pacientes'
     | '/painel-dentista'
     | '/prontuario'
     | '/reativacao'
@@ -250,6 +260,7 @@ export interface FileRouteTypes {
     | '/funil'
     | '/integracoes'
     | '/orcamentos'
+    | '/pacientes'
     | '/painel-dentista'
     | '/prontuario'
     | '/reativacao'
@@ -273,6 +284,7 @@ export interface FileRouteTypes {
     | '/funil'
     | '/integracoes'
     | '/orcamentos'
+    | '/pacientes'
     | '/painel-dentista'
     | '/prontuario'
     | '/reativacao'
@@ -297,6 +309,7 @@ export interface RootRouteChildren {
   FunilRoute: typeof FunilRoute
   IntegracoesRoute: typeof IntegracoesRoute
   OrcamentosRoute: typeof OrcamentosRoute
+  PacientesRoute: typeof PacientesRoute
   PainelDentistaRoute: typeof PainelDentistaRoute
   ProntuarioRoute: typeof ProntuarioRoute
   ReativacaoRoute: typeof ReativacaoRoute
@@ -331,6 +344,13 @@ declare module '@tanstack/react-router' {
       path: '/painel-dentista'
       fullPath: '/painel-dentista'
       preLoaderRoute: typeof PainelDentistaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/pacientes': {
+      id: '/pacientes'
+      path: '/pacientes'
+      fullPath: '/pacientes'
+      preLoaderRoute: typeof PacientesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/orcamentos': {
@@ -473,6 +493,7 @@ const rootRouteChildren: RootRouteChildren = {
   FunilRoute: FunilRoute,
   IntegracoesRoute: IntegracoesRoute,
   OrcamentosRoute: OrcamentosRoute,
+  PacientesRoute: PacientesRoute,
   PainelDentistaRoute: PainelDentistaRoute,
   ProntuarioRoute: ProntuarioRoute,
   ReativacaoRoute: ReativacaoRoute,
