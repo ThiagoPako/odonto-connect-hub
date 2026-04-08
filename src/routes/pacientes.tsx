@@ -548,7 +548,7 @@ function AnamneseTab({ anamnese }: { anamnese?: Anamnese }) {
   );
 }
 
-function OdontogramaTab({ odontograma }: { odontograma?: ReturnType<typeof mockOdontogramas extends Record<string, infer T> ? () => T : never> }) {
+function OdontogramaTab({ odontograma }: { odontograma?: { dentes: DenteInfo[]; atualizadoEm: Date } }) {
   if (!odontograma) {
     return (
       <div className="text-center py-16 animate-fade-in">
