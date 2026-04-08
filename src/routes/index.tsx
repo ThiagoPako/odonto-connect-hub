@@ -13,6 +13,7 @@ import {
 import { OrcamentoConversaoChart } from "@/components/charts/OrcamentoConversaoChart";
 import { OrigemLeadsChart } from "@/components/charts/OrigemLeadsChart";
 import { AgendaStatusChart } from "@/components/charts/AgendaStatusChart";
+import { FaturamentoMensalChart } from "@/components/charts/FaturamentoMensalChart";
 import {
   CalendarCheck, Users, FileText, DollarSign, Package,
   AlertTriangle, TrendingUp, Activity,
