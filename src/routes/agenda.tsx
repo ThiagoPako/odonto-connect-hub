@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { mockAppointments, mockProfessionals, type Appointment } from "@/data/agendaMockData";
-import { mockHistoricos } from "@/data/pacientesMockData";
+import { mockHistoricos, mockAnamneses } from "@/data/pacientesMockData";
 
 export const Route = createFileRoute("/agenda")({
   component: AgendaPage,
