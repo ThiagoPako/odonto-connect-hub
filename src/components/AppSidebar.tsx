@@ -164,24 +164,7 @@ export function AppSidebar() {
         ))}
       </nav>
 
-      {/* User & Logout */}
-      <div className="p-3 border-t border-sidebar-border shrink-0 space-y-2">
-        {!collapsed && (
-          <div className="flex items-center gap-3 px-2 py-2">
-            <div className="h-8 w-8 rounded-lg gradient-primary flex items-center justify-center text-[11px] font-bold text-primary-foreground shadow-sm">
-              DC
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-xs font-semibold text-sidebar-foreground leading-tight truncate">Dr. Carlos</p>
-              <p className="text-[10px] text-muted-foreground">Admin</p>
-            </div>
-          </div>
-        )}
-        <button className="flex items-center gap-3 px-3 py-2 rounded-xl text-[13px] text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-foreground transition-all w-full">
-          <LogOut className="h-[18px] w-[18px] shrink-0" />
-          {!collapsed && <span>Sair</span>}
-        </button>
-      </div>
+      <SidebarFooter collapsed={collapsed} />
     </aside>
   );
 }
