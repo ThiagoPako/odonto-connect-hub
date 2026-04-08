@@ -20,7 +20,6 @@ import {
   Package,
   ClipboardList,
   Percent,
-  Sparkles,
 } from "lucide-react";
 import { Link, useLocation } from "@tanstack/react-router";
 import { useState } from "react";
@@ -89,15 +88,15 @@ export function AppSidebar() {
       }`}
     >
       {/* Logo */}
-      <div className="flex items-center gap-3 px-4 h-[72px] border-b border-sidebar-border shrink-0 relative z-10">
-        <img src={logoImg} alt="Odonto Connect" className="h-10 w-10 rounded-xl shrink-0 shadow-sm bg-white p-0.5" />
+      <div className="flex items-center gap-3 px-4 h-[72px] border-b border-sidebar-border shrink-0">
+        <img src={logoImg} alt="Odonto Connect" className="h-10 w-10 rounded-xl shrink-0 shadow-sm" />
         {!collapsed && (
           <div className="flex flex-col">
-            <span className="text-sm font-bold tracking-tight text-sidebar-foreground leading-tight">
+            <span className="text-sm font-bold tracking-tight text-sidebar-foreground font-heading leading-tight">
               Odonto Connect
             </span>
-            <span className="text-[10px] text-sidebar-foreground/60 font-medium flex items-center gap-1">
-              <Sparkles className="h-2.5 w-2.5" /> SaaS Clínico
+            <span className="text-[10px] text-muted-foreground font-medium">
+              SaaS Clínico
             </span>
           </div>
         )}
@@ -112,11 +111,11 @@ export function AppSidebar() {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 py-4 px-2.5 space-y-5 overflow-y-auto relative z-10">
+      <nav className="flex-1 py-4 px-2.5 space-y-5 overflow-y-auto">
         {navSections.map((section) => (
           <div key={section.label}>
             {!collapsed && (
-              <p className="px-3 mb-2 text-[9px] uppercase tracking-[0.15em] font-semibold text-sidebar-foreground/50">
+              <p className="px-3 mb-2 text-[9px] uppercase tracking-[0.15em] font-semibold text-muted-foreground">
                 {section.label}
               </p>
             )}
@@ -127,22 +126,22 @@ export function AppSidebar() {
                   <Link
                     key={item.title}
                     to={item.url}
-                    className={`group flex items-center gap-3 px-3 py-2 rounded-xl text-[13px] font-medium transition-all duration-200 relative ${
+                    className={`group flex items-center gap-3 px-3 py-2 rounded-xl text-[13px] font-medium transition-all duration-200 ${
                       isActive
-                        ? "bg-sidebar-primary text-white shadow-sm"
-                        : "text-sidebar-foreground/75 hover:bg-sidebar-accent hover:text-sidebar-foreground"
+                        ? "bg-sidebar-accent text-sidebar-accent-foreground font-semibold"
+                        : "text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground"
                     }`}
                   >
                     <item.icon className={`h-[18px] w-[18px] shrink-0 transition-transform duration-200 ${
-                      isActive ? "" : "group-hover:scale-110"
+                      isActive ? "text-sidebar-primary" : "group-hover:scale-110"
                     }`} />
                     {!collapsed && (
                       <>
                         <span className="flex-1">{item.title}</span>
                         {item.badge && (
-                          <span className={`h-5 min-w-[22px] px-1.5 rounded-full text-[10px] font-bold flex items-center justify-center transition-colors ${
+                          <span className={`h-5 min-w-[22px] px-1.5 rounded-full text-[10px] font-bold flex items-center justify-center ${
                             isActive
-                              ? "bg-white/25 text-white"
+                              ? "bg-sidebar-primary text-sidebar-primary-foreground"
                               : "bg-sidebar-primary/15 text-sidebar-primary"
                           }`}>
                             {item.badge}
@@ -159,15 +158,15 @@ export function AppSidebar() {
       </nav>
 
       {/* User & Logout */}
-      <div className="p-3 border-t border-sidebar-border shrink-0 relative z-10 space-y-2">
+      <div className="p-3 border-t border-sidebar-border shrink-0 space-y-2">
         {!collapsed && (
           <div className="flex items-center gap-3 px-2 py-2">
-            <div className="h-8 w-8 rounded-lg bg-sidebar-primary flex items-center justify-center text-[11px] font-bold text-white shadow-sm">
+            <div className="h-8 w-8 rounded-lg gradient-primary flex items-center justify-center text-[11px] font-bold text-primary-foreground shadow-sm">
               DC
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-xs font-semibold text-sidebar-foreground leading-tight truncate">Dr. Carlos</p>
-              <p className="text-[10px] text-sidebar-foreground/55">Admin</p>
+              <p className="text-[10px] text-muted-foreground">Admin</p>
             </div>
           </div>
         )}
