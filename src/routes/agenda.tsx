@@ -133,6 +133,17 @@ function AppointmentCard({ appointment: a }: { appointment: Appointment }) {
         .slice(0, 4)
     : [];
 
+  const anamnese = a.pacienteId ? mockAnamneses[a.pacienteId] : undefined;
+  const alergias = anamnese?.alergias ?? [];
+
+  const condicoes: string[] = [];
+  if (anamnese?.cardiopatia) condicoes.push("Cardiopatia");
+  if (anamnese?.diabetes) condicoes.push("Diabetes");
+  if (anamnese?.hemofilia) condicoes.push("Hemofilia");
+  if (anamnese?.epilepsia) condicoes.push("Epilepsia");
+  if (anamnese?.hepatite) condicoes.push("Hepatite");
+  if (anamnese?.hiv) condicoes.push("HIV");
+
   return (
     <div className={`rounded-lg border border-border/50 p-2.5 space-y-2 ${a.status === "faltou" ? "opacity-50" : ""}`}>
       <div className="flex items-center justify-between">
