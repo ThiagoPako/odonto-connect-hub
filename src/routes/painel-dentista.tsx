@@ -407,9 +407,16 @@ function OrcamentosTab({
                   <User className="h-5 w-5 text-primary" />
                 </div>
                 <div>
-                  <p className="text-sm font-semibold text-foreground">
-                    {orc.pacienteNome}
-                  </p>
+                  <div className="flex items-center gap-1.5">
+                    <p className="text-sm font-semibold text-foreground">
+                      {orc.pacienteNome}
+                    </p>
+                    {orc.pacienteId && (
+                      <Link to="/pacientes" search={{ pacienteId: orc.pacienteId }} className="p-0.5 rounded hover:bg-primary/10" title="Ver ficha">
+                        <ExternalLink className="h-3 w-3 text-primary" />
+                      </Link>
+                    )}
+                  </div>
                   <p className="text-[11px] text-muted-foreground">
                     {orc.criadoEm.toLocaleDateString("pt-BR")}
                   </p>
@@ -485,9 +492,16 @@ function ProntuarioTab({
               {p.pacienteIniciais}
             </div>
             <div className="flex-1">
-              <p className="text-sm font-semibold text-foreground">
-                {p.pacienteNome}
-              </p>
+              <div className="flex items-center gap-1.5">
+                <p className="text-sm font-semibold text-foreground">
+                  {p.pacienteNome}
+                </p>
+                {p.pacienteId && (
+                  <Link to="/pacientes" search={{ pacienteId: p.pacienteId }} className="p-0.5 rounded hover:bg-primary/10" title="Ver ficha">
+                    <ExternalLink className="h-3 w-3 text-primary" />
+                  </Link>
+                )}
+              </div>
               <p className="text-[11px] text-muted-foreground">
                 Última consulta:{" "}
                 {p.ultimaConsulta.toLocaleDateString("pt-BR")}
