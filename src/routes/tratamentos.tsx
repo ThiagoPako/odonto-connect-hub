@@ -1,8 +1,9 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { getAlergias, getCondicoesCriticas } from "@/data/registroCentral";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import {
   Search, CheckCircle2, Clock, Pause, PlayCircle, CalendarDays,
-  ChevronRight, AlertCircle, CircleDot, FileText, Plus,
+  ChevronRight, AlertCircle, CircleDot, FileText, Plus, ExternalLink, AlertTriangle, HeartPulse,
 } from "lucide-react";
 import { useState } from "react";
 import {
@@ -79,7 +80,14 @@ function TratamentosPage() {
                         {t.patientInitials}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-xs font-medium text-foreground truncate">{t.patientName}</p>
+                        <div className="flex items-center gap-1">
+                          <p className="text-xs font-medium text-foreground truncate">{t.patientName}</p>
+                          {t.pacienteId && getAlergias(t.pacienteId).length > 0 && (
+                            <div className="h-3.5 w-3.5 rounded-full bg-destructive/15 flex items-center justify-center shrink-0" title={`Alergias: ${getAlergias(t.pacienteId).join(", ")}`}>
+                              <AlertTriangle className="h-2 w-2 text-destructive" />
+                            </div>
+                          )}
+                        </div>
                         <p className="text-[10px] text-muted-foreground truncate">{t.professional}</p>
                       </div>
                     </div>
@@ -108,7 +116,24 @@ function TratamentosPage() {
                         {selected.patientInitials}
                       </div>
                       <div>
-                        <h3 className="text-base font-semibold text-foreground">{selected.patientName}</h3>
+                        <div className="flex items-center gap-2">
+                          <h3 className="text-base font-semibold text-foreground">{selected.patientName}</h3>
+                          {selected.pacienteId && (
+                            <Link to="/pacientes" search={{ pacienteId: selected.pacienteId }} className="p-0.5 rounded hover:bg-primary/10" title="Ver ficha">
+                              <ExternalLink className="h-3.5 w-3.5 text-primary" />
+                            </Link>
+                          )}
+                          {selected.pacienteId && getAlergias(selected.pacienteId).length > 0 && (
+                            <div className="h-5 w-5 rounded-full bg-destructive/15 flex items-center justify-center" title={`Alergias: ${getAlergias(selected.pacienteId).join(", ")}`}>
+                              <AlertTriangle className="h-3 w-3 text-destructive" />
+                            </div>
+                          )}
+                          {selected.pacienteId && getCondicoesCriticas(selected.pacienteId).length > 0 && (
+                            <div className="h-5 w-5 rounded-full bg-warning/15 flex items-center justify-center" title={`Condições: ${getCondicoesCriticas(selected.pacienteId).join(", ")}`}>
+                              <HeartPulse className="h-3 w-3 text-warning" />
+                            </div>
+                          )}
+                        </div>
                         <p className="text-xs text-muted-foreground">{selected.professional} · {selected.startDate} → {selected.estimatedEnd}</p>
                       </div>
                     </div>

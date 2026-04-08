@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { mockAppointments, mockProfessionals, type Appointment } from "@/data/agendaMockData";
-import { mockHistoricos, mockAnamneses } from "@/data/pacientesMockData";
+import { getAlergias, getCondicoesCriticas, getHistorico } from "@/data/registroCentral";
 
 export const Route = createFileRoute("/agenda")({
   component: AgendaPage,
@@ -126,23 +126,9 @@ function AppointmentCard({ appointment: a }: { appointment: Appointment }) {
   const cfg = statusConfig[a.status];
   const [showHistory, setShowHistory] = useState(false);
 
-  const historico = a.pacienteId
-    ? mockHistoricos
-        .filter((h) => h.pacienteId === a.pacienteId)
-        .sort((x, y) => y.data.getTime() - x.data.getTime())
-        .slice(0, 4)
-    : [];
-
-  const anamnese = a.pacienteId ? mockAnamneses[a.pacienteId] : undefined;
-  const alergias = anamnese?.alergias ?? [];
-
-  const condicoes: string[] = [];
-  if (anamnese?.cardiopatia) condicoes.push("Cardiopatia");
-  if (anamnese?.diabetes) condicoes.push("Diabetes");
-  if (anamnese?.hemofilia) condicoes.push("Hemofilia");
-  if (anamnese?.epilepsia) condicoes.push("Epilepsia");
-  if (anamnese?.hepatite) condicoes.push("Hepatite");
-  if (anamnese?.hiv) condicoes.push("HIV");
+  const historico = a.pacienteId ? getHistorico(a.pacienteId).slice(0, 4) : [];
+  const alergias = a.pacienteId ? getAlergias(a.pacienteId) : [];
+  const condicoes = a.pacienteId ? getCondicoesCriticas(a.pacienteId) : [];
 
   return (
     <div className={`rounded-lg border border-border/50 p-2.5 space-y-2 ${a.status === "faltou" ? "opacity-50" : ""}`}>

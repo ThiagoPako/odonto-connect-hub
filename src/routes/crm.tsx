@@ -1,10 +1,11 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { getAlergias } from "@/data/registroCentral";
 import { useState } from "react";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { mockPatients, type Patient } from "@/data/crmMockData";
 import {
   Search, Plus, Filter, Phone, Mail, Calendar, DollarSign,
-  ChevronRight, MoreHorizontal, UserPlus
+  ChevronRight, MoreHorizontal, UserPlus, ExternalLink
 } from "lucide-react";
 
 export const Route = createFileRoute("/crm")({
@@ -186,7 +187,14 @@ function PatientDetail({ patient, onClose }: { patient: Patient; onClose: () => 
               {patient.initials}
             </div>
             <div>
-              <h2 className="text-xl font-bold text-foreground">{patient.name}</h2>
+              <div className="flex items-center gap-2">
+                <h2 className="text-xl font-bold text-foreground">{patient.name}</h2>
+                {patient.pacienteId && (
+                  <Link to="/pacientes" search={{ pacienteId: patient.pacienteId }} className="p-1 rounded-lg hover:bg-primary/10" title="Ver ficha completa">
+                    <ExternalLink className="h-4 w-4 text-primary" />
+                  </Link>
+                )}
+              </div>
               <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${statusLabels[patient.status].className}`}>
                 {statusLabels[patient.status].label}
               </span>

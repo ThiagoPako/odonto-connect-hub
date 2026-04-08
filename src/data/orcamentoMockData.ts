@@ -1,5 +1,6 @@
 export interface Budget {
   id: string;
+  pacienteId?: string;
   patientName: string;
   patientInitials: string;
   avatarColor: string;
@@ -26,7 +27,7 @@ export interface BudgetItem {
 
 export const mockBudgets: Budget[] = [
   {
-    id: "b1", patientName: "Maria Silva", patientInitials: "MS", avatarColor: "bg-chart-2",
+    id: "b1", pacienteId: "pac1", patientName: "Maria Silva", patientInitials: "MS", avatarColor: "bg-chart-2",
     createdAt: "20/03/2026", validUntil: "20/04/2026", status: "aprovado", professional: "Dr. Ricardo Mendes",
     items: [
       { id: "bi1", procedure: "Implante unitário", tooth: "36", quantity: 1, unitPrice: 4500, totalPrice: 4500 },
@@ -36,7 +37,7 @@ export const mockBudgets: Budget[] = [
     totalValue: 8500, discount: 0, finalValue: 8500, paymentMethod: "Cartão 10x", installments: 10,
   },
   {
-    id: "b2", patientName: "Carlos Oliveira", patientInitials: "CO", avatarColor: "bg-chart-1",
+    id: "b2", pacienteId: "pac5", patientName: "Carlos Oliveira", patientInitials: "CO", avatarColor: "bg-chart-1",
     createdAt: "05/04/2026", validUntil: "05/05/2026", status: "pendente", professional: "Dra. Ana Souza",
     items: [
       { id: "bi4", procedure: "Aparelho ortodôntico fixo", tooth: undefined, quantity: 1, unitPrice: 3500, totalPrice: 3500 },
@@ -56,7 +57,7 @@ export const mockBudgets: Budget[] = [
     totalValue: 3200, discount: 200, finalValue: 3000, paymentMethod: "Pix à vista", installments: 1,
   },
   {
-    id: "b4", patientName: "Pedro Costa", patientInitials: "PC", avatarColor: "bg-dental-cyan",
+    id: "b4", pacienteId: "pac3", patientName: "Pedro Costa", patientInitials: "PC", avatarColor: "bg-dental-cyan",
     createdAt: "28/03/2026", validUntil: "28/04/2026", status: "reprovado", professional: "Dr. Carlos Lima",
     items: [
       { id: "bi10", procedure: "Facetas de porcelana", tooth: "11-23", quantity: 6, unitPrice: 2200, totalPrice: 13200 },
