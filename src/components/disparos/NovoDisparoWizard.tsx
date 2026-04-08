@@ -279,6 +279,48 @@ function StepPublico({
           <span className="text-xs text-muted-foreground">dias de intervalo</span>
         </div>
       </div>
+
+      {/* Número de envio */}
+      <div>
+        <div className="flex items-center gap-2 mb-2">
+          <Phone className="h-4 w-4 text-muted-foreground" />
+          <h4 className="text-sm font-medium text-foreground">Número de envio</h4>
+        </div>
+        <p className="text-xs text-muted-foreground mb-3">Selecione qual número WhatsApp será usado para este disparo</p>
+        <div className="grid grid-cols-1 gap-2">
+          {numerosDisponiveis.map((num) => (
+            <button
+              key={num.id}
+              onClick={() => num.status === "conectado" && setNumeroEnvio(num.id)}
+              disabled={num.status === "desconectado"}
+              className={`flex items-center gap-3 p-3 rounded-xl border text-left transition-all ${
+                numeroEnvio === num.id
+                  ? "border-primary bg-primary/5 ring-1 ring-primary/20"
+                  : num.status === "desconectado"
+                  ? "border-border opacity-50 cursor-not-allowed"
+                  : "border-border hover:border-primary/40"
+              }`}
+            >
+              <div className={`mt-0.5 h-4 w-4 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${
+                numeroEnvio === num.id ? "border-primary bg-primary" : "border-muted-foreground/40"
+              }`}>
+                {numeroEnvio === num.id && <Check className="h-2.5 w-2.5 text-primary-foreground" />}
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-medium text-foreground">{num.nome}</p>
+                <p className="text-xs text-muted-foreground font-mono">{num.numero}</p>
+              </div>
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${
+                num.status === "conectado"
+                  ? "bg-success/15 text-success"
+                  : "bg-destructive/15 text-destructive"
+              }`}>
+                {num.status === "conectado" ? "Conectado" : "Desconectado"}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
