@@ -31,8 +31,8 @@ export function KpiCard({ title, value, change, changeType = "neutral", icon: Ic
 
       <div className="flex items-start justify-between relative z-10">
         <div className="flex-1 min-w-0">
-          <p className="text-xs text-muted-foreground font-medium">{title}</p>
-          <p className="text-2xl font-bold text-card-foreground mt-1.5 tracking-tight">{value}</p>
+          <p className="text-xs uppercase tracking-wider text-muted-foreground font-medium">{title}</p>
+          <p className="text-2xl font-bold text-card-foreground mt-1.5 tracking-tight font-heading">{value}</p>
           {change && (
             <div className={`flex items-center gap-1 mt-2 ${changeColor}`}>
               <ChangeIcon className="h-3 w-3" />
