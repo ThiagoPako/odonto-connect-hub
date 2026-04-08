@@ -23,29 +23,6 @@ import {
   Stethoscope,
   UserRound,
 } from "lucide-react";
-  LayoutDashboard,
-  MessageSquare,
-  Radio,
-  DollarSign,
-  Settings,
-  LogOut,
-  ChevronLeft,
-  Users,
-  Kanban,
-  Megaphone,
-  BarChart3,
-  UserCog,
-  RefreshCcw,
-  Plug,
-  Zap,
-  CalendarDays,
-  FileHeart,
-  Receipt,
-  Package,
-  ClipboardList,
-  Percent,
-  Stethoscope,
-} from "lucide-react";
 import { Link, useLocation } from "@tanstack/react-router";
 import { useState } from "react";
 import logoImg from "@/assets/logo.png";
