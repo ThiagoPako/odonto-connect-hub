@@ -12,12 +12,15 @@ const fluxoData = [
 ];
 
 export function FluxoCaixaChart() {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+
   return (
     <div className="bg-card rounded-xl border border-border p-5">
       <h3 className="text-sm font-semibold text-card-foreground mb-1">Fluxo de Caixa</h3>
       <p className="text-[11px] text-muted-foreground mb-4">Entradas vs saídas — últimos 7 meses</p>
       <div className="h-[220px]">
-        <ResponsiveContainer width="100%" height="100%">
+        {mounted ? (
           <BarChart data={fluxoData} margin={{ left: 0, right: 8, top: 4, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" strokeOpacity={0.5} />
             <XAxis
