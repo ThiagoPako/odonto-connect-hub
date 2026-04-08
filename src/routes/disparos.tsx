@@ -1,9 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import {
-  Send, Play, Pause, Plus, Eye, BarChart3, Clock,
+  Send, Play, Pause, Plus, Eye, Clock,
   CalendarDays, Users, CheckCircle2, AlertCircle, Trash2,
-  MessageSquare, RefreshCcw,
+  MessageSquare, RefreshCcw, Copy, Pencil,
 } from "lucide-react";
 import { useState } from "react";
 import { mockDisparos, publicoOptions, type DisparoProgramado } from "@/data/disparosMockData";
@@ -17,6 +17,7 @@ export const Route = createFileRoute("/disparos")({
 function DisparosPage() {
   const [disparos, setDisparos] = useState(mockDisparos);
   const [wizardOpen, setWizardOpen] = useState(false);
+  const [editingDisparo, setEditingDisparo] = useState<DisparoProgramado | null>(null);
   const [filterStatus, setFilterStatus] = useState<"all" | "ativos" | "inativos">("all");
 
   const filtered = filterStatus === "all" ? disparos : disparos.filter((d) => (filterStatus === "ativos" ? d.ativo : !d.ativo));
@@ -30,13 +31,48 @@ function DisparosPage() {
   };
 
   const handleSave = (data: Omit<DisparoProgramado, "id" | "stats" | "criadoEm">) => {
-    const novo: DisparoProgramado = {
-      ...data,
+    if (editingDisparo) {
+      // Update existing
+      setDisparos((prev) =>
+        prev.map((d) =>
+          d.id === editingDisparo.id
+            ? { ...d, ...data }
+            : d
+        )
+      );
+    } else {
+      // Create new
+      const novo: DisparoProgramado = {
+        ...data,
+        id: `dp${Date.now()}`,
+        stats: { enviadas: 0, entregues: 0, lidas: 0, respondidas: 0, erros: 0 },
+        criadoEm: new Date().toLocaleDateString("pt-BR"),
+      };
+      setDisparos((prev) => [novo, ...prev]);
+    }
+    setEditingDisparo(null);
+  };
+
+  const handleEdit = (disparo: DisparoProgramado) => {
+    setEditingDisparo(disparo);
+    setWizardOpen(true);
+  };
+
+  const handleDuplicate = (disparo: DisparoProgramado) => {
+    const clone: DisparoProgramado = {
+      ...disparo,
       id: `dp${Date.now()}`,
+      nome: `${disparo.nome} (cópia)`,
+      ativo: false,
       stats: { enviadas: 0, entregues: 0, lidas: 0, respondidas: 0, erros: 0 },
       criadoEm: new Date().toLocaleDateString("pt-BR"),
     };
-    setDisparos((prev) => [novo, ...prev]);
+    setDisparos((prev) => [clone, ...prev]);
+  };
+
+  const openNewWizard = () => {
+    setEditingDisparo(null);
+    setWizardOpen(true);
   };
 
   const totalEnviadas = disparos.reduce((a, d) => a + d.stats.enviadas, 0);
@@ -77,7 +113,7 @@ function DisparosPage() {
               ))}
             </div>
             <button
-              onClick={() => setWizardOpen(true)}
+              onClick={openNewWizard}
               className="flex items-center gap-2 h-8 px-4 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors"
             >
               <Plus className="h-3.5 w-3.5" /> Novo disparo
@@ -111,6 +147,8 @@ function DisparosPage() {
                 disparo={disparo}
                 onToggle={() => toggleAtivo(disparo.id)}
                 onRemove={() => removeDisparo(disparo.id)}
+                onEdit={() => handleEdit(disparo)}
+                onDuplicate={() => handleDuplicate(disparo)}
               />
             ))}
           </div>
@@ -119,8 +157,9 @@ function DisparosPage() {
 
       <NovoDisparoWizard
         open={wizardOpen}
-        onClose={() => setWizardOpen(false)}
+        onClose={() => { setWizardOpen(false); setEditingDisparo(null); }}
         onSave={handleSave}
+        editData={editingDisparo}
       />
     </div>
   );
@@ -139,11 +178,13 @@ function MiniKpi({ icon: Icon, label, value }: { icon: React.ElementType; label:
 }
 
 function DisparoCard({
-  disparo, onToggle, onRemove,
+  disparo, onToggle, onRemove, onEdit, onDuplicate,
 }: {
   disparo: DisparoProgramado;
   onToggle: () => void;
   onRemove: () => void;
+  onEdit: () => void;
+  onDuplicate: () => void;
 }) {
   const publicoLabel = publicoOptions.find((p) => p.id === disparo.publico)?.label || disparo.publico;
   const taxaLeitura = disparo.stats.enviadas > 0 ? ((disparo.stats.lidas / disparo.stats.enviadas) * 100).toFixed(0) : "0";
@@ -151,7 +192,6 @@ function DisparoCard({
   return (
     <div className="bg-card rounded-xl border border-border p-5 transition-all hover:shadow-sm">
       <div className="flex items-start justify-between gap-4">
-        {/* Left info */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-2">
             <span className={`h-2 w-2 rounded-full ${disparo.ativo ? "bg-success" : "bg-muted-foreground/40"}`} />
@@ -174,7 +214,6 @@ function DisparoCard({
             )}
           </div>
 
-          {/* Stats */}
           <div className="flex items-center gap-4 text-[11px]">
             <StatPill label="Enviadas" value={disparo.stats.enviadas} />
             <StatPill label="Entregues" value={disparo.stats.entregues} />
@@ -191,6 +230,20 @@ function DisparoCard({
 
         {/* Actions */}
         <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            onClick={onEdit}
+            className="p-2 rounded-lg bg-muted text-muted-foreground hover:bg-primary/15 hover:text-primary transition-colors"
+            title="Editar"
+          >
+            <Pencil className="h-4 w-4" />
+          </button>
+          <button
+            onClick={onDuplicate}
+            className="p-2 rounded-lg bg-muted text-muted-foreground hover:bg-primary/15 hover:text-primary transition-colors"
+            title="Duplicar"
+          >
+            <Copy className="h-4 w-4" />
+          </button>
           <button
             onClick={onToggle}
             className={`p-2 rounded-lg transition-colors ${
