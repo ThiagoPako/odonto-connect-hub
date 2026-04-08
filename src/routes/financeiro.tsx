@@ -17,6 +17,7 @@ import { ReceitaDespesaChart } from "@/components/charts/ReceitaDespesaChart";
 import { DespesasCategoriaChart } from "@/components/charts/DespesasCategoriaChart";
 
 export const Route = createFileRoute("/financeiro")({
+  ssr: false,
   component: FinanceiroPage,
 });
 
