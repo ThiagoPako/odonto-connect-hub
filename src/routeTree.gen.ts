@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as TratamentosRouteImport } from './routes/tratamentos'
 import { Route as ReativacaoRouteImport } from './routes/reativacao'
 import { Route as ProntuarioRouteImport } from './routes/prontuario'
 import { Route as OrcamentosRouteImport } from './routes/orcamentos'
@@ -27,6 +28,11 @@ import { Route as AnalyticsRouteImport } from './routes/analytics'
 import { Route as AgendaRouteImport } from './routes/agenda'
 import { Route as IndexRouteImport } from './routes/index'
 
+const TratamentosRoute = TratamentosRouteImport.update({
+  id: '/tratamentos',
+  path: '/tratamentos',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ReativacaoRoute = ReativacaoRouteImport.update({
   id: '/reativacao',
   path: '/reativacao',
@@ -131,6 +137,7 @@ export interface FileRoutesByFullPath {
   '/orcamentos': typeof OrcamentosRoute
   '/prontuario': typeof ProntuarioRoute
   '/reativacao': typeof ReativacaoRoute
+  '/tratamentos': typeof TratamentosRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -150,6 +157,7 @@ export interface FileRoutesByTo {
   '/orcamentos': typeof OrcamentosRoute
   '/prontuario': typeof ProntuarioRoute
   '/reativacao': typeof ReativacaoRoute
+  '/tratamentos': typeof TratamentosRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -170,6 +178,7 @@ export interface FileRoutesById {
   '/orcamentos': typeof OrcamentosRoute
   '/prontuario': typeof ProntuarioRoute
   '/reativacao': typeof ReativacaoRoute
+  '/tratamentos': typeof TratamentosRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -191,6 +200,7 @@ export interface FileRouteTypes {
     | '/orcamentos'
     | '/prontuario'
     | '/reativacao'
+    | '/tratamentos'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -210,6 +220,7 @@ export interface FileRouteTypes {
     | '/orcamentos'
     | '/prontuario'
     | '/reativacao'
+    | '/tratamentos'
   id:
     | '__root__'
     | '/'
@@ -229,6 +240,7 @@ export interface FileRouteTypes {
     | '/orcamentos'
     | '/prontuario'
     | '/reativacao'
+    | '/tratamentos'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -249,10 +261,18 @@ export interface RootRouteChildren {
   OrcamentosRoute: typeof OrcamentosRoute
   ProntuarioRoute: typeof ProntuarioRoute
   ReativacaoRoute: typeof ReativacaoRoute
+  TratamentosRoute: typeof TratamentosRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/tratamentos': {
+      id: '/tratamentos'
+      path: '/tratamentos'
+      fullPath: '/tratamentos'
+      preLoaderRoute: typeof TratamentosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/reativacao': {
       id: '/reativacao'
       path: '/reativacao'
@@ -393,6 +413,7 @@ const rootRouteChildren: RootRouteChildren = {
   OrcamentosRoute: OrcamentosRoute,
   ProntuarioRoute: ProntuarioRoute,
   ReativacaoRoute: ReativacaoRoute,
+  TratamentosRoute: TratamentosRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

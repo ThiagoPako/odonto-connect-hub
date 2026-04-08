@@ -18,6 +18,7 @@ import {
   FileHeart,
   Receipt,
   Package,
+  ClipboardList,
 } from "lucide-react";
 import { Link, useLocation } from "@tanstack/react-router";
 import { useState } from "react";
@@ -42,6 +43,7 @@ const navSections: NavSection[] = [
     items: [
       { title: "Prontuário", url: "/prontuario", icon: FileHeart },
       { title: "Orçamentos", url: "/orcamentos", icon: Receipt },
+      { title: "Tratamentos", url: "/tratamentos", icon: ClipboardList },
     ],
   },
   {
