@@ -13,6 +13,7 @@ import {
   UserCog,
   RefreshCcw,
   Plug,
+  Zap,
 } from "lucide-react";
 import { Link, useLocation } from "@tanstack/react-router";
 import { useState } from "react";
