@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
+import { AdminResetPanel } from "@/components/AdminResetPanel";
 import { Settings } from "lucide-react";
 
 export const Route = createFileRoute("/configuracoes")({
@@ -11,15 +12,21 @@ function ConfiguracoesPage() {
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Configurações" />
-      <main className="flex-1 flex items-center justify-center p-6">
-        <div className="text-center space-y-4">
-          <div className="h-16 w-16 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto">
-            <Settings className="h-8 w-8 text-primary" />
+      <main className="flex-1 p-6 space-y-6">
+        <div className="flex items-center gap-3">
+          <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center">
+            <Settings className="h-5 w-5 text-primary" />
           </div>
-          <h2 className="text-xl font-semibold text-foreground">Configurações</h2>
-          <p className="text-sm text-muted-foreground max-w-md">
-            Dados da clínica, permissões de atendentes, integrações e chaves de API.
-          </p>
+          <div>
+            <h2 className="text-xl font-semibold text-foreground">Configurações</h2>
+            <p className="text-sm text-muted-foreground">
+              Dados da clínica, permissões e administração
+            </p>
+          </div>
+        </div>
+
+        <div className="max-w-2xl">
+          <AdminResetPanel />
         </div>
       </main>
     </div>
