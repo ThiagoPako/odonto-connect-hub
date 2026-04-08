@@ -176,10 +176,17 @@ function ChatPage() {
           {selectedLead ? (
             <>
               <ChatHeader lead={selectedLead} onClose={() => setSelectedLead(null)} />
-              <ConversationView messages={currentMessages} leadName={selectedLead.name} />
+              <ConversationView
+                messages={currentMessages}
+                leadName={selectedLead.name}
+                onReaction={handleReaction}
+                onReply={handleReply}
+              />
               <MessageInput
                 onSendMessage={handleSendMessage}
                 disabled={selectedLead.status === "waiting"}
+                replyingTo={replyingTo}
+                onCancelReply={() => setReplyingTo(null)}
               />
             </>
           ) : (
