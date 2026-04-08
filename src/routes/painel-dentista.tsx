@@ -310,9 +310,16 @@ function AgendaTab({ agenda }: { agenda: typeof mockAgendaDentista }) {
         </p>
       </div>
       <div className="flex-1">
-        <p className="text-sm font-semibold text-foreground">
-          {item.pacienteNome}
-        </p>
+        <div className="flex items-center gap-1.5">
+          <p className="text-sm font-semibold text-foreground">
+            {item.pacienteNome}
+          </p>
+          {item.pacienteId && (
+            <Link to="/pacientes" search={{ pacienteId: item.pacienteId }} className="p-0.5 rounded hover:bg-primary/10" title="Ver ficha">
+              <ExternalLink className="h-3 w-3 text-primary" />
+            </Link>
+          )}
+        </div>
         <p className="text-xs text-muted-foreground capitalize mt-0.5">
           {item.tipo}
         </p>
