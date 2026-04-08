@@ -20,6 +20,7 @@ import { Route as FunilRouteImport } from './routes/funil'
 import { Route as FinanceiroRouteImport } from './routes/financeiro'
 import { Route as EstoqueRouteImport } from './routes/estoque'
 import { Route as EquipeRouteImport } from './routes/equipe'
+import { Route as DisparosRouteImport } from './routes/disparos'
 import { Route as DentistasRouteImport } from './routes/dentistas'
 import { Route as CrmRouteImport } from './routes/crm'
 import { Route as ConfiguracoesRouteImport } from './routes/configuracoes'
@@ -85,6 +86,11 @@ const EstoqueRoute = EstoqueRouteImport.update({
 const EquipeRoute = EquipeRouteImport.update({
   id: '/equipe',
   path: '/equipe',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DisparosRoute = DisparosRouteImport.update({
+  id: '/disparos',
+  path: '/disparos',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DentistasRoute = DentistasRouteImport.update({
@@ -155,6 +161,7 @@ export interface FileRoutesByFullPath {
   '/configuracoes': typeof ConfiguracoesRoute
   '/crm': typeof CrmRoute
   '/dentistas': typeof DentistasRoute
+  '/disparos': typeof DisparosRoute
   '/equipe': typeof EquipeRoute
   '/estoque': typeof EstoqueRoute
   '/financeiro': typeof FinanceiroRoute
@@ -179,6 +186,7 @@ export interface FileRoutesByTo {
   '/configuracoes': typeof ConfiguracoesRoute
   '/crm': typeof CrmRoute
   '/dentistas': typeof DentistasRoute
+  '/disparos': typeof DisparosRoute
   '/equipe': typeof EquipeRoute
   '/estoque': typeof EstoqueRoute
   '/financeiro': typeof FinanceiroRoute
@@ -204,6 +212,7 @@ export interface FileRoutesById {
   '/configuracoes': typeof ConfiguracoesRoute
   '/crm': typeof CrmRoute
   '/dentistas': typeof DentistasRoute
+  '/disparos': typeof DisparosRoute
   '/equipe': typeof EquipeRoute
   '/estoque': typeof EstoqueRoute
   '/financeiro': typeof FinanceiroRoute
@@ -230,6 +239,7 @@ export interface FileRouteTypes {
     | '/configuracoes'
     | '/crm'
     | '/dentistas'
+    | '/disparos'
     | '/equipe'
     | '/estoque'
     | '/financeiro'
@@ -254,6 +264,7 @@ export interface FileRouteTypes {
     | '/configuracoes'
     | '/crm'
     | '/dentistas'
+    | '/disparos'
     | '/equipe'
     | '/estoque'
     | '/financeiro'
@@ -278,6 +289,7 @@ export interface FileRouteTypes {
     | '/configuracoes'
     | '/crm'
     | '/dentistas'
+    | '/disparos'
     | '/equipe'
     | '/estoque'
     | '/financeiro'
@@ -303,6 +315,7 @@ export interface RootRouteChildren {
   ConfiguracoesRoute: typeof ConfiguracoesRoute
   CrmRoute: typeof CrmRoute
   DentistasRoute: typeof DentistasRoute
+  DisparosRoute: typeof DisparosRoute
   EquipeRoute: typeof EquipeRoute
   EstoqueRoute: typeof EstoqueRoute
   FinanceiroRoute: typeof FinanceiroRoute
@@ -393,6 +406,13 @@ declare module '@tanstack/react-router' {
       path: '/equipe'
       fullPath: '/equipe'
       preLoaderRoute: typeof EquipeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/disparos': {
+      id: '/disparos'
+      path: '/disparos'
+      fullPath: '/disparos'
+      preLoaderRoute: typeof DisparosRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/dentistas': {
@@ -487,6 +507,7 @@ const rootRouteChildren: RootRouteChildren = {
   ConfiguracoesRoute: ConfiguracoesRoute,
   CrmRoute: CrmRoute,
   DentistasRoute: DentistasRoute,
+  DisparosRoute: DisparosRoute,
   EquipeRoute: EquipeRoute,
   EstoqueRoute: EstoqueRoute,
   FinanceiroRoute: FinanceiroRoute,
