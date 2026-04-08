@@ -8,6 +8,7 @@ import {
 import { useState } from "react";
 import { mockDisparos, publicoOptions, type DisparoProgramado } from "@/data/disparosMockData";
 import { NovoDisparoWizard } from "@/components/disparos/NovoDisparoWizard";
+import { DisparoStatsPanel } from "@/components/disparos/DisparoStatsPanel";
 
 export const Route = createFileRoute("/disparos")({
   ssr: false,
