@@ -58,6 +58,7 @@ const navSections: NavSection[] = [
       { title: "CRM", url: "/crm", icon: Users, badge: 12 },
       { title: "Funil de Vendas", url: "/funil", icon: Kanban },
       { title: "Automações", url: "/automacoes", icon: Zap },
+      { title: "Disparos", url: "/disparos", icon: Send },
       { title: "Reativação", url: "/reativacao", icon: RefreshCcw, badge: 5 },
     ],
   },
