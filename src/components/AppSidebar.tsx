@@ -18,6 +18,7 @@ import {
   FileHeart,
   Receipt,
   Package,
+  ClipboardList,
 } from "lucide-react";
 import { Link, useLocation } from "@tanstack/react-router";
 import { useState } from "react";
