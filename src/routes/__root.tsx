@@ -2,7 +2,8 @@ import { Outlet, Link, createRootRoute, HeadContent, Scripts, useLocation, useNa
 import { useEffect } from "react";
 import { AppSidebar } from "@/components/AppSidebar";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
-import { Loader2 } from "lucide-react";
+import { canAccessRoute } from "@/lib/routeAccess";
+import { Loader2, ShieldAlert } from "lucide-react";
 
 import appCss from "../styles.css?url";
 
@@ -25,6 +26,28 @@ function NotFoundComponent() {
             Voltar ao início
           </Link>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function UnauthorizedComponent() {
+  return (
+    <div className="flex-1 flex items-center justify-center bg-background px-4">
+      <div className="max-w-md text-center space-y-4">
+        <div className="h-16 w-16 rounded-2xl bg-destructive/10 flex items-center justify-center mx-auto">
+          <ShieldAlert className="h-8 w-8 text-destructive" />
+        </div>
+        <h2 className="text-xl font-semibold text-foreground">Acesso Negado</h2>
+        <p className="text-sm text-muted-foreground">
+          Você não tem permissão para acessar esta página. Fale com o administrador.
+        </p>
+        <Link
+          to="/"
+          className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+        >
+          Voltar ao Dashboard
+        </Link>
       </div>
     </div>
   );
@@ -72,7 +95,7 @@ function RootComponent() {
 }
 
 function AuthGate() {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, user } = useAuth();
   const location = useLocation();
 
   if (isLoading) {
@@ -95,11 +118,15 @@ function AuthGate() {
     return <Outlet />;
   }
 
-  // Authenticated — show sidebar + content
+  // Role-based route protection
+  const userRole = user?.role ?? "user";
+  const hasAccess = canAccessRoute(location.pathname, userRole);
+
+  // Authenticated — show sidebar + content (or unauthorized)
   return (
     <div className="flex min-h-screen w-full">
       <AppSidebar />
-      <Outlet />
+      {hasAccess ? <Outlet /> : <UnauthorizedComponent />}
     </div>
   );
 }
