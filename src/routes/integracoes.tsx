@@ -12,6 +12,7 @@ import {
 } from "@/data/adsMockData";
 
 export const Route = createFileRoute("/integracoes")({
+  ssr: false,
   component: IntegracoesPage,
 });
 

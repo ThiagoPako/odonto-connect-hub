@@ -10,6 +10,7 @@ import { mockAppointments, mockProfessionals, type Appointment } from "@/data/ag
 import { getAlergias, getCondicoesCriticas, getHistorico } from "@/data/registroCentral";
 
 export const Route = createFileRoute("/agenda")({
+  ssr: false,
   component: AgendaPage,
 });
 

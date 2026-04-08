@@ -3,6 +3,7 @@ import { DashboardHeader } from "@/components/DashboardHeader";
 import { Radio, Wifi, WifiOff, Shield } from "lucide-react";
 
 export const Route = createFileRoute("/canais")({
+  ssr: false,
   component: CanaisPage,
 });
 

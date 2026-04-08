@@ -8,6 +8,7 @@ import {
 import { useState } from "react";
 
 export const Route = createFileRoute("/reativacao")({
+  ssr: false,
   component: ReativacaoPage,
 });
 

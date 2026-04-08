@@ -12,6 +12,7 @@ import {
 } from "@/data/estoqueMockData";
 
 export const Route = createFileRoute("/estoque")({
+  ssr: false,
   component: EstoquePage,
 });
 

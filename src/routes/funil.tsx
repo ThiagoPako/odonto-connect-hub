@@ -5,6 +5,7 @@ import { mockKanbanLeads, kanbanStages, type KanbanStage, type KanbanLead } from
 import { Clock, GripVertical, Phone, MessageSquare, MoreHorizontal, Plus } from "lucide-react";
 
 export const Route = createFileRoute("/funil")({
+  ssr: false,
   component: FunilPage,
 });
 

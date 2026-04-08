@@ -3,6 +3,7 @@ import { DashboardHeader } from "@/components/DashboardHeader";
 import { UserCog, Wifi, WifiOff, Clock, MessageSquare, Phone } from "lucide-react";
 
 export const Route = createFileRoute("/equipe")({
+  ssr: false,
   component: EquipePage,
 });
 

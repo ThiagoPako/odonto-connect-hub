@@ -13,6 +13,7 @@ import {
 } from "@/data/tratamentoMockData";
 
 export const Route = createFileRoute("/tratamentos")({
+  ssr: false,
   component: TratamentosPage,
 });
 

@@ -22,6 +22,7 @@ import {
 import { Link } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/dentistas")({
+  ssr: false,
   component: DentistasPage,
 });
 

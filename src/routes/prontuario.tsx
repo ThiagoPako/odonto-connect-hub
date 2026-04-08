@@ -8,6 +8,7 @@ import { useState } from "react";
 import { mockPatientRecords, type PatientRecord, type ClinicalEntry } from "@/data/prontuarioMockData";
 
 export const Route = createFileRoute("/prontuario")({
+  ssr: false,
   component: ProntuarioPage,
 });
 

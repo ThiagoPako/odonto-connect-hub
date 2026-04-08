@@ -29,6 +29,7 @@ export const Route = createFileRoute("/painel-dentista")({
   validateSearch: (search: Record<string, unknown>) => ({
     id: (search.id as string) || "d1",
   }),
+  ssr: false,
   component: PainelDentistaPage,
 });
 

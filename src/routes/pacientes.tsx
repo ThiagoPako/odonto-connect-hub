@@ -41,6 +41,7 @@ export const Route = createFileRoute("/pacientes")({
   validateSearch: (search: Record<string, unknown>) => ({
     pacienteId: (search.pacienteId as string) || undefined,
   }),
+  ssr: false,
   component: PacientesPage,
 });
 

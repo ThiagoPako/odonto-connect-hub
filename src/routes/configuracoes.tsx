@@ -3,6 +3,7 @@ import { DashboardHeader } from "@/components/DashboardHeader";
 import { Settings } from "lucide-react";
 
 export const Route = createFileRoute("/configuracoes")({
+  ssr: false,
   component: ConfiguracoesPage,
 });
 
