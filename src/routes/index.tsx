@@ -10,9 +10,12 @@ import {
   getEstoqueKpis,
   getPacienteKpis,
 } from "@/data/dashboardKpis";
+import { OrcamentoConversaoChart } from "@/components/charts/OrcamentoConversaoChart";
+import { OrigemLeadsChart } from "@/components/charts/OrigemLeadsChart";
+import { AgendaStatusChart } from "@/components/charts/AgendaStatusChart";
 import {
   CalendarCheck, Users, FileText, DollarSign, Package,
-  AlertTriangle, TrendingUp, Activity, ArrowUpRight, ArrowDownRight,
+  AlertTriangle, TrendingUp, Activity,
   UserCheck, UserX, Clock, CheckCircle, XCircle, BarChart3,
   ExternalLink,
 } from "lucide-react";
