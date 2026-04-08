@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { AdminResetPanel } from "@/components/AdminResetPanel";
+import { AdminCreateUserPanel } from "@/components/AdminCreateUserPanel";
 import { Settings } from "lucide-react";
 
 export const Route = createFileRoute("/configuracoes")({
@@ -25,7 +26,8 @@ function ConfiguracoesPage() {
           </div>
         </div>
 
-        <div className="max-w-2xl">
+        <div className="max-w-2xl space-y-6">
+          <AdminCreateUserPanel />
           <AdminResetPanel />
         </div>
       </main>

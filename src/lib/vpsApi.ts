@@ -109,6 +109,13 @@ export async function adminResetPassword(userId: string, newPassword: string) {
   });
 }
 
+export async function adminCreateUser(name: string, email: string, password: string, role: string) {
+  return vpsApiFetch<{ success: boolean; user: { id: string; name: string; email: string; role: string } }>('/auth/create-user', {
+    method: 'POST',
+    body: { name, email, password, role },
+  });
+}
+
 // ─── Pacientes ──────────────────────────────────────────────
 
 export const pacientesApi = {
