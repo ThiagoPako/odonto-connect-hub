@@ -1,26 +1,168 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useState } from "react";
 import { DashboardHeader } from "@/components/DashboardHeader";
-import { MessageSquare } from "lucide-react";
+import { LeadListItem } from "@/components/chat/LeadListItem";
+import { ConversationView } from "@/components/chat/ConversationView";
+import { MessageInput } from "@/components/chat/MessageInput";
+import { ChatHeader } from "@/components/chat/ChatHeader";
+import { Users, MessageSquare, Inbox } from "lucide-react";
+import {
+  mockLeadsQueue,
+  mockLeadsActive,
+  mockMessages,
+  type Lead,
+  type ChatMessage,
+} from "@/data/chatMockData";
 
 export const Route = createFileRoute("/chat")({
   component: ChatPage,
 });
 
 function ChatPage() {
+  const [activeTab, setActiveTab] = useState<"queue" | "mine">("queue");
+  const [queue, setQueue] = useState<Lead[]>(mockLeadsQueue);
+  const [myLeads, setMyLeads] = useState<Lead[]>(mockLeadsActive);
+  const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
+  const [messages, setMessages] = useState<Record<string, ChatMessage[]>>(mockMessages);
+
+  const handleAssign = (lead: Lead) => {
+    setQueue((prev) => prev.filter((l) => l.id !== lead.id));
+    const assignedLead: Lead = { ...lead, status: "active", assignedTo: "current", unreadCount: 0 };
+    setMyLeads((prev) => [assignedLead, ...prev]);
+    setSelectedLead(assignedLead);
+    setActiveTab("mine");
+
+    // Create initial system message
+    if (!messages[lead.id]) {
+      setMessages((prev) => ({
+        ...prev,
+        [lead.id]: [
+          {
+            id: `sys-${Date.now()}`,
+            leadId: lead.id,
+            content: lead.lastMessage,
+            sender: "lead",
+            type: "text",
+            timestamp: lead.lastMessageTime,
+          },
+        ],
+      }));
+    }
+  };
+
+  const handleSendMessage = (content: string, type: "text" | "audio" | "image" | "file") => {
+    if (!selectedLead) return;
+    const newMsg: ChatMessage = {
+      id: `msg-${Date.now()}`,
+      leadId: selectedLead.id,
+      content,
+      sender: "attendant",
+      type,
+      timestamp: new Date(),
+    };
+    setMessages((prev) => ({
+      ...prev,
+      [selectedLead.id]: [...(prev[selectedLead.id] || []), newMsg],
+    }));
+  };
+
+  const currentMessages = selectedLead ? messages[selectedLead.id] || [] : [];
+  const currentList = activeTab === "queue" ? queue : myLeads;
+
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Chat" />
-      <main className="flex-1 flex items-center justify-center p-6">
-        <div className="text-center space-y-4">
-          <div className="h-16 w-16 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto">
-            <MessageSquare className="h-8 w-8 text-primary" />
+
+      <div className="flex-1 flex overflow-hidden">
+        {/* Left Panel - Lead List */}
+        <div className="w-[360px] flex flex-col border-r border-border bg-card shrink-0">
+          {/* Tabs */}
+          <div className="flex border-b border-border shrink-0">
+            <button
+              onClick={() => setActiveTab("queue")}
+              className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-colors border-b-2 ${
+                activeTab === "queue"
+                  ? "border-primary text-primary"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <Inbox className="h-4 w-4" />
+              Fila de Espera
+              {queue.length > 0 && (
+                <span className="h-5 min-w-[20px] px-1.5 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold flex items-center justify-center">
+                  {queue.length}
+                </span>
+              )}
+            </button>
+            <button
+              onClick={() => setActiveTab("mine")}
+              className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-colors border-b-2 ${
+                activeTab === "mine"
+                  ? "border-primary text-primary"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <MessageSquare className="h-4 w-4" />
+              Meus Atendimentos
+              {myLeads.length > 0 && (
+                <span className="h-5 min-w-[20px] px-1.5 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">
+                  {myLeads.length}
+                </span>
+              )}
+            </button>
           </div>
-          <h2 className="text-xl font-semibold text-foreground">Central de Atendimento</h2>
-          <p className="text-sm text-muted-foreground max-w-md">
-            O módulo de chat com fila de espera, shared inbox e respostas rápidas será implementado aqui.
-          </p>
+
+          {/* Lead List */}
+          <div className="flex-1 overflow-y-auto">
+            {currentList.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-full text-center px-6">
+                <Users className="h-12 w-12 text-muted-foreground/30 mb-3" />
+                <p className="text-sm text-muted-foreground">
+                  {activeTab === "queue"
+                    ? "Nenhum lead na fila de espera"
+                    : "Nenhum atendimento ativo"}
+                </p>
+              </div>
+            ) : (
+              currentList.map((lead) => (
+                <LeadListItem
+                  key={lead.id}
+                  lead={lead}
+                  isSelected={selectedLead?.id === lead.id}
+                  onSelect={setSelectedLead}
+                  showAssignButton={activeTab === "queue"}
+                  onAssign={handleAssign}
+                />
+              ))
+            )}
+          </div>
         </div>
-      </main>
+
+        {/* Right Panel - Conversation */}
+        <div className="flex-1 flex flex-col bg-background">
+          {selectedLead ? (
+            <>
+              <ChatHeader lead={selectedLead} onClose={() => setSelectedLead(null)} />
+              <ConversationView messages={currentMessages} leadName={selectedLead.name} />
+              <MessageInput
+                onSendMessage={handleSendMessage}
+                disabled={selectedLead.status === "waiting"}
+              />
+            </>
+          ) : (
+            <div className="flex-1 flex items-center justify-center">
+              <div className="text-center space-y-3">
+                <div className="h-20 w-20 rounded-2xl bg-primary/5 flex items-center justify-center mx-auto">
+                  <MessageSquare className="h-10 w-10 text-primary/30" />
+                </div>
+                <p className="text-muted-foreground text-sm">
+                  Selecione um atendimento para iniciar
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
