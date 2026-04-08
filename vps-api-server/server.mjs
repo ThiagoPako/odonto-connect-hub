@@ -79,12 +79,13 @@ app.post('/api/auth/login', async (req, res) => {
     if (!email || !password) return res.status(400).json({ error: 'Email e senha são obrigatórios' });
 
     const { rows } = await pool.query(
-      'SELECT id, name, email, role, avatar_url, password_hash FROM profiles WHERE email = $1 LIMIT 1',
+      'SELECT id, name, email, role, avatar_url, password_hash, COALESCE(active, true) as active FROM profiles WHERE email = $1 LIMIT 1',
       [email.toLowerCase().trim()]
     );
     if (rows.length === 0) return res.status(401).json({ error: 'Email ou senha inválidos' });
 
     const profile = rows[0];
+    if (!profile.active) return res.status(403).json({ error: 'Conta desativada. Entre em contato com o administrador.' });
     if (!profile.password_hash) return res.status(401).json({ error: 'Senha não configurada' });
 
     const valid = await bcrypt.compare(password, profile.password_hash);
