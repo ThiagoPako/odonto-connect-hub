@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as TratamentosRouteImport } from './routes/tratamentos'
+import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as ReativacaoRouteImport } from './routes/reativacao'
 import { Route as ProntuarioRouteImport } from './routes/prontuario'
 import { Route as PainelDentistaRouteImport } from './routes/painel-dentista'
@@ -37,6 +38,11 @@ import { Route as IndexRouteImport } from './routes/index'
 const TratamentosRoute = TratamentosRouteImport.update({
   id: '/tratamentos',
   path: '/tratamentos',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ResetPasswordRoute = ResetPasswordRouteImport.update({
+  id: '/reset-password',
+  path: '/reset-password',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ReativacaoRoute = ReativacaoRouteImport.update({
@@ -179,6 +185,7 @@ export interface FileRoutesByFullPath {
   '/painel-dentista': typeof PainelDentistaRoute
   '/prontuario': typeof ProntuarioRoute
   '/reativacao': typeof ReativacaoRoute
+  '/reset-password': typeof ResetPasswordRoute
   '/tratamentos': typeof TratamentosRoute
 }
 export interface FileRoutesByTo {
@@ -205,6 +212,7 @@ export interface FileRoutesByTo {
   '/painel-dentista': typeof PainelDentistaRoute
   '/prontuario': typeof ProntuarioRoute
   '/reativacao': typeof ReativacaoRoute
+  '/reset-password': typeof ResetPasswordRoute
   '/tratamentos': typeof TratamentosRoute
 }
 export interface FileRoutesById {
@@ -232,6 +240,7 @@ export interface FileRoutesById {
   '/painel-dentista': typeof PainelDentistaRoute
   '/prontuario': typeof ProntuarioRoute
   '/reativacao': typeof ReativacaoRoute
+  '/reset-password': typeof ResetPasswordRoute
   '/tratamentos': typeof TratamentosRoute
 }
 export interface FileRouteTypes {
@@ -260,6 +269,7 @@ export interface FileRouteTypes {
     | '/painel-dentista'
     | '/prontuario'
     | '/reativacao'
+    | '/reset-password'
     | '/tratamentos'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -286,6 +296,7 @@ export interface FileRouteTypes {
     | '/painel-dentista'
     | '/prontuario'
     | '/reativacao'
+    | '/reset-password'
     | '/tratamentos'
   id:
     | '__root__'
@@ -312,6 +323,7 @@ export interface FileRouteTypes {
     | '/painel-dentista'
     | '/prontuario'
     | '/reativacao'
+    | '/reset-password'
     | '/tratamentos'
   fileRoutesById: FileRoutesById
 }
@@ -339,6 +351,7 @@ export interface RootRouteChildren {
   PainelDentistaRoute: typeof PainelDentistaRoute
   ProntuarioRoute: typeof ProntuarioRoute
   ReativacaoRoute: typeof ReativacaoRoute
+  ResetPasswordRoute: typeof ResetPasswordRoute
   TratamentosRoute: typeof TratamentosRoute
 }
 
@@ -349,6 +362,13 @@ declare module '@tanstack/react-router' {
       path: '/tratamentos'
       fullPath: '/tratamentos'
       preLoaderRoute: typeof TratamentosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/reset-password': {
+      id: '/reset-password'
+      path: '/reset-password'
+      fullPath: '/reset-password'
+      preLoaderRoute: typeof ResetPasswordRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/reativacao': {
@@ -539,6 +559,7 @@ const rootRouteChildren: RootRouteChildren = {
   PainelDentistaRoute: PainelDentistaRoute,
   ProntuarioRoute: ProntuarioRoute,
   ReativacaoRoute: ReativacaoRoute,
+  ResetPasswordRoute: ResetPasswordRoute,
   TratamentosRoute: TratamentosRoute,
 }
 export const routeTree = rootRouteImport
