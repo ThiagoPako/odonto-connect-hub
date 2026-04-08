@@ -59,6 +59,7 @@ export function NovoDisparoWizard({ open, onClose, onSave, editData }: NovoDispa
       setCampanhaPerpetua(editData.campanhaPerpetua || false);
       setUsarHorarioClinica(editData.usarHorarioClinica || false);
       setIntervaloSpam(editData.intervaloSpam);
+      setNumeroEnvio(editData.numeroEnvio);
     } else if (open && !editData) {
       setStep(1);
       setPublico("todos");
@@ -74,6 +75,7 @@ export function NovoDisparoWizard({ open, onClose, onSave, editData }: NovoDispa
       setCampanhaPerpetua(false);
       setUsarHorarioClinica(false);
       setIntervaloSpam(7);
+      setNumeroEnvio(numerosDisponiveis.find(n => n.status === "conectado")?.id || "n1");
     }
   }, [open, editData]);
 
