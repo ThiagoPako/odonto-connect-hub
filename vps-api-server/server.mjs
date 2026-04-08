@@ -246,7 +246,7 @@ app.get('/api/auth/users', async (req, res) => {
     const { rows } = await pool.query(`
       SELECT p.id, p.name, p.email, p.avatar_url, p.created_at, p.updated_at,
              COALESCE(p.active, true) as active,
-             COALESCE(ur.role, p.role, 'user') as role
+             COALESCE(ur.role::text, p.role::text, 'user') as role
       FROM profiles p
       LEFT JOIN user_roles ur ON ur.user_id = p.id
       ORDER BY p.created_at DESC
