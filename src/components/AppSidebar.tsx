@@ -68,6 +68,7 @@ const navSections: NavSection[] = [
     label: "Gestão",
     items: [
       { title: "Financeiro", url: "/financeiro", icon: DollarSign },
+      { title: "Comissões", url: "/comissoes", icon: Percent },
       { title: "Estoque", url: "/estoque", icon: Package },
       { title: "Canais", url: "/canais", icon: Radio },
       { title: "Equipe", url: "/equipe", icon: UserCog },
