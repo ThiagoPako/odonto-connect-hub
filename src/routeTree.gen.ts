@@ -9,15 +9,27 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as FunilRouteImport } from './routes/funil'
 import { Route as FinanceiroRouteImport } from './routes/financeiro'
+import { Route as CrmRouteImport } from './routes/crm'
 import { Route as ConfiguracoesRouteImport } from './routes/configuracoes'
 import { Route as ChatRouteImport } from './routes/chat'
 import { Route as CanaisRouteImport } from './routes/canais'
 import { Route as IndexRouteImport } from './routes/index'
 
+const FunilRoute = FunilRouteImport.update({
+  id: '/funil',
+  path: '/funil',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const FinanceiroRoute = FinanceiroRouteImport.update({
   id: '/financeiro',
   path: '/financeiro',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CrmRoute = CrmRouteImport.update({
+  id: '/crm',
+  path: '/crm',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ConfiguracoesRoute = ConfiguracoesRouteImport.update({
@@ -46,14 +58,18 @@ export interface FileRoutesByFullPath {
   '/canais': typeof CanaisRoute
   '/chat': typeof ChatRoute
   '/configuracoes': typeof ConfiguracoesRoute
+  '/crm': typeof CrmRoute
   '/financeiro': typeof FinanceiroRoute
+  '/funil': typeof FunilRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/canais': typeof CanaisRoute
   '/chat': typeof ChatRoute
   '/configuracoes': typeof ConfiguracoesRoute
+  '/crm': typeof CrmRoute
   '/financeiro': typeof FinanceiroRoute
+  '/funil': typeof FunilRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -61,14 +77,38 @@ export interface FileRoutesById {
   '/canais': typeof CanaisRoute
   '/chat': typeof ChatRoute
   '/configuracoes': typeof ConfiguracoesRoute
+  '/crm': typeof CrmRoute
   '/financeiro': typeof FinanceiroRoute
+  '/funil': typeof FunilRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/canais' | '/chat' | '/configuracoes' | '/financeiro'
+  fullPaths:
+    | '/'
+    | '/canais'
+    | '/chat'
+    | '/configuracoes'
+    | '/crm'
+    | '/financeiro'
+    | '/funil'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/canais' | '/chat' | '/configuracoes' | '/financeiro'
-  id: '__root__' | '/' | '/canais' | '/chat' | '/configuracoes' | '/financeiro'
+  to:
+    | '/'
+    | '/canais'
+    | '/chat'
+    | '/configuracoes'
+    | '/crm'
+    | '/financeiro'
+    | '/funil'
+  id:
+    | '__root__'
+    | '/'
+    | '/canais'
+    | '/chat'
+    | '/configuracoes'
+    | '/crm'
+    | '/financeiro'
+    | '/funil'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -76,16 +116,32 @@ export interface RootRouteChildren {
   CanaisRoute: typeof CanaisRoute
   ChatRoute: typeof ChatRoute
   ConfiguracoesRoute: typeof ConfiguracoesRoute
+  CrmRoute: typeof CrmRoute
   FinanceiroRoute: typeof FinanceiroRoute
+  FunilRoute: typeof FunilRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/funil': {
+      id: '/funil'
+      path: '/funil'
+      fullPath: '/funil'
+      preLoaderRoute: typeof FunilRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/financeiro': {
       id: '/financeiro'
       path: '/financeiro'
       fullPath: '/financeiro'
       preLoaderRoute: typeof FinanceiroRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/crm': {
+      id: '/crm'
+      path: '/crm'
+      fullPath: '/crm'
+      preLoaderRoute: typeof CrmRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/configuracoes': {
@@ -124,7 +180,9 @@ const rootRouteChildren: RootRouteChildren = {
   CanaisRoute: CanaisRoute,
   ChatRoute: ChatRoute,
   ConfiguracoesRoute: ConfiguracoesRoute,
+  CrmRoute: CrmRoute,
   FinanceiroRoute: FinanceiroRoute,
+  FunilRoute: FunilRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
