@@ -1,13 +1,15 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { useState } from "react";
+import { useAuth } from "@/hooks/useAuth";
 import {
   mockDentistas,
   mockAtendimentosHoje,
   mockAgendaDentista,
   mockOrcamentosDentista,
   mockProntuariosDentista,
-  type Dentista,
+  mockComissoesDentista,
+  type ComissaoDentista,
 } from "@/data/dentistasMockData";
 import {
   CalendarDays,
@@ -22,50 +24,66 @@ import {
   ChevronRight,
   ArrowLeft,
   ExternalLink,
+  Percent,
+  DollarSign,
+  TrendingUp,
 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/painel-dentista")({
   validateSearch: (search: Record<string, unknown>) => ({
-    id: (search.id as string) || "d1",
+    id: (search.id as string) || "",
   }),
   ssr: false,
   component: PainelDentistaPage,
 });
 
-type Tab = "atendimentos" | "agenda" | "orcamentos" | "prontuario";
+type Tab = "atendimentos" | "agenda" | "orcamentos" | "prontuario" | "comissoes";
 
 function PainelDentistaPage() {
   const { id } = Route.useSearch();
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<Tab>("atendimentos");
 
-  const dentista = mockDentistas.find((d) => d.id === id) ?? mockDentistas[0];
+  // Auto-detect: if no id, find dentista by logged-in user's email
+  const dentista = id
+    ? mockDentistas.find((d) => d.id === id) ?? mockDentistas[0]
+    : mockDentistas.find((d) => d.email === user?.email) ?? mockDentistas[0];
+
   const atendimentos = mockAtendimentosHoje.filter((a) => a.dentistaId === dentista.id);
   const agenda = mockAgendaDentista.filter((a) => a.dentistaId === dentista.id);
   const orcamentos = mockOrcamentosDentista.filter((o) => o.dentistaId === dentista.id);
   const prontuarios = mockProntuariosDentista.filter((p) => p.dentistaId === dentista.id);
+  const comissoes = mockComissoesDentista.filter((c) => c.dentistaId === dentista.id);
 
   const tabs: { key: Tab; label: string; icon: typeof Stethoscope; count: number }[] = [
-    { key: "atendimentos", label: "Atendimentos do Dia", icon: Stethoscope, count: atendimentos.length },
+    { key: "atendimentos", label: "Atendimentos", icon: Stethoscope, count: atendimentos.length },
     { key: "agenda", label: "Agenda", icon: CalendarDays, count: agenda.length },
+    { key: "comissoes", label: "Comissões", icon: Percent, count: comissoes.length },
     { key: "orcamentos", label: "Orçamentos", icon: Receipt, count: orcamentos.length },
     { key: "prontuario", label: "Prontuários", icon: FileHeart, count: prontuarios.length },
   ];
+
+  const totalComissoes = comissoes.reduce((s, c) => s + c.valorComissao, 0);
+  const comissoesPagas = comissoes.filter((c) => c.status === "paga").reduce((s, c) => s + c.valorComissao, 0);
+  const comissoesPendentes = comissoes.filter((c) => c.status === "pendente").reduce((s, c) => s + c.valorComissao, 0);
 
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title={`Painel — ${dentista.nome}`} />
       <main className="flex-1 p-8 space-y-6 overflow-auto">
-        {/* Back + Dentist Info */}
-        <div className="flex items-center gap-4 animate-fade-in">
-          <Link
-            to="/dentistas"
-            className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            Voltar
-          </Link>
-        </div>
+        {/* Back */}
+        {user?.role === "admin" && (
+          <div className="flex items-center gap-4 animate-fade-in">
+            <Link
+              to="/dentistas"
+              className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Voltar
+            </Link>
+          </div>
+        )}
 
         {/* Dentist Profile Card */}
         <div className="bg-card rounded-2xl border border-border/60 p-6 shadow-card flex items-center gap-6 animate-fade-in">
@@ -81,15 +99,9 @@ function PainelDentistaPage() {
               {dentista.nome}
             </h2>
             <div className="flex items-center gap-4 mt-1">
-              <span className="text-xs text-muted-foreground">
-                {dentista.cro}
-              </span>
-              <span className="text-xs text-muted-foreground">
-                {dentista.especialidade}
-              </span>
-              <span className="text-xs text-muted-foreground">
-                Comissão: {dentista.comissao}%
-              </span>
+              <span className="text-xs text-muted-foreground">{dentista.cro}</span>
+              <span className="text-xs text-muted-foreground">{dentista.especialidade}</span>
+              <span className="text-xs text-muted-foreground">Comissão: {dentista.comissao}%</span>
               <span
                 className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${
                   dentista.status === "ativo"
@@ -101,45 +113,42 @@ function PainelDentistaPage() {
               </span>
             </div>
           </div>
-          <div className="grid grid-cols-3 gap-6">
+          <div className="grid grid-cols-4 gap-6">
             <div className="text-center">
-              <p className="text-2xl font-bold text-foreground font-heading">
-                {atendimentos.length}
-              </p>
-              <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
-                Atendimentos
-              </p>
+              <p className="text-2xl font-bold text-foreground font-heading">{atendimentos.length}</p>
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Atendimentos</p>
             </div>
             <div className="text-center">
               <p className="text-2xl font-bold text-foreground font-heading">
                 {orcamentos.filter((o) => o.status === "aprovado").length}
               </p>
-              <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
-                Aprovados
-              </p>
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Aprovados</p>
             </div>
             <div className="text-center">
               <p className="text-2xl font-bold text-primary font-heading">
-                R${" "}
-                {orcamentos
+                R$ {orcamentos
                   .filter((o) => o.status === "aprovado")
                   .reduce((sum, o) => sum + o.total, 0)
                   .toLocaleString("pt-BR")}
               </p>
-              <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
-                Faturamento
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Faturamento</p>
+            </div>
+            <div className="text-center">
+              <p className="text-2xl font-bold text-success font-heading">
+                R$ {totalComissoes.toLocaleString("pt-BR")}
               </p>
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Comissões</p>
             </div>
           </div>
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-2 border-b border-border/60 pb-0">
+        <div className="flex gap-2 border-b border-border/60 pb-0 overflow-x-auto">
           {tabs.map((tab) => (
             <button
               key={tab.key}
               onClick={() => setActiveTab(tab.key)}
-              className={`flex items-center gap-2 px-4 py-3 text-sm font-medium transition-all border-b-2 -mb-[1px] ${
+              className={`flex items-center gap-2 px-4 py-3 text-sm font-medium transition-all border-b-2 -mb-[1px] whitespace-nowrap ${
                 activeTab === tab.key
                   ? "border-primary text-primary"
                   : "border-transparent text-muted-foreground hover:text-foreground"
@@ -162,21 +171,129 @@ function PainelDentistaPage() {
 
         {/* Tab Content */}
         <div className="animate-fade-in">
-          {activeTab === "atendimentos" && (
-            <AtendimentosTab atendimentos={atendimentos} />
-          )}
+          {activeTab === "atendimentos" && <AtendimentosTab atendimentos={atendimentos} />}
           {activeTab === "agenda" && <AgendaTab agenda={agenda} />}
-          {activeTab === "orcamentos" && (
-            <OrcamentosTab orcamentos={orcamentos} />
+          {activeTab === "comissoes" && (
+            <ComissoesTab
+              comissoes={comissoes}
+              totalComissoes={totalComissoes}
+              comissoesPagas={comissoesPagas}
+              comissoesPendentes={comissoesPendentes}
+            />
           )}
-          {activeTab === "prontuario" && (
-            <ProntuarioTab prontuarios={prontuarios} />
-          )}
+          {activeTab === "orcamentos" && <OrcamentosTab orcamentos={orcamentos} />}
+          {activeTab === "prontuario" && <ProntuarioTab prontuarios={prontuarios} />}
         </div>
       </main>
     </div>
   );
 }
+
+// ─── Comissões Tab ──────────────────────────────────────────
+
+function ComissoesTab({
+  comissoes,
+  totalComissoes,
+  comissoesPagas,
+  comissoesPendentes,
+}: {
+  comissoes: ComissaoDentista[];
+  totalComissoes: number;
+  comissoesPagas: number;
+  comissoesPendentes: number;
+}) {
+  const statusConfig: Record<string, { label: string; color: string }> = {
+    pendente: { label: "Pendente", color: "bg-warning/10 text-warning" },
+    aprovada: { label: "Aprovada", color: "bg-info/10 text-info" },
+    paga: { label: "Paga", color: "bg-success/10 text-success" },
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* KPI Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="bg-card rounded-2xl border border-border/60 p-5 shadow-card">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center">
+              <TrendingUp className="h-5 w-5 text-primary" />
+            </div>
+            <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Total</p>
+          </div>
+          <p className="text-2xl font-bold text-foreground font-heading">
+            R$ {totalComissoes.toLocaleString("pt-BR")}
+          </p>
+        </div>
+        <div className="bg-card rounded-2xl border border-border/60 p-5 shadow-card">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="h-10 w-10 rounded-xl bg-success/10 flex items-center justify-center">
+              <DollarSign className="h-5 w-5 text-success" />
+            </div>
+            <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Pagas</p>
+          </div>
+          <p className="text-2xl font-bold text-success font-heading">
+            R$ {comissoesPagas.toLocaleString("pt-BR")}
+          </p>
+        </div>
+        <div className="bg-card rounded-2xl border border-border/60 p-5 shadow-card">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="h-10 w-10 rounded-xl bg-warning/10 flex items-center justify-center">
+              <Clock className="h-5 w-5 text-warning" />
+            </div>
+            <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Pendentes</p>
+          </div>
+          <p className="text-2xl font-bold text-warning font-heading">
+            R$ {comissoesPendentes.toLocaleString("pt-BR")}
+          </p>
+        </div>
+      </div>
+
+      {/* Comissões List */}
+      <div className="space-y-3">
+        {comissoes.map((c) => {
+          const st = statusConfig[c.status];
+          return (
+            <div
+              key={c.id}
+              className="bg-card rounded-2xl border border-border/60 p-5 shadow-card hover:shadow-card-hover transition-all flex items-center gap-4"
+            >
+              <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center">
+                <Percent className="h-5 w-5 text-primary" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-foreground">{c.pacienteNome}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">{c.procedimento}</p>
+              </div>
+              <div className="text-right">
+                <p className="text-xs text-muted-foreground">
+                  {c.data.toLocaleDateString("pt-BR")}
+                </p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  R$ {c.valorProcedimento.toLocaleString("pt-BR")} × {c.percentual}%
+                </p>
+              </div>
+              <div className="text-right min-w-[100px]">
+                <p className="text-sm font-bold text-foreground font-heading">
+                  R$ {c.valorComissao.toLocaleString("pt-BR")}
+                </p>
+              </div>
+              <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold ${st.color}`}>
+                {st.label}
+              </span>
+            </div>
+          );
+        })}
+        {comissoes.length === 0 && (
+          <div className="text-center py-16">
+            <Percent className="h-10 w-10 text-muted-foreground/30 mx-auto" />
+            <p className="text-sm text-muted-foreground mt-3">Nenhuma comissão registrada.</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Atendimentos Tab ───────────────────────────────────────
 
 function AtendimentosTab({
   atendimentos,
@@ -184,26 +301,10 @@ function AtendimentosTab({
   atendimentos: typeof mockAtendimentosHoje;
 }) {
   const statusConfig = {
-    agendado: {
-      label: "Agendado",
-      icon: Clock,
-      color: "bg-info/10 text-info",
-    },
-    em_atendimento: {
-      label: "Em Atendimento",
-      icon: Play,
-      color: "bg-warning/10 text-warning",
-    },
-    concluido: {
-      label: "Concluído",
-      icon: CheckCircle2,
-      color: "bg-success/10 text-success",
-    },
-    cancelado: {
-      label: "Cancelado",
-      icon: AlertCircle,
-      color: "bg-destructive/10 text-destructive",
-    },
+    agendado: { label: "Agendado", icon: Clock, color: "bg-info/10 text-info" },
+    em_atendimento: { label: "Em Atendimento", icon: Play, color: "bg-warning/10 text-warning" },
+    concluido: { label: "Concluído", icon: CheckCircle2, color: "bg-success/10 text-success" },
+    cancelado: { label: "Cancelado", icon: AlertCircle, color: "bg-destructive/10 text-destructive" },
   };
 
   const tipoConfig: Record<string, string> = {
@@ -228,42 +329,23 @@ function AtendimentosTab({
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
-                <p className="text-sm font-semibold text-foreground">
-                  {a.pacienteNome}
-                </p>
+                <p className="text-sm font-semibold text-foreground">{a.pacienteNome}</p>
                 {a.pacienteId && (
-                  <Link
-                    to="/pacientes"
-                    search={{ pacienteId: a.pacienteId }}
-                    className="p-0.5 rounded hover:bg-primary/10"
-                    title="Ver ficha"
-                  >
+                  <Link to="/pacientes" search={{ pacienteId: a.pacienteId }} className="p-0.5 rounded hover:bg-primary/10" title="Ver ficha">
                     <ExternalLink className="h-3 w-3 text-primary" />
                   </Link>
                 )}
-                <span
-                  className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold capitalize ${tipoConfig[a.tipo]}`}
-                >
+                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold capitalize ${tipoConfig[a.tipo]}`}>
                   {a.tipo}
                 </span>
               </div>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                {a.procedimento}
-              </p>
+              <p className="text-xs text-muted-foreground mt-0.5">{a.procedimento}</p>
             </div>
             <div className="text-right">
-              <p className="text-sm font-bold text-foreground font-heading">
-                {a.horario}
-              </p>
-              {a.valor && (
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  R$ {a.valor.toLocaleString("pt-BR")}
-                </p>
-              )}
+              <p className="text-sm font-bold text-foreground font-heading">{a.horario}</p>
+              {a.valor && <p className="text-xs text-muted-foreground mt-0.5">R$ {a.valor.toLocaleString("pt-BR")}</p>}
             </div>
-            <span
-              className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-[11px] font-bold ${st.color}`}
-            >
+            <span className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-[11px] font-bold ${st.color}`}>
               <StIcon className="h-3.5 w-3.5" />
               {st.label}
             </span>
@@ -273,23 +355,19 @@ function AtendimentosTab({
       {atendimentos.length === 0 && (
         <div className="text-center py-16">
           <Stethoscope className="h-10 w-10 text-muted-foreground/30 mx-auto" />
-          <p className="text-sm text-muted-foreground mt-3">
-            Nenhum atendimento hoje.
-          </p>
+          <p className="text-sm text-muted-foreground mt-3">Nenhum atendimento hoje.</p>
         </div>
       )}
     </div>
   );
 }
 
+// ─── Agenda Tab ─────────────────────────────────────────────
+
 function AgendaTab({ agenda }: { agenda: typeof mockAgendaDentista }) {
   const hoje = new Date();
-  const agendaHoje = agenda.filter(
-    (a) => a.data.toDateString() === hoje.toDateString()
-  );
-  const agendaFutura = agenda.filter(
-    (a) => a.data.toDateString() !== hoje.toDateString()
-  );
+  const agendaHoje = agenda.filter((a) => a.data.toDateString() === hoje.toDateString());
+  const agendaFutura = agenda.filter((a) => a.data.toDateString() !== hoje.toDateString());
 
   const statusColor: Record<string, string> = {
     agendado: "border-l-info",
@@ -303,35 +381,23 @@ function AgendaTab({ agenda }: { agenda: typeof mockAgendaDentista }) {
       className={`bg-card rounded-xl border border-border/60 p-4 shadow-card border-l-4 ${statusColor[item.status]} flex items-center gap-4`}
     >
       <div className="text-center min-w-[60px]">
-        <p className="text-lg font-bold text-foreground font-heading">
-          {item.horario}
-        </p>
-        <p className="text-[10px] text-muted-foreground">
-          {item.duracao}min
-        </p>
+        <p className="text-lg font-bold text-foreground font-heading">{item.horario}</p>
+        <p className="text-[10px] text-muted-foreground">{item.duracao}min</p>
       </div>
       <div className="flex-1">
         <div className="flex items-center gap-1.5">
-          <p className="text-sm font-semibold text-foreground">
-            {item.pacienteNome}
-          </p>
+          <p className="text-sm font-semibold text-foreground">{item.pacienteNome}</p>
           {item.pacienteId && (
             <Link to="/pacientes" search={{ pacienteId: item.pacienteId }} className="p-0.5 rounded hover:bg-primary/10" title="Ver ficha">
               <ExternalLink className="h-3 w-3 text-primary" />
             </Link>
           )}
         </div>
-        <p className="text-xs text-muted-foreground capitalize mt-0.5">
-          {item.tipo}
-        </p>
+        <p className="text-xs text-muted-foreground capitalize mt-0.5">{item.tipo}</p>
       </div>
       <span
         className={`text-[10px] font-bold uppercase tracking-wider ${
-          item.status === "confirmado"
-            ? "text-success"
-            : item.status === "cancelado"
-              ? "text-destructive"
-              : "text-info"
+          item.status === "confirmado" ? "text-success" : item.status === "cancelado" ? "text-destructive" : "text-info"
         }`}
       >
         {item.status}
@@ -349,9 +415,7 @@ function AgendaTab({ agenda }: { agenda: typeof mockAgendaDentista }) {
         <div className="space-y-2">
           {agendaHoje.map(renderAgendaItem)}
           {agendaHoje.length === 0 && (
-            <p className="text-sm text-muted-foreground py-4 text-center">
-              Nenhum agendamento para hoje.
-            </p>
+            <p className="text-sm text-muted-foreground py-4 text-center">Nenhum agendamento para hoje.</p>
           )}
         </div>
       </div>
@@ -365,11 +429,7 @@ function AgendaTab({ agenda }: { agenda: typeof mockAgendaDentista }) {
             {agendaFutura.map((item) => (
               <div key={item.id}>
                 <p className="text-[10px] text-muted-foreground mb-1 font-medium">
-                  {item.data.toLocaleDateString("pt-BR", {
-                    weekday: "long",
-                    day: "numeric",
-                    month: "long",
-                  })}
+                  {item.data.toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" })}
                 </p>
                 {renderAgendaItem(item)}
               </div>
@@ -381,11 +441,9 @@ function AgendaTab({ agenda }: { agenda: typeof mockAgendaDentista }) {
   );
 }
 
-function OrcamentosTab({
-  orcamentos,
-}: {
-  orcamentos: typeof mockOrcamentosDentista;
-}) {
+// ─── Orçamentos Tab ─────────────────────────────────────────
+
+function OrcamentosTab({ orcamentos }: { orcamentos: typeof mockOrcamentosDentista }) {
   const statusConfig: Record<string, { label: string; color: string }> = {
     pendente: { label: "Pendente", color: "bg-warning/10 text-warning" },
     aprovado: { label: "Aprovado", color: "bg-success/10 text-success" },
@@ -398,10 +456,7 @@ function OrcamentosTab({
       {orcamentos.map((orc) => {
         const st = statusConfig[orc.status];
         return (
-          <div
-            key={orc.id}
-            className="bg-card rounded-2xl border border-border/60 p-5 shadow-card hover:shadow-card-hover transition-all"
-          >
+          <div key={orc.id} className="bg-card rounded-2xl border border-border/60 p-5 shadow-card hover:shadow-card-hover transition-all">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-3">
                 <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center">
@@ -409,29 +464,21 @@ function OrcamentosTab({
                 </div>
                 <div>
                   <div className="flex items-center gap-1.5">
-                    <p className="text-sm font-semibold text-foreground">
-                      {orc.pacienteNome}
-                    </p>
+                    <p className="text-sm font-semibold text-foreground">{orc.pacienteNome}</p>
                     {orc.pacienteId && (
                       <Link to="/pacientes" search={{ pacienteId: orc.pacienteId }} className="p-0.5 rounded hover:bg-primary/10" title="Ver ficha">
                         <ExternalLink className="h-3 w-3 text-primary" />
                       </Link>
                     )}
                   </div>
-                  <p className="text-[11px] text-muted-foreground">
-                    {orc.criadoEm.toLocaleDateString("pt-BR")}
-                  </p>
+                  <p className="text-[11px] text-muted-foreground">{orc.criadoEm.toLocaleDateString("pt-BR")}</p>
                 </div>
               </div>
               <div className="flex items-center gap-3">
-                <span
-                  className={`inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold ${st.color}`}
-                >
+                <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold ${st.color}`}>
                   {st.label}
                 </span>
-                <p className="text-lg font-bold text-foreground font-heading">
-                  R$ {orc.total.toLocaleString("pt-BR")}
-                </p>
+                <p className="text-lg font-bold text-foreground font-heading">R$ {orc.total.toLocaleString("pt-BR")}</p>
               </div>
             </div>
             <div className="bg-muted/30 rounded-xl p-3">
@@ -449,13 +496,8 @@ function OrcamentosTab({
                     <tr key={i} className="text-foreground">
                       <td className="py-1.5">{item.procedimento}</td>
                       <td className="text-center py-1.5">{item.quantidade}</td>
-                      <td className="text-right py-1.5">
-                        R$ {item.valor.toLocaleString("pt-BR")}
-                      </td>
-                      <td className="text-right py-1.5 font-semibold">
-                        R${" "}
-                        {(item.valor * item.quantidade).toLocaleString("pt-BR")}
-                      </td>
+                      <td className="text-right py-1.5">R$ {item.valor.toLocaleString("pt-BR")}</td>
+                      <td className="text-right py-1.5 font-semibold">R$ {(item.valor * item.quantidade).toLocaleString("pt-BR")}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -467,36 +509,27 @@ function OrcamentosTab({
       {orcamentos.length === 0 && (
         <div className="text-center py-16">
           <Receipt className="h-10 w-10 text-muted-foreground/30 mx-auto" />
-          <p className="text-sm text-muted-foreground mt-3">
-            Nenhum orçamento registrado.
-          </p>
+          <p className="text-sm text-muted-foreground mt-3">Nenhum orçamento registrado.</p>
         </div>
       )}
     </div>
   );
 }
 
-function ProntuarioTab({
-  prontuarios,
-}: {
-  prontuarios: typeof mockProntuariosDentista;
-}) {
+// ─── Prontuários Tab ────────────────────────────────────────
+
+function ProntuarioTab({ prontuarios }: { prontuarios: typeof mockProntuariosDentista }) {
   return (
     <div className="space-y-4">
       {prontuarios.map((p) => (
-        <div
-          key={p.id}
-          className="bg-card rounded-2xl border border-border/60 p-5 shadow-card hover:shadow-card-hover transition-all"
-        >
+        <div key={p.id} className="bg-card rounded-2xl border border-border/60 p-5 shadow-card hover:shadow-card-hover transition-all">
           <div className="flex items-center gap-3 mb-4">
             <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center text-sm font-bold text-primary">
               {p.pacienteIniciais}
             </div>
             <div className="flex-1">
               <div className="flex items-center gap-1.5">
-                <p className="text-sm font-semibold text-foreground">
-                  {p.pacienteNome}
-                </p>
+                <p className="text-sm font-semibold text-foreground">{p.pacienteNome}</p>
                 {p.pacienteId && (
                   <Link to="/pacientes" search={{ pacienteId: p.pacienteId }} className="p-0.5 rounded hover:bg-primary/10" title="Ver ficha">
                     <ExternalLink className="h-3 w-3 text-primary" />
@@ -504,36 +537,27 @@ function ProntuarioTab({
                 )}
               </div>
               <p className="text-[11px] text-muted-foreground">
-                Última consulta:{" "}
-                {p.ultimaConsulta.toLocaleDateString("pt-BR")}
+                Última consulta: {p.ultimaConsulta.toLocaleDateString("pt-BR")}
               </p>
             </div>
             {p.alergias && p.alergias.length > 0 && (
               <div className="flex items-center gap-1">
                 <AlertCircle className="h-3.5 w-3.5 text-destructive" />
-                <span className="text-[10px] font-bold text-destructive">
-                  Alergias: {p.alergias.join(", ")}
-                </span>
+                <span className="text-[10px] font-bold text-destructive">Alergias: {p.alergias.join(", ")}</span>
               </div>
             )}
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="bg-muted/30 rounded-xl p-3">
-              <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1">
-                Diagnóstico
-              </p>
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1">Diagnóstico</p>
               <p className="text-xs text-foreground">{p.diagnostico}</p>
             </div>
             <div className="bg-muted/30 rounded-xl p-3">
-              <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1">
-                Tratamento
-              </p>
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1">Tratamento</p>
               <p className="text-xs text-foreground">{p.tratamento}</p>
             </div>
             <div className="bg-muted/30 rounded-xl p-3">
-              <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1">
-                Observações
-              </p>
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1">Observações</p>
               <p className="text-xs text-foreground">{p.observacoes}</p>
             </div>
           </div>
@@ -542,9 +566,7 @@ function ProntuarioTab({
       {prontuarios.length === 0 && (
         <div className="text-center py-16">
           <FileHeart className="h-10 w-10 text-muted-foreground/30 mx-auto" />
-          <p className="text-sm text-muted-foreground mt-3">
-            Nenhum prontuário registrado.
-          </p>
+          <p className="text-sm text-muted-foreground mt-3">Nenhum prontuário registrado.</p>
         </div>
       )}
     </div>
