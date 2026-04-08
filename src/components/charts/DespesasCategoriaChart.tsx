@@ -24,23 +24,57 @@ interface Props {
   movements: FinanceMovement[];
 }
 
-export function DespesasCategoriaChart({ movements }: Props) {
+function DespesasPieInner({ data, total }: { data: { name: string; value: number; color: string }[]; total: number }) {
   const ref = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
 
   useEffect(() => {
     if (!ref.current) return;
+    const el = ref.current;
     const measure = () => {
-      const { width, height } = ref.current!.getBoundingClientRect();
-      if (width > 0 && height > 0) setSize({ w: Math.floor(width), h: Math.floor(height) });
+      const rect = el.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        setSize({ w: Math.floor(rect.width), h: Math.floor(rect.height) });
+      }
     };
     measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(ref.current);
-    return () => observer.disconnect();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
   }, []);
 
-  // Aggregate saidas by category from real movements
+  return (
+    <div ref={ref} style={{ width: "100%", height: 240 }}>
+      {size && (
+        <PieChart width={size.w} height={size.h}>
+          <Pie
+            data={data}
+            cx={size.w / 2}
+            cy={110}
+            innerRadius={55}
+            outerRadius={90}
+            paddingAngle={3}
+            dataKey="value"
+            stroke="none"
+          >
+            {data.map((entry, i) => (
+              <Cell key={i} fill={entry.color} />
+            ))}
+          </Pie>
+          <Tooltip
+            contentStyle={{ background: "hsl(220, 20%, 97%)", border: "1px solid hsl(220, 13%, 91%)", borderRadius: "12px", fontSize: "12px" }}
+            formatter={(value: number, name: string) => [
+              `R$ ${value.toLocaleString("pt-BR")} (${Math.round((value / total) * 100)}%)`,
+              name,
+            ]}
+          />
+        </PieChart>
+      )}
+    </div>
+  );
+}
+
+export function DespesasCategoriaChart({ movements }: Props) {
   const categoryMap = new Map<string, number>();
   movements
     .filter((m) => m.type === "saida")
@@ -75,35 +109,9 @@ export function DespesasCategoriaChart({ movements }: Props) {
     <div className="bg-card rounded-xl border border-border p-5">
       <h3 className="text-sm font-semibold text-card-foreground mb-1">Composição das Despesas</h3>
       <p className="text-[11px] text-muted-foreground mb-4">Distribuição por categoria — mês atual</p>
-      <div ref={ref} style={{ width: "100%", height: 240 }}>
-        <ClientOnly fallback={<div className="h-full w-full animate-pulse bg-muted/30 rounded-lg" />}>
-          {size && (
-            <PieChart width={size.w} height={size.h}>
-              <Pie
-                data={despesasData}
-                cx={size.w / 2}
-                cy={110}
-                innerRadius={55}
-                outerRadius={90}
-                paddingAngle={3}
-                dataKey="value"
-                stroke="none"
-              >
-                {despesasData.map((entry, i) => (
-                  <Cell key={i} fill={entry.color} />
-                ))}
-              </Pie>
-              <Tooltip
-                contentStyle={{ background: "hsl(220, 20%, 97%)", border: "1px solid hsl(220, 13%, 91%)", borderRadius: "12px", fontSize: "12px" }}
-                formatter={(value: number, name: string) => [
-                  `R$ ${value.toLocaleString("pt-BR")} (${Math.round((value / total) * 100)}%)`,
-                  name,
-                ]}
-              />
-            </PieChart>
-          )}
-        </ClientOnly>
-      </div>
+      <ClientOnly fallback={<div style={{ width: "100%", height: 240 }} className="animate-pulse bg-muted/30 rounded-lg" />}>
+        <DespesasPieInner data={despesasData} total={total} />
+      </ClientOnly>
       <div className="grid grid-cols-3 gap-2 mt-2">
         {despesasData.map((d) => (
           <div key={d.name} className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
