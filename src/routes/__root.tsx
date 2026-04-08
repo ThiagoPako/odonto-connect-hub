@@ -1,4 +1,5 @@
-import { Outlet, Link, createRootRoute, HeadContent, Scripts, useLocation } from "@tanstack/react-router";
+import { Outlet, Link, createRootRoute, HeadContent, Scripts, useLocation, useNavigate } from "@tanstack/react-router";
+import { useEffect } from "react";
 import { AppSidebar } from "@/components/AppSidebar";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import { Loader2 } from "lucide-react";
