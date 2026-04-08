@@ -170,7 +170,7 @@ export function NovoDisparoWizard({ open, onClose, onSave, editData }: NovoDispa
               {step === 1 && <StepPublico publico={publico} setPublico={setPublico} contatosAlcancaveis={contatosAlcancaveis} intervaloSpam={intervaloSpam} setIntervaloSpam={setIntervaloSpam} numeroEnvio={numeroEnvio} setNumeroEnvio={setNumeroEnvio} />}
               {step === 2 && <StepConteudo mensagem={mensagem} setMensagem={setMensagem} templateSelecionado={templateSelecionado} selectTemplate={selectTemplate} insertVariable={insertVariable} nomeDisparo={nomeDisparo} setNomeDisparo={setNomeDisparo} />}
               {step === 3 && <StepAgendamento tipo={tipo} setTipo={setTipo} diasSemana={diasSemana} toggleDia={toggleDia} horarioInicio={horarioInicio} setHorarioInicio={setHorarioInicio} horarioFim={horarioFim} setHorarioFim={setHorarioFim} dataInicio={dataInicio} setDataInicio={setDataInicio} dataFim={dataFim} setDataFim={setDataFim} campanhaPerpetua={campanhaPerpetua} setCampanhaPerpetua={setCampanhaPerpetua} usarHorarioClinica={usarHorarioClinica} setUsarHorarioClinica={setUsarHorarioClinica} capacidadeDiaria={capacidadeDiaria} />}
-              {step === 4 && <StepRevisao nomeDisparo={nomeDisparo} publico={publico} tipo={tipo} diasSemana={diasSemana} horarioInicio={horarioInicio} horarioFim={horarioFim} dataInicio={dataInicio} dataFim={dataFim} campanhaPerpetua={campanhaPerpetua} contatosAlcancaveis={contatosAlcancaveis} intervaloSpam={intervaloSpam} mensagem={mensagem} />}
+              {step === 4 && <StepRevisao nomeDisparo={nomeDisparo} publico={publico} tipo={tipo} diasSemana={diasSemana} horarioInicio={horarioInicio} horarioFim={horarioFim} dataInicio={dataInicio} dataFim={dataFim} campanhaPerpetua={campanhaPerpetua} contatosAlcancaveis={contatosAlcancaveis} intervaloSpam={intervaloSpam} mensagem={mensagem} numeroEnvio={numeroEnvio} />}
             </div>
             <div className="w-[280px] shrink-0 hidden lg:block">
               <WhatsAppPreview mensagem={mensagem} />
@@ -605,7 +605,7 @@ function StepAgendamento({
 /* ===== STEP 4: REVISÃO ===== */
 function StepRevisao({
   nomeDisparo, publico, tipo, diasSemana, horarioInicio, horarioFim, dataInicio, dataFim,
-  campanhaPerpetua, contatosAlcancaveis, intervaloSpam, mensagem,
+  campanhaPerpetua, contatosAlcancaveis, intervaloSpam, mensagem, numeroEnvio,
 }: {
   nomeDisparo: string;
   publico: string;
@@ -619,8 +619,10 @@ function StepRevisao({
   contatosAlcancaveis: number;
   intervaloSpam: number;
   mensagem: string;
+  numeroEnvio: string;
 }) {
   const publicoLabel = publicoOptions.find((p) => p.id === publico)?.label || publico;
+  const numeroLabel = numerosDisponiveis.find((n) => n.id === numeroEnvio);
 
   return (
     <div className="space-y-5">
@@ -639,6 +641,7 @@ function StepRevisao({
         {tipo === "recorrente" && <ReviewRow label="Período" value={campanhaPerpetua ? "Perpétua" : `${dataInicio || "?"} a ${dataFim || "?"}`} />}
         {tipo === "unico" && dataInicio && <ReviewRow label="Data" value={dataInicio} />}
         <ReviewRow label="Intervalo anti-spam" value={`${intervaloSpam} dias`} />
+        <ReviewRow label="Número de envio" value={numeroLabel ? `${numeroLabel.nome} (${numeroLabel.numero})` : "Não selecionado"} />
       </div>
 
       <div className="bg-muted/50 rounded-xl p-4">
