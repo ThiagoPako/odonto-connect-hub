@@ -1,10 +1,10 @@
 import { useState, useEffect } from "react";
 import {
   X, ChevronRight, ChevronLeft, Users, FileText, CalendarDays, Eye,
-  Check, Upload, Clock, AlertTriangle, Send,
+  Check, Upload, Clock, AlertTriangle, Send, Phone,
 } from "lucide-react";
 import {
-  diasSemanaOptions, publicoOptions, templatesProntos,
+  diasSemanaOptions, publicoOptions, templatesProntos, numerosDisponiveis,
   type DisparoTemplate, type DisparoProgramado,
 } from "@/data/disparosMockData";
 import { WhatsAppPreview } from "./WhatsAppPreview";
@@ -38,6 +38,7 @@ export function NovoDisparoWizard({ open, onClose, onSave, editData }: NovoDispa
   const [campanhaPerpetua, setCampanhaPerpetua] = useState(false);
   const [usarHorarioClinica, setUsarHorarioClinica] = useState(false);
   const [intervaloSpam, setIntervaloSpam] = useState(7);
+  const [numeroEnvio, setNumeroEnvio] = useState(numerosDisponiveis.find(n => n.status === "conectado")?.id || "n1");
 
   const isEditing = !!editData;
 
