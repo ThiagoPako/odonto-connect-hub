@@ -15,6 +15,7 @@ import {
 
 const FluxoCaixaChart = lazy(() => import("@/components/charts/FluxoCaixaChart").then(m => ({ default: m.FluxoCaixaChart })));
 const ReceitaDespesaChart = lazy(() => import("@/components/charts/ReceitaDespesaChart").then(m => ({ default: m.ReceitaDespesaChart })));
+const DespesasCategoriaChart = lazy(() => import("@/components/charts/DespesasCategoriaChart").then(m => ({ default: m.DespesasCategoriaChart })));
 
 export const Route = createFileRoute("/financeiro")({
   component: FinanceiroPage,
@@ -255,12 +256,15 @@ function TabVisaoGeral({
       </div>
 
       {/* Gráficos */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <Suspense fallback={<div className="bg-card rounded-xl border border-border p-5 h-[320px] animate-pulse bg-muted/30" />}>
           <FluxoCaixaChart />
         </Suspense>
         <Suspense fallback={<div className="bg-card rounded-xl border border-border p-5 h-[320px] animate-pulse bg-muted/30" />}>
           <ReceitaDespesaChart />
+        </Suspense>
+        <Suspense fallback={<div className="bg-card rounded-xl border border-border p-5 h-[320px] animate-pulse bg-muted/30" />}>
+          <DespesasCategoriaChart />
         </Suspense>
       </div>
 
