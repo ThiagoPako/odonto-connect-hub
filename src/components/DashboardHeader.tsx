@@ -1,20 +1,29 @@
 import { Bell, Search, CalendarDays } from "lucide-react";
+import { useState, useEffect } from "react";
 
 export function DashboardHeader({ title }: { title: string }) {
-  const today = new Date().toLocaleDateString("pt-BR", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-  });
+  const [today, setToday] = useState("");
+
+  useEffect(() => {
+    setToday(
+      new Date().toLocaleDateString("pt-BR", {
+        weekday: "long",
+        day: "numeric",
+        month: "long",
+      })
+    );
+  }, []);
 
   return (
     <header className="h-[72px] flex items-center justify-between px-8 border-b border-border bg-card/80 backdrop-blur-md sticky top-0 z-20">
       <div>
         <h1 className="text-lg font-bold text-foreground tracking-tight">{title}</h1>
-        <p className="text-[11px] text-muted-foreground flex items-center gap-1.5 mt-0.5">
-          <CalendarDays className="h-3 w-3" />
-          <span className="capitalize">{today}</span>
-        </p>
+        {today && (
+          <p className="text-[11px] text-muted-foreground flex items-center gap-1.5 mt-0.5">
+            <CalendarDays className="h-3 w-3" />
+            <span className="capitalize">{today}</span>
+          </p>
+        )}
       </div>
       <div className="flex items-center gap-3">
         <div className="relative group">
@@ -29,7 +38,7 @@ export function DashboardHeader({ title }: { title: string }) {
           <Bell className="h-5 w-5 text-muted-foreground group-hover:text-foreground transition-colors" />
           <span className="absolute top-2 right-2 h-2 w-2 rounded-full bg-destructive ring-2 ring-card" />
         </button>
-        <div className="h-10 w-10 rounded-xl gradient-primary flex items-center justify-center text-primary-foreground text-sm font-bold shadow-glow cursor-pointer hover:scale-105 transition-transform">
+        <div className="h-10 w-10 rounded-xl gradient-primary flex items-center justify-center text-primary-foreground text-sm font-bold shadow-sm cursor-pointer hover:scale-105 transition-transform">
           DC
         </div>
       </div>
