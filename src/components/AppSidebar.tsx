@@ -88,21 +88,15 @@ export function AppSidebar() {
         collapsed ? "w-[72px]" : "w-[260px]"
       }`}
     >
-      {/* Decorative gradient orb */}
-      <div className="absolute top-0 left-0 w-full h-32 bg-gradient-to-b from-primary/6 to-transparent pointer-events-none" />
-
       {/* Logo */}
       <div className="flex items-center gap-3 px-4 h-[72px] border-b border-sidebar-border shrink-0 relative z-10">
-        <div className="relative">
-          <div className="absolute inset-0 rounded-xl gradient-primary opacity-15 blur-sm" />
-          <img src={logoImg} alt="Odonto Connect" className="h-9 w-9 rounded-xl shrink-0 relative z-10" />
-        </div>
+        <img src={logoImg} alt="Odonto Connect" className="h-10 w-10 rounded-xl shrink-0 shadow-sm bg-white p-0.5" />
         {!collapsed && (
           <div className="flex flex-col">
             <span className="text-sm font-bold tracking-tight text-sidebar-foreground leading-tight">
               Odonto Connect
             </span>
-            <span className="text-[10px] text-sidebar-foreground/50 font-medium flex items-center gap-1">
+            <span className="text-[10px] text-sidebar-foreground/60 font-medium flex items-center gap-1">
               <Sparkles className="h-2.5 w-2.5" /> SaaS Clínico
             </span>
           </div>
@@ -113,7 +107,7 @@ export function AppSidebar() {
             collapsed ? "rotate-180" : ""
           }`}
         >
-          <ChevronLeft className="h-4 w-4 text-sidebar-foreground/50" />
+          <ChevronLeft className="h-4 w-4 text-sidebar-foreground/60" />
         </button>
       </div>
 
@@ -122,7 +116,7 @@ export function AppSidebar() {
         {navSections.map((section) => (
           <div key={section.label}>
             {!collapsed && (
-              <p className="px-3 mb-2 text-[9px] uppercase tracking-[0.15em] font-semibold text-sidebar-foreground/40">
+              <p className="px-3 mb-2 text-[9px] uppercase tracking-[0.15em] font-semibold text-sidebar-foreground/50">
                 {section.label}
               </p>
             )}
@@ -135,8 +129,8 @@ export function AppSidebar() {
                     to={item.url}
                     className={`group flex items-center gap-3 px-3 py-2 rounded-xl text-[13px] font-medium transition-all duration-200 relative ${
                       isActive
-                        ? "gradient-primary text-white shadow-glow"
-                        : "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground"
+                        ? "bg-sidebar-primary text-white shadow-sm"
+                        : "text-sidebar-foreground/75 hover:bg-sidebar-accent hover:text-sidebar-foreground"
                     }`}
                   >
                     <item.icon className={`h-[18px] w-[18px] shrink-0 transition-transform duration-200 ${
@@ -148,8 +142,8 @@ export function AppSidebar() {
                         {item.badge && (
                           <span className={`h-5 min-w-[22px] px-1.5 rounded-full text-[10px] font-bold flex items-center justify-center transition-colors ${
                             isActive
-                              ? "bg-white/20 text-white"
-                              : "bg-primary/10 text-primary"
+                              ? "bg-white/25 text-white"
+                              : "bg-sidebar-primary/15 text-sidebar-primary"
                           }`}>
                             {item.badge}
                           </span>
@@ -168,12 +162,12 @@ export function AppSidebar() {
       <div className="p-3 border-t border-sidebar-border shrink-0 relative z-10 space-y-2">
         {!collapsed && (
           <div className="flex items-center gap-3 px-2 py-2">
-            <div className="h-8 w-8 rounded-lg gradient-primary flex items-center justify-center text-[11px] font-bold text-white shadow-sm">
+            <div className="h-8 w-8 rounded-lg bg-sidebar-primary flex items-center justify-center text-[11px] font-bold text-white shadow-sm">
               DC
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-xs font-semibold text-sidebar-foreground leading-tight truncate">Dr. Carlos</p>
-              <p className="text-[10px] text-sidebar-foreground/50">Admin</p>
+              <p className="text-[10px] text-sidebar-foreground/55">Admin</p>
             </div>
           </div>
         )}
