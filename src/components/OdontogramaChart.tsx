@@ -224,7 +224,6 @@ export function OdontogramaEditor({ dentes, onChange }: OdontogramaEditorProps) 
                 borderColor: cfg.color,
                 backgroundColor: selectedStatus === key ? `${cfg.color}22` : "transparent",
                 color: cfg.color,
-                ringColor: cfg.color,
               }}
             >
               <div
