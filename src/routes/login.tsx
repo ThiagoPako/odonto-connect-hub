@@ -82,7 +82,7 @@ function LoginPage() {
               <div className="text-center space-y-4">
                 <CheckCircle className="h-12 w-12 text-success mx-auto" />
                 <p className="text-sm text-muted-foreground">
-                  Se o email estiver cadastrado, você receberá um link para redefinir sua senha.
+                  Sua solicitação foi enviada ao administrador. Ele redefinirá sua senha e entrará em contato.
                 </p>
                 <Button
                   variant="outline"
