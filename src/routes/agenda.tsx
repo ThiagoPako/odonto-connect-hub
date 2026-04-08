@@ -1,8 +1,8 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import {
   Clock, CheckCircle2, XCircle, UserCheck, Plus, ChevronLeft, ChevronRight,
-  Phone, MessageSquare, AlertTriangle, RefreshCw, Search,
+  Phone, MessageSquare, AlertTriangle, RefreshCw, Search, ExternalLink,
 } from "lucide-react";
 import { useState } from "react";
 import { mockAppointments, mockProfessionals, type Appointment } from "@/data/agendaMockData";
@@ -133,10 +133,20 @@ function AppointmentCard({ appointment: a }: { appointment: Appointment }) {
         <div className={`h-6 w-6 rounded-full ${a.avatarColor} flex items-center justify-center text-[9px] font-bold text-white shrink-0`}>
           {a.patientInitials}
         </div>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <p className="text-[11px] font-medium text-foreground truncate">{a.patientName}</p>
           <p className="text-[10px] text-muted-foreground truncate">{a.procedure}</p>
         </div>
+        {a.pacienteId && (
+          <Link
+            to="/pacientes"
+            search={{ pacienteId: a.pacienteId }}
+            className="p-1 rounded hover:bg-primary/10 shrink-0"
+            title="Ver ficha do paciente"
+          >
+            <ExternalLink className="h-3 w-3 text-primary" />
+          </Link>
+        )}
       </div>
       <div className="flex items-center justify-between text-[10px] text-muted-foreground">
         <span>{a.room} · {a.duration}min</span>

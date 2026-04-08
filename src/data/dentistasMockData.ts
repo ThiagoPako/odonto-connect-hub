@@ -14,6 +14,7 @@ export interface Dentista {
 export interface Atendimento {
   id: string;
   dentistaId: string;
+  pacienteId?: string;
   pacienteNome: string;
   pacienteIniciais: string;
   horario: string;
@@ -26,6 +27,7 @@ export interface Atendimento {
 export interface AgendaDentista {
   id: string;
   dentistaId: string;
+  pacienteId?: string;
   pacienteNome: string;
   data: Date;
   horario: string;
@@ -38,6 +40,7 @@ export interface AgendaDentista {
 export interface OrcamentoDentista {
   id: string;
   dentistaId: string;
+  pacienteId?: string;
   pacienteNome: string;
   itens: { procedimento: string; valor: number; quantidade: number }[];
   total: number;
@@ -48,6 +51,7 @@ export interface OrcamentoDentista {
 export interface ProntuarioDentista {
   id: string;
   dentistaId: string;
+  pacienteId?: string;
   pacienteNome: string;
   pacienteIniciais: string;
   ultimaConsulta: Date;
@@ -107,12 +111,12 @@ export const mockDentistas: Dentista[] = [
 const hoje = new Date();
 
 export const mockAtendimentosHoje: Atendimento[] = [
-  { id: "a1", dentistaId: "d1", pacienteNome: "Maria Silva", pacienteIniciais: "MS", horario: "08:00", tipo: "procedimento", status: "concluido", procedimento: "Implante unitário", valor: 3500 },
-  { id: "a2", dentistaId: "d1", pacienteNome: "João Santos", pacienteIniciais: "JS", horario: "09:30", tipo: "consulta", status: "em_atendimento", procedimento: "Avaliação para implante" },
-  { id: "a3", dentistaId: "d1", pacienteNome: "Pedro Costa", pacienteIniciais: "PC", horario: "11:00", tipo: "retorno", status: "agendado", procedimento: "Revisão pós-cirúrgica" },
+  { id: "a1", dentistaId: "d1", pacienteId: "pac1", pacienteNome: "Maria Silva", pacienteIniciais: "MS", horario: "08:00", tipo: "procedimento", status: "concluido", procedimento: "Implante unitário", valor: 3500 },
+  { id: "a2", dentistaId: "d1", pacienteId: "pac2", pacienteNome: "João Santos", pacienteIniciais: "JS", horario: "09:30", tipo: "consulta", status: "em_atendimento", procedimento: "Avaliação para implante" },
+  { id: "a3", dentistaId: "d1", pacienteId: "pac3", pacienteNome: "Pedro Costa", pacienteIniciais: "PC", horario: "11:00", tipo: "retorno", status: "agendado", procedimento: "Revisão pós-cirúrgica" },
   { id: "a4", dentistaId: "d1", pacienteNome: "Lucia Ferreira", pacienteIniciais: "LF", horario: "14:00", tipo: "procedimento", status: "agendado", procedimento: "Enxerto ósseo", valor: 2800 },
-  { id: "a5", dentistaId: "d1", pacienteNome: "Carlos Oliveira", pacienteIniciais: "CO", horario: "15:30", tipo: "urgencia", status: "agendado", procedimento: "Dor aguda — avaliação" },
-  { id: "a6", dentistaId: "d2", pacienteNome: "Ana Paula", pacienteIniciais: "AP", horario: "08:30", tipo: "procedimento", status: "concluido", procedimento: "Manutenção aparelho", valor: 250 },
+  { id: "a5", dentistaId: "d1", pacienteId: "pac5", pacienteNome: "Carlos Oliveira", pacienteIniciais: "CO", horario: "15:30", tipo: "urgencia", status: "agendado", procedimento: "Dor aguda — avaliação" },
+  { id: "a6", dentistaId: "d2", pacienteId: "pac4", pacienteNome: "Ana Paula", pacienteIniciais: "AP", horario: "08:30", tipo: "procedimento", status: "concluido", procedimento: "Manutenção aparelho", valor: 250 },
   { id: "a7", dentistaId: "d2", pacienteNome: "Rafaela Dias", pacienteIniciais: "RD", horario: "10:00", tipo: "consulta", status: "em_atendimento", procedimento: "Planejamento ortodôntico" },
   { id: "a8", dentistaId: "d2", pacienteNome: "Bruno Martins", pacienteIniciais: "BM", horario: "11:30", tipo: "procedimento", status: "agendado", procedimento: "Instalação de bráquetes", valor: 3200 },
   { id: "a9", dentistaId: "d3", pacienteNome: "Cláudia Ramos", pacienteIniciais: "CR", horario: "09:00", tipo: "procedimento", status: "concluido", procedimento: "Tratamento de canal", valor: 1200 },
@@ -120,18 +124,18 @@ export const mockAtendimentosHoje: Atendimento[] = [
 ];
 
 export const mockAgendaDentista: AgendaDentista[] = [
-  { id: "ag1", dentistaId: "d1", pacienteNome: "Maria Silva", data: hoje, horario: "08:00", duracao: 60, tipo: "procedimento", status: "confirmado" },
-  { id: "ag2", dentistaId: "d1", pacienteNome: "João Santos", data: hoje, horario: "09:30", duracao: 45, tipo: "consulta", status: "confirmado" },
-  { id: "ag3", dentistaId: "d1", pacienteNome: "Pedro Costa", data: hoje, horario: "11:00", duracao: 30, tipo: "retorno", status: "agendado" },
+  { id: "ag1", dentistaId: "d1", pacienteId: "pac1", pacienteNome: "Maria Silva", data: hoje, horario: "08:00", duracao: 60, tipo: "procedimento", status: "confirmado" },
+  { id: "ag2", dentistaId: "d1", pacienteId: "pac2", pacienteNome: "João Santos", data: hoje, horario: "09:30", duracao: 45, tipo: "consulta", status: "confirmado" },
+  { id: "ag3", dentistaId: "d1", pacienteId: "pac3", pacienteNome: "Pedro Costa", data: hoje, horario: "11:00", duracao: 30, tipo: "retorno", status: "agendado" },
   { id: "ag4", dentistaId: "d1", pacienteNome: "Lucia Ferreira", data: hoje, horario: "14:00", duracao: 90, tipo: "procedimento", status: "confirmado" },
-  { id: "ag5", dentistaId: "d1", pacienteNome: "Carlos Oliveira", data: hoje, horario: "15:30", duracao: 30, tipo: "urgencia", status: "agendado" },
+  { id: "ag5", dentistaId: "d1", pacienteId: "pac5", pacienteNome: "Carlos Oliveira", data: hoje, horario: "15:30", duracao: 30, tipo: "urgencia", status: "agendado" },
   { id: "ag6", dentistaId: "d1", pacienteNome: "Teresa Almeida", data: new Date(hoje.getTime() + 86400000), horario: "08:00", duracao: 60, tipo: "procedimento", status: "agendado" },
   { id: "ag7", dentistaId: "d1", pacienteNome: "Ricardo Nunes", data: new Date(hoje.getTime() + 86400000), horario: "10:00", duracao: 45, tipo: "consulta", status: "confirmado" },
 ];
 
 export const mockOrcamentosDentista: OrcamentoDentista[] = [
   {
-    id: "o1", dentistaId: "d1", pacienteNome: "Maria Silva",
+    id: "o1", dentistaId: "d1", pacienteId: "pac1", pacienteNome: "Maria Silva",
     itens: [
       { procedimento: "Implante unitário", valor: 3500, quantidade: 2 },
       { procedimento: "Prótese sobre implante", valor: 2000, quantidade: 2 },
@@ -139,7 +143,7 @@ export const mockOrcamentosDentista: OrcamentoDentista[] = [
     total: 11000, status: "aprovado", criadoEm: new Date("2025-03-15"),
   },
   {
-    id: "o2", dentistaId: "d1", pacienteNome: "João Santos",
+    id: "o2", dentistaId: "d1", pacienteId: "pac2", pacienteNome: "João Santos",
     itens: [
       { procedimento: "Enxerto ósseo", valor: 2800, quantidade: 1 },
       { procedimento: "Implante unitário", valor: 3500, quantidade: 1 },
@@ -147,14 +151,14 @@ export const mockOrcamentosDentista: OrcamentoDentista[] = [
     total: 6300, status: "pendente", criadoEm: new Date("2025-04-01"),
   },
   {
-    id: "o3", dentistaId: "d1", pacienteNome: "Pedro Costa",
+    id: "o3", dentistaId: "d1", pacienteId: "pac3", pacienteNome: "Pedro Costa",
     itens: [
       { procedimento: "Revisão pós-cirúrgica", valor: 200, quantidade: 1 },
     ],
     total: 200, status: "em_andamento", criadoEm: new Date("2025-04-05"),
   },
   {
-    id: "o4", dentistaId: "d2", pacienteNome: "Ana Paula",
+    id: "o4", dentistaId: "d2", pacienteId: "pac4", pacienteNome: "Ana Paula",
     itens: [
       { procedimento: "Aparelho ortodôntico", valor: 3200, quantidade: 1 },
       { procedimento: "Manutenção mensal (12x)", valor: 250, quantidade: 12 },
@@ -165,7 +169,7 @@ export const mockOrcamentosDentista: OrcamentoDentista[] = [
 
 export const mockProntuariosDentista: ProntuarioDentista[] = [
   {
-    id: "p1", dentistaId: "d1", pacienteNome: "Maria Silva", pacienteIniciais: "MS",
+    id: "p1", dentistaId: "d1", pacienteId: "pac1", pacienteNome: "Maria Silva", pacienteIniciais: "MS",
     ultimaConsulta: new Date("2025-04-05"),
     diagnostico: "Edentulismo parcial posterior bilateral",
     tratamento: "Implantes osseointegrados + prótese fixa",
@@ -173,7 +177,7 @@ export const mockProntuariosDentista: ProntuarioDentista[] = [
     alergias: ["Dipirona"],
   },
   {
-    id: "p2", dentistaId: "d1", pacienteNome: "João Santos", pacienteIniciais: "JS",
+    id: "p2", dentistaId: "d1", pacienteId: "pac2", pacienteNome: "João Santos", pacienteIniciais: "JS",
     ultimaConsulta: new Date("2025-04-02"),
     diagnostico: "Reabsorção óssea moderada em região 36",
     tratamento: "Enxerto ósseo + implante em segundo tempo cirúrgico",
@@ -181,7 +185,7 @@ export const mockProntuariosDentista: ProntuarioDentista[] = [
     alergias: [],
   },
   {
-    id: "p3", dentistaId: "d1", pacienteNome: "Pedro Costa", pacienteIniciais: "PC",
+    id: "p3", dentistaId: "d1", pacienteId: "pac3", pacienteNome: "Pedro Costa", pacienteIniciais: "PC",
     ultimaConsulta: new Date("2025-04-07"),
     diagnostico: "Pós-operatório de implante 46",
     tratamento: "Acompanhamento e proservação",
