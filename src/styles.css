@@ -56,7 +56,7 @@
 
 :root {
   --radius: 0.75rem;
-  --background: oklch(0.98 0.006 230);
+  --background: oklch(1 0 0);
   --foreground: oklch(0.2 0.02 230);
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.2 0.02 230);
@@ -86,14 +86,14 @@
   --chart-3: oklch(0.6 0.18 155);
   --chart-4: oklch(0.75 0.16 75);
   --chart-5: oklch(0.58 0.22 25);
-  --sidebar: oklch(0.97 0.008 230);
-  --sidebar-foreground: oklch(0.2 0.02 230);
+  --sidebar: oklch(0.45 0.16 240);
+  --sidebar-foreground: oklch(1 0 0);
   --sidebar-primary: oklch(0.55 0.18 240);
   --sidebar-primary-foreground: oklch(1 0 0);
-  --sidebar-accent: oklch(0.93 0.02 240);
-  --sidebar-accent-foreground: oklch(0.2 0.02 230);
-  --sidebar-border: oklch(0.9 0.012 230);
-  --sidebar-ring: oklch(0.55 0.18 240);
+  --sidebar-accent: oklch(0.5 0.15 240);
+  --sidebar-accent-foreground: oklch(1 0 0);
+  --sidebar-border: oklch(0.5 0.14 240);
+  --sidebar-ring: oklch(0.65 0.15 240);
 }
 
 .dark {
@@ -168,8 +168,8 @@
   .glass-sidebar {
     background: linear-gradient(
       180deg,
-      oklch(0.98 0.008 230) 0%,
-      oklch(0.96 0.01 235) 100%
+      oklch(0.48 0.16 240) 0%,
+      oklch(0.40 0.17 245) 100%
     );
   }
 
