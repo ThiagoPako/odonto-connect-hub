@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { KpiCard } from "@/components/KpiCard";
-import { useState } from "react";
+import { useState, lazy, Suspense } from "react";
 import {
   DollarSign, TrendingUp, TrendingDown, Wallet, ArrowUpRight, ArrowDownRight,
   Plus, Building2, Users, FileText, BarChart3, CheckCircle, Clock, AlertTriangle,
@@ -12,8 +12,9 @@ import {
   mockOverdue, generateDRE, categoryLabels, generateId,
   type BankAccount, type Employee, type Payroll, type Bill, type FinanceMovement, type FinanceCategory,
 } from "@/data/financeiroMockData";
-import { FluxoCaixaChart } from "@/components/charts/FluxoCaixaChart";
-import { ReceitaDespesaChart } from "@/components/charts/ReceitaDespesaChart";
+
+const FluxoCaixaChart = lazy(() => import("@/components/charts/FluxoCaixaChart").then(m => ({ default: m.FluxoCaixaChart })));
+const ReceitaDespesaChart = lazy(() => import("@/components/charts/ReceitaDespesaChart").then(m => ({ default: m.ReceitaDespesaChart })));
 
 export const Route = createFileRoute("/financeiro")({
   component: FinanceiroPage,
@@ -255,8 +256,12 @@ function TabVisaoGeral({
 
       {/* Gráficos */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <FluxoCaixaChart />
-        <ReceitaDespesaChart />
+        <Suspense fallback={<div className="bg-card rounded-xl border border-border p-5 h-[320px] animate-pulse bg-muted/30" />}>
+          <FluxoCaixaChart />
+        </Suspense>
+        <Suspense fallback={<div className="bg-card rounded-xl border border-border p-5 h-[320px] animate-pulse bg-muted/30" />}>
+          <ReceitaDespesaChart />
+        </Suspense>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">

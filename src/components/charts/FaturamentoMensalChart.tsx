@@ -1,4 +1,5 @@
 import { AreaChart, Area, XAxis, YAxis, ResponsiveContainer, Tooltip, CartesianGrid } from "recharts";
+import { ClientOnly } from "@/components/ClientOnly";
 
 const monthlyData = [
   { mes: "Out", faturamento: 98000, meta: 120000 },
@@ -30,6 +31,7 @@ export function FaturamentoMensalChart() {
         R$ {atual.faturamento.toLocaleString("pt-BR")}
       </p>
       <div className="h-[200px]">
+        <ClientOnly fallback={<div className="h-full w-full animate-pulse bg-muted/30 rounded-lg" />}>
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart data={monthlyData} margin={{ left: 0, right: 8, top: 4, bottom: 0 }}>
             <defs>
@@ -85,6 +87,7 @@ export function FaturamentoMensalChart() {
             />
           </AreaChart>
         </ResponsiveContainer>
+        </ClientOnly>
       </div>
       <div className="flex items-center gap-4 mt-3 text-[11px] text-muted-foreground">
         <div className="flex items-center gap-1.5">
