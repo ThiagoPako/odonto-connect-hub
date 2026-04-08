@@ -1,5 +1,6 @@
 export interface PatientRecord {
   id: string;
+  pacienteId?: string;
   patientName: string;
   patientInitials: string;
   avatarColor: string;
@@ -35,7 +36,7 @@ export interface PatientDocument {
 
 export const mockPatientRecords: PatientRecord[] = [
   {
-    id: "pr1", patientName: "Maria Silva", patientInitials: "MS", avatarColor: "bg-chart-2",
+    id: "pr1", pacienteId: "pac1", patientName: "Maria Silva", patientInitials: "MS", avatarColor: "bg-chart-2",
     cpf: "***.***.***-01", birthDate: "15/03/1985", phone: "+55 11 99999-1001", email: "maria@email.com",
     allergies: ["Dipirona", "Látex"], medications: ["Losartana 50mg"], conditions: ["Hipertensão controlada"],
     lastVisit: "01/04/2026",
