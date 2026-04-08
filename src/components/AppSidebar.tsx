@@ -14,6 +14,10 @@ import {
   RefreshCcw,
   Plug,
   Zap,
+  CalendarDays,
+  FileHeart,
+  Receipt,
+  Package,
 } from "lucide-react";
 import { Link, useLocation } from "@tanstack/react-router";
 import { useState } from "react";
@@ -29,7 +33,15 @@ const navSections: NavSection[] = [
     label: "Principal",
     items: [
       { title: "Dashboard", url: "/", icon: LayoutDashboard },
+      { title: "Agenda", url: "/agenda", icon: CalendarDays },
       { title: "Chat", url: "/chat", icon: MessageSquare },
+    ],
+  },
+  {
+    label: "Clínico",
+    items: [
+      { title: "Prontuário", url: "/prontuario", icon: FileHeart },
+      { title: "Orçamentos", url: "/orcamentos", icon: Receipt },
     ],
   },
   {
@@ -53,6 +65,7 @@ const navSections: NavSection[] = [
     label: "Gestão",
     items: [
       { title: "Financeiro", url: "/financeiro", icon: DollarSign },
+      { title: "Estoque", url: "/estoque", icon: Package },
       { title: "Canais", url: "/canais", icon: Radio },
       { title: "Equipe", url: "/equipe", icon: UserCog },
       { title: "Configurações", url: "/configuracoes", icon: Settings },
