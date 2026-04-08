@@ -3,11 +3,12 @@ import { DashboardHeader } from "@/components/DashboardHeader";
 import {
   Send, Play, Pause, Plus, Eye, Clock,
   CalendarDays, Users, CheckCircle2, AlertCircle, Trash2,
-  MessageSquare, RefreshCcw, Copy, Pencil,
+  MessageSquare, RefreshCcw, Copy, Pencil, BarChart3,
 } from "lucide-react";
 import { useState } from "react";
 import { mockDisparos, publicoOptions, type DisparoProgramado } from "@/data/disparosMockData";
 import { NovoDisparoWizard } from "@/components/disparos/NovoDisparoWizard";
+import { DisparoStatsPanel } from "@/components/disparos/DisparoStatsPanel";
 
 export const Route = createFileRoute("/disparos")({
   ssr: false,
@@ -18,6 +19,7 @@ function DisparosPage() {
   const [disparos, setDisparos] = useState(mockDisparos);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [editingDisparo, setEditingDisparo] = useState<DisparoProgramado | null>(null);
+  const [statsDisparo, setStatsDisparo] = useState<DisparoProgramado | null>(null);
   const [filterStatus, setFilterStatus] = useState<"all" | "ativos" | "inativos">("all");
 
   const filtered = filterStatus === "all" ? disparos : disparos.filter((d) => (filterStatus === "ativos" ? d.ativo : !d.ativo));
@@ -149,6 +151,7 @@ function DisparosPage() {
                 onRemove={() => removeDisparo(disparo.id)}
                 onEdit={() => handleEdit(disparo)}
                 onDuplicate={() => handleDuplicate(disparo)}
+                onStats={() => setStatsDisparo(disparo)}
               />
             ))}
           </div>
@@ -161,6 +164,13 @@ function DisparosPage() {
         onSave={handleSave}
         editData={editingDisparo}
       />
+
+      {statsDisparo && (
+        <DisparoStatsPanel
+          disparo={statsDisparo}
+          onClose={() => setStatsDisparo(null)}
+        />
+      )}
     </div>
   );
 }
@@ -178,13 +188,14 @@ function MiniKpi({ icon: Icon, label, value }: { icon: React.ElementType; label:
 }
 
 function DisparoCard({
-  disparo, onToggle, onRemove, onEdit, onDuplicate,
+  disparo, onToggle, onRemove, onEdit, onDuplicate, onStats,
 }: {
   disparo: DisparoProgramado;
   onToggle: () => void;
   onRemove: () => void;
   onEdit: () => void;
   onDuplicate: () => void;
+  onStats: () => void;
 }) {
   const publicoLabel = publicoOptions.find((p) => p.id === disparo.publico)?.label || disparo.publico;
   const taxaLeitura = disparo.stats.enviadas > 0 ? ((disparo.stats.lidas / disparo.stats.enviadas) * 100).toFixed(0) : "0";
@@ -230,6 +241,13 @@ function DisparoCard({
 
         {/* Actions */}
         <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            onClick={onStats}
+            className="p-2 rounded-lg bg-muted text-muted-foreground hover:bg-primary/15 hover:text-primary transition-colors"
+            title="Estatísticas"
+          >
+            <BarChart3 className="h-4 w-4" />
+          </button>
           <button
             onClick={onEdit}
             className="p-2 rounded-lg bg-muted text-muted-foreground hover:bg-primary/15 hover:text-primary transition-colors"
