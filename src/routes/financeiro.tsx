@@ -12,6 +12,8 @@ import {
   mockOverdue, generateDRE, categoryLabels, generateId,
   type BankAccount, type Employee, type Payroll, type Bill, type FinanceMovement, type FinanceCategory,
 } from "@/data/financeiroMockData";
+import { FluxoCaixaChart } from "@/components/charts/FluxoCaixaChart";
+import { ReceitaDespesaChart } from "@/components/charts/ReceitaDespesaChart";
 
 export const Route = createFileRoute("/financeiro")({
   component: FinanceiroPage,
@@ -249,6 +251,12 @@ function TabVisaoGeral({
         <KpiCard title="Saídas (Mês)" value={`R$ ${totalSaidas.toLocaleString("pt-BR")}`} change="Despesas" changeType="negative" icon={ArrowDownRight} />
         <KpiCard title="Contas Pendentes" value={`R$ ${totalPendente.toLocaleString("pt-BR")}`} change="A pagar" changeType="negative" icon={Clock} />
         <KpiCard title="Folha Pendente" value={`R$ ${totalFolhaPendente.toLocaleString("pt-BR")}`} change="Salários" changeType="neutral" icon={Users} />
+      </div>
+
+      {/* Gráficos */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <FluxoCaixaChart />
+        <ReceitaDespesaChart />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
