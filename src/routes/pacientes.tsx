@@ -38,16 +38,22 @@ import {
 } from "lucide-react";
 
 export const Route = createFileRoute("/pacientes")({
+  validateSearch: (search: Record<string, unknown>) => ({
+    pacienteId: (search.pacienteId as string) || undefined,
+  }),
   component: PacientesPage,
 });
 
 type DetailTab = "dados" | "anamnese" | "odontograma" | "historico";
 
 function PacientesPage() {
+  const { pacienteId } = Route.useSearch();
   const [pacientes] = useState<Paciente[]>(mockPacientes);
   const [searchTerm, setSearchTerm] = useState("");
   const [showForm, setShowForm] = useState(false);
-  const [selectedPaciente, setSelectedPaciente] = useState<Paciente | null>(null);
+  const [selectedPaciente, setSelectedPaciente] = useState<Paciente | null>(
+    pacienteId ? mockPacientes.find((p) => p.id === pacienteId) ?? null : null
+  );
   const [activeTab, setActiveTab] = useState<DetailTab>("dados");
 
   const filtered = pacientes.filter(
