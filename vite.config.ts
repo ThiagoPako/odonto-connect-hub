@@ -175,6 +175,12 @@ export default defineConfig(({ command, mode }) => {
     server: {
       host: "::",
       port: 8080,
+      allowedHosts: ["odontoconnect.tech"],
+    },
+    preview: {
+      host: "0.0.0.0",
+      port: 3000,
+      allowedHosts: ["odontoconnect.tech"],
     },
     define: envDefine,
     resolve: {
