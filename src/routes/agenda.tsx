@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import {
   Clock, CheckCircle2, XCircle, UserCheck, Plus, ChevronLeft, ChevronRight,
-  Phone, MessageSquare, AlertTriangle, RefreshCw, Search, ExternalLink, History,
+  Phone, MessageSquare, AlertTriangle, RefreshCw, Search, ExternalLink, History, HeartPulse,
 } from "lucide-react";
 import { useState } from "react";
 import { mockAppointments, mockProfessionals, type Appointment } from "@/data/agendaMockData";
@@ -136,6 +136,14 @@ function AppointmentCard({ appointment: a }: { appointment: Appointment }) {
   const anamnese = a.pacienteId ? mockAnamneses[a.pacienteId] : undefined;
   const alergias = anamnese?.alergias ?? [];
 
+  const condicoes: string[] = [];
+  if (anamnese?.cardiopatia) condicoes.push("Cardiopatia");
+  if (anamnese?.diabetes) condicoes.push("Diabetes");
+  if (anamnese?.hemofilia) condicoes.push("Hemofilia");
+  if (anamnese?.epilepsia) condicoes.push("Epilepsia");
+  if (anamnese?.hepatite) condicoes.push("Hepatite");
+  if (anamnese?.hiv) condicoes.push("HIV");
+
   return (
     <div className={`rounded-lg border border-border/50 p-2.5 space-y-2 ${a.status === "faltou" ? "opacity-50" : ""}`}>
       <div className="flex items-center justify-between">
@@ -160,7 +168,19 @@ function AppointmentCard({ appointment: a }: { appointment: Appointment }) {
                 </div>
                 <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover/alergia:block z-50 animate-fade-in">
                   <div className="bg-destructive text-destructive-foreground text-[9px] font-bold px-2 py-1 rounded-lg whitespace-nowrap shadow-lg">
-                    ⚠ {alergias.join(", ")}
+                    ⚠ Alergias: {alergias.join(", ")}
+                  </div>
+                </div>
+              </div>
+            )}
+            {condicoes.length > 0 && (
+              <div className="group/cond relative shrink-0">
+                <div className="h-4 w-4 rounded-full bg-warning/15 flex items-center justify-center">
+                  <HeartPulse className="h-2.5 w-2.5 text-warning" />
+                </div>
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover/cond:block z-50 animate-fade-in">
+                  <div className="bg-warning text-warning-foreground text-[9px] font-bold px-2 py-1 rounded-lg whitespace-nowrap shadow-lg">
+                    ♥ {condicoes.join(", ")}
                   </div>
                 </div>
               </div>
