@@ -1,5 +1,8 @@
-import { Outlet, Link, createRootRoute, HeadContent, Scripts } from "@tanstack/react-router";
+import { Outlet, Link, createRootRoute, HeadContent, Scripts, useLocation, useNavigate } from "@tanstack/react-router";
+import { useEffect } from "react";
 import { AppSidebar } from "@/components/AppSidebar";
+import { AuthProvider, useAuth } from "@/hooks/useAuth";
+import { Loader2 } from "lucide-react";
 
 import appCss from "../styles.css?url";
 
@@ -62,9 +65,53 @@ function RootShell({ children }: { children: React.ReactNode }) {
 
 function RootComponent() {
   return (
+    <AuthProvider>
+      <AuthGate />
+    </AuthProvider>
+  );
+}
+
+function AuthGate() {
+  const { isAuthenticated, isLoading } = useAuth();
+  const location = useLocation();
+
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  const isLoginPage = location.pathname === "/login";
+
+  // If not authenticated and not on login page, redirect to login
+  if (!isAuthenticated && !isLoginPage) {
+    return <RedirectToLogin />;
+  }
+
+  // Login page — no sidebar
+  if (isLoginPage) {
+    return <Outlet />;
+  }
+
+  // Authenticated — show sidebar + content
+  return (
     <div className="flex min-h-screen w-full">
       <AppSidebar />
       <Outlet />
+    </div>
+  );
+}
+
+function RedirectToLogin() {
+  const navigate = useNavigate();
+  useEffect(() => {
+    navigate({ to: "/login" });
+  }, [navigate]);
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-background">
+      <Loader2 className="h-8 w-8 animate-spin text-primary" />
     </div>
   );
 }
