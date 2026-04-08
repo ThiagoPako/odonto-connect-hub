@@ -1,4 +1,5 @@
 import type { LucideIcon } from "lucide-react";
+import { ArrowUpRight, ArrowDownRight, Minus } from "lucide-react";
 
 interface KpiCardProps {
   title: string;
@@ -16,17 +17,32 @@ export function KpiCard({ title, value, change, changeType = "neutral", icon: Ic
         ? "text-destructive"
         : "text-muted-foreground";
 
+  const ChangeIcon =
+    changeType === "positive"
+      ? ArrowUpRight
+      : changeType === "negative"
+        ? ArrowDownRight
+        : Minus;
+
   return (
-    <div className="bg-card rounded-xl border border-border p-5 flex items-start gap-4 shadow-sm hover:shadow-md transition-shadow">
-      <div className="h-11 w-11 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-        <Icon className="h-5 w-5 text-primary" />
-      </div>
-      <div className="flex-1 min-w-0">
-        <p className="text-sm text-muted-foreground">{title}</p>
-        <p className="text-2xl font-bold text-card-foreground mt-0.5">{value}</p>
-        {change && (
-          <p className={`text-xs mt-1 ${changeColor}`}>{change}</p>
-        )}
+    <div className="group bg-card rounded-2xl border border-border/60 p-5 shadow-card hover:shadow-card-hover transition-all duration-300 relative overflow-hidden">
+      {/* Subtle gradient accent */}
+      <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl from-primary/5 to-transparent rounded-bl-full pointer-events-none" />
+
+      <div className="flex items-start justify-between relative z-10">
+        <div className="flex-1 min-w-0">
+          <p className="text-xs text-muted-foreground font-medium">{title}</p>
+          <p className="text-2xl font-bold text-card-foreground mt-1.5 tracking-tight">{value}</p>
+          {change && (
+            <div className={`flex items-center gap-1 mt-2 ${changeColor}`}>
+              <ChangeIcon className="h-3 w-3" />
+              <span className="text-[11px] font-medium">{change}</span>
+            </div>
+          )}
+        </div>
+        <div className="h-11 w-11 rounded-xl bg-primary/8 flex items-center justify-center shrink-0 group-hover:bg-primary/12 transition-colors">
+          <Icon className="h-5 w-5 text-primary" />
+        </div>
       </div>
     </div>
   );

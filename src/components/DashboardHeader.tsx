@@ -1,23 +1,35 @@
-import { Bell, Search } from "lucide-react";
+import { Bell, Search, CalendarDays } from "lucide-react";
 
 export function DashboardHeader({ title }: { title: string }) {
+  const today = new Date().toLocaleDateString("pt-BR", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+  });
+
   return (
-    <header className="h-16 flex items-center justify-between px-6 border-b border-border bg-card">
-      <h1 className="text-xl font-semibold text-foreground">{title}</h1>
+    <header className="h-[72px] flex items-center justify-between px-8 border-b border-border bg-card/80 backdrop-blur-md sticky top-0 z-20">
+      <div>
+        <h1 className="text-lg font-bold text-foreground tracking-tight">{title}</h1>
+        <p className="text-[11px] text-muted-foreground flex items-center gap-1.5 mt-0.5">
+          <CalendarDays className="h-3 w-3" />
+          <span className="capitalize">{today}</span>
+        </p>
+      </div>
       <div className="flex items-center gap-3">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <div className="relative group">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground transition-colors group-focus-within:text-primary" />
           <input
             type="text"
-            placeholder="Buscar paciente..."
-            className="h-9 pl-9 pr-4 rounded-lg bg-muted border-0 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring w-64"
+            placeholder="Buscar paciente, orçamento..."
+            className="h-10 pl-10 pr-4 rounded-xl bg-muted/60 border border-border/50 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/40 focus:bg-card w-72 transition-all"
           />
         </div>
-        <button className="relative p-2 rounded-lg hover:bg-muted transition-colors">
-          <Bell className="h-5 w-5 text-muted-foreground" />
-          <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-destructive" />
+        <button className="relative p-2.5 rounded-xl hover:bg-muted/80 transition-all group">
+          <Bell className="h-5 w-5 text-muted-foreground group-hover:text-foreground transition-colors" />
+          <span className="absolute top-2 right-2 h-2 w-2 rounded-full bg-destructive ring-2 ring-card" />
         </button>
-        <div className="h-9 w-9 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-sm font-semibold">
+        <div className="h-10 w-10 rounded-xl gradient-primary flex items-center justify-center text-primary-foreground text-sm font-bold shadow-glow cursor-pointer hover:scale-105 transition-transform">
           DC
         </div>
       </div>
