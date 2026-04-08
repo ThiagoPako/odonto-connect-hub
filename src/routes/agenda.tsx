@@ -3,6 +3,7 @@ import { DashboardHeader } from "@/components/DashboardHeader";
 import {
   Clock, CheckCircle2, XCircle, UserCheck, Plus, ChevronLeft, ChevronRight,
   Phone, MessageSquare, AlertTriangle, RefreshCw, Search, ExternalLink, History, HeartPulse,
+  LayoutGrid, List, CalendarDays,
 } from "lucide-react";
 import { useState } from "react";
 import { mockAppointments, mockProfessionals, type Appointment } from "@/data/agendaMockData";
@@ -21,9 +22,14 @@ const statusConfig: Record<Appointment["status"], { label: string; color: string
   encaixe: { label: "Encaixe", color: "bg-chart-4/15 text-chart-4", icon: AlertTriangle },
 };
 
+type ViewMode = "kanban" | "lista" | "calendario";
+
+const HOURS = Array.from({ length: 12 }, (_, i) => `${String(i + 7).padStart(2, "0")}:00`);
+
 function AgendaPage() {
   const [selectedProfessional, setSelectedProfessional] = useState<string>("all");
   const [searchTerm, setSearchTerm] = useState("");
+  const [viewMode, setViewMode] = useState<ViewMode>("kanban");
 
   const filtered = mockAppointments
     .filter((a) => selectedProfessional === "all" || a.professional.includes(selectedProfessional))
@@ -62,6 +68,28 @@ function AgendaPage() {
             <button className="p-1.5 rounded-lg hover:bg-muted"><ChevronRight className="h-4 w-4 text-muted-foreground" /></button>
           </div>
           <div className="flex items-center gap-2">
+            {/* View mode toggle */}
+            <div className="flex items-center bg-muted rounded-lg p-0.5">
+              {([
+                { mode: "kanban" as const, icon: LayoutGrid, label: "Kanban" },
+                { mode: "lista" as const, icon: List, label: "Lista" },
+                { mode: "calendario" as const, icon: CalendarDays, label: "Calendário" },
+              ]).map(({ mode, icon: Icon, label }) => (
+                <button
+                  key={mode}
+                  onClick={() => setViewMode(mode)}
+                  className={`flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[11px] font-medium transition-colors ${
+                    viewMode === mode
+                      ? "bg-card text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                  title={label}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">{label}</span>
+                </button>
+              ))}
+            </div>
             <div className="relative">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
               <input
@@ -88,40 +116,283 @@ function AgendaPage() {
           </div>
         </div>
 
-        {/* Professional columns */}
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-          {mockProfessionals
-            .filter((p) => selectedProfessional === "all" || p.name.includes(selectedProfessional))
-            .map((prof) => {
-              const profAppts = filtered.filter((a) => a.professional === prof.name).sort((a, b) => a.time.localeCompare(b.time));
-              return (
-                <div key={prof.id} className="bg-card rounded-xl border border-border overflow-hidden">
-                  <div className="flex items-center gap-2 p-3 border-b border-border">
-                    <div className={`h-7 w-7 rounded-full ${prof.color} flex items-center justify-center text-[10px] font-bold text-white`}>
-                      {prof.initials}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-semibold text-foreground truncate">{prof.name}</p>
-                      <p className="text-[10px] text-muted-foreground">{prof.specialty}</p>
-                    </div>
-                    <span className="text-[10px] font-medium text-muted-foreground">{profAppts.length} consultas</span>
-                  </div>
-                  <div className="p-2 space-y-1.5 max-h-[500px] overflow-y-auto">
-                    {profAppts.length === 0 ? (
-                      <p className="text-xs text-muted-foreground text-center py-6">Sem consultas</p>
-                    ) : (
-                      profAppts.map((appt) => <AppointmentCard key={appt.id} appointment={appt} />)
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-        </div>
+        {/* Views */}
+        {viewMode === "kanban" && <KanbanView filtered={filtered} selectedProfessional={selectedProfessional} />}
+        {viewMode === "lista" && <ListView filtered={filtered} />}
+        {viewMode === "calendario" && <CalendarView filtered={filtered} selectedProfessional={selectedProfessional} />}
       </main>
     </div>
   );
 }
 
+/* ===================== KANBAN VIEW ===================== */
+function KanbanView({ filtered, selectedProfessional }: { filtered: Appointment[]; selectedProfessional: string }) {
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+      {mockProfessionals
+        .filter((p) => selectedProfessional === "all" || p.name.includes(selectedProfessional))
+        .map((prof) => {
+          const profAppts = filtered.filter((a) => a.professional === prof.name).sort((a, b) => a.time.localeCompare(b.time));
+          return (
+            <div key={prof.id} className="bg-card rounded-xl border border-border overflow-hidden">
+              <div className="flex items-center gap-2 p-3 border-b border-border">
+                <div className={`h-7 w-7 rounded-full ${prof.color} flex items-center justify-center text-[10px] font-bold text-white`}>
+                  {prof.initials}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-semibold text-foreground truncate">{prof.name}</p>
+                  <p className="text-[10px] text-muted-foreground">{prof.specialty}</p>
+                </div>
+                <span className="text-[10px] font-medium text-muted-foreground">{profAppts.length} consultas</span>
+              </div>
+              <div className="p-2 space-y-1.5 max-h-[500px] overflow-y-auto">
+                {profAppts.length === 0 ? (
+                  <p className="text-xs text-muted-foreground text-center py-6">Sem consultas</p>
+                ) : (
+                  profAppts.map((appt) => <AppointmentCard key={appt.id} appointment={appt} />)
+                )}
+              </div>
+            </div>
+          );
+        })}
+    </div>
+  );
+}
+
+/* ===================== LIST VIEW ===================== */
+function ListView({ filtered }: { filtered: Appointment[] }) {
+  const sorted = [...filtered].sort((a, b) => a.time.localeCompare(b.time));
+
+  return (
+    <div className="bg-card rounded-xl border border-border overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full">
+          <thead>
+            <tr className="border-b border-border bg-muted/50">
+              <th className="text-left text-[10px] font-bold text-muted-foreground uppercase tracking-wider px-4 py-3">Horário</th>
+              <th className="text-left text-[10px] font-bold text-muted-foreground uppercase tracking-wider px-4 py-3">Paciente</th>
+              <th className="text-left text-[10px] font-bold text-muted-foreground uppercase tracking-wider px-4 py-3">Procedimento</th>
+              <th className="text-left text-[10px] font-bold text-muted-foreground uppercase tracking-wider px-4 py-3">Profissional</th>
+              <th className="text-left text-[10px] font-bold text-muted-foreground uppercase tracking-wider px-4 py-3">Sala</th>
+              <th className="text-left text-[10px] font-bold text-muted-foreground uppercase tracking-wider px-4 py-3">Duração</th>
+              <th className="text-left text-[10px] font-bold text-muted-foreground uppercase tracking-wider px-4 py-3">Status</th>
+              <th className="text-left text-[10px] font-bold text-muted-foreground uppercase tracking-wider px-4 py-3">Alertas</th>
+              <th className="text-right text-[10px] font-bold text-muted-foreground uppercase tracking-wider px-4 py-3">Ações</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((a) => {
+              const cfg = statusConfig[a.status];
+              const alergias = a.pacienteId ? getAlergias(a.pacienteId) : [];
+              const condicoes = a.pacienteId ? getCondicoesCriticas(a.pacienteId) : [];
+              return (
+                <tr key={a.id} className={`border-b border-border/50 hover:bg-muted/30 transition-colors ${a.status === "faltou" ? "opacity-50" : ""}`}>
+                  <td className="px-4 py-3">
+                    <span className="text-xs font-bold text-foreground">{a.time}</span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <div className={`h-7 w-7 rounded-full ${a.avatarColor} flex items-center justify-center text-[10px] font-bold text-white shrink-0`}>
+                        {a.patientInitials}
+                      </div>
+                      <div>
+                        <p className="text-xs font-medium text-foreground">{a.patientName}</p>
+                        <p className="text-[10px] text-muted-foreground">{a.phone}</p>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="text-xs text-foreground">{a.procedure}</span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="text-xs text-foreground">{a.professional}</span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="text-xs text-muted-foreground">{a.room}</span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className="text-xs text-muted-foreground">{a.duration}min</span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className={`px-2 py-1 rounded-full text-[10px] font-medium ${cfg.color}`}>{cfg.label}</span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-1">
+                      {alergias.length > 0 && (
+                        <div className="group/al relative">
+                          <div className="h-5 w-5 rounded-full bg-destructive/15 flex items-center justify-center">
+                            <AlertTriangle className="h-3 w-3 text-destructive" />
+                          </div>
+                          <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover/al:block z-50">
+                            <div className="bg-destructive text-destructive-foreground text-[9px] font-bold px-2 py-1 rounded-lg whitespace-nowrap shadow-lg">
+                              ⚠ {alergias.join(", ")}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                      {condicoes.length > 0 && (
+                        <div className="group/co relative">
+                          <div className="h-5 w-5 rounded-full bg-warning/15 flex items-center justify-center">
+                            <HeartPulse className="h-3 w-3 text-warning" />
+                          </div>
+                          <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover/co:block z-50">
+                            <div className="bg-warning text-warning-foreground text-[9px] font-bold px-2 py-1 rounded-lg whitespace-nowrap shadow-lg">
+                              ♥ {condicoes.join(", ")}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                      {alergias.length === 0 && condicoes.length === 0 && (
+                        <span className="text-[10px] text-muted-foreground">—</span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center justify-end gap-1">
+                      {a.status === "aguardando" && (
+                        <button className="p-1.5 rounded-lg hover:bg-primary/10" title="Check-in">
+                          <UserCheck className="h-3.5 w-3.5 text-primary" />
+                        </button>
+                      )}
+                      {a.status === "faltou" && (
+                        <button className="p-1.5 rounded-lg hover:bg-warning/10" title="Reagendar">
+                          <RefreshCw className="h-3.5 w-3.5 text-warning" />
+                        </button>
+                      )}
+                      <button className="p-1.5 rounded-lg hover:bg-muted" title="WhatsApp">
+                        <MessageSquare className="h-3.5 w-3.5 text-muted-foreground" />
+                      </button>
+                      <button className="p-1.5 rounded-lg hover:bg-muted" title="Ligar">
+                        <Phone className="h-3.5 w-3.5 text-muted-foreground" />
+                      </button>
+                      {a.pacienteId && (
+                        <Link to="/pacientes" search={{ pacienteId: a.pacienteId }} className="p-1.5 rounded-lg hover:bg-primary/10" title="Ficha">
+                          <ExternalLink className="h-3.5 w-3.5 text-primary" />
+                        </Link>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/* ===================== CALENDAR VIEW ===================== */
+function CalendarView({ filtered, selectedProfessional }: { filtered: Appointment[]; selectedProfessional: string }) {
+  const professionals = mockProfessionals.filter(
+    (p) => selectedProfessional === "all" || p.name.includes(selectedProfessional)
+  );
+
+  const getApptForSlot = (profName: string, hour: string) => {
+    return filtered.filter((a) => a.professional === profName && a.time.startsWith(hour.split(":")[0]));
+  };
+
+  return (
+    <div className="bg-card rounded-xl border border-border overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full border-collapse">
+          <thead>
+            <tr className="border-b border-border bg-muted/50">
+              <th className="text-left text-[10px] font-bold text-muted-foreground uppercase tracking-wider px-3 py-3 w-16 sticky left-0 bg-muted/50 z-10">
+                Hora
+              </th>
+              {professionals.map((prof) => (
+                <th key={prof.id} className="text-center text-[10px] font-bold text-muted-foreground uppercase tracking-wider px-2 py-3 min-w-[180px]">
+                  <div className="flex items-center justify-center gap-1.5">
+                    <div className={`h-5 w-5 rounded-full ${prof.color} flex items-center justify-center text-[8px] font-bold text-white`}>
+                      {prof.initials}
+                    </div>
+                    <span>{prof.name.split(" ").slice(0, 2).join(" ")}</span>
+                  </div>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {HOURS.map((hour) => (
+              <tr key={hour} className="border-b border-border/30 hover:bg-muted/10">
+                <td className="px-3 py-1 text-[11px] font-semibold text-muted-foreground align-top pt-2 sticky left-0 bg-card z-10 border-r border-border/30">
+                  {hour}
+                </td>
+                {professionals.map((prof) => {
+                  const appts = getApptForSlot(prof.name, hour);
+                  return (
+                    <td key={prof.id} className="px-1.5 py-1 align-top min-w-[180px]">
+                      {appts.length === 0 ? (
+                        <div className="h-12 rounded-lg border border-dashed border-border/30 hover:border-primary/30 hover:bg-primary/5 transition-colors cursor-pointer flex items-center justify-center">
+                          <Plus className="h-3 w-3 text-muted-foreground/30" />
+                        </div>
+                      ) : (
+                        <div className="space-y-1">
+                          {appts.map((a) => {
+                            const cfg = statusConfig[a.status];
+                            const alergias = a.pacienteId ? getAlergias(a.pacienteId) : [];
+                            const condicoes = a.pacienteId ? getCondicoesCriticas(a.pacienteId) : [];
+                            const heightSlots = Math.max(Math.ceil(a.duration / 30), 1);
+                            return (
+                              <div
+                                key={a.id}
+                                className={`rounded-lg border p-2 transition-all hover:shadow-md cursor-pointer ${
+                                  a.status === "faltou"
+                                    ? "border-destructive/20 bg-destructive/5 opacity-60"
+                                    : a.status === "em_atendimento"
+                                    ? "border-primary/30 bg-primary/5"
+                                    : a.status === "finalizado"
+                                    ? "border-border/50 bg-muted/30"
+                                    : "border-border/50 bg-card"
+                                }`}
+                                style={{ minHeight: `${heightSlots * 40}px` }}
+                              >
+                                <div className="flex items-center justify-between mb-1">
+                                  <span className="text-[10px] font-bold text-foreground">{a.time}</span>
+                                  <span className={`px-1.5 py-0.5 rounded text-[8px] font-medium ${cfg.color}`}>
+                                    {cfg.label}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                  <div className={`h-5 w-5 rounded-full ${a.avatarColor} flex items-center justify-center text-[8px] font-bold text-white shrink-0`}>
+                                    {a.patientInitials}
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                    <p className="text-[10px] font-medium text-foreground truncate">{a.patientName}</p>
+                                    <p className="text-[9px] text-muted-foreground truncate">{a.procedure} · {a.duration}min</p>
+                                  </div>
+                                  <div className="flex items-center gap-0.5 shrink-0">
+                                    {alergias.length > 0 && (
+                                      <div className="h-4 w-4 rounded-full bg-destructive/15 flex items-center justify-center" title={`Alergias: ${alergias.join(", ")}`}>
+                                        <AlertTriangle className="h-2.5 w-2.5 text-destructive" />
+                                      </div>
+                                    )}
+                                    {condicoes.length > 0 && (
+                                      <div className="h-4 w-4 rounded-full bg-warning/15 flex items-center justify-center" title={condicoes.join(", ")}>
+                                        <HeartPulse className="h-2.5 w-2.5 text-warning" />
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/* ===================== APPOINTMENT CARD (Kanban) ===================== */
 function AppointmentCard({ appointment: a }: { appointment: Appointment }) {
   const cfg = statusConfig[a.status];
   const [showHistory, setShowHistory] = useState(false);
