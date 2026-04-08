@@ -87,8 +87,7 @@ function AuthGate() {
 
   // If not authenticated and not on login page, redirect to login
   if (!isAuthenticated && !isLoginPage) {
-    // We render Outlet but the login route will be shown via navigate
-    return <LoginRedirect />;
+    return <RedirectToLogin />;
   }
 
   // Login page — no sidebar
