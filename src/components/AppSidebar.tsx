@@ -43,6 +43,7 @@ const navSections: NavSection[] = [
     items: [
       { title: "Prontuário", url: "/prontuario", icon: FileHeart },
       { title: "Orçamentos", url: "/orcamentos", icon: Receipt },
+      { title: "Tratamentos", url: "/tratamentos", icon: ClipboardList },
     ],
   },
   {
