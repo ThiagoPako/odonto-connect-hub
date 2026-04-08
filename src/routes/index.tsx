@@ -106,7 +106,8 @@ function DashboardPage() {
         </section>
 
         {/* === GRÁFICOS ANALÍTICOS === */}
-        <section className="animate-fade-in">
+        <section className="animate-fade-in space-y-5">
+          <FaturamentoMensalChart />
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
             <OrcamentoConversaoChart />
             <OrigemLeadsChart />
