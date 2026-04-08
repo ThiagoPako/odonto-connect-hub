@@ -1,4 +1,4 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState, type FormEvent } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { forgotPassword } from "@/lib/vpsApi";
@@ -82,7 +82,7 @@ function LoginPage() {
               <div className="text-center space-y-4">
                 <CheckCircle className="h-12 w-12 text-success mx-auto" />
                 <p className="text-sm text-muted-foreground">
-                  Se o email estiver cadastrado, você receberá um link para redefinir sua senha.
+                  Sua solicitação foi enviada ao administrador. Ele redefinirá sua senha e entrará em contato.
                 </p>
                 <Button
                   variant="outline"

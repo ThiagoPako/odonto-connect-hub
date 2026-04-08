@@ -83,7 +83,7 @@ function AuthGate() {
     );
   }
 
-  const isPublicPage = location.pathname === "/login" || location.pathname === "/reset-password";
+  const isPublicPage = location.pathname === "/login";
 
   // If not authenticated and not on a public page, redirect to login
   if (!isAuthenticated && !isPublicPage) {
