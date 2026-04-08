@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import { AreaChart, Area, XAxis, YAxis, ResponsiveContainer, Tooltip, CartesianGrid } from "recharts";
 
 const evolucaoData = [

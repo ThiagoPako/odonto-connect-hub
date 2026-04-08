@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, CartesianGrid, Legend } from "recharts";
 
 const fluxoData = [
