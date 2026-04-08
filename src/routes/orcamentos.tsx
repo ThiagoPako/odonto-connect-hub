@@ -9,6 +9,7 @@ import { useState } from "react";
 import { mockBudgets, type Budget } from "@/data/orcamentoMockData";
 
 export const Route = createFileRoute("/orcamentos")({
+  ssr: false,
   component: OrcamentosPage,
 });
 

@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 
 export const Route = createFileRoute("/crm")({
+  ssr: false,
   component: CrmPage,
 });
 

@@ -20,6 +20,7 @@ import {
 } from "@/data/chatMockData";
 
 export const Route = createFileRoute("/chat")({
+  ssr: false,
   component: ChatPage,
 });
 

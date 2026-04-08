@@ -3,6 +3,7 @@ import { DashboardHeader } from "@/components/DashboardHeader";
 import { Megaphone, Plus, Send, BarChart3, Users } from "lucide-react";
 
 export const Route = createFileRoute("/campanhas")({
+  ssr: false,
   component: CampanhasPage,
 });
 

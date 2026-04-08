@@ -4,6 +4,7 @@ import { KpiCard } from "@/components/KpiCard";
 import { BarChart3, Target, DollarSign, TrendingUp, ArrowUpRight, ArrowDownRight } from "lucide-react";
 
 export const Route = createFileRoute("/analytics")({
+  ssr: false,
   component: AnalyticsPage,
 });
 

@@ -11,6 +11,7 @@ import {
 } from "@/data/comissoesMockData";
 
 export const Route = createFileRoute("/comissoes")({
+  ssr: false,
   component: ComissoesPage,
 });
 

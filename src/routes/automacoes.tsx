@@ -11,6 +11,7 @@ import {
 } from "@/data/automationMockData";
 
 export const Route = createFileRoute("/automacoes")({
+  ssr: false,
   component: AutomacoesPage,
 });
 
