@@ -22,22 +22,6 @@ import {
   Percent,
   Stethoscope,
 } from "lucide-react";
-  ChevronLeft,
-  Users,
-  Kanban,
-  Megaphone,
-  BarChart3,
-  UserCog,
-  RefreshCcw,
-  Plug,
-  Zap,
-  CalendarDays,
-  FileHeart,
-  Receipt,
-  Package,
-  ClipboardList,
-  Percent,
-} from "lucide-react";
 import { Link, useLocation } from "@tanstack/react-router";
 import { useState } from "react";
 import logoImg from "@/assets/logo.png";
