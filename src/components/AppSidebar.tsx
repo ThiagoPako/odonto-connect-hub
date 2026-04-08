@@ -20,6 +20,7 @@ import {
   Package,
   ClipboardList,
   Percent,
+  Sparkles,
 } from "lucide-react";
 import { Link, useLocation } from "@tanstack/react-router";
 import { useState } from "react";
@@ -83,34 +84,45 @@ export function AppSidebar() {
 
   return (
     <aside
-      className={`flex flex-col bg-sidebar text-sidebar-foreground border-r border-sidebar-border transition-all duration-300 shrink-0 ${
-        collapsed ? "w-[68px]" : "w-[250px]"
+      className={`flex flex-col glass-sidebar text-sidebar-foreground border-r border-sidebar-border transition-all duration-300 shrink-0 relative ${
+        collapsed ? "w-[72px]" : "w-[260px]"
       }`}
     >
+      {/* Decorative gradient orb */}
+      <div className="absolute top-0 left-0 w-full h-32 bg-gradient-to-b from-primary/8 to-transparent pointer-events-none" />
+
       {/* Logo */}
-      <div className="flex items-center gap-3 px-4 h-16 border-b border-sidebar-border shrink-0">
-        <img src={logoImg} alt="Odonto Connect" className="h-8 w-8 rounded-lg shrink-0" />
+      <div className="flex items-center gap-3 px-4 h-[72px] border-b border-sidebar-border shrink-0 relative z-10">
+        <div className="relative">
+          <div className="absolute inset-0 rounded-xl gradient-primary opacity-20 blur-sm" />
+          <img src={logoImg} alt="Odonto Connect" className="h-9 w-9 rounded-xl shrink-0 relative z-10" />
+        </div>
         {!collapsed && (
-          <span className="text-base font-bold tracking-tight text-sidebar-foreground">
-            Odonto Connect
-          </span>
+          <div className="flex flex-col">
+            <span className="text-sm font-bold tracking-tight text-sidebar-foreground leading-tight">
+              Odonto Connect
+            </span>
+            <span className="text-[10px] text-sidebar-foreground/40 font-medium flex items-center gap-1">
+              <Sparkles className="h-2.5 w-2.5" /> SaaS Clínico
+            </span>
+          </div>
         )}
         <button
           onClick={() => setCollapsed(!collapsed)}
-          className={`ml-auto p-1 rounded-md hover:bg-sidebar-accent transition-transform ${
+          className={`ml-auto p-1.5 rounded-lg hover:bg-sidebar-accent/80 transition-all duration-200 ${
             collapsed ? "rotate-180" : ""
           }`}
         >
-          <ChevronLeft className="h-4 w-4 text-sidebar-foreground/60" />
+          <ChevronLeft className="h-4 w-4 text-sidebar-foreground/50" />
         </button>
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 py-3 px-2 space-y-4 overflow-y-auto">
+      <nav className="flex-1 py-4 px-2.5 space-y-5 overflow-y-auto relative z-10">
         {navSections.map((section) => (
           <div key={section.label}>
             {!collapsed && (
-              <p className="px-3 mb-1.5 text-[10px] uppercase tracking-widest font-semibold text-sidebar-foreground/40">
+              <p className="px-3 mb-2 text-[9px] uppercase tracking-[0.15em] font-semibold text-sidebar-foreground/30">
                 {section.label}
               </p>
             )}
@@ -121,21 +133,23 @@ export function AppSidebar() {
                   <Link
                     key={item.title}
                     to={item.url}
-                    className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                    className={`group flex items-center gap-3 px-3 py-2 rounded-xl text-[13px] font-medium transition-all duration-200 relative ${
                       isActive
-                        ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
-                        : "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                        ? "gradient-primary text-white shadow-glow"
+                        : "text-sidebar-foreground/60 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground"
                     }`}
                   >
-                    <item.icon className="h-4.5 w-4.5 shrink-0" />
+                    <item.icon className={`h-[18px] w-[18px] shrink-0 transition-transform duration-200 ${
+                      isActive ? "" : "group-hover:scale-110"
+                    }`} />
                     {!collapsed && (
                       <>
                         <span className="flex-1">{item.title}</span>
                         {item.badge && (
-                          <span className={`h-5 min-w-[20px] px-1.5 rounded-full text-[10px] font-bold flex items-center justify-center ${
+                          <span className={`h-5 min-w-[22px] px-1.5 rounded-full text-[10px] font-bold flex items-center justify-center transition-colors ${
                             isActive
-                              ? "bg-sidebar-primary-foreground/20 text-sidebar-primary-foreground"
-                              : "bg-sidebar-accent text-sidebar-foreground/60"
+                              ? "bg-white/20 text-white"
+                              : "bg-primary/15 text-primary"
                           }`}>
                             {item.badge}
                           </span>
@@ -150,10 +164,21 @@ export function AppSidebar() {
         ))}
       </nav>
 
-      {/* Footer */}
-      <div className="p-2 border-t border-sidebar-border shrink-0">
-        <button className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors w-full">
-          <LogOut className="h-5 w-5 shrink-0" />
+      {/* User & Logout */}
+      <div className="p-3 border-t border-sidebar-border shrink-0 relative z-10 space-y-2">
+        {!collapsed && (
+          <div className="flex items-center gap-3 px-2 py-2">
+            <div className="h-8 w-8 rounded-lg gradient-primary flex items-center justify-center text-[11px] font-bold text-white shadow-glow">
+              DC
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-semibold text-sidebar-foreground leading-tight truncate">Dr. Carlos</p>
+              <p className="text-[10px] text-sidebar-foreground/40">Admin</p>
+            </div>
+          </div>
+        )}
+        <button className="flex items-center gap-3 px-3 py-2 rounded-xl text-[13px] text-sidebar-foreground/40 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground/70 transition-all w-full">
+          <LogOut className="h-[18px] w-[18px] shrink-0" />
           {!collapsed && <span>Sair</span>}
         </button>
       </div>
