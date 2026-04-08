@@ -1,5 +1,6 @@
 export interface Treatment {
   id: string;
+  pacienteId?: string;
   patientName: string;
   patientInitials: string;
   avatarColor: string;
@@ -68,7 +69,7 @@ export const mockOdontogram: ToothData[] = [
 
 export const mockTreatments: Treatment[] = [
   {
-    id: "t1", patientName: "Maria Silva", patientInitials: "MS", avatarColor: "bg-chart-2",
+    id: "t1", pacienteId: "pac1", patientName: "Maria Silva", patientInitials: "MS", avatarColor: "bg-chart-2",
     professional: "Dr. Ricardo Mendes", startDate: "15/01/2026", estimatedEnd: "15/07/2026",
     status: "em_andamento", totalValue: 8500, paidValue: 4250, budgetId: "b1",
     steps: [
@@ -101,7 +102,7 @@ export const mockTreatments: Treatment[] = [
     ],
   },
   {
-    id: "t4", patientName: "Roberto Mendes", patientInitials: "RM", avatarColor: "bg-chart-4",
+    id: "t4", pacienteId: "pac3", patientName: "Roberto Mendes", patientInitials: "RM", avatarColor: "bg-chart-4",
     professional: "Dr. Carlos Lima", startDate: "10/12/2025", estimatedEnd: "10/01/2026",
     status: "pausado", totalValue: 1200, paidValue: 600,
     steps: [
