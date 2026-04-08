@@ -253,6 +253,12 @@ function TabVisaoGeral({
         <KpiCard title="Folha Pendente" value={`R$ ${totalFolhaPendente.toLocaleString("pt-BR")}`} change="Salários" changeType="neutral" icon={Users} />
       </div>
 
+      {/* Gráficos */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <FluxoCaixaChart />
+        <ReceitaDespesaChart />
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Bancos resumo */}
         <div className="bg-card rounded-xl border border-border p-5">
