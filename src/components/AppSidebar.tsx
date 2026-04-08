@@ -43,6 +43,7 @@ const navSections: NavSection[] = [
     label: "Marketing",
     items: [
       { title: "Campanhas", url: "/campanhas", icon: Megaphone },
+      { title: "Integrações Ads", url: "/integracoes", icon: Plug },
       { title: "ROI & Analytics", url: "/analytics", icon: BarChart3 },
     ],
   },
