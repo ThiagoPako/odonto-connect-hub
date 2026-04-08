@@ -24,28 +24,28 @@ export function ReceitaDespesaChart() {
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={evolucaoData} margin={{ left: 0, right: 8, top: 4, bottom: 0 }}>
               <defs>
-                <linearGradient id="gradReceita" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="hsl(var(--success))" stopOpacity={0.25} />
-                  <stop offset="100%" stopColor="hsl(var(--success))" stopOpacity={0} />
+                <linearGradient id="gradReceitaFin" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="hsl(152, 60%, 42%)" stopOpacity={0.25} />
+                  <stop offset="100%" stopColor="hsl(152, 60%, 42%)" stopOpacity={0} />
                 </linearGradient>
-                <linearGradient id="gradDespesa" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="hsl(var(--destructive))" stopOpacity={0.15} />
-                  <stop offset="100%" stopColor="hsl(var(--destructive))" stopOpacity={0} />
+                <linearGradient id="gradDespesaFin" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="hsl(0, 72%, 51%)" stopOpacity={0.15} />
+                  <stop offset="100%" stopColor="hsl(0, 72%, 51%)" stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" strokeOpacity={0.5} />
-              <XAxis dataKey="mes" tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} width={40} />
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 13%, 91%)" strokeOpacity={0.5} />
+              <XAxis dataKey="mes" tick={{ fontSize: 11, fill: "hsl(200, 10%, 50%)" }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fontSize: 10, fill: "hsl(200, 10%, 50%)" }} axisLine={false} tickLine={false} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} width={40} />
               <Tooltip
-                contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: "12px", fontSize: "12px", color: "hsl(var(--foreground))" }}
+                contentStyle={{ background: "hsl(220, 20%, 97%)", border: "1px solid hsl(220, 13%, 91%)", borderRadius: "12px", fontSize: "12px" }}
                 formatter={(value: number, name: string) => {
                   const labels: Record<string, string> = { receita: "Receita", despesa: "Despesa", saldo: "Saldo" };
                   return [`R$ ${value.toLocaleString("pt-BR")}`, labels[name] || name];
                 }}
               />
-              <Area type="monotone" dataKey="receita" stroke="hsl(var(--success))" strokeWidth={2} fill="url(#gradReceita)" dot={{ r: 3, fill: "hsl(var(--success))", strokeWidth: 0 }} />
-              <Area type="monotone" dataKey="despesa" stroke="hsl(var(--destructive))" strokeWidth={2} fill="url(#gradDespesa)" dot={{ r: 3, fill: "hsl(var(--destructive))", strokeWidth: 0 }} />
-              <Area type="monotone" dataKey="saldo" stroke="hsl(var(--primary))" strokeWidth={2} strokeDasharray="6 4" fill="none" dot={false} />
+              <Area type="monotone" dataKey="receita" stroke="hsl(152, 60%, 42%)" strokeWidth={2} fill="url(#gradReceitaFin)" dot={{ r: 3, fill: "hsl(152, 60%, 42%)", strokeWidth: 0 }} />
+              <Area type="monotone" dataKey="despesa" stroke="hsl(0, 72%, 51%)" strokeWidth={2} fill="url(#gradDespesaFin)" dot={{ r: 3, fill: "hsl(0, 72%, 51%)", strokeWidth: 0 }} />
+              <Area type="monotone" dataKey="saldo" stroke="hsl(187, 85%, 43%)" strokeWidth={2} strokeDasharray="6 4" fill="none" dot={false} />
             </AreaChart>
           </ResponsiveContainer>
         )}
