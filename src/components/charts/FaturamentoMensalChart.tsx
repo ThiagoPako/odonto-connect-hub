@@ -87,6 +87,7 @@ export function FaturamentoMensalChart() {
             />
           </AreaChart>
         </ResponsiveContainer>
+        </ClientOnly>
       </div>
       <div className="flex items-center gap-4 mt-3 text-[11px] text-muted-foreground">
         <div className="flex items-center gap-1.5">
