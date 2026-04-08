@@ -58,27 +58,27 @@
 
 :root {
   --radius: 0.75rem;
-  /* Orange vibrant primary */
+  /* Cyan primary */
   --background: hsl(0, 0%, 97%);
   --foreground: hsl(220, 20%, 14%);
   --card: hsl(0, 0%, 100%);
   --card-foreground: hsl(220, 20%, 14%);
   --popover: hsl(0, 0%, 100%);
   --popover-foreground: hsl(220, 20%, 14%);
-  --primary: hsl(16, 82%, 51%);
+  --primary: hsl(187, 85%, 43%);
   --primary-foreground: hsl(0, 0%, 100%);
-  --primary-glow: hsl(24, 85%, 58%);
-  --secondary: hsl(220, 14%, 96%);
-  --secondary-foreground: hsl(220, 20%, 20%);
-  --muted: hsl(220, 14%, 96%);
-  --muted-foreground: hsl(220, 10%, 50%);
-  --accent: hsl(16, 82%, 96%);
-  --accent-foreground: hsl(16, 82%, 40%);
+  --primary-glow: hsl(192, 80%, 50%);
+  --secondary: hsl(200, 14%, 96%);
+  --secondary-foreground: hsl(200, 20%, 20%);
+  --muted: hsl(200, 14%, 96%);
+  --muted-foreground: hsl(200, 10%, 50%);
+  --accent: hsl(187, 85%, 95%);
+  --accent-foreground: hsl(187, 85%, 30%);
   --destructive: hsl(0, 72%, 51%);
   --destructive-foreground: hsl(0, 0%, 100%);
   --border: hsl(220, 13%, 91%);
   --input: hsl(220, 13%, 91%);
-  --ring: hsl(16, 82%, 51%);
+  --ring: hsl(187, 85%, 43%);
   --success: hsl(152, 60%, 42%);
   --success-foreground: hsl(0, 0%, 100%);
   --warning: hsl(38, 92%, 50%);
@@ -86,20 +86,20 @@
   --info: hsl(217, 91%, 60%);
   --info-foreground: hsl(0, 0%, 100%);
   --dental-cyan: hsl(190, 70%, 55%);
-  --chart-1: hsl(16, 82%, 51%);
+  --chart-1: hsl(187, 85%, 43%);
   --chart-2: hsl(217, 91%, 60%);
   --chart-3: hsl(152, 60%, 42%);
   --chart-4: hsl(38, 92%, 50%);
   --chart-5: hsl(0, 72%, 51%);
-  /* Sidebar — white bg, orange accent */
+  /* Sidebar — white bg, cyan accent */
   --sidebar: hsl(0, 0%, 100%);
-  --sidebar-foreground: hsl(220, 20%, 25%);
-  --sidebar-primary: hsl(16, 82%, 51%);
+  --sidebar-foreground: hsl(200, 20%, 25%);
+  --sidebar-primary: hsl(187, 85%, 43%);
   --sidebar-primary-foreground: hsl(0, 0%, 100%);
-  --sidebar-accent: hsl(16, 82%, 96%);
-  --sidebar-accent-foreground: hsl(16, 82%, 40%);
+  --sidebar-accent: hsl(187, 85%, 95%);
+  --sidebar-accent-foreground: hsl(187, 85%, 30%);
   --sidebar-border: hsl(220, 13%, 93%);
-  --sidebar-ring: hsl(16, 82%, 51%);
+  --sidebar-ring: hsl(187, 85%, 43%);
 }
 
 .dark {
@@ -109,20 +109,20 @@
   --card-foreground: hsl(220, 10%, 95%);
   --popover: hsl(220, 20%, 13%);
   --popover-foreground: hsl(220, 10%, 95%);
-  --primary: hsl(16, 82%, 55%);
+  --primary: hsl(187, 85%, 48%);
   --primary-foreground: hsl(0, 0%, 100%);
-  --primary-glow: hsl(24, 85%, 62%);
+  --primary-glow: hsl(192, 80%, 55%);
   --secondary: hsl(220, 18%, 16%);
   --secondary-foreground: hsl(220, 10%, 95%);
   --muted: hsl(220, 16%, 16%);
   --muted-foreground: hsl(220, 10%, 55%);
-  --accent: hsl(16, 60%, 15%);
-  --accent-foreground: hsl(16, 82%, 70%);
+  --accent: hsl(187, 60%, 12%);
+  --accent-foreground: hsl(187, 85%, 70%);
   --destructive: hsl(0, 72%, 55%);
   --destructive-foreground: hsl(0, 0%, 100%);
   --border: hsl(220, 16%, 20%);
   --input: hsl(220, 16%, 20%);
-  --ring: hsl(16, 82%, 55%);
+  --ring: hsl(187, 85%, 48%);
   --success: hsl(152, 60%, 48%);
   --success-foreground: hsl(0, 0%, 100%);
   --warning: hsl(38, 92%, 55%);
@@ -130,19 +130,19 @@
   --info: hsl(217, 91%, 65%);
   --info-foreground: hsl(0, 0%, 100%);
   --dental-cyan: hsl(190, 70%, 50%);
-  --chart-1: hsl(16, 82%, 55%);
+  --chart-1: hsl(187, 85%, 48%);
   --chart-2: hsl(217, 91%, 65%);
   --chart-3: hsl(152, 60%, 48%);
   --chart-4: hsl(38, 92%, 55%);
   --chart-5: hsl(0, 72%, 55%);
   --sidebar: hsl(220, 20%, 8%);
   --sidebar-foreground: hsl(220, 10%, 90%);
-  --sidebar-primary: hsl(16, 82%, 55%);
+  --sidebar-primary: hsl(187, 85%, 48%);
   --sidebar-primary-foreground: hsl(0, 0%, 100%);
-  --sidebar-accent: hsl(16, 60%, 12%);
-  --sidebar-accent-foreground: hsl(16, 82%, 70%);
+  --sidebar-accent: hsl(187, 60%, 12%);
+  --sidebar-accent-foreground: hsl(187, 85%, 70%);
   --sidebar-border: hsl(220, 16%, 18%);
-  --sidebar-ring: hsl(16, 82%, 55%);
+  --sidebar-ring: hsl(187, 85%, 48%);
 }
 
 @layer base {
