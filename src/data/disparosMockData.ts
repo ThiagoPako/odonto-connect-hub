@@ -6,12 +6,25 @@ export interface DisparoTemplate {
   midia?: { tipo: "imagem" | "video"; url?: string };
 }
 
+export interface NumeroWhatsApp {
+  id: string;
+  numero: string;
+  nome: string;
+  status: "conectado" | "desconectado";
+}
+
+export const numerosDisponiveis: NumeroWhatsApp[] = [
+  { id: "n1", numero: "+55 11 99999-0001", nome: "Principal — Clínica", status: "conectado" },
+  { id: "n2", numero: "+55 11 99999-0002", nome: "Atendimento", status: "conectado" },
+  { id: "n3", numero: "+55 11 99999-0003", nome: "Marketing", status: "desconectado" },
+];
+
 export interface DisparoProgramado {
   id: string;
   nome: string;
   template: DisparoTemplate;
   tipo: "recorrente" | "unico";
-  diasSemana?: string[]; // DOM, SEG, TER, QUA, QUI, SEX, SAB
+  diasSemana?: string[];
   horarioInicio?: string;
   horarioFim?: string;
   dataInicio?: string;
@@ -20,9 +33,10 @@ export interface DisparoProgramado {
   usarHorarioClinica?: boolean;
   publico: "todos" | "ativos" | "inativos" | "aniversariantes" | "custom";
   filtroCustom?: string;
+  numeroEnvio: string; // id do número WhatsApp
   contatosAlcancaveis: number;
   capacidadeDiaria: number;
-  intervaloSpam: number; // dias entre campanhas para mesmo contato
+  intervaloSpam: number;
   ativo: boolean;
   stats: { enviadas: number; entregues: number; lidas: number; respondidas: number; erros: number };
   criadoEm: string;
