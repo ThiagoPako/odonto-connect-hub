@@ -1,11 +1,12 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useState, type FormEvent } from "react";
 import { useAuth } from "@/hooks/useAuth";
+import { forgotPassword } from "@/lib/vpsApi";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Loader2 } from "lucide-react";
+import { Loader2, ArrowLeft, CheckCircle } from "lucide-react";
 
 export const Route = createFileRoute("/login")({
   component: LoginPage,
@@ -18,6 +19,11 @@ function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showForgot, setShowForgot] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState("");
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [forgotSent, setForgotSent] = useState(false);
+  const [forgotError, setForgotError] = useState("");
 
   if (isAuthenticated) {
     navigate({ to: "/" });
@@ -37,6 +43,93 @@ function LoginPage() {
       setLoading(false);
     }
   };
+
+  const handleForgot = async (e: FormEvent) => {
+    e.preventDefault();
+    setForgotError("");
+    setForgotLoading(true);
+    try {
+      const res = await forgotPassword(forgotEmail);
+      if (res.error) {
+        setForgotError(res.error);
+      } else {
+        setForgotSent(true);
+      }
+    } catch {
+      setForgotError("Erro ao enviar email");
+    } finally {
+      setForgotLoading(false);
+    }
+  };
+
+  if (showForgot) {
+    return (
+      <div className="flex min-h-screen w-full items-center justify-center bg-background p-4">
+        <Card className="w-full max-w-sm shadow-card">
+          <CardHeader className="text-center">
+            <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-xl gradient-primary">
+              <span className="text-xl font-bold text-primary-foreground">OC</span>
+            </div>
+            <CardTitle className="text-xl font-heading">Recuperar Senha</CardTitle>
+            <CardDescription>
+              {forgotSent
+                ? "Verifique seu email"
+                : "Informe seu email para receber o link de recuperação"}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {forgotSent ? (
+              <div className="text-center space-y-4">
+                <CheckCircle className="h-12 w-12 text-success mx-auto" />
+                <p className="text-sm text-muted-foreground">
+                  Se o email estiver cadastrado, você receberá um link para redefinir sua senha.
+                </p>
+                <Button
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => { setShowForgot(false); setForgotSent(false); }}
+                >
+                  <ArrowLeft className="mr-2 h-4 w-4" /> Voltar ao Login
+                </Button>
+              </div>
+            ) : (
+              <form onSubmit={handleForgot} className="space-y-4">
+                {forgotError && (
+                  <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
+                    {forgotError}
+                  </div>
+                )}
+                <div className="space-y-2">
+                  <Label htmlFor="forgot-email">Email</Label>
+                  <Input
+                    id="forgot-email"
+                    type="email"
+                    placeholder="seu@email.com"
+                    value={forgotEmail}
+                    onChange={(e) => setForgotEmail(e.target.value)}
+                    required
+                    autoComplete="email"
+                  />
+                </div>
+                <Button type="submit" className="w-full" disabled={forgotLoading}>
+                  {forgotLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Enviar Link de Recuperação
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="w-full"
+                  onClick={() => setShowForgot(false)}
+                >
+                  <ArrowLeft className="mr-2 h-4 w-4" /> Voltar ao Login
+                </Button>
+              </form>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-screen w-full items-center justify-center bg-background p-4">
@@ -83,6 +176,13 @@ function LoginPage() {
               {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Entrar
             </Button>
+            <button
+              type="button"
+              onClick={() => setShowForgot(true)}
+              className="w-full text-center text-sm text-muted-foreground hover:text-primary transition-colors"
+            >
+              Esqueci minha senha
+            </button>
           </form>
         </CardContent>
       </Card>
