@@ -151,6 +151,7 @@ function DisparosPage() {
                 onRemove={() => removeDisparo(disparo.id)}
                 onEdit={() => handleEdit(disparo)}
                 onDuplicate={() => handleDuplicate(disparo)}
+                onStats={() => setStatsDisparo(disparo)}
               />
             ))}
           </div>
