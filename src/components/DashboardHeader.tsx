@@ -1,16 +1,11 @@
 import { Bell, Search, CalendarDays } from "lucide-react";
-import { useState, useEffect } from "react";
 
 export function DashboardHeader({ title }: { title: string }) {
-  const [today, setToday] = useState("");
-
-  useEffect(() => {
-    setToday(new Date().toLocaleDateString("pt-BR", {
-      weekday: "long",
-      day: "numeric",
-      month: "long",
-    }));
-  }, []);
+  const today = new Date().toLocaleDateString("pt-BR", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+  });
 
   return (
     <header className="h-[72px] flex items-center justify-between px-8 border-b border-border bg-card/80 backdrop-blur-md sticky top-0 z-20">
