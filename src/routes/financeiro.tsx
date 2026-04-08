@@ -151,7 +151,7 @@ function FinanceiroPage() {
       <DashboardHeader title="Financeiro" />
       <main className="flex-1 overflow-auto">
         {/* Tabs */}
-        <div className="border-b border-border bg-card/50 sticky top-[72px] z-10 backdrop-blur-md">
+        <div className="border-b border-border bg-card/80 sticky top-0 z-30 backdrop-blur-md">
           <div className="flex gap-1 px-6 overflow-x-auto">
             {tabs.map((tab) => {
               const Icon = tab.icon;
