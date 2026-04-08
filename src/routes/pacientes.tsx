@@ -33,6 +33,8 @@ import {
   Cigarette,
   CheckCircle2,
   XCircle,
+  Edit,
+  Save,
 } from "lucide-react";
 
 export const Route = createFileRoute("/pacientes")({
