@@ -104,7 +104,15 @@ function DashboardPage() {
           </div>
         </section>
 
-        {/* === ESTOQUE === */}
+        {/* === GRÁFICOS ANALÍTICOS === */}
+        <section className="animate-fade-in">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+            <OrcamentoConversaoChart />
+            <OrigemLeadsChart />
+            <AgendaStatusChart />
+          </div>
+        </section>
+
         <section className="animate-fade-in">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
