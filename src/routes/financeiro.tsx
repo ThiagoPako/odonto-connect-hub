@@ -256,15 +256,9 @@ function TabVisaoGeral({
 
       {/* Gráficos */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <Suspense fallback={<div className="bg-card rounded-xl border border-border p-5 h-[320px] animate-pulse bg-muted/30" />}>
-          <FluxoCaixaChart />
-        </Suspense>
-        <Suspense fallback={<div className="bg-card rounded-xl border border-border p-5 h-[320px] animate-pulse bg-muted/30" />}>
-          <ReceitaDespesaChart />
-        </Suspense>
-        <Suspense fallback={<div className="bg-card rounded-xl border border-border p-5 h-[320px] animate-pulse bg-muted/30" />}>
-          <DespesasCategoriaChart movements={movements} />
-        </Suspense>
+        <FluxoCaixaChart />
+        <ReceitaDespesaChart />
+        <DespesasCategoriaChart movements={movements} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
