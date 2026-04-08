@@ -12,6 +12,7 @@ import {
   BarChart3,
   UserCog,
   RefreshCcw,
+  Plug,
 } from "lucide-react";
 import { Link, useLocation } from "@tanstack/react-router";
 import { useState } from "react";
