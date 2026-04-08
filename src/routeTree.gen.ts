@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as ReativacaoRouteImport } from './routes/reativacao'
+import { Route as IntegracoesRouteImport } from './routes/integracoes'
 import { Route as FunilRouteImport } from './routes/funil'
 import { Route as FinanceiroRouteImport } from './routes/financeiro'
 import { Route as EquipeRouteImport } from './routes/equipe'
@@ -24,6 +25,11 @@ import { Route as IndexRouteImport } from './routes/index'
 const ReativacaoRoute = ReativacaoRouteImport.update({
   id: '/reativacao',
   path: '/reativacao',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const IntegracoesRoute = IntegracoesRouteImport.update({
+  id: '/integracoes',
+  path: '/integracoes',
   getParentRoute: () => rootRouteImport,
 } as any)
 const FunilRoute = FunilRouteImport.update({
@@ -88,6 +94,7 @@ export interface FileRoutesByFullPath {
   '/equipe': typeof EquipeRoute
   '/financeiro': typeof FinanceiroRoute
   '/funil': typeof FunilRoute
+  '/integracoes': typeof IntegracoesRoute
   '/reativacao': typeof ReativacaoRoute
 }
 export interface FileRoutesByTo {
@@ -101,6 +108,7 @@ export interface FileRoutesByTo {
   '/equipe': typeof EquipeRoute
   '/financeiro': typeof FinanceiroRoute
   '/funil': typeof FunilRoute
+  '/integracoes': typeof IntegracoesRoute
   '/reativacao': typeof ReativacaoRoute
 }
 export interface FileRoutesById {
@@ -115,6 +123,7 @@ export interface FileRoutesById {
   '/equipe': typeof EquipeRoute
   '/financeiro': typeof FinanceiroRoute
   '/funil': typeof FunilRoute
+  '/integracoes': typeof IntegracoesRoute
   '/reativacao': typeof ReativacaoRoute
 }
 export interface FileRouteTypes {
@@ -130,6 +139,7 @@ export interface FileRouteTypes {
     | '/equipe'
     | '/financeiro'
     | '/funil'
+    | '/integracoes'
     | '/reativacao'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -143,6 +153,7 @@ export interface FileRouteTypes {
     | '/equipe'
     | '/financeiro'
     | '/funil'
+    | '/integracoes'
     | '/reativacao'
   id:
     | '__root__'
@@ -156,6 +167,7 @@ export interface FileRouteTypes {
     | '/equipe'
     | '/financeiro'
     | '/funil'
+    | '/integracoes'
     | '/reativacao'
   fileRoutesById: FileRoutesById
 }
@@ -170,6 +182,7 @@ export interface RootRouteChildren {
   EquipeRoute: typeof EquipeRoute
   FinanceiroRoute: typeof FinanceiroRoute
   FunilRoute: typeof FunilRoute
+  IntegracoesRoute: typeof IntegracoesRoute
   ReativacaoRoute: typeof ReativacaoRoute
 }
 
@@ -180,6 +193,13 @@ declare module '@tanstack/react-router' {
       path: '/reativacao'
       fullPath: '/reativacao'
       preLoaderRoute: typeof ReativacaoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/integracoes': {
+      id: '/integracoes'
+      path: '/integracoes'
+      fullPath: '/integracoes'
+      preLoaderRoute: typeof IntegracoesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/funil': {
@@ -266,6 +286,7 @@ const rootRouteChildren: RootRouteChildren = {
   EquipeRoute: EquipeRoute,
   FinanceiroRoute: FinanceiroRoute,
   FunilRoute: FunilRoute,
+  IntegracoesRoute: IntegracoesRoute,
   ReativacaoRoute: ReativacaoRoute,
 }
 export const routeTree = rootRouteImport

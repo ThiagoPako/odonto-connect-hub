@@ -12,6 +12,7 @@ import {
   BarChart3,
   UserCog,
   RefreshCcw,
+  Plug,
 } from "lucide-react";
 import { Link, useLocation } from "@tanstack/react-router";
 import { useState } from "react";
@@ -42,6 +43,7 @@ const navSections: NavSection[] = [
     label: "Marketing",
     items: [
       { title: "Campanhas", url: "/campanhas", icon: Megaphone },
+      { title: "Integrações Ads", url: "/integracoes", icon: Plug },
       { title: "ROI & Analytics", url: "/analytics", icon: BarChart3 },
     ],
   },
