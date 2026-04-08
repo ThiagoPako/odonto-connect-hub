@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   X, ChevronRight, ChevronLeft, Users, FileText, CalendarDays, Eye,
   Check, Upload, Clock, AlertTriangle, Send,
@@ -13,6 +13,7 @@ interface NovoDisparoWizardProps {
   open: boolean;
   onClose: () => void;
   onSave: (disparo: Omit<DisparoProgramado, "id" | "stats" | "criadoEm">) => void;
+  editData?: DisparoProgramado | null;
 }
 
 const steps = [
@@ -22,7 +23,7 @@ const steps = [
   { id: 4, label: "Revisão", icon: Eye },
 ];
 
-export function NovoDisparoWizard({ open, onClose, onSave }: NovoDisparoWizardProps) {
+export function NovoDisparoWizard({ open, onClose, onSave, editData }: NovoDisparoWizardProps) {
   const [step, setStep] = useState(1);
   const [publico, setPublico] = useState<"todos" | "ativos" | "inativos" | "aniversariantes" | "custom">("todos");
   const [mensagem, setMensagem] = useState("");
@@ -37,6 +38,43 @@ export function NovoDisparoWizard({ open, onClose, onSave }: NovoDisparoWizardPr
   const [campanhaPerpetua, setCampanhaPerpetua] = useState(false);
   const [usarHorarioClinica, setUsarHorarioClinica] = useState(false);
   const [intervaloSpam, setIntervaloSpam] = useState(7);
+
+  const isEditing = !!editData;
+
+  // Pre-fill form when editing
+  useEffect(() => {
+    if (open && editData) {
+      setStep(1);
+      setPublico(editData.publico);
+      setMensagem(editData.template.mensagem);
+      setTemplateSelecionado(editData.template.id);
+      setNomeDisparo(editData.nome);
+      setTipo(editData.tipo);
+      setDiasSemana(editData.diasSemana || ["SEG", "QUA", "SEX"]);
+      setHorarioInicio(editData.horarioInicio || "08:00");
+      setHorarioFim(editData.horarioFim || "18:00");
+      setDataInicio(editData.dataInicio || "");
+      setDataFim(editData.dataFim || "");
+      setCampanhaPerpetua(editData.campanhaPerpetua || false);
+      setUsarHorarioClinica(editData.usarHorarioClinica || false);
+      setIntervaloSpam(editData.intervaloSpam);
+    } else if (open && !editData) {
+      setStep(1);
+      setPublico("todos");
+      setMensagem("");
+      setTemplateSelecionado(null);
+      setNomeDisparo("");
+      setTipo("recorrente");
+      setDiasSemana(["SEG", "QUA", "SEX"]);
+      setHorarioInicio("08:00");
+      setHorarioFim("18:00");
+      setDataInicio("");
+      setDataFim("");
+      setCampanhaPerpetua(false);
+      setUsarHorarioClinica(false);
+      setIntervaloSpam(7);
+    }
+  }, [open, editData]);
 
   const contatosAlcancaveis = publico === "todos" ? 255 : publico === "ativos" ? 156 : publico === "inativos" ? 89 : publico === "aniversariantes" ? 12 : 0;
   const capacidadeDiaria = Math.min(232, contatosAlcancaveis);
@@ -81,7 +119,7 @@ export function NovoDisparoWizard({ open, onClose, onSave }: NovoDisparoWizardPr
       contatosAlcancaveis,
       capacidadeDiaria,
       intervaloSpam,
-      ativo: false,
+      ativo: isEditing ? (editData?.ativo ?? false) : false,
     });
     onClose();
   };
@@ -91,7 +129,9 @@ export function NovoDisparoWizard({ open, onClose, onSave }: NovoDisparoWizardPr
       <div className="bg-card rounded-2xl border border-border shadow-xl w-full max-w-[900px] max-h-[90vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-border">
-          <h2 className="text-base font-semibold text-foreground">Novo disparo programado</h2>
+          <h2 className="text-base font-semibold text-foreground">
+            {isEditing ? "Editar disparo" : "Novo disparo programado"}
+          </h2>
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted transition-colors">
             <X className="h-4 w-4 text-muted-foreground" />
           </button>
@@ -122,14 +162,12 @@ export function NovoDisparoWizard({ open, onClose, onSave }: NovoDisparoWizardPr
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-6">
           <div className="flex gap-6">
-            {/* Left: form */}
             <div className="flex-1 min-w-0">
               {step === 1 && <StepPublico publico={publico} setPublico={setPublico} contatosAlcancaveis={contatosAlcancaveis} intervaloSpam={intervaloSpam} setIntervaloSpam={setIntervaloSpam} />}
               {step === 2 && <StepConteudo mensagem={mensagem} setMensagem={setMensagem} templateSelecionado={templateSelecionado} selectTemplate={selectTemplate} insertVariable={insertVariable} nomeDisparo={nomeDisparo} setNomeDisparo={setNomeDisparo} />}
               {step === 3 && <StepAgendamento tipo={tipo} setTipo={setTipo} diasSemana={diasSemana} toggleDia={toggleDia} horarioInicio={horarioInicio} setHorarioInicio={setHorarioInicio} horarioFim={horarioFim} setHorarioFim={setHorarioFim} dataInicio={dataInicio} setDataInicio={setDataInicio} dataFim={dataFim} setDataFim={setDataFim} campanhaPerpetua={campanhaPerpetua} setCampanhaPerpetua={setCampanhaPerpetua} usarHorarioClinica={usarHorarioClinica} setUsarHorarioClinica={setUsarHorarioClinica} capacidadeDiaria={capacidadeDiaria} />}
               {step === 4 && <StepRevisao nomeDisparo={nomeDisparo} publico={publico} tipo={tipo} diasSemana={diasSemana} horarioInicio={horarioInicio} horarioFim={horarioFim} dataInicio={dataInicio} dataFim={dataFim} campanhaPerpetua={campanhaPerpetua} contatosAlcancaveis={contatosAlcancaveis} intervaloSpam={intervaloSpam} mensagem={mensagem} />}
             </div>
-            {/* Right: preview */}
             <div className="w-[280px] shrink-0 hidden lg:block">
               <WhatsAppPreview mensagem={mensagem} />
             </div>
@@ -159,7 +197,7 @@ export function NovoDisparoWizard({ open, onClose, onSave }: NovoDisparoWizardPr
               className="flex items-center gap-1.5 px-5 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
             >
               <Send className="h-4 w-4" />
-              Criar Disparo
+              {isEditing ? "Salvar Alterações" : "Criar Disparo"}
             </button>
           )}
         </div>
@@ -260,7 +298,6 @@ function StepConteudo({
         <p className="text-xs text-muted-foreground">Personalize a mensagem com dados de cada cliente</p>
       </div>
 
-      {/* Nome do disparo */}
       <div>
         <label className="text-xs font-medium text-foreground mb-1 block">Nome do disparo</label>
         <input
@@ -272,7 +309,6 @@ function StepConteudo({
         />
       </div>
 
-      {/* Templates */}
       <div>
         <label className="text-xs font-medium text-foreground mb-2 block">Templates prontos</label>
         <div className="flex flex-wrap gap-2">
@@ -292,7 +328,6 @@ function StepConteudo({
         </div>
       </div>
 
-      {/* Variables */}
       <div>
         <label className="text-xs font-medium text-foreground mb-1.5 block">
           Variáveis disponíveis <span className="text-muted-foreground font-normal">(clique para inserir)</span>
@@ -310,7 +345,6 @@ function StepConteudo({
         </div>
       </div>
 
-      {/* Message editor */}
       <div>
         <label className="text-xs font-medium text-foreground mb-1 block">Escreva a mensagem do disparo</label>
         <textarea
@@ -322,7 +356,6 @@ function StepConteudo({
         />
       </div>
 
-      {/* Media upload placeholder */}
       <div>
         <label className="text-xs font-medium text-foreground mb-1 block">Selecione uma mídia para o disparo</label>
         <div className="border-2 border-dashed border-border rounded-xl p-6 flex flex-col items-center justify-center text-center hover:border-primary/40 transition-colors cursor-pointer">
@@ -370,7 +403,6 @@ function StepAgendamento({
         <h3 className="text-sm font-semibold text-foreground mb-1">Tipo de campanha</h3>
       </div>
 
-      {/* Campaign type */}
       <div className="grid grid-cols-2 gap-3">
         <button
           onClick={() => setTipo("recorrente")}
@@ -410,7 +442,6 @@ function StepAgendamento({
 
       {tipo === "recorrente" ? (
         <>
-          {/* Days of week */}
           <div>
             <label className="text-xs font-medium text-foreground mb-2 block">Dias de envio</label>
             <div className="flex gap-1.5">
@@ -430,7 +461,6 @@ function StepAgendamento({
             </div>
           </div>
 
-          {/* Use clinic hours toggle */}
           <label className="flex items-center gap-3 cursor-pointer">
             <div
               onClick={() => setUsarHorarioClinica(!usarHorarioClinica)}
@@ -445,7 +475,6 @@ function StepAgendamento({
             <span className="text-xs text-foreground">Usar horários de funcionamento da clínica</span>
           </label>
 
-          {/* Capacity */}
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             Capacidade média por dia: <span className="px-2 py-0.5 rounded-md bg-primary/10 text-primary font-bold">~{capacidadeDiaria} mensagens</span>
           </div>
@@ -473,7 +502,6 @@ function StepAgendamento({
             </div>
           )}
 
-          {/* Perpetual toggle */}
           <div className="space-y-3">
             <p className="text-xs font-medium text-foreground">Até quando a campanha será enviada?</p>
             <label className="flex items-center gap-3 cursor-pointer">
@@ -505,7 +533,6 @@ function StepAgendamento({
           </div>
         </>
       ) : (
-        /* Único dia */
         <div className="space-y-4">
           <div>
             <label className="text-xs font-medium text-foreground mb-2 block">Data e período de envio</label>
