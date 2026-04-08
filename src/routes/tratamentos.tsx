@@ -80,7 +80,14 @@ function TratamentosPage() {
                         {t.patientInitials}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-xs font-medium text-foreground truncate">{t.patientName}</p>
+                        <div className="flex items-center gap-1">
+                          <p className="text-xs font-medium text-foreground truncate">{t.patientName}</p>
+                          {t.pacienteId && getAlergias(t.pacienteId).length > 0 && (
+                            <div className="h-3.5 w-3.5 rounded-full bg-destructive/15 flex items-center justify-center shrink-0" title={`Alergias: ${getAlergias(t.pacienteId).join(", ")}`}>
+                              <AlertTriangle className="h-2 w-2 text-destructive" />
+                            </div>
+                          )}
+                        </div>
                         <p className="text-[10px] text-muted-foreground truncate">{t.professional}</p>
                       </div>
                     </div>
