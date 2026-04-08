@@ -264,7 +264,7 @@ function TabVisaoGeral({
           <ReceitaDespesaChart />
         </Suspense>
         <Suspense fallback={<div className="bg-card rounded-xl border border-border p-5 h-[320px] animate-pulse bg-muted/30" />}>
-          <DespesasCategoriaChart />
+          <DespesasCategoriaChart movements={movements} />
         </Suspense>
       </div>
 
