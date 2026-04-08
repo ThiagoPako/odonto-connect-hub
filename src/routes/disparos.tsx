@@ -19,6 +19,7 @@ function DisparosPage() {
   const [disparos, setDisparos] = useState(mockDisparos);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [editingDisparo, setEditingDisparo] = useState<DisparoProgramado | null>(null);
+  const [statsDisparo, setStatsDisparo] = useState<DisparoProgramado | null>(null);
   const [filterStatus, setFilterStatus] = useState<"all" | "ativos" | "inativos">("all");
 
   const filtered = filterStatus === "all" ? disparos : disparos.filter((d) => (filterStatus === "ativos" ? d.ativo : !d.ativo));
