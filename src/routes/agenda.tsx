@@ -2,10 +2,11 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import {
   Clock, CheckCircle2, XCircle, UserCheck, Plus, ChevronLeft, ChevronRight,
-  Phone, MessageSquare, AlertTriangle, RefreshCw, Search, ExternalLink,
+  Phone, MessageSquare, AlertTriangle, RefreshCw, Search, ExternalLink, History,
 } from "lucide-react";
 import { useState } from "react";
 import { mockAppointments, mockProfessionals, type Appointment } from "@/data/agendaMockData";
+import { mockHistoricos } from "@/data/pacientesMockData";
 
 export const Route = createFileRoute("/agenda")({
   component: AgendaPage,
@@ -123,17 +124,30 @@ function AgendaPage() {
 
 function AppointmentCard({ appointment: a }: { appointment: Appointment }) {
   const cfg = statusConfig[a.status];
+  const [showHistory, setShowHistory] = useState(false);
+
+  const historico = a.pacienteId
+    ? mockHistoricos
+        .filter((h) => h.pacienteId === a.pacienteId)
+        .sort((x, y) => y.data.getTime() - x.data.getTime())
+        .slice(0, 4)
+    : [];
+
   return (
     <div className={`rounded-lg border border-border/50 p-2.5 space-y-2 ${a.status === "faltou" ? "opacity-50" : ""}`}>
       <div className="flex items-center justify-between">
         <span className="text-xs font-bold text-foreground">{a.time}</span>
         <span className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${cfg.color}`}>{cfg.label}</span>
       </div>
-      <div className="flex items-center gap-2">
+      <div className="relative flex items-center gap-2">
         <div className={`h-6 w-6 rounded-full ${a.avatarColor} flex items-center justify-center text-[9px] font-bold text-white shrink-0`}>
           {a.patientInitials}
         </div>
-        <div className="min-w-0 flex-1">
+        <div
+          className="min-w-0 flex-1"
+          onMouseEnter={() => historico.length > 0 && setShowHistory(true)}
+          onMouseLeave={() => setShowHistory(false)}
+        >
           <p className="text-[11px] font-medium text-foreground truncate">{a.patientName}</p>
           <p className="text-[10px] text-muted-foreground truncate">{a.procedure}</p>
         </div>
@@ -146,6 +160,36 @@ function AppointmentCard({ appointment: a }: { appointment: Appointment }) {
           >
             <ExternalLink className="h-3 w-3 text-primary" />
           </Link>
+        )}
+
+        {/* Tooltip de histórico */}
+        {showHistory && historico.length > 0 && (
+          <div className="absolute left-0 top-full mt-1 z-50 w-64 bg-card border border-border rounded-xl shadow-xl p-3 space-y-2 animate-fade-in">
+            <div className="flex items-center gap-1.5 mb-1">
+              <History className="h-3 w-3 text-primary" />
+              <span className="text-[10px] font-bold text-foreground uppercase tracking-wider">Últimas consultas</span>
+            </div>
+            {historico.map((h) => (
+              <div key={h.id} className="flex items-start gap-2">
+                <div className="w-1.5 h-1.5 rounded-full bg-primary mt-1 shrink-0" />
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-semibold text-foreground">{h.data.toLocaleDateString("pt-BR")}</span>
+                    <span className={`text-[8px] px-1.5 py-0.5 rounded-full font-bold uppercase ${
+                      h.tipo === "urgencia" ? "bg-destructive/10 text-destructive"
+                        : h.tipo === "procedimento" ? "bg-primary/10 text-primary"
+                        : h.tipo === "retorno" ? "bg-muted text-muted-foreground"
+                        : "bg-info/10 text-info"
+                    }`}>
+                      {h.tipo}
+                    </span>
+                  </div>
+                  <p className="text-[9px] text-muted-foreground truncate">{h.procedimento}</p>
+                  <p className="text-[9px] text-muted-foreground/70 truncate">{h.dentista}</p>
+                </div>
+              </div>
+            ))}
+          </div>
         )}
       </div>
       <div className="flex items-center justify-between text-[10px] text-muted-foreground">
