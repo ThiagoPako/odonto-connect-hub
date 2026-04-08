@@ -102,7 +102,7 @@ export function AppSidebar() {
             <span className="text-sm font-bold tracking-tight text-sidebar-foreground leading-tight">
               Odonto Connect
             </span>
-            <span className="text-[10px] text-muted-foreground font-medium flex items-center gap-1">
+            <span className="text-[10px] text-sidebar-foreground/50 font-medium flex items-center gap-1">
               <Sparkles className="h-2.5 w-2.5" /> SaaS Clínico
             </span>
           </div>
@@ -113,7 +113,7 @@ export function AppSidebar() {
             collapsed ? "rotate-180" : ""
           }`}
         >
-          <ChevronLeft className="h-4 w-4 text-muted-foreground" />
+          <ChevronLeft className="h-4 w-4 text-sidebar-foreground/50" />
         </button>
       </div>
 
@@ -122,7 +122,7 @@ export function AppSidebar() {
         {navSections.map((section) => (
           <div key={section.label}>
             {!collapsed && (
-              <p className="px-3 mb-2 text-[9px] uppercase tracking-[0.15em] font-semibold text-muted-foreground/60">
+              <p className="px-3 mb-2 text-[9px] uppercase tracking-[0.15em] font-semibold text-sidebar-foreground/40">
                 {section.label}
               </p>
             )}
@@ -173,11 +173,11 @@ export function AppSidebar() {
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-xs font-semibold text-sidebar-foreground leading-tight truncate">Dr. Carlos</p>
-              <p className="text-[10px] text-muted-foreground">Admin</p>
+              <p className="text-[10px] text-sidebar-foreground/50">Admin</p>
             </div>
           </div>
         )}
-        <button className="flex items-center gap-3 px-3 py-2 rounded-xl text-[13px] text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground transition-all w-full">
+        <button className="flex items-center gap-3 px-3 py-2 rounded-xl text-[13px] text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-foreground transition-all w-full">
           <LogOut className="h-[18px] w-[18px] shrink-0" />
           {!collapsed && <span>Sair</span>}
         </button>
