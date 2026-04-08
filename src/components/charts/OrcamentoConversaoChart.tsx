@@ -1,4 +1,5 @@
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from "recharts";
+import { ClientOnly } from "@/components/ClientOnly";
 import { getOrcamentoKpis } from "@/data/dashboardKpis";
 
 const COLORS = [
@@ -26,6 +27,7 @@ export function OrcamentoConversaoChart() {
       </div>
       <p className="text-[11px] text-muted-foreground mb-4">Distribuição por status</p>
       <div className="h-[220px]">
+        <ClientOnly fallback={<div className="h-full w-full animate-pulse bg-muted/30 rounded-lg" />}>
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
             <Pie
@@ -62,6 +64,7 @@ export function OrcamentoConversaoChart() {
             />
           </PieChart>
         </ResponsiveContainer>
+        </ClientOnly>
       </div>
       <div className="mt-3 grid grid-cols-3 gap-2 text-center">
         {data.map((d, i) => (

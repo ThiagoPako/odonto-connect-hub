@@ -1,4 +1,5 @@
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from "recharts";
+import { ClientOnly } from "@/components/ClientOnly";
 import { getAgendaKpis } from "@/data/dashboardKpis";
 
 const STATUS_CONFIG = [
@@ -27,6 +28,7 @@ export function AgendaStatusChart() {
       </div>
       <p className="text-[11px] text-muted-foreground mb-4">Distribuição dos atendimentos</p>
       <div className="h-[220px]">
+        <ClientOnly fallback={<div className="h-full w-full animate-pulse bg-muted/30 rounded-lg" />}>
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
             <Pie
@@ -62,6 +64,7 @@ export function AgendaStatusChart() {
             />
           </PieChart>
         </ResponsiveContainer>
+        </ClientOnly>
       </div>
     </div>
   );

@@ -1,4 +1,5 @@
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, Cell } from "recharts";
+import { ClientOnly } from "@/components/ClientOnly";
 import { mockPatients } from "@/data/crmMockData";
 
 const COLORS = [
@@ -29,6 +30,7 @@ export function OrigemLeadsChart() {
       </div>
       <p className="text-[11px] text-muted-foreground mb-4">Pacientes por canal de aquisição</p>
       <div className="h-[220px]">
+        <ClientOnly fallback={<div className="h-full w-full animate-pulse bg-muted/30 rounded-lg" />}>
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={data} layout="vertical" margin={{ left: 0, right: 16, top: 0, bottom: 0 }}>
             <XAxis type="number" hide />
@@ -58,6 +60,7 @@ export function OrigemLeadsChart() {
             </Bar>
           </BarChart>
         </ResponsiveContainer>
+        </ClientOnly>
       </div>
     </div>
   );
