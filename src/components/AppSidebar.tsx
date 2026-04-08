@@ -164,7 +164,7 @@ export function AppSidebar() {
         ))}
       </nav>
 
-      <SidebarFooter collapsed={collapsed} />
+      <SidebarUserFooter collapsed={collapsed} />
     </aside>
   );
 }
