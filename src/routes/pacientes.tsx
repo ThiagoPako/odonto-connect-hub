@@ -11,9 +11,8 @@ import {
   type Anamnese,
   type HistoricoPaciente,
   type DenteInfo,
-  statusDenteConfig,
 } from "@/data/pacientesMockData";
-import { OdontogramaChart, OdontogramaEditor } from "@/components/OdontogramaChart";
+import { OdontogramaChart } from "@/components/OdontogramaChart";
 import {
   Search,
   UserPlus,
