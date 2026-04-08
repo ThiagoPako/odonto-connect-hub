@@ -12,6 +12,11 @@ import {
   mockMessages,
   type Lead,
   type ChatMessage,
+  type MessageType,
+  type LocationData,
+  type ContactData,
+  type PollData,
+  type ReplyData,
 } from "@/data/chatMockData";
 
 export const Route = createFileRoute("/chat")({
@@ -50,7 +55,9 @@ function ChatPage() {
     }
   };
 
-  const handleSendMessage = (content: string, type: "text" | "audio" | "image" | "file") => {
+  const [replyingTo, setReplyingTo] = useState<ReplyData | null>(null);
+
+  const handleSendMessage = (content: string, type: MessageType, extra?: Partial<ChatMessage>) => {
     if (!selectedLead) return;
     const newMsg: ChatMessage = {
       id: `msg-${Date.now()}`,
@@ -59,11 +66,37 @@ function ChatPage() {
       sender: "attendant",
       type,
       timestamp: new Date(),
+      replyTo: replyingTo || undefined,
+      ...extra,
     };
     setMessages((prev) => ({
       ...prev,
       [selectedLead.id]: [...(prev[selectedLead.id] || []), newMsg],
     }));
+    setReplyingTo(null);
+  };
+
+  const handleReaction = (messageId: string, emoji: string) => {
+    if (!selectedLead) return;
+    setMessages((prev) => {
+      const msgs = prev[selectedLead.id] || [];
+      return {
+        ...prev,
+        [selectedLead.id]: msgs.map((m) =>
+          m.id === messageId
+            ? { ...m, reactions: [...(m.reactions || []), { emoji, count: 1 }] }
+            : m
+        ),
+      };
+    });
+  };
+
+  const handleReply = (msg: ChatMessage) => {
+    setReplyingTo({
+      messageId: msg.id,
+      content: msg.content || (msg.type === "image" ? "📷 Imagem" : msg.type === "location" ? "📍 Localização" : msg.type),
+      sender: msg.sender === "lead" ? selectedLead?.name || "Lead" : "Você",
+    });
   };
 
   const currentMessages = selectedLead ? messages[selectedLead.id] || [] : [];
