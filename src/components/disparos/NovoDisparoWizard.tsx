@@ -212,13 +212,15 @@ export function NovoDisparoWizard({ open, onClose, onSave, editData }: NovoDispa
 
 /* ===== STEP 1: PÚBLICO ===== */
 function StepPublico({
-  publico, setPublico, contatosAlcancaveis, intervaloSpam, setIntervaloSpam,
+  publico, setPublico, contatosAlcancaveis, intervaloSpam, setIntervaloSpam, numeroEnvio, setNumeroEnvio,
 }: {
   publico: string;
   setPublico: (v: any) => void;
   contatosAlcancaveis: number;
   intervaloSpam: number;
   setIntervaloSpam: (v: number) => void;
+  numeroEnvio: string;
+  setNumeroEnvio: (v: string) => void;
 }) {
   return (
     <div className="space-y-5">
