@@ -84,9 +84,10 @@ function AuthGate() {
 
   const isLoginPage = location.pathname === "/login";
 
-  // If not authenticated and not on login page, show login
+  // If not authenticated and not on login page, redirect to login
   if (!isAuthenticated && !isLoginPage) {
-    return <Outlet />;
+    // We render Outlet but the login route will be shown via navigate
+    return <LoginRedirect />;
   }
 
   // Login page — no sidebar
