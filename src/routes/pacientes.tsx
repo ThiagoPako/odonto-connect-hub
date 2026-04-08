@@ -12,7 +12,7 @@ import {
   type HistoricoPaciente,
   type DenteInfo,
 } from "@/data/pacientesMockData";
-import { OdontogramaChart } from "@/components/OdontogramaChart";
+import { OdontogramaChart, OdontogramaEditor } from "@/components/OdontogramaChart";
 import {
   Search,
   UserPlus,
@@ -547,7 +547,10 @@ function AnamneseTab({ anamnese }: { anamnese?: Anamnese }) {
   );
 }
 
-function OdontogramaTab({ odontograma }: { odontograma?: { dentes: DenteInfo[]; atualizadoEm: Date } }) {
+function OdontogramaTab({ odontograma, onUpdate }: { odontograma?: { dentes: DenteInfo[]; atualizadoEm: Date }; onUpdate?: (dentes: DenteInfo[]) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [localDentes, setLocalDentes] = useState<DenteInfo[]>(odontograma?.dentes ?? []);
+
   if (!odontograma) {
     return (
       <div className="text-center py-16 animate-fade-in">
@@ -557,14 +560,55 @@ function OdontogramaTab({ odontograma }: { odontograma?: { dentes: DenteInfo[]; 
     );
   }
 
+  const handleSave = () => {
+    onUpdate?.(localDentes);
+    setEditing(false);
+  };
+
+  const handleCancel = () => {
+    setLocalDentes(odontograma.dentes);
+    setEditing(false);
+  };
+
   return (
-    <div className="animate-fade-in">
-      <div className="bg-muted/20 rounded-2xl p-6">
-        <OdontogramaChart dentes={odontograma.dentes} />
+    <div className="animate-fade-in space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-[10px] text-muted-foreground">
+          Atualizado em: {odontograma.atualizadoEm.toLocaleDateString("pt-BR")}
+        </p>
+        {!editing ? (
+          <button
+            onClick={() => setEditing(true)}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors shadow-sm"
+          >
+            <Edit className="h-3.5 w-3.5" />
+            Editar Odontograma
+          </button>
+        ) : (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleCancel}
+              className="px-4 py-2 rounded-xl text-xs font-medium text-muted-foreground hover:bg-muted/60 transition-colors"
+            >
+              Cancelar
+            </button>
+            <button
+              onClick={handleSave}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-success text-success-foreground text-xs font-semibold hover:bg-success/90 transition-colors shadow-sm"
+            >
+              <Save className="h-3.5 w-3.5" />
+              Salvar
+            </button>
+          </div>
+        )}
       </div>
-      <p className="text-[10px] text-muted-foreground text-right mt-2">
-        Atualizado em: {odontograma.atualizadoEm.toLocaleDateString("pt-BR")}
-      </p>
+      <div className="bg-muted/20 rounded-2xl p-6">
+        {editing ? (
+          <OdontogramaEditor dentes={localDentes} onChange={setLocalDentes} />
+        ) : (
+          <OdontogramaChart dentes={odontograma.dentes} />
+        )}
+      </div>
     </div>
   );
 }
