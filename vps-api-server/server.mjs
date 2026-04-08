@@ -180,6 +180,103 @@ app.post('/api/auth/change-password', async (req, res) => {
   }
 });
 
+// ─── Forgot Password ────────────────────────────────────────
+app.post('/api/auth/forgot-password', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email obrigatório' });
+
+    const { rows } = await pool.query(
+      'SELECT id, name FROM profiles WHERE email = $1 LIMIT 1',
+      [email.toLowerCase().trim()]
+    );
+
+    // Always return success to prevent email enumeration
+    if (rows.length === 0) return res.json({ success: true });
+
+    const profile = rows[0];
+    const resetToken = crypto.randomUUID();
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+
+    // Store token in DB (create table if not exists)
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS password_reset_tokens (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID REFERENCES profiles(id) ON DELETE CASCADE NOT NULL,
+        token TEXT UNIQUE NOT NULL,
+        expires_at TIMESTAMPTZ NOT NULL,
+        used BOOLEAN DEFAULT false,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    // Invalidate previous tokens
+    await pool.query('UPDATE password_reset_tokens SET used = true WHERE user_id = $1', [profile.id]);
+    await pool.query(
+      'INSERT INTO password_reset_tokens (user_id, token, expires_at) VALUES ($1, $2, $3)',
+      [profile.id, resetToken, expiresAt]
+    );
+
+    const resetLink = `${APP_URL}/reset-password?token=${resetToken}`;
+
+    if (smtpTransporter) {
+      await smtpTransporter.sendMail({
+        from: process.env.SMTP_FROM || '"Odonto Connect" <noreply@odontoconnect.tech>',
+        to: email,
+        subject: 'Recuperação de Senha — Odonto Connect',
+        html: `
+          <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;padding:32px 24px">
+            <h2 style="color:#0e9aa7;margin-bottom:8px">🦷 Odonto Connect</h2>
+            <p>Olá <strong>${profile.name}</strong>,</p>
+            <p>Recebemos uma solicitação para redefinir sua senha. Clique no botão abaixo:</p>
+            <div style="text-align:center;margin:28px 0">
+              <a href="${resetLink}" style="background:#0e9aa7;color:#fff;padding:12px 32px;border-radius:8px;text-decoration:none;font-weight:600;display:inline-block">
+                Redefinir Senha
+              </a>
+            </div>
+            <p style="font-size:13px;color:#666">Este link expira em <strong>1 hora</strong>. Se você não solicitou, ignore este email.</p>
+            <hr style="border:none;border-top:1px solid #eee;margin:24px 0"/>
+            <p style="font-size:11px;color:#999">Odonto Connect — Gestão Inteligente de Atendimento</p>
+          </div>
+        `,
+      });
+    } else {
+      console.log(`[RESET] Token para ${email}: ${resetLink}`);
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    res.status(500).json({ error: 'Erro ao processar solicitação' });
+  }
+});
+
+app.post('/api/auth/reset-password', async (req, res) => {
+  try {
+    const { token, newPassword } = req.body;
+    if (!token || !newPassword) return res.status(400).json({ error: 'Token e nova senha obrigatórios' });
+    if (newPassword.length < 6) return res.status(400).json({ error: 'Senha mínima de 6 caracteres' });
+
+    const { rows } = await pool.query(
+      'SELECT user_id, expires_at, used FROM password_reset_tokens WHERE token = $1 LIMIT 1',
+      [token]
+    );
+
+    if (rows.length === 0) return res.status(400).json({ error: 'Token inválido' });
+    const resetRow = rows[0];
+    if (resetRow.used) return res.status(400).json({ error: 'Token já utilizado' });
+    if (new Date(resetRow.expires_at) < new Date()) return res.status(400).json({ error: 'Token expirado' });
+
+    const hash = await bcrypt.hash(newPassword, 12);
+    await pool.query('UPDATE profiles SET password_hash = $1, updated_at = NOW() WHERE id = $2', [hash, resetRow.user_id]);
+    await pool.query('UPDATE password_reset_tokens SET used = true WHERE token = $1', [token]);
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Reset password error:', error);
+    res.status(500).json({ error: 'Erro ao redefinir senha' });
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════
 // EVOLUTION API PROXY (WhatsApp)
 // ═══════════════════════════════════════════════════════════════
