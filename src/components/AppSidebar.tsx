@@ -1,4 +1,5 @@
 import {
+  Send,
   LayoutDashboard,
   MessageSquare,
   Radio,
