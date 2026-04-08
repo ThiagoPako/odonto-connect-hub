@@ -11,15 +11,93 @@ export interface Lead {
   avatarColor?: string;
 }
 
+export type MessageType =
+  | "text"
+  | "audio"
+  | "image"
+  | "video"
+  | "document"
+  | "sticker"
+  | "location"
+  | "contact"
+  | "poll"
+  | "reaction"
+  | "list";
+
+export interface LocationData {
+  latitude: number;
+  longitude: number;
+  name?: string;
+  address?: string;
+}
+
+export interface ContactData {
+  fullName: string;
+  phone: string;
+  email?: string;
+  company?: string;
+  url?: string;
+}
+
+export interface PollData {
+  question: string;
+  options: { text: string; votes: number }[];
+  allowMultiple?: boolean;
+}
+
+export interface LinkPreview {
+  url: string;
+  title?: string;
+  description?: string;
+  image?: string;
+}
+
+export interface ReactionData {
+  emoji: string;
+  count: number;
+}
+
+export interface ReplyData {
+  messageId: string;
+  content: string;
+  sender: string;
+}
+
+export interface MentionData {
+  userId: string;
+  displayName: string;
+}
+
+export interface ListData {
+  title: string;
+  buttonText: string;
+  sections: {
+    title: string;
+    rows: { id: string; title: string; description?: string }[];
+  }[];
+}
+
 export interface ChatMessage {
   id: string;
   leadId: string;
   content: string;
   sender: "lead" | "attendant";
-  type: "text" | "audio" | "image" | "file";
+  type: MessageType;
   timestamp: Date;
-  duration?: number; // audio duration in seconds
+  duration?: number;
   fileName?: string;
+  fileUrl?: string;
+  mimeType?: string;
+  location?: LocationData;
+  contact?: ContactData;
+  poll?: PollData;
+  linkPreview?: LinkPreview;
+  reactions?: ReactionData[];
+  replyTo?: ReplyData;
+  mentions?: MentionData[];
+  stickerUrl?: string;
+  list?: ListData;
+  formatting?: "bold" | "italic" | "strikethrough" | "monospace";
 }
 
 export const mockLeadsQueue: Lead[] = [
@@ -137,6 +215,7 @@ export const mockMessages: Record<string, ChatMessage[]> = {
       sender: "lead",
       type: "text",
       timestamp: new Date(Date.now() - 15 * 60 * 1000),
+      replyTo: { messageId: "m4", content: "Temos disponível terça-feira às 9h ou quarta às 10h.", sender: "Atendente" },
     },
     {
       id: "m6",
@@ -145,6 +224,40 @@ export const mockMessages: Record<string, ChatMessage[]> = {
       sender: "attendant",
       type: "text",
       timestamp: new Date(Date.now() - 10 * 60 * 1000),
+      linkPreview: {
+        url: "https://odonto-connect.com.br/avaliacao",
+        title: "Avaliação Gratuita - Odonto Connect",
+        description: "Agende sua avaliação gratuita com radiografia panorâmica inclusa.",
+      },
+    },
+    {
+      id: "m6b",
+      leadId: "l5",
+      content: "",
+      sender: "attendant",
+      type: "location",
+      timestamp: new Date(Date.now() - 9 * 60 * 1000),
+      location: {
+        latitude: -23.5505,
+        longitude: -46.6333,
+        name: "Odonto Connect - Unidade Paulista",
+        address: "Av. Paulista, 1000 - Bela Vista, São Paulo - SP",
+      },
+    },
+    {
+      id: "m6c",
+      leadId: "l5",
+      content: "",
+      sender: "attendant",
+      type: "contact",
+      timestamp: new Date(Date.now() - 8 * 60 * 1000),
+      contact: {
+        fullName: "Dr. Ricardo Almeida",
+        phone: "+55 11 98888-0001",
+        email: "dr.ricardo@odontoconnect.com.br",
+        company: "Odonto Connect",
+        url: "https://odontoconnect.com.br",
+      },
     },
     {
       id: "m7",
@@ -153,6 +266,7 @@ export const mockMessages: Record<string, ChatMessage[]> = {
       sender: "lead",
       type: "text",
       timestamp: new Date(Date.now() - 5 * 60 * 1000),
+      reactions: [{ emoji: "👍", count: 1 }],
     },
     {
       id: "m8",
@@ -179,6 +293,22 @@ export const mockMessages: Record<string, ChatMessage[]> = {
       sender: "attendant",
       type: "text",
       timestamp: new Date(Date.now() - 8 * 60 * 1000),
+    },
+    {
+      id: "m10b",
+      leadId: "l6",
+      content: "",
+      sender: "attendant",
+      type: "poll",
+      timestamp: new Date(Date.now() - 7 * 60 * 1000),
+      poll: {
+        question: "Qual forma de pagamento você prefere?",
+        options: [
+          { text: "Cartão 12x sem juros", votes: 0 },
+          { text: "Pix à vista (10% desc)", votes: 0 },
+          { text: "Boleto 6x", votes: 0 },
+        ],
+      },
     },
     {
       id: "m11",
