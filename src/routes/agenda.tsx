@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import {
   Clock, CheckCircle2, XCircle, UserCheck, Plus, ChevronLeft, ChevronRight,
-  Phone, MessageSquare, AlertTriangle, RefreshCw, Search, ExternalLink, History,
+  Phone, MessageSquare, AlertTriangle, RefreshCw, Search, ExternalLink, History, HeartPulse,
 } from "lucide-react";
 import { useState } from "react";
 import { mockAppointments, mockProfessionals, type Appointment } from "@/data/agendaMockData";
@@ -148,7 +148,33 @@ function AppointmentCard({ appointment: a }: { appointment: Appointment }) {
           onMouseEnter={() => historico.length > 0 && setShowHistory(true)}
           onMouseLeave={() => setShowHistory(false)}
         >
-          <p className="text-[11px] font-medium text-foreground truncate">{a.patientName}</p>
+          <div className="flex items-center gap-1">
+            <p className="text-[11px] font-medium text-foreground truncate">{a.patientName}</p>
+            {alergias.length > 0 && (
+              <div className="group/alergia relative shrink-0">
+                <div className="h-4 w-4 rounded-full bg-destructive/15 flex items-center justify-center">
+                  <AlertTriangle className="h-2.5 w-2.5 text-destructive" />
+                </div>
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover/alergia:block z-50 animate-fade-in">
+                  <div className="bg-destructive text-destructive-foreground text-[9px] font-bold px-2 py-1 rounded-lg whitespace-nowrap shadow-lg">
+                    ⚠ Alergias: {alergias.join(", ")}
+                  </div>
+                </div>
+              </div>
+            )}
+            {condicoes.length > 0 && (
+              <div className="group/cond relative shrink-0">
+                <div className="h-4 w-4 rounded-full bg-warning/15 flex items-center justify-center">
+                  <HeartPulse className="h-2.5 w-2.5 text-warning" />
+                </div>
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover/cond:block z-50 animate-fade-in">
+                  <div className="bg-warning text-warning-foreground text-[9px] font-bold px-2 py-1 rounded-lg whitespace-nowrap shadow-lg">
+                    ♥ {condicoes.join(", ")}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
           <p className="text-[10px] text-muted-foreground truncate">{a.procedure}</p>
         </div>
         {a.pacienteId && (
