@@ -12,12 +12,14 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as TratamentosRouteImport } from './routes/tratamentos'
 import { Route as ReativacaoRouteImport } from './routes/reativacao'
 import { Route as ProntuarioRouteImport } from './routes/prontuario'
+import { Route as PainelDentistaRouteImport } from './routes/painel-dentista'
 import { Route as OrcamentosRouteImport } from './routes/orcamentos'
 import { Route as IntegracoesRouteImport } from './routes/integracoes'
 import { Route as FunilRouteImport } from './routes/funil'
 import { Route as FinanceiroRouteImport } from './routes/financeiro'
 import { Route as EstoqueRouteImport } from './routes/estoque'
 import { Route as EquipeRouteImport } from './routes/equipe'
+import { Route as DentistasRouteImport } from './routes/dentistas'
 import { Route as CrmRouteImport } from './routes/crm'
 import { Route as ConfiguracoesRouteImport } from './routes/configuracoes'
 import { Route as ComissoesRouteImport } from './routes/comissoes'
@@ -42,6 +44,11 @@ const ReativacaoRoute = ReativacaoRouteImport.update({
 const ProntuarioRoute = ProntuarioRouteImport.update({
   id: '/prontuario',
   path: '/prontuario',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PainelDentistaRoute = PainelDentistaRouteImport.update({
+  id: '/painel-dentista',
+  path: '/painel-dentista',
   getParentRoute: () => rootRouteImport,
 } as any)
 const OrcamentosRoute = OrcamentosRouteImport.update({
@@ -72,6 +79,11 @@ const EstoqueRoute = EstoqueRouteImport.update({
 const EquipeRoute = EquipeRouteImport.update({
   id: '/equipe',
   path: '/equipe',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DentistasRoute = DentistasRouteImport.update({
+  id: '/dentistas',
+  path: '/dentistas',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CrmRoute = CrmRouteImport.update({
@@ -136,12 +148,14 @@ export interface FileRoutesByFullPath {
   '/comissoes': typeof ComissoesRoute
   '/configuracoes': typeof ConfiguracoesRoute
   '/crm': typeof CrmRoute
+  '/dentistas': typeof DentistasRoute
   '/equipe': typeof EquipeRoute
   '/estoque': typeof EstoqueRoute
   '/financeiro': typeof FinanceiroRoute
   '/funil': typeof FunilRoute
   '/integracoes': typeof IntegracoesRoute
   '/orcamentos': typeof OrcamentosRoute
+  '/painel-dentista': typeof PainelDentistaRoute
   '/prontuario': typeof ProntuarioRoute
   '/reativacao': typeof ReativacaoRoute
   '/tratamentos': typeof TratamentosRoute
@@ -157,12 +171,14 @@ export interface FileRoutesByTo {
   '/comissoes': typeof ComissoesRoute
   '/configuracoes': typeof ConfiguracoesRoute
   '/crm': typeof CrmRoute
+  '/dentistas': typeof DentistasRoute
   '/equipe': typeof EquipeRoute
   '/estoque': typeof EstoqueRoute
   '/financeiro': typeof FinanceiroRoute
   '/funil': typeof FunilRoute
   '/integracoes': typeof IntegracoesRoute
   '/orcamentos': typeof OrcamentosRoute
+  '/painel-dentista': typeof PainelDentistaRoute
   '/prontuario': typeof ProntuarioRoute
   '/reativacao': typeof ReativacaoRoute
   '/tratamentos': typeof TratamentosRoute
@@ -179,12 +195,14 @@ export interface FileRoutesById {
   '/comissoes': typeof ComissoesRoute
   '/configuracoes': typeof ConfiguracoesRoute
   '/crm': typeof CrmRoute
+  '/dentistas': typeof DentistasRoute
   '/equipe': typeof EquipeRoute
   '/estoque': typeof EstoqueRoute
   '/financeiro': typeof FinanceiroRoute
   '/funil': typeof FunilRoute
   '/integracoes': typeof IntegracoesRoute
   '/orcamentos': typeof OrcamentosRoute
+  '/painel-dentista': typeof PainelDentistaRoute
   '/prontuario': typeof ProntuarioRoute
   '/reativacao': typeof ReativacaoRoute
   '/tratamentos': typeof TratamentosRoute
@@ -202,12 +220,14 @@ export interface FileRouteTypes {
     | '/comissoes'
     | '/configuracoes'
     | '/crm'
+    | '/dentistas'
     | '/equipe'
     | '/estoque'
     | '/financeiro'
     | '/funil'
     | '/integracoes'
     | '/orcamentos'
+    | '/painel-dentista'
     | '/prontuario'
     | '/reativacao'
     | '/tratamentos'
@@ -223,12 +243,14 @@ export interface FileRouteTypes {
     | '/comissoes'
     | '/configuracoes'
     | '/crm'
+    | '/dentistas'
     | '/equipe'
     | '/estoque'
     | '/financeiro'
     | '/funil'
     | '/integracoes'
     | '/orcamentos'
+    | '/painel-dentista'
     | '/prontuario'
     | '/reativacao'
     | '/tratamentos'
@@ -244,12 +266,14 @@ export interface FileRouteTypes {
     | '/comissoes'
     | '/configuracoes'
     | '/crm'
+    | '/dentistas'
     | '/equipe'
     | '/estoque'
     | '/financeiro'
     | '/funil'
     | '/integracoes'
     | '/orcamentos'
+    | '/painel-dentista'
     | '/prontuario'
     | '/reativacao'
     | '/tratamentos'
@@ -266,12 +290,14 @@ export interface RootRouteChildren {
   ComissoesRoute: typeof ComissoesRoute
   ConfiguracoesRoute: typeof ConfiguracoesRoute
   CrmRoute: typeof CrmRoute
+  DentistasRoute: typeof DentistasRoute
   EquipeRoute: typeof EquipeRoute
   EstoqueRoute: typeof EstoqueRoute
   FinanceiroRoute: typeof FinanceiroRoute
   FunilRoute: typeof FunilRoute
   IntegracoesRoute: typeof IntegracoesRoute
   OrcamentosRoute: typeof OrcamentosRoute
+  PainelDentistaRoute: typeof PainelDentistaRoute
   ProntuarioRoute: typeof ProntuarioRoute
   ReativacaoRoute: typeof ReativacaoRoute
   TratamentosRoute: typeof TratamentosRoute
@@ -298,6 +324,13 @@ declare module '@tanstack/react-router' {
       path: '/prontuario'
       fullPath: '/prontuario'
       preLoaderRoute: typeof ProntuarioRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/painel-dentista': {
+      id: '/painel-dentista'
+      path: '/painel-dentista'
+      fullPath: '/painel-dentista'
+      preLoaderRoute: typeof PainelDentistaRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/orcamentos': {
@@ -340,6 +373,13 @@ declare module '@tanstack/react-router' {
       path: '/equipe'
       fullPath: '/equipe'
       preLoaderRoute: typeof EquipeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dentistas': {
+      id: '/dentistas'
+      path: '/dentistas'
+      fullPath: '/dentistas'
+      preLoaderRoute: typeof DentistasRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/crm': {
@@ -426,12 +466,14 @@ const rootRouteChildren: RootRouteChildren = {
   ComissoesRoute: ComissoesRoute,
   ConfiguracoesRoute: ConfiguracoesRoute,
   CrmRoute: CrmRoute,
+  DentistasRoute: DentistasRoute,
   EquipeRoute: EquipeRoute,
   EstoqueRoute: EstoqueRoute,
   FinanceiroRoute: FinanceiroRoute,
   FunilRoute: FunilRoute,
   IntegracoesRoute: IntegracoesRoute,
   OrcamentosRoute: OrcamentosRoute,
+  PainelDentistaRoute: PainelDentistaRoute,
   ProntuarioRoute: ProntuarioRoute,
   ReativacaoRoute: ReativacaoRoute,
   TratamentosRoute: TratamentosRoute,

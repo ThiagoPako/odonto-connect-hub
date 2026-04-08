@@ -20,6 +20,7 @@ import {
   Package,
   ClipboardList,
   Percent,
+  Stethoscope,
 } from "lucide-react";
 import { Link, useLocation } from "@tanstack/react-router";
 import { useState } from "react";
@@ -42,6 +43,7 @@ const navSections: NavSection[] = [
   {
     label: "Clínico",
     items: [
+      { title: "Dentistas", url: "/dentistas", icon: Stethoscope },
       { title: "Prontuário", url: "/prontuario", icon: FileHeart },
       { title: "Orçamentos", url: "/orcamentos", icon: Receipt },
       { title: "Tratamentos", url: "/tratamentos", icon: ClipboardList },
