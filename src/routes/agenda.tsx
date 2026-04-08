@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { mockAppointments, mockProfessionals, type Appointment } from "@/data/agendaMockData";
-import { mockHistoricos } from "@/data/pacientesMockData";
+import { mockHistoricos, mockAnamneses } from "@/data/pacientesMockData";
 
 export const Route = createFileRoute("/agenda")({
   component: AgendaPage,
@@ -133,6 +133,9 @@ function AppointmentCard({ appointment: a }: { appointment: Appointment }) {
         .slice(0, 4)
     : [];
 
+  const anamnese = a.pacienteId ? mockAnamneses[a.pacienteId] : undefined;
+  const alergias = anamnese?.alergias ?? [];
+
   return (
     <div className={`rounded-lg border border-border/50 p-2.5 space-y-2 ${a.status === "faltou" ? "opacity-50" : ""}`}>
       <div className="flex items-center justify-between">
@@ -148,7 +151,21 @@ function AppointmentCard({ appointment: a }: { appointment: Appointment }) {
           onMouseEnter={() => historico.length > 0 && setShowHistory(true)}
           onMouseLeave={() => setShowHistory(false)}
         >
-          <p className="text-[11px] font-medium text-foreground truncate">{a.patientName}</p>
+          <div className="flex items-center gap-1">
+            <p className="text-[11px] font-medium text-foreground truncate">{a.patientName}</p>
+            {alergias.length > 0 && (
+              <div className="group/alergia relative shrink-0">
+                <div className="h-4 w-4 rounded-full bg-destructive/15 flex items-center justify-center">
+                  <AlertTriangle className="h-2.5 w-2.5 text-destructive" />
+                </div>
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover/alergia:block z-50 animate-fade-in">
+                  <div className="bg-destructive text-destructive-foreground text-[9px] font-bold px-2 py-1 rounded-lg whitespace-nowrap shadow-lg">
+                    ⚠ {alergias.join(", ")}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
           <p className="text-[10px] text-muted-foreground truncate">{a.procedure}</p>
         </div>
         {a.pacienteId && (
