@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { KpiCard } from "@/components/KpiCard";
 import { ActiveAttendanceCard } from "@/components/ActiveAttendanceCard";
+import { GhostModePanel } from "@/components/GhostModePanel";
 import { MessageSquare, Users, Phone, TrendingUp } from "lucide-react";
 
 export const Route = createFileRoute("/")({
@@ -82,9 +83,12 @@ function DashboardPage() {
 
         {/* Active Attendances */}
         <div>
-          <h2 className="text-lg font-semibold text-foreground mb-4">
-            Atendimentos Ativos
-          </h2>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-foreground">
+              Atendimentos Ativos
+            </h2>
+            <GhostModePanel />
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {mockAttendances.map((a) => (
               <ActiveAttendanceCard key={a.patientName} {...a} />
