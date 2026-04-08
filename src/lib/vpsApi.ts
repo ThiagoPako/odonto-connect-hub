@@ -89,6 +89,22 @@ export function logout() {
   window.location.href = '/login';
 }
 
+// ─── Password Recovery ─────────────────────────────────────
+
+export async function forgotPassword(email: string) {
+  return vpsApiFetch<{ success: boolean }>('/auth/forgot-password', {
+    method: 'POST',
+    body: { email },
+  });
+}
+
+export async function resetPassword(token: string, newPassword: string) {
+  return vpsApiFetch<{ success: boolean }>('/auth/reset-password', {
+    method: 'POST',
+    body: { token, newPassword },
+  });
+}
+
 // ─── Pacientes ──────────────────────────────────────────────
 
 export const pacientesApi = {
