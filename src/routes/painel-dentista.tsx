@@ -21,6 +21,7 @@ import {
   User,
   ChevronRight,
   ArrowLeft,
+  ExternalLink,
 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 
@@ -229,6 +230,16 @@ function AtendimentosTab({
                 <p className="text-sm font-semibold text-foreground">
                   {a.pacienteNome}
                 </p>
+                {a.pacienteId && (
+                  <Link
+                    to="/pacientes"
+                    search={{ pacienteId: a.pacienteId }}
+                    className="p-0.5 rounded hover:bg-primary/10"
+                    title="Ver ficha"
+                  >
+                    <ExternalLink className="h-3 w-3 text-primary" />
+                  </Link>
+                )}
                 <span
                   className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold capitalize ${tipoConfig[a.tipo]}`}
                 >
