@@ -11,9 +11,9 @@ export function AudioRecorder({ onRecordingComplete }: AudioRecorderProps) {
   const [waveformBars, setWaveformBars] = useState<number[]>(Array(24).fill(4));
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
-  const intervalRef = useRef<ReturnType<typeof setInterval>>();
+  const intervalRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const analyserRef = useRef<AnalyserNode | null>(null);
-  const animFrameRef = useRef<number>();
+  const animFrameRef = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     return () => {
