@@ -10,9 +10,12 @@ import {
   getEstoqueKpis,
   getPacienteKpis,
 } from "@/data/dashboardKpis";
+import { OrcamentoConversaoChart } from "@/components/charts/OrcamentoConversaoChart";
+import { OrigemLeadsChart } from "@/components/charts/OrigemLeadsChart";
+import { AgendaStatusChart } from "@/components/charts/AgendaStatusChart";
 import {
   CalendarCheck, Users, FileText, DollarSign, Package,
-  AlertTriangle, TrendingUp, Activity, ArrowUpRight, ArrowDownRight,
+  AlertTriangle, TrendingUp, Activity,
   UserCheck, UserX, Clock, CheckCircle, XCircle, BarChart3,
   ExternalLink,
 } from "lucide-react";
@@ -101,7 +104,15 @@ function DashboardPage() {
           </div>
         </section>
 
-        {/* === ESTOQUE === */}
+        {/* === GRÁFICOS ANALÍTICOS === */}
+        <section className="animate-fade-in">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+            <OrcamentoConversaoChart />
+            <OrigemLeadsChart />
+            <AgendaStatusChart />
+          </div>
+        </section>
+
         <section className="animate-fade-in">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
