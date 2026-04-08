@@ -1,8 +1,9 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { getAlergias } from "@/data/registroCentral";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import {
   Plus, Search, DollarSign, CheckCircle2, XCircle, Clock, TrendingUp,
-  FileText, ChevronRight, CreditCard,
+  FileText, ChevronRight, CreditCard, ExternalLink, AlertTriangle,
 } from "lucide-react";
 import { useState } from "react";
 import { mockBudgets, type Budget } from "@/data/orcamentoMockData";
@@ -95,6 +96,16 @@ function OrcamentosPage() {
                         {b.patientInitials}
                       </div>
                       <span className="text-xs font-medium text-foreground">{b.patientName}</span>
+                      {b.pacienteId && (
+                        <Link to="/pacientes" search={{ pacienteId: b.pacienteId }} className="p-0.5 rounded hover:bg-primary/10" title="Ver ficha" onClick={(e) => e.stopPropagation()}>
+                          <ExternalLink className="h-3 w-3 text-primary" />
+                        </Link>
+                      )}
+                      {b.pacienteId && getAlergias(b.pacienteId).length > 0 && (
+                        <div className="h-4 w-4 rounded-full bg-destructive/15 flex items-center justify-center" title={`Alergias: ${getAlergias(b.pacienteId).join(", ")}`}>
+                          <AlertTriangle className="h-2.5 w-2.5 text-destructive" />
+                        </div>
+                      )}
                     </div>
                     <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${cfg.color}`}>{cfg.label}</span>
                   </div>

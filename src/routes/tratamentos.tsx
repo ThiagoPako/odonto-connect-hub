@@ -1,8 +1,9 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { getAlergias, getCondicoesCriticas } from "@/data/registroCentral";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import {
   Search, CheckCircle2, Clock, Pause, PlayCircle, CalendarDays,
-  ChevronRight, AlertCircle, CircleDot, FileText, Plus,
+  ChevronRight, AlertCircle, CircleDot, FileText, Plus, ExternalLink, AlertTriangle, HeartPulse,
 } from "lucide-react";
 import { useState } from "react";
 import {

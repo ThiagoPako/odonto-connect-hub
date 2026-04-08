@@ -1,4 +1,5 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { getAlergias } from "@/data/registroCentral";
 import { useState } from "react";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { mockPatients, type Patient } from "@/data/crmMockData";
