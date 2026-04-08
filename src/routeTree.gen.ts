@@ -9,15 +9,41 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as ReativacaoRouteImport } from './routes/reativacao'
+import { Route as FunilRouteImport } from './routes/funil'
 import { Route as FinanceiroRouteImport } from './routes/financeiro'
+import { Route as EquipeRouteImport } from './routes/equipe'
+import { Route as CrmRouteImport } from './routes/crm'
 import { Route as ConfiguracoesRouteImport } from './routes/configuracoes'
 import { Route as ChatRouteImport } from './routes/chat'
 import { Route as CanaisRouteImport } from './routes/canais'
+import { Route as CampanhasRouteImport } from './routes/campanhas'
+import { Route as AnalyticsRouteImport } from './routes/analytics'
 import { Route as IndexRouteImport } from './routes/index'
 
+const ReativacaoRoute = ReativacaoRouteImport.update({
+  id: '/reativacao',
+  path: '/reativacao',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FunilRoute = FunilRouteImport.update({
+  id: '/funil',
+  path: '/funil',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const FinanceiroRoute = FinanceiroRouteImport.update({
   id: '/financeiro',
   path: '/financeiro',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EquipeRoute = EquipeRouteImport.update({
+  id: '/equipe',
+  path: '/equipe',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CrmRoute = CrmRouteImport.update({
+  id: '/crm',
+  path: '/crm',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ConfiguracoesRoute = ConfiguracoesRouteImport.update({
@@ -35,6 +61,16 @@ const CanaisRoute = CanaisRouteImport.update({
   path: '/canais',
   getParentRoute: () => rootRouteImport,
 } as any)
+const CampanhasRoute = CampanhasRouteImport.update({
+  id: '/campanhas',
+  path: '/campanhas',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AnalyticsRoute = AnalyticsRouteImport.update({
+  id: '/analytics',
+  path: '/analytics',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -43,49 +79,135 @@ const IndexRoute = IndexRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/analytics': typeof AnalyticsRoute
+  '/campanhas': typeof CampanhasRoute
   '/canais': typeof CanaisRoute
   '/chat': typeof ChatRoute
   '/configuracoes': typeof ConfiguracoesRoute
+  '/crm': typeof CrmRoute
+  '/equipe': typeof EquipeRoute
   '/financeiro': typeof FinanceiroRoute
+  '/funil': typeof FunilRoute
+  '/reativacao': typeof ReativacaoRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/analytics': typeof AnalyticsRoute
+  '/campanhas': typeof CampanhasRoute
   '/canais': typeof CanaisRoute
   '/chat': typeof ChatRoute
   '/configuracoes': typeof ConfiguracoesRoute
+  '/crm': typeof CrmRoute
+  '/equipe': typeof EquipeRoute
   '/financeiro': typeof FinanceiroRoute
+  '/funil': typeof FunilRoute
+  '/reativacao': typeof ReativacaoRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/analytics': typeof AnalyticsRoute
+  '/campanhas': typeof CampanhasRoute
   '/canais': typeof CanaisRoute
   '/chat': typeof ChatRoute
   '/configuracoes': typeof ConfiguracoesRoute
+  '/crm': typeof CrmRoute
+  '/equipe': typeof EquipeRoute
   '/financeiro': typeof FinanceiroRoute
+  '/funil': typeof FunilRoute
+  '/reativacao': typeof ReativacaoRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/canais' | '/chat' | '/configuracoes' | '/financeiro'
+  fullPaths:
+    | '/'
+    | '/analytics'
+    | '/campanhas'
+    | '/canais'
+    | '/chat'
+    | '/configuracoes'
+    | '/crm'
+    | '/equipe'
+    | '/financeiro'
+    | '/funil'
+    | '/reativacao'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/canais' | '/chat' | '/configuracoes' | '/financeiro'
-  id: '__root__' | '/' | '/canais' | '/chat' | '/configuracoes' | '/financeiro'
+  to:
+    | '/'
+    | '/analytics'
+    | '/campanhas'
+    | '/canais'
+    | '/chat'
+    | '/configuracoes'
+    | '/crm'
+    | '/equipe'
+    | '/financeiro'
+    | '/funil'
+    | '/reativacao'
+  id:
+    | '__root__'
+    | '/'
+    | '/analytics'
+    | '/campanhas'
+    | '/canais'
+    | '/chat'
+    | '/configuracoes'
+    | '/crm'
+    | '/equipe'
+    | '/financeiro'
+    | '/funil'
+    | '/reativacao'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AnalyticsRoute: typeof AnalyticsRoute
+  CampanhasRoute: typeof CampanhasRoute
   CanaisRoute: typeof CanaisRoute
   ChatRoute: typeof ChatRoute
   ConfiguracoesRoute: typeof ConfiguracoesRoute
+  CrmRoute: typeof CrmRoute
+  EquipeRoute: typeof EquipeRoute
   FinanceiroRoute: typeof FinanceiroRoute
+  FunilRoute: typeof FunilRoute
+  ReativacaoRoute: typeof ReativacaoRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/reativacao': {
+      id: '/reativacao'
+      path: '/reativacao'
+      fullPath: '/reativacao'
+      preLoaderRoute: typeof ReativacaoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/funil': {
+      id: '/funil'
+      path: '/funil'
+      fullPath: '/funil'
+      preLoaderRoute: typeof FunilRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/financeiro': {
       id: '/financeiro'
       path: '/financeiro'
       fullPath: '/financeiro'
       preLoaderRoute: typeof FinanceiroRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/equipe': {
+      id: '/equipe'
+      path: '/equipe'
+      fullPath: '/equipe'
+      preLoaderRoute: typeof EquipeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/crm': {
+      id: '/crm'
+      path: '/crm'
+      fullPath: '/crm'
+      preLoaderRoute: typeof CrmRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/configuracoes': {
@@ -109,6 +231,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CanaisRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/campanhas': {
+      id: '/campanhas'
+      path: '/campanhas'
+      fullPath: '/campanhas'
+      preLoaderRoute: typeof CampanhasRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/analytics': {
+      id: '/analytics'
+      path: '/analytics'
+      fullPath: '/analytics'
+      preLoaderRoute: typeof AnalyticsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -121,10 +257,16 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AnalyticsRoute: AnalyticsRoute,
+  CampanhasRoute: CampanhasRoute,
   CanaisRoute: CanaisRoute,
   ChatRoute: ChatRoute,
   ConfiguracoesRoute: ConfiguracoesRoute,
+  CrmRoute: CrmRoute,
+  EquipeRoute: EquipeRoute,
   FinanceiroRoute: FinanceiroRoute,
+  FunilRoute: FunilRoute,
+  ReativacaoRoute: ReativacaoRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
