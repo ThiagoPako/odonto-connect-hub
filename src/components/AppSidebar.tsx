@@ -113,6 +113,8 @@ function filterByRole(sections: NavSection[], role: string): NavSection[] {
 export function AppSidebar() {
   const [collapsed, setCollapsed] = useState(false);
   const location = useLocation();
+  const { user } = useAuth();
+  const visibleSections = filterByRole(navSections, user?.role ?? "user");
 
   return (
     <aside
