@@ -12,6 +12,8 @@ import {
   mockOverdue, generateDRE, categoryLabels, generateId,
   type BankAccount, type Employee, type Payroll, type Bill, type FinanceMovement, type FinanceCategory,
 } from "@/data/financeiroMockData";
+import { FluxoCaixaChart } from "@/components/charts/FluxoCaixaChart";
+import { ReceitaDespesaChart } from "@/components/charts/ReceitaDespesaChart";
 
 export const Route = createFileRoute("/financeiro")({
   component: FinanceiroPage,
