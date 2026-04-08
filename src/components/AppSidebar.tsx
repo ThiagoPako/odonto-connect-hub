@@ -19,6 +19,7 @@ import {
   Receipt,
   Package,
   ClipboardList,
+  Percent,
 } from "lucide-react";
 import { Link, useLocation } from "@tanstack/react-router";
 import { useState } from "react";
