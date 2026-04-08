@@ -202,6 +202,29 @@ export const mockProntuariosDentista: ProntuarioDentista[] = [
   },
 ];
 
+export interface ComissaoDentista {
+  id: string;
+  dentistaId: string;
+  pacienteNome: string;
+  procedimento: string;
+  data: Date;
+  valorProcedimento: number;
+  percentual: number;
+  valorComissao: number;
+  status: "pendente" | "aprovada" | "paga";
+  dataPagamento?: Date;
+}
+
+export const mockComissoesDentista: ComissaoDentista[] = [
+  { id: "cm1", dentistaId: "d1", pacienteNome: "Maria Silva", procedimento: "Implante unitário", data: new Date("2026-04-01"), valorProcedimento: 3500, percentual: 40, valorComissao: 1400, status: "paga", dataPagamento: new Date("2026-04-05") },
+  { id: "cm2", dentistaId: "d1", pacienteNome: "João Santos", procedimento: "Enxerto ósseo", data: new Date("2026-03-28"), valorProcedimento: 2800, percentual: 40, valorComissao: 1120, status: "aprovada" },
+  { id: "cm3", dentistaId: "d1", pacienteNome: "Pedro Costa", procedimento: "Prótese sobre implante", data: new Date("2026-04-05"), valorProcedimento: 2000, percentual: 40, valorComissao: 800, status: "pendente" },
+  { id: "cm4", dentistaId: "d1", pacienteNome: "Carlos Oliveira", procedimento: "Implante unitário", data: new Date("2026-03-20"), valorProcedimento: 3500, percentual: 40, valorComissao: 1400, status: "paga", dataPagamento: new Date("2026-04-01") },
+  { id: "cm5", dentistaId: "d2", pacienteNome: "Ana Paula", procedimento: "Instalação aparelho", data: new Date("2026-04-03"), valorProcedimento: 3200, percentual: 35, valorComissao: 1120, status: "aprovada" },
+  { id: "cm6", dentistaId: "d2", pacienteNome: "Rafaela Dias", procedimento: "Manutenção ortodôntica", data: new Date("2026-04-06"), valorProcedimento: 250, percentual: 35, valorComissao: 87.5, status: "pendente" },
+  { id: "cm7", dentistaId: "d3", pacienteNome: "Cláudia Ramos", procedimento: "Tratamento de canal", data: new Date("2026-04-02"), valorProcedimento: 1200, percentual: 38, valorComissao: 456, status: "pendente" },
+];
+
 export const especialidades = [
   "Clínica Geral",
   "Implantodontia",
