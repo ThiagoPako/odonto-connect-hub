@@ -13,6 +13,7 @@ import {
 import { OrcamentoConversaoChart } from "@/components/charts/OrcamentoConversaoChart";
 import { OrigemLeadsChart } from "@/components/charts/OrigemLeadsChart";
 import { AgendaStatusChart } from "@/components/charts/AgendaStatusChart";
+import { FaturamentoMensalChart } from "@/components/charts/FaturamentoMensalChart";
 import {
   CalendarCheck, Users, FileText, DollarSign, Package,
   AlertTriangle, TrendingUp, Activity,
@@ -105,7 +106,8 @@ function DashboardPage() {
         </section>
 
         {/* === GRÁFICOS ANALÍTICOS === */}
-        <section className="animate-fade-in">
+        <section className="animate-fade-in space-y-5">
+          <FaturamentoMensalChart />
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
             <OrcamentoConversaoChart />
             <OrigemLeadsChart />
