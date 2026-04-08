@@ -15,193 +15,289 @@ interface OdontogramaChartProps {
 const arcadaSuperior = [18, 17, 16, 15, 14, 13, 12, 11, 21, 22, 23, 24, 25, 26, 27, 28];
 const arcadaInferior = [48, 47, 46, 45, 44, 43, 42, 41, 31, 32, 33, 34, 35, 36, 37, 38];
 
-// Tooth type by FDI number
-function getToothType(n: number): "molar" | "premolar" | "canine" | "incisor" {
+function getToothType(n: number): "molar3" | "molar2" | "premolar" | "canine" | "lateral" | "central" {
   const unit = n % 10;
-  if (unit >= 6) return "molar";
-  if (unit >= 4) return "premolar";
+  if (unit === 8 || unit === 7) return "molar3"; // 3rd & 2nd molar (bigger)
+  if (unit === 6) return "molar2"; // 1st molar
+  if (unit === 5 || unit === 4) return "premolar";
   if (unit === 3) return "canine";
-  return "incisor";
+  if (unit === 2) return "lateral";
+  return "central"; // 1 = central incisor
 }
 
 function isUpper(n: number): boolean {
   return n >= 11 && n <= 28;
 }
 
-// Realistic SVG tooth paths by type
-function ToothSVG({ numero, status, color, fillColor }: { numero: number; status: StatusDente; color: string; fillColor: string }) {
+/* ─── Lateral (side) view of each tooth ─── */
+function LateralToothSVG({ numero, status, color, fillColor }: {
+  numero: number; status: StatusDente; color: string; fillColor: string;
+}) {
   const type = getToothType(numero);
   const upper = isUpper(numero);
 
   if (status === "ausente") {
     return (
-      <svg viewBox="0 0 32 44" className="w-7 h-10">
-        <line x1="6" y1="6" x2="26" y2="38" stroke={color} strokeWidth="2" strokeLinecap="round" opacity="0.5" />
-        <line x1="26" y1="6" x2="6" y2="38" stroke={color} strokeWidth="2" strokeLinecap="round" opacity="0.5" />
+      <svg viewBox="0 0 28 52" className="w-full h-full">
+        <line x1="5" y1="5" x2="23" y2="47" stroke={color} strokeWidth="1.5" opacity="0.4" />
+        <line x1="23" y1="5" x2="5" y2="47" stroke={color} strokeWidth="1.5" opacity="0.4" />
       </svg>
     );
   }
 
-  const crownPath = getCrownPath(type, upper);
-  const rootPath = getRootPath(type, upper);
-
   return (
-    <svg viewBox="0 0 32 44" className="w-7 h-10">
-      {/* Root(s) */}
-      <path d={rootPath} fill={fillColor} stroke={color} strokeWidth="1" opacity="0.7" />
-      {/* Crown */}
-      <path d={crownPath} fill={fillColor} stroke={color} strokeWidth="1.2" />
-      {/* Crown surface detail */}
-      {renderCrownDetail(type, upper, color)}
-      {/* Status overlay */}
-      {renderStatusOverlay(status, color, type, upper)}
+    <svg viewBox="0 0 28 52" className="w-full h-full">
+      {upper ? (
+        <UpperLateral type={type} fillColor={fillColor} color={color} />
+      ) : (
+        <LowerLateral type={type} fillColor={fillColor} color={color} />
+      )}
+      {renderLateralStatusOverlay(status, color, upper)}
     </svg>
   );
 }
 
-function getCrownPath(type: string, upper: boolean): string {
-  if (upper) {
-    switch (type) {
-      case "molar":
-        return "M6 14 C6 10, 8 7, 10 6 C12 5, 14 4.5, 16 4.5 C18 4.5, 20 5, 22 6 C24 7, 26 10, 26 14 C26 18, 25 20, 24 21 C22 22, 20 22.5, 16 22.5 C12 22.5, 10 22, 8 21 C7 20, 6 18, 6 14Z";
-      case "premolar":
-        return "M9 14 C9 10, 10 7, 12 6 C13.5 5, 15 4.5, 16 4.5 C17 4.5, 18.5 5, 20 6 C22 7, 23 10, 23 14 C23 18, 22 20, 21 21 C19.5 22, 17 22.5, 16 22.5 C15 22.5, 12.5 22, 11 21 C10 20, 9 18, 9 14Z";
-      case "canine":
-        return "M10 16 C10 12, 11 8, 13 6 C14 5, 15 4.5, 16 4 C17 4.5, 18 5, 19 6 C21 8, 22 12, 22 16 C22 19, 21 21, 20 22 C18.5 23, 17 23, 16 23 C15 23, 13.5 23, 12 22 C11 21, 10 19, 10 16Z";
-      default: // incisor
-        return "M10 16 C10 11, 11 8, 13 6.5 C14 5.5, 15 5, 16 5 C17 5, 18 5.5, 19 6.5 C21 8, 22 11, 22 16 C22 19, 21 21, 20 22 C18.5 23, 17 23, 16 23 C15 23, 13.5 23, 12 22 C11 21, 10 19, 10 16Z";
-    }
-  } else {
-    switch (type) {
-      case "molar":
-        return "M6 22 C6 18, 7 16, 8 15 C10 14, 12 13.5, 16 13.5 C20 13.5, 22 14, 24 15 C25 16, 26 18, 26 22 C26 26, 25 29, 24 30 C22 31, 20 31.5, 16 31.5 C12 31.5, 10 31, 8 30 C7 29, 6 26, 6 22Z";
-      case "premolar":
-        return "M9 22 C9 18, 10 16, 11 15 C12.5 14, 14.5 13.5, 16 13.5 C17.5 13.5, 19.5 14, 21 15 C22 16, 23 18, 23 22 C23 26, 22 29, 21 30 C19.5 31, 17 31.5, 16 31.5 C15 31.5, 12.5 31, 11 30 C10 29, 9 26, 9 22Z";
-      case "canine":
-        return "M10 20 C10 17, 11 15, 12 14 C13.5 13, 15 13, 16 13 C17 13, 18.5 13, 20 14 C21 15, 22 17, 22 20 C22 24, 21 28, 19 30 C18 31, 17 31.5, 16 32 C15 31.5, 14 31, 13 30 C11 28, 10 24, 10 20Z";
-      default:
-        return "M11 20 C11 17, 12 15, 13 14 C14 13, 15 13, 16 13 C17 13, 18 13, 19 14 C20 15, 21 17, 21 20 C21 24, 20 28, 19 30 C18 31, 17 31.5, 16 32 C15 31.5, 14 31, 13 30 C12 28, 11 24, 11 20Z";
-    }
-  }
-}
-
-function getRootPath(type: string, upper: boolean): string {
-  if (upper) {
-    switch (type) {
-      case "molar":
-        return "M10 21 L7 38 L9 38 L12 25 M16 22 L16 40 M20 21 L25 38 L23 38 L20 25";
-      case "premolar":
-        return "M13 21 L11 36 L13 36 L14 24 M19 21 L21 36 L19 36 L18 24";
-      case "canine":
-        return "M15 22 L14 40 L16 41 L18 40 L17 22";
-      default:
-        return "M15 22 L14.5 38 L16 39 L17.5 38 L17 22";
-    }
-  } else {
-    switch (type) {
-      case "molar":
-        return "M10 15 L7 4 L9 4 L12 12 M16 14 L16 2 M20 15 L25 4 L23 4 L20 12";
-      case "premolar":
-        return "M13 15 L11 4 L13 4 L14 12 M19 15 L21 4 L19 4 L18 12";
-      case "canine":
-        return "M15 14 L14 2 L16 1 L18 2 L17 14";
-      default:
-        return "M15 14 L14.5 4 L16 3 L17.5 4 L17 14";
-    }
-  }
-}
-
-function renderCrownDetail(type: string, upper: boolean, color: string) {
-  const cy = upper ? 14 : 22;
+function UpperLateral({ type, fillColor, color }: { type: string; fillColor: string; color: string }) {
+  // Upper teeth: roots on top, crown on bottom
   switch (type) {
-    case "molar":
+    case "molar3":
       return (
-        <g opacity="0.4">
-          <line x1="11" y1={cy - 3} x2="21" y2={cy - 3} stroke={color} strokeWidth="0.6" />
-          <line x1="16" y1={cy - 6} x2="16" y2={cy + 3} stroke={color} strokeWidth="0.6" />
-          <circle cx="12" cy={cy - 1} r="2" fill="none" stroke={color} strokeWidth="0.5" />
-          <circle cx="20" cy={cy - 1} r="2" fill="none" stroke={color} strokeWidth="0.5" />
-          <circle cx="16" cy={cy + 2} r="1.5" fill="none" stroke={color} strokeWidth="0.5" />
+        <g>
+          {/* 3 roots */}
+          <path d="M7 24 C7 18, 5 8, 4 3 C4 2, 5 2, 6 3 C7 6, 8 14, 10 22" fill={fillColor} stroke={color} strokeWidth="0.8" />
+          <path d="M12 22 C12 16, 13 8, 14 3 C14 2, 15 2, 15 3 C16 8, 16 16, 16 22" fill={fillColor} stroke={color} strokeWidth="0.8" />
+          <path d="M18 22 C19 14, 21 8, 22 3 C22 2, 23 2, 24 3 C23 8, 21 18, 21 24" fill={fillColor} stroke={color} strokeWidth="0.8" />
+          {/* Crown */}
+          <path d="M5 24 C5 22, 6 21, 7 20 C9 19, 12 18.5, 14 18.5 C16 18.5, 19 19, 21 20 C22 21, 23 22, 23 24 C23 28, 22 32, 21 34 C19 36, 17 37, 14 37 C11 37, 9 36, 7 34 C6 32, 5 28, 5 24Z" fill={fillColor} stroke={color} strokeWidth="1" />
+          {/* Crown bumps */}
+          <path d="M7 24 C8 22, 10 21, 11 22 C12 23, 12 22, 14 21 C15 22, 16 22, 17 21 C18 22, 20 22, 21 24" fill="none" stroke={color} strokeWidth="0.6" opacity="0.5" />
+        </g>
+      );
+    case "molar2":
+      return (
+        <g>
+          <path d="M8 23 C8 17, 6 9, 5 4 C5 3, 6 3, 7 4 C8 8, 9 15, 11 21" fill={fillColor} stroke={color} strokeWidth="0.8" />
+          <path d="M13 21 C13 15, 14 9, 14 4 C14 3, 15 3, 15 4 C16 9, 16 15, 16 21" fill={fillColor} stroke={color} strokeWidth="0.8" />
+          <path d="M17 21 C18 13, 20 7, 21 4 C21 3, 22 3, 22 4 C22 8, 21 16, 20 23" fill={fillColor} stroke={color} strokeWidth="0.8" />
+          <path d="M6 23 C6 21, 7 20, 8 19 C10 18, 12 17.5, 14 17.5 C16 17.5, 18 18, 20 19 C21 20, 22 21, 22 23 C22 27, 21 31, 20 33 C18 35, 16 36, 14 36 C12 36, 10 35, 8 33 C7 31, 6 27, 6 23Z" fill={fillColor} stroke={color} strokeWidth="1" />
+          <path d="M8 23 C9 21, 11 20, 12 21 C13 22, 15 20, 16 21 C17 22, 19 21, 20 23" fill="none" stroke={color} strokeWidth="0.6" opacity="0.5" />
         </g>
       );
     case "premolar":
       return (
-        <g opacity="0.4">
-          <line x1="16" y1={cy - 5} x2="16" y2={cy + 2} stroke={color} strokeWidth="0.6" />
-          <circle cx="13.5" cy={cy - 1} r="1.8" fill="none" stroke={color} strokeWidth="0.5" />
-          <circle cx="18.5" cy={cy - 1} r="1.8" fill="none" stroke={color} strokeWidth="0.5" />
+        <g>
+          <path d="M11 22 C11 16, 10 9, 9 4 C9 3, 10 3, 11 4 C12 8, 12 15, 13 20" fill={fillColor} stroke={color} strokeWidth="0.8" />
+          <path d="M15 20 C16 15, 17 9, 18 4 C18 3, 19 3, 19 4 C18 9, 17 16, 17 22" fill={fillColor} stroke={color} strokeWidth="0.8" />
+          <path d="M9 22 C9 20, 10 19, 11 18 C12 17, 13 17, 14 17 C15 17, 16 17, 17 18 C18 19, 19 20, 19 22 C19 26, 18 30, 17 32 C16 33, 15 34, 14 34 C13 34, 12 33, 11 32 C10 30, 9 26, 9 22Z" fill={fillColor} stroke={color} strokeWidth="1" />
+          <path d="M11 22 C12 20, 13 21, 14 20 C15 21, 16 20, 17 22" fill="none" stroke={color} strokeWidth="0.6" opacity="0.5" />
         </g>
       );
     case "canine":
       return (
-        <g opacity="0.35">
-          <path d={`M13 ${cy + 1} L16 ${cy - 4} L19 ${cy + 1}`} fill="none" stroke={color} strokeWidth="0.6" />
+        <g>
+          <path d="M12 22 C12 15, 11 8, 11 4 C11 2, 14 1, 14 3 C15 2, 17 2, 17 4 C17 8, 16 15, 16 22" fill={fillColor} stroke={color} strokeWidth="0.8" />
+          <path d="M10 24 C10 21, 11 19, 12 18 C13 17, 14 16, 14 16 C14 16, 15 17, 16 18 C17 19, 18 21, 18 24 C18 28, 17 32, 16 34 C15 35, 14 36, 14 36 C14 36, 13 35, 12 34 C11 32, 10 28, 10 24Z" fill={fillColor} stroke={color} strokeWidth="1" />
         </g>
       );
-    default:
+    case "lateral":
       return (
-        <g opacity="0.3">
-          <line x1="13" y1={cy - 2} x2="19" y2={cy - 2} stroke={color} strokeWidth="0.5" />
+        <g>
+          <path d="M12 20 C12 14, 12 8, 12 4 C12 2, 14 2, 14 3 C16 2, 16 2, 16 4 C16 8, 16 14, 16 20" fill={fillColor} stroke={color} strokeWidth="0.8" />
+          <path d="M10 22 C10 19, 11 18, 12 17 C13 16, 14 16, 14 16 C14 16, 15 16, 16 17 C17 18, 18 19, 18 22 C18 26, 17 30, 16 32 C15 33, 14 34, 14 34 C14 34, 13 33, 12 32 C11 30, 10 26, 10 22Z" fill={fillColor} stroke={color} strokeWidth="1" />
+        </g>
+      );
+    default: // central
+      return (
+        <g>
+          <path d="M12 18 C12 12, 13 6, 13 4 C13 2, 14 2, 14 3 C15 2, 15 2, 15 4 C15 6, 16 12, 16 18" fill={fillColor} stroke={color} strokeWidth="0.8" />
+          <path d="M10 20 C10 18, 11 16, 12 15 C13 14.5, 14 14, 14 14 C14 14, 15 14.5, 16 15 C17 16, 18 18, 18 20 C18 25, 17 30, 16 33 C15 34, 14 35, 14 35 C14 35, 13 34, 12 33 C11 30, 10 25, 10 20Z" fill={fillColor} stroke={color} strokeWidth="1" />
         </g>
       );
   }
 }
 
-function renderStatusOverlay(status: StatusDente, color: string, type: string, upper: boolean) {
-  const cy = upper ? 14 : 22;
-  switch (status) {
-    case "restaurado":
-      return <rect x="12" y={cy - 3} width="8" height="6" rx="1" fill={color} opacity="0.5" />;
-    case "carie":
+function LowerLateral({ type, fillColor, color }: { type: string; fillColor: string; color: string }) {
+  // Lower teeth: crown on top, roots on bottom
+  switch (type) {
+    case "molar3":
       return (
         <g>
-          <circle cx="16" cy={cy} r="3.5" fill={color} opacity="0.5" />
-          <circle cx="16" cy={cy} r="2" fill={color} opacity="0.3" />
+          {/* Crown */}
+          <path d="M5 15 C5 19, 6 21, 7 22 C9 24, 11 25, 14 25 C17 25, 19 24, 21 22 C22 21, 23 19, 23 15 C23 12, 22 9, 21 8 C19 7, 16 6, 14 6 C12 6, 9 7, 7 8 C6 9, 5 12, 5 15Z" fill={fillColor} stroke={color} strokeWidth="1" />
+          <path d="M7 15 C8 17, 10 18, 11 17 C12 16, 14 18, 17 17 C18 16, 20 17, 21 15" fill="none" stroke={color} strokeWidth="0.6" opacity="0.5" />
+          {/* 2 roots */}
+          <path d="M9 24 C9 30, 7 38, 6 46 C6 48, 7 48, 8 47 C9 42, 10 34, 12 26" fill={fillColor} stroke={color} strokeWidth="0.8" />
+          <path d="M16 26 C18 34, 19 42, 20 47 C20 48, 21 48, 22 46 C21 38, 19 30, 19 24" fill={fillColor} stroke={color} strokeWidth="0.8" />
         </g>
       );
+    case "molar2":
+      return (
+        <g>
+          <path d="M6 15 C6 19, 7 21, 8 22 C10 24, 12 25, 14 25 C16 25, 18 24, 20 22 C21 21, 22 19, 22 15 C22 12, 21 9, 20 8 C18 7, 16 6, 14 6 C12 6, 10 7, 8 8 C7 9, 6 12, 6 15Z" fill={fillColor} stroke={color} strokeWidth="1" />
+          <path d="M8 15 C9 17, 11 18, 12 17 C14 16, 16 17, 17 17 C19 18, 20 17, 20 15" fill="none" stroke={color} strokeWidth="0.6" opacity="0.5" />
+          <path d="M10 24 C10 30, 8 38, 7 46 C7 48, 8 48, 9 47 C10 42, 11 34, 12 26" fill={fillColor} stroke={color} strokeWidth="0.8" />
+          <path d="M16 26 C17 34, 18 42, 19 47 C19 48, 20 48, 21 46 C20 38, 18 30, 18 24" fill={fillColor} stroke={color} strokeWidth="0.8" />
+        </g>
+      );
+    case "premolar":
+      return (
+        <g>
+          <path d="M9 14 C9 18, 10 20, 11 21 C12 22, 13 23, 14 23 C15 23, 16 22, 17 21 C18 20, 19 18, 19 14 C19 11, 18 9, 17 8 C16 7, 15 7, 14 7 C13 7, 12 7, 11 8 C10 9, 9 11, 9 14Z" fill={fillColor} stroke={color} strokeWidth="1" />
+          <path d="M11 14 C12 16, 13 15, 14 16 C15 15, 16 16, 17 14" fill="none" stroke={color} strokeWidth="0.6" opacity="0.5" />
+          <path d="M13 22 C13 28, 12 36, 11 44 C11 46, 12 46, 13 45 C14 40, 15 28, 15 22" fill={fillColor} stroke={color} strokeWidth="0.8" />
+        </g>
+      );
+    case "canine":
+      return (
+        <g>
+          <path d="M10 14 C10 18, 11 21, 12 22 C13 23, 14 24, 14 24 C14 24, 15 23, 16 22 C17 21, 18 18, 18 14 C18 11, 17 9, 16 8 C15 7, 14 7, 14 7 C14 7, 13 7, 12 8 C11 9, 10 11, 10 14Z" fill={fillColor} stroke={color} strokeWidth="1" />
+          <path d="M12 22 C12 28, 12 36, 12 44 C12 46, 14 47, 14 46 C16 47, 16 46, 16 44 C16 36, 16 28, 16 22" fill={fillColor} stroke={color} strokeWidth="0.8" />
+        </g>
+      );
+    case "lateral":
+      return (
+        <g>
+          <path d="M10 14 C10 18, 11 20, 12 21 C13 22, 14 22, 14 22 C14 22, 15 22, 16 21 C17 20, 18 18, 18 14 C18 11, 17 9, 16 8 C15 7, 14 7, 14 7 C14 7, 13 7, 12 8 C11 9, 10 11, 10 14Z" fill={fillColor} stroke={color} strokeWidth="1" />
+          <path d="M12 21 C12 28, 12 36, 12 44 C12 46, 14 47, 14 46 C16 47, 16 46, 16 44 C16 36, 16 28, 16 21" fill={fillColor} stroke={color} strokeWidth="0.8" />
+        </g>
+      );
+    default: // central
+      return (
+        <g>
+          <path d="M10 13 C10 17, 11 19, 12 20 C13 21, 14 22, 14 22 C14 22, 15 21, 16 20 C17 19, 18 17, 18 13 C18 10, 17 8, 16 7 C15 6, 14 6, 14 6 C14 6, 13 6, 12 7 C11 8, 10 10, 10 13Z" fill={fillColor} stroke={color} strokeWidth="1" />
+          <path d="M12 21 C12 28, 13 36, 13 44 C13 46, 14 47, 14 46 C15 47, 15 46, 15 44 C15 36, 16 28, 16 21" fill={fillColor} stroke={color} strokeWidth="0.8" />
+        </g>
+      );
+  }
+}
+
+/* ─── Occlusal (top-down) view ─── */
+function OcclusalToothSVG({ numero, status, color, fillColor }: {
+  numero: number; status: StatusDente; color: string; fillColor: string;
+}) {
+  const type = getToothType(numero);
+
+  if (status === "ausente") {
+    return (
+      <svg viewBox="0 0 24 24" className="w-full h-full">
+        <line x1="4" y1="4" x2="20" y2="20" stroke={color} strokeWidth="1.2" opacity="0.4" />
+        <line x1="20" y1="4" x2="4" y2="20" stroke={color} strokeWidth="1.2" opacity="0.4" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg viewBox="0 0 24 24" className="w-full h-full">
+      {renderOcclusalShape(type, fillColor, color)}
+      {renderOcclusalStatusOverlay(status, color, type)}
+    </svg>
+  );
+}
+
+function renderOcclusalShape(type: string, fillColor: string, color: string) {
+  switch (type) {
+    case "molar3":
+    case "molar2":
+      return (
+        <g>
+          <rect x="2" y="3" width="20" height="18" rx="4" fill={fillColor} stroke={color} strokeWidth="0.9" />
+          {/* Cross grooves */}
+          <line x1="8" y1="5" x2="8" y2="19" stroke={color} strokeWidth="0.5" opacity="0.35" />
+          <line x1="16" y1="5" x2="16" y2="19" stroke={color} strokeWidth="0.5" opacity="0.35" />
+          <line x1="4" y1="9" x2="20" y2="9" stroke={color} strokeWidth="0.5" opacity="0.35" />
+          <line x1="4" y1="15" x2="20" y2="15" stroke={color} strokeWidth="0.5" opacity="0.35" />
+          {/* Central pit */}
+          <rect x="8" y="9" width="8" height="6" rx="1.5" fill="none" stroke={color} strokeWidth="0.6" opacity="0.4" />
+        </g>
+      );
+    case "premolar":
+      return (
+        <g>
+          <ellipse cx="12" cy="12" rx="8" ry="9" fill={fillColor} stroke={color} strokeWidth="0.9" />
+          <line x1="12" y1="5" x2="12" y2="19" stroke={color} strokeWidth="0.5" opacity="0.35" />
+          <ellipse cx="9" cy="12" rx="2.5" ry="3" fill="none" stroke={color} strokeWidth="0.5" opacity="0.4" />
+          <ellipse cx="15" cy="12" rx="2.5" ry="3" fill="none" stroke={color} strokeWidth="0.5" opacity="0.4" />
+        </g>
+      );
+    case "canine":
+      return (
+        <g>
+          <ellipse cx="12" cy="12" rx="7" ry="9" fill={fillColor} stroke={color} strokeWidth="0.9" />
+          {/* Pointed ridge */}
+          <path d="M8 16 L12 6 L16 16" fill="none" stroke={color} strokeWidth="0.5" opacity="0.4" />
+        </g>
+      );
+    case "lateral":
+      return (
+        <g>
+          <ellipse cx="12" cy="12" rx="6.5" ry="8" fill={fillColor} stroke={color} strokeWidth="0.9" />
+          <line x1="8" y1="10" x2="16" y2="10" stroke={color} strokeWidth="0.4" opacity="0.3" />
+        </g>
+      );
+    default: // central
+      return (
+        <g>
+          <rect x="4" y="3" width="16" height="18" rx="5" fill={fillColor} stroke={color} strokeWidth="0.9" />
+          <line x1="7" y1="10" x2="17" y2="10" stroke={color} strokeWidth="0.4" opacity="0.3" />
+        </g>
+      );
+  }
+}
+
+function renderOcclusalStatusOverlay(status: StatusDente, color: string, type: string) {
+  switch (status) {
+    case "restaurado":
+      return <rect x="8" y="8" width="8" height="8" rx="1.5" fill={color} opacity="0.45" />;
+    case "carie":
+      return <circle cx="12" cy="12" r="4" fill={color} opacity="0.5" />;
     case "implante":
       return (
         <g>
-          <line x1="16" y1={upper ? 6 : 30} x2="16" y2={upper ? 38 : 4} stroke={color} strokeWidth="2.5" opacity="0.6" />
-          <line x1="12" y1={upper ? 28 : 14} x2="20" y2={upper ? 28 : 14} stroke={color} strokeWidth="1.2" />
-          <line x1="13" y1={upper ? 32 : 10} x2="19" y2={upper ? 32 : 10} stroke={color} strokeWidth="1.2" />
-          <line x1="14" y1={upper ? 36 : 6} x2="18" y2={upper ? 36 : 6} stroke={color} strokeWidth="1.2" />
+          <circle cx="12" cy="12" r="5" fill="none" stroke={color} strokeWidth="1.5" opacity="0.6" />
+          <circle cx="12" cy="12" r="2" fill={color} opacity="0.4" />
         </g>
       );
     case "canal":
       return (
-        <path
-          d={`M16 ${upper ? 8 : 28} L16 ${upper ? 36 : 6}`}
-          stroke={color}
-          strokeWidth="2"
-          strokeDasharray="2.5 1.5"
-          opacity="0.6"
-        />
-      );
-    case "protese":
-      return (
-        <rect
-          x={type === "molar" ? 8 : 10}
-          y={upper ? 6 : 15}
-          width={type === "molar" ? 16 : 12}
-          height={type === "molar" ? 16 : 14}
-          rx="3"
-          fill="none"
-          stroke={color}
-          strokeWidth="1.5"
-          strokeDasharray="2 2"
-          opacity="0.7"
-        />
-      );
-    case "fratura":
-      return (
-        <g opacity="0.7">
-          <path d={`M10 ${cy - 5} L14 ${cy - 1} L11 ${cy + 1} L16 ${cy + 5}`} stroke={color} strokeWidth="1.8" fill="none" strokeLinecap="round" />
-          <path d={`M22 ${cy - 5} L18 ${cy - 1} L21 ${cy + 1} L16 ${cy + 5}`} stroke={color} strokeWidth="1.8" fill="none" strokeLinecap="round" />
+        <g>
+          <line x1="9" y1="9" x2="15" y2="15" stroke={color} strokeWidth="1.5" opacity="0.5" />
+          <line x1="15" y1="9" x2="9" y2="15" stroke={color} strokeWidth="1.5" opacity="0.5" />
         </g>
       );
+    case "protese":
+      return <rect x="4" y="4" width="16" height="16" rx="3" fill="none" stroke={color} strokeWidth="1.2" strokeDasharray="2 2" opacity="0.6" />;
+    case "fratura":
+      return <path d="M8 6 L12 10 L10 12 L14 18" stroke={color} strokeWidth="1.5" fill="none" opacity="0.6" />;
     case "selante":
-      return <ellipse cx="16" cy={cy - 1} rx="3.5" ry="2.5" fill={color} opacity="0.45" />;
+      return <ellipse cx="12" cy="12" rx="4" ry="3" fill={color} opacity="0.4" />;
+    default:
+      return null;
+  }
+}
+
+function renderLateralStatusOverlay(status: StatusDente, color: string, upper: boolean) {
+  const cy = upper ? 26 : 16;
+  switch (status) {
+    case "restaurado":
+      return <rect x="10" y={cy - 4} width="8" height="8" rx="1.5" fill={color} opacity="0.45" />;
+    case "carie":
+      return <circle cx="14" cy={cy} r="4" fill={color} opacity="0.45" />;
+    case "implante":
+      return (
+        <g>
+          <line x1="14" y1={upper ? 8 : 30} x2="14" y2={upper ? 36 : 8} stroke={color} strokeWidth="2" opacity="0.5" />
+          <line x1="10" y1={upper ? 30 : 14} x2="18" y2={upper ? 30 : 14} stroke={color} strokeWidth="1" />
+          <line x1="11" y1={upper ? 34 : 10} x2="17" y2={upper ? 34 : 10} stroke={color} strokeWidth="1" />
+        </g>
+      );
+    case "canal":
+      return <path d={`M14 ${upper ? 10 : 38} L14 ${upper ? 38 : 10}`} stroke={color} strokeWidth="1.5" strokeDasharray="2 2" opacity="0.5" />;
+    case "protese":
+      return <rect x="8" y={upper ? 16 : 6} width="12" height="16" rx="3" fill="none" stroke={color} strokeWidth="1.2" strokeDasharray="2 2" opacity="0.6" />;
+    case "fratura":
+      return <path d={`M9 ${cy - 6} L13 ${cy - 2} L10 ${cy} L15 ${cy + 6}`} stroke={color} strokeWidth="1.5" fill="none" opacity="0.6" />;
+    case "selante":
+      return <ellipse cx="14" cy={cy} rx="4" ry="3" fill={color} opacity="0.4" />;
     default:
       return null;
   }
@@ -220,42 +316,55 @@ export function OdontogramaChart({ dentes, onDenteClick, editable = false }: Odo
     setSelectedDente(selectedDente === numero ? null : numero);
   };
 
-  const renderDente = (numero: number) => {
+  const getToothProps = (numero: number) => {
     const dente = denteMap.get(numero);
     const status = dente?.status ?? "saudavel";
     const config = statusDenteConfig[status];
+    return { status, config, fillColor: status === "saudavel" ? "hsl(45, 30%, 92%)" : `${config.color}20` };
+  };
+
+  const renderToothColumn = (numero: number) => {
+    const { status, config, fillColor } = getToothProps(numero);
     const isHovered = hoveredDente === numero;
     const isSelected = selectedDente === numero;
+    const upper = isUpper(numero);
 
     return (
       <div
         key={numero}
-        className="flex flex-col items-center gap-0.5 cursor-pointer group"
+        className={`flex flex-col items-center cursor-pointer transition-all duration-150 ${
+          isSelected ? "scale-110 z-10" : isHovered ? "scale-105" : ""
+        }`}
+        style={{ width: "clamp(22px, 4vw, 34px)" }}
         onMouseEnter={() => setHoveredDente(numero)}
         onMouseLeave={() => setHoveredDente(null)}
         onClick={() => handleClick(numero)}
       >
-        <span className={`text-[8px] font-bold transition-colors ${isSelected ? "text-primary" : "text-muted-foreground"}`}>
-          {numero}
-        </span>
-        <div
-          className={`relative transition-all duration-200 ${
-            isSelected
-              ? "scale-[1.2] drop-shadow-lg"
-              : isHovered
-                ? "scale-110 drop-shadow-md"
-                : ""
-          }`}
-        >
-          <ToothSVG
-            numero={numero}
-            status={status}
-            color={config.color}
-            fillColor={status === "saudavel" ? "hsl(152,60%,42%,0.12)" : `${config.color}25`}
-          />
-        </div>
+        {upper ? (
+          <>
+            {/* Lateral view (roots up) */}
+            <div className="w-full" style={{ height: "clamp(28px, 5vw, 42px)" }}>
+              <LateralToothSVG numero={numero} status={status} color={config.color} fillColor={fillColor} />
+            </div>
+            {/* Occlusal view */}
+            <div className="w-full" style={{ height: "clamp(16px, 3vw, 24px)" }}>
+              <OcclusalToothSVG numero={numero} status={status} color={config.color} fillColor={fillColor} />
+            </div>
+          </>
+        ) : (
+          <>
+            {/* Occlusal view */}
+            <div className="w-full" style={{ height: "clamp(16px, 3vw, 24px)" }}>
+              <OcclusalToothSVG numero={numero} status={status} color={config.color} fillColor={fillColor} />
+            </div>
+            {/* Lateral view (roots down) */}
+            <div className="w-full" style={{ height: "clamp(28px, 5vw, 42px)" }}>
+              <LateralToothSVG numero={numero} status={status} color={config.color} fillColor={fillColor} />
+            </div>
+          </>
+        )}
         {isHovered && (
-          <span className="text-[7px] text-muted-foreground font-medium whitespace-nowrap">
+          <span className="text-[7px] text-muted-foreground font-medium whitespace-nowrap absolute -bottom-3">
             {config.label}
           </span>
         )}
@@ -267,79 +376,67 @@ export function OdontogramaChart({ dentes, onDenteClick, editable = false }: Odo
   const selectedConfig = selectedInfo ? statusDenteConfig[selectedInfo.status] : null;
 
   return (
-    <div className="space-y-5">
-      {/* Legenda */}
+    <div className="space-y-3">
+      {/* Legend */}
       <div className="flex flex-wrap justify-center gap-3">
         {Object.entries(statusDenteConfig).map(([key, cfg]) => (
           <div key={key} className="flex items-center gap-1.5">
-            <div
-              className="w-3 h-3 rounded-full border"
-              style={{ backgroundColor: `${cfg.color}33`, borderColor: cfg.color }}
-            />
-            <span className="text-[10px] text-muted-foreground font-medium">
-              {cfg.label}
-            </span>
+            <div className="w-3 h-3 rounded-full border" style={{ backgroundColor: `${cfg.color}33`, borderColor: cfg.color }} />
+            <span className="text-[10px] text-muted-foreground font-medium">{cfg.label}</span>
           </div>
         ))}
       </div>
 
-      {/* Arcada Superior */}
+      {/* Upper Arch */}
       <div>
-        <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-2 text-center">
+        <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1 text-center">
           Arcada Superior
         </p>
-        <div className="flex justify-center gap-0.5 sm:gap-1">
-          {arcadaSuperior.map(renderDente)}
+        <div className="flex justify-center items-end gap-px">
+          {arcadaSuperior.map(renderToothColumn)}
+        </div>
+        {/* Numbers */}
+        <div className="flex justify-center gap-px mt-0.5">
+          {arcadaSuperior.map((n) => (
+            <div key={n} className="text-center border border-border/50 bg-muted/30" style={{ width: "clamp(22px, 4vw, 34px)" }}>
+              <span className={`text-[8px] font-bold ${selectedDente === n ? "text-primary" : "text-muted-foreground"}`}>{n}</span>
+            </div>
+          ))}
         </div>
       </div>
 
-      {/* Divisória */}
-      <div className="flex items-center gap-3 px-4">
-        <div className="flex-1 h-px bg-border" />
-        <span className="text-[9px] text-muted-foreground uppercase tracking-widest font-medium">
-          Direito ← → Esquerdo
-        </span>
-        <div className="flex-1 h-px bg-border" />
-      </div>
-
-      {/* Arcada Inferior */}
+      {/* Lower numbers + arch */}
       <div>
-        <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-2 text-center">
+        <div className="flex justify-center gap-px mb-0.5">
+          {arcadaInferior.map((n) => (
+            <div key={n} className="text-center border border-border/50 bg-muted/30" style={{ width: "clamp(22px, 4vw, 34px)" }}>
+              <span className={`text-[8px] font-bold ${selectedDente === n ? "text-primary" : "text-muted-foreground"}`}>{n}</span>
+            </div>
+          ))}
+        </div>
+        <div className="flex justify-center items-start gap-px">
+          {arcadaInferior.map(renderToothColumn)}
+        </div>
+        <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mt-1 text-center">
           Arcada Inferior
         </p>
-        <div className="flex justify-center gap-0.5 sm:gap-1">
-          {arcadaInferior.map(renderDente)}
-        </div>
       </div>
 
-      {/* Dente Selecionado Info */}
+      {/* Selected tooth info */}
       {selectedDente && selectedInfo && selectedConfig && (
         <div className="bg-card rounded-xl border border-border/60 p-4 flex items-center gap-4 animate-fade-in shadow-sm">
-          <div
-            className="w-12 h-12 rounded-xl flex items-center justify-center"
-            style={{ backgroundColor: `${selectedConfig.color}18` }}
-          >
-            <ToothSVG
-              numero={selectedDente}
-              status={selectedInfo.status}
-              color={selectedConfig.color}
-              fillColor={`${selectedConfig.color}30`}
-            />
+          <div className="w-12 h-16 flex items-center justify-center" style={{ backgroundColor: `${selectedConfig.color}10` }}>
+            <LateralToothSVG numero={selectedDente} status={selectedInfo.status} color={selectedConfig.color} fillColor={`${selectedConfig.color}25`} />
           </div>
           <div>
-            <p className="text-sm font-semibold text-foreground font-heading">
+            <p className="text-sm font-semibold text-foreground">
               Dente {selectedDente} — {nomesDentes[selectedDente]}
             </p>
             <p className="text-xs text-muted-foreground">
-              Status:{" "}
-              <span style={{ color: selectedConfig.color }} className="font-bold">
-                {selectedConfig.label}
-              </span>
+              Status: <span style={{ color: selectedConfig.color }} className="font-bold">{selectedConfig.label}</span>
             </p>
             {selectedInfo.observacao && (
-              <p className="text-xs text-muted-foreground mt-1">
-                {selectedInfo.observacao}
-              </p>
+              <p className="text-xs text-muted-foreground mt-1">{selectedInfo.observacao}</p>
             )}
           </div>
         </div>
@@ -365,7 +462,6 @@ export function OdontogramaEditor({ dentes, onChange }: OdontogramaEditorProps) 
 
   return (
     <div className="space-y-4">
-      {/* Status selector */}
       <div>
         <p className="text-xs font-medium text-muted-foreground mb-2">
           Selecione o status e clique no dente:
@@ -376,9 +472,7 @@ export function OdontogramaEditor({ dentes, onChange }: OdontogramaEditorProps) 
               key={key}
               onClick={() => setSelectedStatus(key as StatusDente)}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-all border ${
-                selectedStatus === key
-                  ? "ring-2 ring-offset-1 shadow-sm"
-                  : "opacity-60 hover:opacity-100"
+                selectedStatus === key ? "ring-2 ring-offset-1 shadow-sm" : "opacity-60 hover:opacity-100"
               }`}
               style={{
                 borderColor: cfg.color,
@@ -386,21 +480,13 @@ export function OdontogramaEditor({ dentes, onChange }: OdontogramaEditorProps) 
                 color: cfg.color,
               }}
             >
-              <div
-                className="w-2.5 h-2.5 rounded-full"
-                style={{ backgroundColor: cfg.color }}
-              />
+              <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: cfg.color }} />
               {cfg.label}
             </button>
           ))}
         </div>
       </div>
-
-      <OdontogramaChart
-        dentes={dentes}
-        onDenteClick={handleDenteClick}
-        editable
-      />
+      <OdontogramaChart dentes={dentes} onDenteClick={handleDenteClick} editable />
     </div>
   );
 }
