@@ -20,6 +20,7 @@ import { Route as EstoqueRouteImport } from './routes/estoque'
 import { Route as EquipeRouteImport } from './routes/equipe'
 import { Route as CrmRouteImport } from './routes/crm'
 import { Route as ConfiguracoesRouteImport } from './routes/configuracoes'
+import { Route as ComissoesRouteImport } from './routes/comissoes'
 import { Route as ChatRouteImport } from './routes/chat'
 import { Route as CanaisRouteImport } from './routes/canais'
 import { Route as CampanhasRouteImport } from './routes/campanhas'
@@ -83,6 +84,11 @@ const ConfiguracoesRoute = ConfiguracoesRouteImport.update({
   path: '/configuracoes',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ComissoesRoute = ComissoesRouteImport.update({
+  id: '/comissoes',
+  path: '/comissoes',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ChatRoute = ChatRouteImport.update({
   id: '/chat',
   path: '/chat',
@@ -127,6 +133,7 @@ export interface FileRoutesByFullPath {
   '/campanhas': typeof CampanhasRoute
   '/canais': typeof CanaisRoute
   '/chat': typeof ChatRoute
+  '/comissoes': typeof ComissoesRoute
   '/configuracoes': typeof ConfiguracoesRoute
   '/crm': typeof CrmRoute
   '/equipe': typeof EquipeRoute
@@ -147,6 +154,7 @@ export interface FileRoutesByTo {
   '/campanhas': typeof CampanhasRoute
   '/canais': typeof CanaisRoute
   '/chat': typeof ChatRoute
+  '/comissoes': typeof ComissoesRoute
   '/configuracoes': typeof ConfiguracoesRoute
   '/crm': typeof CrmRoute
   '/equipe': typeof EquipeRoute
@@ -168,6 +176,7 @@ export interface FileRoutesById {
   '/campanhas': typeof CampanhasRoute
   '/canais': typeof CanaisRoute
   '/chat': typeof ChatRoute
+  '/comissoes': typeof ComissoesRoute
   '/configuracoes': typeof ConfiguracoesRoute
   '/crm': typeof CrmRoute
   '/equipe': typeof EquipeRoute
@@ -190,6 +199,7 @@ export interface FileRouteTypes {
     | '/campanhas'
     | '/canais'
     | '/chat'
+    | '/comissoes'
     | '/configuracoes'
     | '/crm'
     | '/equipe'
@@ -210,6 +220,7 @@ export interface FileRouteTypes {
     | '/campanhas'
     | '/canais'
     | '/chat'
+    | '/comissoes'
     | '/configuracoes'
     | '/crm'
     | '/equipe'
@@ -230,6 +241,7 @@ export interface FileRouteTypes {
     | '/campanhas'
     | '/canais'
     | '/chat'
+    | '/comissoes'
     | '/configuracoes'
     | '/crm'
     | '/equipe'
@@ -251,6 +263,7 @@ export interface RootRouteChildren {
   CampanhasRoute: typeof CampanhasRoute
   CanaisRoute: typeof CanaisRoute
   ChatRoute: typeof ChatRoute
+  ComissoesRoute: typeof ComissoesRoute
   ConfiguracoesRoute: typeof ConfiguracoesRoute
   CrmRoute: typeof CrmRoute
   EquipeRoute: typeof EquipeRoute
@@ -343,6 +356,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConfiguracoesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/comissoes': {
+      id: '/comissoes'
+      path: '/comissoes'
+      fullPath: '/comissoes'
+      preLoaderRoute: typeof ComissoesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/chat': {
       id: '/chat'
       path: '/chat'
@@ -403,6 +423,7 @@ const rootRouteChildren: RootRouteChildren = {
   CampanhasRoute: CampanhasRoute,
   CanaisRoute: CanaisRoute,
   ChatRoute: ChatRoute,
+  ComissoesRoute: ComissoesRoute,
   ConfiguracoesRoute: ConfiguracoesRoute,
   CrmRoute: CrmRoute,
   EquipeRoute: EquipeRoute,
