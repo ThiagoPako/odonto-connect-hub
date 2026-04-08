@@ -24,8 +24,9 @@ import {
   Stethoscope,
   UserRound,
 } from "lucide-react";
-import { Link, useLocation } from "@tanstack/react-router";
+import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
+import { useAuth } from "@/hooks/useAuth";
 import logoImg from "@/assets/logo.png";
 
 interface NavSection {
