@@ -1,10 +1,10 @@
 import { useState, useEffect } from "react";
 import {
   X, ChevronRight, ChevronLeft, Users, FileText, CalendarDays, Eye,
-  Check, Upload, Clock, AlertTriangle, Send,
+  Check, Upload, Clock, AlertTriangle, Send, Phone,
 } from "lucide-react";
 import {
-  diasSemanaOptions, publicoOptions, templatesProntos,
+  diasSemanaOptions, publicoOptions, templatesProntos, numerosDisponiveis,
   type DisparoTemplate, type DisparoProgramado,
 } from "@/data/disparosMockData";
 import { WhatsAppPreview } from "./WhatsAppPreview";
@@ -38,6 +38,7 @@ export function NovoDisparoWizard({ open, onClose, onSave, editData }: NovoDispa
   const [campanhaPerpetua, setCampanhaPerpetua] = useState(false);
   const [usarHorarioClinica, setUsarHorarioClinica] = useState(false);
   const [intervaloSpam, setIntervaloSpam] = useState(7);
+  const [numeroEnvio, setNumeroEnvio] = useState(numerosDisponiveis.find(n => n.status === "conectado")?.id || "n1");
 
   const isEditing = !!editData;
 
@@ -58,6 +59,7 @@ export function NovoDisparoWizard({ open, onClose, onSave, editData }: NovoDispa
       setCampanhaPerpetua(editData.campanhaPerpetua || false);
       setUsarHorarioClinica(editData.usarHorarioClinica || false);
       setIntervaloSpam(editData.intervaloSpam);
+      setNumeroEnvio(editData.numeroEnvio);
     } else if (open && !editData) {
       setStep(1);
       setPublico("todos");
@@ -73,6 +75,7 @@ export function NovoDisparoWizard({ open, onClose, onSave, editData }: NovoDispa
       setCampanhaPerpetua(false);
       setUsarHorarioClinica(false);
       setIntervaloSpam(7);
+      setNumeroEnvio(numerosDisponiveis.find(n => n.status === "conectado")?.id || "n1");
     }
   }, [open, editData]);
 
@@ -119,6 +122,7 @@ export function NovoDisparoWizard({ open, onClose, onSave, editData }: NovoDispa
       contatosAlcancaveis,
       capacidadeDiaria,
       intervaloSpam,
+      numeroEnvio,
       ativo: isEditing ? (editData?.ativo ?? false) : false,
     });
     onClose();
@@ -163,10 +167,10 @@ export function NovoDisparoWizard({ open, onClose, onSave, editData }: NovoDispa
         <div className="flex-1 overflow-y-auto p-6">
           <div className="flex gap-6">
             <div className="flex-1 min-w-0">
-              {step === 1 && <StepPublico publico={publico} setPublico={setPublico} contatosAlcancaveis={contatosAlcancaveis} intervaloSpam={intervaloSpam} setIntervaloSpam={setIntervaloSpam} />}
+              {step === 1 && <StepPublico publico={publico} setPublico={setPublico} contatosAlcancaveis={contatosAlcancaveis} intervaloSpam={intervaloSpam} setIntervaloSpam={setIntervaloSpam} numeroEnvio={numeroEnvio} setNumeroEnvio={setNumeroEnvio} />}
               {step === 2 && <StepConteudo mensagem={mensagem} setMensagem={setMensagem} templateSelecionado={templateSelecionado} selectTemplate={selectTemplate} insertVariable={insertVariable} nomeDisparo={nomeDisparo} setNomeDisparo={setNomeDisparo} />}
               {step === 3 && <StepAgendamento tipo={tipo} setTipo={setTipo} diasSemana={diasSemana} toggleDia={toggleDia} horarioInicio={horarioInicio} setHorarioInicio={setHorarioInicio} horarioFim={horarioFim} setHorarioFim={setHorarioFim} dataInicio={dataInicio} setDataInicio={setDataInicio} dataFim={dataFim} setDataFim={setDataFim} campanhaPerpetua={campanhaPerpetua} setCampanhaPerpetua={setCampanhaPerpetua} usarHorarioClinica={usarHorarioClinica} setUsarHorarioClinica={setUsarHorarioClinica} capacidadeDiaria={capacidadeDiaria} />}
-              {step === 4 && <StepRevisao nomeDisparo={nomeDisparo} publico={publico} tipo={tipo} diasSemana={diasSemana} horarioInicio={horarioInicio} horarioFim={horarioFim} dataInicio={dataInicio} dataFim={dataFim} campanhaPerpetua={campanhaPerpetua} contatosAlcancaveis={contatosAlcancaveis} intervaloSpam={intervaloSpam} mensagem={mensagem} />}
+              {step === 4 && <StepRevisao nomeDisparo={nomeDisparo} publico={publico} tipo={tipo} diasSemana={diasSemana} horarioInicio={horarioInicio} horarioFim={horarioFim} dataInicio={dataInicio} dataFim={dataFim} campanhaPerpetua={campanhaPerpetua} contatosAlcancaveis={contatosAlcancaveis} intervaloSpam={intervaloSpam} mensagem={mensagem} numeroEnvio={numeroEnvio} />}
             </div>
             <div className="w-[280px] shrink-0 hidden lg:block">
               <WhatsAppPreview mensagem={mensagem} />
@@ -208,13 +212,15 @@ export function NovoDisparoWizard({ open, onClose, onSave, editData }: NovoDispa
 
 /* ===== STEP 1: PÚBLICO ===== */
 function StepPublico({
-  publico, setPublico, contatosAlcancaveis, intervaloSpam, setIntervaloSpam,
+  publico, setPublico, contatosAlcancaveis, intervaloSpam, setIntervaloSpam, numeroEnvio, setNumeroEnvio,
 }: {
   publico: string;
   setPublico: (v: any) => void;
   contatosAlcancaveis: number;
   intervaloSpam: number;
   setIntervaloSpam: (v: number) => void;
+  numeroEnvio: string;
+  setNumeroEnvio: (v: string) => void;
 }) {
   return (
     <div className="space-y-5">
@@ -271,6 +277,48 @@ function StepPublico({
             className="w-16 h-8 rounded-lg border border-border bg-background px-2 text-sm text-center text-foreground"
           />
           <span className="text-xs text-muted-foreground">dias de intervalo</span>
+        </div>
+      </div>
+
+      {/* Número de envio */}
+      <div>
+        <div className="flex items-center gap-2 mb-2">
+          <Phone className="h-4 w-4 text-muted-foreground" />
+          <h4 className="text-sm font-medium text-foreground">Número de envio</h4>
+        </div>
+        <p className="text-xs text-muted-foreground mb-3">Selecione qual número WhatsApp será usado para este disparo</p>
+        <div className="grid grid-cols-1 gap-2">
+          {numerosDisponiveis.map((num) => (
+            <button
+              key={num.id}
+              onClick={() => num.status === "conectado" && setNumeroEnvio(num.id)}
+              disabled={num.status === "desconectado"}
+              className={`flex items-center gap-3 p-3 rounded-xl border text-left transition-all ${
+                numeroEnvio === num.id
+                  ? "border-primary bg-primary/5 ring-1 ring-primary/20"
+                  : num.status === "desconectado"
+                  ? "border-border opacity-50 cursor-not-allowed"
+                  : "border-border hover:border-primary/40"
+              }`}
+            >
+              <div className={`mt-0.5 h-4 w-4 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${
+                numeroEnvio === num.id ? "border-primary bg-primary" : "border-muted-foreground/40"
+              }`}>
+                {numeroEnvio === num.id && <Check className="h-2.5 w-2.5 text-primary-foreground" />}
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-medium text-foreground">{num.nome}</p>
+                <p className="text-xs text-muted-foreground font-mono">{num.numero}</p>
+              </div>
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${
+                num.status === "conectado"
+                  ? "bg-success/15 text-success"
+                  : "bg-destructive/15 text-destructive"
+              }`}>
+                {num.status === "conectado" ? "Conectado" : "Desconectado"}
+              </span>
+            </button>
+          ))}
         </div>
       </div>
     </div>
@@ -557,7 +605,7 @@ function StepAgendamento({
 /* ===== STEP 4: REVISÃO ===== */
 function StepRevisao({
   nomeDisparo, publico, tipo, diasSemana, horarioInicio, horarioFim, dataInicio, dataFim,
-  campanhaPerpetua, contatosAlcancaveis, intervaloSpam, mensagem,
+  campanhaPerpetua, contatosAlcancaveis, intervaloSpam, mensagem, numeroEnvio,
 }: {
   nomeDisparo: string;
   publico: string;
@@ -571,8 +619,10 @@ function StepRevisao({
   contatosAlcancaveis: number;
   intervaloSpam: number;
   mensagem: string;
+  numeroEnvio: string;
 }) {
   const publicoLabel = publicoOptions.find((p) => p.id === publico)?.label || publico;
+  const numeroLabel = numerosDisponiveis.find((n) => n.id === numeroEnvio);
 
   return (
     <div className="space-y-5">
@@ -591,6 +641,7 @@ function StepRevisao({
         {tipo === "recorrente" && <ReviewRow label="Período" value={campanhaPerpetua ? "Perpétua" : `${dataInicio || "?"} a ${dataFim || "?"}`} />}
         {tipo === "unico" && dataInicio && <ReviewRow label="Data" value={dataInicio} />}
         <ReviewRow label="Intervalo anti-spam" value={`${intervaloSpam} dias`} />
+        <ReviewRow label="Número de envio" value={numeroLabel ? `${numeroLabel.nome} (${numeroLabel.numero})` : "Não selecionado"} />
       </div>
 
       <div className="bg-muted/50 rounded-xl p-4">
