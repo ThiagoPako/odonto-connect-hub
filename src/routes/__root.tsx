@@ -83,15 +83,15 @@ function AuthGate() {
     );
   }
 
-  const isLoginPage = location.pathname === "/login";
+  const isPublicPage = location.pathname === "/login" || location.pathname === "/reset-password";
 
-  // If not authenticated and not on login page, redirect to login
-  if (!isAuthenticated && !isLoginPage) {
+  // If not authenticated and not on a public page, redirect to login
+  if (!isAuthenticated && !isPublicPage) {
     return <RedirectToLogin />;
   }
 
-  // Login page — no sidebar
-  if (isLoginPage) {
+  // Public pages — no sidebar
+  if (isPublicPage) {
     return <Outlet />;
   }
 
