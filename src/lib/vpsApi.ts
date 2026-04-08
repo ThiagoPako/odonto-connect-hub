@@ -98,6 +98,17 @@ export async function forgotPassword(email: string) {
   });
 }
 
+export async function getResetRequests() {
+  return vpsApiFetch<Array<{ id: string; email: string; user_id: string; status: string; created_at: string }>>('/auth/reset-requests');
+}
+
+export async function adminResetPassword(userId: string, newPassword: string) {
+  return vpsApiFetch<{ success: boolean }>('/auth/admin-reset-password', {
+    method: 'POST',
+    body: { userId, newPassword },
+  });
+}
+
 // ─── Pacientes ──────────────────────────────────────────────
 
 export const pacientesApi = {
