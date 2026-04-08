@@ -5,16 +5,18 @@ import type { FinanceMovement } from "@/data/financeiroMockData";
 import { categoryLabels } from "@/data/financeiroMockData";
 
 const CATEGORY_COLORS: Record<string, string> = {
-  salarios: "hsl(217, 91%, 60%)",
+  salario: "hsl(217, 91%, 60%)",
+  comissao: "hsl(230, 60%, 55%)",
   aluguel: "hsl(187, 85%, 43%)",
+  energia: "hsl(50, 80%, 50%)",
+  agua: "hsl(200, 80%, 55%)",
+  internet: "hsl(260, 50%, 55%)",
   marketing: "hsl(38, 92%, 50%)",
   laboratorio: "hsl(270, 60%, 55%)",
   material: "hsl(152, 60%, 42%)",
   impostos: "hsl(0, 72%, 51%)",
-  equipamentos: "hsl(330, 60%, 50%)",
   manutencao: "hsl(200, 70%, 50%)",
-  consultoria: "hsl(160, 50%, 45%)",
-  honorarios: "hsl(45, 80%, 50%)",
+  software: "hsl(160, 50%, 45%)",
   outros_despesa: "hsl(210, 20%, 55%)",
 };
 
