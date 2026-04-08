@@ -122,6 +122,7 @@ export function NovoDisparoWizard({ open, onClose, onSave, editData }: NovoDispa
       contatosAlcancaveis,
       capacidadeDiaria,
       intervaloSpam,
+      numeroEnvio,
       ativo: isEditing ? (editData?.ativo ?? false) : false,
     });
     onClose();
