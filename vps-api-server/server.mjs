@@ -238,6 +238,55 @@ app.post('/api/auth/admin-reset-password', async (req, res) => {
   }
 });
 
+// ─── Admin: list all users ──────────────────────────────────
+app.get('/api/auth/users', async (req, res) => {
+  try {
+    await verifyAdmin(req);
+    const { rows } = await pool.query(`
+      SELECT p.id, p.name, p.email, p.avatar_url, p.created_at, p.updated_at,
+             COALESCE(p.active, true) as active,
+             COALESCE(ur.role, p.role, 'user') as role
+      FROM profiles p
+      LEFT JOIN user_roles ur ON ur.user_id = p.id
+      ORDER BY p.created_at DESC
+    `);
+    res.json(rows);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ─── Admin: update user ─────────────────────────────────────
+app.put('/api/auth/users/:id', async (req, res) => {
+  try {
+    await verifyAdmin(req);
+    const { id } = req.params;
+    const { name, email, role, active } = req.body;
+
+    const updates = [];
+    const values = [];
+    let idx = 1;
+
+    if (name !== undefined) { updates.push(`name = $${idx++}`); values.push(name); }
+    if (email !== undefined) { updates.push(`email = $${idx++}`); values.push(email.toLowerCase().trim()); }
+    if (active !== undefined) { updates.push(`active = $${idx++}`); values.push(active); }
+    updates.push(`updated_at = NOW()`);
+
+    values.push(id);
+    await pool.query(`UPDATE profiles SET ${updates.join(', ')} WHERE id = $${idx}`, values);
+
+    if (role !== undefined) {
+      await pool.query('DELETE FROM user_roles WHERE user_id = $1', [id]);
+      await pool.query('INSERT INTO user_roles (user_id, role) VALUES ($1, $2)', [id, role]);
+      await pool.query('UPDATE profiles SET role = $1 WHERE id = $2', [role, id]);
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════
 // EVOLUTION API PROXY (WhatsApp)
 // ═══════════════════════════════════════════════════════════════

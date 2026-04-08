@@ -116,6 +116,17 @@ export async function adminCreateUser(name: string, email: string, password: str
   });
 }
 
+export async function adminListUsers() {
+  return vpsApiFetch<Array<{ id: string; name: string; email: string; role: string; active: boolean; avatar_url: string | null; created_at: string }>>('/auth/users');
+}
+
+export async function adminUpdateUser(id: string, data: { name?: string; email?: string; role?: string; active?: boolean }) {
+  return vpsApiFetch<{ success: boolean }>(`/auth/users/${id}`, {
+    method: 'PUT',
+    body: data,
+  });
+}
+
 // ─── Pacientes ──────────────────────────────────────────────
 
 export const pacientesApi = {

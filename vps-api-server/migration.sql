@@ -160,6 +160,9 @@ CREATE TABLE IF NOT EXISTS prontuarios (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Add active column to profiles (run if upgrading)
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT true;
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_agendamentos_data ON agendamentos(data);
 CREATE INDEX IF NOT EXISTS idx_agendamentos_dentista ON agendamentos(dentista_id);
