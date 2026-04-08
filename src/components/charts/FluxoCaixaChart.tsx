@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, CartesianGrid } from "recharts";
+import { useState, useEffect, useRef } from "react";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
 
 const fluxoData = [
   { mes: "Out", entradas: 72000, saidas: 48000 },
@@ -12,28 +12,36 @@ const fluxoData = [
 ];
 
 export function FluxoCaixaChart() {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => { setMounted(true); }, []);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [dims, setDims] = useState({ w: 0, h: 0 });
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const update = () => setDims({ w: el.clientWidth, h: el.clientHeight });
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   return (
     <div className="bg-card rounded-xl border border-border p-5">
       <h3 className="text-sm font-semibold text-card-foreground mb-1">Fluxo de Caixa</h3>
       <p className="text-[11px] text-muted-foreground mb-4">Entradas vs saídas — últimos 7 meses</p>
-      <div className="h-[220px]">
-        {mounted && (
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={fluxoData} margin={{ left: 0, right: 8, top: 4, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 13%, 91%)" strokeOpacity={0.5} />
-              <XAxis dataKey="mes" tick={{ fontSize: 11, fill: "hsl(200, 10%, 50%)" }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fontSize: 10, fill: "hsl(200, 10%, 50%)" }} axisLine={false} tickLine={false} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} width={40} />
-              <Tooltip
-                contentStyle={{ background: "hsl(220, 20%, 97%)", border: "1px solid hsl(220, 13%, 91%)", borderRadius: "12px", fontSize: "12px" }}
-                formatter={(value: number, name: string) => [`R$ ${value.toLocaleString("pt-BR")}`, name === "entradas" ? "Entradas" : "Saídas"]}
-              />
-              <Bar dataKey="entradas" fill="hsl(152, 60%, 42%)" radius={[4, 4, 0, 0]} barSize={16} />
-              <Bar dataKey="saidas" fill="hsl(0, 72%, 51%)" radius={[4, 4, 0, 0]} barSize={16} />
-            </BarChart>
-          </ResponsiveContainer>
+      <div ref={containerRef} className="h-[220px] w-full">
+        {dims.w > 0 && (
+          <BarChart width={dims.w} height={dims.h} data={fluxoData} margin={{ left: 0, right: 8, top: 4, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 13%, 91%)" strokeOpacity={0.5} />
+            <XAxis dataKey="mes" tick={{ fontSize: 11, fill: "hsl(200, 10%, 50%)" }} axisLine={false} tickLine={false} />
+            <YAxis tick={{ fontSize: 10, fill: "hsl(200, 10%, 50%)" }} axisLine={false} tickLine={false} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} width={40} />
+            <Tooltip
+              contentStyle={{ background: "hsl(220, 20%, 97%)", border: "1px solid hsl(220, 13%, 91%)", borderRadius: "12px", fontSize: "12px" }}
+              formatter={(value: number, name: string) => [`R$ ${value.toLocaleString("pt-BR")}`, name === "entradas" ? "Entradas" : "Saídas"]}
+            />
+            <Bar dataKey="entradas" fill="hsl(152, 60%, 42%)" radius={[4, 4, 0, 0]} barSize={16} />
+            <Bar dataKey="saidas" fill="hsl(0, 72%, 51%)" radius={[4, 4, 0, 0]} barSize={16} />
+          </BarChart>
         )}
       </div>
       <div className="flex items-center gap-4 mt-3 text-[11px] text-muted-foreground">
