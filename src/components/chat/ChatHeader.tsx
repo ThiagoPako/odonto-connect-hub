@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import type { Lead } from "@/data/chatMockData";
-import { Phone, Video, MoreVertical, X, ArrowRightLeft, Loader2, ArrowLeft, Tags, Check } from "lucide-react";
+import { Phone, Video, MoreVertical, X, ArrowRightLeft, Loader2, ArrowLeft, Tags, Check, CheckCircle2 } from "lucide-react";
 import { LeadAvatar } from "@/components/LeadAvatar";
 import { toast } from "sonner";
 import { adminListUsers } from "@/lib/vpsApi";
@@ -122,6 +122,19 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, lead
         <button className="p-2 rounded-lg hover:bg-muted transition-colors text-muted-foreground">
           <MoreVertical className="h-4 w-4" />
         </button>
+        {lead.status === "active" && onFinishAttendance && (
+          <button
+            onClick={() => {
+              if (confirm(`Finalizar atendimento de ${lead.name}? Uma pesquisa de satisfação será enviada.`)) {
+                onFinishAttendance(lead);
+              }
+            }}
+            className="p-2 rounded-lg hover:bg-green-500/10 transition-colors text-green-600"
+            title="Finalizar atendimento"
+          >
+            <CheckCircle2 className="h-4 w-4" />
+          </button>
+        )}
         <button onClick={onClose} className="p-2 rounded-lg hover:bg-muted transition-colors text-muted-foreground ml-1">
           <X className="h-4 w-4" />
         </button>
