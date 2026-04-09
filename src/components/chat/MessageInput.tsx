@@ -29,6 +29,9 @@ export function MessageInput({ onSendMessage, disabled, replyingTo, onCancelRepl
   const [showListForm, setShowListForm] = useState(false);
   const [showQuickReplies, setShowQuickReplies] = useState(false);
   const [quickReplyFilter, setQuickReplyFilter] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [mediaPreview, setMediaPreview] = useState<{ file: File; previewUrl: string; type: MessageType } | null>(null);
+  const [mediaCaption, setMediaCaption] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
