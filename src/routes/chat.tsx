@@ -11,7 +11,7 @@ import { getTags, getLeadTags, saveLeadTags, type LeadTag } from "@/data/leadTag
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { useRealtimeChat, type IncomingMessage } from "@/hooks/useRealtimeChat";
-import { whatsappApi, transferApi } from "@/lib/vpsApi";
+import { whatsappApi, transferApi, sessionsApi } from "@/lib/vpsApi";
 import { playNotificationSound } from "@/lib/notificationSound";
 import { showBrowserNotification, requestNotificationPermission } from "@/lib/browserNotification";
 import { setChatUnreadCount } from "@/lib/chatUnreadStore";
