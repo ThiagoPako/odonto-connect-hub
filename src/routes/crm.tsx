@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { whatsappApi } from "@/lib/vpsApi";
+import { LeadAvatar } from "@/components/LeadAvatar";
 
 export const Route = createFileRoute("/crm")({
   ssr: false,
