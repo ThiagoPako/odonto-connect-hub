@@ -54,8 +54,16 @@ function shouldShowTimestamp(messages: ChatMessage[], idx: number): boolean {
   return diff > 5 * 60 * 1000; // 5 min gap
 }
 
-export function ConversationView({ messages, leadName, isTyping, onReaction, onReply, onForward, onDelete, onLoadMore, hasMore = false, loadingMore = false }: ConversationViewProps) {
+export function ConversationView({ messages, leadName, isTyping, onReaction, onReply, onForward, onDelete, onLoadMore, hasMore = false, loadingMore = false, onFileDrop }: ConversationViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const [showReactionPicker, setShowReactionPicker] = useState<string | null>(null);
+  const [showScrollButton, setShowScrollButton] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [highlightedMsgId, setHighlightedMsgId] = useState<string | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const isNearBottomRef = useRef(true);
   const bottomRef = useRef<HTMLDivElement>(null);
   const [showReactionPicker, setShowReactionPicker] = useState<string | null>(null);
   const [showScrollButton, setShowScrollButton] = useState(false);
