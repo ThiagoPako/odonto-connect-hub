@@ -1080,6 +1080,48 @@ app.post('/api/webhook/evolution', async (req, res) => {
       }
     }
 
+    // ─── Check for satisfaction rating response ───
+    const ratingKey = `awaiting_rating_${phone}`;
+    const { rows: ratingCheck } = await pool.query("SELECT value FROM app_settings WHERE key = $1", [ratingKey]);
+    if (ratingCheck.length > 0 && (msgType === 'text' || msgType === 'button_response')) {
+      let rating = null;
+      // Button response: rating_leadId_N
+      const btnMatch = msgContent.match(/rating_[^_]+_(\d)/);
+      if (btnMatch) rating = parseInt(btnMatch[1], 10);
+      // Text response: just a number 1-5
+      if (!rating) {
+        const num = parseInt(msgContent.trim(), 10);
+        if (num >= 1 && num <= 5) rating = num;
+      }
+
+      if (rating) {
+        const ratingData = ratingCheck[0].value;
+        const ratingId = crypto.randomUUID();
+        await pool.query(
+          `INSERT INTO satisfaction_ratings (id, session_id, lead_id, lead_phone, rating, attendant_id, attendant_name)
+           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+          [ratingId, ratingData.sessionId || null, ratingData.leadId, phone, rating, ratingData.attendantId || null, ratingData.attendantName || null]
+        );
+        // Remove awaiting flag
+        await pool.query("DELETE FROM app_settings WHERE key = $1", [ratingKey]);
+
+        const stars = '⭐'.repeat(rating);
+        const thanks = rating >= 4
+          ? `${stars}\n\nMuito obrigado pela avaliação! Ficamos felizes em atendê-lo! 😊`
+          : rating === 3
+          ? `${stars}\n\nObrigado pela avaliação! Vamos trabalhar para melhorar. 🙏`
+          : `${stars}\n\nObrigado pelo feedback. Vamos analisar e melhorar nosso atendimento. 🙏`;
+
+        await evolutionFetch(`/message/sendText/${instance}`, {
+          method: 'POST',
+          body: JSON.stringify({ number: phone, text: thanks }),
+        });
+
+        console.log(`⭐ Rating ${rating}/5 received from ${phone}`);
+        return res.json({ processed: true, rating, leadId: ratingData.leadId });
+      }
+    }
+
     // ─── Normal message (queue already assigned) ───
     broadcastSSE('new_message', {
       id: message?.key?.id || `wh-${Date.now()}`,
