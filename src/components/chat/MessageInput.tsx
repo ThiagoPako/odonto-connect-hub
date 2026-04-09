@@ -68,10 +68,10 @@ export function MessageInput({ onSendMessage, disabled, replyingTo, onCancelRepl
   const handleSend = () => {
     if (!message.trim()) return;
     let finalMessage = message.trim();
-    // Append signature if enabled
+    // Prepend attendant signature (e.g. "Julia:\nmensagem")
     if (attendanceSettings.signatureEnabled && attendantName) {
       const sig = attendanceSettings.signatureTemplate.replace("{name}", attendantName);
-      finalMessage += `\n\n${sig}`;
+      finalMessage = `${sig}\n${finalMessage}`;
     }
     onSendMessage(finalMessage, "text");
     setMessage("");

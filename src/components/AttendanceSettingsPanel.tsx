@@ -65,7 +65,7 @@ const defaultSettings: AttendanceSettings = {
   welcomeMessage:
     "Olá! 👋 Seja bem-vindo(a) à *Odonto Connect*! Como podemos ajudá-lo(a) hoje?",
   signatureEnabled: true,
-  signatureTemplate: "— {name} | Odonto Connect",
+  signatureTemplate: "{name}:",
   autoGreetingEnabled: true,
   quickReplies: [
     { id: "qr1", title: "Agendamento", content: "Claro! Para agendar uma consulta, preciso de algumas informações:\n\n1️⃣ Nome completo\n2️⃣ Telefone\n3️⃣ Procedimento desejado\n4️⃣ Preferência de horário", category: "Agendamento" },
