@@ -28,13 +28,13 @@ const tipoColors: Record<string, string> = {
 };
 
 function ContatosPage() {
+  const navigate = useNavigate();
   const [contatos, setContatos] = useState<Contato[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [tipoFilter, setTipoFilter] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [editContato, setEditContato] = useState<Contato | null>(null);
-  const [whatsappContato, setWhatsappContato] = useState<Contato | null>(null);
   const [syncing, setSyncing] = useState(false);
 
   const handleSync = async () => {
