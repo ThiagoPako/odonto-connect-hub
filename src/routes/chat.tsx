@@ -91,6 +91,7 @@ function ChatPage() {
 
     // Load unread counts from backend and apply to leads
     const fetchUnreadCounts = () => {
+      if (document.hidden) return; // skip when tab not visible
       messagesApi.unreadCounts().then(({ data }) => {
         if (!data || typeof data !== 'object') return;
         const counts = data as Record<string, number>;
@@ -104,9 +105,22 @@ function ChatPage() {
     };
 
     fetchUnreadCounts();
-    const unreadInterval = setInterval(fetchUnreadCounts, 15_000);
+    let unreadInterval = setInterval(fetchUnreadCounts, 15_000);
 
-    return () => clearInterval(unreadInterval);
+    // Pause/resume polling on tab visibility change
+    const handleVisibility = () => {
+      clearInterval(unreadInterval);
+      if (!document.hidden) {
+        fetchUnreadCounts(); // fetch immediately when tab becomes visible
+        unreadInterval = setInterval(fetchUnreadCounts, 15_000);
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    return () => {
+      clearInterval(unreadInterval);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
   }, []);
 
   const handleToggleTag = useCallback((leadId: string, tagId: string) => {
