@@ -78,7 +78,18 @@ export function ChatHeader({ lead, onClose, onTransfer, leadTagIds = [], onToggl
       <div className="flex items-center gap-3">
         <LeadAvatar initials={lead.initials} avatarUrl={lead.avatarUrl} avatarColor={lead.avatarColor || "bg-primary/20"} size="md" />
         <div>
-          <p className="text-sm font-medium text-foreground">{lead.name}</p>
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-medium text-foreground">{lead.name}</p>
+            {leadTagIds.length > 0 && (
+              <div className="flex items-center gap-1">
+                {allTags.filter((t) => leadTagIds.includes(t.id)).map((tag) => (
+                  <span key={tag.id} className="inline-flex items-center gap-0.5 px-1.5 py-0 rounded-full text-[9px] font-semibold text-white" style={{ backgroundColor: tag.color }}>
+                    {tag.icon} {tag.name}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
           <p className="text-xs text-success flex items-center gap-1">
             <span className="h-1.5 w-1.5 rounded-full bg-success inline-block" />
             Online
@@ -88,7 +99,14 @@ export function ChatHeader({ lead, onClose, onTransfer, leadTagIds = [], onToggl
 
       <div className="flex items-center gap-1">
         <button
-          onClick={() => showTransfer ? handleClose() : setShowTransfer(true)}
+          onClick={() => { setShowTagMenu(!showTagMenu); setShowTransfer(false); }}
+          className={`p-2 rounded-lg transition-colors ${showTagMenu ? "bg-primary/10 text-primary" : "hover:bg-muted text-muted-foreground"}`}
+          title="Tags"
+        >
+          <Tags className="h-4 w-4" />
+        </button>
+        <button
+          onClick={() => { setShowTransfer(!showTransfer); setShowTagMenu(false); handleClose(); }}
           className={`p-2 rounded-lg transition-colors ${showTransfer ? "bg-primary/10 text-primary" : "hover:bg-muted text-muted-foreground"}`}
           title="Transferir atendimento"
         >
