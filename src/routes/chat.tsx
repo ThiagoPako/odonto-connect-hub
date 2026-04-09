@@ -251,13 +251,11 @@ function ChatPage() {
     });
   };
 
-  const handleTransfer = (lead: Lead, _toAttendantId: string, toAttendantName: string) => {
-    // Remove from my leads
+  const handleTransfer = (lead: Lead, _toAttendantId: string, toAttendantName: string, reason: string) => {
     setMyLeads((prev) => prev.filter((l) => l.id !== lead.id));
     if (selectedLead?.id === lead.id) {
       setSelectedLead(null);
     }
-    // Add system message
     setMessages((prev) => ({
       ...prev,
       [lead.id]: [
@@ -265,7 +263,7 @@ function ChatPage() {
         {
           id: `sys-transfer-${Date.now()}`,
           leadId: lead.id,
-          content: `Atendimento transferido para ${toAttendantName}`,
+          content: `Atendimento transferido para ${toAttendantName}\nMotivo: ${reason}`,
           sender: "attendant" as const,
           type: "text" as const,
           timestamp: new Date(),
