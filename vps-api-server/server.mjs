@@ -2247,7 +2247,7 @@ app.post('/api/messages/mark-read', async (req, res) => {
 
 app.get('/api/queue/leads', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
 
     // Get leads that have:
     // 1. An open waiting session (not assigned)
@@ -2269,7 +2269,7 @@ app.get('/api/queue/leads', async (req, res) => {
         (SELECT content FROM chat_messages WHERE lead_id = l.id::text ORDER BY timestamp DESC LIMIT 1) as last_message,
         (SELECT timestamp FROM chat_messages WHERE lead_id = l.id::text ORDER BY timestamp DESC LIMIT 1) as last_message_time,
         (SELECT COUNT(*) FROM chat_messages WHERE lead_id = l.id::text AND sender = 'lead' AND timestamp > COALESCE(
-          (SELECT last_read_at FROM chat_read_status WHERE lead_id = l.id::text LIMIT 1),
+          (SELECT last_read_at FROM chat_read_status WHERE lead_id = l.id::text AND user_id = $1 LIMIT 1),
           '1970-01-01'
         ))::INTEGER as unread_count
       FROM crm_leads l
