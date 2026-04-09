@@ -1,13 +1,10 @@
 import { Bell, Search, CalendarDays } from "lucide-react";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
-import { useNavigate } from "@tanstack/react-router";
 
 export function DashboardHeader({ title }: { title: string }) {
   const { user } = useAuth();
-  const navigate = useNavigate();
   const [today, setToday] = useState("");
-  const [searchValue, setSearchValue] = useState("");
 
   useEffect(() => {
     setToday(
@@ -22,15 +19,6 @@ export function DashboardHeader({ title }: { title: string }) {
   const initials = user?.name
     ? user.name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase()
     : "??";
-
-  const handleSearch = useCallback(
-    (e: React.KeyboardEvent<HTMLInputElement>) => {
-      if (e.key === "Enter" && searchValue.trim()) {
-        navigate({ to: "/pacientes" });
-      }
-    },
-    [searchValue, navigate]
-  );
 
   return (
     <header className="h-[72px] flex items-center justify-between px-8 border-b border-border bg-card/80 backdrop-blur-md sticky top-0 z-20">
