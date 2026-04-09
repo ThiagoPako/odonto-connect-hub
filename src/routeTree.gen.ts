@@ -18,7 +18,6 @@ import { Route as PacientesRouteImport } from './routes/pacientes'
 import { Route as OrcamentosRouteImport } from './routes/orcamentos'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as IntegracoesRouteImport } from './routes/integracoes'
-import { Route as FunilRouteImport } from './routes/funil'
 import { Route as FinanceiroRouteImport } from './routes/financeiro'
 import { Route as EstoqueRouteImport } from './routes/estoque'
 import { Route as EquipeRouteImport } from './routes/equipe'
@@ -78,11 +77,6 @@ const LoginRoute = LoginRouteImport.update({
 const IntegracoesRoute = IntegracoesRouteImport.update({
   id: '/integracoes',
   path: '/integracoes',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const FunilRoute = FunilRouteImport.update({
-  id: '/funil',
-  path: '/funil',
   getParentRoute: () => rootRouteImport,
 } as any)
 const FinanceiroRoute = FinanceiroRouteImport.update({
@@ -177,7 +171,6 @@ export interface FileRoutesByFullPath {
   '/equipe': typeof EquipeRoute
   '/estoque': typeof EstoqueRoute
   '/financeiro': typeof FinanceiroRoute
-  '/funil': typeof FunilRoute
   '/integracoes': typeof IntegracoesRoute
   '/login': typeof LoginRoute
   '/orcamentos': typeof OrcamentosRoute
@@ -204,7 +197,6 @@ export interface FileRoutesByTo {
   '/equipe': typeof EquipeRoute
   '/estoque': typeof EstoqueRoute
   '/financeiro': typeof FinanceiroRoute
-  '/funil': typeof FunilRoute
   '/integracoes': typeof IntegracoesRoute
   '/login': typeof LoginRoute
   '/orcamentos': typeof OrcamentosRoute
@@ -232,7 +224,6 @@ export interface FileRoutesById {
   '/equipe': typeof EquipeRoute
   '/estoque': typeof EstoqueRoute
   '/financeiro': typeof FinanceiroRoute
-  '/funil': typeof FunilRoute
   '/integracoes': typeof IntegracoesRoute
   '/login': typeof LoginRoute
   '/orcamentos': typeof OrcamentosRoute
@@ -261,7 +252,6 @@ export interface FileRouteTypes {
     | '/equipe'
     | '/estoque'
     | '/financeiro'
-    | '/funil'
     | '/integracoes'
     | '/login'
     | '/orcamentos'
@@ -288,7 +278,6 @@ export interface FileRouteTypes {
     | '/equipe'
     | '/estoque'
     | '/financeiro'
-    | '/funil'
     | '/integracoes'
     | '/login'
     | '/orcamentos'
@@ -315,7 +304,6 @@ export interface FileRouteTypes {
     | '/equipe'
     | '/estoque'
     | '/financeiro'
-    | '/funil'
     | '/integracoes'
     | '/login'
     | '/orcamentos'
@@ -343,7 +331,6 @@ export interface RootRouteChildren {
   EquipeRoute: typeof EquipeRoute
   EstoqueRoute: typeof EstoqueRoute
   FinanceiroRoute: typeof FinanceiroRoute
-  FunilRoute: typeof FunilRoute
   IntegracoesRoute: typeof IntegracoesRoute
   LoginRoute: typeof LoginRoute
   OrcamentosRoute: typeof OrcamentosRoute
@@ -418,13 +405,6 @@ declare module '@tanstack/react-router' {
       path: '/integracoes'
       fullPath: '/integracoes'
       preLoaderRoute: typeof IntegracoesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/funil': {
-      id: '/funil'
-      path: '/funil'
-      fullPath: '/funil'
-      preLoaderRoute: typeof FunilRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/financeiro': {
@@ -551,7 +531,6 @@ const rootRouteChildren: RootRouteChildren = {
   EquipeRoute: EquipeRoute,
   EstoqueRoute: EstoqueRoute,
   FinanceiroRoute: FinanceiroRoute,
-  FunilRoute: FunilRoute,
   IntegracoesRoute: IntegracoesRoute,
   LoginRoute: LoginRoute,
   OrcamentosRoute: OrcamentosRoute,
