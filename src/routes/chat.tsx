@@ -147,7 +147,7 @@ function ChatPage() {
   const currentList = activeTab === "queue" ? queue : myLeads;
 
   return (
-    <div className="flex-1 flex flex-col min-h-screen">
+    <div className="flex-1 flex flex-col h-screen overflow-hidden">
       <DashboardHeader title="Chat" />
 
       <div className="flex-1 flex overflow-hidden">
