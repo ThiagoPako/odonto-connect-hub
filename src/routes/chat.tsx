@@ -313,7 +313,22 @@ function ChatPage() {
     setMyLeads((prev) => prev.map(updateQueue));
   }, []);
 
-  useRealtimeChat({ onMessage: handleIncomingMessage, onPresence: handlePresenceUpdate, onQueueAssigned: handleQueueAssigned });
+  const handleMessageStatusUpdate = useCallback((update: import("@/hooks/useRealtimeChat").MessageStatusUpdate) => {
+    // Update message status in all conversations matching the phone
+    setMessages((prev) => {
+      const next = { ...prev };
+      for (const leadId of Object.keys(next)) {
+        const msgs = next[leadId];
+        const updated = msgs.map((m) =>
+          m.id === update.messageId ? { ...m, status: update.status as any } : m
+        );
+        if (updated !== msgs) next[leadId] = updated;
+      }
+      return next;
+    });
+  }, []);
+
+  useRealtimeChat({ onMessage: handleIncomingMessage, onPresence: handlePresenceUpdate, onQueueAssigned: handleQueueAssigned, onMessageStatus: handleMessageStatusUpdate });
 
   // Request browser notification permission on first visit
   useEffect(() => { requestNotificationPermission(); }, []);
