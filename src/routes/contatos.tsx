@@ -249,6 +249,15 @@ function ContatosPage() {
           }}
         />
       )}
+
+      {whatsappContato && whatsappContato.telefone && (
+        <SendWhatsAppDialog
+          open={!!whatsappContato}
+          onOpenChange={(open) => !open && setWhatsappContato(null)}
+          contactName={whatsappContato.nome}
+          contactPhone={whatsappContato.telefone}
+        />
+      )}
     </div>
   );
 }
