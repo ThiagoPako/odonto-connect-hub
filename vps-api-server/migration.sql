@@ -188,3 +188,22 @@ VALUES (
 INSERT INTO user_roles (user_id, role)
 SELECT id, 'admin' FROM profiles WHERE email = 'admin@odontoconnect.tech'
 ON CONFLICT (user_id, role) DO NOTHING;
+
+-- Transfer logs (auditoria de transferências de atendimento)
+CREATE TABLE IF NOT EXISTS transfer_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  lead_id TEXT NOT NULL,
+  lead_name TEXT,
+  lead_phone TEXT,
+  from_user_id UUID REFERENCES profiles(id),
+  from_user_name TEXT,
+  to_user_id UUID REFERENCES profiles(id),
+  to_user_name TEXT,
+  reason TEXT NOT NULL,
+  queue_id TEXT,
+  queue_name TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_transfer_logs_created ON transfer_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_transfer_logs_lead ON transfer_logs(lead_id);
