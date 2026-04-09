@@ -266,21 +266,40 @@ function ChatPage() {
       }
     });
 
-    // Create initial system message
-    if (!messages[lead.id]) {
-      setMessages((prev) => ({
-        ...prev,
-        [lead.id]: [
-          {
-            id: `sys-${Date.now()}`,
-            leadId: lead.id,
-            content: lead.lastMessage,
-            sender: "lead",
-            type: "text",
-            timestamp: lead.lastMessageTime,
-          },
-        ],
-      }));
+    // Restore archived messages or create initial message
+    const archived = conversationArchiveRef.current[lead.id];
+    if (!messages[lead.id] || messages[lead.id].length === 0) {
+      if (archived && archived.length > 0) {
+        // Restore previous conversation history
+        setMessages((prev) => ({
+          ...prev,
+          [lead.id]: [
+            ...archived,
+            {
+              id: `sys-reassign-${Date.now()}`,
+              leadId: lead.id,
+              content: "── Atendimento retomado ──",
+              sender: "attendant" as const,
+              type: "text" as const,
+              timestamp: new Date(),
+            },
+          ],
+        }));
+      } else {
+        setMessages((prev) => ({
+          ...prev,
+          [lead.id]: [
+            {
+              id: `sys-${Date.now()}`,
+              leadId: lead.id,
+              content: lead.lastMessage,
+              sender: "lead",
+              type: "text",
+              timestamp: lead.lastMessageTime,
+            },
+          ],
+        }));
+      }
     }
   };
 
@@ -329,7 +348,24 @@ function ChatPage() {
     }
   };
 
-  const handleFinishAttendance = (lead: Lead) => {
+  // Conversation history archive — persists messages even after finishing attendance
+  const conversationArchiveRef = useRef<Record<string, ChatMessage[]>>({});
+
+  // Keep archive in sync with messages
+  useEffect(() => {
+    for (const [leadId, msgs] of Object.entries(messages)) {
+      if (msgs.length > 0) {
+        conversationArchiveRef.current[leadId] = msgs;
+      }
+    }
+  }, [messages]);
+
+  const handleFinishAttendance = (lead: Lead, farewellMessage?: string) => {
+    // Send farewell message via WhatsApp if provided
+    if (farewellMessage) {
+      handleSendMessage(farewellMessage, "text");
+    }
+
     sessionsApi.close({
       leadId: lead.id,
       leadPhone: lead.phone,
@@ -345,8 +381,37 @@ function ChatPage() {
       });
     });
 
-    // Move lead out of active
+    // Add system message BEFORE removing lead
+    setMessages((prev) => {
+      const updated = {
+        ...prev,
+        [lead.id]: [
+          ...(prev[lead.id] || []),
+          {
+            id: `sys-close-${Date.now()}`,
+            leadId: lead.id,
+            content: "✅ Atendimento finalizado. Pesquisa de satisfação enviada ao paciente.",
+            sender: "attendant" as const,
+            type: "text" as const,
+            timestamp: new Date(),
+          },
+        ],
+      };
+      // Archive conversation history
+      conversationArchiveRef.current[lead.id] = updated[lead.id];
+      return updated;
+    });
+
+    // Move lead out of active but keep messages in state for history
     setMyLeads((prev) => prev.filter((l) => l.id !== lead.id));
+    if (selectedLead?.id === lead.id) setSelectedLead(null);
+  };
+
+  const handleReturnToQueue = (lead: Lead) => {
+    // Move from myLeads back to queue
+    setMyLeads((prev) => prev.filter((l) => l.id !== lead.id));
+    const queuedLead: Lead = { ...lead, status: "waiting", assignedTo: undefined, unreadCount: 0 };
+    setQueue((prev) => [queuedLead, ...prev]);
     if (selectedLead?.id === lead.id) setSelectedLead(null);
 
     // Add system message
@@ -355,15 +420,17 @@ function ChatPage() {
       [lead.id]: [
         ...(prev[lead.id] || []),
         {
-          id: `sys-close-${Date.now()}`,
+          id: `sys-return-${Date.now()}`,
           leadId: lead.id,
-          content: "✅ Atendimento finalizado. Pesquisa de satisfação enviada ao paciente.",
+          content: "🔄 Paciente retornado à fila de espera.",
           sender: "attendant" as const,
           type: "text" as const,
           timestamp: new Date(),
         },
       ],
     }));
+
+    toast.info(`${lead.name} retornado à fila de espera`);
   };
 
   const handleReaction = (messageId: string, emoji: string) => {
@@ -604,7 +671,7 @@ function ChatPage() {
         <div className="flex-1 flex flex-col bg-background">
           {selectedLead ? (
             <>
-              <ChatHeader lead={selectedLead} onClose={() => setSelectedLead(null)} onTransfer={handleTransfer} onFinishAttendance={handleFinishAttendance} leadTagIds={leadTagAssignments[selectedLead.id] || []} onToggleTag={handleToggleTag} />
+              <ChatHeader lead={selectedLead} onClose={() => setSelectedLead(null)} onTransfer={handleTransfer} onFinishAttendance={handleFinishAttendance} onReturnToQueue={handleReturnToQueue} leadTagIds={leadTagAssignments[selectedLead.id] || []} onToggleTag={handleToggleTag} messages={currentMessages} />
               <ConversationView
                 messages={currentMessages}
                 leadName={selectedLead.name}
