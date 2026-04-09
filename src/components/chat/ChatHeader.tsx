@@ -8,6 +8,17 @@ import { useAuth } from "@/hooks/useAuth";
 import { FinishAttendanceDialog } from "./FinishAttendanceDialog";
 import { exportChatToPdf } from "@/lib/chatPdfExport";
 
+function formatLastSeen(date: Date): string {
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMin = Math.floor(diffMs / 60000);
+  if (diffMin < 1) return "agora";
+  if (diffMin < 60) return `há ${diffMin} min`;
+  const diffH = Math.floor(diffMin / 60);
+  if (diffH < 24) return `há ${diffH}h`;
+  return date.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+}
+
 interface Attendant {
   id: string;
   name: string;
