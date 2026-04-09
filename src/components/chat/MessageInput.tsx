@@ -105,8 +105,83 @@ export function MessageInput({ onSendMessage, disabled, replyingTo, onCancelRepl
     }
   };
 
-  const handleAudioComplete = (_blob: Blob, _duration: number) => {
-    onSendMessage("🎤 Mensagem de áudio", "audio", { duration: Math.round(_duration) });
+  const handleAudioComplete = (blob: Blob, _duration: number) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const base64 = (reader.result as string).split(",")[1];
+      onSendMessage("🎤 Mensagem de áudio", "audio", {
+        duration: Math.round(_duration),
+        fileUrl: URL.createObjectURL(blob),
+        mimeType: blob.type || "audio/webm",
+        fileName: `audio-${Date.now()}.webm`,
+        _mediaBase64: base64,
+      } as any);
+    };
+    reader.readAsDataURL(blob);
+  };
+
+  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>, mediaType: MessageType) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = ""; // reset input
+
+    const MAX_SIZE = 16 * 1024 * 1024; // 16MB
+    if (file.size > MAX_SIZE) {
+      toast.error("Arquivo muito grande", { description: "Tamanho máximo: 16MB" });
+      return;
+    }
+
+    if (mediaType === "image" || mediaType === "video") {
+      const previewUrl = URL.createObjectURL(file);
+      setMediaPreview({ file, previewUrl, type: mediaType });
+      setMediaCaption("");
+      closeAllForms();
+    } else {
+      // Documents — send immediately
+      sendFileAsMessage(file, "document", "");
+    }
+  }, []);
+
+  const sendFileAsMessage = useCallback((file: File, type: MessageType, caption: string) => {
+    setUploading(true);
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const base64 = (reader.result as string).split(",")[1];
+      const previewUrl = type === "image" || type === "video" ? URL.createObjectURL(file) : undefined;
+
+      const contentLabel = type === "image" ? "🖼️ Imagem" :
+        type === "video" ? "🎬 Vídeo" :
+        `📎 ${file.name}`;
+
+      onSendMessage(caption || contentLabel, type, {
+        fileName: file.name,
+        fileUrl: previewUrl,
+        mimeType: file.type,
+        _mediaBase64: base64,
+      } as any);
+
+      setUploading(false);
+      setMediaPreview(null);
+      setMediaCaption("");
+    };
+    reader.onerror = () => {
+      toast.error("Erro ao ler arquivo");
+      setUploading(false);
+    };
+    reader.readAsDataURL(file);
+  }, [onSendMessage]);
+
+  const handleSendMediaPreview = () => {
+    if (!mediaPreview) return;
+    sendFileAsMessage(mediaPreview.file, mediaPreview.type, mediaCaption);
+  };
+
+  const cancelMediaPreview = () => {
+    if (mediaPreview) {
+      URL.revokeObjectURL(mediaPreview.previewUrl);
+    }
+    setMediaPreview(null);
+    setMediaCaption("");
   };
 
   const applyFormatting = (format: string) => {
