@@ -9,7 +9,7 @@ import { Users, MessageSquare, Inbox, Filter } from "lucide-react";
 import { getQueues, type AttendanceQueue } from "@/data/queueData";
 import { toast } from "sonner";
 import { useRealtimeChat, type IncomingMessage } from "@/hooks/useRealtimeChat";
-import { whatsappApi } from "@/lib/vpsApi";
+import { whatsappApi, transferApi } from "@/lib/vpsApi";
 import { playNotificationSound } from "@/lib/notificationSound";
 import { showBrowserNotification, requestNotificationPermission } from "@/lib/browserNotification";
 import { setChatUnreadCount } from "@/lib/chatUnreadStore";
@@ -254,7 +254,21 @@ function ChatPage() {
     });
   };
 
-  const handleTransfer = (lead: Lead, _toAttendantId: string, toAttendantName: string, reason: string) => {
+  const handleTransfer = (lead: Lead, toAttendantId: string, toAttendantName: string, reason: string) => {
+    // Save to VPS database for auditing
+    transferApi.create({
+      leadId: lead.id,
+      leadName: lead.name,
+      leadPhone: lead.phone,
+      toUserId: toAttendantId,
+      toUserName: toAttendantName,
+      reason,
+      queueId: lead.queueId,
+      queueName: lead.queueName,
+    }).then(({ error }) => {
+      if (error) console.error("Erro ao salvar log de transferência:", error);
+    });
+
     setMyLeads((prev) => prev.filter((l) => l.id !== lead.id));
     if (selectedLead?.id === lead.id) {
       setSelectedLead(null);

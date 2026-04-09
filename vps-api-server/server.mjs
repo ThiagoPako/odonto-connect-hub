@@ -815,6 +815,51 @@ app.post('/api/webhook/evolution', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+// ═══════════════════════════════════════════════════════════════
+// TRANSFER LOGS (auditoria)
+// ═══════════════════════════════════════════════════════════════
+
+app.post('/api/transfers', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    const { leadId, leadName, leadPhone, toUserId, toUserName, reason, queueId, queueName } = req.body;
+    if (!leadId || !toUserId || !reason) {
+      return res.status(400).json({ error: 'leadId, toUserId e reason são obrigatórios' });
+    }
+
+    const { rows } = await pool.query('SELECT name FROM profiles WHERE id = $1', [user.id]);
+    const fromName = rows[0]?.name || 'Desconhecido';
+
+    const id = crypto.randomUUID();
+    await pool.query(
+      `INSERT INTO transfer_logs (id, lead_id, lead_name, lead_phone, from_user_id, from_user_name, to_user_id, to_user_name, reason, queue_id, queue_name)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [id, leadId, leadName || null, leadPhone || null, user.id, fromName, toUserId, toUserName || null, reason, queueId || null, queueName || null]
+    );
+
+    console.log(`🔄 Transfer: ${fromName} → ${toUserName} | Lead: ${leadName} | Motivo: ${reason}`);
+    res.json({ success: true, id });
+  } catch (error) {
+    console.error('Transfer log error:', error);
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+app.get('/api/transfers', async (req, res) => {
+  try {
+    await verifyAdmin(req);
+    const { limit = '50', offset = '0' } = req.query;
+    const { rows } = await pool.query(
+      'SELECT * FROM transfer_logs ORDER BY created_at DESC LIMIT $1 OFFSET $2',
+      [Math.min(Number(limit), 100), Number(offset)]
+    );
+    res.json(rows);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════
 // HEALTH CHECK
 // ═══════════════════════════════════════════════════════════════
