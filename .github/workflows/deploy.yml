@@ -32,22 +32,8 @@ jobs:
               npm run build
             fi
             
-            pm2 delete odonto-connect || true
-            pm2 start "npm run preview -- --host 127.0.0.1 --port 3000" --name odonto-connect --cwd /root/odonto-connect --update-env
-            FRONT_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3000/login)
-            if [ "$FRONT_STATUS" != "200" ]; then
-              echo "odonto-connect não respondeu em http://127.0.0.1:3000/login (status: $FRONT_STATUS)"
-              pm2 logs odonto-connect --lines 30 --nostream || true
-              exit 1
-            fi
-            
-            echo "=== Frontend built and restarted ==="
-            
-            # API server
-            cd /root/odonto-connect/vps-api-server
-            npm install --production
-            pm2 delete odonto-api || true
-            pm2 start /root/odonto-connect/vps-api-server/server.mjs --name odonto-api --cwd /root/odonto-connect/vps-api-server --update-env
+            pm2 delete odonto-connect odonto-api || true
+            pm2 start /root/odonto-connect/ecosystem.config.cjs --update-env
             API_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3002/api/messages/unread)
             if [ "$API_STATUS" != "401" ]; then
               echo "odonto-api subiu, mas a rota /api/messages/unread não respondeu como esperado (status: $API_STATUS)"
