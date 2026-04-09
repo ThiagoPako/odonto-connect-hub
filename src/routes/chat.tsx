@@ -7,7 +7,6 @@ import { MessageInput } from "@/components/chat/MessageInput";
 import { ChatHeader } from "@/components/chat/ChatHeader";
 import { Users, MessageSquare, Inbox, Filter, Tags } from "lucide-react";
 import type { AttendanceQueue } from "@/data/queueData";
-import { tagsApi, type LeadTagApi } from "@/lib/vpsApi";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { useRealtimeChat, type IncomingMessage } from "@/hooks/useRealtimeChat";
