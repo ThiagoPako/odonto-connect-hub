@@ -586,14 +586,19 @@ function ChatPage() {
               />
             </>
           ) : (
-            <div className="flex-1 flex items-center justify-center">
-              <div className="text-center space-y-3">
-                <div className="h-20 w-20 rounded-2xl bg-primary/5 flex items-center justify-center mx-auto">
+            <div className="flex-1 flex items-center justify-center chat-bg-pattern">
+              <div className="text-center space-y-4 animate-fade-in">
+                <div className="h-24 w-24 rounded-3xl bg-gradient-to-br from-primary/10 to-primary/5 flex items-center justify-center mx-auto shadow-sm border border-primary/10">
                   <MessageSquare className="h-10 w-10 text-primary/30" />
                 </div>
-                <p className="text-muted-foreground text-sm">
-                  Selecione um atendimento para iniciar
-                </p>
+                <div className="space-y-1.5">
+                  <p className="text-foreground/60 text-sm font-medium">
+                    Selecione um atendimento
+                  </p>
+                  <p className="text-muted-foreground text-xs">
+                    Escolha uma conversa ao lado ou inicie um novo chat
+                  </p>
+                </div>
               </div>
             </div>
           )}

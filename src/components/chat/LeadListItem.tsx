@@ -19,27 +19,44 @@ export function LeadListItem({ lead, isSelected, onSelect, showAssignButton, onA
   return (
     <div
       onClick={() => onSelect(lead)}
-      className={`flex items-start gap-3 px-4 py-3 cursor-pointer transition-colors border-b border-border/50 ${
-        isSelected ? "bg-primary/5 border-l-2 border-l-primary" : "hover:bg-muted/50"
+      className={`lead-list-item flex items-start gap-3 px-4 py-3.5 cursor-pointer border-b border-border/30 relative overflow-hidden ${
+        isSelected
+          ? "bg-primary/5 border-l-[3px] border-l-primary shadow-sm"
+          : "hover:bg-muted/40 border-l-[3px] border-l-transparent"
       }`}
     >
-      <LeadAvatar initials={lead.initials} avatarUrl={lead.avatarUrl} avatarColor={lead.avatarColor || "bg-primary/20"} size="md" />
+      {/* Subtle gradient overlay on selected */}
+      {isSelected && (
+        <div className="absolute inset-0 bg-gradient-to-r from-primary/5 to-transparent pointer-events-none" />
+      )}
 
-      <div className="flex-1 min-w-0">
+      <div className="relative">
+        <LeadAvatar initials={lead.initials} avatarUrl={lead.avatarUrl} avatarColor={lead.avatarColor || "bg-primary/20"} size="md" />
+        {/* Online indicator */}
+        <div className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full bg-success border-2 border-card" />
+      </div>
+
+      <div className="flex-1 min-w-0 relative z-10">
         <div className="flex items-center justify-between mb-0.5">
-          <span className="text-sm font-medium text-foreground truncate">{lead.name}</span>
+          <span className={`text-sm font-semibold truncate transition-colors ${isSelected ? "text-primary" : "text-foreground"}`}>
+            {lead.name}
+          </span>
           <div className="flex items-center gap-1 text-muted-foreground shrink-0">
             <Clock className="h-3 w-3" />
-            <span className="text-[11px]">{timeAgo}</span>
+            <span className="text-[11px] font-medium">{timeAgo}</span>
           </div>
         </div>
 
-        <p className="text-xs text-muted-foreground truncate">{lead.lastMessage}</p>
+        <p className="text-xs text-muted-foreground truncate leading-relaxed">{lead.lastMessage}</p>
 
         {tagIds.length > 0 && (
-          <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+          <div className="flex items-center gap-1 mt-1 flex-wrap">
             {allTags.filter((t) => tagIds.includes(t.id)).map((tag) => (
-              <span key={tag.id} className="inline-flex items-center gap-0.5 px-1.5 py-0 rounded-full text-[9px] font-semibold text-white leading-4" style={{ backgroundColor: tag.color }}>
+              <span
+                key={tag.id}
+                className="inline-flex items-center gap-0.5 px-1.5 py-0 rounded-full text-[9px] font-semibold text-white leading-4 shadow-sm"
+                style={{ backgroundColor: tag.color }}
+              >
                 {tag.icon} {tag.name}
               </span>
             ))}
@@ -48,20 +65,21 @@ export function LeadListItem({ lead, isSelected, onSelect, showAssignButton, onA
 
         {lead.queueName && (
           <span
-            className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium text-white mt-1"
+            className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-semibold text-white mt-1 shadow-sm"
             style={{ backgroundColor: lead.queueColor || "hsl(var(--primary))" }}
           >
             {lead.queueName}
           </span>
         )}
 
-        <div className="flex items-center justify-between mt-1.5">
-          {lead.unreadCount > 0 && (
-            <span className="h-5 min-w-[20px] px-1.5 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">
+        <div className="flex items-center justify-between mt-2">
+          {lead.unreadCount > 0 ? (
+            <span className="h-5 min-w-[20px] px-1.5 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center shadow-sm animate-badge-pulse">
               {lead.unreadCount}
             </span>
+          ) : (
+            <span />
           )}
-          {lead.unreadCount === 0 && <span />}
 
           {showAssignButton && onAssign && (
             <button
@@ -69,7 +87,7 @@ export function LeadListItem({ lead, isSelected, onSelect, showAssignButton, onA
                 e.stopPropagation();
                 onAssign(lead);
               }}
-              className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold bg-primary text-primary-foreground hover:bg-primary/90 transition-all hover:shadow-md active:scale-95"
             >
               <UserPlus className="h-3 w-3" />
               Assumir
