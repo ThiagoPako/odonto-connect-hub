@@ -12,18 +12,12 @@ function isAuthError(status: number, _error: unknown): boolean {
 }
 
 let _isRedirecting = false;
-let _consecutive401Count = 0;
-const AUTH_REDIRECT_THRESHOLD = 3; // only redirect after 3 consecutive 401s
 
 function handleAuthFailure(background = false) {
+  // Background calls should never force logout or redirect.
+  // They can fail silently and let explicit user actions handle session expiry.
+  if (background) return;
   if (_isRedirecting) return;
-
-  _consecutive401Count++;
-
-  // Background calls (polling) — only redirect after multiple consecutive failures
-  if (background) {
-    if (_consecutive401Count < AUTH_REDIRECT_THRESHOLD) return;
-  }
 
   _isRedirecting = true;
   clearToken();
@@ -34,10 +28,10 @@ function handleAuthFailure(background = false) {
   setTimeout(() => { _isRedirecting = false; }, 2000);
 }
 
-/** Reset the 401 counter — call after any successful API response */
 function resetAuthFailureCount() {
-  _consecutive401Count = 0;
+  // no-op: kept to avoid changing callers and preserve a stable API surface
 }
+
 
 // ─── Auth helpers ───────────────────────────────────────────
 
@@ -227,6 +221,7 @@ export const whatsappApi = {
     vpsApiFetch<{ profilePictureUrl: string | null }>('/whatsapp/profile-picture', {
       method: 'POST',
       body: { instance, number, leadId },
+      background: true,
     }),
   syncProfilePictures: (instance: string) =>
     vpsApiFetch<{ total: number; updated: number; failed: number }>('/whatsapp/sync-profile-pictures', {
@@ -432,6 +427,7 @@ export const messagesApi = {
           ...(params?.before ? { before: params.before } : {}),
           ...(params?.limit ? { limit: String(params.limit) } : {}),
         },
+        background: true,
       }
     ),
   /** Save an outgoing message to the database */
@@ -450,7 +446,7 @@ export const messagesApi = {
   }>) => vpsApiFetch<{ success: boolean; count: number }>('/messages/batch', { method: 'POST', body: { messages } }),
   /** Mark messages as read for a lead */
   markRead: (leadId: string) =>
-    vpsApiFetch<{ success: boolean }>('/messages/mark-read', { method: 'POST', body: { leadId } }),
+    vpsApiFetch<{ success: boolean }>('/messages/mark-read', { method: 'POST', body: { leadId }, background: true }),
   /** Update message status */
   updateStatus: (id: string, status: string) =>
     vpsApiFetch<{ success: boolean }>(`/messages/${id}/status`, { method: 'PUT', body: { status } }),
