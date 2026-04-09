@@ -320,6 +320,7 @@ function ChatPage() {
     if (!selectedLead?.phone) return;
     if (selectedLead.avatarUrl) return; // already has photo
 
+    const cleanPhone = selectedLead.phone.replace(/\D/g, "");
     const instanceName = connectedInstances[0]?.instanceName || "teste";
     whatsappApi.fetchProfilePicture(instanceName, cleanPhone, selectedLead.id).then(({ data }) => {
       const url = data?.profilePictureUrl;
