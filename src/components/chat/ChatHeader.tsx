@@ -1,10 +1,11 @@
 import { useState, useEffect } from "react";
 import type { Lead } from "@/data/chatMockData";
-import { Phone, Video, MoreVertical, X, ArrowRightLeft, Loader2, ArrowLeft } from "lucide-react";
+import { Phone, Video, MoreVertical, X, ArrowRightLeft, Loader2, ArrowLeft, Tags, Check } from "lucide-react";
 import { LeadAvatar } from "@/components/LeadAvatar";
 import { toast } from "sonner";
 import { adminListUsers } from "@/lib/vpsApi";
 import { useAuth } from "@/hooks/useAuth";
+import { getTags, type LeadTag } from "@/data/leadTags";
 
 interface Attendant {
   id: string;
@@ -16,15 +17,19 @@ interface ChatHeaderProps {
   lead: Lead;
   onClose: () => void;
   onTransfer?: (lead: Lead, toAttendantId: string, toAttendantName: string, reason: string) => void;
+  leadTagIds?: string[];
+  onToggleTag?: (leadId: string, tagId: string) => void;
 }
 
-export function ChatHeader({ lead, onClose, onTransfer }: ChatHeaderProps) {
+export function ChatHeader({ lead, onClose, onTransfer, leadTagIds = [], onToggleTag }: ChatHeaderProps) {
   const { user: currentUser } = useAuth();
   const [showTransfer, setShowTransfer] = useState(false);
+  const [showTagMenu, setShowTagMenu] = useState(false);
   const [attendants, setAttendants] = useState<Attendant[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedAtt, setSelectedAtt] = useState<Attendant | null>(null);
   const [reason, setReason] = useState("");
+  const allTags = getTags();
 
   useEffect(() => {
     if (!showTransfer) return;
