@@ -2355,6 +2355,150 @@ app.listen(PORT, async () => {
   console.log(`   Health: http://localhost:${PORT}/api/health`);
   console.log(`   Webhook URL: ${WEBHOOK_URL}`);
 
+  // ─── Auto-migration: ensure required columns/tables exist ───
+  try {
+    const migrations = [
+      `ALTER TABLE profiles ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT true`,
+      `ALTER TABLE profiles ADD COLUMN IF NOT EXISTS password_hash TEXT`,
+      `ALTER TABLE profiles ADD COLUMN IF NOT EXISTS avatar_url TEXT`,
+      `ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS avatar_url TEXT`,
+      `ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS queue_id UUID`,
+      `ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS queue_name TEXT`,
+      `ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS awaiting_queue_selection BOOLEAN DEFAULT false`,
+      `CREATE TABLE IF NOT EXISTS user_roles (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID REFERENCES profiles(id) ON DELETE CASCADE NOT NULL,
+        role TEXT NOT NULL DEFAULT 'user',
+        UNIQUE (user_id, role)
+      )`,
+      `CREATE TABLE IF NOT EXISTS app_settings (
+        key TEXT PRIMARY KEY,
+        value JSONB NOT NULL DEFAULT '{}',
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )`,
+      `CREATE TABLE IF NOT EXISTS chat_messages (
+        id TEXT PRIMARY KEY,
+        lead_id TEXT,
+        content TEXT,
+        sender TEXT,
+        type TEXT DEFAULT 'text',
+        status TEXT DEFAULT 'sent',
+        timestamp TIMESTAMPTZ DEFAULT NOW(),
+        media_url TEXT,
+        file_name TEXT,
+        mime_type TEXT,
+        reply_to_id TEXT,
+        reply_to_content TEXT,
+        reply_to_sender TEXT,
+        attendant_id UUID,
+        attendant_name TEXT,
+        instance TEXT,
+        phone TEXT,
+        metadata JSONB DEFAULT '{}'
+      )`,
+      `CREATE TABLE IF NOT EXISTS chat_read_status (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        lead_id TEXT NOT NULL,
+        user_id UUID NOT NULL,
+        last_read_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE (lead_id, user_id)
+      )`,
+      `CREATE TABLE IF NOT EXISTS attendance_sessions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        lead_id TEXT NOT NULL,
+        lead_name TEXT,
+        lead_phone TEXT,
+        attendant_id UUID,
+        attendant_name TEXT,
+        queue_id TEXT,
+        queue_name TEXT,
+        started_waiting_at TIMESTAMPTZ,
+        assigned_at TIMESTAMPTZ,
+        first_response_at TIMESTAMPTZ,
+        closed_at TIMESTAMPTZ,
+        status TEXT DEFAULT 'waiting',
+        wait_time_seconds INTEGER,
+        response_time_seconds INTEGER,
+        duration_seconds INTEGER,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )`,
+      `CREATE TABLE IF NOT EXISTS attendance_queues (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        name TEXT NOT NULL,
+        color TEXT DEFAULT '#3B82F6',
+        icon TEXT DEFAULT '📋',
+        description TEXT,
+        whatsapp_button_label TEXT,
+        contact_numbers JSONB DEFAULT '[]',
+        team_member_ids JSONB DEFAULT '[]',
+        active BOOLEAN DEFAULT true,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )`,
+      `CREATE TABLE IF NOT EXISTS push_subscriptions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        endpoint TEXT UNIQUE NOT NULL,
+        keys_p256dh TEXT NOT NULL,
+        keys_auth TEXT NOT NULL,
+        user_id UUID,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )`,
+      `CREATE TABLE IF NOT EXISTS satisfaction_ratings (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        session_id UUID,
+        lead_id TEXT,
+        lead_phone TEXT,
+        rating INTEGER,
+        attendant_id UUID,
+        attendant_name TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )`,
+      `CREATE TABLE IF NOT EXISTS tags (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        name TEXT NOT NULL,
+        color TEXT DEFAULT '#3B82F6',
+        icon TEXT DEFAULT '🏷️',
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )`,
+      `CREATE TABLE IF NOT EXISTS tag_assignments (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        tag_id UUID REFERENCES tags(id) ON DELETE CASCADE,
+        lead_id TEXT NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE (tag_id, lead_id)
+      )`,
+      `CREATE TABLE IF NOT EXISTS contatos (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        nome TEXT NOT NULL,
+        telefone TEXT,
+        email TEXT,
+        tipo TEXT DEFAULT 'pessoal',
+        empresa TEXT,
+        cargo TEXT,
+        observacoes TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )`,
+    ];
+
+    let applied = 0;
+    for (const sql of migrations) {
+      try {
+        await pool.query(sql);
+        applied++;
+      } catch (migErr) {
+        // 42701 = column already exists, 42P07 = relation already exists — both are fine
+        if (!['42701', '42P07'].includes(migErr?.code)) {
+          console.warn(`⚠️ Auto-migration warning: ${migErr.message.slice(0, 120)}`);
+        }
+      }
+    }
+    console.log(`   ✅ Auto-migration: ${applied} statements checked`);
+  } catch (migErr) {
+    console.error('❌ Auto-migration failed:', migErr.message);
+  }
+
   // Auto-register webhook for all connected instances on startup
   try {
     const result = await evolutionFetch('/instance/fetchInstances');
