@@ -1,6 +1,6 @@
 import type { ChatMessage } from "@/data/chatMockData";
 import { useEffect, useRef, useState, useCallback } from "react";
-import { CheckCheck, Check, MapPin, Phone, Mail, Globe, Building2, BarChart3, Reply, SmilePlus, ExternalLink, List, ChevronDown, Forward, Trash2, Search } from "lucide-react";
+import { CheckCheck, Check, MapPin, Phone, Mail, Globe, Building2, BarChart3, Reply, SmilePlus, ExternalLink, List, ChevronDown, Forward, Trash2, Search, Loader2 } from "lucide-react";
 import { TypingIndicator } from "./TypingIndicator";
 
 interface ConversationViewProps {
@@ -11,6 +11,12 @@ interface ConversationViewProps {
   onReply?: (msg: ChatMessage) => void;
   onForward?: (msg: ChatMessage) => void;
   onDelete?: (msg: ChatMessage) => void;
+  /** Called when user scrolls near top — should prepend older messages */
+  onLoadMore?: () => Promise<void>;
+  /** Whether there are older messages to load */
+  hasMore?: boolean;
+  /** Whether older messages are currently loading */
+  loadingMore?: boolean;
 }
 
 const REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
@@ -46,7 +52,7 @@ function shouldShowTimestamp(messages: ChatMessage[], idx: number): boolean {
   return diff > 5 * 60 * 1000; // 5 min gap
 }
 
-export function ConversationView({ messages, leadName, isTyping, onReaction, onReply, onForward, onDelete }: ConversationViewProps) {
+export function ConversationView({ messages, leadName, isTyping, onReaction, onReply, onForward, onDelete, onLoadMore, hasMore = false, loadingMore = false }: ConversationViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const [showReactionPicker, setShowReactionPicker] = useState<string | null>(null);
@@ -55,6 +61,7 @@ export function ConversationView({ messages, leadName, isTyping, onReaction, onR
   const [searchQuery, setSearchQuery] = useState("");
   const [highlightedMsgId, setHighlightedMsgId] = useState<string | null>(null);
   const isNearBottomRef = useRef(true);
+  const loadMoreTriggeredRef = useRef(false);
 
   // Smart scroll — only auto-scroll if user is near the bottom
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
@@ -72,7 +79,14 @@ export function ConversationView({ messages, leadName, isTyping, onReaction, onR
     scrollToBottom("instant");
   }, []);
 
-  // Track scroll position for show/hide button
+  // Reset load-more trigger when loadingMore finishes
+  useEffect(() => {
+    if (!loadingMore) {
+      loadMoreTriggeredRef.current = false;
+    }
+  }, [loadingMore]);
+
+  // Track scroll position for show/hide button AND infinite scroll
   const handleScroll = useCallback(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -80,7 +94,22 @@ export function ConversationView({ messages, leadName, isTyping, onReaction, onR
     const near = distanceFromBottom < 150;
     isNearBottomRef.current = near;
     setShowScrollButton(!near);
-  }, []);
+
+    // Infinite scroll: trigger when near top
+    if (el.scrollTop < 100 && hasMore && !loadingMore && !loadMoreTriggeredRef.current && onLoadMore) {
+      loadMoreTriggeredRef.current = true;
+      const prevScrollHeight = el.scrollHeight;
+      onLoadMore().then(() => {
+        // Preserve scroll position after prepending older messages
+        requestAnimationFrame(() => {
+          if (containerRef.current) {
+            const newScrollHeight = containerRef.current.scrollHeight;
+            containerRef.current.scrollTop = newScrollHeight - prevScrollHeight;
+          }
+        });
+      });
+    }
+  }, [hasMore, loadingMore, onLoadMore]);
 
   // Search results
   const searchResults = searchQuery.trim()
