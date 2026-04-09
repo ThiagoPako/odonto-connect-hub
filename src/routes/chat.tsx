@@ -62,6 +62,8 @@ function ChatPage() {
   const [availableTags, setAvailableTags] = useState<LeadTagApi[]>([]);
   const [leadTagAssignments, setLeadTagAssignments] = useState<Record<string, string[]>>({});
   const [surveyLead, setSurveyLead] = useState<Lead | null>(null);
+  const [historyHasMore, setHistoryHasMore] = useState<Record<string, boolean>>({});
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   // Refs for stable closure access in SSE callback
   const queueRef = useRef(queue);
