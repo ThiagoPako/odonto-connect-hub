@@ -8,6 +8,7 @@ import { ChatHeader } from "@/components/chat/ChatHeader";
 import { Users, MessageSquare, Inbox } from "lucide-react";
 import { toast } from "sonner";
 import { useRealtimeChat, type IncomingMessage } from "@/hooks/useRealtimeChat";
+import { whatsappApi } from "@/lib/vpsApi";
 import {
   mockLeadsQueue,
   mockLeadsActive,
