@@ -8,11 +8,24 @@ import { useAuth } from "@/hooks/useAuth";
 import { FinishAttendanceDialog } from "./FinishAttendanceDialog";
 import { exportChatToPdf } from "@/lib/chatPdfExport";
 
+function formatLastSeen(date: Date): string {
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMin = Math.floor(diffMs / 60000);
+  if (diffMin < 1) return "agora";
+  if (diffMin < 60) return `há ${diffMin} min`;
+  const diffH = Math.floor(diffMin / 60);
+  if (diffH < 24) return `há ${diffH}h`;
+  return date.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+}
+
 interface Attendant {
   id: string;
   name: string;
   initials: string;
 }
+
+type PresenceDisplay = "online" | "offline" | "typing" | "recording";
 
 interface ChatHeaderProps {
   lead: Lead;
@@ -23,9 +36,11 @@ interface ChatHeaderProps {
   leadTagIds?: string[];
   onToggleTag?: (leadId: string, tagId: string) => void;
   messages?: ChatMessage[];
+  presence?: PresenceDisplay;
+  lastSeen?: Date | null;
 }
 
-export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onReturnToQueue, leadTagIds = [], onToggleTag, messages = [] }: ChatHeaderProps) {
+export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onReturnToQueue, leadTagIds = [], onToggleTag, messages = [], presence = "offline", lastSeen }: ChatHeaderProps) {
   const { user: currentUser } = useAuth();
   const [showTransfer, setShowTransfer] = useState(false);
   const [showTagMenu, setShowTagMenu] = useState(false);
@@ -97,7 +112,9 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onRe
         <div className="flex items-center gap-3.5 animate-fade-in">
           <div className="relative">
             <LeadAvatar initials={lead.initials} avatarUrl={lead.avatarUrl} avatarColor={lead.avatarColor || "bg-primary/20"} size="md" />
-            <div className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full bg-success border-2 border-card shadow-sm" />
+            <div className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-card shadow-sm ${
+              presence === "online" || presence === "typing" || presence === "recording" ? "bg-success" : "bg-muted-foreground/40"
+            }`} />
           </div>
           <div>
             <div className="flex items-center gap-2">
@@ -112,13 +129,38 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onRe
                 </div>
               )}
             </div>
-            <p className="text-xs text-success flex items-center gap-1.5 font-medium">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-success/60"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-success"></span>
-              </span>
-              Online
-            </p>
+            {presence === "typing" ? (
+              <p className="text-xs text-primary flex items-center gap-1.5 font-medium animate-pulse">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary/60"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
+                </span>
+                digitando...
+              </p>
+            ) : presence === "recording" ? (
+              <p className="text-xs text-destructive flex items-center gap-1.5 font-medium animate-pulse">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-destructive/60"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-destructive"></span>
+                </span>
+                gravando áudio...
+              </p>
+            ) : presence === "online" ? (
+              <p className="text-xs text-success flex items-center gap-1.5 font-medium">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-success/60"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-success"></span>
+                </span>
+                Online
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+                <span className="relative flex h-2 w-2">
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-muted-foreground/40"></span>
+                </span>
+                {lastSeen ? `visto por último ${formatLastSeen(lastSeen)}` : "Offline"}
+              </p>
+            )}
           </div>
         </div>
 

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef } from "react";
 import { VPS_API_BASE } from "@/lib/vpsApi";
 
 export interface IncomingMessage {
@@ -13,11 +13,29 @@ export interface IncomingMessage {
   instance: string;
 }
 
-type MessageHandler = (msg: IncomingMessage) => void;
+export type PresenceStatus = "available" | "composing" | "recording" | "paused" | "unavailable";
 
-export function useRealtimeChat(onMessage: MessageHandler) {
-  const handlerRef = useRef<MessageHandler>(onMessage);
-  handlerRef.current = onMessage;
+export interface PresenceUpdate {
+  phone: string;
+  leadId?: string;
+  status: PresenceStatus;
+  instance: string;
+}
+
+type MessageHandler = (msg: IncomingMessage) => void;
+type PresenceHandler = (update: PresenceUpdate) => void;
+
+interface RealtimeChatOptions {
+  onMessage: MessageHandler;
+  onPresence?: PresenceHandler;
+}
+
+export function useRealtimeChat(options: RealtimeChatOptions) {
+  const messageRef = useRef<MessageHandler>(options.onMessage);
+  messageRef.current = options.onMessage;
+
+  const presenceRef = useRef<PresenceHandler | undefined>(options.onPresence);
+  presenceRef.current = options.onPresence;
 
   useEffect(() => {
     let es: EventSource | null = null;
@@ -35,9 +53,18 @@ export function useRealtimeChat(onMessage: MessageHandler) {
       es.addEventListener("new_message", (e) => {
         try {
           const data: IncomingMessage = JSON.parse(e.data);
-          handlerRef.current(data);
+          messageRef.current(data);
         } catch (err) {
           console.error("SSE parse error:", err);
+        }
+      });
+
+      es.addEventListener("presence_update", (e) => {
+        try {
+          const data: PresenceUpdate = JSON.parse(e.data);
+          presenceRef.current?.(data);
+        } catch (err) {
+          console.error("SSE presence parse error:", err);
         }
       });
 
