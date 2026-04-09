@@ -2,16 +2,19 @@ import type { ChatMessage } from "@/data/chatMockData";
 import { useEffect, useRef, useState } from "react";
 import { CheckCheck, Check, MapPin, Phone, Mail, Globe, Building2, BarChart3, Reply, SmilePlus, ExternalLink, List } from "lucide-react";
 
+import { TypingIndicator } from "./TypingIndicator";
+
 interface ConversationViewProps {
   messages: ChatMessage[];
   leadName: string;
+  isTyping?: boolean;
   onReaction?: (messageId: string, emoji: string) => void;
   onReply?: (msg: ChatMessage) => void;
 }
 
 const REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 
-export function ConversationView({ messages, leadName, onReaction, onReply }: ConversationViewProps) {
+export function ConversationView({ messages, leadName, isTyping, onReaction, onReply }: ConversationViewProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const [showReactionPicker, setShowReactionPicker] = useState<string | null>(null);
 
@@ -320,6 +323,8 @@ export function ConversationView({ messages, leadName, onReaction, onReply }: Co
           </div>
         );
       })}
+
+      {isTyping && <TypingIndicator name={leadName} />}
 
       <div ref={bottomRef} />
     </div>
