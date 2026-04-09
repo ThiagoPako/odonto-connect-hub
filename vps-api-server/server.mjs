@@ -1456,8 +1456,8 @@ app.post('/api/webhook/evolution', async (req, res) => {
           continue;
         }
         
-        const phone = remoteJid.replace('@s.whatsapp.net', '').replace('@c.us', '');
-        console.log(`✅ ACK: ${messageId} → ${newStatus} (ack=${ackNum}, phone=${phone})`);
+        const phone = remoteJid.replace('@s.whatsapp.net', '').replace('@c.us', '').replace(/:.*$/, '');
+        console.log(`✅ ACK: ${messageId} → ${newStatus} (ack=${ack}, phone=${phone})`);
         
         // Update in DB
         try {
