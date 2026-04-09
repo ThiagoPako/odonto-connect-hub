@@ -186,7 +186,7 @@ function ChatPage() {
       },
     });
     showBrowserNotification(`💬 ${name}`, body, name);
-  }, [queue, myLeads, selectedLead]);
+  }, []);
 
   useRealtimeChat(handleIncomingMessage);
 
@@ -314,11 +314,10 @@ function ChatPage() {
     }));
     setReplyingTo(null);
 
-    // Send via WhatsApp (Evolution API)
+    // Send via WhatsApp (Evolution API) — use cached connected instances
     if (type === "text" && selectedLead.phone) {
       try {
-        const instances = await fetchInstances();
-        const connected = instances.find((i) => i.status === "open");
+        const connected = connectedInstances[0];
         if (connected) {
           await sendTextMessage(connected.instanceName, selectedLead.phone, content);
         } else {
