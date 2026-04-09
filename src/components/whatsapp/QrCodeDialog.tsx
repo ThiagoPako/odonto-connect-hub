@@ -163,9 +163,59 @@ export function QrCodeDialog({ open, onOpenChange, instanceName, onConnected }: 
         {/* Main content */}
         <div className="flex flex-col items-center gap-4 py-2">
           {phase === "connected" ? (
-            <div className="flex flex-col items-center gap-3 py-4">
+            <div className="flex flex-col items-center gap-4 py-4">
               <CheckCircle2 className="h-16 w-16 text-success" />
               <p className="text-sm font-medium text-success">WhatsApp conectado!</p>
+
+              {importResult ? (
+                <div className="bg-muted/50 rounded-lg p-3 text-center space-y-1">
+                  <p className="text-sm font-medium text-foreground">
+                    <Users className="h-4 w-4 inline mr-1" />
+                    {importResult.imported} contato{importResult.imported !== 1 ? "s" : ""} importado{importResult.imported !== 1 ? "s" : ""}
+                  </p>
+                  {importResult.skipped > 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      {importResult.skipped} já existiam e foram ignorados
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={importing}
+                  onClick={async () => {
+                    setImporting(true);
+                    try {
+                      const contacts = await fetchWhatsAppContacts(instanceName);
+                      if (contacts.length === 0) {
+                        toast.info("Nenhum contato encontrado no WhatsApp");
+                        setImporting(false);
+                        return;
+                      }
+                      const mapped = contacts.map((c) => ({
+                        telefone: c.id,
+                        nome: c.pushName || c.id,
+                      }));
+                      const { data, error } = await contatosApi.bulkImport(mapped);
+                      if (error) throw new Error(error);
+                      setImportResult({ imported: data?.imported ?? 0, skipped: data?.skipped ?? 0 });
+                      toast.success(`${data?.imported ?? 0} contatos importados do WhatsApp!`);
+                    } catch (err: any) {
+                      toast.error(err?.message || "Erro ao importar contatos");
+                    } finally {
+                      setImporting(false);
+                    }
+                  }}
+                >
+                  {importing ? (
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  ) : (
+                    <Download className="h-4 w-4 mr-2" />
+                  )}
+                  {importing ? "Importando contatos…" : "Importar contatos do WhatsApp"}
+                </Button>
+              )}
             </div>
           ) : phase === "failed" ? (
             <div className="flex flex-col items-center gap-3 py-4">
