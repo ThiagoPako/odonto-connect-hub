@@ -429,6 +429,28 @@ app.put('/api/whatsapp/restart/:instance', async (req, res) => {
   }
 });
 
+// Manual webhook registration / check
+app.post('/api/whatsapp/register-webhook/:instance', async (req, res) => {
+  try {
+    await verifyAdmin(req);
+    const result = await registerWebhook(req.params.instance);
+    res.json({ success: true, webhookUrl: WEBHOOK_URL, result: result?.data });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get current webhook config for an instance
+app.get('/api/whatsapp/webhook/:instance', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const result = await evolutionFetch(`/webhook/find/${req.params.instance}`);
+    res.json(result.data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Send text message
 app.post('/api/whatsapp/send-text', async (req, res) => {
   try {
