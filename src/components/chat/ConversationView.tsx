@@ -118,18 +118,46 @@ function AudioPlayer({ fileUrl, duration, isLead }: { fileUrl?: string; duration
       </button>
       <div className="flex-1 flex flex-col gap-1">
         <div
+          ref={trackRef}
           className={`h-2.5 rounded-full overflow-hidden cursor-pointer ${isLead ? "bg-muted-foreground/20" : "bg-primary-foreground/20"}`}
-          onClick={(e) => {
-            const rect = e.currentTarget.getBoundingClientRect();
-            const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-            if (audioRef.current && audioRef.current.duration && isFinite(audioRef.current.duration)) {
-              audioRef.current.currentTime = ratio * audioRef.current.duration;
+          onMouseDown={(e) => {
+            draggingRef.current = true;
+            const seek = (ev: MouseEvent) => {
+              if (!trackRef.current) return;
+              const rect = trackRef.current.getBoundingClientRect();
+              const ratio = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
               setProgress(ratio);
-              setCurrentTime(ratio * audioRef.current.duration);
-            }
+              if (audioRef.current?.duration && isFinite(audioRef.current.duration)) {
+                audioRef.current.currentTime = ratio * audioRef.current.duration;
+                setCurrentTime(ratio * audioRef.current.duration);
+              }
+            };
+            seek(e.nativeEvent);
+            const onMove = (ev: MouseEvent) => { if (draggingRef.current) seek(ev); };
+            const onUp = () => { draggingRef.current = false; window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
+            window.addEventListener("mousemove", onMove);
+            window.addEventListener("mouseup", onUp);
+          }}
+          onTouchStart={(e) => {
+            draggingRef.current = true;
+            const seek = (touch: Touch) => {
+              if (!trackRef.current) return;
+              const rect = trackRef.current.getBoundingClientRect();
+              const ratio = Math.max(0, Math.min(1, (touch.clientX - rect.left) / rect.width));
+              setProgress(ratio);
+              if (audioRef.current?.duration && isFinite(audioRef.current.duration)) {
+                audioRef.current.currentTime = ratio * audioRef.current.duration;
+                setCurrentTime(ratio * audioRef.current.duration);
+              }
+            };
+            seek(e.touches[0]);
+            const onMove = (ev: TouchEvent) => { if (draggingRef.current && ev.touches[0]) seek(ev.touches[0]); };
+            const onEnd = () => { draggingRef.current = false; window.removeEventListener("touchmove", onMove); window.removeEventListener("touchend", onEnd); };
+            window.addEventListener("touchmove", onMove);
+            window.addEventListener("touchend", onEnd);
           }}
         >
-          <div className={`h-full rounded-full transition-all duration-200 pointer-events-none ${isLead ? "bg-primary" : "bg-primary-foreground"}`} style={{ width: `${progress * 100}%` }} />
+          <div className={`h-full rounded-full pointer-events-none ${isLead ? "bg-primary" : "bg-primary-foreground"}`} style={{ width: `${progress * 100}%` }} />
         </div>
         <span className="text-[10px] opacity-60 font-mono">
           {playing || currentTime > 0 ? fmtTime(currentTime) : fmtTime(totalDuration)}
