@@ -84,6 +84,7 @@ export function AdminUserListPanel() {
     admin: "Admin",
     dentista: "Dentista",
     recepcionista: "Recepcionista",
+    comercial: "Comercial",
     user: "Usuário",
   };
 
@@ -91,6 +92,7 @@ export function AdminUserListPanel() {
     admin: "bg-primary/15 text-primary border-primary/30",
     dentista: "bg-accent/50 text-accent-foreground border-accent",
     recepcionista: "bg-secondary text-secondary-foreground border-border",
+    comercial: "bg-chart-4/15 text-chart-4 border-chart-4/30",
     user: "bg-muted text-muted-foreground border-border",
   };
 
@@ -197,6 +199,7 @@ export function AdminUserListPanel() {
                   <SelectItem value="admin">Administrador</SelectItem>
                   <SelectItem value="dentista">Dentista</SelectItem>
                   <SelectItem value="recepcionista">Recepcionista</SelectItem>
+                  <SelectItem value="comercial">Comercial</SelectItem>
                   <SelectItem value="user">Usuário</SelectItem>
                 </SelectContent>
               </Select>
