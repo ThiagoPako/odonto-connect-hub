@@ -480,44 +480,45 @@ function ChatPage() {
     setReplyingTo(null);
 
     // Send via WhatsApp (Evolution API) — use cached connected instances
-    if (type === "text" && selectedLead.phone) {
-      try {
-        const connected = connectedInstances[0];
-        if (connected) {
-          await sendTextMessage(connected.instanceName, selectedLead.phone, content);
-          // Update status to sent
-          setMessages((prev) => ({
-            ...prev,
-            [selectedLead.id]: (prev[selectedLead.id] || []).map((m) =>
-              m.id === msgId ? { ...m, status: "sent" as const } : m
-            ),
-          }));
-        } else {
-          toast.error("Nenhuma instância WhatsApp conectada");
-          setMessages((prev) => ({
-            ...prev,
-            [selectedLead.id]: (prev[selectedLead.id] || []).map((m) =>
-              m.id === msgId ? { ...m, status: "failed" as const } : m
-            ),
-          }));
-        }
-      } catch (err: any) {
-        toast.error("Erro ao enviar pelo WhatsApp: " + (err?.message || ""));
-        setMessages((prev) => ({
-          ...prev,
-          [selectedLead.id]: (prev[selectedLead.id] || []).map((m) =>
-            m.id === msgId ? { ...m, status: "failed" as const } : m
-          ),
-        }));
-      }
-    } else {
-      // Non-text messages: mark as sent
+    const connected = connectedInstances[0];
+    if (!connected) {
+      // No instance — mark as sent locally only
       setMessages((prev) => ({
         ...prev,
         [selectedLead.id]: (prev[selectedLead.id] || []).map((m) =>
           m.id === msgId ? { ...m, status: "sent" as const } : m
         ),
       }));
+      return;
+    }
+
+    const updateStatus = (status: MessageStatus) => {
+      setMessages((prev) => ({
+        ...prev,
+        [selectedLead.id]: (prev[selectedLead.id] || []).map((m) =>
+          m.id === msgId ? { ...m, status } : m
+        ),
+      }));
+    };
+
+    try {
+      if (type === "text") {
+        await sendTextMessage(connected.instanceName, selectedLead.phone, content);
+      } else if (type === "image" || type === "video" || type === "document" || type === "audio") {
+        const mediaBase64 = (extra as any)?._mediaBase64;
+        if (mediaBase64) {
+          await sendMediaMessage(connected.instanceName, selectedLead.phone, type, {
+            base64: mediaBase64,
+            fileName: extra?.fileName,
+            caption: type !== "audio" ? content : undefined,
+            mimeType: extra?.mimeType,
+          });
+        }
+      }
+      updateStatus("sent");
+    } catch (err: any) {
+      toast.error("Erro ao enviar: " + (err?.message || "Falha no envio"));
+      updateStatus("failed");
     }
   };
 
