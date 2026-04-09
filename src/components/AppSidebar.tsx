@@ -24,6 +24,7 @@ import {
   Stethoscope,
   UserRound,
   Headset,
+  Timer,
 } from "lucide-react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { useState, useMemo } from "react";
@@ -73,6 +74,7 @@ const navSections: NavSection[] = [
       { title: "Automações", url: "/automacoes", icon: Zap },
       { title: "Disparos", url: "/disparos", icon: Send },
       { title: "Reativação", url: "/reativacao", icon: RefreshCcw, badge: 5 },
+      { title: "Métricas", url: "/metricas", icon: Timer },
     ],
   },
   {

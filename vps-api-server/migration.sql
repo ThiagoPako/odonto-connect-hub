@@ -236,3 +236,43 @@ CREATE TABLE IF NOT EXISTS app_settings (
   value JSONB NOT NULL DEFAULT '{}',
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Attendance sessions (tempo de espera, atendimento, etc.)
+CREATE TABLE IF NOT EXISTS attendance_sessions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  lead_id TEXT NOT NULL,
+  lead_name TEXT,
+  lead_phone TEXT,
+  attendant_id UUID REFERENCES profiles(id),
+  attendant_name TEXT,
+  queue_id TEXT,
+  queue_name TEXT,
+  started_waiting_at TIMESTAMPTZ,
+  assigned_at TIMESTAMPTZ,
+  first_response_at TIMESTAMPTZ,
+  closed_at TIMESTAMPTZ,
+  status TEXT DEFAULT 'waiting' CHECK (status IN ('waiting', 'active', 'closed')),
+  wait_time_seconds INTEGER,
+  response_time_seconds INTEGER,
+  duration_seconds INTEGER,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_attendance_sessions_status ON attendance_sessions(status);
+CREATE INDEX IF NOT EXISTS idx_attendance_sessions_attendant ON attendance_sessions(attendant_id);
+CREATE INDEX IF NOT EXISTS idx_attendance_sessions_created ON attendance_sessions(created_at DESC);
+
+-- Satisfaction ratings (avaliação pós-atendimento via WhatsApp)
+CREATE TABLE IF NOT EXISTS satisfaction_ratings (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  session_id UUID REFERENCES attendance_sessions(id),
+  lead_id TEXT NOT NULL,
+  lead_phone TEXT,
+  rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+  attendant_id UUID,
+  attendant_name TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_satisfaction_ratings_attendant ON satisfaction_ratings(attendant_id);
+CREATE INDEX IF NOT EXISTS idx_satisfaction_ratings_created ON satisfaction_ratings(created_at DESC);

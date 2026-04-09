@@ -16,6 +16,7 @@ import { Route as PainelDentistaRouteImport } from './routes/painel-dentista'
 import { Route as PainelComercialRouteImport } from './routes/painel-comercial'
 import { Route as PacientesRouteImport } from './routes/pacientes'
 import { Route as OrcamentosRouteImport } from './routes/orcamentos'
+import { Route as MetricasRouteImport } from './routes/metricas'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as IntegracoesRouteImport } from './routes/integracoes'
 import { Route as FinanceiroRouteImport } from './routes/financeiro'
@@ -67,6 +68,11 @@ const PacientesRoute = PacientesRouteImport.update({
 const OrcamentosRoute = OrcamentosRouteImport.update({
   id: '/orcamentos',
   path: '/orcamentos',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MetricasRoute = MetricasRouteImport.update({
+  id: '/metricas',
+  path: '/metricas',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -173,6 +179,7 @@ export interface FileRoutesByFullPath {
   '/financeiro': typeof FinanceiroRoute
   '/integracoes': typeof IntegracoesRoute
   '/login': typeof LoginRoute
+  '/metricas': typeof MetricasRoute
   '/orcamentos': typeof OrcamentosRoute
   '/pacientes': typeof PacientesRoute
   '/painel-comercial': typeof PainelComercialRoute
@@ -199,6 +206,7 @@ export interface FileRoutesByTo {
   '/financeiro': typeof FinanceiroRoute
   '/integracoes': typeof IntegracoesRoute
   '/login': typeof LoginRoute
+  '/metricas': typeof MetricasRoute
   '/orcamentos': typeof OrcamentosRoute
   '/pacientes': typeof PacientesRoute
   '/painel-comercial': typeof PainelComercialRoute
@@ -226,6 +234,7 @@ export interface FileRoutesById {
   '/financeiro': typeof FinanceiroRoute
   '/integracoes': typeof IntegracoesRoute
   '/login': typeof LoginRoute
+  '/metricas': typeof MetricasRoute
   '/orcamentos': typeof OrcamentosRoute
   '/pacientes': typeof PacientesRoute
   '/painel-comercial': typeof PainelComercialRoute
@@ -254,6 +263,7 @@ export interface FileRouteTypes {
     | '/financeiro'
     | '/integracoes'
     | '/login'
+    | '/metricas'
     | '/orcamentos'
     | '/pacientes'
     | '/painel-comercial'
@@ -280,6 +290,7 @@ export interface FileRouteTypes {
     | '/financeiro'
     | '/integracoes'
     | '/login'
+    | '/metricas'
     | '/orcamentos'
     | '/pacientes'
     | '/painel-comercial'
@@ -306,6 +317,7 @@ export interface FileRouteTypes {
     | '/financeiro'
     | '/integracoes'
     | '/login'
+    | '/metricas'
     | '/orcamentos'
     | '/pacientes'
     | '/painel-comercial'
@@ -333,6 +345,7 @@ export interface RootRouteChildren {
   FinanceiroRoute: typeof FinanceiroRoute
   IntegracoesRoute: typeof IntegracoesRoute
   LoginRoute: typeof LoginRoute
+  MetricasRoute: typeof MetricasRoute
   OrcamentosRoute: typeof OrcamentosRoute
   PacientesRoute: typeof PacientesRoute
   PainelComercialRoute: typeof PainelComercialRoute
@@ -391,6 +404,13 @@ declare module '@tanstack/react-router' {
       path: '/orcamentos'
       fullPath: '/orcamentos'
       preLoaderRoute: typeof OrcamentosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/metricas': {
+      id: '/metricas'
+      path: '/metricas'
+      fullPath: '/metricas'
+      preLoaderRoute: typeof MetricasRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -533,6 +553,7 @@ const rootRouteChildren: RootRouteChildren = {
   FinanceiroRoute: FinanceiroRoute,
   IntegracoesRoute: IntegracoesRoute,
   LoginRoute: LoginRoute,
+  MetricasRoute: MetricasRoute,
   OrcamentosRoute: OrcamentosRoute,
   PacientesRoute: PacientesRoute,
   PainelComercialRoute: PainelComercialRoute,

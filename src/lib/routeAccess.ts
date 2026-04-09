@@ -17,6 +17,7 @@ export const routeRoleMap: Record<string, AppRole[]> = {
   "/campanhas": ["admin"],
   "/integracoes": ["admin"],
   "/analytics": ["admin"],
+  "/metricas": ["admin", "comercial"],
   "/financeiro": ["admin"],
   "/comissoes": ["admin"],
   "/estoque": ["admin", "recepcionista"],

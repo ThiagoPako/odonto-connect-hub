@@ -242,6 +242,62 @@ export const transferApi = {
   }>>('/transfers', { params }),
 };
 
+// ─── Attendance Sessions ────────────────────────────────────
+
+export const sessionsApi = {
+  start: (body: { leadId: string; leadName?: string; leadPhone?: string; queueId?: string; queueName?: string }) =>
+    vpsApiFetch<{ success: boolean; id: string }>('/sessions/start', { method: 'POST', body }),
+  assign: (body: { leadId: string }) =>
+    vpsApiFetch<{ success: boolean; id: string; waitTime: number }>('/sessions/assign', { method: 'POST', body }),
+  firstResponse: (body: { leadId: string }) =>
+    vpsApiFetch('/sessions/first-response', { method: 'POST', body }),
+  close: (body: { leadId: string; leadPhone?: string; instance?: string }) =>
+    vpsApiFetch<{ success: boolean; sessionId?: string; duration?: number }>('/sessions/close', { method: 'POST', body }),
+};
+
+// ─── Attendance Metrics ─────────────────────────────────────
+
+export interface AttendanceMetrics {
+  general: {
+    total_sessions: string;
+    closed_sessions: string;
+    avg_wait_time: string | null;
+    avg_response_time: string | null;
+    avg_duration: string | null;
+    max_wait_time: number | null;
+    min_wait_time: number | null;
+  };
+  perAttendant: Array<{
+    attendant_id: string;
+    attendant_name: string;
+    total_sessions: string;
+    closed_sessions: string;
+    avg_wait_time: string | null;
+    avg_response_time: string | null;
+    avg_duration: string | null;
+  }>;
+  satisfaction: {
+    avg_rating: string | null;
+    total_ratings: string;
+    five_star: string;
+    four_star: string;
+    three_star: string;
+    two_star: string;
+    one_star: string;
+  };
+  satisfactionPerAttendant: Array<{
+    attendant_id: string;
+    attendant_name: string;
+    avg_rating: string;
+    total_ratings: string;
+  }>;
+}
+
+export const metricsApi = {
+  attendance: (days?: number) =>
+    vpsApiFetch<AttendanceMetrics>('/metrics/attendance', { params: days ? { days: String(days) } : undefined }),
+};
+
 // ─── Health check ───────────────────────────────────────────
 
 export const healthCheck = () => vpsApiFetch('/health');

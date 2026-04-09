@@ -11,7 +11,7 @@ import { getTags, getLeadTags, saveLeadTags, type LeadTag } from "@/data/leadTag
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { useRealtimeChat, type IncomingMessage } from "@/hooks/useRealtimeChat";
-import { whatsappApi, transferApi } from "@/lib/vpsApi";
+import { whatsappApi, transferApi, sessionsApi } from "@/lib/vpsApi";
 import { playNotificationSound } from "@/lib/notificationSound";
 import { showBrowserNotification, requestNotificationPermission } from "@/lib/browserNotification";
 import { setChatUnreadCount } from "@/lib/chatUnreadStore";
@@ -124,6 +124,14 @@ function ChatPage() {
         ...prev,
         [newLead.id]: [chatMsg],
       }));
+      // Start attendance session (waiting)
+      sessionsApi.start({
+        leadId: newLead.id,
+        leadName: newLead.name,
+        leadPhone: newLead.phone,
+        queueId: incomingMsg.queueId,
+        queueName: incomingMsg.queueName,
+      });
     }
 
     // Play sound + show toast + browser push notification
@@ -212,6 +220,13 @@ function ChatPage() {
     setSelectedLead(assignedLead);
     setActiveTab("mine");
 
+    // Track session assignment
+    sessionsApi.assign({ leadId: lead.id }).then(({ data }) => {
+      if (data?.waitTime) {
+        console.log(`⏱️ Wait time for ${lead.name}: ${data.waitTime}s`);
+      }
+    });
+
     // Create initial system message
     if (!messages[lead.id]) {
       setMessages((prev) => ({
@@ -230,10 +245,20 @@ function ChatPage() {
     }
   };
 
+  // Track first response
+  const [firstResponseTracked, setFirstResponseTracked] = useState<Set<string>>(new Set());
+
   const [replyingTo, setReplyingTo] = useState<ReplyData | null>(null);
 
   const handleSendMessage = (content: string, type: MessageType, extra?: Partial<ChatMessage>) => {
     if (!selectedLead) return;
+
+    // Track first response time
+    if (selectedLead.status === "active" && !firstResponseTracked.has(selectedLead.id)) {
+      sessionsApi.firstResponse({ leadId: selectedLead.id });
+      setFirstResponseTracked((prev) => new Set(prev).add(selectedLead.id));
+    }
+
     const newMsg: ChatMessage = {
       id: `msg-${Date.now()}`,
       leadId: selectedLead.id,
@@ -249,6 +274,43 @@ function ChatPage() {
       [selectedLead.id]: [...(prev[selectedLead.id] || []), newMsg],
     }));
     setReplyingTo(null);
+  };
+
+  const handleFinishAttendance = (lead: Lead) => {
+    sessionsApi.close({
+      leadId: lead.id,
+      leadPhone: lead.phone,
+      instance: "default",
+    }).then(({ data, error }) => {
+      if (error) {
+        toast.error("Erro ao finalizar atendimento");
+        return;
+      }
+      const durationMin = data?.duration ? Math.floor(data.duration / 60) : 0;
+      toast.success(`Atendimento finalizado`, {
+        description: `${lead.name} — Duração: ${durationMin}min. Pesquisa de satisfação enviada.`,
+      });
+    });
+
+    // Move lead out of active
+    setMyLeads((prev) => prev.filter((l) => l.id !== lead.id));
+    if (selectedLead?.id === lead.id) setSelectedLead(null);
+
+    // Add system message
+    setMessages((prev) => ({
+      ...prev,
+      [lead.id]: [
+        ...(prev[lead.id] || []),
+        {
+          id: `sys-close-${Date.now()}`,
+          leadId: lead.id,
+          content: "✅ Atendimento finalizado. Pesquisa de satisfação enviada ao paciente.",
+          sender: "attendant" as const,
+          type: "text" as const,
+          timestamp: new Date(),
+        },
+      ],
+    }));
   };
 
   const handleReaction = (messageId: string, emoji: string) => {
@@ -434,7 +496,7 @@ function ChatPage() {
         <div className="flex-1 flex flex-col bg-background">
           {selectedLead ? (
             <>
-              <ChatHeader lead={selectedLead} onClose={() => setSelectedLead(null)} onTransfer={handleTransfer} leadTagIds={leadTagAssignments[selectedLead.id] || []} onToggleTag={handleToggleTag} />
+              <ChatHeader lead={selectedLead} onClose={() => setSelectedLead(null)} onTransfer={handleTransfer} onFinishAttendance={handleFinishAttendance} leadTagIds={leadTagAssignments[selectedLead.id] || []} onToggleTag={handleToggleTag} />
               <ConversationView
                 messages={currentMessages}
                 leadName={selectedLead.name}
