@@ -38,14 +38,23 @@ export interface QueueAssignment {
   timestamp: string;
 }
 
+export interface MessageStatusUpdate {
+  messageId: string;
+  phone: string;
+  status: "sent" | "delivered" | "read" | "failed";
+  instance: string;
+}
+
 type MessageHandler = (msg: IncomingMessage) => void;
 type PresenceHandler = (update: PresenceUpdate) => void;
 type QueueAssignHandler = (assignment: QueueAssignment) => void;
+type MessageStatusHandler = (update: MessageStatusUpdate) => void;
 
 interface RealtimeChatOptions {
   onMessage: MessageHandler;
   onPresence?: PresenceHandler;
   onQueueAssigned?: QueueAssignHandler;
+  onMessageStatus?: MessageStatusHandler;
 }
 
 export function useRealtimeChat(options: RealtimeChatOptions) {
