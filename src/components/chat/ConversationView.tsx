@@ -1,7 +1,6 @@
 import type { ChatMessage } from "@/data/chatMockData";
-import { useEffect, useRef, useState } from "react";
-import { CheckCheck, Check, MapPin, Phone, Mail, Globe, Building2, BarChart3, Reply, SmilePlus, ExternalLink, List } from "lucide-react";
-
+import { useEffect, useRef, useState, useCallback } from "react";
+import { CheckCheck, Check, MapPin, Phone, Mail, Globe, Building2, BarChart3, Reply, SmilePlus, ExternalLink, List, ChevronDown, Forward, Trash2, Search } from "lucide-react";
 import { TypingIndicator } from "./TypingIndicator";
 
 interface ConversationViewProps {
@@ -10,17 +9,90 @@ interface ConversationViewProps {
   isTyping?: boolean;
   onReaction?: (messageId: string, emoji: string) => void;
   onReply?: (msg: ChatMessage) => void;
+  onForward?: (msg: ChatMessage) => void;
+  onDelete?: (msg: ChatMessage) => void;
 }
 
 const REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 
-export function ConversationView({ messages, leadName, isTyping, onReaction, onReply }: ConversationViewProps) {
+// ─── Date helpers ───────────────────────────────────────────
+function formatDateDivider(date: Date): string {
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+
+  const isSameDay = (a: Date, b: Date) =>
+    a.getDate() === b.getDate() && a.getMonth() === b.getMonth() && a.getFullYear() === b.getFullYear();
+
+  if (isSameDay(date, today)) return "Hoje";
+  if (isSameDay(date, yesterday)) return "Ontem";
+  return date.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
+
+function shouldShowDateDivider(messages: ChatMessage[], idx: number): boolean {
+  if (idx === 0) return true;
+  const curr = new Date(messages[idx].timestamp);
+  const prev = new Date(messages[idx - 1].timestamp);
+  return curr.toDateString() !== prev.toDateString();
+}
+
+// ─── Time grouping (5-min blocks) ───────────────────────────
+function shouldShowTimestamp(messages: ChatMessage[], idx: number): boolean {
+  if (idx === messages.length - 1) return true;
+  const curr = messages[idx];
+  const next = messages[idx + 1];
+  if (curr.sender !== next.sender) return true;
+  const diff = new Date(next.timestamp).getTime() - new Date(curr.timestamp).getTime();
+  return diff > 5 * 60 * 1000; // 5 min gap
+}
+
+export function ConversationView({ messages, leadName, isTyping, onReaction, onReply, onForward, onDelete }: ConversationViewProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const [showReactionPicker, setShowReactionPicker] = useState<string | null>(null);
+  const [showScrollButton, setShowScrollButton] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [highlightedMsgId, setHighlightedMsgId] = useState<string | null>(null);
+  const isNearBottomRef = useRef(true);
+
+  // Smart scroll — only auto-scroll if user is near the bottom
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
+    bottomRef.current?.scrollIntoView({ behavior });
+  }, []);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isTyping]);
+    if (isNearBottomRef.current) {
+      scrollToBottom();
+    }
+  }, [messages, isTyping, scrollToBottom]);
+
+  // Initial scroll (instant)
+  useEffect(() => {
+    scrollToBottom("instant");
+  }, []);
+
+  // Track scroll position for show/hide button
+  const handleScroll = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const near = distanceFromBottom < 150;
+    isNearBottomRef.current = near;
+    setShowScrollButton(!near);
+  }, []);
+
+  // Search results
+  const searchResults = searchQuery.trim()
+    ? messages.filter((m) => m.content?.toLowerCase().includes(searchQuery.toLowerCase()))
+    : [];
+
+  const jumpToMessage = (msgId: string) => {
+    setHighlightedMsgId(msgId);
+    const el = document.getElementById(`msg-${msgId}`);
+    el?.scrollIntoView({ behavior: "smooth", block: "center" });
+    setTimeout(() => setHighlightedMsgId(null), 2000);
+  };
 
   const formatTime = (date: Date) =>
     date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
@@ -155,178 +227,279 @@ export function ConversationView({ messages, leadName, isTyping, onReaction, onR
     <div className="text-5xl animate-pop-in">{msg.stickerUrl || msg.content}</div>
   );
 
+  // Message status indicator
+  const renderStatus = (msg: ChatMessage) => {
+    if (msg.sender === "lead") return null;
+    // System messages don't get status
+    if (msg.id.startsWith("sys-")) return null;
+
+    const status = (msg as any).status as string | undefined;
+    if (status === "read") {
+      return <CheckCheck className="h-3.5 w-3.5 text-[#53bdeb]" />;
+    }
+    if (status === "delivered") {
+      return <CheckCheck className="h-3.5 w-3.5" />;
+    }
+    // Default: sent
+    return <Check className="h-3.5 w-3.5" />;
+  };
+
   // Group consecutive messages by same sender
   const isFirstInGroup = (i: number) => i === 0 || messages[i].sender !== messages[i - 1].sender;
   const isLastInGroup = (i: number) => i === messages.length - 1 || messages[i].sender !== messages[i + 1].sender;
 
   return (
-    <div className="flex-1 overflow-y-auto px-4 py-6 space-y-1 chat-bg-pattern">
-      {/* Date divider */}
-      <div className="flex items-center justify-center mb-4 animate-fade-in">
-        <span className="text-[11px] text-muted-foreground bg-card/80 backdrop-blur-sm px-4 py-1.5 rounded-full shadow-sm border border-border/30 font-medium">
-          Hoje
-        </span>
-      </div>
+    <div className="relative flex-1 flex flex-col overflow-hidden">
+      {/* Message search bar */}
+      {searchOpen && (
+        <div className="flex items-center gap-2 px-4 py-2 bg-card border-b border-border shrink-0 animate-fade-in">
+          <Search className="h-4 w-4 text-muted-foreground shrink-0" />
+          <input
+            autoFocus
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Buscar na conversa..."
+            className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
+          />
+          <span className="text-[11px] text-muted-foreground shrink-0">
+            {searchResults.length} resultado{searchResults.length !== 1 ? "s" : ""}
+          </span>
+          <button onClick={() => { setSearchOpen(false); setSearchQuery(""); }} className="p-1 rounded hover:bg-muted">
+            <span className="text-xs text-muted-foreground">✕</span>
+          </button>
+        </div>
+      )}
 
-      {messages.map((msg, idx) => {
-        const isLead = msg.sender === "lead";
-        const first = isFirstInGroup(idx);
-        const last = isLastInGroup(idx);
+      {/* Search results strip */}
+      {searchOpen && searchResults.length > 0 && (
+        <div className="flex items-center gap-1 px-4 py-1.5 bg-muted/30 border-b border-border overflow-x-auto shrink-0">
+          {searchResults.slice(0, 10).map((m) => (
+            <button
+              key={m.id}
+              onClick={() => jumpToMessage(m.id)}
+              className="px-2 py-1 rounded-lg bg-card border border-border/50 text-[11px] text-foreground truncate max-w-[200px] hover:bg-primary/10 transition-colors shrink-0"
+            >
+              {m.content?.slice(0, 40)}
+            </button>
+          ))}
+        </div>
+      )}
 
-        // Dynamic border radius based on grouping
-        const bubbleRadius = isLead
-          ? `${first ? "1rem" : "0.375rem"} 1rem 1rem ${last ? "0.25rem" : "0.375rem"}`
-          : `1rem ${first ? "1rem" : "0.375rem"} ${last ? "0.25rem" : "0.375rem"} 1rem`;
+      <div
+        ref={containerRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto px-4 py-6 space-y-1 chat-bg-pattern"
+      >
+        {messages.map((msg, idx) => {
+          const isLead = msg.sender === "lead";
+          const first = isFirstInGroup(idx);
+          const last = isLastInGroup(idx);
+          const showTime = shouldShowTimestamp(messages, idx);
+          const showDate = shouldShowDateDivider(messages, idx);
 
-        return (
-          <div
-            key={msg.id}
-            className={`flex ${isLead ? "justify-start" : "justify-end"} group ${
-              isLead ? "animate-chat-bubble-left" : "animate-chat-bubble-right"
-            } ${first ? "mt-3" : "mt-0.5"}`}
-            style={{ animationDelay: `${Math.min(idx * 30, 200)}ms`, animationFillMode: "both" }}
-          >
-            <div className="relative max-w-[70%]">
-              {/* Reply preview */}
-              {msg.replyTo && (
-                <div className={`rounded-t-2xl px-4 py-2 text-[11px] border-l-2 border-primary/70 bg-primary/5 backdrop-blur-sm animate-fade-in`}>
-                  <p className="font-semibold text-primary text-[10px]">{msg.replyTo.sender}</p>
-                  <p className="opacity-70 truncate">{msg.replyTo.content}</p>
+          // Dynamic border radius based on grouping
+          const bubbleRadius = isLead
+            ? `${first ? "1rem" : "0.375rem"} 1rem 1rem ${last ? "0.25rem" : "0.375rem"}`
+            : `1rem ${first ? "1rem" : "0.375rem"} ${last ? "0.25rem" : "0.375rem"} 1rem`;
+
+          return (
+            <div key={msg.id}>
+              {/* Date divider */}
+              {showDate && (
+                <div className="flex items-center justify-center my-4 animate-fade-in">
+                  <span className="text-[11px] text-muted-foreground bg-card/80 backdrop-blur-sm px-4 py-1.5 rounded-full shadow-sm border border-border/30 font-medium">
+                    {formatDateDivider(new Date(msg.timestamp))}
+                  </span>
                 </div>
               )}
 
               <div
-                className={`relative px-4 py-2.5 transition-all duration-200 ${
-                  msg.replyTo ? "rounded-t-none" : ""
-                } ${
-                  msg.type === "sticker"
-                    ? "bg-transparent p-0"
-                    : isLead
-                      ? "bg-card border border-border/50 msg-bubble-lead shadow-sm"
-                      : "bg-gradient-to-br from-primary to-primary/90 text-primary-foreground msg-bubble-agent shadow-md"
-                } ${last && isLead ? "msg-tail-left" : ""} ${last && !isLead ? "msg-tail-right" : ""}`}
-                style={msg.type !== "sticker" ? { borderRadius: bubbleRadius } : undefined}
+                id={`msg-${msg.id}`}
+                className={`flex ${isLead ? "justify-start" : "justify-end"} group ${
+                  isLead ? "animate-chat-bubble-left" : "animate-chat-bubble-right"
+                } ${first ? "mt-3" : "mt-0.5"} ${highlightedMsgId === msg.id ? "ring-2 ring-primary/40 rounded-2xl" : ""}`}
+                style={{ animationDelay: `${Math.min(idx * 30, 200)}ms`, animationFillMode: "both" }}
               >
-                {/* Content by type */}
-                {msg.type === "audio" && (
-                  <div className="flex items-center gap-2.5 mb-1">
-                    <div className="h-8 w-8 rounded-full bg-primary/15 flex items-center justify-center shrink-0">
-                      <div className="w-0 h-0 border-l-[8px] border-l-primary border-y-[5px] border-y-transparent ml-0.5" />
+                <div className="relative max-w-[70%]">
+                  {/* Reply preview */}
+                  {msg.replyTo && (
+                    <div className="rounded-t-2xl px-4 py-2 text-[11px] border-l-2 border-primary/70 bg-primary/5 backdrop-blur-sm animate-fade-in">
+                      <p className="font-semibold text-primary text-[10px]">{msg.replyTo.sender}</p>
+                      <p className="opacity-70 truncate">{msg.replyTo.content}</p>
                     </div>
-                    <div className="flex items-center gap-[2px] flex-1">
-                      {Array.from({ length: 24 }, (_, i) => (
-                        <div
-                          key={i}
-                          className={`rounded-full transition-all ${isLead ? "bg-muted-foreground/30" : "bg-primary-foreground/30"}`}
-                          style={{
-                            width: 2,
-                            height: 3 + Math.sin(i * 0.8) * 8 + Math.random() * 4,
-                            animationDelay: `${i * 30}ms`,
-                          }}
-                        />
-                      ))}
-                    </div>
-                    <span className="text-[11px] opacity-70 font-mono">0:{String(msg.duration || 0).padStart(2, "0")}</span>
-                  </div>
-                )}
+                  )}
 
-                {msg.type === "location" && renderLocation(msg)}
-                {msg.type === "contact" && renderContact(msg)}
-                {msg.type === "poll" && renderPoll(msg)}
-                {msg.type === "sticker" && renderSticker(msg)}
-                {msg.type === "list" && renderList(msg)}
+                  <div
+                    className={`relative px-4 py-2.5 transition-all duration-200 ${
+                      msg.replyTo ? "rounded-t-none" : ""
+                    } ${
+                      msg.type === "sticker"
+                        ? "bg-transparent p-0"
+                        : isLead
+                          ? "bg-card border border-border/50 msg-bubble-lead shadow-sm"
+                          : "bg-gradient-to-br from-primary to-primary/90 text-primary-foreground msg-bubble-agent shadow-md"
+                    } ${last && isLead ? "msg-tail-left" : ""} ${last && !isLead ? "msg-tail-right" : ""}`}
+                    style={msg.type !== "sticker" ? { borderRadius: bubbleRadius } : undefined}
+                  >
+                    {/* Content by type */}
+                    {msg.type === "audio" && (
+                      <div className="flex items-center gap-2.5 mb-1">
+                        <div className="h-8 w-8 rounded-full bg-primary/15 flex items-center justify-center shrink-0">
+                          <div className="w-0 h-0 border-l-[8px] border-l-primary border-y-[5px] border-y-transparent ml-0.5" />
+                        </div>
+                        <div className="flex items-center gap-[2px] flex-1">
+                          {Array.from({ length: 24 }, (_, i) => (
+                            <div
+                              key={i}
+                              className={`rounded-full transition-all ${isLead ? "bg-muted-foreground/30" : "bg-primary-foreground/30"}`}
+                              style={{
+                                width: 2,
+                                height: 3 + Math.sin(i * 0.8) * 8 + Math.random() * 4,
+                                animationDelay: `${i * 30}ms`,
+                              }}
+                            />
+                          ))}
+                        </div>
+                        <span className="text-[11px] opacity-70 font-mono">0:{String(msg.duration || 0).padStart(2, "0")}</span>
+                      </div>
+                    )}
 
-                {msg.type === "image" && (
-                  <div className="rounded-xl bg-gradient-to-br from-muted/40 to-muted/20 h-44 flex items-center justify-center text-3xl mb-1.5 overflow-hidden">
-                    🖼️
-                  </div>
-                )}
-                {msg.type === "video" && (
-                  <div className="rounded-xl bg-gradient-to-br from-muted/40 to-muted/20 h-44 flex items-center justify-center text-3xl mb-1.5 relative overflow-hidden">
-                    <div className="h-12 w-12 rounded-full bg-background/80 backdrop-blur-sm flex items-center justify-center shadow-lg">
-                      <div className="w-0 h-0 border-l-[10px] border-l-foreground border-y-[7px] border-y-transparent ml-1" />
-                    </div>
-                  </div>
-                )}
-                {msg.type === "document" && (
-                  <div className="flex items-center gap-3 p-2.5 rounded-xl bg-background/15 mb-1.5 border border-border/20">
-                    <div className="h-11 w-11 rounded-xl bg-primary/20 flex items-center justify-center text-lg shrink-0 shadow-sm">📄</div>
-                    <div className="min-w-0">
-                      <p className="text-xs font-semibold truncate">{msg.fileName || "Documento"}</p>
-                      <p className="text-[10px] opacity-60 mt-0.5">{msg.mimeType || "application/pdf"}</p>
-                    </div>
-                  </div>
-                )}
+                    {msg.type === "location" && renderLocation(msg)}
+                    {msg.type === "contact" && renderContact(msg)}
+                    {msg.type === "poll" && renderPoll(msg)}
+                    {msg.type === "sticker" && renderSticker(msg)}
+                    {msg.type === "list" && renderList(msg)}
 
-                {(msg.type === "text" || (msg.content && !["location", "contact", "poll", "sticker", "list"].includes(msg.type))) && msg.content && (
-                  <p className="text-[14px] leading-relaxed">{renderFormattedText(msg.content)}</p>
-                )}
+                    {msg.type === "image" && (
+                      <div className="rounded-xl bg-gradient-to-br from-muted/40 to-muted/20 h-44 flex items-center justify-center text-3xl mb-1.5 overflow-hidden">
+                        🖼️
+                      </div>
+                    )}
+                    {msg.type === "video" && (
+                      <div className="rounded-xl bg-gradient-to-br from-muted/40 to-muted/20 h-44 flex items-center justify-center text-3xl mb-1.5 relative overflow-hidden">
+                        <div className="h-12 w-12 rounded-full bg-background/80 backdrop-blur-sm flex items-center justify-center shadow-lg">
+                          <div className="w-0 h-0 border-l-[10px] border-l-foreground border-y-[7px] border-y-transparent ml-1" />
+                        </div>
+                      </div>
+                    )}
+                    {msg.type === "document" && (
+                      <div className="flex items-center gap-3 p-2.5 rounded-xl bg-background/15 mb-1.5 border border-border/20">
+                        <div className="h-11 w-11 rounded-xl bg-primary/20 flex items-center justify-center text-lg shrink-0 shadow-sm">📄</div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-semibold truncate">{msg.fileName || "Documento"}</p>
+                          <p className="text-[10px] opacity-60 mt-0.5">{msg.mimeType || "application/pdf"}</p>
+                        </div>
+                      </div>
+                    )}
 
-                {msg.type !== "sticker" && renderLinkPreview(msg)}
+                    {(msg.type === "text" || (msg.content && !["location", "contact", "poll", "sticker", "list"].includes(msg.type))) && msg.content && (
+                      <p className="text-[14px] leading-relaxed whitespace-pre-wrap">{renderFormattedText(msg.content)}</p>
+                    )}
 
-                {/* Timestamp + check */}
-                {msg.type !== "sticker" && (
-                  <div className={`flex items-center justify-end gap-1 mt-1.5 ${isLead ? "text-muted-foreground/60" : "text-primary-foreground/50"}`}>
-                    <span className="text-[10px] font-medium">{formatTime(msg.timestamp)}</span>
-                    {!isLead && (
-                      <CheckCheck className="h-3.5 w-3.5 animate-check-reveal" />
+                    {msg.type !== "sticker" && renderLinkPreview(msg)}
+
+                    {/* Timestamp + status */}
+                    {msg.type !== "sticker" && showTime && (
+                      <div className={`flex items-center justify-end gap-1 mt-1.5 ${isLead ? "text-muted-foreground/60" : "text-primary-foreground/50"}`}>
+                        <span className="text-[10px] font-medium">{formatTime(new Date(msg.timestamp))}</span>
+                        {renderStatus(msg)}
+                      </div>
                     )}
                   </div>
-                )}
-              </div>
 
-              {/* Reactions */}
-              {msg.reactions && msg.reactions.length > 0 && (
-                <div className={`flex gap-1 mt-1 ${isLead ? "justify-start ml-2" : "justify-end mr-2"}`}>
-                  {msg.reactions.map((r, i) => (
-                    <span key={i} className="text-sm bg-card rounded-full px-2 py-0.5 border border-border/50 shadow-sm animate-pop-in hover:scale-110 transition-transform cursor-default">
-                      {r.emoji} {r.count > 1 && <span className="text-[10px] font-medium text-muted-foreground">{r.count}</span>}
-                    </span>
-                  ))}
-                </div>
-              )}
+                  {/* Reactions */}
+                  {msg.reactions && msg.reactions.length > 0 && (
+                    <div className={`flex gap-1 mt-1 ${isLead ? "justify-start ml-2" : "justify-end mr-2"}`}>
+                      {msg.reactions.map((r, i) => (
+                        <span key={i} className="text-sm bg-card rounded-full px-2 py-0.5 border border-border/50 shadow-sm animate-pop-in hover:scale-110 transition-transform cursor-default">
+                          {r.emoji} {r.count > 1 && <span className="text-[10px] font-medium text-muted-foreground">{r.count}</span>}
+                        </span>
+                      ))}
+                    </div>
+                  )}
 
-              {/* Message actions (hover) */}
-              <div className={`absolute top-1/2 -translate-y-1/2 ${isLead ? "-right-14" : "-left-14"} hidden group-hover:flex items-center gap-0.5 bg-card/90 backdrop-blur-sm border border-border/50 rounded-xl shadow-lg p-0.5 animate-pop-in`}>
-                <button
-                  onClick={() => setShowReactionPicker(showReactionPicker === msg.id ? null : msg.id)}
-                  className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-                  title="Reagir"
-                >
-                  <SmilePlus className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  onClick={() => onReply?.(msg)}
-                  className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-                  title="Responder"
-                >
-                  <Reply className="h-3.5 w-3.5" />
-                </button>
-              </div>
-
-              {/* Reaction picker */}
-              {showReactionPicker === msg.id && (
-                <div className={`absolute ${isLead ? "left-0" : "right-0"} -top-11 flex items-center gap-0.5 bg-card/95 backdrop-blur-md border border-border/50 rounded-2xl shadow-xl px-2 py-1.5 z-10 animate-pop-in`}>
-                  {REACTION_EMOJIS.map((emoji, i) => (
+                  {/* Message actions (hover) */}
+                  <div className={`absolute top-1/2 -translate-y-1/2 ${isLead ? "-right-20" : "-left-20"} hidden group-hover:flex items-center gap-0.5 bg-card/90 backdrop-blur-sm border border-border/50 rounded-xl shadow-lg p-0.5 animate-pop-in`}>
                     <button
-                      key={emoji}
-                      onClick={() => { onReaction?.(msg.id, emoji); setShowReactionPicker(null); }}
-                      className="text-lg hover:scale-[1.3] transition-all p-0.5 hover:bg-muted/50 rounded-lg"
-                      style={{ animationDelay: `${i * 40}ms` }}
+                      onClick={() => setShowReactionPicker(showReactionPicker === msg.id ? null : msg.id)}
+                      className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                      title="Reagir"
                     >
-                      {emoji}
+                      <SmilePlus className="h-3.5 w-3.5" />
                     </button>
-                  ))}
+                    <button
+                      onClick={() => onReply?.(msg)}
+                      className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                      title="Responder"
+                    >
+                      <Reply className="h-3.5 w-3.5" />
+                    </button>
+                    {onForward && (
+                      <button
+                        onClick={() => onForward(msg)}
+                        className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                        title="Encaminhar"
+                      >
+                        <Forward className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                    {onDelete && msg.sender === "attendant" && (
+                      <button
+                        onClick={() => onDelete(msg)}
+                        className="p-1.5 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+                        title="Apagar"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Reaction picker */}
+                  {showReactionPicker === msg.id && (
+                    <div className={`absolute ${isLead ? "left-0" : "right-0"} -top-11 flex items-center gap-0.5 bg-card/95 backdrop-blur-md border border-border/50 rounded-2xl shadow-xl px-2 py-1.5 z-10 animate-pop-in`}>
+                      {REACTION_EMOJIS.map((emoji, i) => (
+                        <button
+                          key={emoji}
+                          onClick={() => { onReaction?.(msg.id, emoji); setShowReactionPicker(null); }}
+                          className="text-lg hover:scale-[1.3] transition-all p-0.5 hover:bg-muted/50 rounded-lg"
+                          style={{ animationDelay: `${i * 40}ms` }}
+                        >
+                          {emoji}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              )}
+              </div>
             </div>
-          </div>
-        );
-      })}
+          );
+        })}
 
-      {isTyping && <TypingIndicator name={leadName} />}
+        {isTyping && <TypingIndicator name={leadName} />}
 
-      <div ref={bottomRef} />
+        <div ref={bottomRef} />
+      </div>
+
+      {/* Scroll-to-bottom FAB */}
+      {showScrollButton && (
+        <button
+          onClick={() => scrollToBottom()}
+          className="absolute bottom-4 right-4 h-10 w-10 rounded-full bg-card border border-border shadow-lg flex items-center justify-center hover:bg-muted transition-all animate-fade-in z-10"
+        >
+          <ChevronDown className="h-5 w-5 text-foreground" />
+        </button>
+      )}
+
+      {/* Search toggle */}
+      {!searchOpen && (
+        <button
+          onClick={() => setSearchOpen(true)}
+          className="absolute top-3 right-3 h-8 w-8 rounded-full bg-card/80 backdrop-blur-sm border border-border/50 shadow-sm flex items-center justify-center hover:bg-muted transition-all z-10 opacity-0 hover:opacity-100 focus:opacity-100"
+          title="Buscar na conversa"
+        >
+          <Search className="h-3.5 w-3.5 text-muted-foreground" />
+        </button>
+      )}
     </div>
   );
 }

@@ -24,6 +24,7 @@ import {
   type Lead,
   type ChatMessage,
   type MessageType,
+  type MessageStatus,
   type LocationData,
   type ContactData,
   type PollData,
@@ -95,8 +96,20 @@ function ChatPage() {
     tagsApi.toggle(leadId, tagId);
   }, []);
 
+  // ─── Dedup set — prevent duplicate messages ───
+  const processedMsgIds = useRef(new Set<string>());
+
   // ─── Real-time incoming messages via SSE ───
   const handleIncomingMessage = useCallback((msg: IncomingMessage) => {
+    // Idempotency: skip if already processed
+    if (processedMsgIds.current.has(msg.id)) return;
+    processedMsgIds.current.add(msg.id);
+    // Cap dedup set size to prevent memory leak
+    if (processedMsgIds.current.size > 5000) {
+      const entries = Array.from(processedMsgIds.current);
+      processedMsgIds.current = new Set(entries.slice(entries.length - 2500));
+    }
+
     const chatMsg: ChatMessage = {
       id: msg.id,
       leadId: msg.leadId || msg.phone,
@@ -104,6 +117,7 @@ function ChatPage() {
       sender: "lead",
       type: (msg.type as MessageType) || "text",
       timestamp: new Date(msg.timestamp),
+      status: "delivered",
     };
 
     // Use refs to avoid stale closure
@@ -114,17 +128,18 @@ function ChatPage() {
 
     const currentSelected = selectedLeadRef.current;
     const isViewing = existingLead && currentSelected?.id === existingLead.id;
-    if (isViewing) {
-      setIsLeadTyping(true);
-      setTimeout(() => setIsLeadTyping(false), 1500 + Math.random() * 1000);
-    }
 
     const addMessage = () => {
       if (existingLead) {
-        setMessages((prev) => ({
-          ...prev,
-          [existingLead.id]: [...(prev[existingLead.id] || []), chatMsg],
-        }));
+        setMessages((prev) => {
+          // Double-check dedup in state
+          const existing = prev[existingLead.id] || [];
+          if (existing.some((m) => m.id === msg.id)) return prev;
+          return {
+            ...prev,
+            [existingLead.id]: [...existing, chatMsg],
+          };
+        });
 
         const updateLead = (lead: Lead): Lead =>
           lead.id === existingLead.id
@@ -169,9 +184,13 @@ function ChatPage() {
       }
     };
 
-    // Delay message appearance if typing indicator is shown
+    // Show typing indicator briefly before message for active conversation
     if (isViewing) {
-      setTimeout(addMessage, 1500);
+      setIsLeadTyping(true);
+      setTimeout(() => {
+        setIsLeadTyping(false);
+        addMessage();
+      }, 800 + Math.random() * 600);
     } else {
       addMessage();
     }
@@ -320,13 +339,15 @@ function ChatPage() {
       setFirstResponseTracked((prev) => new Set(prev).add(selectedLead.id));
     }
 
+    const msgId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const newMsg: ChatMessage = {
-      id: `msg-${Date.now()}`,
+      id: msgId,
       leadId: selectedLead.id,
       content,
       sender: "attendant",
       type,
       timestamp: new Date(),
+      status: "sending",
       replyTo: replyingTo || undefined,
       ...extra,
     };
@@ -342,12 +363,39 @@ function ChatPage() {
         const connected = connectedInstances[0];
         if (connected) {
           await sendTextMessage(connected.instanceName, selectedLead.phone, content);
+          // Update status to sent
+          setMessages((prev) => ({
+            ...prev,
+            [selectedLead.id]: (prev[selectedLead.id] || []).map((m) =>
+              m.id === msgId ? { ...m, status: "sent" as const } : m
+            ),
+          }));
         } else {
           toast.error("Nenhuma instância WhatsApp conectada");
+          setMessages((prev) => ({
+            ...prev,
+            [selectedLead.id]: (prev[selectedLead.id] || []).map((m) =>
+              m.id === msgId ? { ...m, status: "failed" as const } : m
+            ),
+          }));
         }
       } catch (err: any) {
         toast.error("Erro ao enviar pelo WhatsApp: " + (err?.message || ""));
+        setMessages((prev) => ({
+          ...prev,
+          [selectedLead.id]: (prev[selectedLead.id] || []).map((m) =>
+            m.id === msgId ? { ...m, status: "failed" as const } : m
+          ),
+        }));
       }
+    } else {
+      // Non-text messages: mark as sent
+      setMessages((prev) => ({
+        ...prev,
+        [selectedLead.id]: (prev[selectedLead.id] || []).map((m) =>
+          m.id === msgId ? { ...m, status: "sent" as const } : m
+        ),
+      }));
     }
   };
 
@@ -502,6 +550,24 @@ function ChatPage() {
       content: msg.content || (msg.type === "image" ? "📷 Imagem" : msg.type === "location" ? "📍 Localização" : msg.type),
       sender: msg.sender === "lead" ? selectedLead?.name || "Lead" : "Você",
     });
+  };
+
+  const handleForward = (msg: ChatMessage) => {
+    const text = msg.content || `[${msg.type}]`;
+    navigator.clipboard.writeText(text).then(() => {
+      toast.success("Mensagem copiada para encaminhar");
+    });
+  };
+
+  const handleDeleteMessage = (msg: ChatMessage) => {
+    if (!selectedLead) return;
+    setMessages((prev) => ({
+      ...prev,
+      [selectedLead.id]: (prev[selectedLead.id] || []).map((m) =>
+        m.id === msg.id ? { ...m, content: "🚫 Mensagem apagada", type: "text" as const } : m
+      ),
+    }));
+    toast.info("Mensagem apagada");
   };
 
   const handleTransfer = (lead: Lead, toAttendantId: string, toAttendantName: string, reason: string) => {
@@ -750,6 +816,8 @@ function ChatPage() {
                 isTyping={isLeadTyping}
                 onReaction={handleReaction}
                 onReply={handleReply}
+                onForward={handleForward}
+                onDelete={handleDeleteMessage}
               />
               {selectedLead.status === "finished" ? (
                 <div className="px-4 py-3 border-t border-border/50 bg-muted/30 flex items-center justify-center gap-3">
