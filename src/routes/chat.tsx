@@ -50,12 +50,22 @@ function ChatPage() {
   const [messages, setMessages] = useState<Record<string, ChatMessage[]>>(mockMessages);
   const [filterQueue, setFilterQueue] = useState<string | null>(null);
   const [filterTag, setFilterTag] = useState<string | null>(null);
-  const [availableQueues] = useState<AttendanceQueue[]>(() => getQueues().filter((q) => q.active));
+  const [availableQueues, setAvailableQueues] = useState<AttendanceQueue[]>([]);
   const [availableTags, setAvailableTags] = useState<LeadTagApi[]>([]);
   const [leadTagAssignments, setLeadTagAssignments] = useState<Record<string, string[]>>({});
 
-  // Load tags and assignments from VPS
+  // Load queues, tags and assignments from VPS
   useEffect(() => {
+    queuesApi.list().then(({ data }) => {
+      if (data && Array.isArray(data)) {
+        setAvailableQueues(data.filter((q: any) => q.active).map((q: any) => ({
+          id: q.id, name: q.name, color: q.color, icon: q.icon,
+          description: q.description || "", contactNumbers: q.contact_numbers || [],
+          teamMembers: (q.team_member_ids || []).map((id: string) => ({ id, name: id })),
+          whatsappButtonLabel: q.whatsapp_button_label || "", active: q.active,
+        })));
+      }
+    });
     tagsApi.list().then(({ data }) => { if (data) setAvailableTags(data); });
     tagsApi.assignments().then(({ data }) => { if (data) setLeadTagAssignments(data); });
   }, []);
