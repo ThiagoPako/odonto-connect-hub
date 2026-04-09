@@ -935,7 +935,13 @@ app.get('/api/events', (req, res) => {
   sseClients.add(res);
   console.log(`📡 SSE client connected (total: ${sseClients.size})`);
 
+  // Keepalive ping every 25s to prevent proxy/browser timeouts
+  const keepalive = setInterval(() => {
+    res.write(`event: ping\ndata: ${JSON.stringify({ ts: Date.now() })}\n\n`);
+  }, 25000);
+
   req.on('close', () => {
+    clearInterval(keepalive);
     sseClients.delete(res);
     console.log(`📡 SSE client disconnected (total: ${sseClients.size})`);
   });
