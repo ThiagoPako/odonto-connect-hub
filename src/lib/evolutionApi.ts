@@ -168,6 +168,162 @@ export async function sendMediaMessage(
   });
 }
 
+/** Send location via Evolution API */
+export async function sendLocationMessage(
+  instanceName: string,
+  number: string,
+  location: { latitude: number; longitude: number; name?: string; address?: string },
+  quoted?: { key: { id: string } }
+): Promise<{ key: { id: string } }> {
+  const cleanNumber = number.replace(/\D/g, "");
+  return apiCall(`/message/sendLocation/${instanceName}`, {
+    method: "POST",
+    body: JSON.stringify({
+      number: cleanNumber,
+      name: location.name || "",
+      address: location.address || "",
+      latitude: location.latitude,
+      longitude: location.longitude,
+      ...(quoted ? { quoted: { key: quoted.key } } : {}),
+    }),
+  });
+}
+
+/** Send contact card via Evolution API */
+export async function sendContactMessage(
+  instanceName: string,
+  number: string,
+  contact: { fullName: string; phone: string; email?: string; company?: string; url?: string }
+): Promise<{ key: { id: string } }> {
+  const cleanNumber = number.replace(/\D/g, "");
+  return apiCall(`/message/sendContact/${instanceName}`, {
+    method: "POST",
+    body: JSON.stringify({
+      number: cleanNumber,
+      contact: [
+        {
+          fullName: contact.fullName,
+          wuid: contact.phone.replace(/\D/g, ""),
+          phoneNumber: contact.phone,
+          ...(contact.email ? { email: contact.email } : {}),
+          ...(contact.company ? { organization: contact.company } : {}),
+          ...(contact.url ? { url: contact.url } : {}),
+        },
+      ],
+    }),
+  });
+}
+
+/** Send reaction emoji to a message via Evolution API */
+export async function sendReactionMessage(
+  instanceName: string,
+  number: string,
+  messageId: string,
+  reaction: string // emoji or "" to remove
+): Promise<{ key: { id: string } }> {
+  const cleanNumber = number.replace(/\D/g, "");
+  return apiCall(`/message/sendReaction/${instanceName}`, {
+    method: "POST",
+    body: JSON.stringify({
+      key: {
+        remoteJid: `${cleanNumber}@s.whatsapp.net`,
+        id: messageId,
+      },
+      reaction,
+    }),
+  });
+}
+
+/** Send poll via Evolution API */
+export async function sendPollMessage(
+  instanceName: string,
+  number: string,
+  poll: { question: string; options: string[] }
+): Promise<{ key: { id: string } }> {
+  const cleanNumber = number.replace(/\D/g, "");
+  return apiCall(`/message/sendPoll/${instanceName}`, {
+    method: "POST",
+    body: JSON.stringify({
+      number: cleanNumber,
+      name: poll.question,
+      values: poll.options,
+      selectableCount: 1,
+    }),
+  });
+}
+
+/** Send sticker via Evolution API */
+export async function sendStickerMessage(
+  instanceName: string,
+  number: string,
+  sticker: string // URL or base64
+): Promise<{ key: { id: string } }> {
+  const cleanNumber = number.replace(/\D/g, "");
+  return apiCall(`/message/sendSticker/${instanceName}`, {
+    method: "POST",
+    body: JSON.stringify({
+      number: cleanNumber,
+      sticker,
+    }),
+  });
+}
+
+/** Send interactive list via Evolution API */
+export async function sendListMessage(
+  instanceName: string,
+  number: string,
+  list: {
+    title: string;
+    description?: string;
+    buttonText: string;
+    footerText?: string;
+    sections: Array<{ title: string; rows: Array<{ title: string; description?: string; rowId?: string }> }>;
+  }
+): Promise<{ key: { id: string } }> {
+  const cleanNumber = number.replace(/\D/g, "");
+  return apiCall(`/message/sendList/${instanceName}`, {
+    method: "POST",
+    body: JSON.stringify({
+      number: cleanNumber,
+      title: list.title,
+      description: list.description || list.title,
+      buttonText: list.buttonText,
+      footerText: list.footerText || "",
+      sections: list.sections.map((s) => ({
+        title: s.title,
+        rows: s.rows.map((r, i) => ({
+          title: r.title,
+          description: r.description || "",
+          rowId: r.rowId || `row-${i}`,
+        })),
+      })),
+    }),
+  });
+}
+
+/** Send text with quoted message (reply) via Evolution API */
+export async function sendTextWithQuote(
+  instanceName: string,
+  number: string,
+  text: string,
+  quotedMessageId: string
+): Promise<{ key: { id: string } }> {
+  const cleanNumber = number.replace(/\D/g, "");
+  return apiCall(`/message/sendText/${instanceName}`, {
+    method: "POST",
+    body: JSON.stringify({
+      number: cleanNumber,
+      text,
+      quoted: {
+        key: {
+          remoteJid: `${cleanNumber}@s.whatsapp.net`,
+          id: quotedMessageId,
+        },
+      },
+    }),
+  });
+}
+
 export interface WhatsAppContact {
   id: string;
   pushName?: string;
