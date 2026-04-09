@@ -323,8 +323,12 @@ function ChatPage() {
       setHistoryHasMore((prev) => ({ ...prev, [selectedLead.id]: data.hasMore }));
     });
 
-    // Mark messages as read on server
+    // Mark messages as read on server and reset local unread count
     messagesApi.markRead(selectedLead.id).catch(() => {});
+    const resetUnread = (l: Lead): Lead =>
+      l.id === selectedLead.id ? { ...l, unreadCount: 0 } : l;
+    setQueue((prev) => prev.map(resetUnread));
+    setMyLeads((prev) => prev.map(resetUnread));
   }, [selectedLead?.id]);
 
   // ─── Infinite scroll: load older messages ───
