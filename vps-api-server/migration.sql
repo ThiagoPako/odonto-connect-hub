@@ -276,3 +276,34 @@ CREATE TABLE IF NOT EXISTS satisfaction_ratings (
 
 CREATE INDEX IF NOT EXISTS idx_satisfaction_ratings_attendant ON satisfaction_ratings(attendant_id);
 CREATE INDEX IF NOT EXISTS idx_satisfaction_ratings_created ON satisfaction_ratings(created_at DESC);
+
+-- Lead Tags (tags personalizáveis para classificar leads)
+CREATE TABLE IF NOT EXISTS lead_tags (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  color TEXT NOT NULL DEFAULT '#3B82F6',
+  icon TEXT DEFAULT '📌',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Lead <-> Tag assignments
+CREATE TABLE IF NOT EXISTS lead_tag_assignments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  lead_id TEXT NOT NULL,
+  tag_id UUID REFERENCES lead_tags(id) ON DELETE CASCADE NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (lead_id, tag_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_lead_tag_assignments_lead ON lead_tag_assignments(lead_id);
+CREATE INDEX IF NOT EXISTS idx_lead_tag_assignments_tag ON lead_tag_assignments(tag_id);
+
+-- Insert default tags
+INSERT INTO lead_tags (id, name, color, icon) VALUES
+  (gen_random_uuid(), 'Urgente', '#EF4444', '🔴'),
+  (gen_random_uuid(), 'VIP', '#F59E0B', '⭐'),
+  (gen_random_uuid(), 'Retorno', '#3B82F6', '🔄'),
+  (gen_random_uuid(), 'Novo', '#10B981', '🆕'),
+  (gen_random_uuid(), 'Orçamento', '#8B5CF6', '💰')
+ON CONFLICT DO NOTHING;
