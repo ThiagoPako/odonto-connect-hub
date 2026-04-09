@@ -124,9 +124,11 @@ function AuthGate() {
 
   // Authenticated — show sidebar + content (or unauthorized)
   return (
-    <div className="flex min-h-screen w-full">
+    <div className="flex h-screen w-full overflow-hidden">
       <AppSidebar />
-      {hasAccess ? <Outlet /> : <UnauthorizedComponent />}
+      <main className="flex-1 overflow-y-auto">
+        {hasAccess ? <Outlet /> : <UnauthorizedComponent />}
+      </main>
     </div>
   );
 }
