@@ -3,6 +3,7 @@ import { DashboardHeader } from "@/components/DashboardHeader";
 import { AdminResetPanel } from "@/components/AdminResetPanel";
 import { AdminCreateUserPanel } from "@/components/AdminCreateUserPanel";
 import { AdminUserListPanel } from "@/components/AdminUserListPanel";
+import { ClinicLocationPanel } from "@/components/ClinicLocationPanel";
 import { Settings } from "lucide-react";
 
 export const Route = createFileRoute("/configuracoes")({
@@ -28,6 +29,7 @@ function ConfiguracoesPage() {
         </div>
 
         <div className="max-w-3xl space-y-6">
+          <ClinicLocationPanel />
           <AdminUserListPanel />
           <AdminCreateUserPanel />
           <AdminResetPanel />
