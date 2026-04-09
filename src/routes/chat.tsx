@@ -107,8 +107,15 @@ function ChatPage() {
     playNotificationSound();
     const name = msg.leadName || msg.pushName;
     const body = msg.content?.slice(0, 80) || `[${msg.type}]`;
-    toast.info(`💬 ${name}`, { description: body, duration: 5000 });
-    showBrowserNotification(`💬 ${name}`, body);
+    toast.info(`💬 ${name}`, {
+      description: body,
+      duration: 5000,
+      action: {
+        label: "Abrir",
+        onClick: () => navigate({ to: "/chat", search: { lead: name } }),
+      },
+    });
+    showBrowserNotification(`💬 ${name}`, body, name);
   }, [queue, myLeads, selectedLead]);
 
   useRealtimeChat(handleIncomingMessage);
