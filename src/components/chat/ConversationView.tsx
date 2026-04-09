@@ -3,6 +3,13 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { CheckCheck, Check, MapPin, Phone, Mail, Globe, Building2, BarChart3, Reply, SmilePlus, ExternalLink, List, ChevronDown, Forward, Trash2, Search, Loader2, Upload, Copy } from "lucide-react";
 import { TypingIndicator } from "./TypingIndicator";
 
+interface ServerSearchResult {
+  id: string;
+  content: string;
+  sender: string;
+  timestamp: string;
+}
+
 interface ConversationViewProps {
   messages: ChatMessage[];
   leadName: string;
@@ -17,6 +24,8 @@ interface ConversationViewProps {
   onFileDrop?: (files: File[]) => void;
   /** Number of unread messages from the bottom */
   unreadCount?: number;
+  /** Server-side search callback — if provided, search hits the backend */
+  onServerSearch?: (query: string) => Promise<ServerSearchResult[]>;
 }
 
 const REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
