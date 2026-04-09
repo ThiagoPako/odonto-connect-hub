@@ -11,14 +11,12 @@ interface ConversationViewProps {
   onReply?: (msg: ChatMessage) => void;
   onForward?: (msg: ChatMessage) => void;
   onDelete?: (msg: ChatMessage) => void;
-  /** Called when user scrolls near top — should prepend older messages */
   onLoadMore?: () => Promise<void>;
-  /** Whether there are older messages to load */
   hasMore?: boolean;
-  /** Whether older messages are currently loading */
   loadingMore?: boolean;
-  /** Called when files are dropped onto the chat area */
   onFileDrop?: (files: File[]) => void;
+  /** Number of unread messages from the bottom */
+  unreadCount?: number;
 }
 
 const REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
