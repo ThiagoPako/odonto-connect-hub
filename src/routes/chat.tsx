@@ -850,6 +850,48 @@ function ChatPage() {
   const filteredByQueue = filterQueue ? filteredByStatus.filter((l) => l.queueId === filterQueue) : filteredByStatus;
   const currentList = filterTag ? filteredByQueue.filter((l) => (leadTagAssignments[l.id] || []).includes(filterTag)) : filteredByQueue;
 
+  const handleSyncPhotos = useCallback(async () => {
+    const instanceName = connectedInstances[0]?.instanceName;
+    if (!instanceName) {
+      toast.error("Nenhuma instância WhatsApp conectada");
+      return;
+    }
+    setSyncingPhotos(true);
+    toast.info("Sincronizando fotos de perfil...");
+    try {
+      const { data, error } = await whatsappApi.syncProfilePictures(instanceName);
+      if (error) {
+        toast.error("Erro ao sincronizar: " + error);
+      } else {
+        toast.success(`Fotos sincronizadas: ${data?.updated || 0} atualizadas de ${data?.total || 0}`);
+        // Reload leads to show updated avatars
+        const res = await queueLeadsApi.list();
+        if (res.data) {
+          const mapLead = (r: any): Lead => ({
+            id: r.id,
+            name: r.name || r.phone,
+            initials: (r.name || r.phone || "?").split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase(),
+            phone: r.phone,
+            avatarUrl: r.avatarUrl,
+            lastMessage: r.lastMessage || "",
+            lastMessageTime: r.lastMessageTime ? new Date(r.lastMessageTime) : new Date(),
+            unreadCount: r.unreadCount || 0,
+            status: r.sessionStatus === "active" ? "active" : r.sessionStatus === "waiting" ? "waiting" : "new",
+            assignedTo: r.attendantName || undefined,
+            queueId: r.queueId || undefined,
+            queueName: r.queueName || undefined,
+          });
+          setQueue(res.data.queue?.map(mapLead) || []);
+          setMyLeads(res.data.active?.map(mapLead) || []);
+        }
+      }
+    } catch (err: any) {
+      toast.error("Falha na sincronização: " + (err.message || "erro desconhecido"));
+    } finally {
+      setSyncingPhotos(false);
+    }
+  }, [connectedInstances]);
+
   const handleNewChatFromContact = (contato: Contato) => {
     // Check if lead already exists
     const allLeads = [...queue, ...myLeads];
