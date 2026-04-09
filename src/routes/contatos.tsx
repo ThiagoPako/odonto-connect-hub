@@ -35,6 +35,20 @@ function ContatosPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [editContato, setEditContato] = useState<Contato | null>(null);
   const [whatsappContato, setWhatsappContato] = useState<Contato | null>(null);
+  const [syncing, setSyncing] = useState(false);
+
+  const handleSync = async () => {
+    setSyncing(true);
+    const { data, error } = await contatosApi.syncNow();
+    if (error) {
+      toast.error(error);
+    } else {
+      toast.success(`Sincronizado! ${data?.imported ?? 0} novos contatos importados`);
+      void loadContatos();
+    }
+    setSyncing(false);
+  };
+
   const loadContatos = useCallback(async () => {
     setLoading(true);
     const params: Record<string, string> = {};
