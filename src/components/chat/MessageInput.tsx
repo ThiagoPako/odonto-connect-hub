@@ -263,6 +263,42 @@ export function MessageInput({ onSendMessage, disabled, replyingTo, onCancelRepl
   const formInputClass = "w-full bg-muted rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring";
   const formBtnClass = "px-4 py-2 rounded-lg text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors";
 
+  // If media preview is active, show fullscreen-ish preview panel
+  if (mediaPreview) {
+    return (
+      <div className="border-t border-border bg-card">
+        <div className="relative flex flex-col items-center p-4 bg-muted/30">
+          <button onClick={cancelMediaPreview} className="absolute top-2 right-2 p-1.5 rounded-full bg-card/80 hover:bg-card text-muted-foreground hover:text-foreground z-10 shadow-sm">
+            <X className="h-4 w-4" />
+          </button>
+          {mediaPreview.type === "image" ? (
+            <img src={mediaPreview.previewUrl} alt="Preview" className="max-h-60 max-w-full rounded-lg object-contain shadow-md" />
+          ) : (
+            <video src={mediaPreview.previewUrl} controls className="max-h-60 max-w-full rounded-lg shadow-md" />
+          )}
+          <p className="text-[11px] text-muted-foreground mt-2 truncate max-w-[300px]">{mediaPreview.file.name} ({(mediaPreview.file.size / 1024).toFixed(0)} KB)</p>
+        </div>
+        <div className="flex items-center gap-2 p-3">
+          <input
+            value={mediaCaption}
+            onChange={(e) => setMediaCaption(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSendMediaPreview(); } }}
+            placeholder="Adicione uma legenda..."
+            className="flex-1 bg-muted rounded-xl px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            autoFocus
+          />
+          <button
+            onClick={handleSendMediaPreview}
+            disabled={uploading}
+            className="p-2.5 rounded-full bg-primary text-primary-foreground hover:bg-primary/90 transition-colors shrink-0 disabled:opacity-50"
+          >
+            {uploading ? <Loader2 className="h-5 w-5 animate-spin" /> : <Send className="h-5 w-5" />}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="border-t border-border bg-card">
       {/* Reply preview */}
