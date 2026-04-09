@@ -551,6 +551,24 @@ function ChatPage() {
     });
   };
 
+  const handleForward = (msg: ChatMessage) => {
+    const text = msg.content || `[${msg.type}]`;
+    navigator.clipboard.writeText(text).then(() => {
+      toast.success("Mensagem copiada para encaminhar");
+    });
+  };
+
+  const handleDeleteMessage = (msg: ChatMessage) => {
+    if (!selectedLead) return;
+    setMessages((prev) => ({
+      ...prev,
+      [selectedLead.id]: (prev[selectedLead.id] || []).map((m) =>
+        m.id === msg.id ? { ...m, content: "🚫 Mensagem apagada", type: "text" as const } : m
+      ),
+    }));
+    toast.info("Mensagem apagada");
+  };
+
   const handleTransfer = (lead: Lead, toAttendantId: string, toAttendantName: string, reason: string) => {
     // Save to VPS database for auditing
     transferApi.create({
