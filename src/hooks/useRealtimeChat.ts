@@ -130,6 +130,15 @@ export function useRealtimeChat(options: RealtimeChatOptions) {
         }
       });
 
+      es.addEventListener("message_status_update", (e) => {
+        try {
+          const data: MessageStatusUpdate = JSON.parse(e.data);
+          messageStatusRef.current?.(data);
+        } catch (err) {
+          console.error("SSE message_status_update parse error:", err);
+        }
+      });
+
       es.onerror = () => {
         es?.close();
         clearInterval(keepaliveInterval);
