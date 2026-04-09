@@ -477,9 +477,9 @@ export function MessageInput({ onSendMessage, disabled, replyingTo, onCancelRepl
         </div>
       </div>
 
-      <input ref={fileInputRef} type="file" className="hidden" onChange={() => onSendMessage("📎 Documento anexado", "document")} />
-      <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={() => onSendMessage("🖼️ Imagem enviada", "image")} />
-      <input ref={videoInputRef} type="file" accept="video/*" className="hidden" onChange={() => onSendMessage("🎬 Vídeo enviado", "video")} />
+      <input ref={fileInputRef} type="file" className="hidden" onChange={(e) => handleFileSelect(e, "document")} />
+      <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleFileSelect(e, "image")} />
+      <input ref={videoInputRef} type="file" accept="video/*" className="hidden" onChange={(e) => handleFileSelect(e, "video")} />
     </div>
   );
 }
