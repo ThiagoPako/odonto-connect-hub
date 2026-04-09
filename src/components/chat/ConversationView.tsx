@@ -14,6 +14,7 @@ interface ConversationViewProps {
   messages: ChatMessage[];
   leadName: string;
   isTyping?: boolean;
+  isRecording?: boolean;
   onReaction?: (messageId: string, emoji: string) => void;
   onReply?: (msg: ChatMessage) => void;
   onForward?: (msg: ChatMessage) => void;
