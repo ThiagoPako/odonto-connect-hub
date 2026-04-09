@@ -50,9 +50,7 @@ const navSections: NavSection[] = [
     items: [
       { title: "Dashboard", url: "/", icon: LayoutDashboard },
       { title: "Meu Painel", url: "/painel-dentista", icon: Stethoscope },
-      { title: "Painel Comercial", url: "/painel-comercial", icon: Headset },
       { title: "Agenda", url: "/agenda", icon: CalendarDays },
-      { title: "Chat", url: "/chat", icon: MessageSquare },
     ],
   },
   {
@@ -68,6 +66,8 @@ const navSections: NavSection[] = [
   {
     label: "Comercial",
     items: [
+      { title: "Painel Comercial", url: "/painel-comercial", icon: Headset },
+      { title: "Chat", url: "/chat", icon: MessageSquare },
       { title: "CRM", url: "/crm", icon: Users, badge: 12 },
       { title: "Funil de Vendas", url: "/funil", icon: Kanban },
       { title: "Automações", url: "/automacoes", icon: Zap },
