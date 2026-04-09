@@ -560,19 +560,11 @@ app.post('/api/whatsapp/subscribe-presence', async (req, res) => {
       return res.status(400).json({ error: 'instance and number are required' });
     }
     const cleanNumber = number.replace(/\D/g, '');
-    const result = await evolutionFetch(`/chat/updatePresence/${instance}`, {
+    // Use findPresence to subscribe — updatePresence sends OUR presence to the contact
+    const result = await evolutionFetch(`/chat/findPresence/${instance}`, {
       method: 'POST',
       body: JSON.stringify({
         number: `${cleanNumber}@s.whatsapp.net`,
-        presence: 'composing',
-      }),
-    });
-    // Also subscribe by sending "available" immediately after to register presence listener
-    await evolutionFetch(`/chat/updatePresence/${instance}`, {
-      method: 'POST',
-      body: JSON.stringify({
-        number: `${cleanNumber}@s.whatsapp.net`,
-        presence: 'paused',
       }),
     });
     console.log(`👁️ Presence subscribed for ${cleanNumber} on ${instance}`);
@@ -815,8 +807,9 @@ app.post('/api/whatsapp/profile-picture', async (req, res) => {
 
     const pictureUrl = result.data?.profilePictureUrl || result.data?.picture || result.data?.url || null;
 
-    // If leadId provided, save to crm_leads
-    if (leadId && pictureUrl) {
+    // If leadId provided AND is a valid UUID, save to crm_leads
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (leadId && pictureUrl && uuidRegex.test(leadId)) {
       await pool.query(
         'UPDATE crm_leads SET avatar_url = $1, updated_at = NOW() WHERE id = $2',
         [pictureUrl, leadId]
@@ -1444,17 +1437,20 @@ app.post('/api/webhook/evolution', async (req, res) => {
         
         if (!messageId || !remoteJid || remoteJid.endsWith('@g.us')) continue;
         
-        // Evolution API ACK mapping:
-        // 0 = ERROR, 1 = PENDING, 2 = SERVER_ACK (sent), 3 = DELIVERY_ACK (delivered), 4 = READ, 5 = PLAYED
+        // Evolution API ACK mapping — can be numeric or string:
+        // Numeric: 0=ERROR, 1=PENDING, 2=SERVER_ACK, 3=DELIVERY_ACK, 4=READ, 5=PLAYED
+        // String: "SERVER_ACK", "DELIVERY_ACK", "READ", "PLAYED", "ERROR"
         let newStatus = null;
+        const ackStr = String(ack).toUpperCase();
         const ackNum = typeof ack === 'number' ? ack : parseInt(ack);
-        if (ackNum === 2) newStatus = 'sent';
-        else if (ackNum === 3) newStatus = 'delivered';
-        else if (ackNum === 4 || ackNum === 5) newStatus = 'read';
-        else if (ackNum === 0) newStatus = 'failed';
+        
+        if (ackStr === 'SERVER_ACK' || ackNum === 2) newStatus = 'sent';
+        else if (ackStr === 'DELIVERY_ACK' || ackNum === 3) newStatus = 'delivered';
+        else if (ackStr === 'READ' || ackStr === 'PLAYED' || ackNum === 4 || ackNum === 5) newStatus = 'read';
+        else if (ackStr === 'ERROR' || ackNum === 0) newStatus = 'failed';
         
         if (!newStatus) {
-          console.log(`⚠️ ACK ignored: ack=${ack}, ackNum=${ackNum}, messageId=${messageId}`);
+          console.log(`⚠️ ACK ignored: ack=${ack}, messageId=${messageId}`);
           continue;
         }
         
