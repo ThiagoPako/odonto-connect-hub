@@ -5,8 +5,9 @@ import { LeadListItem } from "@/components/chat/LeadListItem";
 import { ConversationView } from "@/components/chat/ConversationView";
 import { MessageInput } from "@/components/chat/MessageInput";
 import { ChatHeader } from "@/components/chat/ChatHeader";
-import { Users, MessageSquare, Inbox, Filter } from "lucide-react";
+import { Users, MessageSquare, Inbox, Filter, Tags } from "lucide-react";
 import { getQueues, type AttendanceQueue } from "@/data/queueData";
+import { getTags, getLeadTags, saveLeadTags, type LeadTag } from "@/data/leadTags";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { useRealtimeChat, type IncomingMessage } from "@/hooks/useRealtimeChat";
@@ -49,7 +50,20 @@ function ChatPage() {
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [messages, setMessages] = useState<Record<string, ChatMessage[]>>(mockMessages);
   const [filterQueue, setFilterQueue] = useState<string | null>(null);
+  const [filterTag, setFilterTag] = useState<string | null>(null);
   const [availableQueues] = useState<AttendanceQueue[]>(() => getQueues().filter((q) => q.active));
+  const [availableTags] = useState<LeadTag[]>(() => getTags());
+  const [leadTagAssignments, setLeadTagAssignments] = useState<Record<string, string[]>>(() => getLeadTags());
+
+  const handleToggleTag = useCallback((leadId: string, tagId: string) => {
+    setLeadTagAssignments((prev) => {
+      const current = prev[leadId] || [];
+      const updated = current.includes(tagId) ? current.filter((t) => t !== tagId) : [...current, tagId];
+      const next = { ...prev, [leadId]: updated };
+      saveLeadTags(next);
+      return next;
+    });
+  }, []);
 
   // ─── Real-time incoming messages via SSE ───
   const handleIncomingMessage = useCallback((msg: IncomingMessage) => {
@@ -297,7 +311,8 @@ function ChatPage() {
 
   const currentMessages = selectedLead ? messages[selectedLead.id] || [] : [];
   const baseList = activeTab === "queue" ? queue : myLeads;
-  const currentList = filterQueue ? baseList.filter((l) => l.queueId === filterQueue) : baseList;
+  const filteredByQueue = filterQueue ? baseList.filter((l) => l.queueId === filterQueue) : baseList;
+  const currentList = filterTag ? filteredByQueue.filter((l) => (leadTagAssignments[l.id] || []).includes(filterTag)) : filteredByQueue;
 
   return (
     <div className="flex-1 flex flex-col h-screen overflow-hidden">
