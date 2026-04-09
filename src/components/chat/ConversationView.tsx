@@ -11,14 +11,12 @@ interface ConversationViewProps {
   onReply?: (msg: ChatMessage) => void;
   onForward?: (msg: ChatMessage) => void;
   onDelete?: (msg: ChatMessage) => void;
-  /** Called when user scrolls near top — should prepend older messages */
   onLoadMore?: () => Promise<void>;
-  /** Whether there are older messages to load */
   hasMore?: boolean;
-  /** Whether older messages are currently loading */
   loadingMore?: boolean;
-  /** Called when files are dropped onto the chat area */
   onFileDrop?: (files: File[]) => void;
+  /** Number of unread messages from the bottom */
+  unreadCount?: number;
 }
 
 const REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
@@ -54,7 +52,7 @@ function shouldShowTimestamp(messages: ChatMessage[], idx: number): boolean {
   return diff > 5 * 60 * 1000; // 5 min gap
 }
 
-export function ConversationView({ messages, leadName, isTyping, onReaction, onReply, onForward, onDelete, onLoadMore, hasMore = false, loadingMore = false, onFileDrop }: ConversationViewProps) {
+export function ConversationView({ messages, leadName, isTyping, onReaction, onReply, onForward, onDelete, onLoadMore, hasMore = false, loadingMore = false, onFileDrop, unreadCount = 0 }: ConversationViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const [showReactionPicker, setShowReactionPicker] = useState<string | null>(null);
@@ -78,8 +76,22 @@ export function ConversationView({ messages, leadName, isTyping, onReaction, onR
     }
   }, [messages, isTyping, scrollToBottom]);
 
-  // Initial scroll (instant)
+  // Initial scroll — jump to first unread or bottom
+  const initialScrollDone = useRef(false);
   useEffect(() => {
+    if (initialScrollDone.current) return;
+    initialScrollDone.current = true;
+    if (unreadCount > 0 && messages.length > 0) {
+      const firstUnreadIdx = messages.length - unreadCount;
+      const targetMsg = messages[Math.max(0, firstUnreadIdx)];
+      if (targetMsg) {
+        requestAnimationFrame(() => {
+          const el = document.getElementById(`msg-${targetMsg.id}`);
+          el?.scrollIntoView({ behavior: "instant", block: "center" });
+        });
+        return;
+      }
+    }
     scrollToBottom("instant");
   }, []);
 
@@ -426,6 +438,8 @@ export function ConversationView({ messages, leadName, isTyping, onReaction, onR
           const last = isLastInGroup(idx);
           const showTime = shouldShowTimestamp(messages, idx);
           const showDate = shouldShowDateDivider(messages, idx);
+          const firstUnreadIdx = unreadCount > 0 ? messages.length - unreadCount : -1;
+          const showUnreadDivider = idx === firstUnreadIdx;
 
           // Dynamic border radius based on grouping
           const bubbleRadius = isLead
@@ -440,6 +454,17 @@ export function ConversationView({ messages, leadName, isTyping, onReaction, onR
                   <span className="text-[11px] text-muted-foreground bg-card/80 backdrop-blur-sm px-4 py-1.5 rounded-full shadow-sm border border-border/30 font-medium">
                     {formatDateDivider(new Date(msg.timestamp))}
                   </span>
+                </div>
+              )}
+
+              {/* Unread messages divider */}
+              {showUnreadDivider && (
+                <div className="flex items-center gap-3 my-3 animate-fade-in">
+                  <div className="flex-1 h-px bg-primary/40" />
+                  <span className="text-[11px] font-semibold text-primary bg-primary/10 px-3 py-1 rounded-full">
+                    {unreadCount} mensage{unreadCount === 1 ? "m" : "ns"} não lida{unreadCount === 1 ? "" : "s"}
+                  </span>
+                  <div className="flex-1 h-px bg-primary/40" />
                 </div>
               )}
 

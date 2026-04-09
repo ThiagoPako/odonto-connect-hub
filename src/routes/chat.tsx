@@ -974,6 +974,7 @@ function ChatPage() {
                 hasMore={historyHasMore[selectedLead.id] ?? false}
                 loadingMore={historyLoading}
                 onFileDrop={handleFileDrop}
+                unreadCount={selectedLead.unreadCount}
               />
               {selectedLead.status === "finished" ? (
                 <div className="px-4 py-3 border-t border-border/50 bg-muted/30 flex items-center justify-center gap-3">
