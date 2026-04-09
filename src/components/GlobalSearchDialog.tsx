@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import {
   CommandDialog,
@@ -9,10 +9,11 @@ import {
   CommandItem,
   CommandSeparator,
 } from "@/components/ui/command";
-import { Users, FileText, UserCheck, Phone, Mail, DollarSign, Search } from "lucide-react";
+import { Users, FileText, UserCheck, Phone, Mail, DollarSign, Search, MessageSquare, Loader2 } from "lucide-react";
 import { mockPacientes } from "@/data/pacientesMockData";
 import { mockPatients } from "@/data/crmMockData";
 import { mockBudgets } from "@/data/orcamentoMockData";
+import { messagesApi, type ChatMessageApi } from "@/lib/vpsApi";
 
 interface GlobalSearchDialogProps {
   open: boolean;
@@ -22,9 +23,15 @@ interface GlobalSearchDialogProps {
 export function GlobalSearchDialog({ open, onOpenChange }: GlobalSearchDialogProps) {
   const [query, setQuery] = useState("");
   const navigate = useNavigate();
+  const [chatResults, setChatResults] = useState<ChatMessageApi[]>([]);
+  const [chatSearching, setChatSearching] = useState(false);
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   useEffect(() => {
-    if (!open) setQuery("");
+    if (!open) {
+      setQuery("");
+      setChatResults([]);
+    }
   }, [open]);
 
   // Keyboard shortcut Ctrl/Cmd+K
@@ -38,6 +45,32 @@ export function GlobalSearchDialog({ open, onOpenChange }: GlobalSearchDialogPro
     document.addEventListener("keydown", down);
     return () => document.removeEventListener("keydown", down);
   }, [open, onOpenChange]);
+
+  // Debounced server message search
+  useEffect(() => {
+    const q = query.trim();
+    if (q.length < 2) {
+      setChatResults([]);
+      return;
+    }
+
+    clearTimeout(searchTimerRef.current);
+    searchTimerRef.current = setTimeout(async () => {
+      setChatSearching(true);
+      try {
+        const { data } = await messagesApi.search(q);
+        if (data && Array.isArray(data)) {
+          setChatResults(data.slice(0, 8));
+        }
+      } catch {
+        // silently fail
+      } finally {
+        setChatSearching(false);
+      }
+    }, 500);
+
+    return () => clearTimeout(searchTimerRef.current);
+  }, [query]);
 
   const results = useMemo(() => {
     const q = query.toLowerCase().trim();
@@ -58,11 +91,17 @@ export function GlobalSearchDialog({ open, onOpenChange }: GlobalSearchDialogPro
     return { pacientes, orcamentos, leads };
   }, [query]);
 
-  const hasResults = results.pacientes.length > 0 || results.orcamentos.length > 0 || results.leads.length > 0;
+  const hasResults = results.pacientes.length > 0 || results.orcamentos.length > 0 || results.leads.length > 0 || chatResults.length > 0;
 
-  const goTo = (path: string) => {
+  const goTo = (path: string, search?: Record<string, string>) => {
     onOpenChange(false);
-    navigate({ to: path });
+    navigate({ to: path, search });
+  };
+
+  const formatMsgTime = (ts: string) => {
+    const d = new Date(ts);
+    return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }) +
+      " " + d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
   };
 
   const statusLabel: Record<string, string> = {
@@ -76,7 +115,7 @@ export function GlobalSearchDialog({ open, onOpenChange }: GlobalSearchDialogPro
   return (
     <CommandDialog open={open} onOpenChange={onOpenChange}>
       <CommandInput
-        placeholder="Buscar paciente, orçamento, lead..."
+        placeholder="Buscar paciente, orçamento, lead, mensagem..."
         value={query}
         onValueChange={setQuery}
       />
@@ -84,10 +123,10 @@ export function GlobalSearchDialog({ open, onOpenChange }: GlobalSearchDialogPro
         {query.trim() === "" ? (
           <div className="py-10 text-center text-sm text-muted-foreground">
             <Search className="h-8 w-8 mx-auto mb-3 opacity-40" />
-            <p>Digite para buscar pacientes, orçamentos e leads</p>
+            <p>Digite para buscar pacientes, orçamentos, leads e mensagens</p>
             <p className="text-xs mt-1 opacity-60">Ctrl+K para abrir a qualquer momento</p>
           </div>
-        ) : !hasResults ? (
+        ) : !hasResults && !chatSearching ? (
           <CommandEmpty>Nenhum resultado encontrado.</CommandEmpty>
         ) : (
           <>
@@ -147,6 +186,44 @@ export function GlobalSearchDialog({ open, onOpenChange }: GlobalSearchDialogPro
                   </CommandItem>
                 ))}
               </CommandGroup>
+            )}
+
+            {/* Chat messages from server */}
+            {(chatResults.length > 0 || chatSearching) && (
+              <>
+                {(results.pacientes.length > 0 || results.orcamentos.length > 0 || results.leads.length > 0) && <CommandSeparator />}
+                <CommandGroup heading={
+                  <span className="flex items-center gap-1.5">
+                    Mensagens do Chat
+                    {chatSearching && <Loader2 className="h-3 w-3 animate-spin" />}
+                  </span>
+                }>
+                  {chatResults.map(m => (
+                    <CommandItem
+                      key={m.id}
+                      onSelect={() => goTo("/chat", { lead: m.lead_id })}
+                      className="cursor-pointer"
+                    >
+                      <MessageSquare className="h-4 w-4 text-primary shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm truncate">{m.content}</p>
+                        <p className="text-[11px] text-muted-foreground">
+                          {m.sender === "lead" ? "📩 Recebida" : "📤 Enviada"} • {m.lead_id}
+                        </p>
+                      </div>
+                      <span className="text-[10px] text-muted-foreground shrink-0">
+                        {formatMsgTime(m.timestamp)}
+                      </span>
+                    </CommandItem>
+                  ))}
+                  {chatSearching && chatResults.length === 0 && (
+                    <div className="flex items-center justify-center py-3 text-xs text-muted-foreground gap-2">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      Buscando mensagens...
+                    </div>
+                  )}
+                </CommandGroup>
+              </>
             )}
           </>
         )}
