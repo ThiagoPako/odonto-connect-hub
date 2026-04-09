@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState, useEffect, useCallback } from "react";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { LeadListItem } from "@/components/chat/LeadListItem";
@@ -38,6 +38,7 @@ export const Route = createFileRoute("/chat")({
 });
 
 function ChatPage() {
+  const navigate = useNavigate();
   const { lead: leadSearch } = Route.useSearch();
   const [activeTab, setActiveTab] = useState<"queue" | "mine">("queue");
   const [queue, setQueue] = useState<Lead[]>(mockLeadsQueue);
@@ -106,8 +107,15 @@ function ChatPage() {
     playNotificationSound();
     const name = msg.leadName || msg.pushName;
     const body = msg.content?.slice(0, 80) || `[${msg.type}]`;
-    toast.info(`💬 ${name}`, { description: body, duration: 5000 });
-    showBrowserNotification(`💬 ${name}`, body);
+    toast.info(`💬 ${name}`, {
+      description: body,
+      duration: 5000,
+      action: {
+        label: "Abrir",
+        onClick: () => navigate({ to: "/chat", search: { lead: name } }),
+      },
+    });
+    showBrowserNotification(`💬 ${name}`, body, name);
   }, [queue, myLeads, selectedLead]);
 
   useRealtimeChat(handleIncomingMessage);
@@ -243,6 +251,29 @@ function ChatPage() {
     });
   };
 
+  const handleTransfer = (lead: Lead, _toAttendantId: string, toAttendantName: string) => {
+    // Remove from my leads
+    setMyLeads((prev) => prev.filter((l) => l.id !== lead.id));
+    if (selectedLead?.id === lead.id) {
+      setSelectedLead(null);
+    }
+    // Add system message
+    setMessages((prev) => ({
+      ...prev,
+      [lead.id]: [
+        ...(prev[lead.id] || []),
+        {
+          id: `sys-transfer-${Date.now()}`,
+          leadId: lead.id,
+          content: `Atendimento transferido para ${toAttendantName}`,
+          sender: "attendant" as const,
+          type: "text" as const,
+          timestamp: new Date(),
+        },
+      ],
+    }));
+  };
+
   const currentMessages = selectedLead ? messages[selectedLead.id] || [] : [];
   const currentList = activeTab === "queue" ? queue : myLeads;
 
@@ -319,7 +350,7 @@ function ChatPage() {
         <div className="flex-1 flex flex-col bg-background">
           {selectedLead ? (
             <>
-              <ChatHeader lead={selectedLead} onClose={() => setSelectedLead(null)} />
+              <ChatHeader lead={selectedLead} onClose={() => setSelectedLead(null)} onTransfer={handleTransfer} />
               <ConversationView
                 messages={currentMessages}
                 leadName={selectedLead.name}

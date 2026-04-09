@@ -21,20 +21,23 @@ export async function requestNotificationPermission(): Promise<boolean> {
   return result === "granted";
 }
 
-export function showBrowserNotification(title: string, body: string) {
+export function showBrowserNotification(title: string, body: string, leadName?: string) {
   if (!isPushEnabled()) return;
   if (!("Notification" in window)) return;
   if (Notification.permission !== "granted") return;
-  if (document.hasFocus()) return; // only show when tab is not focused
+  if (document.hasFocus()) return;
 
   const notification = new Notification(title, {
     body,
     icon: "/favicon.ico",
-    tag: "odonto-chat", // replaces previous notification
+    tag: "odonto-chat",
   });
 
   notification.onclick = () => {
     window.focus();
     notification.close();
+    if (leadName) {
+      window.location.href = `/chat?lead=${encodeURIComponent(leadName)}`;
+    }
   };
 }
