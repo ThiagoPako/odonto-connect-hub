@@ -838,7 +838,7 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
 
                     {/* Timestamp + status — always show on every message (WhatsApp pattern) */}
                     {msg.type !== "sticker" && (
-                      <div className={`flex items-center justify-end gap-1 mt-1 ${isLead ? "text-muted-foreground/60" : "text-primary-foreground/50"}`}>
+                      <div className={`flex items-center justify-end gap-1 mt-1 ${isLead ? "text-muted-foreground/60" : "text-foreground/50"}`}>
                         <span className="text-[10px] font-medium">{formatTime(new Date(msg.timestamp))}</span>
                         {renderStatus(msg)}
                       </div>
