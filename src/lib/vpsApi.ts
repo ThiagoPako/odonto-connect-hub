@@ -361,6 +361,7 @@ export const contatosApi = {
 export interface ChatMessageApi {
   id: string;
   lead_id: string;
+  lead_name?: string;
   content: string;
   sender: 'lead' | 'attendant';
   type: string;

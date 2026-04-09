@@ -2097,15 +2097,15 @@ app.get('/api/messages/search', async (req, res) => {
     const leadId = req.query.lead_id;
     if (!q || q.length < 2) return res.status(400).json({ error: 'Query mínima 2 caracteres' });
 
-    let query = "SELECT * FROM chat_messages WHERE content ILIKE $1";
+    let query = "SELECT m.*, l.nome as lead_name FROM chat_messages m LEFT JOIN crm_leads l ON l.id = m.lead_id WHERE m.content ILIKE $1";
     const values = [`%${q}%`];
 
     if (leadId) {
-      query += ' AND lead_id = $2';
+      query += ' AND m.lead_id = $2';
       values.push(leadId);
     }
 
-    query += ' ORDER BY timestamp DESC LIMIT 50';
+    query += ' ORDER BY m.timestamp DESC LIMIT 50';
 
     const { rows } = await pool.query(query, values);
     res.json(rows);
