@@ -1437,17 +1437,20 @@ app.post('/api/webhook/evolution', async (req, res) => {
         
         if (!messageId || !remoteJid || remoteJid.endsWith('@g.us')) continue;
         
-        // Evolution API ACK mapping:
-        // 0 = ERROR, 1 = PENDING, 2 = SERVER_ACK (sent), 3 = DELIVERY_ACK (delivered), 4 = READ, 5 = PLAYED
+        // Evolution API ACK mapping — can be numeric or string:
+        // Numeric: 0=ERROR, 1=PENDING, 2=SERVER_ACK, 3=DELIVERY_ACK, 4=READ, 5=PLAYED
+        // String: "SERVER_ACK", "DELIVERY_ACK", "READ", "PLAYED", "ERROR"
         let newStatus = null;
+        const ackStr = String(ack).toUpperCase();
         const ackNum = typeof ack === 'number' ? ack : parseInt(ack);
-        if (ackNum === 2) newStatus = 'sent';
-        else if (ackNum === 3) newStatus = 'delivered';
-        else if (ackNum === 4 || ackNum === 5) newStatus = 'read';
-        else if (ackNum === 0) newStatus = 'failed';
+        
+        if (ackStr === 'SERVER_ACK' || ackNum === 2) newStatus = 'sent';
+        else if (ackStr === 'DELIVERY_ACK' || ackNum === 3) newStatus = 'delivered';
+        else if (ackStr === 'READ' || ackStr === 'PLAYED' || ackNum === 4 || ackNum === 5) newStatus = 'read';
+        else if (ackStr === 'ERROR' || ackNum === 0) newStatus = 'failed';
         
         if (!newStatus) {
-          console.log(`⚠️ ACK ignored: ack=${ack}, ackNum=${ackNum}, messageId=${messageId}`);
+          console.log(`⚠️ ACK ignored: ack=${ack}, messageId=${messageId}`);
           continue;
         }
         
