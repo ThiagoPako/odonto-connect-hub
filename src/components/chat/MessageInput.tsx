@@ -1,6 +1,7 @@
 import { useState, useRef } from "react";
 import { Send, Paperclip, Smile, Image, MapPin, UserCircle, BarChart3, FileText, Video, Sticker, X, Bold, Italic, Strikethrough, Code, List } from "lucide-react";
 import { AudioRecorder } from "./AudioRecorder";
+import { getClinicLocation } from "@/components/ClinicLocationPanel";
 import type { MessageType, ChatMessage, LocationData, ContactData, PollData, ReplyData, ListData } from "@/data/chatMockData";
 
 interface MessageInputProps {
@@ -165,13 +166,32 @@ export function MessageInput({ onSendMessage, disabled, replyingTo, onCancelRepl
             <span className="text-xs font-semibold text-foreground flex items-center gap-1.5"><MapPin className="h-3.5 w-3.5" /> Enviar Localização</span>
             <button onClick={() => setShowLocationForm(false)} className="p-1 rounded hover:bg-muted"><X className="h-3.5 w-3.5" /></button>
           </div>
+          {getClinicLocation() && (
+            <button
+              onClick={() => {
+                const clinic = getClinicLocation()!;
+                const loc: LocationData = {
+                  latitude: -23.5505,
+                  longitude: -46.6333,
+                  name: clinic.name,
+                  address: `${clinic.address}${clinic.city ? `, ${clinic.city}` : ""}${clinic.state ? ` - ${clinic.state}` : ""}`,
+                };
+                onSendMessage(`📍 ${clinic.name}\n${clinic.address}${clinic.googleMapsUrl ? `\n🗺️ ${clinic.googleMapsUrl}` : ""}`, "location", { location: loc });
+                setShowLocationForm(false);
+              }}
+              className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg bg-chart-2/10 border border-chart-2/30 text-sm font-medium text-chart-2 hover:bg-chart-2/20 transition-colors"
+            >
+              <MapPin className="h-4 w-4" />
+              Enviar localização da clínica
+            </button>
+          )}
           <input value={locName} onChange={e => setLocName(e.target.value)} placeholder="Nome do local" className={formInputClass} />
           <input value={locAddress} onChange={e => setLocAddress(e.target.value)} placeholder="Endereço" className={formInputClass} />
           <div className="flex gap-2">
             <input value={locLat} onChange={e => setLocLat(e.target.value)} placeholder="Latitude" className={formInputClass} />
             <input value={locLng} onChange={e => setLocLng(e.target.value)} placeholder="Longitude" className={formInputClass} />
           </div>
-          <button onClick={sendLocation} className={formBtnClass}>Enviar Localização</button>
+          <button onClick={sendLocation} className={formBtnClass}>Enviar Localização Manual</button>
         </div>
       )}
 
