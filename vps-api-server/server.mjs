@@ -1400,6 +1400,8 @@ app.post('/api/webhook/evolution', async (req, res) => {
     const body = req.body;
     const event = typeof body.event === 'string' ? body.event.toLowerCase().replace(/_/g, '.') : '';
     const instance = body.instance || body.instanceName;
+    
+    console.log(`📩 Webhook event: ${event} from ${instance}`);
 
     // ─── Presence updates (typing, recording, online) ───
     if (event === 'presence.update') {
