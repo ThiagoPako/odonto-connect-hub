@@ -76,8 +76,22 @@ export function ConversationView({ messages, leadName, isTyping, onReaction, onR
     }
   }, [messages, isTyping, scrollToBottom]);
 
-  // Initial scroll (instant)
+  // Initial scroll — jump to first unread or bottom
+  const initialScrollDone = useRef(false);
   useEffect(() => {
+    if (initialScrollDone.current) return;
+    initialScrollDone.current = true;
+    if (unreadCount > 0 && messages.length > 0) {
+      const firstUnreadIdx = messages.length - unreadCount;
+      const targetMsg = messages[Math.max(0, firstUnreadIdx)];
+      if (targetMsg) {
+        requestAnimationFrame(() => {
+          const el = document.getElementById(`msg-${targetMsg.id}`);
+          el?.scrollIntoView({ behavior: "instant", block: "center" });
+        });
+        return;
+      }
+    }
     scrollToBottom("instant");
   }, []);
 
