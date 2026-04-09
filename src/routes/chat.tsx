@@ -276,7 +276,8 @@ function ChatPage() {
   };
 
   const currentMessages = selectedLead ? messages[selectedLead.id] || [] : [];
-  const currentList = activeTab === "queue" ? queue : myLeads;
+  const baseList = activeTab === "queue" ? queue : myLeads;
+  const currentList = filterQueue ? baseList.filter((l) => l.queueId === filterQueue) : baseList;
 
   return (
     <div className="flex-1 flex flex-col h-screen overflow-hidden">
