@@ -140,17 +140,17 @@ function AudioPlayer({ fileUrl, duration, isLead }: { fileUrl?: string; duration
           }}
           onTouchStart={(e) => {
             draggingRef.current = true;
-            const seek = (touch: Touch) => {
+            const seekTouch = (clientX: number) => {
               if (!trackRef.current) return;
               const rect = trackRef.current.getBoundingClientRect();
-              const ratio = Math.max(0, Math.min(1, (touch.clientX - rect.left) / rect.width));
+              const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
               setProgress(ratio);
               if (audioRef.current?.duration && isFinite(audioRef.current.duration)) {
                 audioRef.current.currentTime = ratio * audioRef.current.duration;
                 setCurrentTime(ratio * audioRef.current.duration);
               }
             };
-            seek(e.touches[0]);
+            seekTouch(e.touches[0].clientX);
             const onMove = (ev: TouchEvent) => { if (draggingRef.current && ev.touches[0]) seek(ev.touches[0]); };
             const onEnd = () => { draggingRef.current = false; window.removeEventListener("touchmove", onMove); window.removeEventListener("touchend", onEnd); };
             window.addEventListener("touchmove", onMove);
