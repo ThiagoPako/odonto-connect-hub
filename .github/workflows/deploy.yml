@@ -20,11 +20,10 @@ jobs:
             echo "=== Starting deploy $(date) ==="
             
             # Frontend
-            cd /var/www/odonto-connect
+            cd /root/odonto-connect
             git fetch origin main
             git reset --hard origin/main
             
-            # Install & build
             if command -v bun &> /dev/null; then
               bun install
               bun run build
@@ -33,19 +32,18 @@ jobs:
               npm run build
             fi
             
-            # Restart frontend process so the new build is served
             pm2 restart odonto-connect || true
             
             echo "=== Frontend built and restarted ==="
             
             # API server
-            cd /var/www/odonto-connect/vps-api-server
+            cd /root/odonto-connect/vps-api-server
             npm install --production
             pm2 restart odonto-api || pm2 start server.mjs --name odonto-api
             
             echo "=== API restarted ==="
             
             # Run pending migrations
-            sudo -u postgres psql -d odonto_db -f /var/www/odonto-connect/vps-api-server/migration.sql 2>&1 || true
+            sudo -u postgres psql -d odonto_db -f /root/odonto-connect/vps-api-server/migration.sql 2>&1 || true
             
             echo "=== Deploy complete $(date) ==="
