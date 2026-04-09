@@ -876,7 +876,7 @@ function ChatPage() {
             lastMessage: r.lastMessage || "",
             lastMessageTime: r.lastMessageTime ? new Date(r.lastMessageTime) : new Date(),
             unreadCount: r.unreadCount || 0,
-            status: r.sessionStatus === "active" ? "active" : r.sessionStatus === "waiting" ? "waiting" : "new",
+            status: r.sessionStatus === "active" ? "active" : r.sessionStatus === "waiting" ? "waiting" : "waiting",
             assignedTo: r.attendantName || undefined,
             queueId: r.queueId || undefined,
             queueName: r.queueName || undefined,
