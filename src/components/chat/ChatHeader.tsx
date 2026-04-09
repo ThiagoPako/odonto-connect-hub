@@ -78,24 +78,30 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, lead
   };
 
   return (
-    <div className="h-16 flex items-center justify-between px-4 border-b border-border bg-card shrink-0 relative">
-      <div className="flex items-center gap-3">
-        <LeadAvatar initials={lead.initials} avatarUrl={lead.avatarUrl} avatarColor={lead.avatarColor || "bg-primary/20"} size="md" />
+    <div className="h-[68px] flex items-center justify-between px-5 border-b border-border/50 bg-card/80 backdrop-blur-sm shrink-0 relative shadow-sm">
+      <div className="flex items-center gap-3.5 animate-fade-in">
+        <div className="relative">
+          <LeadAvatar initials={lead.initials} avatarUrl={lead.avatarUrl} avatarColor={lead.avatarColor || "bg-primary/20"} size="md" />
+          <div className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full bg-success border-2 border-card shadow-sm" />
+        </div>
         <div>
           <div className="flex items-center gap-2">
-            <p className="text-sm font-medium text-foreground">{lead.name}</p>
+            <p className="text-sm font-semibold text-foreground">{lead.name}</p>
             {leadTagIds.length > 0 && (
               <div className="flex items-center gap-1">
                 {allTags.filter((t) => leadTagIds.includes(t.id)).map((tag) => (
-                  <span key={tag.id} className="inline-flex items-center gap-0.5 px-1.5 py-0 rounded-full text-[9px] font-semibold text-white" style={{ backgroundColor: tag.color }}>
+                  <span key={tag.id} className="inline-flex items-center gap-0.5 px-1.5 py-0 rounded-full text-[9px] font-semibold text-white shadow-sm" style={{ backgroundColor: tag.color }}>
                     {tag.icon} {tag.name}
                   </span>
                 ))}
               </div>
             )}
           </div>
-          <p className="text-xs text-success flex items-center gap-1">
-            <span className="h-1.5 w-1.5 rounded-full bg-success inline-block" />
+          <p className="text-xs text-success flex items-center gap-1.5 font-medium">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-success/60"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-success"></span>
+            </span>
             Online
           </p>
         </div>
