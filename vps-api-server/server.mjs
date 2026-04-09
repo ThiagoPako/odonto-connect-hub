@@ -346,7 +346,7 @@ app.get('/api/whatsapp/instances', async (req, res) => {
   }
 });
 
-// Create instance
+// Create instance (+ auto-register webhook)
 app.post('/api/whatsapp/instances', async (req, res) => {
   try {
     await verifyAdmin(req);
@@ -359,6 +359,10 @@ app.post('/api/whatsapp/instances', async (req, res) => {
         qrcode: true,
       }),
     });
+
+    // Auto-register webhook so all messages go to queue
+    await registerWebhook(instanceName);
+
     res.json(result.data);
   } catch (error) {
     res.status(500).json({ error: error.message });
