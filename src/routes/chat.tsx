@@ -8,6 +8,7 @@ import { ChatHeader } from "@/components/chat/ChatHeader";
 import { Users, MessageSquare, Inbox, Filter } from "lucide-react";
 import { getQueues, type AttendanceQueue } from "@/data/queueData";
 import { toast } from "sonner";
+import { useAuth } from "@/hooks/useAuth";
 import { useRealtimeChat, type IncomingMessage } from "@/hooks/useRealtimeChat";
 import { whatsappApi, transferApi } from "@/lib/vpsApi";
 import { playNotificationSound } from "@/lib/notificationSound";
@@ -409,6 +410,7 @@ function ChatPage() {
                 disabled={selectedLead.status === "waiting"}
                 replyingTo={replyingTo}
                 onCancelReply={() => setReplyingTo(null)}
+                attendantName={currentUser?.name}
               />
             </>
           ) : (
