@@ -254,7 +254,7 @@ function KanbanView() {
       {/* Kanban Board */}
       <div className="flex-1 flex gap-3 p-4 overflow-x-auto">
         {kanbanStages.map((stage) => {
-          const stageLeads = leads[stage.id];
+          const stageLeads = filteredLeads[stage.id];
           const stageValue = stageLeads.reduce((sum, l) => sum + l.value, 0);
           return (
             <div
