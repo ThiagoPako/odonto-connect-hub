@@ -128,7 +128,8 @@ function KanbanCard({ lead, onDragStart }: { lead: KanbanLead; onDragStart: () =
   const handleCall = (e: React.MouseEvent) => {
     e.stopPropagation();
     const cleanPhone = lead.phone.replace(/\D/g, "");
-    window.open(`tel:+55${cleanPhone}`, "_self");
+    const phoneWithPlus = cleanPhone.startsWith("55") ? `+${cleanPhone}` : `+55${cleanPhone}`;
+    window.location.href = `tel:${phoneWithPlus}`;
     toast.success(`Ligando para ${lead.name}...`, { description: lead.phone });
   };
 
