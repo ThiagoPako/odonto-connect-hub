@@ -103,14 +103,14 @@ function ChatPage() {
       timestamp: new Date(msg.timestamp),
     };
 
-    // Check if lead exists in queue or myLeads
-    const allLeads = [...queue, ...myLeads];
+    // Use refs to avoid stale closure
+    const allLeads = [...queueRef.current, ...myLeadsRef.current];
     const existingLead = allLeads.find(
       (l) => l.id === msg.leadId || l.phone.replace(/\D/g, "").endsWith(msg.phone.slice(-11))
     );
 
-    // Show typing indicator if message is for the currently viewed lead
-    const isViewing = existingLead && selectedLead?.id === existingLead.id;
+    const currentSelected = selectedLeadRef.current;
+    const isViewing = existingLead && currentSelected?.id === existingLead.id;
     if (isViewing) {
       setIsLeadTyping(true);
       setTimeout(() => setIsLeadTyping(false), 1500 + Math.random() * 1000);
