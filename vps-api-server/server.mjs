@@ -1116,7 +1116,7 @@ async function persistIncomingMessage({ msgId, leadId, content, msgType, phone, 
   }
 }
 
-function broadcastIncomingMessage({ msgId, phone, pushName, leadId, leadName, content, msgType, instance, queueId = null, queueName, queueColor }) {
+function broadcastIncomingMessage({ msgId, phone, pushName, leadId, leadName, content, msgType, instance, queueId = null, queueName, queueColor, mediaUrl, fileName, mimeType }) {
   broadcastSSE('new_message', {
     id: msgId,
     phone,
@@ -1130,6 +1130,9 @@ function broadcastIncomingMessage({ msgId, phone, pushName, leadId, leadName, co
     queueId,
     queueName,
     queueColor,
+    mediaUrl: mediaUrl || null,
+    fileName: fileName || null,
+    mimeType: mimeType || null,
   });
 }
 
