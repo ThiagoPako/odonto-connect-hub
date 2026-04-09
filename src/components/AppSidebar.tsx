@@ -26,7 +26,8 @@ import {
   Headset,
 } from "lucide-react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useState, useMemo } from "react";
+import { useChatUnreadCount } from "@/lib/chatUnreadStore";
 import { useAuth } from "@/hooks/useAuth";
 import logoImg from "@/assets/logo.png";
 
@@ -109,7 +110,21 @@ export function AppSidebar() {
   const [hovered, setHovered] = useState(false);
   const location = useLocation();
   const { user } = useAuth();
-  const visibleSections = filterByRole(navSections, user?.role ?? "user");
+  const chatUnread = useChatUnreadCount();
+
+  // Inject dynamic chat badge
+  const visibleSections = useMemo(() => {
+    const sections = filterByRole(navSections, user?.role ?? "user");
+    if (chatUnread > 0) {
+      return sections.map((s) => ({
+        ...s,
+        items: s.items.map((item) =>
+          item.url === "/chat" ? { ...item, badge: chatUnread } : item
+        ),
+      }));
+    }
+    return sections;
+  }, [user?.role, chatUnread]);
 
   const expanded = pinned || hovered;
 

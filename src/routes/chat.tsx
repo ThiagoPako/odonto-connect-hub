@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { useRealtimeChat, type IncomingMessage } from "@/hooks/useRealtimeChat";
 import { whatsappApi } from "@/lib/vpsApi";
 import { playNotificationSound } from "@/lib/notificationSound";
+import { setChatUnreadCount } from "@/lib/chatUnreadStore";
 import {
   mockLeadsQueue,
   mockLeadsActive,
@@ -128,8 +129,13 @@ function ChatPage() {
       setSelectedLead((prev) => prev && prev.id === selectedLead.id ? { ...prev, avatarUrl: url } : prev);
     });
   }, [selectedLead?.id]);
+  // Sync global unread count for sidebar badge
+  useEffect(() => {
+    const total = [...queue, ...myLeads].reduce((sum, l) => sum + l.unreadCount, 0);
+    setChatUnreadCount(total);
+  }, [queue, myLeads]);
 
-  // Auto-select lead from search param
+
   useEffect(() => {
     if (!leadSearch) return;
     const allLeads = [...myLeads, ...queue];
