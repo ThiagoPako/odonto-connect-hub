@@ -48,7 +48,14 @@ async function apiCall<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export async function fetchInstances(): Promise<EvolutionInstance[]> {
-  return apiCall<EvolutionInstance[]>("/instance/fetchInstances");
+  const raw = await apiCall<any[]>("/instance/fetchInstances");
+  return raw.map((inst) => ({
+    instanceName: inst.name || inst.instanceName,
+    instanceId: inst.id || inst.instanceId,
+    integration: inst.integration || "",
+    status: inst.connectionStatus || inst.status || "close",
+    owner: inst.ownerJid || inst.owner,
+  }));
 }
 
 export async function getInstanceState(instanceName: string): Promise<InstanceState> {
