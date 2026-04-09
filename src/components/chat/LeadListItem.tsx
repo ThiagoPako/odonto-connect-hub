@@ -1,6 +1,6 @@
 import type { Lead } from "@/data/chatMockData";
 import type { LeadTagApi } from "@/lib/vpsApi";
-import { Clock, UserPlus } from "lucide-react";
+import { Clock, UserPlus, CheckCircle2 } from "lucide-react";
 import { LeadAvatar } from "@/components/LeadAvatar";
 
 interface LeadListItemProps {
@@ -34,6 +34,11 @@ export function LeadListItem({ lead, isSelected, onSelect, showAssignButton, onA
         <LeadAvatar initials={lead.initials} avatarUrl={lead.avatarUrl} avatarColor={lead.avatarColor || "bg-primary/20"} size="md" />
         {lead.status === "active" && (
           <div className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full bg-success border-2 border-card" />
+        )}
+        {lead.status === "finished" && (
+          <div className="absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full bg-muted border-2 border-card flex items-center justify-center">
+            <CheckCircle2 className="h-2.5 w-2.5 text-muted-foreground" />
+          </div>
         )}
       </div>
 
