@@ -14,6 +14,10 @@ interface MessageInputProps {
 
 const QUICK_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏", "🎉", "🔥"];
 
+interface MessageInputInternalProps extends MessageInputProps {
+  attendantName?: string;
+}
+
 export function MessageInput({ onSendMessage, disabled, replyingTo, onCancelReply }: MessageInputProps) {
   const [message, setMessage] = useState("");
   const [showAttachMenu, setShowAttachMenu] = useState(false);
