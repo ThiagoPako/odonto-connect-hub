@@ -12,17 +12,31 @@ function isAuthError(status: number, _error: unknown): boolean {
 }
 
 let _isRedirecting = false;
+let _consecutive401Count = 0;
+const AUTH_REDIRECT_THRESHOLD = 3; // only redirect after 3 consecutive 401s
 
-function handleAuthFailure() {
+function handleAuthFailure(background = false) {
   if (_isRedirecting) return;
+
+  _consecutive401Count++;
+
+  // Background calls (polling) — only redirect after multiple consecutive failures
+  if (background) {
+    if (_consecutive401Count < AUTH_REDIRECT_THRESHOLD) return;
+  }
+
   _isRedirecting = true;
   clearToken();
 
   if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
     window.location.href = '/login';
   }
-  // Reset flag after a short delay so future real 401s still redirect
   setTimeout(() => { _isRedirecting = false; }, 2000);
+}
+
+/** Reset the 401 counter — call after any successful API response */
+function resetAuthFailureCount() {
+  _consecutive401Count = 0;
 }
 
 // ─── Auth helpers ───────────────────────────────────────────
@@ -57,7 +71,7 @@ export function isAuthenticated(): boolean {
 
 export async function vpsApiFetch<T = unknown>(
   path: string,
-  options?: { method?: string; body?: unknown; params?: Record<string, string> }
+  options?: { method?: string; body?: unknown; params?: Record<string, string>; background?: boolean }
 ): Promise<{ data: T | null; error: string | null }> {
   try {
     const method = options?.method || 'GET';
@@ -77,13 +91,15 @@ export async function vpsApiFetch<T = unknown>(
 
     if (!response.ok) {
       if (isAuthError(response.status, data?.error)) {
-        handleAuthFailure();
+        handleAuthFailure(!!options?.background);
         return { data: null, error: 'Sessão expirada. Faça login novamente.' };
       }
 
       return { data: null, error: data.error || `HTTP ${response.status}` };
     }
 
+    // Successful response — reset consecutive 401 counter
+    resetAuthFailureCount();
     return { data, error: null };
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Erro de rede';
@@ -105,7 +121,7 @@ export async function login(email: string, password: string) {
 }
 
 export async function getMe() {
-  return vpsApiFetch<{ id: string; name: string; email: string; role: string; avatar_url: string }>('/auth/me');
+  return vpsApiFetch<{ id: string; name: string; email: string; role: string; avatar_url: string }>('/auth/me', { background: true });
 }
 
 export function logout() {
@@ -443,7 +459,7 @@ export const messagesApi = {
     vpsApiFetch<{ success: boolean }>(`/messages/${id}${hard ? '?hard=true' : ''}`, { method: 'DELETE' }),
   /** Get unread counts per lead */
   unreadCounts: () =>
-    vpsApiFetch<Record<string, number>>('/messages/unread'),
+    vpsApiFetch<Record<string, number>>('/messages/unread', { background: true }),
   /** Search messages */
   search: (q: string, leadId?: string) =>
     vpsApiFetch<ChatMessageApi[]>('/messages/search', {
@@ -454,7 +470,7 @@ export const messagesApi = {
 // ─── Queue Leads ────────────────────────────────────────────
 
 export const queueLeadsApi = {
-  list: () => vpsApiFetch<{ queue: any[]; active: any[] }>('/queue/leads'),
+  list: () => vpsApiFetch<{ queue: any[]; active: any[] }>('/queue/leads', { background: true }),
 };
 
 // ─── Health check ───────────────────────────────────────────
