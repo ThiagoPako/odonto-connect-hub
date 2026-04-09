@@ -59,6 +59,7 @@ export function useRealtimeChat(options: RealtimeChatOptions) {
     let es: EventSource | null = null;
     let retryTimeout: ReturnType<typeof setTimeout>;
     let retries = 0;
+    let keepaliveInterval: ReturnType<typeof setInterval>;
 
     function connect() {
       es = new EventSource(`${VPS_API_BASE}/events`);
@@ -67,6 +68,24 @@ export function useRealtimeChat(options: RealtimeChatOptions) {
         retries = 0;
         console.log("📡 SSE connected");
       });
+
+      // Keepalive: if no event received in 45s, force reconnect
+      let lastEvent = Date.now();
+      const onAnyEvent = () => { lastEvent = Date.now(); };
+      es.addEventListener("connected", onAnyEvent);
+      es.addEventListener("new_message", onAnyEvent);
+      es.addEventListener("presence_update", onAnyEvent);
+      es.addEventListener("queue_assigned", onAnyEvent);
+      es.addEventListener("ping", onAnyEvent);
+
+      clearInterval(keepaliveInterval);
+      keepaliveInterval = setInterval(() => {
+        if (Date.now() - lastEvent > 45000 && es) {
+          console.log("📡 SSE stale — forcing reconnect");
+          es.close();
+          connect();
+        }
+      }, 15000);
 
       es.addEventListener("new_message", (e) => {
         try {
@@ -97,8 +116,9 @@ export function useRealtimeChat(options: RealtimeChatOptions) {
 
       es.onerror = () => {
         es?.close();
+        clearInterval(keepaliveInterval);
         retries++;
-        const delay = Math.min(2000 * retries, 30000);
+        const delay = Math.min(1000 * retries, 10000);
         console.log(`📡 SSE reconnecting in ${delay}ms...`);
         retryTimeout = setTimeout(connect, delay);
       };
@@ -109,6 +129,7 @@ export function useRealtimeChat(options: RealtimeChatOptions) {
     return () => {
       es?.close();
       clearTimeout(retryTimeout);
+      clearInterval(keepaliveInterval);
     };
   }, []);
 }
