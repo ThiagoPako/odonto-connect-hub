@@ -39,7 +39,14 @@ jobs:
             # API server
             cd /root/odonto-connect/vps-api-server
             npm install --production
-            pm2 restart odonto-api || pm2 start server.mjs --name odonto-api
+            pm2 delete odonto-api || true
+            pm2 start /root/odonto-connect/vps-api-server/server.mjs --name odonto-api --cwd /root/odonto-connect/vps-api-server --update-env
+            API_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3002/api/messages/unread)
+            if [ "$API_STATUS" != "401" ]; then
+              echo "odonto-api subiu, mas a rota /api/messages/unread não respondeu como esperado (status: $API_STATUS)"
+              exit 1
+            fi
+            pm2 save
             
             echo "=== API restarted ==="
             
