@@ -6,20 +6,23 @@
 const VPS_API_BASE = 'https://odontoconnect.tech/api';
 const TOKEN_KEY = 'odonto_jwt';
 
-function isAuthError(status: number, error: unknown): boolean {
-  if (status === 401) return true;
-  if (typeof error !== 'string') return false;
-
-  const normalized = error.toLowerCase();
-  return normalized.includes('invalid signature') || normalized.includes('jwt') || normalized.includes('não autenticado') || normalized.includes('unauthorized');
+function isAuthError(status: number, _error: unknown): boolean {
+  // Only treat HTTP 401 as auth failure — avoid false positives from error message content
+  return status === 401;
 }
 
+let _isRedirecting = false;
+
 function handleAuthFailure() {
+  if (_isRedirecting) return;
+  _isRedirecting = true;
   clearToken();
 
   if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
     window.location.href = '/login';
   }
+  // Reset flag after a short delay so future real 401s still redirect
+  setTimeout(() => { _isRedirecting = false; }, 2000);
 }
 
 // ─── Auth helpers ───────────────────────────────────────────
