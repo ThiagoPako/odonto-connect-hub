@@ -90,17 +90,23 @@ function ChatPage() {
     tagsApi.assignments().then(({ data }) => { if (data) setLeadTagAssignments(data); });
 
     // Load unread counts from backend and apply to leads
-    messagesApi.unreadCounts().then(({ data }) => {
-      if (!data || typeof data !== 'object') return;
-      const counts = data as Record<string, number>;
-      const applyUnread = (leads: Lead[]): Lead[] =>
-        leads.map((l) => counts[l.id] != null ? { ...l, unreadCount: counts[l.id] } : l);
-      setQueue((prev) => applyUnread(prev));
-      setMyLeads((prev) => applyUnread(prev));
-      // Also update sidebar badge
-      const total = Object.values(counts).reduce((s, c) => s + c, 0);
-      setChatUnreadCount(total);
-    });
+    const fetchUnreadCounts = () => {
+      messagesApi.unreadCounts().then(({ data }) => {
+        if (!data || typeof data !== 'object') return;
+        const counts = data as Record<string, number>;
+        const applyUnread = (leads: Lead[]): Lead[] =>
+          leads.map((l) => counts[l.id] != null ? { ...l, unreadCount: counts[l.id] } : l);
+        setQueue((prev) => applyUnread(prev));
+        setMyLeads((prev) => applyUnread(prev));
+        const total = Object.values(counts).reduce((s, c) => s + c, 0);
+        setChatUnreadCount(total);
+      });
+    };
+
+    fetchUnreadCounts();
+    const unreadInterval = setInterval(fetchUnreadCounts, 15_000);
+
+    return () => clearInterval(unreadInterval);
   }, []);
 
   const handleToggleTag = useCallback((leadId: string, tagId: string) => {
