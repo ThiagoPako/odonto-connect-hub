@@ -1194,6 +1194,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
       message?.message?.buttonsResponseMessage?.selectedButtonId ||
       message?.message?.listResponseMessage?.singleSelectReply?.selectedRowId ||
       message?.message?.imageMessage?.caption ||
+      message?.message?.videoMessage?.caption ||
       '';
     const msgType =
       message?.message?.imageMessage ? 'image' :
@@ -1206,6 +1207,28 @@ app.post('/api/webhook/evolution', async (req, res) => {
       message?.message?.buttonsResponseMessage ? 'button_response' :
       message?.message?.listResponseMessage ? 'list_response' :
       'text';
+
+    // Extract media metadata
+    const mediaMsg = message?.message?.imageMessage || message?.message?.audioMessage ||
+      message?.message?.videoMessage || message?.message?.documentMessage || message?.message?.stickerMessage;
+    const mediaMimeType = mediaMsg?.mimetype || mediaMsg?.mimeType || null;
+    const mediaFileName = message?.message?.documentMessage?.fileName || null;
+
+    // Fetch media URL from Evolution API (base64 download)
+    let mediaUrl = null;
+    if (['image', 'audio', 'video', 'document', 'sticker'].includes(msgType) && message?.key?.id) {
+      try {
+        const mediaResult = await evolutionFetch(`/chat/getBase64FromMediaMessage/${instance}`, {
+          method: 'POST',
+          body: JSON.stringify({ message: { key: message.key, message: message.message } }),
+        });
+        if (mediaResult.ok && mediaResult.data?.base64) {
+          mediaUrl = `data:${mediaMimeType || 'application/octet-stream'};base64,${mediaResult.data.base64}`;
+        }
+      } catch (mediaErr) {
+        console.error('Media fetch error:', mediaErr.message);
+      }
+    }
 
     // Find lead by phone
     const { rows: leads } = await pool.query(
