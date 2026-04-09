@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import { Clock, Save, MessageSquareText, PenLine } from "lucide-react";
 import { toast } from "sonner";
+import { attendanceSettingsApi } from "@/lib/vpsApi";
 
 const STORAGE_KEY = "odonto_attendance_settings";
 
@@ -130,6 +131,10 @@ export function AttendanceSettingsPanel() {
 
   const handleSave = () => {
     saveAttendanceSettings(settings);
+    // Sync to VPS so webhook can use settings
+    attendanceSettingsApi.update(settings).then(({ error }) => {
+      if (error) console.error("Erro ao sincronizar settings com VPS:", error);
+    });
     toast.success("Configurações de atendimento salvas!");
   };
 
