@@ -755,9 +755,9 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
                     } ${
                       msg.type === "sticker"
                         ? "bg-transparent p-0"
-                        : isLead
+                    : isLead
                           ? "bg-card border border-border/50 msg-bubble-lead shadow-sm"
-                          : "bg-gradient-to-br from-primary to-primary/90 text-primary-foreground msg-bubble-agent shadow-md"
+                          : "bg-gradient-to-br from-primary to-primary/90 text-foreground msg-bubble-agent shadow-md"
                     } ${last && isLead ? "msg-tail-left" : ""} ${last && !isLead ? "msg-tail-right" : ""}`}
                     style={msg.type !== "sticker" ? { borderRadius: bubbleRadius } : undefined}
                   >
@@ -827,7 +827,7 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
                     )}
 
                     {(msg.type === "text" || (msg.content && !["location", "contact", "poll", "sticker", "list", "image", "video", "audio", "document"].includes(msg.type))) && msg.content && (
-                      <p className="text-[14px] leading-relaxed whitespace-pre-wrap">{renderFormattedText(msg.content)}</p>
+                      <p className="text-[14px] leading-relaxed whitespace-pre-wrap font-medium">{renderFormattedText(msg.content)}</p>
                     )}
                     {/* Caption for media messages */}
                     {["image", "video"].includes(msg.type) && msg.content && !msg.content.startsWith("🖼️") && !msg.content.startsWith("🎬") && (
