@@ -254,7 +254,21 @@ function ChatPage() {
     });
   };
 
-  const handleTransfer = (lead: Lead, _toAttendantId: string, toAttendantName: string, reason: string) => {
+  const handleTransfer = (lead: Lead, toAttendantId: string, toAttendantName: string, reason: string) => {
+    // Save to VPS database for auditing
+    transferApi.create({
+      leadId: lead.id,
+      leadName: lead.name,
+      leadPhone: lead.phone,
+      toUserId: toAttendantId,
+      toUserName: toAttendantName,
+      reason,
+      queueId: lead.queueId,
+      queueName: lead.queueName,
+    }).then(({ error }) => {
+      if (error) console.error("Erro ao salvar log de transferência:", error);
+    });
+
     setMyLeads((prev) => prev.filter((l) => l.id !== lead.id));
     if (selectedLead?.id === lead.id) {
       setSelectedLead(null);
