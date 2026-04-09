@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { LeadListItem } from "@/components/chat/LeadListItem";
 import { ConversationView } from "@/components/chat/ConversationView";
@@ -18,18 +18,61 @@ import {
   type PollData,
   type ReplyData,
 } from "@/data/chatMockData";
+import { zodValidator, fallback } from "@tanstack/zod-adapter";
+import { z } from "zod";
+
+const chatSearchSchema = z.object({
+  lead: fallback(z.string(), "").default(""),
+});
 
 export const Route = createFileRoute("/chat")({
   ssr: false,
+  validateSearch: zodValidator(chatSearchSchema),
   component: ChatPage,
 });
 
 function ChatPage() {
+  const { lead: leadSearch } = Route.useSearch();
   const [activeTab, setActiveTab] = useState<"queue" | "mine">("queue");
   const [queue, setQueue] = useState<Lead[]>(mockLeadsQueue);
   const [myLeads, setMyLeads] = useState<Lead[]>(mockLeadsActive);
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [messages, setMessages] = useState<Record<string, ChatMessage[]>>(mockMessages);
+
+  // Auto-select lead from search param
+  useEffect(() => {
+    if (!leadSearch) return;
+    const allLeads = [...myLeads, ...queue];
+    const match = allLeads.find(
+      (l) => l.name.toLowerCase() === leadSearch.toLowerCase()
+    );
+    if (match) {
+      if (match.status === "waiting") {
+        // Auto-assign from queue
+        setQueue((prev) => prev.filter((l) => l.id !== match.id));
+        const assigned: Lead = { ...match, status: "active", assignedTo: "current", unreadCount: 0 };
+        setMyLeads((prev) => [assigned, ...prev]);
+        setSelectedLead(assigned);
+        setActiveTab("mine");
+        if (!messages[match.id]) {
+          setMessages((prev) => ({
+            ...prev,
+            [match.id]: [{
+              id: `sys-${Date.now()}`,
+              leadId: match.id,
+              content: match.lastMessage,
+              sender: "lead",
+              type: "text",
+              timestamp: match.lastMessageTime,
+            }],
+          }));
+        }
+      } else {
+        setSelectedLead(match);
+        setActiveTab("mine");
+      }
+    }
+  }, [leadSearch]);
 
   const handleAssign = (lead: Lead) => {
     setQueue((prev) => prev.filter((l) => l.id !== lead.id));
