@@ -136,10 +136,60 @@ export function ConversationView({ messages, leadName, isTyping, onReaction, onR
     }
   }, [hasMore, loadingMore, onLoadMore]);
 
-  // Search results
-  const searchResults = searchQuery.trim()
+  // Search results — hybrid: server search with local fallback
+  const [serverSearchResults, setServerSearchResults] = useState<ServerSearchResult[]>([]);
+  const [searching, setSearching] = useState(false);
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout>>();
+
+  // Debounced server search
+  useEffect(() => {
+    if (!searchQuery.trim() || searchQuery.trim().length < 2) {
+      setServerSearchResults([]);
+      return;
+    }
+
+    // Always show local results immediately
+    if (onServerSearch) {
+      clearTimeout(searchTimerRef.current);
+      searchTimerRef.current = setTimeout(async () => {
+        setSearching(true);
+        try {
+          const results = await onServerSearch(searchQuery.trim());
+          setServerSearchResults(results);
+        } catch {
+          // Fall back to local only
+        } finally {
+          setSearching(false);
+        }
+      }, 400);
+    }
+
+    return () => clearTimeout(searchTimerRef.current);
+  }, [searchQuery, onServerSearch]);
+
+  // Merge local + server results, dedup by id
+  const localResults = searchQuery.trim()
     ? messages.filter((m) => m.content?.toLowerCase().includes(searchQuery.toLowerCase()))
     : [];
+
+  const searchResults = (() => {
+    if (!searchQuery.trim()) return [];
+    const localIds = new Set(localResults.map((m) => m.id));
+    // Server results not in local messages — show as extra hits
+    const serverOnly = serverSearchResults
+      .filter((r) => !localIds.has(r.id))
+      .map((r) => ({
+        id: r.id,
+        content: r.content,
+        sender: r.sender,
+        timestamp: r.timestamp,
+        isServerOnly: true,
+      }));
+    return [
+      ...localResults.map((m) => ({ id: m.id, content: m.content || "", sender: m.sender, timestamp: new Date(m.timestamp).toISOString(), isServerOnly: false })),
+      ...serverOnly,
+    ];
+  })();
 
   const jumpToMessage = (msgId: string) => {
     setHighlightedMsgId(msgId);
