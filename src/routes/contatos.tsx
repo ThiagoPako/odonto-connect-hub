@@ -93,10 +93,16 @@ function ContatosPage() {
               {contatos.length} contato{contatos.length !== 1 ? "s" : ""} cadastrado{contatos.length !== 1 ? "s" : ""}
             </p>
           </div>
-          <Button size="sm" onClick={() => setCreateOpen(true)}>
-            <UserPlus className="h-4 w-4 mr-2" />
-            Novo Contato
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={handleSync} disabled={syncing}>
+              {syncing ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <RefreshCw className="h-4 w-4 mr-2" />}
+              Sincronizar WhatsApp
+            </Button>
+            <Button size="sm" onClick={() => setCreateOpen(true)}>
+              <UserPlus className="h-4 w-4 mr-2" />
+              Novo Contato
+            </Button>
+          </div>
         </div>
 
         {/* Filters */}
