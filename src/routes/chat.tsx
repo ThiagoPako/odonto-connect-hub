@@ -394,6 +394,37 @@ function ChatPage() {
   const filteredByQueue = filterQueue ? baseList.filter((l) => l.queueId === filterQueue) : baseList;
   const currentList = filterTag ? filteredByQueue.filter((l) => (leadTagAssignments[l.id] || []).includes(filterTag)) : filteredByQueue;
 
+  const handleNewChatFromContact = (contato: Contato) => {
+    // Check if lead already exists
+    const allLeads = [...queue, ...myLeads];
+    const existing = allLeads.find(
+      (l) => l.phone.replace(/\D/g, "").endsWith((contato.telefone || "").replace(/\D/g, "").slice(-11))
+    );
+    if (existing) {
+      setSelectedLead(existing);
+      setActiveTab(existing.status === "waiting" ? "queue" : "mine");
+      return;
+    }
+
+    // Create new lead in myLeads
+    const newLead: Lead = {
+      id: `contact-${contato.id}`,
+      name: contato.nome,
+      initials: contato.nome.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase(),
+      phone: contato.telefone || "",
+      lastMessage: "",
+      lastMessageTime: new Date(),
+      unreadCount: 0,
+      status: "active",
+      assignedTo: "current",
+      avatarColor: "bg-chart-1",
+    };
+    setMyLeads((prev) => [newLead, ...prev]);
+    setMessages((prev) => ({ ...prev, [newLead.id]: [] }));
+    setSelectedLead(newLead);
+    setActiveTab("mine");
+  };
+
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden">
       <DashboardHeader title="Chat" />
