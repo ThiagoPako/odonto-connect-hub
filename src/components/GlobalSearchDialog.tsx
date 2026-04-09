@@ -208,7 +208,7 @@ export function GlobalSearchDialog({ open, onOpenChange }: GlobalSearchDialogPro
                       <div className="flex-1 min-w-0">
                         <p className="text-sm truncate">{m.content}</p>
                         <p className="text-[11px] text-muted-foreground">
-                          {m.sender === "lead" ? "📩 Recebida" : "📤 Enviada"} • {m.lead_id}
+                          {m.sender === "lead" ? "📩 Recebida" : "📤 Enviada"} • {(m as any).lead_name || m.lead_id}
                         </p>
                       </div>
                       <span className="text-[10px] text-muted-foreground shrink-0">
