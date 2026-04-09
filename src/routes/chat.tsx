@@ -726,13 +726,31 @@ function ChatPage() {
                 onReaction={handleReaction}
                 onReply={handleReply}
               />
-              <MessageInput
-                onSendMessage={handleSendMessage}
-                disabled={selectedLead.status === "waiting" || selectedLead.status === "finished"}
-                replyingTo={replyingTo}
-                onCancelReply={() => setReplyingTo(null)}
-                attendantName={currentUser?.name}
-              />
+              {selectedLead.status === "finished" ? (
+                <div className="px-4 py-3 border-t border-border/50 bg-muted/30 flex items-center justify-center gap-3">
+                  <p className="text-sm text-muted-foreground">Atendimento finalizado</p>
+                  <button
+                    onClick={() => {
+                      setMyLeads((prev) =>
+                        prev.map((l) => l.id === selectedLead.id ? { ...l, status: "active" as const } : l)
+                      );
+                      setSelectedLead({ ...selectedLead, status: "active" });
+                      toast.success("Atendimento reaberto");
+                    }}
+                    className="px-4 py-1.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
+                  >
+                    Reabrir atendimento
+                  </button>
+                </div>
+              ) : (
+                <MessageInput
+                  onSendMessage={handleSendMessage}
+                  disabled={selectedLead.status === "waiting"}
+                  replyingTo={replyingTo}
+                  onCancelReply={() => setReplyingTo(null)}
+                  attendantName={currentUser?.name}
+                />
+              )}
             </>
           ) : (
             <div className="flex-1 flex items-center justify-center chat-bg-pattern">
