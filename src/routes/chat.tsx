@@ -600,7 +600,7 @@ function ChatPage() {
         } else {
           result = await whatsappApi.sendText(connected.instanceName, selectedLead.phone, content);
         }
-        evolutionMsgId = result?.key?.id || null;
+        evolutionMsgId = (result?.data as any)?.key?.id || null;
       } else if (type === "image" || type === "video" || type === "document" || type === "audio") {
         const mediaBase64 = (extra as any)?._mediaBase64;
         if (mediaBase64) {
