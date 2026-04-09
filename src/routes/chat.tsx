@@ -758,6 +758,16 @@ function ChatPage() {
         onOpenChange={setNewChatOpen}
         onSelectContact={handleNewChatFromContact}
       />
+
+      {surveyLead && (
+        <SatisfactionSurveyDialog
+          leadName={surveyLead.name}
+          open={!!surveyLead}
+          onClose={() => setSurveyLead(null)}
+          onSend={(rating, comment) => handleSendSurvey(surveyLead, rating, comment)}
+          onSkip={() => setSurveyLead(null)}
+        />
+      )}
     </div>
   );
 }
