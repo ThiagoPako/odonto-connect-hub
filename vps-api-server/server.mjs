@@ -690,6 +690,77 @@ app.get('/api/table/:tableName', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
+// WEBHOOK — Evolution API (auto-sync profile pictures)
+// ═══════════════════════════════════════════════════════════════
+
+app.post('/api/webhook/evolution', async (req, res) => {
+  try {
+    const body = req.body;
+    const event = body.event;
+
+    // Only process incoming messages
+    if (event !== 'messages.upsert') {
+      return res.json({ ignored: true, event });
+    }
+
+    const message = body.data;
+    const instance = body.instance;
+    const remoteJid = message?.key?.remoteJid;
+
+    if (!remoteJid || remoteJid.endsWith('@g.us')) {
+      // Ignore group messages
+      return res.json({ ignored: true, reason: 'group_or_missing_jid' });
+    }
+
+    // Extract phone number from JID (e.g. 5511999991001@s.whatsapp.net → 5511999991001)
+    const phone = remoteJid.replace('@s.whatsapp.net', '').replace('@c.us', '');
+
+    // Find lead by phone (match last 10-11 digits)
+    const phoneSuffix = phone.slice(-11);
+    const { rows: leads } = await pool.query(
+      `SELECT id, avatar_url, phone FROM crm_leads 
+       WHERE REPLACE(REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '(', ''), ')', '') LIKE '%' || $1
+       LIMIT 1`,
+      [phoneSuffix]
+    );
+
+    if (leads.length === 0) {
+      return res.json({ ignored: true, reason: 'lead_not_found' });
+    }
+
+    const lead = leads[0];
+
+    // Skip if already has avatar and was updated recently (avoid hammering the API)
+    if (lead.avatar_url) {
+      return res.json({ skipped: true, reason: 'already_has_avatar' });
+    }
+
+    // Fetch profile picture
+    try {
+      const result = await evolutionFetch(`/chat/fetchProfilePictureUrl/${instance}`, {
+        method: 'POST',
+        body: JSON.stringify({ number: phone }),
+      });
+
+      const pictureUrl = result.data?.profilePictureUrl || result.data?.picture || result.data?.url || null;
+
+      if (pictureUrl) {
+        await pool.query('UPDATE crm_leads SET avatar_url = $1, updated_at = NOW() WHERE id = $2', [pictureUrl, lead.id]);
+        console.log(`📸 Auto-synced avatar for lead ${lead.id} (${phone})`);
+      }
+
+      res.json({ synced: !!pictureUrl, leadId: lead.id });
+    } catch (fetchErr) {
+      console.error('Webhook profile fetch error:', fetchErr.message);
+      res.json({ synced: false, error: fetchErr.message });
+    }
+  } catch (error) {
+    console.error('Webhook error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
 // HEALTH CHECK
 // ═══════════════════════════════════════════════════════════════
 
