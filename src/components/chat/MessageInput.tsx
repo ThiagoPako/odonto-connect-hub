@@ -175,7 +175,6 @@ export function MessageInput({ onSendMessage, disabled, replyingTo, onCancelRepl
                   longitude: -46.6333,
                   name: clinic.name,
                   address: `${clinic.address}${clinic.city ? `, ${clinic.city}` : ""}${clinic.state ? ` - ${clinic.state}` : ""}`,
-                  url: clinic.googleMapsUrl || undefined,
                 };
                 onSendMessage(`📍 ${clinic.name}\n${clinic.address}${clinic.googleMapsUrl ? `\n🗺️ ${clinic.googleMapsUrl}` : ""}`, "location", { location: loc });
                 setShowLocationForm(false);
