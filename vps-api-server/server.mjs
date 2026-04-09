@@ -1282,7 +1282,15 @@ app.post('/api/webhook/evolution', async (req, res) => {
 
     console.log(`💬 New message from ${pushName} (${phone}) → saved + broadcast to ${sseClients.size} clients`);
 
-    // Auto-sync avatar if missing
+    // Send Web Push notification to all subscribed attendants
+    sendPushToAll({
+      title: `💬 ${pushName || phone}`,
+      body: msgContent || `[${msgType}]`,
+      tag: `msg-${lead.id}`,
+      url: `/chat?lead=${encodeURIComponent(lead.id)}`,
+      leadId: lead.id,
+    });
+
     if (lead && !lead.avatar_url) {
       try {
         const result = await evolutionFetch(`/chat/fetchProfilePictureUrl/${instance}`, {
