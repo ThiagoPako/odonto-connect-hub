@@ -583,6 +583,12 @@ function ChatPage() {
           )}
         </div>
       </div>
+
+      <NewChatFromContactDialog
+        open={newChatOpen}
+        onOpenChange={setNewChatOpen}
+        onSelectContact={handleNewChatFromContact}
+      />
     </div>
   );
 }
