@@ -1,11 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { LeadListItem } from "@/components/chat/LeadListItem";
 import { ConversationView } from "@/components/chat/ConversationView";
 import { MessageInput } from "@/components/chat/MessageInput";
 import { ChatHeader } from "@/components/chat/ChatHeader";
 import { Users, MessageSquare, Inbox } from "lucide-react";
+import { toast } from "sonner";
+import { useRealtimeChat, type IncomingMessage } from "@/hooks/useRealtimeChat";
 import {
   mockLeadsQueue,
   mockLeadsActive,
@@ -38,6 +40,72 @@ function ChatPage() {
   const [myLeads, setMyLeads] = useState<Lead[]>(mockLeadsActive);
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [messages, setMessages] = useState<Record<string, ChatMessage[]>>(mockMessages);
+
+  // ─── Real-time incoming messages via SSE ───
+  const handleIncomingMessage = useCallback((msg: IncomingMessage) => {
+    const chatMsg: ChatMessage = {
+      id: msg.id,
+      leadId: msg.leadId || msg.phone,
+      content: msg.content,
+      sender: "lead",
+      type: (msg.type as MessageType) || "text",
+      timestamp: new Date(msg.timestamp),
+    };
+
+    // Check if lead exists in queue or myLeads
+    const allLeads = [...queue, ...myLeads];
+    const existingLead = allLeads.find(
+      (l) => l.id === msg.leadId || l.phone.replace(/\D/g, "").endsWith(msg.phone.slice(-11))
+    );
+
+    if (existingLead) {
+      // Add message to existing conversation
+      setMessages((prev) => ({
+        ...prev,
+        [existingLead.id]: [...(prev[existingLead.id] || []), chatMsg],
+      }));
+
+      // Update unread count & last message (unless currently viewing)
+      const updateLead = (lead: Lead): Lead =>
+        lead.id === existingLead.id
+          ? {
+              ...lead,
+              lastMessage: msg.content || `[${msg.type}]`,
+              lastMessageTime: new Date(msg.timestamp),
+              unreadCount: selectedLead?.id === existingLead.id ? lead.unreadCount : lead.unreadCount + 1,
+            }
+          : lead;
+
+      setQueue((prev) => prev.map(updateLead));
+      setMyLeads((prev) => prev.map(updateLead));
+    } else {
+      // New lead — add to queue
+      const newLead: Lead = {
+        id: msg.leadId || `rt-${msg.phone}`,
+        name: msg.leadName || msg.pushName,
+        initials: (msg.leadName || msg.pushName).split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase(),
+        phone: msg.phone,
+        lastMessage: msg.content || `[${msg.type}]`,
+        lastMessageTime: new Date(msg.timestamp),
+        unreadCount: 1,
+        status: "waiting",
+        avatarColor: "bg-chart-1",
+      };
+      setQueue((prev) => [newLead, ...prev]);
+      setMessages((prev) => ({
+        ...prev,
+        [newLead.id]: [chatMsg],
+      }));
+    }
+
+    // Show toast notification
+    toast.info(`💬 ${msg.leadName || msg.pushName}`, {
+      description: msg.content?.slice(0, 80) || `[${msg.type}]`,
+      duration: 5000,
+    });
+  }, [queue, myLeads, selectedLead]);
+
+  useRealtimeChat(handleIncomingMessage);
 
   // Auto-select lead from search param
   useEffect(() => {
