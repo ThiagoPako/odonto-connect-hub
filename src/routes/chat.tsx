@@ -403,9 +403,10 @@ function ChatPage() {
       return updated;
     });
 
-    // Move lead out of active but keep messages in state for history
-    setMyLeads((prev) => prev.filter((l) => l.id !== lead.id));
-    if (selectedLead?.id === lead.id) setSelectedLead(null);
+    // Keep lead in myLeads with "finished" status (like WhatsApp Web — history stays)
+    setMyLeads((prev) =>
+      prev.map((l) => l.id === lead.id ? { ...l, status: "finished" as const } : l)
+    );
 
     // Open satisfaction survey dialog
     setSurveyLead(lead);
