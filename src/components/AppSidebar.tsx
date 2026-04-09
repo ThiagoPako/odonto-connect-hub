@@ -26,7 +26,8 @@ import {
   Headset,
 } from "lucide-react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useState, useMemo } from "react";
+import { useChatUnreadCount } from "@/lib/chatUnreadStore";
 import { useAuth } from "@/hooks/useAuth";
 import logoImg from "@/assets/logo.png";
 
