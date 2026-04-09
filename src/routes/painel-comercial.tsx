@@ -4,6 +4,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import {
   Headset,
   MessageSquare,
@@ -12,6 +13,7 @@ import {
   Clock,
   AlertCircle,
   Users,
+  BarChart3,
 } from "lucide-react";
 
 export const Route = createFileRoute("/painel-comercial")({
@@ -48,6 +50,22 @@ const followUpTypeConfig: Record<string, { label: string; class: string }> = {
   confirmacao: { label: "Confirmação", class: "bg-chart-2/15 text-chart-2" },
   reativacao: { label: "Reativação", class: "bg-chart-4/15 text-chart-4" },
 };
+
+const conversionByOrigin = [
+  { origin: "Instagram", leads: 32, convertidos: 12, rate: 37.5 },
+  { origin: "Google Ads", leads: 28, convertidos: 14, rate: 50 },
+  { origin: "Indicação", leads: 15, convertidos: 10, rate: 66.7 },
+  { origin: "Meta Ads", leads: 20, convertidos: 6, rate: 30 },
+  { origin: "Site", leads: 10, convertidos: 3, rate: 30 },
+];
+
+const chartColors = [
+  "hsl(var(--chart-4))",
+  "hsl(var(--primary))",
+  "hsl(var(--chart-2))",
+  "hsl(var(--chart-3))",
+  "hsl(var(--chart-5))",
+];
 
 /* ── Component ───────────────────────────────────── */
 
@@ -106,6 +124,34 @@ function PainelComercialPage() {
                   </div>
                 </div>
               ))}
+            </CardContent>
+          </Card>
+
+          {/* Conversion chart */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-lg flex items-center gap-2">
+                <BarChart3 className="h-5 w-5 text-chart-4" />
+                Conversão por Origem
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={conversionByOrigin} layout="vertical" margin={{ left: 10, right: 16, top: 4, bottom: 4 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="hsl(var(--border))" />
+                  <XAxis type="number" domain={[0, 100]} tickFormatter={(v) => `${v}%`} fontSize={11} tick={{ fill: "hsl(var(--muted-foreground))" }} />
+                  <YAxis type="category" dataKey="origin" width={80} fontSize={12} tick={{ fill: "hsl(var(--foreground))" }} />
+                  <Tooltip
+                    contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 12 }}
+                    formatter={(value: number) => [`${value.toFixed(1)}%`, "Conversão"]}
+                  />
+                  <Bar dataKey="rate" radius={[0, 6, 6, 0]} barSize={18}>
+                    {conversionByOrigin.map((_, i) => (
+                      <Cell key={i} fill={chartColors[i % chartColors.length]} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
             </CardContent>
           </Card>
 
