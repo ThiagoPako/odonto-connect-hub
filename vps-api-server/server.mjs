@@ -551,7 +551,39 @@ app.get('/api/whatsapp/webhook/:instance', async (req, res) => {
   }
 });
 
-// Send text message
+// Subscribe to contact presence (typing, recording, online) — required for PRESENCE_UPDATE webhook
+app.post('/api/whatsapp/subscribe-presence', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { instance, number } = req.body;
+    if (!instance || !number) {
+      return res.status(400).json({ error: 'instance and number are required' });
+    }
+    const cleanNumber = number.replace(/\D/g, '');
+    const result = await evolutionFetch(`/chat/updatePresence/${instance}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        number: `${cleanNumber}@s.whatsapp.net`,
+        presence: 'composing',
+      }),
+    });
+    // Also subscribe by sending "available" immediately after to register presence listener
+    await evolutionFetch(`/chat/updatePresence/${instance}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        number: `${cleanNumber}@s.whatsapp.net`,
+        presence: 'paused',
+      }),
+    });
+    console.log(`👁️ Presence subscribed for ${cleanNumber} on ${instance}`);
+    res.json({ subscribed: true, number: cleanNumber });
+  } catch (error) {
+    console.error('Presence subscribe error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
 app.post('/api/whatsapp/send-text', async (req, res) => {
   try {
     await verifyUser(req);
