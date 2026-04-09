@@ -266,21 +266,40 @@ function ChatPage() {
       }
     });
 
-    // Create initial system message
-    if (!messages[lead.id]) {
-      setMessages((prev) => ({
-        ...prev,
-        [lead.id]: [
-          {
-            id: `sys-${Date.now()}`,
-            leadId: lead.id,
-            content: lead.lastMessage,
-            sender: "lead",
-            type: "text",
-            timestamp: lead.lastMessageTime,
-          },
-        ],
-      }));
+    // Restore archived messages or create initial message
+    const archived = conversationArchiveRef.current[lead.id];
+    if (!messages[lead.id] || messages[lead.id].length === 0) {
+      if (archived && archived.length > 0) {
+        // Restore previous conversation history
+        setMessages((prev) => ({
+          ...prev,
+          [lead.id]: [
+            ...archived,
+            {
+              id: `sys-reassign-${Date.now()}`,
+              leadId: lead.id,
+              content: "── Atendimento retomado ──",
+              sender: "attendant" as const,
+              type: "text" as const,
+              timestamp: new Date(),
+            },
+          ],
+        }));
+      } else {
+        setMessages((prev) => ({
+          ...prev,
+          [lead.id]: [
+            {
+              id: `sys-${Date.now()}`,
+              leadId: lead.id,
+              content: lead.lastMessage,
+              sender: "lead",
+              type: "text",
+              timestamp: lead.lastMessageTime,
+            },
+          ],
+        }));
+      }
     }
   };
 
