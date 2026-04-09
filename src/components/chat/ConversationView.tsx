@@ -34,6 +34,7 @@ function AudioPlayer({ fileUrl, duration, isLead }: { fileUrl?: string; duration
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
+  const [playbackRate, setPlaybackRate] = useState(1);
   const [totalDuration, setTotalDuration] = useState(duration || 0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const blobUrlRef = useRef<string | null>(null);
