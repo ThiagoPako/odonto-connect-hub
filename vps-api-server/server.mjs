@@ -2158,15 +2158,15 @@ app.get('/api/queue/leads', async (req, res) => {
         s.attendant_id,
         s.attendant_name,
         s.started_waiting_at,
-        (SELECT content FROM chat_messages WHERE lead_id = l.id ORDER BY timestamp DESC LIMIT 1) as last_message,
-        (SELECT timestamp FROM chat_messages WHERE lead_id = l.id ORDER BY timestamp DESC LIMIT 1) as last_message_time,
-        (SELECT COUNT(*) FROM chat_messages WHERE lead_id = l.id AND sender = 'lead' AND timestamp > COALESCE(
-          (SELECT last_read_at FROM chat_read_status WHERE lead_id = l.id LIMIT 1),
+        (SELECT content FROM chat_messages WHERE lead_id = l.id::text ORDER BY timestamp DESC LIMIT 1) as last_message,
+        (SELECT timestamp FROM chat_messages WHERE lead_id = l.id::text ORDER BY timestamp DESC LIMIT 1) as last_message_time,
+        (SELECT COUNT(*) FROM chat_messages WHERE lead_id = l.id::text AND sender = 'lead' AND timestamp > COALESCE(
+          (SELECT last_read_at FROM chat_read_status WHERE lead_id = l.id::text LIMIT 1),
           '1970-01-01'
         ))::INTEGER as unread_count
       FROM crm_leads l
-      LEFT JOIN attendance_sessions s ON s.lead_id = l.id AND s.status IN ('waiting', 'active')
-      WHERE EXISTS (SELECT 1 FROM chat_messages WHERE lead_id = l.id AND timestamp > NOW() - INTERVAL '7 days')
+      LEFT JOIN attendance_sessions s ON s.lead_id = l.id::text AND s.status IN ('waiting', 'active')
+      WHERE EXISTS (SELECT 1 FROM chat_messages WHERE lead_id = l.id::text AND timestamp > NOW() - INTERVAL '7 days')
       ORDER BY l.id, s.started_waiting_at DESC NULLS LAST
     `);
 
