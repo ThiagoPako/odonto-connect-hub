@@ -25,6 +25,7 @@ import { Route as EquipeRouteImport } from './routes/equipe'
 import { Route as DisparosRouteImport } from './routes/disparos'
 import { Route as DentistasRouteImport } from './routes/dentistas'
 import { Route as CrmRouteImport } from './routes/crm'
+import { Route as ContatosRouteImport } from './routes/contatos'
 import { Route as ConfiguracoesRouteImport } from './routes/configuracoes'
 import { Route as ComissoesRouteImport } from './routes/comissoes'
 import { Route as ChatRouteImport } from './routes/chat'
@@ -115,6 +116,11 @@ const CrmRoute = CrmRouteImport.update({
   path: '/crm',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ContatosRoute = ContatosRouteImport.update({
+  id: '/contatos',
+  path: '/contatos',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ConfiguracoesRoute = ConfiguracoesRouteImport.update({
   id: '/configuracoes',
   path: '/configuracoes',
@@ -171,6 +177,7 @@ export interface FileRoutesByFullPath {
   '/chat': typeof ChatRoute
   '/comissoes': typeof ComissoesRoute
   '/configuracoes': typeof ConfiguracoesRoute
+  '/contatos': typeof ContatosRoute
   '/crm': typeof CrmRoute
   '/dentistas': typeof DentistasRoute
   '/disparos': typeof DisparosRoute
@@ -198,6 +205,7 @@ export interface FileRoutesByTo {
   '/chat': typeof ChatRoute
   '/comissoes': typeof ComissoesRoute
   '/configuracoes': typeof ConfiguracoesRoute
+  '/contatos': typeof ContatosRoute
   '/crm': typeof CrmRoute
   '/dentistas': typeof DentistasRoute
   '/disparos': typeof DisparosRoute
@@ -226,6 +234,7 @@ export interface FileRoutesById {
   '/chat': typeof ChatRoute
   '/comissoes': typeof ComissoesRoute
   '/configuracoes': typeof ConfiguracoesRoute
+  '/contatos': typeof ContatosRoute
   '/crm': typeof CrmRoute
   '/dentistas': typeof DentistasRoute
   '/disparos': typeof DisparosRoute
@@ -255,6 +264,7 @@ export interface FileRouteTypes {
     | '/chat'
     | '/comissoes'
     | '/configuracoes'
+    | '/contatos'
     | '/crm'
     | '/dentistas'
     | '/disparos'
@@ -282,6 +292,7 @@ export interface FileRouteTypes {
     | '/chat'
     | '/comissoes'
     | '/configuracoes'
+    | '/contatos'
     | '/crm'
     | '/dentistas'
     | '/disparos'
@@ -309,6 +320,7 @@ export interface FileRouteTypes {
     | '/chat'
     | '/comissoes'
     | '/configuracoes'
+    | '/contatos'
     | '/crm'
     | '/dentistas'
     | '/disparos'
@@ -337,6 +349,7 @@ export interface RootRouteChildren {
   ChatRoute: typeof ChatRoute
   ComissoesRoute: typeof ComissoesRoute
   ConfiguracoesRoute: typeof ConfiguracoesRoute
+  ContatosRoute: typeof ContatosRoute
   CrmRoute: typeof CrmRoute
   DentistasRoute: typeof DentistasRoute
   DisparosRoute: typeof DisparosRoute
@@ -469,6 +482,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CrmRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/contatos': {
+      id: '/contatos'
+      path: '/contatos'
+      fullPath: '/contatos'
+      preLoaderRoute: typeof ContatosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/configuracoes': {
       id: '/configuracoes'
       path: '/configuracoes'
@@ -545,6 +565,7 @@ const rootRouteChildren: RootRouteChildren = {
   ChatRoute: ChatRoute,
   ComissoesRoute: ComissoesRoute,
   ConfiguracoesRoute: ConfiguracoesRoute,
+  ContatosRoute: ContatosRoute,
   CrmRoute: CrmRoute,
   DentistasRoute: DentistasRoute,
   DisparosRoute: DisparosRoute,
