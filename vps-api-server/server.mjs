@@ -2276,7 +2276,7 @@ app.get('/api/queue/leads', async (req, res) => {
       LEFT JOIN attendance_sessions s ON s.lead_id = l.id::text AND s.status IN ('waiting', 'active')
       WHERE EXISTS (SELECT 1 FROM chat_messages WHERE lead_id = l.id::text AND timestamp > NOW() - INTERVAL '7 days')
       ORDER BY l.id, s.started_waiting_at DESC NULLS LAST
-    `);
+    `, [user.id]);
 
     // Separate into queue (waiting) and active (assigned)
     const queueLeads = [];
