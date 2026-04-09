@@ -8,6 +8,7 @@ import { ChatHeader } from "@/components/chat/ChatHeader";
 import { Users, MessageSquare, Inbox } from "lucide-react";
 import { toast } from "sonner";
 import { useRealtimeChat, type IncomingMessage } from "@/hooks/useRealtimeChat";
+import { whatsappApi } from "@/lib/vpsApi";
 import {
   mockLeadsQueue,
   mockLeadsActive,
@@ -106,6 +107,25 @@ function ChatPage() {
   }, [queue, myLeads, selectedLead]);
 
   useRealtimeChat(handleIncomingMessage);
+
+  // Auto-fetch WhatsApp avatar when opening a conversation
+  useEffect(() => {
+    if (!selectedLead?.phone) return;
+    if (selectedLead.avatarUrl) return; // already has photo
+
+    const cleanPhone = selectedLead.phone.replace(/\D/g, "");
+    whatsappApi.fetchProfilePicture("default", cleanPhone, selectedLead.id).then(({ data }) => {
+      const url = data?.profilePictureUrl;
+      if (!url) return;
+
+      const updateAvatar = (l: Lead): Lead =>
+        l.id === selectedLead.id ? { ...l, avatarUrl: url } : l;
+
+      setQueue((prev) => prev.map(updateAvatar));
+      setMyLeads((prev) => prev.map(updateAvatar));
+      setSelectedLead((prev) => prev && prev.id === selectedLead.id ? { ...prev, avatarUrl: url } : prev);
+    });
+  }, [selectedLead?.id]);
 
   // Auto-select lead from search param
   useEffect(() => {
