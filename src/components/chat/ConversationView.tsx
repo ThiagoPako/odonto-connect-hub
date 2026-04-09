@@ -657,6 +657,66 @@ export function ConversationView({ messages, leadName, isTyping, onReaction, onR
           <Search className="h-3.5 w-3.5 text-muted-foreground" />
         </button>
       )}
+
+      {/* Context menu */}
+      {contextMenu && (
+        <div
+          className="fixed z-[100] min-w-[180px] bg-card/95 backdrop-blur-md border border-border/60 rounded-xl shadow-2xl py-1.5 animate-pop-in"
+          style={{
+            left: Math.min(contextMenu.x, window.innerWidth - 200),
+            top: Math.min(contextMenu.y, window.innerHeight - 220),
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            onClick={() => { handleCopyMessage(contextMenu.msg); }}
+            className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-foreground hover:bg-muted/60 transition-colors"
+          >
+            <Copy className="h-4 w-4 text-muted-foreground" /> Copiar
+          </button>
+          <button
+            onClick={() => { onReply?.(contextMenu.msg); setContextMenu(null); }}
+            className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-foreground hover:bg-muted/60 transition-colors"
+          >
+            <Reply className="h-4 w-4 text-muted-foreground" /> Responder
+          </button>
+          {onForward && (
+            <button
+              onClick={() => { onForward(contextMenu.msg); setContextMenu(null); }}
+              className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-foreground hover:bg-muted/60 transition-colors"
+            >
+              <Forward className="h-4 w-4 text-muted-foreground" /> Encaminhar
+            </button>
+          )}
+          {onReaction && (
+            <>
+              <div className="h-px bg-border/40 my-1" />
+              <div className="flex items-center justify-center gap-1 px-2 py-1">
+                {["👍", "❤️", "😂", "😮", "😢", "🙏"].map((emoji) => (
+                  <button
+                    key={emoji}
+                    onClick={() => { onReaction(contextMenu.msg.id, emoji); setContextMenu(null); }}
+                    className="text-lg hover:scale-125 transition-transform p-1 rounded-lg hover:bg-muted/50"
+                  >
+                    {emoji}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+          {onDelete && contextMenu.msg.sender === "attendant" && (
+            <>
+              <div className="h-px bg-border/40 my-1" />
+              <button
+                onClick={() => { onDelete(contextMenu.msg); setContextMenu(null); }}
+                className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-destructive hover:bg-destructive/10 transition-colors"
+              >
+                <Trash2 className="h-4 w-4" /> Apagar
+              </button>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
