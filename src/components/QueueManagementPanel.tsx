@@ -11,7 +11,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Plus, Pencil, Trash2, Users, Phone, ListChecks, X } from "lucide-react";
 import { toast } from "sonner";
 import { adminListUsers, queuesApi } from "@/lib/vpsApi";
-import { adminListUsers, queuesApi } from "@/lib/vpsApi";
 
 export function QueueManagementPanel() {
   const [queues, setQueues] = useState<AttendanceQueue[]>([]);
@@ -38,11 +37,8 @@ export function QueueManagementPanel() {
           active: q.active,
         }));
         setQueues(mapped);
-        saveQueues(mapped); // sync localStorage fallback
       } else {
-        // Fallback to localStorage
-        setQueues(getQueues());
-      }
+        setQueues([]);
     });
   };
 
