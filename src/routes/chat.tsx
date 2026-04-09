@@ -213,7 +213,46 @@ function ChatPage() {
     showBrowserNotification(`💬 ${name}`, body, name);
   }, []);
 
-  useRealtimeChat(handleIncomingMessage);
+  const handlePresenceUpdate = useCallback((update: import("@/hooks/useRealtimeChat").PresenceUpdate) => {
+    const phone = update.phone?.replace(/\D/g, "");
+    if (!phone) return;
+
+    // Find the lead by phone number
+    const allLeads = [...queueRef.current, ...myLeadsRef.current];
+    const lead = allLeads.find((l) => l.phone.replace(/\D/g, "") === phone);
+    const leadId = update.leadId || lead?.id;
+    if (!leadId) return;
+
+    let displayStatus: "online" | "offline" | "typing" | "recording" = "offline";
+    if (update.status === "composing") displayStatus = "typing";
+    else if (update.status === "recording") displayStatus = "recording";
+    else if (update.status === "available") displayStatus = "online";
+    else if (update.status === "paused") displayStatus = "online"; // paused = still online
+    else displayStatus = "offline";
+
+    setPresenceMap((prev) => ({
+      ...prev,
+      [leadId]: {
+        status: displayStatus,
+        lastSeen: displayStatus === "offline" ? new Date() : prev[leadId]?.lastSeen ?? null,
+      },
+    }));
+
+    // Auto-clear typing/recording after 10s
+    if (displayStatus === "typing" || displayStatus === "recording") {
+      setTimeout(() => {
+        setPresenceMap((prev) => {
+          const current = prev[leadId];
+          if (current?.status === displayStatus) {
+            return { ...prev, [leadId]: { ...current, status: "online" } };
+          }
+          return prev;
+        });
+      }, 10000);
+    }
+  }, []);
+
+  useRealtimeChat({ onMessage: handleIncomingMessage, onPresence: handlePresenceUpdate });
 
   // Request browser notification permission on first visit
   useEffect(() => { requestNotificationPermission(); }, []);
