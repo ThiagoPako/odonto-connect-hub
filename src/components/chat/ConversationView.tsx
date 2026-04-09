@@ -755,9 +755,9 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
                     } ${
                       msg.type === "sticker"
                         ? "bg-transparent p-0"
-                        : isLead
+                    : isLead
                           ? "bg-card border border-border/50 msg-bubble-lead shadow-sm"
-                          : "bg-gradient-to-br from-primary to-primary/90 text-primary-foreground msg-bubble-agent shadow-md"
+                          : "bg-gradient-to-br from-primary to-primary/90 text-foreground msg-bubble-agent shadow-md"
                     } ${last && isLead ? "msg-tail-left" : ""} ${last && !isLead ? "msg-tail-right" : ""}`}
                     style={msg.type !== "sticker" ? { borderRadius: bubbleRadius } : undefined}
                   >
@@ -827,18 +827,18 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
                     )}
 
                     {(msg.type === "text" || (msg.content && !["location", "contact", "poll", "sticker", "list", "image", "video", "audio", "document"].includes(msg.type))) && msg.content && (
-                      <p className="text-[14px] leading-relaxed whitespace-pre-wrap">{renderFormattedText(msg.content)}</p>
+                      <p className="text-[14px] leading-relaxed whitespace-pre-wrap font-medium">{renderFormattedText(msg.content)}</p>
                     )}
                     {/* Caption for media messages */}
                     {["image", "video"].includes(msg.type) && msg.content && !msg.content.startsWith("🖼️") && !msg.content.startsWith("🎬") && (
-                      <p className="text-[13px] leading-relaxed whitespace-pre-wrap mt-1">{renderFormattedText(msg.content)}</p>
+                      <p className="text-[13px] leading-relaxed whitespace-pre-wrap mt-1 font-medium">{renderFormattedText(msg.content)}</p>
                     )}
 
                     {msg.type !== "sticker" && renderLinkPreview(msg)}
 
                     {/* Timestamp + status — always show on every message (WhatsApp pattern) */}
                     {msg.type !== "sticker" && (
-                      <div className={`flex items-center justify-end gap-1 mt-1 ${isLead ? "text-muted-foreground/60" : "text-primary-foreground/50"}`}>
+                      <div className={`flex items-center justify-end gap-1 mt-1 ${isLead ? "text-muted-foreground/60" : "text-foreground/50"}`}>
                         <span className="text-[10px] font-medium">{formatTime(new Date(msg.timestamp))}</span>
                         {renderStatus(msg)}
                       </div>
