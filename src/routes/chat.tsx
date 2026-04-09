@@ -900,6 +900,9 @@ function ChatPage() {
                 onReply={handleReply}
                 onForward={handleForward}
                 onDelete={handleDeleteMessage}
+                onLoadMore={handleLoadMore}
+                hasMore={historyHasMore[selectedLead.id] ?? false}
+                loadingMore={historyLoading}
               />
               {selectedLead.status === "finished" ? (
                 <div className="px-4 py-3 border-t border-border/50 bg-muted/30 flex items-center justify-center gap-3">
