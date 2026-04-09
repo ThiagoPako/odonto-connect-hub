@@ -1599,6 +1599,64 @@ app.patch('/api/crm/leads/:id/stage', async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════
+// CRM LEADS (Kanban + List)
+// ═══════════════════════════════════════════════════════════════
+
+// List all CRM leads (with optional kanban grouping)
+app.get('/api/crm/leads', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { search, status, grouped } = req.query;
+    let query = `SELECT l.*, s.attendant_name, s.status as session_status
+                 FROM crm_leads l
+                 LEFT JOIN LATERAL (
+                   SELECT attendant_name, status FROM attendance_sessions
+                   WHERE lead_id = l.id ORDER BY created_at DESC LIMIT 1
+                 ) s ON true
+                 WHERE 1=1`;
+    const params = [];
+    if (search) {
+      params.push(`%${search}%`);
+      query += ` AND (l.nome ILIKE $${params.length} OR l.telefone ILIKE $${params.length} OR l.email ILIKE $${params.length})`;
+    }
+    if (status && status !== 'todos') {
+      params.push(status);
+      query += ` AND l.status = $${params.length}`;
+    }
+    query += ' ORDER BY l.updated_at DESC NULLS LAST, l.created_at DESC';
+    const { rows } = await pool.query(query, params);
+
+    if (grouped === 'kanban') {
+      const stages = ['lead', 'em_contato', 'followup_1', 'followup_2', 'followup_3', 'sem_resposta', 'desqualificado', 'paciente_agendado'];
+      const kanban = {};
+      for (const stage of stages) kanban[stage] = [];
+      for (const row of rows) {
+        const stage = stages.includes(row.kanban_stage) ? row.kanban_stage : 'lead';
+        kanban[stage].push({
+          id: row.id,
+          name: row.nome,
+          initials: (row.nome || '').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase(),
+          phone: row.telefone || '',
+          origin: row.origem || 'WhatsApp',
+          value: 0,
+          assignedTo: row.attendant_name || 'Sem atendente',
+          assignedInitials: (row.attendant_name || 'SA').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase(),
+          lastContact: row.updated_at || row.created_at,
+          avatarColor: 'bg-chart-1',
+          avatarUrl: row.avatar_url || null,
+          kanbanStage: stage,
+        });
+      }
+      return res.json(kanban);
+    }
+
+    res.json(rows);
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
 // Record first response (attendant sends first message)
 app.post('/api/sessions/first-response', async (req, res) => {
   try {

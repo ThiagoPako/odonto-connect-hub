@@ -1,7 +1,8 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { DashboardHeader } from "@/components/DashboardHeader";
-import { mockPatients, type Patient, mockKanbanLeads, kanbanStages, type KanbanStage, type KanbanLead } from "@/data/crmMockData";
+import { type Patient, kanbanStages, type KanbanStage, type KanbanLead } from "@/data/crmMockData";
+import { crmApi } from "@/lib/vpsApi";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Search, Plus, Filter, Phone, Mail, Calendar, DollarSign,
@@ -89,13 +90,42 @@ function PatientTableView() {
   const [originFilter, setOriginFilter] = useState("Todos");
   const [statusFilter, setStatusFilter] = useState("Todos");
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
+  const [patients, setPatients] = useState<Patient[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const filtered = mockPatients.filter((p) => {
-    const matchSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      p.phone.includes(searchTerm) || p.email.toLowerCase().includes(searchTerm.toLowerCase());
+  const loadPatients = useCallback(async () => {
+    setLoading(true);
+    const params: Record<string, string> = {};
+    if (searchTerm.trim()) params.search = searchTerm.trim();
+    if (statusFilter !== "Todos") params.status = statusFilter;
+    const { data } = await crmApi.list(params);
+    if (data && Array.isArray(data)) {
+      setPatients(data.map((r: any) => ({
+        id: r.id,
+        name: r.nome,
+        initials: (r.nome || '').split(' ').map((w: string) => w[0]).join('').slice(0, 2).toUpperCase(),
+        phone: r.telefone || '',
+        email: r.email || '',
+        origin: r.origem || 'WhatsApp',
+        status: r.status === 'em_contato' ? 'ativo' : (r.status === 'novo' ? 'lead' : r.status) as Patient["status"],
+        lastVisit: r.updated_at ? new Date(r.updated_at) : undefined,
+        createdAt: new Date(r.created_at),
+        totalSpent: 0,
+        avatarColor: 'bg-chart-1',
+        avatarUrl: r.avatar_url,
+      })));
+    }
+    setLoading(false);
+  }, [searchTerm, statusFilter]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => void loadPatients(), 300);
+    return () => clearTimeout(timer);
+  }, [loadPatients]);
+
+  const filtered = patients.filter((p) => {
     const matchOrigin = originFilter === "Todos" || p.origin === originFilter;
-    const matchStatus = statusFilter === "Todos" || p.status === statusFilter;
-    return matchSearch && matchOrigin && matchStatus;
+    return matchOrigin;
   });
 
   return (
@@ -216,12 +246,24 @@ function PatientTableView() {
 /* ── Kanban View (merged from /funil) ────────────── */
 
 function KanbanView() {
-  const [leads, setLeads] = useState(mockKanbanLeads);
+  const emptyKanban: Record<KanbanStage, KanbanLead[]> = {
+    lead: [], em_contato: [], followup_1: [], followup_2: [], followup_3: [],
+    sem_resposta: [], desqualificado: [], paciente_agendado: [],
+  };
+  const [leads, setLeads] = useState<Record<KanbanStage, KanbanLead[]>>(emptyKanban);
   const [draggedLead, setDraggedLead] = useState<{ lead: KanbanLead; fromStage: KanbanStage } | null>(null);
   const [assignedFilter, setAssignedFilter] = useState("Todos");
+  const [loading, setLoading] = useState(true);
 
-  const allLeadsList = Object.values(leads).flat();
-  const assignees = ["Todos", ...Array.from(new Set(allLeadsList.map((l) => l.assignedTo)))];
+  useEffect(() => {
+    crmApi.kanban().then(({ data }) => {
+      if (data) setLeads(data as Record<KanbanStage, KanbanLead[]>);
+      setLoading(false);
+    });
+  }, []);
+
+  const allLeadsList: KanbanLead[] = Object.values(leads).flat();
+  const assignees = ["Todos", ...Array.from(new Set(allLeadsList.map((l: KanbanLead) => l.assignedTo)))];
 
   const handleDragStart = (lead: KanbanLead, fromStage: KanbanStage) => {
     setDraggedLead({ lead, fromStage });
@@ -233,22 +275,24 @@ function KanbanView() {
     if (!draggedLead || draggedLead.fromStage === toStage) return;
     setLeads((prev) => {
       const updated = { ...prev };
-      updated[draggedLead.fromStage] = prev[draggedLead.fromStage].filter((l) => l.id !== draggedLead.lead.id);
+      updated[draggedLead.fromStage] = prev[draggedLead.fromStage].filter((l: KanbanLead) => l.id !== draggedLead.lead.id);
       updated[toStage] = [...prev[toStage], draggedLead.lead];
       return updated;
     });
+    // Persist stage change to backend
+    crmApi.updateStage(draggedLead.lead.id, toStage).catch(() => toast.error("Erro ao mover lead"));
     setDraggedLead(null);
   };
 
   // Apply filter
-  const filteredLeads: typeof leads = assignedFilter === "Todos"
+  const filteredLeads: Record<KanbanStage, KanbanLead[]> = assignedFilter === "Todos"
     ? leads
     : Object.fromEntries(
-        Object.entries(leads).map(([stage, list]) => [stage, list.filter((l) => l.assignedTo === assignedFilter)])
-      ) as typeof leads;
+        Object.entries(leads).map(([stage, list]) => [stage, (list as KanbanLead[]).filter((l: KanbanLead) => l.assignedTo === assignedFilter)])
+      ) as Record<KanbanStage, KanbanLead[]>;
 
-  const visibleList = Object.values(filteredLeads).flat();
-  const totalValue = visibleList.reduce((sum, l) => sum + l.value, 0);
+  const visibleList: KanbanLead[] = Object.values(filteredLeads).flat();
+  const totalValue = visibleList.reduce((sum: number, l: KanbanLead) => sum + l.value, 0);
 
   return (
     <>
@@ -289,7 +333,7 @@ function KanbanView() {
       <div className="flex-1 flex gap-3 p-4 overflow-x-auto">
         {kanbanStages.map((stage) => {
           const stageLeads = filteredLeads[stage.id];
-          const stageValue = stageLeads.reduce((sum, l) => sum + l.value, 0);
+          const stageValue = stageLeads.reduce((sum: number, l: KanbanLead) => sum + l.value, 0);
           return (
             <div
               key={stage.id}
