@@ -171,6 +171,9 @@ CREATE INDEX IF NOT EXISTS idx_financeiro_tipo ON financeiro(tipo);
 CREATE INDEX IF NOT EXISTS idx_pacientes_nome ON pacientes(nome);
 CREATE INDEX IF NOT EXISTS idx_crm_leads_status ON crm_leads(status);
 
+-- Add avatar_url to crm_leads (WhatsApp profile picture)
+ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS avatar_url TEXT;
+
 -- Create admin user (password: admin123 — CHANGE IN PRODUCTION!)
 INSERT INTO profiles (id, name, email, role, password_hash)
 VALUES (
