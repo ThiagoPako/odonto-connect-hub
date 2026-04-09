@@ -962,7 +962,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
     let lead = leads[0] || null;
     const pushName = message?.pushName || phone;
 
-    // ─── New contact: create lead + send queue menu ───
+    // ─── New contact: create lead + check hours + send menu ───
     if (!lead) {
       const newId = crypto.randomUUID();
       await pool.query(
@@ -972,6 +972,33 @@ app.post('/api/webhook/evolution', async (req, res) => {
       );
       lead = { id: newId, name: pushName, phone, queue_id: null, awaiting_queue_selection: true, avatar_url: null };
       console.log(`🆕 New lead created: ${pushName} (${phone})`);
+
+      // Check business hours
+      if (!isWithinBusinessHours(attendanceSettingsCache)) {
+        const offMsg = attendanceSettingsCache?.offHoursMessage ||
+          'Olá! Nosso horário de atendimento encerrou. Deixe sua mensagem que retornaremos assim que possível! 😊';
+        await evolutionFetch(`/message/sendText/${instance}`, {
+          method: 'POST',
+          body: JSON.stringify({ number: phone, text: offMsg }),
+        });
+        console.log(`🕐 Off-hours message sent to ${phone}`);
+        // Still broadcast to SSE so attendants see the message
+        broadcastSSE('new_message', {
+          id: message?.key?.id || `wh-${Date.now()}`,
+          phone, pushName, leadId: lead.id, leadName: lead.name,
+          content: msgContent || `[${msgType}]`, type: msgType,
+          timestamp: new Date().toISOString(), instance,
+        });
+        return res.json({ processed: true, offHours: true, leadId: lead.id });
+      }
+
+      // Send welcome message if enabled
+      if (attendanceSettingsCache?.autoGreetingEnabled && attendanceSettingsCache?.welcomeMessage) {
+        await evolutionFetch(`/message/sendText/${instance}`, {
+          method: 'POST',
+          body: JSON.stringify({ number: phone, text: attendanceSettingsCache.welcomeMessage }),
+        });
+      }
 
       // Send queue menu
       await sendQueueMenu(instance, phone);
