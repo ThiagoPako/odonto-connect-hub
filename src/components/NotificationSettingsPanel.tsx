@@ -1,13 +1,15 @@
 import { useState } from "react";
-import { Bell, BellOff, Volume2, VolumeX } from "lucide-react";
+import { Bell, Volume2, VolumeX, MonitorSmartphone } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { isSoundEnabled, setSoundEnabled, playNotificationSound } from "@/lib/notificationSound";
+import { isPushEnabled, setPushEnabled, requestNotificationPermission } from "@/lib/browserNotification";
 import { toast } from "sonner";
 
 export function NotificationSettingsPanel() {
   const [soundOn, setSoundOn] = useState(isSoundEnabled);
+  const [pushOn, setPushOn] = useState(isPushEnabled);
 
-  const handleToggle = (checked: boolean) => {
+  const handleSoundToggle = (checked: boolean) => {
     setSoundOn(checked);
     setSoundEnabled(checked);
     if (checked) {
@@ -17,6 +19,26 @@ export function NotificationSettingsPanel() {
       toast.info("Som de notificação desativado");
     }
   };
+
+  const handlePushToggle = async (checked: boolean) => {
+    if (checked) {
+      const granted = await requestNotificationPermission();
+      if (!granted) {
+        toast.error("Permissão de notificação negada pelo navegador");
+        return;
+      }
+      setPushOn(true);
+      setPushEnabled(true);
+      toast.success("Notificações push ativadas");
+    } else {
+      setPushOn(false);
+      setPushEnabled(false);
+      toast.info("Notificações push desativadas");
+    }
+  };
+
+  const pushSupported = typeof window !== "undefined" && "Notification" in window;
+  const pushDenied = pushSupported && Notification.permission === "denied";
 
   return (
     <div className="rounded-xl border border-border bg-card p-5">
@@ -30,8 +52,8 @@ export function NotificationSettingsPanel() {
         </div>
       </div>
 
-      <div className="space-y-4">
-        <div className="flex items-center justify-between py-2">
+      <div className="space-y-1 divide-y divide-border/50">
+        <div className="flex items-center justify-between py-3">
           <div className="flex items-center gap-3">
             {soundOn ? (
               <Volume2 className="h-4 w-4 text-muted-foreground" />
@@ -45,7 +67,26 @@ export function NotificationSettingsPanel() {
               </p>
             </div>
           </div>
-          <Switch checked={soundOn} onCheckedChange={handleToggle} />
+          <Switch checked={soundOn} onCheckedChange={handleSoundToggle} />
+        </div>
+
+        <div className="flex items-center justify-between py-3">
+          <div className="flex items-center gap-3">
+            <MonitorSmartphone className="h-4 w-4 text-muted-foreground" />
+            <div>
+              <p className="text-sm font-medium text-foreground">Notificação push do navegador</p>
+              <p className="text-xs text-muted-foreground">
+                {pushDenied
+                  ? "Permissão bloqueada — altere nas configurações do navegador"
+                  : "Exibir notificação nativa quando estiver em outra aba"}
+              </p>
+            </div>
+          </div>
+          <Switch
+            checked={pushOn}
+            onCheckedChange={handlePushToggle}
+            disabled={pushDenied}
+          />
         </div>
       </div>
     </div>
