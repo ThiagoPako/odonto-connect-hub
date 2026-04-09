@@ -3,6 +3,8 @@ import { Button } from "@/components/ui/button";
 import { RefreshCw, Loader2, CheckCircle2, WifiOff, Wifi, QrCode } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import { connectInstance, getInstanceState } from "@/lib/evolutionApi";
+import { playNotificationSound } from "@/lib/notificationSound";
+import { toast } from "sonner";
 
 type ConnectionPhase = "initializing" | "waiting_qr" | "qr_ready" | "connecting" | "connected" | "failed";
 
@@ -85,6 +87,8 @@ export function QrCodeDialog({ open, onOpenChange, instanceName, onConnected }: 
 
         if (state.state === "open") {
           setPhase("connected");
+          playNotificationSound();
+          toast.success(`WhatsApp "${instanceName}" conectado!`);
           onConnected?.();
           clearInterval(interval);
           return;
