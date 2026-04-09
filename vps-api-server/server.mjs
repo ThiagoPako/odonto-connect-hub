@@ -39,6 +39,35 @@ const JWT_EXPIRES_IN = '7d';
 // ─── Evolution API Config ───────────────────────────────────
 const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL || 'https://api.odontoconnect.tech';
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY;
+const VPS_BASE_URL = process.env.APP_URL || 'https://odontoconnect.tech';
+const WEBHOOK_URL = `${VPS_BASE_URL.replace(/\/$/, '').replace(':443', '')}:${PORT}/api/webhook/evolution`;
+
+// ─── Auto-register webhook on Evolution API instance ─────────
+async function registerWebhook(instanceName) {
+  try {
+    const result = await evolutionFetch(`/webhook/set/${instanceName}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        url: WEBHOOK_URL,
+        webhookByEvents: false,
+        webhookBase64: false,
+        events: [
+          'MESSAGES_UPSERT',
+          'CONNECTION_UPDATE',
+          'QRCODE_UPDATED',
+        ],
+      }),
+    });
+    if (result.ok) {
+      console.log(`✅ Webhook registered for ${instanceName} → ${WEBHOOK_URL}`);
+    } else {
+      console.error(`⚠️ Webhook registration failed for ${instanceName}:`, result.data);
+    }
+    return result;
+  } catch (err) {
+    console.error(`❌ Webhook registration error for ${instanceName}:`, err.message);
+  }
+}
 
 
 // ─── Auth helpers ───────────────────────────────────────────
@@ -317,7 +346,7 @@ app.get('/api/whatsapp/instances', async (req, res) => {
   }
 });
 
-// Create instance
+// Create instance (+ auto-register webhook)
 app.post('/api/whatsapp/instances', async (req, res) => {
   try {
     await verifyAdmin(req);
@@ -330,17 +359,26 @@ app.post('/api/whatsapp/instances', async (req, res) => {
         qrcode: true,
       }),
     });
+
+    // Auto-register webhook so all messages go to queue
+    await registerWebhook(instanceName);
+
     res.json(result.data);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// Connect (get QR Code)
+// Connect (get QR Code) + ensure webhook is registered
 app.get('/api/whatsapp/connect/:instance', async (req, res) => {
   try {
     await verifyUser(req);
-    const result = await evolutionFetch(`/instance/connect/${req.params.instance}`);
+    const instanceName = req.params.instance;
+    const result = await evolutionFetch(`/instance/connect/${instanceName}`);
+
+    // Ensure webhook is registered on every connect attempt
+    registerWebhook(instanceName).catch(() => {});
+
     res.json(result.data);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -385,6 +423,28 @@ app.put('/api/whatsapp/restart/:instance', async (req, res) => {
   try {
     await verifyAdmin(req);
     const result = await evolutionFetch(`/instance/restart/${req.params.instance}`, { method: 'PUT' });
+    res.json(result.data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Manual webhook registration / check
+app.post('/api/whatsapp/register-webhook/:instance', async (req, res) => {
+  try {
+    await verifyAdmin(req);
+    const result = await registerWebhook(req.params.instance);
+    res.json({ success: true, webhookUrl: WEBHOOK_URL, result: result?.data });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get current webhook config for an instance
+app.get('/api/whatsapp/webhook/:instance', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const result = await evolutionFetch(`/webhook/find/${req.params.instance}`);
     res.json(result.data);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -1750,9 +1810,26 @@ app.get('/api/health', async (_req, res) => {
 // START SERVER
 // ═══════════════════════════════════════════════════════════════
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`🦷 Odonto Connect API running on port ${PORT}`);
   console.log(`   Health: http://localhost:${PORT}/api/health`);
+  console.log(`   Webhook URL: ${WEBHOOK_URL}`);
+
+  // Auto-register webhook for all connected instances on startup
+  try {
+    const result = await evolutionFetch('/instance/fetchInstances');
+    const instances = Array.isArray(result.data) ? result.data : [];
+    const connected = instances.filter(i => (i.connectionStatus || i.status) === 'open');
+    for (const inst of connected) {
+      const name = inst.name || inst.instanceName;
+      if (name) await registerWebhook(name);
+    }
+    if (connected.length > 0) {
+      console.log(`   📡 Webhook registrado em ${connected.length} instância(s) conectada(s)`);
+    }
+  } catch (err) {
+    console.error('⚠️ Could not auto-register webhooks on startup:', err.message);
+  }
 
   // Start auto-sync every 30 minutes
   syncWhatsAppContacts(); // Run once on startup
