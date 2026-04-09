@@ -5,7 +5,7 @@ import { LeadListItem } from "@/components/chat/LeadListItem";
 import { ConversationView } from "@/components/chat/ConversationView";
 import { MessageInput } from "@/components/chat/MessageInput";
 import { ChatHeader } from "@/components/chat/ChatHeader";
-import { Users, MessageSquare, Inbox, Filter, Tags, UserPlus, Wifi } from "lucide-react";
+import { Users, MessageSquare, Inbox, Filter, Tags, UserPlus, Wifi, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { NewChatFromContactDialog } from "@/components/chat/NewChatFromContactDialog";
 import { SatisfactionSurveyDialog } from "@/components/chat/SatisfactionSurveyDialog";
@@ -58,6 +58,7 @@ function ChatPage() {
   const [filterStatus, setFilterStatus] = useState<"all" | "active" | "finished">("all");
   const [newChatOpen, setNewChatOpen] = useState(false);
   const [isLeadTyping, setIsLeadTyping] = useState(false);
+  const [syncingPhotos, setSyncingPhotos] = useState(false);
   const [availableQueues, setAvailableQueues] = useState<AttendanceQueue[]>([]);
   const [availableTags, setAvailableTags] = useState<LeadTagApi[]>([]);
   const [leadTagAssignments, setLeadTagAssignments] = useState<Record<string, string[]>>({});
@@ -849,6 +850,48 @@ function ChatPage() {
   const filteredByQueue = filterQueue ? filteredByStatus.filter((l) => l.queueId === filterQueue) : filteredByStatus;
   const currentList = filterTag ? filteredByQueue.filter((l) => (leadTagAssignments[l.id] || []).includes(filterTag)) : filteredByQueue;
 
+  const handleSyncPhotos = useCallback(async () => {
+    const instanceName = connectedInstances[0]?.instanceName;
+    if (!instanceName) {
+      toast.error("Nenhuma instância WhatsApp conectada");
+      return;
+    }
+    setSyncingPhotos(true);
+    toast.info("Sincronizando fotos de perfil...");
+    try {
+      const { data, error } = await whatsappApi.syncProfilePictures(instanceName);
+      if (error) {
+        toast.error("Erro ao sincronizar: " + error);
+      } else {
+        toast.success(`Fotos sincronizadas: ${data?.updated || 0} atualizadas de ${data?.total || 0}`);
+        // Reload leads to show updated avatars
+        const res = await queueLeadsApi.list();
+        if (res.data) {
+          const mapLead = (r: any): Lead => ({
+            id: r.id,
+            name: r.name || r.phone,
+            initials: (r.name || r.phone || "?").split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase(),
+            phone: r.phone,
+            avatarUrl: r.avatarUrl,
+            lastMessage: r.lastMessage || "",
+            lastMessageTime: r.lastMessageTime ? new Date(r.lastMessageTime) : new Date(),
+            unreadCount: r.unreadCount || 0,
+            status: r.sessionStatus === "active" ? "active" : r.sessionStatus === "waiting" ? "waiting" : "waiting",
+            assignedTo: r.attendantName || undefined,
+            queueId: r.queueId || undefined,
+            queueName: r.queueName || undefined,
+          });
+          setQueue(res.data.queue?.map(mapLead) || []);
+          setMyLeads(res.data.active?.map(mapLead) || []);
+        }
+      }
+    } catch (err: any) {
+      toast.error("Falha na sincronização: " + (err.message || "erro desconhecido"));
+    } finally {
+      setSyncingPhotos(false);
+    }
+  }, [connectedInstances]);
+
   const handleNewChatFromContact = (contato: Contato) => {
     // Check if lead already exists
     const allLeads = [...queue, ...myLeads];
@@ -912,6 +955,16 @@ function ChatPage() {
               onClick={() => setNewChatOpen(true)}
             >
               <UserPlus className="h-4 w-4 text-primary" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-10 w-10 shrink-0"
+              title="Sincronizar fotos de perfil"
+              onClick={handleSyncPhotos}
+              disabled={syncingPhotos}
+            >
+              <RefreshCw className={`h-4 w-4 text-muted-foreground ${syncingPhotos ? "animate-spin" : ""}`} />
             </Button>
             <button
               onClick={() => setActiveTab("queue")}
