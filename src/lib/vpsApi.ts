@@ -184,6 +184,14 @@ export const dashboardApi = {
   kpis: () => vpsApiFetch('/dashboard/kpis'),
 };
 
+// ─── CRM Leads ──────────────────────────────────────────────
+
+export const crmApi = {
+  list: (params?: Record<string, string>) => vpsApiFetch('/crm/leads', { params }),
+  kanban: () => vpsApiFetch('/crm/leads', { params: { grouped: 'kanban' } }),
+  updateStage: (id: string, stage: string) => vpsApiFetch(`/crm/leads/${id}/stage`, { method: 'PATCH', body: { stage } }),
+};
+
 // ─── WhatsApp (via proxy) ───────────────────────────────────
 
 export const whatsappApi = {
