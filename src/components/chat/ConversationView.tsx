@@ -461,8 +461,12 @@ export function ConversationView({ messages, leadName, isTyping, onReaction, onR
                       </div>
                     )}
 
-                    {(msg.type === "text" || (msg.content && !["location", "contact", "poll", "sticker", "list"].includes(msg.type))) && msg.content && (
+                    {(msg.type === "text" || (msg.content && !["location", "contact", "poll", "sticker", "list", "image", "video", "audio", "document"].includes(msg.type))) && msg.content && (
                       <p className="text-[14px] leading-relaxed whitespace-pre-wrap">{renderFormattedText(msg.content)}</p>
+                    )}
+                    {/* Caption for media messages */}
+                    {["image", "video"].includes(msg.type) && msg.content && !msg.content.startsWith("🖼️") && !msg.content.startsWith("🎬") && (
+                      <p className="text-[13px] leading-relaxed whitespace-pre-wrap mt-1">{renderFormattedText(msg.content)}</p>
                     )}
 
                     {msg.type !== "sticker" && renderLinkPreview(msg)}
