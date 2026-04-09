@@ -215,11 +215,23 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onRe
           >
             <ArrowRightLeft className="h-4 w-4" />
           </button>
-          <button className="p-2.5 rounded-xl hover:bg-muted transition-all text-muted-foreground hover:text-foreground" aria-label="Ligar">
-            <Phone className="h-4 w-4" />
+          <button
+            className="p-2.5 rounded-xl hover:bg-success/10 transition-all text-muted-foreground hover:text-success disabled:opacity-50"
+            aria-label="Ligar"
+            title="Ligar via WhatsApp"
+            onClick={() => handleCall(false)}
+            disabled={calling}
+          >
+            <Phone className={`h-4 w-4 ${calling ? "animate-pulse" : ""}`} />
           </button>
-          <button className="p-2.5 rounded-xl hover:bg-muted transition-all text-muted-foreground hover:text-foreground" aria-label="Chamada de vídeo">
-            <Video className="h-4 w-4" />
+          <button
+            className="p-2.5 rounded-xl hover:bg-primary/10 transition-all text-muted-foreground hover:text-primary disabled:opacity-50"
+            aria-label="Chamada de vídeo"
+            title="Chamada de vídeo via WhatsApp"
+            onClick={() => handleCall(true)}
+            disabled={calling}
+          >
+            <Video className={`h-4 w-4 ${calling ? "animate-pulse" : ""}`} />
           </button>
           {lead.status === "active" && onFinishAttendance && (
             <button
