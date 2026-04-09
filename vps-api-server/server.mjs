@@ -801,12 +801,25 @@ function isWithinBusinessHours(settings) {
   return currentMinutes >= (openH * 60 + openM) && currentMinutes <= (closeH * 60 + closeM);
 }
 
-// In-memory attendance settings cache (synced from frontend via API)
+// ─── Attendance Settings (persisted in PostgreSQL) ──────────
 let attendanceSettingsCache = null;
+
+async function loadAttendanceSettings() {
+  try {
+    const { rows } = await pool.query("SELECT value FROM app_settings WHERE key = 'attendance_settings'");
+    attendanceSettingsCache = rows.length > 0 ? rows[0].value : null;
+  } catch (err) {
+    console.error('⚠️ Could not load attendance settings from DB:', err.message);
+  }
+}
+
+// Load on startup
+loadAttendanceSettings();
 
 app.get('/api/attendance-settings', async (req, res) => {
   try {
     await verifyUser(req);
+    if (!attendanceSettingsCache) await loadAttendanceSettings();
     res.json(attendanceSettingsCache || {});
   } catch (error) {
     res.status(401).json({ error: error.message });
@@ -816,8 +829,14 @@ app.get('/api/attendance-settings', async (req, res) => {
 app.put('/api/attendance-settings', async (req, res) => {
   try {
     await verifyAdmin(req);
-    attendanceSettingsCache = req.body;
-    console.log('⚙️ Attendance settings updated');
+    const settings = req.body;
+    await pool.query(
+      `INSERT INTO app_settings (key, value, updated_at) VALUES ('attendance_settings', $1, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()`,
+      [JSON.stringify(settings)]
+    );
+    attendanceSettingsCache = settings;
+    console.log('⚙️ Attendance settings saved to database');
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
