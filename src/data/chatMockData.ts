@@ -10,6 +10,9 @@ export interface Lead {
   assignedTo?: string;
   avatarColor?: string;
   avatarUrl?: string | null;
+  queueId?: string;
+  queueName?: string;
+  queueColor?: string;
 }
 
 export type MessageType =
