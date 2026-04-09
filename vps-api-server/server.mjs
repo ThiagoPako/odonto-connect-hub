@@ -560,19 +560,11 @@ app.post('/api/whatsapp/subscribe-presence', async (req, res) => {
       return res.status(400).json({ error: 'instance and number are required' });
     }
     const cleanNumber = number.replace(/\D/g, '');
-    const result = await evolutionFetch(`/chat/updatePresence/${instance}`, {
+    // Use findPresence to subscribe — updatePresence sends OUR presence to the contact
+    const result = await evolutionFetch(`/chat/findPresence/${instance}`, {
       method: 'POST',
       body: JSON.stringify({
         number: `${cleanNumber}@s.whatsapp.net`,
-        presence: 'composing',
-      }),
-    });
-    // Also subscribe by sending "available" immediately after to register presence listener
-    await evolutionFetch(`/chat/updatePresence/${instance}`, {
-      method: 'POST',
-      body: JSON.stringify({
-        number: `${cleanNumber}@s.whatsapp.net`,
-        presence: 'paused',
       }),
     });
     console.log(`👁️ Presence subscribed for ${cleanNumber} on ${instance}`);
