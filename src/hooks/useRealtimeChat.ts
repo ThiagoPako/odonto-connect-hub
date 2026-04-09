@@ -91,6 +91,7 @@ export function useRealtimeChat(options: RealtimeChatOptions) {
       es.addEventListener("new_message", onAnyEvent);
       es.addEventListener("presence_update", onAnyEvent);
       es.addEventListener("queue_assigned", onAnyEvent);
+      es.addEventListener("message_status_update", onAnyEvent);
       es.addEventListener("ping", onAnyEvent);
 
       clearInterval(keepaliveInterval);
