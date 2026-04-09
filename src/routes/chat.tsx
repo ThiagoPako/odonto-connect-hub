@@ -1186,7 +1186,7 @@ function ChatPage() {
               <ConversationView
                 messages={currentMessages}
                 leadName={selectedLead.name}
-                isTyping={isLeadTyping}
+                isTyping={presenceMap[selectedLead.id]?.status === "typing"}
                 onReaction={handleReaction}
                 onReply={handleReply}
                 onForward={handleForward}
