@@ -12,17 +12,31 @@ function isAuthError(status: number, _error: unknown): boolean {
 }
 
 let _isRedirecting = false;
+let _consecutive401Count = 0;
+const AUTH_REDIRECT_THRESHOLD = 3; // only redirect after 3 consecutive 401s
 
-function handleAuthFailure() {
+function handleAuthFailure(background = false) {
   if (_isRedirecting) return;
+
+  _consecutive401Count++;
+
+  // Background calls (polling) — only redirect after multiple consecutive failures
+  if (background) {
+    if (_consecutive401Count < AUTH_REDIRECT_THRESHOLD) return;
+  }
+
   _isRedirecting = true;
   clearToken();
 
   if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
     window.location.href = '/login';
   }
-  // Reset flag after a short delay so future real 401s still redirect
   setTimeout(() => { _isRedirecting = false; }, 2000);
+}
+
+/** Reset the 401 counter — call after any successful API response */
+function resetAuthFailureCount() {
+  _consecutive401Count = 0;
 }
 
 // ─── Auth helpers ───────────────────────────────────────────
