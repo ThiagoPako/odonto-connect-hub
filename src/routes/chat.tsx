@@ -464,6 +464,21 @@ function ChatPage() {
     <div className="flex-1 flex flex-col h-full overflow-hidden">
       <DashboardHeader title="Chat" />
 
+      {/* WhatsApp Connection Status Bar */}
+      {connectedInstances.length === 0 && (
+        <div className="flex items-center gap-2 px-4 py-2 bg-destructive/10 border-b border-destructive/20 text-destructive text-xs font-medium animate-fade-in">
+          <Wifi className="h-3.5 w-3.5" />
+          Nenhuma instância WhatsApp conectada — mensagens não serão enviadas.
+        </div>
+      )}
+      {connectedInstances.length > 0 && (
+        <div className="flex items-center gap-2 px-4 py-1.5 bg-success/5 border-b border-success/10 text-success text-[11px] font-medium">
+          <Wifi className="h-3 w-3" />
+          {connectedInstances.length === 1
+            ? `Conectado: ${connectedInstances[0].instanceName}`
+            : `${connectedInstances.length} instâncias conectadas`}
+        </div>
+      )}
       <div className="flex-1 flex overflow-hidden">
         {/* Left Panel - Lead List */}
         <div className="w-[360px] flex flex-col border-r border-border bg-card shrink-0">
