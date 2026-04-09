@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { useRealtimeChat, type IncomingMessage } from "@/hooks/useRealtimeChat";
 import { whatsappApi } from "@/lib/vpsApi";
 import { playNotificationSound } from "@/lib/notificationSound";
+import { showBrowserNotification, requestNotificationPermission } from "@/lib/browserNotification";
 import { setChatUnreadCount } from "@/lib/chatUnreadStore";
 import {
   mockLeadsQueue,
@@ -101,12 +102,12 @@ function ChatPage() {
       }));
     }
 
-    // Play sound + show toast notification
+    // Play sound + show toast + browser push notification
     playNotificationSound();
-    toast.info(`💬 ${msg.leadName || msg.pushName}`, {
-      description: msg.content?.slice(0, 80) || `[${msg.type}]`,
-      duration: 5000,
-    });
+    const name = msg.leadName || msg.pushName;
+    const body = msg.content?.slice(0, 80) || `[${msg.type}]`;
+    toast.info(`💬 ${name}`, { description: body, duration: 5000 });
+    showBrowserNotification(`💬 ${name}`, body);
   }, [queue, myLeads, selectedLead]);
 
   useRealtimeChat(handleIncomingMessage);
