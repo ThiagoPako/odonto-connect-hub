@@ -219,20 +219,36 @@ function KanbanView() {
   return (
     <>
       {/* Summary bar */}
-      <div className="flex items-center justify-between px-6 py-3 border-b border-border bg-card">
+      <div className="flex items-center justify-between px-6 py-3 border-b border-border bg-card flex-wrap gap-3">
         <div className="flex items-center gap-6">
           <div>
             <span className="text-xs text-muted-foreground">Total no funil</span>
-            <p className="text-lg font-bold text-foreground">{Object.values(leads).flat().length} leads</p>
+            <p className="text-lg font-bold text-foreground">{visibleList.length} leads</p>
           </div>
           <div>
             <span className="text-xs text-muted-foreground">Valor total</span>
             <p className="text-lg font-bold text-foreground">R$ {totalValue.toLocaleString("pt-BR")}</p>
           </div>
         </div>
-        <button className="flex items-center gap-2 h-9 px-4 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors">
-          <Plus className="h-4 w-4" /> Novo Lead
-        </button>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <UserPlus className="h-4 w-4 text-muted-foreground" />
+            <div className="flex items-center gap-1">
+              {assignees.map((a) => (
+                <button
+                  key={a}
+                  onClick={() => setAssignedFilter(a)}
+                  className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors whitespace-nowrap ${
+                    assignedFilter === a ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:text-foreground"
+                  }`}
+                >{a}</button>
+              ))}
+            </div>
+          </div>
+          <button className="flex items-center gap-2 h-9 px-4 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors">
+            <Plus className="h-4 w-4" /> Novo Lead
+          </button>
+        </div>
       </div>
 
       {/* Kanban Board */}
