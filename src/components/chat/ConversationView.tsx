@@ -761,6 +761,57 @@ export function ConversationView({ messages, leadName, isTyping, onReaction, onR
                     style={msg.type !== "sticker" ? { borderRadius: bubbleRadius } : undefined}
                   >
                     {/* Content by type */}
+                    {msg.type === "image" && msg.fileUrl && (
+                      <div className="mb-1.5 rounded-xl overflow-hidden cursor-pointer" onClick={() => window.open(msg.fileUrl, "_blank")}>
+                        <img
+                          src={msg.fileUrl}
+                          alt={msg.fileName || "Imagem"}
+                          className="max-w-full max-h-[300px] object-contain rounded-xl"
+                          loading="lazy"
+                          onError={(e) => {
+                            const el = e.currentTarget;
+                            el.style.display = "none";
+                            const fallback = document.createElement("div");
+                            fallback.className = "flex items-center gap-2 p-3 text-xs opacity-70";
+                            fallback.textContent = "📷 Imagem indisponível";
+                            el.parentElement?.appendChild(fallback);
+                          }}
+                        />
+                      </div>
+                    )}
+                    {msg.type === "image" && !msg.fileUrl && (
+                      <div className="flex items-center gap-2 p-3 rounded-xl bg-background/15 mb-1.5">
+                        <span className="text-lg">📷</span>
+                        <span className="text-xs opacity-70">Imagem</span>
+                      </div>
+                    )}
+                    {msg.type === "video" && msg.fileUrl && (
+                      <div className="mb-1.5 rounded-xl overflow-hidden">
+                        <video
+                          src={msg.fileUrl}
+                          controls
+                          preload="metadata"
+                          className="max-w-full max-h-[300px] rounded-xl"
+                          onError={(e) => {
+                            const el = e.currentTarget;
+                            el.style.display = "none";
+                            const fallback = document.createElement("div");
+                            fallback.className = "flex items-center gap-2 p-3 text-xs opacity-70";
+                            fallback.textContent = "🎬 Vídeo indisponível";
+                            el.parentElement?.appendChild(fallback);
+                          }}
+                        />
+                      </div>
+                    )}
+                    {msg.type === "video" && !msg.fileUrl && (
+                      <div className="flex items-center gap-2 p-3 rounded-xl bg-background/15 mb-1.5">
+                        <span className="text-lg">🎬</span>
+                        <span className="text-xs opacity-70">Vídeo</span>
+                      </div>
+                    )}
+                    {msg.type === "sticker" && msg.fileUrl && (
+                      <img src={msg.fileUrl} alt="Sticker" className="max-w-[150px] max-h-[150px]" loading="lazy" />
+                    )}
                     {msg.type === "audio" && (
                       <AudioPlayer fileUrl={msg.fileUrl} duration={msg.duration} isLead={isLead} status={(msg as any).status} />
                     )}
