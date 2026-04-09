@@ -87,7 +87,8 @@ function ChatPage() {
       setQueue((prev) => prev.map(updateLead));
       setMyLeads((prev) => prev.map(updateLead));
     } else {
-      // New lead — add to queue
+      // New lead — add to queue with queue info if available
+      const incomingMsg = msg as IncomingMessage & { queueId?: string; queueName?: string; queueColor?: string };
       const newLead: Lead = {
         id: msg.leadId || `rt-${msg.phone}`,
         name: msg.leadName || msg.pushName,
@@ -98,6 +99,9 @@ function ChatPage() {
         unreadCount: 1,
         status: "waiting",
         avatarColor: "bg-chart-1",
+        queueId: incomingMsg.queueId,
+        queueName: incomingMsg.queueName,
+        queueColor: incomingMsg.queueColor,
       };
       setQueue((prev) => [newLead, ...prev]);
       setMessages((prev) => ({
