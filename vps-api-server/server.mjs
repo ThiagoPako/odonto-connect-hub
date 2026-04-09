@@ -783,8 +783,89 @@ app.get('/api/events', (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
-// WEBHOOK — Evolution API (auto-sync profile pictures + real-time)
+// WEBHOOK — Evolution API (queue routing + real-time)
 // ═══════════════════════════════════════════════════════════════
+
+// Helper: send WhatsApp button menu with active queues
+async function sendQueueMenu(instance, phone) {
+  const { rows: queues } = await pool.query(
+    "SELECT id, name, icon, whatsapp_button_label FROM attendance_queues WHERE active = true ORDER BY name ASC"
+  );
+  if (queues.length === 0) return; // No queues configured
+
+  // Evolution API: sendButtons (Baileys)
+  const buttons = queues.map((q, i) => ({
+    buttonId: `queue_${q.id}`,
+    buttonText: { displayText: q.whatsapp_button_label || `${q.icon} ${q.name}` },
+    type: 1,
+  }));
+
+  // Try button message first
+  const buttonPayload = {
+    number: phone,
+    title: '',
+    description: 'Olá! 👋 Selecione o setor desejado para ser atendido:',
+    footer: 'Odonto Connect',
+    buttons,
+  };
+
+  const btnResult = await evolutionFetch(`/message/sendButtons/${instance}`, {
+    method: 'POST',
+    body: JSON.stringify(buttonPayload),
+  });
+
+  // Fallback: if buttons not supported, send numbered list as text
+  if (!btnResult.ok) {
+    console.log('⚠️ Buttons not supported, falling back to text list');
+    const lines = ['Olá! 👋 Selecione o setor desejado:', ''];
+    queues.forEach((q, i) => {
+      lines.push(`*${i + 1}* - ${q.whatsapp_button_label || `${q.icon} ${q.name}`}`);
+    });
+    lines.push('', 'Responda com o *número* da opção desejada.');
+
+    await evolutionFetch(`/message/sendText/${instance}`, {
+      method: 'POST',
+      body: JSON.stringify({ number: phone, text: lines.join('\n') }),
+    });
+  }
+
+  // Mark lead as awaiting queue selection
+  await pool.query(
+    `UPDATE crm_leads SET awaiting_queue_selection = true, updated_at = NOW()
+     WHERE REPLACE(REPLACE(REPLACE(REPLACE(telefone, ' ', ''), '-', ''), '(', ''), ')', '') LIKE '%' || $1`,
+    [phone.slice(-11)]
+  );
+
+  console.log(`📋 Queue menu sent to ${phone} (${queues.length} options)`);
+}
+
+// Helper: match queue from button response or number
+async function matchQueue(content) {
+  if (!content) return null;
+  const trimmed = content.trim();
+
+  // Match by button ID (queue_UUID)
+  if (trimmed.startsWith('queue_')) {
+    const queueId = trimmed.replace('queue_', '');
+    const { rows } = await pool.query('SELECT * FROM attendance_queues WHERE id = $1 AND active = true', [queueId]);
+    return rows[0] || null;
+  }
+
+  // Match by number (1, 2, 3...)
+  const num = parseInt(trimmed, 10);
+  if (!isNaN(num) && num > 0) {
+    const { rows } = await pool.query('SELECT * FROM attendance_queues WHERE active = true ORDER BY name ASC');
+    return rows[num - 1] || null;
+  }
+
+  // Match by name (fuzzy)
+  const { rows } = await pool.query('SELECT * FROM attendance_queues WHERE active = true');
+  const lower = trimmed.toLowerCase();
+  return rows.find(q =>
+    q.name.toLowerCase().includes(lower) ||
+    (q.whatsapp_button_label || '').toLowerCase().includes(lower)
+  ) || null;
+}
 
 app.post('/api/webhook/evolution', async (req, res) => {
   try {
@@ -804,6 +885,11 @@ app.post('/api/webhook/evolution', async (req, res) => {
       return res.json({ ignored: true, reason: 'group_or_missing_jid' });
     }
 
+    // Skip outgoing messages
+    if (message?.key?.fromMe) {
+      return res.json({ ignored: true, reason: 'outgoing' });
+    }
+
     const phone = remoteJid.replace('@s.whatsapp.net', '').replace('@c.us', '');
     const phoneSuffix = phone.slice(-11);
 
@@ -811,6 +897,8 @@ app.post('/api/webhook/evolution', async (req, res) => {
     const msgContent =
       message?.message?.conversation ||
       message?.message?.extendedTextMessage?.text ||
+      message?.message?.buttonsResponseMessage?.selectedButtonId ||
+      message?.message?.listResponseMessage?.singleSelectReply?.selectedRowId ||
       message?.message?.imageMessage?.caption ||
       '';
     const msgType =
@@ -821,30 +909,105 @@ app.post('/api/webhook/evolution', async (req, res) => {
       message?.message?.stickerMessage ? 'sticker' :
       message?.message?.locationMessage ? 'location' :
       message?.message?.contactMessage ? 'contact' :
+      message?.message?.buttonsResponseMessage ? 'button_response' :
+      message?.message?.listResponseMessage ? 'list_response' :
       'text';
 
     // Find lead by phone
     const { rows: leads } = await pool.query(
-      `SELECT id, name, avatar_url, phone FROM crm_leads 
-       WHERE REPLACE(REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '(', ''), ')', '') LIKE '%' || $1
+      `SELECT id, nome as name, avatar_url, telefone as phone, queue_id, awaiting_queue_selection FROM crm_leads 
+       WHERE REPLACE(REPLACE(REPLACE(REPLACE(telefone, ' ', ''), '-', ''), '(', ''), ')', '') LIKE '%' || $1
        LIMIT 1`,
       [phoneSuffix]
     );
 
-    const lead = leads[0] || null;
+    let lead = leads[0] || null;
     const pushName = message?.pushName || phone;
 
-    // Broadcast to SSE clients
+    // ─── New contact: create lead + send queue menu ───
+    if (!lead) {
+      const newId = crypto.randomUUID();
+      await pool.query(
+        `INSERT INTO crm_leads (id, nome, telefone, origem, status, awaiting_queue_selection)
+         VALUES ($1, $2, $3, 'whatsapp', 'novo', true)`,
+        [newId, pushName, phone]
+      );
+      lead = { id: newId, name: pushName, phone, queue_id: null, awaiting_queue_selection: true, avatar_url: null };
+      console.log(`🆕 New lead created: ${pushName} (${phone})`);
+
+      // Send queue menu
+      await sendQueueMenu(instance, phone);
+    }
+
+    // ─── Lead is awaiting queue selection ───
+    if (lead.awaiting_queue_selection && (msgType === 'text' || msgType === 'button_response' || msgType === 'list_response')) {
+      const selectedQueue = await matchQueue(msgContent);
+
+      if (selectedQueue) {
+        // Assign queue to lead
+        await pool.query(
+          `UPDATE crm_leads SET queue_id = $1, queue_name = $2, awaiting_queue_selection = false, updated_at = NOW() WHERE id = $3`,
+          [selectedQueue.id, selectedQueue.name, lead.id]
+        );
+
+        // Send confirmation
+        await evolutionFetch(`/message/sendText/${instance}`, {
+          method: 'POST',
+          body: JSON.stringify({
+            number: phone,
+            text: `✅ Você foi direcionado para o setor *${selectedQueue.icon} ${selectedQueue.name}*.\n\nUm de nossos atendentes irá te ajudar em breve! 😊`,
+          }),
+        });
+
+        console.log(`📌 Lead ${lead.name} routed to queue: ${selectedQueue.name}`);
+
+        // Broadcast queue assignment to SSE
+        broadcastSSE('queue_assigned', {
+          leadId: lead.id,
+          leadName: lead.name,
+          phone,
+          queueId: selectedQueue.id,
+          queueName: selectedQueue.name,
+          queueColor: selectedQueue.color,
+          timestamp: new Date().toISOString(),
+        });
+
+        // Also broadcast the message itself
+        broadcastSSE('new_message', {
+          id: message?.key?.id || `wh-${Date.now()}`,
+          phone,
+          pushName,
+          leadId: lead.id,
+          leadName: lead.name,
+          content: `[Selecionou: ${selectedQueue.name}]`,
+          type: 'text',
+          timestamp: new Date().toISOString(),
+          instance,
+          queueId: selectedQueue.id,
+          queueName: selectedQueue.name,
+          queueColor: selectedQueue.color,
+        });
+
+        return res.json({ processed: true, leadId: lead.id, queueId: selectedQueue.id });
+      } else {
+        // Invalid selection — resend menu
+        await sendQueueMenu(instance, phone);
+        return res.json({ processed: true, resent_menu: true });
+      }
+    }
+
+    // ─── Normal message (queue already assigned) ───
     broadcastSSE('new_message', {
       id: message?.key?.id || `wh-${Date.now()}`,
       phone,
       pushName,
-      leadId: lead?.id || null,
-      leadName: lead?.name || pushName,
+      leadId: lead.id,
+      leadName: lead.name,
       content: msgContent || `[${msgType}]`,
       type: msgType,
       timestamp: new Date().toISOString(),
       instance,
+      queueId: lead.queue_id || null,
     });
 
     console.log(`💬 New message from ${pushName} (${phone}) → broadcast to ${sseClients.size} clients`);
@@ -866,7 +1029,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
       }
     }
 
-    res.json({ processed: true, leadId: lead?.id || null });
+    res.json({ processed: true, leadId: lead.id });
   } catch (error) {
     console.error('Webhook error:', error);
     res.status(500).json({ error: error.message });
