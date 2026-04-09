@@ -179,9 +179,7 @@ function PatientTableView() {
                 >
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3">
-                      <div className={`h-9 w-9 rounded-full ${patient.avatarColor} flex items-center justify-center text-xs font-bold text-primary-foreground`}>
-                        {patient.initials}
-                      </div>
+                      <LeadAvatar initials={patient.initials} avatarUrl={patient.avatarUrl} avatarColor={patient.avatarColor} size="sm" />
                       <div>
                         <p className="text-sm font-medium text-foreground">{patient.name}</p>
                         <p className="text-[11px] text-muted-foreground">{patient.phone}</p>
@@ -350,9 +348,7 @@ function KanbanCard({ lead, onDragStart }: { lead: KanbanLead; onDragStart: () =
     >
       <div className="flex items-start justify-between mb-2">
         <div className="flex items-center gap-2">
-          <div className={`h-8 w-8 rounded-full ${lead.avatarColor} flex items-center justify-center text-[10px] font-bold text-primary-foreground`}>
-            {lead.initials}
-          </div>
+          <LeadAvatar initials={lead.initials} avatarUrl={lead.avatarUrl} avatarColor={lead.avatarColor} size="sm" />
           <div>
             <p className="text-sm font-medium text-card-foreground leading-tight">{lead.name}</p>
             <p className="text-[11px] text-muted-foreground">{lead.origin}</p>
@@ -395,9 +391,7 @@ function PatientDetail({ patient, onClose }: { patient: Patient; onClose: () => 
       <div className="p-6 space-y-6">
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-4">
-            <div className={`h-14 w-14 rounded-full ${patient.avatarColor} flex items-center justify-center text-lg font-bold text-primary-foreground`}>
-              {patient.initials}
-            </div>
+            <LeadAvatar initials={patient.initials} avatarUrl={patient.avatarUrl} avatarColor={patient.avatarColor} size="lg" />
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-xl font-bold text-foreground">{patient.name}</h2>
