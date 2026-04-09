@@ -143,10 +143,7 @@ function PainelComercialPage() {
                   <YAxis type="category" dataKey="origin" width={80} fontSize={12} tick={{ fill: "hsl(var(--foreground))" }} />
                   <Tooltip
                     contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 12 }}
-                    formatter={(value: number, _name: string, props: { payload: typeof conversionByOrigin[0] }) => [
-                      `${value.toFixed(1)}% (${props.payload.convertidos}/${props.payload.leads})`,
-                      "Conversão",
-                    ]}
+                    formatter={(value: number) => [`${value.toFixed(1)}%`, "Conversão"]}
                   />
                   <Bar dataKey="rate" radius={[0, 6, 6, 0]} barSize={18}>
                     {conversionByOrigin.map((_, i) => (
