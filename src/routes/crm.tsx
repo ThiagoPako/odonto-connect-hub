@@ -90,13 +90,42 @@ function PatientTableView() {
   const [originFilter, setOriginFilter] = useState("Todos");
   const [statusFilter, setStatusFilter] = useState("Todos");
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
+  const [patients, setPatients] = useState<Patient[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const filtered = mockPatients.filter((p) => {
-    const matchSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      p.phone.includes(searchTerm) || p.email.toLowerCase().includes(searchTerm.toLowerCase());
+  const loadPatients = useCallback(async () => {
+    setLoading(true);
+    const params: Record<string, string> = {};
+    if (searchTerm.trim()) params.search = searchTerm.trim();
+    if (statusFilter !== "Todos") params.status = statusFilter;
+    const { data } = await crmApi.list(params);
+    if (data && Array.isArray(data)) {
+      setPatients(data.map((r: any) => ({
+        id: r.id,
+        name: r.nome,
+        initials: (r.nome || '').split(' ').map((w: string) => w[0]).join('').slice(0, 2).toUpperCase(),
+        phone: r.telefone || '',
+        email: r.email || '',
+        origin: r.origem || 'WhatsApp',
+        status: r.status === 'em_contato' ? 'ativo' : (r.status === 'novo' ? 'lead' : r.status) as Patient["status"],
+        lastVisit: r.updated_at ? new Date(r.updated_at) : undefined,
+        createdAt: new Date(r.created_at),
+        totalSpent: 0,
+        avatarColor: 'bg-chart-1',
+        avatarUrl: r.avatar_url,
+      })));
+    }
+    setLoading(false);
+  }, [searchTerm, statusFilter]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => void loadPatients(), 300);
+    return () => clearTimeout(timer);
+  }, [loadPatients]);
+
+  const filtered = patients.filter((p) => {
     const matchOrigin = originFilter === "Todos" || p.origin === originFilter;
-    const matchStatus = statusFilter === "Todos" || p.status === statusFilter;
-    return matchSearch && matchOrigin && matchStatus;
+    return matchOrigin;
   });
 
   return (
