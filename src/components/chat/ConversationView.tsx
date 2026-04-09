@@ -831,7 +831,7 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
                     )}
                     {/* Caption for media messages */}
                     {["image", "video"].includes(msg.type) && msg.content && !msg.content.startsWith("🖼️") && !msg.content.startsWith("🎬") && (
-                      <p className="text-[13px] leading-relaxed whitespace-pre-wrap mt-1">{renderFormattedText(msg.content)}</p>
+                      <p className="text-[13px] leading-relaxed whitespace-pre-wrap mt-1 font-medium">{renderFormattedText(msg.content)}</p>
                     )}
 
                     {msg.type !== "sticker" && renderLinkPreview(msg)}
