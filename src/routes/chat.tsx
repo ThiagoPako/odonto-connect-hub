@@ -823,12 +823,12 @@ function ChatPage() {
 
       const reader = new FileReader();
       reader.onloadend = () => {
-        const base64 = (reader.result as string).split(",")[1];
-        const previewUrl = (type === "image" || type === "video") ? URL.createObjectURL(file) : undefined;
+        const dataUri = reader.result as string;
+        const base64 = dataUri.split(",")[1];
         const label = type === "image" ? "🖼️ Imagem" : type === "video" ? "🎬 Vídeo" : type === "audio" ? "🎤 Áudio" : `📎 ${file.name}`;
         handleSendMessage(label, type, {
           fileName: file.name,
-          fileUrl: previewUrl,
+          fileUrl: dataUri,
           mimeType: file.type,
           _mediaBase64: base64,
         } as any);
