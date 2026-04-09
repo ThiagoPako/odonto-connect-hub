@@ -6,9 +6,10 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Search, Plus, Filter, Phone, Mail, Calendar, DollarSign,
   ChevronRight, MoreHorizontal, UserPlus, ExternalLink,
-  Clock, MessageSquare, GripVertical,
+  Clock, MessageSquare, GripVertical, RefreshCw,
 } from "lucide-react";
 import { toast } from "sonner";
+import { whatsappApi } from "@/lib/vpsApi";
 
 export const Route = createFileRoute("/crm")({
   ssr: false,
