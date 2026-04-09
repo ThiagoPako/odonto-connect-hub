@@ -17,11 +17,12 @@ interface ChatHeaderProps {
   lead: Lead;
   onClose: () => void;
   onTransfer?: (lead: Lead, toAttendantId: string, toAttendantName: string, reason: string) => void;
+  onFinishAttendance?: (lead: Lead) => void;
   leadTagIds?: string[];
   onToggleTag?: (leadId: string, tagId: string) => void;
 }
 
-export function ChatHeader({ lead, onClose, onTransfer, leadTagIds = [], onToggleTag }: ChatHeaderProps) {
+export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, leadTagIds = [], onToggleTag }: ChatHeaderProps) {
   const { user: currentUser } = useAuth();
   const [showTransfer, setShowTransfer] = useState(false);
   const [showTagMenu, setShowTagMenu] = useState(false);
