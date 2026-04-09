@@ -8,13 +8,23 @@
  * 3. pm2 start server.mjs --name odonto-api
  */
 
-import 'dotenv/config';
+import dotenv from 'dotenv';
 import express from 'express';
 import cors from 'cors';
 import pg from 'pg';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import webpush from 'web-push';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+dotenv.config({
+  path: path.join(__dirname, '.env'),
+  override: true,
+});
 
 const { Pool } = pg;
 const app = express();
@@ -31,6 +41,16 @@ const pool = new Pool({
   database: process.env.PG_DATABASE || 'odonto_db',
   user: process.env.PG_USER || 'odonto_user',
   password: process.env.PG_PASSWORD,
+});
+
+console.log('🗄️ Postgres env loaded', {
+  host: process.env.PG_HOST || 'localhost',
+  port: Number(process.env.PG_PORT) || 5432,
+  database: process.env.PG_DATABASE || 'odonto_db',
+  user: process.env.PG_USER || 'odonto_user',
+  hasPassword: Boolean(process.env.PG_PASSWORD),
+  passwordLength: (process.env.PG_PASSWORD || '').length,
+  envPath: path.join(__dirname, '.env'),
 });
 
 // ─── JWT Config ─────────────────────────────────────────────
