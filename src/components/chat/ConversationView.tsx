@@ -445,6 +445,7 @@ export function ConversationView({ messages, leadName, isTyping, onReaction, onR
 
               <div
                 id={`msg-${msg.id}`}
+                onContextMenu={(e) => handleContextMenu(e, msg)}
                 className={`flex ${isLead ? "justify-start" : "justify-end"} group ${
                   isLead ? "animate-chat-bubble-left" : "animate-chat-bubble-right"
                 } ${first ? "mt-3" : "mt-0.5"} ${highlightedMsgId === msg.id ? "ring-2 ring-primary/40 rounded-2xl" : ""}`}
