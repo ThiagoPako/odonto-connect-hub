@@ -1,6 +1,6 @@
 import type { ChatMessage } from "@/data/chatMockData";
 import { useEffect, useRef, useState, useCallback } from "react";
-import { CheckCheck, Check, MapPin, Phone, Mail, Globe, Building2, BarChart3, Reply, SmilePlus, ExternalLink, List, ChevronDown, Forward, Trash2, Search, Loader2, Upload, Copy } from "lucide-react";
+import { CheckCheck, Check, MapPin, Phone, Mail, Globe, Building2, BarChart3, Reply, SmilePlus, ExternalLink, List, ChevronDown, Forward, Trash2, Search, Loader2, Upload, Copy, Clock, Mic } from "lucide-react";
 import { TypingIndicator } from "./TypingIndicator";
 
 interface ServerSearchResult {
@@ -30,7 +30,7 @@ interface ConversationViewProps {
 
 
 // ─── Audio Player (supports base64 data URIs and ogg/opus) ──
-function AudioPlayer({ fileUrl, duration, isLead }: { fileUrl?: string; duration?: number; isLead: boolean }) {
+function AudioPlayer({ fileUrl, duration, isLead, status }: { fileUrl?: string; duration?: number; isLead: boolean; status?: string }) {
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
@@ -104,18 +104,27 @@ function AudioPlayer({ fileUrl, duration, isLead }: { fileUrl?: string; duration
     );
   }
 
+  const listened = status === "read";
+
   return (
     <div className="flex items-center gap-2.5 mb-1.5 min-w-[220px]">
-      <button onClick={togglePlay} className={`h-9 w-9 rounded-full flex items-center justify-center shrink-0 transition-colors ${isLead ? "bg-primary/15 hover:bg-primary/25" : "bg-primary-foreground/15 hover:bg-primary-foreground/25"}`}>
-        {playing ? (
-          <div className="flex gap-[2px]">
-            <div className={`w-[3px] h-3.5 rounded-sm ${isLead ? "bg-primary" : "bg-primary-foreground"}`} />
-            <div className={`w-[3px] h-3.5 rounded-sm ${isLead ? "bg-primary" : "bg-primary-foreground"}`} />
-          </div>
-        ) : (
-          <div className={`w-0 h-0 border-l-[9px] border-y-[6px] border-y-transparent ml-0.5 ${isLead ? "border-l-primary" : "border-l-primary-foreground"}`} />
-        )}
-      </button>
+      {/* Mic icon — blue when listened (WhatsApp pattern) */}
+      <div className="relative shrink-0">
+        <button onClick={togglePlay} className={`h-10 w-10 rounded-full flex items-center justify-center shrink-0 transition-colors ${isLead ? "bg-primary/15 hover:bg-primary/25" : "bg-primary-foreground/15 hover:bg-primary-foreground/25"}`}>
+          {playing ? (
+            <div className="flex gap-[2px]">
+              <div className={`w-[3px] h-3.5 rounded-sm ${isLead ? "bg-primary" : "bg-primary-foreground"}`} />
+              <div className={`w-[3px] h-3.5 rounded-sm ${isLead ? "bg-primary" : "bg-primary-foreground"}`} />
+            </div>
+          ) : (
+            <div className={`w-0 h-0 border-l-[9px] border-y-[6px] border-y-transparent ml-0.5 ${isLead ? "border-l-primary" : "border-l-primary-foreground"}`} />
+          )}
+        </button>
+        {/* Small mic badge — like WhatsApp voice notes */}
+        <div className={`absolute -bottom-0.5 -right-0.5 h-4 w-4 rounded-full flex items-center justify-center ${listened ? "bg-[#53bdeb]" : isLead ? "bg-muted" : "bg-primary-foreground/30"}`}>
+          <Mic className={`h-2.5 w-2.5 ${listened ? "text-white" : isLead ? "text-muted-foreground" : "text-primary-foreground"}`} />
+        </div>
+      </div>
       <div className="flex-1 flex flex-col gap-1">
         <div
           ref={trackRef}
@@ -501,21 +510,27 @@ export function ConversationView({ messages, leadName, isTyping, onReaction, onR
     <div className="text-5xl animate-pop-in">{msg.stickerUrl || msg.content}</div>
   );
 
-  // Message status indicator
+  // Message status indicator — WhatsApp pattern
   const renderStatus = (msg: ChatMessage) => {
     if (msg.sender === "lead") return null;
-    // System messages don't get status
     if (msg.id.startsWith("sys-")) return null;
 
-    const status = (msg as any).status as string | undefined;
-    if (status === "read") {
-      return <CheckCheck className="h-3.5 w-3.5 text-[#53bdeb]" />;
+    const s = (msg as any).status as string | undefined;
+    switch (s) {
+      case "sending":
+        return <Clock className="h-3 w-3 opacity-60" />;
+      case "sent":
+        return <Check className="h-3.5 w-3.5 opacity-70" />;
+      case "delivered":
+        return <CheckCheck className="h-3.5 w-3.5 opacity-70" />;
+      case "read":
+        return <CheckCheck className="h-3.5 w-3.5 text-[#53bdeb]" />;
+      case "failed":
+        return <span className="text-[10px] text-destructive font-medium">!</span>;
+      default:
+        // Default to "sent" (single check)
+        return <Check className="h-3.5 w-3.5 opacity-70" />;
     }
-    if (status === "delivered") {
-      return <CheckCheck className="h-3.5 w-3.5" />;
-    }
-    // Default: sent
-    return <Check className="h-3.5 w-3.5" />;
   };
 
   // Group consecutive messages by same sender
@@ -712,7 +727,7 @@ export function ConversationView({ messages, leadName, isTyping, onReaction, onR
                   >
                     {/* Content by type */}
                     {msg.type === "audio" && (
-                      <AudioPlayer fileUrl={msg.fileUrl} duration={msg.duration} isLead={isLead} />
+                      <AudioPlayer fileUrl={msg.fileUrl} duration={msg.duration} isLead={isLead} status={(msg as any).status} />
                     )}
                     {msg.type === "document" && (
                       <div className="flex items-center gap-3 p-2.5 rounded-xl bg-background/15 mb-1.5 border border-border/20 cursor-pointer hover:bg-background/25 transition-colors" onClick={() => msg.fileUrl && window.open(msg.fileUrl, "_blank")}>
