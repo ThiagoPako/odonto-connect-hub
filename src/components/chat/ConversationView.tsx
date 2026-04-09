@@ -468,6 +468,7 @@ export function ConversationView({ messages, leadName, isTyping, onReaction, onR
                 </div>
               )}
 
+              <div
                 id={`msg-${msg.id}`}
                 onContextMenu={(e) => handleContextMenu(e, msg)}
                 className={`flex ${isLead ? "justify-start" : "justify-end"} group ${
