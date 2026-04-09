@@ -14,6 +14,7 @@ import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { useRealtimeChat, type IncomingMessage } from "@/hooks/useRealtimeChat";
 import { whatsappApi, transferApi, sessionsApi, tagsApi, queuesApi, type LeadTagApi } from "@/lib/vpsApi";
+import { sendTextMessage, fetchInstances } from "@/lib/evolutionApi";
 import { playNotificationSound } from "@/lib/notificationSound";
 import { showBrowserNotification, requestNotificationPermission } from "@/lib/browserNotification";
 import { setChatUnreadCount } from "@/lib/chatUnreadStore";
@@ -268,7 +269,7 @@ function ChatPage() {
 
   const [replyingTo, setReplyingTo] = useState<ReplyData | null>(null);
 
-  const handleSendMessage = (content: string, type: MessageType, extra?: Partial<ChatMessage>) => {
+  const handleSendMessage = async (content: string, type: MessageType, extra?: Partial<ChatMessage>) => {
     if (!selectedLead) return;
 
     // Track first response time
@@ -292,6 +293,21 @@ function ChatPage() {
       [selectedLead.id]: [...(prev[selectedLead.id] || []), newMsg],
     }));
     setReplyingTo(null);
+
+    // Send via WhatsApp (Evolution API)
+    if (type === "text" && selectedLead.phone) {
+      try {
+        const instances = await fetchInstances();
+        const connected = instances.find((i) => i.status === "open");
+        if (connected) {
+          await sendTextMessage(connected.instanceName, selectedLead.phone, content);
+        } else {
+          toast.error("Nenhuma instância WhatsApp conectada");
+        }
+      } catch (err: any) {
+        toast.error("Erro ao enviar pelo WhatsApp: " + (err?.message || ""));
+      }
+    }
   };
 
   const handleFinishAttendance = (lead: Lead) => {
