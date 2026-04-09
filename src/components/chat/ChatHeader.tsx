@@ -4,6 +4,7 @@ import { Phone, Video, MoreVertical, X, ArrowRightLeft, Loader2, ArrowLeft } fro
 import { LeadAvatar } from "@/components/LeadAvatar";
 import { toast } from "sonner";
 import { adminListUsers } from "@/lib/vpsApi";
+import { useAuth } from "@/hooks/useAuth";
 
 interface Attendant {
   id: string;
