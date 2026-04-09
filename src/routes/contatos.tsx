@@ -219,8 +219,8 @@ function ContatosPage() {
                       variant="ghost"
                       size="icon"
                       className="h-8 w-8"
-                      title="Enviar WhatsApp"
-                      onClick={() => setWhatsappContato(contato)}
+                      title="Abrir Chat"
+                      onClick={() => navigate({ to: "/chat", search: { lead: contato.nome } })}
                     >
                       <MessageSquare className="h-4 w-4 text-primary" />
                     </Button>
