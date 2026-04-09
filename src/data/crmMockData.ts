@@ -13,6 +13,7 @@ export interface Patient {
   createdAt: Date;
   totalSpent: number;
   avatarColor: string;
+  avatarUrl?: string | null;
 }
 
 export interface KanbanLead {
@@ -26,6 +27,7 @@ export interface KanbanLead {
   assignedInitials: string;
   lastContact: Date;
   avatarColor: string;
+  avatarUrl?: string | null;
 }
 
 export type KanbanStage =

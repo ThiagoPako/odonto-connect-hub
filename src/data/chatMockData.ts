@@ -9,6 +9,7 @@ export interface Lead {
   status: "waiting" | "active" | "closed";
   assignedTo?: string;
   avatarColor?: string;
+  avatarUrl?: string | null;
 }
 
 export type MessageType =
