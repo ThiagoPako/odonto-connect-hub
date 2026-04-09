@@ -52,6 +52,9 @@ export function useRealtimeChat(options: RealtimeChatOptions) {
   const presenceRef = useRef<PresenceHandler | undefined>(options.onPresence);
   presenceRef.current = options.onPresence;
 
+  const queueAssignRef = useRef<QueueAssignHandler | undefined>(options.onQueueAssigned);
+  queueAssignRef.current = options.onQueueAssigned;
+
   useEffect(() => {
     let es: EventSource | null = null;
     let retryTimeout: ReturnType<typeof setTimeout>;
