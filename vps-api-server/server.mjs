@@ -604,7 +604,6 @@ app.post('/api/whatsapp/send-media', async (req, res) => {
     const cleanNumber = number.replace(/\D/g, '');
 
     if (mediaType === 'audio') {
-      // Clean MIME type — remove codecs params (e.g. "audio/webm;codecs=opus" → "audio/ogg")
       const rawMime = media.mimeType || 'audio/ogg';
       const cleanMime = rawMime.split(';')[0].trim();
       const finalMime = cleanMime === 'audio/webm' ? 'audio/ogg' : cleanMime;
@@ -618,6 +617,12 @@ app.post('/api/whatsapp/send-media', async (req, res) => {
           audio: audioData,
         }),
       });
+      if (!result.ok) {
+        return res.status(result.status || 502).json({
+          error: result.data?.response?.message?.[0] || result.data?.error || 'Falha ao enviar áudio',
+          details: result.data,
+        });
+      }
       return res.json(result.data);
     }
 
