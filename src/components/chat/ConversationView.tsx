@@ -727,7 +727,7 @@ export function ConversationView({ messages, leadName, isTyping, onReaction, onR
                   >
                     {/* Content by type */}
                     {msg.type === "audio" && (
-                      <AudioPlayer fileUrl={msg.fileUrl} duration={msg.duration} isLead={isLead} />
+                      <AudioPlayer fileUrl={msg.fileUrl} duration={msg.duration} isLead={isLead} status={(msg as any).status} />
                     )}
                     {msg.type === "document" && (
                       <div className="flex items-center gap-3 p-2.5 rounded-xl bg-background/15 mb-1.5 border border-border/20 cursor-pointer hover:bg-background/25 transition-colors" onClick={() => msg.fileUrl && window.open(msg.fileUrl, "_blank")}>
