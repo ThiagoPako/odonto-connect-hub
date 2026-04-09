@@ -11,7 +11,7 @@ import { useState, useEffect, useCallback } from "react";
 import { contatosApi, type Contato } from "@/lib/vpsApi";
 import { CreateContatoDialog } from "@/components/contatos/CreateContatoDialog";
 import { EditContatoDialog } from "@/components/contatos/EditContatoDialog";
-import { SendWhatsAppDialog } from "@/components/contatos/SendWhatsAppDialog";
+
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/contatos")({
@@ -267,15 +267,6 @@ function ContatosPage() {
             setEditContato(null);
             toast.success("Contato atualizado!");
           }}
-        />
-      )}
-
-      {whatsappContato && whatsappContato.telefone && (
-        <SendWhatsAppDialog
-          open={!!whatsappContato}
-          onOpenChange={(open) => !open && setWhatsappContato(null)}
-          contactName={whatsappContato.nome}
-          contactPhone={whatsappContato.telefone}
         />
       )}
     </div>
