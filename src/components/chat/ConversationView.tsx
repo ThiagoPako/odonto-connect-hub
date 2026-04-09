@@ -38,6 +38,8 @@ function AudioPlayer({ fileUrl, duration, isLead }: { fileUrl?: string; duration
   const [totalDuration, setTotalDuration] = useState(duration || 0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const blobUrlRef = useRef<string | null>(null);
+  const trackRef = useRef<HTMLDivElement | null>(null);
+  const draggingRef = useRef(false);
 
   const getSrc = useCallback(() => {
     if (!fileUrl) return "";
