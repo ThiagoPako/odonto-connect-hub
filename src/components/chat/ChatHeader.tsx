@@ -110,28 +110,37 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onRe
   };
 
   const handleCall = async (isVideo: boolean) => {
-    const instance = connectedInstances[0]?.instanceName;
-    if (!instance) {
-      toast.error("Nenhuma instância WhatsApp conectada");
-      return;
-    }
     if (!lead.phone) {
       toast.error("Contato sem número de telefone");
       return;
     }
-    setCalling(true);
-    toast.info(isVideo ? "Iniciando chamada de vídeo..." : "Iniciando ligação...");
-    try {
-      const { error } = await whatsappApi.offerCall(instance, lead.phone, isVideo);
-      if (error) {
-        toast.error("Erro ao ligar: " + error);
-      } else {
-        toast.success(isVideo ? "Chamada de vídeo iniciada!" : "Ligação iniciada!");
+    const cleanNumber = lead.phone.replace(/\D/g, "");
+    
+    // Try Evolution API call first
+    const instance = connectedInstances[0]?.instanceName;
+    if (instance) {
+      setCalling(true);
+      toast.info(isVideo ? "Iniciando chamada de vídeo..." : "Iniciando ligação...");
+      try {
+        const { error } = await whatsappApi.offerCall(instance, cleanNumber, isVideo);
+        if (error) {
+          // Fallback: open WhatsApp directly
+          window.open(`https://wa.me/${cleanNumber}`, "_blank");
+          toast.info("Abrindo WhatsApp para ligar manualmente");
+        } else {
+          toast.success(isVideo ? "Chamada de vídeo iniciada!" : "Ligação iniciada!");
+        }
+      } catch (err: any) {
+        // Fallback: open WhatsApp directly
+        window.open(`https://wa.me/${cleanNumber}`, "_blank");
+        toast.info("Abrindo WhatsApp para ligar manualmente");
+      } finally {
+        setCalling(false);
       }
-    } catch (err: any) {
-      toast.error("Falha na ligação: " + (err.message || "erro desconhecido"));
-    } finally {
-      setCalling(false);
+    } else {
+      // No instance connected — open WhatsApp directly
+      window.open(`https://wa.me/${cleanNumber}`, "_blank");
+      toast.info("Abrindo WhatsApp para ligar");
     }
   };
 
