@@ -120,11 +120,28 @@ export async function sendTextMessage(
   const cleanNumber = number.replace(/\D/g, "");
   return apiCall(`/message/sendText/${instanceName}`, {
     method: "POST",
-    body: JSON.stringify({
-      number: cleanNumber,
-      text,
-    }),
+    body: JSON.stringify({ number: cleanNumber, text }),
   });
+}
+
+export interface WhatsAppContact {
+  id: string;
+  pushName?: string;
+  profilePictureUrl?: string;
+}
+
+export async function fetchWhatsAppContacts(instanceName: string): Promise<WhatsAppContact[]> {
+  const raw = await apiCall<any[]>(`/chat/findContacts/${instanceName}`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+  return (raw || [])
+    .filter((c: any) => c.id?.endsWith("@s.whatsapp.net"))
+    .map((c: any) => ({
+      id: c.id.replace("@s.whatsapp.net", ""),
+      pushName: c.pushName || c.name || "",
+      profilePictureUrl: c.profilePictureUrl || "",
+    }));
 }
 
 export { type ConnectionStatus, type EvolutionInstance, type InstanceState, type QrCodeResponse };
