@@ -74,7 +74,7 @@ function ChatPage() {
   myLeadsRef.current = myLeads;
   selectedLeadRef.current = selectedLead;
 
-  // Load queues, tags and assignments from VPS
+  // Load queues, tags, assignments and unread counts from VPS
   useEffect(() => {
     queuesApi.list().then(({ data }) => {
       if (data && Array.isArray(data)) {
@@ -88,6 +88,19 @@ function ChatPage() {
     });
     tagsApi.list().then(({ data }) => { if (data) setAvailableTags(data); });
     tagsApi.assignments().then(({ data }) => { if (data) setLeadTagAssignments(data); });
+
+    // Load unread counts from backend and apply to leads
+    messagesApi.unreadCounts().then(({ data }) => {
+      if (!data || typeof data !== 'object') return;
+      const counts = data as Record<string, number>;
+      const applyUnread = (leads: Lead[]): Lead[] =>
+        leads.map((l) => counts[l.id] != null ? { ...l, unreadCount: counts[l.id] } : l);
+      setQueue((prev) => applyUnread(prev));
+      setMyLeads((prev) => applyUnread(prev));
+      // Also update sidebar badge
+      const total = Object.values(counts).reduce((s, c) => s + c, 0);
+      setChatUnreadCount(total);
+    });
   }, []);
 
   const handleToggleTag = useCallback((leadId: string, tagId: string) => {
@@ -310,8 +323,12 @@ function ChatPage() {
       setHistoryHasMore((prev) => ({ ...prev, [selectedLead.id]: data.hasMore }));
     });
 
-    // Mark messages as read on server
+    // Mark messages as read on server and reset local unread count
     messagesApi.markRead(selectedLead.id).catch(() => {});
+    const resetUnread = (l: Lead): Lead =>
+      l.id === selectedLead.id ? { ...l, unreadCount: 0 } : l;
+    setQueue((prev) => prev.map(resetUnread));
+    setMyLeads((prev) => prev.map(resetUnread));
   }, [selectedLead?.id]);
 
   // ─── Infinite scroll: load older messages ───
