@@ -1027,11 +1027,45 @@ async function matchQueue(content) {
   ) || null;
 }
 
+async function persistIncomingMessage({ msgId, leadId, content, msgType, phone, instance, pushName, remoteJid, rawType }) {
+  try {
+    await pool.query(
+      `INSERT INTO chat_messages (id, lead_id, content, sender, type, status, timestamp, phone, instance, metadata)
+       VALUES ($1,$2,$3,'lead',$4,'delivered',NOW(),$5,$6,$7)
+       ON CONFLICT (id) DO NOTHING`,
+      [msgId, leadId, content, msgType, phone, instance, JSON.stringify({
+        pushName,
+        remoteJid,
+        rawType,
+      })]
+    );
+  } catch (dbErr) {
+    console.error('DB insert error (incoming msg):', dbErr.message);
+  }
+}
+
+function broadcastIncomingMessage({ msgId, phone, pushName, leadId, leadName, content, msgType, instance, queueId = null, queueName, queueColor }) {
+  broadcastSSE('new_message', {
+    id: msgId,
+    phone,
+    pushName,
+    leadId,
+    leadName,
+    content,
+    type: msgType,
+    timestamp: new Date().toISOString(),
+    instance,
+    queueId,
+    queueName,
+    queueColor,
+  });
+}
+
 app.post('/api/webhook/evolution', async (req, res) => {
   try {
     const body = req.body;
-    const event = body.event;
-    const instance = body.instance;
+    const event = typeof body.event === 'string' ? body.event.toLowerCase().replace(/_/g, '.') : '';
+    const instance = body.instance || body.instanceName;
 
     // ─── Presence updates (typing, recording, online) ───
     if (event === 'presence.update') {
@@ -1111,6 +1145,9 @@ app.post('/api/webhook/evolution', async (req, res) => {
 
     let lead = leads[0] || null;
     const pushName = message?.pushName || phone;
+    const msgId = message?.key?.id || `wh-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
+    const resolvedContent = msgContent || `[${msgType}]`;
+    const rawType = Object.keys(message?.message || {})[0] || null;
 
     // ─── New contact: create lead + check hours + send menu ───
     if (!lead) {
@@ -1132,12 +1169,26 @@ app.post('/api/webhook/evolution', async (req, res) => {
           body: JSON.stringify({ number: phone, text: offMsg }),
         });
         console.log(`🕐 Off-hours message sent to ${phone}`);
-        // Still broadcast to SSE so attendants see the message
-        broadcastSSE('new_message', {
-          id: message?.key?.id || `wh-${Date.now()}`,
-          phone, pushName, leadId: lead.id, leadName: lead.name,
-          content: msgContent || `[${msgType}]`, type: msgType,
-          timestamp: new Date().toISOString(), instance,
+        await persistIncomingMessage({
+          msgId,
+          leadId: lead.id,
+          content: resolvedContent,
+          msgType,
+          phone,
+          instance,
+          pushName,
+          remoteJid,
+          rawType,
+        });
+        broadcastIncomingMessage({
+          msgId,
+          phone,
+          pushName,
+          leadId: lead.id,
+          leadName: lead.name,
+          content: resolvedContent,
+          msgType,
+          instance,
         });
         return res.json({ processed: true, offHours: true, leadId: lead.id });
       }
@@ -1205,9 +1256,32 @@ app.post('/api/webhook/evolution', async (req, res) => {
 
         return res.json({ processed: true, leadId: lead.id, queueId: selectedQueue.id });
       } else {
+        await persistIncomingMessage({
+          msgId,
+          leadId: lead.id,
+          content: resolvedContent,
+          msgType,
+          phone,
+          instance,
+          pushName,
+          remoteJid,
+          rawType,
+        });
+        broadcastIncomingMessage({
+          msgId,
+          phone,
+          pushName,
+          leadId: lead.id,
+          leadName: lead.name,
+          content: resolvedContent,
+          msgType,
+          instance,
+          queueId: lead.queue_id || null,
+        });
         // Invalid selection — resend menu
         await sendQueueMenu(instance, phone);
-        return res.json({ processed: true, resent_menu: true });
+        console.log(`💬 Incoming message from ${pushName} (${phone}) awaiting queue selection → saved + broadcast to ${sseClients.size} clients`);
+        return res.json({ processed: true, resent_menu: true, leadId: lead.id });
       }
     }
 
@@ -1254,33 +1328,26 @@ app.post('/api/webhook/evolution', async (req, res) => {
     }
 
     // ─── Normal message (queue already assigned) ───
-    const msgId = message?.key?.id || `wh-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
+    await persistIncomingMessage({
+      msgId,
+      leadId: lead.id,
+      content: resolvedContent,
+      msgType,
+      phone,
+      instance,
+      pushName,
+      remoteJid,
+      rawType,
+    });
 
-    // Persist incoming message to database
-    try {
-      await pool.query(
-        `INSERT INTO chat_messages (id, lead_id, content, sender, type, status, timestamp, phone, instance, metadata)
-         VALUES ($1,$2,$3,'lead',$4,'delivered',NOW(),$5,$6,$7)
-         ON CONFLICT (id) DO NOTHING`,
-        [msgId, lead.id, msgContent || `[${msgType}]`, msgType, phone, instance, JSON.stringify({
-          pushName,
-          remoteJid,
-          rawType: Object.keys(message?.message || {})[0] || null,
-        })]
-      );
-    } catch (dbErr) {
-      console.error('DB insert error (incoming msg):', dbErr.message);
-    }
-
-    broadcastSSE('new_message', {
-      id: msgId,
+    broadcastIncomingMessage({
+      msgId,
       phone,
       pushName,
       leadId: lead.id,
       leadName: lead.name,
-      content: msgContent || `[${msgType}]`,
-      type: msgType,
-      timestamp: new Date().toISOString(),
+      content: resolvedContent,
+      msgType,
       instance,
       queueId: lead.queue_id || null,
     });
