@@ -5,8 +5,9 @@ import { LeadListItem } from "@/components/chat/LeadListItem";
 import { ConversationView } from "@/components/chat/ConversationView";
 import { MessageInput } from "@/components/chat/MessageInput";
 import { ChatHeader } from "@/components/chat/ChatHeader";
-import { Users, MessageSquare, Inbox, Filter } from "lucide-react";
+import { Users, MessageSquare, Inbox, Filter, Tags } from "lucide-react";
 import { getQueues, type AttendanceQueue } from "@/data/queueData";
+import { getTags, getLeadTags, saveLeadTags, type LeadTag } from "@/data/leadTags";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { useRealtimeChat, type IncomingMessage } from "@/hooks/useRealtimeChat";
@@ -49,7 +50,20 @@ function ChatPage() {
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [messages, setMessages] = useState<Record<string, ChatMessage[]>>(mockMessages);
   const [filterQueue, setFilterQueue] = useState<string | null>(null);
+  const [filterTag, setFilterTag] = useState<string | null>(null);
   const [availableQueues] = useState<AttendanceQueue[]>(() => getQueues().filter((q) => q.active));
+  const [availableTags] = useState<LeadTag[]>(() => getTags());
+  const [leadTagAssignments, setLeadTagAssignments] = useState<Record<string, string[]>>(() => getLeadTags());
+
+  const handleToggleTag = useCallback((leadId: string, tagId: string) => {
+    setLeadTagAssignments((prev) => {
+      const current = prev[leadId] || [];
+      const updated = current.includes(tagId) ? current.filter((t) => t !== tagId) : [...current, tagId];
+      const next = { ...prev, [leadId]: updated };
+      saveLeadTags(next);
+      return next;
+    });
+  }, []);
 
   // ─── Real-time incoming messages via SSE ───
   const handleIncomingMessage = useCallback((msg: IncomingMessage) => {
@@ -297,7 +311,8 @@ function ChatPage() {
 
   const currentMessages = selectedLead ? messages[selectedLead.id] || [] : [];
   const baseList = activeTab === "queue" ? queue : myLeads;
-  const currentList = filterQueue ? baseList.filter((l) => l.queueId === filterQueue) : baseList;
+  const filteredByQueue = filterQueue ? baseList.filter((l) => l.queueId === filterQueue) : baseList;
+  const currentList = filterTag ? filteredByQueue.filter((l) => (leadTagAssignments[l.id] || []).includes(filterTag)) : filteredByQueue;
 
   return (
     <div className="flex-1 flex flex-col h-screen overflow-hidden">
@@ -369,6 +384,24 @@ function ChatPage() {
             </div>
           )}
 
+          {/* Tag Filter */}
+          {availableTags.length > 0 && (
+            <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-border shrink-0 overflow-x-auto">
+              <Tags className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+              {availableTags.map((tag) => (
+                <button
+                  key={tag.id}
+                  onClick={() => setFilterTag(filterTag === tag.id ? null : tag.id)}
+                  className={`px-2 py-0.5 rounded-full text-[11px] font-medium transition-colors shrink-0 ${
+                    filterTag === tag.id ? "text-white" : "text-muted-foreground hover:opacity-80"
+                  }`}
+                  style={filterTag === tag.id ? { backgroundColor: tag.color } : { backgroundColor: tag.color + "20", color: tag.color }}
+                >
+                  {tag.icon} {tag.name}
+                </button>
+              ))}
+            </div>
+          )}
           {/* Lead List */}
           <div className="flex-1 overflow-y-auto">
             {currentList.length === 0 ? (
@@ -389,6 +422,8 @@ function ChatPage() {
                   onSelect={setSelectedLead}
                   showAssignButton={activeTab === "queue"}
                   onAssign={handleAssign}
+                  tagIds={leadTagAssignments[lead.id] || []}
+                  allTags={availableTags}
                 />
               ))
             )}
@@ -399,7 +434,7 @@ function ChatPage() {
         <div className="flex-1 flex flex-col bg-background">
           {selectedLead ? (
             <>
-              <ChatHeader lead={selectedLead} onClose={() => setSelectedLead(null)} onTransfer={handleTransfer} />
+              <ChatHeader lead={selectedLead} onClose={() => setSelectedLead(null)} onTransfer={handleTransfer} leadTagIds={leadTagAssignments[selectedLead.id] || []} onToggleTag={handleToggleTag} />
               <ConversationView
                 messages={currentMessages}
                 leadName={selectedLead.name}

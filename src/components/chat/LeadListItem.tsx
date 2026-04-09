@@ -1,4 +1,5 @@
 import type { Lead } from "@/data/chatMockData";
+import type { LeadTag } from "@/data/leadTags";
 import { Clock, UserPlus } from "lucide-react";
 import { LeadAvatar } from "@/components/LeadAvatar";
 
@@ -8,9 +9,11 @@ interface LeadListItemProps {
   onSelect: (lead: Lead) => void;
   showAssignButton?: boolean;
   onAssign?: (lead: Lead) => void;
+  tagIds?: string[];
+  allTags?: LeadTag[];
 }
 
-export function LeadListItem({ lead, isSelected, onSelect, showAssignButton, onAssign }: LeadListItemProps) {
+export function LeadListItem({ lead, isSelected, onSelect, showAssignButton, onAssign, tagIds = [], allTags = [] }: LeadListItemProps) {
   const timeAgo = getTimeAgo(lead.lastMessageTime);
 
   return (
@@ -32,6 +35,16 @@ export function LeadListItem({ lead, isSelected, onSelect, showAssignButton, onA
         </div>
 
         <p className="text-xs text-muted-foreground truncate">{lead.lastMessage}</p>
+
+        {tagIds.length > 0 && (
+          <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+            {allTags.filter((t) => tagIds.includes(t.id)).map((tag) => (
+              <span key={tag.id} className="inline-flex items-center gap-0.5 px-1.5 py-0 rounded-full text-[9px] font-semibold text-white leading-4" style={{ backgroundColor: tag.color }}>
+                {tag.icon} {tag.name}
+              </span>
+            ))}
+          </div>
+        )}
 
         {lead.queueName && (
           <span

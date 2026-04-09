@@ -1,10 +1,11 @@
 import { useState, useEffect } from "react";
 import type { Lead } from "@/data/chatMockData";
-import { Phone, Video, MoreVertical, X, ArrowRightLeft, Loader2, ArrowLeft } from "lucide-react";
+import { Phone, Video, MoreVertical, X, ArrowRightLeft, Loader2, ArrowLeft, Tags, Check } from "lucide-react";
 import { LeadAvatar } from "@/components/LeadAvatar";
 import { toast } from "sonner";
 import { adminListUsers } from "@/lib/vpsApi";
 import { useAuth } from "@/hooks/useAuth";
+import { getTags, type LeadTag } from "@/data/leadTags";
 
 interface Attendant {
   id: string;
@@ -16,15 +17,19 @@ interface ChatHeaderProps {
   lead: Lead;
   onClose: () => void;
   onTransfer?: (lead: Lead, toAttendantId: string, toAttendantName: string, reason: string) => void;
+  leadTagIds?: string[];
+  onToggleTag?: (leadId: string, tagId: string) => void;
 }
 
-export function ChatHeader({ lead, onClose, onTransfer }: ChatHeaderProps) {
+export function ChatHeader({ lead, onClose, onTransfer, leadTagIds = [], onToggleTag }: ChatHeaderProps) {
   const { user: currentUser } = useAuth();
   const [showTransfer, setShowTransfer] = useState(false);
+  const [showTagMenu, setShowTagMenu] = useState(false);
   const [attendants, setAttendants] = useState<Attendant[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedAtt, setSelectedAtt] = useState<Attendant | null>(null);
   const [reason, setReason] = useState("");
+  const allTags = getTags();
 
   useEffect(() => {
     if (!showTransfer) return;
@@ -73,7 +78,18 @@ export function ChatHeader({ lead, onClose, onTransfer }: ChatHeaderProps) {
       <div className="flex items-center gap-3">
         <LeadAvatar initials={lead.initials} avatarUrl={lead.avatarUrl} avatarColor={lead.avatarColor || "bg-primary/20"} size="md" />
         <div>
-          <p className="text-sm font-medium text-foreground">{lead.name}</p>
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-medium text-foreground">{lead.name}</p>
+            {leadTagIds.length > 0 && (
+              <div className="flex items-center gap-1">
+                {allTags.filter((t) => leadTagIds.includes(t.id)).map((tag) => (
+                  <span key={tag.id} className="inline-flex items-center gap-0.5 px-1.5 py-0 rounded-full text-[9px] font-semibold text-white" style={{ backgroundColor: tag.color }}>
+                    {tag.icon} {tag.name}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
           <p className="text-xs text-success flex items-center gap-1">
             <span className="h-1.5 w-1.5 rounded-full bg-success inline-block" />
             Online
@@ -83,7 +99,14 @@ export function ChatHeader({ lead, onClose, onTransfer }: ChatHeaderProps) {
 
       <div className="flex items-center gap-1">
         <button
-          onClick={() => showTransfer ? handleClose() : setShowTransfer(true)}
+          onClick={() => { setShowTagMenu(!showTagMenu); setShowTransfer(false); }}
+          className={`p-2 rounded-lg transition-colors ${showTagMenu ? "bg-primary/10 text-primary" : "hover:bg-muted text-muted-foreground"}`}
+          title="Tags"
+        >
+          <Tags className="h-4 w-4" />
+        </button>
+        <button
+          onClick={() => { setShowTransfer(!showTransfer); setShowTagMenu(false); handleClose(); }}
           className={`p-2 rounded-lg transition-colors ${showTransfer ? "bg-primary/10 text-primary" : "hover:bg-muted text-muted-foreground"}`}
           title="Transferir atendimento"
         >
@@ -169,6 +192,37 @@ export function ChatHeader({ lead, onClose, onTransfer }: ChatHeaderProps) {
               </div>
             </>
           )}
+        </div>
+      )}
+
+      {showTagMenu && (
+        <div className="absolute top-full right-4 mt-1 w-56 bg-card border border-border rounded-xl shadow-lg z-50 overflow-hidden">
+          <div className="px-3 py-2 border-b border-border/50">
+            <p className="text-xs font-semibold text-foreground">Tags do Lead</p>
+            <p className="text-[11px] text-muted-foreground">Clique para adicionar/remover</p>
+          </div>
+          <div className="py-1 max-h-48 overflow-y-auto">
+            {allTags.length === 0 ? (
+              <p className="text-xs text-muted-foreground text-center py-4">Nenhuma tag criada. Vá em Configurações.</p>
+            ) : (
+              allTags.map((tag) => {
+                const active = leadTagIds.includes(tag.id);
+                return (
+                  <button
+                    key={tag.id}
+                    onClick={() => onToggleTag?.(lead.id, tag.id)}
+                    className="w-full flex items-center gap-2 px-3 py-2 hover:bg-muted/50 transition-colors text-left"
+                  >
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold text-white" style={{ backgroundColor: tag.color }}>
+                      {tag.icon} {tag.name}
+                    </span>
+                    <span className="flex-1" />
+                    {active && <Check className="h-3.5 w-3.5 text-primary" />}
+                  </button>
+                );
+              })
+            )}
+          </div>
         </div>
       )}
     </div>
