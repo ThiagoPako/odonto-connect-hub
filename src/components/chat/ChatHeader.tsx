@@ -194,6 +194,37 @@ export function ChatHeader({ lead, onClose, onTransfer, leadTagIds = [], onToggl
           )}
         </div>
       )}
+
+      {showTagMenu && (
+        <div className="absolute top-full right-4 mt-1 w-56 bg-card border border-border rounded-xl shadow-lg z-50 overflow-hidden">
+          <div className="px-3 py-2 border-b border-border/50">
+            <p className="text-xs font-semibold text-foreground">Tags do Lead</p>
+            <p className="text-[11px] text-muted-foreground">Clique para adicionar/remover</p>
+          </div>
+          <div className="py-1 max-h-48 overflow-y-auto">
+            {allTags.length === 0 ? (
+              <p className="text-xs text-muted-foreground text-center py-4">Nenhuma tag criada. Vá em Configurações.</p>
+            ) : (
+              allTags.map((tag) => {
+                const active = leadTagIds.includes(tag.id);
+                return (
+                  <button
+                    key={tag.id}
+                    onClick={() => onToggleTag?.(lead.id, tag.id)}
+                    className="w-full flex items-center gap-2 px-3 py-2 hover:bg-muted/50 transition-colors text-left"
+                  >
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold text-white" style={{ backgroundColor: tag.color }}>
+                      {tag.icon} {tag.name}
+                    </span>
+                    <span className="flex-1" />
+                    {active && <Check className="h-3.5 w-3.5 text-primary" />}
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
