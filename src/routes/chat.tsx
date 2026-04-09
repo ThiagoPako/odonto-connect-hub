@@ -379,7 +379,7 @@ function ChatPage() {
       }
       const durationMin = data?.duration ? Math.floor(data.duration / 60) : 0;
       toast.success(`Atendimento finalizado`, {
-        description: `${lead.name} — Duração: ${durationMin}min. Pesquisa de satisfação enviada.`,
+        description: `${lead.name} — Duração: ${durationMin}min`,
       });
     });
 
@@ -392,14 +392,13 @@ function ChatPage() {
           {
             id: `sys-close-${Date.now()}`,
             leadId: lead.id,
-            content: "✅ Atendimento finalizado. Pesquisa de satisfação enviada ao paciente.",
+            content: "✅ Atendimento finalizado.",
             sender: "attendant" as const,
             type: "text" as const,
             timestamp: new Date(),
           },
         ],
       };
-      // Archive conversation history
       conversationArchiveRef.current[lead.id] = updated[lead.id];
       return updated;
     });
@@ -407,6 +406,51 @@ function ChatPage() {
     // Move lead out of active but keep messages in state for history
     setMyLeads((prev) => prev.filter((l) => l.id !== lead.id));
     if (selectedLead?.id === lead.id) setSelectedLead(null);
+
+    // Open satisfaction survey dialog
+    setSurveyLead(lead);
+  };
+
+  const handleSendSurvey = (lead: Lead, rating: number, comment: string) => {
+    const stars = "⭐".repeat(rating);
+    const labels = ["Péssimo", "Ruim", "Regular", "Bom", "Excelente"];
+    let surveyMsg = `Olá ${lead.name}! 😊\n\nGostaríamos de saber como foi seu atendimento.\n\nSua avaliação: ${stars} (${labels[rating - 1]})\n\nPor favor, responda com uma nota de 1 a 5 para avaliar nosso atendimento.\n\n1 ⭐ Péssimo\n2 ⭐⭐ Ruim\n3 ⭐⭐⭐ Regular\n4 ⭐⭐⭐⭐ Bom\n5 ⭐⭐⭐⭐⭐ Excelente`;
+    if (comment) {
+      surveyMsg += `\n\n${comment}`;
+    }
+
+    // Send via WhatsApp
+    if (connectedInstances.length > 0 && lead.phone) {
+      const instanceName = connectedInstances[0].instanceName;
+      sendTextMessage(instanceName, lead.phone, surveyMsg).catch(() => {
+        toast.error("Erro ao enviar pesquisa de satisfação");
+      });
+    }
+
+    // Add system message to archived conversation
+    setMessages((prev) => {
+      const updated = {
+        ...prev,
+        [lead.id]: [
+          ...(prev[lead.id] || []),
+          {
+            id: `sys-nps-${Date.now()}`,
+            leadId: lead.id,
+            content: `📊 Pesquisa de satisfação enviada (${stars} ${labels[rating - 1]})`,
+            sender: "attendant" as const,
+            type: "text" as const,
+            timestamp: new Date(),
+          },
+        ],
+      };
+      conversationArchiveRef.current[lead.id] = updated[lead.id];
+      return updated;
+    });
+
+    toast.success("Pesquisa de satisfação enviada!", {
+      description: `${lead.name} — ${stars}`,
+    });
+    setSurveyLead(null);
   };
 
   const handleReturnToQueue = (lead: Lead) => {
