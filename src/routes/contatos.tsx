@@ -34,7 +34,7 @@ function ContatosPage() {
   const [tipoFilter, setTipoFilter] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [editContato, setEditContato] = useState<Contato | null>(null);
-
+  const [whatsappContato, setWhatsappContato] = useState<Contato | null>(null);
   const loadContatos = useCallback(async () => {
     setLoading(true);
     const params: Record<string, string> = {};
