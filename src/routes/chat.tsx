@@ -5,7 +5,10 @@ import { LeadListItem } from "@/components/chat/LeadListItem";
 import { ConversationView } from "@/components/chat/ConversationView";
 import { MessageInput } from "@/components/chat/MessageInput";
 import { ChatHeader } from "@/components/chat/ChatHeader";
-import { Users, MessageSquare, Inbox, Filter, Tags } from "lucide-react";
+import { Users, MessageSquare, Inbox, Filter, Tags, UserPlus } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { NewChatFromContactDialog } from "@/components/chat/NewChatFromContactDialog";
+import type { Contato } from "@/lib/vpsApi";
 import type { AttendanceQueue } from "@/data/queueData";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
@@ -50,6 +53,7 @@ function ChatPage() {
   const [messages, setMessages] = useState<Record<string, ChatMessage[]>>(mockMessages);
   const [filterQueue, setFilterQueue] = useState<string | null>(null);
   const [filterTag, setFilterTag] = useState<string | null>(null);
+  const [newChatOpen, setNewChatOpen] = useState(false);
   const [availableQueues, setAvailableQueues] = useState<AttendanceQueue[]>([]);
   const [availableTags, setAvailableTags] = useState<LeadTagApi[]>([]);
   const [leadTagAssignments, setLeadTagAssignments] = useState<Record<string, string[]>>({});
@@ -390,6 +394,37 @@ function ChatPage() {
   const filteredByQueue = filterQueue ? baseList.filter((l) => l.queueId === filterQueue) : baseList;
   const currentList = filterTag ? filteredByQueue.filter((l) => (leadTagAssignments[l.id] || []).includes(filterTag)) : filteredByQueue;
 
+  const handleNewChatFromContact = (contato: Contato) => {
+    // Check if lead already exists
+    const allLeads = [...queue, ...myLeads];
+    const existing = allLeads.find(
+      (l) => l.phone.replace(/\D/g, "").endsWith((contato.telefone || "").replace(/\D/g, "").slice(-11))
+    );
+    if (existing) {
+      setSelectedLead(existing);
+      setActiveTab(existing.status === "waiting" ? "queue" : "mine");
+      return;
+    }
+
+    // Create new lead in myLeads
+    const newLead: Lead = {
+      id: `contact-${contato.id}`,
+      name: contato.nome,
+      initials: contato.nome.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase(),
+      phone: contato.telefone || "",
+      lastMessage: "",
+      lastMessageTime: new Date(),
+      unreadCount: 0,
+      status: "active",
+      assignedTo: "current",
+      avatarColor: "bg-chart-1",
+    };
+    setMyLeads((prev) => [newLead, ...prev]);
+    setMessages((prev) => ({ ...prev, [newLead.id]: [] }));
+    setSelectedLead(newLead);
+    setActiveTab("mine");
+  };
+
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden">
       <DashboardHeader title="Chat" />
@@ -397,8 +432,17 @@ function ChatPage() {
       <div className="flex-1 flex overflow-hidden">
         {/* Left Panel - Lead List */}
         <div className="w-[360px] flex flex-col border-r border-border bg-card shrink-0">
-          {/* Tabs */}
-          <div className="flex border-b border-border shrink-0">
+          {/* New Chat + Tabs */}
+          <div className="flex items-center border-b border-border shrink-0">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-10 w-10 shrink-0 ml-1"
+              title="Novo chat com contato"
+              onClick={() => setNewChatOpen(true)}
+            >
+              <UserPlus className="h-4 w-4 text-primary" />
+            </Button>
             <button
               onClick={() => setActiveTab("queue")}
               className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-colors border-b-2 ${
@@ -539,6 +583,12 @@ function ChatPage() {
           )}
         </div>
       </div>
+
+      <NewChatFromContactDialog
+        open={newChatOpen}
+        onOpenChange={setNewChatOpen}
+        onSelectContact={handleNewChatFromContact}
+      />
     </div>
   );
 }

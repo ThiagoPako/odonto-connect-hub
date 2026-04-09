@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,7 +11,7 @@ import { useState, useEffect, useCallback } from "react";
 import { contatosApi, type Contato } from "@/lib/vpsApi";
 import { CreateContatoDialog } from "@/components/contatos/CreateContatoDialog";
 import { EditContatoDialog } from "@/components/contatos/EditContatoDialog";
-import { SendWhatsAppDialog } from "@/components/contatos/SendWhatsAppDialog";
+
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/contatos")({
@@ -28,13 +28,13 @@ const tipoColors: Record<string, string> = {
 };
 
 function ContatosPage() {
+  const navigate = useNavigate();
   const [contatos, setContatos] = useState<Contato[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [tipoFilter, setTipoFilter] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [editContato, setEditContato] = useState<Contato | null>(null);
-  const [whatsappContato, setWhatsappContato] = useState<Contato | null>(null);
   const [syncing, setSyncing] = useState(false);
 
   const handleSync = async () => {
@@ -219,8 +219,8 @@ function ContatosPage() {
                       variant="ghost"
                       size="icon"
                       className="h-8 w-8"
-                      title="Enviar WhatsApp"
-                      onClick={() => setWhatsappContato(contato)}
+                      title="Abrir Chat"
+                      onClick={() => navigate({ to: "/chat", search: { lead: contato.nome } })}
                     >
                       <MessageSquare className="h-4 w-4 text-primary" />
                     </Button>
@@ -267,15 +267,6 @@ function ContatosPage() {
             setEditContato(null);
             toast.success("Contato atualizado!");
           }}
-        />
-      )}
-
-      {whatsappContato && whatsappContato.telefone && (
-        <SendWhatsAppDialog
-          open={!!whatsappContato}
-          onOpenChange={(open) => !open && setWhatsappContato(null)}
-          contactName={whatsappContato.nome}
-          contactPhone={whatsappContato.telefone}
         />
       )}
     </div>
