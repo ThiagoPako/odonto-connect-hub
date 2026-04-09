@@ -124,6 +124,50 @@ export async function sendTextMessage(
   });
 }
 
+/** Send media (image, video, document) via base64 or URL */
+export async function sendMediaMessage(
+  instanceName: string,
+  number: string,
+  mediaType: "image" | "video" | "document" | "audio",
+  media: { base64?: string; url?: string; fileName?: string; caption?: string; mimeType?: string }
+): Promise<{ key: { id: string } }> {
+  const cleanNumber = number.replace(/\D/g, "");
+
+  if (mediaType === "audio") {
+    // Audio uses sendWhatsAppAudio endpoint
+    return apiCall(`/message/sendWhatsAppAudio/${instanceName}`, {
+      method: "POST",
+      body: JSON.stringify({
+        number: cleanNumber,
+        audio: media.base64 ? `data:${media.mimeType || "audio/ogg"};base64,${media.base64}` : media.url,
+      }),
+    });
+  }
+
+  const endpoint =
+    mediaType === "image" ? "sendMedia" :
+    mediaType === "video" ? "sendMedia" :
+    "sendMedia";
+
+  const payload: Record<string, unknown> = {
+    number: cleanNumber,
+    mediatype: mediaType,
+    caption: media.caption || "",
+    fileName: media.fileName || undefined,
+  };
+
+  if (media.base64) {
+    payload.media = `data:${media.mimeType || "application/octet-stream"};base64,${media.base64}`;
+  } else if (media.url) {
+    payload.media = media.url;
+  }
+
+  return apiCall(`/message/${endpoint}/${instanceName}`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export interface WhatsAppContact {
   id: string;
   pushName?: string;
