@@ -1,7 +1,8 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { DashboardHeader } from "@/components/DashboardHeader";
-import { mockPatients, type Patient, mockKanbanLeads, kanbanStages, type KanbanStage, type KanbanLead } from "@/data/crmMockData";
+import { type Patient, kanbanStages, type KanbanStage, type KanbanLead } from "@/data/crmMockData";
+import { crmApi } from "@/lib/vpsApi";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Search, Plus, Filter, Phone, Mail, Calendar, DollarSign,
