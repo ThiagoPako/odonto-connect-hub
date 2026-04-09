@@ -127,6 +127,31 @@ export function ConversationView({ messages, leadName, isTyping, onReaction, onR
     setTimeout(() => setHighlightedMsgId(null), 2000);
   };
 
+  // Close context menu on click anywhere or scroll
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = () => setContextMenu(null);
+    window.addEventListener("click", close);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [contextMenu]);
+
+  const handleContextMenu = useCallback((e: React.MouseEvent, msg: ChatMessage) => {
+    // Don't show for system messages
+    if (msg.id.startsWith("sys-")) return;
+    e.preventDefault();
+    setContextMenu({ x: e.clientX, y: e.clientY, msg });
+  }, []);
+
+  const handleCopyMessage = useCallback((msg: ChatMessage) => {
+    const text = msg.content || "";
+    navigator.clipboard.writeText(text);
+    setContextMenu(null);
+  }, []);
+
   const formatTime = (date: Date) =>
     date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 
