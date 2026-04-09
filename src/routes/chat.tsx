@@ -52,17 +52,22 @@ function ChatPage() {
   const [filterQueue, setFilterQueue] = useState<string | null>(null);
   const [filterTag, setFilterTag] = useState<string | null>(null);
   const [availableQueues] = useState<AttendanceQueue[]>(() => getQueues().filter((q) => q.active));
-  const [availableTags] = useState<LeadTag[]>(() => getTags());
-  const [leadTagAssignments, setLeadTagAssignments] = useState<Record<string, string[]>>(() => getLeadTags());
+  const [availableTags, setAvailableTags] = useState<LeadTagApi[]>([]);
+  const [leadTagAssignments, setLeadTagAssignments] = useState<Record<string, string[]>>({});
+
+  // Load tags and assignments from VPS
+  useEffect(() => {
+    tagsApi.list().then(({ data }) => { if (data) setAvailableTags(data); });
+    tagsApi.assignments().then(({ data }) => { if (data) setLeadTagAssignments(data); });
+  }, []);
 
   const handleToggleTag = useCallback((leadId: string, tagId: string) => {
     setLeadTagAssignments((prev) => {
       const current = prev[leadId] || [];
       const updated = current.includes(tagId) ? current.filter((t) => t !== tagId) : [...current, tagId];
-      const next = { ...prev, [leadId]: updated };
-      saveLeadTags(next);
-      return next;
+      return { ...prev, [leadId]: updated };
     });
+    tagsApi.toggle(leadId, tagId);
   }, []);
 
   // ─── Real-time incoming messages via SSE ───
