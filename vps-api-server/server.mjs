@@ -1430,10 +1430,12 @@ app.post('/api/webhook/evolution', async (req, res) => {
       const updates = Array.isArray(body.data) ? body.data : [body.data];
       console.log(`📩 MESSAGES_UPDATE: ${updates.length} updates, raw:`, JSON.stringify(body.data).slice(0, 500));
       for (const update of updates) {
-        const key = update?.key || update;
-        const ack = update?.update?.status ?? update?.status ?? update?.update?.messageStubType;
-        const messageId = key?.id;
-        const remoteJid = key?.remoteJid;
+        // Evolution API sends flat fields: keyId, remoteJid, status, messageId
+        // OR nested: key.id, key.remoteJid, update.status
+        const key = update?.key || {};
+        const messageId = key?.id || update?.keyId || update?.messageId;
+        const remoteJid = key?.remoteJid || update?.remoteJid;
+        const ack = update?.update?.status ?? update?.status ?? key?.status;
         
         if (!messageId || !remoteJid || remoteJid.endsWith('@g.us')) continue;
         
