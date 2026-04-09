@@ -37,7 +37,8 @@ export type KanbanStage =
   | "followup_2"
   | "followup_3"
   | "sem_resposta"
-  | "desqualificado";
+  | "desqualificado"
+  | "paciente_agendado";
 
 export const kanbanStages: { id: KanbanStage; label: string; color: string }[] = [
   { id: "lead", label: "Lead", color: "bg-chart-1" },
@@ -47,6 +48,7 @@ export const kanbanStages: { id: KanbanStage; label: string; color: string }[] =
   { id: "followup_3", label: "Follow-up 3", color: "bg-warning" },
   { id: "sem_resposta", label: "Sem Resposta", color: "bg-chart-5" },
   { id: "desqualificado", label: "Desqualificado", color: "bg-destructive" },
+  { id: "paciente_agendado", label: "Paciente Agendado", color: "bg-success" },
 ];
 
 export const mockPatients: Patient[] = [
@@ -80,4 +82,5 @@ export const mockKanbanLeads: Record<KanbanStage, KanbanLead[]> = {
     { id: "k7", name: "Diego Nunes", initials: "DN", phone: "+55 11 99999-2005", origin: "Google Ads", value: 4500, assignedTo: "Beatriz", assignedInitials: "BL", lastContact: new Date(Date.now() - 7 * 86400000), avatarColor: "bg-chart-2" },
   ],
   desqualificado: [],
+  paciente_agendado: [],
 };

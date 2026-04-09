@@ -1211,16 +1211,30 @@ app.post('/api/webhook/evolution', async (req, res) => {
     const resolvedContent = msgContent || `[${msgType}]`;
     const rawType = Object.keys(message?.message || {})[0] || null;
 
-    // ─── New contact: create lead + check hours + send menu ───
+    // ─── New contact: create lead + contato + check hours + send menu ───
     if (!lead) {
       const newId = crypto.randomUUID();
       await pool.query(
-        `INSERT INTO crm_leads (id, nome, telefone, origem, status, awaiting_queue_selection)
-         VALUES ($1, $2, $3, 'whatsapp', 'novo', true)`,
+        `INSERT INTO crm_leads (id, nome, telefone, origem, status, kanban_stage, awaiting_queue_selection)
+         VALUES ($1, $2, $3, 'whatsapp', 'novo', 'lead', true)`,
         [newId, pushName, phone]
       );
       lead = { id: newId, name: pushName, phone, queue_id: null, awaiting_queue_selection: true, avatar_url: null };
       console.log(`🆕 New lead created: ${pushName} (${phone})`);
+
+      // Auto-save to contatos table (skip if phone already exists)
+      try {
+        const existingContato = await pool.query('SELECT id FROM contatos WHERE telefone = $1', [phone]);
+        if (existingContato.rows.length === 0) {
+          await pool.query(
+            'INSERT INTO contatos (id, nome, telefone, tipo) VALUES ($1, $2, $3, $4)',
+            [crypto.randomUUID(), pushName, phone, 'pessoal']
+          );
+          console.log(`📇 Auto-saved contact: ${pushName} (${phone})`);
+        }
+      } catch (contatoErr) {
+        console.error('Failed to auto-save contato:', contatoErr.message);
+      }
 
       // Check business hours
       if (!isWithinBusinessHours(attendanceSettingsCache)) {
@@ -1541,6 +1555,12 @@ app.post('/api/sessions/assign', async (req, res) => {
        RETURNING id, wait_time_seconds`,
       [user.id, attendantName, leadId]
     );
+
+    // Auto-move lead to "em_contato" in CRM kanban
+    await pool.query(
+      `UPDATE crm_leads SET kanban_stage = 'em_contato', status = 'em_contato', updated_at = NOW() WHERE id = $1`,
+      [leadId]
+    ).catch(err => console.error('Failed to update kanban_stage:', err.message));
 
     if (result.rows.length === 0) {
       // No waiting session, create one as active directly
