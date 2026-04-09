@@ -815,6 +815,8 @@ function ChatPage() {
                 isTyping={isLeadTyping}
                 onReaction={handleReaction}
                 onReply={handleReply}
+                onForward={handleForward}
+                onDelete={handleDeleteMessage}
               />
               {selectedLead.status === "finished" ? (
                 <div className="px-4 py-3 border-t border-border/50 bg-muted/30 flex items-center justify-center gap-3">
