@@ -246,12 +246,24 @@ function PatientTableView() {
 /* ── Kanban View (merged from /funil) ────────────── */
 
 function KanbanView() {
-  const [leads, setLeads] = useState(mockKanbanLeads);
+  const emptyKanban: Record<KanbanStage, KanbanLead[]> = {
+    lead: [], em_contato: [], followup_1: [], followup_2: [], followup_3: [],
+    sem_resposta: [], desqualificado: [], paciente_agendado: [],
+  };
+  const [leads, setLeads] = useState<Record<KanbanStage, KanbanLead[]>>(emptyKanban);
   const [draggedLead, setDraggedLead] = useState<{ lead: KanbanLead; fromStage: KanbanStage } | null>(null);
   const [assignedFilter, setAssignedFilter] = useState("Todos");
+  const [loading, setLoading] = useState(true);
 
-  const allLeadsList = Object.values(leads).flat();
-  const assignees = ["Todos", ...Array.from(new Set(allLeadsList.map((l) => l.assignedTo)))];
+  useEffect(() => {
+    crmApi.kanban().then(({ data }) => {
+      if (data) setLeads(data as Record<KanbanStage, KanbanLead[]>);
+      setLoading(false);
+    });
+  }, []);
+
+  const allLeadsList: KanbanLead[] = Object.values(leads).flat();
+  const assignees = ["Todos", ...Array.from(new Set(allLeadsList.map((l: KanbanLead) => l.assignedTo)))];
 
   const handleDragStart = (lead: KanbanLead, fromStage: KanbanStage) => {
     setDraggedLead({ lead, fromStage });
@@ -263,10 +275,12 @@ function KanbanView() {
     if (!draggedLead || draggedLead.fromStage === toStage) return;
     setLeads((prev) => {
       const updated = { ...prev };
-      updated[draggedLead.fromStage] = prev[draggedLead.fromStage].filter((l) => l.id !== draggedLead.lead.id);
+      updated[draggedLead.fromStage] = prev[draggedLead.fromStage].filter((l: KanbanLead) => l.id !== draggedLead.lead.id);
       updated[toStage] = [...prev[toStage], draggedLead.lead];
       return updated;
     });
+    // Persist stage change to backend
+    crmApi.updateStage(draggedLead.lead.id, toStage).catch(() => toast.error("Erro ao mover lead"));
     setDraggedLead(null);
   };
 
