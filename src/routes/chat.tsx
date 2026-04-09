@@ -251,6 +251,29 @@ function ChatPage() {
     });
   };
 
+  const handleTransfer = (lead: Lead, _toAttendantId: string, toAttendantName: string) => {
+    // Remove from my leads
+    setMyLeads((prev) => prev.filter((l) => l.id !== lead.id));
+    if (selectedLead?.id === lead.id) {
+      setSelectedLead(null);
+    }
+    // Add system message
+    setMessages((prev) => ({
+      ...prev,
+      [lead.id]: [
+        ...(prev[lead.id] || []),
+        {
+          id: `sys-transfer-${Date.now()}`,
+          leadId: lead.id,
+          content: `Atendimento transferido para ${toAttendantName}`,
+          sender: "attendant" as const,
+          type: "text" as const,
+          timestamp: new Date(),
+        },
+      ],
+    }));
+  };
+
   const currentMessages = selectedLead ? messages[selectedLead.id] || [] : [];
   const currentList = activeTab === "queue" ? queue : myLeads;
 
