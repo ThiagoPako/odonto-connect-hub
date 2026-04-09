@@ -1434,6 +1434,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
     // ─── Message ACK / status updates ───
     if (event === 'messages.update') {
       const updates = Array.isArray(body.data) ? body.data : [body.data];
+      console.log(`📩 MESSAGES_UPDATE: ${updates.length} updates, raw:`, JSON.stringify(body.data).slice(0, 500));
       for (const update of updates) {
         const key = update?.key || update;
         const ack = update?.update?.status ?? update?.status ?? update?.update?.messageStubType;
@@ -1451,32 +1452,31 @@ app.post('/api/webhook/evolution', async (req, res) => {
         else if (ackNum === 4 || ackNum === 5) newStatus = 'read';
         else if (ackNum === 0) newStatus = 'failed';
         
-        if (!newStatus) continue;
+        if (!newStatus) {
+          console.log(`⚠️ ACK ignored: ack=${ack}, ackNum=${ackNum}, messageId=${messageId}`);
+          continue;
+        }
         
         const phone = remoteJid.replace('@s.whatsapp.net', '').replace('@c.us', '');
+        console.log(`✅ ACK: ${messageId} → ${newStatus} (ack=${ackNum}, phone=${phone})`);
         
-        // Update in DB - find message by Evolution message ID stored in metadata or by id
+        // Update in DB
         try {
-          // Try matching by message id directly (we store Evolution msg id as our message id)
-          const { rowCount } = await pool.query(
+          await pool.query(
             `UPDATE chat_messages SET status = $1 WHERE id = $2 OR (metadata::text LIKE '%' || $2 || '%')`,
             [newStatus, messageId]
           );
-          
-          if (rowCount > 0) {
-            console.log(`✅ Message ACK: ${messageId} → ${newStatus}`);
-          }
-          
-          // Broadcast status update to frontend via SSE
-          broadcastSSE('message_status_update', {
-            messageId,
-            phone,
-            status: newStatus,
-            instance,
-          });
         } catch (ackErr) {
-          console.error('ACK update error:', ackErr.message);
+          console.error('ACK DB update error:', ackErr.message);
         }
+        
+        // Always broadcast status update to frontend via SSE
+        broadcastSSE('message_status_update', {
+          messageId,
+          phone,
+          status: newStatus,
+          instance,
+        });
       }
       return res.json({ processed: true, event: 'messages.update' });
     }
