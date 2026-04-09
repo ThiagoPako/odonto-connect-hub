@@ -369,11 +369,16 @@ app.post('/api/whatsapp/instances', async (req, res) => {
   }
 });
 
-// Connect (get QR Code)
+// Connect (get QR Code) + ensure webhook is registered
 app.get('/api/whatsapp/connect/:instance', async (req, res) => {
   try {
     await verifyUser(req);
-    const result = await evolutionFetch(`/instance/connect/${req.params.instance}`);
+    const instanceName = req.params.instance;
+    const result = await evolutionFetch(`/instance/connect/${instanceName}`);
+
+    // Ensure webhook is registered on every connect attempt
+    registerWebhook(instanceName).catch(() => {});
+
     res.json(result.data);
   } catch (error) {
     res.status(500).json({ error: error.message });
