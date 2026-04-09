@@ -1810,9 +1810,26 @@ app.get('/api/health', async (_req, res) => {
 // START SERVER
 // ═══════════════════════════════════════════════════════════════
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`🦷 Odonto Connect API running on port ${PORT}`);
   console.log(`   Health: http://localhost:${PORT}/api/health`);
+  console.log(`   Webhook URL: ${WEBHOOK_URL}`);
+
+  // Auto-register webhook for all connected instances on startup
+  try {
+    const result = await evolutionFetch('/instance/fetchInstances');
+    const instances = Array.isArray(result.data) ? result.data : [];
+    const connected = instances.filter(i => (i.connectionStatus || i.status) === 'open');
+    for (const inst of connected) {
+      const name = inst.name || inst.instanceName;
+      if (name) await registerWebhook(name);
+    }
+    if (connected.length > 0) {
+      console.log(`   📡 Webhook registrado em ${connected.length} instância(s) conectada(s)`);
+    }
+  } catch (err) {
+    console.error('⚠️ Could not auto-register webhooks on startup:', err.message);
+  }
 
   // Start auto-sync every 30 minutes
   syncWhatsAppContacts(); // Run once on startup
