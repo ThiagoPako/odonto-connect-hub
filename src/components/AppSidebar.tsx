@@ -328,6 +328,7 @@ function SidebarUserFooter({ expanded }: { expanded: boolean }) {
         <LogOut className="h-4 w-4 shrink-0" />
         <span>Sair</span>
       </button>
+      <p className="text-[8px] text-muted-foreground/40 text-center mt-1">v2.1.0 — 09/04/2026</p>
     </div>
   );
 }
