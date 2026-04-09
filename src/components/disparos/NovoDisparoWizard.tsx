@@ -649,7 +649,7 @@ function StepRevisao({
         {tipo === "recorrente" && <ReviewRow label="Período" value={campanhaPerpetua ? "Perpétua" : `${dataInicio || "?"} a ${dataFim || "?"}`} />}
         {tipo === "unico" && dataInicio && <ReviewRow label="Data" value={dataInicio} />}
         <ReviewRow label="Intervalo anti-spam" value={`${intervaloSpam} dias`} />
-        <ReviewRow label="Número de envio" value={numeroLabel ? `${numeroLabel.nome} (${numeroLabel.numero})` : "Não selecionado"} />
+        <ReviewRow label="Número de envio" value={numeroLabel || "Não selecionado"} />
       </div>
 
       <div className="bg-muted/50 rounded-xl p-4">
