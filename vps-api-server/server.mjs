@@ -582,12 +582,16 @@ app.post('/api/whatsapp/profile-picture', async (req, res) => {
     const cleanNumber = number.replace(/\D/g, '');
 
     // Fetch profile picture URL via Evolution API
+    console.log(`📸 Fetching profile picture for ${cleanNumber} on instance ${instance}`);
     const result = await evolutionFetch(`/chat/fetchProfilePictureUrl/${instance}`, {
       method: 'POST',
       body: JSON.stringify({ number: cleanNumber }),
     });
 
+    console.log(`📸 Evolution API response:`, JSON.stringify(result));
+
     if (!result.ok) {
+      console.error(`📸 Evolution API error [${result.status}]:`, JSON.stringify(result.data));
       return res.status(result.status).json({ error: 'Não foi possível buscar a foto de perfil', details: result.data });
     }
 
@@ -2350,6 +2354,36 @@ app.get('/api/queue/leads', async (req, res) => {
     }
 
     res.json({ queue: queueLeads, active: activeLeads });
+
+    // Background: batch-sync missing avatars
+    const leadsWithoutAvatar = rows.filter(r => !r.avatar_url && r.phone);
+    if (leadsWithoutAvatar.length > 0) {
+      // Find connected instance
+      const instResult = await evolutionFetch('/instance/fetchInstances');
+      const connectedInstance = instResult.ok && Array.isArray(instResult.data)
+        ? instResult.data.find(i => i.connectionStatus === 'open')
+        : null;
+
+      if (connectedInstance) {
+        const instanceName = connectedInstance.name || connectedInstance.instanceName;
+        for (const r of leadsWithoutAvatar.slice(0, 10)) {
+          try {
+            const cleanPhone = r.phone.replace(/\D/g, '');
+            const picResult = await evolutionFetch(`/chat/fetchProfilePictureUrl/${instanceName}`, {
+              method: 'POST',
+              body: JSON.stringify({ number: cleanPhone }),
+            });
+            const pictureUrl = picResult.data?.profilePictureUrl || picResult.data?.picture || picResult.data?.url || null;
+            if (pictureUrl) {
+              await pool.query('UPDATE crm_leads SET avatar_url = $1, updated_at = NOW() WHERE id = $2', [pictureUrl, r.id]);
+              console.log(`📸 Background avatar sync: ${r.name || r.phone} → OK`);
+            }
+          } catch (err) {
+            console.error(`📸 Avatar sync error for ${r.phone}:`, err.message);
+          }
+        }
+      }
+    }
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
