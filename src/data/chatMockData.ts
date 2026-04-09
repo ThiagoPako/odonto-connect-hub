@@ -6,7 +6,7 @@ export interface Lead {
   lastMessage: string;
   lastMessageTime: Date;
   unreadCount: number;
-  status: "waiting" | "active" | "closed";
+  status: "waiting" | "active" | "closed" | "finished";
   assignedTo?: string;
   avatarColor?: string;
   avatarUrl?: string | null;
