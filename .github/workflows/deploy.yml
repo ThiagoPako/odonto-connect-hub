@@ -14,14 +14,35 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
+          script_stop: true
           script: |
+            set -e
+            echo "=== Starting deploy $(date) ==="
+            
+            # Frontend
             cd /var/www/odonto-connect
-            git pull origin main
-            bun install
-            bun run build
-            pm2 restart odonto-connect
-
-            # Update API server if package.json changed
-            cd vps-api-server
+            git fetch origin main
+            git reset --hard origin/main
+            
+            # Install & build
+            if command -v bun &> /dev/null; then
+              bun install
+              bun run build
+            else
+              npm install
+              npm run build
+            fi
+            
+            echo "=== Frontend built ==="
+            
+            # API server
+            cd /var/www/odonto-connect/vps-api-server
             npm install --production
             pm2 restart odonto-api || pm2 start server.mjs --name odonto-api
+            
+            echo "=== API restarted ==="
+            
+            # Run pending migrations
+            sudo -u postgres psql -d odonto_db -f /var/www/odonto-connect/vps-api-server/migration.sql 2>&1 || true
+            
+            echo "=== Deploy complete $(date) ==="
