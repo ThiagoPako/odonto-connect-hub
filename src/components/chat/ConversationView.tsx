@@ -30,6 +30,29 @@ interface ConversationViewProps {
 
 
 // ─── Audio Player (supports base64 data URIs and ogg/opus) ──
+// Generate deterministic waveform bars from a seed string
+function generateWaveform(seed: string, barCount: number): number[] {
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) {
+    hash = ((hash << 5) - hash + seed.charCodeAt(i)) | 0;
+  }
+  const bars: number[] = [];
+  for (let i = 0; i < barCount; i++) {
+    hash = ((hash * 16807) % 2147483647) | 0;
+    const v = ((hash & 0x7fffffff) % 100) / 100;
+    // Smoothed: mix with neighbors for natural look
+    bars.push(0.15 + v * 0.85);
+  }
+  // Simple smoothing pass
+  const smoothed: number[] = [];
+  for (let i = 0; i < bars.length; i++) {
+    const prev = bars[i - 1] ?? bars[i];
+    const next = bars[i + 1] ?? bars[i];
+    smoothed.push(prev * 0.2 + bars[i] * 0.6 + next * 0.2);
+  }
+  return smoothed;
+}
+
 function AudioPlayer({ fileUrl, duration, isLead, status }: { fileUrl?: string; duration?: number; isLead: boolean; status?: string }) {
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -38,8 +61,11 @@ function AudioPlayer({ fileUrl, duration, isLead, status }: { fileUrl?: string; 
   const [totalDuration, setTotalDuration] = useState(duration || 0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const blobUrlRef = useRef<string | null>(null);
-  const trackRef = useRef<HTMLDivElement | null>(null);
+  const waveformRef = useRef<HTMLDivElement | null>(null);
   const draggingRef = useRef(false);
+
+  const BAR_COUNT = 40;
+  const waveform = useRef(generateWaveform(fileUrl || "audio", BAR_COUNT)).current;
 
   const getSrc = useCallback(() => {
     if (!fileUrl) return "";
@@ -93,6 +119,17 @@ function AudioPlayer({ fileUrl, duration, isLead, status }: { fileUrl?: string; 
     if (audioRef.current) audioRef.current.playbackRate = next;
   };
 
+  const seekFromEvent = (clientX: number) => {
+    if (!waveformRef.current) return;
+    const rect = waveformRef.current.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    setProgress(ratio);
+    if (audioRef.current?.duration && isFinite(audioRef.current.duration)) {
+      audioRef.current.currentTime = ratio * audioRef.current.duration;
+      setCurrentTime(ratio * audioRef.current.duration);
+    }
+  };
+
   const fmtTime = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
   if (!fileUrl) {
@@ -105,10 +142,12 @@ function AudioPlayer({ fileUrl, duration, isLead, status }: { fileUrl?: string; 
   }
 
   const listened = status === "read";
+  const playedColor = isLead ? "bg-primary" : "bg-primary-foreground";
+  const unplayedColor = isLead ? "bg-muted-foreground/30" : "bg-primary-foreground/30";
 
   return (
-    <div className="flex items-center gap-2.5 mb-1.5 min-w-[220px]">
-      {/* Mic icon — blue when listened (WhatsApp pattern) */}
+    <div className="flex items-center gap-2.5 mb-1.5 min-w-[240px]">
+      {/* Play button with mic badge */}
       <div className="relative shrink-0">
         <button onClick={togglePlay} className={`h-10 w-10 rounded-full flex items-center justify-center shrink-0 transition-colors ${isLead ? "bg-primary/15 hover:bg-primary/25" : "bg-primary-foreground/15 hover:bg-primary-foreground/25"}`}>
           {playing ? (
@@ -120,58 +159,54 @@ function AudioPlayer({ fileUrl, duration, isLead, status }: { fileUrl?: string; 
             <div className={`w-0 h-0 border-l-[9px] border-y-[6px] border-y-transparent ml-0.5 ${isLead ? "border-l-primary" : "border-l-primary-foreground"}`} />
           )}
         </button>
-        {/* Small mic badge — like WhatsApp voice notes */}
         <div className={`absolute -bottom-0.5 -right-0.5 h-4 w-4 rounded-full flex items-center justify-center ${listened ? "bg-[#53bdeb]" : isLead ? "bg-muted" : "bg-primary-foreground/30"}`}>
           <Mic className={`h-2.5 w-2.5 ${listened ? "text-white" : isLead ? "text-muted-foreground" : "text-primary-foreground"}`} />
         </div>
       </div>
+
+      {/* Waveform + time */}
       <div className="flex-1 flex flex-col gap-1">
         <div
-          ref={trackRef}
-          className={`h-2.5 rounded-full overflow-hidden cursor-pointer ${isLead ? "bg-muted-foreground/20" : "bg-primary-foreground/20"}`}
+          ref={waveformRef}
+          className="flex items-center gap-[1.5px] h-7 cursor-pointer select-none"
           onMouseDown={(e) => {
             draggingRef.current = true;
-            const seek = (ev: MouseEvent) => {
-              if (!trackRef.current) return;
-              const rect = trackRef.current.getBoundingClientRect();
-              const ratio = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
-              setProgress(ratio);
-              if (audioRef.current?.duration && isFinite(audioRef.current.duration)) {
-                audioRef.current.currentTime = ratio * audioRef.current.duration;
-                setCurrentTime(ratio * audioRef.current.duration);
-              }
-            };
-            seek(e.nativeEvent);
-            const onMove = (ev: MouseEvent) => { if (draggingRef.current) seek(ev); };
+            seekFromEvent(e.clientX);
+            const onMove = (ev: MouseEvent) => { if (draggingRef.current) seekFromEvent(ev.clientX); };
             const onUp = () => { draggingRef.current = false; window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
             window.addEventListener("mousemove", onMove);
             window.addEventListener("mouseup", onUp);
           }}
           onTouchStart={(e) => {
             draggingRef.current = true;
-            const seekTouch = (clientX: number) => {
-              if (!trackRef.current) return;
-              const rect = trackRef.current.getBoundingClientRect();
-              const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-              setProgress(ratio);
-              if (audioRef.current?.duration && isFinite(audioRef.current.duration)) {
-                audioRef.current.currentTime = ratio * audioRef.current.duration;
-                setCurrentTime(ratio * audioRef.current.duration);
-              }
-            };
-            seekTouch(e.touches[0].clientX);
-            const onMove = (ev: TouchEvent) => { if (draggingRef.current && ev.touches[0]) seekTouch(ev.touches[0].clientX); };
+            seekFromEvent(e.touches[0].clientX);
+            const onMove = (ev: TouchEvent) => { if (draggingRef.current && ev.touches[0]) seekFromEvent(ev.touches[0].clientX); };
             const onEnd = () => { draggingRef.current = false; window.removeEventListener("touchmove", onMove); window.removeEventListener("touchend", onEnd); };
             window.addEventListener("touchmove", onMove);
             window.addEventListener("touchend", onEnd);
           }}
         >
-          <div className={`h-full rounded-full pointer-events-none ${isLead ? "bg-primary" : "bg-primary-foreground"}`} style={{ width: `${progress * 100}%` }} />
+          {waveform.map((h, i) => {
+            const played = i / BAR_COUNT < progress;
+            return (
+              <div
+                key={i}
+                className={`rounded-full transition-colors duration-150 pointer-events-none ${played ? playedColor : unplayedColor}`}
+                style={{
+                  width: "2.5px",
+                  height: `${Math.max(3, h * 24)}px`,
+                  flexShrink: 0,
+                }}
+              />
+            );
+          })}
         </div>
         <span className="text-[10px] opacity-60 font-mono">
           {playing || currentTime > 0 ? fmtTime(currentTime) : fmtTime(totalDuration)}
         </span>
       </div>
+
+      {/* Speed button */}
       <button
         onClick={cycleSpeed}
         className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md transition-colors shrink-0 ${isLead ? "bg-primary/15 hover:bg-primary/25 text-primary" : "bg-primary-foreground/15 hover:bg-primary-foreground/25 text-primary-foreground"}`}
