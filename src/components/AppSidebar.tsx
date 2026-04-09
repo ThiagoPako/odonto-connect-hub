@@ -68,8 +68,7 @@ const navSections: NavSection[] = [
     items: [
       { title: "Painel Comercial", url: "/painel-comercial", icon: Headset },
       { title: "Chat", url: "/chat", icon: MessageSquare },
-      { title: "CRM", url: "/crm", icon: Users, badge: 12 },
-      { title: "Funil de Vendas", url: "/funil", icon: Kanban },
+      { title: "CRM & Funil", url: "/crm", icon: Users, badge: 12 },
       { title: "Automações", url: "/automacoes", icon: Zap },
       { title: "Disparos", url: "/disparos", icon: Send },
       { title: "Reativação", url: "/reativacao", icon: RefreshCcw, badge: 5 },
