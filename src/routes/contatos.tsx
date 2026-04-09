@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import {
   Plus, Search, Star, Phone, Mail, Building2, Loader2, Trash2,
-  Pencil, UserPlus, Users, StarOff, MessageSquare
+  Pencil, UserPlus, Users, StarOff, MessageSquare, RefreshCw
 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import { contatosApi, type Contato } from "@/lib/vpsApi";
@@ -35,6 +35,20 @@ function ContatosPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [editContato, setEditContato] = useState<Contato | null>(null);
   const [whatsappContato, setWhatsappContato] = useState<Contato | null>(null);
+  const [syncing, setSyncing] = useState(false);
+
+  const handleSync = async () => {
+    setSyncing(true);
+    const { data, error } = await contatosApi.syncNow();
+    if (error) {
+      toast.error(error);
+    } else {
+      toast.success(`Sincronizado! ${data?.imported ?? 0} novos contatos importados`);
+      void loadContatos();
+    }
+    setSyncing(false);
+  };
+
   const loadContatos = useCallback(async () => {
     setLoading(true);
     const params: Record<string, string> = {};
@@ -79,10 +93,16 @@ function ContatosPage() {
               {contatos.length} contato{contatos.length !== 1 ? "s" : ""} cadastrado{contatos.length !== 1 ? "s" : ""}
             </p>
           </div>
-          <Button size="sm" onClick={() => setCreateOpen(true)}>
-            <UserPlus className="h-4 w-4 mr-2" />
-            Novo Contato
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={handleSync} disabled={syncing}>
+              {syncing ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <RefreshCw className="h-4 w-4 mr-2" />}
+              Sincronizar WhatsApp
+            </Button>
+            <Button size="sm" onClick={() => setCreateOpen(true)}>
+              <UserPlus className="h-4 w-4 mr-2" />
+              Novo Contato
+            </Button>
+          </div>
         </div>
 
         {/* Filters */}
