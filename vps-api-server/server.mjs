@@ -141,6 +141,54 @@ async function verifyAdmin(req) {
   return { user };
 }
 
+async function getProfileByEmail(email) {
+  const normalizedEmail = email.toLowerCase().trim();
+
+  try {
+    const { rows } = await pool.query(
+      'SELECT id, name, email, role, avatar_url, password_hash, COALESCE(active, true) as active FROM profiles WHERE email = $1 LIMIT 1',
+      [normalizedEmail]
+    );
+    return rows[0] || null;
+  } catch (error) {
+    if (error?.code !== '42703') throw error;
+
+    const { rows } = await pool.query(
+      'SELECT id, name, email, role, avatar_url, password_hash, true as active FROM profiles WHERE email = $1 LIMIT 1',
+      [normalizedEmail]
+    );
+    return rows[0] || null;
+  }
+}
+
+async function listProfilesWithRoles() {
+  try {
+    const { rows } = await pool.query(`
+      SELECT p.id, p.name, p.email, p.avatar_url, p.created_at, p.updated_at,
+             COALESCE(p.active, true) as active,
+             COALESCE(ur.role::text, p.role::text, 'user') as role
+      FROM profiles p
+      LEFT JOIN user_roles ur ON ur.user_id = p.id
+      ORDER BY p.created_at DESC
+    `);
+
+    return rows;
+  } catch (error) {
+    if (error?.code !== '42703') throw error;
+
+    const { rows } = await pool.query(`
+      SELECT p.id, p.name, p.email, p.avatar_url, p.created_at, p.updated_at,
+             true as active,
+             COALESCE(ur.role::text, p.role::text, 'user') as role
+      FROM profiles p
+      LEFT JOIN user_roles ur ON ur.user_id = p.id
+      ORDER BY p.created_at DESC
+    `);
+
+    return rows;
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════
 // AUTH ROUTES
 // ═══════════════════════════════════════════════════════════════
@@ -150,13 +198,8 @@ app.post('/api/auth/login', async (req, res) => {
     const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ error: 'Email e senha são obrigatórios' });
 
-    const { rows } = await pool.query(
-      'SELECT id, name, email, role, avatar_url, password_hash, COALESCE(active, true) as active FROM profiles WHERE email = $1 LIMIT 1',
-      [email.toLowerCase().trim()]
-    );
-    if (rows.length === 0) return res.status(401).json({ error: 'Email ou senha inválidos' });
-
-    const profile = rows[0];
+    const profile = await getProfileByEmail(email);
+    if (!profile) return res.status(401).json({ error: 'Email ou senha inválidos' });
     if (!profile.active) return res.status(403).json({ error: 'Conta desativada. Entre em contato com o administrador.' });
     if (!profile.password_hash) return res.status(401).json({ error: 'Senha não configurada' });
 
@@ -315,14 +358,7 @@ app.post('/api/auth/admin-reset-password', async (req, res) => {
 app.get('/api/auth/users', async (req, res) => {
   try {
     await verifyAdmin(req);
-    const { rows } = await pool.query(`
-      SELECT p.id, p.name, p.email, p.avatar_url, p.created_at, p.updated_at,
-             COALESCE(p.active, true) as active,
-             COALESCE(ur.role::text, p.role::text, 'user') as role
-      FROM profiles p
-      LEFT JOIN user_roles ur ON ur.user_id = p.id
-      ORDER BY p.created_at DESC
-    `);
+    const rows = await listProfilesWithRoles();
     res.json(rows);
   } catch (error) {
     res.status(500).json({ error: error.message });
