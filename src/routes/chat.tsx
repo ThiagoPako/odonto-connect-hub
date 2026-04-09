@@ -488,7 +488,7 @@ function ChatPage() {
         <div className="flex-1 flex flex-col bg-background">
           {selectedLead ? (
             <>
-              <ChatHeader lead={selectedLead} onClose={() => setSelectedLead(null)} onTransfer={handleTransfer} leadTagIds={leadTagAssignments[selectedLead.id] || []} onToggleTag={handleToggleTag} />
+              <ChatHeader lead={selectedLead} onClose={() => setSelectedLead(null)} onTransfer={handleTransfer} onFinishAttendance={handleFinishAttendance} leadTagIds={leadTagAssignments[selectedLead.id] || []} onToggleTag={handleToggleTag} />
               <ConversationView
                 messages={currentMessages}
                 leadName={selectedLead.name}
