@@ -39,6 +39,35 @@ const JWT_EXPIRES_IN = '7d';
 // ─── Evolution API Config ───────────────────────────────────
 const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL || 'https://api.odontoconnect.tech';
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY;
+const VPS_BASE_URL = process.env.APP_URL || 'https://odontoconnect.tech';
+const WEBHOOK_URL = `${VPS_BASE_URL.replace(/\/$/, '').replace(':443', '')}:${PORT}/api/webhook/evolution`;
+
+// ─── Auto-register webhook on Evolution API instance ─────────
+async function registerWebhook(instanceName) {
+  try {
+    const result = await evolutionFetch(`/webhook/set/${instanceName}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        url: WEBHOOK_URL,
+        webhookByEvents: false,
+        webhookBase64: false,
+        events: [
+          'MESSAGES_UPSERT',
+          'CONNECTION_UPDATE',
+          'QRCODE_UPDATED',
+        ],
+      }),
+    });
+    if (result.ok) {
+      console.log(`✅ Webhook registered for ${instanceName} → ${WEBHOOK_URL}`);
+    } else {
+      console.error(`⚠️ Webhook registration failed for ${instanceName}:`, result.data);
+    }
+    return result;
+  } catch (err) {
+    console.error(`❌ Webhook registration error for ${instanceName}:`, err.message);
+  }
+}
 
 
 // ─── Auth helpers ───────────────────────────────────────────
