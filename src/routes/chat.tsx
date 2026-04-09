@@ -1,11 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { LeadListItem } from "@/components/chat/LeadListItem";
 import { ConversationView } from "@/components/chat/ConversationView";
 import { MessageInput } from "@/components/chat/MessageInput";
 import { ChatHeader } from "@/components/chat/ChatHeader";
 import { Users, MessageSquare, Inbox } from "lucide-react";
+import { toast } from "sonner";
+import { useRealtimeChat, type IncomingMessage } from "@/hooks/useRealtimeChat";
 import {
   mockLeadsQueue,
   mockLeadsActive,
