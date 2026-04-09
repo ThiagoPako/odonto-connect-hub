@@ -32,7 +32,14 @@ jobs:
               npm run build
             fi
             
-            pm2 restart odonto-connect || true
+            pm2 delete odonto-connect || true
+            pm2 start /root/odonto-connect/dist/server/server.js --name odonto-connect --cwd /root/odonto-connect --update-env
+            FRONT_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3000/login)
+            if [ "$FRONT_STATUS" != "200" ]; then
+              echo "odonto-connect não respondeu em http://127.0.0.1:3000/login (status: $FRONT_STATUS)"
+              pm2 logs odonto-connect --lines 30 --nostream || true
+              exit 1
+            fi
             
             echo "=== Frontend built and restarted ==="
             
