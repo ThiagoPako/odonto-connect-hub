@@ -1796,6 +1796,119 @@ app.post('/api/contatos/sync/now', async (req, res) => {
 
 
 // ═══════════════════════════════════════════════════════════════
+// CHAT MESSAGES (persistência de histórico)
+// ═══════════════════════════════════════════════════════════════
+
+// GET /api/messages/:leadId — histórico paginado (mais recentes primeiro, retorna em ordem cronológica)
+app.get('/api/messages/:leadId', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { leadId } = req.params;
+    const { before, limit = '50' } = req.query;
+    const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 100);
+
+    let query, params;
+    if (before) {
+      query = `SELECT * FROM chat_messages WHERE lead_id = $1 AND timestamp < $2 ORDER BY timestamp DESC LIMIT $3`;
+      params = [leadId, before, safeLimit];
+    } else {
+      query = `SELECT * FROM chat_messages WHERE lead_id = $1 ORDER BY timestamp DESC LIMIT $2`;
+      params = [leadId, safeLimit];
+    }
+
+    const { rows } = await pool.query(query, params);
+
+    // Retornar em ordem cronológica (mais antigo primeiro)
+    const messages = rows.reverse().map(r => ({
+      id: r.id,
+      lead_id: r.lead_id,
+      content: r.content,
+      sender: r.sender,
+      type: r.type,
+      timestamp: r.timestamp,
+      status: r.status,
+      media_url: r.media_url,
+      file_name: r.file_name,
+      mime_type: r.mime_type,
+      reply_to_id: r.reply_to_id,
+      reply_to_content: r.reply_to_content,
+      reply_to_sender: r.reply_to_sender,
+      attendant_name: r.attendant_name,
+      metadata: r.metadata,
+    }));
+
+    // hasMore = se retornou exatamente o limite, provavelmente há mais
+    const hasMore = rows.length === safeLimit;
+    res.json({ messages, hasMore });
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+// POST /api/messages — salvar mensagem enviada pelo atendente
+app.post('/api/messages', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    const { id, leadId, content, type, status, fileName, fileUrl, mimeType, replyTo, instance, phone } = req.body;
+    if (!leadId || !id) return res.status(400).json({ error: 'id e leadId obrigatórios' });
+
+    const { rows: profile } = await pool.query('SELECT name FROM profiles WHERE id = $1', [user.id]);
+    const attendantName = profile[0]?.name || 'Atendente';
+
+    await pool.query(
+      `INSERT INTO chat_messages (id, lead_id, content, sender, type, status, timestamp, media_url, file_name, mime_type, reply_to_id, reply_to_content, reply_to_sender, attendant_id, attendant_name, instance, phone)
+       VALUES ($1,$2,$3,'attendant',$4,$5,NOW(),$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+       ON CONFLICT (id) DO NOTHING`,
+      [
+        id, leadId, content || '', type || 'text', status || 'sent',
+        fileUrl || null, fileName || null, mimeType || null,
+        replyTo?.messageId || null, replyTo?.content || null, replyTo?.sender || null,
+        user.id, attendantName, instance || null, phone || null,
+      ]
+    );
+
+    res.json({ success: true, id });
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+// PUT /api/messages/:id/status — atualizar status de entrega/leitura
+app.put('/api/messages/:id/status', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { status } = req.body;
+    if (!['sending', 'sent', 'delivered', 'read', 'failed'].includes(status)) {
+      return res.status(400).json({ error: 'Status inválido' });
+    }
+    await pool.query('UPDATE chat_messages SET status = $1 WHERE id = $2', [status, req.params.id]);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/messages/mark-read — marcar mensagens como lidas
+app.post('/api/messages/mark-read', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    const { leadId } = req.body;
+    if (!leadId) return res.status(400).json({ error: 'leadId obrigatório' });
+
+    await pool.query(
+      `INSERT INTO chat_read_status (lead_id, user_id, last_read_at)
+       VALUES ($1, $2, NOW())
+       ON CONFLICT (lead_id, user_id) DO UPDATE SET last_read_at = NOW()`,
+      [leadId, user.id]
+    );
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
+// ═══════════════════════════════════════════════════════════════
 
 app.get('/api/health', async (_req, res) => {
   try {
