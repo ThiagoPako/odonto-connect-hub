@@ -244,6 +244,13 @@ function ChatPage() {
 
   const handleSendMessage = (content: string, type: MessageType, extra?: Partial<ChatMessage>) => {
     if (!selectedLead) return;
+
+    // Track first response time
+    if (selectedLead.status === "active" && !firstResponseTracked.has(selectedLead.id)) {
+      sessionsApi.firstResponse({ leadId: selectedLead.id });
+      setFirstResponseTracked((prev) => new Set(prev).add(selectedLead.id));
+    }
+
     const newMsg: ChatMessage = {
       id: `msg-${Date.now()}`,
       leadId: selectedLead.id,
@@ -259,6 +266,43 @@ function ChatPage() {
       [selectedLead.id]: [...(prev[selectedLead.id] || []), newMsg],
     }));
     setReplyingTo(null);
+  };
+
+  const handleFinishAttendance = (lead: Lead) => {
+    sessionsApi.close({
+      leadId: lead.id,
+      leadPhone: lead.phone,
+      instance: "default",
+    }).then(({ data, error }) => {
+      if (error) {
+        toast.error("Erro ao finalizar atendimento");
+        return;
+      }
+      const durationMin = data?.duration ? Math.floor(data.duration / 60) : 0;
+      toast.success(`Atendimento finalizado`, {
+        description: `${lead.name} — Duração: ${durationMin}min. Pesquisa de satisfação enviada.`,
+      });
+    });
+
+    // Move lead out of active
+    setMyLeads((prev) => prev.filter((l) => l.id !== lead.id));
+    if (selectedLead?.id === lead.id) setSelectedLead(null);
+
+    // Add system message
+    setMessages((prev) => ({
+      ...prev,
+      [lead.id]: [
+        ...(prev[lead.id] || []),
+        {
+          id: `sys-close-${Date.now()}`,
+          leadId: lead.id,
+          content: "✅ Atendimento finalizado. Pesquisa de satisfação enviada ao paciente.",
+          sender: "attendant" as const,
+          type: "text" as const,
+          timestamp: new Date(),
+        },
+      ],
+    }));
   };
 
   const handleReaction = (messageId: string, emoji: string) => {
