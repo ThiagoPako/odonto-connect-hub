@@ -23,6 +23,7 @@ import {
   Percent,
   Stethoscope,
   UserRound,
+  Headset,
 } from "lucide-react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
@@ -49,6 +50,7 @@ const navSections: NavSection[] = [
     items: [
       { title: "Dashboard", url: "/", icon: LayoutDashboard },
       { title: "Meu Painel", url: "/painel-dentista", icon: Stethoscope },
+      { title: "Painel Comercial", url: "/painel-comercial", icon: Headset },
       { title: "Agenda", url: "/agenda", icon: CalendarDays },
       { title: "Chat", url: "/chat", icon: MessageSquare },
     ],
