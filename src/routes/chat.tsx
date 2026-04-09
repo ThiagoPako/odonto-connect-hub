@@ -14,7 +14,7 @@ import type { AttendanceQueue } from "@/data/queueData";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { useRealtimeChat, type IncomingMessage } from "@/hooks/useRealtimeChat";
-import { whatsappApi, transferApi, sessionsApi, tagsApi, queuesApi, type LeadTagApi } from "@/lib/vpsApi";
+import { whatsappApi, transferApi, sessionsApi, tagsApi, queuesApi, messagesApi, type LeadTagApi, type ChatMessageApi } from "@/lib/vpsApi";
 import { sendTextMessage } from "@/lib/evolutionApi";
 import { useWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
 import { playNotificationSound } from "@/lib/notificationSound";
@@ -62,6 +62,8 @@ function ChatPage() {
   const [availableTags, setAvailableTags] = useState<LeadTagApi[]>([]);
   const [leadTagAssignments, setLeadTagAssignments] = useState<Record<string, string[]>>({});
   const [surveyLead, setSurveyLead] = useState<Lead | null>(null);
+  const [historyHasMore, setHistoryHasMore] = useState<Record<string, boolean>>({});
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   // Refs for stable closure access in SSE callback
   const queueRef = useRef(queue);
@@ -233,6 +235,86 @@ function ChatPage() {
       setSelectedLead((prev) => prev && prev.id === selectedLead.id ? { ...prev, avatarUrl: url } : prev);
     });
   }, [selectedLead?.id]);
+
+  // ─── Load initial message history from VPS when selecting a lead ───
+  const historyLoadedRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!selectedLead) return;
+    if (historyLoadedRef.current.has(selectedLead.id)) return;
+    historyLoadedRef.current.add(selectedLead.id);
+
+    messagesApi.list(selectedLead.id, { limit: 50 }).then(({ data }) => {
+      if (!data?.messages?.length) return;
+      const apiMessages: ChatMessage[] = data.messages.map((m: ChatMessageApi) => ({
+        id: m.id,
+        leadId: m.lead_id,
+        content: m.content,
+        sender: m.sender,
+        type: (m.type as MessageType) || "text",
+        timestamp: new Date(m.timestamp),
+        status: (m.status as any) || "delivered",
+        fileName: m.file_name || undefined,
+        fileUrl: m.media_url || undefined,
+        mimeType: m.mime_type || undefined,
+      }));
+
+      setMessages((prev) => {
+        const existing = prev[selectedLead.id] || [];
+        // Merge: prepend history, skip duplicates
+        const existingIds = new Set(existing.map((m) => m.id));
+        const newMsgs = apiMessages.filter((m) => !existingIds.has(m.id));
+        return { ...prev, [selectedLead.id]: [...newMsgs, ...existing] };
+      });
+
+      setHistoryHasMore((prev) => ({ ...prev, [selectedLead.id]: data.hasMore }));
+    });
+  }, [selectedLead?.id]);
+
+  // ─── Infinite scroll: load older messages ───
+  const handleLoadMore = useCallback(async () => {
+    if (!selectedLead) return;
+    const currentMsgs = messages[selectedLead.id] || [];
+    if (currentMsgs.length === 0) return;
+
+    setHistoryLoading(true);
+    const oldestMsg = currentMsgs[0];
+    const oldestTimestamp = new Date(oldestMsg.timestamp).toISOString();
+
+    try {
+      const { data } = await messagesApi.list(selectedLead.id, { before: oldestTimestamp, limit: 30 });
+      if (data?.messages?.length) {
+        const apiMessages: ChatMessage[] = data.messages.map((m: ChatMessageApi) => ({
+          id: m.id,
+          leadId: m.lead_id,
+          content: m.content,
+          sender: m.sender,
+          type: (m.type as MessageType) || "text",
+          timestamp: new Date(m.timestamp),
+          status: (m.status as any) || "delivered",
+          fileName: m.file_name || undefined,
+          fileUrl: m.media_url || undefined,
+          mimeType: m.mime_type || undefined,
+        }));
+
+        setMessages((prev) => {
+          const existing = prev[selectedLead.id] || [];
+          const existingIds = new Set(existing.map((m) => m.id));
+          const newMsgs = apiMessages.filter((m) => !existingIds.has(m.id));
+          return { ...prev, [selectedLead.id]: [...newMsgs, ...existing] };
+        });
+
+        setHistoryHasMore((prev) => ({ ...prev, [selectedLead.id]: data.hasMore }));
+      } else {
+        setHistoryHasMore((prev) => ({ ...prev, [selectedLead.id]: false }));
+      }
+    } catch {
+      // Silently fail — user can retry by scrolling up again
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [selectedLead?.id, messages]);
+
   // Sync global unread count for sidebar badge
   useEffect(() => {
     const total = [...queue, ...myLeads].reduce((sum, l) => sum + l.unreadCount, 0);
@@ -818,6 +900,9 @@ function ChatPage() {
                 onReply={handleReply}
                 onForward={handleForward}
                 onDelete={handleDeleteMessage}
+                onLoadMore={handleLoadMore}
+                hasMore={historyHasMore[selectedLead.id] ?? false}
+                loadingMore={historyLoading}
               />
               {selectedLead.status === "finished" ? (
                 <div className="px-4 py-3 border-t border-border/50 bg-muted/30 flex items-center justify-center gap-3">

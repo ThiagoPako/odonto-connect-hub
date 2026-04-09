@@ -356,6 +356,37 @@ export const contatosApi = {
     vpsApiFetch<{ autoSync: boolean; intervalMinutes: number; totalContatos: number }>('/contatos/sync/status'),
 };
 
+// ─── Messages / Chat History ────────────────────────────────
+
+export interface ChatMessageApi {
+  id: string;
+  lead_id: string;
+  content: string;
+  sender: 'lead' | 'attendant';
+  type: string;
+  timestamp: string;
+  status?: string;
+  media_url?: string;
+  file_name?: string;
+  mime_type?: string;
+  reply_to_id?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export const messagesApi = {
+  /** Fetch paginated message history for a lead (oldest first) */
+  list: (leadId: string, params?: { before?: string; limit?: number }) =>
+    vpsApiFetch<{ messages: ChatMessageApi[]; hasMore: boolean }>(
+      `/messages/${encodeURIComponent(leadId)}`,
+      {
+        params: {
+          ...(params?.before ? { before: params.before } : {}),
+          ...(params?.limit ? { limit: String(params.limit) } : {}),
+        },
+      }
+    ),
+};
+
 // ─── Health check ───────────────────────────────────────────
 
 export const healthCheck = () => vpsApiFetch('/health');
