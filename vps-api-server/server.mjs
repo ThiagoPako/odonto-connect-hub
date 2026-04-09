@@ -1641,6 +1641,99 @@ app.post('/api/contatos/import', async (req, res) => {
   }
 });
 
+// ─── Auto-sync WhatsApp contacts (runs every 30 min) ────────
+let syncInterval = null;
+
+async function syncWhatsAppContacts() {
+  try {
+    // 1. Fetch connected instances from Evolution API
+    const instRes = await fetch(`${EVOLUTION_API_URL}/instance/fetchInstances`, {
+      headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
+    });
+    if (!instRes.ok) return;
+    const instances = await instRes.json();
+    const connected = instances.filter(i => (i.connectionStatus || i.status) === 'open');
+    if (connected.length === 0) return;
+
+    let totalImported = 0;
+    for (const inst of connected) {
+      const name = inst.name || inst.instanceName;
+      try {
+        // 2. Fetch contacts from each connected instance
+        const cRes = await fetch(`${EVOLUTION_API_URL}/chat/findContacts/${name}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
+          body: JSON.stringify({}),
+        });
+        if (!cRes.ok) continue;
+        const contacts = await cRes.json();
+
+        const waContacts = (contacts || []).filter(c => c.id?.endsWith('@s.whatsapp.net'));
+
+        for (const c of waContacts) {
+          const telefone = c.id.replace('@s.whatsapp.net', '').replace(/\D/g, '');
+          const nome = (c.pushName || c.name || telefone).trim();
+          if (!telefone) continue;
+
+          const existing = await pool.query('SELECT id FROM contatos WHERE telefone = $1', [telefone]);
+          if (existing.rows.length > 0) {
+            // Update name if it was just the phone number before
+            if (nome && nome !== telefone) {
+              await pool.query(
+                `UPDATE contatos SET nome = $1, updated_at = NOW() WHERE telefone = $2 AND nome = telefone`,
+                [nome, telefone]
+              );
+            }
+            continue;
+          }
+
+          await pool.query(
+            'INSERT INTO contatos (id, nome, telefone, tipo) VALUES ($1, $2, $3, $4)',
+            [crypto.randomUUID(), nome || telefone, telefone, 'pessoal']
+          );
+          totalImported++;
+        }
+      } catch (err) {
+        console.error(`[sync] Erro ao sincronizar instância ${name}:`, err.message);
+      }
+    }
+
+    if (totalImported > 0) {
+      console.log(`[sync] ${totalImported} novos contatos importados do WhatsApp`);
+    }
+  } catch (err) {
+    console.error('[sync] Erro na sincronização de contatos:', err.message);
+  }
+}
+
+// Sync status & manual trigger endpoint
+app.get('/api/contatos/sync/status', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { rows } = await pool.query('SELECT COUNT(*) as total FROM contatos');
+    res.json({
+      autoSync: !!syncInterval,
+      intervalMinutes: 30,
+      totalContatos: parseInt(rows[0].total),
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/contatos/sync/now', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const before = await pool.query('SELECT COUNT(*) as total FROM contatos');
+    await syncWhatsAppContacts();
+    const after = await pool.query('SELECT COUNT(*) as total FROM contatos');
+    const imported = parseInt(after.rows[0].total) - parseInt(before.rows[0].total);
+    res.json({ success: true, imported, totalContatos: parseInt(after.rows[0].total) });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 
 // ═══════════════════════════════════════════════════════════════
 
@@ -1660,4 +1753,9 @@ app.get('/api/health', async (_req, res) => {
 app.listen(PORT, () => {
   console.log(`🦷 Odonto Connect API running on port ${PORT}`);
   console.log(`   Health: http://localhost:${PORT}/api/health`);
+
+  // Start auto-sync every 30 minutes
+  syncWhatsAppContacts(); // Run once on startup
+  syncInterval = setInterval(syncWhatsAppContacts, 30 * 60 * 1000);
+  console.log('   📇 Auto-sync de contatos WhatsApp ativo (a cada 30 min)');
 });
