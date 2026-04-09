@@ -100,7 +100,8 @@ function ChatPage() {
       }));
     }
 
-    // Show toast notification
+    // Play sound + show toast notification
+    playNotificationSound();
     toast.info(`💬 ${msg.leadName || msg.pushName}`, {
       description: msg.content?.slice(0, 80) || `[${msg.type}]`,
       duration: 5000,
