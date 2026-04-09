@@ -109,6 +109,32 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onRe
     toast.success("Exportação iniciada", { description: "Use Ctrl+P para salvar como PDF" });
   };
 
+  const handleCall = async (isVideo: boolean) => {
+    const instance = connectedInstances[0]?.instanceName;
+    if (!instance) {
+      toast.error("Nenhuma instância WhatsApp conectada");
+      return;
+    }
+    if (!lead.phone) {
+      toast.error("Contato sem número de telefone");
+      return;
+    }
+    setCalling(true);
+    toast.info(isVideo ? "Iniciando chamada de vídeo..." : "Iniciando ligação...");
+    try {
+      const { error } = await whatsappApi.offerCall(instance, lead.phone, isVideo);
+      if (error) {
+        toast.error("Erro ao ligar: " + error);
+      } else {
+        toast.success(isVideo ? "Chamada de vídeo iniciada!" : "Ligação iniciada!");
+      }
+    } catch (err: any) {
+      toast.error("Falha na ligação: " + (err.message || "erro desconhecido"));
+    } finally {
+      setCalling(false);
+    }
+  };
+
   return (
     <>
       <div className="h-[68px] flex items-center justify-between px-5 border-b border-border/50 bg-card/80 backdrop-blur-sm shrink-0 relative shadow-sm">
