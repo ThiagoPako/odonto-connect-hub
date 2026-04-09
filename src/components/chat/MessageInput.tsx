@@ -131,12 +131,16 @@ export function MessageInput({ onSendMessage, disabled, replyingTo, onCancelRepl
     const reader = new FileReader();
     reader.onloadend = () => {
       const base64 = (reader.result as string).split(",")[1];
-      const mime = blob.type || "audio/ogg; codecs=opus";
-      const ext = mime.includes("webm") ? "webm" : mime.includes("mp4") ? "m4a" : "ogg";
+      // Clean MIME type — remove codecs params that break Evolution API data URI parsing
+      const rawMime = blob.type || "audio/ogg";
+      const cleanMime = rawMime.split(";")[0].trim(); // "audio/webm;codecs=opus" → "audio/webm"
+      // WhatsApp prefers ogg/opus — map webm to ogg for better compatibility
+      const finalMime = cleanMime === "audio/webm" ? "audio/ogg" : cleanMime;
+      const ext = finalMime.includes("mp4") ? "m4a" : "ogg";
       onSendMessage("🎤 Mensagem de áudio", "audio", {
         duration: Math.max(1, Math.round(recordedDuration)),
         fileUrl: URL.createObjectURL(blob),
-        mimeType: mime,
+        mimeType: finalMime,
         fileName: `audio-${Date.now()}.${ext}`,
         _mediaBase64: base64,
       } as any);
