@@ -401,8 +401,17 @@ function ChatPage() {
       <div className="flex-1 flex overflow-hidden">
         {/* Left Panel - Lead List */}
         <div className="w-[360px] flex flex-col border-r border-border bg-card shrink-0">
-          {/* Tabs */}
-          <div className="flex border-b border-border shrink-0">
+          {/* New Chat + Tabs */}
+          <div className="flex items-center border-b border-border shrink-0">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-10 w-10 shrink-0 ml-1"
+              title="Novo chat com contato"
+              onClick={() => setNewChatOpen(true)}
+            >
+              <UserPlus className="h-4 w-4 text-primary" />
+            </Button>
             <button
               onClick={() => setActiveTab("queue")}
               className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-colors border-b-2 ${
