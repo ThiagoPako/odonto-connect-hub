@@ -1528,6 +1528,86 @@ app.post('/api/tag-assignments/toggle', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
+// CONTATOS
+// ═══════════════════════════════════════════════════════════════
+
+app.get('/api/contatos', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { search, tipo } = req.query;
+    let query = 'SELECT * FROM contatos WHERE 1=1';
+    const params = [];
+    if (search) {
+      params.push(`%${search}%`);
+      query += ` AND (nome ILIKE $${params.length} OR telefone ILIKE $${params.length} OR email ILIKE $${params.length})`;
+    }
+    if (tipo) { params.push(tipo); query += ` AND tipo = $${params.length}`; }
+    query += ' ORDER BY favorito DESC, nome ASC';
+    const { rows } = await pool.query(query, params);
+    res.json(rows);
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+app.post('/api/contatos', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { nome, telefone, email, tipo, empresa, cargo, observacoes } = req.body;
+    if (!nome || !nome.trim()) return res.status(400).json({ error: 'Nome é obrigatório' });
+    const id = crypto.randomUUID();
+    await pool.query(
+      'INSERT INTO contatos (id, nome, telefone, email, tipo, empresa, cargo, observacoes) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+      [id, nome.trim(), telefone || null, email || null, tipo || 'pessoal', empresa || null, cargo || null, observacoes || null]
+    );
+    const { rows } = await pool.query('SELECT * FROM contatos WHERE id = $1', [id]);
+    res.json(rows[0]);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/api/contatos/:id', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { nome, telefone, email, tipo, empresa, cargo, observacoes, favorito } = req.body;
+    await pool.query(
+      `UPDATE contatos SET nome=COALESCE($1,nome), telefone=$2, email=$3, tipo=COALESCE($4,tipo),
+       empresa=$5, cargo=$6, observacoes=$7, favorito=COALESCE($8,favorito), updated_at=NOW() WHERE id=$9`,
+      [nome, telefone, email, tipo, empresa, cargo, observacoes, favorito, req.params.id]
+    );
+    const { rows } = await pool.query('SELECT * FROM contatos WHERE id = $1', [req.params.id]);
+    res.json(rows[0]);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/contatos/:id', async (req, res) => {
+  try {
+    await verifyUser(req);
+    await pool.query('DELETE FROM contatos WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.patch('/api/contatos/:id/favorito', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { rows } = await pool.query(
+      'UPDATE contatos SET favorito = NOT favorito, updated_at = NOW() WHERE id = $1 RETURNING *',
+      [req.params.id]
+    );
+    if (rows.length === 0) return res.status(404).json({ error: 'Contato não encontrado' });
+    res.json(rows[0]);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
 // HEALTH CHECK
 // ═══════════════════════════════════════════════════════════════
 

@@ -320,6 +320,36 @@ export const tagsApi = {
     vpsApiFetch<{ action: 'added' | 'removed' }>('/tag-assignments/toggle', { method: 'POST', body: { leadId, tagId } }),
 };
 
+// ─── Contatos ───────────────────────────────────────────────
+
+export interface Contato {
+  id: string;
+  nome: string;
+  telefone: string | null;
+  email: string | null;
+  tipo: string;
+  empresa: string | null;
+  cargo: string | null;
+  observacoes: string | null;
+  avatar_url: string | null;
+  favorito: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export const contatosApi = {
+  list: (params?: Record<string, string>) =>
+    vpsApiFetch<Contato[]>('/contatos', { params }),
+  create: (body: { nome: string; telefone?: string; email?: string; tipo?: string; empresa?: string; cargo?: string; observacoes?: string }) =>
+    vpsApiFetch<Contato>('/contatos', { method: 'POST', body }),
+  update: (id: string, body: Partial<Contato>) =>
+    vpsApiFetch<Contato>(`/contatos/${id}`, { method: 'PUT', body }),
+  delete: (id: string) =>
+    vpsApiFetch<{ success: boolean }>(`/contatos/${id}`, { method: 'DELETE' }),
+  toggleFavorito: (id: string) =>
+    vpsApiFetch<Contato>(`/contatos/${id}/favorito`, { method: 'PATCH' }),
+};
+
 // ─── Health check ───────────────────────────────────────────
 
 export const healthCheck = () => vpsApiFetch('/health');
