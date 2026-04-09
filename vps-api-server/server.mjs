@@ -1099,13 +1099,13 @@ async function matchQueue(content) {
   ) || null;
 }
 
-async function persistIncomingMessage({ msgId, leadId, content, msgType, phone, instance, pushName, remoteJid, rawType }) {
+async function persistIncomingMessage({ msgId, leadId, content, msgType, phone, instance, pushName, remoteJid, rawType, mediaUrl, fileName, mimeType }) {
   try {
     await pool.query(
-      `INSERT INTO chat_messages (id, lead_id, content, sender, type, status, timestamp, phone, instance, metadata)
-       VALUES ($1,$2,$3,'lead',$4,'delivered',NOW(),$5,$6,$7)
+      `INSERT INTO chat_messages (id, lead_id, content, sender, type, status, timestamp, phone, instance, media_url, file_name, mime_type, metadata)
+       VALUES ($1,$2,$3,'lead',$4,'delivered',NOW(),$5,$6,$7,$8,$9,$10)
        ON CONFLICT (id) DO NOTHING`,
-      [msgId, leadId, content, msgType, phone, instance, JSON.stringify({
+      [msgId, leadId, content, msgType, phone, instance, mediaUrl || null, fileName || null, mimeType || null, JSON.stringify({
         pushName,
         remoteJid,
         rawType,
@@ -1116,7 +1116,7 @@ async function persistIncomingMessage({ msgId, leadId, content, msgType, phone, 
   }
 }
 
-function broadcastIncomingMessage({ msgId, phone, pushName, leadId, leadName, content, msgType, instance, queueId = null, queueName, queueColor }) {
+function broadcastIncomingMessage({ msgId, phone, pushName, leadId, leadName, content, msgType, instance, queueId = null, queueName, queueColor, mediaUrl, fileName, mimeType }) {
   broadcastSSE('new_message', {
     id: msgId,
     phone,
@@ -1130,6 +1130,9 @@ function broadcastIncomingMessage({ msgId, phone, pushName, leadId, leadName, co
     queueId,
     queueName,
     queueColor,
+    mediaUrl: mediaUrl || null,
+    fileName: fileName || null,
+    mimeType: mimeType || null,
   });
 }
 
@@ -1194,6 +1197,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
       message?.message?.buttonsResponseMessage?.selectedButtonId ||
       message?.message?.listResponseMessage?.singleSelectReply?.selectedRowId ||
       message?.message?.imageMessage?.caption ||
+      message?.message?.videoMessage?.caption ||
       '';
     const msgType =
       message?.message?.imageMessage ? 'image' :
@@ -1206,6 +1210,28 @@ app.post('/api/webhook/evolution', async (req, res) => {
       message?.message?.buttonsResponseMessage ? 'button_response' :
       message?.message?.listResponseMessage ? 'list_response' :
       'text';
+
+    // Extract media metadata
+    const mediaMsg = message?.message?.imageMessage || message?.message?.audioMessage ||
+      message?.message?.videoMessage || message?.message?.documentMessage || message?.message?.stickerMessage;
+    const mediaMimeType = mediaMsg?.mimetype || mediaMsg?.mimeType || null;
+    const mediaFileName = message?.message?.documentMessage?.fileName || null;
+
+    // Fetch media URL from Evolution API (base64 download)
+    let mediaUrl = null;
+    if (['image', 'audio', 'video', 'document', 'sticker'].includes(msgType) && message?.key?.id) {
+      try {
+        const mediaResult = await evolutionFetch(`/chat/getBase64FromMediaMessage/${instance}`, {
+          method: 'POST',
+          body: JSON.stringify({ message: { key: message.key, message: message.message } }),
+        });
+        if (mediaResult.ok && mediaResult.data?.base64) {
+          mediaUrl = `data:${mediaMimeType || 'application/octet-stream'};base64,${mediaResult.data.base64}`;
+        }
+      } catch (mediaErr) {
+        console.error('Media fetch error:', mediaErr.message);
+      }
+    }
 
     // Find lead by phone
     const { rows: leads } = await pool.query(
@@ -1265,6 +1291,9 @@ app.post('/api/webhook/evolution', async (req, res) => {
           pushName,
           remoteJid,
           rawType,
+          mediaUrl,
+          fileName: mediaFileName,
+          mimeType: mediaMimeType,
         });
         broadcastIncomingMessage({
           msgId,
@@ -1275,6 +1304,9 @@ app.post('/api/webhook/evolution', async (req, res) => {
           content: resolvedContent,
           msgType,
           instance,
+          mediaUrl,
+          fileName: mediaFileName,
+          mimeType: mediaMimeType,
         });
         return res.json({ processed: true, offHours: true, leadId: lead.id });
       }
@@ -1352,6 +1384,9 @@ app.post('/api/webhook/evolution', async (req, res) => {
           pushName,
           remoteJid,
           rawType,
+          mediaUrl,
+          fileName: mediaFileName,
+          mimeType: mediaMimeType,
         });
         broadcastIncomingMessage({
           msgId,
@@ -1363,6 +1398,9 @@ app.post('/api/webhook/evolution', async (req, res) => {
           msgType,
           instance,
           queueId: lead.queue_id || null,
+          mediaUrl,
+          fileName: mediaFileName,
+          mimeType: mediaMimeType,
         });
         // Invalid selection — resend menu
         await sendQueueMenu(instance, phone);
@@ -1424,6 +1462,9 @@ app.post('/api/webhook/evolution', async (req, res) => {
       pushName,
       remoteJid,
       rawType,
+      mediaUrl,
+      fileName: mediaFileName,
+      mimeType: mediaMimeType,
     });
 
     broadcastIncomingMessage({
@@ -1436,6 +1477,9 @@ app.post('/api/webhook/evolution', async (req, res) => {
       msgType,
       instance,
       queueId: lead.queue_id || null,
+      mediaUrl,
+      fileName: mediaFileName,
+      mimeType: mediaMimeType,
     });
 
     console.log(`💬 New message from ${pushName} (${phone}) → saved + broadcast to ${sseClients.size} clients`);
@@ -1622,7 +1666,7 @@ app.get('/api/crm/leads', async (req, res) => {
                  FROM crm_leads l
                  LEFT JOIN LATERAL (
                    SELECT attendant_name, status FROM attendance_sessions
-                   WHERE lead_id = l.id ORDER BY created_at DESC LIMIT 1
+                   WHERE lead_id = l.id::text ORDER BY created_at DESC LIMIT 1
                  ) s ON true
                  WHERE 1=1`;
     const params = [];
@@ -2247,7 +2291,7 @@ app.post('/api/messages/mark-read', async (req, res) => {
 
 app.get('/api/queue/leads', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
 
     // Get leads that have:
     // 1. An open waiting session (not assigned)
@@ -2269,14 +2313,14 @@ app.get('/api/queue/leads', async (req, res) => {
         (SELECT content FROM chat_messages WHERE lead_id = l.id::text ORDER BY timestamp DESC LIMIT 1) as last_message,
         (SELECT timestamp FROM chat_messages WHERE lead_id = l.id::text ORDER BY timestamp DESC LIMIT 1) as last_message_time,
         (SELECT COUNT(*) FROM chat_messages WHERE lead_id = l.id::text AND sender = 'lead' AND timestamp > COALESCE(
-          (SELECT last_read_at FROM chat_read_status WHERE lead_id = l.id::text LIMIT 1),
+          (SELECT last_read_at FROM chat_read_status WHERE lead_id = l.id::text AND user_id = $1 LIMIT 1),
           '1970-01-01'
         ))::INTEGER as unread_count
       FROM crm_leads l
       LEFT JOIN attendance_sessions s ON s.lead_id = l.id::text AND s.status IN ('waiting', 'active')
       WHERE EXISTS (SELECT 1 FROM chat_messages WHERE lead_id = l.id::text AND timestamp > NOW() - INTERVAL '7 days')
       ORDER BY l.id, s.started_waiting_at DESC NULLS LAST
-    `);
+    `, [user.id]);
 
     // Separate into queue (waiting) and active (assigned)
     const queueLeads = [];
@@ -2611,9 +2655,11 @@ app.listen(PORT, async () => {
         empresa TEXT,
         cargo TEXT,
         observacoes TEXT,
+        favorito BOOLEAN DEFAULT false,
         created_at TIMESTAMPTZ DEFAULT NOW(),
         updated_at TIMESTAMPTZ DEFAULT NOW()
       )`,
+      `ALTER TABLE contatos ADD COLUMN IF NOT EXISTS favorito BOOLEAN DEFAULT false`,
     ];
 
     let applied = 0;

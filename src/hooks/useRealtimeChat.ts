@@ -14,6 +14,9 @@ export interface IncomingMessage {
   queueId?: string;
   queueName?: string;
   queueColor?: string;
+  mediaUrl?: string | null;
+  fileName?: string | null;
+  mimeType?: string | null;
 }
 
 export type PresenceStatus = "available" | "composing" | "recording" | "paused" | "unavailable";

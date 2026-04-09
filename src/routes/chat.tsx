@@ -176,6 +176,9 @@ function ChatPage() {
       type: (msg.type as MessageType) || "text",
       timestamp: new Date(msg.timestamp),
       status: "delivered",
+      fileUrl: msg.mediaUrl || undefined,
+      fileName: msg.fileName || undefined,
+      mimeType: msg.mimeType || undefined,
     };
 
     // Use refs to avoid stale closure
@@ -321,7 +324,8 @@ function ChatPage() {
     if (selectedLead.avatarUrl) return; // already has photo
 
     const cleanPhone = selectedLead.phone.replace(/\D/g, "");
-    whatsappApi.fetchProfilePicture("default", cleanPhone, selectedLead.id).then(({ data }) => {
+    const instanceName = connectedInstances[0]?.instanceName || "teste";
+    whatsappApi.fetchProfilePicture(instanceName, cleanPhone, selectedLead.id).then(({ data }) => {
       const url = data?.profilePictureUrl;
       if (!url) return;
 
@@ -619,10 +623,11 @@ function ChatPage() {
       handleSendMessage(farewellMessage, "text");
     }
 
+    const instanceName = connectedInstances[0]?.instanceName || "teste";
     sessionsApi.close({
       leadId: lead.id,
       leadPhone: lead.phone,
-      instance: "default",
+      instance: instanceName,
     }).then(({ data, error }) => {
       if (error) {
         toast.error("Erro ao finalizar atendimento");
