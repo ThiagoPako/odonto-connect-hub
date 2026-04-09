@@ -1288,6 +1288,9 @@ app.post('/api/webhook/evolution', async (req, res) => {
           pushName,
           remoteJid,
           rawType,
+          mediaUrl,
+          fileName: mediaFileName,
+          mimeType: mediaMimeType,
         });
         broadcastIncomingMessage({
           msgId,
@@ -1375,6 +1378,9 @@ app.post('/api/webhook/evolution', async (req, res) => {
           pushName,
           remoteJid,
           rawType,
+          mediaUrl,
+          fileName: mediaFileName,
+          mimeType: mediaMimeType,
         });
         broadcastIncomingMessage({
           msgId,
@@ -1447,6 +1453,9 @@ app.post('/api/webhook/evolution', async (req, res) => {
       pushName,
       remoteJid,
       rawType,
+      mediaUrl,
+      fileName: mediaFileName,
+      mimeType: mediaMimeType,
     });
 
     broadcastIncomingMessage({
