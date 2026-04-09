@@ -28,6 +28,96 @@ interface ConversationViewProps {
   onServerSearch?: (query: string) => Promise<ServerSearchResult[]>;
 }
 
+
+// ─── Audio Player (supports base64 data URIs and ogg/opus) ──
+function AudioPlayer({ fileUrl, duration, isLead }: { fileUrl?: string; duration?: number; isLead: boolean }) {
+  const [playing, setPlaying] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [totalDuration, setTotalDuration] = useState(duration || 0);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const blobUrlRef = useRef<string | null>(null);
+
+  const getSrc = useCallback(() => {
+    if (!fileUrl) return "";
+    if (!fileUrl.startsWith("data:")) return fileUrl;
+    if (blobUrlRef.current) return blobUrlRef.current;
+    try {
+      const [header, b64] = fileUrl.split(",");
+      const mime = header.match(/data:(.*?);/)?.[1] || "audio/ogg";
+      const bin = atob(b64);
+      const arr = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      const blob = new Blob([arr], { type: mime });
+      blobUrlRef.current = URL.createObjectURL(blob);
+      return blobUrlRef.current;
+    } catch {
+      return fileUrl;
+    }
+  }, [fileUrl]);
+
+  useEffect(() => {
+    return () => { if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current); };
+  }, []);
+
+  const togglePlay = () => {
+    if (!fileUrl) return;
+    if (!audioRef.current) {
+      const audio = new Audio(getSrc());
+      audioRef.current = audio;
+      audio.onloadedmetadata = () => {
+        if (audio.duration && isFinite(audio.duration)) setTotalDuration(audio.duration);
+      };
+      audio.ontimeupdate = () => {
+        setCurrentTime(audio.currentTime);
+        if (audio.duration && isFinite(audio.duration)) setProgress(audio.currentTime / audio.duration);
+      };
+      audio.onended = () => { setPlaying(false); setProgress(0); setCurrentTime(0); };
+      audio.onerror = () => { setPlaying(false); };
+    }
+    if (playing) {
+      audioRef.current.pause();
+      setPlaying(false);
+    } else {
+      audioRef.current.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
+    }
+  };
+
+  const fmtTime = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+
+  if (!fileUrl) {
+    return (
+      <div className="flex items-center gap-2 p-2 rounded-xl bg-background/15 mb-1.5">
+        <span className="text-lg">🎤</span>
+        <span className="text-xs opacity-70">{duration ? fmtTime(duration) : "Áudio"}</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-2.5 mb-1.5 min-w-[220px]">
+      <button onClick={togglePlay} className={`h-9 w-9 rounded-full flex items-center justify-center shrink-0 transition-colors ${isLead ? "bg-primary/15 hover:bg-primary/25" : "bg-primary-foreground/15 hover:bg-primary-foreground/25"}`}>
+        {playing ? (
+          <div className="flex gap-[2px]">
+            <div className={`w-[3px] h-3.5 rounded-sm ${isLead ? "bg-primary" : "bg-primary-foreground"}`} />
+            <div className={`w-[3px] h-3.5 rounded-sm ${isLead ? "bg-primary" : "bg-primary-foreground"}`} />
+          </div>
+        ) : (
+          <div className={`w-0 h-0 border-l-[9px] border-y-[6px] border-y-transparent ml-0.5 ${isLead ? "border-l-primary" : "border-l-primary-foreground"}`} />
+        )}
+      </button>
+      <div className="flex-1 flex flex-col gap-1">
+        <div className={`h-1 rounded-full overflow-hidden ${isLead ? "bg-muted-foreground/20" : "bg-primary-foreground/20"}`}>
+          <div className={`h-full rounded-full transition-all duration-200 ${isLead ? "bg-primary" : "bg-primary-foreground"}`} style={{ width: `${progress * 100}%` }} />
+        </div>
+        <span className="text-[10px] opacity-60 font-mono">
+          {playing || currentTime > 0 ? fmtTime(currentTime) : fmtTime(totalDuration)}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 const REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 
 // ─── Date helpers ───────────────────────────────────────────
