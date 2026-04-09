@@ -25,6 +25,7 @@ import {
   UserRound,
   Headset,
   Timer,
+  Contact,
 } from "lucide-react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { useState, useMemo } from "react";
@@ -70,6 +71,7 @@ const navSections: NavSection[] = [
     items: [
       { title: "Painel Comercial", url: "/painel-comercial", icon: Headset },
       { title: "Chat", url: "/chat", icon: MessageSquare },
+      { title: "Contatos", url: "/contatos", icon: Contact },
       { title: "CRM & Funil", url: "/crm", icon: Users, badge: 12 },
       { title: "Automações", url: "/automacoes", icon: Zap },
       { title: "Disparos", url: "/disparos", icon: Send },

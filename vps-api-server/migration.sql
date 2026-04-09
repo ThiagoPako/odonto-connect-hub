@@ -299,6 +299,25 @@ CREATE TABLE IF NOT EXISTS lead_tag_assignments (
 CREATE INDEX IF NOT EXISTS idx_lead_tag_assignments_lead ON lead_tag_assignments(lead_id);
 CREATE INDEX IF NOT EXISTS idx_lead_tag_assignments_tag ON lead_tag_assignments(tag_id);
 
+-- Contatos (lista de contatos do WhatsApp / clínica)
+CREATE TABLE IF NOT EXISTS contatos (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  nome TEXT NOT NULL,
+  telefone TEXT,
+  email TEXT,
+  tipo TEXT DEFAULT 'pessoal',
+  empresa TEXT,
+  cargo TEXT,
+  observacoes TEXT,
+  avatar_url TEXT,
+  favorito BOOLEAN DEFAULT false,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_contatos_nome ON contatos(nome);
+CREATE INDEX IF NOT EXISTS idx_contatos_telefone ON contatos(telefone);
+
 -- Insert default tags
 INSERT INTO lead_tags (id, name, color, icon) VALUES
   (gen_random_uuid(), 'Urgente', '#EF4444', '🔴'),
