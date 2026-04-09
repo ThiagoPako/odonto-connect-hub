@@ -242,16 +242,8 @@ function ChatPage() {
       }
     };
 
-    // Show typing indicator briefly before message for active conversation
-    if (isViewing) {
-      setIsLeadTyping(true);
-      setTimeout(() => {
-        setIsLeadTyping(false);
-        addMessage();
-      }, 800 + Math.random() * 600);
-    } else {
-      addMessage();
-    }
+    // Add message immediately — no artificial delay
+    addMessage();
 
     // Play sound + show toast + browser push notification
     playNotificationSound();
