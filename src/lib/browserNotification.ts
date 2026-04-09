@@ -2,6 +2,8 @@
  * Browser Push Notifications — request permission and show native notifications
  */
 
+import { registerPushSubscription } from './pushSubscription';
+
 const PERMISSION_KEY = "odonto_push_enabled";
 
 export function isPushEnabled(): boolean {
@@ -15,9 +17,17 @@ export function setPushEnabled(enabled: boolean): void {
 
 export async function requestNotificationPermission(): Promise<boolean> {
   if (!("Notification" in window)) return false;
-  if (Notification.permission === "granted") return true;
+  if (Notification.permission === "granted") {
+    // Auto-register push subscription when permission already granted
+    registerPushSubscription().catch(() => {});
+    return true;
+  }
   if (Notification.permission === "denied") return false;
   const result = await Notification.requestPermission();
+  if (result === "granted") {
+    // Register push subscription after granting permission
+    registerPushSubscription().catch(() => {});
+  }
   return result === "granted";
 }
 
