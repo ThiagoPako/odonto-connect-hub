@@ -215,8 +215,27 @@ export const whatsappApi = {
   logout: (instance: string) => vpsApiFetch(`/whatsapp/logout/${instance}`, { method: 'DELETE' }),
   delete: (instance: string) => vpsApiFetch(`/whatsapp/instances/${instance}`, { method: 'DELETE' }),
   restart: (instance: string) => vpsApiFetch(`/whatsapp/restart/${instance}`, { method: 'PUT' }),
-  sendText: (instance: string, number: string, text: string) =>
-    vpsApiFetch('/whatsapp/send-text', { method: 'POST', body: { instance, number, text } }),
+  sendText: (instance: string, number: string, text: string, quoted?: { key: { remoteJid: string; id: string } }) =>
+    vpsApiFetch('/whatsapp/send-text', { method: 'POST', body: { instance, number, text, quoted } }),
+  sendMedia: (instance: string, number: string, mediaType: string, media: {
+    base64?: string; url?: string; fileName?: string; caption?: string; mimeType?: string;
+  }) => vpsApiFetch('/whatsapp/send-media', { method: 'POST', body: { instance, number, mediaType, media } }),
+  sendLocation: (instance: string, number: string, location: {
+    latitude: number; longitude: number; name?: string; address?: string;
+  }) => vpsApiFetch('/whatsapp/send-location', { method: 'POST', body: { instance, number, ...location } }),
+  sendContact: (instance: string, number: string, contact: {
+    fullName: string; phone: string; email?: string; company?: string; url?: string;
+  }) => vpsApiFetch('/whatsapp/send-contact', { method: 'POST', body: { instance, number, contact } }),
+  sendPoll: (instance: string, number: string, question: string, options: string[]) =>
+    vpsApiFetch('/whatsapp/send-poll', { method: 'POST', body: { instance, number, question, options } }),
+  sendSticker: (instance: string, number: string, sticker: string) =>
+    vpsApiFetch('/whatsapp/send-sticker', { method: 'POST', body: { instance, number, sticker } }),
+  sendList: (instance: string, number: string, list: {
+    title: string; buttonText: string; description?: string; footerText?: string;
+    sections: Array<{ title: string; rows: Array<{ title: string; description?: string; id?: string }> }>;
+  }) => vpsApiFetch('/whatsapp/send-list', { method: 'POST', body: { instance, number, ...list } }),
+  sendReaction: (instance: string, number: string, messageId: string, reaction: string) =>
+    vpsApiFetch('/whatsapp/send-reaction', { method: 'POST', body: { instance, number, messageId, reaction } }),
   fetchProfilePicture: (instance: string, number: string, leadId?: string) =>
     vpsApiFetch<{ profilePictureUrl: string | null }>('/whatsapp/profile-picture', {
       method: 'POST',
