@@ -124,6 +124,14 @@ function ChatPage() {
         ...prev,
         [newLead.id]: [chatMsg],
       }));
+      // Start attendance session (waiting)
+      sessionsApi.start({
+        leadId: newLead.id,
+        leadName: newLead.name,
+        leadPhone: newLead.phone,
+        queueId: incomingMsg.queueId,
+        queueName: incomingMsg.queueName,
+      });
     }
 
     // Play sound + show toast + browser push notification
