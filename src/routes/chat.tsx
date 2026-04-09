@@ -320,18 +320,28 @@ function ChatPage() {
     setMyLeads((prev) => prev.map(updateQueue));
   }, []);
 
+  // Status priority: only upgrade, never downgrade
+  const statusPriority: Record<string, number> = { sending: 0, sent: 1, delivered: 2, read: 3, failed: -1 };
+
   const handleMessageStatusUpdate = useCallback((update: import("@/hooks/useRealtimeChat").MessageStatusUpdate) => {
-    // Update message status in all conversations matching the phone
     setMessages((prev) => {
-      const next = { ...prev };
-      for (const leadId of Object.keys(next)) {
-        const msgs = next[leadId];
-        const updated = msgs.map((m) =>
-          m.id === update.messageId ? { ...m, status: update.status as any } : m
-        );
-        if (updated !== msgs) next[leadId] = updated;
+      let changed = false;
+      const next: Record<string, ChatMessage[]> = {};
+      for (const leadId of Object.keys(prev)) {
+        const msgs = prev[leadId];
+        const updated = msgs.map((m) => {
+          if (m.id !== update.messageId) return m;
+          const currentPri = statusPriority[m.status || "sent"] ?? 1;
+          const newPri = statusPriority[update.status] ?? 1;
+          if (newPri > currentPri) {
+            changed = true;
+            return { ...m, status: update.status as MessageStatus };
+          }
+          return m;
+        });
+        next[leadId] = updated;
       }
-      return next;
+      return changed ? next : prev;
     });
   }, []);
 
