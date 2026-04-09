@@ -685,13 +685,19 @@ function ChatPage() {
       }
       updateStatus("sent");
 
-      // If we got a WhatsApp message ID, update the local message ID to match for ACK tracking
+      // Atomically swap ID and set status to "sent" (never downgrade if ACK arrived faster)
       if (evolutionMsgId) {
         setMessages((prev) => ({
           ...prev,
-          [selectedLead.id]: (prev[selectedLead.id] || []).map((m) =>
-            m.id === msgId ? { ...m, id: evolutionMsgId!, status: "sent" as const } : m
-          ),
+          [selectedLead.id]: (prev[selectedLead.id] || []).map((m) => {
+            if (m.id !== msgId && m.id !== evolutionMsgId) return m;
+            const currentPri = statusPriority[m.status || "sending"] ?? 0;
+            const newId = evolutionMsgId!;
+            // Keep higher status if ACK arrived before this runs
+            return currentPri >= (statusPriority["sent"] ?? 1)
+              ? { ...m, id: newId }
+              : { ...m, id: newId, status: "sent" as MessageStatus };
+          }),
         }));
       }
 
