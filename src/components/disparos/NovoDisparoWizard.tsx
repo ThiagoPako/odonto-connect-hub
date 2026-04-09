@@ -630,7 +630,7 @@ function StepRevisao({
   numeroEnvio: string;
 }) {
   const publicoLabel = publicoOptions.find((p) => p.id === publico)?.label || publico;
-  const numeroLabel = numerosDisponiveis.find((n) => n.id === numeroEnvio);
+  const numeroLabel = numeroEnvio || "Não selecionado";
 
   return (
     <div className="space-y-5">
