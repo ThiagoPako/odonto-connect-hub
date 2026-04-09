@@ -64,6 +64,7 @@ function ChatPage() {
   const [surveyLead, setSurveyLead] = useState<Lead | null>(null);
   const [historyHasMore, setHistoryHasMore] = useState<Record<string, boolean>>({});
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [presenceMap, setPresenceMap] = useState<Record<string, { status: "online" | "offline" | "typing" | "recording"; lastSeen: Date | null }>>({});
 
   // Refs for stable closure access in SSE callback
   const queueRef = useRef(queue);
