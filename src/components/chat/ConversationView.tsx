@@ -510,21 +510,27 @@ export function ConversationView({ messages, leadName, isTyping, onReaction, onR
     <div className="text-5xl animate-pop-in">{msg.stickerUrl || msg.content}</div>
   );
 
-  // Message status indicator
+  // Message status indicator — WhatsApp pattern
   const renderStatus = (msg: ChatMessage) => {
     if (msg.sender === "lead") return null;
-    // System messages don't get status
     if (msg.id.startsWith("sys-")) return null;
 
-    const status = (msg as any).status as string | undefined;
-    if (status === "read") {
-      return <CheckCheck className="h-3.5 w-3.5 text-[#53bdeb]" />;
+    const s = (msg as any).status as string | undefined;
+    switch (s) {
+      case "sending":
+        return <Clock className="h-3 w-3 opacity-60" />;
+      case "sent":
+        return <Check className="h-3.5 w-3.5 opacity-70" />;
+      case "delivered":
+        return <CheckCheck className="h-3.5 w-3.5 opacity-70" />;
+      case "read":
+        return <CheckCheck className="h-3.5 w-3.5 text-[#53bdeb]" />;
+      case "failed":
+        return <span className="text-[10px] text-destructive font-medium">!</span>;
+      default:
+        // Default to "sent" (single check)
+        return <Check className="h-3.5 w-3.5 opacity-70" />;
     }
-    if (status === "delivered") {
-      return <CheckCheck className="h-3.5 w-3.5" />;
-    }
-    // Default: sent
-    return <Check className="h-3.5 w-3.5" />;
   };
 
   // Group consecutive messages by same sender
