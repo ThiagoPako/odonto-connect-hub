@@ -7,6 +7,7 @@ import {
   Settings,
   LogOut,
   ChevronLeft,
+  ChevronDown,
   Users,
   Megaphone,
   BarChart3,
@@ -104,93 +105,157 @@ function filterByRole(sections: NavSection[], role: string): NavSection[] {
 }
 
 export function AppSidebar() {
-  const [collapsed, setCollapsed] = useState(false);
+  const [pinned, setPinned] = useState(false);
+  const [hovered, setHovered] = useState(false);
   const location = useLocation();
   const { user } = useAuth();
   const visibleSections = filterByRole(navSections, user?.role ?? "user");
 
+  const expanded = pinned || hovered;
+
+  // Auto-expand the section that contains the active route
+  const activeSectionLabel = visibleSections.find((s) =>
+    s.items.some((i) => i.url === location.pathname)
+  )?.label;
+
   return (
     <aside
-      className={`flex flex-col bg-sidebar text-sidebar-foreground border-r border-sidebar-border transition-all duration-300 shrink-0 relative ${
-        collapsed ? "w-[72px]" : "w-[260px]"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      className={`flex flex-col bg-sidebar text-sidebar-foreground border-r border-sidebar-border transition-all duration-300 shrink-0 relative z-30 ${
+        expanded ? "w-[240px]" : "w-[60px]"
       }`}
     >
       {/* Logo */}
-      <div className="flex items-center gap-3 px-4 h-[72px] border-b border-sidebar-border shrink-0">
-        <img src={logoImg} alt="Odonto Connect" className="h-10 w-10 rounded-xl shrink-0 shadow-sm" />
-        {!collapsed && (
-          <div className="flex flex-col">
-            <span className="text-sm font-bold tracking-tight text-sidebar-foreground font-heading leading-tight">
+      <div className="flex items-center gap-2.5 px-3 h-[56px] border-b border-sidebar-border shrink-0">
+        <img src={logoImg} alt="Odonto Connect" className="h-8 w-8 rounded-lg shrink-0 shadow-sm" />
+        {expanded && (
+          <div className="flex flex-col flex-1 min-w-0">
+            <span className="text-[13px] font-bold tracking-tight text-sidebar-foreground font-heading leading-tight truncate">
               Odonto Connect
-            </span>
-            <span className="text-[10px] text-muted-foreground font-medium">
-              SaaS Clínico
             </span>
           </div>
         )}
-        <button
-          onClick={() => setCollapsed(!collapsed)}
-          className={`ml-auto p-1.5 rounded-lg hover:bg-sidebar-accent transition-all duration-200 ${
-            collapsed ? "rotate-180" : ""
-          }`}
-        >
-          <ChevronLeft className="h-4 w-4 text-sidebar-foreground/60" />
-        </button>
+        {expanded && (
+          <button
+            onClick={() => setPinned(!pinned)}
+            className={`p-1 rounded-md hover:bg-sidebar-accent transition-all duration-200 shrink-0 ${
+              pinned ? "" : "opacity-60"
+            }`}
+            title={pinned ? "Recolher menu" : "Fixar menu"}
+          >
+            <ChevronLeft className={`h-3.5 w-3.5 text-sidebar-foreground/60 transition-transform ${pinned ? "" : "rotate-180"}`} />
+          </button>
+        )}
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 py-4 px-2.5 space-y-5 overflow-y-auto">
+      <nav className="flex-1 py-2 px-1.5 space-y-1 overflow-y-auto scrollbar-thin">
         {visibleSections.map((section) => (
-          <div key={section.label}>
-            {!collapsed && (
-              <p className="px-3 mb-2 text-[9px] uppercase tracking-[0.15em] font-semibold text-muted-foreground">
-                {section.label}
-              </p>
-            )}
-            <div className="space-y-0.5">
-              {section.items.map((item) => {
-                const isActive = location.pathname === item.url;
-                return (
-                  <Link
-                    key={item.title}
-                    to={item.url}
-                    className={`group flex items-center gap-3 px-3 py-2 rounded-xl text-[13px] font-medium transition-all duration-200 ${
-                      isActive
-                        ? "bg-sidebar-accent text-sidebar-accent-foreground font-semibold"
-                        : "text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground"
-                    }`}
-                  >
-                    <item.icon className={`h-[18px] w-[18px] shrink-0 transition-transform duration-200 ${
-                      isActive ? "text-sidebar-primary" : "group-hover:scale-110"
-                    }`} />
-                    {!collapsed && (
-                      <>
-                        <span className="flex-1">{item.title}</span>
-                        {item.badge && (
-                          <span className={`h-5 min-w-[22px] px-1.5 rounded-full text-[10px] font-bold flex items-center justify-center ${
-                            isActive
-                              ? "bg-sidebar-primary text-sidebar-primary-foreground"
-                              : "bg-sidebar-primary/15 text-sidebar-primary"
-                          }`}>
-                            {item.badge}
-                          </span>
-                        )}
-                      </>
-                    )}
-                  </Link>
-                );
-              })}
-            </div>
-          </div>
+          <CollapsibleSection
+            key={section.label}
+            section={section}
+            expanded={expanded}
+            activePath={location.pathname}
+            defaultOpen={section.label === activeSectionLabel}
+          />
         ))}
       </nav>
 
-      <SidebarUserFooter collapsed={collapsed} />
+      <SidebarUserFooter expanded={expanded} />
     </aside>
   );
 }
 
-function SidebarUserFooter({ collapsed }: { collapsed: boolean }) {
+function CollapsibleSection({
+  section,
+  expanded,
+  activePath,
+  defaultOpen,
+}: {
+  section: NavSection;
+  expanded: boolean;
+  activePath: string;
+  defaultOpen: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+
+  // In collapsed mode, show only icons without sections
+  if (!expanded) {
+    return (
+      <div className="space-y-0.5 py-1">
+        {section.items.map((item) => {
+          const isActive = activePath === item.url;
+          return (
+            <Link
+              key={item.title}
+              to={item.url}
+              className={`flex items-center justify-center h-9 w-9 mx-auto rounded-lg transition-all duration-200 relative ${
+                isActive
+                  ? "bg-sidebar-accent text-sidebar-primary"
+                  : "text-sidebar-foreground/60 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground"
+              }`}
+              title={item.title}
+            >
+              <item.icon className="h-[17px] w-[17px]" />
+              {item.badge && (
+                <span className="absolute -top-0.5 -right-0.5 h-3.5 min-w-[14px] px-0.5 rounded-full bg-destructive text-destructive-foreground text-[8px] font-bold flex items-center justify-center">
+                  {item.badge}
+                </span>
+              )}
+            </Link>
+          );
+        })}
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex items-center w-full px-2 py-1.5 text-[10px] uppercase tracking-[0.12em] font-semibold text-muted-foreground hover:text-sidebar-foreground transition-colors"
+      >
+        <span className="flex-1 text-left">{section.label}</span>
+        <ChevronDown className={`h-3 w-3 transition-transform duration-200 ${open ? "" : "-rotate-90"}`} />
+      </button>
+      {open && (
+        <div className="space-y-0.5">
+          {section.items.map((item) => {
+            const isActive = activePath === item.url;
+            return (
+              <Link
+                key={item.title}
+                to={item.url}
+                className={`group flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-[12px] font-medium transition-all duration-200 ${
+                  isActive
+                    ? "bg-sidebar-accent text-sidebar-accent-foreground font-semibold"
+                    : "text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground"
+                }`}
+              >
+                <item.icon className={`h-[16px] w-[16px] shrink-0 ${
+                  isActive ? "text-sidebar-primary" : ""
+                }`} />
+                <span className="flex-1 truncate">{item.title}</span>
+                {item.badge && (
+                  <span className={`h-4 min-w-[18px] px-1 rounded-full text-[9px] font-bold flex items-center justify-center ${
+                    isActive
+                      ? "bg-sidebar-primary text-sidebar-primary-foreground"
+                      : "bg-sidebar-primary/15 text-sidebar-primary"
+                  }`}>
+                    {item.badge}
+                  </span>
+                )}
+              </Link>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SidebarUserFooter({ expanded }: { expanded: boolean }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
 
@@ -203,29 +268,41 @@ function SidebarUserFooter({ collapsed }: { collapsed: boolean }) {
     navigate({ to: "/login" });
   };
 
-  return (
-    <div className="p-3 border-t border-sidebar-border shrink-0 space-y-2">
-      {!collapsed && (
-        <div className="flex items-center gap-3 px-2 py-2">
-          <div className="h-8 w-8 rounded-lg gradient-primary flex items-center justify-center text-[11px] font-bold text-primary-foreground shadow-sm">
-            {initials}
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-xs font-semibold text-sidebar-foreground leading-tight truncate">{user?.name ?? "Usuário"}</p>
-            <p className="text-[10px] text-muted-foreground capitalize">{user?.role ?? ""}</p>
-          </div>
+  if (!expanded) {
+    return (
+      <div className="p-2 border-t border-sidebar-border shrink-0 space-y-1">
+        <div className="h-8 w-8 rounded-lg gradient-primary flex items-center justify-center text-[10px] font-bold text-primary-foreground shadow-sm mx-auto">
+          {initials}
         </div>
-      )}
+        <button
+          onClick={handleLogout}
+          className="flex items-center justify-center h-8 w-8 mx-auto rounded-lg text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-foreground transition-all"
+          title="Sair"
+        >
+          <LogOut className="h-4 w-4" />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-2 border-t border-sidebar-border shrink-0 space-y-1">
+      <div className="flex items-center gap-2.5 px-2 py-1.5">
+        <div className="h-7 w-7 rounded-lg gradient-primary flex items-center justify-center text-[10px] font-bold text-primary-foreground shadow-sm">
+          {initials}
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-[11px] font-semibold text-sidebar-foreground leading-tight truncate">{user?.name ?? "Usuário"}</p>
+          <p className="text-[9px] text-muted-foreground capitalize">{user?.role ?? ""}</p>
+        </div>
+      </div>
       <button
         onClick={handleLogout}
-        className="flex items-center gap-3 px-3 py-2 rounded-xl text-[13px] text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-foreground transition-all w-full"
+        className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-[12px] text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-foreground transition-all w-full"
       >
-        <LogOut className="h-[18px] w-[18px] shrink-0" />
-        {!collapsed && <span>Sair</span>}
+        <LogOut className="h-4 w-4 shrink-0" />
+        <span>Sair</span>
       </button>
-      {!collapsed && (
-        <p className="text-[10px] text-muted-foreground text-center mt-1">v1.0.0</p>
-      )}
     </div>
   );
 }
