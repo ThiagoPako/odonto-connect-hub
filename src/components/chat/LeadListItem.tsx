@@ -32,8 +32,9 @@ export function LeadListItem({ lead, isSelected, onSelect, showAssignButton, onA
 
       <div className="relative">
         <LeadAvatar initials={lead.initials} avatarUrl={lead.avatarUrl} avatarColor={lead.avatarColor || "bg-primary/20"} size="md" />
-        {/* Online indicator */}
-        <div className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full bg-success border-2 border-card" />
+        {lead.status === "active" && (
+          <div className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full bg-success border-2 border-card" />
+        )}
       </div>
 
       <div className="flex-1 min-w-0 relative z-10">

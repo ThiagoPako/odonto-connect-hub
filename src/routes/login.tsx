@@ -1,12 +1,12 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useState, type FormEvent } from "react";
+import { useState, useEffect, type FormEvent } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { forgotPassword } from "@/lib/vpsApi";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Loader2, ArrowLeft, CheckCircle } from "lucide-react";
+import { Loader2, ArrowLeft, CheckCircle, Eye, EyeOff } from "lucide-react";
 
 export const Route = createFileRoute("/login")({
   component: LoginPage,
@@ -17,6 +17,7 @@ function LoginPage() {
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [showForgot, setShowForgot] = useState(false);
@@ -25,10 +26,12 @@ function LoginPage() {
   const [forgotSent, setForgotSent] = useState(false);
   const [forgotError, setForgotError] = useState("");
 
-  if (isAuthenticated) {
-    navigate({ to: "/" });
-    return null;
-  }
+  // Redirect if already authenticated (useEffect instead of conditional return before hooks)
+  useEffect(() => {
+    if (isAuthenticated) {
+      navigate({ to: "/" });
+    }
+  }, [isAuthenticated, navigate]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -62,10 +65,12 @@ function LoginPage() {
     }
   };
 
+  if (isAuthenticated) return null;
+
   if (showForgot) {
     return (
       <div className="flex min-h-screen w-full items-center justify-center bg-background p-4">
-        <Card className="w-full max-w-sm shadow-card">
+        <Card className="w-full max-w-sm shadow-card animate-fade-in">
           <CardHeader className="text-center">
             <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-xl gradient-primary">
               <span className="text-xl font-bold text-primary-foreground">OC</span>
@@ -95,7 +100,7 @@ function LoginPage() {
             ) : (
               <form onSubmit={handleForgot} className="space-y-4">
                 {forgotError && (
-                  <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
+                  <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive animate-fade-in">
                     {forgotError}
                   </div>
                 )}
@@ -133,7 +138,7 @@ function LoginPage() {
 
   return (
     <div className="flex min-h-screen w-full items-center justify-center bg-background p-4">
-      <Card className="w-full max-w-sm shadow-card">
+      <Card className="w-full max-w-sm shadow-card animate-fade-in">
         <CardHeader className="text-center">
           <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-xl gradient-primary">
             <span className="text-xl font-bold text-primary-foreground">OC</span>
@@ -144,7 +149,7 @@ function LoginPage() {
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
             {error && (
-              <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
+              <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive animate-fade-in">
                 {error}
               </div>
             )}
@@ -162,15 +167,26 @@ function LoginPage() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="password">Senha</Label>
-              <Input
-                id="password"
-                type="password"
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                autoComplete="current-password"
-              />
+              <div className="relative">
+                <Input
+                  id="password"
+                  type={showPassword ? "text" : "password"}
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  autoComplete="current-password"
+                  className="pr-10"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                  aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"}
+                >
+                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
             </div>
             <Button type="submit" className="w-full" disabled={loading}>
               {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
