@@ -228,6 +228,11 @@ export const whatsappApi = {
       method: 'POST',
       body: { instance },
     }),
+  offerCall: (instance: string, number: string, isVideo = false) =>
+    vpsApiFetch<{ success: boolean }>('/whatsapp/call', {
+      method: 'POST',
+      body: { instance, number, isVideo },
+    }),
 };
 
 // ─── Attendance Settings ────────────────────────────────────

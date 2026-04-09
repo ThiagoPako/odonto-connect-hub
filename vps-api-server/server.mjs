@@ -657,6 +657,43 @@ app.post('/api/whatsapp/sync-profile-pictures', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
+// WHATSAPP CALL — Offer call via Evolution API
+// ═══════════════════════════════════════════════════════════════
+
+app.post('/api/whatsapp/call', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { instance, number, isVideo = false, callDuration = 5 } = req.body;
+    if (!instance || !number) {
+      return res.status(400).json({ error: 'instance e number são obrigatórios' });
+    }
+
+    const cleanNumber = number.replace(/\D/g, '');
+    console.log(`📞 Initiating ${isVideo ? 'video' : 'voice'} call to ${cleanNumber} on instance ${instance}`);
+
+    const result = await evolutionFetch(`/call/offer/${instance}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        number: cleanNumber,
+        isVideo,
+        callDuration: callDuration || 5,
+      }),
+    });
+
+    if (!result.ok) {
+      console.error(`📞 Call error [${result.status}]:`, JSON.stringify(result.data));
+      return res.status(result.status).json({ error: 'Não foi possível iniciar a ligação', details: result.data });
+    }
+
+    console.log(`📞 Call offered successfully to ${cleanNumber}`);
+    res.json({ success: true, data: result.data });
+  } catch (error) {
+    console.error('Call error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
 
 app.get('/api/pacientes', async (req, res) => {
   try {
