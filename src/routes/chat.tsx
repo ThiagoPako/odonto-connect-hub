@@ -14,7 +14,7 @@ import type { AttendanceQueue } from "@/data/queueData";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { useRealtimeChat, type IncomingMessage } from "@/hooks/useRealtimeChat";
-import { whatsappApi, transferApi, sessionsApi, tagsApi, queuesApi, messagesApi, type LeadTagApi, type ChatMessageApi } from "@/lib/vpsApi";
+import { whatsappApi, transferApi, sessionsApi, tagsApi, queuesApi, messagesApi, queueLeadsApi, type LeadTagApi, type ChatMessageApi } from "@/lib/vpsApi";
 import { sendTextMessage, sendMediaMessage } from "@/lib/evolutionApi";
 import { useWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
 import { playNotificationSound } from "@/lib/notificationSound";
@@ -88,6 +88,28 @@ function ChatPage() {
     });
     tagsApi.list().then(({ data }) => { if (data) setAvailableTags(data); });
     tagsApi.assignments().then(({ data }) => { if (data) setLeadTagAssignments(data); });
+
+    // Load leads from queue/active from backend
+    queueLeadsApi.list().then(({ data }) => {
+      if (!data) return;
+      const toLead = (r: any): Lead => ({
+        id: r.id,
+        name: r.name || r.phone,
+        initials: (r.name || r.phone || "?").split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase(),
+        phone: r.phone,
+        avatarUrl: r.avatarUrl,
+        lastMessage: r.lastMessage || "",
+        lastMessageTime: r.lastMessageTime ? new Date(r.lastMessageTime) : new Date(),
+        unreadCount: r.unreadCount || 0,
+        status: r.sessionStatus === "active" ? "active" : "waiting",
+        avatarColor: "bg-chart-1",
+        queueId: r.queueId,
+        queueName: r.queueName,
+        assignedTo: r.attendantId ? "current" : undefined,
+      });
+      if (data.queue?.length) setQueue(data.queue.map(toLead));
+      if (data.active?.length) setMyLeads(data.active.map(toLead));
+    });
 
     // Load unread counts from backend and apply to leads
     const fetchUnreadCounts = () => {
@@ -285,7 +307,18 @@ function ChatPage() {
     }
   }, []);
 
-  useRealtimeChat({ onMessage: handleIncomingMessage, onPresence: handlePresenceUpdate });
+  // Handle queue assignment events from SSE
+  const handleQueueAssigned = useCallback((assignment: import("@/hooks/useRealtimeChat").QueueAssignment) => {
+    // Update existing lead's queue info, or it will arrive via new_message
+    const updateQueue = (l: Lead): Lead =>
+      l.id === assignment.leadId
+        ? { ...l, queueId: assignment.queueId, queueName: assignment.queueName }
+        : l;
+    setQueue((prev) => prev.map(updateQueue));
+    setMyLeads((prev) => prev.map(updateQueue));
+  }, []);
+
+  useRealtimeChat({ onMessage: handleIncomingMessage, onPresence: handlePresenceUpdate, onQueueAssigned: handleQueueAssigned });
 
   // Request browser notification permission on first visit
   useEffect(() => { requestNotificationPermission(); }, []);

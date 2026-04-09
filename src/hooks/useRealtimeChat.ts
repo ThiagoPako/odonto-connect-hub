@@ -11,6 +11,9 @@ export interface IncomingMessage {
   type: string;
   timestamp: string;
   instance: string;
+  queueId?: string;
+  queueName?: string;
+  queueColor?: string;
 }
 
 export type PresenceStatus = "available" | "composing" | "recording" | "paused" | "unavailable";
@@ -22,12 +25,24 @@ export interface PresenceUpdate {
   instance: string;
 }
 
+export interface QueueAssignment {
+  leadId: string;
+  leadName: string;
+  phone: string;
+  queueId: string;
+  queueName: string;
+  queueColor?: string;
+  timestamp: string;
+}
+
 type MessageHandler = (msg: IncomingMessage) => void;
 type PresenceHandler = (update: PresenceUpdate) => void;
+type QueueAssignHandler = (assignment: QueueAssignment) => void;
 
 interface RealtimeChatOptions {
   onMessage: MessageHandler;
   onPresence?: PresenceHandler;
+  onQueueAssigned?: QueueAssignHandler;
 }
 
 export function useRealtimeChat(options: RealtimeChatOptions) {
@@ -36,6 +51,9 @@ export function useRealtimeChat(options: RealtimeChatOptions) {
 
   const presenceRef = useRef<PresenceHandler | undefined>(options.onPresence);
   presenceRef.current = options.onPresence;
+
+  const queueAssignRef = useRef<QueueAssignHandler | undefined>(options.onQueueAssigned);
+  queueAssignRef.current = options.onQueueAssigned;
 
   useEffect(() => {
     let es: EventSource | null = null;
@@ -65,6 +83,15 @@ export function useRealtimeChat(options: RealtimeChatOptions) {
           presenceRef.current?.(data);
         } catch (err) {
           console.error("SSE presence parse error:", err);
+        }
+      });
+
+      es.addEventListener("queue_assigned", (e) => {
+        try {
+          const data: QueueAssignment = JSON.parse(e.data);
+          queueAssignRef.current?.(data);
+        } catch (err) {
+          console.error("SSE queue_assigned parse error:", err);
         }
       });
 
