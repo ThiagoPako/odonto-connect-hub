@@ -780,6 +780,7 @@ function ChatPage() {
 
   const handleReaction = (messageId: string, emoji: string) => {
     if (!selectedLead) return;
+    // Update local UI
     setMessages((prev) => {
       const msgs = prev[selectedLead.id] || [];
       return {
@@ -791,6 +792,12 @@ function ChatPage() {
         ),
       };
     });
+    // Send reaction via Evolution API
+    const connected = connectedInstances[0];
+    if (connected && selectedLead.phone) {
+      sendReactionMessage(connected.instanceName, selectedLead.phone, messageId, emoji)
+        .catch((err) => console.error("Failed to send reaction:", err));
+    }
   };
 
   const handleReply = (msg: ChatMessage) => {
