@@ -1099,13 +1099,13 @@ async function matchQueue(content) {
   ) || null;
 }
 
-async function persistIncomingMessage({ msgId, leadId, content, msgType, phone, instance, pushName, remoteJid, rawType }) {
+async function persistIncomingMessage({ msgId, leadId, content, msgType, phone, instance, pushName, remoteJid, rawType, mediaUrl, fileName, mimeType }) {
   try {
     await pool.query(
-      `INSERT INTO chat_messages (id, lead_id, content, sender, type, status, timestamp, phone, instance, metadata)
-       VALUES ($1,$2,$3,'lead',$4,'delivered',NOW(),$5,$6,$7)
+      `INSERT INTO chat_messages (id, lead_id, content, sender, type, status, timestamp, phone, instance, media_url, file_name, mime_type, metadata)
+       VALUES ($1,$2,$3,'lead',$4,'delivered',NOW(),$5,$6,$7,$8,$9,$10)
        ON CONFLICT (id) DO NOTHING`,
-      [msgId, leadId, content, msgType, phone, instance, JSON.stringify({
+      [msgId, leadId, content, msgType, phone, instance, mediaUrl || null, fileName || null, mimeType || null, JSON.stringify({
         pushName,
         remoteJid,
         rawType,
@@ -2611,9 +2611,11 @@ app.listen(PORT, async () => {
         empresa TEXT,
         cargo TEXT,
         observacoes TEXT,
+        favorito BOOLEAN DEFAULT false,
         created_at TIMESTAMPTZ DEFAULT NOW(),
         updated_at TIMESTAMPTZ DEFAULT NOW()
       )`,
+      `ALTER TABLE contatos ADD COLUMN IF NOT EXISTS favorito BOOLEAN DEFAULT false`,
     ];
 
     let applied = 0;
