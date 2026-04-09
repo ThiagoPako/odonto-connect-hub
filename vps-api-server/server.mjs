@@ -607,14 +607,18 @@ app.post('/api/whatsapp/send-media', async (req, res) => {
       const rawMime = media.mimeType || 'audio/ogg';
       const cleanMime = rawMime.split(';')[0].trim();
       const finalMime = cleanMime === 'audio/webm' ? 'audio/ogg' : cleanMime;
-      const audioData = media.base64
-        ? `data:${finalMime};base64,${media.base64}`
-        : media.url;
+      const audioValue = media.base64 || media.url;
       const result = await evolutionFetch(`/message/sendWhatsAppAudio/${instance}`, {
         method: 'POST',
         body: JSON.stringify({
           number: cleanNumber,
-          audio: audioData,
+          audio: audioValue,
+          options: {
+            delay: 1200,
+            presence: 'recording',
+            encoding: true,
+          },
+          mimeType: finalMime,
         }),
       });
       if (!result.ok) {
