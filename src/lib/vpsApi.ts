@@ -385,6 +385,19 @@ export const messagesApi = {
         },
       }
     ),
+  /** Save an outgoing message to the database */
+  save: (body: {
+    id: string; leadId: string; content: string; type: string;
+    status?: string; fileName?: string; fileUrl?: string; mimeType?: string;
+    replyTo?: { messageId: string; content: string; sender: string } | null;
+    instance?: string; phone?: string;
+  }) => vpsApiFetch<{ success: boolean }>('/messages', { method: 'POST', body }),
+  /** Mark messages as read for a lead */
+  markRead: (leadId: string) =>
+    vpsApiFetch<{ success: boolean }>('/messages/mark-read', { method: 'POST', body: { leadId } }),
+  /** Update message status */
+  updateStatus: (id: string, status: string) =>
+    vpsApiFetch<{ success: boolean }>(`/messages/${id}/status`, { method: 'PUT', body: { status } }),
 };
 
 // ─── Health check ───────────────────────────────────────────

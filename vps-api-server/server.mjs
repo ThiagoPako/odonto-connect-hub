@@ -55,6 +55,7 @@ async function registerWebhook(instanceName) {
           'MESSAGES_UPSERT',
           'CONNECTION_UPDATE',
           'QRCODE_UPDATED',
+          'PRESENCE_UPDATE',
         ],
       }),
     });
@@ -990,7 +991,35 @@ app.post('/api/webhook/evolution', async (req, res) => {
     const event = body.event;
     const instance = body.instance;
 
-    // Only process incoming messages
+    // ─── Presence updates (typing, recording, online) ───
+    if (event === 'presence.update') {
+      const presenceData = body.data;
+      const participants = presenceData?.participants || [];
+      const chatJid = presenceData?.id || presenceData?.chatId || '';
+
+      if (chatJid && !chatJid.endsWith('@g.us')) {
+        const presencePhone = chatJid.replace('@s.whatsapp.net', '').replace('@c.us', '');
+        for (const participant of participants) {
+          const status = participant?.status || participant?.presence || 'unavailable';
+          broadcastSSE('presence_update', {
+            phone: presencePhone,
+            status,
+            instance,
+          });
+        }
+        // If no participants array, try direct status
+        if (participants.length === 0 && presenceData?.status) {
+          broadcastSSE('presence_update', {
+            phone: presencePhone,
+            status: presenceData.status,
+            instance,
+          });
+        }
+      }
+      return res.json({ processed: true, event: 'presence' });
+    }
+
+    // Only process incoming messages from here
     if (event !== 'messages.upsert') {
       return res.json({ ignored: true, event });
     }
@@ -1183,8 +1212,26 @@ app.post('/api/webhook/evolution', async (req, res) => {
     }
 
     // ─── Normal message (queue already assigned) ───
+    const msgId = message?.key?.id || `wh-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
+
+    // Persist incoming message to database
+    try {
+      await pool.query(
+        `INSERT INTO chat_messages (id, lead_id, content, sender, type, status, timestamp, phone, instance, metadata)
+         VALUES ($1,$2,$3,'lead',$4,'delivered',NOW(),$5,$6,$7)
+         ON CONFLICT (id) DO NOTHING`,
+        [msgId, lead.id, msgContent || `[${msgType}]`, msgType, phone, instance, JSON.stringify({
+          pushName,
+          remoteJid,
+          rawType: Object.keys(message?.message || {})[0] || null,
+        })]
+      );
+    } catch (dbErr) {
+      console.error('DB insert error (incoming msg):', dbErr.message);
+    }
+
     broadcastSSE('new_message', {
-      id: message?.key?.id || `wh-${Date.now()}`,
+      id: msgId,
       phone,
       pushName,
       leadId: lead.id,
@@ -1196,7 +1243,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
       queueId: lead.queue_id || null,
     });
 
-    console.log(`💬 New message from ${pushName} (${phone}) → broadcast to ${sseClients.size} clients`);
+    console.log(`💬 New message from ${pushName} (${phone}) → saved + broadcast to ${sseClients.size} clients`);
 
     // Auto-sync avatar if missing
     if (lead && !lead.avatar_url) {
@@ -1789,6 +1836,119 @@ app.post('/api/contatos/sync/now', async (req, res) => {
     const after = await pool.query('SELECT COUNT(*) as total FROM contatos');
     const imported = parseInt(after.rows[0].total) - parseInt(before.rows[0].total);
     res.json({ success: true, imported, totalContatos: parseInt(after.rows[0].total) });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
+// ═══════════════════════════════════════════════════════════════
+// CHAT MESSAGES (persistência de histórico)
+// ═══════════════════════════════════════════════════════════════
+
+// GET /api/messages/:leadId — histórico paginado (mais recentes primeiro, retorna em ordem cronológica)
+app.get('/api/messages/:leadId', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { leadId } = req.params;
+    const { before, limit = '50' } = req.query;
+    const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 100);
+
+    let query, params;
+    if (before) {
+      query = `SELECT * FROM chat_messages WHERE lead_id = $1 AND timestamp < $2 ORDER BY timestamp DESC LIMIT $3`;
+      params = [leadId, before, safeLimit];
+    } else {
+      query = `SELECT * FROM chat_messages WHERE lead_id = $1 ORDER BY timestamp DESC LIMIT $2`;
+      params = [leadId, safeLimit];
+    }
+
+    const { rows } = await pool.query(query, params);
+
+    // Retornar em ordem cronológica (mais antigo primeiro)
+    const messages = rows.reverse().map(r => ({
+      id: r.id,
+      lead_id: r.lead_id,
+      content: r.content,
+      sender: r.sender,
+      type: r.type,
+      timestamp: r.timestamp,
+      status: r.status,
+      media_url: r.media_url,
+      file_name: r.file_name,
+      mime_type: r.mime_type,
+      reply_to_id: r.reply_to_id,
+      reply_to_content: r.reply_to_content,
+      reply_to_sender: r.reply_to_sender,
+      attendant_name: r.attendant_name,
+      metadata: r.metadata,
+    }));
+
+    // hasMore = se retornou exatamente o limite, provavelmente há mais
+    const hasMore = rows.length === safeLimit;
+    res.json({ messages, hasMore });
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+// POST /api/messages — salvar mensagem enviada pelo atendente
+app.post('/api/messages', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    const { id, leadId, content, type, status, fileName, fileUrl, mimeType, replyTo, instance, phone } = req.body;
+    if (!leadId || !id) return res.status(400).json({ error: 'id e leadId obrigatórios' });
+
+    const { rows: profile } = await pool.query('SELECT name FROM profiles WHERE id = $1', [user.id]);
+    const attendantName = profile[0]?.name || 'Atendente';
+
+    await pool.query(
+      `INSERT INTO chat_messages (id, lead_id, content, sender, type, status, timestamp, media_url, file_name, mime_type, reply_to_id, reply_to_content, reply_to_sender, attendant_id, attendant_name, instance, phone)
+       VALUES ($1,$2,$3,'attendant',$4,$5,NOW(),$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+       ON CONFLICT (id) DO NOTHING`,
+      [
+        id, leadId, content || '', type || 'text', status || 'sent',
+        fileUrl || null, fileName || null, mimeType || null,
+        replyTo?.messageId || null, replyTo?.content || null, replyTo?.sender || null,
+        user.id, attendantName, instance || null, phone || null,
+      ]
+    );
+
+    res.json({ success: true, id });
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+// PUT /api/messages/:id/status — atualizar status de entrega/leitura
+app.put('/api/messages/:id/status', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { status } = req.body;
+    if (!['sending', 'sent', 'delivered', 'read', 'failed'].includes(status)) {
+      return res.status(400).json({ error: 'Status inválido' });
+    }
+    await pool.query('UPDATE chat_messages SET status = $1 WHERE id = $2', [status, req.params.id]);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/messages/mark-read — marcar mensagens como lidas
+app.post('/api/messages/mark-read', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    const { leadId } = req.body;
+    if (!leadId) return res.status(400).json({ error: 'leadId obrigatório' });
+
+    await pool.query(
+      `INSERT INTO chat_read_status (lead_id, user_id, last_read_at)
+       VALUES ($1, $2, NOW())
+       ON CONFLICT (lead_id, user_id) DO UPDATE SET last_read_at = NOW()`,
+      [leadId, user.id]
+    );
+    res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

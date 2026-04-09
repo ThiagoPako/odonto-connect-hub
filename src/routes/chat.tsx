@@ -309,6 +309,9 @@ function ChatPage() {
 
       setHistoryHasMore((prev) => ({ ...prev, [selectedLead.id]: data.hasMore }));
     });
+
+    // Mark messages as read on server
+    messagesApi.markRead(selectedLead.id).catch(() => {});
   }, [selectedLead?.id]);
 
   // ─── Infinite scroll: load older messages ───
@@ -516,6 +519,20 @@ function ChatPage() {
         }
       }
       updateStatus("sent");
+
+      // Persist to backend
+      messagesApi.save({
+        id: msgId,
+        leadId: selectedLead.id,
+        content,
+        type,
+        status: "sent",
+        fileName: extra?.fileName,
+        mimeType: extra?.mimeType,
+        replyTo: replyingTo,
+        instance: connected.instanceName,
+        phone: selectedLead.phone,
+      }).catch((err) => console.error("Failed to persist message:", err));
     } catch (err: any) {
       toast.error("Erro ao enviar: " + (err?.message || "Falha no envio"));
       updateStatus("failed");
