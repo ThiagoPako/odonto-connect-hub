@@ -121,7 +121,7 @@ export async function login(email: string, password: string) {
 }
 
 export async function getMe() {
-  return vpsApiFetch<{ id: string; name: string; email: string; role: string; avatar_url: string }>('/auth/me');
+  return vpsApiFetch<{ id: string; name: string; email: string; role: string; avatar_url: string }>('/auth/me', { background: true });
 }
 
 export function logout() {
