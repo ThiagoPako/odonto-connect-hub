@@ -176,6 +176,9 @@ function ChatPage() {
       type: (msg.type as MessageType) || "text",
       timestamp: new Date(msg.timestamp),
       status: "delivered",
+      fileUrl: msg.mediaUrl || undefined,
+      fileName: msg.fileName || undefined,
+      mimeType: msg.mimeType || undefined,
     };
 
     // Use refs to avoid stale closure
