@@ -8,6 +8,7 @@ import { ChatHeader } from "@/components/chat/ChatHeader";
 import { Users, MessageSquare, Inbox, Filter, Tags, UserPlus, Wifi } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { NewChatFromContactDialog } from "@/components/chat/NewChatFromContactDialog";
+import { SatisfactionSurveyDialog } from "@/components/chat/SatisfactionSurveyDialog";
 import type { Contato } from "@/lib/vpsApi";
 import type { AttendanceQueue } from "@/data/queueData";
 import { toast } from "sonner";
@@ -58,6 +59,7 @@ function ChatPage() {
   const [availableQueues, setAvailableQueues] = useState<AttendanceQueue[]>([]);
   const [availableTags, setAvailableTags] = useState<LeadTagApi[]>([]);
   const [leadTagAssignments, setLeadTagAssignments] = useState<Record<string, string[]>>({});
+  const [surveyLead, setSurveyLead] = useState<Lead | null>(null);
 
   // Refs for stable closure access in SSE callback
   const queueRef = useRef(queue);
