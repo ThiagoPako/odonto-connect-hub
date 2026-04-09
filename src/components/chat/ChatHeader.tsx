@@ -107,28 +107,28 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, lead
         </div>
       </div>
 
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-0.5">
         <button
           onClick={() => { setShowTagMenu(!showTagMenu); setShowTransfer(false); }}
-          className={`p-2 rounded-lg transition-colors ${showTagMenu ? "bg-primary/10 text-primary" : "hover:bg-muted text-muted-foreground"}`}
+          className={`p-2.5 rounded-xl transition-all ${showTagMenu ? "bg-primary/10 text-primary shadow-sm" : "hover:bg-muted text-muted-foreground hover:text-foreground"}`}
           title="Tags"
         >
           <Tags className="h-4 w-4" />
         </button>
         <button
           onClick={() => { setShowTransfer(!showTransfer); setShowTagMenu(false); handleClose(); }}
-          className={`p-2 rounded-lg transition-colors ${showTransfer ? "bg-primary/10 text-primary" : "hover:bg-muted text-muted-foreground"}`}
+          className={`p-2.5 rounded-xl transition-all ${showTransfer ? "bg-primary/10 text-primary shadow-sm" : "hover:bg-muted text-muted-foreground hover:text-foreground"}`}
           title="Transferir atendimento"
         >
           <ArrowRightLeft className="h-4 w-4" />
         </button>
-        <button className="p-2 rounded-lg hover:bg-muted transition-colors text-muted-foreground">
+        <button className="p-2.5 rounded-xl hover:bg-muted transition-all text-muted-foreground hover:text-foreground">
           <Phone className="h-4 w-4" />
         </button>
-        <button className="p-2 rounded-lg hover:bg-muted transition-colors text-muted-foreground">
+        <button className="p-2.5 rounded-xl hover:bg-muted transition-all text-muted-foreground hover:text-foreground">
           <Video className="h-4 w-4" />
         </button>
-        <button className="p-2 rounded-lg hover:bg-muted transition-colors text-muted-foreground">
+        <button className="p-2.5 rounded-xl hover:bg-muted transition-all text-muted-foreground hover:text-foreground">
           <MoreVertical className="h-4 w-4" />
         </button>
         {lead.status === "active" && onFinishAttendance && (
@@ -138,13 +138,13 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, lead
                 onFinishAttendance(lead);
               }
             }}
-            className="p-2 rounded-lg hover:bg-green-500/10 transition-colors text-green-600"
+            className="p-2.5 rounded-xl hover:bg-success/10 transition-all text-success hover:shadow-sm"
             title="Finalizar atendimento"
           >
             <CheckCircle2 className="h-4 w-4" />
           </button>
         )}
-        <button onClick={onClose} className="p-2 rounded-lg hover:bg-muted transition-colors text-muted-foreground ml-1">
+        <button onClick={onClose} className="p-2.5 rounded-xl hover:bg-muted transition-all text-muted-foreground hover:text-foreground ml-1">
           <X className="h-4 w-4" />
         </button>
       </div>
