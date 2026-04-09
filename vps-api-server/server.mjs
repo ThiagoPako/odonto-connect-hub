@@ -1400,11 +1400,32 @@ app.post('/api/webhook/evolution', async (req, res) => {
     if (event === 'presence.update') {
       const presenceData = body.data;
       console.log(`👁️ PRESENCE_UPDATE raw:`, JSON.stringify(presenceData).slice(0, 300));
-      const participants = presenceData?.participants || [];
-      const chatJid = presenceData?.id || presenceData?.chatId || '';
+      const participants = Array.isArray(presenceData?.participants) ? presenceData.participants : [];
+      const presenceCandidates = [
+        presenceData?.id,
+        presenceData?.chatId,
+        presenceData?.remoteJid,
+        ...participants.flatMap((participant) => [
+          participant?.id,
+          participant?.jid,
+          participant?.participant,
+          participant?.remoteJid,
+          participant?.userJid,
+        ]),
+      ];
 
-      if (chatJid && !chatJid.endsWith('@g.us')) {
-        const presencePhone = chatJid.replace('@s.whatsapp.net', '').replace('@c.us', '');
+      const presencePhone = presenceCandidates
+        .filter(Boolean)
+        .map((value) => String(value)
+          .replace('@s.whatsapp.net', '')
+          .replace('@c.us', '')
+          .replace('@lid', '')
+          .replace(/:\d+$/, '')
+          .replace(/\D/g, '')
+        )
+        .find((value) => value.length >= 10) || '';
+
+      if (presencePhone) {
         for (const participant of participants) {
           const status = participant?.status || participant?.presence || 'unavailable';
           broadcastSSE('presence_update', {
@@ -1413,7 +1434,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
             instance,
           });
         }
-        // If no participants array, try direct status
+
         if (participants.length === 0 && presenceData?.status) {
           broadcastSSE('presence_update', {
             phone: presencePhone,
@@ -1430,52 +1451,54 @@ app.post('/api/webhook/evolution', async (req, res) => {
       const updates = Array.isArray(body.data) ? body.data : [body.data];
       console.log(`📩 MESSAGES_UPDATE: ${updates.length} updates, raw:`, JSON.stringify(body.data).slice(0, 500));
       for (const update of updates) {
-        // Evolution API sends flat fields: keyId, remoteJid, status, messageId
-        // OR nested: key.id, key.remoteJid, update.status
         const key = update?.key || {};
-        const messageId = key?.id || update?.keyId || update?.messageId;
+        const lookupIds = [...new Set([update?.messageId, key?.id, update?.keyId].filter(Boolean))];
+        const primaryMessageId = lookupIds[0];
         const remoteJid = key?.remoteJid || update?.remoteJid;
         const ack = update?.update?.status ?? update?.status ?? key?.status;
-        
-        if (!messageId || !remoteJid || remoteJid.endsWith('@g.us')) continue;
-        
-        // Evolution API ACK mapping — can be numeric or string:
-        // Numeric: 0=ERROR, 1=PENDING, 2=SERVER_ACK, 3=DELIVERY_ACK, 4=READ, 5=PLAYED
-        // String: "SERVER_ACK", "DELIVERY_ACK", "READ", "PLAYED", "ERROR"
+
+        if (!primaryMessageId || !remoteJid || remoteJid.endsWith('@g.us')) continue;
+
         let newStatus = null;
         const ackStr = String(ack).toUpperCase();
         const ackNum = typeof ack === 'number' ? ack : parseInt(ack);
-        
+
         if (ackStr === 'SERVER_ACK' || ackNum === 2) newStatus = 'sent';
         else if (ackStr === 'DELIVERY_ACK' || ackNum === 3) newStatus = 'delivered';
         else if (ackStr === 'READ' || ackStr === 'PLAYED' || ackNum === 4 || ackNum === 5) newStatus = 'read';
         else if (ackStr === 'ERROR' || ackNum === 0) newStatus = 'failed';
-        
+
         if (!newStatus) {
-          console.log(`⚠️ ACK ignored: ack=${ack}, messageId=${messageId}`);
+          console.log(`⚠️ ACK ignored: ack=${ack}, messageIds=${lookupIds.join(',')}`);
           continue;
         }
-        
-        const phone = remoteJid.replace('@s.whatsapp.net', '').replace('@c.us', '').replace(/:.*$/, '');
-        console.log(`✅ ACK: ${messageId} → ${newStatus} (ack=${ack}, phone=${phone})`);
-        
-        // Update in DB
-        try {
-          await pool.query(
-            `UPDATE chat_messages SET status = $1 WHERE id = $2 OR (metadata::text LIKE '%' || $2 || '%')`,
-            [newStatus, messageId]
-          );
-        } catch (ackErr) {
-          console.error('ACK DB update error:', ackErr.message);
+
+        const phone = String(remoteJid)
+          .replace('@s.whatsapp.net', '')
+          .replace('@c.us', '')
+          .replace('@lid', '')
+          .replace(/:\d+$/, '')
+          .replace(/\D/g, '');
+
+        for (const lookupId of lookupIds) {
+          console.log(`✅ ACK: ${lookupId} → ${newStatus} (ack=${ack}, phone=${phone})`);
+
+          try {
+            await pool.query(
+              `UPDATE chat_messages SET status = $1 WHERE id = $2 OR (metadata::text LIKE '%' || $2 || '%')`,
+              [newStatus, lookupId]
+            );
+          } catch (ackErr) {
+            console.error('ACK DB update error:', ackErr.message);
+          }
+
+          broadcastSSE('message_status_update', {
+            messageId: lookupId,
+            phone,
+            status: newStatus,
+            instance,
+          });
         }
-        
-        // Always broadcast status update to frontend via SSE
-        broadcastSSE('message_status_update', {
-          messageId,
-          phone,
-          status: newStatus,
-          instance,
-        });
       }
       return res.json({ processed: true, event: 'messages.update' });
     }
