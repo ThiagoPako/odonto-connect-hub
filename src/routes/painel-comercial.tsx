@@ -4,6 +4,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import {
   Headset,
   MessageSquare,
@@ -12,6 +13,7 @@ import {
   Clock,
   AlertCircle,
   Users,
+  BarChart3,
 } from "lucide-react";
 
 export const Route = createFileRoute("/painel-comercial")({
