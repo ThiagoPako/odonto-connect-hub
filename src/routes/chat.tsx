@@ -610,7 +610,7 @@ function ChatPage() {
             caption: type !== "audio" ? content : undefined,
             mimeType: extra?.mimeType,
           });
-          evolutionMsgId = result?.key?.id || null;
+          evolutionMsgId = (result?.data as any)?.key?.id || null;
         }
       } else if (type === "location" && extra?.location) {
         const result = await whatsappApi.sendLocation(connected.instanceName, selectedLead.phone, {
@@ -619,7 +619,7 @@ function ChatPage() {
           name: extra.location.name,
           address: extra.location.address,
         });
-        evolutionMsgId = (result as any)?.key?.id || null;
+        evolutionMsgId = (result?.data as any)?.key?.id || null;
       } else if (type === "contact" && extra?.contact) {
         const result = await whatsappApi.sendContact(connected.instanceName, selectedLead.phone, {
           fullName: extra.contact.fullName,
@@ -628,22 +628,22 @@ function ChatPage() {
           company: extra.contact.company,
           url: extra.contact.url,
         });
-        evolutionMsgId = (result as any)?.key?.id || null;
+        evolutionMsgId = (result?.data as any)?.key?.id || null;
       } else if (type === "poll" && extra?.poll) {
         const opts = extra.poll.options.map((o: any) => typeof o === "string" ? o : o.text);
         const result = await whatsappApi.sendPoll(connected.instanceName, selectedLead.phone, extra.poll.question, opts);
-        evolutionMsgId = (result as any)?.key?.id || null;
+        evolutionMsgId = (result?.data as any)?.key?.id || null;
       } else if (type === "sticker") {
         const stickerData = (extra as any)?.stickerUrl || content;
         const result = await whatsappApi.sendSticker(connected.instanceName, selectedLead.phone, stickerData);
-        evolutionMsgId = (result as any)?.key?.id || null;
+        evolutionMsgId = (result?.data as any)?.key?.id || null;
       } else if (type === "list" && extra?.list) {
         const result = await whatsappApi.sendList(connected.instanceName, selectedLead.phone, {
           title: extra.list.title,
           buttonText: extra.list.buttonText || "Ver opções",
           sections: extra.list.sections,
         });
-        evolutionMsgId = (result as any)?.key?.id || null;
+        evolutionMsgId = (result?.data as any)?.key?.id || null;
       } else if (type === "reaction") {
         const reactionData = extra as any;
         if (reactionData?.targetMessageId && reactionData?.emoji) {
