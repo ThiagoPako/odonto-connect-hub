@@ -86,6 +86,15 @@ export function useRealtimeChat(options: RealtimeChatOptions) {
         }
       });
 
+      es.addEventListener("queue_assigned", (e) => {
+        try {
+          const data: QueueAssignment = JSON.parse(e.data);
+          queueAssignRef.current?.(data);
+        } catch (err) {
+          console.error("SSE queue_assigned parse error:", err);
+        }
+      });
+
       es.onerror = () => {
         es?.close();
         retries++;
