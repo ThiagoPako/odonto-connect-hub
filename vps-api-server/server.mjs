@@ -690,13 +690,50 @@ app.get('/api/table/:tableName', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
-// WEBHOOK — Evolution API (auto-sync profile pictures)
+// SSE — Real-time event stream for frontend
+// ═══════════════════════════════════════════════════════════════
+
+const sseClients = new Set();
+
+function broadcastSSE(event, data) {
+  const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  for (const client of sseClients) {
+    client.write(payload);
+  }
+}
+
+app.get('/api/events', (req, res) => {
+  // Optional: verify JWT from query param
+  // const token = req.query.token;
+  // try { verifyToken(token); } catch { return res.status(401).end(); }
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'Access-Control-Allow-Origin': '*',
+  });
+
+  res.write(`event: connected\ndata: ${JSON.stringify({ ts: Date.now() })}\n\n`);
+
+  sseClients.add(res);
+  console.log(`📡 SSE client connected (total: ${sseClients.size})`);
+
+  req.on('close', () => {
+    sseClients.delete(res);
+    console.log(`📡 SSE client disconnected (total: ${sseClients.size})`);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// WEBHOOK — Evolution API (auto-sync profile pictures + real-time)
 // ═══════════════════════════════════════════════════════════════
 
 app.post('/api/webhook/evolution', async (req, res) => {
   try {
     const body = req.body;
     const event = body.event;
+    const instance = body.instance;
 
     // Only process incoming messages
     if (event !== 'messages.upsert') {
@@ -704,62 +741,80 @@ app.post('/api/webhook/evolution', async (req, res) => {
     }
 
     const message = body.data;
-    const instance = body.instance;
     const remoteJid = message?.key?.remoteJid;
 
     if (!remoteJid || remoteJid.endsWith('@g.us')) {
-      // Ignore group messages
       return res.json({ ignored: true, reason: 'group_or_missing_jid' });
     }
 
-    // Extract phone number from JID (e.g. 5511999991001@s.whatsapp.net → 5511999991001)
     const phone = remoteJid.replace('@s.whatsapp.net', '').replace('@c.us', '');
-
-    // Find lead by phone (match last 10-11 digits)
     const phoneSuffix = phone.slice(-11);
+
+    // Extract message content
+    const msgContent =
+      message?.message?.conversation ||
+      message?.message?.extendedTextMessage?.text ||
+      message?.message?.imageMessage?.caption ||
+      '';
+    const msgType =
+      message?.message?.imageMessage ? 'image' :
+      message?.message?.audioMessage ? 'audio' :
+      message?.message?.videoMessage ? 'video' :
+      message?.message?.documentMessage ? 'document' :
+      message?.message?.stickerMessage ? 'sticker' :
+      message?.message?.locationMessage ? 'location' :
+      message?.message?.contactMessage ? 'contact' :
+      'text';
+
+    // Find lead by phone
     const { rows: leads } = await pool.query(
-      `SELECT id, avatar_url, phone FROM crm_leads 
+      `SELECT id, name, avatar_url, phone FROM crm_leads 
        WHERE REPLACE(REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '(', ''), ')', '') LIKE '%' || $1
        LIMIT 1`,
       [phoneSuffix]
     );
 
-    if (leads.length === 0) {
-      return res.json({ ignored: true, reason: 'lead_not_found' });
-    }
+    const lead = leads[0] || null;
+    const pushName = message?.pushName || phone;
 
-    const lead = leads[0];
+    // Broadcast to SSE clients
+    broadcastSSE('new_message', {
+      id: message?.key?.id || `wh-${Date.now()}`,
+      phone,
+      pushName,
+      leadId: lead?.id || null,
+      leadName: lead?.name || pushName,
+      content: msgContent || `[${msgType}]`,
+      type: msgType,
+      timestamp: new Date().toISOString(),
+      instance,
+    });
 
-    // Skip if already has avatar and was updated recently (avoid hammering the API)
-    if (lead.avatar_url) {
-      return res.json({ skipped: true, reason: 'already_has_avatar' });
-    }
+    console.log(`💬 New message from ${pushName} (${phone}) → broadcast to ${sseClients.size} clients`);
 
-    // Fetch profile picture
-    try {
-      const result = await evolutionFetch(`/chat/fetchProfilePictureUrl/${instance}`, {
-        method: 'POST',
-        body: JSON.stringify({ number: phone }),
-      });
-
-      const pictureUrl = result.data?.profilePictureUrl || result.data?.picture || result.data?.url || null;
-
-      if (pictureUrl) {
-        await pool.query('UPDATE crm_leads SET avatar_url = $1, updated_at = NOW() WHERE id = $2', [pictureUrl, lead.id]);
-        console.log(`📸 Auto-synced avatar for lead ${lead.id} (${phone})`);
+    // Auto-sync avatar if missing
+    if (lead && !lead.avatar_url) {
+      try {
+        const result = await evolutionFetch(`/chat/fetchProfilePictureUrl/${instance}`, {
+          method: 'POST',
+          body: JSON.stringify({ number: phone }),
+        });
+        const pictureUrl = result.data?.profilePictureUrl || result.data?.picture || result.data?.url || null;
+        if (pictureUrl) {
+          await pool.query('UPDATE crm_leads SET avatar_url = $1, updated_at = NOW() WHERE id = $2', [pictureUrl, lead.id]);
+          console.log(`📸 Auto-synced avatar for lead ${lead.id} (${phone})`);
+        }
+      } catch (fetchErr) {
+        console.error('Webhook profile fetch error:', fetchErr.message);
       }
-
-      res.json({ synced: !!pictureUrl, leadId: lead.id });
-    } catch (fetchErr) {
-      console.error('Webhook profile fetch error:', fetchErr.message);
-      res.json({ synced: false, error: fetchErr.message });
     }
+
+    res.json({ processed: true, leadId: lead?.id || null });
   } catch (error) {
     console.error('Webhook error:', error);
     res.status(500).json({ error: error.message });
   }
 });
-
 // ═══════════════════════════════════════════════════════════════
 // HEALTH CHECK
 // ═══════════════════════════════════════════════════════════════
