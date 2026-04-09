@@ -1,8 +1,9 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { RefreshCw, Loader2, CheckCircle2, WifiOff, Wifi, QrCode } from "lucide-react";
+import { RefreshCw, Loader2, CheckCircle2, WifiOff, Wifi, QrCode, Download, Users } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
-import { connectInstance, getInstanceState } from "@/lib/evolutionApi";
+import { connectInstance, getInstanceState, fetchWhatsAppContacts } from "@/lib/evolutionApi";
+import { contatosApi } from "@/lib/vpsApi";
 import { playNotificationSound } from "@/lib/notificationSound";
 import { toast } from "sonner";
 
