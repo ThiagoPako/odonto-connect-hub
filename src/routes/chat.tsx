@@ -309,6 +309,9 @@ function ChatPage() {
 
       setHistoryHasMore((prev) => ({ ...prev, [selectedLead.id]: data.hasMore }));
     });
+
+    // Mark messages as read on server
+    messagesApi.markRead(selectedLead.id).catch(() => {});
   }, [selectedLead?.id]);
 
   // ─── Infinite scroll: load older messages ───
