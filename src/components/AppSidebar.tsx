@@ -8,7 +8,6 @@ import {
   LogOut,
   ChevronLeft,
   Users,
-  Kanban,
   Megaphone,
   BarChart3,
   UserCog,
