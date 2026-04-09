@@ -554,10 +554,195 @@ app.get('/api/whatsapp/webhook/:instance', async (req, res) => {
 app.post('/api/whatsapp/send-text', async (req, res) => {
   try {
     await verifyUser(req);
-    const { instance, number, text } = req.body;
+    const { instance, number, text, quoted } = req.body;
+    const payload = { number, text };
+    if (quoted) payload.quoted = quoted;
     const result = await evolutionFetch(`/message/sendText/${instance}`, {
       method: 'POST',
-      body: JSON.stringify({ number, text }),
+      body: JSON.stringify(payload),
+    });
+    res.json(result.data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Send media (image, video, document, audio)
+app.post('/api/whatsapp/send-media', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { instance, number, mediaType, media } = req.body;
+    if (!instance || !number || !mediaType) {
+      return res.status(400).json({ error: 'instance, number e mediaType são obrigatórios' });
+    }
+
+    const cleanNumber = number.replace(/\D/g, '');
+
+    if (mediaType === 'audio') {
+      const result = await evolutionFetch(`/message/sendWhatsAppAudio/${instance}`, {
+        method: 'POST',
+        body: JSON.stringify({
+          number: cleanNumber,
+          audio: media.base64
+            ? `data:${media.mimeType || 'audio/ogg'};base64,${media.base64}`
+            : media.url,
+        }),
+      });
+      return res.json(result.data);
+    }
+
+    const payload = {
+      number: cleanNumber,
+      mediatype: mediaType,
+      caption: media.caption || '',
+      fileName: media.fileName || undefined,
+    };
+    if (media.base64) {
+      payload.media = `data:${media.mimeType || 'application/octet-stream'};base64,${media.base64}`;
+    } else if (media.url) {
+      payload.media = media.url;
+    }
+
+    const result = await evolutionFetch(`/message/sendMedia/${instance}`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    res.json(result.data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Send location
+app.post('/api/whatsapp/send-location', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { instance, number, latitude, longitude, name, address } = req.body;
+    const cleanNumber = number.replace(/\D/g, '');
+    const result = await evolutionFetch(`/message/sendLocation/${instance}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        number: cleanNumber,
+        name: name || '',
+        address: address || '',
+        latitude,
+        longitude,
+      }),
+    });
+    res.json(result.data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Send contact card
+app.post('/api/whatsapp/send-contact', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { instance, number, contact } = req.body;
+    const cleanNumber = number.replace(/\D/g, '');
+    const result = await evolutionFetch(`/message/sendContact/${instance}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        number: cleanNumber,
+        contact: [{
+          fullName: contact.fullName,
+          wuid: contact.phone.replace(/\D/g, ''),
+          phoneNumber: contact.phone,
+          ...(contact.email ? { email: contact.email } : {}),
+          ...(contact.company ? { organization: contact.company } : {}),
+          ...(contact.url ? { url: contact.url } : {}),
+        }],
+      }),
+    });
+    res.json(result.data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Send poll
+app.post('/api/whatsapp/send-poll', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { instance, number, question, options } = req.body;
+    const cleanNumber = number.replace(/\D/g, '');
+    const result = await evolutionFetch(`/message/sendPoll/${instance}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        number: cleanNumber,
+        name: question,
+        values: options,
+        selectableCount: 1,
+      }),
+    });
+    res.json(result.data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Send sticker
+app.post('/api/whatsapp/send-sticker', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { instance, number, sticker } = req.body;
+    const cleanNumber = number.replace(/\D/g, '');
+    const result = await evolutionFetch(`/message/sendSticker/${instance}`, {
+      method: 'POST',
+      body: JSON.stringify({ number: cleanNumber, sticker }),
+    });
+    res.json(result.data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Send interactive list
+app.post('/api/whatsapp/send-list', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { instance, number, title, description, buttonText, footerText, sections } = req.body;
+    const cleanNumber = number.replace(/\D/g, '');
+    const result = await evolutionFetch(`/message/sendList/${instance}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        number: cleanNumber,
+        title,
+        description: description || title,
+        buttonText,
+        footerText: footerText || '',
+        sections: sections.map((s, si) => ({
+          title: s.title,
+          rows: s.rows.map((r, ri) => ({
+            title: r.title,
+            description: r.description || '',
+            rowId: r.rowId || r.id || `row-${si}-${ri}`,
+          })),
+        })),
+      }),
+    });
+    res.json(result.data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Send reaction emoji
+app.post('/api/whatsapp/send-reaction', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { instance, number, messageId, reaction } = req.body;
+    const cleanNumber = number.replace(/\D/g, '');
+    const result = await evolutionFetch(`/message/sendReaction/${instance}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        key: {
+          remoteJid: `${cleanNumber}@s.whatsapp.net`,
+          id: messageId,
+        },
+        reaction,
+      }),
     });
     res.json(result.data);
   } catch (error) {

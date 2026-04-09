@@ -15,7 +15,6 @@ import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { useRealtimeChat, type IncomingMessage } from "@/hooks/useRealtimeChat";
 import { whatsappApi, transferApi, sessionsApi, tagsApi, queuesApi, messagesApi, queueLeadsApi, type LeadTagApi, type ChatMessageApi } from "@/lib/vpsApi";
-import { sendTextMessage, sendMediaMessage, sendLocationMessage, sendContactMessage, sendPollMessage, sendStickerMessage, sendListMessage, sendReactionMessage, sendTextWithQuote } from "@/lib/evolutionApi";
 import { useWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
 import { playNotificationSound } from "@/lib/notificationSound";
 import { showBrowserNotification, requestNotificationPermission } from "@/lib/browserNotification";
@@ -577,14 +576,17 @@ function ChatPage() {
 
       if (type === "text") {
         if (replyMessageId) {
-          await sendTextWithQuote(connected.instanceName, selectedLead.phone, content, replyMessageId);
+          const cleanNumber = selectedLead.phone.replace(/\D/g, "");
+          await whatsappApi.sendText(connected.instanceName, selectedLead.phone, content, {
+            key: { remoteJid: `${cleanNumber}@s.whatsapp.net`, id: replyMessageId },
+          });
         } else {
-          await sendTextMessage(connected.instanceName, selectedLead.phone, content);
+          await whatsappApi.sendText(connected.instanceName, selectedLead.phone, content);
         }
       } else if (type === "image" || type === "video" || type === "document" || type === "audio") {
         const mediaBase64 = (extra as any)?._mediaBase64;
         if (mediaBase64) {
-          await sendMediaMessage(connected.instanceName, selectedLead.phone, type, {
+          await whatsappApi.sendMedia(connected.instanceName, selectedLead.phone, type, {
             base64: mediaBase64,
             fileName: extra?.fileName,
             caption: type !== "audio" ? content : undefined,
@@ -592,14 +594,14 @@ function ChatPage() {
           });
         }
       } else if (type === "location" && extra?.location) {
-        await sendLocationMessage(connected.instanceName, selectedLead.phone, {
+        await whatsappApi.sendLocation(connected.instanceName, selectedLead.phone, {
           latitude: extra.location.latitude,
           longitude: extra.location.longitude,
           name: extra.location.name,
           address: extra.location.address,
         });
       } else if (type === "contact" && extra?.contact) {
-        await sendContactMessage(connected.instanceName, selectedLead.phone, {
+        await whatsappApi.sendContact(connected.instanceName, selectedLead.phone, {
           fullName: extra.contact.fullName,
           phone: extra.contact.phone,
           email: extra.contact.email,
@@ -607,15 +609,13 @@ function ChatPage() {
           url: extra.contact.url,
         });
       } else if (type === "poll" && extra?.poll) {
-        await sendPollMessage(connected.instanceName, selectedLead.phone, {
-          question: extra.poll.question,
-          options: extra.poll.options.map((o: any) => typeof o === "string" ? o : o.text),
-        });
+        const opts = extra.poll.options.map((o: any) => typeof o === "string" ? o : o.text);
+        await whatsappApi.sendPoll(connected.instanceName, selectedLead.phone, extra.poll.question, opts);
       } else if (type === "sticker") {
         const stickerData = (extra as any)?.stickerUrl || content;
-        await sendStickerMessage(connected.instanceName, selectedLead.phone, stickerData);
+        await whatsappApi.sendSticker(connected.instanceName, selectedLead.phone, stickerData);
       } else if (type === "list" && extra?.list) {
-        await sendListMessage(connected.instanceName, selectedLead.phone, {
+        await whatsappApi.sendList(connected.instanceName, selectedLead.phone, {
           title: extra.list.title,
           buttonText: extra.list.buttonText || "Ver opções",
           sections: extra.list.sections,
@@ -623,7 +623,7 @@ function ChatPage() {
       } else if (type === "reaction") {
         const reactionData = extra as any;
         if (reactionData?.targetMessageId && reactionData?.emoji) {
-          await sendReactionMessage(connected.instanceName, selectedLead.phone, reactionData.targetMessageId, reactionData.emoji);
+          await whatsappApi.sendReaction(connected.instanceName, selectedLead.phone, reactionData.targetMessageId, reactionData.emoji);
         }
       }
       updateStatus("sent");
@@ -721,7 +721,7 @@ function ChatPage() {
     // Send via WhatsApp
     if (connectedInstances.length > 0 && lead.phone) {
       const instanceName = connectedInstances[0].instanceName;
-      sendTextMessage(instanceName, lead.phone, surveyMsg).catch(() => {
+      whatsappApi.sendText(instanceName, lead.phone, surveyMsg).catch(() => {
         toast.error("Erro ao enviar pesquisa de satisfação");
       });
     }
@@ -795,8 +795,8 @@ function ChatPage() {
     // Send reaction via Evolution API
     const connected = connectedInstances[0];
     if (connected && selectedLead.phone) {
-      sendReactionMessage(connected.instanceName, selectedLead.phone, messageId, emoji)
-        .catch((err) => console.error("Failed to send reaction:", err));
+      whatsappApi.sendReaction(connected.instanceName, selectedLead.phone, messageId, emoji)
+        .catch((err: any) => console.error("Failed to send reaction:", err));
     }
   };
 
