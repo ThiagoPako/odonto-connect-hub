@@ -1,11 +1,11 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { LeadListItem } from "@/components/chat/LeadListItem";
 import { ConversationView } from "@/components/chat/ConversationView";
 import { MessageInput } from "@/components/chat/MessageInput";
 import { ChatHeader } from "@/components/chat/ChatHeader";
-import { Users, MessageSquare, Inbox, Filter, Tags, UserPlus } from "lucide-react";
+import { Users, MessageSquare, Inbox, Filter, Tags, UserPlus, Wifi } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { NewChatFromContactDialog } from "@/components/chat/NewChatFromContactDialog";
 import type { Contato } from "@/lib/vpsApi";
@@ -14,14 +14,12 @@ import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { useRealtimeChat, type IncomingMessage } from "@/hooks/useRealtimeChat";
 import { whatsappApi, transferApi, sessionsApi, tagsApi, queuesApi, type LeadTagApi } from "@/lib/vpsApi";
-import { sendTextMessage, fetchInstances } from "@/lib/evolutionApi";
+import { sendTextMessage } from "@/lib/evolutionApi";
+import { useWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
 import { playNotificationSound } from "@/lib/notificationSound";
 import { showBrowserNotification, requestNotificationPermission } from "@/lib/browserNotification";
 import { setChatUnreadCount } from "@/lib/chatUnreadStore";
 import {
-  mockLeadsQueue,
-  mockLeadsActive,
-  mockMessages,
   type Lead,
   type ChatMessage,
   type MessageType,
@@ -47,11 +45,12 @@ function ChatPage() {
   const navigate = useNavigate();
   const { user: currentUser } = useAuth();
   const { lead: leadSearch } = Route.useSearch();
+  const { connected: connectedInstances } = useWhatsAppInstances();
   const [activeTab, setActiveTab] = useState<"queue" | "mine">("queue");
-  const [queue, setQueue] = useState<Lead[]>(mockLeadsQueue);
-  const [myLeads, setMyLeads] = useState<Lead[]>(mockLeadsActive);
+  const [queue, setQueue] = useState<Lead[]>([]);
+  const [myLeads, setMyLeads] = useState<Lead[]>([]);
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
-  const [messages, setMessages] = useState<Record<string, ChatMessage[]>>(mockMessages);
+  const [messages, setMessages] = useState<Record<string, ChatMessage[]>>({});
   const [filterQueue, setFilterQueue] = useState<string | null>(null);
   const [filterTag, setFilterTag] = useState<string | null>(null);
   const [newChatOpen, setNewChatOpen] = useState(false);
@@ -59,6 +58,14 @@ function ChatPage() {
   const [availableQueues, setAvailableQueues] = useState<AttendanceQueue[]>([]);
   const [availableTags, setAvailableTags] = useState<LeadTagApi[]>([]);
   const [leadTagAssignments, setLeadTagAssignments] = useState<Record<string, string[]>>({});
+
+  // Refs for stable closure access in SSE callback
+  const queueRef = useRef(queue);
+  const myLeadsRef = useRef(myLeads);
+  const selectedLeadRef = useRef(selectedLead);
+  queueRef.current = queue;
+  myLeadsRef.current = myLeads;
+  selectedLeadRef.current = selectedLead;
 
   // Load queues, tags and assignments from VPS
   useEffect(() => {
@@ -96,14 +103,14 @@ function ChatPage() {
       timestamp: new Date(msg.timestamp),
     };
 
-    // Check if lead exists in queue or myLeads
-    const allLeads = [...queue, ...myLeads];
+    // Use refs to avoid stale closure
+    const allLeads = [...queueRef.current, ...myLeadsRef.current];
     const existingLead = allLeads.find(
       (l) => l.id === msg.leadId || l.phone.replace(/\D/g, "").endsWith(msg.phone.slice(-11))
     );
 
-    // Show typing indicator if message is for the currently viewed lead
-    const isViewing = existingLead && selectedLead?.id === existingLead.id;
+    const currentSelected = selectedLeadRef.current;
+    const isViewing = existingLead && currentSelected?.id === existingLead.id;
     if (isViewing) {
       setIsLeadTyping(true);
       setTimeout(() => setIsLeadTyping(false), 1500 + Math.random() * 1000);
@@ -122,7 +129,7 @@ function ChatPage() {
                 ...lead,
                 lastMessage: msg.content || `[${msg.type}]`,
                 lastMessageTime: new Date(msg.timestamp),
-                unreadCount: selectedLead?.id === existingLead.id ? lead.unreadCount : lead.unreadCount + 1,
+                unreadCount: currentSelected?.id === existingLead.id ? lead.unreadCount : lead.unreadCount + 1,
               }
             : lead;
 
@@ -179,7 +186,7 @@ function ChatPage() {
       },
     });
     showBrowserNotification(`💬 ${name}`, body, name);
-  }, [queue, myLeads, selectedLead]);
+  }, []);
 
   useRealtimeChat(handleIncomingMessage);
 
@@ -307,11 +314,10 @@ function ChatPage() {
     }));
     setReplyingTo(null);
 
-    // Send via WhatsApp (Evolution API)
+    // Send via WhatsApp (Evolution API) — use cached connected instances
     if (type === "text" && selectedLead.phone) {
       try {
-        const instances = await fetchInstances();
-        const connected = instances.find((i) => i.status === "open");
+        const connected = connectedInstances[0];
         if (connected) {
           await sendTextMessage(connected.instanceName, selectedLead.phone, content);
         } else {
@@ -458,6 +464,21 @@ function ChatPage() {
     <div className="flex-1 flex flex-col h-full overflow-hidden">
       <DashboardHeader title="Chat" />
 
+      {/* WhatsApp Connection Status Bar */}
+      {connectedInstances.length === 0 && (
+        <div className="flex items-center gap-2 px-4 py-2 bg-destructive/10 border-b border-destructive/20 text-destructive text-xs font-medium animate-fade-in">
+          <Wifi className="h-3.5 w-3.5" />
+          Nenhuma instância WhatsApp conectada — mensagens não serão enviadas.
+        </div>
+      )}
+      {connectedInstances.length > 0 && (
+        <div className="flex items-center gap-2 px-4 py-1.5 bg-success/5 border-b border-success/10 text-success text-[11px] font-medium">
+          <Wifi className="h-3 w-3" />
+          {connectedInstances.length === 1
+            ? `Conectado: ${connectedInstances[0].instanceName}`
+            : `${connectedInstances.length} instâncias conectadas`}
+        </div>
+      )}
       <div className="flex-1 flex overflow-hidden">
         {/* Left Panel - Lead List */}
         <div className="w-[360px] flex flex-col border-r border-border bg-card shrink-0">

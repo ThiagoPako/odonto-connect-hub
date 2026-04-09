@@ -4,10 +4,11 @@ import {
   Check, Upload, Clock, AlertTriangle, Send, Phone,
 } from "lucide-react";
 import {
-  diasSemanaOptions, publicoOptions, templatesProntos, numerosDisponiveis,
+  diasSemanaOptions, publicoOptions, templatesProntos,
   type DisparoTemplate, type DisparoProgramado,
 } from "@/data/disparosMockData";
 import { WhatsAppPreview } from "./WhatsAppPreview";
+import { useWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
 
 interface NovoDisparoWizardProps {
   open: boolean;
@@ -24,6 +25,7 @@ const steps = [
 ];
 
 export function NovoDisparoWizard({ open, onClose, onSave, editData }: NovoDisparoWizardProps) {
+  const { connected: connectedInstances, instances: allInstances } = useWhatsAppInstances();
   const [step, setStep] = useState(1);
   const [publico, setPublico] = useState<"todos" | "ativos" | "inativos" | "aniversariantes" | "custom">("todos");
   const [mensagem, setMensagem] = useState("");
@@ -38,7 +40,7 @@ export function NovoDisparoWizard({ open, onClose, onSave, editData }: NovoDispa
   const [campanhaPerpetua, setCampanhaPerpetua] = useState(false);
   const [usarHorarioClinica, setUsarHorarioClinica] = useState(false);
   const [intervaloSpam, setIntervaloSpam] = useState(7);
-  const [numeroEnvio, setNumeroEnvio] = useState(numerosDisponiveis.find(n => n.status === "conectado")?.id || "n1");
+  const [numeroEnvio, setNumeroEnvio] = useState(connectedInstances[0]?.instanceName || "");
 
   const isEditing = !!editData;
 
@@ -75,7 +77,7 @@ export function NovoDisparoWizard({ open, onClose, onSave, editData }: NovoDispa
       setCampanhaPerpetua(false);
       setUsarHorarioClinica(false);
       setIntervaloSpam(7);
-      setNumeroEnvio(numerosDisponiveis.find(n => n.status === "conectado")?.id || "n1");
+      setNumeroEnvio(connectedInstances[0]?.instanceName || "");
     }
   }, [open, editData]);
 
@@ -222,6 +224,7 @@ function StepPublico({
   numeroEnvio: string;
   setNumeroEnvio: (v: string) => void;
 }) {
+  const { instances: allInstances } = useWhatsAppInstances();
   return (
     <div className="space-y-5">
       <div>
@@ -288,37 +291,42 @@ function StepPublico({
         </div>
         <p className="text-xs text-muted-foreground mb-3">Selecione qual número WhatsApp será usado para este disparo</p>
         <div className="grid grid-cols-1 gap-2">
-          {numerosDisponiveis.map((num) => (
-            <button
-              key={num.id}
-              onClick={() => num.status === "conectado" && setNumeroEnvio(num.id)}
-              disabled={num.status === "desconectado"}
-              className={`flex items-center gap-3 p-3 rounded-xl border text-left transition-all ${
-                numeroEnvio === num.id
-                  ? "border-primary bg-primary/5 ring-1 ring-primary/20"
-                  : num.status === "desconectado"
-                  ? "border-border opacity-50 cursor-not-allowed"
-                  : "border-border hover:border-primary/40"
-              }`}
-            >
-              <div className={`mt-0.5 h-4 w-4 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${
-                numeroEnvio === num.id ? "border-primary bg-primary" : "border-muted-foreground/40"
-              }`}>
-                {numeroEnvio === num.id && <Check className="h-2.5 w-2.5 text-primary-foreground" />}
-              </div>
-              <div className="flex-1">
-                <p className="text-sm font-medium text-foreground">{num.nome}</p>
-                <p className="text-xs text-muted-foreground font-mono">{num.numero}</p>
-              </div>
-              <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${
-                num.status === "conectado"
-                  ? "bg-success/15 text-success"
-                  : "bg-destructive/15 text-destructive"
-              }`}>
-                {num.status === "conectado" ? "Conectado" : "Desconectado"}
-              </span>
-            </button>
-          ))}
+          {allInstances.length === 0 ? (
+            <p className="text-xs text-muted-foreground py-4 text-center">Nenhuma instância configurada. Configure em Canais.</p>
+          ) : allInstances.map((inst) => {
+            const isConnected = inst.connectionState === "open";
+            return (
+              <button
+                key={inst.instanceName}
+                onClick={() => isConnected && setNumeroEnvio(inst.instanceName)}
+                disabled={!isConnected}
+                className={`flex items-center gap-3 p-3 rounded-xl border text-left transition-all ${
+                  numeroEnvio === inst.instanceName
+                    ? "border-primary bg-primary/5 ring-1 ring-primary/20"
+                    : !isConnected
+                    ? "border-border opacity-50 cursor-not-allowed"
+                    : "border-border hover:border-primary/40"
+                }`}
+              >
+                <div className={`mt-0.5 h-4 w-4 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${
+                  numeroEnvio === inst.instanceName ? "border-primary bg-primary" : "border-muted-foreground/40"
+                }`}>
+                  {numeroEnvio === inst.instanceName && <Check className="h-2.5 w-2.5 text-primary-foreground" />}
+                </div>
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-foreground">{inst.instanceName}</p>
+                  <p className="text-xs text-muted-foreground font-mono">{inst.owner || inst.instanceId?.slice(0, 12) || "—"}</p>
+                </div>
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${
+                  isConnected
+                    ? "bg-success/15 text-success"
+                    : "bg-destructive/15 text-destructive"
+                }`}>
+                  {isConnected ? "Conectado" : "Desconectado"}
+                </span>
+              </button>
+            );
+          })}
         </div>
       </div>
     </div>
@@ -622,7 +630,7 @@ function StepRevisao({
   numeroEnvio: string;
 }) {
   const publicoLabel = publicoOptions.find((p) => p.id === publico)?.label || publico;
-  const numeroLabel = numerosDisponiveis.find((n) => n.id === numeroEnvio);
+  const numeroLabel = numeroEnvio || "Não selecionado";
 
   return (
     <div className="space-y-5">
@@ -641,7 +649,7 @@ function StepRevisao({
         {tipo === "recorrente" && <ReviewRow label="Período" value={campanhaPerpetua ? "Perpétua" : `${dataInicio || "?"} a ${dataFim || "?"}`} />}
         {tipo === "unico" && dataInicio && <ReviewRow label="Data" value={dataInicio} />}
         <ReviewRow label="Intervalo anti-spam" value={`${intervaloSpam} dias`} />
-        <ReviewRow label="Número de envio" value={numeroLabel ? `${numeroLabel.nome} (${numeroLabel.numero})` : "Não selecionado"} />
+        <ReviewRow label="Número de envio" value={numeroLabel || "Não selecionado"} />
       </div>
 
       <div className="bg-muted/50 rounded-xl p-4">
