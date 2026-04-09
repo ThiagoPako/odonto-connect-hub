@@ -1,5 +1,6 @@
 import type { Lead } from "@/data/chatMockData";
 import { Clock, UserPlus } from "lucide-react";
+import { LeadAvatar } from "@/components/LeadAvatar";
 
 interface LeadListItemProps {
   lead: Lead;
@@ -19,9 +20,7 @@ export function LeadListItem({ lead, isSelected, onSelect, showAssignButton, onA
         isSelected ? "bg-primary/5 border-l-2 border-l-primary" : "hover:bg-muted/50"
       }`}
     >
-      <div className={`h-10 w-10 rounded-full ${lead.avatarColor || "bg-primary/20"} flex items-center justify-center text-xs font-bold text-primary-foreground shrink-0`}>
-        {lead.initials}
-      </div>
+      <LeadAvatar initials={lead.initials} avatarUrl={lead.avatarUrl} avatarColor={lead.avatarColor || "bg-primary/20"} size="md" />
 
       <div className="flex-1 min-w-0">
         <div className="flex items-center justify-between mb-0.5">
