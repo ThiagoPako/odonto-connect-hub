@@ -1579,6 +1579,26 @@ app.post('/api/sessions/assign', async (req, res) => {
   }
 });
 
+// Update lead kanban stage (manual move)
+app.patch('/api/crm/leads/:id/stage', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { stage } = req.body;
+    const validStages = ['lead', 'em_contato', 'followup_1', 'followup_2', 'followup_3', 'sem_resposta', 'desqualificado', 'paciente_agendado'];
+    if (!stage || !validStages.includes(stage)) {
+      return res.status(400).json({ error: `Stage inválido. Válidos: ${validStages.join(', ')}` });
+    }
+    const { rows } = await pool.query(
+      `UPDATE crm_leads SET kanban_stage = $1, status = $1, updated_at = NOW() WHERE id = $2 RETURNING id, nome, kanban_stage`,
+      [stage, req.params.id]
+    );
+    if (rows.length === 0) return res.status(404).json({ error: 'Lead não encontrado' });
+    res.json(rows[0]);
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
 // Record first response (attendant sends first message)
 app.post('/api/sessions/first-response', async (req, res) => {
   try {
