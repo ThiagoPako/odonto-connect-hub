@@ -1,11 +1,11 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { LeadListItem } from "@/components/chat/LeadListItem";
 import { ConversationView } from "@/components/chat/ConversationView";
 import { MessageInput } from "@/components/chat/MessageInput";
 import { ChatHeader } from "@/components/chat/ChatHeader";
-import { Users, MessageSquare, Inbox, Filter, Tags, UserPlus } from "lucide-react";
+import { Users, MessageSquare, Inbox, Filter, Tags, UserPlus, Wifi } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { NewChatFromContactDialog } from "@/components/chat/NewChatFromContactDialog";
 import type { Contato } from "@/lib/vpsApi";
@@ -14,14 +14,12 @@ import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { useRealtimeChat, type IncomingMessage } from "@/hooks/useRealtimeChat";
 import { whatsappApi, transferApi, sessionsApi, tagsApi, queuesApi, type LeadTagApi } from "@/lib/vpsApi";
-import { sendTextMessage, fetchInstances } from "@/lib/evolutionApi";
+import { sendTextMessage } from "@/lib/evolutionApi";
+import { useWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
 import { playNotificationSound } from "@/lib/notificationSound";
 import { showBrowserNotification, requestNotificationPermission } from "@/lib/browserNotification";
 import { setChatUnreadCount } from "@/lib/chatUnreadStore";
 import {
-  mockLeadsQueue,
-  mockLeadsActive,
-  mockMessages,
   type Lead,
   type ChatMessage,
   type MessageType,
@@ -47,11 +45,12 @@ function ChatPage() {
   const navigate = useNavigate();
   const { user: currentUser } = useAuth();
   const { lead: leadSearch } = Route.useSearch();
+  const { connected: connectedInstances } = useWhatsAppInstances();
   const [activeTab, setActiveTab] = useState<"queue" | "mine">("queue");
-  const [queue, setQueue] = useState<Lead[]>(mockLeadsQueue);
-  const [myLeads, setMyLeads] = useState<Lead[]>(mockLeadsActive);
+  const [queue, setQueue] = useState<Lead[]>([]);
+  const [myLeads, setMyLeads] = useState<Lead[]>([]);
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
-  const [messages, setMessages] = useState<Record<string, ChatMessage[]>>(mockMessages);
+  const [messages, setMessages] = useState<Record<string, ChatMessage[]>>({});
   const [filterQueue, setFilterQueue] = useState<string | null>(null);
   const [filterTag, setFilterTag] = useState<string | null>(null);
   const [newChatOpen, setNewChatOpen] = useState(false);
@@ -59,6 +58,14 @@ function ChatPage() {
   const [availableQueues, setAvailableQueues] = useState<AttendanceQueue[]>([]);
   const [availableTags, setAvailableTags] = useState<LeadTagApi[]>([]);
   const [leadTagAssignments, setLeadTagAssignments] = useState<Record<string, string[]>>({});
+
+  // Refs for stable closure access in SSE callback
+  const queueRef = useRef(queue);
+  const myLeadsRef = useRef(myLeads);
+  const selectedLeadRef = useRef(selectedLead);
+  queueRef.current = queue;
+  myLeadsRef.current = myLeads;
+  selectedLeadRef.current = selectedLead;
 
   // Load queues, tags and assignments from VPS
   useEffect(() => {
