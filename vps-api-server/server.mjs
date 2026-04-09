@@ -1956,6 +1956,212 @@ app.post('/api/messages/mark-read', async (req, res) => {
 
 
 // ═══════════════════════════════════════════════════════════════
+// CHAT MESSAGES CRUD
+// ═══════════════════════════════════════════════════════════════
+
+// List messages for a lead (with pagination)
+app.get('/api/chat/messages/:leadId', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { leadId } = req.params;
+    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+    const before = req.query.before; // cursor: timestamp ISO
+
+    let query = 'SELECT * FROM chat_messages WHERE lead_id = $1';
+    const values = [leadId];
+
+    if (before) {
+      query += ' AND timestamp < $2 ORDER BY timestamp DESC LIMIT $3';
+      values.push(before, limit);
+    } else {
+      query += ' ORDER BY timestamp DESC LIMIT $2';
+      values.push(limit);
+    }
+
+    const { rows } = await pool.query(query, values);
+    res.json(rows.reverse()); // return chronological order
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+// Save a single message
+app.post('/api/chat/messages', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const m = req.body;
+    if (!m.id || !m.lead_id || !m.sender) {
+      return res.status(400).json({ error: 'id, lead_id e sender são obrigatórios' });
+    }
+
+    await pool.query(`
+      INSERT INTO chat_messages (id, lead_id, content, sender, type, status, timestamp, media_url, file_name, mime_type,
+        reply_to_id, reply_to_content, reply_to_sender, attendant_id, attendant_name, instance, phone, metadata)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+      ON CONFLICT (id) DO UPDATE SET
+        content = EXCLUDED.content,
+        status = EXCLUDED.status,
+        media_url = EXCLUDED.media_url,
+        metadata = EXCLUDED.metadata
+    `, [
+      m.id, m.lead_id, m.content || null, m.sender, m.type || 'text', m.status || 'sent',
+      m.timestamp || new Date().toISOString(), m.media_url || null, m.file_name || null, m.mime_type || null,
+      m.reply_to_id || null, m.reply_to_content || null, m.reply_to_sender || null,
+      m.attendant_id || null, m.attendant_name || null, m.instance || null, m.phone || null,
+      JSON.stringify(m.metadata || {})
+    ]);
+
+    res.json({ success: true, id: m.id });
+  } catch (error) {
+    console.error('Save message error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Save multiple messages (batch)
+app.post('/api/chat/messages/batch', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { messages } = req.body;
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return res.status(400).json({ error: 'Array messages obrigatório' });
+    }
+    if (messages.length > 500) {
+      return res.status(400).json({ error: 'Máximo 500 mensagens por batch' });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      for (const m of messages) {
+        await client.query(`
+          INSERT INTO chat_messages (id, lead_id, content, sender, type, status, timestamp, media_url, file_name, mime_type,
+            reply_to_id, reply_to_content, reply_to_sender, attendant_id, attendant_name, instance, phone, metadata)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+          ON CONFLICT (id) DO NOTHING
+        `, [
+          m.id, m.lead_id, m.content || null, m.sender, m.type || 'text', m.status || 'sent',
+          m.timestamp || new Date().toISOString(), m.media_url || null, m.file_name || null, m.mime_type || null,
+          m.reply_to_id || null, m.reply_to_content || null, m.reply_to_sender || null,
+          m.attendant_id || null, m.attendant_name || null, m.instance || null, m.phone || null,
+          JSON.stringify(m.metadata || {})
+        ]);
+      }
+      await client.query('COMMIT');
+      res.json({ success: true, count: messages.length });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    console.error('Batch save error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update message status
+app.patch('/api/chat/messages/:id/status', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { id } = req.params;
+    const { status } = req.body;
+    if (!status) return res.status(400).json({ error: 'status obrigatório' });
+
+    await pool.query('UPDATE chat_messages SET status = $1 WHERE id = $2', [status, id]);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete a message (soft: set content to null, or hard delete)
+app.delete('/api/chat/messages/:id', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { id } = req.params;
+    const hard = req.query.hard === 'true';
+
+    if (hard) {
+      await pool.query('DELETE FROM chat_messages WHERE id = $1', [id]);
+    } else {
+      await pool.query("UPDATE chat_messages SET content = NULL, type = 'text', media_url = NULL, metadata = '{\"deleted\":true}' WHERE id = $1", [id]);
+    }
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Mark conversation as read
+app.post('/api/chat/read/:leadId', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    const { leadId } = req.params;
+
+    await pool.query(`
+      INSERT INTO chat_read_status (lead_id, user_id, last_read_at)
+      VALUES ($1, $2, NOW())
+      ON CONFLICT (lead_id, user_id) DO UPDATE SET last_read_at = NOW()
+    `, [leadId, user.id]);
+
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get unread counts for current user
+app.get('/api/chat/unread', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+
+    const { rows } = await pool.query(`
+      SELECT m.lead_id, COUNT(*) as unread_count
+      FROM chat_messages m
+      LEFT JOIN chat_read_status r ON r.lead_id = m.lead_id AND r.user_id = $1
+      WHERE m.sender = 'lead'
+        AND (r.last_read_at IS NULL OR m.timestamp > r.last_read_at)
+      GROUP BY m.lead_id
+    `, [user.id]);
+
+    const counts = {};
+    for (const row of rows) {
+      counts[row.lead_id] = parseInt(row.unread_count);
+    }
+    res.json(counts);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Search messages
+app.get('/api/chat/search', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const q = req.query.q;
+    const leadId = req.query.lead_id;
+    if (!q || q.length < 2) return res.status(400).json({ error: 'Query mínima 2 caracteres' });
+
+    let query = "SELECT * FROM chat_messages WHERE content ILIKE $1";
+    const values = [`%${q}%`];
+
+    if (leadId) {
+      query += ' AND lead_id = $2';
+      values.push(leadId);
+    }
+
+    query += ' ORDER BY timestamp DESC LIMIT 50';
+
+    const { rows } = await pool.query(query, values);
+    res.json(rows);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
 
 app.get('/api/health', async (_req, res) => {
   try {
