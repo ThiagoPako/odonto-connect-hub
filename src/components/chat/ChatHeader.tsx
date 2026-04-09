@@ -1,16 +1,15 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { Lead } from "@/data/chatMockData";
-import { Phone, Video, MoreVertical, X, ArrowRightLeft } from "lucide-react";
+import { Phone, Video, MoreVertical, X, ArrowRightLeft, Loader2 } from "lucide-react";
 import { LeadAvatar } from "@/components/LeadAvatar";
 import { toast } from "sonner";
+import { adminListUsers } from "@/lib/vpsApi";
 
-// Mock attendants list
-const attendants = [
-  { id: "att1", name: "Ana Rodrigues", initials: "AR" },
-  { id: "att2", name: "Beatriz Lima", initials: "BL" },
-  { id: "att3", name: "Carla Mendes", initials: "CM" },
-  { id: "att4", name: "Daniel Souza", initials: "DS" },
-];
+interface Attendant {
+  id: string;
+  name: string;
+  initials: string;
+}
 
 interface ChatHeaderProps {
   lead: Lead;
@@ -20,8 +19,35 @@ interface ChatHeaderProps {
 
 export function ChatHeader({ lead, onClose, onTransfer }: ChatHeaderProps) {
   const [showTransfer, setShowTransfer] = useState(false);
+  const [attendants, setAttendants] = useState<Attendant[]>([]);
+  const [loading, setLoading] = useState(false);
 
-  const handleTransfer = (att: typeof attendants[0]) => {
+  useEffect(() => {
+    if (!showTransfer) return;
+    setLoading(true);
+    adminListUsers().then(({ data, error }) => {
+      if (data && Array.isArray(data)) {
+        const list: Attendant[] = data
+          .filter((u) => u.active)
+          .map((u) => ({
+            id: u.id,
+            name: u.name,
+            initials: u.name
+              .split(" ")
+              .map((w) => w[0])
+              .join("")
+              .slice(0, 2)
+              .toUpperCase(),
+          }));
+        setAttendants(list);
+      } else if (error) {
+        toast.error("Erro ao carregar atendentes");
+      }
+      setLoading(false);
+    });
+  }, [showTransfer]);
+
+  const handleTransfer = (att: Attendant) => {
     onTransfer?.(lead, att.id, att.name);
     setShowTransfer(false);
     toast.success(`Atendimento transferido para ${att.name}`, {
@@ -64,7 +90,6 @@ export function ChatHeader({ lead, onClose, onTransfer }: ChatHeaderProps) {
         </button>
       </div>
 
-      {/* Transfer dropdown */}
       {showTransfer && (
         <div className="absolute top-full right-4 mt-1 w-64 bg-card border border-border rounded-xl shadow-lg z-50 overflow-hidden">
           <div className="px-3 py-2 border-b border-border/50">
@@ -72,18 +97,26 @@ export function ChatHeader({ lead, onClose, onTransfer }: ChatHeaderProps) {
             <p className="text-[11px] text-muted-foreground">Selecione o atendente</p>
           </div>
           <div className="py-1 max-h-48 overflow-y-auto">
-            {attendants.map((att) => (
-              <button
-                key={att.id}
-                onClick={() => handleTransfer(att)}
-                className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-muted/50 transition-colors text-left"
-              >
-                <div className="h-8 w-8 rounded-full bg-primary/15 flex items-center justify-center text-[10px] font-bold text-primary shrink-0">
-                  {att.initials}
-                </div>
-                <span className="text-sm text-foreground">{att.name}</span>
-              </button>
-            ))}
+            {loading ? (
+              <div className="flex items-center justify-center py-4">
+                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+              </div>
+            ) : attendants.length === 0 ? (
+              <p className="text-xs text-muted-foreground text-center py-4">Nenhum atendente disponível</p>
+            ) : (
+              attendants.map((att) => (
+                <button
+                  key={att.id}
+                  onClick={() => handleTransfer(att)}
+                  className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-muted/50 transition-colors text-left"
+                >
+                  <div className="h-8 w-8 rounded-full bg-primary/15 flex items-center justify-center text-[10px] font-bold text-primary shrink-0">
+                    {att.initials}
+                  </div>
+                  <span className="text-sm text-foreground">{att.name}</span>
+                </button>
+              ))
+            )}
           </div>
         </div>
       )}
