@@ -608,9 +608,13 @@ function ChatPage() {
     const updateStatus = (status: MessageStatus) => {
       setMessages((prev) => ({
         ...prev,
-        [selectedLead.id]: (prev[selectedLead.id] || []).map((m) =>
-          m.id === msgId ? { ...m, status } : m
-        ),
+        [selectedLead.id]: (prev[selectedLead.id] || []).map((m) => {
+          if (m.id !== msgId) return m;
+          // Never downgrade status
+          const currentPri = statusPriority[m.status || "sending"] ?? 0;
+          const newPri = statusPriority[status] ?? 1;
+          return newPri > currentPri ? { ...m, status } : m;
+        }),
       }));
     };
 
