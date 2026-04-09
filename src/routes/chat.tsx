@@ -55,6 +55,7 @@ function ChatPage() {
   const [filterQueue, setFilterQueue] = useState<string | null>(null);
   const [filterTag, setFilterTag] = useState<string | null>(null);
   const [newChatOpen, setNewChatOpen] = useState(false);
+  const [isLeadTyping, setIsLeadTyping] = useState(false);
   const [availableQueues, setAvailableQueues] = useState<AttendanceQueue[]>([]);
   const [availableTags, setAvailableTags] = useState<LeadTagApi[]>([]);
   const [leadTagAssignments, setLeadTagAssignments] = useState<Record<string, string[]>>({});
@@ -574,6 +575,7 @@ function ChatPage() {
               <ConversationView
                 messages={currentMessages}
                 leadName={selectedLead.name}
+                isTyping={isLeadTyping}
                 onReaction={handleReaction}
                 onReply={handleReply}
               />
