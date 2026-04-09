@@ -87,15 +87,18 @@ async function registerWebhook(instanceName) {
     const result = await evolutionFetch(`/webhook/set/${instanceName}`, {
       method: 'POST',
       body: JSON.stringify({
-        url: WEBHOOK_URL,
-        webhookByEvents: false,
-        webhookBase64: false,
-        events: [
-          'MESSAGES_UPSERT',
-          'CONNECTION_UPDATE',
-          'QRCODE_UPDATED',
-          'PRESENCE_UPDATE',
-        ],
+        webhook: {
+          enabled: true,
+          url: WEBHOOK_URL,
+          webhookByEvents: false,
+          webhookBase64: false,
+          events: [
+            'MESSAGES_UPSERT',
+            'CONNECTION_UPDATE',
+            'QRCODE_UPDATED',
+            'PRESENCE_UPDATE',
+          ],
+        },
       }),
     });
     if (result.ok) {
