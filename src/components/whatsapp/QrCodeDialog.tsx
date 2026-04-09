@@ -87,6 +87,8 @@ export function QrCodeDialog({ open, onOpenChange, instanceName, onConnected }: 
 
         if (state.state === "open") {
           setPhase("connected");
+          playNotificationSound();
+          toast.success(`WhatsApp "${instanceName}" conectado!`);
           onConnected?.();
           clearInterval(interval);
           return;
