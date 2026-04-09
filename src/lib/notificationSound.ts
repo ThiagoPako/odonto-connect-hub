@@ -3,6 +3,8 @@
  * Plays a short pleasant "ding" tone.
  */
 
+const SOUND_ENABLED_KEY = "odonto_notification_sound";
+
 let audioCtx: AudioContext | null = null;
 
 function getAudioContext(): AudioContext {
@@ -12,11 +14,22 @@ function getAudioContext(): AudioContext {
   return audioCtx;
 }
 
+export function isSoundEnabled(): boolean {
+  if (typeof window === "undefined") return true;
+  const val = localStorage.getItem(SOUND_ENABLED_KEY);
+  return val !== "false"; // enabled by default
+}
+
+export function setSoundEnabled(enabled: boolean): void {
+  localStorage.setItem(SOUND_ENABLED_KEY, String(enabled));
+}
+
 export function playNotificationSound() {
+  if (!isSoundEnabled()) return;
+
   try {
     const ctx = getAudioContext();
 
-    // Resume context if suspended (browser autoplay policy)
     if (ctx.state === "suspended") {
       ctx.resume();
     }
@@ -27,7 +40,7 @@ export function playNotificationSound() {
     const osc1 = ctx.createOscillator();
     const gain1 = ctx.createGain();
     osc1.type = "sine";
-    osc1.frequency.setValueAtTime(880, now); // A5
+    osc1.frequency.setValueAtTime(880, now);
     gain1.gain.setValueAtTime(0.15, now);
     gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
     osc1.connect(gain1);
@@ -39,7 +52,7 @@ export function playNotificationSound() {
     const osc2 = ctx.createOscillator();
     const gain2 = ctx.createGain();
     osc2.type = "sine";
-    osc2.frequency.setValueAtTime(1174.66, now + 0.12); // D6
+    osc2.frequency.setValueAtTime(1174.66, now + 0.12);
     gain2.gain.setValueAtTime(0, now);
     gain2.gain.setValueAtTime(0.12, now + 0.12);
     gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
