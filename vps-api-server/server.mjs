@@ -1183,8 +1183,26 @@ app.post('/api/webhook/evolution', async (req, res) => {
     }
 
     // ─── Normal message (queue already assigned) ───
+    const msgId = message?.key?.id || `wh-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
+
+    // Persist incoming message to database
+    try {
+      await pool.query(
+        `INSERT INTO chat_messages (id, lead_id, content, sender, type, status, timestamp, phone, instance, metadata)
+         VALUES ($1,$2,$3,'lead',$4,'delivered',NOW(),$5,$6,$7)
+         ON CONFLICT (id) DO NOTHING`,
+        [msgId, lead.id, msgContent || `[${msgType}]`, msgType, phone, instance, JSON.stringify({
+          pushName,
+          remoteJid,
+          rawType: Object.keys(message?.message || {})[0] || null,
+        })]
+      );
+    } catch (dbErr) {
+      console.error('DB insert error (incoming msg):', dbErr.message);
+    }
+
     broadcastSSE('new_message', {
-      id: message?.key?.id || `wh-${Date.now()}`,
+      id: msgId,
       phone,
       pushName,
       leadId: lead.id,
@@ -1196,7 +1214,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
       queueId: lead.queue_id || null,
     });
 
-    console.log(`💬 New message from ${pushName} (${phone}) → broadcast to ${sseClients.size} clients`);
+    console.log(`💬 New message from ${pushName} (${phone}) → saved + broadcast to ${sseClients.size} clients`);
 
     // Auto-sync avatar if missing
     if (lead && !lead.avatar_url) {
