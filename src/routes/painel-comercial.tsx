@@ -301,6 +301,12 @@ function LeadRow({ lead }: { lead: Lead }) {
   const OriginIcon = lead.originIcon;
   const cfg = statusConfig[lead.status];
 
+  const handleCall = () => {
+    const cleanPhone = lead.phone.replace(/\D/g, "");
+    const phoneWithPlus = cleanPhone.startsWith("55") ? `+${cleanPhone}` : `+55${cleanPhone}`;
+    window.location.href = `tel:${phoneWithPlus}`;
+  };
+
   return (
     <div className="flex items-center gap-3 p-3 hover:bg-muted/30 transition-colors">
       <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center text-[11px] font-bold text-primary shrink-0">
@@ -325,8 +331,17 @@ function LeadRow({ lead }: { lead: Lead }) {
         </div>
       </div>
       <div className="flex gap-1 shrink-0">
-        <Link to="/chat">
-          <Button variant="ghost" size="icon" className="h-8 w-8" title="Abrir conversa">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 hover:bg-chart-2/15 hover:text-chart-2"
+          title={`Ligar: ${lead.phone}`}
+          onClick={handleCall}
+        >
+          <Phone className="h-4 w-4" />
+        </Button>
+        <Link to="/chat" search={{ lead: lead.name }}>
+          <Button variant="ghost" size="icon" className="h-8 w-8 hover:bg-primary/15 hover:text-primary" title={`Chat com ${lead.name}`}>
             <MessageSquare className="h-4 w-4" />
           </Button>
         </Link>
