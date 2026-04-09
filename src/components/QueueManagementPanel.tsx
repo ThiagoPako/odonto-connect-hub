@@ -10,16 +10,42 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Plus, Pencil, Trash2, Users, Phone, ListChecks, X } from "lucide-react";
 import { toast } from "sonner";
 import { getQueues, saveQueues, type AttendanceQueue } from "@/data/queueData";
-import { adminListUsers } from "@/lib/vpsApi";
+import { adminListUsers, queuesApi } from "@/lib/vpsApi";
 
 export function QueueManagementPanel() {
   const [queues, setQueues] = useState<AttendanceQueue[]>([]);
   const [editingQueue, setEditingQueue] = useState<AttendanceQueue | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [availableUsers, setAvailableUsers] = useState<{ id: string; name: string }[]>([]);
+  const [saving, setSaving] = useState(false);
+
+  const loadQueues = () => {
+    queuesApi.list().then(({ data, error }) => {
+      if (data && Array.isArray(data)) {
+        const mapped: AttendanceQueue[] = data.map((q) => ({
+          id: q.id,
+          name: q.name,
+          color: q.color,
+          icon: q.icon,
+          description: q.description || "",
+          contactNumbers: q.contact_numbers || [],
+          teamMembers: (q.team_member_ids || []).map((id: string) => {
+            const user = availableUsers.find((u) => u.id === id);
+            return { id, name: user?.name || id };
+          }),
+          whatsappButtonLabel: q.whatsapp_button_label || "",
+          active: q.active,
+        }));
+        setQueues(mapped);
+        saveQueues(mapped); // sync localStorage fallback
+      } else {
+        // Fallback to localStorage
+        setQueues(getQueues());
+      }
+    });
+  };
 
   useEffect(() => {
-    setQueues(getQueues());
     adminListUsers().then(({ data }) => {
       if (data) {
         setAvailableUsers(data.filter((u) => u.active).map((u) => ({ id: u.id, name: u.name })));
@@ -27,10 +53,9 @@ export function QueueManagementPanel() {
     });
   }, []);
 
-  const persist = (updated: AttendanceQueue[]) => {
-    setQueues(updated);
-    saveQueues(updated);
-  };
+  useEffect(() => {
+    loadQueues();
+  }, [availableUsers]);
 
   const handleNew = () => {
     setEditingQueue({
@@ -52,29 +77,54 @@ export function QueueManagementPanel() {
     setDialogOpen(true);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!editingQueue) return;
     if (!editingQueue.name.trim()) {
       toast.error("Nome da fila é obrigatório");
       return;
     }
+    setSaving(true);
     const exists = queues.find((q) => q.id === editingQueue.id);
-    const updated = exists
-      ? queues.map((q) => (q.id === editingQueue.id ? editingQueue : q))
-      : [...queues, editingQueue];
-    persist(updated);
+    const payload = {
+      name: editingQueue.name,
+      color: editingQueue.color,
+      icon: editingQueue.icon,
+      description: editingQueue.description,
+      whatsapp_button_label: editingQueue.whatsappButtonLabel,
+      contact_numbers: editingQueue.contactNumbers,
+      team_member_ids: editingQueue.teamMembers.map((m) => m.id),
+    };
+
+    const { error } = exists
+      ? await queuesApi.update(editingQueue.id, payload)
+      : await queuesApi.create(payload);
+
+    setSaving(false);
+    if (error) {
+      toast.error("Erro ao salvar fila: " + error);
+      return;
+    }
     setDialogOpen(false);
     setEditingQueue(null);
     toast.success(exists ? "Fila atualizada" : "Fila criada com sucesso");
+    loadQueues();
   };
 
-  const handleDelete = (id: string) => {
-    persist(queues.filter((q) => q.id !== id));
+  const handleDelete = async (id: string) => {
+    const { error } = await queuesApi.delete(id);
+    if (error) {
+      toast.error("Erro ao remover: " + error);
+      return;
+    }
     toast.success("Fila removida");
+    loadQueues();
   };
 
-  const toggleActive = (id: string) => {
-    persist(queues.map((q) => (q.id === id ? { ...q, active: !q.active } : q)));
+  const toggleActive = async (id: string) => {
+    const queue = queues.find((q) => q.id === id);
+    if (!queue) return;
+    await queuesApi.update(id, { active: !queue.active });
+    loadQueues();
   };
 
   return (
