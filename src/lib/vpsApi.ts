@@ -71,7 +71,7 @@ export function isAuthenticated(): boolean {
 
 export async function vpsApiFetch<T = unknown>(
   path: string,
-  options?: { method?: string; body?: unknown; params?: Record<string, string> }
+  options?: { method?: string; body?: unknown; params?: Record<string, string>; background?: boolean }
 ): Promise<{ data: T | null; error: string | null }> {
   try {
     const method = options?.method || 'GET';
@@ -91,13 +91,15 @@ export async function vpsApiFetch<T = unknown>(
 
     if (!response.ok) {
       if (isAuthError(response.status, data?.error)) {
-        handleAuthFailure();
+        handleAuthFailure(!!options?.background);
         return { data: null, error: 'Sessão expirada. Faça login novamente.' };
       }
 
       return { data: null, error: data.error || `HTTP ${response.status}` };
     }
 
+    // Successful response — reset consecutive 401 counter
+    resetAuthFailureCount();
     return { data, error: null };
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Erro de rede';
