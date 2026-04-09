@@ -184,6 +184,10 @@ function PatientTableView() {
 function KanbanView() {
   const [leads, setLeads] = useState(mockKanbanLeads);
   const [draggedLead, setDraggedLead] = useState<{ lead: KanbanLead; fromStage: KanbanStage } | null>(null);
+  const [assignedFilter, setAssignedFilter] = useState("Todos");
+
+  const allLeadsList = Object.values(leads).flat();
+  const assignees = ["Todos", ...Array.from(new Set(allLeadsList.map((l) => l.assignedTo)))];
 
   const handleDragStart = (lead: KanbanLead, fromStage: KanbanStage) => {
     setDraggedLead({ lead, fromStage });
@@ -202,7 +206,15 @@ function KanbanView() {
     setDraggedLead(null);
   };
 
-  const totalValue = Object.values(leads).flat().reduce((sum, l) => sum + l.value, 0);
+  // Apply filter
+  const filteredLeads: typeof leads = assignedFilter === "Todos"
+    ? leads
+    : Object.fromEntries(
+        Object.entries(leads).map(([stage, list]) => [stage, list.filter((l) => l.assignedTo === assignedFilter)])
+      ) as typeof leads;
+
+  const visibleList = Object.values(filteredLeads).flat();
+  const totalValue = visibleList.reduce((sum, l) => sum + l.value, 0);
 
   return (
     <>
