@@ -786,6 +786,44 @@ app.get('/api/events', (req, res) => {
 // WEBHOOK — Evolution API (queue routing + real-time)
 // ═══════════════════════════════════════════════════════════════
 
+// Helper: check if currently within business hours
+function isWithinBusinessHours(settings) {
+  if (!settings?.businessHours) return true; // default: always open
+  const now = new Date();
+  const dayKeys = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+  const dayKey = dayKeys[now.getDay()];
+  const schedule = settings.businessHours[dayKey];
+  if (!schedule?.enabled) return false;
+
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  const [openH, openM] = schedule.openTime.split(':').map(Number);
+  const [closeH, closeM] = schedule.closeTime.split(':').map(Number);
+  return currentMinutes >= (openH * 60 + openM) && currentMinutes <= (closeH * 60 + closeM);
+}
+
+// In-memory attendance settings cache (synced from frontend via API)
+let attendanceSettingsCache = null;
+
+app.get('/api/attendance-settings', async (req, res) => {
+  try {
+    await verifyUser(req);
+    res.json(attendanceSettingsCache || {});
+  } catch (error) {
+    res.status(401).json({ error: error.message });
+  }
+});
+
+app.put('/api/attendance-settings', async (req, res) => {
+  try {
+    await verifyAdmin(req);
+    attendanceSettingsCache = req.body;
+    console.log('⚙️ Attendance settings updated');
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Helper: send WhatsApp button menu with active queues
 async function sendQueueMenu(instance, phone) {
   const { rows: queues } = await pool.query(
