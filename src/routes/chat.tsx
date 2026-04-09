@@ -58,6 +58,7 @@ function ChatPage() {
   const [filterStatus, setFilterStatus] = useState<"all" | "active" | "finished">("all");
   const [newChatOpen, setNewChatOpen] = useState(false);
   const [isLeadTyping, setIsLeadTyping] = useState(false);
+  const [syncingPhotos, setSyncingPhotos] = useState(false);
   const [availableQueues, setAvailableQueues] = useState<AttendanceQueue[]>([]);
   const [availableTags, setAvailableTags] = useState<LeadTagApi[]>([]);
   const [leadTagAssignments, setLeadTagAssignments] = useState<Record<string, string[]>>({});
