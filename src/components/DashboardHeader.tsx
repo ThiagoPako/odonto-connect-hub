@@ -26,8 +26,7 @@ export function DashboardHeader({ title }: { title: string }) {
   const handleSearch = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
       if (e.key === "Enter" && searchValue.trim()) {
-        // Navigate to pacientes search
-        navigate({ to: "/pacientes", search: {} });
+        navigate({ to: "/pacientes" });
       }
     },
     [searchValue, navigate]
