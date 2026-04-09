@@ -1165,6 +1165,229 @@ app.get('/api/transfers', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
+// ATTENDANCE SESSIONS & METRICS
+// ═══════════════════════════════════════════════════════════════
+
+// Start session (when lead enters queue)
+app.post('/api/sessions/start', async (req, res) => {
+  try {
+    const { leadId, leadName, leadPhone, queueId, queueName } = req.body;
+    if (!leadId) return res.status(400).json({ error: 'leadId obrigatório' });
+    
+    // Check if there's already an open session for this lead
+    const { rows: existing } = await pool.query(
+      "SELECT id FROM attendance_sessions WHERE lead_id = $1 AND status != 'closed' LIMIT 1",
+      [leadId]
+    );
+    if (existing.length > 0) {
+      return res.json({ success: true, id: existing[0].id, existing: true });
+    }
+
+    const id = crypto.randomUUID();
+    await pool.query(
+      `INSERT INTO attendance_sessions (id, lead_id, lead_name, lead_phone, queue_id, queue_name, started_waiting_at, status)
+       VALUES ($1,$2,$3,$4,$5,$6, NOW(), 'waiting')`,
+      [id, leadId, leadName || null, leadPhone || null, queueId || null, queueName || null]
+    );
+    res.json({ success: true, id });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Assign session (attendant takes lead)
+app.post('/api/sessions/assign', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    const { leadId } = req.body;
+    if (!leadId) return res.status(400).json({ error: 'leadId obrigatório' });
+
+    const { rows } = await pool.query('SELECT name FROM profiles WHERE id = $1', [user.id]);
+    const attendantName = rows[0]?.name || 'Atendente';
+
+    const result = await pool.query(
+      `UPDATE attendance_sessions SET 
+         attendant_id = $1, attendant_name = $2, assigned_at = NOW(), status = 'active',
+         wait_time_seconds = EXTRACT(EPOCH FROM (NOW() - started_waiting_at))::INTEGER
+       WHERE lead_id = $3 AND status = 'waiting'
+       RETURNING id, wait_time_seconds`,
+      [user.id, attendantName, leadId]
+    );
+
+    if (result.rows.length === 0) {
+      // No waiting session, create one as active directly
+      const id = crypto.randomUUID();
+      await pool.query(
+        `INSERT INTO attendance_sessions (id, lead_id, attendant_id, attendant_name, assigned_at, started_waiting_at, status, wait_time_seconds)
+         VALUES ($1,$2,$3,$4, NOW(), NOW(), 'active', 0)`,
+        [id, leadId, user.id, attendantName]
+      );
+      return res.json({ success: true, id, waitTime: 0 });
+    }
+
+    res.json({ success: true, id: result.rows[0].id, waitTime: result.rows[0].wait_time_seconds });
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+// Record first response (attendant sends first message)
+app.post('/api/sessions/first-response', async (req, res) => {
+  try {
+    const { leadId } = req.body;
+    if (!leadId) return res.status(400).json({ error: 'leadId obrigatório' });
+
+    await pool.query(
+      `UPDATE attendance_sessions SET 
+         first_response_at = COALESCE(first_response_at, NOW()),
+         response_time_seconds = COALESCE(response_time_seconds, EXTRACT(EPOCH FROM (NOW() - assigned_at))::INTEGER)
+       WHERE lead_id = $1 AND status = 'active' AND first_response_at IS NULL`,
+      [leadId]
+    );
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Close session + send satisfaction survey via WhatsApp
+app.post('/api/sessions/close', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    const { leadId, leadPhone, instance } = req.body;
+    if (!leadId) return res.status(400).json({ error: 'leadId obrigatório' });
+
+    const result = await pool.query(
+      `UPDATE attendance_sessions SET 
+         closed_at = NOW(), status = 'closed',
+         duration_seconds = EXTRACT(EPOCH FROM (NOW() - COALESCE(assigned_at, started_waiting_at)))::INTEGER
+       WHERE lead_id = $1 AND status = 'active'
+       RETURNING id, duration_seconds, attendant_id, attendant_name`,
+      [leadId]
+    );
+
+    const session = result.rows[0];
+
+    // Send satisfaction survey via WhatsApp buttons
+    if (leadPhone && instance && EVOLUTION_API_KEY) {
+      const phone = leadPhone.replace(/\D/g, '');
+      try {
+        // Try buttons first
+        await evolutionFetch(`/message/sendButtons/${instance}`, {
+          method: 'POST',
+          body: JSON.stringify({
+            number: phone,
+            title: '⭐ Avalie nosso atendimento',
+            description: 'Como você avalia o atendimento que recebeu?',
+            buttons: [
+              { buttonId: `rating_${leadId}_5`, buttonText: { displayText: '⭐⭐⭐⭐⭐ Excelente' } },
+              { buttonId: `rating_${leadId}_4`, buttonText: { displayText: '⭐⭐⭐⭐ Bom' } },
+              { buttonId: `rating_${leadId}_3`, buttonText: { displayText: '⭐⭐⭐ Regular' } },
+            ],
+          }),
+        });
+        console.log(`📊 Satisfaction survey sent to ${phone}`);
+      } catch (btnErr) {
+        // Fallback: text-based survey
+        await evolutionFetch(`/message/sendText/${instance}`, {
+          method: 'POST',
+          body: JSON.stringify({
+            number: phone,
+            text: `⭐ *Avalie nosso atendimento!*\n\nComo você avalia o atendimento que recebeu?\n\n5️⃣ Excelente\n4️⃣ Bom\n3️⃣ Regular\n2️⃣ Ruim\n1️⃣ Péssimo\n\nResponda com o número da sua avaliação.`,
+          }),
+        });
+        console.log(`📊 Satisfaction survey (text fallback) sent to ${phone}`);
+      }
+
+      // Mark lead as awaiting rating
+      await pool.query(
+        `INSERT INTO app_settings (key, value, updated_at) 
+         VALUES ($1, $2, NOW()) ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
+        [`awaiting_rating_${phone}`, JSON.stringify({ leadId, sessionId: session?.id, attendantId: session?.attendant_id, attendantName: session?.attendant_name })]
+      );
+    }
+
+    console.log(`✅ Session closed for lead ${leadId} (duration: ${session?.duration_seconds || 0}s)`);
+    res.json({ success: true, sessionId: session?.id, duration: session?.duration_seconds });
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+// Get metrics (general + per attendant)
+app.get('/api/metrics/attendance', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { days = '30' } = req.query;
+    const since = `NOW() - INTERVAL '${Math.min(Number(days), 365)} days'`;
+
+    // General metrics
+    const { rows: general } = await pool.query(`
+      SELECT 
+        COUNT(*) as total_sessions,
+        COUNT(*) FILTER (WHERE status = 'closed') as closed_sessions,
+        ROUND(AVG(wait_time_seconds) FILTER (WHERE wait_time_seconds IS NOT NULL)) as avg_wait_time,
+        ROUND(AVG(response_time_seconds) FILTER (WHERE response_time_seconds IS NOT NULL)) as avg_response_time,
+        ROUND(AVG(duration_seconds) FILTER (WHERE duration_seconds IS NOT NULL)) as avg_duration,
+        MAX(wait_time_seconds) as max_wait_time,
+        MIN(wait_time_seconds) FILTER (WHERE wait_time_seconds > 0) as min_wait_time
+      FROM attendance_sessions 
+      WHERE created_at >= ${since}
+    `);
+
+    // Per attendant metrics
+    const { rows: perAttendant } = await pool.query(`
+      SELECT 
+        attendant_id, attendant_name,
+        COUNT(*) as total_sessions,
+        COUNT(*) FILTER (WHERE status = 'closed') as closed_sessions,
+        ROUND(AVG(wait_time_seconds) FILTER (WHERE wait_time_seconds IS NOT NULL)) as avg_wait_time,
+        ROUND(AVG(response_time_seconds) FILTER (WHERE response_time_seconds IS NOT NULL)) as avg_response_time,
+        ROUND(AVG(duration_seconds) FILTER (WHERE duration_seconds IS NOT NULL)) as avg_duration
+      FROM attendance_sessions 
+      WHERE attendant_id IS NOT NULL AND created_at >= ${since}
+      GROUP BY attendant_id, attendant_name
+      ORDER BY total_sessions DESC
+    `);
+
+    // Satisfaction metrics
+    const { rows: satisfaction } = await pool.query(`
+      SELECT 
+        ROUND(AVG(rating)::NUMERIC, 1) as avg_rating,
+        COUNT(*) as total_ratings,
+        COUNT(*) FILTER (WHERE rating = 5) as five_star,
+        COUNT(*) FILTER (WHERE rating = 4) as four_star,
+        COUNT(*) FILTER (WHERE rating = 3) as three_star,
+        COUNT(*) FILTER (WHERE rating = 2) as two_star,
+        COUNT(*) FILTER (WHERE rating = 1) as one_star
+      FROM satisfaction_ratings
+      WHERE created_at >= ${since}
+    `);
+
+    // Satisfaction per attendant
+    const { rows: satisfactionPerAttendant } = await pool.query(`
+      SELECT 
+        attendant_id, attendant_name,
+        ROUND(AVG(rating)::NUMERIC, 1) as avg_rating,
+        COUNT(*) as total_ratings
+      FROM satisfaction_ratings
+      WHERE attendant_id IS NOT NULL AND created_at >= ${since}
+      GROUP BY attendant_id, attendant_name
+      ORDER BY avg_rating DESC
+    `);
+
+    res.json({
+      general: general[0],
+      perAttendant,
+      satisfaction: satisfaction[0],
+      satisfactionPerAttendant,
+    });
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
 // HEALTH CHECK
 // ═══════════════════════════════════════════════════════════════
 
