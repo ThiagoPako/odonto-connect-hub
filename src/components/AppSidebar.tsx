@@ -180,11 +180,19 @@ function CollapsibleSection({
 }) {
   const [open, setOpen] = useState(defaultOpen);
 
-  // In collapsed mode, show only icons without sections
+  // In collapsed mode, show only icons — but respect open/closed state
   if (!expanded) {
     return (
       <div className="space-y-0.5 py-1">
-        {section.items.map((item) => {
+        {/* Section dot indicator — click to toggle */}
+        <button
+          onClick={() => setOpen(!open)}
+          className="flex items-center justify-center h-6 w-9 mx-auto rounded text-muted-foreground hover:text-sidebar-foreground transition-colors"
+          title={`${section.label} — ${open ? "Minimizar" : "Expandir"}`}
+        >
+          <div className={`h-1 w-4 rounded-full transition-colors ${open ? "bg-sidebar-primary/50" : "bg-muted-foreground/30"}`} />
+        </button>
+        {open && section.items.map((item) => {
           const isActive = activePath === item.url;
           return (
             <Link
