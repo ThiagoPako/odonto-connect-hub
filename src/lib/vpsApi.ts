@@ -459,7 +459,7 @@ export const messagesApi = {
     vpsApiFetch<{ success: boolean }>(`/messages/${id}${hard ? '?hard=true' : ''}`, { method: 'DELETE' }),
   /** Get unread counts per lead */
   unreadCounts: () =>
-    vpsApiFetch<Record<string, number>>('/messages/unread'),
+    vpsApiFetch<Record<string, number>>('/messages/unread', { background: true }),
   /** Search messages */
   search: (q: string, leadId?: string) =>
     vpsApiFetch<ChatMessageApi[]>('/messages/search', {
