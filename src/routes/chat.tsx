@@ -675,6 +675,35 @@ function ChatPage() {
     });
   };
 
+  const handleFileDrop = useCallback((files: File[]) => {
+    if (!selectedLead) return;
+    const MAX_SIZE = 16 * 1024 * 1024;
+    for (const file of files) {
+      if (file.size > MAX_SIZE) {
+        toast.error(`${file.name} é muito grande`, { description: "Máximo: 16MB" });
+        continue;
+      }
+      const type: MessageType = file.type.startsWith("image/") ? "image"
+        : file.type.startsWith("video/") ? "video"
+        : file.type.startsWith("audio/") ? "audio"
+        : "document";
+
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64 = (reader.result as string).split(",")[1];
+        const previewUrl = (type === "image" || type === "video") ? URL.createObjectURL(file) : undefined;
+        const label = type === "image" ? "🖼️ Imagem" : type === "video" ? "🎬 Vídeo" : type === "audio" ? "🎤 Áudio" : `📎 ${file.name}`;
+        handleSendMessage(label, type, {
+          fileName: file.name,
+          fileUrl: previewUrl,
+          mimeType: file.type,
+          _mediaBase64: base64,
+        } as any);
+      };
+      reader.readAsDataURL(file);
+    }
+  }, [selectedLead, handleSendMessage]);
+
   const handleForward = (msg: ChatMessage) => {
     const text = msg.content || `[${msg.type}]`;
     navigator.clipboard.writeText(text).then(() => {
