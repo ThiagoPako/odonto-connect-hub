@@ -338,13 +338,15 @@ function ChatPage() {
       setFirstResponseTracked((prev) => new Set(prev).add(selectedLead.id));
     }
 
+    const msgId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const newMsg: ChatMessage = {
-      id: `msg-${Date.now()}`,
+      id: msgId,
       leadId: selectedLead.id,
       content,
       sender: "attendant",
       type,
       timestamp: new Date(),
+      status: "sending",
       replyTo: replyingTo || undefined,
       ...extra,
     };
@@ -360,12 +362,39 @@ function ChatPage() {
         const connected = connectedInstances[0];
         if (connected) {
           await sendTextMessage(connected.instanceName, selectedLead.phone, content);
+          // Update status to sent
+          setMessages((prev) => ({
+            ...prev,
+            [selectedLead.id]: (prev[selectedLead.id] || []).map((m) =>
+              m.id === msgId ? { ...m, status: "sent" as const } : m
+            ),
+          }));
         } else {
           toast.error("Nenhuma instância WhatsApp conectada");
+          setMessages((prev) => ({
+            ...prev,
+            [selectedLead.id]: (prev[selectedLead.id] || []).map((m) =>
+              m.id === msgId ? { ...m, status: "failed" as const } : m
+            ),
+          }));
         }
       } catch (err: any) {
         toast.error("Erro ao enviar pelo WhatsApp: " + (err?.message || ""));
+        setMessages((prev) => ({
+          ...prev,
+          [selectedLead.id]: (prev[selectedLead.id] || []).map((m) =>
+            m.id === msgId ? { ...m, status: "failed" as const } : m
+          ),
+        }));
       }
+    } else {
+      // Non-text messages: mark as sent
+      setMessages((prev) => ({
+        ...prev,
+        [selectedLead.id]: (prev[selectedLead.id] || []).map((m) =>
+          m.id === msgId ? { ...m, status: "sent" as const } : m
+        ),
+      }));
     }
   };
 
