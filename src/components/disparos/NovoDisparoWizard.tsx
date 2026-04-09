@@ -4,10 +4,11 @@ import {
   Check, Upload, Clock, AlertTriangle, Send, Phone,
 } from "lucide-react";
 import {
-  diasSemanaOptions, publicoOptions, templatesProntos, numerosDisponiveis,
+  diasSemanaOptions, publicoOptions, templatesProntos,
   type DisparoTemplate, type DisparoProgramado,
 } from "@/data/disparosMockData";
 import { WhatsAppPreview } from "./WhatsAppPreview";
+import { useWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
 
 interface NovoDisparoWizardProps {
   open: boolean;
@@ -24,6 +25,7 @@ const steps = [
 ];
 
 export function NovoDisparoWizard({ open, onClose, onSave, editData }: NovoDisparoWizardProps) {
+  const { connected: connectedInstances, instances: allInstances } = useWhatsAppInstances();
   const [step, setStep] = useState(1);
   const [publico, setPublico] = useState<"todos" | "ativos" | "inativos" | "aniversariantes" | "custom">("todos");
   const [mensagem, setMensagem] = useState("");
@@ -38,7 +40,7 @@ export function NovoDisparoWizard({ open, onClose, onSave, editData }: NovoDispa
   const [campanhaPerpetua, setCampanhaPerpetua] = useState(false);
   const [usarHorarioClinica, setUsarHorarioClinica] = useState(false);
   const [intervaloSpam, setIntervaloSpam] = useState(7);
-  const [numeroEnvio, setNumeroEnvio] = useState(numerosDisponiveis.find(n => n.status === "conectado")?.id || "n1");
+  const [numeroEnvio, setNumeroEnvio] = useState(connectedInstances[0]?.instanceName || "");
 
   const isEditing = !!editData;
 
