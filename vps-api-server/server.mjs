@@ -40,8 +40,10 @@ const JWT_EXPIRES_IN = '7d';
 // ─── Evolution API Config ───────────────────────────────────
 const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL || 'https://api.odontoconnect.tech';
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY;
-const VPS_BASE_URL = process.env.APP_URL || 'https://odontoconnect.tech';
-const WEBHOOK_URL = `${VPS_BASE_URL.replace(/\/$/, '').replace(':443', '')}:${PORT}/api/webhook/evolution`;
+const APP_URL = (process.env.APP_URL || 'https://odontoconnect.tech').replace(/\/$/, '').replace(':443', '');
+const WEBHOOK_PUBLIC_URL = process.env.WEBHOOK_PUBLIC_URL?.replace(/\/$/, '');
+const isLocalAppUrl = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(APP_URL);
+const WEBHOOK_URL = WEBHOOK_PUBLIC_URL || (isLocalAppUrl ? `${APP_URL.replace(/:\d+$/, `:${PORT}`)}/api/webhook/evolution` : `${APP_URL}/api/webhook/evolution`);
 
 // ─── Web Push (VAPID) Config ────────────────────────────────
 // Generate keys once: npx web-push generate-vapid-keys
