@@ -2,8 +2,8 @@ import { useState, useEffect } from "react";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Tags, Plus, Trash2, Pencil, Check, X } from "lucide-react";
-import { getTags, saveTags, type LeadTag } from "@/data/leadTags";
+import { Tags, Plus, Trash2, Pencil, Check, X, Loader2 } from "lucide-react";
+import { tagsApi, type LeadTagApi } from "@/lib/vpsApi";
 import { toast } from "sonner";
 
 const PRESET_COLORS = [
@@ -14,7 +14,8 @@ const PRESET_COLORS = [
 const PRESET_ICONS = ["🔴", "⭐", "🔄", "🆕", "💰", "🔥", "👑", "⏳", "📌", "💎", "🎯", "❗"];
 
 export function TagManagementPanel() {
-  const [tags, setTags] = useState<LeadTag[]>([]);
+  const [tags, setTags] = useState<LeadTagApi[]>([]);
+  const [loading, setLoading] = useState(true);
   const [newName, setNewName] = useState("");
   const [newColor, setNewColor] = useState(PRESET_COLORS[0]);
   const [newIcon, setNewIcon] = useState("📌");
@@ -23,43 +24,57 @@ export function TagManagementPanel() {
   const [editColor, setEditColor] = useState("");
   const [editIcon, setEditIcon] = useState("");
 
-  useEffect(() => { setTags(getTags()); }, []);
+  useEffect(() => {
+    tagsApi.list().then(({ data }) => {
+      if (data) setTags(data);
+      setLoading(false);
+    });
+  }, []);
 
-  const persist = (updated: LeadTag[]) => {
-    setTags(updated);
-    saveTags(updated);
-  };
-
-  const handleAdd = () => {
+  const handleAdd = async () => {
     const name = newName.trim();
     if (!name) return;
     if (tags.some((t) => t.name.toLowerCase() === name.toLowerCase())) {
       toast.error("Tag já existe");
       return;
     }
-    persist([...tags, { id: `tag-${Date.now()}`, name, color: newColor, icon: newIcon }]);
+    const { data, error } = await tagsApi.create({ name, color: newColor, icon: newIcon });
+    if (error) { toast.error(error); return; }
+    if (data) setTags((prev) => [...prev, data]);
     setNewName("");
     toast.success("Tag criada");
   };
 
-  const handleDelete = (id: string) => {
-    persist(tags.filter((t) => t.id !== id));
+  const handleDelete = async (id: string) => {
+    const { error } = await tagsApi.delete(id);
+    if (error) { toast.error(error); return; }
+    setTags((prev) => prev.filter((t) => t.id !== id));
     toast.success("Tag removida");
   };
 
-  const startEdit = (tag: LeadTag) => {
+  const startEdit = (tag: LeadTagApi) => {
     setEditingId(tag.id);
     setEditName(tag.name);
     setEditColor(tag.color);
     setEditIcon(tag.icon || "📌");
   };
 
-  const saveEdit = () => {
+  const saveEdit = async () => {
     if (!editingId || !editName.trim()) return;
-    persist(tags.map((t) => t.id === editingId ? { ...t, name: editName.trim(), color: editColor, icon: editIcon } : t));
+    const { error } = await tagsApi.update(editingId, { name: editName.trim(), color: editColor, icon: editIcon });
+    if (error) { toast.error(error); return; }
+    setTags((prev) => prev.map((t) => t.id === editingId ? { ...t, name: editName.trim(), color: editColor, icon: editIcon } : t));
     setEditingId(null);
     toast.success("Tag atualizada");
   };
+
+  if (loading) {
+    return (
+      <Card className="p-5 flex items-center justify-center gap-2 text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin" /> Carregando tags...
+      </Card>
+    );
+  }
 
   return (
     <Card className="p-5 space-y-4">
