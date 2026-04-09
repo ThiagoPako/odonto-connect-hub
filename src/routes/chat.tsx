@@ -313,7 +313,22 @@ function ChatPage() {
     setMyLeads((prev) => prev.map(updateQueue));
   }, []);
 
-  useRealtimeChat({ onMessage: handleIncomingMessage, onPresence: handlePresenceUpdate, onQueueAssigned: handleQueueAssigned });
+  const handleMessageStatusUpdate = useCallback((update: import("@/hooks/useRealtimeChat").MessageStatusUpdate) => {
+    // Update message status in all conversations matching the phone
+    setMessages((prev) => {
+      const next = { ...prev };
+      for (const leadId of Object.keys(next)) {
+        const msgs = next[leadId];
+        const updated = msgs.map((m) =>
+          m.id === update.messageId ? { ...m, status: update.status as any } : m
+        );
+        if (updated !== msgs) next[leadId] = updated;
+      }
+      return next;
+    });
+  }, []);
+
+  useRealtimeChat({ onMessage: handleIncomingMessage, onPresence: handlePresenceUpdate, onQueueAssigned: handleQueueAssigned, onMessageStatus: handleMessageStatusUpdate });
 
   // Request browser notification permission on first visit
   useEffect(() => { requestNotificationPermission(); }, []);
@@ -573,53 +588,62 @@ function ChatPage() {
     try {
       // Check if this is a reply (quoted message)
       const replyMessageId = replyingTo?.messageId;
+      let evolutionMsgId: string | null = null;
 
       if (type === "text") {
+        let result;
         if (replyMessageId) {
           const cleanNumber = selectedLead.phone.replace(/\D/g, "");
-          await whatsappApi.sendText(connected.instanceName, selectedLead.phone, content, {
+          result = await whatsappApi.sendText(connected.instanceName, selectedLead.phone, content, {
             key: { remoteJid: `${cleanNumber}@s.whatsapp.net`, id: replyMessageId },
           });
         } else {
-          await whatsappApi.sendText(connected.instanceName, selectedLead.phone, content);
+          result = await whatsappApi.sendText(connected.instanceName, selectedLead.phone, content);
         }
+        evolutionMsgId = (result?.data as any)?.key?.id || null;
       } else if (type === "image" || type === "video" || type === "document" || type === "audio") {
         const mediaBase64 = (extra as any)?._mediaBase64;
         if (mediaBase64) {
-          await whatsappApi.sendMedia(connected.instanceName, selectedLead.phone, type, {
+          const result = await whatsappApi.sendMedia(connected.instanceName, selectedLead.phone, type, {
             base64: mediaBase64,
             fileName: extra?.fileName,
             caption: type !== "audio" ? content : undefined,
             mimeType: extra?.mimeType,
           });
+          evolutionMsgId = (result?.data as any)?.key?.id || null;
         }
       } else if (type === "location" && extra?.location) {
-        await whatsappApi.sendLocation(connected.instanceName, selectedLead.phone, {
+        const result = await whatsappApi.sendLocation(connected.instanceName, selectedLead.phone, {
           latitude: extra.location.latitude,
           longitude: extra.location.longitude,
           name: extra.location.name,
           address: extra.location.address,
         });
+        evolutionMsgId = (result?.data as any)?.key?.id || null;
       } else if (type === "contact" && extra?.contact) {
-        await whatsappApi.sendContact(connected.instanceName, selectedLead.phone, {
+        const result = await whatsappApi.sendContact(connected.instanceName, selectedLead.phone, {
           fullName: extra.contact.fullName,
           phone: extra.contact.phone,
           email: extra.contact.email,
           company: extra.contact.company,
           url: extra.contact.url,
         });
+        evolutionMsgId = (result?.data as any)?.key?.id || null;
       } else if (type === "poll" && extra?.poll) {
         const opts = extra.poll.options.map((o: any) => typeof o === "string" ? o : o.text);
-        await whatsappApi.sendPoll(connected.instanceName, selectedLead.phone, extra.poll.question, opts);
+        const result = await whatsappApi.sendPoll(connected.instanceName, selectedLead.phone, extra.poll.question, opts);
+        evolutionMsgId = (result?.data as any)?.key?.id || null;
       } else if (type === "sticker") {
         const stickerData = (extra as any)?.stickerUrl || content;
-        await whatsappApi.sendSticker(connected.instanceName, selectedLead.phone, stickerData);
+        const result = await whatsappApi.sendSticker(connected.instanceName, selectedLead.phone, stickerData);
+        evolutionMsgId = (result?.data as any)?.key?.id || null;
       } else if (type === "list" && extra?.list) {
-        await whatsappApi.sendList(connected.instanceName, selectedLead.phone, {
+        const result = await whatsappApi.sendList(connected.instanceName, selectedLead.phone, {
           title: extra.list.title,
           buttonText: extra.list.buttonText || "Ver opções",
           sections: extra.list.sections,
         });
+        evolutionMsgId = (result?.data as any)?.key?.id || null;
       } else if (type === "reaction") {
         const reactionData = extra as any;
         if (reactionData?.targetMessageId && reactionData?.emoji) {
@@ -628,9 +652,19 @@ function ChatPage() {
       }
       updateStatus("sent");
 
-      // Persist to backend
+      // If we got a WhatsApp message ID, update the local message ID to match for ACK tracking
+      if (evolutionMsgId) {
+        setMessages((prev) => ({
+          ...prev,
+          [selectedLead.id]: (prev[selectedLead.id] || []).map((m) =>
+            m.id === msgId ? { ...m, id: evolutionMsgId!, status: "sent" as const } : m
+          ),
+        }));
+      }
+
+      // Persist to backend with the Evolution message ID
       messagesApi.save({
-        id: msgId,
+        id: evolutionMsgId || msgId,
         leadId: selectedLead.id,
         content,
         type,

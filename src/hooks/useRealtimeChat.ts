@@ -38,14 +38,23 @@ export interface QueueAssignment {
   timestamp: string;
 }
 
+export interface MessageStatusUpdate {
+  messageId: string;
+  phone: string;
+  status: "sent" | "delivered" | "read" | "failed";
+  instance: string;
+}
+
 type MessageHandler = (msg: IncomingMessage) => void;
 type PresenceHandler = (update: PresenceUpdate) => void;
 type QueueAssignHandler = (assignment: QueueAssignment) => void;
+type MessageStatusHandler = (update: MessageStatusUpdate) => void;
 
 interface RealtimeChatOptions {
   onMessage: MessageHandler;
   onPresence?: PresenceHandler;
   onQueueAssigned?: QueueAssignHandler;
+  onMessageStatus?: MessageStatusHandler;
 }
 
 export function useRealtimeChat(options: RealtimeChatOptions) {
@@ -57,6 +66,9 @@ export function useRealtimeChat(options: RealtimeChatOptions) {
 
   const queueAssignRef = useRef<QueueAssignHandler | undefined>(options.onQueueAssigned);
   queueAssignRef.current = options.onQueueAssigned;
+
+  const messageStatusRef = useRef<MessageStatusHandler | undefined>(options.onMessageStatus);
+  messageStatusRef.current = options.onMessageStatus;
 
   useEffect(() => {
     let es: EventSource | null = null;
@@ -79,6 +91,7 @@ export function useRealtimeChat(options: RealtimeChatOptions) {
       es.addEventListener("new_message", onAnyEvent);
       es.addEventListener("presence_update", onAnyEvent);
       es.addEventListener("queue_assigned", onAnyEvent);
+      es.addEventListener("message_status_update", onAnyEvent);
       es.addEventListener("ping", onAnyEvent);
 
       clearInterval(keepaliveInterval);
@@ -114,6 +127,15 @@ export function useRealtimeChat(options: RealtimeChatOptions) {
           queueAssignRef.current?.(data);
         } catch (err) {
           console.error("SSE queue_assigned parse error:", err);
+        }
+      });
+
+      es.addEventListener("message_status_update", (e) => {
+        try {
+          const data: MessageStatusUpdate = JSON.parse(e.data);
+          messageStatusRef.current?.(data);
+        } catch (err) {
+          console.error("SSE message_status_update parse error:", err);
         }
       });
 
