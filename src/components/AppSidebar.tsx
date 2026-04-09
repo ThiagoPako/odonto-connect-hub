@@ -25,30 +25,6 @@ import {
   UserRound,
   Headset,
 } from "lucide-react";
-  LayoutDashboard,
-  MessageSquare,
-  Radio,
-  DollarSign,
-  Settings,
-  LogOut,
-  ChevronLeft,
-  Users,
-  Kanban,
-  Megaphone,
-  BarChart3,
-  UserCog,
-  RefreshCcw,
-  Plug,
-  Zap,
-  CalendarDays,
-  FileHeart,
-  Receipt,
-  Package,
-  ClipboardList,
-  Percent,
-  Stethoscope,
-  UserRound,
-} from "lucide-react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
