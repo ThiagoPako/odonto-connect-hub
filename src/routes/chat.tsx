@@ -353,6 +353,18 @@ function ChatPage() {
     });
   }, [selectedLead?.id]);
 
+  // Auto-subscribe to contact presence when opening a conversation
+  const presenceSubscribedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!selectedLead?.phone) return;
+    const connected = connectedInstances[0];
+    if (!connected) return;
+    const key = `${connected.instanceName}:${selectedLead.phone}`;
+    if (presenceSubscribedRef.current.has(key)) return;
+    presenceSubscribedRef.current.add(key);
+    whatsappApi.subscribePresence(connected.instanceName, selectedLead.phone).catch(() => {});
+  }, [selectedLead?.id, connectedInstances]);
+
   // ─── Load initial message history from VPS when selecting a lead ───
   const historyLoadedRef = useRef<Set<string>>(new Set());
 

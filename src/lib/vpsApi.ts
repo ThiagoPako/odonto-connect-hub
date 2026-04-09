@@ -252,6 +252,12 @@ export const whatsappApi = {
       method: 'POST',
       body: { instance, number, isVideo },
     }),
+  subscribePresence: (instance: string, number: string) =>
+    vpsApiFetch('/whatsapp/subscribe-presence', {
+      method: 'POST',
+      body: { instance, number },
+      background: true,
+    }),
 };
 
 // ─── Attendance Settings ────────────────────────────────────
