@@ -34,6 +34,7 @@ function AudioPlayer({ fileUrl, duration, isLead }: { fileUrl?: string; duration
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
+  const [playbackRate, setPlaybackRate] = useState(1);
   const [totalDuration, setTotalDuration] = useState(duration || 0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const blobUrlRef = useRef<string | null>(null);
@@ -83,6 +84,13 @@ function AudioPlayer({ fileUrl, duration, isLead }: { fileUrl?: string; duration
     }
   };
 
+  const cycleSpeed = () => {
+    const speeds = [1, 1.5, 2];
+    const next = speeds[(speeds.indexOf(playbackRate) + 1) % speeds.length];
+    setPlaybackRate(next);
+    if (audioRef.current) audioRef.current.playbackRate = next;
+  };
+
   const fmtTime = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
   if (!fileUrl) {
@@ -114,6 +122,12 @@ function AudioPlayer({ fileUrl, duration, isLead }: { fileUrl?: string; duration
           {playing || currentTime > 0 ? fmtTime(currentTime) : fmtTime(totalDuration)}
         </span>
       </div>
+      <button
+        onClick={cycleSpeed}
+        className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md transition-colors shrink-0 ${isLead ? "bg-primary/15 hover:bg-primary/25 text-primary" : "bg-primary-foreground/15 hover:bg-primary-foreground/25 text-primary-foreground"}`}
+      >
+        {playbackRate}x
+      </button>
     </div>
   );
 }
