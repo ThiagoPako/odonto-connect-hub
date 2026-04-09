@@ -1999,6 +1999,75 @@ app.post('/api/messages/mark-read', async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════
+// QUEUE LEADS — load leads currently in the attendance queue
+// ═══════════════════════════════════════════════════════════════
+
+app.get('/api/queue/leads', async (req, res) => {
+  try {
+    await verifyUser(req);
+
+    // Get leads that have:
+    // 1. An open waiting session (not assigned)
+    // 2. OR recent messages but no active/closed session (orphaned)
+    const { rows } = await pool.query(`
+      SELECT DISTINCT ON (l.id)
+        l.id,
+        l.nome as name,
+        l.telefone as phone,
+        l.avatar_url,
+        l.queue_id,
+        l.queue_name,
+        l.origem,
+        s.id as session_id,
+        s.status as session_status,
+        s.attendant_id,
+        s.attendant_name,
+        s.started_waiting_at,
+        (SELECT content FROM chat_messages WHERE lead_id = l.id ORDER BY timestamp DESC LIMIT 1) as last_message,
+        (SELECT timestamp FROM chat_messages WHERE lead_id = l.id ORDER BY timestamp DESC LIMIT 1) as last_message_time,
+        (SELECT COUNT(*) FROM chat_messages WHERE lead_id = l.id AND sender = 'lead' AND timestamp > COALESCE(
+          (SELECT last_read_at FROM chat_read_status WHERE lead_id = l.id LIMIT 1),
+          '1970-01-01'
+        ))::INTEGER as unread_count
+      FROM crm_leads l
+      LEFT JOIN attendance_sessions s ON s.lead_id = l.id AND s.status IN ('waiting', 'active')
+      WHERE EXISTS (SELECT 1 FROM chat_messages WHERE lead_id = l.id AND timestamp > NOW() - INTERVAL '7 days')
+      ORDER BY l.id, s.started_waiting_at DESC NULLS LAST
+    `);
+
+    // Separate into queue (waiting) and active (assigned)
+    const queueLeads = [];
+    const activeLeads = [];
+
+    for (const r of rows) {
+      const lead = {
+        id: r.id,
+        name: r.name || r.phone,
+        phone: r.phone,
+        avatarUrl: r.avatar_url,
+        queueId: r.queue_id,
+        queueName: r.queue_name,
+        lastMessage: r.last_message || '',
+        lastMessageTime: r.last_message_time,
+        unreadCount: r.unread_count || 0,
+        sessionStatus: r.session_status,
+        attendantId: r.attendant_id,
+        attendantName: r.attendant_name,
+      };
+
+      if (r.session_status === 'active' && r.attendant_id) {
+        activeLeads.push(lead);
+      } else {
+        queueLeads.push(lead);
+      }
+    }
+
+    res.json({ queue: queueLeads, active: activeLeads });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
 // ═══════════════════════════════════════════════════════════════
 // CHAT MESSAGES — Extended CRUD (batch, delete, unread, search)
