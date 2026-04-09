@@ -1,6 +1,6 @@
 import type { ChatMessage } from "@/data/chatMockData";
 import { useEffect, useRef, useState, useCallback } from "react";
-import { CheckCheck, Check, MapPin, Phone, Mail, Globe, Building2, BarChart3, Reply, SmilePlus, ExternalLink, List, ChevronDown, Forward, Trash2, Search, Loader2 } from "lucide-react";
+import { CheckCheck, Check, MapPin, Phone, Mail, Globe, Building2, BarChart3, Reply, SmilePlus, ExternalLink, List, ChevronDown, Forward, Trash2, Search, Loader2, Upload } from "lucide-react";
 import { TypingIndicator } from "./TypingIndicator";
 
 interface ConversationViewProps {
@@ -17,6 +17,8 @@ interface ConversationViewProps {
   hasMore?: boolean;
   /** Whether older messages are currently loading */
   loadingMore?: boolean;
+  /** Called when files are dropped onto the chat area */
+  onFileDrop?: (files: File[]) => void;
 }
 
 const REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
@@ -52,7 +54,7 @@ function shouldShowTimestamp(messages: ChatMessage[], idx: number): boolean {
   return diff > 5 * 60 * 1000; // 5 min gap
 }
 
-export function ConversationView({ messages, leadName, isTyping, onReaction, onReply, onForward, onDelete, onLoadMore, hasMore = false, loadingMore = false }: ConversationViewProps) {
+export function ConversationView({ messages, leadName, isTyping, onReaction, onReply, onForward, onDelete, onLoadMore, hasMore = false, loadingMore = false, onFileDrop }: ConversationViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const [showReactionPicker, setShowReactionPicker] = useState<string | null>(null);
@@ -60,6 +62,7 @@ export function ConversationView({ messages, leadName, isTyping, onReaction, onR
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [highlightedMsgId, setHighlightedMsgId] = useState<string | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
   const isNearBottomRef = useRef(true);
   const loadMoreTriggeredRef = useRef(false);
 
@@ -277,8 +280,62 @@ export function ConversationView({ messages, leadName, isTyping, onReaction, onR
   const isFirstInGroup = (i: number) => i === 0 || messages[i].sender !== messages[i - 1].sender;
   const isLastInGroup = (i: number) => i === messages.length - 1 || messages[i].sender !== messages[i + 1].sender;
 
+  const dragCounterRef = useRef(0);
+
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current++;
+    if (e.dataTransfer.types.includes("Files")) {
+      setIsDragOver(true);
+    }
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current--;
+    if (dragCounterRef.current === 0) {
+      setIsDragOver(false);
+    }
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current = 0;
+    setIsDragOver(false);
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length > 0 && onFileDrop) {
+      onFileDrop(files);
+    }
+  }, [onFileDrop]);
+
   return (
-    <div className="relative flex-1 flex flex-col overflow-hidden">
+    <div
+      className="relative flex-1 flex flex-col overflow-hidden"
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+    >
+      {/* Drag overlay */}
+      {isDragOver && (
+        <div className="absolute inset-0 z-50 bg-primary/10 backdrop-blur-sm border-2 border-dashed border-primary rounded-xl flex items-center justify-center animate-fade-in pointer-events-none">
+          <div className="flex flex-col items-center gap-3 text-primary">
+            <div className="h-16 w-16 rounded-full bg-primary/15 flex items-center justify-center">
+              <Upload className="h-8 w-8" />
+            </div>
+            <p className="text-sm font-semibold">Solte os arquivos aqui</p>
+            <p className="text-xs text-muted-foreground">Imagens, vídeos, documentos...</p>
+          </div>
+        </div>
+      )}
       {/* Message search bar */}
       {searchOpen && (
         <div className="flex items-center gap-2 px-4 py-2 bg-card border-b border-border shrink-0 animate-fade-in">
