@@ -6,7 +6,7 @@ import { CreateInstanceDialog } from "@/components/whatsapp/CreateInstanceDialog
 import { Button } from "@/components/ui/button";
 import { Plus, RefreshCw, Loader2, WifiOff } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
-import { fetchInstances, getInstanceState, type EvolutionInstance } from "@/lib/evolutionApi";
+import { fetchInstances, type EvolutionInstance } from "@/lib/evolutionApi";
 
 export const Route = createFileRoute("/canais")({
   ssr: false,
@@ -24,35 +24,44 @@ function CanaisPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [qrInstance, setQrInstance] = useState<string | null>(null);
 
-  const loadInstances = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  const loadInstances = useCallback(async (showLoader = true) => {
+    if (showLoader) {
+      setLoading(true);
+      setError(null);
+    }
+
     try {
       const list = await fetchInstances();
-      const withState = await Promise.all(
-        list.map(async (inst) => {
-          try {
-            const state = await getInstanceState(inst.instanceName);
-            return { ...inst, connectionState: state.state };
-          } catch {
-            return { ...inst, connectionState: "close" as const };
-          }
-        })
-      );
-      setInstances(withState);
+      setInstances(list.map((inst) => ({ ...inst, connectionState: inst.status })));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro ao carregar instâncias");
+      if (showLoader || instances.length === 0) {
+        setError(err instanceof Error ? err.message : "Erro ao carregar instâncias");
+      }
     } finally {
-      setLoading(false);
+      if (showLoader) {
+        setLoading(false);
+      }
     }
-  }, []);
+  }, [instances.length]);
 
   useEffect(() => {
-    loadInstances();
+    void loadInstances();
   }, [loadInstances]);
 
+  useEffect(() => {
+    if (!instances.some((inst) => inst.connectionState === "connecting")) {
+      return;
+    }
+
+    const interval = setInterval(() => {
+      void loadInstances(false);
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [instances, loadInstances]);
+
   const handleCreated = (name: string) => {
-    loadInstances();
+    void loadInstances();
     setQrInstance(name);
   };
 
@@ -68,7 +77,7 @@ function CanaisPage() {
             </p>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={loadInstances} disabled={loading}>
+            <Button variant="outline" size="sm" onClick={() => void loadInstances()} disabled={loading}>
               <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} />
               Atualizar
             </Button>
@@ -87,7 +96,7 @@ function CanaisPage() {
           <div className="flex flex-col items-center justify-center py-16 gap-3">
             <WifiOff className="h-10 w-10 text-destructive" />
             <p className="text-sm text-destructive text-center max-w-md">{error}</p>
-            <Button variant="outline" size="sm" onClick={loadInstances}>
+            <Button variant="outline" size="sm" onClick={() => void loadInstances()}>
               Tentar novamente
             </Button>
           </div>
@@ -108,7 +117,7 @@ function CanaisPage() {
                 instanceId={inst.instanceId}
                 status={inst.connectionState}
                 onConnect={(name) => setQrInstance(name)}
-                onRefresh={loadInstances}
+                onRefresh={() => void loadInstances()}
               />
             ))}
           </div>
@@ -122,7 +131,7 @@ function CanaisPage() {
           open={!!qrInstance}
           onOpenChange={(open) => !open && setQrInstance(null)}
           instanceName={qrInstance}
-          onConnected={loadInstances}
+          onConnected={() => void loadInstances(false)}
         />
       )}
     </div>

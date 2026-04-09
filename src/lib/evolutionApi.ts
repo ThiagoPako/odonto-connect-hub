@@ -2,17 +2,19 @@
 const EVOLUTION_API_URL = "https://api.odontoconnect.tech";
 const EVOLUTION_API_KEY = "0a4c40e588465f7c078587511143c18cf979fcdf967b7debe58ef690a8907cbc";
 
+type ConnectionStatus = "open" | "close" | "connecting";
+
 interface EvolutionInstance {
   instanceName: string;
   instanceId: string;
   integration: string;
-  status: string;
+  status: ConnectionStatus;
   owner?: string;
 }
 
 interface InstanceState {
   instanceName: string;
-  state: "open" | "close" | "connecting";
+  state: ConnectionStatus;
 }
 
 interface QrCodeResponse {
@@ -27,6 +29,10 @@ interface CreateInstancePayload {
   integration?: string;
   qrcode?: boolean;
   number?: string;
+}
+
+function normalizeStatus(value: unknown): ConnectionStatus {
+  return value === "open" || value === "connecting" ? value : "close";
 }
 
 async function apiCall<T>(path: string, options?: RequestInit): Promise<T> {
@@ -53,13 +59,19 @@ export async function fetchInstances(): Promise<EvolutionInstance[]> {
     instanceName: inst.name || inst.instanceName,
     instanceId: inst.id || inst.instanceId,
     integration: inst.integration || "",
-    status: inst.connectionStatus || inst.status || "close",
+    status: normalizeStatus(inst.connectionStatus || inst.status),
     owner: inst.ownerJid || inst.owner,
   }));
 }
 
 export async function getInstanceState(instanceName: string): Promise<InstanceState> {
-  return apiCall<InstanceState>(`/instance/connectionState/${instanceName}`);
+  const raw = await apiCall<any>(`/instance/connectionState/${instanceName}`);
+  const instance = raw?.instance ?? raw;
+
+  return {
+    instanceName: instance?.instanceName || instanceName,
+    state: normalizeStatus(instance?.state),
+  };
 }
 
 export async function createInstance(payload: CreateInstancePayload) {
@@ -77,7 +89,15 @@ export async function createInstance(payload: CreateInstancePayload) {
 }
 
 export async function connectInstance(instanceName: string): Promise<QrCodeResponse> {
-  return apiCall<QrCodeResponse>(`/instance/connect/${instanceName}`);
+  const raw = await apiCall<any>(`/instance/connect/${instanceName}`);
+  const qr = raw?.qrcode ?? raw;
+
+  return {
+    pairingCode: qr?.pairingCode ?? null,
+    code: qr?.code ?? "",
+    base64: qr?.base64 ?? "",
+    count: typeof qr?.count === "number" ? qr.count : 0,
+  };
 }
 
 export async function logoutInstance(instanceName: string) {
@@ -92,4 +112,4 @@ export async function restartInstance(instanceName: string) {
   return apiCall(`/instance/restart/${instanceName}`, { method: "PUT" });
 }
 
-export { type EvolutionInstance, type InstanceState, type QrCodeResponse };
+export { type ConnectionStatus, type EvolutionInstance, type InstanceState, type QrCodeResponse };
