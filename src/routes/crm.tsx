@@ -6,9 +6,10 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Search, Plus, Filter, Phone, Mail, Calendar, DollarSign,
   ChevronRight, MoreHorizontal, UserPlus, ExternalLink,
-  Clock, MessageSquare, GripVertical,
+  Clock, MessageSquare, GripVertical, RefreshCw,
 } from "lucide-react";
 import { toast } from "sonner";
+import { whatsappApi } from "@/lib/vpsApi";
 
 export const Route = createFileRoute("/crm")({
   ssr: false,
@@ -24,6 +25,39 @@ const statusLabels: Record<Patient["status"], { label: string; className: string
 
 const origins = ["Todos", "Google Ads", "Meta Ads", "Instagram", "Indicação", "Site"];
 const statuses = ["Todos", "lead", "ativo", "inativo", "paciente"];
+
+function SyncAvatarsButton() {
+  const [syncing, setSyncing] = useState(false);
+
+  const handleSync = async () => {
+    setSyncing(true);
+    toast.info("Sincronizando fotos de perfil do WhatsApp...");
+    try {
+      const { data, error } = await whatsappApi.syncProfilePictures("default");
+      if (error) {
+        toast.error("Erro ao sincronizar: " + error);
+      } else if (data) {
+        toast.success(`Fotos atualizadas: ${data.updated} de ${data.total} leads`);
+      }
+    } catch {
+      toast.error("Erro de conexão ao sincronizar fotos");
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  return (
+    <button
+      onClick={handleSync}
+      disabled={syncing}
+      className="h-9 px-3 rounded-lg bg-muted text-muted-foreground text-sm font-medium hover:bg-accent hover:text-accent-foreground transition-colors flex items-center gap-1.5 disabled:opacity-50"
+      title="Sincronizar fotos do WhatsApp"
+    >
+      <RefreshCw className={`h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
+      <span className="hidden sm:inline">{syncing ? "Sincronizando..." : "Sync Fotos"}</span>
+    </button>
+  );
+}
 
 function CrmPage() {
   return (
@@ -78,6 +112,7 @@ function PatientTableView() {
               className="w-full h-9 pl-9 pr-4 rounded-lg bg-muted border-0 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
             />
           </div>
+          <SyncAvatarsButton />
           <button className="h-9 px-3 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors flex items-center gap-1.5">
             <UserPlus className="h-4 w-4" /> Novo
           </button>
