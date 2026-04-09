@@ -509,6 +509,7 @@ export function MessageInput({ onSendMessage, disabled, replyingTo, onCancelRepl
               value={message}
               onChange={(e) => handleMessageChange(e.target.value)}
               onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
               placeholder={disabled ? "Selecione um atendimento" : 'Digite "/" para respostas rápidas...'}
               disabled={disabled}
               rows={1}
