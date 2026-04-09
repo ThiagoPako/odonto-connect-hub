@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import {
   Plus, Search, Star, Phone, Mail, Building2, Loader2, Trash2,
-  Pencil, UserPlus, Users, StarOff, MessageSquare
+  Pencil, UserPlus, Users, StarOff, MessageSquare, RefreshCw
 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import { contatosApi, type Contato } from "@/lib/vpsApi";

@@ -350,6 +350,10 @@ export const contatosApi = {
     vpsApiFetch<Contato>(`/contatos/${id}/favorito`, { method: 'PATCH' }),
   bulkImport: (contatos: Array<{ telefone: string; nome: string }>) =>
     vpsApiFetch<{ imported: number; skipped: number; total: number }>('/contatos/import', { method: 'POST', body: { contatos } }),
+  syncNow: () =>
+    vpsApiFetch<{ success: boolean; imported: number; totalContatos: number }>('/contatos/sync/now', { method: 'POST' }),
+  syncStatus: () =>
+    vpsApiFetch<{ autoSync: boolean; intervalMinutes: number; totalContatos: number }>('/contatos/sync/status'),
 };
 
 // ─── Health check ───────────────────────────────────────────
