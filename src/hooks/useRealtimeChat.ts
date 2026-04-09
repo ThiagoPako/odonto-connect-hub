@@ -67,6 +67,9 @@ export function useRealtimeChat(options: RealtimeChatOptions) {
   const queueAssignRef = useRef<QueueAssignHandler | undefined>(options.onQueueAssigned);
   queueAssignRef.current = options.onQueueAssigned;
 
+  const messageStatusRef = useRef<MessageStatusHandler | undefined>(options.onMessageStatus);
+  messageStatusRef.current = options.onMessageStatus;
+
   useEffect(() => {
     let es: EventSource | null = null;
     let retryTimeout: ReturnType<typeof setTimeout>;
