@@ -212,6 +212,13 @@ function ChatPage() {
     setSelectedLead(assignedLead);
     setActiveTab("mine");
 
+    // Track session assignment
+    sessionsApi.assign({ leadId: lead.id }).then(({ data }) => {
+      if (data?.waitTime) {
+        console.log(`⏱️ Wait time for ${lead.name}: ${data.waitTime}s`);
+      }
+    });
+
     // Create initial system message
     if (!messages[lead.id]) {
       setMessages((prev) => ({
@@ -229,6 +236,9 @@ function ChatPage() {
       }));
     }
   };
+
+  // Track first response
+  const [firstResponseTracked, setFirstResponseTracked] = useState<Set<string>>(new Set());
 
   const [replyingTo, setReplyingTo] = useState<ReplyData | null>(null);
 
