@@ -690,6 +690,63 @@ app.get('/api/table/:tableName', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
+// ATTENDANCE QUEUES (filas de atendimento)
+// ═══════════════════════════════════════════════════════════════
+
+app.get('/api/queues', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { rows } = await pool.query('SELECT * FROM attendance_queues ORDER BY name ASC');
+    res.json(rows);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/queues', async (req, res) => {
+  try {
+    await verifyAdmin(req);
+    const { name, color, icon, description, whatsapp_button_label, contact_numbers, team_member_ids } = req.body;
+    if (!name) return res.status(400).json({ error: 'Nome é obrigatório' });
+    const id = crypto.randomUUID();
+    await pool.query(
+      `INSERT INTO attendance_queues (id, name, color, icon, description, whatsapp_button_label, contact_numbers, team_member_ids)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [id, name, color || '#3B82F6', icon || '📋', description, whatsapp_button_label || name, JSON.stringify(contact_numbers || []), JSON.stringify(team_member_ids || [])]
+    );
+    res.json({ success: true, id });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/api/queues/:id', async (req, res) => {
+  try {
+    await verifyAdmin(req);
+    const { name, color, icon, description, whatsapp_button_label, contact_numbers, team_member_ids, active } = req.body;
+    await pool.query(
+      `UPDATE attendance_queues SET name=COALESCE($1,name), color=COALESCE($2,color), icon=COALESCE($3,icon),
+       description=COALESCE($4,description), whatsapp_button_label=COALESCE($5,whatsapp_button_label),
+       contact_numbers=COALESCE($6,contact_numbers), team_member_ids=COALESCE($7,team_member_ids),
+       active=COALESCE($8,active), updated_at=NOW() WHERE id=$9`,
+      [name, color, icon, description, whatsapp_button_label, contact_numbers ? JSON.stringify(contact_numbers) : null, team_member_ids ? JSON.stringify(team_member_ids) : null, active, req.params.id]
+    );
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/queues/:id', async (req, res) => {
+  try {
+    await verifyAdmin(req);
+    await pool.query('DELETE FROM attendance_queues WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+// ═══════════════════════════════════════════════════════════════
 // SSE — Real-time event stream for frontend
 // ═══════════════════════════════════════════════════════════════
 
