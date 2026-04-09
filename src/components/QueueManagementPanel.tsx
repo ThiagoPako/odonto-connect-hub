@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import type { AttendanceQueue } from "@/data/queueData";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,7 +10,6 @@ import { Separator } from "@/components/ui/separator";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Plus, Pencil, Trash2, Users, Phone, ListChecks, X } from "lucide-react";
 import { toast } from "sonner";
-import { getQueues, saveQueues, type AttendanceQueue } from "@/data/queueData";
 import { adminListUsers, queuesApi } from "@/lib/vpsApi";
 
 export function QueueManagementPanel() {
@@ -37,10 +37,8 @@ export function QueueManagementPanel() {
           active: q.active,
         }));
         setQueues(mapped);
-        saveQueues(mapped); // sync localStorage fallback
       } else {
-        // Fallback to localStorage
-        setQueues(getQueues());
+        setQueues([]);
       }
     });
   };
