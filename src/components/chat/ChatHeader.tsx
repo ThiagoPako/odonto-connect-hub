@@ -3,7 +3,8 @@ import type { Lead, ChatMessage } from "@/data/chatMockData";
 import { Phone, Video, MoreVertical, X, ArrowRightLeft, Loader2, ArrowLeft, Tags, Check, CheckCircle2, Download } from "lucide-react";
 import { LeadAvatar } from "@/components/LeadAvatar";
 import { toast } from "sonner";
-import { adminListUsers, tagsApi, type LeadTagApi } from "@/lib/vpsApi";
+import { adminListUsers, tagsApi, whatsappApi, type LeadTagApi } from "@/lib/vpsApi";
+import { useWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
 import { useAuth } from "@/hooks/useAuth";
 import { FinishAttendanceDialog } from "./FinishAttendanceDialog";
 import { exportChatToPdf } from "@/lib/chatPdfExport";
@@ -42,6 +43,8 @@ interface ChatHeaderProps {
 
 export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onReturnToQueue, leadTagIds = [], onToggleTag, messages = [], presence = "offline", lastSeen }: ChatHeaderProps) {
   const { user: currentUser } = useAuth();
+  const { connected: connectedInstances } = useWhatsAppInstances();
+  const [calling, setCalling] = useState(false);
   const [showTransfer, setShowTransfer] = useState(false);
   const [showTagMenu, setShowTagMenu] = useState(false);
   const [showFinishDialog, setShowFinishDialog] = useState(false);
@@ -104,6 +107,32 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onRe
     }
     exportChatToPdf(messages, lead.name, lead.phone);
     toast.success("Exportação iniciada", { description: "Use Ctrl+P para salvar como PDF" });
+  };
+
+  const handleCall = async (isVideo: boolean) => {
+    const instance = connectedInstances[0]?.instanceName;
+    if (!instance) {
+      toast.error("Nenhuma instância WhatsApp conectada");
+      return;
+    }
+    if (!lead.phone) {
+      toast.error("Contato sem número de telefone");
+      return;
+    }
+    setCalling(true);
+    toast.info(isVideo ? "Iniciando chamada de vídeo..." : "Iniciando ligação...");
+    try {
+      const { error } = await whatsappApi.offerCall(instance, lead.phone, isVideo);
+      if (error) {
+        toast.error("Erro ao ligar: " + error);
+      } else {
+        toast.success(isVideo ? "Chamada de vídeo iniciada!" : "Ligação iniciada!");
+      }
+    } catch (err: any) {
+      toast.error("Falha na ligação: " + (err.message || "erro desconhecido"));
+    } finally {
+      setCalling(false);
+    }
   };
 
   return (
@@ -186,11 +215,23 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onRe
           >
             <ArrowRightLeft className="h-4 w-4" />
           </button>
-          <button className="p-2.5 rounded-xl hover:bg-muted transition-all text-muted-foreground hover:text-foreground" aria-label="Ligar">
-            <Phone className="h-4 w-4" />
+          <button
+            className="p-2.5 rounded-xl hover:bg-success/10 transition-all text-muted-foreground hover:text-success disabled:opacity-50"
+            aria-label="Ligar"
+            title="Ligar via WhatsApp"
+            onClick={() => handleCall(false)}
+            disabled={calling}
+          >
+            <Phone className={`h-4 w-4 ${calling ? "animate-pulse" : ""}`} />
           </button>
-          <button className="p-2.5 rounded-xl hover:bg-muted transition-all text-muted-foreground hover:text-foreground" aria-label="Chamada de vídeo">
-            <Video className="h-4 w-4" />
+          <button
+            className="p-2.5 rounded-xl hover:bg-primary/10 transition-all text-muted-foreground hover:text-primary disabled:opacity-50"
+            aria-label="Chamada de vídeo"
+            title="Chamada de vídeo via WhatsApp"
+            onClick={() => handleCall(true)}
+            disabled={calling}
+          >
+            <Video className={`h-4 w-4 ${calling ? "animate-pulse" : ""}`} />
           </button>
           {lead.status === "active" && onFinishAttendance && (
             <button
