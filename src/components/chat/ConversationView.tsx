@@ -1,6 +1,6 @@
 import type { ChatMessage } from "@/data/chatMockData";
 import { useEffect, useRef, useState, useCallback } from "react";
-import { CheckCheck, Check, MapPin, Phone, Mail, Globe, Building2, BarChart3, Reply, SmilePlus, ExternalLink, List, ChevronDown, Forward, Trash2, Search, Loader2, Upload } from "lucide-react";
+import { CheckCheck, Check, MapPin, Phone, Mail, Globe, Building2, BarChart3, Reply, SmilePlus, ExternalLink, List, ChevronDown, Forward, Trash2, Search, Loader2, Upload, Copy } from "lucide-react";
 import { TypingIndicator } from "./TypingIndicator";
 
 interface ConversationViewProps {
@@ -63,6 +63,7 @@ export function ConversationView({ messages, leadName, isTyping, onReaction, onR
   const [searchQuery, setSearchQuery] = useState("");
   const [highlightedMsgId, setHighlightedMsgId] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; msg: ChatMessage } | null>(null);
   const isNearBottomRef = useRef(true);
   const loadMoreTriggeredRef = useRef(false);
 
@@ -125,6 +126,31 @@ export function ConversationView({ messages, leadName, isTyping, onReaction, onR
     el?.scrollIntoView({ behavior: "smooth", block: "center" });
     setTimeout(() => setHighlightedMsgId(null), 2000);
   };
+
+  // Close context menu on click anywhere or scroll
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = () => setContextMenu(null);
+    window.addEventListener("click", close);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [contextMenu]);
+
+  const handleContextMenu = useCallback((e: React.MouseEvent, msg: ChatMessage) => {
+    // Don't show for system messages
+    if (msg.id.startsWith("sys-")) return;
+    e.preventDefault();
+    setContextMenu({ x: e.clientX, y: e.clientY, msg });
+  }, []);
+
+  const handleCopyMessage = useCallback((msg: ChatMessage) => {
+    const text = msg.content || "";
+    navigator.clipboard.writeText(text);
+    setContextMenu(null);
+  }, []);
 
   const formatTime = (date: Date) =>
     date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
@@ -419,6 +445,7 @@ export function ConversationView({ messages, leadName, isTyping, onReaction, onR
 
               <div
                 id={`msg-${msg.id}`}
+                onContextMenu={(e) => handleContextMenu(e, msg)}
                 className={`flex ${isLead ? "justify-start" : "justify-end"} group ${
                   isLead ? "animate-chat-bubble-left" : "animate-chat-bubble-right"
                 } ${first ? "mt-3" : "mt-0.5"} ${highlightedMsgId === msg.id ? "ring-2 ring-primary/40 rounded-2xl" : ""}`}
@@ -629,6 +656,66 @@ export function ConversationView({ messages, leadName, isTyping, onReaction, onR
         >
           <Search className="h-3.5 w-3.5 text-muted-foreground" />
         </button>
+      )}
+
+      {/* Context menu */}
+      {contextMenu && (
+        <div
+          className="fixed z-[100] min-w-[180px] bg-card/95 backdrop-blur-md border border-border/60 rounded-xl shadow-2xl py-1.5 animate-pop-in"
+          style={{
+            left: Math.min(contextMenu.x, window.innerWidth - 200),
+            top: Math.min(contextMenu.y, window.innerHeight - 220),
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            onClick={() => { handleCopyMessage(contextMenu.msg); }}
+            className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-foreground hover:bg-muted/60 transition-colors"
+          >
+            <Copy className="h-4 w-4 text-muted-foreground" /> Copiar
+          </button>
+          <button
+            onClick={() => { onReply?.(contextMenu.msg); setContextMenu(null); }}
+            className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-foreground hover:bg-muted/60 transition-colors"
+          >
+            <Reply className="h-4 w-4 text-muted-foreground" /> Responder
+          </button>
+          {onForward && (
+            <button
+              onClick={() => { onForward(contextMenu.msg); setContextMenu(null); }}
+              className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-foreground hover:bg-muted/60 transition-colors"
+            >
+              <Forward className="h-4 w-4 text-muted-foreground" /> Encaminhar
+            </button>
+          )}
+          {onReaction && (
+            <>
+              <div className="h-px bg-border/40 my-1" />
+              <div className="flex items-center justify-center gap-1 px-2 py-1">
+                {["👍", "❤️", "😂", "😮", "😢", "🙏"].map((emoji) => (
+                  <button
+                    key={emoji}
+                    onClick={() => { onReaction(contextMenu.msg.id, emoji); setContextMenu(null); }}
+                    className="text-lg hover:scale-125 transition-transform p-1 rounded-lg hover:bg-muted/50"
+                  >
+                    {emoji}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+          {onDelete && contextMenu.msg.sender === "attendant" && (
+            <>
+              <div className="h-px bg-border/40 my-1" />
+              <button
+                onClick={() => { onDelete(contextMenu.msg); setContextMenu(null); }}
+                className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-destructive hover:bg-destructive/10 transition-colors"
+              >
+                <Trash2 className="h-4 w-4" /> Apagar
+              </button>
+            </>
+          )}
+        </div>
       )}
     </div>
   );
