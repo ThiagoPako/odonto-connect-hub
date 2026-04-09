@@ -151,7 +151,7 @@ function AudioPlayer({ fileUrl, duration, isLead }: { fileUrl?: string; duration
               }
             };
             seekTouch(e.touches[0].clientX);
-            const onMove = (ev: TouchEvent) => { if (draggingRef.current && ev.touches[0]) seek(ev.touches[0]); };
+            const onMove = (ev: TouchEvent) => { if (draggingRef.current && ev.touches[0]) seekTouch(ev.touches[0].clientX); };
             const onEnd = () => { draggingRef.current = false; window.removeEventListener("touchmove", onMove); window.removeEventListener("touchend", onEnd); };
             window.addEventListener("touchmove", onMove);
             window.addEventListener("touchend", onEnd);
