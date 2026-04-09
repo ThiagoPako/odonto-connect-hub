@@ -122,13 +122,13 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, lead
         >
           <ArrowRightLeft className="h-4 w-4" />
         </button>
-        <button className="p-2.5 rounded-xl hover:bg-muted transition-all text-muted-foreground hover:text-foreground">
+        <button className="p-2.5 rounded-xl hover:bg-muted transition-all text-muted-foreground hover:text-foreground" aria-label="Ligar">
           <Phone className="h-4 w-4" />
         </button>
-        <button className="p-2.5 rounded-xl hover:bg-muted transition-all text-muted-foreground hover:text-foreground">
+        <button className="p-2.5 rounded-xl hover:bg-muted transition-all text-muted-foreground hover:text-foreground" aria-label="Chamada de vídeo">
           <Video className="h-4 w-4" />
         </button>
-        <button className="p-2.5 rounded-xl hover:bg-muted transition-all text-muted-foreground hover:text-foreground">
+        <button className="p-2.5 rounded-xl hover:bg-muted transition-all text-muted-foreground hover:text-foreground" aria-label="Mais opções">
           <MoreVertical className="h-4 w-4" />
         </button>
         {lead.status === "active" && onFinishAttendance && (
