@@ -2107,6 +2107,50 @@ app.get('/api/messages/search', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
+// PUSH NOTIFICATIONS (Web Push)
+// ═══════════════════════════════════════════════════════════════
+
+// Get VAPID public key (frontend needs this to subscribe)
+app.get('/api/push/vapid-key', (_req, res) => {
+  if (!VAPID_PUBLIC_KEY) return res.status(503).json({ error: 'VAPID not configured' });
+  res.json({ publicKey: VAPID_PUBLIC_KEY });
+});
+
+// Subscribe to push notifications
+app.post('/api/push/subscribe', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    const { subscription } = req.body;
+    if (!subscription?.endpoint || !subscription?.keys?.p256dh || !subscription?.keys?.auth) {
+      return res.status(400).json({ error: 'Invalid subscription object' });
+    }
+
+    await pool.query(
+      `INSERT INTO push_subscriptions (user_id, endpoint, keys_p256dh, keys_auth, updated_at)
+       VALUES ($1, $2, $3, $4, NOW())
+       ON CONFLICT (endpoint) DO UPDATE SET user_id = $1, keys_p256dh = $3, keys_auth = $4, updated_at = NOW()`,
+      [user.id, subscription.endpoint, subscription.keys.p256dh, subscription.keys.auth]
+    );
+
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Unsubscribe from push notifications
+app.post('/api/push/unsubscribe', async (req, res) => {
+  try {
+    const { endpoint } = req.body;
+    if (!endpoint) return res.status(400).json({ error: 'endpoint required' });
+    await pool.query('DELETE FROM push_subscriptions WHERE endpoint = $1', [endpoint]);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
 
 app.get('/api/health', async (_req, res) => {
   try {
