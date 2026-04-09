@@ -53,6 +53,7 @@ function ChatPage() {
   const [messages, setMessages] = useState<Record<string, ChatMessage[]>>(mockMessages);
   const [filterQueue, setFilterQueue] = useState<string | null>(null);
   const [filterTag, setFilterTag] = useState<string | null>(null);
+  const [newChatOpen, setNewChatOpen] = useState(false);
   const [availableQueues, setAvailableQueues] = useState<AttendanceQueue[]>([]);
   const [availableTags, setAvailableTags] = useState<LeadTagApi[]>([]);
   const [leadTagAssignments, setLeadTagAssignments] = useState<Record<string, string[]>>({});
