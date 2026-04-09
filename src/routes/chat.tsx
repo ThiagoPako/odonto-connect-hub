@@ -54,6 +54,7 @@ function ChatPage() {
   const [messages, setMessages] = useState<Record<string, ChatMessage[]>>({});
   const [filterQueue, setFilterQueue] = useState<string | null>(null);
   const [filterTag, setFilterTag] = useState<string | null>(null);
+  const [filterStatus, setFilterStatus] = useState<"all" | "active" | "finished">("all");
   const [newChatOpen, setNewChatOpen] = useState(false);
   const [isLeadTyping, setIsLeadTyping] = useState(false);
   const [availableQueues, setAvailableQueues] = useState<AttendanceQueue[]>([]);
@@ -540,7 +541,8 @@ function ChatPage() {
 
   const currentMessages = selectedLead ? messages[selectedLead.id] || [] : [];
   const baseList = activeTab === "queue" ? queue : myLeads;
-  const filteredByQueue = filterQueue ? baseList.filter((l) => l.queueId === filterQueue) : baseList;
+  const filteredByStatus = activeTab === "mine" && filterStatus !== "all" ? baseList.filter((l) => l.status === filterStatus) : baseList;
+  const filteredByQueue = filterQueue ? filteredByStatus.filter((l) => l.queueId === filterQueue) : filteredByStatus;
   const currentList = filterTag ? filteredByQueue.filter((l) => (leadTagAssignments[l.id] || []).includes(filterTag)) : filteredByQueue;
 
   const handleNewChatFromContact = (contato: Contato) => {
