@@ -43,6 +43,8 @@ interface ChatHeaderProps {
 
 export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onReturnToQueue, leadTagIds = [], onToggleTag, messages = [], presence = "offline", lastSeen }: ChatHeaderProps) {
   const { user: currentUser } = useAuth();
+  const { connected: connectedInstances } = useWhatsAppInstances();
+  const [calling, setCalling] = useState(false);
   const [showTransfer, setShowTransfer] = useState(false);
   const [showTagMenu, setShowTagMenu] = useState(false);
   const [showFinishDialog, setShowFinishDialog] = useState(false);
