@@ -470,7 +470,7 @@ export const messagesApi = {
 // ─── Queue Leads ────────────────────────────────────────────
 
 export const queueLeadsApi = {
-  list: () => vpsApiFetch<{ queue: any[]; active: any[] }>('/queue/leads'),
+  list: () => vpsApiFetch<{ queue: any[]; active: any[] }>('/queue/leads', { background: true }),
 };
 
 // ─── Health check ───────────────────────────────────────────
