@@ -457,7 +457,17 @@ export function ConversationView({ messages, leadName, isTyping, onReaction, onR
                 </div>
               )}
 
-              <div
+              {/* Unread messages divider */}
+              {showUnreadDivider && (
+                <div className="flex items-center gap-3 my-3 animate-fade-in">
+                  <div className="flex-1 h-px bg-primary/40" />
+                  <span className="text-[11px] font-semibold text-primary bg-primary/10 px-3 py-1 rounded-full">
+                    {unreadCount} mensage{unreadCount === 1 ? "m" : "ns"} não lida{unreadCount === 1 ? "" : "s"}
+                  </span>
+                  <div className="flex-1 h-px bg-primary/40" />
+                </div>
+              )}
+
                 id={`msg-${msg.id}`}
                 onContextMenu={(e) => handleContextMenu(e, msg)}
                 className={`flex ${isLead ? "justify-start" : "justify-end"} group ${
