@@ -1,5 +1,6 @@
-import { Clock, MessageSquare } from "lucide-react";
+import { Clock, MessageSquare, ExternalLink } from "lucide-react";
 import { useEffect, useState } from "react";
+import { Link } from "@tanstack/react-router";
 
 interface ActiveAttendanceCardProps {
   patientName: string;
@@ -77,6 +78,14 @@ export function ActiveAttendanceCard({
             Lead Ocioso
           </span>
         )}
+        <Link
+          to="/chat"
+          search={{ lead: patientName }}
+          className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-semibold text-primary bg-primary/10 hover:bg-primary/15 transition-colors"
+        >
+          <ExternalLink className="h-3 w-3" />
+          Abrir Chat
+        </Link>
       </div>
     </div>
   );
