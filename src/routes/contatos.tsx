@@ -199,10 +199,10 @@ function ContatosPage() {
                       variant="ghost"
                       size="icon"
                       className="h-8 w-8"
-                      title="Enviar mensagem"
-                      onClick={() => window.open(`https://wa.me/${contato.telefone?.replace(/\D/g, "")}`, "_blank")}
+                      title="Enviar WhatsApp"
+                      onClick={() => setWhatsappContato(contato)}
                     >
-                      <MessageSquare className="h-4 w-4 text-muted-foreground" />
+                      <MessageSquare className="h-4 w-4 text-primary" />
                     </Button>
                   )}
                   <Button
