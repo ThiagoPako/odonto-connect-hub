@@ -1956,70 +1956,11 @@ app.post('/api/messages/mark-read', async (req, res) => {
 
 
 // ═══════════════════════════════════════════════════════════════
-// CHAT MESSAGES CRUD
+// CHAT MESSAGES — Extended CRUD (batch, delete, unread, search)
 // ═══════════════════════════════════════════════════════════════
 
-// List messages for a lead (with pagination)
-app.get('/api/chat/messages/:leadId', async (req, res) => {
-  try {
-    await verifyUser(req);
-    const { leadId } = req.params;
-    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
-    const before = req.query.before; // cursor: timestamp ISO
-
-    let query = 'SELECT * FROM chat_messages WHERE lead_id = $1';
-    const values = [leadId];
-
-    if (before) {
-      query += ' AND timestamp < $2 ORDER BY timestamp DESC LIMIT $3';
-      values.push(before, limit);
-    } else {
-      query += ' ORDER BY timestamp DESC LIMIT $2';
-      values.push(limit);
-    }
-
-    const { rows } = await pool.query(query, values);
-    res.json(rows.reverse()); // return chronological order
-  } catch (error) {
-    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
-  }
-});
-
-// Save a single message
-app.post('/api/chat/messages', async (req, res) => {
-  try {
-    await verifyUser(req);
-    const m = req.body;
-    if (!m.id || !m.lead_id || !m.sender) {
-      return res.status(400).json({ error: 'id, lead_id e sender são obrigatórios' });
-    }
-
-    await pool.query(`
-      INSERT INTO chat_messages (id, lead_id, content, sender, type, status, timestamp, media_url, file_name, mime_type,
-        reply_to_id, reply_to_content, reply_to_sender, attendant_id, attendant_name, instance, phone, metadata)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
-      ON CONFLICT (id) DO UPDATE SET
-        content = EXCLUDED.content,
-        status = EXCLUDED.status,
-        media_url = EXCLUDED.media_url,
-        metadata = EXCLUDED.metadata
-    `, [
-      m.id, m.lead_id, m.content || null, m.sender, m.type || 'text', m.status || 'sent',
-      m.timestamp || new Date().toISOString(), m.media_url || null, m.file_name || null, m.mime_type || null,
-      m.reply_to_id || null, m.reply_to_content || null, m.reply_to_sender || null,
-      m.attendant_id || null, m.attendant_name || null, m.instance || null, m.phone || null,
-      JSON.stringify(m.metadata || {})
-    ]);
-
-    res.json({ success: true, id: m.id });
-  } catch (error) {
-    console.error('Save message error:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
 // Save multiple messages (batch)
-app.post('/api/chat/messages/batch', async (req, res) => {
+app.post('/api/messages/batch', async (req, res) => {
   try {
     await verifyUser(req);
     const { messages } = req.body;
@@ -2061,23 +2002,8 @@ app.post('/api/chat/messages/batch', async (req, res) => {
   }
 });
 
-// Update message status
-app.patch('/api/chat/messages/:id/status', async (req, res) => {
-  try {
-    await verifyUser(req);
-    const { id } = req.params;
-    const { status } = req.body;
-    if (!status) return res.status(400).json({ error: 'status obrigatório' });
-
-    await pool.query('UPDATE chat_messages SET status = $1 WHERE id = $2', [status, id]);
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Delete a message (soft: set content to null, or hard delete)
-app.delete('/api/chat/messages/:id', async (req, res) => {
+// Delete a message (soft or hard)
+app.delete('/api/messages/:id', async (req, res) => {
   try {
     await verifyUser(req);
     const { id } = req.params;
@@ -2094,26 +2020,8 @@ app.delete('/api/chat/messages/:id', async (req, res) => {
   }
 });
 
-// Mark conversation as read
-app.post('/api/chat/read/:leadId', async (req, res) => {
-  try {
-    const { user } = await verifyUser(req);
-    const { leadId } = req.params;
-
-    await pool.query(`
-      INSERT INTO chat_read_status (lead_id, user_id, last_read_at)
-      VALUES ($1, $2, NOW())
-      ON CONFLICT (lead_id, user_id) DO UPDATE SET last_read_at = NOW()
-    `, [leadId, user.id]);
-
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Get unread counts for current user
-app.get('/api/chat/unread', async (req, res) => {
+// Get unread counts per lead for current user
+app.get('/api/messages/unread', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
 
@@ -2136,8 +2044,8 @@ app.get('/api/chat/unread', async (req, res) => {
   }
 });
 
-// Search messages
-app.get('/api/chat/search', async (req, res) => {
+// Search messages globally or within a lead
+app.get('/api/messages/search', async (req, res) => {
   try {
     await verifyUser(req);
     const q = req.query.q;
