@@ -14,6 +14,8 @@ interface Attendant {
   initials: string;
 }
 
+type PresenceDisplay = "online" | "offline" | "typing" | "recording";
+
 interface ChatHeaderProps {
   lead: Lead;
   onClose: () => void;
@@ -23,9 +25,11 @@ interface ChatHeaderProps {
   leadTagIds?: string[];
   onToggleTag?: (leadId: string, tagId: string) => void;
   messages?: ChatMessage[];
+  presence?: PresenceDisplay;
+  lastSeen?: Date | null;
 }
 
-export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onReturnToQueue, leadTagIds = [], onToggleTag, messages = [] }: ChatHeaderProps) {
+export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onReturnToQueue, leadTagIds = [], onToggleTag, messages = [], presence = "offline", lastSeen }: ChatHeaderProps) {
   const { user: currentUser } = useAuth();
   const [showTransfer, setShowTransfer] = useState(false);
   const [showTagMenu, setShowTagMenu] = useState(false);
