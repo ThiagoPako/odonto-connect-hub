@@ -224,6 +224,7 @@ function StepPublico({
   numeroEnvio: string;
   setNumeroEnvio: (v: string) => void;
 }) {
+  const { instances: allInstances } = useWhatsAppInstances();
   return (
     <div className="space-y-5">
       <div>
