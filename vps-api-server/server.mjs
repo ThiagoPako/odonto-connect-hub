@@ -1607,8 +1607,41 @@ app.patch('/api/contatos/:id/favorito', async (req, res) => {
   }
 });
 
+// ─── Bulk import contatos (WhatsApp) ────────────────────────
+app.post('/api/contatos/import', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { contatos } = req.body;
+    if (!Array.isArray(contatos) || contatos.length === 0) {
+      return res.status(400).json({ error: 'Lista de contatos vazia' });
+    }
 
-// HEALTH CHECK
+    let imported = 0;
+    let skipped = 0;
+
+    for (const c of contatos) {
+      const telefone = (c.telefone || c.id || '').replace(/\D/g, '');
+      const nome = (c.nome || c.pushName || telefone).trim();
+      if (!telefone) { skipped++; continue; }
+
+      // Skip if phone already exists
+      const existing = await pool.query('SELECT id FROM contatos WHERE telefone = $1', [telefone]);
+      if (existing.rows.length > 0) { skipped++; continue; }
+
+      await pool.query(
+        'INSERT INTO contatos (id, nome, telefone, tipo) VALUES ($1, $2, $3, $4)',
+        [crypto.randomUUID(), nome || telefone, telefone, 'pessoal']
+      );
+      imported++;
+    }
+
+    res.json({ imported, skipped, total: contatos.length });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
 // ═══════════════════════════════════════════════════════════════
 
 app.get('/api/health', async (_req, res) => {

@@ -348,6 +348,8 @@ export const contatosApi = {
     vpsApiFetch<{ success: boolean }>(`/contatos/${id}`, { method: 'DELETE' }),
   toggleFavorito: (id: string) =>
     vpsApiFetch<Contato>(`/contatos/${id}/favorito`, { method: 'PATCH' }),
+  bulkImport: (contatos: Array<{ telefone: string; nome: string }>) =>
+    vpsApiFetch<{ imported: number; skipped: number; total: number }>('/contatos/import', { method: 'POST', body: { contatos } }),
 };
 
 // ─── Health check ───────────────────────────────────────────
