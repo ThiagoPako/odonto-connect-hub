@@ -33,7 +33,10 @@ jobs:
               npm run build
             fi
             
-            echo "=== Frontend built ==="
+            # Restart frontend process so the new build is served
+            pm2 restart odonto-connect || true
+            
+            echo "=== Frontend built and restarted ==="
             
             # API server
             cd /var/www/odonto-connect/vps-api-server
