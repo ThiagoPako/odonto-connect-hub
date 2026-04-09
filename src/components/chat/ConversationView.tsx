@@ -64,13 +64,6 @@ export function ConversationView({ messages, leadName, isTyping, onReaction, onR
   const [highlightedMsgId, setHighlightedMsgId] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const isNearBottomRef = useRef(true);
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const [showReactionPicker, setShowReactionPicker] = useState<string | null>(null);
-  const [showScrollButton, setShowScrollButton] = useState(false);
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [highlightedMsgId, setHighlightedMsgId] = useState<string | null>(null);
-  const isNearBottomRef = useRef(true);
   const loadMoreTriggeredRef = useRef(false);
 
   // Smart scroll — only auto-scroll if user is near the bottom
