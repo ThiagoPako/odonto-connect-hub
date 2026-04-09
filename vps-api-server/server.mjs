@@ -1622,7 +1622,7 @@ app.get('/api/crm/leads', async (req, res) => {
                  FROM crm_leads l
                  LEFT JOIN LATERAL (
                    SELECT attendant_name, status FROM attendance_sessions
-                   WHERE lead_id = l.id ORDER BY created_at DESC LIMIT 1
+                   WHERE lead_id = l.id::text ORDER BY created_at DESC LIMIT 1
                  ) s ON true
                  WHERE 1=1`;
     const params = [];
