@@ -10,6 +10,9 @@ export interface Lead {
   assignedTo?: string;
   avatarColor?: string;
   avatarUrl?: string | null;
+  queueId?: string;
+  queueName?: string;
+  queueColor?: string;
 }
 
 export type MessageType =
@@ -112,6 +115,9 @@ export const mockLeadsQueue: Lead[] = [
     unreadCount: 3,
     status: "waiting",
     avatarColor: "bg-chart-2",
+    queueId: "q1",
+    queueName: "Agendamento",
+    queueColor: "#3B82F6",
   },
   {
     id: "l2",
@@ -123,6 +129,9 @@ export const mockLeadsQueue: Lead[] = [
     unreadCount: 1,
     status: "waiting",
     avatarColor: "bg-chart-1",
+    queueId: "q2",
+    queueName: "Financeiro",
+    queueColor: "#10B981",
   },
   {
     id: "l3",
@@ -134,6 +143,9 @@ export const mockLeadsQueue: Lead[] = [
     unreadCount: 2,
     status: "waiting",
     avatarColor: "bg-chart-3",
+    queueId: "q1",
+    queueName: "Agendamento",
+    queueColor: "#3B82F6",
   },
   {
     id: "l4",
@@ -145,6 +157,9 @@ export const mockLeadsQueue: Lead[] = [
     unreadCount: 1,
     status: "waiting",
     avatarColor: "bg-chart-4",
+    queueId: "q3",
+    queueName: "Emergência",
+    queueColor: "#EF4444",
   },
 ];
 

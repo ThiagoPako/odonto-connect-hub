@@ -5,6 +5,7 @@ import { AdminCreateUserPanel } from "@/components/AdminCreateUserPanel";
 import { AdminUserListPanel } from "@/components/AdminUserListPanel";
 import { ClinicLocationPanel } from "@/components/ClinicLocationPanel";
 import { NotificationSettingsPanel } from "@/components/NotificationSettingsPanel";
+import { QueueManagementPanel } from "@/components/QueueManagementPanel";
 import { Settings } from "lucide-react";
 
 export const Route = createFileRoute("/configuracoes")({
@@ -30,6 +31,7 @@ function ConfiguracoesPage() {
         </div>
 
         <div className="max-w-3xl space-y-6">
+          <QueueManagementPanel />
           <ClinicLocationPanel />
           <NotificationSettingsPanel />
           <AdminUserListPanel />

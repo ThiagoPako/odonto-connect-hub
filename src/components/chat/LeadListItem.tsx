@@ -33,6 +33,15 @@ export function LeadListItem({ lead, isSelected, onSelect, showAssignButton, onA
 
         <p className="text-xs text-muted-foreground truncate">{lead.lastMessage}</p>
 
+        {lead.queueName && (
+          <span
+            className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium text-white mt-1"
+            style={{ backgroundColor: lead.queueColor || "hsl(var(--primary))" }}
+          >
+            {lead.queueName}
+          </span>
+        )}
+
         <div className="flex items-center justify-between mt-1.5">
           {lead.unreadCount > 0 && (
             <span className="h-5 min-w-[20px] px-1.5 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">
