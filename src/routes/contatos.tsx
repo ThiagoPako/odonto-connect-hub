@@ -11,6 +11,7 @@ import { useState, useEffect, useCallback } from "react";
 import { contatosApi, type Contato } from "@/lib/vpsApi";
 import { CreateContatoDialog } from "@/components/contatos/CreateContatoDialog";
 import { EditContatoDialog } from "@/components/contatos/EditContatoDialog";
+import { SendWhatsAppDialog } from "@/components/contatos/SendWhatsAppDialog";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/contatos")({
