@@ -127,15 +127,17 @@ export function MessageInput({ onSendMessage, disabled, replyingTo, onCancelRepl
     }
   }, []);
 
-  const handleAudioComplete = (blob: Blob, _duration: number) => {
+  const handleAudioComplete = (blob: Blob, recordedDuration: number) => {
     const reader = new FileReader();
     reader.onloadend = () => {
       const base64 = (reader.result as string).split(",")[1];
+      const mime = blob.type || "audio/ogg; codecs=opus";
+      const ext = mime.includes("webm") ? "webm" : mime.includes("mp4") ? "m4a" : "ogg";
       onSendMessage("🎤 Mensagem de áudio", "audio", {
-        duration: Math.round(_duration),
+        duration: Math.max(1, Math.round(recordedDuration)),
         fileUrl: URL.createObjectURL(blob),
-        mimeType: blob.type || "audio/webm",
-        fileName: `audio-${Date.now()}.webm`,
+        mimeType: mime,
+        fileName: `audio-${Date.now()}.${ext}`,
         _mediaBase64: base64,
       } as any);
     };
