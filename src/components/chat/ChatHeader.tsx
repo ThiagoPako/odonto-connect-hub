@@ -19,6 +19,7 @@ interface ChatHeaderProps {
 }
 
 export function ChatHeader({ lead, onClose, onTransfer }: ChatHeaderProps) {
+  const { user: currentUser } = useAuth();
   const [showTransfer, setShowTransfer] = useState(false);
   const [attendants, setAttendants] = useState<Attendant[]>([]);
   const [loading, setLoading] = useState(false);
@@ -31,7 +32,7 @@ export function ChatHeader({ lead, onClose, onTransfer }: ChatHeaderProps) {
     adminListUsers().then(({ data, error }) => {
       if (data && Array.isArray(data)) {
         const list: Attendant[] = data
-          .filter((u) => u.active)
+          .filter((u) => u.active && u.id !== currentUser?.id)
           .map((u) => ({
             id: u.id,
             name: u.name,
@@ -43,7 +44,7 @@ export function ChatHeader({ lead, onClose, onTransfer }: ChatHeaderProps) {
       }
       setLoading(false);
     });
-  }, [showTransfer]);
+  }, [showTransfer, currentUser?.id]);
 
   const handleConfirmTransfer = () => {
     if (!selectedAtt) return;
