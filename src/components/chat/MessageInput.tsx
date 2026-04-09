@@ -105,6 +105,28 @@ export function MessageInput({ onSendMessage, disabled, replyingTo, onCancelRepl
     }
   };
 
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of Array.from(items)) {
+      if (item.type.startsWith("image/")) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (!file) return;
+        const MAX_SIZE = 16 * 1024 * 1024;
+        if (file.size > MAX_SIZE) {
+          toast.error("Imagem muito grande", { description: "Máximo: 16MB" });
+          return;
+        }
+        const previewUrl = URL.createObjectURL(file);
+        setMediaPreview({ file, previewUrl, type: "image" });
+        setMediaCaption("");
+        closeAllForms();
+        return;
+      }
+    }
+  }, []);
+
   const handleAudioComplete = (blob: Blob, _duration: number) => {
     const reader = new FileReader();
     reader.onloadend = () => {
@@ -487,6 +509,7 @@ export function MessageInput({ onSendMessage, disabled, replyingTo, onCancelRepl
               value={message}
               onChange={(e) => handleMessageChange(e.target.value)}
               onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
               placeholder={disabled ? "Selecione um atendimento" : 'Digite "/" para respostas rápidas...'}
               disabled={disabled}
               rows={1}
