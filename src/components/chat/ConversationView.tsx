@@ -63,6 +63,7 @@ export function ConversationView({ messages, leadName, isTyping, onReaction, onR
   const [searchQuery, setSearchQuery] = useState("");
   const [highlightedMsgId, setHighlightedMsgId] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; msg: ChatMessage } | null>(null);
   const isNearBottomRef = useRef(true);
   const loadMoreTriggeredRef = useRef(false);
 
