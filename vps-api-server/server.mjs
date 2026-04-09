@@ -1406,6 +1406,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
     // ─── Presence updates (typing, recording, online) ───
     if (event === 'presence.update') {
       const presenceData = body.data;
+      console.log(`👁️ PRESENCE_UPDATE raw:`, JSON.stringify(presenceData).slice(0, 300));
       const participants = presenceData?.participants || [];
       const chatJid = presenceData?.id || presenceData?.chatId || '';
 
