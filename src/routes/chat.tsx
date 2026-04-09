@@ -102,56 +102,68 @@ function ChatPage() {
       (l) => l.id === msg.leadId || l.phone.replace(/\D/g, "").endsWith(msg.phone.slice(-11))
     );
 
-    if (existingLead) {
-      // Add message to existing conversation
-      setMessages((prev) => ({
-        ...prev,
-        [existingLead.id]: [...(prev[existingLead.id] || []), chatMsg],
-      }));
+    // Show typing indicator if message is for the currently viewed lead
+    const isViewing = existingLead && selectedLead?.id === existingLead.id;
+    if (isViewing) {
+      setIsLeadTyping(true);
+      setTimeout(() => setIsLeadTyping(false), 1500 + Math.random() * 1000);
+    }
 
-      // Update unread count & last message (unless currently viewing)
-      const updateLead = (lead: Lead): Lead =>
-        lead.id === existingLead.id
-          ? {
-              ...lead,
-              lastMessage: msg.content || `[${msg.type}]`,
-              lastMessageTime: new Date(msg.timestamp),
-              unreadCount: selectedLead?.id === existingLead.id ? lead.unreadCount : lead.unreadCount + 1,
-            }
-          : lead;
+    const addMessage = () => {
+      if (existingLead) {
+        setMessages((prev) => ({
+          ...prev,
+          [existingLead.id]: [...(prev[existingLead.id] || []), chatMsg],
+        }));
 
-      setQueue((prev) => prev.map(updateLead));
-      setMyLeads((prev) => prev.map(updateLead));
+        const updateLead = (lead: Lead): Lead =>
+          lead.id === existingLead.id
+            ? {
+                ...lead,
+                lastMessage: msg.content || `[${msg.type}]`,
+                lastMessageTime: new Date(msg.timestamp),
+                unreadCount: selectedLead?.id === existingLead.id ? lead.unreadCount : lead.unreadCount + 1,
+              }
+            : lead;
+
+        setQueue((prev) => prev.map(updateLead));
+        setMyLeads((prev) => prev.map(updateLead));
+      } else {
+        const incomingMsg = msg as IncomingMessage & { queueId?: string; queueName?: string; queueColor?: string };
+        const newLead: Lead = {
+          id: msg.leadId || `rt-${msg.phone}`,
+          name: msg.leadName || msg.pushName,
+          initials: (msg.leadName || msg.pushName).split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase(),
+          phone: msg.phone,
+          lastMessage: msg.content || `[${msg.type}]`,
+          lastMessageTime: new Date(msg.timestamp),
+          unreadCount: 1,
+          status: "waiting",
+          avatarColor: "bg-chart-1",
+          queueId: incomingMsg.queueId,
+          queueName: incomingMsg.queueName,
+          queueColor: incomingMsg.queueColor,
+        };
+        setQueue((prev) => [newLead, ...prev]);
+        setMessages((prev) => ({
+          ...prev,
+          [newLead.id]: [chatMsg],
+        }));
+        sessionsApi.start({
+          leadId: newLead.id,
+          leadName: newLead.name,
+          leadPhone: newLead.phone,
+          queueId: incomingMsg.queueId,
+          queueName: incomingMsg.queueName,
+        });
+      }
+    };
+
+    // Delay message appearance if typing indicator is shown
+    if (isViewing) {
+      setTimeout(addMessage, 1500);
     } else {
-      // New lead — add to queue with queue info if available
-      const incomingMsg = msg as IncomingMessage & { queueId?: string; queueName?: string; queueColor?: string };
-      const newLead: Lead = {
-        id: msg.leadId || `rt-${msg.phone}`,
-        name: msg.leadName || msg.pushName,
-        initials: (msg.leadName || msg.pushName).split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase(),
-        phone: msg.phone,
-        lastMessage: msg.content || `[${msg.type}]`,
-        lastMessageTime: new Date(msg.timestamp),
-        unreadCount: 1,
-        status: "waiting",
-        avatarColor: "bg-chart-1",
-        queueId: incomingMsg.queueId,
-        queueName: incomingMsg.queueName,
-        queueColor: incomingMsg.queueColor,
-      };
-      setQueue((prev) => [newLead, ...prev]);
-      setMessages((prev) => ({
-        ...prev,
-        [newLead.id]: [chatMsg],
-      }));
-      // Start attendance session (waiting)
-      sessionsApi.start({
-        leadId: newLead.id,
-        leadName: newLead.name,
-        leadPhone: newLead.phone,
-        queueId: incomingMsg.queueId,
-        queueName: incomingMsg.queueName,
-      });
+      addMessage();
     }
 
     // Play sound + show toast + browser push notification
