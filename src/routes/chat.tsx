@@ -9,6 +9,7 @@ import { Users, MessageSquare, Inbox } from "lucide-react";
 import { toast } from "sonner";
 import { useRealtimeChat, type IncomingMessage } from "@/hooks/useRealtimeChat";
 import { whatsappApi } from "@/lib/vpsApi";
+import { playNotificationSound } from "@/lib/notificationSound";
 import {
   mockLeadsQueue,
   mockLeadsActive,
@@ -99,7 +100,8 @@ function ChatPage() {
       }));
     }
 
-    // Show toast notification
+    // Play sound + show toast notification
+    playNotificationSound();
     toast.info(`💬 ${msg.leadName || msg.pushName}`, {
       description: msg.content?.slice(0, 80) || `[${msg.type}]`,
       duration: 5000,
