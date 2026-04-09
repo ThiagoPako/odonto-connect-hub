@@ -1,7 +1,8 @@
-import { useState, useRef } from "react";
-import { Send, Paperclip, Smile, Image, MapPin, UserCircle, BarChart3, FileText, Video, Sticker, X, Bold, Italic, Strikethrough, Code, List } from "lucide-react";
+import { useState, useRef, useMemo } from "react";
+import { Send, Paperclip, Smile, Image, MapPin, UserCircle, BarChart3, FileText, Video, Sticker, X, Bold, Italic, Strikethrough, Code, List, Zap } from "lucide-react";
 import { AudioRecorder } from "./AudioRecorder";
 import { getClinicLocation } from "@/components/ClinicLocationPanel";
+import { getAttendanceSettings, type QuickReply } from "@/components/AttendanceSettingsPanel";
 import type { MessageType, ChatMessage, LocationData, ContactData, PollData, ReplyData, ListData } from "@/data/chatMockData";
 
 interface MessageInputProps {
@@ -13,7 +14,11 @@ interface MessageInputProps {
 
 const QUICK_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏", "🎉", "🔥"];
 
-export function MessageInput({ onSendMessage, disabled, replyingTo, onCancelReply }: MessageInputProps) {
+interface MessageInputInternalProps extends MessageInputProps {
+  attendantName?: string;
+}
+
+export function MessageInput({ onSendMessage, disabled, replyingTo, onCancelReply, attendantName }: MessageInputProps & { attendantName?: string }) {
   const [message, setMessage] = useState("");
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -21,9 +26,22 @@ export function MessageInput({ onSendMessage, disabled, replyingTo, onCancelRepl
   const [showContactForm, setShowContactForm] = useState(false);
   const [showPollForm, setShowPollForm] = useState(false);
   const [showListForm, setShowListForm] = useState(false);
+  const [showQuickReplies, setShowQuickReplies] = useState(false);
+  const [quickReplyFilter, setQuickReplyFilter] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
+
+  const attendanceSettings = useMemo(() => getAttendanceSettings(), []);
+  const quickReplies = attendanceSettings.quickReplies;
+
+  const filteredQuickReplies = useMemo(() => {
+    if (!quickReplyFilter) return quickReplies;
+    const lower = quickReplyFilter.toLowerCase();
+    return quickReplies.filter(
+      (qr) => qr.title.toLowerCase().includes(lower) || qr.category.toLowerCase().includes(lower)
+    );
+  }, [quickReplies, quickReplyFilter]);
 
   // Location form
   const [locName, setLocName] = useState("");
@@ -49,8 +67,31 @@ export function MessageInput({ onSendMessage, disabled, replyingTo, onCancelRepl
 
   const handleSend = () => {
     if (!message.trim()) return;
-    onSendMessage(message.trim(), "text");
+    let finalMessage = message.trim();
+    // Append signature if enabled
+    if (attendanceSettings.signatureEnabled && attendantName) {
+      const sig = attendanceSettings.signatureTemplate.replace("{name}", attendantName);
+      finalMessage += `\n\n${sig}`;
+    }
+    onSendMessage(finalMessage, "text");
     setMessage("");
+  };
+
+  const handleMessageChange = (value: string) => {
+    setMessage(value);
+    // Trigger quick replies on "/"
+    if (value === "/" || (value.startsWith("/") && value.length <= 30)) {
+      setShowQuickReplies(true);
+      setQuickReplyFilter(value.slice(1));
+    } else {
+      setShowQuickReplies(false);
+    }
+  };
+
+  const selectQuickReply = (qr: QuickReply) => {
+    setMessage(qr.content);
+    setShowQuickReplies(false);
+    setQuickReplyFilter("");
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -302,12 +343,36 @@ export function MessageInput({ onSendMessage, disabled, replyingTo, onCancelRepl
             <Paperclip className="h-5 w-5" />
           </button>
 
-          <div className="flex-1 flex items-end gap-2">
+          <div className="flex-1 flex items-end gap-2 relative">
+            {/* Quick Replies Dropdown */}
+            {showQuickReplies && filteredQuickReplies.length > 0 && (
+              <div className="absolute bottom-full left-0 right-0 mb-1 bg-card border border-border rounded-xl shadow-lg max-h-60 overflow-y-auto z-50">
+                <div className="p-2 border-b border-border">
+                  <p className="text-[11px] text-muted-foreground font-medium flex items-center gap-1">
+                    <Zap className="h-3 w-3" /> Respostas Rápidas
+                  </p>
+                </div>
+                {filteredQuickReplies.map((qr) => (
+                  <button
+                    key={qr.id}
+                    onClick={() => selectQuickReply(qr)}
+                    className="w-full text-left px-3 py-2 hover:bg-muted/50 transition-colors border-b border-border/30 last:border-0"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-foreground">{qr.title}</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary">{qr.category}</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">{qr.content}</p>
+                  </button>
+                ))}
+              </div>
+            )}
+
             <textarea
               value={message}
-              onChange={(e) => setMessage(e.target.value)}
+              onChange={(e) => handleMessageChange(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={disabled ? "Selecione um atendimento" : "Digite uma mensagem..."}
+              placeholder={disabled ? "Selecione um atendimento" : 'Digite "/" para respostas rápidas...'}
               disabled={disabled}
               rows={1}
               className="flex-1 resize-none bg-muted rounded-xl px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring min-h-[40px] max-h-[120px] disabled:opacity-50"

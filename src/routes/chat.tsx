@@ -8,6 +8,7 @@ import { ChatHeader } from "@/components/chat/ChatHeader";
 import { Users, MessageSquare, Inbox, Filter } from "lucide-react";
 import { getQueues, type AttendanceQueue } from "@/data/queueData";
 import { toast } from "sonner";
+import { useAuth } from "@/hooks/useAuth";
 import { useRealtimeChat, type IncomingMessage } from "@/hooks/useRealtimeChat";
 import { whatsappApi, transferApi } from "@/lib/vpsApi";
 import { playNotificationSound } from "@/lib/notificationSound";
@@ -40,6 +41,7 @@ export const Route = createFileRoute("/chat")({
 
 function ChatPage() {
   const navigate = useNavigate();
+  const { user: currentUser } = useAuth();
   const { lead: leadSearch } = Route.useSearch();
   const [activeTab, setActiveTab] = useState<"queue" | "mine">("queue");
   const [queue, setQueue] = useState<Lead[]>(mockLeadsQueue);
@@ -409,6 +411,7 @@ function ChatPage() {
                 disabled={selectedLead.status === "waiting"}
                 replyingTo={replyingTo}
                 onCancelReply={() => setReplyingTo(null)}
+                attendantName={currentUser?.name}
               />
             </>
           ) : (
