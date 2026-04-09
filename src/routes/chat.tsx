@@ -38,6 +38,7 @@ export const Route = createFileRoute("/chat")({
 });
 
 function ChatPage() {
+  const navigate = useNavigate();
   const { lead: leadSearch } = Route.useSearch();
   const [activeTab, setActiveTab] = useState<"queue" | "mine">("queue");
   const [queue, setQueue] = useState<Lead[]>(mockLeadsQueue);
