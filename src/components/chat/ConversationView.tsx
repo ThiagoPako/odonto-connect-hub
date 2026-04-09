@@ -444,10 +444,14 @@ export function ConversationView({ messages, leadName, isTyping, onReaction, onR
             placeholder="Buscar na conversa..."
             className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
           />
-          <span className="text-[11px] text-muted-foreground shrink-0">
-            {searchResults.length} resultado{searchResults.length !== 1 ? "s" : ""}
-          </span>
-          <button onClick={() => { setSearchOpen(false); setSearchQuery(""); }} className="p-1 rounded hover:bg-muted">
+          {searching ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground shrink-0" />
+          ) : (
+            <span className="text-[11px] text-muted-foreground shrink-0">
+              {searchResults.length} resultado{searchResults.length !== 1 ? "s" : ""}
+            </span>
+          )}
+          <button onClick={() => { setSearchOpen(false); setSearchQuery(""); setServerSearchResults([]); }} className="p-1 rounded hover:bg-muted">
             <span className="text-xs text-muted-foreground">✕</span>
           </button>
         </div>
@@ -456,11 +460,16 @@ export function ConversationView({ messages, leadName, isTyping, onReaction, onR
       {/* Search results strip */}
       {searchOpen && searchResults.length > 0 && (
         <div className="flex items-center gap-1 px-4 py-1.5 bg-muted/30 border-b border-border overflow-x-auto shrink-0">
-          {searchResults.slice(0, 10).map((m) => (
+          {searchResults.slice(0, 15).map((m) => (
             <button
               key={m.id}
               onClick={() => jumpToMessage(m.id)}
-              className="px-2 py-1 rounded-lg bg-card border border-border/50 text-[11px] text-foreground truncate max-w-[200px] hover:bg-primary/10 transition-colors shrink-0"
+              className={`px-2 py-1 rounded-lg border text-[11px] text-foreground truncate max-w-[200px] hover:bg-primary/10 transition-colors shrink-0 ${
+                (m as any).isServerOnly
+                  ? "bg-primary/5 border-primary/30 italic"
+                  : "bg-card border-border/50"
+              }`}
+              title={(m as any).isServerOnly ? "Resultado do servidor (não carregado localmente)" : undefined}
             >
               {m.content?.slice(0, 40)}
             </button>
