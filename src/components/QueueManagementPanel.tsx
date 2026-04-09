@@ -39,6 +39,7 @@ export function QueueManagementPanel() {
         setQueues(mapped);
       } else {
         setQueues([]);
+      }
     });
   };
 
