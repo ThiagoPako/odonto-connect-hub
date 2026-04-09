@@ -112,6 +112,9 @@ function ChatPage() {
 
   useRealtimeChat(handleIncomingMessage);
 
+  // Request browser notification permission on first visit
+  useEffect(() => { requestNotificationPermission(); }, []);
+
   // Auto-fetch WhatsApp avatar when opening a conversation
   useEffect(() => {
     if (!selectedLead?.phone) return;
