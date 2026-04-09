@@ -307,7 +307,18 @@ function ChatPage() {
     }
   }, []);
 
-  useRealtimeChat({ onMessage: handleIncomingMessage, onPresence: handlePresenceUpdate });
+  // Handle queue assignment events from SSE
+  const handleQueueAssigned = useCallback((assignment: import("@/hooks/useRealtimeChat").QueueAssignment) => {
+    // Update existing lead's queue info, or it will arrive via new_message
+    const updateQueue = (l: Lead): Lead =>
+      l.id === assignment.leadId
+        ? { ...l, queueId: assignment.queueId, queueName: assignment.queueName }
+        : l;
+    setQueue((prev) => prev.map(updateQueue));
+    setMyLeads((prev) => prev.map(updateQueue));
+  }, []);
+
+  useRealtimeChat({ onMessage: handleIncomingMessage, onPresence: handlePresenceUpdate, onQueueAssigned: handleQueueAssigned });
 
   // Request browser notification permission on first visit
   useEffect(() => { requestNotificationPermission(); }, []);
