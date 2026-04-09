@@ -115,8 +115,19 @@ function AudioPlayer({ fileUrl, duration, isLead }: { fileUrl?: string; duration
         )}
       </button>
       <div className="flex-1 flex flex-col gap-1">
-        <div className={`h-1 rounded-full overflow-hidden ${isLead ? "bg-muted-foreground/20" : "bg-primary-foreground/20"}`}>
-          <div className={`h-full rounded-full transition-all duration-200 ${isLead ? "bg-primary" : "bg-primary-foreground"}`} style={{ width: `${progress * 100}%` }} />
+        <div
+          className={`h-2.5 rounded-full overflow-hidden cursor-pointer ${isLead ? "bg-muted-foreground/20" : "bg-primary-foreground/20"}`}
+          onClick={(e) => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+            if (audioRef.current && audioRef.current.duration && isFinite(audioRef.current.duration)) {
+              audioRef.current.currentTime = ratio * audioRef.current.duration;
+              setProgress(ratio);
+              setCurrentTime(ratio * audioRef.current.duration);
+            }
+          }}
+        >
+          <div className={`h-full rounded-full transition-all duration-200 pointer-events-none ${isLead ? "bg-primary" : "bg-primary-foreground"}`} style={{ width: `${progress * 100}%` }} />
         </div>
         <span className="text-[10px] opacity-60 font-mono">
           {playing || currentTime > 0 ? fmtTime(currentTime) : fmtTime(totalDuration)}
