@@ -67,8 +67,31 @@ export function MessageInput({ onSendMessage, disabled, replyingTo, onCancelRepl
 
   const handleSend = () => {
     if (!message.trim()) return;
-    onSendMessage(message.trim(), "text");
+    let finalMessage = message.trim();
+    // Append signature if enabled
+    if (attendanceSettings.signatureEnabled && attendantName) {
+      const sig = attendanceSettings.signatureTemplate.replace("{name}", attendantName);
+      finalMessage += `\n\n${sig}`;
+    }
+    onSendMessage(finalMessage, "text");
     setMessage("");
+  };
+
+  const handleMessageChange = (value: string) => {
+    setMessage(value);
+    // Trigger quick replies on "/"
+    if (value === "/" || (value.startsWith("/") && value.length <= 30)) {
+      setShowQuickReplies(true);
+      setQuickReplyFilter(value.slice(1));
+    } else {
+      setShowQuickReplies(false);
+    }
+  };
+
+  const selectQuickReply = (qr: QuickReply) => {
+    setMessage(qr.content);
+    setShowQuickReplies(false);
+    setQuickReplyFilter("");
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
