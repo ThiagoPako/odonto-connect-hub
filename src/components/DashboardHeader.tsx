@@ -37,9 +37,6 @@ export function DashboardHeader({ title }: { title: string }) {
           <input
             type="text"
             placeholder="Buscar paciente, orçamento..."
-            value={searchValue}
-            onChange={(e) => setSearchValue(e.target.value)}
-            onKeyDown={handleSearch}
             className="h-10 pl-10 pr-4 rounded-xl bg-muted/60 border border-border/50 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/40 focus:bg-card w-72 transition-all"
             aria-label="Buscar no sistema"
           />
