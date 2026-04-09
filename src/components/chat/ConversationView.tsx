@@ -139,7 +139,7 @@ export function ConversationView({ messages, leadName, isTyping, onReaction, onR
   // Search results — hybrid: server search with local fallback
   const [serverSearchResults, setServerSearchResults] = useState<ServerSearchResult[]>([]);
   const [searching, setSearching] = useState(false);
-  const searchTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   // Debounced server search
   useEffect(() => {
