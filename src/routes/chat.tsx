@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { useRealtimeChat, type IncomingMessage } from "@/hooks/useRealtimeChat";
 import { whatsappApi } from "@/lib/vpsApi";
 import { playNotificationSound } from "@/lib/notificationSound";
+import { setChatUnreadCount } from "@/lib/chatUnreadStore";
 import {
   mockLeadsQueue,
   mockLeadsActive,
