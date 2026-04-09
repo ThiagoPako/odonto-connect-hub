@@ -418,19 +418,41 @@ export function ConversationView({ messages, leadName, isTyping, onReaction, onR
                     {msg.type === "list" && renderList(msg)}
 
                     {msg.type === "image" && (
-                      <div className="rounded-xl bg-gradient-to-br from-muted/40 to-muted/20 h-44 flex items-center justify-center text-3xl mb-1.5 overflow-hidden">
-                        🖼️
+                      <div className="rounded-xl overflow-hidden mb-1.5 max-w-[280px]">
+                        {msg.fileUrl ? (
+                          <img src={msg.fileUrl} alt={msg.fileName || "Imagem"} className="w-full max-h-64 object-cover rounded-xl cursor-pointer hover:opacity-90 transition-opacity" onClick={() => window.open(msg.fileUrl, "_blank")} />
+                        ) : (
+                          <div className="bg-gradient-to-br from-muted/40 to-muted/20 h-44 flex items-center justify-center text-3xl">🖼️</div>
+                        )}
                       </div>
                     )}
                     {msg.type === "video" && (
-                      <div className="rounded-xl bg-gradient-to-br from-muted/40 to-muted/20 h-44 flex items-center justify-center text-3xl mb-1.5 relative overflow-hidden">
-                        <div className="h-12 w-12 rounded-full bg-background/80 backdrop-blur-sm flex items-center justify-center shadow-lg">
-                          <div className="w-0 h-0 border-l-[10px] border-l-foreground border-y-[7px] border-y-transparent ml-1" />
-                        </div>
+                      <div className="rounded-xl overflow-hidden mb-1.5 max-w-[280px]">
+                        {msg.fileUrl ? (
+                          <video src={msg.fileUrl} controls className="w-full max-h-64 rounded-xl" preload="metadata" />
+                        ) : (
+                          <div className="bg-gradient-to-br from-muted/40 to-muted/20 h-44 flex items-center justify-center relative">
+                            <div className="h-12 w-12 rounded-full bg-background/80 backdrop-blur-sm flex items-center justify-center shadow-lg">
+                              <div className="w-0 h-0 border-l-[10px] border-l-foreground border-y-[7px] border-y-transparent ml-1" />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {msg.type === "audio" && (
+                      <div className="mb-1.5 min-w-[200px]">
+                        {msg.fileUrl ? (
+                          <audio src={msg.fileUrl} controls className="w-full h-10" preload="metadata" />
+                        ) : (
+                          <div className="flex items-center gap-2 p-2 rounded-xl bg-background/15">
+                            <span className="text-lg">🎤</span>
+                            <span className="text-xs opacity-70">{msg.duration ? `${Math.floor(msg.duration / 60)}:${String(msg.duration % 60).padStart(2, "0")}` : "Áudio"}</span>
+                          </div>
+                        )}
                       </div>
                     )}
                     {msg.type === "document" && (
-                      <div className="flex items-center gap-3 p-2.5 rounded-xl bg-background/15 mb-1.5 border border-border/20">
+                      <div className="flex items-center gap-3 p-2.5 rounded-xl bg-background/15 mb-1.5 border border-border/20 cursor-pointer hover:bg-background/25 transition-colors" onClick={() => msg.fileUrl && window.open(msg.fileUrl, "_blank")}>
                         <div className="h-11 w-11 rounded-xl bg-primary/20 flex items-center justify-center text-lg shrink-0 shadow-sm">📄</div>
                         <div className="min-w-0">
                           <p className="text-xs font-semibold truncate">{msg.fileName || "Documento"}</p>
@@ -439,8 +461,12 @@ export function ConversationView({ messages, leadName, isTyping, onReaction, onR
                       </div>
                     )}
 
-                    {(msg.type === "text" || (msg.content && !["location", "contact", "poll", "sticker", "list"].includes(msg.type))) && msg.content && (
+                    {(msg.type === "text" || (msg.content && !["location", "contact", "poll", "sticker", "list", "image", "video", "audio", "document"].includes(msg.type))) && msg.content && (
                       <p className="text-[14px] leading-relaxed whitespace-pre-wrap">{renderFormattedText(msg.content)}</p>
+                    )}
+                    {/* Caption for media messages */}
+                    {["image", "video"].includes(msg.type) && msg.content && !msg.content.startsWith("🖼️") && !msg.content.startsWith("🎬") && (
+                      <p className="text-[13px] leading-relaxed whitespace-pre-wrap mt-1">{renderFormattedText(msg.content)}</p>
                     )}
 
                     {msg.type !== "sticker" && renderLinkPreview(msg)}

@@ -1,9 +1,10 @@
-import { useState, useRef, useMemo } from "react";
-import { Send, Paperclip, Smile, Image, MapPin, UserCircle, BarChart3, FileText, Video, Sticker, X, Bold, Italic, Strikethrough, Code, List, Zap } from "lucide-react";
+import { useState, useRef, useMemo, useCallback } from "react";
+import { Send, Paperclip, Smile, Image, MapPin, UserCircle, BarChart3, FileText, Video, Sticker, X, Bold, Italic, Strikethrough, Code, List, Zap, Loader2 } from "lucide-react";
 import { AudioRecorder } from "./AudioRecorder";
 import { getClinicLocation } from "@/components/ClinicLocationPanel";
 import { getAttendanceSettings, type QuickReply } from "@/components/AttendanceSettingsPanel";
 import type { MessageType, ChatMessage, LocationData, ContactData, PollData, ReplyData, ListData } from "@/data/chatMockData";
+import { toast } from "sonner";
 
 interface MessageInputProps {
   onSendMessage: (content: string, type: MessageType, extra?: Partial<ChatMessage>) => void;
@@ -28,6 +29,9 @@ export function MessageInput({ onSendMessage, disabled, replyingTo, onCancelRepl
   const [showListForm, setShowListForm] = useState(false);
   const [showQuickReplies, setShowQuickReplies] = useState(false);
   const [quickReplyFilter, setQuickReplyFilter] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [mediaPreview, setMediaPreview] = useState<{ file: File; previewUrl: string; type: MessageType } | null>(null);
+  const [mediaCaption, setMediaCaption] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
@@ -101,8 +105,83 @@ export function MessageInput({ onSendMessage, disabled, replyingTo, onCancelRepl
     }
   };
 
-  const handleAudioComplete = (_blob: Blob, _duration: number) => {
-    onSendMessage("🎤 Mensagem de áudio", "audio", { duration: Math.round(_duration) });
+  const handleAudioComplete = (blob: Blob, _duration: number) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const base64 = (reader.result as string).split(",")[1];
+      onSendMessage("🎤 Mensagem de áudio", "audio", {
+        duration: Math.round(_duration),
+        fileUrl: URL.createObjectURL(blob),
+        mimeType: blob.type || "audio/webm",
+        fileName: `audio-${Date.now()}.webm`,
+        _mediaBase64: base64,
+      } as any);
+    };
+    reader.readAsDataURL(blob);
+  };
+
+  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>, mediaType: MessageType) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = ""; // reset input
+
+    const MAX_SIZE = 16 * 1024 * 1024; // 16MB
+    if (file.size > MAX_SIZE) {
+      toast.error("Arquivo muito grande", { description: "Tamanho máximo: 16MB" });
+      return;
+    }
+
+    if (mediaType === "image" || mediaType === "video") {
+      const previewUrl = URL.createObjectURL(file);
+      setMediaPreview({ file, previewUrl, type: mediaType });
+      setMediaCaption("");
+      closeAllForms();
+    } else {
+      // Documents — send immediately
+      sendFileAsMessage(file, "document", "");
+    }
+  }, []);
+
+  const sendFileAsMessage = useCallback((file: File, type: MessageType, caption: string) => {
+    setUploading(true);
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const base64 = (reader.result as string).split(",")[1];
+      const previewUrl = type === "image" || type === "video" ? URL.createObjectURL(file) : undefined;
+
+      const contentLabel = type === "image" ? "🖼️ Imagem" :
+        type === "video" ? "🎬 Vídeo" :
+        `📎 ${file.name}`;
+
+      onSendMessage(caption || contentLabel, type, {
+        fileName: file.name,
+        fileUrl: previewUrl,
+        mimeType: file.type,
+        _mediaBase64: base64,
+      } as any);
+
+      setUploading(false);
+      setMediaPreview(null);
+      setMediaCaption("");
+    };
+    reader.onerror = () => {
+      toast.error("Erro ao ler arquivo");
+      setUploading(false);
+    };
+    reader.readAsDataURL(file);
+  }, [onSendMessage]);
+
+  const handleSendMediaPreview = () => {
+    if (!mediaPreview) return;
+    sendFileAsMessage(mediaPreview.file, mediaPreview.type, mediaCaption);
+  };
+
+  const cancelMediaPreview = () => {
+    if (mediaPreview) {
+      URL.revokeObjectURL(mediaPreview.previewUrl);
+    }
+    setMediaPreview(null);
+    setMediaCaption("");
   };
 
   const applyFormatting = (format: string) => {
@@ -183,6 +262,42 @@ export function MessageInput({ onSendMessage, disabled, replyingTo, onCancelRepl
 
   const formInputClass = "w-full bg-muted rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring";
   const formBtnClass = "px-4 py-2 rounded-lg text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors";
+
+  // If media preview is active, show fullscreen-ish preview panel
+  if (mediaPreview) {
+    return (
+      <div className="border-t border-border bg-card">
+        <div className="relative flex flex-col items-center p-4 bg-muted/30">
+          <button onClick={cancelMediaPreview} className="absolute top-2 right-2 p-1.5 rounded-full bg-card/80 hover:bg-card text-muted-foreground hover:text-foreground z-10 shadow-sm">
+            <X className="h-4 w-4" />
+          </button>
+          {mediaPreview.type === "image" ? (
+            <img src={mediaPreview.previewUrl} alt="Preview" className="max-h-60 max-w-full rounded-lg object-contain shadow-md" />
+          ) : (
+            <video src={mediaPreview.previewUrl} controls className="max-h-60 max-w-full rounded-lg shadow-md" />
+          )}
+          <p className="text-[11px] text-muted-foreground mt-2 truncate max-w-[300px]">{mediaPreview.file.name} ({(mediaPreview.file.size / 1024).toFixed(0)} KB)</p>
+        </div>
+        <div className="flex items-center gap-2 p-3">
+          <input
+            value={mediaCaption}
+            onChange={(e) => setMediaCaption(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSendMediaPreview(); } }}
+            placeholder="Adicione uma legenda..."
+            className="flex-1 bg-muted rounded-xl px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            autoFocus
+          />
+          <button
+            onClick={handleSendMediaPreview}
+            disabled={uploading}
+            className="p-2.5 rounded-full bg-primary text-primary-foreground hover:bg-primary/90 transition-colors shrink-0 disabled:opacity-50"
+          >
+            {uploading ? <Loader2 className="h-5 w-5 animate-spin" /> : <Send className="h-5 w-5" />}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="border-t border-border bg-card">
@@ -398,9 +513,9 @@ export function MessageInput({ onSendMessage, disabled, replyingTo, onCancelRepl
         </div>
       </div>
 
-      <input ref={fileInputRef} type="file" className="hidden" onChange={() => onSendMessage("📎 Documento anexado", "document")} />
-      <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={() => onSendMessage("🖼️ Imagem enviada", "image")} />
-      <input ref={videoInputRef} type="file" accept="video/*" className="hidden" onChange={() => onSendMessage("🎬 Vídeo enviado", "video")} />
+      <input ref={fileInputRef} type="file" className="hidden" onChange={(e) => handleFileSelect(e, "document")} />
+      <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleFileSelect(e, "image")} />
+      <input ref={videoInputRef} type="file" accept="video/*" className="hidden" onChange={(e) => handleFileSelect(e, "video")} />
     </div>
   );
 }
