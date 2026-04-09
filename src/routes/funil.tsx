@@ -1,8 +1,9 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { mockKanbanLeads, kanbanStages, type KanbanStage, type KanbanLead } from "@/data/crmMockData";
 import { Clock, GripVertical, Phone, MessageSquare, MoreHorizontal, Plus } from "lucide-react";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/funil")({
   ssr: false,
@@ -115,8 +116,21 @@ function FunilPage() {
 }
 
 function KanbanCard({ lead, onDragStart }: { lead: KanbanLead; onDragStart: () => void }) {
+  const navigate = useNavigate();
   const daysAgo = Math.floor((Date.now() - lead.lastContact.getTime()) / 86400000);
   const isStale = daysAgo > 3;
+
+  const handleOpenChat = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigate({ to: "/chat", search: { lead: lead.name } });
+  };
+
+  const handleCall = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const cleanPhone = lead.phone.replace(/\D/g, "");
+    window.open(`tel:+55${cleanPhone}`, "_self");
+    toast.success(`Ligando para ${lead.name}...`, { description: lead.phone });
+  };
 
   return (
     <div
@@ -154,8 +168,20 @@ function KanbanCard({ lead, onDragStart }: { lead: KanbanLead; onDragStart: () =
         </div>
 
         <div className="flex items-center gap-2">
-          <button className="p-1 rounded hover:bg-muted text-muted-foreground"><Phone className="h-3 w-3" /></button>
-          <button className="p-1 rounded hover:bg-muted text-muted-foreground"><MessageSquare className="h-3 w-3" /></button>
+          <button
+            onClick={handleCall}
+            className="p-1.5 rounded-lg hover:bg-chart-2/15 text-muted-foreground hover:text-chart-2 transition-colors"
+            title={`Ligar: ${lead.phone}`}
+          >
+            <Phone className="h-3.5 w-3.5" />
+          </button>
+          <button
+            onClick={handleOpenChat}
+            className="p-1.5 rounded-lg hover:bg-primary/15 text-muted-foreground hover:text-primary transition-colors"
+            title={`Chat com ${lead.name}`}
+          >
+            <MessageSquare className="h-3.5 w-3.5" />
+          </button>
           <div className={`flex items-center gap-0.5 ${isStale ? "text-warning" : "text-muted-foreground/50"}`}>
             <Clock className="h-3 w-3" />
             <span className="text-[10px]">{daysAgo}d</span>
