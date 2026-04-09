@@ -14,6 +14,7 @@ import cors from 'cors';
 import pg from 'pg';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
+import webpush from 'web-push';
 
 const { Pool } = pg;
 const app = express();
@@ -41,6 +42,42 @@ const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL || 'https://api.odontoco
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY;
 const VPS_BASE_URL = process.env.APP_URL || 'https://odontoconnect.tech';
 const WEBHOOK_URL = `${VPS_BASE_URL.replace(/\/$/, '').replace(':443', '')}:${PORT}/api/webhook/evolution`;
+
+// ─── Web Push (VAPID) Config ────────────────────────────────
+// Generate keys once: npx web-push generate-vapid-keys
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || '';
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || '';
+if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
+  webpush.setVapidDetails('mailto:contato@odontoconnect.tech', VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+  console.log('🔔 Web Push VAPID configured');
+} else {
+  console.warn('⚠️ VAPID keys not set — push notifications disabled. Run: npx web-push generate-vapid-keys');
+}
+
+// ─── Send push to all subscriptions ─────────────────────────
+async function sendPushToAll(payload) {
+  if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return;
+  try {
+    const { rows: subs } = await pool.query('SELECT * FROM push_subscriptions');
+    const pushPayload = JSON.stringify(payload);
+    for (const sub of subs) {
+      const subscription = {
+        endpoint: sub.endpoint,
+        keys: { p256dh: sub.keys_p256dh, auth: sub.keys_auth },
+      };
+      try {
+        await webpush.sendNotification(subscription, pushPayload);
+      } catch (err) {
+        if (err.statusCode === 410 || err.statusCode === 404) {
+          await pool.query('DELETE FROM push_subscriptions WHERE endpoint = $1', [sub.endpoint]);
+          console.log('🗑️ Removed expired push subscription');
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Push send error:', err.message);
+  }
+}
 
 // ─── Auto-register webhook on Evolution API instance ─────────
 async function registerWebhook(instanceName) {
@@ -1245,7 +1282,15 @@ app.post('/api/webhook/evolution', async (req, res) => {
 
     console.log(`💬 New message from ${pushName} (${phone}) → saved + broadcast to ${sseClients.size} clients`);
 
-    // Auto-sync avatar if missing
+    // Send Web Push notification to all subscribed attendants
+    sendPushToAll({
+      title: `💬 ${pushName || phone}`,
+      body: msgContent || `[${msgType}]`,
+      tag: `msg-${lead.id}`,
+      url: `/chat?lead=${encodeURIComponent(lead.id)}`,
+      leadId: lead.id,
+    });
+
     if (lead && !lead.avatar_url) {
       try {
         const result = await evolutionFetch(`/chat/fetchProfilePictureUrl/${instance}`, {
@@ -2064,6 +2109,50 @@ app.get('/api/messages/search', async (req, res) => {
 
     const { rows } = await pool.query(query, values);
     res.json(rows);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// PUSH NOTIFICATIONS (Web Push)
+// ═══════════════════════════════════════════════════════════════
+
+// Get VAPID public key (frontend needs this to subscribe)
+app.get('/api/push/vapid-key', (_req, res) => {
+  if (!VAPID_PUBLIC_KEY) return res.status(503).json({ error: 'VAPID not configured' });
+  res.json({ publicKey: VAPID_PUBLIC_KEY });
+});
+
+// Subscribe to push notifications
+app.post('/api/push/subscribe', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    const { subscription } = req.body;
+    if (!subscription?.endpoint || !subscription?.keys?.p256dh || !subscription?.keys?.auth) {
+      return res.status(400).json({ error: 'Invalid subscription object' });
+    }
+
+    await pool.query(
+      `INSERT INTO push_subscriptions (user_id, endpoint, keys_p256dh, keys_auth, updated_at)
+       VALUES ($1, $2, $3, $4, NOW())
+       ON CONFLICT (endpoint) DO UPDATE SET user_id = $1, keys_p256dh = $3, keys_auth = $4, updated_at = NOW()`,
+      [user.id, subscription.endpoint, subscription.keys.p256dh, subscription.keys.auth]
+    );
+
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Unsubscribe from push notifications
+app.post('/api/push/unsubscribe', async (req, res) => {
+  try {
+    const { endpoint } = req.body;
+    if (!endpoint) return res.status(400).json({ error: 'endpoint required' });
+    await pool.query('DELETE FROM push_subscriptions WHERE endpoint = $1', [endpoint]);
+    res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
