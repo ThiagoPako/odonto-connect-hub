@@ -319,7 +319,23 @@ export function ConversationView({ messages, leadName, isTyping, onReaction, onR
         onScroll={handleScroll}
         className="flex-1 overflow-y-auto px-4 py-6 space-y-1 chat-bg-pattern"
       >
-        {messages.map((msg, idx) => {
+        {/* Infinite scroll: loading older messages indicator */}
+        {loadingMore && (
+          <div className="flex items-center justify-center py-3 animate-fade-in">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            <span className="ml-2 text-xs text-muted-foreground">Carregando mensagens anteriores...</span>
+          </div>
+        )}
+        {hasMore && !loadingMore && (
+          <div className="flex items-center justify-center py-2">
+            <button
+              onClick={() => onLoadMore?.()}
+              className="text-xs text-primary hover:underline font-medium"
+            >
+              ↑ Carregar mensagens anteriores
+            </button>
+          </div>
+        )}
           const isLead = msg.sender === "lead";
           const first = isFirstInGroup(idx);
           const last = isLastInGroup(idx);
