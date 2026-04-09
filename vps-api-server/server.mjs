@@ -1304,6 +1304,9 @@ app.post('/api/webhook/evolution', async (req, res) => {
           content: resolvedContent,
           msgType,
           instance,
+          mediaUrl,
+          fileName: mediaFileName,
+          mimeType: mediaMimeType,
         });
         return res.json({ processed: true, offHours: true, leadId: lead.id });
       }
@@ -1395,6 +1398,9 @@ app.post('/api/webhook/evolution', async (req, res) => {
           msgType,
           instance,
           queueId: lead.queue_id || null,
+          mediaUrl,
+          fileName: mediaFileName,
+          mimeType: mediaMimeType,
         });
         // Invalid selection — resend menu
         await sendQueueMenu(instance, phone);
@@ -1471,6 +1477,9 @@ app.post('/api/webhook/evolution', async (req, res) => {
       msgType,
       instance,
       queueId: lead.queue_id || null,
+      mediaUrl,
+      fileName: mediaFileName,
+      mimeType: mediaMimeType,
     });
 
     console.log(`💬 New message from ${pushName} (${phone}) → saved + broadcast to ${sseClients.size} clients`);
