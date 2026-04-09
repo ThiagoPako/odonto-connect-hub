@@ -407,7 +407,92 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
-// PACIENTES (CRUD)
+// WHATSAPP PROFILE PICTURE
+// ═══════════════════════════════════════════════════════════════
+
+// Fetch profile picture from Evolution API and optionally save to lead
+app.post('/api/whatsapp/profile-picture', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { instance, number, leadId } = req.body;
+    if (!instance || !number) {
+      return res.status(400).json({ error: 'instance e number são obrigatórios' });
+    }
+
+    // Clean phone number — Evolution API expects format: 5511999991234
+    const cleanNumber = number.replace(/\D/g, '');
+
+    // Fetch profile picture URL via Evolution API
+    const result = await evolutionFetch(`/chat/fetchProfilePictureUrl/${instance}`, {
+      method: 'POST',
+      body: JSON.stringify({ number: cleanNumber }),
+    });
+
+    if (!result.ok) {
+      return res.status(result.status).json({ error: 'Não foi possível buscar a foto de perfil', details: result.data });
+    }
+
+    const pictureUrl = result.data?.profilePictureUrl || result.data?.picture || result.data?.url || null;
+
+    // If leadId provided, save to crm_leads
+    if (leadId && pictureUrl) {
+      await pool.query(
+        'UPDATE crm_leads SET avatar_url = $1, updated_at = NOW() WHERE id = $2',
+        [pictureUrl, leadId]
+      );
+    }
+
+    res.json({ profilePictureUrl: pictureUrl });
+  } catch (error) {
+    console.error('Profile picture error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Bulk fetch: update all leads without avatar_url
+app.post('/api/whatsapp/sync-profile-pictures', async (req, res) => {
+  try {
+    await verifyAdmin(req);
+    const { instance } = req.body;
+    if (!instance) return res.status(400).json({ error: 'instance é obrigatório' });
+
+    // Get leads without avatar
+    const { rows: leads } = await pool.query(
+      "SELECT id, telefone FROM crm_leads WHERE telefone IS NOT NULL AND (avatar_url IS NULL OR avatar_url = '')"
+    );
+
+    let updated = 0;
+    let failed = 0;
+
+    for (const lead of leads) {
+      try {
+        const cleanNumber = lead.telefone.replace(/\D/g, '');
+        if (!cleanNumber) continue;
+
+        const result = await evolutionFetch(`/chat/fetchProfilePictureUrl/${instance}`, {
+          method: 'POST',
+          body: JSON.stringify({ number: cleanNumber }),
+        });
+
+        const pictureUrl = result.data?.profilePictureUrl || result.data?.picture || result.data?.url || null;
+        if (pictureUrl) {
+          await pool.query('UPDATE crm_leads SET avatar_url = $1, updated_at = NOW() WHERE id = $2', [pictureUrl, lead.id]);
+          updated++;
+        }
+      } catch {
+        failed++;
+      }
+
+      // Rate limit: 500ms between requests
+      await new Promise(r => setTimeout(r, 500));
+    }
+
+    res.json({ total: leads.length, updated, failed });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════
 
 app.get('/api/pacientes', async (req, res) => {
