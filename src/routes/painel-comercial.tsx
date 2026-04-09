@@ -51,6 +51,22 @@ const followUpTypeConfig: Record<string, { label: string; class: string }> = {
   reativacao: { label: "Reativação", class: "bg-chart-4/15 text-chart-4" },
 };
 
+const conversionByOrigin = [
+  { origin: "Instagram", leads: 32, convertidos: 12, rate: 37.5 },
+  { origin: "Google Ads", leads: 28, convertidos: 14, rate: 50 },
+  { origin: "Indicação", leads: 15, convertidos: 10, rate: 66.7 },
+  { origin: "Meta Ads", leads: 20, convertidos: 6, rate: 30 },
+  { origin: "Site", leads: 10, convertidos: 3, rate: 30 },
+];
+
+const chartColors = [
+  "hsl(var(--chart-4))",
+  "hsl(var(--primary))",
+  "hsl(var(--chart-2))",
+  "hsl(var(--chart-3))",
+  "hsl(var(--chart-5))",
+];
+
 /* ── Component ───────────────────────────────────── */
 
 function PainelComercialPage() {
