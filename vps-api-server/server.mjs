@@ -815,8 +815,9 @@ app.post('/api/whatsapp/profile-picture', async (req, res) => {
 
     const pictureUrl = result.data?.profilePictureUrl || result.data?.picture || result.data?.url || null;
 
-    // If leadId provided, save to crm_leads
-    if (leadId && pictureUrl) {
+    // If leadId provided AND is a valid UUID, save to crm_leads
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (leadId && pictureUrl && uuidRegex.test(leadId)) {
       await pool.query(
         'UPDATE crm_leads SET avatar_url = $1, updated_at = NOW() WHERE id = $2',
         [pictureUrl, leadId]
