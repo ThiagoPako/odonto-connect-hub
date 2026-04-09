@@ -129,7 +129,7 @@ function ChatPage() {
                 ...lead,
                 lastMessage: msg.content || `[${msg.type}]`,
                 lastMessageTime: new Date(msg.timestamp),
-                unreadCount: selectedLead?.id === existingLead.id ? lead.unreadCount : lead.unreadCount + 1,
+                unreadCount: currentSelected?.id === existingLead.id ? lead.unreadCount : lead.unreadCount + 1,
               }
             : lead;
 
