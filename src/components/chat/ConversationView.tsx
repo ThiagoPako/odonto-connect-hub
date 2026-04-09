@@ -30,7 +30,7 @@ interface ConversationViewProps {
 
 
 // ─── Audio Player (supports base64 data URIs and ogg/opus) ──
-function AudioPlayer({ fileUrl, duration, isLead }: { fileUrl?: string; duration?: number; isLead: boolean }) {
+function AudioPlayer({ fileUrl, duration, isLead, status }: { fileUrl?: string; duration?: number; isLead: boolean; status?: string }) {
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
