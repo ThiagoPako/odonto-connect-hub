@@ -95,8 +95,20 @@ function ChatPage() {
     tagsApi.toggle(leadId, tagId);
   }, []);
 
+  // ─── Dedup set — prevent duplicate messages ───
+  const processedMsgIds = useRef(new Set<string>());
+
   // ─── Real-time incoming messages via SSE ───
   const handleIncomingMessage = useCallback((msg: IncomingMessage) => {
+    // Idempotency: skip if already processed
+    if (processedMsgIds.current.has(msg.id)) return;
+    processedMsgIds.current.add(msg.id);
+    // Cap dedup set size to prevent memory leak
+    if (processedMsgIds.current.size > 5000) {
+      const entries = Array.from(processedMsgIds.current);
+      processedMsgIds.current = new Set(entries.slice(entries.length - 2500));
+    }
+
     const chatMsg: ChatMessage = {
       id: msg.id,
       leadId: msg.leadId || msg.phone,
@@ -104,6 +116,7 @@ function ChatPage() {
       sender: "lead",
       type: (msg.type as MessageType) || "text",
       timestamp: new Date(msg.timestamp),
+      status: "delivered",
     };
 
     // Use refs to avoid stale closure
@@ -114,17 +127,18 @@ function ChatPage() {
 
     const currentSelected = selectedLeadRef.current;
     const isViewing = existingLead && currentSelected?.id === existingLead.id;
-    if (isViewing) {
-      setIsLeadTyping(true);
-      setTimeout(() => setIsLeadTyping(false), 1500 + Math.random() * 1000);
-    }
 
     const addMessage = () => {
       if (existingLead) {
-        setMessages((prev) => ({
-          ...prev,
-          [existingLead.id]: [...(prev[existingLead.id] || []), chatMsg],
-        }));
+        setMessages((prev) => {
+          // Double-check dedup in state
+          const existing = prev[existingLead.id] || [];
+          if (existing.some((m) => m.id === msg.id)) return prev;
+          return {
+            ...prev,
+            [existingLead.id]: [...existing, chatMsg],
+          };
+        });
 
         const updateLead = (lead: Lead): Lead =>
           lead.id === existingLead.id
@@ -169,9 +183,13 @@ function ChatPage() {
       }
     };
 
-    // Delay message appearance if typing indicator is shown
+    // Show typing indicator briefly before message for active conversation
     if (isViewing) {
-      setTimeout(addMessage, 1500);
+      setIsLeadTyping(true);
+      setTimeout(() => {
+        setIsLeadTyping(false);
+        addMessage();
+      }, 800 + Math.random() * 600);
     } else {
       addMessage();
     }
