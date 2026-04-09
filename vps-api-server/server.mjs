@@ -990,7 +990,35 @@ app.post('/api/webhook/evolution', async (req, res) => {
     const event = body.event;
     const instance = body.instance;
 
-    // Only process incoming messages
+    // ─── Presence updates (typing, recording, online) ───
+    if (event === 'presence.update') {
+      const presenceData = body.data;
+      const participants = presenceData?.participants || [];
+      const chatJid = presenceData?.id || presenceData?.chatId || '';
+
+      if (chatJid && !chatJid.endsWith('@g.us')) {
+        const presencePhone = chatJid.replace('@s.whatsapp.net', '').replace('@c.us', '');
+        for (const participant of participants) {
+          const status = participant?.status || participant?.presence || 'unavailable';
+          broadcastSSE('presence_update', {
+            phone: presencePhone,
+            status,
+            instance,
+          });
+        }
+        // If no participants array, try direct status
+        if (participants.length === 0 && presenceData?.status) {
+          broadcastSSE('presence_update', {
+            phone: presencePhone,
+            status: presenceData.status,
+            instance,
+          });
+        }
+      }
+      return res.json({ processed: true, event: 'presence' });
+    }
+
+    // Only process incoming messages from here
     if (event !== 'messages.upsert') {
       return res.json({ ignored: true, event });
     }
