@@ -46,6 +46,8 @@ function ChatPage() {
   const [myLeads, setMyLeads] = useState<Lead[]>(mockLeadsActive);
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [messages, setMessages] = useState<Record<string, ChatMessage[]>>(mockMessages);
+  const [filterQueue, setFilterQueue] = useState<string | null>(null);
+  const [availableQueues] = useState<AttendanceQueue[]>(() => getQueues().filter((q) => q.active));
 
   // ─── Real-time incoming messages via SSE ───
   const handleIncomingMessage = useCallback((msg: IncomingMessage) => {
