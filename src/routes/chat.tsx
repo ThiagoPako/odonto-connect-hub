@@ -643,7 +643,8 @@ function ChatPage() {
             caption: type !== "audio" ? content : undefined,
             mimeType: extra?.mimeType,
           });
-          evolutionMsgId = (result as any)?.data?.key?.id || null;
+          if (result.error) throw new Error(result.error);
+          evolutionMsgId = (result.data as any)?.key?.id || null;
         }
       } else if (type === "location" && extra?.location) {
         const result = await whatsappApi.sendLocation(connected.instanceName, selectedLead.phone, {
