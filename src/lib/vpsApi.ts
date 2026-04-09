@@ -175,6 +175,16 @@ export const whatsappApi = {
   restart: (instance: string) => vpsApiFetch(`/whatsapp/restart/${instance}`, { method: 'PUT' }),
   sendText: (instance: string, number: string, text: string) =>
     vpsApiFetch('/whatsapp/send-text', { method: 'POST', body: { instance, number, text } }),
+  fetchProfilePicture: (instance: string, number: string, leadId?: string) =>
+    vpsApiFetch<{ profilePictureUrl: string | null }>('/whatsapp/profile-picture', {
+      method: 'POST',
+      body: { instance, number, leadId },
+    }),
+  syncProfilePictures: (instance: string) =>
+    vpsApiFetch<{ total: number; updated: number; failed: number }>('/whatsapp/sync-profile-pictures', {
+      method: 'POST',
+      body: { instance },
+    }),
 };
 
 // ─── Generic table ──────────────────────────────────────────
