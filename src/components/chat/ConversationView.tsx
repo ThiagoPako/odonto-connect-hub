@@ -336,6 +336,8 @@ export function ConversationView({ messages, leadName, isTyping, onReaction, onR
             </button>
           </div>
         )}
+
+        {messages.map((msg, idx) => {
           const isLead = msg.sender === "lead";
           const first = isFirstInGroup(idx);
           const last = isLastInGroup(idx);
