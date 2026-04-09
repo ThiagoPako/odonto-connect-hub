@@ -104,18 +104,27 @@ function AudioPlayer({ fileUrl, duration, isLead, status }: { fileUrl?: string; 
     );
   }
 
+  const listened = status === "read";
+
   return (
     <div className="flex items-center gap-2.5 mb-1.5 min-w-[220px]">
-      <button onClick={togglePlay} className={`h-9 w-9 rounded-full flex items-center justify-center shrink-0 transition-colors ${isLead ? "bg-primary/15 hover:bg-primary/25" : "bg-primary-foreground/15 hover:bg-primary-foreground/25"}`}>
-        {playing ? (
-          <div className="flex gap-[2px]">
-            <div className={`w-[3px] h-3.5 rounded-sm ${isLead ? "bg-primary" : "bg-primary-foreground"}`} />
-            <div className={`w-[3px] h-3.5 rounded-sm ${isLead ? "bg-primary" : "bg-primary-foreground"}`} />
-          </div>
-        ) : (
-          <div className={`w-0 h-0 border-l-[9px] border-y-[6px] border-y-transparent ml-0.5 ${isLead ? "border-l-primary" : "border-l-primary-foreground"}`} />
-        )}
-      </button>
+      {/* Mic icon — blue when listened (WhatsApp pattern) */}
+      <div className="relative shrink-0">
+        <button onClick={togglePlay} className={`h-10 w-10 rounded-full flex items-center justify-center shrink-0 transition-colors ${isLead ? "bg-primary/15 hover:bg-primary/25" : "bg-primary-foreground/15 hover:bg-primary-foreground/25"}`}>
+          {playing ? (
+            <div className="flex gap-[2px]">
+              <div className={`w-[3px] h-3.5 rounded-sm ${isLead ? "bg-primary" : "bg-primary-foreground"}`} />
+              <div className={`w-[3px] h-3.5 rounded-sm ${isLead ? "bg-primary" : "bg-primary-foreground"}`} />
+            </div>
+          ) : (
+            <div className={`w-0 h-0 border-l-[9px] border-y-[6px] border-y-transparent ml-0.5 ${isLead ? "border-l-primary" : "border-l-primary-foreground"}`} />
+          )}
+        </button>
+        {/* Small mic badge — like WhatsApp voice notes */}
+        <div className={`absolute -bottom-0.5 -right-0.5 h-4 w-4 rounded-full flex items-center justify-center ${listened ? "bg-[#53bdeb]" : isLead ? "bg-muted" : "bg-primary-foreground/30"}`}>
+          <Mic className={`h-2.5 w-2.5 ${listened ? "text-white" : isLead ? "text-muted-foreground" : "text-primary-foreground"}`} />
+        </div>
+      </div>
       <div className="flex-1 flex flex-col gap-1">
         <div
           ref={trackRef}
