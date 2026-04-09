@@ -64,6 +64,8 @@ export function QrCodeDialog({ open, onOpenChange, instanceName, onConnected }: 
     setPhase("initializing");
     setErrorMsg(null);
     setElapsed(0);
+    setImporting(false);
+    setImportResult(null);
     void fetchQr();
   }, [open, fetchQr]);
 
