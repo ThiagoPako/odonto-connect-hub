@@ -18,7 +18,7 @@ interface MessageInputInternalProps extends MessageInputProps {
   attendantName?: string;
 }
 
-export function MessageInput({ onSendMessage, disabled, replyingTo, onCancelReply }: MessageInputProps) {
+export function MessageInput({ onSendMessage, disabled, replyingTo, onCancelReply, attendantName }: MessageInputProps & { attendantName?: string }) {
   const [message, setMessage] = useState("");
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -26,9 +26,22 @@ export function MessageInput({ onSendMessage, disabled, replyingTo, onCancelRepl
   const [showContactForm, setShowContactForm] = useState(false);
   const [showPollForm, setShowPollForm] = useState(false);
   const [showListForm, setShowListForm] = useState(false);
+  const [showQuickReplies, setShowQuickReplies] = useState(false);
+  const [quickReplyFilter, setQuickReplyFilter] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
+
+  const attendanceSettings = useMemo(() => getAttendanceSettings(), []);
+  const quickReplies = attendanceSettings.quickReplies;
+
+  const filteredQuickReplies = useMemo(() => {
+    if (!quickReplyFilter) return quickReplies;
+    const lower = quickReplyFilter.toLowerCase();
+    return quickReplies.filter(
+      (qr) => qr.title.toLowerCase().includes(lower) || qr.category.toLowerCase().includes(lower)
+    );
+  }, [quickReplies, quickReplyFilter]);
 
   // Location form
   const [locName, setLocName] = useState("");
