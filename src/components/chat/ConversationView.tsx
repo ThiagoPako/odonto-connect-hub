@@ -438,6 +438,8 @@ export function ConversationView({ messages, leadName, isTyping, onReaction, onR
           const last = isLastInGroup(idx);
           const showTime = shouldShowTimestamp(messages, idx);
           const showDate = shouldShowDateDivider(messages, idx);
+          const firstUnreadIdx = unreadCount > 0 ? messages.length - unreadCount : -1;
+          const showUnreadDivider = idx === firstUnreadIdx;
 
           // Dynamic border radius based on grouping
           const bubbleRadius = isLead
