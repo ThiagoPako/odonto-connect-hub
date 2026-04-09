@@ -122,6 +122,12 @@ function AudioPlayer({ fileUrl, duration, isLead }: { fileUrl?: string; duration
           {playing || currentTime > 0 ? fmtTime(currentTime) : fmtTime(totalDuration)}
         </span>
       </div>
+      <button
+        onClick={cycleSpeed}
+        className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md transition-colors shrink-0 ${isLead ? "bg-primary/15 hover:bg-primary/25 text-primary" : "bg-primary-foreground/15 hover:bg-primary-foreground/25 text-primary-foreground"}`}
+      >
+        {playbackRate}x
+      </button>
     </div>
   );
 }
