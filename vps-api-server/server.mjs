@@ -1397,6 +1397,56 @@ app.post('/api/webhook/evolution', async (req, res) => {
       return res.json({ processed: true, event: 'presence' });
     }
 
+    // ─── Message ACK / status updates ───
+    if (event === 'messages.update') {
+      const updates = Array.isArray(body.data) ? body.data : [body.data];
+      for (const update of updates) {
+        const key = update?.key || update;
+        const ack = update?.update?.status ?? update?.status ?? update?.update?.messageStubType;
+        const messageId = key?.id;
+        const remoteJid = key?.remoteJid;
+        
+        if (!messageId || !remoteJid || remoteJid.endsWith('@g.us')) continue;
+        
+        // Evolution API ACK mapping:
+        // 0 = ERROR, 1 = PENDING, 2 = SERVER_ACK (sent), 3 = DELIVERY_ACK (delivered), 4 = READ, 5 = PLAYED
+        let newStatus = null;
+        const ackNum = typeof ack === 'number' ? ack : parseInt(ack);
+        if (ackNum === 2) newStatus = 'sent';
+        else if (ackNum === 3) newStatus = 'delivered';
+        else if (ackNum === 4 || ackNum === 5) newStatus = 'read';
+        else if (ackNum === 0) newStatus = 'failed';
+        
+        if (!newStatus) continue;
+        
+        const phone = remoteJid.replace('@s.whatsapp.net', '').replace('@c.us', '');
+        
+        // Update in DB - find message by Evolution message ID stored in metadata or by id
+        try {
+          // Try matching by message id directly (we store Evolution msg id as our message id)
+          const { rowCount } = await pool.query(
+            `UPDATE chat_messages SET status = $1 WHERE id = $2 OR (metadata::text LIKE '%' || $2 || '%')`,
+            [newStatus, messageId]
+          );
+          
+          if (rowCount > 0) {
+            console.log(`✅ Message ACK: ${messageId} → ${newStatus}`);
+          }
+          
+          // Broadcast status update to frontend via SSE
+          broadcastSSE('message_status_update', {
+            messageId,
+            phone,
+            status: newStatus,
+            instance,
+          });
+        } catch (ackErr) {
+          console.error('ACK update error:', ackErr.message);
+        }
+      }
+      return res.json({ processed: true, event: 'messages.update' });
+    }
+
     // Only process incoming messages from here
     if (event !== 'messages.upsert') {
       return res.json({ ignored: true, event });
