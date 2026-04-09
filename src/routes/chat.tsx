@@ -572,8 +572,15 @@ function ChatPage() {
     };
 
     try {
+      // Check if this is a reply (quoted message)
+      const replyMessageId = replyingTo?.messageId;
+
       if (type === "text") {
-        await sendTextMessage(connected.instanceName, selectedLead.phone, content);
+        if (replyMessageId) {
+          await sendTextWithQuote(connected.instanceName, selectedLead.phone, content, replyMessageId);
+        } else {
+          await sendTextMessage(connected.instanceName, selectedLead.phone, content);
+        }
       } else if (type === "image" || type === "video" || type === "document" || type === "audio") {
         const mediaBase64 = (extra as any)?._mediaBase64;
         if (mediaBase64) {
@@ -583,6 +590,40 @@ function ChatPage() {
             caption: type !== "audio" ? content : undefined,
             mimeType: extra?.mimeType,
           });
+        }
+      } else if (type === "location" && extra?.location) {
+        await sendLocationMessage(connected.instanceName, selectedLead.phone, {
+          latitude: extra.location.latitude,
+          longitude: extra.location.longitude,
+          name: extra.location.name,
+          address: extra.location.address,
+        });
+      } else if (type === "contact" && extra?.contact) {
+        await sendContactMessage(connected.instanceName, selectedLead.phone, {
+          fullName: extra.contact.fullName,
+          phone: extra.contact.phone,
+          email: extra.contact.email,
+          company: extra.contact.company,
+          url: extra.contact.url,
+        });
+      } else if (type === "poll" && extra?.poll) {
+        await sendPollMessage(connected.instanceName, selectedLead.phone, {
+          question: extra.poll.question,
+          options: extra.poll.options.map((o: any) => typeof o === "string" ? o : o.text),
+        });
+      } else if (type === "sticker") {
+        const stickerData = (extra as any)?.stickerUrl || content;
+        await sendStickerMessage(connected.instanceName, selectedLead.phone, stickerData);
+      } else if (type === "list" && extra?.list) {
+        await sendListMessage(connected.instanceName, selectedLead.phone, {
+          title: extra.list.title,
+          buttonText: extra.list.buttonText || "Ver opções",
+          sections: extra.list.sections,
+        });
+      } else if (type === "reaction") {
+        const reactionData = extra as any;
+        if (reactionData?.targetMessageId && reactionData?.emoji) {
+          await sendReactionMessage(connected.instanceName, selectedLead.phone, reactionData.targetMessageId, reactionData.emoji);
         }
       }
       updateStatus("sent");
