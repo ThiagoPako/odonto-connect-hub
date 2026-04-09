@@ -285,14 +285,14 @@ function KanbanView() {
   };
 
   // Apply filter
-  const filteredLeads: typeof leads = assignedFilter === "Todos"
+  const filteredLeads: Record<KanbanStage, KanbanLead[]> = assignedFilter === "Todos"
     ? leads
     : Object.fromEntries(
-        Object.entries(leads).map(([stage, list]) => [stage, list.filter((l) => l.assignedTo === assignedFilter)])
-      ) as typeof leads;
+        Object.entries(leads).map(([stage, list]) => [stage, (list as KanbanLead[]).filter((l: KanbanLead) => l.assignedTo === assignedFilter)])
+      ) as Record<KanbanStage, KanbanLead[]>;
 
-  const visibleList = Object.values(filteredLeads).flat();
-  const totalValue = visibleList.reduce((sum, l) => sum + l.value, 0);
+  const visibleList: KanbanLead[] = Object.values(filteredLeads).flat();
+  const totalValue = visibleList.reduce((sum: number, l: KanbanLead) => sum + l.value, 0);
 
   return (
     <>
