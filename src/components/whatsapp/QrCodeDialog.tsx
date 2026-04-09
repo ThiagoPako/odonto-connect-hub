@@ -30,6 +30,8 @@ export function QrCodeDialog({ open, onOpenChange, instanceName, onConnected }: 
   const [phase, setPhase] = useState<ConnectionPhase>("initializing");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<{ imported: number; skipped: number } | null>(null);
 
   const fetchQr = useCallback(async (silent = false) => {
     if (!silent) {
