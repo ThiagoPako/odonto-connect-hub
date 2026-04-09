@@ -728,7 +728,7 @@ function ChatPage() {
               />
               <MessageInput
                 onSendMessage={handleSendMessage}
-                disabled={selectedLead.status === "waiting"}
+                disabled={selectedLead.status === "waiting" || selectedLead.status === "finished"}
                 replyingTo={replyingTo}
                 onCancelReply={() => setReplyingTo(null)}
                 attendantName={currentUser?.name}
