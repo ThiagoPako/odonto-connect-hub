@@ -127,6 +127,37 @@ function PainelComercialPage() {
             </CardContent>
           </Card>
 
+          {/* Conversion chart */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-lg flex items-center gap-2">
+                <BarChart3 className="h-5 w-5 text-chart-4" />
+                Conversão por Origem
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={conversionByOrigin} layout="vertical" margin={{ left: 10, right: 16, top: 4, bottom: 4 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="hsl(var(--border))" />
+                  <XAxis type="number" domain={[0, 100]} tickFormatter={(v) => `${v}%`} fontSize={11} tick={{ fill: "hsl(var(--muted-foreground))" }} />
+                  <YAxis type="category" dataKey="origin" width={80} fontSize={12} tick={{ fill: "hsl(var(--foreground))" }} />
+                  <Tooltip
+                    contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 12 }}
+                    formatter={(value: number, _name: string, props: { payload: typeof conversionByOrigin[0] }) => [
+                      `${value.toFixed(1)}% (${props.payload.convertidos}/${props.payload.leads})`,
+                      "Conversão",
+                    ]}
+                  />
+                  <Bar dataKey="rate" radius={[0, 6, 6, 0]} barSize={18}>
+                    {conversionByOrigin.map((_, i) => (
+                      <Cell key={i} fill={chartColors[i % chartColors.length]} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+
           {/* Quick links */}
           <Card>
             <CardHeader className="pb-3">
