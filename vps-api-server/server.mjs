@@ -43,6 +43,42 @@ const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY;
 const VPS_BASE_URL = process.env.APP_URL || 'https://odontoconnect.tech';
 const WEBHOOK_URL = `${VPS_BASE_URL.replace(/\/$/, '').replace(':443', '')}:${PORT}/api/webhook/evolution`;
 
+// ─── Web Push (VAPID) Config ────────────────────────────────
+// Generate keys once: npx web-push generate-vapid-keys
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || '';
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || '';
+if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
+  webpush.setVapidDetails('mailto:contato@odontoconnect.tech', VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+  console.log('🔔 Web Push VAPID configured');
+} else {
+  console.warn('⚠️ VAPID keys not set — push notifications disabled. Run: npx web-push generate-vapid-keys');
+}
+
+// ─── Send push to all subscriptions ─────────────────────────
+async function sendPushToAll(payload) {
+  if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return;
+  try {
+    const { rows: subs } = await pool.query('SELECT * FROM push_subscriptions');
+    const pushPayload = JSON.stringify(payload);
+    for (const sub of subs) {
+      const subscription = {
+        endpoint: sub.endpoint,
+        keys: { p256dh: sub.keys_p256dh, auth: sub.keys_auth },
+      };
+      try {
+        await webpush.sendNotification(subscription, pushPayload);
+      } catch (err) {
+        if (err.statusCode === 410 || err.statusCode === 404) {
+          await pool.query('DELETE FROM push_subscriptions WHERE endpoint = $1', [sub.endpoint]);
+          console.log('🗑️ Removed expired push subscription');
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Push send error:', err.message);
+  }
+}
+
 // ─── Auto-register webhook on Evolution API instance ─────────
 async function registerWebhook(instanceName) {
   try {
