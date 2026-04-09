@@ -114,6 +114,7 @@ async function registerWebhook(instanceName) {
           webhookBase64: false,
           events: [
             'MESSAGES_UPSERT',
+            'MESSAGES_UPDATE',
             'CONNECTION_UPDATE',
             'QRCODE_UPDATED',
             'PRESENCE_UPDATE',
