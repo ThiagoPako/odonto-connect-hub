@@ -727,12 +727,22 @@ app.get('/api/agenda', async (req, res) => {
 app.post('/api/agenda', async (req, res) => {
   try {
     await verifyUser(req);
-    const { paciente_id, dentista_id, data, hora, duracao, procedimento, status, observacoes } = req.body;
+    const { paciente_id, dentista_id, data, hora, duracao, procedimento, status, observacoes, lead_id } = req.body;
     const id = crypto.randomUUID();
     await pool.query(
       'INSERT INTO agendamentos (id, paciente_id, dentista_id, data, hora, duracao, procedimento, status, observacoes) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
       [id, paciente_id, dentista_id, data, hora, duracao || 30, procedimento, status || 'agendado', observacoes]
     );
+
+    // Auto-move CRM lead to "paciente_agendado" if lead_id provided
+    const resolvedLeadId = lead_id || paciente_id;
+    if (resolvedLeadId) {
+      await pool.query(
+        `UPDATE crm_leads SET kanban_stage = 'paciente_agendado', status = 'paciente_agendado', updated_at = NOW() WHERE id = $1`,
+        [resolvedLeadId]
+      ).catch(err => console.error('Failed to update lead to paciente_agendado:', err.message));
+    }
+
     res.json({ id, success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
