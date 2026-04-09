@@ -736,6 +736,8 @@ function ChatPage() {
         m.id === msg.id ? { ...m, content: "🚫 Mensagem apagada", type: "text" as const } : m
       ),
     }));
+    // Persist soft-delete to backend
+    messagesApi.delete(msg.id).catch((err) => console.error("Failed to delete message:", err));
     toast.info("Mensagem apagada");
   };
 

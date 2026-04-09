@@ -392,12 +392,30 @@ export const messagesApi = {
     replyTo?: { messageId: string; content: string; sender: string } | null;
     instance?: string; phone?: string;
   }) => vpsApiFetch<{ success: boolean }>('/messages', { method: 'POST', body }),
+  /** Save multiple messages in batch */
+  saveBatch: (messages: Array<{
+    id: string; lead_id: string; content: string; sender: string; type?: string;
+    status?: string; timestamp?: string; media_url?: string; file_name?: string; mime_type?: string;
+    reply_to_id?: string; reply_to_content?: string; reply_to_sender?: string;
+    attendant_id?: string; attendant_name?: string; instance?: string; phone?: string;
+  }>) => vpsApiFetch<{ success: boolean; count: number }>('/messages/batch', { method: 'POST', body: { messages } }),
   /** Mark messages as read for a lead */
   markRead: (leadId: string) =>
     vpsApiFetch<{ success: boolean }>('/messages/mark-read', { method: 'POST', body: { leadId } }),
   /** Update message status */
   updateStatus: (id: string, status: string) =>
     vpsApiFetch<{ success: boolean }>(`/messages/${id}/status`, { method: 'PUT', body: { status } }),
+  /** Delete a message (soft by default, hard with flag) */
+  delete: (id: string, hard = false) =>
+    vpsApiFetch<{ success: boolean }>(`/messages/${id}${hard ? '?hard=true' : ''}`, { method: 'DELETE' }),
+  /** Get unread counts per lead */
+  unreadCounts: () =>
+    vpsApiFetch<Record<string, number>>('/messages/unread'),
+  /** Search messages */
+  search: (q: string, leadId?: string) =>
+    vpsApiFetch<ChatMessageApi[]>('/messages/search', {
+      params: { q, ...(leadId ? { lead_id: leadId } : {}) },
+    }),
 };
 
 // ─── Health check ───────────────────────────────────────────
