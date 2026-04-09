@@ -391,7 +391,7 @@ function ChatPage() {
   const currentList = filterTag ? filteredByQueue.filter((l) => (leadTagAssignments[l.id] || []).includes(filterTag)) : filteredByQueue;
 
   return (
-    <div className="flex-1 flex flex-col h-screen overflow-hidden">
+    <div className="flex-1 flex flex-col h-full overflow-hidden">
       <DashboardHeader title="Chat" />
 
       <div className="flex-1 flex overflow-hidden">
