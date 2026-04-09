@@ -6,6 +6,22 @@
 const VPS_API_BASE = 'https://odontoconnect.tech/api';
 const TOKEN_KEY = 'odonto_jwt';
 
+function isAuthError(status: number, error: unknown): boolean {
+  if (status === 401) return true;
+  if (typeof error !== 'string') return false;
+
+  const normalized = error.toLowerCase();
+  return normalized.includes('invalid signature') || normalized.includes('jwt') || normalized.includes('não autenticado') || normalized.includes('unauthorized');
+}
+
+function handleAuthFailure() {
+  clearToken();
+
+  if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+    window.location.href = '/login';
+  }
+}
+
 // ─── Auth helpers ───────────────────────────────────────────
 
 function getAuthHeaders(): Record<string, string> {
@@ -57,6 +73,11 @@ export async function vpsApiFetch<T = unknown>(
     const data = await response.json();
 
     if (!response.ok) {
+      if (isAuthError(response.status, data?.error)) {
+        handleAuthFailure();
+        return { data: null, error: 'Sessão expirada. Faça login novamente.' };
+      }
+
       return { data: null, error: data.error || `HTTP ${response.status}` };
     }
 
