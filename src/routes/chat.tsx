@@ -9,6 +9,7 @@ import { Users, MessageSquare, Inbox } from "lucide-react";
 import { toast } from "sonner";
 import { useRealtimeChat, type IncomingMessage } from "@/hooks/useRealtimeChat";
 import { whatsappApi } from "@/lib/vpsApi";
+import { playNotificationSound } from "@/lib/notificationSound";
 import {
   mockLeadsQueue,
   mockLeadsActive,
