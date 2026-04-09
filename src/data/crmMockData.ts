@@ -82,4 +82,5 @@ export const mockKanbanLeads: Record<KanbanStage, KanbanLead[]> = {
     { id: "k7", name: "Diego Nunes", initials: "DN", phone: "+55 11 99999-2005", origin: "Google Ads", value: 4500, assignedTo: "Beatriz", assignedInitials: "BL", lastContact: new Date(Date.now() - 7 * 86400000), avatarColor: "bg-chart-2" },
   ],
   desqualificado: [],
+  paciente_agendado: [],
 };
