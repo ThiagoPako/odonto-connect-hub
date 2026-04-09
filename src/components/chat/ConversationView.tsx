@@ -3,6 +3,13 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { CheckCheck, Check, MapPin, Phone, Mail, Globe, Building2, BarChart3, Reply, SmilePlus, ExternalLink, List, ChevronDown, Forward, Trash2, Search, Loader2, Upload, Copy } from "lucide-react";
 import { TypingIndicator } from "./TypingIndicator";
 
+interface ServerSearchResult {
+  id: string;
+  content: string;
+  sender: string;
+  timestamp: string;
+}
+
 interface ConversationViewProps {
   messages: ChatMessage[];
   leadName: string;
@@ -17,6 +24,8 @@ interface ConversationViewProps {
   onFileDrop?: (files: File[]) => void;
   /** Number of unread messages from the bottom */
   unreadCount?: number;
+  /** Server-side search callback — if provided, search hits the backend */
+  onServerSearch?: (query: string) => Promise<ServerSearchResult[]>;
 }
 
 const REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
@@ -52,7 +61,7 @@ function shouldShowTimestamp(messages: ChatMessage[], idx: number): boolean {
   return diff > 5 * 60 * 1000; // 5 min gap
 }
 
-export function ConversationView({ messages, leadName, isTyping, onReaction, onReply, onForward, onDelete, onLoadMore, hasMore = false, loadingMore = false, onFileDrop, unreadCount = 0 }: ConversationViewProps) {
+export function ConversationView({ messages, leadName, isTyping, onReaction, onReply, onForward, onDelete, onLoadMore, hasMore = false, loadingMore = false, onFileDrop, unreadCount = 0, onServerSearch }: ConversationViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const [showReactionPicker, setShowReactionPicker] = useState<string | null>(null);
@@ -127,10 +136,60 @@ export function ConversationView({ messages, leadName, isTyping, onReaction, onR
     }
   }, [hasMore, loadingMore, onLoadMore]);
 
-  // Search results
-  const searchResults = searchQuery.trim()
+  // Search results — hybrid: server search with local fallback
+  const [serverSearchResults, setServerSearchResults] = useState<ServerSearchResult[]>([]);
+  const [searching, setSearching] = useState(false);
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  // Debounced server search
+  useEffect(() => {
+    if (!searchQuery.trim() || searchQuery.trim().length < 2) {
+      setServerSearchResults([]);
+      return;
+    }
+
+    // Always show local results immediately
+    if (onServerSearch) {
+      clearTimeout(searchTimerRef.current);
+      searchTimerRef.current = setTimeout(async () => {
+        setSearching(true);
+        try {
+          const results = await onServerSearch(searchQuery.trim());
+          setServerSearchResults(results);
+        } catch {
+          // Fall back to local only
+        } finally {
+          setSearching(false);
+        }
+      }, 400);
+    }
+
+    return () => clearTimeout(searchTimerRef.current);
+  }, [searchQuery, onServerSearch]);
+
+  // Merge local + server results, dedup by id
+  const localResults = searchQuery.trim()
     ? messages.filter((m) => m.content?.toLowerCase().includes(searchQuery.toLowerCase()))
     : [];
+
+  const searchResults = (() => {
+    if (!searchQuery.trim()) return [];
+    const localIds = new Set(localResults.map((m) => m.id));
+    // Server results not in local messages — show as extra hits
+    const serverOnly = serverSearchResults
+      .filter((r) => !localIds.has(r.id))
+      .map((r) => ({
+        id: r.id,
+        content: r.content,
+        sender: r.sender,
+        timestamp: r.timestamp,
+        isServerOnly: true,
+      }));
+    return [
+      ...localResults.map((m) => ({ id: m.id, content: m.content || "", sender: m.sender, timestamp: new Date(m.timestamp).toISOString(), isServerOnly: false })),
+      ...serverOnly,
+    ];
+  })();
 
   const jumpToMessage = (msgId: string) => {
     setHighlightedMsgId(msgId);
@@ -385,10 +444,14 @@ export function ConversationView({ messages, leadName, isTyping, onReaction, onR
             placeholder="Buscar na conversa..."
             className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
           />
-          <span className="text-[11px] text-muted-foreground shrink-0">
-            {searchResults.length} resultado{searchResults.length !== 1 ? "s" : ""}
-          </span>
-          <button onClick={() => { setSearchOpen(false); setSearchQuery(""); }} className="p-1 rounded hover:bg-muted">
+          {searching ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground shrink-0" />
+          ) : (
+            <span className="text-[11px] text-muted-foreground shrink-0">
+              {searchResults.length} resultado{searchResults.length !== 1 ? "s" : ""}
+            </span>
+          )}
+          <button onClick={() => { setSearchOpen(false); setSearchQuery(""); setServerSearchResults([]); }} className="p-1 rounded hover:bg-muted">
             <span className="text-xs text-muted-foreground">✕</span>
           </button>
         </div>
@@ -397,11 +460,16 @@ export function ConversationView({ messages, leadName, isTyping, onReaction, onR
       {/* Search results strip */}
       {searchOpen && searchResults.length > 0 && (
         <div className="flex items-center gap-1 px-4 py-1.5 bg-muted/30 border-b border-border overflow-x-auto shrink-0">
-          {searchResults.slice(0, 10).map((m) => (
+          {searchResults.slice(0, 15).map((m) => (
             <button
               key={m.id}
               onClick={() => jumpToMessage(m.id)}
-              className="px-2 py-1 rounded-lg bg-card border border-border/50 text-[11px] text-foreground truncate max-w-[200px] hover:bg-primary/10 transition-colors shrink-0"
+              className={`px-2 py-1 rounded-lg border text-[11px] text-foreground truncate max-w-[200px] hover:bg-primary/10 transition-colors shrink-0 ${
+                (m as any).isServerOnly
+                  ? "bg-primary/5 border-primary/30 italic"
+                  : "bg-card border-border/50"
+              }`}
+              title={(m as any).isServerOnly ? "Resultado do servidor (não carregado localmente)" : undefined}
             >
               {m.content?.slice(0, 40)}
             </button>

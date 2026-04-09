@@ -1011,6 +1011,16 @@ function ChatPage() {
                 loadingMore={historyLoading}
                 onFileDrop={handleFileDrop}
                 unreadCount={selectedLead.unreadCount}
+                onServerSearch={async (q) => {
+                  const { data } = await messagesApi.search(q, selectedLead.id);
+                  if (!data || !Array.isArray(data)) return [];
+                  return data.map((m: any) => ({
+                    id: m.id,
+                    content: m.content || "",
+                    sender: m.sender,
+                    timestamp: m.timestamp,
+                  }));
+                }}
               />
               {selectedLead.status === "finished" ? (
                 <div className="px-4 py-3 border-t border-border/50 bg-muted/30 flex items-center justify-center gap-3">
