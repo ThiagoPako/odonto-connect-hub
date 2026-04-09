@@ -112,4 +112,19 @@ export async function restartInstance(instanceName: string) {
   return apiCall(`/instance/restart/${instanceName}`, { method: "PUT" });
 }
 
+export async function sendTextMessage(
+  instanceName: string,
+  number: string,
+  text: string
+): Promise<{ key: { id: string } }> {
+  const cleanNumber = number.replace(/\D/g, "");
+  return apiCall(`/message/sendText/${instanceName}`, {
+    method: "POST",
+    body: JSON.stringify({
+      number: cleanNumber,
+      text,
+    }),
+  });
+}
+
 export { type ConnectionStatus, type EvolutionInstance, type InstanceState, type QrCodeResponse };
