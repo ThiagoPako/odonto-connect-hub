@@ -567,66 +567,7 @@ export function ConversationView({ messages, leadName, isTyping, onReaction, onR
                   >
                     {/* Content by type */}
                     {msg.type === "audio" && (
-                      <div className="flex items-center gap-2.5 mb-1">
-                        <div className="h-8 w-8 rounded-full bg-primary/15 flex items-center justify-center shrink-0">
-                          <div className="w-0 h-0 border-l-[8px] border-l-primary border-y-[5px] border-y-transparent ml-0.5" />
-                        </div>
-                        <div className="flex items-center gap-[2px] flex-1">
-                          {Array.from({ length: 24 }, (_, i) => (
-                            <div
-                              key={i}
-                              className={`rounded-full transition-all ${isLead ? "bg-muted-foreground/30" : "bg-primary-foreground/30"}`}
-                              style={{
-                                width: 2,
-                                height: 3 + Math.sin(i * 0.8) * 8 + Math.random() * 4,
-                                animationDelay: `${i * 30}ms`,
-                              }}
-                            />
-                          ))}
-                        </div>
-                        <span className="text-[11px] opacity-70 font-mono">0:{String(msg.duration || 0).padStart(2, "0")}</span>
-                      </div>
-                    )}
-
-                    {msg.type === "location" && renderLocation(msg)}
-                    {msg.type === "contact" && renderContact(msg)}
-                    {msg.type === "poll" && renderPoll(msg)}
-                    {msg.type === "sticker" && renderSticker(msg)}
-                    {msg.type === "list" && renderList(msg)}
-
-                    {msg.type === "image" && (
-                      <div className="rounded-xl overflow-hidden mb-1.5 max-w-[280px]">
-                        {msg.fileUrl ? (
-                          <img src={msg.fileUrl} alt={msg.fileName || "Imagem"} className="w-full max-h-64 object-cover rounded-xl cursor-pointer hover:opacity-90 transition-opacity" onClick={() => window.open(msg.fileUrl, "_blank")} />
-                        ) : (
-                          <div className="bg-gradient-to-br from-muted/40 to-muted/20 h-44 flex items-center justify-center text-3xl">🖼️</div>
-                        )}
-                      </div>
-                    )}
-                    {msg.type === "video" && (
-                      <div className="rounded-xl overflow-hidden mb-1.5 max-w-[280px]">
-                        {msg.fileUrl ? (
-                          <video src={msg.fileUrl} controls className="w-full max-h-64 rounded-xl" preload="metadata" />
-                        ) : (
-                          <div className="bg-gradient-to-br from-muted/40 to-muted/20 h-44 flex items-center justify-center relative">
-                            <div className="h-12 w-12 rounded-full bg-background/80 backdrop-blur-sm flex items-center justify-center shadow-lg">
-                              <div className="w-0 h-0 border-l-[10px] border-l-foreground border-y-[7px] border-y-transparent ml-1" />
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                    {msg.type === "audio" && (
-                      <div className="mb-1.5 min-w-[200px]">
-                        {msg.fileUrl ? (
-                          <audio src={msg.fileUrl} controls className="w-full h-10" preload="metadata" />
-                        ) : (
-                          <div className="flex items-center gap-2 p-2 rounded-xl bg-background/15">
-                            <span className="text-lg">🎤</span>
-                            <span className="text-xs opacity-70">{msg.duration ? `${Math.floor(msg.duration / 60)}:${String(msg.duration % 60).padStart(2, "0")}` : "Áudio"}</span>
-                          </div>
-                        )}
-                      </div>
+                      <AudioPlayer fileUrl={msg.fileUrl} duration={msg.duration} isLead={isLead} />
                     )}
                     {msg.type === "document" && (
                       <div className="flex items-center gap-3 p-2.5 rounded-xl bg-background/15 mb-1.5 border border-border/20 cursor-pointer hover:bg-background/25 transition-colors" onClick={() => msg.fileUrl && window.open(msg.fileUrl, "_blank")}>
