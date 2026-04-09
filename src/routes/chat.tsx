@@ -9,7 +9,7 @@ import { Users, MessageSquare, Inbox, Filter } from "lucide-react";
 import { getQueues, type AttendanceQueue } from "@/data/queueData";
 import { toast } from "sonner";
 import { useRealtimeChat, type IncomingMessage } from "@/hooks/useRealtimeChat";
-import { whatsappApi } from "@/lib/vpsApi";
+import { whatsappApi, transferApi } from "@/lib/vpsApi";
 import { playNotificationSound } from "@/lib/notificationSound";
 import { showBrowserNotification, requestNotificationPermission } from "@/lib/browserNotification";
 import { setChatUnreadCount } from "@/lib/chatUnreadStore";
