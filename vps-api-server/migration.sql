@@ -230,6 +230,9 @@ ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS awaiting_queue_selection BOOLEAN 
 
 CREATE INDEX IF NOT EXISTS idx_attendance_queues_active ON attendance_queues(active);
 
+-- Kanban stage for CRM leads (funnel tracking)
+ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS kanban_stage TEXT DEFAULT 'lead';
+
 -- App settings (key-value store for attendance config, etc.)
 CREATE TABLE IF NOT EXISTS app_settings (
   key TEXT PRIMARY KEY,
