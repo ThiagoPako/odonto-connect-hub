@@ -1,5 +1,6 @@
 import type { Lead } from "@/data/chatMockData";
 import { Phone, Video, MoreVertical, X } from "lucide-react";
+import { LeadAvatar } from "@/components/LeadAvatar";
 
 interface ChatHeaderProps {
   lead: Lead;
@@ -10,9 +11,7 @@ export function ChatHeader({ lead, onClose }: ChatHeaderProps) {
   return (
     <div className="h-16 flex items-center justify-between px-4 border-b border-border bg-card shrink-0">
       <div className="flex items-center gap-3">
-        <div className={`h-10 w-10 rounded-full ${lead.avatarColor || "bg-primary/20"} flex items-center justify-center text-xs font-bold text-primary-foreground`}>
-          {lead.initials}
-        </div>
+        <LeadAvatar initials={lead.initials} avatarUrl={lead.avatarUrl} avatarColor={lead.avatarColor || "bg-primary/20"} size="md" />
         <div>
           <p className="text-sm font-medium text-foreground">{lead.name}</p>
           <p className="text-xs text-success flex items-center gap-1">
