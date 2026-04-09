@@ -55,6 +55,7 @@ async function registerWebhook(instanceName) {
           'MESSAGES_UPSERT',
           'CONNECTION_UPDATE',
           'QRCODE_UPDATED',
+          'PRESENCE_UPDATE',
         ],
       }),
     });
