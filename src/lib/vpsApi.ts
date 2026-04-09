@@ -298,6 +298,28 @@ export const metricsApi = {
     vpsApiFetch<AttendanceMetrics>('/metrics/attendance', { params: days ? { days: String(days) } : undefined }),
 };
 
+// ─── Lead Tags ──────────────────────────────────────────────
+
+export interface LeadTagApi {
+  id: string;
+  name: string;
+  color: string;
+  icon: string;
+  created_at: string;
+}
+
+export const tagsApi = {
+  list: () => vpsApiFetch<LeadTagApi[]>('/tags'),
+  create: (body: { name: string; color?: string; icon?: string }) =>
+    vpsApiFetch<LeadTagApi>('/tags', { method: 'POST', body }),
+  update: (id: string, body: { name?: string; color?: string; icon?: string }) =>
+    vpsApiFetch<{ success: boolean }>(`/tags/${id}`, { method: 'PUT', body }),
+  delete: (id: string) => vpsApiFetch<{ success: boolean }>(`/tags/${id}`, { method: 'DELETE' }),
+  assignments: () => vpsApiFetch<Record<string, string[]>>('/tag-assignments'),
+  toggle: (leadId: string, tagId: string) =>
+    vpsApiFetch<{ action: 'added' | 'removed' }>('/tag-assignments/toggle', { method: 'POST', body: { leadId, tagId } }),
+};
+
 // ─── Health check ───────────────────────────────────────────
 
 export const healthCheck = () => vpsApiFetch('/health');

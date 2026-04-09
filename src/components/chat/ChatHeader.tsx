@@ -3,9 +3,8 @@ import type { Lead } from "@/data/chatMockData";
 import { Phone, Video, MoreVertical, X, ArrowRightLeft, Loader2, ArrowLeft, Tags, Check, CheckCircle2 } from "lucide-react";
 import { LeadAvatar } from "@/components/LeadAvatar";
 import { toast } from "sonner";
-import { adminListUsers } from "@/lib/vpsApi";
+import { adminListUsers, tagsApi, type LeadTagApi } from "@/lib/vpsApi";
 import { useAuth } from "@/hooks/useAuth";
-import { getTags, type LeadTag } from "@/data/leadTags";
 
 interface Attendant {
   id: string;
@@ -30,7 +29,11 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, lead
   const [loading, setLoading] = useState(false);
   const [selectedAtt, setSelectedAtt] = useState<Attendant | null>(null);
   const [reason, setReason] = useState("");
-  const allTags = getTags();
+  const [allTags, setAllTags] = useState<LeadTagApi[]>([]);
+
+  useEffect(() => {
+    tagsApi.list().then(({ data }) => { if (data) setAllTags(data); });
+  }, []);
 
   useEffect(() => {
     if (!showTransfer) return;

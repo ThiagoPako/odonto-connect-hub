@@ -1430,6 +1430,104 @@ app.get('/api/metrics/attendance', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
+// LEAD TAGS
+// ═══════════════════════════════════════════════════════════════
+
+// List all tags
+app.get('/api/tags', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { rows } = await pool.query('SELECT * FROM lead_tags ORDER BY created_at ASC');
+    res.json(rows);
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+// Create tag
+app.post('/api/tags', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { name, color, icon } = req.body;
+    if (!name?.trim()) return res.status(400).json({ error: 'Nome obrigatório' });
+    const { rows } = await pool.query(
+      'INSERT INTO lead_tags (name, color, icon) VALUES ($1, $2, $3) RETURNING *',
+      [name.trim(), color || '#3B82F6', icon || '📌']
+    );
+    res.json(rows[0]);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update tag
+app.put('/api/tags/:id', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { name, color, icon } = req.body;
+    await pool.query(
+      'UPDATE lead_tags SET name = COALESCE($1, name), color = COALESCE($2, color), icon = COALESCE($3, icon), updated_at = NOW() WHERE id = $4',
+      [name?.trim(), color, icon, req.params.id]
+    );
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete tag
+app.delete('/api/tags/:id', async (req, res) => {
+  try {
+    await verifyUser(req);
+    await pool.query('DELETE FROM lead_tags WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get all lead-tag assignments
+app.get('/api/tag-assignments', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { rows } = await pool.query('SELECT lead_id, tag_id FROM lead_tag_assignments ORDER BY created_at ASC');
+    // Group by lead_id
+    const map = {};
+    for (const r of rows) {
+      if (!map[r.lead_id]) map[r.lead_id] = [];
+      map[r.lead_id].push(r.tag_id);
+    }
+    res.json(map);
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+// Toggle a tag on a lead (add or remove)
+app.post('/api/tag-assignments/toggle', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { leadId, tagId } = req.body;
+    if (!leadId || !tagId) return res.status(400).json({ error: 'leadId e tagId obrigatórios' });
+
+    const { rows } = await pool.query(
+      'SELECT id FROM lead_tag_assignments WHERE lead_id = $1 AND tag_id = $2',
+      [leadId, tagId]
+    );
+
+    if (rows.length > 0) {
+      await pool.query('DELETE FROM lead_tag_assignments WHERE lead_id = $1 AND tag_id = $2', [leadId, tagId]);
+      res.json({ action: 'removed' });
+    } else {
+      await pool.query('INSERT INTO lead_tag_assignments (lead_id, tag_id) VALUES ($1, $2)', [leadId, tagId]);
+      res.json({ action: 'added' });
+    }
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
 // HEALTH CHECK
 // ═══════════════════════════════════════════════════════════════
 

@@ -1,5 +1,5 @@
 import type { Lead } from "@/data/chatMockData";
-import type { LeadTag } from "@/data/leadTags";
+import type { LeadTagApi } from "@/lib/vpsApi";
 import { Clock, UserPlus } from "lucide-react";
 import { LeadAvatar } from "@/components/LeadAvatar";
 
@@ -10,7 +10,7 @@ interface LeadListItemProps {
   showAssignButton?: boolean;
   onAssign?: (lead: Lead) => void;
   tagIds?: string[];
-  allTags?: LeadTag[];
+  allTags?: LeadTagApi[];
 }
 
 export function LeadListItem({ lead, isSelected, onSelect, showAssignButton, onAssign, tagIds = [], allTags = [] }: LeadListItemProps) {
