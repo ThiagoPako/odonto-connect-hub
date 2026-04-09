@@ -17,6 +17,8 @@ interface ConversationViewProps {
   hasMore?: boolean;
   /** Whether older messages are currently loading */
   loadingMore?: boolean;
+  /** Called when files are dropped onto the chat area */
+  onFileDrop?: (files: File[]) => void;
 }
 
 const REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
