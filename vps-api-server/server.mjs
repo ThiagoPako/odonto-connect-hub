@@ -1889,12 +1889,14 @@ app.post('/api/webhook/evolution', async (req, res) => {
           continue;
         }
 
-        const phone = String(remoteJid)
+        let phone = String(remoteJid)
           .replace('@s.whatsapp.net', '')
           .replace('@c.us', '')
           .replace('@lid', '')
           .replace(/:\d+$/, '')
           .replace(/\D/g, '');
+        // Resolve LID to real phone if mapped
+        phone = resolvePhoneFromLid(phone);
 
         for (const lookupId of lookupIds) {
           console.log(`✅ ACK: ${lookupId} → ${newStatus} (ack=${ack}, phone=${phone})`);
