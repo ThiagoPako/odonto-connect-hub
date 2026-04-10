@@ -1034,7 +1034,7 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '6
 
     const cleanNumber = String(number).replace(/\D/g, '');
     const resolvedMimeType = String(mimeType || req.headers['content-type'] || 'application/octet-stream');
-    const jobId = randomUUID();
+    jobId = randomUUID();
 
     mediaSendJobs.set(jobId, {
       status: 'processing',
