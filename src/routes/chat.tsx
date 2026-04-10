@@ -1389,7 +1389,7 @@ function ChatPage() {
                 leadName={selectedLead.name}
                 isTyping={presenceMap[selectedLead.id]?.status === "typing"}
                 isRecording={presenceMap[selectedLead.id]?.status === "recording"}
-                onReaction={handleReaction}
+                
                 onReply={handleReply}
                 onForward={handleForward}
                 onDelete={handleDeleteMessage}
