@@ -261,6 +261,11 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
   const [highlightedMsgId, setHighlightedMsgId] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; msg: ChatMessage } | null>(null);
+  const [lightbox, setLightbox] = useState<{ url: string; name: string } | null>(null);
+  const [lightboxZoom, setLightboxZoom] = useState(1);
+  const [lightboxPos, setLightboxPos] = useState({ x: 0, y: 0 });
+  const lightboxDragging = useRef(false);
+  const lightboxDragStart = useRef({ x: 0, y: 0, posX: 0, posY: 0 });
   const isNearBottomRef = useRef(true);
   const loadMoreTriggeredRef = useRef(false);
 
