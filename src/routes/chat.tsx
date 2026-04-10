@@ -211,7 +211,7 @@ function ChatPage() {
           lead.id === existingLead.id
             ? {
                 ...lead,
-                lastMessage: msg.content || `[${msg.type}]`,
+                lastMessage: msg.content && !["🖼️ Imagem","🎬 Vídeo","📎"].some(p => msg.content.startsWith(p)) ? msg.content : ({ image: "📷 Foto", video: "🎬 Vídeo", audio: "🎤 Áudio", document: "📄 Documento", sticker: "🏷️ Sticker" } as Record<string, string>)[msg.type] || msg.content || "",
                 lastMessageTime: new Date(msg.timestamp),
                 unreadCount: currentSelected?.id === existingLead.id ? lead.unreadCount : lead.unreadCount + 1,
               }
@@ -226,7 +226,7 @@ function ChatPage() {
           name: msg.leadName || msg.pushName,
           initials: (msg.leadName || msg.pushName).split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase(),
           phone: msg.phone,
-          lastMessage: msg.content || `[${msg.type}]`,
+          lastMessage: msg.content && !["🖼️ Imagem","🎬 Vídeo","📎"].some(p => msg.content.startsWith(p)) ? msg.content : ({ image: "📷 Foto", video: "🎬 Vídeo", audio: "🎤 Áudio", document: "📄 Documento", sticker: "🏷️ Sticker" } as Record<string, string>)[msg.type] || msg.content || "",
           lastMessageTime: new Date(msg.timestamp),
           unreadCount: 1,
           status: "waiting",
