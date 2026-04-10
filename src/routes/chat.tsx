@@ -335,6 +335,10 @@ function ChatPage() {
         const msgs = prev[leadId];
         const updated = msgs.map((m) => {
           if (m.id !== update.messageId) return m;
+          if (update.status === "failed") {
+            changed = true;
+            return { ...m, status: update.status as MessageStatus };
+          }
           const currentPri = statusPriority[m.status || "sent"] ?? 1;
           const newPri = statusPriority[update.status] ?? 1;
           if (newPri > currentPri) {
