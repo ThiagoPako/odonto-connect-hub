@@ -693,8 +693,9 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
       <div
         ref={containerRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto px-4 py-6 space-y-1 chat-bg-pattern"
+        className="flex-1 overflow-y-auto chat-bg-pattern"
       >
+        <div className="min-h-full flex flex-col justify-end px-4 py-6 space-y-1">
         {/* Infinite scroll: loading older messages indicator */}
         {loadingMore && (
           <div className="flex items-center justify-center py-3 animate-fade-in">
@@ -948,6 +949,7 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
         {isRecording && !isTyping && <TypingIndicator name={leadName} mode="recording" />}
 
         <div ref={bottomRef} />
+        </div>
       </div>
 
       {/* Scroll-to-bottom FAB */}
