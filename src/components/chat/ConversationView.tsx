@@ -844,7 +844,7 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
                       <p className="text-[14px] leading-relaxed whitespace-pre-wrap font-medium">{renderFormattedText(msg.content)}</p>
                     )}
                     {/* Caption for media messages */}
-                    {["image", "video"].includes(msg.type) && msg.content && !msg.content.startsWith("🖼️") && !msg.content.startsWith("🎬") && (
+                    {["image", "video"].includes(msg.type) && msg.content && !msg.content.startsWith("🖼️") && !msg.content.startsWith("🎬") && !msg.content.startsWith("📎") && !/^\[(image|video|audio|document|sticker)\]$/i.test(msg.content) && (
                       <p className="text-[13px] leading-relaxed whitespace-pre-wrap mt-1 font-medium">{renderFormattedText(msg.content)}</p>
                     )}
 
