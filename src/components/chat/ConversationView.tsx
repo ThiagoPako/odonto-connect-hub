@@ -558,7 +558,7 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
       case "sent":
         return <Check className="h-3.5 w-3.5 opacity-70" />;
       case "delivered":
-        return <CheckCheck className="h-3.5 w-3.5 opacity-70" />;
+        return <CheckCheck className="h-3.5 w-3.5 text-info drop-shadow-[0_0_4px_hsl(var(--info))]" />;
       case "read":
         return <CheckCheck className="h-3.5 w-3.5 text-[#53bdeb]" />;
       case "failed":
