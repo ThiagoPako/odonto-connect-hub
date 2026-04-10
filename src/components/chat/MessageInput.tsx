@@ -299,6 +299,34 @@ export function MessageInput({ onSendMessage, onPresenceChange, disabled, replyi
     setLocName(""); setLocAddress("");
   };
 
+  // Search contacts from system
+  useEffect(() => {
+    if (!showContactForm) return;
+    const timer = setTimeout(async () => {
+      setCtLoading(true);
+      const params: Record<string, string> = {};
+      if (ctSearch.trim()) params.search = ctSearch.trim();
+      const { data } = await contatosApi.list(params);
+      setCtResults(data?.filter(c => !!c.telefone) || []);
+      setCtLoading(false);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [showContactForm, ctSearch]);
+
+  const selectSystemContact = (contato: Contato) => {
+    const contact: ContactData = {
+      fullName: contato.nome,
+      phone: contato.telefone || "",
+      email: contato.email || undefined,
+      company: undefined,
+      url: undefined,
+    };
+    onSendMessage("👤 Contato", "contact", { contact });
+    setShowContactForm(false);
+    setCtSearch("");
+    setCtResults([]);
+  };
+
   const sendContact = () => {
     if (!ctName || !ctPhone) return;
     const contact: ContactData = {
