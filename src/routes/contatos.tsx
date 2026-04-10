@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import {
   Plus, Search, Star, Phone, Mail, Building2, Loader2, Trash2,
-  Pencil, UserPlus, Users, StarOff, MessageSquare, Download
+  Pencil, UserPlus, Users, StarOff, MessageSquare, Download, MessageCircle
 
 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
@@ -13,6 +13,7 @@ import { contatosApi, type Contato } from "@/lib/vpsApi";
 import { CreateContatoDialog } from "@/components/contatos/CreateContatoDialog";
 import { EditContatoDialog } from "@/components/contatos/EditContatoDialog";
 import { ImportWhatsAppDialog } from "@/components/contatos/ImportWhatsAppDialog";
+import { ImportMessagesDialog } from "@/components/contatos/ImportMessagesDialog";
 
 import { toast } from "sonner";
 
@@ -38,6 +39,7 @@ function ContatosPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [editContato, setEditContato] = useState<Contato | null>(null);
   const [importOpen, setImportOpen] = useState(false);
+  const [importMsgOpen, setImportMsgOpen] = useState(false);
 
   const loadContatos = useCallback(async () => {
     setLoading(true);
@@ -83,10 +85,14 @@ function ContatosPage() {
               {contatos.length} contato{contatos.length !== 1 ? "s" : ""} cadastrado{contatos.length !== 1 ? "s" : ""}
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
+            <Button variant="outline" size="sm" onClick={() => setImportMsgOpen(true)}>
+              <MessageCircle className="h-4 w-4 mr-2" />
+              Importar Mensagens
+            </Button>
             <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
               <Download className="h-4 w-4 mr-2" />
-              Importar do WhatsApp
+              Importar Contatos
             </Button>
             <Button size="sm" onClick={() => setCreateOpen(true)}>
               <UserPlus className="h-4 w-4 mr-2" />
@@ -264,6 +270,11 @@ function ContatosPage() {
         open={importOpen}
         onOpenChange={setImportOpen}
         onImported={() => void loadContatos()}
+      />
+
+      <ImportMessagesDialog
+        open={importMsgOpen}
+        onOpenChange={setImportMsgOpen}
       />
     </div>
   );
