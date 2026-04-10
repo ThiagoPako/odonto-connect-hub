@@ -220,7 +220,11 @@ export function ImportMessagesDialog({
   };
 
   const handleClose = (v: boolean) => {
-    if (!v) setResult(null);
+    if (!v) {
+      setResult(null);
+      setProgress(null);
+      if (abortRef.current) { abortRef.current.abort(); abortRef.current = null; }
+    }
     onOpenChange(v);
   };
 
