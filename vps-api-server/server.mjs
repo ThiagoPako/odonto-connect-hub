@@ -711,11 +711,8 @@ app.post('/api/whatsapp/subscribe-presence', async (req, res) => {
           method: 'POST',
           body: JSON.stringify({
             number: cleanNumber,
-            options: {
-              number: cleanNumber,
-              delay: 1200,
-              presence: 'composing',
-            },
+            delay: 1200,
+            presence: 'composing',
           }),
         });
         console.log(`👁️ Presence subscribe attempt for ${cleanNumber} on ${instance}: status=${subResult.status}, data=${JSON.stringify(subResult.data).slice(0, 200)}`);
@@ -1062,12 +1059,24 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '5
 
     console.log(`📤 send-media-upload payload size: ${JSON.stringify(payload).length} bytes`);
 
-    const result = await evolutionFetch(`/message/sendMedia/${instance}`, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 120000);
+
+    let result;
+    try {
+      result = await evolutionFetch(`/message/sendMedia/${instance}`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    console.log(`📤 send-media-upload result ok=${result.ok} status=${result.status} jobId=${jobId}`);
 
     if (!result.ok) {
+      console.error('❌ send-media-upload failed:', JSON.stringify(result.data));
       mediaSendJobs.set(jobId, {
         ...mediaSendJobs.get(jobId),
         status: 'failed',
@@ -1078,6 +1087,7 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '5
       return;
     }
 
+    console.log('✅ send-media-upload success jobId=' + jobId, JSON.stringify(result.data?.key || {}));
     mediaSendJobs.set(jobId, {
       ...mediaSendJobs.get(jobId),
       status: 'sent',
