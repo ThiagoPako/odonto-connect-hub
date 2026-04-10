@@ -1048,48 +1048,121 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '5
     res.status(202).json({ jobId, status: 'processing' });
 
     const base64Data = rawBody.toString('base64');
+    const dataUri = `data:${resolvedMimeType};base64,${base64Data}`;
+    const normalizedFileName = fileName
+      ? String(fileName)
+      : `upload.${resolvedMimeType.split('/')[1] || 'bin'}`;
+    const mediaCaption = caption ? String(caption) : '';
+
     console.log(`📤 send-media-upload jobId=${jobId} [${String(mediaType)}] to ${cleanNumber}, binary size: ${rawBody.length}, base64 len: ${base64Data.length}, mime: ${resolvedMimeType}`);
 
-    const payload = {
-      number: cleanNumber,
-      mediatype: String(mediaType),
-      mimetype: resolvedMimeType,
-      caption: caption ? String(caption) : '',
-      fileName: fileName ? String(fileName) : undefined,
-      media: base64Data,
-    };
-
-    console.log(`📤 send-media-upload payload size: ${JSON.stringify(payload).length} bytes`);
+    const payloadVariants = [
+      {
+        label: 'v2-base64-fileName',
+        body: {
+          number: cleanNumber,
+          mediatype: String(mediaType),
+          mimetype: resolvedMimeType,
+          caption: mediaCaption,
+          fileName: normalizedFileName,
+          media: base64Data,
+        },
+      },
+      {
+        label: 'v2-base64-filename',
+        body: {
+          number: cleanNumber,
+          mediatype: String(mediaType),
+          mimetype: resolvedMimeType,
+          caption: mediaCaption,
+          filename: normalizedFileName,
+          media: base64Data,
+        },
+      },
+      {
+        label: 'v2-datauri-fileName',
+        body: {
+          number: cleanNumber,
+          mediatype: String(mediaType),
+          mimetype: resolvedMimeType,
+          caption: mediaCaption,
+          fileName: normalizedFileName,
+          media: dataUri,
+        },
+      },
+      {
+        label: 'v2-datauri-filename',
+        body: {
+          number: cleanNumber,
+          mediatype: String(mediaType),
+          mimetype: resolvedMimeType,
+          caption: mediaCaption,
+          filename: normalizedFileName,
+          media: dataUri,
+        },
+      },
+      {
+        label: 'v1-mediaMessage-base64',
+        body: {
+          number: cleanNumber,
+          mediaMessage: {
+            mediaType: String(mediaType),
+            mimetype: resolvedMimeType,
+            caption: mediaCaption,
+            fileName: normalizedFileName,
+            media: base64Data,
+          },
+        },
+      },
+      {
+        label: 'v1-mediaMessage-datauri',
+        body: {
+          number: cleanNumber,
+          mediaMessage: {
+            mediaType: String(mediaType),
+            mimetype: resolvedMimeType,
+            caption: mediaCaption,
+            fileName: normalizedFileName,
+            media: dataUri,
+          },
+        },
+      },
+    ];
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 120000);
 
-    let result;
+    let result = null;
     try {
-      result = await evolutionFetch(`/message/sendMedia/${instance}`, {
-        method: 'POST',
-        body: JSON.stringify(payload),
-        signal: controller.signal,
-      });
+      for (const variant of payloadVariants) {
+        console.log(`📤 send-media-upload trying ${variant.label} jobId=${jobId}, payload size: ${JSON.stringify(variant.body).length} bytes`);
+        result = await evolutionFetch(`/message/sendMedia/${instance}`, {
+          method: 'POST',
+          body: JSON.stringify(variant.body),
+          signal: controller.signal,
+        });
+        console.log(`📤 send-media-upload result ${variant.label} ok=${result.ok} status=${result.status} jobId=${jobId}`);
+        if (result.ok) {
+          console.log('✅ send-media-upload success jobId=' + jobId + ` variant=${variant.label}`, JSON.stringify(result.data?.key || {}));
+          break;
+        }
+        console.error(`❌ send-media-upload variant failed ${variant.label}:`, JSON.stringify(result.data));
+      }
     } finally {
       clearTimeout(timeout);
     }
 
-    console.log(`📤 send-media-upload result ok=${result.ok} status=${result.status} jobId=${jobId}`);
-
-    if (!result.ok) {
-      console.error('❌ send-media-upload failed:', JSON.stringify(result.data));
+    if (!result?.ok) {
       mediaSendJobs.set(jobId, {
         ...mediaSendJobs.get(jobId),
         status: 'failed',
-        error: result.data?.response?.message?.[0] || result.data?.error || 'Falha ao enviar mídia',
-        details: result.data,
+        error: result?.data?.response?.message?.[0] || result?.data?.error || 'Falha ao enviar mídia',
+        details: result?.data,
         finishedAt: Date.now(),
       });
       return;
     }
 
-    console.log('✅ send-media-upload success jobId=' + jobId, JSON.stringify(result.data?.key || {}));
     mediaSendJobs.set(jobId, {
       ...mediaSendJobs.get(jobId),
       status: 'sent',
