@@ -754,7 +754,7 @@ function ChatPage() {
             mediaFile,
             {
               fileName: extra?.fileName,
-              caption: type !== "audio" ? content : undefined,
+              caption: type !== "audio" && content && !content.startsWith("🖼️") && !content.startsWith("🎬") && !content.startsWith("📎") ? content : undefined,
               mimeType: extra?.mimeType || mediaFile.type,
             }
           );
