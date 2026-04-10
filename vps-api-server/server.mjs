@@ -672,19 +672,19 @@ app.post('/api/whatsapp/send-media', async (req, res) => {
         }
       }
 
-      const audioValue = outgoingBase64
-        ? `data:${outgoingMime};base64,${outgoingBase64}`
-        : media.url;
+      const audioValue = outgoingBase64 || media.url;
 
       const v2Payload = {
         number: cleanNumber,
         audio: audioValue,
         delay: 1200,
+        mimetype: outgoingMime,
       };
       const v1Payload = {
         number: cleanNumber,
         audioMessage: {
           audio: audioValue,
+          mimetype: outgoingMime,
         },
         options: {
           delay: 1200,
