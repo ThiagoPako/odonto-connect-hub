@@ -664,6 +664,9 @@ app.get('/api/whatsapp/webhook/:instance', async (req, res) => {
 
 // Track which numbers we already subscribed presence for (per instance)
 const presenceSubscribed = new Set();
+// Track subscribed phones per instance for LID resolution fallback
+// Map<instance, Set<phone>>
+const instanceSubscribedPhones = new Map();
 
 // Subscribe to contact presence (typing, recording, online) — calls Evolution API
 app.post('/api/whatsapp/subscribe-presence', async (req, res) => {
