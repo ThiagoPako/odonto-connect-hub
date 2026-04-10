@@ -604,12 +604,12 @@ app.post('/api/whatsapp/send-media', async (req, res) => {
     const cleanNumber = number.replace(/\D/g, '');
 
     if (mediaType === 'audio') {
-      const rawMime = media.mimeType || 'audio/ogg';
+      const rawMime = media.mimeType || 'audio/webm';
       const cleanMime = rawMime.split(';')[0].trim();
-      const finalMime = cleanMime === 'audio/webm' ? 'audio/ogg' : cleanMime;
-      // Evolution API expects a data URI for audio, not raw base64
-      const audioValue = media.base64
-        ? `data:${finalMime};base64,${media.base64}`
+      const finalMime = cleanMime || 'audio/webm';
+      const audioBase64 = typeof media.base64 === 'string' ? media.base64.trim().replace(/\s/g, '') : '';
+      const audioValue = audioBase64
+        ? `data:${finalMime};base64,${audioBase64}`
         : media.url;
       const result = await evolutionFetch(`/message/sendWhatsAppAudio/${instance}`, {
         method: 'POST',
@@ -621,7 +621,9 @@ app.post('/api/whatsapp/send-media', async (req, res) => {
             presence: 'recording',
             encoding: true,
           },
+          fileName: media.fileName || `audio.${finalMime.includes('mp4') ? 'm4a' : finalMime.includes('ogg') ? 'ogg' : 'webm'}`,
           mimeType: finalMime,
+          ptt: true,
         }),
       });
       if (!result.ok) {
