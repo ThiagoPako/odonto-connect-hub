@@ -1018,6 +1018,7 @@ app.post('/api/whatsapp/send-media', async (req, res) => {
 });
 
 app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '64mb' }), async (req, res) => {
+  let jobId;
   try {
     await verifyUser(req);
     const { instance, number, mediaType, fileName, caption, mimeType } = req.query;
@@ -1033,7 +1034,7 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '6
 
     const cleanNumber = String(number).replace(/\D/g, '');
     const resolvedMimeType = String(mimeType || req.headers['content-type'] || 'application/octet-stream');
-    const jobId = randomUUID();
+    jobId = randomUUID();
 
     mediaSendJobs.set(jobId, {
       status: 'processing',
@@ -1173,8 +1174,17 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '6
     });
   } catch (error) {
     console.error('send-media-upload failed:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Falha ao enviar mídia';
+    if (typeof jobId !== 'undefined') {
+      mediaSendJobs.set(jobId, {
+        ...mediaSendJobs.get(jobId),
+        status: 'failed',
+        error: errorMessage,
+        finishedAt: Date.now(),
+      });
+    }
     if (!res.headersSent) {
-      return res.status(500).json({ error: error.message });
+      return res.status(500).json({ error: errorMessage });
     }
   }
 });
