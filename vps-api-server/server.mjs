@@ -476,6 +476,7 @@ async function resolveLidForPhone(instance, phone) {
       method: 'POST',
       body: JSON.stringify({ numbers: [phone] }),
     });
+    console.log(`🔍 whatsappNumbers response for ${phone}:`, JSON.stringify(result.data).slice(0, 500));
     if (result.ok && Array.isArray(result.data)) {
       for (const entry of result.data) {
         const jid = entry?.jid || entry?.id || '';
@@ -489,6 +490,24 @@ async function resolveLidForPhone(instance, phone) {
         }
       }
     }
+    // Fallback: try findContacts to get LID mapping
+    try {
+      const contactResult = await evolutionFetch(`/chat/findContacts/${instance}`, {
+        method: 'POST',
+        body: JSON.stringify({ where: { id: `${phone}@s.whatsapp.net` } }),
+      });
+      if (contactResult.ok && Array.isArray(contactResult.data)) {
+        for (const c of contactResult.data) {
+          const cLid = c?.lid || '';
+          const lidNum = normalizeWhatsappNumber(cLid);
+          if (lidNum && lidNum.length >= 10) {
+            registerLidMapping(lidNum, phone);
+            console.log(`🔗 LID mapped (findContacts): ${lidNum} → ${phone}`);
+            return lidNum;
+          }
+        }
+      }
+    } catch (e2) { /* ignore findContacts fallback error */ }
   } catch (err) {
     console.error(`LID resolve error for ${phone}:`, err.message);
   }
@@ -664,6 +683,9 @@ app.get('/api/whatsapp/webhook/:instance', async (req, res) => {
 
 // Track which numbers we already subscribed presence for (per instance)
 const presenceSubscribed = new Set();
+// Track subscribed phones per instance for LID resolution fallback
+// Map<instance, Set<phone>>
+const instanceSubscribedPhones = new Map();
 
 // Subscribe to contact presence (typing, recording, online) — calls Evolution API
 app.post('/api/whatsapp/subscribe-presence', async (req, res) => {
@@ -697,8 +719,15 @@ app.post('/api/whatsapp/subscribe-presence', async (req, res) => {
           didSubscribe = true;
           console.log(`✅ Presence subscribed for ${cleanNumber} on ${instance}`);
 
-          // Resolve LID mapping in background so presence updates can be matched
-          resolveLidForPhone(instance, cleanNumber).catch(() => {});
+          // Track subscribed phone for this instance (for LID resolution fallback)
+          if (!instanceSubscribedPhones.has(instance)) instanceSubscribedPhones.set(instance, new Set());
+          instanceSubscribedPhones.get(instance).add(cleanNumber);
+
+          // Resolve LID mapping — await so it's ready for presence events
+          const lid = await resolveLidForPhone(instance, cleanNumber);
+          if (!lid) {
+            console.warn(`⚠️ Could not resolve LID for ${cleanNumber} — presence updates may not match`);
+          }
         } else {
           console.warn(`⚠️ Presence subscribe failed for ${cleanNumber}:`, JSON.stringify(subResult.data).slice(0, 300));
         }
@@ -1797,11 +1826,42 @@ app.post('/api/webhook/evolution', async (req, res) => {
             );
             if (rawLid && rawLid.length >= 10) {
               const mapped = resolvePhoneFromLid(rawLid);
-              if (mapped !== rawLid) resolvedPhone = mapped;
+              if (mapped !== rawLid) {
+                resolvedPhone = mapped;
+              } else {
+                // Ultimate fallback: try to resolve LID by calling Evolution API now
+                try {
+                  const subscribedPhones = instanceSubscribedPhones.get(instance);
+                  if (subscribedPhones && subscribedPhones.size > 0) {
+                    // Try each subscribed phone to find which one has this LID
+                    for (const subPhone of subscribedPhones) {
+                      const phoneLid = phoneToLidMap.get(subPhone);
+                      if (phoneLid === rawLid) {
+                        resolvedPhone = subPhone;
+                        break;
+                      }
+                    }
+                    // If still not resolved, try API lookup for all subscribed phones
+                    if (!resolvedPhone) {
+                      for (const subPhone of subscribedPhones) {
+                        if (phoneToLidMap.has(subPhone)) continue; // already checked
+                        const lid = await resolveLidForPhone(instance, subPhone);
+                        if (lid === rawLid) {
+                          resolvedPhone = subPhone;
+                          break;
+                        }
+                      }
+                    }
+                  }
+                } catch (e) { /* ignore fallback error */ }
+              }
             }
           }
 
-          if (!resolvedPhone) continue;
+          if (!resolvedPhone) {
+            console.log(`⚠️ PRESENCE: unresolved LID ${participant?.id || presenceData?.id}, no mapping found`);
+            continue;
+          }
 
           const status = participant?.status
             || participant?.presence
