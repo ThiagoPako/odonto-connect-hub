@@ -253,7 +253,8 @@ export function MessageInput({ onSendMessage, onPresenceChange, disabled, replyi
   }, [onSendMessage]);
 
   const handleSendMediaPreview = () => {
-    if (!mediaPreview) return;
+    if (!mediaPreview || uploading) return;
+    console.log(`📤 [CHAT] handleSendMediaPreview click: type=${mediaPreview.type}, file=${mediaPreview.file.name}, size=${mediaPreview.file.size}`);
     sendFileAsMessage(mediaPreview.file, mediaPreview.type, mediaCaption);
   };
 
