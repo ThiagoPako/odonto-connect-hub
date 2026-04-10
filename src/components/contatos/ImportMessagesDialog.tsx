@@ -77,6 +77,20 @@ export function ImportMessagesDialog({
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ImportResult | null>(null);
 
+  // Progress state
+  const [progress, setProgress] = useState<{
+    message: string;
+    contactName?: string;
+    contactIndex?: number;
+    totalContacts?: number;
+    instanceName?: string;
+    instanceIndex?: number;
+    totalInstances?: number;
+    imported?: number;
+    skipped?: number;
+  } | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
   // Instance selection
   const [instances, setInstances] = useState<WaInstance[]>([]);
   const [loadingInstances, setLoadingInstances] = useState(false);
@@ -90,7 +104,6 @@ export function ImportMessagesDialog({
       status: i.connectionStatus || i.status || 'unknown',
     })) : [];
     setInstances(list);
-    // Select all connected by default
     setSelectedInstances(new Set(list.filter(i => i.status === 'open').map(i => i.name)));
     setLoadingInstances(false);
   }, []);
@@ -115,19 +128,93 @@ export function ImportMessagesDialog({
   const handleImport = async () => {
     setLoading(true);
     setResult(null);
-    const { data, error } = await vpsApiFetch<ImportResult>("/messages/import-whatsapp", {
-      method: "POST",
-      body: {
-        startDate: startDate.toISOString(),
-        endDate: endDate.toISOString(),
-        instances: Array.from(selectedInstances),
-      },
-    });
-    if (error) {
-      setResult({ success: false, imported: 0, skipped: 0, instances: [], error });
-    } else if (data) {
-      setResult(data);
-      if (data.imported > 0) onImported?.();
+    setProgress({ message: "Iniciando importação..." });
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    try {
+      const token = getToken();
+      const res = await fetch("https://odontoconnect.tech/api/messages/import-whatsapp", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          startDate: startDate.toISOString(),
+          endDate: endDate.toISOString(),
+          instances: Array.from(selectedInstances),
+          stream: true,
+        }),
+        signal: controller.signal,
+      });
+
+      if (!res.ok || !res.body) {
+        const errText = await res.text().catch(() => "Erro desconhecido");
+        setResult({ success: false, imported: 0, skipped: 0, instances: [], error: errText });
+        setLoading(false);
+        setProgress(null);
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const evt = JSON.parse(line.slice(6));
+
+            if (evt.phase === "done") {
+              setResult(evt as ImportResult);
+              setProgress(null);
+              if (evt.imported > 0) onImported?.();
+            } else if (evt.phase === "contact") {
+              setProgress({
+                message: `Processando ${evt.contactName}...`,
+                contactName: evt.contactName,
+                contactIndex: evt.contactIndex,
+                totalContacts: evt.totalContacts,
+                instanceName: evt.instance,
+                instanceIndex: evt.instanceIndex,
+                totalInstances: evt.totalInstances,
+                imported: evt.imported,
+                skipped: evt.skipped,
+              });
+            } else if (evt.phase === "instance") {
+              setProgress({
+                message: evt.message,
+                instanceName: evt.instance,
+                instanceIndex: evt.instanceIndex,
+                totalInstances: evt.totalInstances,
+              });
+            } else if (evt.phase === "contacts_found") {
+              setProgress(prev => ({
+                ...prev!,
+                message: `${evt.totalContacts} contatos encontrados em ${evt.instance}`,
+                totalContacts: evt.totalContacts,
+              }));
+            } else if (evt.phase === "init") {
+              setProgress({ message: evt.message });
+            }
+          } catch (_) { /* ignore parse errors */ }
+        }
+      }
+    } catch (err: any) {
+      if (err.name !== "AbortError") {
+        setResult({ success: false, imported: 0, skipped: 0, instances: [], error: err.message });
+        setProgress(null);
+      }
     }
     setLoading(false);
   };
