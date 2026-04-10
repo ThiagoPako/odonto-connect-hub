@@ -1856,6 +1856,25 @@ app.post('/api/webhook/evolution', async (req, res) => {
 
         if (!primaryMessageId || !remoteJid || remoteJid.endsWith('@g.us')) continue;
 
+        // Build LID→phone mapping from ACK events
+        // remoteJid is often a LID; look up the real phone from our DB
+        if (remoteJid.includes('@lid')) {
+          const lidNum = normalizeWhatsappNumber(remoteJid);
+          if (lidNum && !lidToPhoneMap.has(lidNum)) {
+            // Try to find the phone from the message in DB
+            try {
+              const { rows: msgRows } = await pool.query(
+                `SELECT phone FROM chat_messages WHERE id = $1 LIMIT 1`,
+                [primaryMessageId]
+              );
+              if (msgRows[0]?.phone) {
+                registerLidMapping(lidNum, msgRows[0].phone);
+                console.log(`🔗 LID mapped from ACK: ${lidNum} → ${msgRows[0].phone}`);
+              }
+            } catch (e) { /* ignore */ }
+          }
+        }
+
         let newStatus = null;
         const ackStr = String(ack).toUpperCase();
         const ackNum = typeof ack === 'number' ? ack : parseInt(ack);
