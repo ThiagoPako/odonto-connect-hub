@@ -469,14 +469,62 @@ export function MessageInput({ onSendMessage, onPresenceChange, disabled, replyi
         <div className="p-3 space-y-2 border-b border-border bg-muted/30">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-foreground flex items-center gap-1.5"><UserCircle className="h-3.5 w-3.5" /> Enviar Contato</span>
-            <button onClick={() => setShowContactForm(false)} className="p-1 rounded hover:bg-muted"><X className="h-3.5 w-3.5" /></button>
+            <button onClick={() => { setShowContactForm(false); setCtSearch(""); }} className="p-1 rounded hover:bg-muted"><X className="h-3.5 w-3.5" /></button>
           </div>
-          <input value={ctName} onChange={e => setCtName(e.target.value)} placeholder="Nome completo *" className={formInputClass} />
-          <input value={ctPhone} onChange={e => setCtPhone(e.target.value)} placeholder="Telefone *" className={formInputClass} />
-          <input value={ctEmail} onChange={e => setCtEmail(e.target.value)} placeholder="E-mail" className={formInputClass} />
-          <input value={ctCompany} onChange={e => setCtCompany(e.target.value)} placeholder="Empresa" className={formInputClass} />
-          <input value={ctUrl} onChange={e => setCtUrl(e.target.value)} placeholder="URL" className={formInputClass} />
-          <button onClick={sendContact} className={formBtnClass}>Enviar Contato</button>
+
+          {/* Search system contacts */}
+          <div className="relative">
+            <input
+              value={ctSearch}
+              onChange={e => setCtSearch(e.target.value)}
+              placeholder="Buscar contato salvo..."
+              className={formInputClass}
+              autoFocus
+            />
+          </div>
+
+          {ctLoading ? (
+            <div className="flex justify-center py-3">
+              <Loader2 className="h-4 w-4 animate-spin text-primary" />
+            </div>
+          ) : ctResults.length > 0 ? (
+            <div className="max-h-[200px] overflow-y-auto space-y-1">
+              {ctResults.map(c => (
+                <button
+                  key={c.id}
+                  onClick={() => selectSystemContact(c)}
+                  className="w-full flex items-center gap-2 p-2 rounded-lg hover:bg-muted/60 transition-colors text-left"
+                >
+                  <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold text-[10px] shrink-0">
+                    {c.nome.slice(0, 2).toUpperCase()}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <span className="text-xs font-medium text-foreground truncate block">{c.nome}</span>
+                    <span className="text-[10px] text-muted-foreground">{c.telefone}</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground text-center py-2">
+              {ctSearch ? "Nenhum contato encontrado" : "Digite para buscar"}
+            </p>
+          )}
+
+          {/* Manual fallback */}
+          <details className="text-xs">
+            <summary className="cursor-pointer text-muted-foreground hover:text-foreground transition-colors">
+              Enviar manualmente
+            </summary>
+            <div className="space-y-2 mt-2">
+              <input value={ctName} onChange={e => setCtName(e.target.value)} placeholder="Nome completo *" className={formInputClass} />
+              <input value={ctPhone} onChange={e => setCtPhone(e.target.value)} placeholder="Telefone *" className={formInputClass} />
+              <input value={ctEmail} onChange={e => setCtEmail(e.target.value)} placeholder="E-mail" className={formInputClass} />
+              <input value={ctCompany} onChange={e => setCtCompany(e.target.value)} placeholder="Empresa" className={formInputClass} />
+              <input value={ctUrl} onChange={e => setCtUrl(e.target.value)} placeholder="URL" className={formInputClass} />
+              <button onClick={sendContact} className={formBtnClass}>Enviar Contato</button>
+            </div>
+          </details>
         </div>
       )}
 
