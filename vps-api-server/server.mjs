@@ -3247,16 +3247,29 @@ async function syncWhatsAppContacts() {
     for (const inst of connected) {
       const name = inst.name || inst.instanceName;
       try {
-        // 2. Fetch contacts from each connected instance
+        let waContacts = [];
         const cRes = await fetch(`${EVOLUTION_API_URL}/chat/findContacts/${name}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
-          body: JSON.stringify({}),
+          body: JSON.stringify({ where: {} }),
         });
-        if (!cRes.ok) continue;
-        const contacts = await cRes.json();
-
-        const waContacts = (contacts || []).filter(c => c.id?.endsWith('@s.whatsapp.net'));
+        if (cRes.ok) {
+          const contacts = await cRes.json();
+          waContacts = (contacts || []).filter(c => c.id?.endsWith('@s.whatsapp.net'));
+        }
+        if (waContacts.length === 0) {
+          try {
+            const altRes = await fetch(`${EVOLUTION_API_URL}/contact/find/${name}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
+              body: JSON.stringify({}),
+            });
+            if (altRes.ok) {
+              const altContacts = await altRes.json();
+              waContacts = (altContacts || []).filter(c => (c.id || c.remoteJid || '').endsWith('@s.whatsapp.net'));
+            }
+          } catch (e) { /* ignore */ }
+        }
 
         for (const c of waContacts) {
           const telefone = c.id.replace('@s.whatsapp.net', '').replace(/\D/g, '');
