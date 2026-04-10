@@ -1031,6 +1031,14 @@ function ChatPage() {
     }));
     // Persist soft-delete to backend
     messagesApi.delete(msg.id).catch((err) => console.error("Failed to delete message:", err));
+
+    // Delete on WhatsApp for everyone (only works for messages we sent)
+    const connected = connectedInstances[0];
+    if (connected && selectedLead.phone && msg.sender === "attendant") {
+      whatsappApi.deleteMessage(connected.instanceName, selectedLead.phone, msg.id, true)
+        .catch((err: any) => console.error("Failed to delete on WhatsApp:", err));
+    }
+
     toast.info("Mensagem apagada");
   };
 
