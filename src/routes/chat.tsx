@@ -372,15 +372,10 @@ function ChatPage() {
 
   // Auto-subscribe to contact presence when opening a conversation
   const presenceSubscribedRef = useRef<Set<string>>(new Set());
-  useEffect(() => {
-    if (!selectedLead?.phone) return;
-    const connected = connectedInstances[0];
-    if (!connected) return;
-    const key = `${connected.instanceName}:${selectedLead.phone}`;
-    if (presenceSubscribedRef.current.has(key)) return;
-    presenceSubscribedRef.current.add(key);
-    whatsappApi.subscribePresence(connected.instanceName, selectedLead.phone).then(({ data }) => {
-      if (!data?.presence || !selectedLead) return;
+
+  const fetchPresence = useCallback((leadId: string, phone: string, instanceName: string) => {
+    whatsappApi.subscribePresence(instanceName, phone).then(({ data }) => {
+      if (!data?.presence) return;
       const status = data.presence;
       let displayStatus: "online" | "offline" = "offline";
       if (status === "available" || status === "online" || status === "composing" || status === "recording" || status === "paused") {
@@ -388,13 +383,35 @@ function ChatPage() {
       }
       setPresenceMap((prev) => ({
         ...prev,
-        [selectedLead.id]: {
+        [leadId]: {
           status: displayStatus,
-          lastSeen: displayStatus === "offline" ? new Date() : prev[selectedLead.id]?.lastSeen ?? null,
+          lastSeen: displayStatus === "offline" ? new Date() : prev[leadId]?.lastSeen ?? null,
         },
       }));
     }).catch(() => {});
-  }, [selectedLead?.id, connectedInstances]);
+  }, []);
+
+  // Initial subscription
+  useEffect(() => {
+    if (!selectedLead?.phone) return;
+    const connected = connectedInstances[0];
+    if (!connected) return;
+    const key = `${connected.instanceName}:${selectedLead.phone}`;
+    if (presenceSubscribedRef.current.has(key)) return;
+    presenceSubscribedRef.current.add(key);
+    fetchPresence(selectedLead.id, selectedLead.phone, connected.instanceName);
+  }, [selectedLead?.id, connectedInstances, fetchPresence]);
+
+  // Periodic presence polling every 30s while a conversation is open
+  useEffect(() => {
+    if (!selectedLead?.phone) return;
+    const connected = connectedInstances[0];
+    if (!connected) return;
+    const interval = setInterval(() => {
+      fetchPresence(selectedLead.id, selectedLead.phone, connected.instanceName);
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [selectedLead?.id, connectedInstances, fetchPresence]);
 
   // ─── Load initial message history from VPS when selecting a lead ───
   const historyLoadedRef = useRef<Set<string>>(new Set());
