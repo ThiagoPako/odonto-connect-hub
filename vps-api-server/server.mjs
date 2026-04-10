@@ -997,7 +997,89 @@ app.post('/api/whatsapp/send-media', async (req, res) => {
     const result = await evolutionFetch(`/message/sendMedia/${instance}`, {
       method: 'POST',
       body: JSON.stringify(payload),
+});
+
+app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '50mb' }), async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { instance, number, mediaType, fileName, caption, mimeType } = req.query;
+
+    if (!instance || !number || !mediaType) {
+      return res.status(400).json({ error: 'instance, number e mediaType são obrigatórios' });
+    }
+
+    const rawBody = req.body;
+    if (!rawBody || !Buffer.isBuffer(rawBody) || rawBody.length === 0) {
+      return res.status(400).json({ error: 'Arquivo não enviado' });
+    }
+
+    const cleanNumber = String(number).replace(/\D/g, '');
+    const resolvedMimeType = String(mimeType || req.headers['content-type'] || 'application/octet-stream');
+    const jobId = randomUUID();
+
+    mediaSendJobs.set(jobId, {
+      status: 'processing',
+      createdAt: Date.now(),
+      instance: String(instance),
+      number: cleanNumber,
+      mediaType: String(mediaType),
+      fileName: fileName ? String(fileName) : undefined,
+      mimeType: resolvedMimeType,
     });
+
+    res.status(202).json({ jobId, status: 'processing' });
+
+    const base64 = rawBody.toString('base64');
+    const payload = {
+      number: cleanNumber,
+      mediatype: String(mediaType),
+      caption: caption ? String(caption) : '',
+      fileName: fileName ? String(fileName) : undefined,
+      media: `data:${resolvedMimeType};base64,${base64}`,
+    };
+
+    const result = await evolutionFetch(`/message/sendMedia/${instance}`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+
+    if (!result.ok) {
+      mediaSendJobs.set(jobId, {
+        ...mediaSendJobs.get(jobId),
+        status: 'failed',
+        error: result.data?.response?.message?.[0] || result.data?.error || 'Falha ao enviar mídia',
+        details: result.data,
+        finishedAt: Date.now(),
+      });
+      return;
+    }
+
+    mediaSendJobs.set(jobId, {
+      ...mediaSendJobs.get(jobId),
+      status: 'sent',
+      result: result.data,
+      finishedAt: Date.now(),
+    });
+  } catch (error) {
+    console.error('send-media-upload failed:', error);
+    if (!res.headersSent) {
+      return res.status(500).json({ error: error.message });
+    }
+  }
+});
+
+app.get('/api/whatsapp/send-media-status/:jobId', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const job = mediaSendJobs.get(req.params.jobId);
+    if (!job) {
+      return res.status(404).json({ error: 'Job não encontrado' });
+    }
+    res.json(job);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
     if (!result.ok) {
       console.error('❌ sendMedia Evolution error:', JSON.stringify(result.data));
