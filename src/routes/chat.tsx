@@ -1264,6 +1264,7 @@ function ChatPage() {
                   onAssign={handleAssign}
                   tagIds={leadTagAssignments[lead.id] || []}
                   allTags={availableTags}
+                  presence={presenceMap[lead.id]?.status}
                 />
               ))
             )}
