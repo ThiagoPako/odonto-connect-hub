@@ -1826,11 +1826,42 @@ app.post('/api/webhook/evolution', async (req, res) => {
             );
             if (rawLid && rawLid.length >= 10) {
               const mapped = resolvePhoneFromLid(rawLid);
-              if (mapped !== rawLid) resolvedPhone = mapped;
+              if (mapped !== rawLid) {
+                resolvedPhone = mapped;
+              } else {
+                // Ultimate fallback: try to resolve LID by calling Evolution API now
+                try {
+                  const subscribedPhones = instanceSubscribedPhones.get(instance);
+                  if (subscribedPhones && subscribedPhones.size > 0) {
+                    // Try each subscribed phone to find which one has this LID
+                    for (const subPhone of subscribedPhones) {
+                      const phoneLid = phoneToLidMap.get(subPhone);
+                      if (phoneLid === rawLid) {
+                        resolvedPhone = subPhone;
+                        break;
+                      }
+                    }
+                    // If still not resolved, try API lookup for all subscribed phones
+                    if (!resolvedPhone) {
+                      for (const subPhone of subscribedPhones) {
+                        if (phoneToLidMap.has(subPhone)) continue; // already checked
+                        const lid = await resolveLidForPhone(instance, subPhone);
+                        if (lid === rawLid) {
+                          resolvedPhone = subPhone;
+                          break;
+                        }
+                      }
+                    }
+                  }
+                } catch (e) { /* ignore fallback error */ }
+              }
             }
           }
 
-          if (!resolvedPhone) continue;
+          if (!resolvedPhone) {
+            console.log(`⚠️ PRESENCE: unresolved LID ${participant?.id || presenceData?.id}, no mapping found`);
+            continue;
+          }
 
           const status = participant?.status
             || participant?.presence
