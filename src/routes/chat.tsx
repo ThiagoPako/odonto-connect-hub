@@ -671,7 +671,6 @@ function ChatPage() {
   const handleSendMessage = async (content: string, type: MessageType, extra?: Partial<ChatMessage>) => {
     if (!selectedLead) return;
 
-    // Track first response time
     if (selectedLead.status === "active" && !firstResponseTracked.has(selectedLead.id)) {
       sessionsApi.firstResponse({ leadId: selectedLead.id });
       setFirstResponseTracked((prev) => new Set(prev).add(selectedLead.id));
@@ -689,16 +688,15 @@ function ChatPage() {
       replyTo: replyingTo || undefined,
       ...extra,
     };
+
     setMessages((prev) => ({
       ...prev,
       [selectedLead.id]: [...(prev[selectedLead.id] || []), newMsg],
     }));
     setReplyingTo(null);
 
-    // Send via WhatsApp (Evolution API) — use cached connected instances
     const connected = connectedInstances[0];
     if (!connected) {
-      // No instance — mark as sent locally only
       setMessages((prev) => ({
         ...prev,
         [selectedLead.id]: (prev[selectedLead.id] || []).map((m) =>
@@ -713,7 +711,6 @@ function ChatPage() {
         ...prev,
         [selectedLead.id]: (prev[selectedLead.id] || []).map((m) => {
           if (m.id !== msgId) return m;
-          // Never downgrade status
           const currentPri = statusPriority[m.status || "sending"] ?? 0;
           const newPri = statusPriority[status] ?? 1;
           return newPri > currentPri ? { ...m, status } : m;
@@ -722,7 +719,6 @@ function ChatPage() {
     };
 
     try {
-      // Check if this is a reply (quoted message)
       const replyMessageId = replyingTo?.messageId;
       let evolutionMsgId: string | null = null;
 
@@ -739,7 +735,7 @@ function ChatPage() {
         evolutionMsgId = (result?.data as any)?.key?.id || null;
       } else if (type === "image" || type === "video" || type === "document" || type === "audio") {
         const mediaFile = (extra as any)?._mediaFile as File | undefined;
-        const mediaBase64 = (extra as any)?._mediaBase64;
+        const mediaBase64 = (extra as any)?._mediaBase64 as string | undefined;
 
         if (type === "audio" && mediaBase64) {
           const result = await whatsappApi.sendMedia(connected.instanceName, selectedLead.phone, type, {
@@ -751,11 +747,18 @@ function ChatPage() {
           if (result.error) throw new Error(result.error);
           evolutionMsgId = (result.data as any)?.key?.id || null;
         } else if (mediaFile) {
-          const uploadResult = await whatsappApi.sendMediaUpload(connected.instanceName, selectedLead.phone, type, mediaFile, {
-            fileName: extra?.fileName,
-            caption: type !== "audio" ? content : undefined,
-            mimeType: extra?.mimeType || mediaFile.type,
-          });
+          const uploadResult = await whatsappApi.sendMediaUpload(
+            connected.instanceName,
+            selectedLead.phone,
+            type,
+            mediaFile,
+            {
+              fileName: extra?.fileName,
+              caption: type !== "audio" ? content : undefined,
+              mimeType: extra?.mimeType || mediaFile.type,
+            }
+          );
+
           if (uploadResult.error) throw new Error(uploadResult.error);
 
           const jobId = (uploadResult.data as any)?.jobId as string | undefined;
@@ -780,6 +783,15 @@ function ChatPage() {
           if (!evolutionMsgId) {
             throw new Error("Tempo limite ao aguardar confirmação do envio da mídia");
           }
+        } else if (mediaBase64) {
+          const result = await whatsappApi.sendMedia(connected.instanceName, selectedLead.phone, type, {
+            base64: mediaBase64,
+            fileName: extra?.fileName,
+            caption: type !== "audio" ? content : undefined,
+            mimeType: extra?.mimeType,
+          });
+          if (result.error) throw new Error(result.error);
+          evolutionMsgId = (result.data as any)?.key?.id || null;
         }
       } else if (type === "location" && extra?.location) {
         const result = await whatsappApi.sendLocation(connected.instanceName, selectedLead.phone, {
@@ -799,7 +811,7 @@ function ChatPage() {
         });
         evolutionMsgId = (result?.data as any)?.key?.id || null;
       } else if (type === "poll" && extra?.poll) {
-        const opts = extra.poll.options.map((o: any) => typeof o === "string" ? o : o.text);
+        const opts = extra.poll.options.map((o: any) => (typeof o === "string" ? o : o.text));
         const result = await whatsappApi.sendPoll(connected.instanceName, selectedLead.phone, extra.poll.question, opts);
         evolutionMsgId = (result?.data as any)?.key?.id || null;
       } else if (type === "sticker") {
@@ -816,12 +828,17 @@ function ChatPage() {
       } else if (type === "reaction") {
         const reactionData = extra as any;
         if (reactionData?.targetMessageId && reactionData?.emoji) {
-          await whatsappApi.sendReaction(connected.instanceName, selectedLead.phone, reactionData.targetMessageId, reactionData.emoji);
+          await whatsappApi.sendReaction(
+            connected.instanceName,
+            selectedLead.phone,
+            reactionData.targetMessageId,
+            reactionData.emoji
+          );
         }
       }
+
       updateStatus("sent");
 
-      // Atomically swap ID and set status to "sent" (never downgrade if ACK arrived faster)
       if (evolutionMsgId) {
         setMessages((prev) => ({
           ...prev,
@@ -829,7 +846,6 @@ function ChatPage() {
             if (m.id !== msgId && m.id !== evolutionMsgId) return m;
             const currentPri = statusPriority[m.status || "sending"] ?? 0;
             const newId = evolutionMsgId!;
-            // Keep higher status if ACK arrived before this runs
             return currentPri >= (statusPriority["sent"] ?? 1)
               ? { ...m, id: newId }
               : { ...m, id: newId, status: "sent" as MessageStatus };
@@ -837,7 +853,6 @@ function ChatPage() {
         }));
       }
 
-      // Persist to backend with the Evolution message ID
       messagesApi.save({
         id: evolutionMsgId || msgId,
         leadId: selectedLead.id,
