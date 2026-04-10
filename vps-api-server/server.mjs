@@ -1052,7 +1052,7 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '5
     const normalizedFileName = fileName
       ? String(fileName)
       : `upload.${resolvedMimeType.split('/')[1] || 'bin'}`;
-    const mediaCaption = caption ? String(caption) : '';
+    const mediaCaption = caption && String(caption).trim() ? String(caption).trim() : undefined;
 
     console.log(`📤 send-media-upload jobId=${jobId} [${String(mediaType)}] to ${cleanNumber}, binary size: ${rawBody.length}, base64 len: ${base64Data.length}, mime: ${resolvedMimeType}`);
 
