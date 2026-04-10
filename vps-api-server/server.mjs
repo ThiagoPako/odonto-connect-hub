@@ -3359,19 +3359,50 @@ app.post('/api/messages', async (req, res) => {
     const { rows: profile } = await pool.query('SELECT name FROM profiles WHERE id = $1', [user.id]);
     const attendantName = profile[0]?.name || 'Atendente';
 
+    // If fileUrl is a base64 data URI, save to disk for persistent storage
+    let persistedMediaUrl = fileUrl || null;
+    if (fileUrl && fileUrl.startsWith('data:')) {
+      const diskUrl = await saveMediaToDisk(fileUrl, mimeType, fileName);
+      if (diskUrl) persistedMediaUrl = diskUrl;
+    }
+
     await pool.query(
       `INSERT INTO chat_messages (id, lead_id, content, sender, type, status, timestamp, media_url, file_name, mime_type, reply_to_id, reply_to_content, reply_to_sender, attendant_id, attendant_name, instance, phone)
        VALUES ($1,$2,$3,'attendant',$4,$5,NOW(),$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
        ON CONFLICT (id) DO NOTHING`,
       [
         id, leadId, content || '', type || 'text', status || 'sent',
-        fileUrl || null, fileName || null, mimeType || null,
+        persistedMediaUrl, fileName || null, mimeType || null,
         replyTo?.messageId || null, replyTo?.content || null, replyTo?.sender || null,
         user.id, attendantName, instance || null, phone || null,
       ]
     );
 
-    res.json({ success: true, id });
+    res.json({ success: true, id, mediaUrl: persistedMediaUrl });
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+// POST /api/media/upload — upload media file and return persistent URL
+app.post('/api/media/upload', express.raw({ type: '*/*', limit: '64mb' }), async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { fileName, mimeType } = req.query;
+    const rawBody = req.body;
+
+    if (!rawBody || !Buffer.isBuffer(rawBody) || rawBody.length === 0) {
+      return res.status(400).json({ error: 'Arquivo não enviado' });
+    }
+
+    const resolvedMime = String(mimeType || req.headers['content-type'] || 'application/octet-stream');
+    const savedUrl = await saveBufferToDisk(rawBody, resolvedMime, fileName ? String(fileName) : undefined);
+
+    if (!savedUrl) {
+      return res.status(500).json({ error: 'Falha ao salvar arquivo' });
+    }
+
+    res.json({ url: savedUrl, fileName: fileName || null, mimeType: resolvedMime });
   } catch (error) {
     res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
   }
