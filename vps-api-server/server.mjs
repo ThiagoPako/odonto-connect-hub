@@ -1071,27 +1071,47 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '6
 
     const captionField = mediaCaption ? { caption: mediaCaption } : {};
 
+    const multipartBody = new FormData();
+    multipartBody.append('number', cleanNumber);
+    multipartBody.append('mediatype', String(mediaType));
+    multipartBody.append('mimetype', resolvedMimeType);
+    multipartBody.append('fileName', normalizedFileName);
+    multipartBody.append('filename', normalizedFileName);
+    multipartBody.append('delay', '1200');
+    if (mediaCaption) multipartBody.append('caption', mediaCaption);
+    multipartBody.append('file', new Blob([rawBody], { type: resolvedMimeType }), normalizedFileName);
+
     const payloadVariants = [
-      // Legacy flat format — confirmed working in production logs
+      ...(String(mediaType) === 'video'
+        ? [{
+            label: 'multipart-file-upload',
+            kind: 'multipart',
+            body: multipartBody,
+          }]
+        : []),
       {
         label: 'v2-base64-fileName',
+        kind: 'json',
         body: {
           number: cleanNumber,
           mediatype: String(mediaType),
           mimetype: resolvedMimeType,
           ...captionField,
           fileName: normalizedFileName,
-          media: base64Data,
+          filename: normalizedFileName,
+          media: cleanBase64Media(base64Data),
         },
       },
       {
         label: 'v2-datauri-fileName',
+        kind: 'json',
         body: {
           number: cleanNumber,
           mediatype: String(mediaType),
           mimetype: resolvedMimeType,
           ...captionField,
           fileName: normalizedFileName,
+          filename: normalizedFileName,
           media: dataUri,
         },
       },
@@ -1103,12 +1123,30 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '6
     let result = null;
     try {
       for (const variant of payloadVariants) {
-        console.log(`📤 send-media-upload trying ${variant.label} jobId=${jobId}, payload size: ${JSON.stringify(variant.body).length} bytes`);
-        result = await evolutionFetch(`/message/sendMedia/${instance}`, {
-          method: 'POST',
-          body: JSON.stringify(variant.body),
-          signal: controller.signal,
-        });
+        const attemptMeta = variant.kind === 'multipart'
+          ? 'multipart/form-data upload'
+          : `payload size: ${JSON.stringify(variant.body).length} bytes`;
+        console.log(`📤 send-media-upload trying ${variant.label} jobId=${jobId}, ${attemptMeta}`);
+
+        if (variant.kind === 'multipart') {
+          const res = await fetch(`${EVOLUTION_API_URL}/message/sendMedia/${instance}`, {
+            method: 'POST',
+            headers: {
+              apikey: EVOLUTION_API_KEY,
+            },
+            body: variant.body,
+            signal: controller.signal,
+          });
+          const data = await res.json().catch(() => ({}));
+          result = { ok: res.ok, status: res.status, data };
+        } else {
+          result = await evolutionFetch(`/message/sendMedia/${instance}`, {
+            method: 'POST',
+            body: JSON.stringify(variant.body),
+            signal: controller.signal,
+          });
+        }
+
         console.log(`📤 send-media-upload result ${variant.label} ok=${result.ok} status=${result.status} jobId=${jobId}`);
         console.log(`📤 send-media-upload FULL RESPONSE ${variant.label} jobId=${jobId}:`, JSON.stringify(result.data, null, 2));
         if (result.ok) {
