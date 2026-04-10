@@ -1025,27 +1025,6 @@ function ChatPage() {
     toast.info(`${lead.name} retornado à fila de espera`);
   };
 
-  const handleReaction = (messageId: string, emoji: string) => {
-    if (!selectedLead) return;
-    // Update local UI
-    setMessages((prev) => {
-      const msgs = prev[selectedLead.id] || [];
-      return {
-        ...prev,
-        [selectedLead.id]: msgs.map((m) =>
-          m.id === messageId
-            ? { ...m, reactions: [...(m.reactions || []), { emoji, count: 1 }] }
-            : m
-        ),
-      };
-    });
-    // Send reaction via Evolution API
-    const connected = connectedInstances[0];
-    if (connected && selectedLead.phone) {
-      whatsappApi.sendReaction(connected.instanceName, selectedLead.phone, messageId, emoji)
-        .catch((err: any) => console.error("Failed to send reaction:", err));
-    }
-  };
 
   const handleReply = (msg: ChatMessage) => {
     setReplyingTo({
@@ -1410,7 +1389,7 @@ function ChatPage() {
                 leadName={selectedLead.name}
                 isTyping={presenceMap[selectedLead.id]?.status === "typing"}
                 isRecording={presenceMap[selectedLead.id]?.status === "recording"}
-                onReaction={handleReaction}
+                
                 onReply={handleReply}
                 onForward={handleForward}
                 onDelete={handleDeleteMessage}
