@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { format, subDays } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import {
@@ -11,6 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Calendar } from "@/components/ui/calendar";
+import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Popover,
@@ -24,9 +25,11 @@ import {
   XCircle,
   Smartphone,
   CalendarIcon,
+  Wifi,
+  WifiOff,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { vpsApiFetch } from "@/lib/vpsApi";
+import { vpsApiFetch, whatsappApi } from "@/lib/vpsApi";
 
 interface InstanceResult {
   name: string;
@@ -43,6 +46,12 @@ interface ImportResult {
   instances: InstanceResult[];
   message?: string;
   error?: string;
+}
+
+interface WaInstance {
+  name: string;
+  status: string;
+  profilePictureUrl?: string;
 }
 
 interface ImportMessagesDialogProps {
@@ -68,6 +77,36 @@ export function ImportMessagesDialog({
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ImportResult | null>(null);
 
+  // Instance selection
+  const [instances, setInstances] = useState<WaInstance[]>([]);
+  const [loadingInstances, setLoadingInstances] = useState(false);
+  const [selectedInstances, setSelectedInstances] = useState<Set<string>>(new Set());
+
+  const loadInstances = useCallback(async () => {
+    setLoadingInstances(true);
+    const { data } = await whatsappApi.instances();
+    const list: WaInstance[] = Array.isArray(data) ? data.map((i: any) => ({
+      name: i.name || i.instanceName || i.instance?.instanceName,
+      status: i.connectionStatus || i.status || 'unknown',
+    })) : [];
+    setInstances(list);
+    // Select all connected by default
+    setSelectedInstances(new Set(list.filter(i => i.status === 'open').map(i => i.name)));
+    setLoadingInstances(false);
+  }, []);
+
+  useEffect(() => {
+    if (open) void loadInstances();
+  }, [open, loadInstances]);
+
+  const toggleInstance = (name: string) => {
+    setSelectedInstances(prev => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name); else next.add(name);
+      return next;
+    });
+  };
+
   const applyPreset = (days: number) => {
     setStartDate(subDays(new Date(), days));
     setEndDate(new Date());
@@ -81,6 +120,7 @@ export function ImportMessagesDialog({
       body: {
         startDate: startDate.toISOString(),
         endDate: endDate.toISOString(),
+        instances: Array.from(selectedInstances),
       },
     });
     if (error) {
@@ -96,6 +136,8 @@ export function ImportMessagesDialog({
     if (!v) setResult(null);
     onOpenChange(v);
   };
+
+  const connectedInstances = instances.filter(i => i.status === 'open');
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
