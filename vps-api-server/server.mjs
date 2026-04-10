@@ -610,15 +610,28 @@ app.post('/api/whatsapp/subscribe-presence', async (req, res) => {
       return res.status(400).json({ error: 'instance and number are required' });
     }
     const cleanNumber = number.replace(/\D/g, '');
-    // Use findPresence to subscribe — updatePresence sends OUR presence to the contact
+    // Use findPresence to subscribe AND get current status
     const result = await evolutionFetch(`/chat/findPresence/${instance}`, {
       method: 'POST',
       body: JSON.stringify({
         number: `${cleanNumber}@s.whatsapp.net`,
       }),
     });
-    console.log(`👁️ Presence subscribed for ${cleanNumber} on ${instance}`);
-    res.json({ subscribed: true, number: cleanNumber });
+    console.log(`👁️ Presence subscribed for ${cleanNumber} on ${instance}`, JSON.stringify(result).slice(0, 200));
+
+    // Extract current presence from Evolution response
+    let currentStatus = 'unavailable';
+    if (result) {
+      // Evolution API v2 returns array of participants or direct status
+      const participants = Array.isArray(result) ? result : result?.participants || [];
+      if (participants.length > 0) {
+        currentStatus = participants[0]?.status || participants[0]?.presence || 'unavailable';
+      } else if (result?.status || result?.presence) {
+        currentStatus = result.status || result.presence;
+      }
+    }
+
+    res.json({ subscribed: true, number: cleanNumber, presence: currentStatus });
   } catch (error) {
     console.error('Presence subscribe error:', error.message);
     res.status(500).json({ error: error.message });

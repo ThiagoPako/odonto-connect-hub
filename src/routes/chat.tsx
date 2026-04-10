@@ -379,7 +379,21 @@ function ChatPage() {
     const key = `${connected.instanceName}:${selectedLead.phone}`;
     if (presenceSubscribedRef.current.has(key)) return;
     presenceSubscribedRef.current.add(key);
-    whatsappApi.subscribePresence(connected.instanceName, selectedLead.phone).catch(() => {});
+    whatsappApi.subscribePresence(connected.instanceName, selectedLead.phone).then(({ data }) => {
+      if (!data?.presence || !selectedLead) return;
+      const status = data.presence;
+      let displayStatus: "online" | "offline" = "offline";
+      if (status === "available" || status === "online" || status === "composing" || status === "recording" || status === "paused") {
+        displayStatus = "online";
+      }
+      setPresenceMap((prev) => ({
+        ...prev,
+        [selectedLead.id]: {
+          status: displayStatus,
+          lastSeen: displayStatus === "offline" ? new Date() : prev[selectedLead.id]?.lastSeen ?? null,
+        },
+      }));
+    }).catch(() => {});
   }, [selectedLead?.id, connectedInstances]);
 
   // ─── Load initial message history from VPS when selecting a lead ───
