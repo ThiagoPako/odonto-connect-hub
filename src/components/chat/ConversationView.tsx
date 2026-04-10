@@ -1,6 +1,6 @@
 import type { ChatMessage } from "@/data/chatMockData";
 import { useEffect, useRef, useState, useCallback } from "react";
-import { CheckCheck, Check, MapPin, Phone, Mail, Globe, Building2, BarChart3, Reply, SmilePlus, ExternalLink, List, ChevronDown, Forward, Trash2, Search, Loader2, Upload, Copy, Clock, Mic, Download, X, ZoomIn, ZoomOut } from "lucide-react";
+import { CheckCheck, Check, MapPin, Phone, Mail, Globe, Building2, BarChart3, Reply, ExternalLink, List, ChevronDown, Forward, Trash2, Search, Loader2, Upload, Copy, Clock, Mic, Download, X, ZoomIn, ZoomOut } from "lucide-react";
 import { TypingIndicator } from "./TypingIndicator";
 
 interface ServerSearchResult {
@@ -15,7 +15,7 @@ interface ConversationViewProps {
   leadName: string;
   isTyping?: boolean;
   isRecording?: boolean;
-  onReaction?: (messageId: string, emoji: string) => void;
+  
   onReply?: (msg: ChatMessage) => void;
   onForward?: (msg: ChatMessage) => void;
   onDelete?: (msg: ChatMessage) => void;
@@ -218,7 +218,7 @@ function AudioPlayer({ fileUrl, duration, isLead, status }: { fileUrl?: string; 
   );
 }
 
-const REACTION_EMOJIS = ["👍", "❤️", "😁", "🦷", "✨", "🙏", "💪", "😊"];
+
 
 // ─── Date helpers ───────────────────────────────────────────
 function formatDateDivider(date: Date): string {
@@ -251,10 +251,10 @@ function shouldShowTimestamp(messages: ChatMessage[], idx: number): boolean {
   return diff > 5 * 60 * 1000; // 5 min gap
 }
 
-export function ConversationView({ messages, leadName, isTyping, isRecording, onReaction, onReply, onForward, onDelete, onLoadMore, hasMore = false, loadingMore = false, onFileDrop, unreadCount = 0, onServerSearch }: ConversationViewProps) {
+export function ConversationView({ messages, leadName, isTyping, isRecording, onReply, onForward, onDelete, onLoadMore, hasMore = false, loadingMore = false, onFileDrop, unreadCount = 0, onServerSearch }: ConversationViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const [showReactionPicker, setShowReactionPicker] = useState<string | null>(null);
+  
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
