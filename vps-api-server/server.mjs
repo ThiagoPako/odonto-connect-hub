@@ -3234,6 +3234,23 @@ let syncInterval = null;
 
 async function syncWhatsAppContacts() {
   try {
+    const normalizeEvolutionContacts = (payload) => {
+      const list = Array.isArray(payload)
+        ? payload
+        : Array.isArray(payload?.data)
+          ? payload.data
+          : Array.isArray(payload?.contacts)
+            ? payload.contacts
+            : Array.isArray(payload?.result)
+              ? payload.result
+              : [];
+
+      return list.filter((c) => {
+        const id = c?.id || c?.remoteJid || c?.jid || '';
+        return id.includes('@') && !id.endsWith('@g.us') && !id.endsWith('@broadcast');
+      });
+    };
+
     // 1. Fetch connected instances from Evolution API
     const instRes = await fetch(`${EVOLUTION_API_URL}/instance/fetchInstances`, {
       headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
@@ -3255,7 +3272,7 @@ async function syncWhatsAppContacts() {
         });
         if (cRes.ok) {
           const contacts = await cRes.json();
-          waContacts = (contacts || []).filter(c => c.id?.endsWith('@s.whatsapp.net'));
+          waContacts = normalizeEvolutionContacts(contacts);
         }
         if (waContacts.length === 0) {
           try {
@@ -3266,14 +3283,14 @@ async function syncWhatsAppContacts() {
             });
             if (altRes.ok) {
               const altContacts = await altRes.json();
-              waContacts = (altContacts || []).filter(c => (c.id || c.remoteJid || '').endsWith('@s.whatsapp.net'));
+              waContacts = normalizeEvolutionContacts(altContacts);
             }
           } catch (e) { /* ignore */ }
         }
 
         for (const c of waContacts) {
-          const telefone = (c.id || c.remoteJid || '').replace('@s.whatsapp.net', '').replace(/\D/g, '');
-          const nome = (c.name || c.pushName || telefone).trim();
+          const telefone = (c.id || c.remoteJid || c.jid || '').replace(/@.*$/, '').replace(/\D/g, '');
+          const nome = (c.name || c.pushName || c.profileName || c.notify || telefone).trim();
           if (!telefone) continue;
 
           const existing = await pool.query('SELECT id, nome FROM contatos WHERE telefone = $1', [telefone]);
@@ -3326,6 +3343,22 @@ app.post('/api/contatos/sync/now', async (req, res) => {
   try {
     await verifyUser(req);
     const allowedInstances = Array.isArray(req.body?.instances) ? req.body.instances : null;
+    const normalizeEvolutionContacts = (payload) => {
+      const list = Array.isArray(payload)
+        ? payload
+        : Array.isArray(payload?.data)
+          ? payload.data
+          : Array.isArray(payload?.contacts)
+            ? payload.contacts
+            : Array.isArray(payload?.result)
+              ? payload.result
+              : [];
+
+      return list.filter((c) => {
+        const id = c?.id || c?.remoteJid || c?.jid || '';
+        return id.includes('@') && !id.endsWith('@g.us') && !id.endsWith('@broadcast');
+      });
+    };
 
     // 1. Fetch connected instances
     const instRes = await fetch(`${EVOLUTION_API_URL}/instance/fetchInstances`, {
@@ -3335,7 +3368,6 @@ app.post('/api/contatos/sync/now', async (req, res) => {
     const instances = await instRes.json();
     let connected = instances.filter(i => (i.connectionStatus || i.status) === 'open');
 
-    // Filter by selected instances if provided
     if (allowedInstances && allowedInstances.length > 0) {
       connected = connected.filter(i => allowedInstances.includes(i.name || i.instanceName));
     }
@@ -3352,7 +3384,6 @@ app.post('/api/contatos/sync/now', async (req, res) => {
       const instResult = { name, imported: 0, skipped: 0, total: 0, error: null };
 
       try {
-        // Try findContacts first, then fallback to /contact/find
         let waContacts = [];
         console.log(`[sync][${name}] Tentando chat/findContacts...`);
         const cRes = await fetch(`${EVOLUTION_API_URL}/chat/findContacts/${name}`, {
@@ -3363,15 +3394,15 @@ app.post('/api/contatos/sync/now', async (req, res) => {
         console.log(`[sync][${name}] findContacts status: ${cRes.status}`);
         if (cRes.ok) {
           const contacts = await cRes.json();
-          console.log(`[sync][${name}] findContacts retornou ${Array.isArray(contacts) ? contacts.length : 'non-array'} items. Amostra:`, JSON.stringify((contacts || []).slice(0, 3)).substring(0, 500));
-          waContacts = (contacts || []).filter(c => c.id?.endsWith('@s.whatsapp.net'));
-          console.log(`[sync][${name}] Após filtro @s.whatsapp.net: ${waContacts.length} contatos`);
+          const rawList = Array.isArray(contacts) ? contacts : Array.isArray(contacts?.data) ? contacts.data : Array.isArray(contacts?.contacts) ? contacts.contacts : Array.isArray(contacts?.result) ? contacts.result : [];
+          console.log(`[sync][${name}] findContacts retornou ${rawList.length} items. Amostra:`, JSON.stringify(rawList.slice(0, 3)).substring(0, 500));
+          waContacts = normalizeEvolutionContacts(contacts);
+          console.log(`[sync][${name}] Após normalização: ${waContacts.length} contatos`);
         } else {
           const errText = await cRes.text().catch(() => '');
           console.log(`[sync][${name}] findContacts erro: ${errText.substring(0, 300)}`);
         }
 
-        // Fallback: try /contact/find endpoint if no results
         if (waContacts.length === 0) {
           console.log(`[sync][${name}] Tentando fallback contact/find...`);
           try {
@@ -3383,12 +3414,10 @@ app.post('/api/contatos/sync/now', async (req, res) => {
             console.log(`[sync][${name}] contact/find status: ${altRes.status}`);
             if (altRes.ok) {
               const altContacts = await altRes.json();
-              console.log(`[sync][${name}] contact/find retornou ${Array.isArray(altContacts) ? altContacts.length : 'non-array'} items. Amostra:`, JSON.stringify((altContacts || []).slice(0, 3)).substring(0, 500));
-              waContacts = (altContacts || []).filter(c => {
-                const id = c.id || c.remoteJid || '';
-                return id.endsWith('@s.whatsapp.net');
-              });
-              console.log(`[sync][${name}] Após filtro fallback: ${waContacts.length} contatos`);
+              const rawAltList = Array.isArray(altContacts) ? altContacts : Array.isArray(altContacts?.data) ? altContacts.data : Array.isArray(altContacts?.contacts) ? altContacts.contacts : Array.isArray(altContacts?.result) ? altContacts.result : [];
+              console.log(`[sync][${name}] contact/find retornou ${rawAltList.length} items. Amostra:`, JSON.stringify(rawAltList.slice(0, 3)).substring(0, 500));
+              waContacts = normalizeEvolutionContacts(altContacts);
+              console.log(`[sync][${name}] Após normalização fallback: ${waContacts.length} contatos`);
             } else {
               const errText2 = await altRes.text().catch(() => '');
               console.log(`[sync][${name}] contact/find erro: ${errText2.substring(0, 300)}`);
@@ -3400,9 +3429,8 @@ app.post('/api/contatos/sync/now', async (req, res) => {
         instResult.total = waContacts.length;
 
         for (const c of waContacts) {
-          const telefone = (c.id || c.remoteJid || '').replace('@s.whatsapp.net', '').replace(/\D/g, '');
-          // Prefer saved contact name, fallback to pushName (profile name), then phone
-          const nome = (c.name || c.pushName || telefone).trim();
+          const telefone = (c.id || c.remoteJid || c.jid || '').replace(/@.*$/, '').replace(/\D/g, '');
+          const nome = (c.name || c.pushName || c.profileName || c.notify || telefone).trim();
           if (!telefone) continue;
 
           const existing = await pool.query('SELECT id, nome FROM contatos WHERE telefone = $1', [telefone]);
