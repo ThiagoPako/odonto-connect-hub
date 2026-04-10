@@ -619,19 +619,20 @@ app.post('/api/whatsapp/subscribe-presence', async (req, res) => {
     });
     console.log(`👁️ Presence subscribed for ${cleanNumber} on ${instance}`, JSON.stringify(result).slice(0, 200));
 
-    // Extract current presence from Evolution response
+    // evolutionFetch returns { ok, status, data } — unwrap payload before parsing presence
+    const payload = result?.data;
     let currentStatus = 'unavailable';
-    if (result) {
-      // Evolution API v2 returns array of participants or direct status
-      const participants = Array.isArray(result) ? result : result?.participants || [];
+
+    if (result?.ok && payload) {
+      const participants = Array.isArray(payload) ? payload : payload?.participants || [];
       if (participants.length > 0) {
         currentStatus = participants[0]?.status || participants[0]?.presence || 'unavailable';
-      } else if (result?.status || result?.presence) {
-        currentStatus = result.status || result.presence;
+      } else if (payload?.status || payload?.presence) {
+        currentStatus = payload.status || payload.presence;
       }
     }
 
-    res.json({ subscribed: true, number: cleanNumber, presence: currentStatus });
+    res.json({ subscribed: !!result?.ok, number: cleanNumber, presence: currentStatus });
   } catch (error) {
     console.error('Presence subscribe error:', error.message);
     res.status(500).json({ error: error.message });
