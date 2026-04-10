@@ -264,6 +264,25 @@ export const whatsappApi = {
       body: { instance, number },
       background: true,
     }),
+  /** Mark messages as read on WhatsApp (blue ticks for the patient) */
+  markWhatsAppRead: (instance: string, number: string, messageIds: string[]) =>
+    vpsApiFetch<{ success: boolean; marked: number }>('/whatsapp/mark-read', {
+      method: 'POST',
+      body: { instance, number, messageIds },
+      background: true,
+    }),
+  /** Delete message for everyone on WhatsApp */
+  deleteMessage: (instance: string, number: string, messageId: string, fromMe = true) =>
+    vpsApiFetch<{ success: boolean }>('/whatsapp/delete-message', {
+      method: 'POST',
+      body: { instance, number, messageId, fromMe },
+    }),
+  /** Archive chat on WhatsApp */
+  archiveChat: (instance: string, number: string, archive = true) =>
+    vpsApiFetch<{ success: boolean }>('/whatsapp/archive-chat', {
+      method: 'POST',
+      body: { instance, number, archive },
+    }),
 };
 
 // ─── Attendance Settings ────────────────────────────────────
