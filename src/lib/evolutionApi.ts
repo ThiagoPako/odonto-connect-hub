@@ -348,15 +348,21 @@ export async function fetchWhatsAppContacts(instanceName: string): Promise<Whats
 
   return contacts
     .filter((c: any) => {
-      const jid = c?.id || c?.remoteJid || c?.jid || "";
-      return jid.includes("@") && !jid.endsWith("@g.us") && !jid.endsWith("@broadcast");
+      const jid = c?.remoteJid || c?.jid || c?.id || "";
+      const type = String(c?.type || "").toLowerCase();
+      return (
+        jid.includes("@") &&
+        !jid.endsWith("@g.us") &&
+        !jid.endsWith("@broadcast") &&
+        type !== "group_member"
+      );
     })
     .map((c: any) => {
-      const jid = c?.id || c?.remoteJid || c?.jid || "";
+      const jid = c?.remoteJid || c?.jid || c?.id || "";
       return {
         id: jid.replace(/@.*$/, "").replace(/\D/g, ""),
         pushName: c?.name || c?.pushName || c?.profileName || c?.notify || "",
-        profilePictureUrl: c?.profilePictureUrl || "",
+        profilePictureUrl: c?.profilePictureUrl || c?.profilePicUrl || "",
       };
     })
     .filter((c: WhatsAppContact) => c.id.length > 0);
