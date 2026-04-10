@@ -20,7 +20,8 @@ import {
   WifiOff,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { vpsApiFetch, whatsappApi } from "@/lib/vpsApi";
+import { contatosApi, whatsappApi } from "@/lib/vpsApi";
+import { fetchWhatsAppContacts } from "@/lib/evolutionApi";
 
 interface InstanceResult {
   name: string;
@@ -65,12 +66,14 @@ export function ImportWhatsAppDialog({
   const loadInstances = useCallback(async () => {
     setLoadingInstances(true);
     const { data } = await whatsappApi.instances();
-    const list: WaInstance[] = Array.isArray(data) ? data.map((i: any) => ({
-      name: i.name || i.instanceName || i.instance?.instanceName,
-      status: i.connectionStatus || i.status || 'unknown',
-    })) : [];
+    const list: WaInstance[] = Array.isArray(data)
+      ? data.map((i: any) => ({
+          name: i.name || i.instanceName || i.instance?.instanceName,
+          status: i.connectionStatus || i.status || "unknown",
+        }))
+      : [];
     setInstances(list);
-    setSelectedInstances(new Set(list.filter(i => i.status === 'open').map(i => i.name)));
+    setSelectedInstances(new Set(list.filter((i) => i.status === "open").map((i) => i.name)));
     setLoadingInstances(false);
   }, []);
 
@@ -79,9 +82,10 @@ export function ImportWhatsAppDialog({
   }, [open, loadInstances]);
 
   const toggleInstance = (name: string) => {
-    setSelectedInstances(prev => {
+    setSelectedInstances((prev) => {
       const next = new Set(prev);
-      if (next.has(name)) next.delete(name); else next.add(name);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
       return next;
     });
   };
@@ -89,16 +93,83 @@ export function ImportWhatsAppDialog({
   const handleImport = async () => {
     setLoading(true);
     setResult(null);
-    const { data, error } = await vpsApiFetch<SyncResult>("/contatos/sync/now", {
-      method: "POST",
-      body: { instances: Array.from(selectedInstances) },
-    });
-    if (error) {
-      setResult({ success: false, imported: 0, totalContatos: 0, instances: [], error });
-    } else if (data) {
-      setResult(data);
-      if (data.imported > 0) onImported();
+
+    const instanceResults: InstanceResult[] = [];
+    let totalImported = 0;
+    let hadContacts = false;
+
+    for (const instanceName of Array.from(selectedInstances)) {
+      try {
+        const contacts = await fetchWhatsAppContacts(instanceName);
+        const mapped = contacts.map((contact) => ({
+          telefone: contact.id,
+          nome: contact.pushName?.trim() || contact.id,
+        }));
+
+        if (mapped.length > 0) hadContacts = true;
+
+        if (mapped.length === 0) {
+          instanceResults.push({
+            name: instanceName,
+            imported: 0,
+            skipped: 0,
+            total: 0,
+            error: null,
+          });
+          continue;
+        }
+
+        const { data, error } = await contatosApi.bulkImport(mapped);
+        if (error) {
+          instanceResults.push({
+            name: instanceName,
+            imported: 0,
+            skipped: 0,
+            total: mapped.length,
+            error,
+          });
+          continue;
+        }
+
+        const imported = data?.imported ?? 0;
+        const skipped = data?.skipped ?? Math.max(0, mapped.length - imported);
+        const total = data?.total ?? mapped.length;
+
+        instanceResults.push({
+          name: instanceName,
+          imported,
+          skipped,
+          total,
+          error: null,
+        });
+
+        totalImported += imported;
+      } catch (error) {
+        instanceResults.push({
+          name: instanceName,
+          imported: 0,
+          skipped: 0,
+          total: 0,
+          error: error instanceof Error ? error.message : "Erro ao buscar contatos",
+        });
+      }
     }
+
+    const { data: statusData } = await contatosApi.syncStatus();
+
+    setResult({
+      success: instanceResults.some((inst) => !inst.error),
+      imported: totalImported,
+      totalContatos: statusData?.totalContatos ?? 0,
+      instances: instanceResults,
+      message: !hadContacts
+        ? "Nenhum contato encontrado nas instâncias selecionadas"
+        : totalImported > 0
+          ? undefined
+          : "Nenhum novo contato importado",
+    });
+
+    if (totalImported > 0) onImported();
     setLoading(false);
   };
 
@@ -122,31 +193,30 @@ export function ImportWhatsAppDialog({
 
         {!result && !loading && (
           <div className="space-y-4">
-            {/* Instance selection */}
             <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+              <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
                 Instâncias WhatsApp
               </label>
               {loadingInstances ? (
-                <div className="flex items-center gap-2 py-3 justify-center">
+                <div className="flex items-center justify-center gap-2 py-3">
                   <Loader2 className="h-4 w-4 animate-spin text-primary" />
                   <span className="text-xs text-muted-foreground">Carregando instâncias...</span>
                 </div>
               ) : instances.length === 0 ? (
-                <p className="text-xs text-muted-foreground text-center py-3">Nenhuma instância encontrada</p>
+                <p className="py-3 text-center text-xs text-muted-foreground">Nenhuma instância encontrada</p>
               ) : (
-                <div className="space-y-1.5 max-h-[200px] overflow-y-auto">
+                <div className="max-h-[200px] space-y-1.5 overflow-y-auto">
                   {instances.map((inst) => {
-                    const isConnected = inst.status === 'open';
+                    const isConnected = inst.status === "open";
                     return (
                       <label
                         key={inst.name}
                         className={cn(
-                          "flex items-center gap-2.5 p-2 rounded-lg border transition-colors cursor-pointer",
+                          "flex cursor-pointer items-center gap-2.5 rounded-lg border p-2 transition-colors",
                           selectedInstances.has(inst.name)
                             ? "border-primary/40 bg-primary/5"
                             : "border-border hover:bg-muted/40",
-                          !isConnected && "opacity-50 cursor-not-allowed"
+                          !isConnected && "cursor-not-allowed opacity-50",
                         )}
                       >
                         <Checkbox
@@ -155,14 +225,17 @@ export function ImportWhatsAppDialog({
                           disabled={!isConnected}
                           className="shrink-0"
                         />
-                        <Smartphone className="h-3.5 w-3.5 text-primary shrink-0" />
-                        <span className="text-sm font-medium text-foreground truncate flex-1">{inst.name}</span>
+                        <Smartphone className="h-3.5 w-3.5 shrink-0 text-primary" />
+                        <span className="flex-1 truncate text-sm font-medium text-foreground">{inst.name}</span>
                         {isConnected ? (
-                          <Badge variant="outline" className="text-[10px] bg-chart-2/10 text-chart-2 border-chart-2/30 gap-1">
+                          <Badge
+                            variant="outline"
+                            className="gap-1 border-chart-2/30 bg-chart-2/10 text-[10px] text-chart-2"
+                          >
                             <Wifi className="h-2.5 w-2.5" /> Conectada
                           </Badge>
                         ) : (
-                          <Badge variant="outline" className="text-[10px] text-muted-foreground gap-1">
+                          <Badge variant="outline" className="gap-1 text-[10px] text-muted-foreground">
                             <WifiOff className="h-2.5 w-2.5" /> Offline
                           </Badge>
                         )}
@@ -174,8 +247,10 @@ export function ImportWhatsAppDialog({
             </div>
 
             <Button onClick={handleImport} className="w-full" disabled={selectedInstances.size === 0}>
-              <Download className="h-4 w-4 mr-2" />
-              {selectedInstances.size === 0 ? "Selecione ao menos uma instância" : `Importar de ${selectedInstances.size} instância${selectedInstances.size !== 1 ? "s" : ""}`}
+              <Download className="mr-2 h-4 w-4" />
+              {selectedInstances.size === 0
+                ? "Selecione ao menos uma instância"
+                : `Importar de ${selectedInstances.size} instância${selectedInstances.size !== 1 ? "s" : ""}`}
             </Button>
           </div>
         )}
@@ -189,11 +264,11 @@ export function ImportWhatsAppDialog({
 
         {result && (
           <div className="space-y-4">
-            <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/50">
+            <div className="flex items-center gap-3 rounded-lg bg-muted/50 p-3">
               {result.success ? (
-                <CheckCircle2 className="h-6 w-6 text-chart-2 shrink-0" />
+                <CheckCircle2 className="h-6 w-6 shrink-0 text-chart-2" />
               ) : (
-                <XCircle className="h-6 w-6 text-destructive shrink-0" />
+                <XCircle className="h-6 w-6 shrink-0 text-destructive" />
               )}
               <div>
                 <p className="text-sm font-medium text-foreground">
@@ -217,20 +292,23 @@ export function ImportWhatsAppDialog({
                   {result.instances.map((inst) => (
                     <div
                       key={inst.name}
-                      className="flex items-center justify-between p-2.5 rounded-lg border border-border bg-card"
+                      className="flex items-center justify-between rounded-lg border border-border bg-card p-2.5"
                     >
-                      <div className="flex items-center gap-2 min-w-0">
-                        <Smartphone className="h-4 w-4 text-primary shrink-0" />
-                        <span className="text-sm font-medium text-foreground truncate">
-                          {inst.name}
-                        </span>
+                      <div className="flex min-w-0 items-center gap-2">
+                        <Smartphone className="h-4 w-4 shrink-0 text-primary" />
+                        <span className="truncate text-sm font-medium text-foreground">{inst.name}</span>
                       </div>
-                      <div className="flex items-center gap-1.5 shrink-0">
+                      <div className="flex shrink-0 items-center gap-1.5">
                         {inst.error ? (
-                          <Badge variant="destructive" className="text-[10px]">Erro</Badge>
+                          <Badge variant="destructive" className="text-[10px]">
+                            Erro
+                          </Badge>
                         ) : (
                           <>
-                            <Badge variant="outline" className="text-[10px] bg-chart-2/10 text-chart-2 border-chart-2/30">
+                            <Badge
+                              variant="outline"
+                              className="border-chart-2/30 bg-chart-2/10 text-[10px] text-chart-2"
+                            >
                               +{inst.imported}
                             </Badge>
                             <Badge variant="outline" className="text-[10px]">
