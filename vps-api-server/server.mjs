@@ -1072,42 +1072,9 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '6
     const captionField = mediaCaption ? { caption: mediaCaption } : {};
 
     const payloadVariants = [
+      // Legacy flat format — confirmed working in production logs
       {
-        label: 'official-mediaMessage-base64',
-        body: {
-          number: cleanNumber,
-          mediaMessage: {
-            mediaType: String(mediaType),
-            mimetype: resolvedMimeType,
-            ...captionField,
-            fileName: normalizedFileName,
-            media: base64Data,
-          },
-          options: {
-            delay: 1200,
-            presence: 'composing',
-          },
-        },
-      },
-      {
-        label: 'official-mediaMessage-datauri',
-        body: {
-          number: cleanNumber,
-          mediaMessage: {
-            mediaType: String(mediaType),
-            mimetype: resolvedMimeType,
-            ...captionField,
-            fileName: normalizedFileName,
-            media: dataUri,
-          },
-          options: {
-            delay: 1200,
-            presence: 'composing',
-          },
-        },
-      },
-      {
-        label: 'legacy-v2-base64-fileName',
+        label: 'v2-base64-fileName',
         body: {
           number: cleanNumber,
           mediatype: String(mediaType),
@@ -1118,7 +1085,7 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '6
         },
       },
       {
-        label: 'legacy-v2-datauri-fileName',
+        label: 'v2-datauri-fileName',
         body: {
           number: cleanNumber,
           mediatype: String(mediaType),
