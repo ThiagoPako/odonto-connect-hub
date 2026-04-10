@@ -637,32 +637,30 @@ app.post('/api/whatsapp/subscribe-presence', async (req, res) => {
     const subKey = `${instance}:${cleanNumber}`;
     let didSubscribe = false;
 
-    // Actually call Evolution API to subscribe presence — this is REQUIRED for PRESENCE_UPDATE webhooks
+    // Subscribe to presence by sending a brief "paused" presence — this triggers Baileys to track the contact
+    // Evolution API does NOT have a /chat/fetchPresence endpoint; sendPresence with "paused" activates tracking
     if (!presenceSubscribed.has(subKey)) {
       try {
-        const subResult = await evolutionFetch(`/chat/fetchPresence/${instance}`, {
+        const jid = cleanNumber.includes('@') ? cleanNumber : `${cleanNumber}@s.whatsapp.net`;
+        const subResult = await evolutionFetch(`/chat/sendPresence/${instance}`, {
           method: 'POST',
-          body: JSON.stringify({ number: cleanNumber }),
+          body: JSON.stringify({
+            number: jid,
+            delay: 0,
+            presence: 'paused',
+          }),
         });
-        if (subResult.ok) {
+        if (subResult.ok || subResult.status === 201) {
           presenceSubscribed.add(subKey);
           didSubscribe = true;
-          console.log(`👁️ Presence subscribed for ${cleanNumber} on ${instance}:`, JSON.stringify(subResult.data).slice(0, 200));
-          
-          // Extract presence from response if available
-          const presenceFromApi = subResult.data?.[cleanNumber + '@s.whatsapp.net']?.status
-            || subResult.data?.status
-            || subResult.data?.presence;
-          if (presenceFromApi) {
-            presenceStateCache.set(cleanNumber, {
-              status: presenceFromApi,
-              instance,
-              updatedAt: new Date().toISOString(),
-            });
-          }
+          console.log(`👁️ Presence subscribed for ${cleanNumber} on ${instance} via sendPresence/paused`);
         } else {
           console.warn(`⚠️ Presence subscribe failed for ${cleanNumber}:`, JSON.stringify(subResult.data).slice(0, 200));
         }
+      } catch (subErr) {
+        console.error(`❌ Presence subscribe error for ${cleanNumber}:`, subErr.message);
+      }
+    }
       } catch (subErr) {
         console.error(`❌ Presence subscribe error for ${cleanNumber}:`, subErr.message);
       }
