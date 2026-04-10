@@ -861,6 +861,20 @@ function ChatPage() {
         }));
       }
 
+      // For media messages, upload file to VPS for persistent URL, or pass base64
+      let persistFileUrl = extra?.fileUrl || undefined;
+      const mediaFile = (extra as any)?._mediaFile as File | undefined;
+      if (mediaFile && ['image', 'video', 'document', 'audio'].includes(type)) {
+        try {
+          const uploadResult = await mediaApi.upload(mediaFile);
+          if (uploadResult.url) {
+            persistFileUrl = uploadResult.url;
+          }
+        } catch (uploadErr) {
+          console.warn('Media upload for persistence failed:', uploadErr);
+        }
+      }
+
       messagesApi.save({
         id: evolutionMsgId || msgId,
         leadId: selectedLead.id,
@@ -868,6 +882,7 @@ function ChatPage() {
         type,
         status: "sent",
         fileName: extra?.fileName,
+        fileUrl: persistFileUrl,
         mimeType: extra?.mimeType,
         replyTo: replyingTo,
         instance: connected.instanceName,
