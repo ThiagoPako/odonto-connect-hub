@@ -709,8 +709,11 @@ app.post('/api/whatsapp/subscribe-presence', async (req, res) => {
           method: 'POST',
           body: JSON.stringify({
             number: cleanNumber,
-            delay: 1200,
-            presence: 'composing',
+            options: {
+              number: cleanNumber,
+              delay: 1200,
+              presence: 'composing',
+            },
           }),
         });
         console.log(`👁️ Presence subscribe attempt for ${cleanNumber} on ${instance}: status=${subResult.status}, data=${JSON.stringify(subResult.data).slice(0, 200)}`);
@@ -862,8 +865,11 @@ app.post('/api/whatsapp/send-presence', async (req, res) => {
       method: 'POST',
       body: JSON.stringify({
         number: cleanNumber,
-        presence,
-        delay: typeof delay === 'number' ? delay : 200,
+        options: {
+          number: cleanNumber,
+          presence,
+          delay: typeof delay === 'number' ? delay : 200,
+        },
       }),
     });
 
