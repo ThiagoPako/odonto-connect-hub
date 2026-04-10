@@ -293,17 +293,17 @@ export function ImportMessagesDialog({
             {/* Summary */}
             <div className="rounded-lg bg-muted/50 p-3">
               <p className="text-xs text-muted-foreground">
-                Período selecionado:{" "}
-                <span className="font-medium text-foreground">
+                Período: <span className="font-medium text-foreground">
                   {format(startDate, "dd/MM/yyyy")} — {format(endDate, "dd/MM/yyyy")}
                 </span>{" "}
                 ({Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1} dias)
+                {" · "}{selectedInstances.size} instância{selectedInstances.size !== 1 ? "s" : ""} selecionada{selectedInstances.size !== 1 ? "s" : ""}
               </p>
             </div>
 
-            <Button onClick={handleImport} className="w-full">
+            <Button onClick={handleImport} className="w-full" disabled={selectedInstances.size === 0}>
               <MessageSquare className="h-4 w-4 mr-2" />
-              Iniciar Importação
+              {selectedInstances.size === 0 ? "Selecione ao menos uma instância" : "Iniciar Importação"}
             </Button>
           </div>
         )}
