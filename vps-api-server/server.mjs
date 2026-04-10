@@ -1081,6 +1081,8 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '6
     if (mediaCaption) multipartBody.append('caption', mediaCaption);
     multipartBody.append('file', new Blob([rawBody], { type: resolvedMimeType }), normalizedFileName);
 
+    // Image: data URI first (confirmed working), then raw base64 fallback
+    // Video: multipart first, then data URI, then raw base64
     const payloadVariants = [
       ...(String(mediaType) === 'video'
         ? [{
@@ -1090,7 +1092,7 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '6
           }]
         : []),
       {
-        label: 'v2-base64-fileName',
+        label: 'datauri-primary',
         kind: 'json',
         body: {
           number: cleanNumber,
@@ -1098,12 +1100,11 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '6
           mimetype: resolvedMimeType,
           ...captionField,
           fileName: normalizedFileName,
-          filename: normalizedFileName,
-          media: cleanBase64Media(base64Data),
+          media: dataUri,
         },
       },
       {
-        label: 'v2-datauri-fileName',
+        label: 'raw-base64-fallback',
         kind: 'json',
         body: {
           number: cleanNumber,
@@ -1111,8 +1112,7 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '6
           mimetype: resolvedMimeType,
           ...captionField,
           fileName: normalizedFileName,
-          filename: normalizedFileName,
-          media: dataUri,
+          media: cleanBase64Media(base64Data),
         },
       },
     ];
