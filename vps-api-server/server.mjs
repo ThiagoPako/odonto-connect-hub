@@ -40,6 +40,86 @@ const PORT = process.env.API_PORT || 3002;
 app.use(cors());
 app.use(express.json({ limit: '64mb' }));
 
+// ─── Media File Storage ─────────────────────────────────────
+const UPLOADS_DIR = path.join(__dirname, '..', 'uploads', 'media');
+// Ensure uploads directory exists
+(async () => {
+  if (!existsSync(UPLOADS_DIR)) {
+    await mkdir(UPLOADS_DIR, { recursive: true });
+    console.log('📁 Created media uploads directory:', UPLOADS_DIR);
+  }
+})();
+
+// Serve uploaded media files statically
+app.use('/uploads/media', express.static(UPLOADS_DIR, {
+  maxAge: '30d',
+  immutable: true,
+}));
+
+/**
+ * Save a base64 data URI or raw base64 to disk and return the public URL.
+ * Returns null on failure.
+ */
+async function saveMediaToDisk(base64OrDataUri, mimeType, originalFileName) {
+  try {
+    let base64Data = base64OrDataUri;
+    let resolvedMime = mimeType || 'application/octet-stream';
+
+    // Strip data URI prefix if present
+    if (base64OrDataUri.startsWith('data:')) {
+      const match = base64OrDataUri.match(/^data:([^;]+);base64,(.+)$/s);
+      if (match) {
+        resolvedMime = match[1];
+        base64Data = match[2];
+      }
+    }
+
+    // Determine file extension
+    const extMap = {
+      'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif',
+      'video/mp4': 'mp4', 'video/3gpp': '3gp', 'video/quicktime': 'mov', 'video/webm': 'webm',
+      'audio/ogg': 'ogg', 'audio/mpeg': 'mp3', 'audio/mp4': 'm4a', 'audio/webm': 'webm', 'audio/aac': 'aac',
+      'application/pdf': 'pdf', 'application/msword': 'doc',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+    };
+    const ext = extMap[resolvedMime.split(';')[0].trim()] || originalFileName?.split('.').pop() || 'bin';
+
+    // Generate unique filename: YYYY-MM/uuid.ext
+    const now = new Date();
+    const subDir = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const dirPath = path.join(UPLOADS_DIR, subDir);
+    if (!existsSync(dirPath)) {
+      await mkdir(dirPath, { recursive: true });
+    }
+
+    const fileName = `${randomUUID()}.${ext}`;
+    const filePath = path.join(dirPath, fileName);
+    const buffer = Buffer.from(base64Data, 'base64');
+    await writeFile(filePath, buffer);
+
+    // Return relative URL path
+    const publicUrl = `/uploads/media/${subDir}/${fileName}`;
+    console.log(`💾 Media saved: ${publicUrl} (${(buffer.length / 1024).toFixed(1)} KB)`);
+    return publicUrl;
+  } catch (err) {
+    console.error('Failed to save media to disk:', err.message);
+    return null;
+  }
+}
+
+/**
+ * Save a raw Buffer to disk and return the public URL.
+ */
+async function saveBufferToDisk(buffer, mimeType, originalFileName) {
+  try {
+    const base64 = buffer.toString('base64');
+    return await saveMediaToDisk(base64, mimeType, originalFileName);
+  } catch (err) {
+    console.error('Failed to save buffer to disk:', err.message);
+    return null;
+  }
+}
+
 // ─── PostgreSQL ─────────────────────────────────────────────
 const pool = new Pool({
   host: process.env.PG_HOST || 'localhost',
