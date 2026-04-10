@@ -607,7 +607,10 @@ app.post('/api/whatsapp/send-media', async (req, res) => {
       const rawMime = media.mimeType || 'audio/ogg';
       const cleanMime = rawMime.split(';')[0].trim();
       const finalMime = cleanMime === 'audio/webm' ? 'audio/ogg' : cleanMime;
-      const audioValue = media.base64 || media.url;
+      // Evolution API expects a data URI for audio, not raw base64
+      const audioValue = media.base64
+        ? `data:${finalMime};base64,${media.base64}`
+        : media.url;
       const result = await evolutionFetch(`/message/sendWhatsAppAudio/${instance}`, {
         method: 'POST',
         body: JSON.stringify({
