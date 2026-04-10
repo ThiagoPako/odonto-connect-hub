@@ -611,21 +611,35 @@ app.post('/api/whatsapp/send-media', async (req, res) => {
       const audioValue = audioBase64
         ? `data:${finalMime};base64,${audioBase64}`
         : media.url;
-      const result = await evolutionFetch(`/message/sendWhatsAppAudio/${instance}`, {
-        method: 'POST',
-        body: JSON.stringify({
-          number: cleanNumber,
+      const v2Payload = {
+        number: cleanNumber,
+        audio: audioValue,
+        delay: 1200,
+        quoted: undefined,
+      };
+      const v1Payload = {
+        number: cleanNumber,
+        audioMessage: {
           audio: audioValue,
-          options: {
-            delay: 1200,
-            presence: 'recording',
-            encoding: true,
-          },
-          fileName: media.fileName || `audio.${finalMime.includes('mp4') ? 'm4a' : finalMime.includes('ogg') ? 'ogg' : 'webm'}`,
-          mimeType: finalMime,
-          ptt: true,
-        }),
+        },
+        options: {
+          delay: 1200,
+          presence: 'recording',
+          encoding: true,
+        },
+      };
+
+      let result = await evolutionFetch(`/message/sendWhatsAppAudio/${instance}`, {
+        method: 'POST',
+        body: JSON.stringify(v2Payload),
       });
+
+      if (!result.ok) {
+        result = await evolutionFetch(`/message/sendWhatsAppAudio/${instance}`, {
+          method: 'POST',
+          body: JSON.stringify(v1Payload),
+        });
+      }
       if (!result.ok) {
         return res.status(result.status || 502).json({
           error: result.data?.response?.message?.[0] || result.data?.error || 'Falha ao enviar áudio',
