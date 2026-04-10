@@ -29,7 +29,7 @@ import {
   WifiOff,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { vpsApiFetch, whatsappApi } from "@/lib/vpsApi";
+import { whatsappApi, getToken } from "@/lib/vpsApi";
 
 interface InstanceResult {
   name: string;
