@@ -331,17 +331,35 @@ export interface WhatsAppContact {
 }
 
 export async function fetchWhatsAppContacts(instanceName: string): Promise<WhatsAppContact[]> {
-  const raw = await apiCall<any[]>(`/chat/findContacts/${instanceName}`, {
+  const raw = await apiCall<any>(`/chat/findContacts/${instanceName}`, {
     method: "POST",
-    body: JSON.stringify({}),
+    body: JSON.stringify({ where: {} }),
   });
-  return (raw || [])
-    .filter((c: any) => c.id?.endsWith("@s.whatsapp.net"))
-    .map((c: any) => ({
-      id: c.id.replace("@s.whatsapp.net", ""),
-      pushName: c.pushName || c.name || "",
-      profilePictureUrl: c.profilePictureUrl || "",
-    }));
+
+  const contacts = Array.isArray(raw)
+    ? raw
+    : Array.isArray(raw?.data)
+      ? raw.data
+      : Array.isArray(raw?.contacts)
+        ? raw.contacts
+        : Array.isArray(raw?.result)
+          ? raw.result
+          : [];
+
+  return contacts
+    .filter((c: any) => {
+      const jid = c?.id || c?.remoteJid || c?.jid || "";
+      return jid.includes("@") && !jid.endsWith("@g.us") && !jid.endsWith("@broadcast");
+    })
+    .map((c: any) => {
+      const jid = c?.id || c?.remoteJid || c?.jid || "";
+      return {
+        id: jid.replace(/@.*$/, "").replace(/\D/g, ""),
+        pushName: c?.name || c?.pushName || c?.profileName || c?.notify || "",
+        profilePictureUrl: c?.profilePictureUrl || "",
+      };
+    })
+    .filter((c: WhatsAppContact) => c.id.length > 0);
 }
 
 export { type ConnectionStatus, type EvolutionInstance, type InstanceState, type QrCodeResponse };
