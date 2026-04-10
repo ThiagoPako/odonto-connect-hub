@@ -495,51 +495,29 @@ function ChatPage() {
         fileName: m.file_name || undefined,
         fileUrl: m.media_url || undefined,
         mimeType: m.mime_type || undefined,
+        reactions: Array.isArray(m.reactions) ? m.reactions : [],
       }));
 
       setMessages((prev) => {
         const existing = prev[selectedLead.id] || [];
-        // Merge: prepend history, skip duplicates
         const existingIds = new Set(existing.map((m) => m.id));
         const newMsgs = apiMessages.filter((m) => !existingIds.has(m.id));
         return { ...prev, [selectedLead.id]: [...newMsgs, ...existing] };
       });
-
-      setHistoryHasMore((prev) => ({ ...prev, [selectedLead.id]: data.hasMore }));
+      setHistoryHasMore((prev) => ({ ...prev, [selectedLead.id]: !!data.hasMore }));
+    }).catch(() => {
+      historyLoadedRef.current.delete(selectedLead.id);
     });
-
-    // Mark messages as read on server and reset local unread count
-    messagesApi.markRead(selectedLead.id).catch(() => {});
-    const resetUnread = (l: Lead): Lead =>
-      l.id === selectedLead.id ? { ...l, unreadCount: 0 } : l;
-    setQueue((prev) => prev.map(resetUnread));
-    setMyLeads((prev) => prev.map(resetUnread));
-
-    // Send read receipt to WhatsApp (blue ticks for patient)
-    const instanceName = connectedInstances[0]?.instanceName;
-    if (instanceName && selectedLead.phone) {
-      // Collect last N unread message IDs from lead
-      const leadMsgs = messages[selectedLead.id] || [];
-      const unreadIds = leadMsgs
-        .filter((m) => m.sender === "lead" && m.status !== "read")
-        .slice(-20)
-        .map((m) => m.id)
-        .filter((id) => !id.startsWith("sys-") && !id.startsWith("msg-"));
-      if (unreadIds.length > 0) {
-        whatsappApi.markWhatsAppRead(instanceName, selectedLead.phone, unreadIds).catch(() => {});
-      }
-    }
   }, [selectedLead?.id]);
 
-  // ─── Infinite scroll: load older messages ───
-  const handleLoadMore = useCallback(async () => {
-    if (!selectedLead) return;
-    const currentMsgs = messages[selectedLead.id] || [];
-    if (currentMsgs.length === 0) return;
+  const handleLoadMore = async () => {
+    if (!selectedLead || historyLoading) return;
+    const currentMessages = messages[selectedLead.id] || [];
+    if (currentMessages.length === 0) return;
 
-    setHistoryLoading(true);
-    const oldestMsg = currentMsgs[0];
+    const oldestMsg = currentMessages[0];
     const oldestTimestamp = new Date(oldestMsg.timestamp).toISOString();
+    setHistoryLoading(true);
 
     try {
       const { data } = await messagesApi.list(selectedLead.id, { before: oldestTimestamp, limit: 30 });
@@ -555,6 +533,7 @@ function ChatPage() {
           fileName: m.file_name || undefined,
           fileUrl: m.media_url || undefined,
           mimeType: m.mime_type || undefined,
+          reactions: Array.isArray(m.reactions) ? m.reactions : [],
         }));
 
         setMessages((prev) => {
@@ -564,7 +543,7 @@ function ChatPage() {
           return { ...prev, [selectedLead.id]: [...newMsgs, ...existing] };
         });
 
-        setHistoryHasMore((prev) => ({ ...prev, [selectedLead.id]: data.hasMore }));
+        setHistoryHasMore((prev) => ({ ...prev, [selectedLead.id]: !!data.hasMore }));
       } else {
         setHistoryHasMore((prev) => ({ ...prev, [selectedLead.id]: false }));
       }
@@ -573,7 +552,7 @@ function ChatPage() {
     } finally {
       setHistoryLoading(false);
     }
-  }, [selectedLead?.id, messages]);
+  };
 
   // Sync global unread count for sidebar badge
   useEffect(() => {
@@ -1026,16 +1005,26 @@ function ChatPage() {
   };
   const handleReaction = (messageId: string, emoji: string) => {
     if (!selectedLead) return;
-    // Send reaction via Evolution API using the real WhatsApp message key.id
     const connected = connectedInstances[0];
-    if (connected && selectedLead.phone) {
-      whatsappApi.sendReaction(connected.instanceName, selectedLead.phone, messageId, emoji)
-        .then(() => toast.success("Reação enviada"))
-        .catch((err: any) => {
-          console.error("Failed to send reaction:", err);
-          toast.error("Erro ao enviar reação");
-        });
-    }
+    if (!connected || !selectedLead.phone) return;
+
+    whatsappApi.sendReaction(connected.instanceName, selectedLead.phone, messageId, emoji)
+      .then(({ error }) => {
+        if (error) throw new Error(error);
+        setMessages((prev) => ({
+          ...prev,
+          [selectedLead.id]: (prev[selectedLead.id] || []).map((m) =>
+            m.id === messageId
+              ? { ...m, reactions: [{ emoji, count: 1 }] }
+              : m
+          ),
+        }));
+        toast.success("Reação enviada");
+      })
+      .catch((err: any) => {
+        console.error("Failed to send reaction:", err);
+        toast.error(err?.message || "Erro ao enviar reação");
+      });
   };
 
 

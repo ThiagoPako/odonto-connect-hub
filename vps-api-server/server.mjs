@@ -1420,18 +1420,42 @@ app.post('/api/whatsapp/send-reaction', async (req, res) => {
   try {
     await verifyUser(req);
     const { instance, number, messageId, reaction } = req.body;
+    if (!instance || !number || !messageId || typeof reaction !== 'string') {
+      return res.status(400).json({ error: 'instance, number, messageId e reaction são obrigatórios' });
+    }
+
     const cleanNumber = number.replace(/\D/g, '');
+    const { rows: messageRows } = await pool.query(
+      `SELECT sender FROM chat_messages WHERE id = $1 LIMIT 1`,
+      [messageId]
+    );
+    const fromMe = messageRows[0]?.sender === 'attendant';
+
     const result = await evolutionFetch(`/message/sendReaction/${instance}`, {
       method: 'POST',
       body: JSON.stringify({
         key: {
           remoteJid: `${cleanNumber}@s.whatsapp.net`,
+          fromMe,
           id: messageId,
         },
         reaction,
       }),
     });
-    res.json(result.data);
+
+    if (!result.ok) {
+      const errorMessage = result.data?.response?.message || result.data?.error || result.data?.message || `Evolution API HTTP ${result.status}`;
+      return res.status(result.status || 500).json({ error: errorMessage, details: result.data });
+    }
+
+    await pool.query(
+      `UPDATE chat_messages
+         SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('reactions', $2::jsonb)
+       WHERE id = $1`,
+      [messageId, JSON.stringify(reaction ? [{ emoji: reaction, count: 1 }] : [])]
+    );
+
+    res.json({ success: true, reaction, result: result.data });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -3338,6 +3362,7 @@ app.get('/api/messages/:leadId', async (req, res) => {
       reply_to_content: r.reply_to_content,
       reply_to_sender: r.reply_to_sender,
       attendant_name: r.attendant_name,
+      reactions: Array.isArray(r.metadata?.reactions) ? r.metadata.reactions : [],
       metadata: r.metadata,
     }));
 
