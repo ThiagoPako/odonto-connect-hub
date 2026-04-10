@@ -3312,6 +3312,7 @@ app.get('/api/contatos/sync/status', async (req, res) => {
 app.post('/api/contatos/sync/now', async (req, res) => {
   try {
     await verifyUser(req);
+    const allowedInstances = Array.isArray(req.body?.instances) ? req.body.instances : null;
 
     // 1. Fetch connected instances
     const instRes = await fetch(`${EVOLUTION_API_URL}/instance/fetchInstances`, {
@@ -3319,10 +3320,15 @@ app.post('/api/contatos/sync/now', async (req, res) => {
     });
     if (!instRes.ok) return res.json({ success: false, error: 'Falha ao buscar instâncias', instances: [] });
     const instances = await instRes.json();
-    const connected = instances.filter(i => (i.connectionStatus || i.status) === 'open');
+    let connected = instances.filter(i => (i.connectionStatus || i.status) === 'open');
+
+    // Filter by selected instances if provided
+    if (allowedInstances && allowedInstances.length > 0) {
+      connected = connected.filter(i => allowedInstances.includes(i.name || i.instanceName));
+    }
 
     if (connected.length === 0) {
-      return res.json({ success: true, imported: 0, totalContatos: 0, instances: [], message: 'Nenhuma instância conectada' });
+      return res.json({ success: true, imported: 0, totalContatos: 0, instances: [], message: 'Nenhuma instância conectada/selecionada' });
     }
 
     const instanceResults = [];
@@ -3393,7 +3399,7 @@ app.post('/api/contatos/sync/now', async (req, res) => {
 app.post('/api/messages/import-whatsapp', async (req, res) => {
   try {
     await verifyUser(req);
-    const { startDate, endDate } = req.body;
+    const { startDate, endDate, instances: allowedInstances } = req.body;
     if (!startDate || !endDate) return res.status(400).json({ error: 'startDate e endDate obrigatórios' });
 
     const start = new Date(startDate);
@@ -3405,11 +3411,16 @@ app.post('/api/messages/import-whatsapp', async (req, res) => {
       headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
     });
     if (!instRes.ok) return res.json({ success: false, error: 'Falha ao buscar instâncias', instances: [] });
-    const instances = await instRes.json();
-    const connected = instances.filter(i => (i.connectionStatus || i.status) === 'open');
+    const allInstances = await instRes.json();
+    let connected = allInstances.filter(i => (i.connectionStatus || i.status) === 'open');
+
+    // Filter by selected instances if provided
+    if (Array.isArray(allowedInstances) && allowedInstances.length > 0) {
+      connected = connected.filter(i => allowedInstances.includes(i.name || i.instanceName));
+    }
 
     if (connected.length === 0) {
-      return res.json({ success: true, imported: 0, skipped: 0, instances: [], message: 'Nenhuma instância conectada' });
+      return res.json({ success: true, imported: 0, skipped: 0, instances: [], message: 'Nenhuma instância conectada/selecionada' });
     }
 
     const instanceResults = [];

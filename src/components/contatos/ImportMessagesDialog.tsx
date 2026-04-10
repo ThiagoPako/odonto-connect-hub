@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { format, subDays } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import {
@@ -11,6 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Calendar } from "@/components/ui/calendar";
+import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Popover,
@@ -24,9 +25,11 @@ import {
   XCircle,
   Smartphone,
   CalendarIcon,
+  Wifi,
+  WifiOff,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { vpsApiFetch } from "@/lib/vpsApi";
+import { vpsApiFetch, whatsappApi } from "@/lib/vpsApi";
 
 interface InstanceResult {
   name: string;
@@ -43,6 +46,12 @@ interface ImportResult {
   instances: InstanceResult[];
   message?: string;
   error?: string;
+}
+
+interface WaInstance {
+  name: string;
+  status: string;
+  profilePictureUrl?: string;
 }
 
 interface ImportMessagesDialogProps {
@@ -68,6 +77,36 @@ export function ImportMessagesDialog({
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ImportResult | null>(null);
 
+  // Instance selection
+  const [instances, setInstances] = useState<WaInstance[]>([]);
+  const [loadingInstances, setLoadingInstances] = useState(false);
+  const [selectedInstances, setSelectedInstances] = useState<Set<string>>(new Set());
+
+  const loadInstances = useCallback(async () => {
+    setLoadingInstances(true);
+    const { data } = await whatsappApi.instances();
+    const list: WaInstance[] = Array.isArray(data) ? data.map((i: any) => ({
+      name: i.name || i.instanceName || i.instance?.instanceName,
+      status: i.connectionStatus || i.status || 'unknown',
+    })) : [];
+    setInstances(list);
+    // Select all connected by default
+    setSelectedInstances(new Set(list.filter(i => i.status === 'open').map(i => i.name)));
+    setLoadingInstances(false);
+  }, []);
+
+  useEffect(() => {
+    if (open) void loadInstances();
+  }, [open, loadInstances]);
+
+  const toggleInstance = (name: string) => {
+    setSelectedInstances(prev => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name); else next.add(name);
+      return next;
+    });
+  };
+
   const applyPreset = (days: number) => {
     setStartDate(subDays(new Date(), days));
     setEndDate(new Date());
@@ -81,6 +120,7 @@ export function ImportMessagesDialog({
       body: {
         startDate: startDate.toISOString(),
         endDate: endDate.toISOString(),
+        instances: Array.from(selectedInstances),
       },
     });
     if (error) {
@@ -97,6 +137,8 @@ export function ImportMessagesDialog({
     onOpenChange(v);
   };
 
+  const connectedInstances = instances.filter(i => i.status === 'open');
+
   return (
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="sm:max-w-lg">
@@ -112,6 +154,57 @@ export function ImportMessagesDialog({
 
         {!result && !loading && (
           <div className="space-y-4">
+            {/* Instance selection */}
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                Instâncias WhatsApp
+              </label>
+              {loadingInstances ? (
+                <div className="flex items-center gap-2 py-3 justify-center">
+                  <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                  <span className="text-xs text-muted-foreground">Carregando instâncias...</span>
+                </div>
+              ) : instances.length === 0 ? (
+                <p className="text-xs text-muted-foreground text-center py-3">Nenhuma instância encontrada</p>
+              ) : (
+                <div className="space-y-1.5 max-h-[140px] overflow-y-auto">
+                  {instances.map((inst) => {
+                    const isConnected = inst.status === 'open';
+                    return (
+                      <label
+                        key={inst.name}
+                        className={cn(
+                          "flex items-center gap-2.5 p-2 rounded-lg border transition-colors cursor-pointer",
+                          selectedInstances.has(inst.name)
+                            ? "border-primary/40 bg-primary/5"
+                            : "border-border hover:bg-muted/40",
+                          !isConnected && "opacity-50 cursor-not-allowed"
+                        )}
+                      >
+                        <Checkbox
+                          checked={selectedInstances.has(inst.name)}
+                          onCheckedChange={() => isConnected && toggleInstance(inst.name)}
+                          disabled={!isConnected}
+                          className="shrink-0"
+                        />
+                        <Smartphone className="h-3.5 w-3.5 text-primary shrink-0" />
+                        <span className="text-sm font-medium text-foreground truncate flex-1">{inst.name}</span>
+                        {isConnected ? (
+                          <Badge variant="outline" className="text-[10px] bg-chart-2/10 text-chart-2 border-chart-2/30 gap-1">
+                            <Wifi className="h-2.5 w-2.5" /> Conectada
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-[10px] text-muted-foreground gap-1">
+                            <WifiOff className="h-2.5 w-2.5" /> Offline
+                          </Badge>
+                        )}
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
             {/* Period presets */}
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
@@ -200,17 +293,17 @@ export function ImportMessagesDialog({
             {/* Summary */}
             <div className="rounded-lg bg-muted/50 p-3">
               <p className="text-xs text-muted-foreground">
-                Período selecionado:{" "}
-                <span className="font-medium text-foreground">
+                Período: <span className="font-medium text-foreground">
                   {format(startDate, "dd/MM/yyyy")} — {format(endDate, "dd/MM/yyyy")}
                 </span>{" "}
                 ({Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1} dias)
+                {" · "}{selectedInstances.size} instância{selectedInstances.size !== 1 ? "s" : ""} selecionada{selectedInstances.size !== 1 ? "s" : ""}
               </p>
             </div>
 
-            <Button onClick={handleImport} className="w-full">
+            <Button onClick={handleImport} className="w-full" disabled={selectedInstances.size === 0}>
               <MessageSquare className="h-4 w-4 mr-2" />
-              Iniciar Importação
+              {selectedInstances.size === 0 ? "Selecione ao menos uma instância" : "Iniciar Importação"}
             </Button>
           </div>
         )}
