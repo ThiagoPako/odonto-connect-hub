@@ -259,6 +259,12 @@ function ContatosPage() {
           }}
         />
       )}
+
+      <ImportWhatsAppDialog
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        onImported={() => void loadContatos()}
+      />
     </div>
   );
 }
