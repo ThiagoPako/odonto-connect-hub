@@ -3312,11 +3312,78 @@ app.get('/api/contatos/sync/status', async (req, res) => {
 app.post('/api/contatos/sync/now', async (req, res) => {
   try {
     await verifyUser(req);
-    const before = await pool.query('SELECT COUNT(*) as total FROM contatos');
-    await syncWhatsAppContacts();
+
+    // 1. Fetch connected instances
+    const instRes = await fetch(`${EVOLUTION_API_URL}/instance/fetchInstances`, {
+      headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
+    });
+    if (!instRes.ok) return res.json({ success: false, error: 'Falha ao buscar instâncias', instances: [] });
+    const instances = await instRes.json();
+    const connected = instances.filter(i => (i.connectionStatus || i.status) === 'open');
+
+    if (connected.length === 0) {
+      return res.json({ success: true, imported: 0, totalContatos: 0, instances: [], message: 'Nenhuma instância conectada' });
+    }
+
+    const instanceResults = [];
+    let totalImported = 0;
+
+    for (const inst of connected) {
+      const name = inst.name || inst.instanceName;
+      const instResult = { name, imported: 0, skipped: 0, total: 0, error: null };
+
+      try {
+        const cRes = await fetch(`${EVOLUTION_API_URL}/chat/findContacts/${name}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
+          body: JSON.stringify({}),
+        });
+        if (!cRes.ok) {
+          instResult.error = `HTTP ${cRes.status}`;
+          instanceResults.push(instResult);
+          continue;
+        }
+        const contacts = await cRes.json();
+        const waContacts = (contacts || []).filter(c => c.id?.endsWith('@s.whatsapp.net'));
+        instResult.total = waContacts.length;
+
+        for (const c of waContacts) {
+          const telefone = c.id.replace('@s.whatsapp.net', '').replace(/\D/g, '');
+          const nome = (c.pushName || c.name || telefone).trim();
+          if (!telefone) continue;
+
+          const existing = await pool.query('SELECT id FROM contatos WHERE telefone = $1', [telefone]);
+          if (existing.rows.length > 0) {
+            if (nome && nome !== telefone) {
+              await pool.query(
+                `UPDATE contatos SET nome = $1, updated_at = NOW() WHERE telefone = $2 AND nome = telefone`,
+                [nome, telefone]
+              );
+            }
+            instResult.skipped++;
+            continue;
+          }
+
+          await pool.query(
+            'INSERT INTO contatos (id, nome, telefone, tipo) VALUES ($1, $2, $3, $4)',
+            [crypto.randomUUID(), nome || telefone, telefone, 'pessoal']
+          );
+          instResult.imported++;
+          totalImported++;
+        }
+      } catch (err) {
+        instResult.error = err.message;
+      }
+      instanceResults.push(instResult);
+    }
+
     const after = await pool.query('SELECT COUNT(*) as total FROM contatos');
-    const imported = parseInt(after.rows[0].total) - parseInt(before.rows[0].total);
-    res.json({ success: true, imported, totalContatos: parseInt(after.rows[0].total) });
+    res.json({
+      success: true,
+      imported: totalImported,
+      totalContatos: parseInt(after.rows[0].total),
+      instances: instanceResults,
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
