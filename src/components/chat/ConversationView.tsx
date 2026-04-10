@@ -791,8 +791,8 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
                             const el = e.currentTarget;
                             el.style.display = "none";
                             const fallback = document.createElement("div");
-                            fallback.className = "flex items-center gap-2 p-3 text-xs opacity-70";
-                            fallback.textContent = "📷 Imagem indisponível";
+                            fallback.className = "flex items-center gap-3 p-4 text-xs";
+                            fallback.innerHTML = `<a href="${msg.fileUrl}" download="${msg.fileName || 'imagem'}" class="flex items-center gap-2 text-primary hover:underline"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Baixar imagem</a>`;
                             el.parentElement?.appendChild(fallback);
                           }}
                         />
