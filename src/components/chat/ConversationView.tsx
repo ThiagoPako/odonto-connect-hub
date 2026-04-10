@@ -786,7 +786,13 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
                   >
                     {/* Content by type */}
                     {msg.type === "image" && msg.fileUrl && (
-                      <div className="mb-1.5 rounded-xl overflow-hidden cursor-pointer relative" onClick={() => (msg as any).status !== "sending" && window.open(msg.fileUrl, "_blank")}>
+                      <div className="mb-1.5 rounded-xl overflow-hidden cursor-pointer relative group" onClick={() => {
+                        if ((msg as any).status !== "sending") {
+                          setLightbox({ url: msg.fileUrl!, name: msg.fileName || "Imagem" });
+                          setLightboxZoom(1);
+                          setLightboxPos({ x: 0, y: 0 });
+                        }
+                      }}>
                         <img
                           src={msg.fileUrl}
                           alt={msg.fileName || "Imagem"}
@@ -807,15 +813,15 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
                             <span className="text-[11px] text-white/90 font-medium">Enviando...</span>
                           </div>
                         )}
+                        {(msg as any).status !== "sending" && (
+                          <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/20 rounded-xl">
+                            <ZoomIn className="h-8 w-8 text-white drop-shadow-lg" />
+                          </div>
+                        )}
                       </div>
                     )}
                     {msg.type === "image" && !msg.fileUrl && (
-                      <div
-                        className="flex items-center gap-3 p-4 rounded-xl bg-background/15 mb-1.5 cursor-pointer hover:bg-background/25 transition-colors border border-border/20"
-                        onClick={() => {
-                          // No URL available — nothing to download
-                        }}
-                      >
+                      <div className="flex items-center gap-3 p-4 rounded-xl bg-background/15 mb-1.5 border border-border/20">
                         <div className="h-10 w-10 rounded-full bg-muted/30 flex items-center justify-center shrink-0">
                           <Download className="h-5 w-5 text-muted-foreground" />
                         </div>
