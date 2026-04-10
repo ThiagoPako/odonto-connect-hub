@@ -742,6 +742,8 @@ function ChatPage() {
         const mediaFile = (extra as any)?._mediaFile as File | undefined;
         const mediaBase64 = (extra as any)?._mediaBase64 as string | undefined;
 
+        console.log(`📤 [CHAT] Media send: type=${type}, hasFile=${!!mediaFile}, fileSize=${mediaFile?.size}, hasBase64=${!!mediaBase64}, base64Len=${mediaBase64?.length}, instance=${connected.instanceName}, phone=${selectedLead.phone}`);
+
         if (type === "audio" && mediaBase64) {
           const result = await whatsappApi.sendMedia(connected.instanceName, selectedLead.phone, type, {
             base64: mediaBase64,
@@ -752,6 +754,7 @@ function ChatPage() {
           if (result.error) throw new Error(result.error);
           evolutionMsgId = (result.data as any)?.key?.id || null;
         } else if (mediaFile) {
+          console.log(`📤 [CHAT] Using sendMediaUpload path for ${type}, file: ${mediaFile.name}, size: ${mediaFile.size}`);
           const uploadResult = await whatsappApi.sendMediaUpload(
             connected.instanceName,
             selectedLead.phone,
