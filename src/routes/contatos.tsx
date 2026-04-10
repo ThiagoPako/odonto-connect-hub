@@ -85,10 +85,14 @@ function ContatosPage() {
               {contatos.length} contato{contatos.length !== 1 ? "s" : ""} cadastrado{contatos.length !== 1 ? "s" : ""}
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
+            <Button variant="outline" size="sm" onClick={() => setImportMsgOpen(true)}>
+              <MessageCircle className="h-4 w-4 mr-2" />
+              Importar Mensagens
+            </Button>
             <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
               <Download className="h-4 w-4 mr-2" />
-              Importar do WhatsApp
+              Importar Contatos
             </Button>
             <Button size="sm" onClick={() => setCreateOpen(true)}>
               <UserPlus className="h-4 w-4 mr-2" />
