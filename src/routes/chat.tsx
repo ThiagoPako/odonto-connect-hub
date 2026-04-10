@@ -281,7 +281,7 @@ function ChatPage() {
     let displayStatus: "online" | "offline" | "typing" | "recording" = "offline";
     if (update.status === "composing") displayStatus = "typing";
     else if (update.status === "recording") displayStatus = "recording";
-    else if (update.status === "available" || update.status === "online" || update.status === "paused") displayStatus = "online";
+    else if (update.status === "available" || update.status === "paused") displayStatus = "online";
 
     setPresenceMap((prev) => ({
       [currentLead.id]: {
@@ -378,7 +378,7 @@ function ChatPage() {
       let displayStatus: "online" | "offline" | "typing" | "recording" = "offline";
       if (status === "composing") displayStatus = "typing";
       else if (status === "recording") displayStatus = "recording";
-      else if (status === "available" || status === "online" || status === "paused") displayStatus = "online";
+      else if (status === "available" || status === "paused") displayStatus = "online";
 
       setPresenceMap((prev) => ({
         [leadId]: {
