@@ -24,8 +24,6 @@ const badgeSizes = {
 export function LeadAvatar({ initials, avatarUrl, avatarColor = "bg-primary/20", size = "md", className = "", hasWhatsApp }: LeadAvatarProps) {
   const [imgError, setImgError] = useState(false);
 
-  const showWhatsApp = hasWhatsApp ?? !!avatarUrl;
-
   const avatar = avatarUrl && !imgError ? (
     <img
       src={avatarUrl}
@@ -42,12 +40,6 @@ export function LeadAvatar({ initials, avatarUrl, avatarColor = "bg-primary/20",
   return (
     <div className={`relative shrink-0 ${className}`}>
       {avatar}
-      {showWhatsApp && (
-        <span
-          className={`absolute bottom-0 right-0 rounded-full bg-success border-card ${badgeSizes[size]}`}
-          title="WhatsApp conectado"
-        />
-      )}
     </div>
   );
 }
