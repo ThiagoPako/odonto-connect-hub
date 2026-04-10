@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo, useCallback } from "react";
+import { useState, useRef, useMemo, useCallback, useEffect } from "react";
 import { Send, Paperclip, Smile, Image, MapPin, UserCircle, BarChart3, FileText, Video, Sticker, X, Bold, Italic, Strikethrough, Code, List, Zap, Loader2 } from "lucide-react";
 import { AudioRecorder } from "./AudioRecorder";
 import { getClinicLocation } from "@/components/ClinicLocationPanel";
@@ -8,6 +8,7 @@ import { toast } from "sonner";
 
 interface MessageInputProps {
   onSendMessage: (content: string, type: MessageType, extra?: Partial<ChatMessage>) => void;
+  onPresenceChange?: (status: "composing" | "recording" | "paused") => void;
   disabled?: boolean;
   replyingTo?: ReplyData | null;
   onCancelReply?: () => void;
@@ -19,7 +20,7 @@ interface MessageInputInternalProps extends MessageInputProps {
   attendantName?: string;
 }
 
-export function MessageInput({ onSendMessage, disabled, replyingTo, onCancelReply, attendantName }: MessageInputProps & { attendantName?: string }) {
+export function MessageInput({ onSendMessage, onPresenceChange, disabled, replyingTo, onCancelReply, attendantName }: MessageInputProps & { attendantName?: string }) {
   const [message, setMessage] = useState("");
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -35,6 +36,7 @@ export function MessageInput({ onSendMessage, disabled, replyingTo, onCancelRepl
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
+  const presenceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const attendanceSettings = useMemo(() => getAttendanceSettings(), []);
   const quickReplies = attendanceSettings.quickReplies;
@@ -69,6 +71,28 @@ export function MessageInput({ onSendMessage, disabled, replyingTo, onCancelRepl
   const [listButton, setListButton] = useState("Ver opções");
   const [listRows, setListRows] = useState([{ id: "1", title: "", description: "" }, { id: "2", title: "", description: "" }]);
 
+  const clearPresenceTimeout = useCallback(() => {
+    if (presenceTimeoutRef.current) {
+      clearTimeout(presenceTimeoutRef.current);
+      presenceTimeoutRef.current = null;
+    }
+  }, []);
+
+  const schedulePausedPresence = useCallback(() => {
+    if (!onPresenceChange) return;
+    clearPresenceTimeout();
+    presenceTimeoutRef.current = setTimeout(() => {
+      onPresenceChange("paused");
+    }, 1800);
+  }, [clearPresenceTimeout, onPresenceChange]);
+
+  useEffect(() => {
+    return () => {
+      clearPresenceTimeout();
+      onPresenceChange?.("paused");
+    };
+  }, [clearPresenceTimeout, onPresenceChange]);
+
   const handleSend = () => {
     if (!message.trim()) return;
     let finalMessage = message.trim();
@@ -79,10 +103,21 @@ export function MessageInput({ onSendMessage, disabled, replyingTo, onCancelRepl
     }
     onSendMessage(finalMessage, "text");
     setMessage("");
+    clearPresenceTimeout();
+    onPresenceChange?.("paused");
   };
 
   const handleMessageChange = (value: string) => {
     setMessage(value);
+    if (onPresenceChange) {
+      if (value.trim()) {
+        onPresenceChange("composing");
+        schedulePausedPresence();
+      } else {
+        clearPresenceTimeout();
+        onPresenceChange("paused");
+      }
+    }
     // Trigger quick replies on "/"
     if (value === "/" || (value.startsWith("/") && value.length <= 30)) {
       setShowQuickReplies(true);
@@ -96,6 +131,8 @@ export function MessageInput({ onSendMessage, disabled, replyingTo, onCancelRepl
     setMessage(qr.content);
     setShowQuickReplies(false);
     setQuickReplyFilter("");
+    onPresenceChange?.("composing");
+    schedulePausedPresence();
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -520,7 +557,7 @@ export function MessageInput({ onSendMessage, disabled, replyingTo, onCancelRepl
               className="flex-1 resize-none bg-muted rounded-xl px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring min-h-[40px] max-h-[120px] disabled:opacity-50"
             />
             {message.length === 0 ? (
-              <AudioRecorder onRecordingComplete={handleAudioComplete} />
+              <AudioRecorder onRecordingComplete={handleAudioComplete} onRecordingStateChange={onPresenceChange} />
             ) : (
               <button
                 onClick={handleSend}

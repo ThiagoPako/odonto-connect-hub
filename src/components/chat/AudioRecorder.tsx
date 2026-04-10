@@ -3,9 +3,10 @@ import { Mic, Square, Trash2, Send } from "lucide-react";
 
 interface AudioRecorderProps {
   onRecordingComplete: (blob: Blob, duration: number) => void;
+  onRecordingStateChange?: (status: "recording" | "paused") => void;
 }
 
-export function AudioRecorder({ onRecordingComplete }: AudioRecorderProps) {
+export function AudioRecorder({ onRecordingComplete, onRecordingStateChange }: AudioRecorderProps) {
   const [isRecording, setIsRecording] = useState(false);
   const [duration, setDuration] = useState(0);
   const [waveformBars, setWaveformBars] = useState<number[]>(Array(24).fill(4));
@@ -91,6 +92,7 @@ export function AudioRecorder({ onRecordingComplete }: AudioRecorderProps) {
 
       mediaRecorder.start(250); // collect data every 250ms
       setIsRecording(true);
+      onRecordingStateChange?.("recording");
       setDuration(0);
 
       intervalRef.current = setInterval(() => {
@@ -126,6 +128,7 @@ export function AudioRecorder({ onRecordingComplete }: AudioRecorderProps) {
       sendRequestedRef.current = true;
       mediaRecorderRef.current.stop();
     }
+    onRecordingStateChange?.("paused");
     setIsRecording(false);
     if (intervalRef.current) clearInterval(intervalRef.current);
     if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
@@ -145,12 +148,13 @@ export function AudioRecorder({ onRecordingComplete }: AudioRecorderProps) {
       audioCtxRef.current = null;
     }
     mediaRecorderRef.current = null;
+    onRecordingStateChange?.("paused");
     setIsRecording(false);
     setDuration(0);
     if (intervalRef.current) clearInterval(intervalRef.current);
     if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
     setWaveformBars(Array(24).fill(4));
-  }, []);
+  }, [onRecordingStateChange]);
 
   const formatTime = (s: number) =>
     `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
