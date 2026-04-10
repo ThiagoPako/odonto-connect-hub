@@ -386,20 +386,13 @@ function ChatPage() {
   }, []);
 
   const fetchPresence = useCallback((leadId: string, phone: string, instanceName: string) => {
-    // First call subscribes to presence updates
     whatsappApi.subscribePresence(instanceName, phone).then(({ data }) => {
-      if (selectedLeadRef.current?.id !== leadId) return;
-      console.log("📡 Presence subscribe response:", data);
       if (data?.presence) {
         applyPresence(leadId, data.presence);
       }
-
       // Retry after 2s — Evolution API often needs time to report real status after subscribe
       setTimeout(() => {
-        if (selectedLeadRef.current?.id !== leadId) return;
         whatsappApi.subscribePresence(instanceName, phone).then(({ data: data2 }) => {
-          if (selectedLeadRef.current?.id !== leadId) return;
-          console.log("📡 Presence retry response:", data2);
           if (data2?.presence) {
             applyPresence(leadId, data2.presence);
           }
@@ -408,16 +401,29 @@ function ChatPage() {
     }).catch(() => {});
   }, [applyPresence]);
 
+  // Subscribe presence for all active leads (myLeads)
   useEffect(() => {
-    if (!selectedLead?.phone) {
-      setPresenceMap({});
-      return;
-    }
+    const instanceName = connectedInstances[0]?.instanceName;
+    if (!instanceName || myLeads.length === 0) return;
+
+    // Stagger subscriptions to avoid hammering the API
+    myLeads.forEach((lead, i) => {
+      if (!lead.phone) return;
+      setTimeout(() => {
+        fetchPresence(lead.id, lead.phone, instanceName);
+      }, i * 500);
+    });
+  }, [myLeads.map(l => l.id).join(","), connectedInstances[0]?.instanceName, fetchPresence]);
+
+  // Also subscribe for selected lead immediately (covers queue leads)
+  useEffect(() => {
+    if (!selectedLead?.phone) return;
     const instanceName = connectedInstances[0]?.instanceName;
     if (!instanceName) return;
     fetchPresence(selectedLead.id, selectedLead.phone, instanceName);
   }, [selectedLead?.id, selectedLead?.phone, connectedInstances[0]?.instanceName, fetchPresence]);
 
+  // Refresh presence for selected lead every 30s
   useEffect(() => {
     if (!selectedLead?.phone) return;
     const instanceName = connectedInstances[0]?.instanceName;
