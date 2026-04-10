@@ -781,7 +781,7 @@ function ChatPage() {
             throw new Error("Tempo limite ao aguardar confirmação do envio da mídia");
           }
         }
-      }
+      } else if (type === "location" && extra?.location) {
         const result = await whatsappApi.sendLocation(connected.instanceName, selectedLead.phone, {
           latitude: extra.location.latitude,
           longitude: extra.location.longitude,
