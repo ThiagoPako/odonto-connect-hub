@@ -264,19 +264,17 @@ function ChatPage() {
   }, []);
 
   const handlePresenceUpdate = useCallback((update: import("@/hooks/useRealtimeChat").PresenceUpdate) => {
-    const currentLead = selectedLeadRef.current;
     const phone = update.phone?.replace(/\D/g, "");
-    const currentPhone = currentLead?.phone?.replace(/\D/g, "");
-    if (!currentLead || !phone || !currentPhone) return;
+    if (!phone) return;
 
-    const isCurrentLead =
-      currentPhone === phone ||
-      phone.includes(currentPhone) ||
-      currentPhone.includes(phone) ||
-      currentPhone.endsWith(phone.slice(-11)) ||
-      phone.endsWith(currentPhone.slice(-11));
-
-    if (!isCurrentLead) return;
+    // Match against all known leads (queue + myLeads)
+    const allLeads = [...queueRef.current, ...myLeadsRef.current];
+    const matchedLead = allLeads.find((l) => {
+      const lp = l.phone?.replace(/\D/g, "");
+      if (!lp) return false;
+      return lp === phone || lp.endsWith(phone.slice(-11)) || phone.endsWith(lp.slice(-11));
+    });
+    if (!matchedLead) return;
 
     let displayStatus: "online" | "offline" | "typing" | "recording" = "offline";
     if (update.status === "composing") displayStatus = "typing";
@@ -284,20 +282,21 @@ function ChatPage() {
     else if (update.status === "available" || update.status === "paused") displayStatus = "online";
 
     setPresenceMap((prev) => ({
-      [currentLead.id]: {
+      ...prev,
+      [matchedLead.id]: {
         status: displayStatus,
-        lastSeen: displayStatus === "offline" ? new Date() : prev[currentLead.id]?.lastSeen ?? null,
+        lastSeen: displayStatus === "offline" ? new Date() : prev[matchedLead.id]?.lastSeen ?? null,
       },
     }));
 
     if (displayStatus === "typing" || displayStatus === "recording") {
       setTimeout(() => {
-        if (selectedLeadRef.current?.id !== currentLead.id) return;
         setPresenceMap((prev) => {
-          const current = prev[currentLead.id];
+          const current = prev[matchedLead.id];
           if (current?.status === displayStatus) {
             return {
-              [currentLead.id]: {
+              ...prev,
+              [matchedLead.id]: {
                 ...current,
                 status: "online",
               },
@@ -377,6 +376,7 @@ function ChatPage() {
     else if (presenceStr === "available" || presenceStr === "paused") displayStatus = "online";
 
     setPresenceMap((prev) => ({
+      ...prev,
       [leadId]: {
         status: displayStatus,
         lastSeen: displayStatus === "offline" ? new Date() : prev[leadId]?.lastSeen ?? null,
@@ -386,20 +386,13 @@ function ChatPage() {
   }, []);
 
   const fetchPresence = useCallback((leadId: string, phone: string, instanceName: string) => {
-    // First call subscribes to presence updates
     whatsappApi.subscribePresence(instanceName, phone).then(({ data }) => {
-      if (selectedLeadRef.current?.id !== leadId) return;
-      console.log("📡 Presence subscribe response:", data);
       if (data?.presence) {
         applyPresence(leadId, data.presence);
       }
-
       // Retry after 2s — Evolution API often needs time to report real status after subscribe
       setTimeout(() => {
-        if (selectedLeadRef.current?.id !== leadId) return;
         whatsappApi.subscribePresence(instanceName, phone).then(({ data: data2 }) => {
-          if (selectedLeadRef.current?.id !== leadId) return;
-          console.log("📡 Presence retry response:", data2);
           if (data2?.presence) {
             applyPresence(leadId, data2.presence);
           }
@@ -408,16 +401,29 @@ function ChatPage() {
     }).catch(() => {});
   }, [applyPresence]);
 
+  // Subscribe presence for all active leads (myLeads)
   useEffect(() => {
-    if (!selectedLead?.phone) {
-      setPresenceMap({});
-      return;
-    }
+    const instanceName = connectedInstances[0]?.instanceName;
+    if (!instanceName || myLeads.length === 0) return;
+
+    // Stagger subscriptions to avoid hammering the API
+    myLeads.forEach((lead, i) => {
+      if (!lead.phone) return;
+      setTimeout(() => {
+        fetchPresence(lead.id, lead.phone, instanceName);
+      }, i * 500);
+    });
+  }, [myLeads.map(l => l.id).join(","), connectedInstances[0]?.instanceName, fetchPresence]);
+
+  // Also subscribe for selected lead immediately (covers queue leads)
+  useEffect(() => {
+    if (!selectedLead?.phone) return;
     const instanceName = connectedInstances[0]?.instanceName;
     if (!instanceName) return;
     fetchPresence(selectedLead.id, selectedLead.phone, instanceName);
   }, [selectedLead?.id, selectedLead?.phone, connectedInstances[0]?.instanceName, fetchPresence]);
 
+  // Refresh presence for selected lead every 30s
   useEffect(() => {
     if (!selectedLead?.phone) return;
     const instanceName = connectedInstances[0]?.instanceName;
@@ -1258,6 +1264,7 @@ function ChatPage() {
                   onAssign={handleAssign}
                   tagIds={leadTagAssignments[lead.id] || []}
                   allTags={availableTags}
+                  presence={presenceMap[lead.id]?.status}
                 />
               ))
             )}

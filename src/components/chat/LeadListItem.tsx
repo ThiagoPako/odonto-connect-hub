@@ -3,6 +3,8 @@ import type { LeadTagApi } from "@/lib/vpsApi";
 import { Clock, UserPlus, CheckCircle2 } from "lucide-react";
 import { LeadAvatar } from "@/components/LeadAvatar";
 
+type PresenceStatus = "online" | "offline" | "typing" | "recording";
+
 interface LeadListItemProps {
   lead: Lead;
   isSelected: boolean;
@@ -11,9 +13,10 @@ interface LeadListItemProps {
   onAssign?: (lead: Lead) => void;
   tagIds?: string[];
   allTags?: LeadTagApi[];
+  presence?: PresenceStatus;
 }
 
-export function LeadListItem({ lead, isSelected, onSelect, showAssignButton, onAssign, tagIds = [], allTags = [] }: LeadListItemProps) {
+export function LeadListItem({ lead, isSelected, onSelect, showAssignButton, onAssign, tagIds = [], allTags = [], presence = "offline" }: LeadListItemProps) {
   const timeAgo = getTimeAgo(lead.lastMessageTime);
 
   return (
@@ -32,11 +35,13 @@ export function LeadListItem({ lead, isSelected, onSelect, showAssignButton, onA
 
       <div className="relative">
         <LeadAvatar initials={lead.initials} avatarUrl={lead.avatarUrl} avatarColor={lead.avatarColor || "bg-primary/20"} size="md" />
-        {lead.status === "finished" && (
+        {lead.status === "finished" ? (
           <div className="absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full bg-muted border-2 border-card flex items-center justify-center">
             <CheckCircle2 className="h-2.5 w-2.5 text-muted-foreground" />
           </div>
-        )}
+        ) : (presence === "online" || presence === "typing" || presence === "recording") ? (
+          <div className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full bg-success border-2 border-card shadow-sm" />
+        ) : null}
       </div>
 
       <div className="flex-1 min-w-0 relative z-10">
@@ -50,7 +55,13 @@ export function LeadListItem({ lead, isSelected, onSelect, showAssignButton, onA
           </div>
         </div>
 
-        <p className="text-xs text-muted-foreground truncate leading-relaxed">{lead.lastMessage}</p>
+        {presence === "typing" ? (
+          <p className="text-xs text-primary font-medium truncate leading-relaxed animate-pulse">digitando...</p>
+        ) : presence === "recording" ? (
+          <p className="text-xs text-destructive font-medium truncate leading-relaxed animate-pulse">gravando áudio...</p>
+        ) : (
+          <p className="text-xs text-muted-foreground truncate leading-relaxed">{lead.lastMessage}</p>
+        )}
 
         {tagIds.length > 0 && (
           <div className="flex items-center gap-1 mt-1 flex-wrap">
