@@ -1071,26 +1071,33 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '6
 
     const captionField = mediaCaption ? { caption: mediaCaption } : {};
 
-    const multipartBody = new FormData();
-    multipartBody.append('number', cleanNumber);
-    multipartBody.append('mediatype', String(mediaType));
-    multipartBody.append('mimetype', resolvedMimeType);
-    multipartBody.append('fileName', normalizedFileName);
-    multipartBody.append('filename', normalizedFileName);
-    multipartBody.append('delay', '1200');
-    if (mediaCaption) multipartBody.append('caption', mediaCaption);
-    multipartBody.append('file', new Blob([rawBody], { type: resolvedMimeType }), normalizedFileName);
-
     // Image: data URI first (confirmed working), then raw base64 fallback
-    // Video: multipart first, then data URI, then raw base64
-    const payloadVariants = [
-      ...(String(mediaType) === 'video'
-        ? [{
-            label: 'multipart-file-upload',
-            kind: 'multipart',
-            body: multipartBody,
-          }]
-        : []),
+    // Video: multipart first (if available), then data URI, then raw base64
+    const payloadVariants = [];
+
+    // Multipart only for video — wrap in try/catch in case FormData/Blob unavailable
+    if (String(mediaType) === 'video') {
+      try {
+        const multipartBody = new FormData();
+        multipartBody.append('number', cleanNumber);
+        multipartBody.append('mediatype', String(mediaType));
+        multipartBody.append('mimetype', resolvedMimeType);
+        multipartBody.append('fileName', normalizedFileName);
+        multipartBody.append('filename', normalizedFileName);
+        multipartBody.append('delay', '1200');
+        if (mediaCaption) multipartBody.append('caption', mediaCaption);
+        multipartBody.append('file', new Blob([rawBody], { type: resolvedMimeType }), normalizedFileName);
+        payloadVariants.push({
+          label: 'multipart-file-upload',
+          kind: 'multipart',
+          body: multipartBody,
+        });
+      } catch (e) {
+        console.warn('FormData/Blob not available, skipping multipart variant:', e.message);
+      }
+    }
+
+    payloadVariants.push(
       {
         label: 'datauri-primary',
         kind: 'json',
@@ -1115,7 +1122,7 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '6
           media: cleanBase64Media(base64Data),
         },
       },
-    ];
+    );
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 120000);
