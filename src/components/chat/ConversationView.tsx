@@ -949,6 +949,7 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
         {isRecording && !isTyping && <TypingIndicator name={leadName} mode="recording" />}
 
         <div ref={bottomRef} />
+        </div>
       </div>
 
       {/* Scroll-to-bottom FAB */}
