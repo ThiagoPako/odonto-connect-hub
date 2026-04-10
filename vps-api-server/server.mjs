@@ -1742,9 +1742,13 @@ app.post('/api/webhook/evolution', async (req, res) => {
       ]
         .map((v) => {
           const raw = String(v || '');
-          // Skip LID JIDs — they are not real phone numbers
-          if (raw.includes('@lid')) return '';
-          return normalizeWhatsappNumber(raw);
+          const normalized = normalizeWhatsappNumber(raw);
+          if (!normalized || normalized.length < 10) return '';
+          // If the JID is a LID, try to resolve to real phone via mapping
+          if (raw.includes('@lid')) {
+            return resolvePhoneFromLid(normalized);
+          }
+          return normalized;
         })
         .find((value) => value.length >= 10) || '';
 
@@ -1768,19 +1772,35 @@ app.post('/api/webhook/evolution', async (req, res) => {
             participant?.participant,
             participant?.remoteJid,
             participant?.userJid,
-            fallbackPhone,
           ]
             .map((v) => {
               const raw = String(v || '');
-              // If the JID is a LID (@lid), skip it — use fallbackPhone instead
-              if (raw.includes('@lid')) return '';
-              return normalizeWhatsappNumber(raw);
+              const normalized = normalizeWhatsappNumber(raw);
+              if (!normalized || normalized.length < 10) return '';
+              // If the JID is a LID, try to resolve to real phone via mapping
+              if (raw.includes('@lid')) {
+                const resolved = resolvePhoneFromLid(normalized);
+                // If resolved is still the LID (no mapping yet), return empty to try next
+                return resolved !== normalized ? resolved : '';
+              }
+              return normalized;
             })
             .find((value) => value.length >= 10) || '';
 
-          // If participant phone is empty (LID-only), use the chat JID phone as fallback
-          // The chat JID (presenceData.id) for 1:1 chats IS the real phone number
-          const resolvedPhone = participantPhone || fallbackPhone;
+          // Try LID→phone resolution from all available LIDs in this event
+          let resolvedPhone = participantPhone || fallbackPhone;
+
+          // Last resort: try resolving any raw LID from participant fields
+          if (!resolvedPhone) {
+            const rawLid = normalizeWhatsappNumber(
+              participant?.id || participant?.jid || presenceData?.id || ''
+            );
+            if (rawLid && rawLid.length >= 10) {
+              const mapped = resolvePhoneFromLid(rawLid);
+              if (mapped !== rawLid) resolvedPhone = mapped;
+            }
+          }
+
           if (!resolvedPhone) continue;
 
           const status = participant?.status
@@ -1790,11 +1810,13 @@ app.post('/api/webhook/evolution', async (req, res) => {
             || 'unavailable';
 
           console.log(`👁️ PRESENCE resolved: phone=${resolvedPhone} status=${status}${participantPhone !== resolvedPhone ? ` (LID fallback from ${chatJid})` : ''}`);
-          presenceStateCache.set(resolvedPhone, {
+          // Cache under both the resolved phone AND the raw LID for future lookups
+          const cacheEntry = {
             status,
             instance,
             updatedAt: new Date().toISOString(),
-          });
+          };
+          presenceStateCache.set(resolvedPhone, cacheEntry);
           broadcastSSE('presence_update', {
             phone: resolvedPhone,
             status,
@@ -1802,14 +1824,16 @@ app.post('/api/webhook/evolution', async (req, res) => {
           });
         }
       } else if (fallbackPhone && globalStatus) {
-        console.log(`👁️ PRESENCE fallback: phone=${fallbackPhone} status=${globalStatus}`);
-        presenceStateCache.set(fallbackPhone, {
+        const resolvedFallback = resolvePhoneFromLid(fallbackPhone);
+        const finalPhone = resolvedFallback !== fallbackPhone ? resolvedFallback : fallbackPhone;
+        console.log(`👁️ PRESENCE fallback: phone=${finalPhone} status=${globalStatus}${finalPhone !== fallbackPhone ? ` (resolved from LID ${fallbackPhone})` : ''}`);
+        presenceStateCache.set(finalPhone, {
           status: globalStatus,
           instance,
           updatedAt: new Date().toISOString(),
         });
         broadcastSSE('presence_update', {
-          phone: fallbackPhone,
+          phone: finalPhone,
           status: globalStatus,
           instance,
         });
