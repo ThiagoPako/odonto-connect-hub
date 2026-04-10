@@ -3272,7 +3272,7 @@ async function syncWhatsAppContacts() {
         }
 
         for (const c of waContacts) {
-          const telefone = c.id.replace('@s.whatsapp.net', '').replace(/\D/g, '');
+          const telefone = (c.id || c.remoteJid || '').replace('@s.whatsapp.net', '').replace(/\D/g, '');
           const nome = (c.name || c.pushName || telefone).trim();
           if (!telefone) continue;
 
@@ -3386,7 +3386,7 @@ app.post('/api/contatos/sync/now', async (req, res) => {
         instResult.total = waContacts.length;
 
         for (const c of waContacts) {
-          const telefone = c.id.replace('@s.whatsapp.net', '').replace(/\D/g, '');
+          const telefone = (c.id || c.remoteJid || '').replace('@s.whatsapp.net', '').replace(/\D/g, '');
           // Prefer saved contact name, fallback to pushName (profile name), then phone
           const nome = (c.name || c.pushName || telefone).trim();
           if (!telefone) continue;
