@@ -508,6 +508,7 @@ export interface ChatMessageApi {
   file_name?: string;
   mime_type?: string;
   reply_to_id?: string;
+  reactions?: Array<{ emoji: string; count: number }>;
   metadata?: Record<string, unknown>;
 }
 

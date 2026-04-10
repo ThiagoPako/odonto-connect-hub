@@ -495,6 +495,7 @@ function ChatPage() {
         fileName: m.file_name || undefined,
         fileUrl: m.media_url || undefined,
         mimeType: m.mime_type || undefined,
+        reactions: Array.isArray(m.reactions) ? m.reactions : [],
       }));
 
       setMessages((prev) => {
@@ -504,44 +505,11 @@ function ChatPage() {
         const newMsgs = apiMessages.filter((m) => !existingIds.has(m.id));
         return { ...prev, [selectedLead.id]: [...newMsgs, ...existing] };
       });
-
-      setHistoryHasMore((prev) => ({ ...prev, [selectedLead.id]: data.hasMore }));
+      setHistoryHasMore((prev) => ({ ...prev, [selectedLead.id]: !!data.hasMore }));
+    }).catch(() => {
+      historyLoadedRef.current.delete(selectedLead.id);
     });
-
-    // Mark messages as read on server and reset local unread count
-    messagesApi.markRead(selectedLead.id).catch(() => {});
-    const resetUnread = (l: Lead): Lead =>
-      l.id === selectedLead.id ? { ...l, unreadCount: 0 } : l;
-    setQueue((prev) => prev.map(resetUnread));
-    setMyLeads((prev) => prev.map(resetUnread));
-
-    // Send read receipt to WhatsApp (blue ticks for patient)
-    const instanceName = connectedInstances[0]?.instanceName;
-    if (instanceName && selectedLead.phone) {
-      // Collect last N unread message IDs from lead
-      const leadMsgs = messages[selectedLead.id] || [];
-      const unreadIds = leadMsgs
-        .filter((m) => m.sender === "lead" && m.status !== "read")
-        .slice(-20)
-        .map((m) => m.id)
-        .filter((id) => !id.startsWith("sys-") && !id.startsWith("msg-"));
-      if (unreadIds.length > 0) {
-        whatsappApi.markWhatsAppRead(instanceName, selectedLead.phone, unreadIds).catch(() => {});
-      }
-    }
-  }, [selectedLead?.id]);
-
-  // ─── Infinite scroll: load older messages ───
-  const handleLoadMore = useCallback(async () => {
-    if (!selectedLead) return;
-    const currentMsgs = messages[selectedLead.id] || [];
-    if (currentMsgs.length === 0) return;
-
-    setHistoryLoading(true);
-    const oldestMsg = currentMsgs[0];
-    const oldestTimestamp = new Date(oldestMsg.timestamp).toISOString();
-
-    try {
+...
       const { data } = await messagesApi.list(selectedLead.id, { before: oldestTimestamp, limit: 30 });
       if (data?.messages?.length) {
         const apiMessages: ChatMessage[] = data.messages.map((m: ChatMessageApi) => ({
@@ -555,6 +523,7 @@ function ChatPage() {
           fileName: m.file_name || undefined,
           fileUrl: m.media_url || undefined,
           mimeType: m.mime_type || undefined,
+          reactions: Array.isArray(m.reactions) ? m.reactions : [],
         }));
 
         setMessages((prev) => {
