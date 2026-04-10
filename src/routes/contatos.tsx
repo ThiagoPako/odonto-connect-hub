@@ -5,12 +5,14 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import {
   Plus, Search, Star, Phone, Mail, Building2, Loader2, Trash2,
-  Pencil, UserPlus, Users, StarOff, MessageSquare, RefreshCw
+  Pencil, UserPlus, Users, StarOff, MessageSquare, Download
+
 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import { contatosApi, type Contato } from "@/lib/vpsApi";
 import { CreateContatoDialog } from "@/components/contatos/CreateContatoDialog";
 import { EditContatoDialog } from "@/components/contatos/EditContatoDialog";
+import { ImportWhatsAppDialog } from "@/components/contatos/ImportWhatsAppDialog";
 
 import { toast } from "sonner";
 
@@ -35,19 +37,7 @@ function ContatosPage() {
   const [tipoFilter, setTipoFilter] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [editContato, setEditContato] = useState<Contato | null>(null);
-  const [syncing, setSyncing] = useState(false);
-
-  const handleSync = async () => {
-    setSyncing(true);
-    const { data, error } = await contatosApi.syncNow();
-    if (error) {
-      toast.error(error);
-    } else {
-      toast.success(`Sincronizado! ${data?.imported ?? 0} novos contatos importados`);
-      void loadContatos();
-    }
-    setSyncing(false);
-  };
+  const [importOpen, setImportOpen] = useState(false);
 
   const loadContatos = useCallback(async () => {
     setLoading(true);
@@ -94,9 +84,9 @@ function ContatosPage() {
             </p>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={handleSync} disabled={syncing}>
-              {syncing ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <RefreshCw className="h-4 w-4 mr-2" />}
-              Sincronizar WhatsApp
+            <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
+              <Download className="h-4 w-4 mr-2" />
+              Importar do WhatsApp
             </Button>
             <Button size="sm" onClick={() => setCreateOpen(true)}>
               <UserPlus className="h-4 w-4 mr-2" />
