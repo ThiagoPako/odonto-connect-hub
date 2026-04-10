@@ -264,23 +264,35 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
   const isNearBottomRef = useRef(true);
   const loadMoreTriggeredRef = useRef(false);
 
-  // Smart scroll — only auto-scroll if user is near the bottom
+  // Scroll to bottom using scrollTop (instant, no animation)
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
-    requestAnimationFrame(() => {
-      bottomRef.current?.scrollIntoView({ behavior });
-    });
+    const container = scrollRef.current;
+    if (!container) return;
+    if (behavior === "instant") {
+      container.scrollTop = container.scrollHeight;
+    } else {
+      requestAnimationFrame(() => {
+        bottomRef.current?.scrollIntoView({ behavior });
+      });
+    }
   }, []);
 
-  // Always scroll to bottom when lead changes
+  // Always jump to bottom instantly when lead changes
   const prevLeadName = useRef(leadName);
   useEffect(() => {
     if (prevLeadName.current !== leadName) {
       prevLeadName.current = leadName;
       isNearBottomRef.current = true;
-      // Use a small delay to ensure messages are rendered
-      setTimeout(() => scrollToBottom("instant"), 50);
+      // Multiple frames to ensure DOM is fully rendered
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (scrollRef.current) {
+            scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+          }
+        });
+      });
     }
-  }, [leadName, scrollToBottom]);
+  }, [leadName]);
 
   // Auto-scroll on new messages / typing if near bottom
   useEffect(() => {
@@ -289,14 +301,16 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
     }
   }, [messages, isTyping, scrollToBottom]);
 
-  // Initial scroll on mount
+  // Initial scroll on mount — instant
   const initialScrollDone = useRef(false);
   useEffect(() => {
     if (initialScrollDone.current) return;
     if (messages.length === 0) return;
     initialScrollDone.current = true;
-    scrollToBottom("instant");
-  }, [messages, scrollToBottom]);
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [messages]);
 
   // Reset load-more trigger when loadingMore finishes
   useEffect(() => {
