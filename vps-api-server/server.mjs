@@ -685,6 +685,8 @@ app.get('/api/whatsapp/webhook/:instance', async (req, res) => {
 
 // Track which numbers we already subscribed presence for (per instance)
 const presenceSubscribed = new Set();
+// Track LID resolution warnings to avoid log spam
+let resolveLidWarned = new Set();
 // Track subscribed phones per instance for LID resolution fallback
 // Map<instance, Set<phone>>
 const instanceSubscribedPhones = new Map();
