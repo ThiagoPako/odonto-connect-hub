@@ -711,6 +711,7 @@ function ChatPage() {
         ...prev,
         [selectedLead.id]: (prev[selectedLead.id] || []).map((m) => {
           if (m.id !== msgId) return m;
+          if (status === "failed") return { ...m, status };
           const currentPri = statusPriority[m.status || "sending"] ?? 0;
           const newPri = statusPriority[status] ?? 1;
           return newPri > currentPri ? { ...m, status } : m;
