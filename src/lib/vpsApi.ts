@@ -530,7 +530,7 @@ export const messagesApi = {
     status?: string; fileName?: string; fileUrl?: string; mimeType?: string;
     replyTo?: { messageId: string; content: string; sender: string } | null;
     instance?: string; phone?: string;
-  }) => vpsApiFetch<{ success: boolean }>('/messages', { method: 'POST', body }),
+  }) => vpsApiFetch<{ success: boolean; mediaUrl?: string }>('/messages', { method: 'POST', body }),
   /** Save multiple messages in batch */
   saveBatch: (messages: Array<{
     id: string; lead_id: string; content: string; sender: string; type?: string;
@@ -555,6 +555,40 @@ export const messagesApi = {
     vpsApiFetch<ChatMessageApi[]>('/messages/search', {
       params: { q, ...(leadId ? { lead_id: leadId } : {}) },
     }),
+};
+
+// ─── Media Upload ───────────────────────────────────────────
+
+export const mediaApi = {
+  /** Upload a file to the VPS and get a persistent URL */
+  upload: async (file: File): Promise<{ url: string | null; error: string | null }> => {
+    try {
+      const token = getToken();
+      const params = new URLSearchParams({
+        fileName: file.name,
+        mimeType: file.type || 'application/octet-stream',
+      });
+
+      const response = await fetch(`${VPS_API_BASE}/media/upload?${params.toString()}`, {
+        method: 'POST',
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          'Content-Type': file.type || 'application/octet-stream',
+        },
+        body: file,
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        return { url: null, error: data.error || `HTTP ${response.status}` };
+      }
+
+      return { url: data.url, error: null };
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Erro de rede';
+      return { url: null, error: message };
+    }
+  },
 };
 
 // ─── Queue Leads ────────────────────────────────────────────

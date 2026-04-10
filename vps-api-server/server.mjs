@@ -18,9 +18,10 @@ import webpush from 'web-push';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import { execFile } from 'child_process';
-import { mkdtemp, writeFile, readFile, rm } from 'fs/promises';
+import { mkdtemp, writeFile, readFile, rm, mkdir } from 'fs/promises';
 import { tmpdir } from 'os';
 import { promisify } from 'util';
+import { existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -38,6 +39,86 @@ const PORT = process.env.API_PORT || 3002;
 // ─── Middleware ──────────────────────────────────────────────
 app.use(cors());
 app.use(express.json({ limit: '64mb' }));
+
+// ─── Media File Storage ─────────────────────────────────────
+const UPLOADS_DIR = path.join(__dirname, '..', 'uploads', 'media');
+// Ensure uploads directory exists
+(async () => {
+  if (!existsSync(UPLOADS_DIR)) {
+    await mkdir(UPLOADS_DIR, { recursive: true });
+    console.log('📁 Created media uploads directory:', UPLOADS_DIR);
+  }
+})();
+
+// Serve uploaded media files statically
+app.use('/uploads/media', express.static(UPLOADS_DIR, {
+  maxAge: '30d',
+  immutable: true,
+}));
+
+/**
+ * Save a base64 data URI or raw base64 to disk and return the public URL.
+ * Returns null on failure.
+ */
+async function saveMediaToDisk(base64OrDataUri, mimeType, originalFileName) {
+  try {
+    let base64Data = base64OrDataUri;
+    let resolvedMime = mimeType || 'application/octet-stream';
+
+    // Strip data URI prefix if present
+    if (base64OrDataUri.startsWith('data:')) {
+      const match = base64OrDataUri.match(/^data:([^;]+);base64,(.+)$/s);
+      if (match) {
+        resolvedMime = match[1];
+        base64Data = match[2];
+      }
+    }
+
+    // Determine file extension
+    const extMap = {
+      'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif',
+      'video/mp4': 'mp4', 'video/3gpp': '3gp', 'video/quicktime': 'mov', 'video/webm': 'webm',
+      'audio/ogg': 'ogg', 'audio/mpeg': 'mp3', 'audio/mp4': 'm4a', 'audio/webm': 'webm', 'audio/aac': 'aac',
+      'application/pdf': 'pdf', 'application/msword': 'doc',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+    };
+    const ext = extMap[resolvedMime.split(';')[0].trim()] || originalFileName?.split('.').pop() || 'bin';
+
+    // Generate unique filename: YYYY-MM/uuid.ext
+    const now = new Date();
+    const subDir = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const dirPath = path.join(UPLOADS_DIR, subDir);
+    if (!existsSync(dirPath)) {
+      await mkdir(dirPath, { recursive: true });
+    }
+
+    const fileName = `${randomUUID()}.${ext}`;
+    const filePath = path.join(dirPath, fileName);
+    const buffer = Buffer.from(base64Data, 'base64');
+    await writeFile(filePath, buffer);
+
+    // Return relative URL path
+    const publicUrl = `/uploads/media/${subDir}/${fileName}`;
+    console.log(`💾 Media saved: ${publicUrl} (${(buffer.length / 1024).toFixed(1)} KB)`);
+    return publicUrl;
+  } catch (err) {
+    console.error('Failed to save media to disk:', err.message);
+    return null;
+  }
+}
+
+/**
+ * Save a raw Buffer to disk and return the public URL.
+ */
+async function saveBufferToDisk(buffer, mimeType, originalFileName) {
+  try {
+    const base64 = buffer.toString('base64');
+    return await saveMediaToDisk(base64, mimeType, originalFileName);
+  } catch (err) {
+    console.error('Failed to save buffer to disk:', err.message);
+    return null;
+  }
+}
 
 // ─── PostgreSQL ─────────────────────────────────────────────
 const pool = new Pool({
@@ -1179,10 +1260,14 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '6
       return;
     }
 
+    // Save uploaded media to disk for persistence
+    const savedMediaUrl = await saveBufferToDisk(rawBody, resolvedMimeType, fileName ? String(fileName) : undefined);
+
     mediaSendJobs.set(jobId, {
       ...mediaSendJobs.get(jobId),
       status: 'sent',
       result: result.data,
+      mediaUrl: savedMediaUrl,
       finishedAt: Date.now(),
     });
   } catch (error) {
@@ -2252,7 +2337,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
     const mediaMimeType = mediaMsg?.mimetype || mediaMsg?.mimeType || null;
     const mediaFileName = message?.message?.documentMessage?.fileName || null;
 
-    // Fetch media URL from Evolution API (base64 download)
+    // Fetch media from Evolution API and save to disk
     let mediaUrl = null;
     if (['image', 'audio', 'video', 'document', 'sticker'].includes(msgType) && message?.key?.id) {
       try {
@@ -2261,7 +2346,13 @@ app.post('/api/webhook/evolution', async (req, res) => {
           body: JSON.stringify({ message: { key: message.key, message: message.message } }),
         });
         if (mediaResult.ok && mediaResult.data?.base64) {
-          mediaUrl = `data:${mediaMimeType || 'application/octet-stream'};base64,${mediaResult.data.base64}`;
+          // Save to disk instead of storing base64 in DB
+          const diskUrl = await saveMediaToDisk(
+            mediaResult.data.base64,
+            mediaMimeType,
+            mediaFileName
+          );
+          mediaUrl = diskUrl || null;
         }
       } catch (mediaErr) {
         console.error('Media fetch error:', mediaErr.message);
@@ -3268,19 +3359,50 @@ app.post('/api/messages', async (req, res) => {
     const { rows: profile } = await pool.query('SELECT name FROM profiles WHERE id = $1', [user.id]);
     const attendantName = profile[0]?.name || 'Atendente';
 
+    // If fileUrl is a base64 data URI, save to disk for persistent storage
+    let persistedMediaUrl = fileUrl || null;
+    if (fileUrl && fileUrl.startsWith('data:')) {
+      const diskUrl = await saveMediaToDisk(fileUrl, mimeType, fileName);
+      if (diskUrl) persistedMediaUrl = diskUrl;
+    }
+
     await pool.query(
       `INSERT INTO chat_messages (id, lead_id, content, sender, type, status, timestamp, media_url, file_name, mime_type, reply_to_id, reply_to_content, reply_to_sender, attendant_id, attendant_name, instance, phone)
        VALUES ($1,$2,$3,'attendant',$4,$5,NOW(),$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
        ON CONFLICT (id) DO NOTHING`,
       [
         id, leadId, content || '', type || 'text', status || 'sent',
-        fileUrl || null, fileName || null, mimeType || null,
+        persistedMediaUrl, fileName || null, mimeType || null,
         replyTo?.messageId || null, replyTo?.content || null, replyTo?.sender || null,
         user.id, attendantName, instance || null, phone || null,
       ]
     );
 
-    res.json({ success: true, id });
+    res.json({ success: true, id, mediaUrl: persistedMediaUrl });
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+// POST /api/media/upload — upload media file and return persistent URL
+app.post('/api/media/upload', express.raw({ type: '*/*', limit: '64mb' }), async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { fileName, mimeType } = req.query;
+    const rawBody = req.body;
+
+    if (!rawBody || !Buffer.isBuffer(rawBody) || rawBody.length === 0) {
+      return res.status(400).json({ error: 'Arquivo não enviado' });
+    }
+
+    const resolvedMime = String(mimeType || req.headers['content-type'] || 'application/octet-stream');
+    const savedUrl = await saveBufferToDisk(rawBody, resolvedMime, fileName ? String(fileName) : undefined);
+
+    if (!savedUrl) {
+      return res.status(500).json({ error: 'Falha ao salvar arquivo' });
+    }
+
+    res.json({ url: savedUrl, fileName: fileName || null, mimeType: resolvedMime });
   } catch (error) {
     res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
   }
