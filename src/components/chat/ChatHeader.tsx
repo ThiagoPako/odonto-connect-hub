@@ -196,7 +196,7 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onRe
                 <span className="relative flex h-2 w-2">
                   <span className="relative inline-flex rounded-full h-2 w-2 bg-muted-foreground/40"></span>
                 </span>
-                {lastSeen ? `visto por último ${formatLastSeen(lastSeen)}` : "Offline"}
+                Offline
               </p>
             )}
           </div>
