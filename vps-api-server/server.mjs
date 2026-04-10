@@ -696,6 +696,9 @@ app.post('/api/whatsapp/subscribe-presence', async (req, res) => {
           presenceSubscribed.add(subKey);
           didSubscribe = true;
           console.log(`✅ Presence subscribed for ${cleanNumber} on ${instance}`);
+
+          // Resolve LID mapping in background so presence updates can be matched
+          resolveLidForPhone(instance, cleanNumber).catch(() => {});
         } else {
           console.warn(`⚠️ Presence subscribe failed for ${cleanNumber}:`, JSON.stringify(subResult.data).slice(0, 300));
         }
@@ -708,7 +711,9 @@ app.post('/api/whatsapp/subscribe-presence', async (req, res) => {
       || Array.from(presenceStateCache.entries()).find(([phone]) => {
         if (!phone || !cleanNumber) return false;
         return phone === cleanNumber || phone.endsWith(cleanNumber.slice(-11)) || cleanNumber.endsWith(phone.slice(-11));
-      })?.[1];
+      })?.[1]
+      // Also check if we have a LID mapped to this phone
+      || (phoneToLidMap.has(cleanNumber) ? presenceStateCache.get(phoneToLidMap.get(cleanNumber)) : undefined);
 
     res.json({
       subscribed: didSubscribe || presenceSubscribed.has(subKey),
