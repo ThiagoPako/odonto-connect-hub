@@ -1052,9 +1052,10 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '5
     const payload = {
       number: cleanNumber,
       mediatype: String(mediaType),
+      mimetype: resolvedMimeType,
       caption: caption ? String(caption) : '',
       fileName: fileName ? String(fileName) : undefined,
-      media: `data:${resolvedMimeType};base64,${base64Data}`,
+      media: base64Data,
     };
 
     console.log(`📤 send-media-upload payload size: ${JSON.stringify(payload).length} bytes`);
