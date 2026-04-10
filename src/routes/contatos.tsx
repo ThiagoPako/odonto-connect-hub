@@ -39,6 +39,7 @@ function ContatosPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [editContato, setEditContato] = useState<Contato | null>(null);
   const [importOpen, setImportOpen] = useState(false);
+  const [importMsgOpen, setImportMsgOpen] = useState(false);
 
   const loadContatos = useCallback(async () => {
     setLoading(true);
