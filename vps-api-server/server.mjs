@@ -3247,19 +3247,32 @@ async function syncWhatsAppContacts() {
     for (const inst of connected) {
       const name = inst.name || inst.instanceName;
       try {
-        // 2. Fetch contacts from each connected instance
+        let waContacts = [];
         const cRes = await fetch(`${EVOLUTION_API_URL}/chat/findContacts/${name}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
-          body: JSON.stringify({}),
+          body: JSON.stringify({ where: {} }),
         });
-        if (!cRes.ok) continue;
-        const contacts = await cRes.json();
-
-        const waContacts = (contacts || []).filter(c => c.id?.endsWith('@s.whatsapp.net'));
+        if (cRes.ok) {
+          const contacts = await cRes.json();
+          waContacts = (contacts || []).filter(c => c.id?.endsWith('@s.whatsapp.net'));
+        }
+        if (waContacts.length === 0) {
+          try {
+            const altRes = await fetch(`${EVOLUTION_API_URL}/contact/find/${name}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
+              body: JSON.stringify({}),
+            });
+            if (altRes.ok) {
+              const altContacts = await altRes.json();
+              waContacts = (altContacts || []).filter(c => (c.id || c.remoteJid || '').endsWith('@s.whatsapp.net'));
+            }
+          } catch (e) { /* ignore */ }
+        }
 
         for (const c of waContacts) {
-          const telefone = c.id.replace('@s.whatsapp.net', '').replace(/\D/g, '');
+          const telefone = (c.id || c.remoteJid || '').replace('@s.whatsapp.net', '').replace(/\D/g, '');
           const nome = (c.name || c.pushName || telefone).trim();
           if (!telefone) continue;
 
@@ -3339,22 +3352,41 @@ app.post('/api/contatos/sync/now', async (req, res) => {
       const instResult = { name, imported: 0, skipped: 0, total: 0, error: null };
 
       try {
+        // Try findContacts first, then fallback to /contact/find
+        let waContacts = [];
         const cRes = await fetch(`${EVOLUTION_API_URL}/chat/findContacts/${name}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
-          body: JSON.stringify({}),
+          body: JSON.stringify({ where: {} }),
         });
-        if (!cRes.ok) {
-          instResult.error = `HTTP ${cRes.status}`;
-          instanceResults.push(instResult);
-          continue;
+        if (cRes.ok) {
+          const contacts = await cRes.json();
+          waContacts = (contacts || []).filter(c => c.id?.endsWith('@s.whatsapp.net'));
         }
-        const contacts = await cRes.json();
-        const waContacts = (contacts || []).filter(c => c.id?.endsWith('@s.whatsapp.net'));
+
+        // Fallback: try /contact/find endpoint if no results
+        if (waContacts.length === 0) {
+          try {
+            const altRes = await fetch(`${EVOLUTION_API_URL}/contact/find/${name}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
+              body: JSON.stringify({}),
+            });
+            if (altRes.ok) {
+              const altContacts = await altRes.json();
+              waContacts = (altContacts || []).filter(c => {
+                const id = c.id || c.remoteJid || '';
+                return id.endsWith('@s.whatsapp.net');
+              });
+            }
+          } catch (e) { /* ignore fallback error */ }
+        }
+
+        console.log(`[sync] Instance ${name}: found ${waContacts.length} WhatsApp contacts`);
         instResult.total = waContacts.length;
 
         for (const c of waContacts) {
-          const telefone = c.id.replace('@s.whatsapp.net', '').replace(/\D/g, '');
+          const telefone = (c.id || c.remoteJid || '').replace('@s.whatsapp.net', '').replace(/\D/g, '');
           // Prefer saved contact name, fallback to pushName (profile name), then phone
           const nome = (c.name || c.pushName || telefone).trim();
           if (!telefone) continue;
