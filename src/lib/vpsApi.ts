@@ -220,6 +220,45 @@ export const whatsappApi = {
   sendMedia: (instance: string, number: string, mediaType: string, media: {
     base64?: string; url?: string; fileName?: string; caption?: string; mimeType?: string;
   }) => vpsApiFetch('/whatsapp/send-media', { method: 'POST', body: { instance, number, mediaType, media } }),
+  sendMediaUpload: async (instance: string, number: string, mediaType: string, file: File, media: {
+    fileName?: string; caption?: string; mimeType?: string;
+  }) => {
+    try {
+      const token = getToken();
+      const params = new URLSearchParams({
+        instance,
+        number,
+        mediaType,
+        ...(media.fileName ? { fileName: media.fileName } : {}),
+        ...(media.caption ? { caption: media.caption } : {}),
+        ...(media.mimeType ? { mimeType: media.mimeType } : {}),
+      });
+
+      const response = await fetch(`${VPS_API_BASE}/whatsapp/send-media-upload?${params.toString()}`, {
+        method: 'POST',
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          'Content-Type': file.type || media.mimeType || 'application/octet-stream',
+        },
+        body: file,
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        if (isAuthError(response.status, data?.error)) {
+          handleAuthFailure(false);
+          return { data: null, error: 'Sessão expirada. Faça login novamente.' };
+        }
+        return { data: null, error: data.error || `HTTP ${response.status}` };
+      }
+
+      return { data, error: null };
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Erro de rede';
+      return { data: null, error: message };
+    }
+  },
+  getMediaSendStatus: (jobId: string) => vpsApiFetch<{ status: string; result?: { key?: { id?: string } }; error?: string }>(`/whatsapp/send-media-status/${jobId}`, { background: true }),
   sendLocation: (instance: string, number: string, location: {
     latitude: number; longitude: number; name?: string; address?: string;
   }) => vpsApiFetch('/whatsapp/send-location', { method: 'POST', body: { instance, number, ...location } }),

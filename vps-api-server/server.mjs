@@ -16,6 +16,7 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import webpush from 'web-push';
 import path from 'path';
+import { randomUUID } from 'crypto';
 import { execFile } from 'child_process';
 import { mkdtemp, writeFile, readFile, rm } from 'fs/promises';
 import { tmpdir } from 'os';
@@ -452,6 +453,7 @@ function normalizeWhatsappNumber(value) {
 
 const presenceStateCache = new Map();
 const webhookEnsureTimestamps = new Map();
+const mediaSendJobs = new Map();
 
 // ─── LID ↔ Phone mapping ───────────────────────────────────
 // WhatsApp uses Linked IDs (@lid) internally. Presence updates arrive with LIDs,
