@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { format, subDays } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import {
@@ -29,7 +29,7 @@ import {
   WifiOff,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { vpsApiFetch, whatsappApi } from "@/lib/vpsApi";
+import { whatsappApi, getToken } from "@/lib/vpsApi";
 
 interface InstanceResult {
   name: string;
@@ -77,6 +77,20 @@ export function ImportMessagesDialog({
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ImportResult | null>(null);
 
+  // Progress state
+  const [progress, setProgress] = useState<{
+    message: string;
+    contactName?: string;
+    contactIndex?: number;
+    totalContacts?: number;
+    instanceName?: string;
+    instanceIndex?: number;
+    totalInstances?: number;
+    imported?: number;
+    skipped?: number;
+  } | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
   // Instance selection
   const [instances, setInstances] = useState<WaInstance[]>([]);
   const [loadingInstances, setLoadingInstances] = useState(false);
@@ -90,7 +104,6 @@ export function ImportMessagesDialog({
       status: i.connectionStatus || i.status || 'unknown',
     })) : [];
     setInstances(list);
-    // Select all connected by default
     setSelectedInstances(new Set(list.filter(i => i.status === 'open').map(i => i.name)));
     setLoadingInstances(false);
   }, []);
@@ -115,25 +128,103 @@ export function ImportMessagesDialog({
   const handleImport = async () => {
     setLoading(true);
     setResult(null);
-    const { data, error } = await vpsApiFetch<ImportResult>("/messages/import-whatsapp", {
-      method: "POST",
-      body: {
-        startDate: startDate.toISOString(),
-        endDate: endDate.toISOString(),
-        instances: Array.from(selectedInstances),
-      },
-    });
-    if (error) {
-      setResult({ success: false, imported: 0, skipped: 0, instances: [], error });
-    } else if (data) {
-      setResult(data);
-      if (data.imported > 0) onImported?.();
+    setProgress({ message: "Iniciando importação..." });
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    try {
+      const token = getToken();
+      const res = await fetch("https://odontoconnect.tech/api/messages/import-whatsapp", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          startDate: startDate.toISOString(),
+          endDate: endDate.toISOString(),
+          instances: Array.from(selectedInstances),
+          stream: true,
+        }),
+        signal: controller.signal,
+      });
+
+      if (!res.ok || !res.body) {
+        const errText = await res.text().catch(() => "Erro desconhecido");
+        setResult({ success: false, imported: 0, skipped: 0, instances: [], error: errText });
+        setLoading(false);
+        setProgress(null);
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const evt = JSON.parse(line.slice(6));
+
+            if (evt.phase === "done") {
+              setResult(evt as ImportResult);
+              setProgress(null);
+              if (evt.imported > 0) onImported?.();
+            } else if (evt.phase === "contact") {
+              setProgress({
+                message: `Processando ${evt.contactName}...`,
+                contactName: evt.contactName,
+                contactIndex: evt.contactIndex,
+                totalContacts: evt.totalContacts,
+                instanceName: evt.instance,
+                instanceIndex: evt.instanceIndex,
+                totalInstances: evt.totalInstances,
+                imported: evt.imported,
+                skipped: evt.skipped,
+              });
+            } else if (evt.phase === "instance") {
+              setProgress({
+                message: evt.message,
+                instanceName: evt.instance,
+                instanceIndex: evt.instanceIndex,
+                totalInstances: evt.totalInstances,
+              });
+            } else if (evt.phase === "contacts_found") {
+              setProgress(prev => ({
+                ...prev!,
+                message: `${evt.totalContacts} contatos encontrados em ${evt.instance}`,
+                totalContacts: evt.totalContacts,
+              }));
+            } else if (evt.phase === "init") {
+              setProgress({ message: evt.message });
+            }
+          } catch (_) { /* ignore parse errors */ }
+        }
+      }
+    } catch (err: any) {
+      if (err.name !== "AbortError") {
+        setResult({ success: false, imported: 0, skipped: 0, instances: [], error: err.message });
+        setProgress(null);
+      }
     }
     setLoading(false);
   };
 
   const handleClose = (v: boolean) => {
-    if (!v) setResult(null);
+    if (!v) {
+      setResult(null);
+      setProgress(null);
+      if (abortRef.current) { abortRef.current.abort(); abortRef.current = null; }
+    }
     onOpenChange(v);
   };
 
@@ -309,11 +400,54 @@ export function ImportMessagesDialog({
         )}
 
         {loading && (
-          <div className="flex flex-col items-center gap-3 py-8">
-            <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            <p className="text-sm text-muted-foreground">
-              Importando mensagens... isso pode demorar alguns minutos.
-            </p>
+          <div className="space-y-4 py-4">
+            {/* Progress bar */}
+            {progress && progress.totalContacts != null && progress.contactIndex != null ? (
+              <>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground">
+                      Instância: <span className="font-medium text-foreground">{progress.instanceName}</span>
+                      {progress.totalInstances && (
+                        <span className="text-muted-foreground"> ({(progress.instanceIndex ?? 0) + 1}/{progress.totalInstances})</span>
+                      )}
+                    </span>
+                    <span className="text-muted-foreground">
+                      {progress.contactIndex + 1}/{progress.totalContacts}
+                    </span>
+                  </div>
+                  <div className="h-2 bg-muted rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-primary rounded-full transition-all duration-300"
+                      style={{ width: `${((progress.contactIndex + 1) / progress.totalContacts) * 100}%` }}
+                    />
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 p-2.5 rounded-lg bg-muted/50">
+                  <Loader2 className="h-4 w-4 animate-spin text-primary shrink-0" />
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-foreground truncate">
+                      {progress.contactName}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">
+                      {progress.imported ?? 0} importadas · {progress.skipped ?? 0} duplicadas
+                    </p>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="flex flex-col items-center gap-3">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                <p className="text-sm text-muted-foreground">
+                  {progress?.message || "Iniciando importação..."}
+                </p>
+              </div>
+            )}
+
+            <Button variant="outline" size="sm" className="w-full" onClick={() => handleClose(false)}>
+              Cancelar
+            </Button>
           </div>
         )}
 
