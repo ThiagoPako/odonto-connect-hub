@@ -1260,10 +1260,14 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '6
       return;
     }
 
+    // Save uploaded media to disk for persistence
+    const savedMediaUrl = await saveBufferToDisk(rawBody, resolvedMimeType, fileName ? String(fileName) : undefined);
+
     mediaSendJobs.set(jobId, {
       ...mediaSendJobs.get(jobId),
       status: 'sent',
       result: result.data,
+      mediaUrl: savedMediaUrl,
       finishedAt: Date.now(),
     });
   } catch (error) {
