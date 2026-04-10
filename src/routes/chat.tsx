@@ -376,6 +376,7 @@ function ChatPage() {
     else if (presenceStr === "available" || presenceStr === "paused") displayStatus = "online";
 
     setPresenceMap((prev) => ({
+      ...prev,
       [leadId]: {
         status: displayStatus,
         lastSeen: displayStatus === "offline" ? new Date() : prev[leadId]?.lastSeen ?? null,
