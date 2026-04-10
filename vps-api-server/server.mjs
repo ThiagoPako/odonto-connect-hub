@@ -1682,8 +1682,18 @@ app.post('/api/webhook/evolution', async (req, res) => {
     // ─── Presence updates (typing, recording, online) ───
     if (event === 'presence.update') {
       const presenceData = body.data;
-      console.log(`👁️ PRESENCE_UPDATE raw:`, JSON.stringify(presenceData).slice(0, 300));
-      const participants = Array.isArray(presenceData?.participants) ? presenceData.participants : [];
+      console.log(`👁️ PRESENCE_UPDATE raw:`, JSON.stringify(presenceData).slice(0, 500));
+
+      // Extract participants — Baileys sends them in different shapes
+      let participants = Array.isArray(presenceData?.participants) ? presenceData.participants : [];
+      // Sometimes Evolution sends presences as an object keyed by JID
+      if (participants.length === 0 && presenceData?.presences && typeof presenceData.presences === 'object') {
+        participants = Object.entries(presenceData.presences).map(([jid, data]) => ({
+          id: jid,
+          ...(typeof data === 'object' ? data : { status: data }),
+        }));
+      }
+
       const fallbackPhone = [
         presenceData?.id,
         presenceData?.chatId,
@@ -1691,6 +1701,11 @@ app.post('/api/webhook/evolution', async (req, res) => {
       ]
         .map(normalizeWhatsappNumber)
         .find((value) => value.length >= 10) || '';
+
+      // Global status from presenceData itself (Baileys sometimes puts it here)
+      const globalStatus = presenceData?.status
+        || presenceData?.lastKnownPresence
+        || presenceData?.presence;
 
       if (participants.length > 0) {
         for (const participant of participants) {
@@ -1707,7 +1722,13 @@ app.post('/api/webhook/evolution', async (req, res) => {
 
           if (!participantPhone) continue;
 
-          const status = participant?.status || participant?.presence || 'unavailable';
+          const status = participant?.status
+            || participant?.presence
+            || participant?.lastKnownPresence
+            || globalStatus
+            || 'unavailable';
+
+          console.log(`👁️ PRESENCE resolved: phone=${participantPhone} status=${status}`);
           presenceStateCache.set(participantPhone, {
             status,
             instance,
@@ -1719,17 +1740,20 @@ app.post('/api/webhook/evolution', async (req, res) => {
             instance,
           });
         }
-      } else if (fallbackPhone && presenceData?.status) {
+      } else if (fallbackPhone && globalStatus) {
+        console.log(`👁️ PRESENCE fallback: phone=${fallbackPhone} status=${globalStatus}`);
         presenceStateCache.set(fallbackPhone, {
-          status: presenceData.status,
+          status: globalStatus,
           instance,
           updatedAt: new Date().toISOString(),
         });
         broadcastSSE('presence_update', {
           phone: fallbackPhone,
-          status: presenceData.status,
+          status: globalStatus,
           instance,
         });
+      } else {
+        console.log(`⚠️ PRESENCE_UPDATE: could not extract phone or status from:`, JSON.stringify(presenceData).slice(0, 300));
       }
       return res.json({ processed: true, event: 'presence' });
     }
