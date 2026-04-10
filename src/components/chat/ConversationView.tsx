@@ -275,8 +275,18 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
     }
   }, [messages, isTyping, scrollToBottom]);
 
-  // Initial scroll — jump to first unread or bottom
+  // Reset scroll state when lead changes
+  const prevLeadName = useRef(leadName);
   const initialScrollDone = useRef(false);
+  useEffect(() => {
+    if (prevLeadName.current !== leadName) {
+      prevLeadName.current = leadName;
+      initialScrollDone.current = false;
+      isNearBottomRef.current = true;
+    }
+  }, [leadName]);
+
+  // Initial scroll — jump to first unread or bottom
   useEffect(() => {
     if (initialScrollDone.current) return;
     initialScrollDone.current = true;
@@ -292,7 +302,7 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
       }
     }
     scrollToBottom("instant");
-  }, []);
+  }, [leadName, messages, unreadCount, scrollToBottom]);
 
   // Reset load-more trigger when loadingMore finishes
   useEffect(() => {
