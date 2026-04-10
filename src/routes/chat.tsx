@@ -510,6 +510,21 @@ function ChatPage() {
       l.id === selectedLead.id ? { ...l, unreadCount: 0 } : l;
     setQueue((prev) => prev.map(resetUnread));
     setMyLeads((prev) => prev.map(resetUnread));
+
+    // Send read receipt to WhatsApp (blue ticks for patient)
+    const instanceName = connectedInstances[0]?.instanceName;
+    if (instanceName && selectedLead.phone) {
+      // Collect last N unread message IDs from lead
+      const leadMsgs = messages[selectedLead.id] || [];
+      const unreadIds = leadMsgs
+        .filter((m) => m.sender === "lead" && m.status !== "read")
+        .slice(-20)
+        .map((m) => m.id)
+        .filter((id) => !id.startsWith("sys-") && !id.startsWith("msg-"));
+      if (unreadIds.length > 0) {
+        whatsappApi.markWhatsAppRead(instanceName, selectedLead.phone, unreadIds).catch(() => {});
+      }
+    }
   }, [selectedLead?.id]);
 
   // ─── Infinite scroll: load older messages ───
