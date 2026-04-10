@@ -453,6 +453,48 @@ function normalizeWhatsappNumber(value) {
 const presenceStateCache = new Map();
 const webhookEnsureTimestamps = new Map();
 
+// ─── LID ↔ Phone mapping ───────────────────────────────────
+// WhatsApp uses Linked IDs (@lid) internally. Presence updates arrive with LIDs,
+// but our leads are stored by phone number. We build this map dynamically.
+const lidToPhoneMap = new Map(); // lid_number → phone_number
+const phoneToLidMap = new Map(); // phone_number → lid_number
+
+function registerLidMapping(lid, phone) {
+  if (!lid || !phone || lid === phone) return;
+  lidToPhoneMap.set(lid, phone);
+  phoneToLidMap.set(phone, lid);
+}
+
+function resolvePhoneFromLid(lidOrPhone) {
+  return lidToPhoneMap.get(lidOrPhone) || lidOrPhone;
+}
+
+// Resolve LID→phone by calling Evolution API whatsappNumbers
+async function resolveLidForPhone(instance, phone) {
+  try {
+    const result = await evolutionFetch(`/chat/whatsappNumbers/${instance}`, {
+      method: 'POST',
+      body: JSON.stringify({ numbers: [phone] }),
+    });
+    if (result.ok && Array.isArray(result.data)) {
+      for (const entry of result.data) {
+        const jid = entry?.jid || entry?.id || '';
+        const lid = entry?.lid || '';
+        // Extract LID number
+        const lidNum = normalizeWhatsappNumber(lid) || (jid.includes('@lid') ? normalizeWhatsappNumber(jid) : '');
+        if (lidNum && lidNum.length >= 10) {
+          registerLidMapping(lidNum, phone);
+          console.log(`🔗 LID mapped: ${lidNum} → ${phone}`);
+          return lidNum;
+        }
+      }
+    }
+  } catch (err) {
+    console.error(`LID resolve error for ${phone}:`, err.message);
+  }
+  return null;
+}
+
 async function ensureWebhookRegistration(instanceName) {
   const lastEnsure = webhookEnsureTimestamps.get(instanceName) || 0;
   if (Date.now() - lastEnsure < 5 * 60 * 1000) return;
