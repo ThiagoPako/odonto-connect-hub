@@ -510,6 +510,21 @@ function ChatPage() {
       l.id === selectedLead.id ? { ...l, unreadCount: 0 } : l;
     setQueue((prev) => prev.map(resetUnread));
     setMyLeads((prev) => prev.map(resetUnread));
+
+    // Send read receipt to WhatsApp (blue ticks for patient)
+    const instanceName = connectedInstances[0]?.instanceName;
+    if (instanceName && selectedLead.phone) {
+      // Collect last N unread message IDs from lead
+      const leadMsgs = messages[selectedLead.id] || [];
+      const unreadIds = leadMsgs
+        .filter((m) => m.sender === "lead" && m.status !== "read")
+        .slice(-20)
+        .map((m) => m.id)
+        .filter((id) => !id.startsWith("sys-") && !id.startsWith("msg-"));
+      if (unreadIds.length > 0) {
+        whatsappApi.markWhatsAppRead(instanceName, selectedLead.phone, unreadIds).catch(() => {});
+      }
+    }
   }, [selectedLead?.id]);
 
   // ─── Infinite scroll: load older messages ───
@@ -1016,6 +1031,14 @@ function ChatPage() {
     }));
     // Persist soft-delete to backend
     messagesApi.delete(msg.id).catch((err) => console.error("Failed to delete message:", err));
+
+    // Delete on WhatsApp for everyone (only works for messages we sent)
+    const connected = connectedInstances[0];
+    if (connected && selectedLead.phone && msg.sender === "attendant") {
+      whatsappApi.deleteMessage(connected.instanceName, selectedLead.phone, msg.id, true)
+        .catch((err: any) => console.error("Failed to delete on WhatsApp:", err));
+    }
+
     toast.info("Mensagem apagada");
   };
 

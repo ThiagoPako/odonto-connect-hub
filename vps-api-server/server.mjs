@@ -620,7 +620,10 @@ app.get('/api/whatsapp/webhook/:instance', async (req, res) => {
   }
 });
 
-// Subscribe to contact presence (typing, recording, online) — required for PRESENCE_UPDATE webhook
+// Track which numbers we already subscribed presence for (per instance)
+const presenceSubscribed = new Set();
+
+// Subscribe to contact presence (typing, recording, online) — calls Evolution API
 app.post('/api/whatsapp/subscribe-presence', async (req, res) => {
   try {
     await verifyUser(req);
@@ -631,6 +634,40 @@ app.post('/api/whatsapp/subscribe-presence', async (req, res) => {
     const cleanNumber = normalizeWhatsappNumber(number);
     await ensureWebhookRegistration(instance);
 
+    const subKey = `${instance}:${cleanNumber}`;
+    let didSubscribe = false;
+
+    // Actually call Evolution API to subscribe presence — this is REQUIRED for PRESENCE_UPDATE webhooks
+    if (!presenceSubscribed.has(subKey)) {
+      try {
+        const subResult = await evolutionFetch(`/chat/fetchPresence/${instance}`, {
+          method: 'POST',
+          body: JSON.stringify({ number: cleanNumber }),
+        });
+        if (subResult.ok) {
+          presenceSubscribed.add(subKey);
+          didSubscribe = true;
+          console.log(`👁️ Presence subscribed for ${cleanNumber} on ${instance}:`, JSON.stringify(subResult.data).slice(0, 200));
+          
+          // Extract presence from response if available
+          const presenceFromApi = subResult.data?.[cleanNumber + '@s.whatsapp.net']?.status
+            || subResult.data?.status
+            || subResult.data?.presence;
+          if (presenceFromApi) {
+            presenceStateCache.set(cleanNumber, {
+              status: presenceFromApi,
+              instance,
+              updatedAt: new Date().toISOString(),
+            });
+          }
+        } else {
+          console.warn(`⚠️ Presence subscribe failed for ${cleanNumber}:`, JSON.stringify(subResult.data).slice(0, 200));
+        }
+      } catch (subErr) {
+        console.error(`❌ Presence subscribe error for ${cleanNumber}:`, subErr.message);
+      }
+    }
+
     const cachedPresence = presenceStateCache.get(cleanNumber)
       || Array.from(presenceStateCache.entries()).find(([phone]) => {
         if (!phone || !cleanNumber) return false;
@@ -638,13 +675,101 @@ app.post('/api/whatsapp/subscribe-presence', async (req, res) => {
       })?.[1];
 
     res.json({
-      subscribed: true,
+      subscribed: didSubscribe || presenceSubscribed.has(subKey),
       number: cleanNumber,
       presence: cachedPresence?.status || 'unavailable',
       updatedAt: cachedPresence?.updatedAt || null,
     });
   } catch (error) {
     console.error('Presence subscribe error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ─── Mark messages as read on WhatsApp (blue ticks) ───
+app.post('/api/whatsapp/mark-read', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { instance, number, messageIds } = req.body;
+    if (!instance || !number) {
+      return res.status(400).json({ error: 'instance e number são obrigatórios' });
+    }
+    const cleanNumber = normalizeWhatsappNumber(number);
+    const keys = (messageIds || []).map(id => ({
+      remoteJid: `${cleanNumber}@s.whatsapp.net`,
+      id,
+    }));
+
+    if (keys.length === 0) {
+      return res.json({ success: true, marked: 0 });
+    }
+
+    const result = await evolutionFetch(`/chat/markMessageAsRead/${instance}`, {
+      method: 'PUT',
+      body: JSON.stringify({ readMessages: keys }),
+    });
+
+    return res.json({ success: result.ok, marked: keys.length, data: result.data });
+  } catch (error) {
+    console.error('Mark read error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ─── Delete message for everyone on WhatsApp ───
+app.post('/api/whatsapp/delete-message', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { instance, number, messageId, fromMe } = req.body;
+    if (!instance || !number || !messageId) {
+      return res.status(400).json({ error: 'instance, number e messageId são obrigatórios' });
+    }
+    const cleanNumber = normalizeWhatsappNumber(number);
+
+    const result = await evolutionFetch(`/chat/deleteMessageForEveryone/${instance}`, {
+      method: 'DELETE',
+      body: JSON.stringify({
+        id: messageId,
+        remoteJid: `${cleanNumber}@s.whatsapp.net`,
+        fromMe: fromMe !== false, // default true (attendant messages)
+      }),
+    });
+
+    if (!result.ok) {
+      return res.status(result.status || 502).json({
+        error: result.data?.response?.message?.[0] || 'Falha ao apagar mensagem',
+        details: result.data,
+      });
+    }
+
+    return res.json({ success: true, data: result.data });
+  } catch (error) {
+    console.error('Delete message error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ─── Archive/clear chat on WhatsApp ───
+app.post('/api/whatsapp/archive-chat', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { instance, number, archive } = req.body;
+    if (!instance || !number) {
+      return res.status(400).json({ error: 'instance e number são obrigatórios' });
+    }
+    const cleanNumber = normalizeWhatsappNumber(number);
+
+    const result = await evolutionFetch(`/chat/archiveChat/${instance}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        lastMessage: { key: { remoteJid: `${cleanNumber}@s.whatsapp.net` } },
+        archive: archive !== false,
+      }),
+    });
+
+    return res.json({ success: result.ok, data: result.data });
+  } catch (error) {
+    console.error('Archive chat error:', error.message);
     res.status(500).json({ error: error.message });
   }
 });
