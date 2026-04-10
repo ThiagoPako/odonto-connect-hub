@@ -253,7 +253,7 @@ export const whatsappApi = {
       body: { instance, number, isVideo },
     }),
   subscribePresence: (instance: string, number: string) =>
-    vpsApiFetch('/whatsapp/subscribe-presence', {
+    vpsApiFetch<{ subscribed: boolean; number: string; presence?: string }>('/whatsapp/subscribe-presence', {
       method: 'POST',
       body: { instance, number },
       background: true,
