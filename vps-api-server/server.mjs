@@ -975,22 +975,37 @@ app.post('/api/whatsapp/send-media', async (req, res) => {
       return res.json(result.data);
     }
 
+    const cleanedBase64 = media.base64 ? cleanBase64Media(media.base64) : null;
+    const mimeType = media.mimeType || 'application/octet-stream';
+
     const payload = {
       number: cleanNumber,
       mediatype: mediaType,
       caption: media.caption || '',
       fileName: media.fileName || undefined,
     };
-    if (media.base64) {
-      payload.media = `data:${media.mimeType || 'application/octet-stream'};base64,${media.base64}`;
+    if (cleanedBase64) {
+      payload.media = `data:${mimeType};base64,${cleanedBase64}`;
     } else if (media.url) {
       payload.media = media.url;
     }
+
+    console.log(`📤 Sending media [${mediaType}] to ${cleanNumber}, payload size: ${JSON.stringify(payload).length} bytes`);
 
     const result = await evolutionFetch(`/message/sendMedia/${instance}`, {
       method: 'POST',
       body: JSON.stringify(payload),
     });
+
+    if (!result.ok) {
+      console.error('❌ sendMedia Evolution error:', JSON.stringify(result.data));
+      return res.status(result.status || 502).json({
+        error: result.data?.response?.message?.[0] || result.data?.error || 'Falha ao enviar mídia',
+        details: result.data,
+      });
+    }
+
+    console.log('✅ sendMedia success:', JSON.stringify(result.data?.key || {}));
     res.json(result.data);
   } catch (error) {
     res.status(500).json({ error: error.message });
