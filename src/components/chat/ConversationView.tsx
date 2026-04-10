@@ -998,22 +998,6 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
               <Forward className="h-4 w-4 text-muted-foreground" /> Encaminhar
             </button>
           )}
-          {onReaction && (
-            <>
-              <div className="h-px bg-border/40 my-1" />
-              <div className="flex items-center justify-center gap-1 px-2 py-1">
-                {REACTION_EMOJIS.map((emoji) => (
-                  <button
-                    key={emoji}
-                    onClick={() => { onReaction(contextMenu.msg.id, emoji); setContextMenu(null); }}
-                    className="text-lg hover:scale-125 transition-transform p-1 rounded-lg hover:bg-muted/50"
-                  >
-                    {emoji}
-                  </button>
-                ))}
-              </div>
-            </>
-          )}
           {onDelete && contextMenu.msg.sender === "attendant" && (
             <>
               <div className="h-px bg-border/40 my-1" />
