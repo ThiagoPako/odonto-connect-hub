@@ -6,7 +6,6 @@ interface LeadAvatarProps {
   avatarColor?: string;
   size?: "sm" | "md" | "lg";
   className?: string;
-  hasWhatsApp?: boolean;
 }
 
 const sizeClasses = {
@@ -15,13 +14,8 @@ const sizeClasses = {
   lg: "h-14 w-14 text-lg",
 };
 
-const badgeSizes = {
-  sm: "h-2.5 w-2.5 border-[1.5px]",
-  md: "h-3 w-3 border-2",
-  lg: "h-4 w-4 border-2",
-};
 
-export function LeadAvatar({ initials, avatarUrl, avatarColor = "bg-primary/20", size = "md", className = "", hasWhatsApp }: LeadAvatarProps) {
+export function LeadAvatar({ initials, avatarUrl, avatarColor = "bg-primary/20", size = "md", className = "" }: LeadAvatarProps) {
   const [imgError, setImgError] = useState(false);
 
   const avatar = avatarUrl && !imgError ? (
