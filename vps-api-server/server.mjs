@@ -2333,7 +2333,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
     const mediaMimeType = mediaMsg?.mimetype || mediaMsg?.mimeType || null;
     const mediaFileName = message?.message?.documentMessage?.fileName || null;
 
-    // Fetch media URL from Evolution API (base64 download)
+    // Fetch media from Evolution API and save to disk
     let mediaUrl = null;
     if (['image', 'audio', 'video', 'document', 'sticker'].includes(msgType) && message?.key?.id) {
       try {
@@ -2342,7 +2342,13 @@ app.post('/api/webhook/evolution', async (req, res) => {
           body: JSON.stringify({ message: { key: message.key, message: message.message } }),
         });
         if (mediaResult.ok && mediaResult.data?.base64) {
-          mediaUrl = `data:${mediaMimeType || 'application/octet-stream'};base64,${mediaResult.data.base64}`;
+          // Save to disk instead of storing base64 in DB
+          const diskUrl = await saveMediaToDisk(
+            mediaResult.data.base64,
+            mediaMimeType,
+            mediaFileName
+          );
+          mediaUrl = diskUrl || null;
         }
       } catch (mediaErr) {
         console.error('Media fetch error:', mediaErr.message);
