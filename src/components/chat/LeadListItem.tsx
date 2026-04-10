@@ -55,7 +55,13 @@ export function LeadListItem({ lead, isSelected, onSelect, showAssignButton, onA
           </div>
         </div>
 
-        <p className="text-xs text-muted-foreground truncate leading-relaxed">{lead.lastMessage}</p>
+        {presence === "typing" ? (
+          <p className="text-xs text-primary font-medium truncate leading-relaxed animate-pulse">digitando...</p>
+        ) : presence === "recording" ? (
+          <p className="text-xs text-destructive font-medium truncate leading-relaxed animate-pulse">gravando áudio...</p>
+        ) : (
+          <p className="text-xs text-muted-foreground truncate leading-relaxed">{lead.lastMessage}</p>
+        )}
 
         {tagIds.length > 0 && (
           <div className="flex items-center gap-1 mt-1 flex-wrap">
