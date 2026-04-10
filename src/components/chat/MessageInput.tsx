@@ -131,10 +131,10 @@ export function MessageInput({ onSendMessage, disabled, replyingTo, onCancelRepl
     const reader = new FileReader();
     reader.onloadend = () => {
       const base64 = (reader.result as string).split(",")[1];
-      const rawMime = blob.type || "audio/ogg";
+      const rawMime = blob.type || "audio/webm";
       const cleanMime = rawMime.split(";")[0].trim();
-      const finalMime = cleanMime === "audio/webm" ? "audio/ogg" : cleanMime;
-      const ext = finalMime.includes("mp4") ? "m4a" : "ogg";
+      const finalMime = cleanMime || "audio/webm";
+      const ext = finalMime.includes("mp4") ? "m4a" : finalMime.includes("ogg") ? "ogg" : "webm";
       onSendMessage("🎤 Mensagem de áudio", "audio", {
         duration: Math.max(1, Math.round(recordedDuration)),
         fileUrl: URL.createObjectURL(blob),
