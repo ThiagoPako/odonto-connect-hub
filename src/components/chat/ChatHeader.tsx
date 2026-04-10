@@ -168,21 +168,31 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onRe
               )}
             </div>
             {presence === "typing" ? (
-              <p className="text-xs text-primary flex items-center gap-1.5 font-medium animate-pulse">
-                <span className="relative flex h-2 w-2">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary/60"></span>
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
-                </span>
-                digitando...
-              </p>
+              <div className="flex items-center gap-1.5 h-4">
+                <div className="flex items-center gap-[3px]">
+                  {[0, 1, 2].map((i) => (
+                    <span
+                      key={i}
+                      className="w-[5px] h-[5px] rounded-full bg-primary/70"
+                      style={{ animation: `typingBounce 1s ease-in-out ${i * 0.2}s infinite` }}
+                    />
+                  ))}
+                </div>
+                <span className="text-xs text-primary font-medium">digitando...</span>
+              </div>
             ) : presence === "recording" ? (
-              <p className="text-xs text-destructive flex items-center gap-1.5 font-medium animate-pulse">
-                <span className="relative flex h-2 w-2">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-destructive/60"></span>
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-destructive"></span>
-                </span>
-                gravando áudio...
-              </p>
+              <div className="flex items-center gap-1.5 h-4">
+                <div className="flex items-end gap-[2px] h-3.5">
+                  {[0, 1, 2, 3, 4].map((i) => (
+                    <span
+                      key={i}
+                      className="w-[2.5px] rounded-full bg-destructive/70"
+                      style={{ animation: `soundwave 0.8s ease-in-out ${i * 0.12}s infinite alternate` }}
+                    />
+                  ))}
+                </div>
+                <span className="text-xs text-destructive font-medium">gravando áudio...</span>
+              </div>
             ) : presence === "online" ? (
               <p className="text-xs text-success flex items-center gap-1.5 font-medium">
                 <span className="relative flex h-2 w-2">
