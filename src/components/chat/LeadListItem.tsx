@@ -56,7 +56,20 @@ export function LeadListItem({ lead, isSelected, onSelect, showAssignButton, onA
         </div>
 
         {presence === "typing" ? (
-          <p className="text-xs text-primary font-medium truncate leading-relaxed animate-pulse">digitando...</p>
+          <div className="flex items-center gap-1.5 h-5">
+            <div className="flex items-center gap-[3px]">
+              {[0, 1, 2].map((i) => (
+                <span
+                  key={i}
+                  className="w-[5px] h-[5px] rounded-full bg-primary/70"
+                  style={{
+                    animation: `typingBounce 1s ease-in-out ${i * 0.2}s infinite`,
+                  }}
+                />
+              ))}
+            </div>
+            <span className="text-xs text-primary font-medium">digitando...</span>
+          </div>
         ) : presence === "recording" ? (
           <div className="flex items-center gap-1.5 h-5">
             <div className="flex items-end gap-[2px] h-3.5">
