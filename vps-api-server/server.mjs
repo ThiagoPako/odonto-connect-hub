@@ -981,21 +981,29 @@ app.post('/api/whatsapp/send-media', async (req, res) => {
 
     const payload = {
       number: cleanNumber,
-      mediatype: mediaType,
-      mimetype: mimeType,
-      caption: media.caption || '',
-      fileName: media.fileName || undefined,
+      mediaMessage: {
+        mediaType,
+        fileName: media.fileName || undefined,
+        caption: media.caption || '',
+      },
+      options: {
+        delay: 1200,
+        presence: 'composing',
+      },
     };
+    if (mimeType) {
+      payload.mediaMessage.mimetype = mimeType;
+    }
     if (cleanedBase64 && cleanedBase64.length > 10) {
-      payload.media = cleanedBase64;
+      payload.mediaMessage.media = cleanedBase64;
     } else if (media.url) {
-      payload.media = media.url;
+      payload.mediaMessage.media = media.url;
     } else {
       console.error('❌ sendMedia: no valid media (base64 or url). base64 length:', cleanedBase64?.length, 'url:', media.url);
       return res.status(400).json({ error: 'Nenhuma mídia válida fornecida (base64 vazio ou URL ausente)' });
     }
 
-    console.log(`📤 sendMedia payload size: ${JSON.stringify(payload).length} bytes, media field starts with: ${String(payload.media).substring(0, 50)}`);
+    console.log(`📤 sendMedia payload size: ${JSON.stringify(payload).length} bytes, media field starts with: ${String(payload.mediaMessage.media).substring(0, 50)}`);
 
     const result = await evolutionFetch(`/message/sendMedia/${instance}`, {
       method: 'POST',
@@ -1061,51 +1069,7 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '6
 
     const payloadVariants = [
       {
-        label: 'v2-base64-fileName',
-        body: {
-          number: cleanNumber,
-          mediatype: String(mediaType),
-          mimetype: resolvedMimeType,
-          ...captionField,
-          fileName: normalizedFileName,
-          media: base64Data,
-        },
-      },
-      {
-        label: 'v2-base64-filename',
-        body: {
-          number: cleanNumber,
-          mediatype: String(mediaType),
-          mimetype: resolvedMimeType,
-          ...captionField,
-          filename: normalizedFileName,
-          media: base64Data,
-        },
-      },
-      {
-        label: 'v2-datauri-fileName',
-        body: {
-          number: cleanNumber,
-          mediatype: String(mediaType),
-          mimetype: resolvedMimeType,
-          ...captionField,
-          fileName: normalizedFileName,
-          media: dataUri,
-        },
-      },
-      {
-        label: 'v2-datauri-filename',
-        body: {
-          number: cleanNumber,
-          mediatype: String(mediaType),
-          mimetype: resolvedMimeType,
-          ...captionField,
-          filename: normalizedFileName,
-          media: dataUri,
-        },
-      },
-      {
-        label: 'v1-mediaMessage-base64',
+        label: 'official-mediaMessage-base64',
         body: {
           number: cleanNumber,
           mediaMessage: {
@@ -1115,10 +1079,14 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '6
             fileName: normalizedFileName,
             media: base64Data,
           },
+          options: {
+            delay: 1200,
+            presence: 'composing',
+          },
         },
       },
       {
-        label: 'v1-mediaMessage-datauri',
+        label: 'official-mediaMessage-datauri',
         body: {
           number: cleanNumber,
           mediaMessage: {
@@ -1128,6 +1096,32 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '6
             fileName: normalizedFileName,
             media: dataUri,
           },
+          options: {
+            delay: 1200,
+            presence: 'composing',
+          },
+        },
+      },
+      {
+        label: 'legacy-v2-base64-fileName',
+        body: {
+          number: cleanNumber,
+          mediatype: String(mediaType),
+          mimetype: resolvedMimeType,
+          ...captionField,
+          fileName: normalizedFileName,
+          media: base64Data,
+        },
+      },
+      {
+        label: 'legacy-v2-datauri-fileName',
+        body: {
+          number: cleanNumber,
+          mediatype: String(mediaType),
+          mimetype: resolvedMimeType,
+          ...captionField,
+          fileName: normalizedFileName,
+          media: dataUri,
         },
       },
     ];
