@@ -154,6 +154,57 @@ export function ImportMessagesDialog({
 
         {!result && !loading && (
           <div className="space-y-4">
+            {/* Instance selection */}
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                Instâncias WhatsApp
+              </label>
+              {loadingInstances ? (
+                <div className="flex items-center gap-2 py-3 justify-center">
+                  <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                  <span className="text-xs text-muted-foreground">Carregando instâncias...</span>
+                </div>
+              ) : instances.length === 0 ? (
+                <p className="text-xs text-muted-foreground text-center py-3">Nenhuma instância encontrada</p>
+              ) : (
+                <div className="space-y-1.5 max-h-[140px] overflow-y-auto">
+                  {instances.map((inst) => {
+                    const isConnected = inst.status === 'open';
+                    return (
+                      <label
+                        key={inst.name}
+                        className={cn(
+                          "flex items-center gap-2.5 p-2 rounded-lg border transition-colors cursor-pointer",
+                          selectedInstances.has(inst.name)
+                            ? "border-primary/40 bg-primary/5"
+                            : "border-border hover:bg-muted/40",
+                          !isConnected && "opacity-50 cursor-not-allowed"
+                        )}
+                      >
+                        <Checkbox
+                          checked={selectedInstances.has(inst.name)}
+                          onCheckedChange={() => isConnected && toggleInstance(inst.name)}
+                          disabled={!isConnected}
+                          className="shrink-0"
+                        />
+                        <Smartphone className="h-3.5 w-3.5 text-primary shrink-0" />
+                        <span className="text-sm font-medium text-foreground truncate flex-1">{inst.name}</span>
+                        {isConnected ? (
+                          <Badge variant="outline" className="text-[10px] bg-chart-2/10 text-chart-2 border-chart-2/30 gap-1">
+                            <Wifi className="h-2.5 w-2.5" /> Conectada
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-[10px] text-muted-foreground gap-1">
+                            <WifiOff className="h-2.5 w-2.5" /> Offline
+                          </Badge>
+                        )}
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
             {/* Period presets */}
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
