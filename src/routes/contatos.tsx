@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import {
   Plus, Search, Star, Phone, Mail, Building2, Loader2, Trash2,
-  Pencil, UserPlus, Users, StarOff, MessageSquare, Download
+  Pencil, UserPlus, Users, StarOff, MessageSquare, Download, MessageCircle
 
 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
@@ -13,6 +13,7 @@ import { contatosApi, type Contato } from "@/lib/vpsApi";
 import { CreateContatoDialog } from "@/components/contatos/CreateContatoDialog";
 import { EditContatoDialog } from "@/components/contatos/EditContatoDialog";
 import { ImportWhatsAppDialog } from "@/components/contatos/ImportWhatsAppDialog";
+import { ImportMessagesDialog } from "@/components/contatos/ImportMessagesDialog";
 
 import { toast } from "sonner";
 
