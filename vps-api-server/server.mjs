@@ -3354,32 +3354,46 @@ app.post('/api/contatos/sync/now', async (req, res) => {
       try {
         // Try findContacts first, then fallback to /contact/find
         let waContacts = [];
+        console.log(`[sync][${name}] Tentando chat/findContacts...`);
         const cRes = await fetch(`${EVOLUTION_API_URL}/chat/findContacts/${name}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
           body: JSON.stringify({ where: {} }),
         });
+        console.log(`[sync][${name}] findContacts status: ${cRes.status}`);
         if (cRes.ok) {
           const contacts = await cRes.json();
+          console.log(`[sync][${name}] findContacts retornou ${Array.isArray(contacts) ? contacts.length : 'non-array'} items. Amostra:`, JSON.stringify((contacts || []).slice(0, 3)).substring(0, 500));
           waContacts = (contacts || []).filter(c => c.id?.endsWith('@s.whatsapp.net'));
+          console.log(`[sync][${name}] Após filtro @s.whatsapp.net: ${waContacts.length} contatos`);
+        } else {
+          const errText = await cRes.text().catch(() => '');
+          console.log(`[sync][${name}] findContacts erro: ${errText.substring(0, 300)}`);
         }
 
         // Fallback: try /contact/find endpoint if no results
         if (waContacts.length === 0) {
+          console.log(`[sync][${name}] Tentando fallback contact/find...`);
           try {
             const altRes = await fetch(`${EVOLUTION_API_URL}/contact/find/${name}`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
               body: JSON.stringify({}),
             });
+            console.log(`[sync][${name}] contact/find status: ${altRes.status}`);
             if (altRes.ok) {
               const altContacts = await altRes.json();
+              console.log(`[sync][${name}] contact/find retornou ${Array.isArray(altContacts) ? altContacts.length : 'non-array'} items. Amostra:`, JSON.stringify((altContacts || []).slice(0, 3)).substring(0, 500));
               waContacts = (altContacts || []).filter(c => {
                 const id = c.id || c.remoteJid || '';
                 return id.endsWith('@s.whatsapp.net');
               });
+              console.log(`[sync][${name}] Após filtro fallback: ${waContacts.length} contatos`);
+            } else {
+              const errText2 = await altRes.text().catch(() => '');
+              console.log(`[sync][${name}] contact/find erro: ${errText2.substring(0, 300)}`);
             }
-          } catch (e) { /* ignore fallback error */ }
+          } catch (e) { console.log(`[sync][${name}] contact/find exception:`, e.message); }
         }
 
         console.log(`[sync] Instance ${name}: found ${waContacts.length} WhatsApp contacts`);
