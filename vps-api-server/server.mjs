@@ -3389,6 +3389,167 @@ app.post('/api/contatos/sync/now', async (req, res) => {
   }
 });
 
+// ─── Import WhatsApp Messages by date range ─────────────────
+app.post('/api/messages/import-whatsapp', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { startDate, endDate } = req.body;
+    if (!startDate || !endDate) return res.status(400).json({ error: 'startDate e endDate obrigatórios' });
+
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    end.setHours(23, 59, 59, 999); // include full end day
+
+    // 1. Fetch connected instances
+    const instRes = await fetch(`${EVOLUTION_API_URL}/instance/fetchInstances`, {
+      headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
+    });
+    if (!instRes.ok) return res.json({ success: false, error: 'Falha ao buscar instâncias', instances: [] });
+    const instances = await instRes.json();
+    const connected = instances.filter(i => (i.connectionStatus || i.status) === 'open');
+
+    if (connected.length === 0) {
+      return res.json({ success: true, imported: 0, skipped: 0, instances: [], message: 'Nenhuma instância conectada' });
+    }
+
+    const instanceResults = [];
+    let totalImported = 0;
+    let totalSkipped = 0;
+
+    for (const inst of connected) {
+      const name = inst.name || inst.instanceName;
+      const instResult = { name, imported: 0, skipped: 0, contacts: 0, error: null };
+
+      try {
+        // Get all contacts for this instance
+        const cRes = await fetch(`${EVOLUTION_API_URL}/chat/findContacts/${name}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
+          body: JSON.stringify({}),
+        });
+        if (!cRes.ok) { instResult.error = `findContacts HTTP ${cRes.status}`; instanceResults.push(instResult); continue; }
+        const contacts = await cRes.json();
+        const waContacts = (contacts || []).filter(c => c.id?.endsWith('@s.whatsapp.net'));
+        instResult.contacts = waContacts.length;
+
+        // For each contact, fetch messages within date range
+        for (const contact of waContacts) {
+          const remoteJid = contact.id;
+          const phone = remoteJid.replace('@s.whatsapp.net', '').replace(/\D/g, '');
+          const contactName = (contact.pushName || contact.name || phone).trim();
+
+          try {
+            const mRes = await fetch(`${EVOLUTION_API_URL}/chat/findMessages/${name}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
+              body: JSON.stringify({
+                where: { key: { remoteJid } },
+              }),
+            });
+            if (!mRes.ok) continue;
+            const allMessages = await mRes.json();
+            const messages = Array.isArray(allMessages) ? allMessages : (allMessages?.messages || allMessages?.data || []);
+
+            // Determine lead_id for this contact
+            const leadId = phone;
+
+            for (const msg of messages) {
+              // Parse message timestamp
+              const msgTimestamp = msg.messageTimestamp
+                ? new Date(typeof msg.messageTimestamp === 'number'
+                    ? (msg.messageTimestamp > 1e12 ? msg.messageTimestamp : msg.messageTimestamp * 1000)
+                    : msg.messageTimestamp)
+                : null;
+
+              if (!msgTimestamp || msgTimestamp < start || msgTimestamp > end) continue;
+
+              // Build message id from Evolution key
+              const msgId = msg.key?.id || msg.id || `evo-${randomUUID()}`;
+
+              // Check duplicate
+              const existing = await pool.query('SELECT id FROM chat_messages WHERE id = $1', [msgId]);
+              if (existing.rows.length > 0) { instResult.skipped++; totalSkipped++; continue; }
+
+              // Determine sender
+              const fromMe = msg.key?.fromMe || false;
+              const sender = fromMe ? 'attendant' : 'lead';
+
+              // Extract content
+              let content = '';
+              let type = 'text';
+              let mediaUrl = null;
+              let fileName = null;
+              let mimeType = null;
+
+              const m = msg.message || {};
+              if (m.conversation) {
+                content = m.conversation;
+              } else if (m.extendedTextMessage?.text) {
+                content = m.extendedTextMessage.text;
+              } else if (m.imageMessage) {
+                type = 'image';
+                content = m.imageMessage.caption || '📷 Imagem';
+                mimeType = m.imageMessage.mimetype;
+              } else if (m.videoMessage) {
+                type = 'video';
+                content = m.videoMessage.caption || '🎥 Vídeo';
+                mimeType = m.videoMessage.mimetype;
+              } else if (m.audioMessage) {
+                type = 'audio';
+                content = '🎵 Áudio';
+                mimeType = m.audioMessage.mimetype;
+              } else if (m.documentMessage) {
+                type = 'document';
+                content = m.documentMessage.fileName || '📄 Documento';
+                fileName = m.documentMessage.fileName;
+                mimeType = m.documentMessage.mimetype;
+              } else if (m.stickerMessage) {
+                type = 'sticker';
+                content = '🏷️ Sticker';
+              } else if (m.contactMessage) {
+                type = 'contact';
+                content = `👤 ${m.contactMessage.displayName || 'Contato'}`;
+              } else if (m.locationMessage) {
+                type = 'location';
+                content = '📍 Localização';
+              } else {
+                // Skip protocol/system messages
+                if (m.protocolMessage || m.senderKeyDistributionMessage || msg.messageStubType) continue;
+                content = '[Mensagem não suportada]';
+              }
+
+              if (!content) continue;
+
+              await pool.query(
+                `INSERT INTO chat_messages (id, lead_id, content, sender, type, status, timestamp, media_url, file_name, mime_type, instance, phone, metadata)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                 ON CONFLICT (id) DO NOTHING`,
+                [msgId, leadId, content, sender, type, 'delivered', msgTimestamp, mediaUrl, fileName, mimeType, name, phone, JSON.stringify({ importedFrom: 'whatsapp', contactName: contactName })]
+              );
+              instResult.imported++;
+              totalImported++;
+            }
+          } catch (msgErr) {
+            // Skip individual contact errors, continue with next
+          }
+        }
+      } catch (err) {
+        instResult.error = err.message;
+      }
+      instanceResults.push(instResult);
+    }
+
+    res.json({
+      success: true,
+      imported: totalImported,
+      skipped: totalSkipped,
+      instances: instanceResults,
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 
 // ═══════════════════════════════════════════════════════════════
 // CHAT MESSAGES (persistência de histórico)
