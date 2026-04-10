@@ -1049,13 +1049,18 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '5
 
     res.status(202).json({ jobId, status: 'processing' });
 
+    const base64Data = rawBody.toString('base64');
+    console.log(`📤 send-media-upload jobId=${jobId} [${String(mediaType)}] to ${cleanNumber}, binary size: ${rawBody.length}, base64 len: ${base64Data.length}, mime: ${resolvedMimeType}`);
+
     const payload = {
       number: cleanNumber,
       mediatype: String(mediaType),
       caption: caption ? String(caption) : '',
       fileName: fileName ? String(fileName) : undefined,
-      media: `data:${resolvedMimeType};base64,${rawBody.toString('base64')}`,
+      media: `data:${resolvedMimeType};base64,${base64Data}`,
     };
+
+    console.log(`📤 send-media-upload payload size: ${JSON.stringify(payload).length} bytes`);
 
     const result = await evolutionFetch(`/message/sendMedia/${instance}`, {
       method: 'POST',
