@@ -960,7 +960,7 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
                         </button>
                       ))}
                     </div>
-                  )
+                  )}
                 </div>
               </div>
             </div>
