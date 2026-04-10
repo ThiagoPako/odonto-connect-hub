@@ -1052,9 +1052,11 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '5
     const normalizedFileName = fileName
       ? String(fileName)
       : `upload.${resolvedMimeType.split('/')[1] || 'bin'}`;
-    const mediaCaption = caption ? String(caption) : '';
+    const mediaCaption = caption && String(caption).trim() ? String(caption).trim() : undefined;
 
     console.log(`📤 send-media-upload jobId=${jobId} [${String(mediaType)}] to ${cleanNumber}, binary size: ${rawBody.length}, base64 len: ${base64Data.length}, mime: ${resolvedMimeType}`);
+
+    const captionField = mediaCaption ? { caption: mediaCaption } : {};
 
     const payloadVariants = [
       {
@@ -1063,7 +1065,7 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '5
           number: cleanNumber,
           mediatype: String(mediaType),
           mimetype: resolvedMimeType,
-          caption: mediaCaption,
+          ...captionField,
           fileName: normalizedFileName,
           media: base64Data,
         },
@@ -1074,7 +1076,7 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '5
           number: cleanNumber,
           mediatype: String(mediaType),
           mimetype: resolvedMimeType,
-          caption: mediaCaption,
+          ...captionField,
           filename: normalizedFileName,
           media: base64Data,
         },
@@ -1085,7 +1087,7 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '5
           number: cleanNumber,
           mediatype: String(mediaType),
           mimetype: resolvedMimeType,
-          caption: mediaCaption,
+          ...captionField,
           fileName: normalizedFileName,
           media: dataUri,
         },
@@ -1096,7 +1098,7 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '5
           number: cleanNumber,
           mediatype: String(mediaType),
           mimetype: resolvedMimeType,
-          caption: mediaCaption,
+          ...captionField,
           filename: normalizedFileName,
           media: dataUri,
         },
@@ -1108,7 +1110,7 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '5
           mediaMessage: {
             mediaType: String(mediaType),
             mimetype: resolvedMimeType,
-            caption: mediaCaption,
+            ...captionField,
             fileName: normalizedFileName,
             media: base64Data,
           },
@@ -1121,7 +1123,7 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '5
           mediaMessage: {
             mediaType: String(mediaType),
             mimetype: resolvedMimeType,
-            caption: mediaCaption,
+            ...captionField,
             fileName: normalizedFileName,
             media: dataUri,
           },

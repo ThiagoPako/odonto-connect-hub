@@ -754,7 +754,7 @@ function ChatPage() {
             mediaFile,
             {
               fileName: extra?.fileName,
-              caption: type !== "audio" ? content : undefined,
+              caption: type !== "audio" && content && !content.startsWith("🖼️") && !content.startsWith("🎬") && !content.startsWith("📎") ? content : undefined,
               mimeType: extra?.mimeType || mediaFile.type,
             }
           );
@@ -787,7 +787,7 @@ function ChatPage() {
           const result = await whatsappApi.sendMedia(connected.instanceName, selectedLead.phone, type, {
             base64: mediaBase64,
             fileName: extra?.fileName,
-            caption: type !== "audio" ? content : undefined,
+            caption: type !== "audio" && content && !content.startsWith("🖼️") && !content.startsWith("🎬") && !content.startsWith("📎") ? content : undefined,
             mimeType: extra?.mimeType,
           });
           if (result.error) throw new Error(result.error);
