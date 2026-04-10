@@ -637,25 +637,25 @@ app.post('/api/whatsapp/subscribe-presence', async (req, res) => {
     const subKey = `${instance}:${cleanNumber}`;
     let didSubscribe = false;
 
-    // Subscribe to presence by sending a brief "paused" presence — this triggers Baileys to track the contact
-    // Evolution API does NOT have a /chat/fetchPresence endpoint; sendPresence with "paused" activates tracking
+    // Subscribe to presence by calling sendPresence — this triggers Baileys presenceSubscribe() internally
+    // Evolution API's sendPresence expects a plain phone number (not JID), it resolves the JID internally
     if (!presenceSubscribed.has(subKey)) {
       try {
-        const jid = cleanNumber.includes('@') ? cleanNumber : `${cleanNumber}@s.whatsapp.net`;
         const subResult = await evolutionFetch(`/chat/sendPresence/${instance}`, {
           method: 'POST',
           body: JSON.stringify({
-            number: jid,
-            delay: 0,
-            presence: 'paused',
+            number: cleanNumber,
+            delay: 1200,
+            presence: 'composing',
           }),
         });
+        console.log(`👁️ Presence subscribe attempt for ${cleanNumber} on ${instance}: status=${subResult.status}, data=${JSON.stringify(subResult.data).slice(0, 200)}`);
         if (subResult.ok || subResult.status === 201) {
           presenceSubscribed.add(subKey);
           didSubscribe = true;
-          console.log(`👁️ Presence subscribed for ${cleanNumber} on ${instance} via sendPresence/paused`);
+          console.log(`✅ Presence subscribed for ${cleanNumber} on ${instance}`);
         } else {
-          console.warn(`⚠️ Presence subscribe failed for ${cleanNumber}:`, JSON.stringify(subResult.data).slice(0, 200));
+          console.warn(`⚠️ Presence subscribe failed for ${cleanNumber}:`, JSON.stringify(subResult.data).slice(0, 300));
         }
       } catch (subErr) {
         console.error(`❌ Presence subscribe error for ${cleanNumber}:`, subErr.message);
