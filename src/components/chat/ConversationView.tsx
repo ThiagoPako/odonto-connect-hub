@@ -907,6 +907,15 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
                     )}
                   </div>
 
+                  {msg.reactions && msg.reactions.length > 0 && (
+                    <div className={`mt-1 flex gap-1 ${isLead ? "justify-start ml-2" : "justify-end mr-2"}`}>
+                      {msg.reactions.map((reaction, index) => (
+                        <span key={`${reaction.emoji}-${index}`} className="rounded-full border border-border/50 bg-card px-2 py-0.5 text-sm shadow-sm">
+                          {reaction.emoji}
+                        </span>
+                      ))}
+                    </div>
+                  )}
 
                   {/* Message actions (hover) */}
                   <div className={`absolute top-1/2 -translate-y-1/2 ${isLead ? "-right-20" : "-left-20"} hidden group-hover:flex items-center gap-0.5 bg-card/90 backdrop-blur-sm border border-border/50 rounded-xl shadow-lg p-0.5 animate-pop-in`}>
