@@ -738,18 +738,50 @@ function ChatPage() {
         }
         evolutionMsgId = (result?.data as any)?.key?.id || null;
       } else if (type === "image" || type === "video" || type === "document" || type === "audio") {
+        const mediaFile = (extra as any)?._mediaFile as File | undefined;
         const mediaBase64 = (extra as any)?._mediaBase64;
-        if (mediaBase64) {
+
+        if (type === "audio" && mediaBase64) {
           const result = await whatsappApi.sendMedia(connected.instanceName, selectedLead.phone, type, {
             base64: mediaBase64,
             fileName: extra?.fileName,
-            caption: type !== "audio" ? content : undefined,
+            caption: undefined,
             mimeType: extra?.mimeType,
           });
           if (result.error) throw new Error(result.error);
           evolutionMsgId = (result.data as any)?.key?.id || null;
+        } else if (mediaFile) {
+          const uploadResult = await whatsappApi.sendMediaUpload(connected.instanceName, selectedLead.phone, type, mediaFile, {
+            fileName: extra?.fileName,
+            caption: type !== "audio" ? content : undefined,
+            mimeType: extra?.mimeType || mediaFile.type,
+          });
+          if (uploadResult.error) throw new Error(uploadResult.error);
+
+          const jobId = (uploadResult.data as any)?.jobId as string | undefined;
+          if (!jobId) throw new Error("Upload de mídia não retornou jobId");
+
+          const startedAt = Date.now();
+          while (Date.now() - startedAt < 120000) {
+            await new Promise((resolve) => setTimeout(resolve, 1500));
+            const statusResult = await whatsappApi.getMediaSendStatus(jobId);
+            if (statusResult.error) throw new Error(statusResult.error);
+
+            const job = statusResult.data as any;
+            if (job?.status === "sent") {
+              evolutionMsgId = job?.result?.key?.id || null;
+              break;
+            }
+            if (job?.status === "failed") {
+              throw new Error(job?.error || "Falha ao enviar mídia");
+            }
+          }
+
+          if (!evolutionMsgId) {
+            throw new Error("Tempo limite ao aguardar confirmação do envio da mídia");
+          }
         }
-      } else if (type === "location" && extra?.location) {
+      }
         const result = await whatsappApi.sendLocation(connected.instanceName, selectedLead.phone, {
           latitude: extra.location.latitude,
           longitude: extra.location.longitude,
