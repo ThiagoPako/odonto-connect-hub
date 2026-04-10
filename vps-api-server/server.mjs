@@ -661,10 +661,6 @@ app.post('/api/whatsapp/subscribe-presence', async (req, res) => {
         console.error(`❌ Presence subscribe error for ${cleanNumber}:`, subErr.message);
       }
     }
-      } catch (subErr) {
-        console.error(`❌ Presence subscribe error for ${cleanNumber}:`, subErr.message);
-      }
-    }
 
     const cachedPresence = presenceStateCache.get(cleanNumber)
       || Array.from(presenceStateCache.entries()).find(([phone]) => {
