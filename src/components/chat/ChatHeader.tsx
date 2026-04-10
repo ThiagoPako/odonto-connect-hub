@@ -150,9 +150,9 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onRe
         <div className="flex items-center gap-3.5 animate-fade-in">
           <div className="relative">
             <LeadAvatar initials={lead.initials} avatarUrl={lead.avatarUrl} avatarColor={lead.avatarColor || "bg-primary/20"} size="md" />
-            <div className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-card shadow-sm ${
-              presence === "online" || presence === "typing" || presence === "recording" ? "bg-success" : "bg-muted-foreground/40"
-            }`} />
+            {(presence === "online" || presence === "typing" || presence === "recording") && (
+              <div className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-card shadow-sm bg-success" />
+            )}
           </div>
           <div>
             <div className="flex items-center gap-2">
@@ -191,14 +191,11 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onRe
                 </span>
                 Online
               </p>
-            ) : (
-              <p className="text-xs text-muted-foreground flex items-center gap-1.5">
-                <span className="relative flex h-2 w-2">
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-muted-foreground/40"></span>
-                </span>
-                Offline
+            ) : lastSeen ? (
+              <p className="text-xs text-muted-foreground">
+                Visto por último {formatLastSeen(lastSeen)}
               </p>
-            )}
+            ) : null}
           </div>
         </div>
 
