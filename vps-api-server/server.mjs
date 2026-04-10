@@ -685,6 +685,8 @@ app.get('/api/whatsapp/webhook/:instance', async (req, res) => {
 
 // Track which numbers we already subscribed presence for (per instance)
 const presenceSubscribed = new Set();
+// Track LID resolution warnings to avoid log spam
+let resolveLidWarned = new Set();
 // Track subscribed phones per instance for LID resolution fallback
 // Map<instance, Set<phone>>
 const instanceSubscribedPhones = new Map();
@@ -728,7 +730,12 @@ app.post('/api/whatsapp/subscribe-presence', async (req, res) => {
           // Resolve LID mapping — await so it's ready for presence events
           const lid = await resolveLidForPhone(instance, cleanNumber);
           if (!lid) {
-            console.warn(`⚠️ Could not resolve LID for ${cleanNumber} — presence updates may not match`);
+            // Log only once per number to avoid spam
+            if (!resolveLidWarned) resolveLidWarned = new Set();
+            if (!resolveLidWarned.has(cleanNumber)) {
+              resolveLidWarned.add(cleanNumber);
+              console.warn(`⚠️ Could not resolve LID for ${cleanNumber} — presence updates may not match (suppressing future warnings for this number)`);
+            }
           }
         } else {
           console.warn(`⚠️ Presence subscribe failed for ${cleanNumber}:`, JSON.stringify(subResult.data).slice(0, 300));
