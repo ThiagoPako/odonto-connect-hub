@@ -18,9 +18,10 @@ import webpush from 'web-push';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import { execFile } from 'child_process';
-import { mkdtemp, writeFile, readFile, rm } from 'fs/promises';
+import { mkdtemp, writeFile, readFile, rm, mkdir } from 'fs/promises';
 import { tmpdir } from 'os';
 import { promisify } from 'util';
+import { existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
