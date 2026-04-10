@@ -1,4 +1,5 @@
 import { useState, useRef, useMemo, useCallback, useEffect } from "react";
+import { contatosApi, type Contato } from "@/lib/vpsApi";
 import { Send, Paperclip, Smile, Image, MapPin, UserCircle, BarChart3, FileText, Video, Sticker, X, Bold, Italic, Strikethrough, Code, List, Zap, Loader2 } from "lucide-react";
 import { AudioRecorder } from "./AudioRecorder";
 import { getClinicLocation } from "@/components/ClinicLocationPanel";
@@ -55,7 +56,10 @@ export function MessageInput({ onSendMessage, onPresenceChange, disabled, replyi
   const [locLat, setLocLat] = useState("-23.5505");
   const [locLng, setLocLng] = useState("-46.6333");
 
-  // Contact form
+  // Contact form - search from system contacts
+  const [ctSearch, setCtSearch] = useState("");
+  const [ctResults, setCtResults] = useState<Contato[]>([]);
+  const [ctLoading, setCtLoading] = useState(false);
   const [ctName, setCtName] = useState("");
   const [ctPhone, setCtPhone] = useState("");
   const [ctEmail, setCtEmail] = useState("");
