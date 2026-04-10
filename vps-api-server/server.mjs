@@ -871,11 +871,8 @@ app.post('/api/whatsapp/send-presence', async (req, res) => {
       method: 'POST',
       body: JSON.stringify({
         number: cleanNumber,
-        options: {
-          number: cleanNumber,
-          presence,
-          delay: typeof delay === 'number' ? delay : 200,
-        },
+        presence,
+        delay: typeof delay === 'number' ? delay : 200,
       }),
     });
 
