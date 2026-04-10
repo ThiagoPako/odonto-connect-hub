@@ -221,6 +221,7 @@ export function MessageInput({ onSendMessage, onPresenceChange, disabled, replyi
         fileUrl: dataUri,
         mimeType: file.type,
         _mediaBase64: base64,
+        _mediaFile: file,
       } as any);
 
       setUploading(false);
