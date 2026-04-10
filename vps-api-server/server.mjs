@@ -997,6 +997,21 @@ app.post('/api/whatsapp/send-media', async (req, res) => {
     const result = await evolutionFetch(`/message/sendMedia/${instance}`, {
       method: 'POST',
       body: JSON.stringify(payload),
+    });
+
+    if (!result.ok) {
+      console.error('❌ sendMedia Evolution error:', JSON.stringify(result.data));
+      return res.status(result.status || 502).json({
+        error: result.data?.response?.message?.[0] || result.data?.error || 'Falha ao enviar mídia',
+        details: result.data,
+      });
+    }
+
+    console.log('✅ sendMedia success:', JSON.stringify(result.data?.key || {}));
+    res.json(result.data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '50mb' }), async (req, res) => {
@@ -1029,13 +1044,12 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '5
 
     res.status(202).json({ jobId, status: 'processing' });
 
-    const base64 = rawBody.toString('base64');
     const payload = {
       number: cleanNumber,
       mediatype: String(mediaType),
       caption: caption ? String(caption) : '',
       fileName: fileName ? String(fileName) : undefined,
-      media: `data:${resolvedMimeType};base64,${base64}`,
+      media: `data:${resolvedMimeType};base64,${rawBody.toString('base64')}`,
     };
 
     const result = await evolutionFetch(`/message/sendMedia/${instance}`, {
@@ -1076,21 +1090,6 @@ app.get('/api/whatsapp/send-media-status/:jobId', async (req, res) => {
       return res.status(404).json({ error: 'Job não encontrado' });
     }
     res.json(job);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-    if (!result.ok) {
-      console.error('❌ sendMedia Evolution error:', JSON.stringify(result.data));
-      return res.status(result.status || 502).json({
-        error: result.data?.response?.message?.[0] || result.data?.error || 'Falha ao enviar mídia',
-        details: result.data,
-      });
-    }
-
-    console.log('✅ sendMedia success:', JSON.stringify(result.data?.key || {}));
-    res.json(result.data);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
