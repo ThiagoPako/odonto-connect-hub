@@ -370,24 +370,43 @@ function ChatPage() {
     });
   }, [selectedLead?.id]);
 
-  const fetchPresence = useCallback((leadId: string, phone: string, instanceName: string) => {
-    whatsappApi.subscribePresence(instanceName, phone).then(({ data }) => {
-      if (selectedLeadRef.current?.id !== leadId || !data?.presence) return;
+  const applyPresence = useCallback((leadId: string, presenceStr: string) => {
+    let displayStatus: "online" | "offline" | "typing" | "recording" = "offline";
+    if (presenceStr === "composing") displayStatus = "typing";
+    else if (presenceStr === "recording") displayStatus = "recording";
+    else if (presenceStr === "available" || presenceStr === "paused") displayStatus = "online";
 
-      const status = data.presence;
-      let displayStatus: "online" | "offline" | "typing" | "recording" = "offline";
-      if (status === "composing") displayStatus = "typing";
-      else if (status === "recording") displayStatus = "recording";
-      else if (status === "available" || status === "paused") displayStatus = "online";
-
-      setPresenceMap((prev) => ({
-        [leadId]: {
-          status: displayStatus,
-          lastSeen: displayStatus === "offline" ? new Date() : prev[leadId]?.lastSeen ?? null,
-        },
-      }));
-    }).catch(() => {});
+    setPresenceMap((prev) => ({
+      [leadId]: {
+        status: displayStatus,
+        lastSeen: displayStatus === "offline" ? new Date() : prev[leadId]?.lastSeen ?? null,
+      },
+    }));
+    return displayStatus;
   }, []);
+
+  const fetchPresence = useCallback((leadId: string, phone: string, instanceName: string) => {
+    // First call subscribes to presence updates
+    whatsappApi.subscribePresence(instanceName, phone).then(({ data }) => {
+      if (selectedLeadRef.current?.id !== leadId) return;
+      console.log("📡 Presence subscribe response:", data);
+      if (data?.presence) {
+        applyPresence(leadId, data.presence);
+      }
+
+      // Retry after 2s — Evolution API often needs time to report real status after subscribe
+      setTimeout(() => {
+        if (selectedLeadRef.current?.id !== leadId) return;
+        whatsappApi.subscribePresence(instanceName, phone).then(({ data: data2 }) => {
+          if (selectedLeadRef.current?.id !== leadId) return;
+          console.log("📡 Presence retry response:", data2);
+          if (data2?.presence) {
+            applyPresence(leadId, data2.presence);
+          }
+        }).catch(() => {});
+      }, 2000);
+    }).catch(() => {});
+  }, [applyPresence]);
 
   useEffect(() => {
     if (!selectedLead?.phone) {
