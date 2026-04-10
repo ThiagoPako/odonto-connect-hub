@@ -441,6 +441,25 @@ async function evolutionFetch(path, options = {}) {
   return { ok: res.ok, status: res.status, data };
 }
 
+function normalizeWhatsappNumber(value) {
+  return String(value || '')
+    .replace('@s.whatsapp.net', '')
+    .replace('@c.us', '')
+    .replace('@lid', '')
+    .replace(/:\d+$/, '')
+    .replace(/\D/g, '');
+}
+
+const presenceStateCache = new Map();
+const webhookEnsureTimestamps = new Map();
+
+async function ensureWebhookRegistration(instanceName) {
+  const lastEnsure = webhookEnsureTimestamps.get(instanceName) || 0;
+  if (Date.now() - lastEnsure < 5 * 60 * 1000) return;
+  await registerWebhook(instanceName);
+  webhookEnsureTimestamps.set(instanceName, Date.now());
+}
+
 function cleanBase64Media(value) {
   if (!value) return '';
   const trimmed = String(value).trim();
@@ -609,32 +628,60 @@ app.post('/api/whatsapp/subscribe-presence', async (req, res) => {
     if (!instance || !number) {
       return res.status(400).json({ error: 'instance and number are required' });
     }
-    const cleanNumber = number.replace(/\D/g, '');
-    // Use findPresence to subscribe AND get current status
-    const result = await evolutionFetch(`/chat/findPresence/${instance}`, {
-      method: 'POST',
-      body: JSON.stringify({
-        number: `${cleanNumber}@s.whatsapp.net`,
-      }),
+    const cleanNumber = normalizeWhatsappNumber(number);
+    await ensureWebhookRegistration(instance);
+
+    const cachedPresence = presenceStateCache.get(cleanNumber)
+      || Array.from(presenceStateCache.entries()).find(([phone]) => {
+        if (!phone || !cleanNumber) return false;
+        return phone === cleanNumber || phone.endsWith(cleanNumber.slice(-11)) || cleanNumber.endsWith(phone.slice(-11));
+      })?.[1];
+
+    res.json({
+      subscribed: true,
+      number: cleanNumber,
+      presence: cachedPresence?.status || 'unavailable',
+      updatedAt: cachedPresence?.updatedAt || null,
     });
-    console.log(`👁️ Presence subscribed for ${cleanNumber} on ${instance}`, JSON.stringify(result).slice(0, 200));
-
-    // evolutionFetch returns { ok, status, data } — unwrap payload before parsing presence
-    const payload = result?.data;
-    let currentStatus = 'unavailable';
-
-    if (result?.ok && payload) {
-      const participants = Array.isArray(payload) ? payload : payload?.participants || [];
-      if (participants.length > 0) {
-        currentStatus = participants[0]?.status || participants[0]?.presence || 'unavailable';
-      } else if (payload?.status || payload?.presence) {
-        currentStatus = payload.status || payload.presence;
-      }
-    }
-
-    res.json({ subscribed: !!result?.ok, number: cleanNumber, presence: currentStatus });
   } catch (error) {
     console.error('Presence subscribe error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/whatsapp/send-presence', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { instance, number, presence, delay } = req.body;
+    if (!instance || !number || !presence) {
+      return res.status(400).json({ error: 'instance, number e presence são obrigatórios' });
+    }
+
+    const allowedPresence = new Set(['composing', 'recording', 'paused']);
+    if (!allowedPresence.has(presence)) {
+      return res.status(400).json({ error: 'presence inválido' });
+    }
+
+    const cleanNumber = normalizeWhatsappNumber(number);
+    const result = await evolutionFetch(`/chat/sendPresence/${instance}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        number: cleanNumber,
+        presence,
+        delay: typeof delay === 'number' ? delay : 200,
+      }),
+    });
+
+    if (!result.ok) {
+      return res.status(result.status || 502).json({
+        error: result.data?.response?.message?.[0] || result.data?.error || 'Falha ao enviar presence',
+        details: result.data,
+      });
+    }
+
+    return res.json(result.data || { success: true, presence });
+  } catch (error) {
+    console.error('Send presence error:', error.message);
     res.status(500).json({ error: error.message });
   }
 });
@@ -1512,47 +1559,52 @@ app.post('/api/webhook/evolution', async (req, res) => {
       const presenceData = body.data;
       console.log(`👁️ PRESENCE_UPDATE raw:`, JSON.stringify(presenceData).slice(0, 300));
       const participants = Array.isArray(presenceData?.participants) ? presenceData.participants : [];
-      const presenceCandidates = [
+      const fallbackPhone = [
         presenceData?.id,
         presenceData?.chatId,
         presenceData?.remoteJid,
-        ...participants.flatMap((participant) => [
-          participant?.id,
-          participant?.jid,
-          participant?.participant,
-          participant?.remoteJid,
-          participant?.userJid,
-        ]),
-      ];
-
-      const presencePhone = presenceCandidates
-        .filter(Boolean)
-        .map((value) => String(value)
-          .replace('@s.whatsapp.net', '')
-          .replace('@c.us', '')
-          .replace('@lid', '')
-          .replace(/:\d+$/, '')
-          .replace(/\D/g, '')
-        )
+      ]
+        .map(normalizeWhatsappNumber)
         .find((value) => value.length >= 10) || '';
 
-      if (presencePhone) {
+      if (participants.length > 0) {
         for (const participant of participants) {
+          const participantPhone = [
+            participant?.id,
+            participant?.jid,
+            participant?.participant,
+            participant?.remoteJid,
+            participant?.userJid,
+            fallbackPhone,
+          ]
+            .map(normalizeWhatsappNumber)
+            .find((value) => value.length >= 10) || '';
+
+          if (!participantPhone) continue;
+
           const status = participant?.status || participant?.presence || 'unavailable';
+          presenceStateCache.set(participantPhone, {
+            status,
+            instance,
+            updatedAt: new Date().toISOString(),
+          });
           broadcastSSE('presence_update', {
-            phone: presencePhone,
+            phone: participantPhone,
             status,
             instance,
           });
         }
-
-        if (participants.length === 0 && presenceData?.status) {
-          broadcastSSE('presence_update', {
-            phone: presencePhone,
-            status: presenceData.status,
-            instance,
-          });
-        }
+      } else if (fallbackPhone && presenceData?.status) {
+        presenceStateCache.set(fallbackPhone, {
+          status: presenceData.status,
+          instance,
+          updatedAt: new Date().toISOString(),
+        });
+        broadcastSSE('presence_update', {
+          phone: fallbackPhone,
+          status: presenceData.status,
+          instance,
+        });
       }
       return res.json({ processed: true, event: 'presence' });
     }

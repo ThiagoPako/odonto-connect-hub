@@ -70,6 +70,11 @@ function ChatPage() {
   const queueRef = useRef(queue);
   const myLeadsRef = useRef(myLeads);
   const selectedLeadRef = useRef(selectedLead);
+  const lastSentPresenceRef = useRef<{ leadId: string | null; status: "composing" | "recording" | "paused"; timestamp: number }>({
+    leadId: null,
+    status: "paused",
+    timestamp: 0,
+  });
   queueRef.current = queue;
   myLeadsRef.current = myLeads;
   selectedLeadRef.current = selectedLead;
@@ -344,7 +349,38 @@ function ChatPage() {
     });
   }, []);
 
+  const handleAttendantPresenceChange = useCallback((status: "composing" | "recording" | "paused") => {
+    const activeLead = selectedLeadRef.current;
+    const instanceName = connectedInstances[0]?.instanceName;
+    if (!activeLead?.phone || !instanceName) return;
+
+    const now = Date.now();
+    const last = lastSentPresenceRef.current;
+    if (last.leadId === activeLead.id && last.status === status && now - last.timestamp < 1000) {
+      return;
+    }
+
+    lastSentPresenceRef.current = {
+      leadId: activeLead.id,
+      status,
+      timestamp: now,
+    };
+
+    whatsappApi.sendPresence(instanceName, activeLead.phone, status).catch((err: any) => {
+      console.error("Failed to send presence:", err);
+    });
+  }, [connectedInstances]);
+
   useRealtimeChat({ onMessage: handleIncomingMessage, onPresence: handlePresenceUpdate, onQueueAssigned: handleQueueAssigned, onMessageStatus: handleMessageStatusUpdate });
+
+  useEffect(() => {
+    const currentLead = selectedLead;
+    const instanceName = connectedInstances[0]?.instanceName;
+    return () => {
+      if (!currentLead?.phone || !instanceName) return;
+      whatsappApi.sendPresence(instanceName, currentLead.phone, "paused").catch(() => {});
+    };
+  }, [selectedLead?.id, connectedInstances[0]?.instanceName]);
 
   // Request browser notification permission on first visit
   useEffect(() => { requestNotificationPermission(); }, []);
@@ -1320,6 +1356,7 @@ function ChatPage() {
               ) : (
                 <MessageInput
                   onSendMessage={handleSendMessage}
+                  onPresenceChange={handleAttendantPresenceChange}
                   disabled={selectedLead.status === "waiting"}
                   replyingTo={replyingTo}
                   onCancelReply={() => setReplyingTo(null)}

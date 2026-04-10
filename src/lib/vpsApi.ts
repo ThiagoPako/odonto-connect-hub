@@ -252,8 +252,14 @@ export const whatsappApi = {
       method: 'POST',
       body: { instance, number, isVideo },
     }),
+  sendPresence: (instance: string, number: string, presence: 'composing' | 'recording' | 'paused', delay = 200) =>
+    vpsApiFetch<{ success?: boolean; presence?: string }>('/whatsapp/send-presence', {
+      method: 'POST',
+      body: { instance, number, presence, delay },
+      background: true,
+    }),
   subscribePresence: (instance: string, number: string) =>
-    vpsApiFetch<{ subscribed: boolean; number: string; presence?: string }>('/whatsapp/subscribe-presence', {
+    vpsApiFetch<{ subscribed: boolean; number: string; presence?: string; updatedAt?: string | null }>('/whatsapp/subscribe-presence', {
       method: 'POST',
       body: { instance, number },
       background: true,
