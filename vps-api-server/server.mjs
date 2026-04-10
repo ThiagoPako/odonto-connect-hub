@@ -453,6 +453,48 @@ function normalizeWhatsappNumber(value) {
 const presenceStateCache = new Map();
 const webhookEnsureTimestamps = new Map();
 
+// ─── LID ↔ Phone mapping ───────────────────────────────────
+// WhatsApp uses Linked IDs (@lid) internally. Presence updates arrive with LIDs,
+// but our leads are stored by phone number. We build this map dynamically.
+const lidToPhoneMap = new Map(); // lid_number → phone_number
+const phoneToLidMap = new Map(); // phone_number → lid_number
+
+function registerLidMapping(lid, phone) {
+  if (!lid || !phone || lid === phone) return;
+  lidToPhoneMap.set(lid, phone);
+  phoneToLidMap.set(phone, lid);
+}
+
+function resolvePhoneFromLid(lidOrPhone) {
+  return lidToPhoneMap.get(lidOrPhone) || lidOrPhone;
+}
+
+// Resolve LID→phone by calling Evolution API whatsappNumbers
+async function resolveLidForPhone(instance, phone) {
+  try {
+    const result = await evolutionFetch(`/chat/whatsappNumbers/${instance}`, {
+      method: 'POST',
+      body: JSON.stringify({ numbers: [phone] }),
+    });
+    if (result.ok && Array.isArray(result.data)) {
+      for (const entry of result.data) {
+        const jid = entry?.jid || entry?.id || '';
+        const lid = entry?.lid || '';
+        // Extract LID number
+        const lidNum = normalizeWhatsappNumber(lid) || (jid.includes('@lid') ? normalizeWhatsappNumber(jid) : '');
+        if (lidNum && lidNum.length >= 10) {
+          registerLidMapping(lidNum, phone);
+          console.log(`🔗 LID mapped: ${lidNum} → ${phone}`);
+          return lidNum;
+        }
+      }
+    }
+  } catch (err) {
+    console.error(`LID resolve error for ${phone}:`, err.message);
+  }
+  return null;
+}
+
 async function ensureWebhookRegistration(instanceName) {
   const lastEnsure = webhookEnsureTimestamps.get(instanceName) || 0;
   if (Date.now() - lastEnsure < 5 * 60 * 1000) return;
@@ -654,6 +696,9 @@ app.post('/api/whatsapp/subscribe-presence', async (req, res) => {
           presenceSubscribed.add(subKey);
           didSubscribe = true;
           console.log(`✅ Presence subscribed for ${cleanNumber} on ${instance}`);
+
+          // Resolve LID mapping in background so presence updates can be matched
+          resolveLidForPhone(instance, cleanNumber).catch(() => {});
         } else {
           console.warn(`⚠️ Presence subscribe failed for ${cleanNumber}:`, JSON.stringify(subResult.data).slice(0, 300));
         }
@@ -666,7 +711,9 @@ app.post('/api/whatsapp/subscribe-presence', async (req, res) => {
       || Array.from(presenceStateCache.entries()).find(([phone]) => {
         if (!phone || !cleanNumber) return false;
         return phone === cleanNumber || phone.endsWith(cleanNumber.slice(-11)) || cleanNumber.endsWith(phone.slice(-11));
-      })?.[1];
+      })?.[1]
+      // Also check if we have a LID mapped to this phone
+      || (phoneToLidMap.has(cleanNumber) ? presenceStateCache.get(phoneToLidMap.get(cleanNumber)) : undefined);
 
     res.json({
       subscribed: didSubscribe || presenceSubscribed.has(subKey),
@@ -1695,9 +1742,13 @@ app.post('/api/webhook/evolution', async (req, res) => {
       ]
         .map((v) => {
           const raw = String(v || '');
-          // Skip LID JIDs — they are not real phone numbers
-          if (raw.includes('@lid')) return '';
-          return normalizeWhatsappNumber(raw);
+          const normalized = normalizeWhatsappNumber(raw);
+          if (!normalized || normalized.length < 10) return '';
+          // If the JID is a LID, try to resolve to real phone via mapping
+          if (raw.includes('@lid')) {
+            return resolvePhoneFromLid(normalized);
+          }
+          return normalized;
         })
         .find((value) => value.length >= 10) || '';
 
@@ -1721,19 +1772,35 @@ app.post('/api/webhook/evolution', async (req, res) => {
             participant?.participant,
             participant?.remoteJid,
             participant?.userJid,
-            fallbackPhone,
           ]
             .map((v) => {
               const raw = String(v || '');
-              // If the JID is a LID (@lid), skip it — use fallbackPhone instead
-              if (raw.includes('@lid')) return '';
-              return normalizeWhatsappNumber(raw);
+              const normalized = normalizeWhatsappNumber(raw);
+              if (!normalized || normalized.length < 10) return '';
+              // If the JID is a LID, try to resolve to real phone via mapping
+              if (raw.includes('@lid')) {
+                const resolved = resolvePhoneFromLid(normalized);
+                // If resolved is still the LID (no mapping yet), return empty to try next
+                return resolved !== normalized ? resolved : '';
+              }
+              return normalized;
             })
             .find((value) => value.length >= 10) || '';
 
-          // If participant phone is empty (LID-only), use the chat JID phone as fallback
-          // The chat JID (presenceData.id) for 1:1 chats IS the real phone number
-          const resolvedPhone = participantPhone || fallbackPhone;
+          // Try LID→phone resolution from all available LIDs in this event
+          let resolvedPhone = participantPhone || fallbackPhone;
+
+          // Last resort: try resolving any raw LID from participant fields
+          if (!resolvedPhone) {
+            const rawLid = normalizeWhatsappNumber(
+              participant?.id || participant?.jid || presenceData?.id || ''
+            );
+            if (rawLid && rawLid.length >= 10) {
+              const mapped = resolvePhoneFromLid(rawLid);
+              if (mapped !== rawLid) resolvedPhone = mapped;
+            }
+          }
+
           if (!resolvedPhone) continue;
 
           const status = participant?.status
@@ -1743,11 +1810,13 @@ app.post('/api/webhook/evolution', async (req, res) => {
             || 'unavailable';
 
           console.log(`👁️ PRESENCE resolved: phone=${resolvedPhone} status=${status}${participantPhone !== resolvedPhone ? ` (LID fallback from ${chatJid})` : ''}`);
-          presenceStateCache.set(resolvedPhone, {
+          // Cache under both the resolved phone AND the raw LID for future lookups
+          const cacheEntry = {
             status,
             instance,
             updatedAt: new Date().toISOString(),
-          });
+          };
+          presenceStateCache.set(resolvedPhone, cacheEntry);
           broadcastSSE('presence_update', {
             phone: resolvedPhone,
             status,
@@ -1755,14 +1824,16 @@ app.post('/api/webhook/evolution', async (req, res) => {
           });
         }
       } else if (fallbackPhone && globalStatus) {
-        console.log(`👁️ PRESENCE fallback: phone=${fallbackPhone} status=${globalStatus}`);
-        presenceStateCache.set(fallbackPhone, {
+        const resolvedFallback = resolvePhoneFromLid(fallbackPhone);
+        const finalPhone = resolvedFallback !== fallbackPhone ? resolvedFallback : fallbackPhone;
+        console.log(`👁️ PRESENCE fallback: phone=${finalPhone} status=${globalStatus}${finalPhone !== fallbackPhone ? ` (resolved from LID ${fallbackPhone})` : ''}`);
+        presenceStateCache.set(finalPhone, {
           status: globalStatus,
           instance,
           updatedAt: new Date().toISOString(),
         });
         broadcastSSE('presence_update', {
-          phone: fallbackPhone,
+          phone: finalPhone,
           status: globalStatus,
           instance,
         });
@@ -1785,6 +1856,25 @@ app.post('/api/webhook/evolution', async (req, res) => {
 
         if (!primaryMessageId || !remoteJid || remoteJid.endsWith('@g.us')) continue;
 
+        // Build LID→phone mapping from ACK events
+        // remoteJid is often a LID; look up the real phone from our DB
+        if (remoteJid.includes('@lid')) {
+          const lidNum = normalizeWhatsappNumber(remoteJid);
+          if (lidNum && !lidToPhoneMap.has(lidNum)) {
+            // Try to find the phone from the message in DB
+            try {
+              const { rows: msgRows } = await pool.query(
+                `SELECT phone FROM chat_messages WHERE id = $1 LIMIT 1`,
+                [primaryMessageId]
+              );
+              if (msgRows[0]?.phone) {
+                registerLidMapping(lidNum, msgRows[0].phone);
+                console.log(`🔗 LID mapped from ACK: ${lidNum} → ${msgRows[0].phone}`);
+              }
+            } catch (e) { /* ignore */ }
+          }
+        }
+
         let newStatus = null;
         const ackStr = String(ack).toUpperCase();
         const ackNum = typeof ack === 'number' ? ack : parseInt(ack);
@@ -1799,12 +1889,14 @@ app.post('/api/webhook/evolution', async (req, res) => {
           continue;
         }
 
-        const phone = String(remoteJid)
+        let phone = String(remoteJid)
           .replace('@s.whatsapp.net', '')
           .replace('@c.us', '')
           .replace('@lid', '')
           .replace(/:\d+$/, '')
           .replace(/\D/g, '');
+        // Resolve LID to real phone if mapped
+        phone = resolvePhoneFromLid(phone);
 
         for (const lookupId of lookupIds) {
           console.log(`✅ ACK: ${lookupId} → ${newStatus} (ack=${ack}, phone=${phone})`);
