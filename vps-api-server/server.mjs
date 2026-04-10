@@ -1696,6 +1696,13 @@ app.post('/api/webhook/evolution', async (req, res) => {
         .map(normalizeWhatsappNumber)
         .find((value) => value.length >= 10) || '';
 
+      // Skip group presence updates (id ends with @g.us)
+      const chatJid = presenceData?.id || presenceData?.chatId || '';
+      if (chatJid.includes('@g.us')) {
+        console.log(`👁️ PRESENCE skipped (group chat): ${chatJid}`);
+        return res.json({ processed: true, event: 'presence', skipped: 'group' });
+      }
+
       // Global status from presenceData itself (Baileys sometimes puts it here)
       const globalStatus = presenceData?.status
         || presenceData?.lastKnownPresence
@@ -1711,10 +1718,18 @@ app.post('/api/webhook/evolution', async (req, res) => {
             participant?.userJid,
             fallbackPhone,
           ]
-            .map(normalizeWhatsappNumber)
+            .map((v) => {
+              const raw = String(v || '');
+              // If the JID is a LID (@lid), skip it — use fallbackPhone instead
+              if (raw.includes('@lid')) return '';
+              return normalizeWhatsappNumber(raw);
+            })
             .find((value) => value.length >= 10) || '';
 
-          if (!participantPhone) continue;
+          // If participant phone is empty (LID-only), use the chat JID phone as fallback
+          // The chat JID (presenceData.id) for 1:1 chats IS the real phone number
+          const resolvedPhone = participantPhone || fallbackPhone;
+          if (!resolvedPhone) continue;
 
           const status = participant?.status
             || participant?.presence
@@ -1722,14 +1737,14 @@ app.post('/api/webhook/evolution', async (req, res) => {
             || globalStatus
             || 'unavailable';
 
-          console.log(`👁️ PRESENCE resolved: phone=${participantPhone} status=${status}`);
-          presenceStateCache.set(participantPhone, {
+          console.log(`👁️ PRESENCE resolved: phone=${resolvedPhone} status=${status}${participantPhone !== resolvedPhone ? ` (LID fallback from ${chatJid})` : ''}`);
+          presenceStateCache.set(resolvedPhone, {
             status,
             instance,
             updatedAt: new Date().toISOString(),
           });
           broadcastSSE('presence_update', {
-            phone: participantPhone,
+            phone: resolvedPhone,
             status,
             instance,
           });
