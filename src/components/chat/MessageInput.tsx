@@ -208,14 +208,30 @@ export function MessageInput({ onSendMessage, onPresenceChange, disabled, replyi
 
   const sendFileAsMessage = useCallback((file: File, type: MessageType, caption: string) => {
     setUploading(true);
+
+    const contentLabel = type === "image" ? "🖼️ Imagem" :
+      type === "video" ? "🎬 Vídeo" :
+      `📎 ${file.name}`;
+
+    // For large files (video/documents > 5MB), skip base64 conversion and send File directly
+    if (file.size > 5 * 1024 * 1024) {
+      const previewUrl = URL.createObjectURL(file);
+      onSendMessage(caption || contentLabel, type, {
+        fileName: file.name,
+        fileUrl: previewUrl,
+        mimeType: file.type,
+        _mediaFile: file,
+      } as any);
+      setUploading(false);
+      setMediaPreview(null);
+      setMediaCaption("");
+      return;
+    }
+
     const reader = new FileReader();
     reader.onloadend = () => {
       const dataUri = reader.result as string;
       const base64 = dataUri.split(",")[1];
-
-      const contentLabel = type === "image" ? "🖼️ Imagem" :
-        type === "video" ? "🎬 Vídeo" :
-        `📎 ${file.name}`;
 
       onSendMessage(caption || contentLabel, type, {
         fileName: file.name,
