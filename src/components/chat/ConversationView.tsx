@@ -302,7 +302,7 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
       }
     }
     scrollToBottom("instant");
-  }, []);
+  }, [leadName, messages, unreadCount, scrollToBottom]);
 
   // Reset load-more trigger when loadingMore finishes
   useEffect(() => {
