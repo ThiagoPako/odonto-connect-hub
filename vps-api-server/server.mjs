@@ -16,6 +16,10 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import webpush from 'web-push';
 import path from 'path';
+import { execFile } from 'child_process';
+import { mkdtemp, writeFile, readFile, rm } from 'fs/promises';
+import { tmpdir } from 'os';
+import { promisify } from 'util';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -421,6 +425,8 @@ app.put('/api/auth/users/:id', async (req, res) => {
 // EVOLUTION API PROXY (WhatsApp)
 // ═══════════════════════════════════════════════════════════════
 
+const execFileAsync = promisify(execFile);
+
 async function evolutionFetch(path, options = {}) {
   const url = `${EVOLUTION_API_URL}${path}`;
   const res = await fetch(url, {
@@ -433,6 +439,50 @@ async function evolutionFetch(path, options = {}) {
   });
   const data = await res.json().catch(() => ({}));
   return { ok: res.ok, status: res.status, data };
+}
+
+function cleanBase64Media(value) {
+  if (!value) return '';
+  const trimmed = String(value).trim();
+  const withoutPrefix = trimmed.startsWith('data:') && trimmed.includes(',')
+    ? trimmed.split(',')[1]
+    : trimmed;
+  return withoutPrefix.replace(/\s/g, '');
+}
+
+function getAudioInputExtension(mimeType) {
+  if (mimeType.includes('ogg')) return 'ogg';
+  if (mimeType.includes('mp4') || mimeType.includes('aac') || mimeType.includes('m4a')) return 'm4a';
+  if (mimeType.includes('mpeg') || mimeType.includes('mp3')) return 'mp3';
+  return 'webm';
+}
+
+async function transcodeAudioToWhatsAppOgg(base64Audio, mimeType) {
+  const workDir = await mkdtemp(path.join(tmpdir(), 'odonto-audio-'));
+  const inputPath = path.join(workDir, `input.${getAudioInputExtension(mimeType)}`);
+  const outputPath = path.join(workDir, 'output.ogg');
+
+  try {
+    await writeFile(inputPath, Buffer.from(base64Audio, 'base64'));
+    await execFileAsync('ffmpeg', [
+      '-y',
+      '-i', inputPath,
+      '-vn',
+      '-c:a', 'libopus',
+      '-b:a', '64k',
+      '-ar', '48000',
+      '-ac', '1',
+      outputPath,
+    ], { maxBuffer: 20 * 1024 * 1024 });
+
+    const transcodedBuffer = await readFile(outputPath);
+    return {
+      base64: transcodedBuffer.toString('base64'),
+      mimeType: 'audio/ogg',
+    };
+  } finally {
+    await rm(workDir, { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 // List instances
@@ -606,16 +656,30 @@ app.post('/api/whatsapp/send-media', async (req, res) => {
     if (mediaType === 'audio') {
       const rawMime = media.mimeType || 'audio/webm';
       const cleanMime = rawMime.split(';')[0].trim();
-      const finalMime = cleanMime || 'audio/webm';
-      const audioBase64 = typeof media.base64 === 'string' ? media.base64.trim().replace(/\s/g, '') : '';
-      const audioValue = audioBase64
-        ? `data:${finalMime};base64,${audioBase64}`
+      const sourceMime = cleanMime || 'audio/webm';
+      const audioBase64 = cleanBase64Media(media.base64);
+
+      let outgoingMime = sourceMime;
+      let outgoingBase64 = audioBase64;
+
+      if (audioBase64) {
+        try {
+          const transcoded = await transcodeAudioToWhatsAppOgg(audioBase64, sourceMime);
+          outgoingBase64 = transcoded.base64;
+          outgoingMime = transcoded.mimeType;
+        } catch (transcodeError) {
+          console.error('Audio transcode failed, falling back to original payload:', transcodeError.message);
+        }
+      }
+
+      const audioValue = outgoingBase64
+        ? `data:${outgoingMime};base64,${outgoingBase64}`
         : media.url;
+
       const v2Payload = {
         number: cleanNumber,
         audio: audioValue,
         delay: 1200,
-        quoted: undefined,
       };
       const v1Payload = {
         number: cleanNumber,
