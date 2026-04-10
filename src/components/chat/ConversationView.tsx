@@ -266,43 +266,37 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
 
   // Smart scroll — only auto-scroll if user is near the bottom
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
-    bottomRef.current?.scrollIntoView({ behavior });
+    requestAnimationFrame(() => {
+      bottomRef.current?.scrollIntoView({ behavior });
+    });
   }, []);
 
+  // Always scroll to bottom when lead changes
+  const prevLeadName = useRef(leadName);
+  useEffect(() => {
+    if (prevLeadName.current !== leadName) {
+      prevLeadName.current = leadName;
+      isNearBottomRef.current = true;
+      // Use a small delay to ensure messages are rendered
+      setTimeout(() => scrollToBottom("instant"), 50);
+    }
+  }, [leadName, scrollToBottom]);
+
+  // Auto-scroll on new messages / typing if near bottom
   useEffect(() => {
     if (isNearBottomRef.current) {
       scrollToBottom();
     }
   }, [messages, isTyping, scrollToBottom]);
 
-  // Reset scroll state when lead changes
-  const prevLeadName = useRef(leadName);
+  // Initial scroll on mount
   const initialScrollDone = useRef(false);
   useEffect(() => {
-    if (prevLeadName.current !== leadName) {
-      prevLeadName.current = leadName;
-      initialScrollDone.current = false;
-      isNearBottomRef.current = true;
-    }
-  }, [leadName]);
-
-  // Initial scroll — jump to first unread or bottom
-  useEffect(() => {
     if (initialScrollDone.current) return;
+    if (messages.length === 0) return;
     initialScrollDone.current = true;
-    if (unreadCount > 0 && messages.length > 0) {
-      const firstUnreadIdx = messages.length - unreadCount;
-      const targetMsg = messages[Math.max(0, firstUnreadIdx)];
-      if (targetMsg) {
-        requestAnimationFrame(() => {
-          const el = document.getElementById(`msg-${targetMsg.id}`);
-          el?.scrollIntoView({ behavior: "instant", block: "center" });
-        });
-        return;
-      }
-    }
     scrollToBottom("instant");
-  }, [leadName, messages, unreadCount, scrollToBottom]);
+  }, [messages, scrollToBottom]);
 
   // Reset load-more trigger when loadingMore finishes
   useEffect(() => {
