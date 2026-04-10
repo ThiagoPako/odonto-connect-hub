@@ -3260,15 +3260,15 @@ async function syncWhatsAppContacts() {
 
         for (const c of waContacts) {
           const telefone = c.id.replace('@s.whatsapp.net', '').replace(/\D/g, '');
-          const nome = (c.pushName || c.name || telefone).trim();
+          const nome = (c.name || c.pushName || telefone).trim();
           if (!telefone) continue;
 
-          const existing = await pool.query('SELECT id FROM contatos WHERE telefone = $1', [telefone]);
+          const existing = await pool.query('SELECT id, nome FROM contatos WHERE telefone = $1', [telefone]);
           if (existing.rows.length > 0) {
-            // Update name if it was just the phone number before
-            if (nome && nome !== telefone) {
+            const currentName = (existing.rows[0].nome || '').trim();
+            if (nome && nome !== telefone && (!currentName || currentName === telefone)) {
               await pool.query(
-                `UPDATE contatos SET nome = $1, updated_at = NOW() WHERE telefone = $2 AND nome = telefone`,
+                `UPDATE contatos SET nome = $1, updated_at = NOW() WHERE telefone = $2`,
                 [nome, telefone]
               );
             }
@@ -3355,14 +3355,16 @@ app.post('/api/contatos/sync/now', async (req, res) => {
 
         for (const c of waContacts) {
           const telefone = c.id.replace('@s.whatsapp.net', '').replace(/\D/g, '');
-          const nome = (c.pushName || c.name || telefone).trim();
+          // Prefer saved contact name, fallback to pushName (profile name), then phone
+          const nome = (c.name || c.pushName || telefone).trim();
           if (!telefone) continue;
 
-          const existing = await pool.query('SELECT id FROM contatos WHERE telefone = $1', [telefone]);
+          const existing = await pool.query('SELECT id, nome FROM contatos WHERE telefone = $1', [telefone]);
           if (existing.rows.length > 0) {
-            if (nome && nome !== telefone) {
+            const currentName = (existing.rows[0].nome || '').trim();
+            if (nome && nome !== telefone && (!currentName || currentName === telefone)) {
               await pool.query(
-                `UPDATE contatos SET nome = $1, updated_at = NOW() WHERE telefone = $2 AND nome = telefone`,
+                `UPDATE contatos SET nome = $1, updated_at = NOW() WHERE telefone = $2`,
                 [nome, telefone]
               );
             }
