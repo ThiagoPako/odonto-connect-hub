@@ -316,7 +316,7 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
     const el = containerRef.current;
     if (!el) return;
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    const near = distanceFromBottom < 150;
+    const near = distanceFromBottom < 300;
     isNearBottomRef.current = near;
     setShowScrollButton(!near);
 
