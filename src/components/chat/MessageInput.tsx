@@ -14,7 +14,7 @@ interface MessageInputProps {
   onCancelReply?: () => void;
 }
 
-const QUICK_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏", "🎉", "🔥"];
+const QUICK_EMOJIS = ["👍", "❤️", "😁", "🦷", "✨", "🙏", "🎉", "💪", "😄", "🪥", "💉", "🩺", "😊", "👏", "💙"];
 
 interface MessageInputInternalProps extends MessageInputProps {
   attendantName?: string;

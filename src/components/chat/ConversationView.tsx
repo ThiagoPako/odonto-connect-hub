@@ -218,7 +218,7 @@ function AudioPlayer({ fileUrl, duration, isLead, status }: { fileUrl?: string; 
   );
 }
 
-const REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
+const REACTION_EMOJIS = ["👍", "❤️", "😁", "🦷", "✨", "🙏", "💪", "😊"];
 
 // ─── Date helpers ───────────────────────────────────────────
 function formatDateDivider(date: Date): string {
@@ -1035,7 +1035,7 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
             <>
               <div className="h-px bg-border/40 my-1" />
               <div className="flex items-center justify-center gap-1 px-2 py-1">
-                {["👍", "❤️", "😂", "😮", "😢", "🙏"].map((emoji) => (
+                {REACTION_EMOJIS.map((emoji) => (
                   <button
                     key={emoji}
                     onClick={() => { onReaction(contextMenu.msg.id, emoji); setContextMenu(null); }}
