@@ -476,6 +476,7 @@ async function resolveLidForPhone(instance, phone) {
       method: 'POST',
       body: JSON.stringify({ numbers: [phone] }),
     });
+    console.log(`🔍 whatsappNumbers response for ${phone}:`, JSON.stringify(result.data).slice(0, 500));
     if (result.ok && Array.isArray(result.data)) {
       for (const entry of result.data) {
         const jid = entry?.jid || entry?.id || '';
@@ -489,6 +490,24 @@ async function resolveLidForPhone(instance, phone) {
         }
       }
     }
+    // Fallback: try findContacts to get LID mapping
+    try {
+      const contactResult = await evolutionFetch(`/chat/findContacts/${instance}`, {
+        method: 'POST',
+        body: JSON.stringify({ where: { id: `${phone}@s.whatsapp.net` } }),
+      });
+      if (contactResult.ok && Array.isArray(contactResult.data)) {
+        for (const c of contactResult.data) {
+          const cLid = c?.lid || '';
+          const lidNum = normalizeWhatsappNumber(cLid);
+          if (lidNum && lidNum.length >= 10) {
+            registerLidMapping(lidNum, phone);
+            console.log(`🔗 LID mapped (findContacts): ${lidNum} → ${phone}`);
+            return lidNum;
+          }
+        }
+      }
+    } catch (e2) { /* ignore findContacts fallback error */ }
   } catch (err) {
     console.error(`LID resolve error for ${phone}:`, err.message);
   }
