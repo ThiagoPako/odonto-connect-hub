@@ -763,11 +763,11 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
                   >
                     {/* Content by type */}
                     {msg.type === "image" && msg.fileUrl && (
-                      <div className="mb-1.5 rounded-xl overflow-hidden cursor-pointer" onClick={() => window.open(msg.fileUrl, "_blank")}>
+                      <div className="mb-1.5 rounded-xl overflow-hidden cursor-pointer relative" onClick={() => (msg as any).status !== "sending" && window.open(msg.fileUrl, "_blank")}>
                         <img
                           src={msg.fileUrl}
                           alt={msg.fileName || "Imagem"}
-                          className="max-w-full max-h-[300px] object-contain rounded-xl"
+                          className={`max-w-full max-h-[300px] object-contain rounded-xl transition-opacity ${(msg as any).status === "sending" ? "opacity-60" : ""}`}
                           loading="lazy"
                           onError={(e) => {
                             const el = e.currentTarget;
@@ -778,6 +778,12 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
                             el.parentElement?.appendChild(fallback);
                           }}
                         />
+                        {(msg as any).status === "sending" && (
+                          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/30 rounded-xl backdrop-blur-[1px]">
+                            <Loader2 className="h-8 w-8 text-white animate-spin mb-1.5" />
+                            <span className="text-[11px] text-white/90 font-medium">Enviando...</span>
+                          </div>
+                        )}
                       </div>
                     )}
                     {msg.type === "image" && !msg.fileUrl && (
