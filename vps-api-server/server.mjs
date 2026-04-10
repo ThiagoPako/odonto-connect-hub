@@ -1693,7 +1693,12 @@ app.post('/api/webhook/evolution', async (req, res) => {
         presenceData?.chatId,
         presenceData?.remoteJid,
       ]
-        .map(normalizeWhatsappNumber)
+        .map((v) => {
+          const raw = String(v || '');
+          // Skip LID JIDs — they are not real phone numbers
+          if (raw.includes('@lid')) return '';
+          return normalizeWhatsappNumber(raw);
+        })
         .find((value) => value.length >= 10) || '';
 
       // Skip group presence updates (id ends with @g.us)
