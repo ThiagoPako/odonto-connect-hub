@@ -829,11 +829,13 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
                       <AudioPlayer fileUrl={msg.fileUrl} duration={msg.duration} isLead={isLead} status={(msg as any).status} />
                     )}
                     {msg.type === "document" && (
-                      <div className="flex items-center gap-3 p-2.5 rounded-xl bg-background/15 mb-1.5 border border-border/20 cursor-pointer hover:bg-background/25 transition-colors" onClick={() => msg.fileUrl && window.open(msg.fileUrl, "_blank")}>
-                        <div className="h-11 w-11 rounded-xl bg-primary/20 flex items-center justify-center text-lg shrink-0 shadow-sm">📄</div>
+                      <div className="flex items-center gap-3 p-2.5 rounded-xl bg-background/15 mb-1.5 border border-border/20 cursor-pointer hover:bg-background/25 transition-colors" onClick={() => (msg as any).status !== "sending" && msg.fileUrl && window.open(msg.fileUrl, "_blank")}>
+                        <div className="h-11 w-11 rounded-xl bg-primary/20 flex items-center justify-center text-lg shrink-0 shadow-sm">
+                          {(msg as any).status === "sending" ? <Loader2 className="h-5 w-5 animate-spin text-primary" /> : "📄"}
+                        </div>
                         <div className="min-w-0">
                           <p className="text-xs font-semibold truncate">{msg.fileName || "Documento"}</p>
-                          <p className="text-[10px] opacity-60 mt-0.5">{msg.mimeType || "application/pdf"}</p>
+                          <p className="text-[10px] opacity-60 mt-0.5">{(msg as any).status === "sending" ? "Enviando..." : (msg.mimeType || "application/pdf")}</p>
                         </div>
                       </div>
                     )}
