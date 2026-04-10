@@ -264,44 +264,44 @@ function ChatPage() {
   }, []);
 
   const handlePresenceUpdate = useCallback((update: import("@/hooks/useRealtimeChat").PresenceUpdate) => {
+    const currentLead = selectedLeadRef.current;
     const phone = update.phone?.replace(/\D/g, "");
-    if (!phone) return;
+    const currentPhone = currentLead?.phone?.replace(/\D/g, "");
+    if (!currentLead || !phone || !currentPhone) return;
 
-    const allLeads = [...queueRef.current, ...myLeadsRef.current];
-    const lead = allLeads.find((l) => {
-      const leadPhone = l.phone.replace(/\D/g, "");
-      return (
-        leadPhone === phone ||
-        phone.includes(leadPhone) ||
-        leadPhone.includes(phone) ||
-        leadPhone.endsWith(phone.slice(-11)) ||
-        phone.endsWith(leadPhone.slice(-11))
-      );
-    });
+    const isCurrentLead =
+      currentPhone === phone ||
+      phone.includes(currentPhone) ||
+      currentPhone.includes(phone) ||
+      currentPhone.endsWith(phone.slice(-11)) ||
+      phone.endsWith(currentPhone.slice(-11));
 
-    const leadId = update.leadId || lead?.id;
-    if (!leadId) return;
+    if (!isCurrentLead) return;
 
     let displayStatus: "online" | "offline" | "typing" | "recording" = "offline";
     if (update.status === "composing") displayStatus = "typing";
     else if (update.status === "recording") displayStatus = "recording";
-    else if (update.status === "available" || update.status === "paused") displayStatus = "online";
-    else displayStatus = "offline";
+    else if (update.status === "available" || update.status === "online" || update.status === "paused") displayStatus = "online";
 
     setPresenceMap((prev) => ({
-      ...prev,
-      [leadId]: {
+      [currentLead.id]: {
         status: displayStatus,
-        lastSeen: displayStatus === "offline" ? new Date() : prev[leadId]?.lastSeen ?? null,
+        lastSeen: displayStatus === "offline" ? new Date() : prev[currentLead.id]?.lastSeen ?? null,
       },
     }));
 
     if (displayStatus === "typing" || displayStatus === "recording") {
       setTimeout(() => {
+        if (selectedLeadRef.current?.id !== currentLead.id) return;
         setPresenceMap((prev) => {
-          const current = prev[leadId];
+          const current = prev[currentLead.id];
           if (current?.status === displayStatus) {
-            return { ...prev, [leadId]: { ...current, status: "online" } };
+            return {
+              [currentLead.id]: {
+                ...current,
+                status: "online",
+              },
+            };
           }
           return prev;
         });
@@ -370,19 +370,17 @@ function ChatPage() {
     });
   }, [selectedLead?.id]);
 
-  // Auto-subscribe to contact presence when opening a conversation
-  const presenceSubscribedRef = useRef<Set<string>>(new Set());
-
   const fetchPresence = useCallback((leadId: string, phone: string, instanceName: string) => {
     whatsappApi.subscribePresence(instanceName, phone).then(({ data }) => {
-      if (!data?.presence) return;
+      if (selectedLeadRef.current?.id !== leadId || !data?.presence) return;
+
       const status = data.presence;
-      let displayStatus: "online" | "offline" = "offline";
-      if (status === "available" || status === "online" || status === "composing" || status === "recording" || status === "paused") {
-        displayStatus = "online";
-      }
+      let displayStatus: "online" | "offline" | "typing" | "recording" = "offline";
+      if (status === "composing") displayStatus = "typing";
+      else if (status === "recording") displayStatus = "recording";
+      else if (status === "available" || status === "online" || status === "paused") displayStatus = "online";
+
       setPresenceMap((prev) => ({
-        ...prev,
         [leadId]: {
           status: displayStatus,
           lastSeen: displayStatus === "offline" ? new Date() : prev[leadId]?.lastSeen ?? null,
@@ -391,31 +389,25 @@ function ChatPage() {
     }).catch(() => {});
   }, []);
 
-  // Initial subscription
   useEffect(() => {
     if (!selectedLead?.phone) {
-      // Clear all presence when no conversation is open
       setPresenceMap({});
       return;
     }
-    const connected = connectedInstances[0];
-    if (!connected) return;
-    const key = `${connected.instanceName}:${selectedLead.phone}`;
-    if (presenceSubscribedRef.current.has(key)) return;
-    presenceSubscribedRef.current.add(key);
-    fetchPresence(selectedLead.id, selectedLead.phone, connected.instanceName);
-  }, [selectedLead?.id, connectedInstances, fetchPresence]);
+    const instanceName = connectedInstances[0]?.instanceName;
+    if (!instanceName) return;
+    fetchPresence(selectedLead.id, selectedLead.phone, instanceName);
+  }, [selectedLead?.id, selectedLead?.phone, connectedInstances[0]?.instanceName, fetchPresence]);
 
-  // Periodic presence polling every 30s while a conversation is open
   useEffect(() => {
     if (!selectedLead?.phone) return;
-    const connected = connectedInstances[0];
-    if (!connected) return;
+    const instanceName = connectedInstances[0]?.instanceName;
+    if (!instanceName) return;
     const interval = setInterval(() => {
-      fetchPresence(selectedLead.id, selectedLead.phone, connected.instanceName);
+      fetchPresence(selectedLead.id, selectedLead.phone, instanceName);
     }, 30000);
     return () => clearInterval(interval);
-  }, [selectedLead?.id, connectedInstances, fetchPresence]);
+  }, [selectedLead?.id, selectedLead?.phone, connectedInstances[0]?.instanceName, fetchPresence]);
 
   // ─── Load initial message history from VPS when selecting a lead ───
   const historyLoadedRef = useRef<Set<string>>(new Set());
