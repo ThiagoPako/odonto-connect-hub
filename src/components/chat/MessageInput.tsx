@@ -188,9 +188,10 @@ export function MessageInput({ onSendMessage, onPresenceChange, disabled, replyi
     if (!file) return;
     e.target.value = ""; // reset input
 
-    const MAX_SIZE = 16 * 1024 * 1024; // 16MB
+    const MAX_SIZE = mediaType === "video" ? 64 * 1024 * 1024 : 16 * 1024 * 1024;
+    const maxLabel = mediaType === "video" ? "64MB" : "16MB";
     if (file.size > MAX_SIZE) {
-      toast.error("Arquivo muito grande", { description: "Tamanho máximo: 16MB" });
+      toast.error("Arquivo muito grande", { description: `Tamanho máximo: ${maxLabel}` });
       return;
     }
 
