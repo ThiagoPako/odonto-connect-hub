@@ -393,7 +393,11 @@ function ChatPage() {
 
   // Initial subscription
   useEffect(() => {
-    if (!selectedLead?.phone) return;
+    if (!selectedLead?.phone) {
+      // Clear all presence when no conversation is open
+      setPresenceMap({});
+      return;
+    }
     const connected = connectedInstances[0];
     if (!connected) return;
     const key = `${connected.instanceName}:${selectedLead.phone}`;
