@@ -266,7 +266,7 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
 
   // Scroll to bottom using scrollTop (instant, no animation)
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
-    const container = scrollRef.current;
+    const container = containerRef.current;
     if (!container) return;
     if (behavior === "instant") {
       container.scrollTop = container.scrollHeight;
@@ -283,11 +283,10 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
     if (prevLeadName.current !== leadName) {
       prevLeadName.current = leadName;
       isNearBottomRef.current = true;
-      // Multiple frames to ensure DOM is fully rendered
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-          if (scrollRef.current) {
-            scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+          if (containerRef.current) {
+            containerRef.current.scrollTop = containerRef.current.scrollHeight;
           }
         });
       });
@@ -307,8 +306,8 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
     if (initialScrollDone.current) return;
     if (messages.length === 0) return;
     initialScrollDone.current = true;
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    if (containerRef.current) {
+      containerRef.current.scrollTop = containerRef.current.scrollHeight;
     }
   }, [messages]);
 
