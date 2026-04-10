@@ -264,19 +264,17 @@ function ChatPage() {
   }, []);
 
   const handlePresenceUpdate = useCallback((update: import("@/hooks/useRealtimeChat").PresenceUpdate) => {
-    const currentLead = selectedLeadRef.current;
     const phone = update.phone?.replace(/\D/g, "");
-    const currentPhone = currentLead?.phone?.replace(/\D/g, "");
-    if (!currentLead || !phone || !currentPhone) return;
+    if (!phone) return;
 
-    const isCurrentLead =
-      currentPhone === phone ||
-      phone.includes(currentPhone) ||
-      currentPhone.includes(phone) ||
-      currentPhone.endsWith(phone.slice(-11)) ||
-      phone.endsWith(currentPhone.slice(-11));
-
-    if (!isCurrentLead) return;
+    // Match against all known leads (queue + myLeads)
+    const allLeads = [...queueRef.current, ...myLeadsRef.current];
+    const matchedLead = allLeads.find((l) => {
+      const lp = l.phone?.replace(/\D/g, "");
+      if (!lp) return false;
+      return lp === phone || lp.endsWith(phone.slice(-11)) || phone.endsWith(lp.slice(-11));
+    });
+    if (!matchedLead) return;
 
     let displayStatus: "online" | "offline" | "typing" | "recording" = "offline";
     if (update.status === "composing") displayStatus = "typing";
@@ -284,20 +282,21 @@ function ChatPage() {
     else if (update.status === "available" || update.status === "paused") displayStatus = "online";
 
     setPresenceMap((prev) => ({
-      [currentLead.id]: {
+      ...prev,
+      [matchedLead.id]: {
         status: displayStatus,
-        lastSeen: displayStatus === "offline" ? new Date() : prev[currentLead.id]?.lastSeen ?? null,
+        lastSeen: displayStatus === "offline" ? new Date() : prev[matchedLead.id]?.lastSeen ?? null,
       },
     }));
 
     if (displayStatus === "typing" || displayStatus === "recording") {
       setTimeout(() => {
-        if (selectedLeadRef.current?.id !== currentLead.id) return;
         setPresenceMap((prev) => {
-          const current = prev[currentLead.id];
+          const current = prev[matchedLead.id];
           if (current?.status === displayStatus) {
             return {
-              [currentLead.id]: {
+              ...prev,
+              [matchedLead.id]: {
                 ...current,
                 status: "online",
               },
