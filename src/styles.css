@@ -398,3 +398,9 @@
 .lead-list-item:active {
   transform: scale(0.99);
 }
+
+@keyframes soundwave {
+  0% { height: 3px; }
+  50% { height: 14px; }
+  100% { height: 5px; }
+}

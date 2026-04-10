@@ -58,7 +58,20 @@ export function LeadListItem({ lead, isSelected, onSelect, showAssignButton, onA
         {presence === "typing" ? (
           <p className="text-xs text-primary font-medium truncate leading-relaxed animate-pulse">digitando...</p>
         ) : presence === "recording" ? (
-          <p className="text-xs text-destructive font-medium truncate leading-relaxed animate-pulse">gravando áudio...</p>
+          <div className="flex items-center gap-1.5 h-5">
+            <div className="flex items-end gap-[2px] h-3.5">
+              {[0, 1, 2, 3, 4].map((i) => (
+                <span
+                  key={i}
+                  className="w-[2.5px] rounded-full bg-destructive/70"
+                  style={{
+                    animation: `soundwave 0.8s ease-in-out ${i * 0.12}s infinite alternate`,
+                  }}
+                />
+              ))}
+            </div>
+            <span className="text-xs text-destructive font-medium">gravando áudio...</span>
+          </div>
         ) : (
           <p className="text-xs text-muted-foreground truncate leading-relaxed">{lead.lastMessage}</p>
         )}
