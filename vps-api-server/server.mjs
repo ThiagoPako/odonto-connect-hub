@@ -719,8 +719,15 @@ app.post('/api/whatsapp/subscribe-presence', async (req, res) => {
           didSubscribe = true;
           console.log(`✅ Presence subscribed for ${cleanNumber} on ${instance}`);
 
-          // Resolve LID mapping in background so presence updates can be matched
-          resolveLidForPhone(instance, cleanNumber).catch(() => {});
+          // Track subscribed phone for this instance (for LID resolution fallback)
+          if (!instanceSubscribedPhones.has(instance)) instanceSubscribedPhones.set(instance, new Set());
+          instanceSubscribedPhones.get(instance).add(cleanNumber);
+
+          // Resolve LID mapping — await so it's ready for presence events
+          const lid = await resolveLidForPhone(instance, cleanNumber);
+          if (!lid) {
+            console.warn(`⚠️ Could not resolve LID for ${cleanNumber} — presence updates may not match`);
+          }
         } else {
           console.warn(`⚠️ Presence subscribe failed for ${cleanNumber}:`, JSON.stringify(subResult.data).slice(0, 300));
         }
