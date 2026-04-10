@@ -271,6 +271,11 @@ function ContatosPage() {
         onOpenChange={setImportOpen}
         onImported={() => void loadContatos()}
       />
+
+      <ImportMessagesDialog
+        open={importMsgOpen}
+        onOpenChange={setImportMsgOpen}
+      />
     </div>
   );
 }
