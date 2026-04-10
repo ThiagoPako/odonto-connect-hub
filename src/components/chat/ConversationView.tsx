@@ -905,26 +905,9 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
                     )}
                   </div>
 
-                  {/* Reactions */}
-                  {msg.reactions && msg.reactions.length > 0 && (
-                    <div className={`flex gap-1 mt-1 ${isLead ? "justify-start ml-2" : "justify-end mr-2"}`}>
-                      {msg.reactions.map((r, i) => (
-                        <span key={i} className="text-sm bg-card rounded-full px-2 py-0.5 border border-border/50 shadow-sm animate-pop-in hover:scale-110 transition-transform cursor-default">
-                          {r.emoji} {r.count > 1 && <span className="text-[10px] font-medium text-muted-foreground">{r.count}</span>}
-                        </span>
-                      ))}
-                    </div>
-                  )}
 
                   {/* Message actions (hover) */}
                   <div className={`absolute top-1/2 -translate-y-1/2 ${isLead ? "-right-20" : "-left-20"} hidden group-hover:flex items-center gap-0.5 bg-card/90 backdrop-blur-sm border border-border/50 rounded-xl shadow-lg p-0.5 animate-pop-in`}>
-                    <button
-                      onClick={() => setShowReactionPicker(showReactionPicker === msg.id ? null : msg.id)}
-                      className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-                      title="Reagir"
-                    >
-                      <SmilePlus className="h-3.5 w-3.5" />
-                    </button>
                     <button
                       onClick={() => onReply?.(msg)}
                       className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
@@ -951,22 +934,6 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
                       </button>
                     )}
                   </div>
-
-                  {/* Reaction picker */}
-                  {showReactionPicker === msg.id && (
-                    <div className={`absolute ${isLead ? "left-0" : "right-0"} -top-11 flex items-center gap-0.5 bg-card/95 backdrop-blur-md border border-border/50 rounded-2xl shadow-xl px-2 py-1.5 z-10 animate-pop-in`}>
-                      {REACTION_EMOJIS.map((emoji, i) => (
-                        <button
-                          key={emoji}
-                          onClick={() => { onReaction?.(msg.id, emoji); setShowReactionPicker(null); }}
-                          className="text-lg hover:scale-[1.3] transition-all p-0.5 hover:bg-muted/50 rounded-lg"
-                          style={{ animationDelay: `${i * 40}ms` }}
-                        >
-                          {emoji}
-                        </button>
-                      ))}
-                    </div>
-                  )}
                 </div>
               </div>
             </div>
