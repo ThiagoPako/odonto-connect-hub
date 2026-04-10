@@ -982,11 +982,12 @@ app.post('/api/whatsapp/send-media', async (req, res) => {
     const payload = {
       number: cleanNumber,
       mediatype: mediaType,
+      mimetype: mimeType,
       caption: media.caption || '',
       fileName: media.fileName || undefined,
     };
     if (cleanedBase64 && cleanedBase64.length > 10) {
-      payload.media = `data:${mimeType};base64,${cleanedBase64}`;
+      payload.media = cleanedBase64;
     } else if (media.url) {
       payload.media = media.url;
     } else {
@@ -1052,9 +1053,10 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '5
     const payload = {
       number: cleanNumber,
       mediatype: String(mediaType),
+      mimetype: resolvedMimeType,
       caption: caption ? String(caption) : '',
       fileName: fileName ? String(fileName) : undefined,
-      media: `data:${resolvedMimeType};base64,${base64Data}`,
+      media: base64Data,
     };
 
     console.log(`📤 send-media-upload payload size: ${JSON.stringify(payload).length} bytes`);
