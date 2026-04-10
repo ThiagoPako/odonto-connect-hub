@@ -1060,6 +1060,102 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
           )}
         </div>
       )}
+
+      {/* Image Lightbox / Zoom Modal */}
+      {lightbox && (
+        <div
+          className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center animate-fade-in"
+          onClick={() => setLightbox(null)}
+        >
+          {/* Top bar */}
+          <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-4 py-3 bg-gradient-to-b from-black/60 to-transparent z-10">
+            <span className="text-white text-sm font-medium truncate max-w-[60%]">{lightbox.name}</span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={(e) => { e.stopPropagation(); setLightboxZoom((z) => Math.min(z + 0.5, 5)); }}
+                className="h-9 w-9 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center text-white transition-colors"
+              >
+                <ZoomIn className="h-5 w-5" />
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); setLightboxZoom((z) => { const nz = Math.max(z - 0.5, 1); if (nz === 1) setLightboxPos({ x: 0, y: 0 }); return nz; }); }}
+                className="h-9 w-9 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center text-white transition-colors"
+              >
+                <ZoomOut className="h-5 w-5" />
+              </button>
+              <a
+                href={lightbox.url}
+                download={lightbox.name}
+                onClick={(e) => e.stopPropagation()}
+                className="h-9 w-9 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center text-white transition-colors"
+              >
+                <Download className="h-5 w-5" />
+              </a>
+              <button
+                onClick={() => setLightbox(null)}
+                className="h-9 w-9 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center text-white transition-colors"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+          </div>
+
+          {/* Image */}
+          <div
+            className="overflow-hidden max-w-full max-h-full"
+            onClick={(e) => e.stopPropagation()}
+            onWheel={(e) => {
+              e.preventDefault();
+              setLightboxZoom((z) => {
+                const nz = Math.max(1, Math.min(5, z + (e.deltaY < 0 ? 0.3 : -0.3)));
+                if (nz === 1) setLightboxPos({ x: 0, y: 0 });
+                return nz;
+              });
+            }}
+            onMouseDown={(e) => {
+              if (lightboxZoom <= 1) return;
+              lightboxDragging.current = true;
+              lightboxDragStart.current = { x: e.clientX, y: e.clientY, posX: lightboxPos.x, posY: lightboxPos.y };
+            }}
+            onMouseMove={(e) => {
+              if (!lightboxDragging.current) return;
+              setLightboxPos({
+                x: lightboxDragStart.current.posX + (e.clientX - lightboxDragStart.current.x),
+                y: lightboxDragStart.current.posY + (e.clientY - lightboxDragStart.current.y),
+              });
+            }}
+            onMouseUp={() => { lightboxDragging.current = false; }}
+            onMouseLeave={() => { lightboxDragging.current = false; }}
+            onDoubleClick={() => {
+              if (lightboxZoom > 1) {
+                setLightboxZoom(1);
+                setLightboxPos({ x: 0, y: 0 });
+              } else {
+                setLightboxZoom(2.5);
+              }
+            }}
+            style={{ cursor: lightboxZoom > 1 ? "grab" : "zoom-in" }}
+          >
+            <img
+              src={lightbox.url}
+              alt={lightbox.name}
+              className="max-w-[90vw] max-h-[85vh] object-contain select-none"
+              draggable={false}
+              style={{
+                transform: `scale(${lightboxZoom}) translate(${lightboxPos.x / lightboxZoom}px, ${lightboxPos.y / lightboxZoom}px)`,
+                transition: lightboxDragging.current ? "none" : "transform 0.2s ease-out",
+              }}
+            />
+          </div>
+
+          {/* Zoom indicator */}
+          {lightboxZoom !== 1 && (
+            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/60 text-white text-xs font-medium px-3 py-1.5 rounded-full">
+              {Math.round(lightboxZoom * 100)}%
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
