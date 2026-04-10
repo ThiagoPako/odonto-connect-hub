@@ -1062,12 +1062,24 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '5
 
     console.log(`📤 send-media-upload payload size: ${JSON.stringify(payload).length} bytes`);
 
-    const result = await evolutionFetch(`/message/sendMedia/${instance}`, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 120000);
+
+    let result;
+    try {
+      result = await evolutionFetch(`/message/sendMedia/${instance}`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    console.log(`📤 send-media-upload result ok=${result.ok} status=${result.status} jobId=${jobId}`);
 
     if (!result.ok) {
+      console.error('❌ send-media-upload failed:', JSON.stringify(result.data));
       mediaSendJobs.set(jobId, {
         ...mediaSendJobs.get(jobId),
         status: 'failed',
@@ -1078,6 +1090,7 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '5
       return;
     }
 
+    console.log('✅ send-media-upload success jobId=' + jobId, JSON.stringify(result.data?.key || {}));
     mediaSendJobs.set(jobId, {
       ...mediaSendJobs.get(jobId),
       status: 'sent',
