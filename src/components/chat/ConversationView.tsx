@@ -1,6 +1,6 @@
 import type { ChatMessage } from "@/data/chatMockData";
 import { useEffect, useRef, useState, useCallback } from "react";
-import { CheckCheck, Check, MapPin, Phone, Mail, Globe, Building2, BarChart3, Reply, SmilePlus, ExternalLink, List, ChevronDown, Forward, Trash2, Search, Loader2, Upload, Copy, Clock, Mic, Download } from "lucide-react";
+import { CheckCheck, Check, MapPin, Phone, Mail, Globe, Building2, BarChart3, Reply, SmilePlus, ExternalLink, List, ChevronDown, Forward, Trash2, Search, Loader2, Upload, Copy, Clock, Mic, Download, X, ZoomIn, ZoomOut } from "lucide-react";
 import { TypingIndicator } from "./TypingIndicator";
 
 interface ServerSearchResult {
@@ -261,6 +261,11 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
   const [highlightedMsgId, setHighlightedMsgId] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; msg: ChatMessage } | null>(null);
+  const [lightbox, setLightbox] = useState<{ url: string; name: string } | null>(null);
+  const [lightboxZoom, setLightboxZoom] = useState(1);
+  const [lightboxPos, setLightboxPos] = useState({ x: 0, y: 0 });
+  const lightboxDragging = useRef(false);
+  const lightboxDragStart = useRef({ x: 0, y: 0, posX: 0, posY: 0 });
   const isNearBottomRef = useRef(true);
   const loadMoreTriggeredRef = useRef(false);
 
@@ -781,7 +786,13 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
                   >
                     {/* Content by type */}
                     {msg.type === "image" && msg.fileUrl && (
-                      <div className="mb-1.5 rounded-xl overflow-hidden cursor-pointer relative" onClick={() => (msg as any).status !== "sending" && window.open(msg.fileUrl, "_blank")}>
+                      <div className="mb-1.5 rounded-xl overflow-hidden cursor-pointer relative group" onClick={() => {
+                        if ((msg as any).status !== "sending") {
+                          setLightbox({ url: msg.fileUrl!, name: msg.fileName || "Imagem" });
+                          setLightboxZoom(1);
+                          setLightboxPos({ x: 0, y: 0 });
+                        }
+                      }}>
                         <img
                           src={msg.fileUrl}
                           alt={msg.fileName || "Imagem"}
@@ -802,15 +813,15 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
                             <span className="text-[11px] text-white/90 font-medium">Enviando...</span>
                           </div>
                         )}
+                        {(msg as any).status !== "sending" && (
+                          <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/20 rounded-xl">
+                            <ZoomIn className="h-8 w-8 text-white drop-shadow-lg" />
+                          </div>
+                        )}
                       </div>
                     )}
                     {msg.type === "image" && !msg.fileUrl && (
-                      <div
-                        className="flex items-center gap-3 p-4 rounded-xl bg-background/15 mb-1.5 cursor-pointer hover:bg-background/25 transition-colors border border-border/20"
-                        onClick={() => {
-                          // No URL available — nothing to download
-                        }}
-                      >
+                      <div className="flex items-center gap-3 p-4 rounded-xl bg-background/15 mb-1.5 border border-border/20">
                         <div className="h-10 w-10 rounded-full bg-muted/30 flex items-center justify-center shrink-0">
                           <Download className="h-5 w-5 text-muted-foreground" />
                         </div>
@@ -1046,6 +1057,102 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
                 <Trash2 className="h-4 w-4" /> Apagar
               </button>
             </>
+          )}
+        </div>
+      )}
+
+      {/* Image Lightbox / Zoom Modal */}
+      {lightbox && (
+        <div
+          className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center animate-fade-in"
+          onClick={() => setLightbox(null)}
+        >
+          {/* Top bar */}
+          <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-4 py-3 bg-gradient-to-b from-black/60 to-transparent z-10">
+            <span className="text-white text-sm font-medium truncate max-w-[60%]">{lightbox.name}</span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={(e) => { e.stopPropagation(); setLightboxZoom((z) => Math.min(z + 0.5, 5)); }}
+                className="h-9 w-9 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center text-white transition-colors"
+              >
+                <ZoomIn className="h-5 w-5" />
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); setLightboxZoom((z) => { const nz = Math.max(z - 0.5, 1); if (nz === 1) setLightboxPos({ x: 0, y: 0 }); return nz; }); }}
+                className="h-9 w-9 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center text-white transition-colors"
+              >
+                <ZoomOut className="h-5 w-5" />
+              </button>
+              <a
+                href={lightbox.url}
+                download={lightbox.name}
+                onClick={(e) => e.stopPropagation()}
+                className="h-9 w-9 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center text-white transition-colors"
+              >
+                <Download className="h-5 w-5" />
+              </a>
+              <button
+                onClick={() => setLightbox(null)}
+                className="h-9 w-9 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center text-white transition-colors"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+          </div>
+
+          {/* Image */}
+          <div
+            className="overflow-hidden max-w-full max-h-full"
+            onClick={(e) => e.stopPropagation()}
+            onWheel={(e) => {
+              e.preventDefault();
+              setLightboxZoom((z) => {
+                const nz = Math.max(1, Math.min(5, z + (e.deltaY < 0 ? 0.3 : -0.3)));
+                if (nz === 1) setLightboxPos({ x: 0, y: 0 });
+                return nz;
+              });
+            }}
+            onMouseDown={(e) => {
+              if (lightboxZoom <= 1) return;
+              lightboxDragging.current = true;
+              lightboxDragStart.current = { x: e.clientX, y: e.clientY, posX: lightboxPos.x, posY: lightboxPos.y };
+            }}
+            onMouseMove={(e) => {
+              if (!lightboxDragging.current) return;
+              setLightboxPos({
+                x: lightboxDragStart.current.posX + (e.clientX - lightboxDragStart.current.x),
+                y: lightboxDragStart.current.posY + (e.clientY - lightboxDragStart.current.y),
+              });
+            }}
+            onMouseUp={() => { lightboxDragging.current = false; }}
+            onMouseLeave={() => { lightboxDragging.current = false; }}
+            onDoubleClick={() => {
+              if (lightboxZoom > 1) {
+                setLightboxZoom(1);
+                setLightboxPos({ x: 0, y: 0 });
+              } else {
+                setLightboxZoom(2.5);
+              }
+            }}
+            style={{ cursor: lightboxZoom > 1 ? "grab" : "zoom-in" }}
+          >
+            <img
+              src={lightbox.url}
+              alt={lightbox.name}
+              className="max-w-[90vw] max-h-[85vh] object-contain select-none"
+              draggable={false}
+              style={{
+                transform: `scale(${lightboxZoom}) translate(${lightboxPos.x / lightboxZoom}px, ${lightboxPos.y / lightboxZoom}px)`,
+                transition: lightboxDragging.current ? "none" : "transform 0.2s ease-out",
+              }}
+            />
+          </div>
+
+          {/* Zoom indicator */}
+          {lightboxZoom !== 1 && (
+            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/60 text-white text-xs font-medium px-3 py-1.5 rounded-full">
+              {Math.round(lightboxZoom * 100)}%
+            </div>
           )}
         </div>
       )}
