@@ -488,7 +488,7 @@ export const contatosApi = {
   bulkImport: (contatos: Array<{ telefone: string; nome: string }>) =>
     vpsApiFetch<{ imported: number; skipped: number; total: number }>('/contatos/import', { method: 'POST', body: { contatos } }),
   syncNow: () =>
-    vpsApiFetch<{ success: boolean; imported: number; totalContatos: number }>('/contatos/sync/now', { method: 'POST' }),
+    vpsApiFetch<{ success: boolean; imported: number; totalContatos: number; instances: Array<{ name: string; imported: number; skipped: number; total: number; error: string | null }>; message?: string }>('/contatos/sync/now', { method: 'POST' }),
   syncStatus: () =>
     vpsApiFetch<{ autoSync: boolean; intervalMinutes: number; totalContatos: number }>('/contatos/sync/status'),
 };
