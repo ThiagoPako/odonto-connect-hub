@@ -1139,11 +1139,14 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '6
           signal: controller.signal,
         });
         console.log(`📤 send-media-upload result ${variant.label} ok=${result.ok} status=${result.status} jobId=${jobId}`);
+        console.log(`📤 send-media-upload FULL RESPONSE ${variant.label} jobId=${jobId}:`, JSON.stringify(result.data, null, 2));
         if (result.ok) {
-          console.log('✅ send-media-upload success jobId=' + jobId + ` variant=${variant.label}`, JSON.stringify(result.data?.key || {}));
+          console.log('✅ send-media-upload success jobId=' + jobId + ` variant=${variant.label} messageId=${result.data?.key?.id || 'N/A'}`);
           break;
         }
-        console.error(`❌ send-media-upload variant failed ${variant.label}:`, JSON.stringify(result.data));
+        console.error(`❌ send-media-upload variant FAILED ${variant.label} jobId=${jobId} HTTP ${result.status}:`);
+        console.error(`   Response body:`, JSON.stringify(result.data));
+        console.error(`   Error message:`, result.data?.response?.message || result.data?.error || result.data?.message || 'unknown');
       }
     } finally {
       clearTimeout(timeout);
