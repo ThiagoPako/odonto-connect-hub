@@ -711,11 +711,8 @@ app.post('/api/whatsapp/subscribe-presence', async (req, res) => {
           method: 'POST',
           body: JSON.stringify({
             number: cleanNumber,
-            options: {
-              number: cleanNumber,
-              delay: 1200,
-              presence: 'composing',
-            },
+            delay: 1200,
+            presence: 'composing',
           }),
         });
         console.log(`👁️ Presence subscribe attempt for ${cleanNumber} on ${instance}: status=${subResult.status}, data=${JSON.stringify(subResult.data).slice(0, 200)}`);
