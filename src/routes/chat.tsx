@@ -1132,7 +1132,8 @@ function ChatPage() {
   const baseList = activeTab === "queue" ? queue : myLeads;
   const filteredByStatus = activeTab === "mine" && filterStatus !== "all" ? baseList.filter((l) => l.status === filterStatus) : baseList;
   const filteredByQueue = filterQueue ? filteredByStatus.filter((l) => l.queueId === filterQueue) : filteredByStatus;
-  const currentList = filterTag ? filteredByQueue.filter((l) => (leadTagAssignments[l.id] || []).includes(filterTag)) : filteredByQueue;
+  const filteredByTag = filterTag ? filteredByQueue.filter((l) => (leadTagAssignments[l.id] || []).includes(filterTag)) : filteredByQueue;
+  const currentList = [...filteredByTag].sort((a, b) => b.lastMessageTime.getTime() - a.lastMessageTime.getTime());
 
   const handleSyncPhotos = useCallback(async () => {
     const instanceName = connectedInstances[0]?.instanceName;
