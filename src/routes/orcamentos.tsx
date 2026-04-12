@@ -44,7 +44,7 @@ function OrcamentosPage() {
       <DashboardHeader title="Orçamentos e Vendas" />
       <main className="flex-1 p-6 space-y-5 overflow-auto">
         {/* KPIs */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 animate-slide-up" style={{ animationFillMode: 'both' }}>
           <KpiMini icon={FileText} label="Total Orçamentos" value={mockBudgets.length.toString()} />
           <KpiMini icon={Clock} label="Valor Pendente" value={`R$ ${(totalPending / 1000).toFixed(1)}k`} />
           <KpiMini icon={DollarSign} label="Valor Aprovado" value={`R$ ${(totalApproved / 1000).toFixed(1)}k`} />
@@ -90,8 +90,8 @@ function OrcamentosPage() {
                 <div
                   key={b.id}
                   onClick={() => setSelectedBudget(b)}
-                  className={`bg-card rounded-xl border p-4 cursor-pointer transition-all ${
-                    selectedBudget?.id === b.id ? "border-primary ring-1 ring-primary/20" : "border-border hover:border-primary/40"
+                  className={`bg-card rounded-xl border p-4 cursor-pointer transition-all duration-300 hover-lift ${
+                    selectedBudget?.id === b.id ? "border-primary ring-1 ring-primary/20 shadow-[0_0_16px_-4px_hsl(var(--primary)/0.3)]" : "border-border hover:border-primary/40 hover:shadow-glow-primary"
                   }`}
                 >
                   <div className="flex items-center justify-between mb-2">
@@ -144,12 +144,15 @@ function OrcamentosPage() {
 
 function KpiMini({ icon: Icon, label, value }: { icon: React.ElementType; label: string; value: string }) {
   return (
-    <div className="bg-card rounded-xl border border-border p-4 space-y-1">
-      <div className="flex items-center gap-2 text-muted-foreground">
-        <Icon className="h-4 w-4" />
+    <div className="group bg-card rounded-xl border border-border p-4 space-y-1 hover-lift hover:shadow-glow-primary transition-all duration-300 relative overflow-hidden">
+      <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-bl from-primary/5 to-transparent rounded-bl-full pointer-events-none" />
+      <div className="flex items-center gap-2 text-muted-foreground relative z-10">
+        <div className="h-7 w-7 rounded-lg bg-primary/10 flex items-center justify-center group-hover:shadow-[0_0_10px_-2px_hsl(var(--primary)/0.3)] transition-shadow duration-300">
+          <Icon className="h-3.5 w-3.5 text-primary" />
+        </div>
         <span className="text-[11px] font-medium">{label}</span>
       </div>
-      <p className="text-lg font-bold text-foreground">{value}</p>
+      <p className="text-lg font-bold text-foreground relative z-10">{value}</p>
     </div>
   );
 }

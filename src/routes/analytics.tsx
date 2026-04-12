@@ -13,16 +13,16 @@ function AnalyticsPage() {
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="ROI & Analytics" />
       <main className="flex-1 p-6 space-y-6 overflow-auto">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 animate-slide-up" style={{ animationFillMode: 'both' }}>
           <KpiCard title="ROI Geral" value="15.1x" change="+2.3x vs mês anterior" changeType="positive" icon={BarChart3} />
           <KpiCard title="Custo por Lead" value="R$ 32,50" change="-12% vs mês anterior" changeType="positive" icon={Target} />
           <KpiCard title="Custo por Paciente" value="R$ 124,00" change="-8% vs mês anterior" changeType="positive" icon={DollarSign} />
           <KpiCard title="Ticket Médio" value="R$ 4.850" change="+5% vs mês anterior" changeType="positive" icon={TrendingUp} />
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 animate-slide-up" style={{ animationDelay: '100ms', animationFillMode: 'both' }}>
           {/* ROI por Campanha */}
-          <div className="bg-card rounded-xl border border-border p-5">
+          <div className="bg-card rounded-xl border border-border p-5 shadow-card hover:shadow-card-hover transition-all duration-300">
             <h3 className="text-sm font-semibold text-card-foreground mb-4">ROI por Campanha</h3>
             <div className="space-y-4">
               {[
@@ -31,7 +31,7 @@ function AnalyticsPage() {
                 { name: "Instagram — Branding", invest: 2400, revenue: 15800, roi: 6.6 },
                 { name: "Google Ads — Ortodontia", invest: 2000, revenue: 51100, roi: 25.6 },
               ].map((c) => (
-                <div key={c.name} className="space-y-1.5">
+                <div key={c.name} className="space-y-1.5 group">
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-foreground">{c.name}</span>
                     <span className="text-sm font-bold text-primary">{c.roi}x</span>
@@ -42,7 +42,7 @@ function AnalyticsPage() {
                     <span className="text-success font-medium">Receita: R$ {c.revenue.toLocaleString("pt-BR")}</span>
                   </div>
                   <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-                    <div className="h-full bg-primary rounded-full" style={{ width: `${Math.min((c.roi / 30) * 100, 100)}%` }} />
+                    <div className="h-full bg-primary rounded-full transition-all duration-500" style={{ width: `${Math.min((c.roi / 30) * 100, 100)}%` }} />
                   </div>
                 </div>
               ))}
@@ -50,7 +50,7 @@ function AnalyticsPage() {
           </div>
 
           {/* Faturamento por Canal */}
-          <div className="bg-card rounded-xl border border-border p-5">
+          <div className="bg-card rounded-xl border border-border p-5 shadow-card hover:shadow-card-hover transition-all duration-300">
             <h3 className="text-sm font-semibold text-card-foreground mb-4">Faturamento por Canal</h3>
             <div className="space-y-3">
               {[
