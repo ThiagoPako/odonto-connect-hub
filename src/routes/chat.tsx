@@ -917,6 +917,31 @@ function ChatPage() {
       });
     });
 
+    // ── Auto-move lead in CRM Kanban based on outcome ──
+    const stageMap: Record<string, string> = {
+      atendido: "", // remove from kanban (no stage move needed, already closed)
+      followup: "followup", // → Recovery Kanban
+      orcamento: "orcamento", // → Sales Kanban: Orçamento stage
+    };
+    const targetStage = stageMap[outcome || "atendido"];
+    if (targetStage) {
+      crmApi.updateStage(lead.id, targetStage, `Desfecho de atendimento: ${outcome}`).then(({ error }) => {
+        if (error) {
+          console.error("Erro ao mover lead no CRM:", error);
+        } else {
+          const destLabel = outcome === "followup" ? "Follow-up (Recuperação)" : "Orçamento (Funil de Vendas)";
+          toast.info(`Lead movido para "${destLabel}" no CRM`, { duration: 4000 });
+        }
+      });
+    }
+
+    // Update consciousness level if provided
+    if (options?.consciousnessLevel) {
+      crmApi.updateConsciousness(lead.id, options.consciousnessLevel).catch((err) => {
+        console.error("Erro ao atualizar nível de consciência:", err);
+      });
+    }
+
     // System message
     const outcomeMessages: Record<string, string> = {
       atendido: "✅ Atendimento finalizado — Cliente atendido.",
