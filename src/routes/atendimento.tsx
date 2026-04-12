@@ -199,14 +199,22 @@ function ConsultaPage() {
     setProcedimentoRealizado(apt.procedure);
   }, [atendimentoAtivo]);
 
-  const iniciarAtendimento = useCallback(() => {
+  const iniciarAtendimento = useCallback(async () => {
     if (!pacienteSelecionado) return;
     setAtendimentoAtivo(true);
     setTempoAtendimento(0);
     setTabAtiva("consulta");
     timerRef.current = setInterval(() => setTempoAtendimento(t => t + 1), 1000);
+
+    // Update appointment status to "em_atendimento" on VPS
+    if (appointmentSelecionado) {
+      agendaApi.update(appointmentSelecionado.id, { status: "em_atendimento" }).then(() => {
+        fetchAgenda(); // Refresh agenda list
+      }).catch(() => {});
+    }
+
     toast.success(`Consulta iniciada — ${pacienteSelecionado.nome}`);
-  }, [pacienteSelecionado]);
+  }, [pacienteSelecionado, appointmentSelecionado, fetchAgenda]);
 
   const finalizarAtendimento = useCallback(async () => {
     setAtendimentoAtivo(false);
