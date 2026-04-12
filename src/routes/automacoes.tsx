@@ -41,7 +41,7 @@ function AutomacoesPage() {
   const [showFollowupConfig, setShowFollowupConfig] = useState(false);
   const [editingFlow, setEditingFlow] = useState<AutomationFlow | null>(null);
   const [loadingFlows, setLoadingFlows] = useState(true);
-  const [activeTab, setActiveTab] = useState<"flows" | "report">("flows");
+  const [activeTab, setActiveTab] = useState<"solutions" | "flows" | "report">("solutions");
 
   const [followupConfig, setFollowupConfig] = useState<FollowupAutomationConfig | null>(null);
   const [loadingConfig, setLoadingConfig] = useState(true);
