@@ -50,7 +50,7 @@ export function AutomationReportPanel() {
   const loadStats = (days: number) => {
     setLoading(true);
     automationsApi.getStats(days)
-      .then((res) => { if (res.data) setStats(res.data as AutomationStats); })
+      .then((res) => { if (res.data) setStats(res.data as unknown as AutomationStats); })
       .catch(() => {})
       .finally(() => setLoading(false));
   };
