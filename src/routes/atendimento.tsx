@@ -66,6 +66,7 @@ interface FollowupState {
 }
 
 function ConsultaPage() {
+  const { appointmentId } = Route.useSearch();
   const [pacienteSelecionado, setPacienteSelecionado] = useState<Paciente | null>(null);
   const [appointmentSelecionado, setAppointmentSelecionado] = useState<Appointment | null>(null);
   const [atendimentoAtivo, setAtendimentoAtivo] = useState(false);
@@ -89,9 +90,65 @@ function ConsultaPage() {
     status: 'idle', messages: [], summary: '', jobs: [], error: '',
   });
 
-  // Today's agenda — filter appointments for today
-  const hoje = new Date().toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
-  const agendaHoje = mockAppointments.filter(a => a.date === "08/04/2026"); // In production, filter by hoje
+  // VPS agenda state
+  const [agendaHoje, setAgendaHoje] = useState<Appointment[]>([]);
+  const [loadingAgenda, setLoadingAgenda] = useState(true);
+
+  /** Convert VPS agendamento to local Appointment shape */
+  const vpsToAppointment = useCallback((a: AgendamentoVPS): Appointment => {
+    const name = a.paciente_nome || "Paciente";
+    const initials = name.split(" ").filter((_: string, i: number, arr: string[]) => i === 0 || i === arr.length - 1).map((n: string) => n[0]).join("").toUpperCase();
+    const colors = ["bg-chart-1","bg-chart-2","bg-chart-3","bg-chart-4","bg-chart-5","bg-primary","bg-dental-cyan"];
+    const colorIdx = name.length % colors.length;
+    const profName = a.dentista_nome || "Dr. Não atribuído";
+    const profInitials = profName.split(" ").filter((_: string, i: number, arr: string[]) => i === 0 || i === arr.length - 1).map((n: string) => n[0]).join("").toUpperCase();
+    const statusMap: Record<string, Appointment["status"]> = {
+      agendado: "confirmado", confirmado: "confirmado", aguardando: "aguardando",
+      em_atendimento: "em_atendimento", finalizado: "finalizado", realizado: "finalizado",
+      faltou: "faltou", cancelado: "faltou", desmarcado: "faltou", encaixe: "encaixe",
+    };
+    return {
+      id: a.id,
+      pacienteId: a.paciente_id,
+      patientName: name,
+      patientInitials: initials,
+      avatarColor: colors[colorIdx],
+      professional: profName,
+      professionalInitials: profInitials,
+      room: a.sala || "Sala 1",
+      procedure: a.procedimento || "Consulta",
+      date: a.data,
+      time: a.hora || "08:00",
+      duration: a.duracao || 30,
+      status: statusMap[a.status] || "confirmado",
+      phone: "",
+      confirmed: a.status === "confirmado",
+    };
+  }, []);
+
+  // Fetch today's agenda from VPS
+  const fetchAgenda = useCallback(async () => {
+    setLoadingAgenda(true);
+    const today = new Date().toISOString().split("T")[0];
+    const { data, error } = await agendaApi.list({ data: today });
+    if (!error && data && Array.isArray(data)) {
+      const converted = data.map(vpsToAppointment);
+      setAgendaHoje(converted);
+
+      // Auto-select appointment from URL param
+      if (appointmentId && !appointmentSelecionado) {
+        const target = converted.find((a: Appointment) => a.id === appointmentId);
+        if (target) {
+          handleSelecionarAgendamentoInternal(target);
+        }
+      }
+    } else {
+      setAgendaHoje([]);
+    }
+    setLoadingAgenda(false);
+  }, [appointmentId, vpsToAppointment]);
+
+  useEffect(() => { fetchAgenda(); }, [fetchAgenda]);
 
   const statusOrder: Record<string, number> = { em_atendimento: 0, aguardando: 1, confirmado: 2, encaixe: 3, finalizado: 4, faltou: 5 };
   const agendaOrdenada = [...agendaHoje].sort((a, b) => {
