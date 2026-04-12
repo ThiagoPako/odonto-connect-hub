@@ -1797,6 +1797,94 @@ app.get('/api/table/:tableName', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
+// ORÇAMENTOS (Budget management with CRM auto-move)
+// ═══════════════════════════════════════════════════════════════
+
+// List budgets
+app.get('/api/orcamentos', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { rows } = await pool.query('SELECT * FROM orcamentos ORDER BY created_at DESC');
+    res.json(rows);
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+// Update budget status (approve/reject) — auto-moves CRM lead
+app.patch('/api/orcamentos/:id/status', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    const { status } = req.body;
+    const validStatuses = ['pendente', 'aprovado', 'reprovado', 'em_tratamento', 'finalizado'];
+    if (!status || !validStatuses.includes(status)) {
+      return res.status(400).json({ error: `Status inválido. Válidos: ${validStatuses.join(', ')}` });
+    }
+
+    const { rows } = await pool.query(
+      `UPDATE orcamentos SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
+      [status, req.params.id]
+    );
+    if (rows.length === 0) return res.status(404).json({ error: 'Orçamento não encontrado' });
+
+    const budget = rows[0];
+
+    // ── Auto-move linked CRM lead based on budget status ──
+    // Find lead linked to this budget (by orcamento_id) or by paciente_id
+    let leadId = null;
+    const { rows: linkedLeads } = await pool.query(
+      `SELECT id FROM crm_leads WHERE orcamento_id = $1 LIMIT 1`,
+      [req.params.id]
+    );
+    if (linkedLeads.length > 0) {
+      leadId = linkedLeads[0].id;
+    } else if (budget.paciente_id) {
+      // Try matching by paciente_id via telefone
+      const { rows: patientLeads } = await pool.query(
+        `SELECT cl.id FROM crm_leads cl
+         JOIN pacientes p ON p.telefone = cl.telefone
+         WHERE p.id = $1 LIMIT 1`,
+        [budget.paciente_id]
+      );
+      if (patientLeads.length > 0) leadId = patientLeads[0].id;
+    }
+
+    if (leadId) {
+      let newStage = null;
+      if (status === 'reprovado') newStage = 'orcamento_reprovado';
+      else if (status === 'aprovado') newStage = 'orcamento_aprovado';
+      else if (status === 'em_tratamento') newStage = 'orcamento_aprovado';
+
+      if (newStage) {
+        // Get current stage for audit
+        const { rows: currentLead } = await pool.query('SELECT kanban_stage FROM crm_leads WHERE id = $1', [leadId]);
+        const fromStage = currentLead[0]?.kanban_stage || 'lead';
+
+        await pool.query(
+          `UPDATE crm_leads SET kanban_stage = $1, status = $1, updated_at = NOW() WHERE id = $2`,
+          [newStage, leadId]
+        );
+
+        // Log movement
+        const profile = await getProfileByEmail(user.email);
+        await pool.query(
+          `INSERT INTO kanban_movements (lead_id, from_stage, to_stage, moved_by, moved_by_name, reason)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [leadId, fromStage, newStage, user.id, profile?.name || user.email, `Orçamento #${req.params.id} ${status}`]
+        ).catch(err => console.error('Failed to log kanban movement:', err.message));
+
+        console.log(`🔄 Lead ${leadId} auto-moved to ${newStage} (budget ${req.params.id} → ${status})`);
+      }
+    }
+
+    res.json({ success: true, budget: rows[0], leadMoved: !!leadId });
+  } catch (error) {
+    console.error('Budget status update error:', error);
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
 // ATTENDANCE QUEUES (filas de atendimento)
 // ═══════════════════════════════════════════════════════════════
 

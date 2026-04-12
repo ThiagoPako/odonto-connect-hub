@@ -4,9 +4,12 @@ import { DashboardHeader } from "@/components/DashboardHeader";
 import {
   Plus, Search, DollarSign, CheckCircle2, XCircle, Clock, TrendingUp,
   FileText, ChevronRight, CreditCard, ExternalLink, AlertTriangle,
+  Loader2,
 } from "lucide-react";
 import { useState } from "react";
 import { mockBudgets, type Budget } from "@/data/orcamentoMockData";
+import { orcamentosApi } from "@/lib/vpsApi";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/orcamentos")({
   ssr: false,
@@ -122,7 +125,9 @@ function OrcamentosPage() {
           {/* Budget detail */}
           <div className="lg:col-span-2">
             {selectedBudget ? (
-              <BudgetDetail budget={selectedBudget} />
+              <BudgetDetail budget={selectedBudget} onStatusChange={(newStatus) => {
+                setSelectedBudget({ ...selectedBudget, status: newStatus });
+              }} />
             ) : (
               <div className="bg-card rounded-xl border border-border p-8 flex flex-col items-center justify-center text-center min-h-[400px]">
                 <FileText className="h-12 w-12 text-muted-foreground/30 mb-4" />
@@ -149,8 +154,27 @@ function KpiMini({ icon: Icon, label, value }: { icon: React.ElementType; label:
   );
 }
 
-function BudgetDetail({ budget: b }: { budget: Budget }) {
+function BudgetDetail({ budget: b, onStatusChange }: { budget: Budget; onStatusChange: (status: Budget["status"]) => void }) {
   const cfg = statusConfig[b.status];
+  const [updating, setUpdating] = useState(false);
+
+  const handleStatusChange = async (newStatus: Budget["status"]) => {
+    setUpdating(true);
+    const { data, error } = await orcamentosApi.updateStatus(b.id, newStatus);
+    setUpdating(false);
+    if (error) {
+      toast.error("Erro ao atualizar orçamento: " + error);
+      return;
+    }
+    onStatusChange(newStatus);
+    const label = newStatus === 'aprovado' ? 'aprovado ✅' : newStatus === 'reprovado' ? 'reprovado ❌' : newStatus;
+    toast.success(`Orçamento ${label}`);
+    if (data?.leadMoved) {
+      const dest = newStatus === 'reprovado' ? 'Recuperação de Vendas' : 'Orçamento Aprovado';
+      toast.info(`Lead movido automaticamente para "${dest}" no CRM`);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="bg-card rounded-xl border border-border p-5">
@@ -238,12 +262,25 @@ function BudgetDetail({ budget: b }: { budget: Budget }) {
 
         {b.status === "pendente" && (
           <div className="flex items-center gap-2 mt-4">
-            <button className="flex items-center gap-1.5 h-8 px-4 rounded-lg bg-success text-white text-xs font-medium hover:bg-success/90">
-              <CheckCircle2 className="h-3.5 w-3.5" /> Aprovar
+            <button disabled={updating} onClick={() => handleStatusChange("aprovado")}
+              className="flex items-center gap-1.5 h-8 px-4 rounded-lg bg-success text-white text-xs font-medium hover:bg-success/90 disabled:opacity-50">
+              {updating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />} Aprovar
             </button>
-            <button className="flex items-center gap-1.5 h-8 px-4 rounded-lg bg-destructive text-white text-xs font-medium hover:bg-destructive/90">
-              <XCircle className="h-3.5 w-3.5" /> Reprovar
+            <button disabled={updating} onClick={() => handleStatusChange("reprovado")}
+              className="flex items-center gap-1.5 h-8 px-4 rounded-lg bg-destructive text-white text-xs font-medium hover:bg-destructive/90 disabled:opacity-50">
+              {updating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <XCircle className="h-3.5 w-3.5" />} Reprovar
             </button>
+          </div>
+        )}
+
+        {b.status === "reprovado" && (
+          <div className="mt-3 p-2 rounded-lg bg-destructive/10 text-destructive text-xs">
+            ❌ Orçamento reprovado — lead movido para Recuperação de Vendas no CRM
+          </div>
+        )}
+        {b.status === "aprovado" && (
+          <div className="mt-3 p-2 rounded-lg bg-success/10 text-success text-xs">
+            ✅ Orçamento aprovado — lead movido para Orçamento Aprovado no CRM
           </div>
         )}
       </div>

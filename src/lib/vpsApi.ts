@@ -212,6 +212,14 @@ export const crmApi = {
     vpsApiFetch<Array<{ id: string; from_stage: string; to_stage: string; moved_by_name: string; reason: string; created_at: string }>>(`/crm/leads/${id}/movements`),
 };
 
+// ─── Orçamentos ─────────────────────────────────────────────
+
+export const orcamentosApi = {
+  list: () => vpsApiFetch('/orcamentos'),
+  updateStatus: (id: string, status: string) =>
+    vpsApiFetch<{ success: boolean; budget: any; leadMoved: boolean }>(`/orcamentos/${id}/status`, { method: 'PATCH', body: { status } }),
+};
+
 // ─── WhatsApp (via proxy) ───────────────────────────────────
 
 export const whatsappApi = {
