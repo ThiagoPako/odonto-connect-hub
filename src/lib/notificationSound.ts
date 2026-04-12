@@ -6,6 +6,7 @@
 const SOUND_ENABLED_KEY = "odonto_notification_sound";
 const RECOVERY_SOUND_KEY = "odonto_recovery_sound";
 const SOUND_TYPE_KEY = "odonto_sound_type";
+const SOUND_VOLUME_KEY = "odonto_sound_volume";
 
 export type SoundType = "ding" | "beep" | "chime";
 
@@ -16,12 +17,21 @@ export const SOUND_OPTIONS: { value: SoundType; label: string }[] = [
 ];
 
 let audioCtx: AudioContext | null = null;
+let masterGain: GainNode | null = null;
 
 function getAudioContext(): AudioContext {
   if (!audioCtx) {
     audioCtx = new AudioContext();
+    masterGain = audioCtx.createGain();
+    masterGain.gain.value = getVolume();
+    masterGain.connect(audioCtx.destination);
   }
   return audioCtx;
+}
+
+function getMasterGain(): GainNode {
+  getAudioContext();
+  return masterGain!;
 }
 
 export function isSoundEnabled(): boolean {
@@ -55,7 +65,26 @@ export function setSoundType(type: SoundType): void {
   localStorage.setItem(SOUND_TYPE_KEY, type);
 }
 
+/** Volume 0-100, stored as percentage */
+export function getVolume(): number {
+  if (typeof window === "undefined") return 70;
+  const val = localStorage.getItem(SOUND_VOLUME_KEY);
+  if (val === null) return 70;
+  const n = parseInt(val, 10);
+  return isNaN(n) ? 70 : Math.max(0, Math.min(100, n));
+}
+
+export function setVolume(volume: number): void {
+  const clamped = Math.max(0, Math.min(100, volume));
+  localStorage.setItem(SOUND_VOLUME_KEY, String(clamped));
+  // Update live master gain if already created
+  if (masterGain) {
+    masterGain.gain.value = clamped / 100;
+  }
+}
+
 function playDing(ctx: AudioContext) {
+  const dest = getMasterGain();
   const now = ctx.currentTime;
   const osc1 = ctx.createOscillator();
   const gain1 = ctx.createGain();
@@ -64,7 +93,7 @@ function playDing(ctx: AudioContext) {
   gain1.gain.setValueAtTime(0.15, now);
   gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
   osc1.connect(gain1);
-  gain1.connect(ctx.destination);
+  gain1.connect(dest);
   osc1.start(now);
   osc1.stop(now + 0.3);
 
@@ -76,14 +105,14 @@ function playDing(ctx: AudioContext) {
   gain2.gain.setValueAtTime(0.12, now + 0.12);
   gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
   osc2.connect(gain2);
-  gain2.connect(ctx.destination);
+  gain2.connect(dest);
   osc2.start(now + 0.12);
   osc2.stop(now + 0.45);
 }
 
 function playBeep(ctx: AudioContext) {
+  const dest = getMasterGain();
   const now = ctx.currentTime;
-  // Short punchy square-wave beep
   const osc = ctx.createOscillator();
   const gain = ctx.createGain();
   osc.type = "square";
@@ -91,11 +120,10 @@ function playBeep(ctx: AudioContext) {
   gain.gain.setValueAtTime(0.1, now);
   gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
   osc.connect(gain);
-  gain.connect(ctx.destination);
+  gain.connect(dest);
   osc.start(now);
   osc.stop(now + 0.15);
 
-  // Second beep slightly higher
   const osc2 = ctx.createOscillator();
   const gain2 = ctx.createGain();
   osc2.type = "square";
@@ -104,14 +132,14 @@ function playBeep(ctx: AudioContext) {
   gain2.gain.setValueAtTime(0.1, now + 0.18);
   gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.33);
   osc2.connect(gain2);
-  gain2.connect(ctx.destination);
+  gain2.connect(dest);
   osc2.start(now + 0.18);
   osc2.stop(now + 0.33);
 }
 
 function playChime(ctx: AudioContext) {
+  const dest = getMasterGain();
   const now = ctx.currentTime;
-  // Soft melodic three-note chime (C5-E5-G5)
   const notes = [
     { freq: 523.25, start: 0, vol: 0.12 },
     { freq: 659.25, start: 0.15, vol: 0.1 },
@@ -127,7 +155,7 @@ function playChime(ctx: AudioContext) {
     gain.gain.setValueAtTime(note.vol, now + note.start);
     gain.gain.exponentialRampToValueAtTime(0.001, now + note.start + 0.4);
     osc.connect(gain);
-    gain.connect(ctx.destination);
+    gain.connect(dest);
     osc.start(now + note.start);
     osc.stop(now + note.start + 0.4);
   }
@@ -179,6 +207,7 @@ export function playRecoverySound() {
       { freq: 1318.51, start: 0.3, end: 0.55 },
     ];
 
+    const dest = getMasterGain();
     for (const note of notes) {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
@@ -187,7 +216,7 @@ export function playRecoverySound() {
       gain.gain.setValueAtTime(0.2, now + note.start);
       gain.gain.exponentialRampToValueAtTime(0.001, now + note.end);
       osc.connect(gain);
-      gain.connect(ctx.destination);
+      gain.connect(dest);
       osc.start(now + note.start);
       osc.stop(now + note.end);
     }
@@ -203,7 +232,7 @@ export function playRecoverySound() {
           gain.gain.setValueAtTime(0.18, now2 + note.start);
           gain.gain.exponentialRampToValueAtTime(0.001, now2 + note.end);
           osc.connect(gain);
-          gain.connect(ctx.destination);
+          gain.connect(dest);
           osc.start(now2 + note.start);
           osc.stop(now2 + note.end);
         }
