@@ -7,7 +7,9 @@ import {
   Play, Square, Mic, FileText, Receipt, AlertTriangle, Clock,
   User, Phone, Mail, Heart, Pill, Stethoscope, Send, Plus, Trash2,
   Save, ChevronRight, Activity, ClipboardList, ExternalLink, Timer
+  Printer,
 } from "lucide-react";
+import { exportarPrescricaoPdf } from "@/lib/prescricaoPdfExport";
 import { AudioRecorder } from "@/components/chat/AudioRecorder";
 import {
   mockPacientes, getPacienteById, getPacienteIniciais, getPacienteIdade,
