@@ -4,14 +4,15 @@ import {
   Play, Pause, Plus, Clock, MessageSquare, Mail, Smartphone,
   Zap, Settings2, Send, CheckCircle2, Edit2, Save, Loader2, RotateCcw,
   Trash2, Copy, GripVertical, ChevronDown, ChevronUp, X, Sparkles,
-  AlertTriangle, Eye, EyeOff, BarChart3,
+  AlertTriangle, Eye, EyeOff, BarChart3, Info, Rocket,
 } from "lucide-react";
 import { AutomationReportPanel } from "@/components/AutomationReportPanel";
 import { useState, useEffect, useCallback } from "react";
 import {
   mockAutomationFlows, automationTypes, triggerOptions, delayOptions,
-  availableVariables, messageTemplates,
+  availableVariables, messageTemplates, preConfiguredSolutions,
   type AutomationFlow, type AutomationStep, type AutomationType, type AutomationChannel,
+  type PreConfiguredSolution,
 } from "@/data/automationMockData";
 import { automationsApi, type FollowupAutomationConfig } from "@/lib/vpsApi";
 import { toast } from "sonner";
