@@ -4,7 +4,8 @@ import {
   Play, Pause, Plus, Clock, MessageSquare, Mail, Smartphone,
   Zap, Settings2, Send, CheckCircle2, Edit2, Save, Loader2, RotateCcw,
   Trash2, Copy, GripVertical, ChevronDown, ChevronUp, X, Sparkles,
-  AlertTriangle, Eye, EyeOff,
+  AlertTriangle, Eye, EyeOff, Phone, User, Calendar, XCircle,
+  RefreshCw, ListChecks,
 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import {
@@ -12,7 +13,7 @@ import {
   availableVariables, messageTemplates,
   type AutomationFlow, type AutomationStep, type AutomationType, type AutomationChannel,
 } from "@/data/automationMockData";
-import { automationsApi, type FollowupAutomationConfig } from "@/lib/vpsApi";
+import { automationsApi, type FollowupAutomationConfig, type AutomationJob } from "@/lib/vpsApi";
 import { toast } from "sonner";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
