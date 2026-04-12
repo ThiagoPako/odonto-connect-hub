@@ -4,6 +4,7 @@ import {
   Send, Play, Pause, Plus, Eye, Clock,
   CalendarDays, Users, CheckCircle2, AlertCircle, Trash2,
   MessageSquare, RefreshCcw, Copy, Pencil, BarChart3, Loader2,
+  Rocket, X,
 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import { publicoOptions, type DisparoProgramado } from "@/data/disparosMockData";
@@ -24,6 +25,8 @@ function DisparosPage() {
   const [editingDisparo, setEditingDisparo] = useState<DisparoProgramado | null>(null);
   const [statsDisparo, setStatsDisparo] = useState<DisparoProgramado | null>(null);
   const [filterStatus, setFilterStatus] = useState<"all" | "ativos" | "inativos">("all");
+  const [executingId, setExecutingId] = useState<string | null>(null);
+  const [jobsPanel, setJobsPanel] = useState<{ id: string; nome: string } | null>(null);
 
   const loadCampaigns = useCallback(async () => {
     const { data, error } = await campaignsApi.list();
@@ -76,6 +79,17 @@ function DisparosPage() {
     if (error) { toast.error(error); return; }
     toast.success("Disparo duplicado");
     loadCampaigns();
+  };
+
+  const handleExecute = async (disparo: DisparoProgramado) => {
+    setExecutingId(disparo.id);
+    const { data, error } = await campaignsApi.execute(disparo.id);
+    setExecutingId(null);
+    if (error) { toast.error("Erro ao executar: " + error); return; }
+    if (data) {
+      toast.success(`${data.enqueued} mensagens enfileiradas (${data.skipped} ignoradas pelo filtro anti-spam)`);
+      loadCampaigns();
+    }
   };
 
   const openNewWizard = () => {
@@ -158,11 +172,14 @@ function DisparosPage() {
               <DisparoCard
                 key={disparo.id}
                 disparo={disparo}
+                executing={executingId === disparo.id}
                 onToggle={() => toggleAtivo(disparo.id)}
                 onRemove={() => removeDisparo(disparo.id)}
                 onEdit={() => handleEdit(disparo)}
                 onDuplicate={() => handleDuplicate(disparo)}
                 onStats={() => setStatsDisparo(disparo)}
+                onExecute={() => handleExecute(disparo)}
+                onViewJobs={() => setJobsPanel({ id: disparo.id, nome: disparo.nome })}
               />
             ))}
           </div>
@@ -182,6 +199,14 @@ function DisparosPage() {
           onClose={() => setStatsDisparo(null)}
         />
       )}
+
+      {jobsPanel && (
+        <CampaignJobsPanel
+          campaignId={jobsPanel.id}
+          campaignName={jobsPanel.nome}
+          onClose={() => setJobsPanel(null)}
+        />
+      )}
     </div>
   );
 }
@@ -199,14 +224,17 @@ function MiniKpi({ icon: Icon, label, value }: { icon: React.ElementType; label:
 }
 
 function DisparoCard({
-  disparo, onToggle, onRemove, onEdit, onDuplicate, onStats,
+  disparo, executing, onToggle, onRemove, onEdit, onDuplicate, onStats, onExecute, onViewJobs,
 }: {
   disparo: DisparoProgramado;
+  executing: boolean;
   onToggle: () => void;
   onRemove: () => void;
   onEdit: () => void;
   onDuplicate: () => void;
   onStats: () => void;
+  onExecute: () => void;
+  onViewJobs: () => void;
 }) {
   const publicoLabel = publicoOptions.find((p) => p.id === disparo.publico)?.label || disparo.publico;
   const taxaLeitura = disparo.stats.enviadas > 0 ? ((disparo.stats.lidas / disparo.stats.enviadas) * 100).toFixed(0) : "0";
@@ -252,6 +280,21 @@ function DisparoCard({
 
         {/* Actions */}
         <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            onClick={onExecute}
+            disabled={executing}
+            className="p-2 rounded-lg bg-chart-3/15 text-chart-3 hover:bg-chart-3/25 transition-colors disabled:opacity-50"
+            title="Executar agora"
+          >
+            {executing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />}
+          </button>
+          <button
+            onClick={onViewJobs}
+            className="p-2 rounded-lg bg-muted text-muted-foreground hover:bg-primary/15 hover:text-primary transition-colors"
+            title="Ver fila de envio"
+          >
+            <Send className="h-4 w-4" />
+          </button>
           <button
             onClick={onStats}
             className="p-2 rounded-lg bg-muted text-muted-foreground hover:bg-primary/15 hover:text-primary transition-colors"
@@ -302,5 +345,104 @@ function StatPill({ label, value }: { label: string; value: number }) {
     <span className="text-muted-foreground">
       {label}: <span className="font-semibold text-foreground">{value}</span>
     </span>
+  );
+}
+
+// ─── Campaign Jobs Panel ────────────────────────────────────
+
+function CampaignJobsPanel({ campaignId, campaignName, onClose }: { campaignId: string; campaignName: string; onClose: () => void }) {
+  const [jobs, setJobs] = useState<{ summary: Record<string, number>; recent: Array<{ patient_name: string; patient_phone: string; status: string; sent_at: string; error: string; scheduled_at: string }> } | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const loadJobs = useCallback(async () => {
+    const { data } = await campaignsApi.jobs(campaignId);
+    if (data) setJobs(data);
+    setLoading(false);
+  }, [campaignId]);
+
+  useEffect(() => {
+    loadJobs();
+    const interval = setInterval(loadJobs, 5000); // auto-refresh every 5s
+    return () => clearInterval(interval);
+  }, [loadJobs]);
+
+  const statusColors: Record<string, string> = {
+    pending: "bg-warning/15 text-warning",
+    sent: "bg-success/15 text-success",
+    failed: "bg-destructive/15 text-destructive",
+    cancelled: "bg-muted text-muted-foreground",
+  };
+
+  const statusLabels: Record<string, string> = {
+    pending: "Pendente",
+    sent: "Enviado",
+    failed: "Falhou",
+    cancelled: "Cancelado",
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+      <div className="bg-card rounded-xl border border-border w-full max-w-2xl max-h-[80vh] flex flex-col">
+        <div className="flex items-center justify-between p-4 border-b border-border">
+          <div>
+            <h3 className="text-sm font-semibold text-foreground">Fila de Envio</h3>
+            <p className="text-xs text-muted-foreground">{campaignName}</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted transition-colors">
+            <X className="h-4 w-4 text-muted-foreground" />
+          </button>
+        </div>
+
+        {loading ? (
+          <div className="p-8 flex justify-center">
+            <Loader2 className="h-6 w-6 text-primary animate-spin" />
+          </div>
+        ) : !jobs ? (
+          <div className="p-8 text-center text-sm text-muted-foreground">Erro ao carregar fila</div>
+        ) : (
+          <>
+            {/* Summary */}
+            <div className="p-4 flex items-center gap-4 border-b border-border">
+              {Object.entries(jobs.summary).map(([status, count]) => (
+                <div key={status} className="flex items-center gap-1.5">
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${statusColors[status] || "bg-muted text-muted-foreground"}`}>
+                    {statusLabels[status] || status}
+                  </span>
+                  <span className="text-sm font-bold text-foreground">{count}</span>
+                </div>
+              ))}
+              {Object.keys(jobs.summary).length === 0 && (
+                <span className="text-xs text-muted-foreground">Nenhum envio registrado ainda</span>
+              )}
+            </div>
+
+            {/* Recent jobs */}
+            <div className="flex-1 overflow-auto p-4 space-y-2">
+              {jobs.recent.length === 0 ? (
+                <p className="text-xs text-muted-foreground text-center py-4">Nenhum job encontrado</p>
+              ) : jobs.recent.map((job, i) => (
+                <div key={i} className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg bg-muted/50">
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium text-foreground truncate">{job.patient_name || job.patient_phone}</p>
+                    <p className="text-[10px] text-muted-foreground">{job.patient_phone}</p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {job.error && (
+                      <span className="text-[10px] text-destructive max-w-[120px] truncate" title={job.error}>{job.error}</span>
+                    )}
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${statusColors[job.status] || "bg-muted text-muted-foreground"}`}>
+                      {statusLabels[job.status] || job.status}
+                    </span>
+                    <span className="text-[10px] text-muted-foreground">
+                      {job.sent_at ? new Date(job.sent_at).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : "—"}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
   );
 }
