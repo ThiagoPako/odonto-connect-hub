@@ -238,9 +238,16 @@ function TratamentosPage() {
                       <p className="text-xs text-muted-foreground">{selected.dentista_nome} · {selected.descricao}</p>
                       {selected.plano && <p className="text-xs text-muted-foreground mt-0.5">Plano: {selected.plano}</p>}
                     </div>
-                    <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${(treatmentStatusCfg[selected.status] || treatmentStatusCfg.planejado).color}`}>
-                      {(treatmentStatusCfg[selected.status] || treatmentStatusCfg.planejado).label}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${(treatmentStatusCfg[selected.status] || treatmentStatusCfg.planejado).color}`}>
+                        {(treatmentStatusCfg[selected.status] || treatmentStatusCfg.planejado).label}
+                      </span>
+                      <button onClick={() => setDeleteTarget(selected.id)}
+                        className="p-1.5 rounded-lg hover:bg-destructive/15 text-muted-foreground hover:text-destructive transition-colors"
+                        title="Excluir tratamento">
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
                   </div>
                   <div className="grid grid-cols-4 gap-3">
                     <StatBox label="Progresso" value={totalSteps > 0 ? `${progress.toFixed(0)}%` : 'N/A'} />
