@@ -27,6 +27,7 @@ import {
   Edit,
   Save,
   Loader2,
+  Trash2,
 } from "lucide-react";
 
 export const Route = createFileRoute("/pacientes")({
@@ -454,6 +455,8 @@ function PacienteDetailModal({
   const [activeTab, setActiveTab] = useState<DetailTab>("dados");
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [form, setForm] = useState({
     nome: paciente.nome,
     cpf: paciente.cpf || "",
@@ -547,13 +550,22 @@ function PacienteDetailModal({
           </div>
           <div className="flex items-center gap-2">
             {activeTab === "dados" && !editing && (
-              <button
-                onClick={() => setEditing(true)}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary/10 text-primary text-xs font-semibold hover:bg-primary/20 transition-colors"
-              >
-                <Edit className="h-3.5 w-3.5" />
-                Editar
-              </button>
+              <>
+                <button
+                  onClick={() => setShowDeleteConfirm(true)}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-destructive/10 text-destructive text-xs font-semibold hover:bg-destructive/20 transition-colors"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Excluir
+                </button>
+                <button
+                  onClick={() => setEditing(true)}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary/10 text-primary text-xs font-semibold hover:bg-primary/20 transition-colors"
+                >
+                  <Edit className="h-3.5 w-3.5" />
+                  Editar
+                </button>
+              </>
             )}
             {activeTab === "dados" && editing && (
               <>
@@ -672,6 +684,59 @@ function PacienteDetailModal({
             <HistoricoTab pacienteId={paciente.id} />
           )}
         </div>
+
+        {/* Delete confirmation */}
+        {showDeleteConfirm && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/40 rounded-2xl">
+            <div className="bg-card rounded-xl border border-border/60 shadow-lg p-6 max-w-sm mx-4 animate-fade-in">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="h-10 w-10 rounded-full bg-destructive/10 flex items-center justify-center">
+                  <Trash2 className="h-5 w-5 text-destructive" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-foreground">Excluir Paciente</h3>
+                  <p className="text-xs text-muted-foreground">Esta ação não pode ser desfeita.</p>
+                </div>
+              </div>
+              <p className="text-sm text-foreground mb-5">
+                Deseja realmente excluir <strong>{paciente.nome}</strong>? Todos os dados (anamnese, odontograma, histórico) serão removidos.
+              </p>
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => setShowDeleteConfirm(false)}
+                  disabled={deleting}
+                  className="px-4 py-2 rounded-xl text-xs font-medium text-muted-foreground hover:bg-muted/60 transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={async () => {
+                    setDeleting(true);
+                    try {
+                      const { error } = await pacientesApi.delete(paciente.id);
+                      if (error) {
+                        toast.error("Erro ao excluir: " + error);
+                      } else {
+                        toast.success("Paciente excluído!");
+                        onUpdated?.();
+                        onClose();
+                      }
+                    } catch {
+                      toast.error("Erro de conexão");
+                    } finally {
+                      setDeleting(false);
+                    }
+                  }}
+                  disabled={deleting}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-destructive text-destructive-foreground text-xs font-semibold hover:bg-destructive/90 transition-colors shadow-sm disabled:opacity-50"
+                >
+                  {deleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                  Excluir
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
