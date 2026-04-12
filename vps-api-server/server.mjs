@@ -2059,10 +2059,503 @@ app.post('/api/dentistas', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
-// DASHBOARD KPIs
+// DENTISTAS — PUT / DELETE (missing)
 // ═══════════════════════════════════════════════════════════════
 
-app.get('/api/dashboard/kpis', async (req, res) => {
+app.put('/api/dentistas/:id', async (req, res) => {
+  try {
+    await verifyAdmin(req);
+    const { nome, cro, especialidade, telefone, email, comissao_percentual, ativo, cor_agenda, sala } = req.body;
+    const sets = []; const params = [];
+    if (nome !== undefined) { params.push(nome); sets.push(`nome=$${params.length}`); }
+    if (cro !== undefined) { params.push(cro); sets.push(`cro=$${params.length}`); }
+    if (especialidade !== undefined) { params.push(especialidade); sets.push(`especialidade=$${params.length}`); }
+    if (telefone !== undefined) { params.push(telefone); sets.push(`telefone=$${params.length}`); }
+    if (email !== undefined) { params.push(email); sets.push(`email=$${params.length}`); }
+    if (comissao_percentual !== undefined) { params.push(comissao_percentual); sets.push(`comissao_percentual=$${params.length}`); }
+    if (ativo !== undefined) { params.push(ativo); sets.push(`ativo=$${params.length}`); }
+    if (cor_agenda !== undefined) { params.push(cor_agenda); sets.push(`cor_agenda=$${params.length}`); }
+    if (sala !== undefined) { params.push(sala); sets.push(`sala=$${params.length}`); }
+    if (sets.length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
+    params.push(req.params.id);
+    await pool.query(`UPDATE dentistas SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length}`, params);
+    const { rows } = await pool.query('SELECT * FROM dentistas WHERE id=$1', [req.params.id]);
+    res.json(rows[0]);
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    if (error.message === 'Admin only') return res.status(403).json({ error: 'Admin only' });
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/dentistas/:id', async (req, res) => {
+  try {
+    await verifyAdmin(req);
+    await pool.query('DELETE FROM dentistas WHERE id=$1', [req.params.id]);
+    res.json({ success: true });
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    if (error.message === 'Admin only') return res.status(403).json({ error: 'Admin only' });
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// FINANCEIRO — PUT / DELETE (missing)
+// ═══════════════════════════════════════════════════════════════
+
+app.put('/api/financeiro/:id', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { tipo, descricao, valor, data, categoria, paciente_id, forma_pagamento, status, vencimento, observacoes } = req.body;
+    const sets = []; const params = [];
+    if (tipo !== undefined) { params.push(tipo); sets.push(`tipo=$${params.length}`); }
+    if (descricao !== undefined) { params.push(descricao); sets.push(`descricao=$${params.length}`); }
+    if (valor !== undefined) { params.push(valor); sets.push(`valor=$${params.length}`); }
+    if (data !== undefined) { params.push(data); sets.push(`data=$${params.length}`); }
+    if (categoria !== undefined) { params.push(categoria); sets.push(`categoria=$${params.length}`); }
+    if (paciente_id !== undefined) { params.push(paciente_id); sets.push(`paciente_id=$${params.length}`); }
+    if (forma_pagamento !== undefined) { params.push(forma_pagamento); sets.push(`forma_pagamento=$${params.length}`); }
+    if (status !== undefined) { params.push(status); sets.push(`status=$${params.length}`); }
+    if (vencimento !== undefined) { params.push(vencimento); sets.push(`vencimento=$${params.length}`); }
+    if (observacoes !== undefined) { params.push(observacoes); sets.push(`observacoes=$${params.length}`); }
+    if (sets.length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
+    params.push(req.params.id);
+    await pool.query(`UPDATE financeiro SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length}`, params);
+    const { rows } = await pool.query('SELECT * FROM financeiro WHERE id=$1', [req.params.id]);
+    res.json(rows[0]);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/financeiro/:id', async (req, res) => {
+  try {
+    await verifyUser(req);
+    await pool.query('DELETE FROM financeiro WHERE id=$1', [req.params.id]);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// ESTOQUE — FULL CRUD + MOVIMENTAÇÕES
+// ═══════════════════════════════════════════════════════════════
+
+app.get('/api/estoque', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { rows } = await pool.query('SELECT * FROM estoque ORDER BY nome ASC');
+    res.json(rows);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/estoque', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { nome, categoria, quantidade, quantidade_minima, unidade, valor_unitario, fornecedor, localizacao, validade, lote } = req.body;
+    const id = crypto.randomUUID();
+    await pool.query(
+      'INSERT INTO estoque (id, nome, categoria, quantidade, quantidade_minima, unidade, valor_unitario, fornecedor, localizacao, validade, lote) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
+      [id, nome, categoria, quantidade || 0, quantidade_minima || 5, unidade || 'un', valor_unitario, fornecedor, localizacao, validade, lote]
+    );
+    res.json({ id, success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/api/estoque/:id', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { nome, categoria, quantidade, quantidade_minima, unidade, valor_unitario, fornecedor, localizacao, validade, lote } = req.body;
+    const sets = []; const params = [];
+    if (nome !== undefined) { params.push(nome); sets.push(`nome=$${params.length}`); }
+    if (categoria !== undefined) { params.push(categoria); sets.push(`categoria=$${params.length}`); }
+    if (quantidade !== undefined) { params.push(quantidade); sets.push(`quantidade=$${params.length}`); }
+    if (quantidade_minima !== undefined) { params.push(quantidade_minima); sets.push(`quantidade_minima=$${params.length}`); }
+    if (unidade !== undefined) { params.push(unidade); sets.push(`unidade=$${params.length}`); }
+    if (valor_unitario !== undefined) { params.push(valor_unitario); sets.push(`valor_unitario=$${params.length}`); }
+    if (fornecedor !== undefined) { params.push(fornecedor); sets.push(`fornecedor=$${params.length}`); }
+    if (localizacao !== undefined) { params.push(localizacao); sets.push(`localizacao=$${params.length}`); }
+    if (validade !== undefined) { params.push(validade); sets.push(`validade=$${params.length}`); }
+    if (lote !== undefined) { params.push(lote); sets.push(`lote=$${params.length}`); }
+    if (sets.length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
+    params.push(req.params.id);
+    await pool.query(`UPDATE estoque SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length}`, params);
+    const { rows } = await pool.query('SELECT * FROM estoque WHERE id=$1', [req.params.id]);
+    res.json(rows[0]);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/estoque/:id', async (req, res) => {
+  try {
+    await verifyUser(req);
+    await pool.query('DELETE FROM estoque WHERE id=$1', [req.params.id]);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/estoque/:id/movimentos', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { rows } = await pool.query('SELECT * FROM estoque_movimentos WHERE item_id=$1 ORDER BY created_at DESC', [req.params.id]);
+    res.json(rows);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/estoque/:id/movimentos', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { tipo, quantidade, motivo, usuario_nome } = req.body;
+    const id = crypto.randomUUID();
+    await pool.query(
+      'INSERT INTO estoque_movimentos (id, item_id, tipo, quantidade, motivo, usuario_nome) VALUES ($1,$2,$3,$4,$5,$6)',
+      [id, req.params.id, tipo, quantidade, motivo, usuario_nome]
+    );
+    // Update stock quantity
+    const delta = tipo === 'entrada' ? quantidade : -quantidade;
+    await pool.query('UPDATE estoque SET quantidade = GREATEST(0, quantidade + $1), updated_at=NOW() WHERE id=$2', [delta, req.params.id]);
+    const { rows } = await pool.query('SELECT * FROM estoque WHERE id=$1', [req.params.id]);
+    res.json({ success: true, item: rows[0] });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// TRATAMENTOS — FULL CRUD + ETAPAS
+// ═══════════════════════════════════════════════════════════════
+
+app.get('/api/tratamentos', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { paciente_id } = req.query;
+    let query = `SELECT t.*, p.nome as paciente_nome, d.nome as dentista_nome
+      FROM tratamentos t
+      LEFT JOIN pacientes p ON t.paciente_id = p.id
+      LEFT JOIN dentistas d ON t.dentista_id = d.id WHERE 1=1`;
+    const params = [];
+    if (paciente_id) { params.push(paciente_id); query += ` AND t.paciente_id=$${params.length}`; }
+    query += ' ORDER BY t.created_at DESC';
+    const { rows } = await pool.query(query, params);
+    res.json(rows);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/tratamentos', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { paciente_id, dentista_id, descricao, dente, valor, status, plano, observacoes } = req.body;
+    const id = crypto.randomUUID();
+    await pool.query(
+      'INSERT INTO tratamentos (id, paciente_id, dentista_id, descricao, dente, valor, status, plano, observacoes) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+      [id, paciente_id, dentista_id, descricao, dente, valor, status || 'planejado', plano, observacoes]
+    );
+    res.json({ id, success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/api/tratamentos/:id', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { descricao, dente, valor, status, plano, observacoes, dentista_id } = req.body;
+    const sets = []; const params = [];
+    if (descricao !== undefined) { params.push(descricao); sets.push(`descricao=$${params.length}`); }
+    if (dente !== undefined) { params.push(dente); sets.push(`dente=$${params.length}`); }
+    if (valor !== undefined) { params.push(valor); sets.push(`valor=$${params.length}`); }
+    if (status !== undefined) { params.push(status); sets.push(`status=$${params.length}`); }
+    if (plano !== undefined) { params.push(plano); sets.push(`plano=$${params.length}`); }
+    if (observacoes !== undefined) { params.push(observacoes); sets.push(`observacoes=$${params.length}`); }
+    if (dentista_id !== undefined) { params.push(dentista_id); sets.push(`dentista_id=$${params.length}`); }
+    if (sets.length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
+    params.push(req.params.id);
+    await pool.query(`UPDATE tratamentos SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length}`, params);
+    const { rows } = await pool.query('SELECT * FROM tratamentos WHERE id=$1', [req.params.id]);
+    res.json(rows[0]);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/tratamentos/:id', async (req, res) => {
+  try {
+    await verifyUser(req);
+    await pool.query('DELETE FROM tratamentos WHERE id=$1', [req.params.id]);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Etapas de tratamento
+app.get('/api/tratamentos/:id/etapas', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { rows } = await pool.query(
+      `SELECT e.*, d.nome as dentista_nome FROM tratamento_etapas e
+       LEFT JOIN dentistas d ON e.dentista_id = d.id
+       WHERE e.tratamento_id=$1 ORDER BY e.ordem ASC, e.created_at ASC`,
+      [req.params.id]
+    );
+    res.json(rows);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/tratamentos/:id/etapas', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { descricao, dente, valor, status, dentista_id, observacoes, ordem } = req.body;
+    const id = crypto.randomUUID();
+    await pool.query(
+      'INSERT INTO tratamento_etapas (id, tratamento_id, descricao, dente, valor, status, dentista_id, observacoes, ordem) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+      [id, req.params.id, descricao, dente, valor || 0, status || 'pendente', dentista_id, observacoes, ordem || 0]
+    );
+    res.json({ id, success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/api/tratamentos/etapas/:id', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { descricao, dente, valor, status, dentista_id, observacoes, ordem, data_realizada } = req.body;
+    const sets = []; const params = [];
+    if (descricao !== undefined) { params.push(descricao); sets.push(`descricao=$${params.length}`); }
+    if (dente !== undefined) { params.push(dente); sets.push(`dente=$${params.length}`); }
+    if (valor !== undefined) { params.push(valor); sets.push(`valor=$${params.length}`); }
+    if (status !== undefined) { params.push(status); sets.push(`status=$${params.length}`); }
+    if (dentista_id !== undefined) { params.push(dentista_id); sets.push(`dentista_id=$${params.length}`); }
+    if (observacoes !== undefined) { params.push(observacoes); sets.push(`observacoes=$${params.length}`); }
+    if (ordem !== undefined) { params.push(ordem); sets.push(`ordem=$${params.length}`); }
+    if (data_realizada !== undefined) { params.push(data_realizada); sets.push(`data_realizada=$${params.length}`); }
+    if (sets.length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
+    params.push(req.params.id);
+    await pool.query(`UPDATE tratamento_etapas SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length}`, params);
+    const { rows } = await pool.query('SELECT * FROM tratamento_etapas WHERE id=$1', [req.params.id]);
+    res.json(rows[0]);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/tratamentos/etapas/:id', async (req, res) => {
+  try {
+    await verifyUser(req);
+    await pool.query('DELETE FROM tratamento_etapas WHERE id=$1', [req.params.id]);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// COMISSÕES — FULL CRUD
+// ═══════════════════════════════════════════════════════════════
+
+app.get('/api/comissoes', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { dentista_id, status: statusFilter, mes, ano } = req.query;
+    let query = `SELECT c.*, d.nome as dentista_nome, p.nome as paciente_nome
+      FROM comissoes c
+      LEFT JOIN dentistas d ON c.dentista_id = d.id
+      LEFT JOIN pacientes p ON c.paciente_id = p.id WHERE 1=1`;
+    const params = [];
+    if (dentista_id) { params.push(dentista_id); query += ` AND c.dentista_id=$${params.length}`; }
+    if (statusFilter) { params.push(statusFilter); query += ` AND c.status=$${params.length}`; }
+    if (mes && ano) { params.push(mes, ano); query += ` AND EXTRACT(MONTH FROM c.data)=$${params.length - 1} AND EXTRACT(YEAR FROM c.data)=$${params.length}`; }
+    query += ' ORDER BY c.data DESC';
+    const { rows } = await pool.query(query, params);
+    res.json(rows);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/comissoes', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { dentista_id, tratamento_id, paciente_id, valor, percentual, data, procedimento, descricao, status } = req.body;
+    const id = crypto.randomUUID();
+    await pool.query(
+      'INSERT INTO comissoes (id, dentista_id, tratamento_id, paciente_id, valor, percentual, data, procedimento, descricao, status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
+      [id, dentista_id, tratamento_id, paciente_id, valor, percentual, data || new Date().toISOString().split('T')[0], procedimento, descricao, status || 'pendente']
+    );
+    res.json({ id, success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/api/comissoes/:id', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { valor, percentual, status, pago, descricao } = req.body;
+    const sets = []; const params = [];
+    if (valor !== undefined) { params.push(valor); sets.push(`valor=$${params.length}`); }
+    if (percentual !== undefined) { params.push(percentual); sets.push(`percentual=$${params.length}`); }
+    if (status !== undefined) { params.push(status); sets.push(`status=$${params.length}`); }
+    if (pago !== undefined) { params.push(pago); sets.push(`pago=$${params.length}`); }
+    if (descricao !== undefined) { params.push(descricao); sets.push(`descricao=$${params.length}`); }
+    if (sets.length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
+    params.push(req.params.id);
+    await pool.query(`UPDATE comissoes SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length}`, params);
+    const { rows } = await pool.query('SELECT * FROM comissoes WHERE id=$1', [req.params.id]);
+    res.json(rows[0]);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/comissoes/:id', async (req, res) => {
+  try {
+    await verifyUser(req);
+    await pool.query('DELETE FROM comissoes WHERE id=$1', [req.params.id]);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// PRONTUÁRIOS — FULL CRUD
+// ═══════════════════════════════════════════════════════════════
+
+app.get('/api/prontuarios', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { paciente_id } = req.query;
+    let query = `SELECT pr.*, p.nome as paciente_nome, d.nome as dentista_nome
+      FROM prontuarios pr
+      LEFT JOIN pacientes p ON pr.paciente_id = p.id
+      LEFT JOIN dentistas d ON pr.dentista_id = d.id WHERE 1=1`;
+    const params = [];
+    if (paciente_id) { params.push(paciente_id); query += ` AND pr.paciente_id=$${params.length}`; }
+    query += ' ORDER BY pr.created_at DESC';
+    const { rows } = await pool.query(query, params);
+    res.json(rows);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/prontuarios', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { paciente_id, dentista_id, descricao, tipo, titulo, odontograma, anexos } = req.body;
+    const id = crypto.randomUUID();
+    await pool.query(
+      'INSERT INTO prontuarios (id, paciente_id, dentista_id, descricao, tipo, titulo, odontograma, anexos) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+      [id, paciente_id, dentista_id, descricao, tipo || 'evolucao', titulo, odontograma ? JSON.stringify(odontograma) : '{}', anexos ? JSON.stringify(anexos) : '[]']
+    );
+    res.json({ id, success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/api/prontuarios/:id', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { descricao, tipo, titulo, odontograma, anexos } = req.body;
+    const sets = []; const params = [];
+    if (descricao !== undefined) { params.push(descricao); sets.push(`descricao=$${params.length}`); }
+    if (tipo !== undefined) { params.push(tipo); sets.push(`tipo=$${params.length}`); }
+    if (titulo !== undefined) { params.push(titulo); sets.push(`titulo=$${params.length}`); }
+    if (odontograma !== undefined) { params.push(JSON.stringify(odontograma)); sets.push(`odontograma=$${params.length}`); }
+    if (anexos !== undefined) { params.push(JSON.stringify(anexos)); sets.push(`anexos=$${params.length}`); }
+    if (sets.length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
+    params.push(req.params.id);
+    await pool.query(`UPDATE prontuarios SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length}`, params);
+    const { rows } = await pool.query('SELECT * FROM prontuarios WHERE id=$1', [req.params.id]);
+    res.json(rows[0]);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/prontuarios/:id', async (req, res) => {
+  try {
+    await verifyUser(req);
+    await pool.query('DELETE FROM prontuarios WHERE id=$1', [req.params.id]);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// ORÇAMENTOS — POST completo (missing)
+// ═══════════════════════════════════════════════════════════════
+
+app.post('/api/orcamentos', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { paciente_id, dentista_id, itens, valor_total, desconto, status, validade, observacoes, forma_pagamento, parcelas } = req.body;
+    const id = crypto.randomUUID();
+    await pool.query(
+      'INSERT INTO orcamentos (id, paciente_id, dentista_id, itens, valor_total, desconto, status, validade, observacoes, forma_pagamento, parcelas) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
+      [id, paciente_id, dentista_id, JSON.stringify(itens || []), valor_total, desconto || 0, status || 'pendente', validade, observacoes, forma_pagamento, parcelas || 1]
+    );
+    res.json({ id, success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/api/orcamentos/:id', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { itens, valor_total, desconto, status, validade, observacoes, forma_pagamento, parcelas } = req.body;
+    const sets = []; const params = [];
+    if (itens !== undefined) { params.push(JSON.stringify(itens)); sets.push(`itens=$${params.length}`); }
+    if (valor_total !== undefined) { params.push(valor_total); sets.push(`valor_total=$${params.length}`); }
+    if (desconto !== undefined) { params.push(desconto); sets.push(`desconto=$${params.length}`); }
+    if (status !== undefined) { params.push(status); sets.push(`status=$${params.length}`); }
+    if (validade !== undefined) { params.push(validade); sets.push(`validade=$${params.length}`); }
+    if (observacoes !== undefined) { params.push(observacoes); sets.push(`observacoes=$${params.length}`); }
+    if (forma_pagamento !== undefined) { params.push(forma_pagamento); sets.push(`forma_pagamento=$${params.length}`); }
+    if (parcelas !== undefined) { params.push(parcelas); sets.push(`parcelas=$${params.length}`); }
+    if (sets.length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
+    params.push(req.params.id);
+    await pool.query(`UPDATE orcamentos SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length}`, params);
+    const { rows } = await pool.query('SELECT * FROM orcamentos WHERE id=$1', [req.params.id]);
+    res.json(rows[0]);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/orcamentos/:id', async (req, res) => {
+  try {
+    await verifyUser(req);
+    await pool.query('DELETE FROM orcamentos WHERE id=$1', [req.params.id]);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// DASHBOARD KPIs
+// ═══════════════════════════════════════════════════════════════
   try {
     await verifyUser(req);
     const today = new Date().toISOString().split('T')[0];

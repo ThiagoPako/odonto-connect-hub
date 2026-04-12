@@ -259,6 +259,8 @@ export interface AgendamentoVPS {
 export const financeiroApi = {
   list: (params?: Record<string, string>) => vpsApiFetch('/financeiro', { params }),
   create: (body: unknown) => vpsApiFetch('/financeiro', { method: 'POST', body }),
+  update: (id: string, body: unknown) => vpsApiFetch(`/financeiro/${id}`, { method: 'PUT', body }),
+  delete: (id: string) => vpsApiFetch(`/financeiro/${id}`, { method: 'DELETE' }),
 };
 
 // ─── Dentistas ──────────────────────────────────────────────
@@ -266,6 +268,50 @@ export const financeiroApi = {
 export const dentistasApi = {
   list: () => vpsApiFetch('/dentistas'),
   create: (body: unknown) => vpsApiFetch('/dentistas', { method: 'POST', body }),
+  update: (id: string, body: unknown) => vpsApiFetch(`/dentistas/${id}`, { method: 'PUT', body }),
+  delete: (id: string) => vpsApiFetch(`/dentistas/${id}`, { method: 'DELETE' }),
+};
+
+// ─── Estoque ────────────────────────────────────────────────
+
+export const estoqueApi = {
+  list: () => vpsApiFetch('/estoque'),
+  create: (body: unknown) => vpsApiFetch('/estoque', { method: 'POST', body }),
+  update: (id: string, body: unknown) => vpsApiFetch(`/estoque/${id}`, { method: 'PUT', body }),
+  delete: (id: string) => vpsApiFetch(`/estoque/${id}`, { method: 'DELETE' }),
+  getMovimentos: (id: string) => vpsApiFetch(`/estoque/${id}/movimentos`),
+  addMovimento: (id: string, body: unknown) => vpsApiFetch(`/estoque/${id}/movimentos`, { method: 'POST', body }),
+};
+
+// ─── Tratamentos ────────────────────────────────────────────
+
+export const tratamentosApi = {
+  list: (params?: Record<string, string>) => vpsApiFetch('/tratamentos', { params }),
+  create: (body: unknown) => vpsApiFetch('/tratamentos', { method: 'POST', body }),
+  update: (id: string, body: unknown) => vpsApiFetch(`/tratamentos/${id}`, { method: 'PUT', body }),
+  delete: (id: string) => vpsApiFetch(`/tratamentos/${id}`, { method: 'DELETE' }),
+  getEtapas: (id: string) => vpsApiFetch(`/tratamentos/${id}/etapas`),
+  addEtapa: (id: string, body: unknown) => vpsApiFetch(`/tratamentos/${id}/etapas`, { method: 'POST', body }),
+  updateEtapa: (id: string, body: unknown) => vpsApiFetch(`/tratamentos/etapas/${id}`, { method: 'PUT', body }),
+  deleteEtapa: (id: string) => vpsApiFetch(`/tratamentos/etapas/${id}`, { method: 'DELETE' }),
+};
+
+// ─── Comissões ──────────────────────────────────────────────
+
+export const comissoesApi = {
+  list: (params?: Record<string, string>) => vpsApiFetch('/comissoes', { params }),
+  create: (body: unknown) => vpsApiFetch('/comissoes', { method: 'POST', body }),
+  update: (id: string, body: unknown) => vpsApiFetch(`/comissoes/${id}`, { method: 'PUT', body }),
+  delete: (id: string) => vpsApiFetch(`/comissoes/${id}`, { method: 'DELETE' }),
+};
+
+// ─── Prontuários ────────────────────────────────────────────
+
+export const prontuariosApi = {
+  list: (params?: Record<string, string>) => vpsApiFetch('/prontuarios', { params }),
+  create: (body: unknown) => vpsApiFetch('/prontuarios', { method: 'POST', body }),
+  update: (id: string, body: unknown) => vpsApiFetch(`/prontuarios/${id}`, { method: 'PUT', body }),
+  delete: (id: string) => vpsApiFetch(`/prontuarios/${id}`, { method: 'DELETE' }),
 };
 
 // ─── Dashboard ──────────────────────────────────────────────
@@ -300,6 +346,9 @@ export const crmApi = {
 
 export const orcamentosApi = {
   list: () => vpsApiFetch('/orcamentos'),
+  create: (body: unknown) => vpsApiFetch('/orcamentos', { method: 'POST', body }),
+  update: (id: string, body: unknown) => vpsApiFetch(`/orcamentos/${id}`, { method: 'PUT', body }),
+  delete: (id: string) => vpsApiFetch(`/orcamentos/${id}`, { method: 'DELETE' }),
   updateStatus: (id: string, status: string) =>
     vpsApiFetch<{ success: boolean; budget: any; leadMoved: boolean }>(`/orcamentos/${id}/status`, { method: 'PATCH', body: { status } }),
 };
