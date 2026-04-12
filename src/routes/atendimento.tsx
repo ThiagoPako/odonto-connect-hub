@@ -6,8 +6,10 @@ import { SidebarProvider } from "@/components/ui/sidebar";
 import {
   Play, Square, Mic, FileText, Receipt, AlertTriangle, Clock,
   User, Phone, Mail, Heart, Pill, Stethoscope, Send, Plus, Trash2,
-  Save, ChevronRight, Activity, ClipboardList, ExternalLink, Timer
+  Save, ChevronRight, Activity, ClipboardList, ExternalLink, Timer,
+  Printer,
 } from "lucide-react";
+import { exportarPrescricaoPdf } from "@/lib/prescricaoPdfExport";
 import { AudioRecorder } from "@/components/chat/AudioRecorder";
 import {
   mockPacientes, getPacienteById, getPacienteIniciais, getPacienteIdade,
@@ -97,6 +99,23 @@ function AtendimentoPage() {
   const removerPrescricao = useCallback((id: string) => {
     setPrescricoes(prev => prev.filter(p => p.id !== id));
   }, []);
+
+  const imprimirPrescricao = useCallback(() => {
+    if (!pacienteSelecionado || prescricoes.length === 0) {
+      toast.error("Adicione ao menos uma prescrição antes de imprimir");
+      return;
+    }
+    exportarPrescricaoPdf({
+      pacienteNome: pacienteSelecionado.nome,
+      pacienteTelefone: pacienteSelecionado.telefone,
+      pacienteIdade: getPacienteIdade(pacienteSelecionado),
+      profissional: "Dr. Ricardo Mendes",
+      croProfissional: "CRO-SP 12345",
+      prescricoes,
+      observacoes: notas || undefined,
+    });
+    toast.success("Prescrição gerada para impressão");
+  }, [pacienteSelecionado, prescricoes, notas]);
 
   const formatTime = (s: number) =>
     `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
@@ -361,9 +380,19 @@ function AtendimentoPage() {
                       {/* Tab Prescrição */}
                       {tabAtiva === "prescricao" && (
                         <div className="bg-card rounded-2xl border border-border/60 p-5 shadow-card space-y-4">
-                          <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
-                            <Pill className="h-4 w-4 text-primary" /> Receituário
-                          </h3>
+                          <div className="flex items-center justify-between">
+                            <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                              <Pill className="h-4 w-4 text-primary" /> Receituário
+                            </h3>
+                            {prescricoes.length > 0 && (
+                              <button
+                                onClick={imprimirPrescricao}
+                                className="flex items-center gap-1.5 h-8 px-3 rounded-lg bg-primary/10 text-primary text-xs font-medium hover:bg-primary/20 transition-colors"
+                              >
+                                <Printer className="h-3.5 w-3.5" /> Imprimir / PDF
+                              </button>
+                            )}
+                          </div>
                           <div className="grid grid-cols-4 gap-3">
                             <input
                               type="text" placeholder="Medicamento"
