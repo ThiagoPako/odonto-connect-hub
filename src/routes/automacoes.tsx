@@ -3,11 +3,14 @@ import { DashboardHeader } from "@/components/DashboardHeader";
 import {
   Play, Pause, Plus, Clock, MessageSquare, Mail, Smartphone,
   Zap, Settings2, Send, CheckCircle2, Edit2, Save, Loader2, RotateCcw,
+  Trash2, Copy, GripVertical, ChevronDown, ChevronUp, X, Sparkles,
+  AlertTriangle, Eye, EyeOff,
 } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
-  mockAutomationFlows, automationTypes,
-  type AutomationFlow, type AutomationStep,
+  mockAutomationFlows, automationTypes, triggerOptions, delayOptions,
+  availableVariables, messageTemplates,
+  type AutomationFlow, type AutomationStep, type AutomationType, type AutomationChannel,
 } from "@/data/automationMockData";
 import { automationsApi, type FollowupAutomationConfig } from "@/lib/vpsApi";
 import { toast } from "sonner";
@@ -15,6 +18,14 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader,
+  AlertDialogTitle, AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
 
 export const Route = createFileRoute("/automacoes")({
   ssr: false,
@@ -22,12 +33,12 @@ export const Route = createFileRoute("/automacoes")({
 });
 
 function AutomacoesPage() {
-  const [flows, setFlows] = useState(mockAutomationFlows);
+  const [flows, setFlows] = useState<AutomationFlow[]>(mockAutomationFlows);
   const [selectedFlow, setSelectedFlow] = useState<AutomationFlow | null>(null);
   const [filterType, setFilterType] = useState<string>("all");
   const [showFollowupConfig, setShowFollowupConfig] = useState(false);
+  const [editingFlow, setEditingFlow] = useState<AutomationFlow | null>(null);
 
-  // Follow-up automation config from API
   const [followupConfig, setFollowupConfig] = useState<FollowupAutomationConfig | null>(null);
   const [loadingConfig, setLoadingConfig] = useState(true);
 
@@ -42,6 +53,59 @@ function AutomacoesPage() {
 
   const toggleActive = (id: string) => {
     setFlows((prev) => prev.map((f) => f.id === id ? { ...f, active: !f.active } : f));
+    const flow = flows.find(f => f.id === id);
+    toast.success(flow?.active ? `"${flow.name}" pausado` : `"${flow?.name}" ativado`);
+  };
+
+  const deleteFlow = (id: string) => {
+    const flow = flows.find(f => f.id === id);
+    setFlows((prev) => prev.filter((f) => f.id !== id));
+    if (selectedFlow?.id === id) setSelectedFlow(null);
+    if (editingFlow?.id === id) setEditingFlow(null);
+    toast.success(`Fluxo "${flow?.name}" removido`);
+  };
+
+  const duplicateFlow = (flow: AutomationFlow) => {
+    const newFlow: AutomationFlow = {
+      ...flow,
+      id: `af${Date.now()}`,
+      name: `${flow.name} (cópia)`,
+      active: false,
+      stats: { sent: 0, responded: 0, converted: 0 },
+      createdAt: new Date().toLocaleDateString("pt-BR"),
+      steps: flow.steps.map(s => ({ ...s, id: `s${Date.now()}-${Math.random().toString(36).slice(2, 6)}` })),
+    };
+    setFlows((prev) => [newFlow, ...prev]);
+    setSelectedFlow(newFlow);
+    toast.success(`Fluxo duplicado: "${newFlow.name}"`);
+  };
+
+  const createNewFlow = () => {
+    const newFlow: AutomationFlow = {
+      id: `af${Date.now()}`,
+      name: "Novo Fluxo",
+      description: "",
+      type: "custom",
+      active: false,
+      trigger: "Personalizado",
+      steps: [
+        { id: `s${Date.now()}`, delay: "Imediato", delayMinutes: 0, channel: "whatsapp", message: "Olá {{nome}}!", variables: ["nome"] },
+      ],
+      stats: { sent: 0, responded: 0, converted: 0 },
+      createdAt: new Date().toLocaleDateString("pt-BR"),
+    };
+    setFlows((prev) => [newFlow, ...prev]);
+    setEditingFlow(newFlow);
+    setSelectedFlow(newFlow);
+    toast.success("Novo fluxo criado! Edite os detalhes.");
+  };
+
+  const saveEditedFlow = (updated: AutomationFlow) => {
+    const withUpdate = { ...updated, updatedAt: new Date().toLocaleDateString("pt-BR") };
+    setFlows((prev) => prev.map((f) => f.id === updated.id ? withUpdate : f));
+    setSelectedFlow(withUpdate);
+    setEditingFlow(null);
+    toast.success(`Fluxo "${updated.name}" salvo`);
   };
 
   const totalSent = flows.reduce((a, f) => a + f.stats.sent, 0);
@@ -55,10 +119,24 @@ function AutomacoesPage() {
       <main className="flex-1 p-6 space-y-6 overflow-auto">
         {/* KPIs */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <MiniKpi icon={Zap} label="Fluxos Ativos" value={flows.filter((f) => f.active).length.toString()} />
+          <MiniKpi icon={Zap} label="Fluxos Ativos" value={flows.filter((f) => f.active).length.toString()} total={flows.length.toString()} />
           <MiniKpi icon={Send} label="Mensagens Enviadas" value={totalSent.toString()} />
-          <MiniKpi icon={MessageSquare} label="Taxa de Resposta" value={`${responseRate}%`} />
+          <MiniKpi icon={MessageSquare} label="Taxa de Resposta" value={`${responseRate}%`} highlight={Number(responseRate) > 40} />
           <MiniKpi icon={CheckCircle2} label="Conversões" value={totalConverted.toString()} />
+        </div>
+
+        {/* Best practices tip */}
+        <div className="flex items-start gap-3 p-4 rounded-xl bg-primary/5 border border-primary/20">
+          <Sparkles className="h-5 w-5 text-primary shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-medium text-foreground mb-1">Dicas de Boas Práticas</p>
+            <ul className="text-xs text-muted-foreground space-y-0.5">
+              <li>• Use <strong>no máximo 3 etapas</strong> por fluxo para não saturar o paciente</li>
+              <li>• Espaçe as mensagens com <strong>intervalos de 2-7 dias</strong> entre cada etapa</li>
+              <li>• Sempre inclua uma <strong>opção de resposta</strong> clara na mensagem (ex: "Responda SIM")</li>
+              <li>• Personalize com variáveis como <code className="px-1 py-0.5 bg-muted rounded text-primary">{"{{nome}}"}</code> para maior engajamento</li>
+            </ul>
+          </div>
         </div>
 
         {/* Follow-up CRM Automation Card */}
@@ -74,44 +152,31 @@ function AutomacoesPage() {
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
           <div>
             <h2 className="text-lg font-semibold text-foreground">Fluxos de Automação</h2>
-            <p className="text-sm text-muted-foreground">Configure mensagens automáticas por gatilho</p>
+            <p className="text-sm text-muted-foreground">Crie, edite e gerencie seus fluxos de relacionamento</p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <div className="inline-flex h-8 items-center rounded-lg bg-muted p-0.5 text-sm">
               <button
                 onClick={() => setFilterType("all")}
                 className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${filterType === "all" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
               >
-                Todos
+                Todos ({flows.length})
               </button>
-              {automationTypes.map((t) => (
-                <button
-                  key={t.id}
-                  onClick={() => setFilterType(t.id)}
-                  className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${filterType === t.id ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
-                >
-                  {t.label}
-                </button>
-              ))}
+              {automationTypes.map((t) => {
+                const count = flows.filter(f => f.type === t.id).length;
+                return (
+                  <button
+                    key={t.id}
+                    onClick={() => setFilterType(t.id)}
+                    className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${filterType === t.id ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                  >
+                    {t.icon} {t.label} {count > 0 ? `(${count})` : ""}
+                  </button>
+                );
+              })}
             </div>
             <button
-              onClick={() => {
-                const newFlow: AutomationFlow = {
-                  id: `af${Date.now()}`,
-                  name: "Novo Fluxo",
-                  type: "pos_consulta",
-                  active: false,
-                  trigger: "Definir gatilho...",
-                  steps: [
-                    { id: `s${Date.now()}`, delay: "Imediato", channel: "whatsapp", message: "Olá {{nome}}!", variables: ["nome"] },
-                  ],
-                  stats: { sent: 0, responded: 0, converted: 0 },
-                  createdAt: new Date().toLocaleDateString("pt-BR"),
-                };
-                setFlows((prev) => [newFlow, ...prev]);
-                setSelectedFlow(newFlow);
-                toast.success("Novo fluxo criado! Edite os detalhes.");
-              }}
+              onClick={createNewFlow}
               className="flex items-center gap-2 h-8 px-4 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors"
             >
               <Plus className="h-3.5 w-3.5" /> Novo Fluxo
@@ -122,28 +187,54 @@ function AutomacoesPage() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Flow list */}
           <div className="lg:col-span-1 space-y-3">
+            {filtered.length === 0 && (
+              <div className="bg-card rounded-xl border border-dashed border-border p-8 text-center">
+                <Zap className="h-8 w-8 text-muted-foreground/30 mx-auto mb-3" />
+                <p className="text-sm text-muted-foreground mb-3">Nenhum fluxo encontrado</p>
+                <button onClick={createNewFlow} className="text-xs text-primary hover:underline font-medium">
+                  + Criar primeiro fluxo
+                </button>
+              </div>
+            )}
             {filtered.map((flow) => (
               <FlowCard
                 key={flow.id}
                 flow={flow}
                 isSelected={selectedFlow?.id === flow.id}
-                onSelect={() => setSelectedFlow(flow)}
+                onSelect={() => { setSelectedFlow(flow); setEditingFlow(null); }}
                 onToggle={() => toggleActive(flow.id)}
+                onDelete={() => deleteFlow(flow.id)}
+                onDuplicate={() => duplicateFlow(flow)}
+                onEdit={() => { setSelectedFlow(flow); setEditingFlow({ ...flow, steps: flow.steps.map(s => ({ ...s })) }); }}
               />
             ))}
           </div>
 
-          {/* Flow detail */}
+          {/* Flow detail / editor */}
           <div className="lg:col-span-2">
-            {selectedFlow ? (
-              <FlowDetail flow={selectedFlow} />
+            {editingFlow ? (
+              <FlowEditor
+                flow={editingFlow}
+                onChange={setEditingFlow}
+                onSave={saveEditedFlow}
+                onCancel={() => setEditingFlow(null)}
+              />
+            ) : selectedFlow ? (
+              <FlowDetail
+                flow={selectedFlow}
+                onEdit={() => setEditingFlow({ ...selectedFlow, steps: selectedFlow.steps.map(s => ({ ...s })) })}
+                onDelete={() => deleteFlow(selectedFlow.id)}
+              />
             ) : (
               <div className="bg-card rounded-xl border border-border p-8 flex flex-col items-center justify-center text-center h-full min-h-[400px]">
                 <Zap className="h-12 w-12 text-muted-foreground/30 mb-4" />
                 <h3 className="text-sm font-semibold text-foreground mb-1">Selecione um fluxo</h3>
-                <p className="text-xs text-muted-foreground max-w-xs">
-                  Clique em um fluxo ao lado para visualizar as etapas, mensagens e métricas.
+                <p className="text-xs text-muted-foreground max-w-xs mb-4">
+                  Clique em um fluxo ao lado para visualizar, editar ou criar novos fluxos de relacionamento.
                 </p>
+                <button onClick={createNewFlow} className="flex items-center gap-2 h-8 px-4 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors">
+                  <Plus className="h-3.5 w-3.5" /> Criar Novo Fluxo
+                </button>
               </div>
             )}
           </div>
@@ -338,51 +429,109 @@ function FollowupAutomationCard({
   );
 }
 
-// ─── Existing components ────────────────────────────────────
+// ─── Mini KPI ───────────────────────────────────────────────
 
-function MiniKpi({ icon: Icon, label, value }: { icon: React.ElementType; label: string; value: string }) {
+function MiniKpi({ icon: Icon, label, value, total, highlight }: { icon: React.ElementType; label: string; value: string; total?: string; highlight?: boolean }) {
   return (
     <div className="bg-card rounded-xl border border-border p-4 space-y-1">
       <div className="flex items-center gap-2 text-muted-foreground">
         <Icon className="h-4 w-4" />
         <span className="text-[11px] font-medium">{label}</span>
       </div>
-      <p className="text-lg font-bold text-foreground">{value}</p>
+      <div className="flex items-baseline gap-1">
+        <p className={`text-lg font-bold ${highlight ? "text-success" : "text-foreground"}`}>{value}</p>
+        {total && <span className="text-xs text-muted-foreground">/ {total}</span>}
+      </div>
     </div>
   );
 }
 
+// ─── Flow Card ──────────────────────────────────────────────
+
 function FlowCard({
-  flow, isSelected, onSelect, onToggle,
+  flow, isSelected, onSelect, onToggle, onDelete, onDuplicate, onEdit,
 }: {
   flow: AutomationFlow; isSelected: boolean; onSelect: () => void; onToggle: () => void;
+  onDelete: () => void; onDuplicate: () => void; onEdit: () => void;
 }) {
   const typeInfo = automationTypes.find((t) => t.id === flow.type);
+  const [showActions, setShowActions] = useState(false);
+
   return (
     <div
       onClick={onSelect}
+      onMouseEnter={() => setShowActions(true)}
+      onMouseLeave={() => setShowActions(false)}
       className={`bg-card rounded-xl border p-4 cursor-pointer transition-all ${
         isSelected ? "border-primary ring-1 ring-primary/20" : "border-border hover:border-primary/40"
       }`}
     >
-      <div className="flex items-start justify-between mb-3">
-        <div className="flex items-center gap-2">
-          <span className={`h-2 w-2 rounded-full ${flow.active ? "bg-success" : "bg-muted-foreground/40"}`} />
-          <span className="text-sm font-medium text-foreground">{flow.name}</span>
+      <div className="flex items-start justify-between mb-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className={`h-2 w-2 rounded-full shrink-0 ${flow.active ? "bg-success" : "bg-muted-foreground/40"}`} />
+          <span className="text-sm font-medium text-foreground truncate">{flow.name}</span>
         </div>
-        <button
-          onClick={(e) => { e.stopPropagation(); onToggle(); }}
-          className={`p-1.5 rounded-lg transition-colors ${
-            flow.active ? "bg-success/15 text-success hover:bg-success/25" : "bg-muted text-muted-foreground hover:bg-muted/80"
-          }`}
-          title={flow.active ? "Pausar" : "Ativar"}
-        >
-          {flow.active ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
-        </button>
+        <div className="flex items-center gap-1 shrink-0">
+          {showActions && (
+            <>
+              <button
+                onClick={(e) => { e.stopPropagation(); onEdit(); }}
+                className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                title="Editar"
+              >
+                <Edit2 className="h-3 w-3" />
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); onDuplicate(); }}
+                className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                title="Duplicar"
+              >
+                <Copy className="h-3 w-3" />
+              </button>
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <button
+                    onClick={(e) => e.stopPropagation()}
+                    className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+                    title="Excluir"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Excluir fluxo</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      Tem certeza que deseja excluir "{flow.name}"? Esta ação não pode ser desfeita.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                    <AlertDialogAction onClick={onDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                      Excluir
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </>
+          )}
+          <button
+            onClick={(e) => { e.stopPropagation(); onToggle(); }}
+            className={`p-1.5 rounded-lg transition-colors ${
+              flow.active ? "bg-success/15 text-success hover:bg-success/25" : "bg-muted text-muted-foreground hover:bg-muted/80"
+            }`}
+            title={flow.active ? "Pausar" : "Ativar"}
+          >
+            {flow.active ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
+          </button>
+        </div>
       </div>
+      {flow.description && (
+        <p className="text-[11px] text-muted-foreground mb-2 line-clamp-1">{flow.description}</p>
+      )}
       <div className="flex items-center gap-2 mb-2">
-        <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${typeInfo?.color}/15 text-foreground`}>
-          {typeInfo?.label}
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-muted text-muted-foreground">
+          {typeInfo?.icon} {typeInfo?.label}
         </span>
         <span className="text-[10px] text-muted-foreground">{flow.steps.length} etapas</span>
       </div>
@@ -395,39 +544,70 @@ function FlowCard({
   );
 }
 
-function FlowDetail({ flow }: { flow: AutomationFlow }) {
+// ─── Flow Detail (read-only view) ──────────────────────────
+
+function FlowDetail({ flow, onEdit, onDelete }: { flow: AutomationFlow; onEdit: () => void; onDelete: () => void }) {
   const typeInfo = automationTypes.find((t) => t.id === flow.type);
   const responseRate = flow.stats.sent > 0 ? ((flow.stats.responded / flow.stats.sent) * 100).toFixed(1) : "0";
+  const conversionRate = flow.stats.responded > 0 ? ((flow.stats.converted / flow.stats.responded) * 100).toFixed(1) : "0";
 
   return (
     <div className="space-y-4">
       <div className="bg-card rounded-xl border border-border p-5">
-        <div className="flex items-center justify-between mb-3">
-          <div>
-            <h3 className="text-base font-semibold text-foreground">{flow.name}</h3>
-            <p className="text-xs text-muted-foreground mt-0.5">
+        <div className="flex items-center justify-between mb-1">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-1">
+              <h3 className="text-base font-semibold text-foreground">{flow.name}</h3>
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${
+                flow.active ? "bg-success/15 text-success" : "bg-muted text-muted-foreground"
+              }`}>
+                {flow.active ? "Ativo" : "Inativo"}
+              </span>
+            </div>
+            {flow.description && (
+              <p className="text-xs text-muted-foreground mb-2">{flow.description}</p>
+            )}
+            <p className="text-xs text-muted-foreground">
               Gatilho: <span className="text-foreground font-medium">{flow.trigger}</span>
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <button className="flex items-center gap-1.5 h-7 px-3 rounded-lg bg-muted text-xs font-medium text-muted-foreground hover:text-foreground transition-colors">
+            <button onClick={onEdit} className="flex items-center gap-1.5 h-7 px-3 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors">
               <Edit2 className="h-3 w-3" /> Editar
             </button>
-            <button className="flex items-center gap-1.5 h-7 px-3 rounded-lg bg-muted text-xs font-medium text-muted-foreground hover:text-foreground transition-colors">
-              <Settings2 className="h-3 w-3" /> Configurar
-            </button>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <button className="flex items-center gap-1.5 h-7 px-3 rounded-lg bg-destructive/10 text-destructive text-xs font-medium hover:bg-destructive/20 transition-colors">
+                  <Trash2 className="h-3 w-3" /> Excluir
+                </button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Excluir fluxo</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Tem certeza que deseja excluir "{flow.name}"? Esta ação não pode ser desfeita.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                  <AlertDialogAction onClick={onDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                    Excluir
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </div>
         </div>
-        <div className="grid grid-cols-4 gap-3">
+        <div className="grid grid-cols-4 gap-3 mt-4">
           <StatBox label="Enviadas" value={flow.stats.sent.toString()} />
           <StatBox label="Respondidas" value={flow.stats.responded.toString()} />
           <StatBox label="Taxa Resposta" value={`${responseRate}%`} />
-          <StatBox label="Conversões" value={flow.stats.converted.toString()} />
+          <StatBox label="Conversões" value={`${conversionRate}%`} />
         </div>
       </div>
 
       <div className="bg-card rounded-xl border border-border p-5">
-        <h4 className="text-sm font-semibold text-card-foreground mb-4">Etapas do Fluxo</h4>
+        <h4 className="text-sm font-semibold text-card-foreground mb-4">Etapas do Fluxo ({flow.steps.length})</h4>
         <div className="space-y-0">
           {flow.steps.map((step, i) => (
             <StepItem key={step.id} step={step} isLast={i === flow.steps.length - 1} index={i} />
@@ -435,19 +615,376 @@ function FlowDetail({ flow }: { flow: AutomationFlow }) {
         </div>
       </div>
 
+      {/* Warnings / best practices */}
+      {flow.steps.length > 5 && (
+        <div className="flex items-start gap-2 p-3 rounded-lg bg-warning/10 border border-warning/30">
+          <AlertTriangle className="h-4 w-4 text-warning shrink-0 mt-0.5" />
+          <p className="text-xs text-warning">
+            <strong>Atenção:</strong> Este fluxo possui {flow.steps.length} etapas. Recomendamos no máximo 3-5 etapas para evitar saturação.
+          </p>
+        </div>
+      )}
+
       <div className="bg-card rounded-xl border border-border p-5">
-        <h4 className="text-sm font-semibold text-card-foreground mb-3">Variáveis Disponíveis</h4>
+        <h4 className="text-sm font-semibold text-card-foreground mb-3">Variáveis Utilizadas</h4>
         <div className="flex flex-wrap gap-2">
-          {Array.from(new Set(flow.steps.flatMap((s) => s.variables))).map((v) => (
-            <span key={v} className="px-2.5 py-1 rounded-lg bg-primary/10 text-primary text-xs font-mono">
-              {"{{" + v + "}}"}
-            </span>
-          ))}
+          {Array.from(new Set(flow.steps.flatMap((s) => s.variables))).map((v) => {
+            const info = availableVariables.find(av => av.key === v);
+            return (
+              <span key={v} className="px-2.5 py-1 rounded-lg bg-primary/10 text-primary text-xs font-mono" title={info?.label}>
+                {"{{" + v + "}}"}
+              </span>
+            );
+          })}
         </div>
       </div>
     </div>
   );
 }
+
+// ─── Flow Editor ────────────────────────────────────────────
+
+function FlowEditor({
+  flow, onChange, onSave, onCancel,
+}: {
+  flow: AutomationFlow;
+  onChange: (f: AutomationFlow) => void;
+  onSave: (f: AutomationFlow) => void;
+  onCancel: () => void;
+}) {
+  const [showTemplates, setShowTemplates] = useState(false);
+  const [previewStep, setPreviewStep] = useState<number | null>(null);
+
+  const updateField = <K extends keyof AutomationFlow>(key: K, value: AutomationFlow[K]) => {
+    onChange({ ...flow, [key]: value });
+  };
+
+  const updateStep = (stepId: string, updates: Partial<AutomationStep>) => {
+    onChange({
+      ...flow,
+      steps: flow.steps.map(s => s.id === stepId ? { ...s, ...updates } : s),
+    });
+  };
+
+  const addStep = () => {
+    const newStep: AutomationStep = {
+      id: `s${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      delay: "1 dia",
+      delayMinutes: 1440,
+      channel: "whatsapp",
+      message: "",
+      variables: [],
+    };
+    onChange({ ...flow, steps: [...flow.steps, newStep] });
+  };
+
+  const removeStep = (stepId: string) => {
+    if (flow.steps.length <= 1) {
+      toast.error("O fluxo precisa ter pelo menos 1 etapa");
+      return;
+    }
+    onChange({ ...flow, steps: flow.steps.filter(s => s.id !== stepId) });
+  };
+
+  const moveStep = (index: number, direction: "up" | "down") => {
+    const newSteps = [...flow.steps];
+    const targetIndex = direction === "up" ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= newSteps.length) return;
+    [newSteps[index], newSteps[targetIndex]] = [newSteps[targetIndex], newSteps[index]];
+    onChange({ ...flow, steps: newSteps });
+  };
+
+  const applyTemplate = (template: typeof messageTemplates[0], stepId: string) => {
+    updateStep(stepId, { message: template.message, variables: template.variables });
+    setShowTemplates(false);
+    toast.success(`Template "${template.name}" aplicado`);
+  };
+
+  const extractVariables = (message: string): string[] => {
+    const matches = message.match(/\{\{(\w+)\}\}/g);
+    if (!matches) return [];
+    return [...new Set(matches.map(m => m.replace(/\{\{|\}\}/g, "")))];
+  };
+
+  const handleMessageChange = (stepId: string, message: string) => {
+    const vars = extractVariables(message);
+    updateStep(stepId, { message, variables: vars });
+  };
+
+  const isValid = flow.name.trim().length > 0 && flow.steps.length > 0 && flow.steps.every(s => s.message.trim().length > 0);
+
+  return (
+    <div className="space-y-4">
+      {/* Header */}
+      <div className="bg-card rounded-xl border border-primary/30 p-5">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-base font-semibold text-foreground flex items-center gap-2">
+            <Edit2 className="h-4 w-4 text-primary" /> Editando Fluxo
+          </h3>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={onCancel}>
+              <X className="h-3.5 w-3.5 mr-1.5" /> Cancelar
+            </Button>
+            <Button size="sm" onClick={() => onSave(flow)} disabled={!isValid}>
+              <Save className="h-3.5 w-3.5 mr-1.5" /> Salvar
+            </Button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-foreground">Nome do Fluxo *</label>
+            <Input
+              value={flow.name}
+              onChange={(e) => updateField("name", e.target.value)}
+              placeholder="Ex: Pós-Consulta — Agradecimento"
+              className="h-9 text-sm"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-foreground">Tipo</label>
+            <Select value={flow.type} onValueChange={(v) => updateField("type", v as AutomationType)}>
+              <SelectTrigger className="h-9 text-sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {automationTypes.map(t => (
+                  <SelectItem key={t.id} value={t.id}>
+                    {t.icon} {t.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-foreground">Gatilho</label>
+            <Select value={flow.trigger} onValueChange={(v) => updateField("trigger", v)}>
+              <SelectTrigger className="h-9 text-sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {triggerOptions.map(t => (
+                  <SelectItem key={t} value={t}>{t}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-foreground">Descrição</label>
+            <Input
+              value={flow.description || ""}
+              onChange={(e) => updateField("description", e.target.value)}
+              placeholder="Breve descrição do fluxo..."
+              className="h-9 text-sm"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Steps editor */}
+      <div className="bg-card rounded-xl border border-border p-5">
+        <div className="flex items-center justify-between mb-4">
+          <h4 className="text-sm font-semibold text-card-foreground">
+            Etapas do Fluxo ({flow.steps.length})
+          </h4>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowTemplates(!showTemplates)}
+              className="flex items-center gap-1.5 h-7 px-3 rounded-lg bg-muted text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <Sparkles className="h-3 w-3" /> Templates
+            </button>
+            <button
+              onClick={addStep}
+              className="flex items-center gap-1.5 h-7 px-3 rounded-lg bg-primary/10 text-primary text-xs font-medium hover:bg-primary/20 transition-colors"
+            >
+              <Plus className="h-3 w-3" /> Etapa
+            </button>
+          </div>
+        </div>
+
+        {/* Template selector */}
+        {showTemplates && (
+          <div className="mb-4 p-3 rounded-lg bg-muted/50 border border-border space-y-2">
+            <p className="text-xs font-medium text-foreground mb-2">Modelos prontos — clique para aplicar a uma etapa:</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {messageTemplates.filter(t => t.type === flow.type || flow.type === "custom").map((template, i) => (
+                <button
+                  key={i}
+                  onClick={() => {
+                    if (flow.steps.length > 0) applyTemplate(template, flow.steps[flow.steps.length - 1].id);
+                  }}
+                  className="text-left p-2.5 rounded-lg bg-card border border-border hover:border-primary/40 transition-colors"
+                >
+                  <p className="text-xs font-medium text-foreground mb-1">{template.name}</p>
+                  <p className="text-[11px] text-muted-foreground line-clamp-2">{template.message}</p>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {flow.steps.length > 5 && (
+          <div className="flex items-start gap-2 p-2.5 rounded-lg bg-warning/10 border border-warning/30 mb-4">
+            <AlertTriangle className="h-3.5 w-3.5 text-warning shrink-0 mt-0.5" />
+            <p className="text-[11px] text-warning">Muitas etapas. Recomendamos no máximo 3-5 para melhor engajamento.</p>
+          </div>
+        )}
+
+        <div className="space-y-4">
+          {flow.steps.map((step, i) => (
+            <div key={step.id} className="relative">
+              <div className="flex gap-3">
+                {/* Step number + connector */}
+                <div className="flex flex-col items-center">
+                  <div className="h-8 w-8 rounded-full bg-primary/15 flex items-center justify-center text-primary text-xs font-bold shrink-0">
+                    {i + 1}
+                  </div>
+                  {i < flow.steps.length - 1 && <div className="w-px flex-1 bg-border my-1" />}
+                </div>
+
+                {/* Step content */}
+                <div className="flex-1 pb-2">
+                  <div className="bg-muted/30 rounded-lg border border-border p-3 space-y-3">
+                    {/* Step controls */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Select
+                        value={step.delay}
+                        onValueChange={(v) => {
+                          const opt = delayOptions.find(d => d.label === v);
+                          updateStep(step.id, { delay: v, delayMinutes: opt?.minutes ?? 0 });
+                        }}
+                      >
+                        <SelectTrigger className="h-7 w-[130px] text-xs">
+                          <Clock className="h-3 w-3 mr-1 text-muted-foreground" />
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {delayOptions.map(d => (
+                            <SelectItem key={d.label} value={d.label}>{d.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+
+                      <Select
+                        value={step.channel}
+                        onValueChange={(v) => updateStep(step.id, { channel: v as AutomationChannel })}
+                      >
+                        <SelectTrigger className="h-7 w-[120px] text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="whatsapp">📱 WhatsApp</SelectItem>
+                          <SelectItem value="sms">💬 SMS</SelectItem>
+                          <SelectItem value="email">📧 E-mail</SelectItem>
+                        </SelectContent>
+                      </Select>
+
+                      <div className="flex-1" />
+
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => setPreviewStep(previewStep === i ? null : i)}
+                          className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                          title="Pré-visualizar"
+                        >
+                          {previewStep === i ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                        </button>
+                        <button
+                          onClick={() => moveStep(i, "up")}
+                          disabled={i === 0}
+                          className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors disabled:opacity-30"
+                          title="Mover para cima"
+                        >
+                          <ChevronUp className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          onClick={() => moveStep(i, "down")}
+                          disabled={i === flow.steps.length - 1}
+                          className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors disabled:opacity-30"
+                          title="Mover para baixo"
+                        >
+                          <ChevronDown className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          onClick={() => removeStep(step.id)}
+                          className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+                          title="Remover etapa"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Message textarea */}
+                    <Textarea
+                      value={step.message}
+                      onChange={(e) => handleMessageChange(step.id, e.target.value)}
+                      placeholder="Digite a mensagem... Use {{nome}} para variáveis"
+                      rows={3}
+                      className="text-xs resize-none"
+                    />
+
+                    {/* Quick variable buttons */}
+                    <div className="flex flex-wrap gap-1">
+                      {availableVariables.map(v => (
+                        <button
+                          key={v.key}
+                          onClick={() => handleMessageChange(step.id, step.message + `{{${v.key}}}`)}
+                          className="px-1.5 py-0.5 rounded text-[10px] bg-primary/10 text-primary hover:bg-primary/20 transition-colors font-mono"
+                          title={`${v.label} — Ex: ${v.example}`}
+                        >
+                          {`{{${v.key}}}`}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Preview */}
+                    {previewStep === i && step.message && (
+                      <div className="p-3 rounded-lg bg-success/10 border border-success/20">
+                        <p className="text-[10px] font-medium text-success mb-1.5">Pré-visualização:</p>
+                        <p className="text-xs text-foreground leading-relaxed">
+                          {step.message.replace(/\{\{(\w+)\}\}/g, (_, key) => {
+                            const v = availableVariables.find(av => av.key === key);
+                            return v?.example || `[${key}]`;
+                          })}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Add step button at the bottom */}
+        <button
+          onClick={addStep}
+          className="w-full mt-4 py-2.5 border-2 border-dashed border-border rounded-lg text-xs text-muted-foreground hover:text-primary hover:border-primary/40 transition-colors flex items-center justify-center gap-2"
+        >
+          <Plus className="h-3.5 w-3.5" /> Adicionar Etapa
+        </button>
+      </div>
+
+      {/* Save / Cancel bar at bottom */}
+      <div className="flex items-center justify-between bg-card rounded-xl border border-border p-4">
+        <p className="text-xs text-muted-foreground">
+          {!isValid && <span className="text-warning">⚠ Preencha o nome e todas as mensagens para salvar</span>}
+          {isValid && <span className="text-success">✅ Fluxo pronto para salvar</span>}
+        </p>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={onCancel}>Cancelar</Button>
+          <Button size="sm" onClick={() => onSave(flow)} disabled={!isValid}>
+            <Save className="h-3.5 w-3.5 mr-1.5" /> Salvar Fluxo
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Shared components ──────────────────────────────────────
 
 function StatBox({ label, value }: { label: string; value: string }) {
   return (
