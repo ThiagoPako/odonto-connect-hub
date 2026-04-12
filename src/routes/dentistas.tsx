@@ -71,11 +71,17 @@ function DentistasPage() {
   );
 
   const handleSave = async (data: Omit<Dentista, "id" | "criadoEm">) => {
+    const payload = {
+      nome: data.nome, email: data.email, telefone: data.telefone,
+      cro: data.cro, especialidade: data.especialidade,
+      comissao_percentual: data.comissao,
+      ativo: data.status === 'ativo',
+    };
     try {
       if (editingDentista) {
-        await dentistasApi.update(editingDentista.id, data);
+        await dentistasApi.update(editingDentista.id, payload);
       } else {
-        await dentistasApi.create(data);
+        await dentistasApi.create(payload);
       }
       await loadDentistas();
     } catch (err) {
