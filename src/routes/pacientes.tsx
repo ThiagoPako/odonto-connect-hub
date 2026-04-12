@@ -419,7 +419,7 @@ function NovoPacienteModal({ onClose, onSaved }: { onClose: () => void; onSaved:
 }
 
 /* ─── Patient Detail Modal ─── */
-type DetailTab = "dados" | "anamnese";
+type DetailTab = "dados" | "anamnese" | "odontograma";
 
 interface AnamneseData {
   id?: string;
@@ -523,6 +523,7 @@ function PacienteDetailModal({
   const tabs: { key: DetailTab; label: string; icon: typeof FileHeart }[] = [
     { key: "dados", label: "Dados", icon: FileHeart },
     { key: "anamnese", label: "Anamnese", icon: ClipboardList },
+    { key: "odontograma", label: "Odontograma", icon: Smile },
   ];
 
   return (
@@ -660,6 +661,10 @@ function PacienteDetailModal({
 
           {activeTab === "anamnese" && (
             <AnamneseTab pacienteId={paciente.id} />
+          )}
+
+          {activeTab === "odontograma" && (
+            <OdontogramaTab pacienteId={paciente.id} />
           )}
         </div>
       </div>
