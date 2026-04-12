@@ -19,7 +19,7 @@ import {
   type Paciente
 } from "@/data/registroCentral";
 import { mockAppointments, type Appointment } from "@/data/agendaMockData";
-import { aiApi } from "@/lib/vpsApi";
+import { aiApi, consultationsApi } from "@/lib/vpsApi";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/atendimento")({
