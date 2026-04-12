@@ -3291,6 +3291,300 @@ app.patch('/api/automations/flows/:id/toggle', async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════
+// AUTOMATION SCHEDULER — Job Queue, Triggers & Real Send
+// ═══════════════════════════════════════════════════════════════
+
+// Helper: replace {{variables}} in message text
+function replaceVariables(message, variables) {
+  let out = message;
+  for (const [key, value] of Object.entries(variables || {})) {
+    out = out.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), value || '');
+  }
+  return out;
+}
+
+// Helper: get first connected WhatsApp instance
+async function getDefaultInstance() {
+  try {
+    const result = await evolutionFetch('/instance/fetchInstances');
+    const instances = Array.isArray(result.data) ? result.data : [];
+    const connected = instances.find(i => (i.connectionStatus || i.status) === 'open');
+    return connected ? (connected.name || connected.instanceName) : null;
+  } catch { return null; }
+}
+
+// Map trigger_event strings to automation types
+const TRIGGER_MAP = {
+  'Após consulta finalizada': 'pos_consulta',
+  'Atendimento finalizado sem agendamento': 'pos_consulta',
+  'Lead entrou no CRM': 'custom',
+  'Orçamento criado e não fechado': 'followup_orcamento',
+  'Paciente inativo há 60+ dias': 'reativacao',
+  'Paciente inativo há 90+ dias': 'reativacao',
+  'Paciente inativo há 180+ dias': 'reativacao',
+  '30 dias antes do retorno': 'lembrete_retorno',
+  '7 dias antes do retorno': 'lembrete_retorno',
+  'Data de aniversário do paciente': 'aniversario',
+};
+
+// Core: enqueue all steps of matching flows for a given trigger event
+async function triggerAutomationFlows(triggerEvent, patientData) {
+  try {
+    const { rows: flows } = await pool.query(
+      `SELECT * FROM automation_flows WHERE active = true AND trigger_event = $1`, [triggerEvent]
+    );
+    if (flows.length === 0) return;
+
+    const instanceName = await getDefaultInstance();
+    if (!instanceName) {
+      console.warn('⚠️ Automation trigger: no connected WhatsApp instance');
+      return;
+    }
+
+    const phone = normalizeWhatsappNumber(patientData.phone || patientData.telefone || '');
+    if (!phone) return;
+
+    const vars = {
+      nome: patientData.name || patientData.nome || '',
+      primeiro_nome: (patientData.name || patientData.nome || '').split(' ')[0],
+      telefone: phone,
+      procedimento: patientData.procedimento || '',
+      valor: patientData.valor || '',
+      horario: patientData.horario || '',
+      data: patientData.data || '',
+      dentista: patientData.dentista || '',
+      clinica: 'Odonto Connect',
+      link_agendamento: patientData.link_agendamento || '',
+    };
+
+    let totalJobs = 0;
+    for (const flow of flows) {
+      const steps = typeof flow.steps === 'string' ? JSON.parse(flow.steps) : flow.steps;
+      if (!steps || steps.length === 0) continue;
+
+      // Check if we already have pending jobs for this flow+phone (avoid duplicates)
+      const { rows: existing } = await pool.query(
+        `SELECT 1 FROM automation_jobs WHERE flow_id = $1 AND patient_phone = $2 AND status = 'pending' LIMIT 1`,
+        [flow.id, phone]
+      );
+      if (existing.length > 0) continue;
+
+      const now = new Date();
+      for (let i = 0; i < steps.length; i++) {
+        const step = steps[i];
+        const delayMs = (step.delayMinutes || 0) * 60 * 1000;
+        const scheduledAt = new Date(now.getTime() + delayMs);
+        const finalMessage = replaceVariables(step.message, vars);
+
+        await pool.query(
+          `INSERT INTO automation_jobs (flow_id, flow_name, step_index, patient_name, patient_phone, instance, variables, message, channel, scheduled_at, trigger_event)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+          [flow.id, flow.name, i, vars.nome, phone, instanceName, JSON.stringify(vars), finalMessage, step.channel || 'whatsapp', scheduledAt, triggerEvent]
+        );
+        totalJobs++;
+      }
+
+      // Update flow stats
+      await pool.query(
+        `UPDATE automation_flows SET stats = jsonb_set(stats, '{sent}', to_jsonb(COALESCE((stats->>'sent')::int, 0) + $1)) WHERE id = $2`,
+        [steps.length, flow.id]
+      ).catch(() => {});
+    }
+
+    if (totalJobs > 0) {
+      console.log(`🤖 Automation: ${totalJobs} jobs enqueued for trigger "${triggerEvent}" → ${phone} (${flows.length} flows)`);
+    }
+  } catch (err) {
+    console.error('❌ triggerAutomationFlows error:', err.message);
+  }
+}
+
+// Manual enqueue endpoint
+app.post('/api/automations/enqueue', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    const { flowId, patientName, patientPhone, variables, instance } = req.body;
+    if (!flowId || !patientPhone) return res.status(400).json({ error: 'flowId e patientPhone obrigatórios' });
+
+    const { rows: flowRows } = await pool.query('SELECT * FROM automation_flows WHERE id = $1', [flowId]);
+    if (flowRows.length === 0) return res.status(404).json({ error: 'Fluxo não encontrado' });
+    const flow = flowRows[0];
+    if (!flow.active) return res.status(400).json({ error: 'Fluxo está desativado' });
+
+    const steps = typeof flow.steps === 'string' ? JSON.parse(flow.steps) : flow.steps;
+    if (!steps || steps.length === 0) return res.status(400).json({ error: 'Fluxo sem etapas' });
+
+    const instanceName = instance || await getDefaultInstance();
+    if (!instanceName) return res.status(400).json({ error: 'Nenhuma instância WhatsApp conectada' });
+
+    const phone = normalizeWhatsappNumber(patientPhone);
+    const vars = { nome: patientName || '', telefone: phone, ...(variables || {}) };
+    const now = new Date();
+    const jobIds = [];
+
+    for (let i = 0; i < steps.length; i++) {
+      const step = steps[i];
+      const delayMs = (step.delayMinutes || 0) * 60 * 1000;
+      const scheduledAt = new Date(now.getTime() + delayMs);
+      const finalMessage = replaceVariables(step.message, vars);
+
+      const { rows } = await pool.query(
+        `INSERT INTO automation_jobs (flow_id, flow_name, step_index, patient_name, patient_phone, instance, variables, message, channel, scheduled_at, trigger_event)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'manual') RETURNING id`,
+        [flow.id, flow.name, i, patientName || '', phone, instanceName, JSON.stringify(vars), finalMessage, step.channel || 'whatsapp', scheduledAt]
+      );
+      jobIds.push(rows[0].id);
+    }
+
+    await pool.query(
+      `UPDATE automation_flows SET stats = jsonb_set(stats, '{sent}', to_jsonb(COALESCE((stats->>'sent')::int, 0) + $1)) WHERE id = $2`,
+      [steps.length, flow.id]
+    ).catch(() => {});
+
+    console.log(`🤖 Manual enqueue: ${steps.length} jobs for flow "${flow.name}" → ${phone}`);
+    res.json({ success: true, jobsCreated: jobIds.length, jobIds });
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+// List automation jobs
+app.get('/api/automations/jobs', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { status, flowId, limit } = req.query;
+    let sql = 'SELECT * FROM automation_jobs';
+    const vals = [];
+    const where = [];
+    if (status) { vals.push(status); where.push(`status = $${vals.length}`); }
+    if (flowId) { vals.push(flowId); where.push(`flow_id = $${vals.length}`); }
+    if (where.length) sql += ' WHERE ' + where.join(' AND ');
+    sql += ' ORDER BY scheduled_at DESC';
+    sql += ` LIMIT ${Math.min(parseInt(limit) || 100, 500)}`;
+    const { rows } = await pool.query(sql, vals);
+    res.json(rows);
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+// Cancel pending jobs
+app.delete('/api/automations/jobs/cancel', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { flowId, patientPhone } = req.body || {};
+    let sql = `UPDATE automation_jobs SET status = 'cancelled' WHERE status = 'pending'`;
+    const vals = [];
+    if (flowId) { vals.push(flowId); sql += ` AND flow_id = $${vals.length}`; }
+    if (patientPhone) { vals.push(normalizeWhatsappNumber(patientPhone)); sql += ` AND patient_phone = $${vals.length}`; }
+    const { rowCount } = await pool.query(sql, vals);
+    res.json({ success: true, cancelled: rowCount });
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+// ─── Job Processor (runs every 30s) ────────────────────────────
+let automationSchedulerInterval = null;
+
+async function processAutomationJobs() {
+  try {
+    const { rows: dueJobs } = await pool.query(
+      `SELECT * FROM automation_jobs WHERE status = 'pending' AND scheduled_at <= NOW() ORDER BY scheduled_at ASC LIMIT 20`
+    );
+    if (dueJobs.length === 0) return;
+
+    console.log(`🤖 Scheduler: processing ${dueJobs.length} due jobs`);
+
+    for (const job of dueJobs) {
+      try {
+        if (job.channel === 'whatsapp') {
+          const phone = normalizeWhatsappNumber(job.patient_phone);
+          const whatsappNumber = phone.includes('@') ? phone : `${phone}@s.whatsapp.net`;
+
+          const result = await evolutionFetch(`/message/sendText/${job.instance}`, {
+            method: 'POST',
+            body: JSON.stringify({ number: whatsappNumber, text: job.message }),
+          });
+
+          if (result.ok) {
+            await pool.query(`UPDATE automation_jobs SET status = 'sent', sent_at = NOW() WHERE id = $1`, [job.id]);
+            console.log(`   ✅ Sent step ${job.step_index} to ${job.patient_phone} (${job.flow_name})`);
+          } else {
+            const errMsg = JSON.stringify(result.data).slice(0, 200);
+            await pool.query(`UPDATE automation_jobs SET status = 'failed', error = $1 WHERE id = $2`, [errMsg, job.id]);
+            console.error(`   ❌ Failed step ${job.step_index} to ${job.patient_phone}: ${errMsg}`);
+          }
+        } else {
+          await pool.query(
+            `UPDATE automation_jobs SET status = 'failed', error = $1 WHERE id = $2`,
+            [`Canal "${job.channel}" não suportado ainda`, job.id]
+          );
+        }
+      } catch (jobErr) {
+        await pool.query(
+          `UPDATE automation_jobs SET status = 'failed', error = $1 WHERE id = $2`,
+          [jobErr.message.slice(0, 500), job.id]
+        );
+        console.error(`   ❌ Job ${job.id} error:`, jobErr.message);
+      }
+    }
+  } catch (err) {
+    console.error('❌ Automation scheduler error:', err.message);
+  }
+}
+
+// ─── Cron: inactive patients & birthdays (runs every 6h) ────
+let automationCronInterval = null;
+
+async function checkInactivePatientsTrigger() {
+  try {
+    // Find patients inactive for 60+, 90+, 180+ days with no pending automation
+    const thresholds = [
+      { days: 60, trigger: 'Paciente inativo há 60+ dias' },
+      { days: 90, trigger: 'Paciente inativo há 90+ dias' },
+      { days: 180, trigger: 'Paciente inativo há 180+ dias' },
+    ];
+
+    for (const { days, trigger } of thresholds) {
+      // Check if any active flow uses this trigger
+      const { rows: activeFlows } = await pool.query(
+        `SELECT 1 FROM automation_flows WHERE active = true AND trigger_event = $1 LIMIT 1`, [trigger]
+      );
+      if (activeFlows.length === 0) continue;
+
+      // Find inactive leads (no message in X days)
+      const { rows: inactiveLeads } = await pool.query(
+        `SELECT DISTINCT cl.id, cl.nome, cl.telefone FROM crm_leads cl
+         LEFT JOIN chat_messages cm ON cm.phone = cl.telefone AND cm.timestamp > NOW() - INTERVAL '${days} days'
+         WHERE cl.telefone IS NOT NULL AND cl.telefone != '' AND cm.id IS NULL
+         LIMIT 50`
+      );
+
+      for (const lead of inactiveLeads) {
+        await triggerAutomationFlows(trigger, { name: lead.nome, phone: lead.telefone });
+      }
+
+      if (inactiveLeads.length > 0) {
+        console.log(`🤖 Inactive check (${days}d): ${inactiveLeads.length} leads triggered`);
+      }
+    }
+
+    // Birthday check
+    const { rows: birthdayFlows } = await pool.query(
+      `SELECT 1 FROM automation_flows WHERE active = true AND trigger_event = 'Data de aniversário do paciente' LIMIT 1`
+    );
+    if (birthdayFlows.length > 0) {
+      // If we had birthday data in contatos, we'd check here
+      // For now, this is a placeholder for when birthday field is added
+      console.log('🎂 Birthday automation check: no birthday data available yet');
+    }
+  } catch (err) {
+    console.error('❌ Inactive patients cron error:', err.message);
+  }
+}
+
 // Update lead kanban stage (manual move)
 app.patch('/api/crm/leads/:id/stage', async (req, res) => {
   try {
