@@ -3411,6 +3411,13 @@ const TRIGGER_MAP = {
   '30 dias antes do retorno': 'lembrete_retorno',
   '7 dias antes do retorno': 'lembrete_retorno',
   'Data de aniversário do paciente': 'aniversario',
+  'Agendamento criado sem confirmação': 'confirmacao_agenda',
+  'Consulta desmarcada pelo paciente': 'desmarcacao',
+  'Paciente não compareceu à consulta': 'faltas',
+  'Paciente faltou à primeira consulta': 'faltas_primeira',
+  'Parcela ou pagamento em atraso': 'inadimplencia',
+  'Orçamento criado e não aprovado': 'orcamento_aberto',
+  'Tratamento ativo sem agendamento futuro': 'tratamento_sem_agenda',
 };
 
 // Core: enqueue all steps of matching flows for a given trigger event
@@ -4147,6 +4154,171 @@ async function checkInactivePatientsTrigger() {
     }
   } catch (err) {
     console.error('❌ Inactive patients cron error:', err.message);
+  }
+}
+
+// ─── Cron: Solution-Based Triggers (runs every 2h) ──────────
+let solutionCronInterval = null;
+
+async function processSolutionTriggers() {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+
+    // Map each solution trigger to its query
+    const solutionQueries = [
+      {
+        trigger: 'Agendamento criado sem confirmação',
+        query: `SELECT DISTINCT p.id, p.nome, p.telefone, a.procedimento, a.data::text, a.hora::text as horario,
+                  d.nome as dentista
+                FROM agendamentos a
+                JOIN pacientes p ON a.paciente_id = p.id
+                LEFT JOIN dentistas d ON a.dentista_id = d.id
+                WHERE a.data >= $1 AND a.data <= ($1::date + INTERVAL '2 days')
+                AND a.status = 'agendado'
+                AND p.telefone IS NOT NULL AND p.telefone != ''
+                LIMIT 100`,
+        params: [today],
+      },
+      {
+        trigger: 'Data de aniversário do paciente',
+        query: `SELECT id, nome, telefone FROM pacientes
+                WHERE EXTRACT(MONTH FROM data_nascimento) = EXTRACT(MONTH FROM CURRENT_DATE)
+                AND EXTRACT(DAY FROM data_nascimento) = EXTRACT(DAY FROM CURRENT_DATE)
+                AND telefone IS NOT NULL AND telefone != ''
+                LIMIT 100`,
+        params: [],
+      },
+      {
+        trigger: 'Consulta desmarcada pelo paciente',
+        query: `SELECT DISTINCT p.id, p.nome, p.telefone, a.procedimento
+                FROM agendamentos a
+                JOIN pacientes p ON a.paciente_id = p.id
+                WHERE a.status IN ('desmarcado','cancelado')
+                AND a.updated_at >= NOW() - INTERVAL '24 hours'
+                AND p.telefone IS NOT NULL AND p.telefone != ''
+                LIMIT 100`,
+        params: [],
+      },
+      {
+        trigger: 'Paciente não compareceu à consulta',
+        query: `SELECT DISTINCT p.id, p.nome, p.telefone, a.procedimento
+                FROM agendamentos a
+                JOIN pacientes p ON a.paciente_id = p.id
+                WHERE a.status = 'faltou'
+                AND a.data >= CURRENT_DATE - INTERVAL '1 day'
+                AND p.telefone IS NOT NULL AND p.telefone != ''
+                LIMIT 100`,
+        params: [],
+      },
+      {
+        trigger: 'Paciente faltou à primeira consulta',
+        query: `SELECT DISTINCT p.id, p.nome, p.telefone, a.procedimento
+                FROM agendamentos a
+                JOIN pacientes p ON a.paciente_id = p.id
+                WHERE a.status = 'faltou'
+                AND a.data >= CURRENT_DATE - INTERVAL '1 day'
+                AND p.telefone IS NOT NULL AND p.telefone != ''
+                AND NOT EXISTS (
+                  SELECT 1 FROM agendamentos b
+                  WHERE b.paciente_id = a.paciente_id
+                  AND b.status IN ('realizado','confirmado','atendido')
+                )
+                LIMIT 100`,
+        params: [],
+      },
+      {
+        trigger: 'Parcela ou pagamento em atraso',
+        query: `SELECT DISTINCT p.id, p.nome, p.telefone, o.valor_total::text as valor
+                FROM orcamentos o
+                JOIN pacientes p ON o.paciente_id = p.id
+                WHERE o.status = 'aprovado'
+                AND p.telefone IS NOT NULL AND p.telefone != ''
+                AND NOT EXISTS (
+                  SELECT 1 FROM financeiro f
+                  WHERE f.paciente_id = o.paciente_id AND f.tipo = 'receita' AND f.valor >= o.valor_total
+                )
+                LIMIT 100`,
+        params: [],
+      },
+      {
+        trigger: 'Orçamento criado e não aprovado',
+        query: `SELECT DISTINCT p.id, p.nome, p.telefone,
+                  (o.itens::jsonb->0->>'procedimento')::text as procedimento,
+                  ('R$ ' || o.valor_total::text) as valor
+                FROM orcamentos o
+                JOIN pacientes p ON o.paciente_id = p.id
+                WHERE o.status = 'pendente'
+                AND o.created_at >= NOW() - INTERVAL '30 days'
+                AND p.telefone IS NOT NULL AND p.telefone != ''
+                LIMIT 100`,
+        params: [],
+      },
+      {
+        trigger: 'Tratamento ativo sem agendamento futuro',
+        query: `SELECT DISTINCT p.id, p.nome, p.telefone, t.descricao as procedimento
+                FROM tratamentos t
+                JOIN pacientes p ON t.paciente_id = p.id
+                WHERE t.status IN ('planejado','em_andamento','ativo')
+                AND p.telefone IS NOT NULL AND p.telefone != ''
+                AND NOT EXISTS (
+                  SELECT 1 FROM agendamentos a
+                  WHERE a.paciente_id = t.paciente_id
+                  AND a.data >= $1
+                  AND a.status NOT IN ('cancelado','desmarcado','faltou')
+                )
+                LIMIT 100`,
+        params: [today],
+      },
+    ];
+
+    let totalTriggered = 0;
+
+    for (const sol of solutionQueries) {
+      // Check if there's an active flow using this trigger
+      const { rows: activeFlows } = await pool.query(
+        `SELECT 1 FROM automation_flows WHERE active = true AND trigger_event = $1 LIMIT 1`,
+        [sol.trigger]
+      );
+      if (activeFlows.length === 0) continue;
+
+      // Run the query to find matching patients
+      const { rows: patients } = await pool.query(sol.query, sol.params);
+      if (patients.length === 0) continue;
+
+      for (const patient of patients) {
+        // Check cooldown: don't re-trigger same patient+trigger within 24h
+        const { rows: recent } = await pool.query(
+          `SELECT 1 FROM automation_jobs
+           WHERE patient_phone LIKE '%' || $1 || '%'
+           AND trigger_event = $2
+           AND created_at > NOW() - INTERVAL '24 hours'
+           LIMIT 1`,
+          [patient.telefone.replace(/\D/g, '').slice(-11), sol.trigger]
+        );
+        if (recent.length > 0) continue;
+
+        await triggerAutomationFlows(sol.trigger, {
+          name: patient.nome,
+          phone: patient.telefone,
+          procedimento: patient.procedimento || '',
+          valor: patient.valor || '',
+          horario: patient.horario || '',
+          data: patient.data || '',
+          dentista: patient.dentista || '',
+        });
+        totalTriggered++;
+      }
+
+      if (patients.length > 0) {
+        console.log(`🤖 Solution "${sol.trigger}": ${patients.length} pacientes encontrados, ${totalTriggered} triggered`);
+      }
+    }
+
+    if (totalTriggered > 0) {
+      console.log(`🤖 Solution triggers total: ${totalTriggered} pacientes enfileirados`);
+    }
+  } catch (err) {
+    console.error('❌ Solution triggers cron error:', err.message);
   }
 }
 
@@ -5875,6 +6047,11 @@ app.listen(PORT, async () => {
   checkInactivePatientsTrigger();
   automationCronInterval = setInterval(checkInactivePatientsTrigger, 6 * 60 * 60 * 1000);
   console.log('   📅 Cron de pacientes inativos ativo (a cada 6h)');
+
+  // Start solution triggers cron (every 2h)
+  setTimeout(() => processSolutionTriggers(), 10000); // delay 10s to let DB settle
+  solutionCronInterval = setInterval(processSolutionTriggers, 2 * 60 * 60 * 1000);
+  console.log('   🩺 Cron de soluções automáticas ativo (a cada 2h)');
 
   // Start campaign scheduler (every 60s)
   processCampaignScheduler();
