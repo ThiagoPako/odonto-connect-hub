@@ -3,12 +3,14 @@ import { DashboardHeader } from "@/components/DashboardHeader";
 import {
   Send, Play, Pause, Plus, Eye, Clock,
   CalendarDays, Users, CheckCircle2, AlertCircle, Trash2,
-  MessageSquare, RefreshCcw, Copy, Pencil, BarChart3,
+  MessageSquare, RefreshCcw, Copy, Pencil, BarChart3, Loader2,
 } from "lucide-react";
-import { useState } from "react";
-import { mockDisparos, publicoOptions, type DisparoProgramado } from "@/data/disparosMockData";
+import { useState, useEffect, useCallback } from "react";
+import { publicoOptions, type DisparoProgramado } from "@/data/disparosMockData";
 import { NovoDisparoWizard } from "@/components/disparos/NovoDisparoWizard";
 import { DisparoStatsPanel } from "@/components/disparos/DisparoStatsPanel";
+import { campaignsApi } from "@/lib/vpsApi";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/disparos")({
   ssr: false,
@@ -16,43 +18,52 @@ export const Route = createFileRoute("/disparos")({
 });
 
 function DisparosPage() {
-  const [disparos, setDisparos] = useState(mockDisparos);
+  const [disparos, setDisparos] = useState<DisparoProgramado[]>([]);
+  const [loading, setLoading] = useState(true);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [editingDisparo, setEditingDisparo] = useState<DisparoProgramado | null>(null);
   const [statsDisparo, setStatsDisparo] = useState<DisparoProgramado | null>(null);
   const [filterStatus, setFilterStatus] = useState<"all" | "ativos" | "inativos">("all");
 
+  const loadCampaigns = useCallback(async () => {
+    const { data, error } = await campaignsApi.list();
+    if (error) {
+      toast.error("Erro ao carregar disparos: " + error);
+    } else if (data) {
+      setDisparos(data);
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { loadCampaigns(); }, [loadCampaigns]);
+
   const filtered = filterStatus === "all" ? disparos : disparos.filter((d) => (filterStatus === "ativos" ? d.ativo : !d.ativo));
 
-  const toggleAtivo = (id: string) => {
-    setDisparos((prev) => prev.map((d) => (d.id === id ? { ...d, ativo: !d.ativo } : d)));
+  const toggleAtivo = async (id: string) => {
+    const { data, error } = await campaignsApi.toggle(id);
+    if (error) { toast.error(error); return; }
+    setDisparos((prev) => prev.map((d) => (d.id === id ? { ...d, ativo: data?.ativo ?? !d.ativo } : d)));
   };
 
-  const removeDisparo = (id: string) => {
+  const removeDisparo = async (id: string) => {
+    const { error } = await campaignsApi.remove(id);
+    if (error) { toast.error(error); return; }
     setDisparos((prev) => prev.filter((d) => d.id !== id));
+    toast.success("Disparo removido");
   };
 
-  const handleSave = (data: Omit<DisparoProgramado, "id" | "stats" | "criadoEm">) => {
+  const handleSave = async (data: Omit<DisparoProgramado, "id" | "stats" | "criadoEm">) => {
     if (editingDisparo) {
-      // Update existing
-      setDisparos((prev) =>
-        prev.map((d) =>
-          d.id === editingDisparo.id
-            ? { ...d, ...data }
-            : d
-        )
-      );
+      const { error } = await campaignsApi.update(editingDisparo.id, data);
+      if (error) { toast.error(error); return; }
+      toast.success("Disparo atualizado");
     } else {
-      // Create new
-      const novo: DisparoProgramado = {
-        ...data,
-        id: `dp${Date.now()}`,
-        stats: { enviadas: 0, entregues: 0, lidas: 0, respondidas: 0, erros: 0 },
-        criadoEm: new Date().toLocaleDateString("pt-BR"),
-      };
-      setDisparos((prev) => [novo, ...prev]);
+      const { error } = await campaignsApi.create(data);
+      if (error) { toast.error(error); return; }
+      toast.success("Disparo criado");
     }
     setEditingDisparo(null);
+    loadCampaigns();
   };
 
   const handleEdit = (disparo: DisparoProgramado) => {
@@ -60,16 +71,11 @@ function DisparosPage() {
     setWizardOpen(true);
   };
 
-  const handleDuplicate = (disparo: DisparoProgramado) => {
-    const clone: DisparoProgramado = {
-      ...disparo,
-      id: `dp${Date.now()}`,
-      nome: `${disparo.nome} (cópia)`,
-      ativo: false,
-      stats: { enviadas: 0, entregues: 0, lidas: 0, respondidas: 0, erros: 0 },
-      criadoEm: new Date().toLocaleDateString("pt-BR"),
-    };
-    setDisparos((prev) => [clone, ...prev]);
+  const handleDuplicate = async (disparo: DisparoProgramado) => {
+    const { error } = await campaignsApi.duplicate(disparo.id);
+    if (error) { toast.error(error); return; }
+    toast.success("Disparo duplicado");
+    loadCampaigns();
   };
 
   const openNewWizard = () => {
@@ -134,8 +140,13 @@ function DisparosPage() {
           </div>
         </div>
 
-        {/* Disparos list */}
-        {filtered.length === 0 ? (
+        {/* Loading */}
+        {loading ? (
+          <div className="bg-card rounded-xl border border-border p-12 flex flex-col items-center justify-center">
+            <Loader2 className="h-8 w-8 text-primary animate-spin mb-3" />
+            <p className="text-sm text-muted-foreground">Carregando disparos...</p>
+          </div>
+        ) : filtered.length === 0 ? (
           <div className="bg-card rounded-xl border border-border p-12 flex flex-col items-center justify-center text-center">
             <Send className="h-12 w-12 text-muted-foreground/30 mb-4" />
             <h3 className="text-sm font-semibold text-foreground mb-1">Nenhum disparo encontrado</h3>
