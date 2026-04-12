@@ -1,11 +1,13 @@
 import { useState } from "react";
-import { Bell, Volume2, VolumeX, MonitorSmartphone, Flame, Play } from "lucide-react";
+import { Bell, Volume2, VolumeX, MonitorSmartphone, Flame, Play, Volume1 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
+import { Slider } from "@/components/ui/slider";
 import {
   isSoundEnabled, setSoundEnabled, playNotificationSound,
   isRecoverySoundEnabled, setRecoverySoundEnabled, playRecoverySound,
   getSoundType, setSoundType, previewSound,
+  getVolume, setVolume,
   SOUND_OPTIONS, type SoundType,
 } from "@/lib/notificationSound";
 import { isPushEnabled, setPushEnabled, requestNotificationPermission } from "@/lib/browserNotification";
@@ -16,6 +18,7 @@ export function NotificationSettingsPanel() {
   const [pushOn, setPushOn] = useState(isPushEnabled);
   const [recoverySoundOn, setRecoverySoundOn] = useState(isRecoverySoundEnabled);
   const [currentSound, setCurrentSound] = useState<SoundType>(getSoundType);
+  const [vol, setVol] = useState(getVolume);
 
   const handleSoundToggle = (checked: boolean) => {
     setSoundOn(checked);
