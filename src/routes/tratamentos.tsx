@@ -153,6 +153,16 @@ function TratamentosPage() {
     loadAll();
   };
 
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    const { error } = await tratamentosApi.delete(deleteTarget) as any;
+    if (error) { toast.error("Erro ao excluir: " + error); return; }
+    toast.success("Tratamento excluído com sucesso!");
+    setDeleteTarget(null);
+    if (selectedId === deleteTarget) { setSelectedId(null); setEtapas([]); }
+    loadAll();
+  };
+
   const filtered = tratamentos.filter(
     t => !searchTerm || t.paciente_nome.toLowerCase().includes(searchTerm.toLowerCase()) || t.descricao.toLowerCase().includes(searchTerm.toLowerCase())
   );
