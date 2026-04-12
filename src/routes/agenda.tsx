@@ -3,13 +3,14 @@ import { DashboardHeader } from "@/components/DashboardHeader";
 import {
   Clock, CheckCircle2, XCircle, UserCheck, Plus, ChevronLeft, ChevronRight,
   Phone, MessageSquare, AlertTriangle, RefreshCw, Search, ExternalLink, History, HeartPulse,
-  LayoutGrid, List, CalendarDays, Stethoscope, Loader2,
+  LayoutGrid, List, CalendarDays, Stethoscope, Loader2, X,
 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import { mockProfessionals, type Appointment } from "@/data/agendaMockData";
 import { getAlergias, getCondicoesCriticas, getHistorico } from "@/data/registroCentral";
 import { agendaApi, type AgendamentoVPS } from "@/lib/vpsApi";
 import { toast } from "sonner";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 export const Route = createFileRoute("/agenda")({
   ssr: false,
