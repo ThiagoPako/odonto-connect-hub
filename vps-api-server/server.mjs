@@ -2140,6 +2140,242 @@ app.delete('/api/financeiro/:id', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
+// FINANCEIRO — BANK ACCOUNTS
+// ═══════════════════════════════════════════════════════════════
+
+app.get('/api/fin/banks', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { rows } = await pool.query('SELECT * FROM fin_bank_accounts WHERE active=true ORDER BY created_at');
+    res.json(rows);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/api/fin/banks', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { name, bank, agency, account, type, balance, color } = req.body;
+    const id = randomUUID();
+    await pool.query(
+      'INSERT INTO fin_bank_accounts (id,name,bank,agency,account,type,balance,color) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+      [id, name, bank, agency || '', account || '', type || 'corrente', balance || 0, color || 'hsl(217,91%,60%)']
+    );
+    const { rows } = await pool.query('SELECT * FROM fin_bank_accounts WHERE id=$1', [id]);
+    res.status(201).json(rows[0]);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.put('/api/fin/banks/:id', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const fields = ['name','bank','agency','account','type','balance','color'];
+    const sets = []; const params = [];
+    fields.forEach(f => { if (req.body[f] !== undefined) { params.push(req.body[f]); sets.push(`${f}=$${params.length}`); } });
+    if (sets.length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
+    params.push(req.params.id);
+    await pool.query(`UPDATE fin_bank_accounts SET ${sets.join(',')}, updated_at=NOW() WHERE id=$${params.length}`, params);
+    const { rows } = await pool.query('SELECT * FROM fin_bank_accounts WHERE id=$1', [req.params.id]);
+    res.json(rows[0]);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.delete('/api/fin/banks/:id', async (req, res) => {
+  try {
+    await verifyUser(req);
+    await pool.query('UPDATE fin_bank_accounts SET active=false WHERE id=$1', [req.params.id]);
+    res.json({ success: true });
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// FINANCEIRO — EMPLOYEES
+// ═══════════════════════════════════════════════════════════════
+
+app.get('/api/fin/employees', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { rows } = await pool.query('SELECT * FROM fin_employees WHERE active=true ORDER BY name');
+    res.json(rows);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/api/fin/employees', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { name, role, cpf, admission_date, salary, benefits, bank_account_id } = req.body;
+    const id = randomUUID();
+    await pool.query(
+      'INSERT INTO fin_employees (id,name,role,cpf,admission_date,salary,benefits,bank_account_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+      [id, name, role, cpf || '', admission_date || '', salary || 0, benefits || 0, bank_account_id || null]
+    );
+    const { rows } = await pool.query('SELECT * FROM fin_employees WHERE id=$1', [id]);
+    res.status(201).json(rows[0]);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.delete('/api/fin/employees/:id', async (req, res) => {
+  try {
+    await verifyUser(req);
+    await pool.query('UPDATE fin_employees SET active=false WHERE id=$1', [req.params.id]);
+    res.json({ success: true });
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// FINANCEIRO — PAYROLLS
+// ═══════════════════════════════════════════════════════════════
+
+app.get('/api/fin/payrolls', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { month } = req.query;
+    let q = 'SELECT * FROM fin_payrolls'; const params = [];
+    if (month) { params.push(month); q += ` WHERE month=$${params.length}`; }
+    q += ' ORDER BY created_at DESC';
+    const { rows } = await pool.query(q, params);
+    res.json(rows);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/api/fin/payrolls', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { employee_id, employee_name, month, gross_salary, benefits, deductions, net_salary, status, payment_date, bank_account_id } = req.body;
+    const id = randomUUID();
+    await pool.query(
+      'INSERT INTO fin_payrolls (id,employee_id,employee_name,month,gross_salary,benefits,deductions,net_salary,status,payment_date,bank_account_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
+      [id, employee_id, employee_name, month, gross_salary || 0, benefits || 0, deductions || 0, net_salary || 0, status || 'pendente', payment_date || null, bank_account_id || null]
+    );
+    const { rows } = await pool.query('SELECT * FROM fin_payrolls WHERE id=$1', [id]);
+    res.status(201).json(rows[0]);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.put('/api/fin/payrolls/:id', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const fields = ['status','payment_date','bank_account_id'];
+    const sets = []; const params = [];
+    fields.forEach(f => { if (req.body[f] !== undefined) { params.push(req.body[f]); sets.push(`${f}=$${params.length}`); } });
+    if (sets.length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
+    params.push(req.params.id);
+    await pool.query(`UPDATE fin_payrolls SET ${sets.join(',')}, updated_at=NOW() WHERE id=$${params.length}`, params);
+    const { rows } = await pool.query('SELECT * FROM fin_payrolls WHERE id=$1', [req.params.id]);
+    res.json(rows[0]);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// FINANCEIRO — BILLS (Contas a Pagar)
+// ═══════════════════════════════════════════════════════════════
+
+app.get('/api/fin/bills', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { rows } = await pool.query('SELECT * FROM fin_bills ORDER BY due_date DESC');
+    res.json(rows);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/api/fin/bills', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { description, category, value, due_date, status, supplier, recurrent } = req.body;
+    const id = randomUUID();
+    await pool.query(
+      'INSERT INTO fin_bills (id,description,category,value,due_date,status,supplier,recurrent) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+      [id, description, category, value, due_date, status || 'pendente', supplier || null, recurrent || false]
+    );
+    const { rows } = await pool.query('SELECT * FROM fin_bills WHERE id=$1', [id]);
+    res.status(201).json(rows[0]);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.put('/api/fin/bills/:id', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const fields = ['description','category','value','due_date','status','supplier','bank_account_id','payment_date','recurrent'];
+    const sets = []; const params = [];
+    fields.forEach(f => { if (req.body[f] !== undefined) { params.push(req.body[f]); sets.push(`${f}=$${params.length}`); } });
+    if (sets.length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
+    params.push(req.params.id);
+    await pool.query(`UPDATE fin_bills SET ${sets.join(',')}, updated_at=NOW() WHERE id=$${params.length}`, params);
+    const { rows } = await pool.query('SELECT * FROM fin_bills WHERE id=$1', [req.params.id]);
+    res.json(rows[0]);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.delete('/api/fin/bills/:id', async (req, res) => {
+  try {
+    await verifyUser(req);
+    await pool.query('DELETE FROM fin_bills WHERE id=$1', [req.params.id]);
+    res.json({ success: true });
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// FINANCEIRO — MOVEMENTS
+// ═══════════════════════════════════════════════════════════════
+
+app.get('/api/fin/movements', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { rows } = await pool.query('SELECT * FROM fin_movements ORDER BY created_at DESC');
+    res.json(rows);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/api/fin/movements', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { type, description, category, value, date, bank_account_id, bank_name, patient, bill_id, payroll_id } = req.body;
+    const id = randomUUID();
+    await pool.query(
+      'INSERT INTO fin_movements (id,type,description,category,value,date,bank_account_id,bank_name,patient,bill_id,payroll_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
+      [id, type, description, category, value, date, bank_account_id || null, bank_name || '', patient || null, bill_id || null, payroll_id || null]
+    );
+    // Update bank balance
+    if (bank_account_id) {
+      const op = type === 'entrada' ? '+' : '-';
+      await pool.query(`UPDATE fin_bank_accounts SET balance = balance ${op} $1, updated_at=NOW() WHERE id=$2`, [value, bank_account_id]);
+    }
+    const { rows } = await pool.query('SELECT * FROM fin_movements WHERE id=$1', [id]);
+    res.status(201).json(rows[0]);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// FINANCEIRO — OVERDUE (Inadimplentes)
+// ═══════════════════════════════════════════════════════════════
+
+app.get('/api/fin/overdue', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { rows } = await pool.query('SELECT * FROM fin_overdue ORDER BY days_late DESC');
+    res.json(rows);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/api/fin/overdue', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { patient, value, days_late, procedure: proc } = req.body;
+    const id = randomUUID();
+    await pool.query('INSERT INTO fin_overdue (id,patient,value,days_late,procedure) VALUES ($1,$2,$3,$4,$5)', [id, patient, value, days_late || 0, proc || '']);
+    const { rows } = await pool.query('SELECT * FROM fin_overdue WHERE id=$1', [id]);
+    res.status(201).json(rows[0]);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.delete('/api/fin/overdue/:id', async (req, res) => {
+  try {
+    await verifyUser(req);
+    await pool.query('DELETE FROM fin_overdue WHERE id=$1', [req.params.id]);
+    res.json({ success: true });
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════
 // ESTOQUE — FULL CRUD + MOVIMENTAÇÕES
 // ═══════════════════════════════════════════════════════════════
 
