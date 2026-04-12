@@ -540,7 +540,67 @@ function KanbanCard({ lead, stageId, onDragStart, onLeadAssigned }: { lead: Kanb
         </div>
       )}
 
-      <p className="text-sm font-semibold text-primary mb-2">R$ {lead.value.toLocaleString("pt-BR")}</p>
+      <div className="flex items-center justify-between mb-1">
+        <p className="text-sm font-semibold text-primary">R$ {lead.value.toLocaleString("pt-BR")}</p>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            if (!showHistory && historyData === null) {
+              setLoadingHistory(true);
+              crmApi.history(lead.id).then(({ data }) => {
+                setHistoryData(data || []);
+                setLoadingHistory(false);
+              });
+            }
+            setShowHistory(!showHistory);
+          }}
+          className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors ${
+            showHistory ? "bg-primary/15 text-primary" : "text-muted-foreground hover:text-foreground hover:bg-muted"
+          }`}
+          title="Ver histórico de consultas"
+        >
+          {loadingHistory ? <Loader2 className="h-3 w-3 animate-spin" /> : <History className="h-3 w-3" />}
+          Histórico
+        </button>
+      </div>
+
+      {showHistory && (
+        <div className="mb-2 rounded-lg border border-border/50 bg-muted/30 overflow-hidden animate-fade-in">
+          {loadingHistory ? (
+            <div className="flex items-center justify-center py-3">
+              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+            </div>
+          ) : historyData && historyData.length > 0 ? (
+            <div className="divide-y divide-border/30 max-h-[140px] overflow-y-auto">
+              {historyData.map((appt) => {
+                const statusColors: Record<string, string> = {
+                  confirmado: "text-success",
+                  realizado: "text-success",
+                  agendado: "text-primary",
+                  faltou: "text-destructive",
+                  cancelado: "text-muted-foreground",
+                  desmarcado: "text-warning",
+                };
+                const dataBR = appt.data ? new Date(appt.data + "T12:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }) : "—";
+                return (
+                  <div key={appt.id} className="flex items-center gap-2 px-2 py-1.5">
+                    <Calendar className="h-3 w-3 text-muted-foreground shrink-0" />
+                    <span className="text-[10px] text-foreground font-medium w-10">{dataBR}</span>
+                    <span className="text-[10px] text-muted-foreground w-10">{appt.hora || "—"}</span>
+                    <span className="text-[10px] text-foreground truncate flex-1">{appt.procedimento || "Consulta"}</span>
+                    <span className={`text-[9px] font-medium capitalize ${statusColors[appt.status] || "text-muted-foreground"}`}>
+                      {appt.status}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="text-[10px] text-muted-foreground text-center py-3">Nenhuma consulta encontrada</p>
+          )}
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5">
           {lead.assignedAvatarUrl ? (
