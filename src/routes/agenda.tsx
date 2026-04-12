@@ -205,6 +205,12 @@ function AgendaPage() {
             {viewMode === "calendario" && <CalendarView filtered={filtered} selectedProfessional={selectedProfessional} />}
           </>
         )}
+        <NovoAgendamentoDialog
+          open={showNovoDialog}
+          onOpenChange={setShowNovoDialog}
+          defaultDate={dateStr}
+          onCreated={fetchAgenda}
+        />
       </main>
     </div>
   );
