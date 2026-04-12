@@ -45,6 +45,7 @@ function AutomacoesPage() {
 
   const [followupConfig, setFollowupConfig] = useState<FollowupAutomationConfig | null>(null);
   const [loadingConfig, setLoadingConfig] = useState(true);
+  const [solutionCounts, setSolutionCounts] = useState<Record<string, number>>({});
 
   // Load flows from API, fallback to mock data
   useEffect(() => {
@@ -67,6 +68,11 @@ function AutomacoesPage() {
       .then((res) => { if (res.data) setFollowupConfig(res.data); })
       .catch(() => {})
       .finally(() => setLoadingConfig(false));
+
+    // Load real patient counts for solutions
+    automationsApi.getSolutionCounts()
+      .then((res) => { if (res.data) setSolutionCounts(res.data); })
+      .catch(() => {});
   }, []);
 
   const filtered = filterType === "all" ? flows : flows.filter((f) => f.type === filterType);
