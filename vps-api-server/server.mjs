@@ -2760,9 +2760,9 @@ app.post('/api/sessions/assign', async (req, res) => {
       [user.id, attendantName, leadId]
     );
 
-    // Auto-move lead to "em_contato" in CRM kanban
+    // Auto-move lead to "em_atendimento" in CRM kanban
     await pool.query(
-      `UPDATE crm_leads SET kanban_stage = 'em_contato', status = 'em_contato', updated_at = NOW() WHERE id = $1`,
+      `UPDATE crm_leads SET kanban_stage = 'em_atendimento', status = 'em_atendimento', updated_at = NOW() WHERE id = $1`,
       [leadId]
     ).catch(err => console.error('Failed to update kanban_stage:', err.message));
 
