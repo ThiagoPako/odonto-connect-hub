@@ -45,16 +45,25 @@ export interface MessageStatusUpdate {
   instance: string;
 }
 
+export interface LeadRecoveryReturn {
+  leadId: string;
+  leadName: string;
+  phone: string;
+  previousStage: string;
+}
+
 type MessageHandler = (msg: IncomingMessage) => void;
 type PresenceHandler = (update: PresenceUpdate) => void;
 type QueueAssignHandler = (assignment: QueueAssignment) => void;
 type MessageStatusHandler = (update: MessageStatusUpdate) => void;
+type LeadRecoveryHandler = (data: LeadRecoveryReturn) => void;
 
 interface RealtimeChatOptions {
   onMessage: MessageHandler;
   onPresence?: PresenceHandler;
   onQueueAssigned?: QueueAssignHandler;
   onMessageStatus?: MessageStatusHandler;
+  onLeadRecoveryReturn?: LeadRecoveryHandler;
 }
 
 export function useRealtimeChat(options: RealtimeChatOptions) {
