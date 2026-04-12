@@ -158,7 +158,7 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onRe
 
   return (
     <>
-      <div className="h-[68px] flex items-center justify-between px-5 border-b border-border/50 bg-card/80 backdrop-blur-sm shrink-0 relative shadow-sm">
+      <div className="h-[68px] flex items-center justify-between px-5 border-b border-border/50 bg-card/80 backdrop-blur-sm shrink-0 relative z-30 isolate shadow-sm">
         <div className="flex items-center gap-3.5 animate-fade-in">
           <div className="relative">
             <LeadAvatar initials={lead.initials} avatarUrl={lead.avatarUrl} avatarColor={lead.avatarColor || "bg-primary/20"} size="md" />
@@ -217,7 +217,7 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onRe
           </div>
         </div>
 
-        <div className="flex items-center gap-0.5">
+        <div className="relative z-10 flex items-center gap-0.5">
           <button
             onClick={handleDownloadPdf}
             className="p-2.5 rounded-xl hover:bg-muted transition-all text-muted-foreground hover:text-foreground"
@@ -272,7 +272,7 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onRe
         </div>
 
         {showTransfer && (
-          <div className="absolute top-full right-4 mt-1 w-72 bg-card border border-border rounded-xl shadow-lg z-50 overflow-hidden">
+          <div className="absolute top-full right-4 mt-1 w-72 bg-card border border-border rounded-xl shadow-lg z-[80] overflow-hidden">
             {!selectedAtt ? (
               <>
                 <div className="px-3 py-2 border-b border-border/50">
@@ -341,7 +341,7 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onRe
         )}
 
         {showStageMenu && (
-          <div className="absolute top-full right-4 mt-1 w-64 bg-card border border-border rounded-xl shadow-lg z-50 overflow-hidden">
+          <div className="absolute top-full right-4 mt-1 w-64 bg-card border border-border rounded-xl shadow-lg z-[80] overflow-hidden">
             <div className="px-3 py-2 border-b border-border/50">
               <p className="text-xs font-semibold text-foreground">Fase do Lead no CRM</p>
               <p className="text-[11px] text-muted-foreground">Marcar sem finalizar o atendimento</p>
