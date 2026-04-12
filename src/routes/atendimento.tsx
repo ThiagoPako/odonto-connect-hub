@@ -944,27 +944,32 @@ function ConsultaPage() {
                 {!atendimentoAtivo && !pacienteSelecionado && (
                   <div className="bg-card rounded-2xl border border-border/60 p-12 shadow-card text-center animate-slide-up">
                     <Stethoscope className="h-12 w-12 text-primary/20 mx-auto mb-4" />
-                    <h3 className="text-lg font-semibold text-foreground mb-2">Módulo de Atendimento</h3>
+                    <h3 className="text-lg font-semibold text-foreground mb-2">Consulta</h3>
                     <p className="text-sm text-muted-foreground max-w-md mx-auto">
-                      Selecione um paciente na lista ao lado para iniciar um atendimento clínico.
-                      Grave a consulta, faça prescrições e gere relatórios automáticos com IA.
+                      Selecione um agendamento na agenda do dia ao lado para iniciar a consulta.
+                      Preencha os dados clínicos, grave o áudio e gere relatórios com IA.
                     </p>
                   </div>
                 )}
 
-                {/* Paciente selecionado mas atendimento não iniciado */}
+                {/* Paciente selecionado mas consulta não iniciada */}
                 {!atendimentoAtivo && pacienteSelecionado && (
                   <div className="bg-card rounded-2xl border border-border/60 p-8 shadow-card text-center animate-slide-up">
                     <div className="h-14 w-14 rounded-2xl bg-primary/10 flex items-center justify-center text-primary text-lg font-bold mx-auto mb-4">
                       {getPacienteIniciais(pacienteSelecionado)}
                     </div>
                     <h3 className="text-lg font-semibold text-foreground mb-1">{pacienteSelecionado.nome}</h3>
-                    <p className="text-sm text-muted-foreground mb-4">{getPacienteIdade(pacienteSelecionado)} anos • {pacienteSelecionado.telefone}</p>
+                    <p className="text-sm text-muted-foreground mb-1">{getPacienteIdade(pacienteSelecionado)} anos • {pacienteSelecionado.telefone}</p>
+                    {appointmentSelecionado && (
+                      <p className="text-xs text-primary font-medium mb-4">
+                        {appointmentSelecionado.procedure} • {appointmentSelecionado.time} • {appointmentSelecionado.room}
+                      </p>
+                    )}
                     <button
                       onClick={iniciarAtendimento}
                       className="inline-flex items-center gap-2 h-11 px-6 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-all shadow-md hover:shadow-lg"
                     >
-                      <Play className="h-4 w-4" /> Iniciar Atendimento
+                      <Play className="h-4 w-4" /> Iniciar Consulta
                     </button>
                   </div>
                 )}
