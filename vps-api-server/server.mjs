@@ -2990,6 +2990,8 @@ let followupAutomationConfig = {
     followup_3: 'Oi {{nome}}, última chamada! 🦷 Seu orçamento ainda está disponível e temos horários esta semana. Posso agendar uma avaliação para você?',
   },
   delaySeconds: 30, // delay before sending (gives time to cancel)
+  delayDays: { followup: 0, followup_2: 3, followup_3: 7 }, // days after stage entry before sending
+  returnToQueueOnReply: true, // when client replies from recovery, return to queue with priority
 };
 
 // Load config from DB on startup

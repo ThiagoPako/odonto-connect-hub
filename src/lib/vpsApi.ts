@@ -664,6 +664,8 @@ export interface FollowupAutomationConfig {
   stages: string[];
   messages: Record<string, string>;
   delaySeconds: number;
+  delayDays: Record<string, number>;
+  returnToQueueOnReply: boolean;
 }
 
 export const automationsApi = {
