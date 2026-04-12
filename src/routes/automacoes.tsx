@@ -1412,12 +1412,22 @@ function SolutionsGrid({
               {/* Description */}
               <p className="text-[11px] text-muted-foreground mb-3 line-clamp-2 leading-relaxed">{sol.description}</p>
 
-              {/* Patient count */}
-              <div className="flex items-center gap-2 mb-3 p-2 rounded-lg bg-muted/50">
-                <Users className="h-3.5 w-3.5 text-primary" />
-                <span className="text-xs text-muted-foreground">
-                  <span className="font-bold text-foreground">{patientCount}</span> pacientes elegíveis
-                </span>
+              {/* Patient count + sent messages */}
+              <div className="flex items-center gap-2 mb-3">
+                <div className="flex-1 flex items-center gap-2 p-2 rounded-lg bg-muted/50">
+                  <Users className="h-3.5 w-3.5 text-primary" />
+                  <span className="text-xs text-muted-foreground">
+                    <span className="font-bold text-foreground">{patientCount}</span> elegíveis
+                  </span>
+                </div>
+                {isActive && existingFlow && (
+                  <div className="flex items-center gap-2 p-2 rounded-lg bg-success/10 animate-fade-in">
+                    <Send className="h-3.5 w-3.5 text-success" />
+                    <span className="text-xs text-muted-foreground">
+                      <span className="font-bold text-success">{existingFlow.stats.sent}</span> enviadas
+                    </span>
+                  </div>
+                )}
               </div>
 
               {/* Steps preview */}
