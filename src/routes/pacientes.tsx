@@ -419,6 +419,29 @@ function NovoPacienteModal({ onClose, onSaved }: { onClose: () => void; onSaved:
 }
 
 /* ─── Patient Detail Modal ─── */
+type DetailTab = "dados" | "anamnese";
+
+interface AnamneseData {
+  id?: string;
+  paciente_id: string;
+  alergias: string[];
+  medicamentos: string[];
+  doencas_preexistentes: string[];
+  cirurgias_anteriores: string[];
+  fumante: boolean;
+  etilista: boolean;
+  gestante: boolean;
+  diabetes: boolean;
+  cardiopatia: boolean;
+  hepatite: boolean;
+  hiv: boolean;
+  hemofilia: boolean;
+  epilepsia: boolean;
+  pressao_arterial: string | null;
+  observacoes: string | null;
+  updated_at?: string;
+}
+
 function PacienteDetailModal({
   paciente,
   onClose,
@@ -428,6 +451,7 @@ function PacienteDetailModal({
   onClose: () => void;
   onUpdated?: () => void;
 }) {
+  const [activeTab, setActiveTab] = useState<DetailTab>("dados");
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
@@ -494,8 +518,12 @@ function PacienteDetailModal({
   };
 
   const idade = calcularIdade(form.data_nascimento || null);
-
   const inputClass = "w-full h-9 px-3 rounded-lg bg-background border border-border/60 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30";
+
+  const tabs: { key: DetailTab; label: string; icon: typeof FileHeart }[] = [
+    { key: "dados", label: "Dados", icon: FileHeart },
+    { key: "anamnese", label: "Anamnese", icon: ClipboardList },
+  ];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
@@ -516,7 +544,7 @@ function PacienteDetailModal({
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {!editing ? (
+            {activeTab === "dados" && !editing && (
               <button
                 onClick={() => setEditing(true)}
                 className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary/10 text-primary text-xs font-semibold hover:bg-primary/20 transition-colors"
@@ -524,12 +552,10 @@ function PacienteDetailModal({
                 <Edit className="h-3.5 w-3.5" />
                 Editar
               </button>
-            ) : (
+            )}
+            {activeTab === "dados" && editing && (
               <>
-                <button
-                  onClick={handleCancel}
-                  className="px-4 py-2 rounded-xl text-xs font-medium text-muted-foreground hover:bg-muted/60 transition-colors"
-                >
+                <button onClick={handleCancel} className="px-4 py-2 rounded-xl text-xs font-medium text-muted-foreground hover:bg-muted/60 transition-colors">
                   Cancelar
                 </button>
                 <button
@@ -548,118 +574,408 @@ function PacienteDetailModal({
           </div>
         </div>
 
+        {/* Tabs */}
+        <div className="flex gap-1 px-6 pt-3 border-b border-border/60 shrink-0">
+          {tabs.map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => { setActiveTab(tab.key); if (tab.key !== "dados") setEditing(false); }}
+              className={`flex items-center gap-2 px-4 py-3 text-sm font-medium transition-all border-b-2 -mb-[1px] ${
+                activeTab === tab.key
+                  ? "border-primary text-primary"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <tab.icon className="h-4 w-4" />
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-fade-in">
-            {/* Nome */}
-            <div className="col-span-1 md:col-span-2 bg-muted/30 rounded-xl p-4 flex items-start gap-3">
-              <FileHeart className="h-4 w-4 text-primary mt-0.5 shrink-0" />
-              <div className="flex-1">
-                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Nome</p>
+          {activeTab === "dados" && (
+            <div className="space-y-4 animate-fade-in">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="col-span-1 md:col-span-2 bg-muted/30 rounded-xl p-4 flex items-start gap-3">
+                  <FileHeart className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                  <div className="flex-1">
+                    <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Nome</p>
+                    {editing ? <input value={form.nome} onChange={(e) => handleChange("nome", e.target.value)} className={inputClass + " mt-1"} /> : <p className="text-sm text-foreground mt-0.5">{paciente.nome}</p>}
+                  </div>
+                </div>
+                <div className="bg-muted/30 rounded-xl p-4 flex items-start gap-3">
+                  <FileHeart className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                  <div className="flex-1">
+                    <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">CPF</p>
+                    {editing ? <input value={form.cpf} onChange={(e) => handleChange("cpf", e.target.value)} placeholder="000.000.000-00" className={inputClass + " mt-1"} /> : <p className="text-sm text-foreground mt-0.5">{paciente.cpf || "—"}</p>}
+                  </div>
+                </div>
+                <div className="bg-muted/30 rounded-xl p-4 flex items-start gap-3">
+                  <Calendar className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                  <div className="flex-1">
+                    <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Nascimento</p>
+                    {editing ? <input type="date" value={form.data_nascimento} onChange={(e) => handleChange("data_nascimento", e.target.value)} className={inputClass + " mt-1"} /> : <p className="text-sm text-foreground mt-0.5">{paciente.data_nascimento ? new Date(paciente.data_nascimento).toLocaleDateString("pt-BR") : "—"}</p>}
+                  </div>
+                </div>
+                <div className="bg-muted/30 rounded-xl p-4 flex items-start gap-3">
+                  <Phone className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                  <div className="flex-1">
+                    <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Telefone</p>
+                    {editing ? <input value={form.telefone} onChange={(e) => handleChange("telefone", e.target.value)} placeholder="(11) 99999-0000" className={inputClass + " mt-1"} /> : <p className="text-sm text-foreground mt-0.5">{paciente.telefone || "—"}</p>}
+                  </div>
+                </div>
+                <div className="bg-muted/30 rounded-xl p-4 flex items-start gap-3">
+                  <Mail className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                  <div className="flex-1">
+                    <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">E-mail</p>
+                    {editing ? <input type="email" value={form.email} onChange={(e) => handleChange("email", e.target.value)} placeholder="email@exemplo.com" className={inputClass + " mt-1"} /> : <p className="text-sm text-foreground mt-0.5">{paciente.email || "—"}</p>}
+                  </div>
+                </div>
+                <div className="bg-muted/30 rounded-xl p-4 flex items-start gap-3">
+                  <Shield className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                  <div className="flex-1">
+                    <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Convênio</p>
+                    {editing ? <input value={form.convenio} onChange={(e) => handleChange("convenio", e.target.value)} placeholder="Particular" className={inputClass + " mt-1"} /> : <p className="text-sm text-foreground mt-0.5">{paciente.convenio || "Particular"}</p>}
+                  </div>
+                </div>
+                <div className="col-span-1 md:col-span-2 bg-muted/30 rounded-xl p-4 flex items-start gap-3">
+                  <MapPin className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                  <div className="flex-1">
+                    <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Endereço</p>
+                    {editing ? <input value={form.endereco} onChange={(e) => handleChange("endereco", e.target.value)} placeholder="Rua, número — Cidade, UF" className={inputClass + " mt-1"} /> : <p className="text-sm text-foreground mt-0.5">{paciente.endereco || "—"}</p>}
+                  </div>
+                </div>
+              </div>
+              <div className="bg-warning/5 border border-warning/20 rounded-xl p-4">
+                <p className="text-[10px] uppercase tracking-wider text-warning font-semibold mb-1">Observações</p>
                 {editing ? (
-                  <input value={form.nome} onChange={(e) => handleChange("nome", e.target.value)} className={inputClass + " mt-1"} />
+                  <textarea rows={3} value={form.observacoes} onChange={(e) => handleChange("observacoes", e.target.value)} placeholder="Observações relevantes..." className="w-full px-3 py-2 rounded-lg bg-background border border-border/60 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none mt-1" />
                 ) : (
-                  <p className="text-sm text-foreground mt-0.5">{paciente.nome}</p>
+                  <p className="text-xs text-foreground">{paciente.observacoes || "Nenhuma observação."}</p>
                 )}
               </div>
             </div>
+          )}
 
-            {/* CPF */}
-            <div className="bg-muted/30 rounded-xl p-4 flex items-start gap-3">
-              <FileHeart className="h-4 w-4 text-primary mt-0.5 shrink-0" />
-              <div className="flex-1">
-                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">CPF</p>
-                {editing ? (
-                  <input value={form.cpf} onChange={(e) => handleChange("cpf", e.target.value)} placeholder="000.000.000-00" className={inputClass + " mt-1"} />
-                ) : (
-                  <p className="text-sm text-foreground mt-0.5">{paciente.cpf || "—"}</p>
-                )}
-              </div>
-            </div>
-
-            {/* Nascimento */}
-            <div className="bg-muted/30 rounded-xl p-4 flex items-start gap-3">
-              <Calendar className="h-4 w-4 text-primary mt-0.5 shrink-0" />
-              <div className="flex-1">
-                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Nascimento</p>
-                {editing ? (
-                  <input type="date" value={form.data_nascimento} onChange={(e) => handleChange("data_nascimento", e.target.value)} className={inputClass + " mt-1"} />
-                ) : (
-                  <p className="text-sm text-foreground mt-0.5">{paciente.data_nascimento ? new Date(paciente.data_nascimento).toLocaleDateString("pt-BR") : "—"}</p>
-                )}
-              </div>
-            </div>
-
-            {/* Telefone */}
-            <div className="bg-muted/30 rounded-xl p-4 flex items-start gap-3">
-              <Phone className="h-4 w-4 text-primary mt-0.5 shrink-0" />
-              <div className="flex-1">
-                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Telefone</p>
-                {editing ? (
-                  <input value={form.telefone} onChange={(e) => handleChange("telefone", e.target.value)} placeholder="(11) 99999-0000" className={inputClass + " mt-1"} />
-                ) : (
-                  <p className="text-sm text-foreground mt-0.5">{paciente.telefone || "—"}</p>
-                )}
-              </div>
-            </div>
-
-            {/* Email */}
-            <div className="bg-muted/30 rounded-xl p-4 flex items-start gap-3">
-              <Mail className="h-4 w-4 text-primary mt-0.5 shrink-0" />
-              <div className="flex-1">
-                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">E-mail</p>
-                {editing ? (
-                  <input type="email" value={form.email} onChange={(e) => handleChange("email", e.target.value)} placeholder="email@exemplo.com" className={inputClass + " mt-1"} />
-                ) : (
-                  <p className="text-sm text-foreground mt-0.5">{paciente.email || "—"}</p>
-                )}
-              </div>
-            </div>
-
-            {/* Convênio */}
-            <div className="bg-muted/30 rounded-xl p-4 flex items-start gap-3">
-              <Shield className="h-4 w-4 text-primary mt-0.5 shrink-0" />
-              <div className="flex-1">
-                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Convênio</p>
-                {editing ? (
-                  <input value={form.convenio} onChange={(e) => handleChange("convenio", e.target.value)} placeholder="Particular" className={inputClass + " mt-1"} />
-                ) : (
-                  <p className="text-sm text-foreground mt-0.5">{paciente.convenio || "Particular"}</p>
-                )}
-              </div>
-            </div>
-
-            {/* Endereço */}
-            <div className="col-span-1 md:col-span-2 bg-muted/30 rounded-xl p-4 flex items-start gap-3">
-              <MapPin className="h-4 w-4 text-primary mt-0.5 shrink-0" />
-              <div className="flex-1">
-                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Endereço</p>
-                {editing ? (
-                  <input value={form.endereco} onChange={(e) => handleChange("endereco", e.target.value)} placeholder="Rua, número — Cidade, UF" className={inputClass + " mt-1"} />
-                ) : (
-                  <p className="text-sm text-foreground mt-0.5">{paciente.endereco || "—"}</p>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Observações */}
-          <div className="mt-4 bg-warning/5 border border-warning/20 rounded-xl p-4">
-            <p className="text-[10px] uppercase tracking-wider text-warning font-semibold mb-1">Observações</p>
-            {editing ? (
-              <textarea
-                rows={3}
-                value={form.observacoes}
-                onChange={(e) => handleChange("observacoes", e.target.value)}
-                placeholder="Observações relevantes..."
-                className="w-full px-3 py-2 rounded-lg bg-background border border-border/60 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none mt-1"
-              />
-            ) : (
-              <p className="text-xs text-foreground">{paciente.observacoes || "Nenhuma observação."}</p>
-            )}
-          </div>
+          {activeTab === "anamnese" && (
+            <AnamneseTab pacienteId={paciente.id} />
+          )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ─── Anamnese Tab ─── */
+function AnamneseTab({ pacienteId }: { pacienteId: string }) {
+  const [anamnese, setAnamnese] = useState<AnamneseData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const emptyAnamnese: AnamneseData = {
+    paciente_id: pacienteId,
+    alergias: [],
+    medicamentos: [],
+    doencas_preexistentes: [],
+    cirurgias_anteriores: [],
+    fumante: false,
+    etilista: false,
+    gestante: false,
+    diabetes: false,
+    cardiopatia: false,
+    hepatite: false,
+    hiv: false,
+    hemofilia: false,
+    epilepsia: false,
+    pressao_arterial: "",
+    observacoes: "",
+  };
+
+  const [form, setForm] = useState<AnamneseData>(emptyAnamnese);
+  const [alergiasText, setAlergiasText] = useState("");
+  const [medicamentosText, setMedicamentosText] = useState("");
+  const [doencasText, setDoencasText] = useState("");
+  const [cirurgiasText, setCirurgiasText] = useState("");
+
+  const loadAnamnese = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data, error } = await pacientesApi.getAnamnese(pacienteId);
+      if (error) {
+        toast.error("Erro ao carregar anamnese");
+      } else if (data) {
+        setAnamnese(data as AnamneseData);
+        setForm(data as AnamneseData);
+        setAlergiasText((data as AnamneseData).alergias?.join(", ") || "");
+        setMedicamentosText((data as AnamneseData).medicamentos?.join(", ") || "");
+        setDoencasText((data as AnamneseData).doencas_preexistentes?.join(", ") || "");
+        setCirurgiasText((data as AnamneseData).cirurgias_anteriores?.join(", ") || "");
+      }
+    } catch {
+      // No anamnese yet — that's ok
+    } finally {
+      setLoading(false);
+    }
+  }, [pacienteId]);
+
+  useEffect(() => { loadAnamnese(); }, [loadAnamnese]);
+
+  const startEditing = () => {
+    if (anamnese) {
+      setForm(anamnese);
+      setAlergiasText(anamnese.alergias?.join(", ") || "");
+      setMedicamentosText(anamnese.medicamentos?.join(", ") || "");
+      setDoencasText(anamnese.doencas_preexistentes?.join(", ") || "");
+      setCirurgiasText(anamnese.cirurgias_anteriores?.join(", ") || "");
+    } else {
+      setForm(emptyAnamnese);
+      setAlergiasText("");
+      setMedicamentosText("");
+      setDoencasText("");
+      setCirurgiasText("");
+    }
+    setEditing(true);
+  };
+
+  const parseList = (text: string) => text.split(",").map((s) => s.trim()).filter(Boolean);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const payload = {
+        ...form,
+        alergias: parseList(alergiasText),
+        medicamentos: parseList(medicamentosText),
+        doencas_preexistentes: parseList(doencasText),
+        cirurgias_anteriores: parseList(cirurgiasText),
+      };
+      const { data, error } = await pacientesApi.saveAnamnese(pacienteId, payload);
+      if (error) {
+        toast.error("Erro ao salvar: " + error);
+      } else {
+        toast.success("Anamnese salva com sucesso!");
+        setAnamnese(data as AnamneseData);
+        setEditing(false);
+      }
+    } catch {
+      toast.error("Erro de conexão");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="h-5 w-5 animate-spin text-primary" />
+        <span className="ml-2 text-sm text-muted-foreground">Carregando anamnese...</span>
+      </div>
+    );
+  }
+
+  const inputClass = "w-full h-9 px-3 rounded-lg bg-background border border-border/60 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30";
+
+  const boolFields: { label: string; key: keyof AnamneseData; icon: typeof Heart }[] = [
+    { label: "Diabetes", key: "diabetes", icon: Heart },
+    { label: "Cardiopatia", key: "cardiopatia", icon: Heart },
+    { label: "Hepatite", key: "hepatite", icon: Heart },
+    { label: "HIV", key: "hiv", icon: Heart },
+    { label: "Hemofilia", key: "hemofilia", icon: Heart },
+    { label: "Epilepsia", key: "epilepsia", icon: Heart },
+    { label: "Fumante", key: "fumante", icon: Cigarette },
+    { label: "Etilista", key: "etilista", icon: Pill },
+    { label: "Gestante", key: "gestante", icon: Heart },
+  ];
+
+  // View mode
+  if (!editing) {
+    if (!anamnese) {
+      return (
+        <div className="text-center py-16 animate-fade-in">
+          <ClipboardList className="h-10 w-10 text-muted-foreground/30 mx-auto" />
+          <p className="text-sm text-muted-foreground mt-3">Anamnese não preenchida.</p>
+          <button
+            onClick={startEditing}
+            className="mt-4 px-5 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors"
+          >
+            Preencher Anamnese
+          </button>
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-5 animate-fade-in">
+        <div className="flex justify-end">
+          <button
+            onClick={startEditing}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary/10 text-primary text-xs font-semibold hover:bg-primary/20 transition-colors"
+          >
+            <Edit className="h-3.5 w-3.5" />
+            Editar Anamnese
+          </button>
+        </div>
+
+        {/* Alertas */}
+        {((anamnese.alergias?.length ?? 0) > 0 || anamnese.cardiopatia) && (
+          <div className="bg-destructive/5 border border-destructive/20 rounded-xl p-4 flex items-start gap-3">
+            <AlertTriangle className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-semibold text-destructive">Atenção</p>
+              {(anamnese.alergias?.length ?? 0) > 0 && (
+                <p className="text-xs text-destructive/80 mt-1">Alergias: <strong>{anamnese.alergias.join(", ")}</strong></p>
+              )}
+              {anamnese.cardiopatia && (
+                <p className="text-xs text-destructive/80 mt-1">Paciente cardiopata — verificar liberação do cardiologista.</p>
+              )}
+            </div>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <ListCard label="Alergias" icon={AlertTriangle} items={anamnese.alergias} color="destructive" />
+          <ListCard label="Medicamentos" icon={Pill} items={anamnese.medicamentos} color="info" />
+          <ListCard label="Doenças Preexistentes" icon={Heart} items={anamnese.doencas_preexistentes} color="warning" />
+          <ListCard label="Cirurgias Anteriores" icon={History} items={anamnese.cirurgias_anteriores} color="muted" />
+        </div>
+
+        <div>
+          <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-3">Condições</p>
+          <div className="grid grid-cols-3 gap-2">
+            {boolFields.map((f) => {
+              const val = anamnese[f.key] as boolean;
+              return (
+                <div key={f.key} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs ${val ? "bg-destructive/10 text-destructive" : "bg-muted/30 text-muted-foreground"}`}>
+                  {val ? <CheckCircle2 className="h-3.5 w-3.5" /> : <XCircle className="h-3.5 w-3.5" />}
+                  <span className={val ? "font-semibold" : ""}>{f.label}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="bg-muted/30 rounded-xl p-4">
+            <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1">Pressão Arterial</p>
+            <p className="text-lg font-bold text-foreground font-heading">{anamnese.pressao_arterial || "—"} {anamnese.pressao_arterial ? "mmHg" : ""}</p>
+          </div>
+          {anamnese.updated_at && (
+            <div className="bg-muted/30 rounded-xl p-4">
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1">Última Atualização</p>
+              <p className="text-sm text-foreground">{new Date(anamnese.updated_at).toLocaleDateString("pt-BR")}</p>
+            </div>
+          )}
+        </div>
+
+        {anamnese.observacoes && (
+          <div className="bg-warning/5 border border-warning/20 rounded-xl p-4">
+            <p className="text-[10px] uppercase tracking-wider text-warning font-semibold mb-1">Observações</p>
+            <p className="text-xs text-foreground">{anamnese.observacoes}</p>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Edit mode
+  return (
+    <div className="space-y-5 animate-fade-in">
+      <div className="flex justify-end gap-2">
+        <button onClick={() => setEditing(false)} className="px-4 py-2 rounded-xl text-xs font-medium text-muted-foreground hover:bg-muted/60 transition-colors">
+          Cancelar
+        </button>
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors shadow-sm disabled:opacity-50"
+        >
+          {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+          Salvar Anamnese
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="col-span-2">
+          <label className="text-xs font-medium text-muted-foreground mb-1 block">Alergias (separar por vírgula)</label>
+          <input value={alergiasText} onChange={(e) => setAlergiasText(e.target.value)} placeholder="Ex: Dipirona, Amoxicilina" className={inputClass} />
+        </div>
+        <div className="col-span-2">
+          <label className="text-xs font-medium text-muted-foreground mb-1 block">Medicamentos em uso (separar por vírgula)</label>
+          <input value={medicamentosText} onChange={(e) => setMedicamentosText(e.target.value)} placeholder="Ex: Losartana, Metformina" className={inputClass} />
+        </div>
+        <div className="col-span-2">
+          <label className="text-xs font-medium text-muted-foreground mb-1 block">Doenças preexistentes (separar por vírgula)</label>
+          <input value={doencasText} onChange={(e) => setDoencasText(e.target.value)} placeholder="Ex: Hipertensão, Diabetes" className={inputClass} />
+        </div>
+        <div className="col-span-2">
+          <label className="text-xs font-medium text-muted-foreground mb-1 block">Cirurgias anteriores (separar por vírgula)</label>
+          <input value={cirurgiasText} onChange={(e) => setCirurgiasText(e.target.value)} placeholder="Ex: Apendicectomia, Cesariana" className={inputClass} />
+        </div>
+      </div>
+
+      <div>
+        <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-3">Condições</p>
+        <div className="grid grid-cols-3 gap-3">
+          {boolFields.map((f) => (
+            <label key={f.key} className="flex items-center gap-2 text-xs text-foreground cursor-pointer bg-muted/30 rounded-lg px-3 py-2.5 hover:bg-muted/50 transition-colors">
+              <input
+                type="checkbox"
+                checked={form[f.key] as boolean}
+                onChange={(e) => setForm((prev) => ({ ...prev, [f.key]: e.target.checked }))}
+                className="rounded border-border accent-primary"
+              />
+              {f.label}
+            </label>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label className="text-xs font-medium text-muted-foreground mb-1 block">Pressão Arterial</label>
+          <input
+            value={form.pressao_arterial || ""}
+            onChange={(e) => setForm((prev) => ({ ...prev, pressao_arterial: e.target.value }))}
+            placeholder="Ex: 120/80"
+            className={inputClass}
+          />
+        </div>
+      </div>
+
+      <div>
+        <label className="text-xs font-medium text-muted-foreground mb-1 block">Observações</label>
+        <textarea
+          rows={3}
+          value={form.observacoes || ""}
+          onChange={(e) => setForm((prev) => ({ ...prev, observacoes: e.target.value }))}
+          placeholder="Observações relevantes..."
+          className="w-full px-3 py-2 rounded-lg bg-background border border-border/60 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none"
+        />
+      </div>
+    </div>
+  );
+}
+
+/* ─── Helper: List Card ─── */
+function ListCard({ label, icon: Icon, items, color }: { label: string; icon: typeof AlertTriangle; items: string[]; color: string }) {
+  return (
+    <div className="bg-muted/30 rounded-xl p-4">
+      <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-2 flex items-center gap-1.5">
+        <Icon className="h-3 w-3" /> {label}
+      </p>
+      {items && items.length > 0 ? (
+        <div className="flex flex-wrap gap-1.5">
+          {items.map((item) => (
+            <span key={item} className={`px-2.5 py-1 rounded-full text-[11px] font-bold bg-${color}/10 text-${color}`}>
+              {item}
+            </span>
+          ))}
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground">Nenhum(a)</p>
+      )}
     </div>
   );
 }
