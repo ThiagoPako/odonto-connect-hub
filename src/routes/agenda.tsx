@@ -476,7 +476,7 @@ function CalendarView({ filtered, selectedProfessional }: { filtered: Appointmen
 }
 
 /* ===================== APPOINTMENT CARD (Kanban) ===================== */
-function AppointmentCard({ appointment: a }: { appointment: Appointment }) {
+function AppointmentCard({ appointment: a, onAtender, onUpdateStatus }: { appointment: Appointment; onAtender: (a: Appointment) => void; onUpdateStatus: (id: string, status: string) => void }) {
   const cfg = statusConfig[a.status];
   const [showHistory, setShowHistory] = useState(false);
 
@@ -572,8 +572,18 @@ function AppointmentCard({ appointment: a }: { appointment: Appointment }) {
       <div className="flex items-center justify-between text-[10px] text-muted-foreground">
         <span>{a.room} · {a.duration}min</span>
         <div className="flex items-center gap-1">
+          {(a.status === "confirmado" || a.status === "aguardando") && (
+            <button
+              onClick={() => onAtender(a)}
+              className="flex items-center gap-1 px-2 py-1 rounded-md bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+              title="Iniciar atendimento"
+            >
+              <Stethoscope className="h-3 w-3" />
+              <span className="text-[9px] font-medium">Atender</span>
+            </button>
+          )}
           {a.status === "aguardando" && (
-            <button className="p-1 rounded hover:bg-primary/10" title="Check-in">
+            <button onClick={() => onUpdateStatus(a.id, "confirmado")} className="p-1 rounded hover:bg-primary/10" title="Confirmar">
               <UserCheck className="h-3 w-3 text-primary" />
             </button>
           )}
