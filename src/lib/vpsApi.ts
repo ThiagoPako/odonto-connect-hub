@@ -613,6 +613,27 @@ export const queueLeadsApi = {
   list: () => vpsApiFetch<{ queue: any[]; active: any[] }>('/queue/leads', { background: true }),
 };
 
+// ─── Automations ────────────────────────────────────────────
+
+export interface FollowupAutomationConfig {
+  enabled: boolean;
+  stages: string[];
+  messages: Record<string, string>;
+  delaySeconds: number;
+}
+
+export const automationsApi = {
+  /** Get follow-up automation config */
+  getFollowup: () =>
+    vpsApiFetch<FollowupAutomationConfig>('/automations/followup'),
+  /** Update follow-up automation config (admin only) */
+  updateFollowup: (config: Partial<FollowupAutomationConfig>) =>
+    vpsApiFetch<FollowupAutomationConfig>('/automations/followup', {
+      method: 'PUT',
+      body: config,
+    }),
+};
+
 // ─── Health check ───────────────────────────────────────────
 
 export const healthCheck = () => vpsApiFetch('/health');
