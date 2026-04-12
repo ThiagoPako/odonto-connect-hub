@@ -148,11 +148,15 @@ function FollowupAutomationCard({
   const [saving, setSaving] = useState(false);
   const [editMessages, setEditMessages] = useState<Record<string, string>>({});
   const [editDelay, setEditDelay] = useState<number>(30);
+  const [editDelayDays, setEditDelayDays] = useState<Record<string, number>>({});
+  const [editReturnOnReply, setEditReturnOnReply] = useState(true);
 
   useEffect(() => {
     if (config) {
       setEditMessages(config.messages);
       setEditDelay(config.delaySeconds);
+      setEditDelayDays(config.delayDays || {});
+      setEditReturnOnReply(config.returnToQueueOnReply !== false);
     }
   }, [config]);
 
