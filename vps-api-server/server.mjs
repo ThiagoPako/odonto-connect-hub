@@ -3488,7 +3488,85 @@ app.delete('/api/automations/jobs/cancel', async (req, res) => {
   }
 });
 
-// ─── Job Processor (runs every 30s) ────────────────────────────
+// Automation stats/report endpoint
+app.get('/api/automations/stats', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { days = '30' } = req.query;
+    const daysInt = Math.min(parseInt(days) || 30, 365);
+
+    // Overall stats
+    const { rows: [overall] } = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE status = 'sent') AS total_sent,
+        COUNT(*) FILTER (WHERE status = 'failed') AS total_failed,
+        COUNT(*) FILTER (WHERE status = 'pending') AS total_pending,
+        COUNT(*) FILTER (WHERE status = 'cancelled') AS total_cancelled,
+        COUNT(*) AS total_jobs
+      FROM automation_jobs
+      WHERE created_at >= NOW() - INTERVAL '${daysInt} days'
+    `);
+
+    // Per-flow stats
+    const { rows: perFlow } = await pool.query(`
+      SELECT
+        flow_id, flow_name,
+        COUNT(*) AS total,
+        COUNT(*) FILTER (WHERE status = 'sent') AS sent,
+        COUNT(*) FILTER (WHERE status = 'failed') AS failed,
+        COUNT(*) FILTER (WHERE status = 'pending') AS pending
+      FROM automation_jobs
+      WHERE created_at >= NOW() - INTERVAL '${daysInt} days'
+      GROUP BY flow_id, flow_name
+      ORDER BY total DESC
+    `);
+
+    // Daily timeline
+    const { rows: timeline } = await pool.query(`
+      SELECT
+        DATE(scheduled_at) AS date,
+        COUNT(*) FILTER (WHERE status = 'sent') AS sent,
+        COUNT(*) FILTER (WHERE status = 'failed') AS failed,
+        COUNT(*) FILTER (WHERE status = 'pending') AS pending,
+        COUNT(*) AS total
+      FROM automation_jobs
+      WHERE created_at >= NOW() - INTERVAL '${daysInt} days'
+      GROUP BY DATE(scheduled_at)
+      ORDER BY date ASC
+    `);
+
+    // Per-flow stats from automation_flows table (includes responded/converted)
+    const { rows: flowStats } = await pool.query(`
+      SELECT id, name, active,
+        COALESCE((stats->>'sent')::int, 0) AS sent,
+        COALESCE((stats->>'responded')::int, 0) AS responded,
+        COALESCE((stats->>'converted')::int, 0) AS converted
+      FROM automation_flows
+      ORDER BY sent DESC
+    `);
+
+    res.json({
+      overall: {
+        totalJobs: parseInt(overall.total_jobs),
+        totalSent: parseInt(overall.total_sent),
+        totalFailed: parseInt(overall.total_failed),
+        totalPending: parseInt(overall.total_pending),
+        totalCancelled: parseInt(overall.total_cancelled),
+        deliveryRate: parseInt(overall.total_sent) > 0
+          ? ((parseInt(overall.total_sent) / (parseInt(overall.total_sent) + parseInt(overall.total_failed))) * 100).toFixed(1)
+          : '0',
+      },
+      perFlow,
+      timeline,
+      flowStats,
+      period: daysInt,
+    });
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+
 let automationSchedulerInterval = null;
 
 async function processAutomationJobs() {
