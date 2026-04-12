@@ -680,6 +680,21 @@ export const automationsApi = {
       method: 'PUT',
       body: config,
     }),
+  /** List all automation flows */
+  listFlows: () =>
+    vpsApiFetch<import('@/data/automationMockData').AutomationFlow[]>('/automations/flows'),
+  /** Create a new automation flow */
+  createFlow: (flow: import('@/data/automationMockData').AutomationFlow) =>
+    vpsApiFetch<{ success: boolean; id: string }>('/automations/flows', { method: 'POST', body: flow }),
+  /** Update an existing automation flow */
+  updateFlow: (id: string, data: Partial<import('@/data/automationMockData').AutomationFlow>) =>
+    vpsApiFetch<{ success: boolean }>(`/automations/flows/${id}`, { method: 'PUT', body: data }),
+  /** Delete an automation flow */
+  deleteFlow: (id: string) =>
+    vpsApiFetch<{ success: boolean }>(`/automations/flows/${id}`, { method: 'DELETE' }),
+  /** Toggle active status */
+  toggleFlow: (id: string) =>
+    vpsApiFetch<{ success: boolean; active: boolean }>(`/automations/flows/${id}/toggle`, { method: 'PATCH' }),
 };
 
 // ─── Health check ───────────────────────────────────────────

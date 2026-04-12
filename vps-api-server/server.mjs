@@ -3188,6 +3188,109 @@ app.put('/api/automations/followup', async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════
+// AUTOMATION FLOWS CRUD
+// ═══════════════════════════════════════════════════════════════
+
+// List all automation flows
+app.get('/api/automations/flows', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { rows } = await pool.query(
+      `SELECT id, name, description, type, active, trigger_event as trigger, steps, stats, created_at, updated_at
+       FROM automation_flows ORDER BY created_at DESC`
+    );
+    const flows = rows.map(r => ({
+      ...r,
+      steps: typeof r.steps === 'string' ? JSON.parse(r.steps) : r.steps,
+      stats: typeof r.stats === 'string' ? JSON.parse(r.stats) : r.stats,
+      createdAt: r.created_at ? new Date(r.created_at).toLocaleDateString('pt-BR') : '',
+      updatedAt: r.updated_at ? new Date(r.updated_at).toLocaleDateString('pt-BR') : undefined,
+    }));
+    res.json(flows);
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+// Create automation flow
+app.post('/api/automations/flows', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    const { id, name, description, type, active, trigger, steps, stats } = req.body;
+    if (!name) return res.status(400).json({ error: 'name obrigatório' });
+    const flowId = id || `af${Date.now()}`;
+
+    await pool.query(
+      `INSERT INTO automation_flows (id, name, description, type, active, trigger_event, steps, stats, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [flowId, name, description || '', type || 'custom', active || false, trigger || 'Personalizado',
+       JSON.stringify(steps || []), JSON.stringify(stats || {sent:0,responded:0,converted:0}), user.id]
+    );
+    res.json({ success: true, id: flowId });
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+// Update automation flow
+app.put('/api/automations/flows/:id', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { id } = req.params;
+    const { name, description, type, active, trigger, steps } = req.body;
+
+    const sets = [];
+    const vals = [];
+    let idx = 1;
+
+    if (name !== undefined) { sets.push(`name = $${idx++}`); vals.push(name); }
+    if (description !== undefined) { sets.push(`description = $${idx++}`); vals.push(description); }
+    if (type !== undefined) { sets.push(`type = $${idx++}`); vals.push(type); }
+    if (active !== undefined) { sets.push(`active = $${idx++}`); vals.push(active); }
+    if (trigger !== undefined) { sets.push(`trigger_event = $${idx++}`); vals.push(trigger); }
+    if (steps !== undefined) { sets.push(`steps = $${idx++}`); vals.push(JSON.stringify(steps)); }
+    sets.push(`updated_at = NOW()`);
+
+    if (sets.length === 1) return res.json({ success: true }); // only updated_at
+
+    vals.push(id);
+    await pool.query(
+      `UPDATE automation_flows SET ${sets.join(', ')} WHERE id = $${idx}`, vals
+    );
+    res.json({ success: true });
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+// Delete automation flow
+app.delete('/api/automations/flows/:id', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { id } = req.params;
+    await pool.query('DELETE FROM automation_flows WHERE id = $1', [id]);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+// Toggle automation flow active status
+app.patch('/api/automations/flows/:id/toggle', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { id } = req.params;
+    const { rows } = await pool.query(
+      `UPDATE automation_flows SET active = NOT active, updated_at = NOW() WHERE id = $1 RETURNING active`, [id]
+    );
+    if (rows.length === 0) return res.status(404).json({ error: 'Fluxo não encontrado' });
+    res.json({ success: true, active: rows[0].active });
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
 // Update lead kanban stage (manual move)
 app.patch('/api/crm/leads/:id/stage', async (req, res) => {
   try {
@@ -4781,7 +4884,19 @@ app.listen(PORT, async () => {
         updated_at TIMESTAMPTZ DEFAULT NOW()
       )`,
       `ALTER TABLE contatos ADD COLUMN IF NOT EXISTS favorito BOOLEAN DEFAULT false`,
-    ];
+      `CREATE TABLE IF NOT EXISTS automation_flows (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT,
+        type TEXT NOT NULL DEFAULT 'custom',
+        active BOOLEAN DEFAULT false,
+        trigger_event TEXT NOT NULL DEFAULT 'Personalizado',
+        steps JSONB NOT NULL DEFAULT '[]',
+        stats JSONB NOT NULL DEFAULT '{"sent":0,"responded":0,"converted":0}',
+        created_by UUID,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )`,
 
     let applied = 0;
     for (const sql of migrations) {
