@@ -46,7 +46,7 @@ function DashboardPage() {
       <main className="flex-1 p-8 space-y-8 overflow-auto">
 
         {/* === AGENDA DO DIA === */}
-        <section className="animate-fade-in">
+        <section className="animate-slide-up" style={{ animationDelay: '0ms', animationFillMode: 'both' }}>
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
               <CalendarCheck className="h-5 w-5 text-primary" />
@@ -67,7 +67,7 @@ function DashboardPage() {
         </section>
 
         {/* === FINANCEIRO / ORÇAMENTOS === */}
-        <section className="animate-fade-in">
+        <section className="animate-slide-up" style={{ animationDelay: '80ms', animationFillMode: 'both' }}>
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
               <DollarSign className="h-5 w-5 text-primary" />
@@ -87,7 +87,7 @@ function DashboardPage() {
         </section>
 
         {/* === CRM / PACIENTES === */}
-        <section className="animate-fade-in">
+        <section className="animate-slide-up" style={{ animationDelay: '160ms', animationFillMode: 'both' }}>
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
               <Users className="h-5 w-5 text-primary" />
@@ -107,7 +107,7 @@ function DashboardPage() {
         </section>
 
         {/* === GRÁFICOS ANALÍTICOS === */}
-        <section className="animate-fade-in space-y-5">
+        <section className="animate-slide-up space-y-5" style={{ animationDelay: '240ms', animationFillMode: 'both' }}>
           <FaturamentoMensalChart />
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
             <OrcamentoConversaoChart />
@@ -116,7 +116,7 @@ function DashboardPage() {
           </div>
         </section>
 
-        <section className="animate-fade-in">
+        <section className="animate-slide-up" style={{ animationDelay: '320ms', animationFillMode: 'both' }}>
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
               <Package className="h-5 w-5 text-primary" />
