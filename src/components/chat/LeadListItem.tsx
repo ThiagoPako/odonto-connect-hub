@@ -5,6 +5,20 @@ import { LeadAvatar } from "@/components/LeadAvatar";
 
 type PresenceStatus = "online" | "offline" | "typing" | "recording";
 
+const CRM_STAGE_LABELS: Record<string, { label: string; emoji: string; color: string }> = {
+  lead: { label: "Lead", emoji: "📥", color: "#6b7280" },
+  em_atendimento: { label: "Atendimento", emoji: "💬", color: "#3b82f6" },
+  orcamento: { label: "Orçamento", emoji: "📋", color: "#3b82f6" },
+  orcamento_enviado: { label: "Orç. Enviado", emoji: "📨", color: "#8b5cf6" },
+  orcamento_aprovado: { label: "Aprovado", emoji: "✅", color: "#22c55e" },
+  followup: { label: "Follow-up", emoji: "🔄", color: "#f59e0b" },
+  followup_2: { label: "Follow-up 2", emoji: "🔄", color: "#f59e0b" },
+  followup_3: { label: "Follow-up 3", emoji: "🔄", color: "#ef4444" },
+  sem_resposta: { label: "Sem Resposta", emoji: "⏳", color: "#6b7280" },
+  orcamento_reprovado: { label: "Orç. Reprovado", emoji: "❌", color: "#ef4444" },
+  desqualificado: { label: "Desqualificado", emoji: "🚫", color: "#6b7280" },
+};
+
 interface LeadListItemProps {
   lead: Lead;
   isSelected: boolean;
@@ -14,9 +28,10 @@ interface LeadListItemProps {
   tagIds?: string[];
   allTags?: LeadTagApi[];
   presence?: PresenceStatus;
+  crmStage?: string;
 }
 
-export function LeadListItem({ lead, isSelected, onSelect, showAssignButton, onAssign, tagIds = [], allTags = [], presence = "offline" }: LeadListItemProps) {
+export function LeadListItem({ lead, isSelected, onSelect, showAssignButton, onAssign, tagIds = [], allTags = [], presence = "offline", crmStage }: LeadListItemProps) {
   const timeAgo = getTimeAgo(lead.lastMessageTime);
 
   return (
