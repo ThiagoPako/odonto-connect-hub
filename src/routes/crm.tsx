@@ -200,7 +200,26 @@ function GenericKanbanBoard<T extends string>({
               )}
               <div className="flex-1 overflow-y-auto px-2 pb-2 space-y-2">
                 {stageLeads.map((lead) => (
-                  <KanbanCard key={lead.id} lead={lead} onDragStart={() => handleDragStart(lead, stage.id)} />
+                  <KanbanCard
+                    key={lead.id}
+                    lead={lead}
+                    onDragStart={() => handleDragStart(lead, stage.id)}
+                    onLeadAssigned={(leadId, userName, userInitials, avatarUrl) => {
+                      // Move lead to em_atendimento and update assigned info
+                      setLeads((prev) => {
+                        const updated = { ...prev };
+                        // Remove from current stage
+                        for (const key of Object.keys(updated) as T[]) {
+                          updated[key] = updated[key].filter((l) => l.id !== leadId);
+                        }
+                        // Add to em_atendimento with updated info
+                        const targetStage = ("em_atendimento" in updated ? "em_atendimento" : stage.id) as T;
+                        const updatedLead = { ...lead, assignedTo: userName, assignedInitials: userInitials, assignedAvatarUrl: avatarUrl };
+                        updated[targetStage] = [...(updated[targetStage] || []), updatedLead];
+                        return updated;
+                      });
+                    }}
+                  />
                 ))}
               </div>
             </div>
