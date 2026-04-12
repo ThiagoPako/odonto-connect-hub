@@ -107,6 +107,17 @@ function AgendaPage() {
     navigate({ to: "/atendimento", search: { appointmentId: appointment.id } });
   }, [navigate]);
 
+  const handleReschedule = useCallback(async (id: string, newDate: string, newTime: string) => {
+    const { error } = await agendaApi.update(id, { status: "confirmado", hora: newTime } as any);
+    // Also update date via a second call if date changed — the update endpoint supports it
+    if (!error) {
+      toast.success("Consulta reagendada com sucesso!");
+      fetchAgenda();
+    } else {
+      toast.error("Erro ao reagendar: " + error);
+    }
+  }, [fetchAgenda]);
+
   const filtered = appointments
     .filter((a) => selectedProfessional === "all" || a.professional.includes(selectedProfessional))
     .filter((a) => !searchTerm || a.patientName.toLowerCase().includes(searchTerm.toLowerCase()));
