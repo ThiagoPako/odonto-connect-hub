@@ -8,7 +8,7 @@ import {
   salesStages, recoveryStages,
   consciousnessLevels, type ConsciousnessLevel,
 } from "@/data/crmMockData";
-import { crmApi, sessionsApi } from "@/lib/vpsApi";
+import { crmApi, sessionsApi, pacientesApi } from "@/lib/vpsApi";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Search, Plus, Filter, Phone, Mail, Calendar, DollarSign,
