@@ -84,6 +84,22 @@ function ComissoesPage() {
     loadAll();
   };
 
+  const handleCreateComissao = async (data: { dentista_id: string; paciente_id: string; procedimento: string; valor: number; percentual: number }) => {
+    const comissaoValor = (data.valor * data.percentual) / 100;
+    const { error } = await comissoesApi.create({
+      dentista_id: data.dentista_id,
+      paciente_id: data.paciente_id,
+      procedimento: data.procedimento,
+      valor: comissaoValor,
+      percentual: data.percentual,
+      status: 'pendente',
+    });
+    if (error) { toast.error("Erro ao criar comissão: " + error); return; }
+    toast.success("Comissão registrada com sucesso!");
+    setShowAddModal(false);
+    loadAll();
+  };
+
   const profComissoes = (dId: string) => comissoes.filter(c => c.dentista_id === dId);
 
   const filteredEntries = (selectedDentista
