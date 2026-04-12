@@ -95,6 +95,18 @@ function ChatPage() {
     tagsApi.list().then(({ data }) => { if (data) setAvailableTags(data); });
     tagsApi.assignments().then(({ data }) => { if (data) setLeadTagAssignments(data); });
 
+    // Load CRM stages for all leads
+    crmApi.list({ grouped: 'kanban' }).then(({ data }) => {
+      if (!data) return;
+      const stages: Record<string, string> = {};
+      for (const [stage, leads] of Object.entries(data as Record<string, any[]>)) {
+        for (const lead of leads) {
+          stages[lead.id] = stage;
+        }
+      }
+      setCrmStages(stages);
+    });
+
     // Load leads from queue/active from backend
     queueLeadsApi.list().then(({ data }) => {
       if (!data) return;
