@@ -275,6 +275,33 @@ function ComissoesPage() {
             onClose={() => setShowAddModal(false)}
           />
         )}
+
+        {deleteTarget && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+            <div className="bg-card rounded-2xl border border-border/60 shadow-xl w-full max-w-sm mx-4 animate-slide-up p-6 space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-full bg-destructive/15 flex items-center justify-center">
+                  <Trash2 className="h-5 w-5 text-destructive" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-foreground">Excluir Comissão</h3>
+                  <p className="text-xs text-muted-foreground">Esta ação não pode ser desfeita.</p>
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground">Tem certeza que deseja excluir esta comissão permanentemente?</p>
+              <div className="flex justify-end gap-2">
+                <button onClick={() => setDeleteTarget(null)}
+                  className="px-4 py-2 rounded-xl text-xs font-medium border border-border hover:bg-muted transition-colors">
+                  Cancelar
+                </button>
+                <button onClick={handleDelete}
+                  className="px-4 py-2 rounded-xl text-xs font-medium bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors">
+                  Excluir
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );
