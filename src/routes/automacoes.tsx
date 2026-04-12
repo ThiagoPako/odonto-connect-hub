@@ -258,7 +258,6 @@ function AutomacoesPage() {
               onToggleActive={toggleActive}
               counts={solutionCounts}
             />
-            />
           ) : activeTab === "report" ? (
             <AutomationReportPanel />
           ) : (
