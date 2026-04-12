@@ -698,6 +698,9 @@ export const automationsApi = {
   /** Get automation stats/report */
   getStats: (days = 30) =>
     vpsApiFetch<Record<string, unknown>>(`/automations/stats?days=${days}`),
+  /** Get dynamic patient counts for pre-configured solutions */
+  getSolutionCounts: () =>
+    vpsApiFetch<Record<string, number>>('/automations/solution-counts'),
 };
 
 // ─── Broadcast Campaigns (Disparos) ────────────────────────
