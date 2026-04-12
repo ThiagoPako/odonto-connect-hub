@@ -3,13 +3,14 @@ import { DashboardHeader } from "@/components/DashboardHeader";
 import {
   Clock, CheckCircle2, XCircle, UserCheck, Plus, ChevronLeft, ChevronRight,
   Phone, MessageSquare, AlertTriangle, RefreshCw, Search, ExternalLink, History, HeartPulse,
-  LayoutGrid, List, CalendarDays, Stethoscope, Loader2,
+  LayoutGrid, List, CalendarDays, Stethoscope, Loader2, X,
 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import { mockProfessionals, type Appointment } from "@/data/agendaMockData";
 import { getAlergias, getCondicoesCriticas, getHistorico } from "@/data/registroCentral";
 import { agendaApi, type AgendamentoVPS } from "@/lib/vpsApi";
 import { toast } from "sonner";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 export const Route = createFileRoute("/agenda")({
   ssr: false,
@@ -69,6 +70,7 @@ function AgendaPage() {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
   const [dateOffset, setDateOffset] = useState(0);
+  const [showNovoDialog, setShowNovoDialog] = useState(false);
 
   const currentDate = new Date();
   currentDate.setDate(currentDate.getDate() + dateOffset);
@@ -184,7 +186,7 @@ function AgendaPage() {
                 <option key={p.id} value={p.name.split(" ")[1]}>{p.name}</option>
               ))}
             </select>
-            <button className="flex items-center gap-1.5 h-8 px-3 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors">
+            <button onClick={() => setShowNovoDialog(true)} className="flex items-center gap-1.5 h-8 px-3 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors">
               <Plus className="h-3.5 w-3.5" /> Agendar
             </button>
           </div>
@@ -203,6 +205,12 @@ function AgendaPage() {
             {viewMode === "calendario" && <CalendarView filtered={filtered} selectedProfessional={selectedProfessional} />}
           </>
         )}
+        <NovoAgendamentoDialog
+          open={showNovoDialog}
+          onOpenChange={setShowNovoDialog}
+          defaultDate={dateStr}
+          onCreated={fetchAgenda}
+        />
       </main>
     </div>
   );
@@ -611,5 +619,164 @@ function AppointmentCard({ appointment: a, onAtender, onUpdateStatus }: { appoin
         </div>
       </div>
     </div>
+  );
+}
+
+/* ===================== NOVO AGENDAMENTO DIALOG ===================== */
+const PROCEDIMENTOS = [
+  "Consulta avaliação", "Profilaxia", "Restauração", "Extração",
+  "Tratamento de canal", "Implante", "Manutenção ortodôntica",
+  "Instalação aparelho", "Clareamento", "Cirurgia", "Prótese", "Outro",
+];
+
+const SALAS = ["Sala 1", "Sala 2", "Sala 3", "Sala 4"];
+
+const HORARIOS = Array.from({ length: 26 }, (_, i) => {
+  const h = Math.floor(i / 2) + 7;
+  const m = i % 2 === 0 ? "00" : "30";
+  return `${String(h).padStart(2, "0")}:${m}`;
+}).filter((h) => parseInt(h.split(":")[0]) <= 19);
+
+interface NovoAgendamentoForm {
+  paciente_nome: string;
+  paciente_id: string;
+  dentista_id: string;
+  data: string;
+  hora: string;
+  duracao: number;
+  procedimento: string;
+  sala: string;
+  observacoes: string;
+}
+
+function NovoAgendamentoDialog({
+  open, onOpenChange, defaultDate, onCreated,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  defaultDate: string;
+  onCreated: () => void;
+}) {
+  const [form, setForm] = useState<NovoAgendamentoForm>({
+    paciente_nome: "", paciente_id: "",
+    dentista_id: mockProfessionals[0]?.id || "",
+    data: defaultDate, hora: "08:00", duracao: 30,
+    procedimento: "Consulta avaliação", sala: "Sala 1", observacoes: "",
+  });
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (open) setForm((f) => ({ ...f, data: defaultDate }));
+  }, [open, defaultDate]);
+
+  const handleChange = (field: keyof NovoAgendamentoForm, value: string | number) => {
+    setForm((f) => ({ ...f, [field]: value }));
+  };
+
+  const handleSubmit = async () => {
+    if (!form.paciente_nome.trim()) { toast.error("Informe o nome do paciente"); return; }
+    if (!form.dentista_id) { toast.error("Selecione o profissional"); return; }
+    setSaving(true);
+    const prof = mockProfessionals.find((p) => p.id === form.dentista_id);
+    const { error } = await agendaApi.create({
+      paciente_id: form.paciente_id || form.paciente_nome.toLowerCase().replace(/\s+/g, "_"),
+      paciente_nome: form.paciente_nome.trim(),
+      dentista_id: form.dentista_id,
+      dentista_nome: prof?.name || "",
+      data: form.data, hora: form.hora, duracao: form.duracao,
+      procedimento: form.procedimento, sala: form.sala,
+      observacoes: form.observacoes || undefined, status: "agendado",
+    });
+    setSaving(false);
+    if (error) {
+      toast.error("Erro ao criar agendamento: " + error);
+    } else {
+      toast.success("Agendamento criado com sucesso!");
+      onOpenChange(false);
+      setForm({ paciente_nome: "", paciente_id: "", dentista_id: mockProfessionals[0]?.id || "",
+        data: defaultDate, hora: "08:00", duracao: 30, procedimento: "Consulta avaliação",
+        sala: "Sala 1", observacoes: "" });
+      onCreated();
+    }
+  };
+
+  const inputCls = "w-full h-9 px-3 rounded-lg bg-muted border border-border text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary";
+  const labelCls = "text-xs font-medium text-foreground mb-1 block";
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-base">
+            <CalendarDays className="h-4 w-4 text-primary" />
+            Novo Agendamento
+          </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 mt-2">
+          <div>
+            <label className={labelCls}>Paciente *</label>
+            <input type="text" placeholder="Nome do paciente" value={form.paciente_nome}
+              onChange={(e) => handleChange("paciente_nome", e.target.value)} className={inputCls} maxLength={100} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={labelCls}>Data *</label>
+              <input type="date" value={form.data} onChange={(e) => handleChange("data", e.target.value)} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Horário *</label>
+              <select value={form.hora} onChange={(e) => handleChange("hora", e.target.value)} className={inputCls}>
+                {HORARIOS.map((h) => <option key={h} value={h}>{h}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={labelCls}>Profissional *</label>
+              <select value={form.dentista_id} onChange={(e) => handleChange("dentista_id", e.target.value)} className={inputCls}>
+                {mockProfessionals.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>Duração</label>
+              <select value={form.duracao} onChange={(e) => handleChange("duracao", parseInt(e.target.value))} className={inputCls}>
+                {[15,30,45,60,90,120].map((d) => <option key={d} value={d}>{d} min</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={labelCls}>Procedimento</label>
+              <select value={form.procedimento} onChange={(e) => handleChange("procedimento", e.target.value)} className={inputCls}>
+                {PROCEDIMENTOS.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>Sala</label>
+              <select value={form.sala} onChange={(e) => handleChange("sala", e.target.value)} className={inputCls}>
+                {SALAS.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className={labelCls}>Observações</label>
+            <textarea placeholder="Observações opcionais..." value={form.observacoes}
+              onChange={(e) => handleChange("observacoes", e.target.value)}
+              className={`${inputCls} h-16 resize-none py-2`} maxLength={500} />
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <button onClick={() => onOpenChange(false)}
+              className="h-9 px-4 rounded-lg text-xs font-medium text-muted-foreground hover:bg-muted transition-colors">
+              Cancelar
+            </button>
+            <button onClick={handleSubmit} disabled={saving}
+              className="h-9 px-5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-2">
+              {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              Criar Agendamento
+            </button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
