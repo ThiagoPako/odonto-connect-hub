@@ -108,8 +108,7 @@ function AgendaPage() {
   }, [navigate]);
 
   const handleReschedule = useCallback(async (id: string, newDate: string, newTime: string) => {
-    const { error } = await agendaApi.update(id, { status: "confirmado", hora: newTime } as any);
-    // Also update date via a second call if date changed — the update endpoint supports it
+    const { error } = await agendaApi.update(id, { status: "confirmado", hora: newTime, data: newDate });
     if (!error) {
       toast.success("Consulta reagendada com sucesso!");
       fetchAgenda();
