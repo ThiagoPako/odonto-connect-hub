@@ -4,9 +4,12 @@ import { DashboardHeader } from "@/components/DashboardHeader";
 import {
   Plus, Search, DollarSign, CheckCircle2, XCircle, Clock, TrendingUp,
   FileText, ChevronRight, CreditCard, ExternalLink, AlertTriangle,
+  Loader2,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { mockBudgets, type Budget } from "@/data/orcamentoMockData";
+import { orcamentosApi } from "@/lib/vpsApi";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/orcamentos")({
   ssr: false,
