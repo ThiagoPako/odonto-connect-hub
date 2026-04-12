@@ -6070,6 +6070,68 @@ app.get('/api/ai/reports/:patientId', async (req, res) => {
   }
 });
 
+// ─── Consultations — finalize & history ─────────────────────
+
+// POST /api/consultations — save a finalized consultation
+app.post('/api/consultations', async (req, res) => {
+  try {
+    const user = await verifyUser(req);
+    const {
+      patient_id, patient_name, appointment_id,
+      queixa_principal, procedimento, dente_regiao, observacoes,
+      prescricoes, duration_seconds, gravacoes_count,
+      clinical_report_id, started_at,
+    } = req.body;
+
+    if (!patient_id) return res.status(400).json({ error: 'patient_id é obrigatório' });
+
+    const { rows } = await pool.query(
+      `INSERT INTO consultations
+        (patient_id, patient_name, appointment_id, dentist_id, dentist_name,
+         queixa_principal, procedimento, dente_regiao, observacoes,
+         prescricoes, duration_seconds, gravacoes_count, clinical_report_id,
+         started_at, finished_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW())
+       RETURNING id, finished_at`,
+      [
+        patient_id, patient_name || null, appointment_id || null,
+        user.id, user.name,
+        queixa_principal || null, procedimento || null, dente_regiao || null, observacoes || null,
+        JSON.stringify(prescricoes || []), duration_seconds || 0, gravacoes_count || 0,
+        clinical_report_id || null, started_at || null,
+      ]
+    );
+
+    res.json({ id: rows[0].id, finished_at: rows[0].finished_at });
+  } catch (err) {
+    if (err.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('❌ Error saving consultation:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/consultations/:patientId — consultation history for a patient
+app.get('/api/consultations/:patientId', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { patientId } = req.params;
+    const { rows } = await pool.query(
+      `SELECT id, patient_name, dentist_name, queixa_principal, procedimento,
+              dente_regiao, observacoes, prescricoes, duration_seconds,
+              gravacoes_count, clinical_report_id, status, started_at, finished_at
+       FROM consultations
+       WHERE patient_id = $1
+       ORDER BY finished_at DESC
+       LIMIT 50`,
+      [patientId]
+    );
+    res.json(rows);
+  } catch (err) {
+    if (err.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── Generate AI follow-up messages based on clinical report ─
 app.post('/api/ai/followup-messages', async (req, res) => {
   try {
