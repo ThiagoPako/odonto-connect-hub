@@ -168,6 +168,53 @@ function AtendimentoPage() {
     }
   }, [gravacoes, queixaPrincipal, procedimentoRealizado, dente, prescricoes, pacienteSelecionado, tempoAtendimento]);
 
+  const handleGerarFollowup = useCallback(async () => {
+    if (!aiState.reportId || !pacienteSelecionado) return;
+    setFollowupState(prev => ({ ...prev, status: 'generating', error: '' }));
+    try {
+      const { data, error } = await aiApi.generateFollowupMessages({
+        reportId: aiState.reportId,
+        patientName: pacienteSelecionado.nome,
+        patientPhone: pacienteSelecionado.telefone,
+      });
+      if (error || !data) {
+        setFollowupState(prev => ({ ...prev, status: 'error', error: error || 'Erro ao gerar mensagens' }));
+        toast.error(error || 'Erro ao gerar follow-up');
+        return;
+      }
+      setFollowupState(prev => ({ ...prev, status: 'ready', messages: data.messages || [], summary: data.summary || '' }));
+      toast.success('Mensagens de follow-up geradas!');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Erro desconhecido';
+      setFollowupState(prev => ({ ...prev, status: 'error', error: msg }));
+      toast.error(msg);
+    }
+  }, [aiState.reportId, pacienteSelecionado]);
+
+  const handleAgendarFollowup = useCallback(async () => {
+    if (!aiState.reportId || !pacienteSelecionado || followupState.messages.length === 0) return;
+    setFollowupState(prev => ({ ...prev, status: 'scheduling' }));
+    try {
+      const { data, error } = await aiApi.scheduleFollowup({
+        reportId: aiState.reportId,
+        patientName: pacienteSelecionado.nome,
+        patientPhone: pacienteSelecionado.telefone,
+        messages: followupState.messages,
+      });
+      if (error || !data) {
+        setFollowupState(prev => ({ ...prev, status: 'error', error: error || 'Erro ao agendar' }));
+        toast.error(error || 'Erro ao agendar follow-up');
+        return;
+      }
+      setFollowupState(prev => ({ ...prev, status: 'scheduled', jobs: data.jobs || [] }));
+      toast.success(`${data.jobs?.length || 0} mensagens de follow-up agendadas!`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Erro desconhecido';
+      setFollowupState(prev => ({ ...prev, status: 'error', error: msg }));
+      toast.error(msg);
+    }
+  }, [aiState.reportId, pacienteSelecionado, followupState.messages]);
+
   const adicionarPrescricao = useCallback(() => {
     if (!novaPrescricao.medicamento) return;
     setPrescricoes(prev => [...prev, { ...novaPrescricao, id: `rx-${Date.now()}` }]);
