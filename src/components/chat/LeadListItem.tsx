@@ -111,20 +111,6 @@ export function LeadListItem({ lead, isSelected, onSelect, showAssignButton, onA
           <p className="text-xs text-muted-foreground truncate leading-relaxed">{lead.lastMessage}</p>
         )}
 
-        {tagIds.length > 0 && (
-          <div className="flex items-center gap-1 mt-1 flex-wrap">
-            {allTags.filter((t) => tagIds.includes(t.id)).map((tag) => (
-              <span
-                key={tag.id}
-                className="inline-flex items-center gap-0.5 px-1.5 py-0 rounded-full text-[9px] font-semibold text-white leading-4 shadow-sm"
-                style={{ backgroundColor: tag.color }}
-              >
-                {tag.icon} {tag.name}
-              </span>
-            ))}
-          </div>
-        )}
-
         {lead.queueName && (
           <span
             className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-semibold text-white mt-1 shadow-sm"
