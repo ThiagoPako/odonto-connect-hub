@@ -567,62 +567,66 @@ function FlowCard({
   flow: AutomationFlow; isSelected: boolean; onSelect: () => void; onToggle: () => void;
   onDelete: () => void; onDuplicate: () => void; onEdit: () => void;
 }) {
-  const typeInfo = automationTypes.find((t) => t.id === flow.type);
+  const iconData = solutionIconMap[flow.type] || { icon: Zap, gradient: "from-primary to-primary-glow", bg: "bg-primary/10" };
+  const TypeIcon = iconData.icon;
   const [showActions, setShowActions] = useState(false);
+  const responseRate = flow.stats.sent > 0 ? ((flow.stats.responded / flow.stats.sent) * 100).toFixed(0) : "0";
 
   return (
     <div
       onClick={onSelect}
       onMouseEnter={() => setShowActions(true)}
       onMouseLeave={() => setShowActions(false)}
-      className={`bg-card rounded-xl border p-4 cursor-pointer transition-all ${
-        isSelected ? "border-primary ring-1 ring-primary/20" : "border-border hover:border-primary/40"
+      className={`group bg-card rounded-2xl border p-4 cursor-pointer transition-all duration-200 hover:shadow-card-hover ${
+        isSelected ? "border-primary shadow-card ring-1 ring-primary/20" : "border-border hover:border-primary/30"
       }`}
     >
-      <div className="flex items-start justify-between mb-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className={`h-2 w-2 rounded-full shrink-0 ${flow.active ? "bg-success" : "bg-muted-foreground/40"}`} />
-          <span className="text-sm font-medium text-foreground truncate">{flow.name}</span>
+      <div className="flex items-start gap-3">
+        <div className={`h-9 w-9 rounded-xl bg-gradient-to-br ${iconData.gradient} flex items-center justify-center shrink-0`}>
+          <TypeIcon className="h-4 w-4 text-primary-foreground" strokeWidth={1.8} />
         </div>
-        <div className="flex items-center gap-1 shrink-0">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-0.5">
+            <span className="text-sm font-semibold text-foreground truncate font-heading">{flow.name}</span>
+            {flow.active && (
+              <span className="relative flex h-2 w-2 shrink-0">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-success" />
+              </span>
+            )}
+          </div>
+          {flow.description && (
+            <p className="text-[11px] text-muted-foreground mb-2 line-clamp-1">{flow.description}</p>
+          )}
+          <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+            <span className="flex items-center gap-1"><Send className="h-3 w-3" /> {flow.stats.sent}</span>
+            <span className="flex items-center gap-1"><MessageSquare className="h-3 w-3" /> {responseRate}%</span>
+            <span className="text-[10px] text-muted-foreground/70">{flow.steps.length} etapas</span>
+          </div>
+        </div>
+        <div className="flex items-center gap-0.5 shrink-0">
           {showActions && (
             <>
-              <button
-                onClick={(e) => { e.stopPropagation(); onEdit(); }}
-                className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-                title="Editar"
-              >
-                <Edit2 className="h-3 w-3" />
+              <button onClick={(e) => { e.stopPropagation(); onEdit(); }} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors" title="Editar">
+                <Edit2 className="h-3.5 w-3.5" />
               </button>
-              <button
-                onClick={(e) => { e.stopPropagation(); onDuplicate(); }}
-                className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-                title="Duplicar"
-              >
-                <Copy className="h-3 w-3" />
+              <button onClick={(e) => { e.stopPropagation(); onDuplicate(); }} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors" title="Duplicar">
+                <Copy className="h-3.5 w-3.5" />
               </button>
               <AlertDialog>
                 <AlertDialogTrigger asChild>
-                  <button
-                    onClick={(e) => e.stopPropagation()}
-                    className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
-                    title="Excluir"
-                  >
-                    <Trash2 className="h-3 w-3" />
+                  <button onClick={(e) => e.stopPropagation()} className="p-1.5 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors" title="Excluir">
+                    <Trash2 className="h-3.5 w-3.5" />
                   </button>
                 </AlertDialogTrigger>
                 <AlertDialogContent>
                   <AlertDialogHeader>
                     <AlertDialogTitle>Excluir fluxo</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      Tem certeza que deseja excluir "{flow.name}"? Esta ação não pode ser desfeita.
-                    </AlertDialogDescription>
+                    <AlertDialogDescription>Tem certeza que deseja excluir "{flow.name}"? Esta ação não pode ser desfeita.</AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
                     <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                    <AlertDialogAction onClick={onDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-                      Excluir
-                    </AlertDialogAction>
+                    <AlertDialogAction onClick={onDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Excluir</AlertDialogAction>
                   </AlertDialogFooter>
                 </AlertDialogContent>
               </AlertDialog>
@@ -630,33 +634,16 @@ function FlowCard({
           )}
           <button
             onClick={(e) => { e.stopPropagation(); onToggle(); }}
-            className={`p-1.5 rounded-lg transition-colors ${
-              flow.active ? "bg-success/15 text-success hover:bg-success/25" : "bg-muted text-muted-foreground hover:bg-muted/80"
-            }`}
+            className={`p-1.5 rounded-xl transition-colors ${flow.active ? "bg-success/15 text-success hover:bg-success/25" : "bg-muted text-muted-foreground hover:bg-muted/80"}`}
             title={flow.active ? "Pausar" : "Ativar"}
           >
-            {flow.active ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
+            {flow.active ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
           </button>
         </div>
-      </div>
-      {flow.description && (
-        <p className="text-[11px] text-muted-foreground mb-2 line-clamp-1">{flow.description}</p>
-      )}
-      <div className="flex items-center gap-2 mb-2">
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-muted text-muted-foreground">
-          {typeInfo?.icon} {typeInfo?.label}
-        </span>
-        <span className="text-[10px] text-muted-foreground">{flow.steps.length} etapas</span>
-      </div>
-      <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
-        <span className="flex items-center gap-1"><Send className="h-3 w-3" /> {flow.stats.sent}</span>
-        <span className="flex items-center gap-1"><MessageSquare className="h-3 w-3" /> {flow.stats.responded}</span>
-        <span className="flex items-center gap-1"><CheckCircle2 className="h-3 w-3" /> {flow.stats.converted}</span>
       </div>
     </div>
   );
 }
-
 // ─── Flow Detail (read-only view) ──────────────────────────
 
 function FlowDetail({ flow, onEdit, onDelete }: { flow: AutomationFlow; onEdit: () => void; onDelete: () => void }) {
