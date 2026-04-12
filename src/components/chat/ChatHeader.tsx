@@ -50,7 +50,7 @@ interface ChatHeaderProps {
   onStageChange?: (leadId: string, stage: string) => void;
 }
 
-export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onReturnToQueue, leadTagIds = [], onToggleTag, messages = [], presence = "offline", lastSeen, crmStage, onStageChange }: ChatHeaderProps) {
+export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onReturnToQueue, messages = [], presence = "offline", lastSeen, crmStage, onStageChange }: ChatHeaderProps) {
   const { user: currentUser } = useAuth();
   const { connected: connectedInstances } = useWhatsAppInstances();
   const [calling, setCalling] = useState(false);
