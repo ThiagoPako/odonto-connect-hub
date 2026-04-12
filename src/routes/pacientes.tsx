@@ -182,16 +182,35 @@ function PacientesPage() {
         </div>
 
         {/* Search + Actions */}
-        <div className="flex items-center justify-between gap-4">
-          <div className="relative flex-1 max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <input
-              type="text"
-              placeholder="Buscar por nome, CPF ou telefone..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full h-10 pl-10 pr-4 rounded-xl bg-card border border-border/60 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
-            />
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            <div className="relative flex-1 max-w-md">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <input
+                type="text"
+                placeholder="Buscar por nome, CPF ou telefone..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full h-10 pl-10 pr-4 rounded-xl bg-card border border-border/60 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+              />
+            </div>
+            <button
+              onClick={() => setShowFilters(!showFilters)}
+              className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl border text-xs font-semibold transition-colors ${
+                hasActiveFilters
+                  ? "bg-primary/10 border-primary/30 text-primary"
+                  : "bg-card border-border/60 text-muted-foreground hover:text-foreground hover:border-border"
+              }`}
+            >
+              <Filter className="h-3.5 w-3.5" />
+              Filtros
+              {hasActiveFilters && (
+                <span className="ml-1 h-4 w-4 rounded-full bg-primary text-primary-foreground text-[9px] flex items-center justify-center font-bold">
+                  {[filterConvenio, filterSexo, filterIdadeMin || filterIdadeMax].filter(Boolean).length}
+                </span>
+              )}
+              <ChevronDown className={`h-3 w-3 transition-transform ${showFilters ? "rotate-180" : ""}`} />
+            </button>
           </div>
           <button
             onClick={() => setShowForm(true)}
@@ -201,6 +220,82 @@ function PacientesPage() {
             Novo Paciente
           </button>
         </div>
+
+        {/* Advanced Filters */}
+        {showFilters && (
+          <div className="bg-card rounded-xl border border-border/60 p-4 animate-fade-in shadow-sm">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Filtros Avançados</p>
+              {hasActiveFilters && (
+                <button
+                  onClick={() => { setFilterConvenio(""); setFilterSexo(""); setFilterIdadeMin(""); setFilterIdadeMax(""); }}
+                  className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <RotateCcw className="h-3 w-3" />
+                  Limpar filtros
+                </button>
+              )}
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              <div>
+                <label className="text-[10px] font-medium text-muted-foreground mb-1 block uppercase tracking-wider">Convênio</label>
+                <select
+                  value={filterConvenio}
+                  onChange={(e) => setFilterConvenio(e.target.value)}
+                  className="w-full h-9 px-3 rounded-lg bg-background border border-border/60 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                >
+                  <option value="">Todos</option>
+                  <option value="__particular">Particular (sem convênio)</option>
+                  {convenios.map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] font-medium text-muted-foreground mb-1 block uppercase tracking-wider">Sexo</label>
+                <select
+                  value={filterSexo}
+                  onChange={(e) => setFilterSexo(e.target.value)}
+                  className="w-full h-9 px-3 rounded-lg bg-background border border-border/60 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                >
+                  <option value="">Todos</option>
+                  <option value="masculino">Masculino</option>
+                  <option value="feminino">Feminino</option>
+                  <option value="outro">Outro</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] font-medium text-muted-foreground mb-1 block uppercase tracking-wider">Idade mínima</label>
+                <input
+                  type="number"
+                  min="0"
+                  max="120"
+                  value={filterIdadeMin}
+                  onChange={(e) => setFilterIdadeMin(e.target.value)}
+                  placeholder="Ex: 18"
+                  className="w-full h-9 px-3 rounded-lg bg-background border border-border/60 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-medium text-muted-foreground mb-1 block uppercase tracking-wider">Idade máxima</label>
+                <input
+                  type="number"
+                  min="0"
+                  max="120"
+                  value={filterIdadeMax}
+                  onChange={(e) => setFilterIdadeMax(e.target.value)}
+                  placeholder="Ex: 65"
+                  className="w-full h-9 px-3 rounded-lg bg-background border border-border/60 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                />
+              </div>
+            </div>
+            {hasActiveFilters && (
+              <p className="text-[10px] text-muted-foreground mt-3">
+                {filtered.length} paciente{filtered.length !== 1 ? "s" : ""} encontrado{filtered.length !== 1 ? "s" : ""}
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Loading */}
         {loading && (
