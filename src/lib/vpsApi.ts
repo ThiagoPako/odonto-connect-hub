@@ -701,6 +701,12 @@ export const automationsApi = {
   /** Get dynamic patient counts for pre-configured solutions */
   getSolutionCounts: () =>
     vpsApiFetch<Record<string, number>>('/automations/solution-counts'),
+  /** Get solution business hours config */
+  getSolutionHours: () =>
+    vpsApiFetch<{ inicio: string; fim: string; diasSemana: string[] }>('/automations/solution-hours'),
+  /** Update solution business hours config */
+  updateSolutionHours: (config: { inicio: string; fim: string; diasSemana: string[] }) =>
+    vpsApiFetch<{ inicio: string; fim: string; diasSemana: string[] }>('/automations/solution-hours', { method: 'PUT', body: config }),
 };
 
 // ─── Broadcast Campaigns (Disparos) ────────────────────────
