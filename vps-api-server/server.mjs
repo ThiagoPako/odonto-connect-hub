@@ -2789,6 +2789,71 @@ app.post('/api/webhook/evolution', async (req, res) => {
       }
     }
 
+    // ─── Auto-return from recovery stage to queue with priority ───
+    if (followupAutomationConfig.returnToQueueOnReply) {
+      try {
+        const { rows: leadStage } = await pool.query('SELECT kanban_stage FROM crm_leads WHERE id = $1', [lead.id]);
+        const currentStage = leadStage[0]?.kanban_stage;
+        if (currentStage && RECOVERY_STAGES.includes(currentStage)) {
+          // Move lead back to "lead" stage (top of funnel)
+          await pool.query(
+            `UPDATE crm_leads SET kanban_stage = 'em_atendimento', status = 'em_atendimento', priority = true, updated_at = NOW() WHERE id = $1`,
+            [lead.id]
+          );
+          // Log movement
+          await pool.query(
+            `INSERT INTO kanban_movements (lead_id, from_stage, to_stage, moved_by_name, reason)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [lead.id, currentStage, 'em_atendimento', 'Sistema (Auto-retorno)', 'Cliente respondeu durante recuperação — retornou à fila com prioridade']
+          ).catch(() => {});
+          // Add "Recuperação de Lead" tag
+          try {
+            // Ensure the tag exists
+            const { rows: existingTag } = await pool.query(
+              "SELECT id FROM lead_tags WHERE name = 'Recuperação de Lead' LIMIT 1"
+            );
+            let tagId;
+            if (existingTag.length > 0) {
+              tagId = existingTag[0].id;
+            } else {
+              tagId = crypto.randomUUID();
+              await pool.query(
+                "INSERT INTO lead_tags (id, name, color) VALUES ($1, $2, $3)",
+                [tagId, 'Recuperação de Lead', '#F59E0B']
+              );
+            }
+            // Assign tag to lead
+            await pool.query(
+              "INSERT INTO lead_tag_assignments (lead_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+              [lead.id.toString(), tagId]
+            );
+          } catch (tagErr) {
+            console.error('Failed to assign recovery tag:', tagErr.message);
+          }
+
+          // Create a new waiting session so lead appears at top of queue
+          const sessionId = crypto.randomUUID();
+          await pool.query(
+            `INSERT INTO attendance_sessions (id, lead_id, lead_phone, status, started_waiting_at)
+             VALUES ($1, $2, $3, 'waiting', NOW())
+             ON CONFLICT DO NOTHING`,
+            [sessionId, lead.id.toString(), phone]
+          ).catch(() => {});
+
+          console.log(`🔄 Lead ${lead.name} (${phone}) replied from recovery stage ${currentStage} → returned to queue with priority`);
+          broadcastSSE('lead_returned_from_recovery', {
+            leadId: lead.id,
+            leadName: lead.name || pushName,
+            phone,
+            fromStage: currentStage,
+            timestamp: new Date().toISOString(),
+          });
+        }
+      } catch (recoveryErr) {
+        console.error('Recovery auto-return error:', recoveryErr.message);
+      }
+    }
+
     // ─── Normal message (queue already assigned) ───
     await persistIncomingMessage({
       msgId,
