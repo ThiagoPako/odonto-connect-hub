@@ -544,14 +544,16 @@ function FollowupAutomationCard({
 
 function MiniKpi({ icon: Icon, label, value, total, highlight }: { icon: React.ElementType; label: string; value: string; total?: string; highlight?: boolean }) {
   return (
-    <div className="bg-card rounded-xl border border-border p-4 space-y-1">
-      <div className="flex items-center gap-2 text-muted-foreground">
-        <Icon className="h-4 w-4" />
-        <span className="text-[11px] font-medium">{label}</span>
+    <div className="flex items-center gap-3 bg-card rounded-2xl border border-border p-3.5 shadow-card">
+      <div className={`h-10 w-10 rounded-xl flex items-center justify-center shrink-0 ${highlight ? "gradient-primary" : "bg-muted"}`}>
+        <Icon className={`h-4.5 w-4.5 ${highlight ? "text-primary-foreground" : "text-muted-foreground"}`} />
       </div>
-      <div className="flex items-baseline gap-1">
-        <p className={`text-lg font-bold ${highlight ? "text-success" : "text-foreground"}`}>{value}</p>
-        {total && <span className="text-xs text-muted-foreground">/ {total}</span>}
+      <div className="min-w-0">
+        <p className="text-[11px] text-muted-foreground">{label}</p>
+        <div className="flex items-baseline gap-1">
+          <p className={`text-lg font-bold font-heading ${highlight ? "gradient-text" : "text-foreground"}`}>{value}</p>
+          {total && <span className="text-xs text-muted-foreground">/ {total}</span>}
+        </div>
       </div>
     </div>
   );
