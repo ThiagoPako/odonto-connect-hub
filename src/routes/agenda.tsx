@@ -70,6 +70,7 @@ function AgendaPage() {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
   const [dateOffset, setDateOffset] = useState(0);
+  const [showNovoDialog, setShowNovoDialog] = useState(false);
 
   const currentDate = new Date();
   currentDate.setDate(currentDate.getDate() + dateOffset);
