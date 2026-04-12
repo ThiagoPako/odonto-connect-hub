@@ -109,14 +109,11 @@ function ConsultaPage() {
         nome: apt.patientName,
         telefone: apt.phone,
         email: "",
-        dataNascimento: "",
+        dataNascimento: new Date(),
         cpf: "",
         endereco: "",
-        convenio: "",
-        ultimaConsulta: "",
-        status: "ativo",
-        sexo: "M",
-        criadoEm: "",
+        sexo: "masculino",
+        criadoEm: new Date(),
       });
     }
     setProcedimentoRealizado(apt.procedure);
