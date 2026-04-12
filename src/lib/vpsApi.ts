@@ -202,7 +202,14 @@ export const dashboardApi = {
 export const crmApi = {
   list: (params?: Record<string, string>) => vpsApiFetch('/crm/leads', { params }),
   kanban: () => vpsApiFetch('/crm/leads', { params: { grouped: 'kanban' } }),
-  updateStage: (id: string, stage: string) => vpsApiFetch(`/crm/leads/${id}/stage`, { method: 'PATCH', body: { stage } }),
+  updateStage: (id: string, stage: string, reason?: string) =>
+    vpsApiFetch(`/crm/leads/${id}/stage`, { method: 'PATCH', body: { stage, reason } }),
+  updateConsciousness: (id: string, level: string) =>
+    vpsApiFetch(`/crm/leads/${id}/consciousness`, { method: 'PATCH', body: { level } }),
+  assign: (id: string, assignedTo: string, assignedToName: string) =>
+    vpsApiFetch(`/crm/leads/${id}/assign`, { method: 'PATCH', body: { assignedTo, assignedToName } }),
+  movements: (id: string) =>
+    vpsApiFetch<Array<{ id: string; from_stage: string; to_stage: string; moved_by_name: string; reason: string; created_at: string }>>(`/crm/leads/${id}/movements`),
 };
 
 // ─── WhatsApp (via proxy) ───────────────────────────────────
