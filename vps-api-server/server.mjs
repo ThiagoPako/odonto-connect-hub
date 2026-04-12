@@ -4573,8 +4573,50 @@ app.get('/api/health', async (_req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
-// START SERVER
+// USER PREFERENCES (notification settings sync)
 // ═══════════════════════════════════════════════════════════════
+
+app.get('/api/user/preferences', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    const { rows } = await pool.query(
+      'SELECT sound_enabled, sound_type, sound_volume, recovery_sound_enabled, push_enabled FROM user_preferences WHERE user_id = $1',
+      [user.id]
+    );
+    if (rows.length === 0) {
+      return res.json({ sound_enabled: true, sound_type: 'ding', sound_volume: 70, recovery_sound_enabled: true, push_enabled: true });
+    }
+    res.json(rows[0]);
+  } catch (err) {
+    if (err.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/user/preferences', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    const { sound_enabled, sound_type, sound_volume, recovery_sound_enabled, push_enabled } = req.body;
+    await pool.query(`
+      INSERT INTO user_preferences (user_id, sound_enabled, sound_type, sound_volume, recovery_sound_enabled, push_enabled, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, NOW())
+      ON CONFLICT (user_id) DO UPDATE SET
+        sound_enabled = EXCLUDED.sound_enabled,
+        sound_type = EXCLUDED.sound_type,
+        sound_volume = EXCLUDED.sound_volume,
+        recovery_sound_enabled = EXCLUDED.recovery_sound_enabled,
+        push_enabled = EXCLUDED.push_enabled,
+        updated_at = NOW()
+    `, [user.id, sound_enabled, sound_type, sound_volume, recovery_sound_enabled, push_enabled]);
+    res.json({ ok: true });
+  } catch (err) {
+    if (err.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// START SERVER
 
 app.listen(PORT, async () => {
   console.log(`🦷 Odonto Connect API running on port ${PORT}`);
