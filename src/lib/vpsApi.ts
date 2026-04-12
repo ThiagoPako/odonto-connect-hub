@@ -271,6 +271,8 @@ export const crmApi = {
     vpsApiFetch(`/crm/leads/${id}/assign`, { method: 'PATCH', body: { assignedTo, assignedToName } }),
   movements: (id: string) =>
     vpsApiFetch<Array<{ id: string; from_stage: string; to_stage: string; moved_by_name: string; reason: string; created_at: string }>>(`/crm/leads/${id}/movements`),
+  convertToPatient: (id: string) =>
+    vpsApiFetch<{ success: boolean; paciente_id: string; nome: string }>(`/crm/leads/${id}/convert-to-patient`, { method: 'POST' }),
 };
 
 // ─── Orçamentos ─────────────────────────────────────────────

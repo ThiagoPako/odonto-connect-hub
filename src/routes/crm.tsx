@@ -8,13 +8,13 @@ import {
   salesStages, recoveryStages,
   consciousnessLevels, type ConsciousnessLevel,
 } from "@/data/crmMockData";
-import { crmApi, sessionsApi } from "@/lib/vpsApi";
+import { crmApi, sessionsApi, pacientesApi } from "@/lib/vpsApi";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Search, Plus, Filter, Phone, Mail, Calendar, DollarSign,
   ChevronRight, MoreHorizontal, UserPlus, ExternalLink,
   Clock, MessageSquare, GripVertical, RefreshCw, RotateCcw,
-  TrendingUp, Target, Loader2,
+  TrendingUp, Target, Loader2, UserCheck,
 } from "lucide-react";
 import { toast } from "sonner";
 import { whatsappApi } from "@/lib/vpsApi";
@@ -306,8 +306,11 @@ function KanbanCard({ lead, stageId, onDragStart, onLeadAssigned }: { lead: Kanb
   const [showLevelMenu, setShowLevelMenu] = useState(false);
   const [currentLevel, setCurrentLevel] = useState<ConsciousnessLevel | undefined>(lead.consciousnessLevel);
   const [assuming, setAssuming] = useState(false);
+  const [converting, setConverting] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
   const [activeSession, setActiveSession] = useState<{ active: boolean; attendantName?: string; isCurrentUser?: boolean } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const cardMenuRef = useRef<HTMLDivElement>(null);
 
   const lastContactDate = lead.lastContact instanceof Date ? lead.lastContact : new Date(lead.lastContact);
   const daysAgo = Math.floor((Date.now() - lastContactDate.getTime()) / 86400000);
@@ -383,15 +386,40 @@ function KanbanCard({ lead, stageId, onDragStart, onLeadAssigned }: { lead: Kanb
     });
   };
 
-  // Close menu on outside click
+  // Close menus on outside click
   useEffect(() => {
-    if (!showLevelMenu) return;
+    if (!showLevelMenu && !showMenu) return;
     const handler = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setShowLevelMenu(false);
+      if (showLevelMenu && menuRef.current && !menuRef.current.contains(e.target as Node)) setShowLevelMenu(false);
+      if (showMenu && cardMenuRef.current && !cardMenuRef.current.contains(e.target as Node)) setShowMenu(false);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
-  }, [showLevelMenu]);
+  }, [showLevelMenu, showMenu]);
+
+  const handleConvertToPatient = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setShowMenu(false);
+    setConverting(true);
+    try {
+      const { data, error } = await crmApi.convertToPatient(lead.id);
+      if (error) {
+        if (error.includes("já cadastrado")) {
+          toast.info(`${lead.name} já está cadastrado como paciente`);
+        } else {
+          toast.error("Erro: " + error);
+        }
+      } else {
+        toast.success(`${lead.name} cadastrado como paciente!`, {
+          action: { label: "Ver paciente", onClick: () => navigate({ to: "/pacientes", search: { pacienteId: data?.paciente_id } }) },
+        });
+      }
+    } catch {
+      toast.error("Erro ao cadastrar paciente");
+    } finally {
+      setConverting(false);
+    }
+  };
 
   const level = currentLevel ? consciousnessLevels.find((l) => l.id === currentLevel) : null;
 
@@ -408,9 +436,30 @@ function KanbanCard({ lead, stageId, onDragStart, onLeadAssigned }: { lead: Kanb
             <p className="text-[11px] text-muted-foreground">{lead.origin}</p>
           </div>
         </div>
-        <button className="p-1 rounded hover:bg-muted transition-colors text-muted-foreground">
-          <MoreHorizontal className="h-3.5 w-3.5" />
-        </button>
+        <div className="relative" ref={cardMenuRef}>
+          <button onClick={(e) => { e.stopPropagation(); setShowMenu(!showMenu); }} className="p-1 rounded hover:bg-muted transition-colors text-muted-foreground">
+            <MoreHorizontal className="h-3.5 w-3.5" />
+          </button>
+          {showMenu && (
+            <div className="absolute z-50 right-0 top-full mt-1 bg-popover border border-border rounded-lg shadow-lg py-1 w-52 animate-scale-in">
+              <button
+                onClick={handleConvertToPatient}
+                disabled={converting}
+                className="flex items-center gap-2 w-full px-3 py-2 text-xs hover:bg-muted transition-colors text-left text-foreground disabled:opacity-50"
+              >
+                {converting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserCheck className="h-3.5 w-3.5 text-primary" />}
+                Cadastrar como Paciente
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); setShowMenu(false); navigate({ to: "/chat", search: { lead: lead.name } }); }}
+                className="flex items-center gap-2 w-full px-3 py-2 text-xs hover:bg-muted transition-colors text-left text-foreground"
+              >
+                <MessageSquare className="h-3.5 w-3.5 text-chart-2" />
+                Abrir conversa
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Nível de Consciência — clickable */}
