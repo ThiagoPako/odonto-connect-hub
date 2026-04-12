@@ -544,14 +544,16 @@ function FollowupAutomationCard({
 
 function MiniKpi({ icon: Icon, label, value, total, highlight }: { icon: React.ElementType; label: string; value: string; total?: string; highlight?: boolean }) {
   return (
-    <div className="bg-card rounded-xl border border-border p-4 space-y-1">
-      <div className="flex items-center gap-2 text-muted-foreground">
-        <Icon className="h-4 w-4" />
-        <span className="text-[11px] font-medium">{label}</span>
+    <div className="flex items-center gap-3 bg-card rounded-2xl border border-border p-3.5 shadow-card">
+      <div className={`h-10 w-10 rounded-xl flex items-center justify-center shrink-0 ${highlight ? "gradient-primary" : "bg-muted"}`}>
+        <Icon className={`h-4.5 w-4.5 ${highlight ? "text-primary-foreground" : "text-muted-foreground"}`} />
       </div>
-      <div className="flex items-baseline gap-1">
-        <p className={`text-lg font-bold ${highlight ? "text-success" : "text-foreground"}`}>{value}</p>
-        {total && <span className="text-xs text-muted-foreground">/ {total}</span>}
+      <div className="min-w-0">
+        <p className="text-[11px] text-muted-foreground">{label}</p>
+        <div className="flex items-baseline gap-1">
+          <p className={`text-lg font-bold font-heading ${highlight ? "gradient-text" : "text-foreground"}`}>{value}</p>
+          {total && <span className="text-xs text-muted-foreground">/ {total}</span>}
+        </div>
       </div>
     </div>
   );
@@ -565,62 +567,66 @@ function FlowCard({
   flow: AutomationFlow; isSelected: boolean; onSelect: () => void; onToggle: () => void;
   onDelete: () => void; onDuplicate: () => void; onEdit: () => void;
 }) {
-  const typeInfo = automationTypes.find((t) => t.id === flow.type);
+  const iconData = solutionIconMap[flow.type] || { icon: Zap, gradient: "from-primary to-primary-glow", bg: "bg-primary/10" };
+  const TypeIcon = iconData.icon;
   const [showActions, setShowActions] = useState(false);
+  const responseRate = flow.stats.sent > 0 ? ((flow.stats.responded / flow.stats.sent) * 100).toFixed(0) : "0";
 
   return (
     <div
       onClick={onSelect}
       onMouseEnter={() => setShowActions(true)}
       onMouseLeave={() => setShowActions(false)}
-      className={`bg-card rounded-xl border p-4 cursor-pointer transition-all ${
-        isSelected ? "border-primary ring-1 ring-primary/20" : "border-border hover:border-primary/40"
+      className={`group bg-card rounded-2xl border p-4 cursor-pointer transition-all duration-200 hover:shadow-card-hover ${
+        isSelected ? "border-primary shadow-card ring-1 ring-primary/20" : "border-border hover:border-primary/30"
       }`}
     >
-      <div className="flex items-start justify-between mb-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className={`h-2 w-2 rounded-full shrink-0 ${flow.active ? "bg-success" : "bg-muted-foreground/40"}`} />
-          <span className="text-sm font-medium text-foreground truncate">{flow.name}</span>
+      <div className="flex items-start gap-3">
+        <div className={`h-9 w-9 rounded-xl bg-gradient-to-br ${iconData.gradient} flex items-center justify-center shrink-0`}>
+          <TypeIcon className="h-4 w-4 text-primary-foreground" strokeWidth={1.8} />
         </div>
-        <div className="flex items-center gap-1 shrink-0">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-0.5">
+            <span className="text-sm font-semibold text-foreground truncate font-heading">{flow.name}</span>
+            {flow.active && (
+              <span className="relative flex h-2 w-2 shrink-0">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-success" />
+              </span>
+            )}
+          </div>
+          {flow.description && (
+            <p className="text-[11px] text-muted-foreground mb-2 line-clamp-1">{flow.description}</p>
+          )}
+          <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+            <span className="flex items-center gap-1"><Send className="h-3 w-3" /> {flow.stats.sent}</span>
+            <span className="flex items-center gap-1"><MessageSquare className="h-3 w-3" /> {responseRate}%</span>
+            <span className="text-[10px] text-muted-foreground/70">{flow.steps.length} etapas</span>
+          </div>
+        </div>
+        <div className="flex items-center gap-0.5 shrink-0">
           {showActions && (
             <>
-              <button
-                onClick={(e) => { e.stopPropagation(); onEdit(); }}
-                className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-                title="Editar"
-              >
-                <Edit2 className="h-3 w-3" />
+              <button onClick={(e) => { e.stopPropagation(); onEdit(); }} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors" title="Editar">
+                <Edit2 className="h-3.5 w-3.5" />
               </button>
-              <button
-                onClick={(e) => { e.stopPropagation(); onDuplicate(); }}
-                className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-                title="Duplicar"
-              >
-                <Copy className="h-3 w-3" />
+              <button onClick={(e) => { e.stopPropagation(); onDuplicate(); }} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors" title="Duplicar">
+                <Copy className="h-3.5 w-3.5" />
               </button>
               <AlertDialog>
                 <AlertDialogTrigger asChild>
-                  <button
-                    onClick={(e) => e.stopPropagation()}
-                    className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
-                    title="Excluir"
-                  >
-                    <Trash2 className="h-3 w-3" />
+                  <button onClick={(e) => e.stopPropagation()} className="p-1.5 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors" title="Excluir">
+                    <Trash2 className="h-3.5 w-3.5" />
                   </button>
                 </AlertDialogTrigger>
                 <AlertDialogContent>
                   <AlertDialogHeader>
                     <AlertDialogTitle>Excluir fluxo</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      Tem certeza que deseja excluir "{flow.name}"? Esta ação não pode ser desfeita.
-                    </AlertDialogDescription>
+                    <AlertDialogDescription>Tem certeza que deseja excluir "{flow.name}"? Esta ação não pode ser desfeita.</AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
                     <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                    <AlertDialogAction onClick={onDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-                      Excluir
-                    </AlertDialogAction>
+                    <AlertDialogAction onClick={onDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Excluir</AlertDialogAction>
                   </AlertDialogFooter>
                 </AlertDialogContent>
               </AlertDialog>
@@ -628,97 +634,96 @@ function FlowCard({
           )}
           <button
             onClick={(e) => { e.stopPropagation(); onToggle(); }}
-            className={`p-1.5 rounded-lg transition-colors ${
-              flow.active ? "bg-success/15 text-success hover:bg-success/25" : "bg-muted text-muted-foreground hover:bg-muted/80"
-            }`}
+            className={`p-1.5 rounded-xl transition-colors ${flow.active ? "bg-success/15 text-success hover:bg-success/25" : "bg-muted text-muted-foreground hover:bg-muted/80"}`}
             title={flow.active ? "Pausar" : "Ativar"}
           >
-            {flow.active ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
+            {flow.active ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
           </button>
         </div>
-      </div>
-      {flow.description && (
-        <p className="text-[11px] text-muted-foreground mb-2 line-clamp-1">{flow.description}</p>
-      )}
-      <div className="flex items-center gap-2 mb-2">
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-muted text-muted-foreground">
-          {typeInfo?.icon} {typeInfo?.label}
-        </span>
-        <span className="text-[10px] text-muted-foreground">{flow.steps.length} etapas</span>
-      </div>
-      <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
-        <span className="flex items-center gap-1"><Send className="h-3 w-3" /> {flow.stats.sent}</span>
-        <span className="flex items-center gap-1"><MessageSquare className="h-3 w-3" /> {flow.stats.responded}</span>
-        <span className="flex items-center gap-1"><CheckCircle2 className="h-3 w-3" /> {flow.stats.converted}</span>
       </div>
     </div>
   );
 }
-
 // ─── Flow Detail (read-only view) ──────────────────────────
 
 function FlowDetail({ flow, onEdit, onDelete }: { flow: AutomationFlow; onEdit: () => void; onDelete: () => void }) {
-  const typeInfo = automationTypes.find((t) => t.id === flow.type);
+  const iconData = solutionIconMap[flow.type] || { icon: Zap, gradient: "from-primary to-primary-glow", bg: "bg-primary/10" };
+  const TypeIcon = iconData.icon;
   const responseRate = flow.stats.sent > 0 ? ((flow.stats.responded / flow.stats.sent) * 100).toFixed(1) : "0";
   const conversionRate = flow.stats.responded > 0 ? ((flow.stats.converted / flow.stats.responded) * 100).toFixed(1) : "0";
 
   return (
-    <div className="space-y-4">
-      <div className="bg-card rounded-xl border border-border p-5">
-        <div className="flex items-center justify-between mb-1">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-1">
-              <h3 className="text-base font-semibold text-foreground">{flow.name}</h3>
-              <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${
-                flow.active ? "bg-success/15 text-success" : "bg-muted text-muted-foreground"
-              }`}>
-                {flow.active ? "Ativo" : "Inativo"}
-              </span>
+    <div className="space-y-4 animate-fade-in">
+      {/* Header */}
+      <div className="bg-card rounded-2xl border border-border p-5 shadow-card">
+        <div className="flex items-start justify-between mb-4">
+          <div className="flex items-start gap-3 flex-1 min-w-0">
+            <div className={`h-11 w-11 rounded-xl bg-gradient-to-br ${iconData.gradient} flex items-center justify-center shrink-0`}>
+              <TypeIcon className="h-5 w-5 text-primary-foreground" strokeWidth={1.8} />
             </div>
-            {flow.description && (
-              <p className="text-xs text-muted-foreground mb-2">{flow.description}</p>
-            )}
-            <p className="text-xs text-muted-foreground">
-              Gatilho: <span className="text-foreground font-medium">{flow.trigger}</span>
-            </p>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 mb-1">
+                <h3 className="text-base font-semibold text-foreground font-heading">{flow.name}</h3>
+                <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-semibold ${
+                  flow.active ? "bg-success/15 text-success" : "bg-muted text-muted-foreground"
+                }`}>
+                  {flow.active ? "● Ativo" : "Inativo"}
+                </span>
+              </div>
+              {flow.description && <p className="text-xs text-muted-foreground mb-1.5">{flow.description}</p>}
+              <p className="text-xs text-muted-foreground">Gatilho: <span className="text-foreground font-medium">{flow.trigger}</span></p>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <button onClick={onEdit} className="flex items-center gap-1.5 h-7 px-3 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors">
-              <Edit2 className="h-3 w-3" /> Editar
+          <div className="flex items-center gap-2 shrink-0">
+            <button onClick={onEdit} className="flex items-center gap-1.5 h-8 px-4 rounded-xl bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors">
+              <Edit2 className="h-3.5 w-3.5" /> Editar
             </button>
             <AlertDialog>
               <AlertDialogTrigger asChild>
-                <button className="flex items-center gap-1.5 h-7 px-3 rounded-lg bg-destructive/10 text-destructive text-xs font-medium hover:bg-destructive/20 transition-colors">
-                  <Trash2 className="h-3 w-3" /> Excluir
+                <button className="flex items-center gap-1.5 h-8 px-3 rounded-xl bg-destructive/10 text-destructive text-xs font-medium hover:bg-destructive/20 transition-colors">
+                  <Trash2 className="h-3.5 w-3.5" />
                 </button>
               </AlertDialogTrigger>
               <AlertDialogContent>
                 <AlertDialogHeader>
                   <AlertDialogTitle>Excluir fluxo</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    Tem certeza que deseja excluir "{flow.name}"? Esta ação não pode ser desfeita.
-                  </AlertDialogDescription>
+                  <AlertDialogDescription>Tem certeza que deseja excluir "{flow.name}"?</AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
                   <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                  <AlertDialogAction onClick={onDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-                    Excluir
-                  </AlertDialogAction>
+                  <AlertDialogAction onClick={onDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Excluir</AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>
           </div>
         </div>
-        <div className="grid grid-cols-4 gap-3 mt-4">
-          <StatBox label="Enviadas" value={flow.stats.sent.toString()} />
-          <StatBox label="Respondidas" value={flow.stats.responded.toString()} />
-          <StatBox label="Taxa Resposta" value={`${responseRate}%`} />
-          <StatBox label="Conversões" value={`${conversionRate}%`} />
+        <div className="grid grid-cols-4 gap-3">
+          <div className="bg-muted/50 rounded-xl p-3 text-center">
+            <Send className="h-3.5 w-3.5 text-muted-foreground mx-auto mb-1" />
+            <p className="text-lg font-bold text-foreground font-heading">{flow.stats.sent}</p>
+            <p className="text-[10px] text-muted-foreground">Enviadas</p>
+          </div>
+          <div className="bg-muted/50 rounded-xl p-3 text-center">
+            <MessageSquare className="h-3.5 w-3.5 text-muted-foreground mx-auto mb-1" />
+            <p className="text-lg font-bold text-foreground font-heading">{flow.stats.responded}</p>
+            <p className="text-[10px] text-muted-foreground">Respondidas</p>
+          </div>
+          <div className="bg-chart-2/10 rounded-xl p-3 text-center">
+            <p className="text-lg font-bold text-chart-2 font-heading">{responseRate}%</p>
+            <p className="text-[10px] text-muted-foreground">Taxa Resposta</p>
+          </div>
+          <div className="bg-success/10 rounded-xl p-3 text-center">
+            <p className="text-lg font-bold text-success font-heading">{conversionRate}%</p>
+            <p className="text-[10px] text-muted-foreground">Conversões</p>
+          </div>
         </div>
       </div>
 
-      <div className="bg-card rounded-xl border border-border p-5">
-        <h4 className="text-sm font-semibold text-card-foreground mb-4">Etapas do Fluxo ({flow.steps.length})</h4>
+      {/* Steps */}
+      <div className="bg-card rounded-2xl border border-border p-5 shadow-card">
+        <h4 className="text-sm font-semibold text-card-foreground mb-5 font-heading flex items-center gap-2">
+          <Zap className="h-4 w-4 text-primary" /> Etapas do Fluxo ({flow.steps.length})
+        </h4>
         <div className="space-y-0">
           {flow.steps.map((step, i) => (
             <StepItem key={step.id} step={step} isLast={i === flow.steps.length - 1} index={i} />
@@ -726,23 +731,21 @@ function FlowDetail({ flow, onEdit, onDelete }: { flow: AutomationFlow; onEdit: 
         </div>
       </div>
 
-      {/* Warnings / best practices */}
       {flow.steps.length > 5 && (
-        <div className="flex items-start gap-2 p-3 rounded-lg bg-warning/10 border border-warning/30">
+        <div className="flex items-start gap-2.5 p-4 rounded-xl bg-warning/10 border border-warning/30">
           <AlertTriangle className="h-4 w-4 text-warning shrink-0 mt-0.5" />
-          <p className="text-xs text-warning">
-            <strong>Atenção:</strong> Este fluxo possui {flow.steps.length} etapas. Recomendamos no máximo 3-5 etapas para evitar saturação.
-          </p>
+          <p className="text-xs text-warning"><strong>Atenção:</strong> {flow.steps.length} etapas — recomendamos no máximo 3-5.</p>
         </div>
       )}
 
-      <div className="bg-card rounded-xl border border-border p-5">
-        <h4 className="text-sm font-semibold text-card-foreground mb-3">Variáveis Utilizadas</h4>
+      {/* Variables */}
+      <div className="bg-card rounded-2xl border border-border p-5 shadow-card">
+        <h4 className="text-sm font-semibold text-card-foreground mb-3 font-heading">Variáveis Utilizadas</h4>
         <div className="flex flex-wrap gap-2">
           {Array.from(new Set(flow.steps.flatMap((s) => s.variables))).map((v) => {
             const info = availableVariables.find(av => av.key === v);
             return (
-              <span key={v} className="px-2.5 py-1 rounded-lg bg-primary/10 text-primary text-xs font-mono" title={info?.label}>
+              <span key={v} className="px-3 py-1.5 rounded-xl bg-primary/10 text-primary text-xs font-mono border border-primary/20" title={info?.label}>
                 {"{{" + v + "}}"}
               </span>
             );
@@ -752,7 +755,6 @@ function FlowDetail({ flow, onEdit, onDelete }: { flow: AutomationFlow; onEdit: 
     </div>
   );
 }
-
 // ─── Flow Editor ────────────────────────────────────────────
 
 function FlowEditor({
@@ -1097,44 +1099,33 @@ function FlowEditor({
 
 // ─── Shared components ──────────────────────────────────────
 
-function StatBox({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="bg-muted/50 rounded-lg p-2.5 text-center">
-      <p className="text-[10px] text-muted-foreground mb-0.5">{label}</p>
-      <p className="text-sm font-bold text-foreground">{value}</p>
-    </div>
-  );
-}
-
 function StepItem({ step, isLast, index }: { step: AutomationStep; isLast: boolean; index: number }) {
   const channelIcon = step.channel === "whatsapp" ? MessageSquare : step.channel === "sms" ? Smartphone : Mail;
   const channelLabel = step.channel === "whatsapp" ? "WhatsApp" : step.channel === "sms" ? "SMS" : "E-mail";
+  const channelColor = step.channel === "whatsapp" ? "text-success" : step.channel === "sms" ? "text-chart-2" : "text-chart-4";
 
   return (
-    <div className="flex gap-3">
+    <div className="flex gap-4 animate-slide-up" style={{ animationDelay: `${index * 80}ms`, animationFillMode: 'both' }}>
       <div className="flex flex-col items-center">
-        <div className="h-8 w-8 rounded-full bg-primary/15 flex items-center justify-center text-primary text-xs font-bold shrink-0">
+        <div className="h-9 w-9 rounded-xl gradient-primary flex items-center justify-center text-primary-foreground text-xs font-bold shrink-0 shadow-sm">
           {index + 1}
         </div>
-        {!isLast && <div className="w-px flex-1 bg-border my-1" />}
+        {!isLast && <div className="w-0.5 flex-1 my-1.5 bg-gradient-to-b from-primary/30 to-border rounded-full" />}
       </div>
-      <div className={`flex-1 ${!isLast ? "pb-4" : ""}`}>
-        <div className="flex items-center gap-2 mb-1.5">
-          <span className="flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
+      <div className={`flex-1 ${!isLast ? "pb-5" : ""}`}>
+        <div className="flex items-center gap-2.5 mb-2">
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-muted text-[11px] font-medium text-muted-foreground">
             <Clock className="h-3 w-3" /> {step.delay}
           </span>
-          <span className="text-muted-foreground/30">·</span>
-          <span className="flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
+          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-muted text-[11px] font-medium ${channelColor}`}>
             {(() => { const Icon = channelIcon; return <Icon className="h-3 w-3" />; })()}
             {channelLabel}
           </span>
         </div>
-        <div className="bg-muted/50 rounded-lg p-3 text-xs text-foreground leading-relaxed border border-border/50">
+        <div className="bg-muted/40 rounded-2xl rounded-tl-md p-4 text-xs text-foreground leading-relaxed border border-border/50">
           {step.message.split(/(\{\{[^}]+\}\})/).map((part, i) =>
             part.startsWith("{{") ? (
-              <span key={i} className="px-1 py-0.5 rounded bg-primary/10 text-primary font-mono text-[11px]">
-                {part}
-              </span>
+              <span key={i} className="px-1.5 py-0.5 rounded-md bg-primary/10 text-primary font-mono text-[11px] font-medium">{part}</span>
             ) : (
               <span key={i}>{part}</span>
             )
@@ -1144,7 +1135,6 @@ function StepItem({ step, isLast, index }: { step: AutomationStep; isLast: boole
     </div>
   );
 }
-
 // ─── Solution Icon Map ──────────────────────────────────────
 
 const solutionIconMap: Record<string, { icon: LucideIcon; gradient: string; bg: string }> = {
