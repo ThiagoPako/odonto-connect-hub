@@ -26,12 +26,40 @@ export function ClinicalAudioRecorder({ onRecordingComplete }: ClinicalAudioReco
   const streamRef = useRef<MediaStream | null>(null);
   const audioElRef = useRef<HTMLAudioElement | null>(null);
   const playTimerRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
+  const stateRef = useRef<RecState>("idle");
+  stateRef.current = state;
 
   useEffect(() => {
     return () => {
       cleanup();
       if (reviewUrl) URL.revokeObjectURL(reviewUrl);
     };
+  }, []);
+
+  // Keyboard shortcuts: Space = pause/resume/play, Escape = discard
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      // Skip if user is typing in an input/textarea
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+
+      const s = stateRef.current;
+
+      if (e.code === "Space") {
+        e.preventDefault();
+        if (s === "recording") pauseRecording();
+        else if (s === "paused") resumeRecording();
+        else if (s === "review") togglePlay();
+      }
+
+      if (e.code === "Escape") {
+        if (s === "recording" || s === "paused") cancelRecording();
+        else if (s === "review") discardReview();
+      }
+    }
+
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
   }, []);
 
   function cleanup() {
