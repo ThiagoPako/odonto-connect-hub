@@ -4,7 +4,8 @@ import {
   Play, Pause, Plus, Clock, MessageSquare, Mail, Smartphone,
   Zap, Settings2, Send, CheckCircle2, Edit2, Save, Loader2, RotateCcw,
   Trash2, Copy, GripVertical, ChevronDown, ChevronUp, X, Sparkles,
-  AlertTriangle, Eye, EyeOff,
+  AlertTriangle, Eye, EyeOff, Phone, User, Calendar, XCircle,
+  RefreshCw, ListChecks,
 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import {
@@ -12,7 +13,7 @@ import {
   availableVariables, messageTemplates,
   type AutomationFlow, type AutomationStep, type AutomationType, type AutomationChannel,
 } from "@/data/automationMockData";
-import { automationsApi, type FollowupAutomationConfig } from "@/lib/vpsApi";
+import { automationsApi, type FollowupAutomationConfig, type AutomationJob } from "@/lib/vpsApi";
 import { toast } from "sonner";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
@@ -587,6 +588,54 @@ function FlowDetail({ flow, onEdit, onDelete }: { flow: AutomationFlow; onEdit: 
   const responseRate = flow.stats.sent > 0 ? ((flow.stats.responded / flow.stats.sent) * 100).toFixed(1) : "0";
   const conversionRate = flow.stats.responded > 0 ? ((flow.stats.converted / flow.stats.responded) * 100).toFixed(1) : "0";
 
+  const [showTrigger, setShowTrigger] = useState(false);
+  const [triggerPhone, setTriggerPhone] = useState("");
+  const [triggerName, setTriggerName] = useState("");
+  const [triggerProcedure, setTriggerProcedure] = useState("");
+  const [sending, setSending] = useState(false);
+
+  const [showJobs, setShowJobs] = useState(false);
+  const [jobs, setJobs] = useState<AutomationJob[]>([]);
+  const [loadingJobs, setLoadingJobs] = useState(false);
+
+  const loadJobs = useCallback(() => {
+    setLoadingJobs(true);
+    automationsApi.listJobs({ flowId: flow.id, limit: 50 })
+      .then(res => { if (res.data) setJobs(res.data); })
+      .catch(() => {})
+      .finally(() => setLoadingJobs(false));
+  }, [flow.id]);
+
+  const handleTrigger = async () => {
+    if (!triggerPhone.trim()) { toast.error("Telefone é obrigatório"); return; }
+    setSending(true);
+    try {
+      const res = await automationsApi.enqueueFlow({
+        flowId: flow.id,
+        patientName: triggerName,
+        patientPhone: triggerPhone.replace(/\D/g, ''),
+        variables: { nome: triggerName, procedimento: triggerProcedure, clinica: "Odonto Connect" },
+      });
+      if (res.data?.success) {
+        toast.success(`${res.data.jobsCreated} mensagens agendadas com sucesso!`);
+        setTriggerPhone(""); setTriggerName(""); setTriggerProcedure("");
+        setShowTrigger(false);
+        if (showJobs) loadJobs();
+      } else {
+        toast.error(res.error || "Erro ao agendar");
+      }
+    } catch { toast.error("Erro ao conectar com servidor"); }
+    finally { setSending(false); }
+  };
+
+  const cancelPendingJobs = async () => {
+    const res = await automationsApi.cancelJobs({ flowId: flow.id, patientPhone: undefined });
+    if (res.data?.success) {
+      toast.success(`${res.data.cancelled} jobs cancelados`);
+      loadJobs();
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="bg-card rounded-xl border border-border p-5">
@@ -607,7 +656,21 @@ function FlowDetail({ flow, onEdit, onDelete }: { flow: AutomationFlow; onEdit: 
               Gatilho: <span className="text-foreground font-medium">{flow.trigger}</span>
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={() => { setShowTrigger(!showTrigger); }}
+              disabled={!flow.active}
+              className="flex items-center gap-1.5 h-7 px-3 rounded-lg bg-success/15 text-success text-xs font-medium hover:bg-success/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              title={flow.active ? "Disparar fluxo manualmente" : "Ative o fluxo antes de disparar"}
+            >
+              <Send className="h-3 w-3" /> Disparar
+            </button>
+            <button
+              onClick={() => { setShowJobs(!showJobs); if (!showJobs) loadJobs(); }}
+              className="flex items-center gap-1.5 h-7 px-3 rounded-lg bg-muted text-muted-foreground text-xs font-medium hover:bg-accent transition-colors"
+            >
+              <ListChecks className="h-3 w-3" /> Jobs
+            </button>
             <button onClick={onEdit} className="flex items-center gap-1.5 h-7 px-3 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors">
               <Edit2 className="h-3 w-3" /> Editar
             </button>
@@ -634,6 +697,57 @@ function FlowDetail({ flow, onEdit, onDelete }: { flow: AutomationFlow; onEdit: 
             </AlertDialog>
           </div>
         </div>
+
+        {/* Trigger form */}
+        {showTrigger && (
+          <div className="mt-4 p-4 rounded-lg bg-success/5 border border-success/20 space-y-3">
+            <h4 className="text-sm font-semibold text-success flex items-center gap-2">
+              <Send className="h-4 w-4" /> Disparar Fluxo para Paciente
+            </h4>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1">Telefone *</label>
+                <Input
+                  value={triggerPhone}
+                  onChange={(e) => setTriggerPhone(e.target.value)}
+                  placeholder="5511999999999"
+                  className="h-8 text-xs"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1">Nome do Paciente</label>
+                <Input
+                  value={triggerName}
+                  onChange={(e) => setTriggerName(e.target.value)}
+                  placeholder="João Silva"
+                  className="h-8 text-xs"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1">Procedimento</label>
+                <Input
+                  value={triggerProcedure}
+                  onChange={(e) => setTriggerProcedure(e.target.value)}
+                  placeholder="Limpeza"
+                  className="h-8 text-xs"
+                />
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button onClick={handleTrigger} disabled={sending} size="sm" className="h-7 text-xs bg-success hover:bg-success/90 text-success-foreground">
+                {sending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Send className="h-3 w-3 mr-1" />}
+                Agendar {flow.steps.length} mensagem(ns)
+              </Button>
+              <Button onClick={() => setShowTrigger(false)} variant="ghost" size="sm" className="h-7 text-xs">
+                Cancelar
+              </Button>
+            </div>
+            <p className="text-[10px] text-muted-foreground">
+              As mensagens serão enviadas automaticamente via WhatsApp conforme os intervalos de cada etapa.
+            </p>
+          </div>
+        )}
+
         <div className="grid grid-cols-4 gap-3 mt-4">
           <StatBox label="Enviadas" value={flow.stats.sent.toString()} />
           <StatBox label="Respondidas" value={flow.stats.responded.toString()} />
@@ -641,6 +755,67 @@ function FlowDetail({ flow, onEdit, onDelete }: { flow: AutomationFlow; onEdit: 
           <StatBox label="Conversões" value={`${conversionRate}%`} />
         </div>
       </div>
+
+      {/* Jobs monitor */}
+      {showJobs && (
+        <div className="bg-card rounded-xl border border-border p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h4 className="text-sm font-semibold text-card-foreground flex items-center gap-2">
+              <ListChecks className="h-4 w-4" /> Fila de Envios
+            </h4>
+            <div className="flex gap-2">
+              <button onClick={loadJobs} className="flex items-center gap-1 h-6 px-2 rounded bg-muted text-muted-foreground text-[10px] hover:bg-accent">
+                <RefreshCw className={`h-3 w-3 ${loadingJobs ? "animate-spin" : ""}`} /> Atualizar
+              </button>
+              {jobs.some(j => j.status === 'pending') && (
+                <button onClick={cancelPendingJobs} className="flex items-center gap-1 h-6 px-2 rounded bg-destructive/10 text-destructive text-[10px] hover:bg-destructive/20">
+                  <XCircle className="h-3 w-3" /> Cancelar pendentes
+                </button>
+              )}
+            </div>
+          </div>
+          {loadingJobs ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : jobs.length === 0 ? (
+            <p className="text-xs text-muted-foreground text-center py-6">Nenhum job encontrado para este fluxo</p>
+          ) : (
+            <div className="space-y-1.5 max-h-[300px] overflow-auto">
+              {jobs.map(job => (
+                <div key={job.id} className="flex items-center gap-3 p-2.5 rounded-lg bg-muted/50 text-xs">
+                  <span className={`w-2 h-2 rounded-full shrink-0 ${
+                    job.status === 'sent' ? 'bg-success' :
+                    job.status === 'pending' ? 'bg-warning animate-pulse' :
+                    job.status === 'failed' ? 'bg-destructive' : 'bg-muted-foreground'
+                  }`} />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-foreground truncate">{job.patient_name || job.patient_phone}</span>
+                      <span className="text-muted-foreground">Etapa {job.step_index + 1}</span>
+                    </div>
+                    <p className="text-muted-foreground truncate">{job.message.slice(0, 80)}...</p>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                      job.status === 'sent' ? 'bg-success/15 text-success' :
+                      job.status === 'pending' ? 'bg-warning/15 text-warning' :
+                      job.status === 'failed' ? 'bg-destructive/15 text-destructive' : 'bg-muted text-muted-foreground'
+                    }`}>
+                      {job.status === 'sent' ? '✅ Enviado' : job.status === 'pending' ? '⏳ Pendente' : job.status === 'failed' ? '❌ Falhou' : '🚫 Cancelado'}
+                    </span>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">
+                      {job.status === 'sent' && job.sent_at ? new Date(job.sent_at).toLocaleString('pt-BR') :
+                       new Date(job.scheduled_at).toLocaleString('pt-BR')}
+                    </p>
+                    {job.error && <p className="text-[10px] text-destructive truncate max-w-[150px]" title={job.error}>{job.error}</p>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="bg-card rounded-xl border border-border p-5">
         <h4 className="text-sm font-semibold text-card-foreground mb-4">Etapas do Fluxo ({flow.steps.length})</h4>

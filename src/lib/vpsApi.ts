@@ -670,6 +670,24 @@ export interface FollowupAutomationConfig {
   returnToQueueOnReply: boolean;
 }
 
+export interface AutomationJob {
+  id: string;
+  flow_id: string;
+  flow_name: string;
+  step_index: number;
+  patient_name: string;
+  patient_phone: string;
+  instance: string;
+  variables: Record<string, string>;
+  message: string;
+  channel: string;
+  status: 'pending' | 'sent' | 'failed' | 'cancelled';
+  scheduled_at: string;
+  sent_at: string | null;
+  error: string | null;
+  created_at: string;
+}
+
 export const automationsApi = {
   /** Get follow-up automation config */
   getFollowup: () =>
@@ -695,6 +713,21 @@ export const automationsApi = {
   /** Toggle active status */
   toggleFlow: (id: string) =>
     vpsApiFetch<{ success: boolean; active: boolean }>(`/automations/flows/${id}/toggle`, { method: 'PATCH' }),
+  /** Enqueue a flow for a patient */
+  enqueueFlow: (data: { flowId: string; patientName: string; patientPhone: string; variables?: Record<string, string>; instance?: string }) =>
+    vpsApiFetch<{ success: boolean; jobsCreated: number; jobIds: string[] }>('/automations/enqueue', { method: 'POST', body: data }),
+  /** List automation jobs */
+  listJobs: (params?: { status?: string; flowId?: string; limit?: number }) => {
+    const q = new URLSearchParams();
+    if (params?.status) q.set('status', params.status);
+    if (params?.flowId) q.set('flowId', params.flowId);
+    if (params?.limit) q.set('limit', String(params.limit));
+    const qs = q.toString();
+    return vpsApiFetch<AutomationJob[]>(`/automations/jobs${qs ? `?${qs}` : ''}`);
+  },
+  /** Cancel pending jobs */
+  cancelJobs: (data: { flowId?: string; patientPhone?: string }) =>
+    vpsApiFetch<{ success: boolean; cancelled: number }>('/automations/jobs/cancel', { method: 'DELETE', body: data }),
 };
 
 // ─── Health check ───────────────────────────────────────────
