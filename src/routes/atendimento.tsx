@@ -380,9 +380,19 @@ function AtendimentoPage() {
                       {/* Tab Prescrição */}
                       {tabAtiva === "prescricao" && (
                         <div className="bg-card rounded-2xl border border-border/60 p-5 shadow-card space-y-4">
-                          <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
-                            <Pill className="h-4 w-4 text-primary" /> Receituário
-                          </h3>
+                          <div className="flex items-center justify-between">
+                            <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                              <Pill className="h-4 w-4 text-primary" /> Receituário
+                            </h3>
+                            {prescricoes.length > 0 && (
+                              <button
+                                onClick={imprimirPrescricao}
+                                className="flex items-center gap-1.5 h-8 px-3 rounded-lg bg-primary/10 text-primary text-xs font-medium hover:bg-primary/20 transition-colors"
+                              >
+                                <Printer className="h-3.5 w-3.5" /> Imprimir / PDF
+                              </button>
+                            )}
+                          </div>
                           <div className="grid grid-cols-4 gap-3">
                             <input
                               type="text" placeholder="Medicamento"
