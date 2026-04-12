@@ -4350,6 +4350,7 @@ app.get('/api/queue/leads', async (req, res) => {
         sessionStatus: r.session_status,
         attendantId: r.attendant_id,
         attendantName: r.attendant_name,
+        priority: r.priority || false,
       };
 
       if (r.session_status === 'active' && r.attendant_id) {
