@@ -125,7 +125,9 @@ function OrcamentosPage() {
           {/* Budget detail */}
           <div className="lg:col-span-2">
             {selectedBudget ? (
-              <BudgetDetail budget={selectedBudget} />
+              <BudgetDetail budget={selectedBudget} onStatusChange={(newStatus) => {
+                setSelectedBudget({ ...selectedBudget, status: newStatus });
+              }} />
             ) : (
               <div className="bg-card rounded-xl border border-border p-8 flex flex-col items-center justify-center text-center min-h-[400px]">
                 <FileText className="h-12 w-12 text-muted-foreground/30 mb-4" />
