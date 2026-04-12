@@ -1,41 +1,105 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import {
-  Search, DollarSign, CheckCircle2, Clock, TrendingUp,
-  ArrowUpRight, CreditCard, Users, ChevronRight,
+  DollarSign, CheckCircle2, Clock, CreditCard, Users, ChevronRight, Loader2,
 } from "lucide-react";
-import { useState } from "react";
-import {
-  mockProfessionals, mockCommissions,
-  type Professional, type CommissionEntry,
-} from "@/data/comissoesMockData";
+import { useState, useEffect, useCallback } from "react";
+import { comissoesApi, dentistasApi } from "@/lib/vpsApi";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/comissoes")({
   ssr: false,
   component: ComissoesPage,
 });
 
-const statusCfg: Record<CommissionEntry["status"], { label: string; color: string; icon: React.ElementType }> = {
+interface DentistaRow {
+  id: string;
+  nome: string;
+  especialidade: string;
+  comissao_percentual: number;
+}
+
+interface ComissaoRow {
+  id: string;
+  dentista_id: string;
+  dentista_nome: string;
+  paciente_nome: string;
+  procedimento: string;
+  valor: number;
+  percentual: number;
+  data: string;
+  status: "pendente" | "aprovado" | "pago";
+}
+
+const statusCfg: Record<string, { label: string; color: string; icon: React.ElementType }> = {
   pendente: { label: "Pendente", color: "bg-warning/15 text-warning", icon: Clock },
   aprovado: { label: "Aprovado", color: "bg-chart-1/15 text-chart-1", icon: CheckCircle2 },
   pago: { label: "Pago", color: "bg-success/15 text-success", icon: CreditCard },
 };
 
+const AVATAR_COLORS = ["bg-chart-1", "bg-chart-2", "bg-chart-3", "bg-chart-4", "bg-primary"];
+
+function getInitials(name: string) {
+  return name.split(" ").filter((_, i, a) => i === 0 || i === a.length - 1).map(n => n[0]).join("").toUpperCase();
+}
+
 function ComissoesPage() {
-  const [selectedProf, setSelectedProf] = useState<Professional | null>(null);
+  const [dentistas, setDentistas] = useState<DentistaRow[]>([]);
+  const [comissoes, setComissoes] = useState<ComissaoRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedDentista, setSelectedDentista] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("todos");
 
-  const profCommissions = (profId: string) => mockCommissions.filter((c) => c.professionalId === profId);
+  const loadAll = useCallback(async () => {
+    try {
+      const [dRes, cRes] = await Promise.all([dentistasApi.list(), comissoesApi.list()]);
+      const dData = (dRes as any).data || dRes || [];
+      const cData = (cRes as any).data || cRes || [];
+      setDentistas(Array.isArray(dData) ? dData : []);
+      setComissoes(Array.isArray(cData) ? cData.map((r: any) => ({
+        id: r.id,
+        dentista_id: r.dentista_id,
+        dentista_nome: r.dentista_nome || '',
+        paciente_nome: r.paciente_nome || '',
+        procedimento: r.procedimento || r.descricao || '',
+        valor: Number(r.valor) || 0,
+        percentual: Number(r.percentual) || 0,
+        data: r.data ? new Date(r.data).toLocaleDateString("pt-BR") : '',
+        status: r.status || 'pendente',
+      })) : []);
+    } catch (err) { console.error(err); }
+    finally { setLoading(false); }
+  }, []);
 
-  const filteredEntries = (selectedProf
-    ? profCommissions(selectedProf.id)
-    : mockCommissions
-  ).filter((c) => statusFilter === "todos" || c.status === statusFilter);
+  useEffect(() => { loadAll(); }, [loadAll]);
 
-  const totalPending = mockCommissions.filter((c) => c.status === "pendente").reduce((s, c) => s + c.commissionValue, 0);
-  const totalApproved = mockCommissions.filter((c) => c.status === "aprovado").reduce((s, c) => s + c.commissionValue, 0);
-  const totalPaid = mockCommissions.filter((c) => c.status === "pago").reduce((s, c) => s + c.commissionValue, 0);
-  const totalRevenue = mockCommissions.reduce((s, c) => s + c.procedureValue, 0);
+  const handleStatusChange = async (id: string, newStatus: string) => {
+    const { error } = await comissoesApi.update(id, { status: newStatus });
+    if (error) { toast.error("Erro: " + error); return; }
+    toast.success(`Comissão ${newStatus === 'pago' ? 'paga' : newStatus === 'aprovado' ? 'aprovada' : newStatus}`);
+    loadAll();
+  };
+
+  const profComissoes = (dId: string) => comissoes.filter(c => c.dentista_id === dId);
+
+  const filteredEntries = (selectedDentista
+    ? profComissoes(selectedDentista)
+    : comissoes
+  ).filter(c => statusFilter === "todos" || c.status === statusFilter);
+
+  const totalPending = comissoes.filter(c => c.status === "pendente").reduce((s, c) => s + c.valor, 0);
+  const totalApproved = comissoes.filter(c => c.status === "aprovado").reduce((s, c) => s + c.valor, 0);
+  const totalPaid = comissoes.filter(c => c.status === "pago").reduce((s, c) => s + c.valor, 0);
+  const totalAll = comissoes.reduce((s, c) => s + c.valor, 0);
+
+  if (loading) {
+    return (
+      <div className="flex-1 flex flex-col min-h-screen">
+        <DashboardHeader title="Gestão de Comissões" />
+        <div className="flex-1 flex items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex-1 flex flex-col min-h-screen">
@@ -43,73 +107,59 @@ function ComissoesPage() {
       <main className="flex-1 p-6 overflow-auto space-y-5">
         {/* KPIs */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 animate-slide-up" style={{ animationFillMode: 'both' }}>
-          <KpiBox icon={DollarSign} label="Faturamento Total" value={`R$ ${(totalRevenue / 1000).toFixed(1)}k`} color="text-primary" />
+          <KpiBox icon={DollarSign} label="Total Comissões" value={`R$ ${(totalAll / 1000).toFixed(1)}k`} color="text-primary" />
           <KpiBox icon={Clock} label="Pendente" value={`R$ ${totalPending.toFixed(0)}`} color="text-warning" />
           <KpiBox icon={CheckCircle2} label="Aprovado" value={`R$ ${totalApproved.toFixed(0)}`} color="text-chart-1" />
           <KpiBox icon={CreditCard} label="Pago" value={`R$ ${totalPaid.toFixed(0)}`} color="text-success" />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-          {/* Professional cards */}
+          {/* Dentist cards */}
           <div className="lg:col-span-4 space-y-3">
             <h3 className="text-sm font-semibold text-foreground">Profissionais</h3>
-            <button
-              onClick={() => setSelectedProf(null)}
-              className={`w-full text-left px-3 py-2.5 rounded-xl border transition-all text-xs font-medium ${
-                !selectedProf ? "bg-primary/5 border-primary/30 text-primary" : "border-transparent hover:bg-muted text-muted-foreground"
-              }`}
-            >
+            <button onClick={() => setSelectedDentista(null)}
+              className={`w-full text-left px-3 py-2.5 rounded-xl border transition-all text-xs font-medium ${!selectedDentista ? "bg-primary/5 border-primary/30 text-primary" : "border-transparent hover:bg-muted text-muted-foreground"}`}>
               <Users className="inline h-3.5 w-3.5 mr-1.5" /> Todos os profissionais
             </button>
-            {mockProfessionals.map((prof) => {
-              const comms = profCommissions(prof.id);
-              const earned = comms.reduce((s, c) => s + c.commissionValue, 0);
-              const revenue = comms.reduce((s, c) => s + c.procedureValue, 0);
-              const pending = comms.filter((c) => c.status === "pendente").reduce((s, c) => s + c.commissionValue, 0);
+            {dentistas.map((d, i) => {
+              const comms = profComissoes(d.id);
+              const earned = comms.reduce((s, c) => s + c.valor, 0);
+              const pending = comms.filter(c => c.status === "pendente").reduce((s, c) => s + c.valor, 0);
               return (
-                <button
-                  key={prof.id}
-                  onClick={() => setSelectedProf(prof)}
-                  className={`w-full text-left px-3 py-3 rounded-xl border transition-all duration-300 hover-lift ${
-                    selectedProf?.id === prof.id ? "bg-primary/5 border-primary/30 shadow-[0_0_16px_-4px_hsl(var(--primary)/0.3)]" : "border-transparent hover:bg-muted hover:shadow-card"
-                  }`}
-                >
+                <button key={d.id} onClick={() => setSelectedDentista(d.id)}
+                  className={`w-full text-left px-3 py-3 rounded-xl border transition-all duration-300 hover-lift ${selectedDentista === d.id ? "bg-primary/5 border-primary/30 shadow-[0_0_16px_-4px_hsl(var(--primary)/0.3)]" : "border-transparent hover:bg-muted hover:shadow-card"}`}>
                   <div className="flex items-center gap-2.5 mb-2">
-                    <div className={`h-8 w-8 rounded-full ${prof.avatarColor} flex items-center justify-center text-[10px] font-bold text-white shrink-0`}>
-                      {prof.initials}
+                    <div className={`h-8 w-8 rounded-full ${AVATAR_COLORS[i % AVATAR_COLORS.length]} flex items-center justify-center text-[10px] font-bold text-white shrink-0`}>
+                      {getInitials(d.nome)}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-xs font-medium text-foreground truncate">{prof.name}</p>
-                      <p className="text-[10px] text-muted-foreground">{prof.specialty} · {prof.commissionRate}%</p>
+                      <p className="text-xs font-medium text-foreground truncate">{d.nome}</p>
+                      <p className="text-[10px] text-muted-foreground">{d.especialidade} · {d.comissao_percentual || 0}%</p>
                     </div>
                     <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/40 shrink-0" />
                   </div>
                   <div className="grid grid-cols-3 gap-2">
-                    <MiniStat label="Faturado" value={`R$ ${(revenue / 1000).toFixed(1)}k`} />
-                    <MiniStat label="Comissão" value={`R$ ${earned.toFixed(0)}`} />
+                    <MiniStat label="Registros" value={comms.length.toString()} />
+                    <MiniStat label="Total" value={`R$ ${earned.toFixed(0)}`} />
                     <MiniStat label="Pendente" value={`R$ ${pending.toFixed(0)}`} accent />
                   </div>
                 </button>
               );
             })}
+            {dentistas.length === 0 && <p className="text-xs text-muted-foreground text-center py-4">Nenhum dentista cadastrado</p>}
           </div>
 
           {/* Entries table */}
           <div className="lg:col-span-8 space-y-3">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-foreground">
-                {selectedProf ? `Comissões — ${selectedProf.name}` : "Todas as Comissões"}
+                {selectedDentista ? `Comissões — ${dentistas.find(d => d.id === selectedDentista)?.nome}` : "Todas as Comissões"}
               </h3>
               <div className="flex items-center gap-1.5">
-                {["todos", "pendente", "aprovado", "pago"].map((s) => (
-                  <button
-                    key={s}
-                    onClick={() => setStatusFilter(s)}
-                    className={`px-2.5 py-1 rounded-full text-[10px] font-medium transition-colors ${
-                      statusFilter === s ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:text-foreground"
-                    }`}
-                  >
-                    {s === "todos" ? "Todos" : statusCfg[s as CommissionEntry["status"]].label}
+                {["todos", "pendente", "aprovado", "pago"].map(s => (
+                  <button key={s} onClick={() => setStatusFilter(s)}
+                    className={`px-2.5 py-1 rounded-full text-[10px] font-medium transition-colors ${statusFilter === s ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:text-foreground"}`}>
+                    {s === "todos" ? "Todos" : statusCfg[s]?.label || s}
                   </button>
                 ))}
               </div>
@@ -123,45 +173,50 @@ function ComissoesPage() {
                       <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Profissional</th>
                       <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Paciente</th>
                       <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Procedimento</th>
-                      <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Valor Proc.</th>
                       <th className="text-center px-4 py-2.5 font-medium text-muted-foreground">%</th>
                       <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Comissão</th>
+                      <th className="text-center px-4 py-2.5 font-medium text-muted-foreground">Data</th>
                       <th className="text-center px-4 py-2.5 font-medium text-muted-foreground">Status</th>
+                      <th className="text-center px-4 py-2.5 font-medium text-muted-foreground">Ações</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredEntries.map((entry) => {
-                      const prof = mockProfessionals.find((p) => p.id === entry.professionalId)!;
-                      const cfg = statusCfg[entry.status];
+                    {filteredEntries.map(entry => {
+                      const cfg = statusCfg[entry.status] || statusCfg.pendente;
                       return (
                         <tr key={entry.id} className="border-b border-border/50 hover:bg-muted/20 transition-colors">
-                          <td className="px-4 py-2.5">
-                            <div className="flex items-center gap-2">
-                              <div className={`h-6 w-6 rounded-full ${prof.avatarColor} flex items-center justify-center text-[8px] font-bold text-white`}>
-                                {prof.initials}
-                              </div>
-                              <span className="text-foreground font-medium truncate max-w-[100px]">{prof.name}</span>
-                            </div>
-                          </td>
-                          <td className="px-4 py-2.5 text-foreground">{entry.patientName}</td>
-                          <td className="px-4 py-2.5 text-muted-foreground">{entry.procedure}</td>
-                          <td className="px-4 py-2.5 text-right text-foreground font-medium">
-                            R$ {entry.procedureValue.toLocaleString("pt-BR")}
-                          </td>
-                          <td className="px-4 py-2.5 text-center text-muted-foreground">{entry.commissionRate}%</td>
+                          <td className="px-4 py-2.5 text-foreground font-medium">{entry.dentista_nome}</td>
+                          <td className="px-4 py-2.5 text-foreground">{entry.paciente_nome}</td>
+                          <td className="px-4 py-2.5 text-muted-foreground">{entry.procedimento}</td>
+                          <td className="px-4 py-2.5 text-center text-muted-foreground">{entry.percentual}%</td>
                           <td className="px-4 py-2.5 text-right font-bold text-foreground">
-                            R$ {entry.commissionValue.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                            R$ {entry.valor.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
                           </td>
+                          <td className="px-4 py-2.5 text-center text-muted-foreground">{entry.data}</td>
                           <td className="px-4 py-2.5 text-center">
                             <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${cfg.color}`}>
                               <cfg.icon className="h-2.5 w-2.5" /> {cfg.label}
                             </span>
                           </td>
+                          <td className="px-4 py-2.5 text-center">
+                            {entry.status === "pendente" && (
+                              <button onClick={() => handleStatusChange(entry.id, "aprovado")}
+                                className="px-2 py-0.5 rounded text-[10px] font-medium bg-chart-1/15 text-chart-1 hover:bg-chart-1/25">
+                                Aprovar
+                              </button>
+                            )}
+                            {entry.status === "aprovado" && (
+                              <button onClick={() => handleStatusChange(entry.id, "pago")}
+                                className="px-2 py-0.5 rounded text-[10px] font-medium bg-success/15 text-success hover:bg-success/25">
+                                Pagar
+                              </button>
+                            )}
+                          </td>
                         </tr>
                       );
                     })}
                     {filteredEntries.length === 0 && (
-                      <tr><td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">Nenhuma comissão encontrada.</td></tr>
+                      <tr><td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">Nenhuma comissão encontrada.</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -179,7 +234,7 @@ function KpiBox({ icon: Icon, label, value, color }: { icon: React.ElementType; 
     <div className="group bg-card rounded-xl border border-border p-4 hover-lift hover:shadow-glow-primary transition-all duration-300 relative overflow-hidden">
       <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-bl from-primary/5 to-transparent rounded-bl-full pointer-events-none" />
       <div className="flex items-center gap-2 mb-1 relative z-10">
-        <div className={`h-7 w-7 rounded-lg bg-primary/10 flex items-center justify-center group-hover:shadow-[0_0_10px_-2px_currentColor] transition-shadow duration-300`}>
+        <div className="h-7 w-7 rounded-lg bg-primary/10 flex items-center justify-center group-hover:shadow-[0_0_10px_-2px_currentColor] transition-shadow duration-300">
           <Icon className={`h-3.5 w-3.5 ${color}`} />
         </div>
         <span className="text-[10px] text-muted-foreground">{label}</span>
