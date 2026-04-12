@@ -26,12 +26,40 @@ export function ClinicalAudioRecorder({ onRecordingComplete }: ClinicalAudioReco
   const streamRef = useRef<MediaStream | null>(null);
   const audioElRef = useRef<HTMLAudioElement | null>(null);
   const playTimerRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
+  const stateRef = useRef<RecState>("idle");
+  stateRef.current = state;
 
   useEffect(() => {
     return () => {
       cleanup();
       if (reviewUrl) URL.revokeObjectURL(reviewUrl);
     };
+  }, []);
+
+  // Keyboard shortcuts: Space = pause/resume/play, Escape = discard
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      // Skip if user is typing in an input/textarea
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+
+      const s = stateRef.current;
+
+      if (e.code === "Space") {
+        e.preventDefault();
+        if (s === "recording") pauseRecording();
+        else if (s === "paused") resumeRecording();
+        else if (s === "review") togglePlay();
+      }
+
+      if (e.code === "Escape") {
+        if (s === "recording" || s === "paused") cancelRecording();
+        else if (s === "review") discardReview();
+      }
+    }
+
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
   }, []);
 
   function cleanup() {
@@ -360,13 +388,14 @@ export function ClinicalAudioRecorder({ onRecordingComplete }: ClinicalAudioReco
         ))}
       </div>
 
-      {/* Controls */}
+      {/* Controls + keyboard hints */}
       <div className="flex items-center gap-3">
         <button
           onClick={cancelRecording}
           className="flex items-center gap-2 h-11 px-5 rounded-xl border border-border text-muted-foreground text-sm font-medium hover:bg-muted/60 hover:text-foreground transition-all"
         >
           <Trash2 className="h-4 w-4" /> Descartar
+          <kbd className="ml-1 px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono text-muted-foreground border border-border/60">Esc</kbd>
         </button>
         {isPaused ? (
           <button
@@ -374,6 +403,7 @@ export function ClinicalAudioRecorder({ onRecordingComplete }: ClinicalAudioReco
             className="flex items-center gap-2 h-11 px-5 rounded-xl bg-primary text-primary-foreground text-sm font-bold hover:bg-primary/90 transition-all shadow-md"
           >
             <Play className="h-4 w-4" /> Retomar
+            <kbd className="ml-1 px-1.5 py-0.5 rounded bg-primary-foreground/20 text-[10px] font-mono border border-primary-foreground/20">Space</kbd>
           </button>
         ) : (
           <button
@@ -381,6 +411,7 @@ export function ClinicalAudioRecorder({ onRecordingComplete }: ClinicalAudioReco
             className="flex items-center gap-2 h-11 px-5 rounded-xl bg-warning text-warning-foreground text-sm font-bold hover:bg-warning/90 transition-all shadow-md"
           >
             <Pause className="h-4 w-4" /> Pausar
+            <kbd className="ml-1 px-1.5 py-0.5 rounded bg-warning-foreground/20 text-[10px] font-mono border border-warning-foreground/20">Space</kbd>
           </button>
         )}
         <button
