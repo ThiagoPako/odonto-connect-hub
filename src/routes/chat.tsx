@@ -14,7 +14,7 @@ import type { AttendanceQueue } from "@/data/queueData";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { useRealtimeChat, type IncomingMessage } from "@/hooks/useRealtimeChat";
-import { whatsappApi, transferApi, sessionsApi, tagsApi, queuesApi, messagesApi, queueLeadsApi, mediaApi, crmApi, type LeadTagApi, type ChatMessageApi } from "@/lib/vpsApi";
+import { whatsappApi, transferApi, sessionsApi, queuesApi, messagesApi, queueLeadsApi, mediaApi, crmApi, type ChatMessageApi } from "@/lib/vpsApi";
 import { useWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
 import { playNotificationSound } from "@/lib/notificationSound";
 import { showBrowserNotification, requestNotificationPermission } from "@/lib/browserNotification";
@@ -53,14 +53,12 @@ function ChatPage() {
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [messages, setMessages] = useState<Record<string, ChatMessage[]>>({});
   const [filterQueue, setFilterQueue] = useState<string | null>(null);
-  const [filterTag, setFilterTag] = useState<string | null>(null);
+  const [filterStage, setFilterStage] = useState<string | null>(null);
   const [filterStatus, setFilterStatus] = useState<"all" | "active" | "finished">("all");
   const [newChatOpen, setNewChatOpen] = useState(false);
   const [isLeadTyping, setIsLeadTyping] = useState(false);
   const [syncingPhotos, setSyncingPhotos] = useState(false);
   const [availableQueues, setAvailableQueues] = useState<AttendanceQueue[]>([]);
-  const [availableTags, setAvailableTags] = useState<LeadTagApi[]>([]);
-  const [leadTagAssignments, setLeadTagAssignments] = useState<Record<string, string[]>>({});
   const [surveyLead, setSurveyLead] = useState<Lead | null>(null);
   const [historyHasMore, setHistoryHasMore] = useState<Record<string, boolean>>({});
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -92,8 +90,6 @@ function ChatPage() {
         })));
       }
     });
-    tagsApi.list().then(({ data }) => { if (data) setAvailableTags(data); });
-    tagsApi.assignments().then(({ data }) => { if (data) setLeadTagAssignments(data); });
 
     // Load CRM stages for all leads
     crmApi.kanban().then(({ data }) => {
