@@ -1135,3 +1135,106 @@ function StepItem({ step, isLast, index }: { step: AutomationStep; isLast: boole
     </div>
   );
 }
+
+// ─── Solutions Grid ─────────────────────────────────────────
+
+function SolutionsGrid({
+  solutions, flows, onActivate,
+}: {
+  solutions: PreConfiguredSolution[];
+  flows: AutomationFlow[];
+  onActivate: (s: PreConfiguredSolution) => void;
+}) {
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-lg font-semibold text-foreground">Soluções Pré-Configuradas</h2>
+        <p className="text-sm text-muted-foreground mt-1">
+          Ative soluções prontas para os cenários mais comuns da sua clínica. Cada solução vem com mensagens e gatilhos já configurados.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {solutions.map((sol) => {
+          const existingFlow = flows.find(f => f.type === sol.type);
+          const isActive = existingFlow?.active;
+          const isConfigured = !!existingFlow;
+
+          return (
+            <div
+              key={sol.id}
+              className={`relative bg-card rounded-xl border-2 p-5 transition-all hover:shadow-md ${
+                isActive
+                  ? "border-primary/50 shadow-sm"
+                  : sol.hasDelay
+                    ? "border-warning/50"
+                    : "border-border"
+              }`}
+            >
+              {/* Delay badge */}
+              {sol.hasDelay && !isConfigured && (
+                <span className="absolute top-3 right-12 px-2 py-0.5 rounded-full text-[10px] font-medium bg-warning/15 text-warning">
+                  Atividade em Atraso
+                </span>
+              )}
+
+              {/* Info icon */}
+              <button className="absolute top-3 right-3 text-muted-foreground/50 hover:text-muted-foreground transition-colors" title={sol.description}>
+                <Info className="h-4 w-4" />
+              </button>
+
+              {/* Icon */}
+              <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center text-2xl mb-4">
+                {sol.icon}
+              </div>
+
+              {/* Name */}
+              <h3 className="font-semibold text-foreground text-sm mb-2">{sol.name}</h3>
+
+              {/* Patient count */}
+              <p className="text-xs text-muted-foreground mb-4">
+                Total de Pacientes: {sol.totalPacientes ?? 0}
+              </p>
+
+              {/* Description on hover */}
+              <p className="text-xs text-muted-foreground mb-4 line-clamp-2">{sol.description}</p>
+
+              {/* Steps preview */}
+              <div className="text-[11px] text-muted-foreground/70 mb-4 space-y-0.5">
+                {sol.defaultSteps.map((step, i) => (
+                  <div key={step.id} className="flex items-center gap-1.5">
+                    <span className="font-medium text-primary">{i + 1}.</span>
+                    <span>{step.channel === "whatsapp" ? "📱" : step.channel === "sms" ? "💬" : "✉️"}</span>
+                    <span>{step.delay}</span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Action */}
+              {isActive ? (
+                <div className="flex items-center gap-2 text-xs font-medium text-primary">
+                  <CheckCircle2 className="h-4 w-4" />
+                  <span>Ativa</span>
+                </div>
+              ) : isConfigured ? (
+                <button
+                  onClick={() => onActivate(sol)}
+                  className="text-xs font-medium text-primary hover:underline"
+                >
+                  Editar configuração
+                </button>
+              ) : (
+                <button
+                  onClick={() => onActivate(sol)}
+                  className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg border border-primary text-primary text-xs font-medium hover:bg-primary/5 transition-colors"
+                >
+                  Ativar
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
