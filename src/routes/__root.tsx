@@ -1,6 +1,7 @@
 import { Outlet, Link, createRootRoute, HeadContent, Scripts, useLocation, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 import { AppSidebar } from "@/components/AppSidebar";
+import { WhatsAppConnectionBanner } from "@/components/WhatsAppConnectionBanner";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import { canAccessRoute } from "@/lib/routeAccess";
 import { Loader2, ShieldAlert } from "lucide-react";
@@ -126,9 +127,12 @@ function AuthGate() {
   return (
     <div className="flex h-screen w-full overflow-hidden">
       <AppSidebar />
-      <main className="flex-1 overflow-y-auto">
-        {hasAccess ? <Outlet /> : <UnauthorizedComponent />}
-      </main>
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <WhatsAppConnectionBanner />
+        <main className="flex-1 overflow-y-auto">
+          {hasAccess ? <Outlet /> : <UnauthorizedComponent />}
+        </main>
+      </div>
     </div>
   );
 }
