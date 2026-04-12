@@ -13,6 +13,7 @@ export interface Lead {
   queueId?: string;
   queueName?: string;
   queueColor?: string;
+  priority?: boolean;
 }
 
 export type MessageType =

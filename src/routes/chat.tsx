@@ -120,6 +120,7 @@ function ChatPage() {
         queueId: r.queueId,
         queueName: r.queueName,
         assignedTo: r.attendantId ? "current" : undefined,
+        priority: r.priority || false,
       });
       if (data.queue?.length) setQueue(data.queue.map(toLead));
       if (data.active?.length) setMyLeads(data.active.map(toLead));

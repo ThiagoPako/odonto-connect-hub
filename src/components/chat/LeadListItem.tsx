@@ -1,5 +1,5 @@
 import type { Lead } from "@/data/chatMockData";
-import { Clock, UserPlus, CheckCircle2 } from "lucide-react";
+import { Clock, UserPlus, CheckCircle2, Flame } from "lucide-react";
 import { LeadAvatar } from "@/components/LeadAvatar";
 
 type PresenceStatus = "online" | "offline" | "typing" | "recording";
@@ -35,9 +35,13 @@ export function LeadListItem({ lead, isSelected, onSelect, showAssignButton, onA
     <div
       onClick={() => onSelect(lead)}
       className={`lead-list-item flex items-start gap-3 px-4 py-3.5 cursor-pointer border-b border-border/30 relative overflow-hidden ${
-        isSelected
-          ? "bg-primary/5 border-l-[3px] border-l-primary shadow-sm"
-          : "hover:bg-muted/40 border-l-[3px] border-l-transparent"
+        lead.priority
+          ? isSelected
+            ? "bg-warning/10 border-l-[3px] border-l-warning shadow-sm"
+            : "bg-warning/5 border-l-[3px] border-l-warning hover:bg-warning/10"
+          : isSelected
+            ? "bg-primary/5 border-l-[3px] border-l-primary shadow-sm"
+            : "hover:bg-muted/40 border-l-[3px] border-l-transparent"
       }`}
     >
       {/* Subtle gradient overlay on selected */}
@@ -59,6 +63,11 @@ export function LeadListItem({ lead, isSelected, onSelect, showAssignButton, onA
       <div className="flex-1 min-w-0 relative z-10">
         <div className="flex items-center justify-between mb-0.5">
           <div className="flex items-center gap-1.5 min-w-0">
+            {lead.priority && (
+              <span className="inline-flex items-center gap-0.5 px-1.5 py-0 rounded-full text-[8px] font-bold bg-warning/20 text-warning leading-4 shrink-0 animate-pulse">
+                <Flame className="h-2.5 w-2.5" /> Recuperação
+              </span>
+            )}
             <span className={`text-sm font-semibold truncate transition-colors ${isSelected ? "text-primary" : "text-foreground"}`}>
               {lead.name}
             </span>
