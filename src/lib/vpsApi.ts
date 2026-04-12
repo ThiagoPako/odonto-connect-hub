@@ -245,7 +245,8 @@ export const dashboardApi = {
 // ─── CRM Leads ──────────────────────────────────────────────
 
 export const crmApi = {
-  list: (params?: Record<string, string>) => vpsApiFetch('/crm/leads', { params }),
+  list: (params?: Record<string, string>) =>
+    vpsApiFetch<{ rows: any[]; total: number; limit: number; offset: number }>('/crm/leads', { params }),
   kanban: () => vpsApiFetch('/crm/leads', { params: { grouped: 'kanban' } }),
   updateStage: (id: string, stage: string, reason?: string) =>
     vpsApiFetch(`/crm/leads/${id}/stage`, { method: 'PATCH', body: { stage, reason } }),
