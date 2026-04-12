@@ -184,6 +184,8 @@ function FollowupAutomationCard({
       const res = await automationsApi.updateFollowup({
         messages: editMessages,
         delaySeconds: editDelay,
+        delayDays: editDelayDays,
+        returnToQueueOnReply: editReturnOnReply,
       });
       if (res.data) {
         onUpdate(res.data);
