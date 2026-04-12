@@ -201,7 +201,9 @@ function SalesKanbanView() {
 
   useEffect(() => {
     crmApi.kanban().then(({ data }) => {
-      if (data && data.lead) setLeads(data as Record<SalesStage, KanbanLead[]>);
+      if (data && typeof data === 'object' && 'lead' in (data as Record<string, unknown>)) {
+        setLeads(data as Record<SalesStage, KanbanLead[]>);
+      }
     });
   }, []);
 
