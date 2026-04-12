@@ -346,9 +346,23 @@ function AtendimentoPage() {
                   <div className="bg-card rounded-2xl border border-border/60 p-4 shadow-card animate-slide-up" style={{ animationDelay: "50ms" }}>
                     <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
                       <Mic className="h-4 w-4 text-primary" /> Gravação da Consulta
-                      <span className="text-[10px] text-muted-foreground bg-muted/60 px-2 py-0.5 rounded-full ml-auto">
-                        Futuro: Transcrição IA automática
-                      </span>
+                      {gravacoes.length > 0 && (
+                        <button
+                          onClick={handleTranscreverIA}
+                          disabled={aiState.status === 'transcribing' || aiState.status === 'generating'}
+                          className="flex items-center gap-1.5 ml-auto h-7 px-3 rounded-lg bg-primary text-primary-foreground text-[11px] font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+                        >
+                          {aiState.status === 'transcribing' || aiState.status === 'generating' ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <Sparkles className="h-3 w-3" />
+                          )}
+                          {aiState.status === 'transcribing' ? 'Transcrevendo...' :
+                           aiState.status === 'generating' ? 'Gerando relatório...' :
+                           aiState.status === 'done' ? 'Gerar novamente' :
+                           'Transcrever com IA'}
+                        </button>
+                      )}
                     </h3>
                     <div className="flex items-center gap-3">
                       <AudioRecorder
