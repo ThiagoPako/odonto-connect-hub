@@ -72,8 +72,8 @@ function TratamentosPage() {
                   <button
                     key={t.id}
                     onClick={() => { setSelected(t); setSelectedTooth(null); }}
-                    className={`w-full text-left px-3 py-3 rounded-xl border transition-all ${
-                      selected?.id === t.id ? "bg-primary/5 border-primary/30" : "border-transparent hover:bg-muted"
+                    className={`w-full text-left px-3 py-3 rounded-xl border transition-all duration-300 hover-lift ${
+                      selected?.id === t.id ? "bg-primary/5 border-primary/30 shadow-[0_0_16px_-4px_hsl(var(--primary)/0.3)]" : "border-transparent hover:bg-muted hover:shadow-card"
                     }`}
                   >
                     <div className="flex items-center gap-2 mb-1.5">

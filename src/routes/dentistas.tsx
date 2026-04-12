@@ -75,8 +75,9 @@ function DentistasPage() {
       <DashboardHeader title="Gestão de Dentistas" />
       <main className="flex-1 p-8 space-y-6 overflow-auto">
         {/* Stats */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 animate-fade-in">
-          <div className="bg-card rounded-2xl border border-border/60 p-5 shadow-card">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 animate-slide-up" style={{ animationFillMode: 'both' }}>
+          <div className="group bg-card rounded-2xl border border-border/60 p-5 shadow-card hover:shadow-glow-primary hover-lift transition-all duration-300 relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-20 h-20 bg-gradient-to-bl from-primary/5 to-transparent rounded-bl-full pointer-events-none" />
             <p className="text-xs uppercase tracking-wider text-muted-foreground font-medium">
               Total Cadastrados
             </p>
@@ -84,7 +85,8 @@ function DentistasPage() {
               {dentistas.length}
             </p>
           </div>
-          <div className="bg-card rounded-2xl border border-border/60 p-5 shadow-card">
+          <div className="group bg-card rounded-2xl border border-border/60 p-5 shadow-card hover:shadow-glow-primary hover-lift transition-all duration-300 relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-20 h-20 bg-gradient-to-bl from-success/5 to-transparent rounded-bl-full pointer-events-none" />
             <p className="text-xs uppercase tracking-wider text-muted-foreground font-medium">
               Ativos
             </p>
@@ -92,7 +94,8 @@ function DentistasPage() {
               {dentistas.filter((d) => d.status === "ativo").length}
             </p>
           </div>
-          <div className="bg-card rounded-2xl border border-border/60 p-5 shadow-card">
+          <div className="group bg-card rounded-2xl border border-border/60 p-5 shadow-card hover:shadow-glow-primary hover-lift transition-all duration-300 relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-20 h-20 bg-gradient-to-bl from-destructive/5 to-transparent rounded-bl-full pointer-events-none" />
             <p className="text-xs uppercase tracking-wider text-muted-foreground font-medium">
               Inativos
             </p>
