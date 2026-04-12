@@ -197,7 +197,7 @@ function ContatosPage() {
                 </div>
 
                 {/* Actions */}
-                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
                   <Button
                     variant="ghost"
                     size="icon"
@@ -217,7 +217,7 @@ function ContatosPage() {
                       size="icon"
                       className="h-8 w-8"
                       title="Abrir Chat"
-                      onClick={() => navigate({ to: "/chat", search: { lead: contato.nome } })}
+                      onClick={() => navigate({ to: "/chat", search: { lead: contato.telefone || contato.nome } })}
                     >
                       <MessageSquare className="h-4 w-4 text-primary" />
                     </Button>
