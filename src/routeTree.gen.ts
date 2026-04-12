@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as TratamentosRouteImport } from './routes/tratamentos'
+import { Route as RelatoriosClinicosRouteImport } from './routes/relatorios-clinicos'
 import { Route as ReativacaoRouteImport } from './routes/reativacao'
 import { Route as ProntuarioRouteImport } from './routes/prontuario'
 import { Route as PerfilRouteImport } from './routes/perfil'
@@ -41,6 +42,11 @@ import { Route as IndexRouteImport } from './routes/index'
 const TratamentosRoute = TratamentosRouteImport.update({
   id: '/tratamentos',
   path: '/tratamentos',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RelatoriosClinicosRoute = RelatoriosClinicosRouteImport.update({
+  id: '/relatorios-clinicos',
+  path: '/relatorios-clinicos',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ReativacaoRoute = ReativacaoRouteImport.update({
@@ -207,6 +213,7 @@ export interface FileRoutesByFullPath {
   '/perfil': typeof PerfilRoute
   '/prontuario': typeof ProntuarioRoute
   '/reativacao': typeof ReativacaoRoute
+  '/relatorios-clinicos': typeof RelatoriosClinicosRoute
   '/tratamentos': typeof TratamentosRoute
 }
 export interface FileRoutesByTo {
@@ -237,6 +244,7 @@ export interface FileRoutesByTo {
   '/perfil': typeof PerfilRoute
   '/prontuario': typeof ProntuarioRoute
   '/reativacao': typeof ReativacaoRoute
+  '/relatorios-clinicos': typeof RelatoriosClinicosRoute
   '/tratamentos': typeof TratamentosRoute
 }
 export interface FileRoutesById {
@@ -268,6 +276,7 @@ export interface FileRoutesById {
   '/perfil': typeof PerfilRoute
   '/prontuario': typeof ProntuarioRoute
   '/reativacao': typeof ReativacaoRoute
+  '/relatorios-clinicos': typeof RelatoriosClinicosRoute
   '/tratamentos': typeof TratamentosRoute
 }
 export interface FileRouteTypes {
@@ -300,6 +309,7 @@ export interface FileRouteTypes {
     | '/perfil'
     | '/prontuario'
     | '/reativacao'
+    | '/relatorios-clinicos'
     | '/tratamentos'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -330,6 +340,7 @@ export interface FileRouteTypes {
     | '/perfil'
     | '/prontuario'
     | '/reativacao'
+    | '/relatorios-clinicos'
     | '/tratamentos'
   id:
     | '__root__'
@@ -360,6 +371,7 @@ export interface FileRouteTypes {
     | '/perfil'
     | '/prontuario'
     | '/reativacao'
+    | '/relatorios-clinicos'
     | '/tratamentos'
   fileRoutesById: FileRoutesById
 }
@@ -391,6 +403,7 @@ export interface RootRouteChildren {
   PerfilRoute: typeof PerfilRoute
   ProntuarioRoute: typeof ProntuarioRoute
   ReativacaoRoute: typeof ReativacaoRoute
+  RelatoriosClinicosRoute: typeof RelatoriosClinicosRoute
   TratamentosRoute: typeof TratamentosRoute
 }
 
@@ -401,6 +414,13 @@ declare module '@tanstack/react-router' {
       path: '/tratamentos'
       fullPath: '/tratamentos'
       preLoaderRoute: typeof TratamentosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/relatorios-clinicos': {
+      id: '/relatorios-clinicos'
+      path: '/relatorios-clinicos'
+      fullPath: '/relatorios-clinicos'
+      preLoaderRoute: typeof RelatoriosClinicosRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/reativacao': {
@@ -623,6 +643,7 @@ const rootRouteChildren: RootRouteChildren = {
   PerfilRoute: PerfilRoute,
   ProntuarioRoute: ProntuarioRoute,
   ReativacaoRoute: ReativacaoRoute,
+  RelatoriosClinicosRoute: RelatoriosClinicosRoute,
   TratamentosRoute: TratamentosRoute,
 }
 export const routeTree = rootRouteImport
