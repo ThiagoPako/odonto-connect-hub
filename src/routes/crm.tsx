@@ -631,8 +631,8 @@ function PatientTableView() {
                     <div className="flex items-center gap-3">
                       <LeadAvatar initials={patient.initials} avatarUrl={patient.avatarUrl} avatarColor={patient.avatarColor} size="sm" />
                       <div>
-                        <p className="text-sm font-medium text-foreground">{patient.name}</p>
-                        <p className="text-[11px] text-muted-foreground">{patient.phone}</p>
+                        <p className="text-sm font-medium text-foreground"><HighlightText text={patient.name} query={searchTerm} /></p>
+                        <p className="text-[11px] text-muted-foreground"><HighlightText text={patient.phone} query={searchTerm} /></p>
                       </div>
                     </div>
                   </td>
