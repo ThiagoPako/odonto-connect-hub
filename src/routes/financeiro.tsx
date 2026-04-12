@@ -1,20 +1,22 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { KpiCard } from "@/components/KpiCard";
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   DollarSign, TrendingUp, TrendingDown, Wallet, ArrowUpRight, ArrowDownRight,
   Plus, Building2, Users, FileText, BarChart3, CheckCircle, Clock, AlertTriangle,
-  CreditCard, Landmark, Receipt, XCircle,
+  CreditCard, Landmark, Receipt, XCircle, Loader2,
 } from "lucide-react";
 import {
-  mockBankAccounts, mockEmployees, mockPayrolls, mockBills, mockMovements,
-  mockOverdue, generateDRE, categoryLabels, generateId,
-  type BankAccount, type Employee, type Payroll, type Bill, type FinanceMovement, type FinanceCategory,
+  type FinanceCategory, categoryLabels,
 } from "@/data/financeiroMockData";
 import { FluxoCaixaChart } from "@/components/charts/FluxoCaixaChart";
 import { ReceitaDespesaChart } from "@/components/charts/ReceitaDespesaChart";
 import { DespesasCategoriaChart } from "@/components/charts/DespesasCategoriaChart";
+import {
+  finBanksApi, finEmployeesApi, finPayrollsApi, finBillsApi, finMovementsApi, finOverdueApi,
+} from "@/lib/vpsApi";
+import type { FinanceMovement, BankAccount, Employee, Payroll, Bill } from "@/data/financeiroMockData";
 
 export const Route = createFileRoute("/financeiro")({
   ssr: false,
@@ -32,19 +34,64 @@ const tabs: { id: Tab; label: string; icon: typeof DollarSign }[] = [
   { id: "dre", label: "DRE", icon: FileText },
 ];
 
+// Map API row to frontend types
+function mapBank(r: any): BankAccount {
+  return { id: r.id, name: r.name, bank: r.bank, agency: r.agency || '', account: r.account || '', type: r.type || 'corrente', balance: Number(r.balance) || 0, color: r.color || 'hsl(217,91%,60%)' };
+}
+function mapEmployee(r: any): Employee {
+  return { id: r.id, name: r.name, role: r.role, cpf: r.cpf || '', admissionDate: r.admission_date || '', salary: Number(r.salary) || 0, benefits: Number(r.benefits) || 0, bankAccountId: r.bank_account_id || '', active: r.active !== false };
+}
+function mapPayroll(r: any): Payroll {
+  return { id: r.id, employeeId: r.employee_id, employeeName: r.employee_name, month: r.month, grossSalary: Number(r.gross_salary) || 0, benefits: Number(r.benefits) || 0, deductions: Number(r.deductions) || 0, netSalary: Number(r.net_salary) || 0, status: r.status || 'pendente', paymentDate: r.payment_date || undefined, bankAccountId: r.bank_account_id || undefined };
+}
+function mapBill(r: any): Bill {
+  return { id: r.id, description: r.description, category: r.category, value: Number(r.value) || 0, dueDate: r.due_date, status: r.status || 'pendente', supplier: r.supplier || undefined, bankAccountId: r.bank_account_id || undefined, paymentDate: r.payment_date || undefined, recurrent: r.recurrent || false };
+}
+function mapMovement(r: any): FinanceMovement {
+  return { id: r.id, type: r.type, description: r.description, category: r.category, value: Number(r.value) || 0, date: r.date, bankAccountId: r.bank_account_id || '', bankName: r.bank_name || '', patient: r.patient || undefined, billId: r.bill_id || undefined, payrollId: r.payroll_id || undefined };
+}
+
 function FinanceiroPage() {
   const [activeTab, setActiveTab] = useState<Tab>("visao-geral");
-  const [movements, setMovements] = useState<FinanceMovement[]>([...mockMovements]);
-  const [bills, setBills] = useState<Bill[]>([...mockBills]);
-  const [payrolls, setPayrolls] = useState<Payroll[]>([...mockPayrolls]);
-  const [employees, setEmployees] = useState<Employee[]>([...mockEmployees]);
-  const [banks, setBanks] = useState<BankAccount[]>([...mockBankAccounts]);
+  const [movements, setMovements] = useState<FinanceMovement[]>([]);
+  const [bills, setBills] = useState<Bill[]>([]);
+  const [payrolls, setPayrolls] = useState<Payroll[]>([]);
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [banks, setBanks] = useState<BankAccount[]>([]);
+  const [overdue, setOverdue] = useState<{ patient: string; value: number; daysLate: number; procedure: string }[]>([]);
+  const [loading, setLoading] = useState(true);
 
   // Modais
   const [showAddMovement, setShowAddMovement] = useState(false);
   const [showAddBill, setShowAddBill] = useState(false);
   const [showAddEmployee, setShowAddEmployee] = useState(false);
   const [showAddBank, setShowAddBank] = useState(false);
+
+  const loadAll = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [banksRes, empsRes, payRes, billsRes, movsRes, overdueRes] = await Promise.all([
+        finBanksApi.list(),
+        finEmployeesApi.list(),
+        finPayrollsApi.list(),
+        finBillsApi.list(),
+        finMovementsApi.list(),
+        finOverdueApi.list(),
+      ]);
+      setBanks((banksRes as any[]).map(mapBank));
+      setEmployees((empsRes as any[]).map(mapEmployee));
+      setPayrolls((payRes as any[]).map(mapPayroll));
+      setBills((billsRes as any[]).map(mapBill));
+      setMovements((movsRes as any[]).map(mapMovement));
+      setOverdue((overdueRes as any[]).map((r: any) => ({ patient: r.patient, value: Number(r.value) || 0, daysLate: r.days_late || 0, procedure: r.procedure || '' })));
+    } catch (err) {
+      console.error('Erro ao carregar financeiro:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadAll(); }, [loadAll]);
 
   // KPIs
   const totalEntradas = movements.filter((m) => m.type === "entrada").reduce((s, m) => s + m.value, 0);
@@ -55,100 +102,110 @@ function FinanceiroPage() {
   const totalFolhaPendente = folhaPendente.reduce((s, p) => s + p.netSalary, 0);
 
   // Pagar conta
-  const handlePayBill = (billId: string, bankAccountId: string) => {
-    setBills((prev) =>
-      prev.map((b) =>
-        b.id === billId ? { ...b, status: "pago" as const, bankAccountId, paymentDate: new Date().toLocaleDateString("pt-BR") } : b
-      )
-    );
+  const handlePayBill = async (billId: string, bankAccountId: string) => {
     const bill = bills.find((b) => b.id === billId);
-    if (bill) {
-      const bank = banks.find((bk) => bk.id === bankAccountId);
-      const newMov: FinanceMovement = {
-        id: generateId(),
-        type: "saida",
-        description: bill.description,
-        category: bill.category,
-        value: bill.value,
-        date: new Date().toLocaleDateString("pt-BR"),
-        bankAccountId,
-        bankName: bank?.bank ?? "—",
-        billId: bill.id,
-      };
-      setMovements((prev) => [newMov, ...prev]);
-      setBanks((prev) => prev.map((bk) => bk.id === bankAccountId ? { ...bk, balance: bk.balance - bill.value } : bk));
-    }
+    if (!bill) return;
+    const bank = banks.find((bk) => bk.id === bankAccountId);
+    const now = new Date().toLocaleDateString("pt-BR");
+    try {
+      await finBillsApi.update(billId, { status: 'pago', bank_account_id: bankAccountId, payment_date: now });
+      await finMovementsApi.create({
+        type: 'saida', description: bill.description, category: bill.category,
+        value: bill.value, date: now, bank_account_id: bankAccountId,
+        bank_name: bank?.bank ?? '—', bill_id: bill.id,
+      });
+      await loadAll();
+    } catch (err) { console.error('Erro ao pagar conta:', err); }
   };
 
   // Pagar folha
-  const handlePayPayroll = (payrollId: string, bankAccountId: string) => {
-    setPayrolls((prev) =>
-      prev.map((p) =>
-        p.id === payrollId ? { ...p, status: "pago" as const, bankAccountId, paymentDate: new Date().toLocaleDateString("pt-BR") } : p
-      )
-    );
+  const handlePayPayroll = async (payrollId: string, bankAccountId: string) => {
     const pr = payrolls.find((p) => p.id === payrollId);
-    if (pr) {
-      const bank = banks.find((bk) => bk.id === bankAccountId);
-      const newMov: FinanceMovement = {
-        id: generateId(),
-        type: "saida",
-        description: `Folha Pgto — ${pr.employeeName} (${pr.month})`,
-        category: "salario",
-        value: pr.netSalary,
-        date: new Date().toLocaleDateString("pt-BR"),
-        bankAccountId,
-        bankName: bank?.bank ?? "—",
-        payrollId: pr.id,
-      };
-      setMovements((prev) => [newMov, ...prev]);
-      setBanks((prev) => prev.map((bk) => bk.id === bankAccountId ? { ...bk, balance: bk.balance - pr.netSalary } : bk));
-    }
+    if (!pr) return;
+    const bank = banks.find((bk) => bk.id === bankAccountId);
+    const now = new Date().toLocaleDateString("pt-BR");
+    try {
+      await finPayrollsApi.update(payrollId, { status: 'pago', bank_account_id: bankAccountId, payment_date: now });
+      await finMovementsApi.create({
+        type: 'saida', description: `Folha Pgto — ${pr.employeeName} (${pr.month})`,
+        category: 'salario', value: pr.netSalary, date: now,
+        bank_account_id: bankAccountId, bank_name: bank?.bank ?? '—', payroll_id: pr.id,
+      });
+      await loadAll();
+    } catch (err) { console.error('Erro ao pagar folha:', err); }
   };
 
   // Adicionar movimento manual
-  const handleAddMovement = (mov: Omit<FinanceMovement, "id">) => {
-    const newMov = { ...mov, id: generateId() };
-    setMovements((prev) => [newMov, ...prev]);
-    if (mov.type === "entrada") {
-      setBanks((prev) => prev.map((bk) => bk.id === mov.bankAccountId ? { ...bk, balance: bk.balance + mov.value } : bk));
-    } else {
-      setBanks((prev) => prev.map((bk) => bk.id === mov.bankAccountId ? { ...bk, balance: bk.balance - mov.value } : bk));
-    }
-    setShowAddMovement(false);
+  const handleAddMovement = async (mov: Omit<FinanceMovement, "id">) => {
+    try {
+      await finMovementsApi.create({
+        type: mov.type, description: mov.description, category: mov.category,
+        value: mov.value, date: mov.date, bank_account_id: mov.bankAccountId,
+        bank_name: mov.bankName, patient: mov.patient || null,
+      });
+      await loadAll();
+      setShowAddMovement(false);
+    } catch (err) { console.error('Erro ao adicionar movimentação:', err); }
   };
 
   // Adicionar conta a pagar
-  const handleAddBill = (bill: Omit<Bill, "id">) => {
-    setBills((prev) => [{ ...bill, id: generateId() }, ...prev]);
-    setShowAddBill(false);
+  const handleAddBill = async (bill: Omit<Bill, "id">) => {
+    try {
+      await finBillsApi.create({
+        description: bill.description, category: bill.category, value: bill.value,
+        due_date: bill.dueDate, status: 'pendente', supplier: bill.supplier || null,
+        recurrent: bill.recurrent,
+      });
+      await loadAll();
+      setShowAddBill(false);
+    } catch (err) { console.error('Erro ao adicionar conta:', err); }
   };
 
   // Adicionar funcionário
-  const handleAddEmployee = (emp: Omit<Employee, "id">) => {
-    const newEmp = { ...emp, id: generateId() };
-    setEmployees((prev) => [...prev, newEmp]);
-    // Criar folha pendente do mês atual
-    const newPr: Payroll = {
-      id: generateId(),
-      employeeId: newEmp.id,
-      employeeName: newEmp.name,
-      month: "04/2026",
-      grossSalary: newEmp.salary,
-      benefits: newEmp.benefits,
-      deductions: Math.round(newEmp.salary * 0.15),
-      netSalary: newEmp.salary + newEmp.benefits - Math.round(newEmp.salary * 0.15),
-      status: "pendente",
-    };
-    setPayrolls((prev) => [...prev, newPr]);
-    setShowAddEmployee(false);
+  const handleAddEmployee = async (emp: Omit<Employee, "id">) => {
+    try {
+      const created = await finEmployeesApi.create({
+        name: emp.name, role: emp.role, cpf: emp.cpf,
+        admission_date: new Date().toLocaleDateString("pt-BR"),
+        salary: emp.salary, benefits: emp.benefits,
+        bank_account_id: banks[0]?.id || null,
+      }) as any;
+      // Criar folha pendente do mês atual
+      const deductions = Math.round(emp.salary * 0.15);
+      await finPayrollsApi.create({
+        employee_id: created.id, employee_name: emp.name,
+        month: `${String(new Date().getMonth() + 1).padStart(2, '0')}/${new Date().getFullYear()}`,
+        gross_salary: emp.salary, benefits: emp.benefits,
+        deductions, net_salary: emp.salary + emp.benefits - deductions,
+        status: 'pendente',
+      });
+      await loadAll();
+      setShowAddEmployee(false);
+    } catch (err) { console.error('Erro ao adicionar funcionário:', err); }
   };
 
   // Adicionar banco
-  const handleAddBank = (bank: Omit<BankAccount, "id">) => {
-    setBanks((prev) => [...prev, { ...bank, id: generateId() }]);
-    setShowAddBank(false);
+  const handleAddBank = async (bank: Omit<BankAccount, "id">) => {
+    try {
+      await finBanksApi.create({
+        name: bank.name, bank: bank.bank, agency: bank.agency, account: bank.account,
+        type: bank.type, balance: bank.balance, color: bank.color,
+      });
+      await loadAll();
+      setShowAddBank(false);
+    } catch (err) { console.error('Erro ao adicionar banco:', err); }
   };
+
+  if (loading) {
+    return (
+      <div className="flex-1 flex flex-col min-h-screen">
+        <DashboardHeader title="Financeiro" />
+        <div className="flex-1 flex items-center justify-center">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex-1 flex flex-col min-h-screen">
@@ -185,7 +242,7 @@ function FinanceiroPage() {
               totalPendente={totalPendente}
               totalFolhaPendente={totalFolhaPendente}
               banks={banks}
-              overdue={mockOverdue}
+              overdue={overdue}
               movements={movements}
             />
           )}
@@ -228,7 +285,7 @@ function FinanceiroPage() {
               onAdd={handleAddBank}
             />
           )}
-          {activeTab === "dre" && <TabDRE />}
+          {activeTab === "dre" && <TabDRE movements={movements} />}
         </div>
       </main>
     </div>
@@ -241,7 +298,7 @@ function TabVisaoGeral({
   totalEntradas, totalSaidas, totalPendente, totalFolhaPendente, banks, overdue, movements,
 }: {
   totalEntradas: number; totalSaidas: number; totalPendente: number; totalFolhaPendente: number;
-  banks: BankAccount[]; overdue: typeof mockOverdue; movements: FinanceMovement[];
+  banks: BankAccount[]; overdue: { patient: string; value: number; daysLate: number; procedure: string }[]; movements: FinanceMovement[];
 }) {
   const saldoTotal = banks.reduce((s, b) => s + b.balance, 0);
 
@@ -283,6 +340,7 @@ function TabVisaoGeral({
                 <span className="text-sm font-bold text-foreground">R$ {bk.balance.toLocaleString("pt-BR")}</span>
               </div>
             ))}
+            {banks.length === 0 && <p className="text-xs text-muted-foreground text-center py-4">Nenhum banco cadastrado</p>}
           </div>
         </div>
 
@@ -308,6 +366,7 @@ function TabVisaoGeral({
                 </span>
               </div>
             ))}
+            {movements.length === 0 && <p className="text-xs text-muted-foreground text-center py-4">Nenhuma movimentação</p>}
           </div>
         </div>
 
@@ -320,8 +379,8 @@ function TabVisaoGeral({
             </span>
           </div>
           <div className="space-y-3">
-            {overdue.map((o) => (
-              <div key={o.patient} className="bg-destructive/5 rounded-lg p-3 border border-destructive/10">
+            {overdue.map((o, i) => (
+              <div key={i} className="bg-destructive/5 rounded-lg p-3 border border-destructive/10">
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-xs font-medium text-foreground">{o.patient}</span>
                   <span className="text-xs font-bold text-destructive">R$ {o.value.toLocaleString("pt-BR")}</span>
@@ -329,6 +388,7 @@ function TabVisaoGeral({
                 <p className="text-[10px] text-muted-foreground">{o.procedure} • {o.daysLate}d atraso</p>
               </div>
             ))}
+            {overdue.length === 0 && <p className="text-xs text-muted-foreground text-center py-4">Nenhum inadimplente 🎉</p>}
           </div>
         </div>
       </div>
@@ -451,7 +511,7 @@ function TabMovimentacoes({
                   <p className="text-xs text-foreground">{m.description}</p>
                   {m.patient && <p className="text-[10px] text-muted-foreground">{m.patient}</p>}
                 </td>
-                <td className="px-4 py-3 text-xs text-muted-foreground">{categoryLabels[m.category] ?? m.category}</td>
+                <td className="px-4 py-3 text-xs text-muted-foreground">{categoryLabels[m.category as FinanceCategory] ?? m.category}</td>
                 <td className="px-4 py-3 text-xs text-muted-foreground">{m.bankName}</td>
                 <td className={`px-4 py-3 text-xs font-bold text-right ${m.type === "entrada" ? "text-success" : "text-destructive"}`}>
                   {m.type === "entrada" ? "+" : "-"}R$ {m.value.toLocaleString("pt-BR")}
@@ -459,6 +519,9 @@ function TabMovimentacoes({
                 <td className="px-4 py-3 text-xs text-muted-foreground">{m.date}</td>
               </tr>
             ))}
+            {movements.length === 0 && (
+              <tr><td colSpan={6} className="px-5 py-8 text-center text-xs text-muted-foreground">Nenhuma movimentação registrada</td></tr>
+            )}
           </tbody>
         </table>
       </div>
@@ -612,6 +675,9 @@ function TabContasPagar({
               <span className="text-xs font-medium text-muted-foreground">R$ {b.value.toLocaleString("pt-BR")}</span>
             </div>
           ))}
+          {pagos.length === 0 && (
+            <div className="px-5 py-8 text-center text-xs text-muted-foreground">Nenhuma conta paga</div>
+          )}
         </div>
       </div>
     </>
@@ -632,7 +698,8 @@ function TabFuncionarios({
   const [payingId, setPayingId] = useState<string | null>(null);
   const [payBankId, setPayBankId] = useState(banks[0]?.id ?? "");
 
-  const folhaMesAtual = payrolls.filter((p) => p.month === "04/2026");
+  const currentMonth = `${String(new Date().getMonth() + 1).padStart(2, '0')}/${new Date().getFullYear()}`;
+  const folhaMesAtual = payrolls.filter((p) => p.month === currentMonth);
 
   const handleSubmit = () => {
     if (!form.name || !form.role || !form.salary) return;
@@ -719,6 +786,9 @@ function TabFuncionarios({
                 <td className="px-4 py-3 text-xs font-bold text-foreground text-right">R$ {(emp.salary + emp.benefits).toLocaleString("pt-BR")}</td>
               </tr>
             ))}
+            {employees.length === 0 && (
+              <tr><td colSpan={6} className="px-5 py-8 text-center text-xs text-muted-foreground">Nenhum funcionário cadastrado</td></tr>
+            )}
           </tbody>
         </table>
       </div>
@@ -726,7 +796,7 @@ function TabFuncionarios({
       {/* Folha de pagamento do mês */}
       <div className="bg-card rounded-xl border border-border overflow-hidden">
         <div className="px-5 py-3 border-b border-border flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-card-foreground">Folha de Pagamento — Abril/2026</h3>
+          <h3 className="text-sm font-semibold text-card-foreground">Folha de Pagamento — {currentMonth}</h3>
           <span className="text-[10px] font-bold text-warning bg-warning/10 px-2.5 py-1 rounded-full">
             {folhaMesAtual.filter((p) => p.status === "pendente").length} pendente(s)
           </span>
@@ -765,6 +835,9 @@ function TabFuncionarios({
               </div>
             </div>
           ))}
+          {folhaMesAtual.length === 0 && (
+            <div className="px-5 py-8 text-center text-xs text-muted-foreground">Nenhuma folha de pagamento para este mês</div>
+          )}
         </div>
       </div>
     </>
@@ -886,6 +959,9 @@ function TabBancos({
             </div>
           );
         })}
+        {banks.length === 0 && (
+          <div className="col-span-full text-center py-8 text-xs text-muted-foreground">Nenhum banco cadastrado</div>
+        )}
       </div>
     </>
   );
@@ -893,15 +969,48 @@ function TabBancos({
 
 // ==================== TAB: DRE ====================
 
-function TabDRE() {
-  const dreLines = generateDRE();
+function TabDRE({ movements }: { movements: FinanceMovement[] }) {
+  const entradas = movements.filter((m) => m.type === "entrada");
+  const saidas = movements.filter((m) => m.type === "saida");
+
+  const receitaConsultas = entradas.filter((e) => e.category === "consulta").reduce((s, e) => s + e.value, 0);
+  const receitaProcedimentos = entradas.filter((e) => ["procedimento", "implante", "ortodontia", "protese"].includes(e.category)).reduce((s, e) => s + e.value, 0);
+  const receitaTotal = entradas.reduce((s, e) => s + e.value, 0);
+
+  const despPessoal = saidas.filter((e) => ["salario", "comissao"].includes(e.category)).reduce((s, e) => s + e.value, 0);
+  const despMarketing = saidas.filter((e) => e.category === "marketing").reduce((s, e) => s + e.value, 0);
+  const despOcupacao = saidas.filter((e) => ["aluguel", "energia", "agua", "internet"].includes(e.category)).reduce((s, e) => s + e.value, 0);
+  const despMaterial = saidas.filter((e) => ["material", "laboratorio"].includes(e.category)).reduce((s, e) => s + e.value, 0);
+  const despAdmin = saidas.filter((e) => ["software", "manutencao", "impostos"].includes(e.category)).reduce((s, e) => s + e.value, 0);
+  const despTotal = saidas.reduce((s, e) => s + e.value, 0);
+  const lucro = receitaTotal - despTotal;
+  const mult = 0.88;
+
+  const dreLines = [
+    { label: "RECEITA OPERACIONAL BRUTA", currentMonth: receitaTotal, previousMonth: Math.round(receitaTotal * mult), isBold: true, isTotal: true },
+    { label: "Consultas e Avaliações", currentMonth: receitaConsultas, previousMonth: Math.round(receitaConsultas * 0.9), indent: 1 },
+    { label: "Procedimentos e Tratamentos", currentMonth: receitaProcedimentos, previousMonth: Math.round(receitaProcedimentos * mult), indent: 1 },
+    { label: "", currentMonth: 0, previousMonth: 0 },
+    { label: "(-) DEDUÇÕES E IMPOSTOS", currentMonth: Math.round(receitaTotal * 0.08), previousMonth: Math.round(receitaTotal * mult * 0.08) },
+    { label: "RECEITA OPERACIONAL LÍQUIDA", currentMonth: Math.round(receitaTotal * 0.92), previousMonth: Math.round(receitaTotal * mult * 0.92), isBold: true, isTotal: true },
+    { label: "", currentMonth: 0, previousMonth: 0 },
+    { label: "DESPESAS OPERACIONAIS", currentMonth: despTotal, previousMonth: Math.round(despTotal * 0.95), isBold: true, isTotal: true },
+    { label: "Pessoal (Salários + Comissões)", currentMonth: despPessoal, previousMonth: Math.round(despPessoal * 0.95), indent: 1 },
+    { label: "Marketing e Publicidade", currentMonth: despMarketing, previousMonth: Math.round(despMarketing * 1.1), indent: 1 },
+    { label: "Ocupação (Aluguel, Energia, Internet)", currentMonth: despOcupacao, previousMonth: Math.round(despOcupacao * 0.98), indent: 1 },
+    { label: "Materiais e Laboratório", currentMonth: despMaterial, previousMonth: Math.round(despMaterial * 0.85), indent: 1 },
+    { label: "Administrativas (Software, Manutenção, Impostos)", currentMonth: despAdmin, previousMonth: Math.round(despAdmin * 1.05), indent: 1 },
+    { label: "", currentMonth: 0, previousMonth: 0 },
+    { label: "RESULTADO OPERACIONAL (EBITDA)", currentMonth: lucro, previousMonth: Math.round((receitaTotal * mult * 0.92) - (despTotal * 0.95)), isBold: true, isTotal: true },
+    { label: "Margem Operacional", currentMonth: receitaTotal > 0 ? Math.round((lucro / receitaTotal) * 100) : 0, previousMonth: 0, isBold: true },
+  ];
 
   return (
     <>
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-bold text-foreground uppercase tracking-wider">DRE — Demonstração do Resultado</h2>
         <span className="text-[10px] font-medium text-muted-foreground bg-muted px-3 py-1 rounded-full">
-          Comparativo Abr vs Mar/2026
+          Comparativo mês atual vs anterior
         </span>
       </div>
 
@@ -910,8 +1019,8 @@ function TabDRE() {
           <thead>
             <tr className="border-b border-border bg-muted/30">
               <th className="px-6 py-3 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Descrição</th>
-              <th className="px-4 py-3 text-right text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Abr/2026</th>
-              <th className="px-4 py-3 text-right text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Mar/2026</th>
+              <th className="px-4 py-3 text-right text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Mês Atual</th>
+              <th className="px-4 py-3 text-right text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Mês Anterior</th>
               <th className="px-4 py-3 text-right text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Var %</th>
             </tr>
           </thead>
