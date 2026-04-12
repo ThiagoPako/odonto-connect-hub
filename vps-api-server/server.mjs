@@ -1742,6 +1742,67 @@ app.delete('/api/pacientes/:id', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
+// ANAMNESE
+// ═══════════════════════════════════════════════════════════════
+
+app.get('/api/pacientes/:id/anamnese', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { rows } = await pool.query('SELECT * FROM anamneses WHERE paciente_id = $1', [req.params.id]);
+    res.json(rows[0] || null);
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+app.put('/api/pacientes/:id/anamnese', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { id } = req.params;
+    const {
+      alergias, medicamentos, doencas_preexistentes, cirurgias_anteriores,
+      fumante, etilista, gestante, diabetes, cardiopatia, hepatite, hiv,
+      hemofilia, epilepsia, pressao_arterial, observacoes
+    } = req.body;
+
+    const { rows: existing } = await pool.query('SELECT id FROM anamneses WHERE paciente_id = $1', [id]);
+
+    if (existing.length > 0) {
+      await pool.query(
+        `UPDATE anamneses SET
+          alergias=$1, medicamentos=$2, doencas_preexistentes=$3, cirurgias_anteriores=$4,
+          fumante=$5, etilista=$6, gestante=$7, diabetes=$8, cardiopatia=$9,
+          hepatite=$10, hiv=$11, hemofilia=$12, epilepsia=$13,
+          pressao_arterial=$14, observacoes=$15, updated_at=NOW()
+        WHERE paciente_id=$16`,
+        [alergias||[], medicamentos||[], doencas_preexistentes||[], cirurgias_anteriores||[],
+         fumante||false, etilista||false, gestante||false, diabetes||false, cardiopatia||false,
+         hepatite||false, hiv||false, hemofilia||false, epilepsia||false,
+         pressao_arterial||null, observacoes||null, id]
+      );
+    } else {
+      await pool.query(
+        `INSERT INTO anamneses (paciente_id, alergias, medicamentos, doencas_preexistentes, cirurgias_anteriores,
+          fumante, etilista, gestante, diabetes, cardiopatia, hepatite, hiv, hemofilia, epilepsia,
+          pressao_arterial, observacoes)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+        [id, alergias||[], medicamentos||[], doencas_preexistentes||[], cirurgias_anteriores||[],
+         fumante||false, etilista||false, gestante||false, diabetes||false, cardiopatia||false,
+         hepatite||false, hiv||false, hemofilia||false, epilepsia||false,
+         pressao_arterial||null, observacoes||null]
+      );
+    }
+
+    const { rows } = await pool.query('SELECT * FROM anamneses WHERE paciente_id = $1', [id]);
+    res.json(rows[0]);
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('❌ Error saving anamnese:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
 // AGENDA
 // ═══════════════════════════════════════════════════════════════
 
