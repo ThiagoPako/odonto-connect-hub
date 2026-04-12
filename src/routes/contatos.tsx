@@ -157,7 +157,8 @@ function ContatosPage() {
             {contatos.map((contato) => (
               <div
                 key={contato.id}
-                className="bg-card border border-border rounded-xl p-4 flex items-center gap-4 hover:border-primary/30 transition-colors group"
+                className="bg-card border border-border rounded-xl p-4 flex items-center gap-4 hover:border-primary/30 transition-colors group cursor-pointer"
+                onClick={() => navigate({ to: "/chat", search: { lead: contato.telefone || contato.nome } })}
               >
                 {/* Avatar */}
                 <div className="h-11 w-11 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold text-sm shrink-0">
