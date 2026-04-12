@@ -1,10 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import {
-  DollarSign, CheckCircle2, Clock, CreditCard, Users, ChevronRight, Loader2,
+  DollarSign, CheckCircle2, Clock, CreditCard, Users, ChevronRight, Loader2, Plus, X,
 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
-import { comissoesApi, dentistasApi } from "@/lib/vpsApi";
+import { comissoesApi, dentistasApi, pacientesApi } from "@/lib/vpsApi";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/comissoes")({
@@ -45,17 +45,21 @@ function getInitials(name: string) {
 
 function ComissoesPage() {
   const [dentistas, setDentistas] = useState<DentistaRow[]>([]);
+  const [pacientes, setPacientes] = useState<{ id: string; nome: string }[]>([]);
   const [comissoes, setComissoes] = useState<ComissaoRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedDentista, setSelectedDentista] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("todos");
+  const [showAddModal, setShowAddModal] = useState(false);
 
   const loadAll = useCallback(async () => {
     try {
-      const [dRes, cRes] = await Promise.all([dentistasApi.list(), comissoesApi.list()]);
+      const [dRes, cRes, pRes] = await Promise.all([dentistasApi.list(), comissoesApi.list(), pacientesApi.list()]);
       const dData = (dRes as any).data || dRes || [];
       const cData = (cRes as any).data || cRes || [];
+      const pData = (pRes as any).data || pRes || [];
       setDentistas(Array.isArray(dData) ? dData : []);
+      setPacientes(Array.isArray(pData) ? pData.map((p: any) => ({ id: p.id, nome: p.nome })) : []);
       setComissoes(Array.isArray(cData) ? cData.map((r: any) => ({
         id: r.id,
         dentista_id: r.dentista_id,
@@ -77,6 +81,22 @@ function ComissoesPage() {
     const { error } = await comissoesApi.update(id, { status: newStatus });
     if (error) { toast.error("Erro: " + error); return; }
     toast.success(`Comissão ${newStatus === 'pago' ? 'paga' : newStatus === 'aprovado' ? 'aprovada' : newStatus}`);
+    loadAll();
+  };
+
+  const handleCreateComissao = async (data: { dentista_id: string; paciente_id: string; procedimento: string; valor: number; percentual: number }) => {
+    const comissaoValor = (data.valor * data.percentual) / 100;
+    const { error } = await comissoesApi.create({
+      dentista_id: data.dentista_id,
+      paciente_id: data.paciente_id,
+      procedimento: data.procedimento,
+      valor: comissaoValor,
+      percentual: data.percentual,
+      status: 'pendente',
+    });
+    if (error) { toast.error("Erro ao criar comissão: " + error); return; }
+    toast.success("Comissão registrada com sucesso!");
+    setShowAddModal(false);
     loadAll();
   };
 
@@ -162,6 +182,10 @@ function ComissoesPage() {
                     {s === "todos" ? "Todos" : statusCfg[s]?.label || s}
                   </button>
                 ))}
+                <button onClick={() => setShowAddModal(true)}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-medium bg-primary text-primary-foreground hover:bg-primary/90 ml-2">
+                  <Plus className="h-3 w-3" /> Nova
+                </button>
               </div>
             </div>
 
@@ -224,6 +248,15 @@ function ComissoesPage() {
             </div>
           </div>
         </div>
+
+        {showAddModal && (
+          <AddComissaoModal
+            dentistas={dentistas}
+            pacientes={pacientes}
+            onSave={handleCreateComissao}
+            onClose={() => setShowAddModal(false)}
+          />
+        )}
       </main>
     </div>
   );
@@ -249,6 +282,111 @@ function MiniStat({ label, value, accent }: { label: string; value: string; acce
     <div className="text-center">
       <p className="text-[9px] text-muted-foreground">{label}</p>
       <p className={`text-[11px] font-bold ${accent ? "text-warning" : "text-foreground"}`}>{value}</p>
+    </div>
+  );
+}
+
+function AddComissaoModal({
+  dentistas, pacientes, onSave, onClose,
+}: {
+  dentistas: DentistaRow[];
+  pacientes: { id: string; nome: string }[];
+  onSave: (data: { dentista_id: string; paciente_id: string; procedimento: string; valor: number; percentual: number }) => void;
+  onClose: () => void;
+}) {
+  const [form, setForm] = useState({
+    dentista_id: dentistas[0]?.id ?? '',
+    paciente_id: pacientes[0]?.id ?? '',
+    procedimento: '',
+    valor: '',
+    percentual: dentistas[0]?.comissao_percentual?.toString() || '30',
+  });
+  const [saving, setSaving] = useState(false);
+  const [pacienteSearch, setPacienteSearch] = useState('');
+
+  const valorNum = Number(form.valor) || 0;
+  const percNum = Number(form.percentual) || 0;
+  const comissaoValor = (valorNum * percNum) / 100;
+
+  const filteredPacientes = pacientes.filter(p =>
+    !pacienteSearch || p.nome.toLowerCase().includes(pacienteSearch.toLowerCase())
+  ).slice(0, 50);
+
+  const handleDentistaChange = (id: string) => {
+    const d = dentistas.find(d => d.id === id);
+    setForm({ ...form, dentista_id: id, percentual: d?.comissao_percentual?.toString() || form.percentual });
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!form.dentista_id || !form.paciente_id || !form.procedimento || !form.valor) return;
+    setSaving(true);
+    await onSave({
+      dentista_id: form.dentista_id,
+      paciente_id: form.paciente_id,
+      procedimento: form.procedimento,
+      valor: valorNum,
+      percentual: percNum,
+    });
+    setSaving(false);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+      <div className="bg-card rounded-2xl border border-border/60 shadow-xl w-full max-w-lg mx-4 animate-slide-up">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border/60">
+          <h2 className="text-lg font-bold text-foreground font-heading">Nova Comissão</h2>
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-muted/60"><X className="h-4 w-4 text-muted-foreground" /></button>
+        </div>
+        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Profissional (Dentista)</label>
+            <select value={form.dentista_id} onChange={(e) => handleDentistaChange(e.target.value)}
+              className="w-full h-10 px-4 rounded-xl bg-background border border-border/60 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30">
+              {dentistas.map(d => <option key={d.id} value={d.id}>{d.nome} — {d.especialidade} ({d.comissao_percentual}%)</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Paciente</label>
+            <input type="text" placeholder="Buscar paciente..." value={pacienteSearch}
+              onChange={(e) => setPacienteSearch(e.target.value)}
+              className="w-full h-8 px-3 rounded-lg bg-muted border-0 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary mb-1" />
+            <select value={form.paciente_id} onChange={(e) => setForm({ ...form, paciente_id: e.target.value })} size={4}
+              className="w-full px-4 py-1 rounded-xl bg-background border border-border/60 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30">
+              {filteredPacientes.map(p => <option key={p.id} value={p.id}>{p.nome}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Procedimento</label>
+            <input value={form.procedimento} onChange={(e) => setForm({ ...form, procedimento: e.target.value })} required placeholder="Ex: Implante dentário"
+              className="w-full h-10 px-4 rounded-xl bg-background border border-border/60 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30" />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Valor do Procedimento (R$)</label>
+              <input type="number" value={form.valor} onChange={(e) => setForm({ ...form, valor: e.target.value })} required min={0} step="0.01"
+                className="w-full h-10 px-4 rounded-xl bg-background border border-border/60 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">% Comissão</label>
+              <input type="number" value={form.percentual} onChange={(e) => setForm({ ...form, percentual: e.target.value })} required min={0} max={100}
+                className="w-full h-10 px-4 rounded-xl bg-background border border-border/60 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30" />
+            </div>
+          </div>
+          {valorNum > 0 && percNum > 0 && (
+            <div className="bg-primary/5 border border-primary/20 rounded-xl p-3 text-center">
+              <p className="text-[10px] text-muted-foreground">Valor da comissão calculada</p>
+              <p className="text-lg font-bold text-primary">R$ {comissaoValor.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</p>
+            </div>
+          )}
+          <div className="flex justify-end gap-3 pt-2">
+            <button type="button" onClick={onClose} className="px-5 py-2.5 rounded-xl text-sm font-medium text-muted-foreground hover:bg-muted/60">Cancelar</button>
+            <button type="submit" disabled={saving} className="px-5 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 disabled:opacity-50 flex items-center gap-2">
+              {saving && <Loader2 className="h-4 w-4 animate-spin" />} Registrar Comissão
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }
