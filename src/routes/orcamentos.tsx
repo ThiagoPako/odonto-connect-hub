@@ -6,7 +6,7 @@ import {
   FileText, ChevronRight, CreditCard, ExternalLink, AlertTriangle,
   Loader2,
 } from "lucide-react";
-import { useState, useEffect, useCallback } from "react";
+import { useState } from "react";
 import { mockBudgets, type Budget } from "@/data/orcamentoMockData";
 import { orcamentosApi } from "@/lib/vpsApi";
 import { toast } from "sonner";
