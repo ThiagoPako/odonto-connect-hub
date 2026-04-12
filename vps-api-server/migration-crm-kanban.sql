@@ -36,3 +36,7 @@ UPDATE crm_leads SET kanban_stage = 'followup' WHERE kanban_stage = 'followup_1'
 -- 6. Index on kanban_stage for faster grouping
 CREATE INDEX IF NOT EXISTS idx_crm_leads_kanban_stage ON crm_leads(kanban_stage);
 CREATE INDEX IF NOT EXISTS idx_crm_leads_consciousness ON crm_leads(consciousness_level);
+
+-- 7. Add paciente_id column to link leads to patients
+ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS paciente_id UUID REFERENCES pacientes(id);
+CREATE INDEX IF NOT EXISTS idx_crm_leads_paciente ON crm_leads(paciente_id);

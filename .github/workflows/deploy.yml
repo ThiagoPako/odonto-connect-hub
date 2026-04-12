@@ -41,6 +41,7 @@ jobs:
             cat /root/odonto-connect/vps-api-server/migration-crm-kanban.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             cat /root/odonto-connect/vps-api-server/migration-priority-recovery.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             cat /root/odonto-connect/vps-api-server/migration-user-preferences.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
+            cat /root/odonto-connect/vps-api-server/migration-ai-settings.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             echo "=== Migrations applied ==="
 
             # Restart services
