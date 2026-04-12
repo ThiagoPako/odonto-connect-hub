@@ -102,15 +102,7 @@ export function AutomationReportPanel() {
     pending: Number(t.pending),
   }));
 
-  // Per-flow conversion chart
-  const flowConversionData = flowStats
-    .filter(f => f.sent > 0)
-    .map(f => ({
-      name: f.name.length > 20 ? f.name.slice(0, 20) + "…" : f.name,
-      entrega: f.sent > 0 ? 100 : 0,
-      resposta: f.sent > 0 ? ((f.responded / f.sent) * 100) : 0,
-      conversao: f.sent > 0 ? ((f.converted / f.sent) * 100) : 0,
-    }));
+
 
   return (
     <div className="space-y-6">
