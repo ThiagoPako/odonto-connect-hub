@@ -255,7 +255,9 @@ function AutomacoesPage() {
               solutions={preConfiguredSolutions}
               flows={flows}
               onActivate={activateSolution}
+              onToggleActive={toggleActive}
               counts={solutionCounts}
+            />
             />
           ) : activeTab === "report" ? (
             <AutomationReportPanel />
@@ -1209,11 +1211,12 @@ const solutionIconMap: Record<string, { icon: LucideIcon; gradient: string; bg: 
 // ─── Solutions Grid ─────────────────────────────────────────
 
 function SolutionsGrid({
-  solutions, flows, onActivate, counts,
+  solutions, flows, onActivate, onToggleActive, counts,
 }: {
   solutions: PreConfiguredSolution[];
   flows: AutomationFlow[];
   onActivate: (s: PreConfiguredSolution) => void;
+  onToggleActive: (id: string) => void;
   counts: Record<string, number>;
 }) {
   const [hoursConfig, setHoursConfig] = useState({ inicio: '08:00', fim: '18:00', diasSemana: ['SEG','TER','QUA','QUI','SEX'] });
