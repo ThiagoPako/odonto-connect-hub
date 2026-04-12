@@ -574,7 +574,7 @@ function PatientTableView() {
               </tr>
             </thead>
             <tbody>
-              {paginated.map((patient) => (
+              {patients.map((patient: Patient) => (
                 <tr key={patient.id} onClick={() => setSelectedPatient(patient)}
                   className={`border-b border-border/50 cursor-pointer transition-colors ${
                     selectedPatient?.id === patient.id ? "bg-primary/5" : "hover:bg-muted/50"
