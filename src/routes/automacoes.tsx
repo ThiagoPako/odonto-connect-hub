@@ -1192,13 +1192,18 @@ function StepItem({ step, isLast, index }: { step: AutomationStep; isLast: boole
 
 const solutionIconMap: Record<string, { icon: LucideIcon; gradient: string; bg: string }> = {
   confirmacao_agenda: { icon: CalendarCheck, gradient: "from-chart-2 to-info", bg: "bg-chart-2/10" },
-  aniversario: { icon: Cake, gradient: "from-chart-5 to-warning", bg: "bg-chart-5/10" },
+  aniversario: { icon: Cake, gradient: "from-chart-5 to-chart-4", bg: "bg-chart-5/10" },
   desmarcacao: { icon: CalendarX, gradient: "from-warning to-chart-4", bg: "bg-warning/10" },
   faltas: { icon: UserX, gradient: "from-destructive to-chart-5", bg: "bg-destructive/10" },
   faltas_primeira: { icon: Bell, gradient: "from-chart-4 to-destructive", bg: "bg-chart-4/10" },
   inadimplencia: { icon: DollarSign, gradient: "from-warning to-chart-3", bg: "bg-warning/10" },
   orcamento_aberto: { icon: FileText, gradient: "from-chart-3 to-primary", bg: "bg-chart-3/10" },
   tratamento_sem_agenda: { icon: Stethoscope, gradient: "from-primary to-dental-cyan", bg: "bg-primary/10" },
+  pos_consulta: { icon: ShieldCheck, gradient: "from-chart-1 to-primary-glow", bg: "bg-chart-1/10" },
+  lembrete_retorno: { icon: Timer, gradient: "from-dental-cyan to-chart-2", bg: "bg-dental-cyan/10" },
+  reativacao: { icon: RotateCcw, gradient: "from-warning to-chart-4", bg: "bg-warning/10" },
+  followup_orcamento: { icon: Target, gradient: "from-chart-3 to-chart-1", bg: "bg-chart-3/10" },
+  custom: { icon: Settings2, gradient: "from-muted-foreground to-foreground", bg: "bg-muted" },
 };
 
 // ─── Solutions Grid ─────────────────────────────────────────
