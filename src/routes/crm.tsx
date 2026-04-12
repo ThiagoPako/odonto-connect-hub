@@ -452,16 +452,25 @@ function PatientTableView() {
   const [patients, setPatients] = useState<Patient[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
 
   const loadPatients = useCallback(async () => {
     setLoading(true);
     try {
-      const params: Record<string, string> = {};
+      const params: Record<string, string> = {
+        limit: String(PAGE_SIZE),
+        offset: String((safePage - 1) * PAGE_SIZE),
+      };
       if (searchTerm.trim()) params.search = searchTerm.trim();
       if (statusFilter !== "Todos") params.status = statusFilter;
+      if (originFilter !== "Todos") params.origin = originFilter;
       const { data } = await crmApi.list(params);
-      if (data && Array.isArray(data)) {
-        setPatients(data.map((r: any) => ({
+      if (data && data.rows && Array.isArray(data.rows)) {
+        setTotal(data.total);
+        setPatients(data.rows.map((r: any) => ({
           id: r.id,
           name: r.nome,
           initials: (r.nome || '').split(' ').map((w: string) => w[0]).join('').slice(0, 2).toUpperCase(),
@@ -482,7 +491,7 @@ function PatientTableView() {
     } finally {
       setLoading(false);
     }
-  }, [searchTerm, statusFilter]);
+  }, [searchTerm, statusFilter, originFilter, safePage]);
 
   useEffect(() => {
     const timer = setTimeout(() => void loadPatients(), 300);
