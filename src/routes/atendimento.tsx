@@ -7,7 +7,7 @@ import {
   Play, Square, Mic, FileText, Receipt, AlertTriangle, Clock,
   User, Phone, Mail, Heart, Pill, Stethoscope, Send, Plus, Trash2,
   Save, ChevronRight, Activity, ClipboardList, ExternalLink, Timer,
-  Printer, Loader2, Bot, Sparkles,
+  Printer, Loader2, Bot, Sparkles, CalendarCheck, MessageSquare,
 } from "lucide-react";
 import { exportarPrescricaoPdf } from "@/lib/prescricaoPdfExport";
 import { AudioRecorder } from "@/components/chat/AudioRecorder";
@@ -49,6 +49,14 @@ interface TranscriptionState {
   error: string;
 }
 
+interface FollowupState {
+  status: 'idle' | 'generating' | 'ready' | 'scheduling' | 'scheduled' | 'error';
+  messages: Array<{ delay_days: number; text: string }>;
+  summary: string;
+  jobs: Array<{ id: string; scheduled_at: string; delay_days: number; message: string }>;
+  error: string;
+}
+
 function AtendimentoPage() {
   const [pacienteSelecionado, setPacienteSelecionado] = useState<Paciente | null>(null);
   const [busca, setBusca] = useState("");
@@ -67,6 +75,9 @@ function AtendimentoPage() {
   const timerRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const [aiState, setAiState] = useState<TranscriptionState>({
     status: 'idle', transcription: '', report: '', reportId: '', error: '',
+  });
+  const [followupState, setFollowupState] = useState<FollowupState>({
+    status: 'idle', messages: [], summary: '', jobs: [], error: '',
   });
 
   const pacientesFiltrados = mockPacientes.filter(p =>
