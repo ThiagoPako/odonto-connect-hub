@@ -209,7 +209,7 @@ function AgendaPage() {
 }
 
 /* ===================== KANBAN VIEW ===================== */
-function KanbanView({ filtered, selectedProfessional }: { filtered: Appointment[]; selectedProfessional: string }) {
+function KanbanView({ filtered, selectedProfessional, onAtender, onUpdateStatus }: { filtered: Appointment[]; selectedProfessional: string; onAtender: (a: Appointment) => void; onUpdateStatus: (id: string, status: string) => void }) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
       {mockProfessionals
