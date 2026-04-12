@@ -1,15 +1,16 @@
+# Memory: index.md
+Updated: 4d ago
+
 # Project Memory
 
 ## Core
 SaaS odontológico "Odonto Connect". Azul dental primário, sidebar escura, Inter font.
-Stack: TanStack Start, VPS Hostinger, Evolution API (WhatsApp), PostgreSQL local.
-Backend: Express API server (vps-api-server/) port 3002, JWT auth, pg Pool.
-Frontend API: src/lib/vpsApi.ts → https://odontoconnect.tech/api.
-Sem Supabase/Lovable Cloud — tudo na VPS.
-REGRA: Todo botão/função frontend DEVE funcionar no backend. Nada de UI vazia.
+Stack: TanStack Start, VPS Hostinger, Evolution API (WhatsApp), PostgreSQL.
+Módulos: Chat/Fila, Phoenix (contingência WA), Dashboard Admin, VoIP, IA Financeira, CRM.
 
 ## Memories
 - [Design tokens](mem://design/tokens) — Dental blue palette, semantic colors, pulse-danger animation
-- [VPS Backend](mem://features/data-sync) — Express API, PostgreSQL, JWT, Evolution proxy
-- [No Lovable Cloud](mem://constraints/no-lovable-cloud) — Backend disabled, use VPS instead
-- [Backend funcional](mem://constraints/functional-backend) — Todo frontend deve ter backend real
+- [CRM Kanban flow](mem://features/crm-kanban-flow) — Dois kanbans (Vendas + Recuperação), níveis de consciência como tags
+- [Data sync](mem://features/data-sync) — registroCentral.ts como fonte única de verdade
+- [Backend funcional](mem://constraints/functional-backend) — Todo botão deve ter implementação real
+- [Sem Lovable Cloud](mem://constraints/no-lovable-cloud) — Backend externo VPS Hostinger

@@ -1,13 +1,20 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useState, useEffect, useCallback } from "react";
 import { DashboardHeader } from "@/components/DashboardHeader";
-import { type Patient, kanbanStages, type KanbanStage, type KanbanLead } from "@/data/crmMockData";
+import {
+  type Patient, type KanbanLead,
+  type SalesStage, type RecoveryStage,
+  salesStages, recoveryStages,
+  mockSalesKanban, mockRecoveryKanban,
+  consciousnessLevels, type ConsciousnessLevel,
+} from "@/data/crmMockData";
 import { crmApi } from "@/lib/vpsApi";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Search, Plus, Filter, Phone, Mail, Calendar, DollarSign,
   ChevronRight, MoreHorizontal, UserPlus, ExternalLink,
-  Clock, MessageSquare, GripVertical, RefreshCw,
+  Clock, MessageSquare, GripVertical, RefreshCw, RotateCcw,
+  TrendingUp, Target,
 } from "lucide-react";
 import { toast } from "sonner";
 import { whatsappApi } from "@/lib/vpsApi";
@@ -30,31 +37,20 @@ const statuses = ["Todos", "lead", "ativo", "inativo", "paciente"];
 
 function SyncAvatarsButton() {
   const [syncing, setSyncing] = useState(false);
-
   const handleSync = async () => {
     setSyncing(true);
     toast.info("Sincronizando fotos de perfil do WhatsApp...");
     try {
       const { data, error } = await whatsappApi.syncProfilePictures("default");
-      if (error) {
-        toast.error("Erro ao sincronizar: " + error);
-      } else if (data) {
-        toast.success(`Fotos atualizadas: ${data.updated} de ${data.total} leads`);
-      }
-    } catch {
-      toast.error("Erro de conexão ao sincronizar fotos");
-    } finally {
-      setSyncing(false);
-    }
+      if (error) toast.error("Erro ao sincronizar: " + error);
+      else if (data) toast.success(`Fotos atualizadas: ${data.updated} de ${data.total} leads`);
+    } catch { toast.error("Erro de conexão ao sincronizar fotos"); }
+    finally { setSyncing(false); }
   };
-
   return (
-    <button
-      onClick={handleSync}
-      disabled={syncing}
+    <button onClick={handleSync} disabled={syncing}
       className="h-9 px-3 rounded-lg bg-muted text-muted-foreground text-sm font-medium hover:bg-accent hover:text-accent-foreground transition-colors flex items-center gap-1.5 disabled:opacity-50"
-      title="Sincronizar fotos do WhatsApp"
-    >
+      title="Sincronizar fotos do WhatsApp">
       <RefreshCw className={`h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
       <span className="hidden sm:inline">{syncing ? "Sincronizando..." : "Sync Fotos"}</span>
     </button>
@@ -65,20 +61,235 @@ function CrmPage() {
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="CRM — Pacientes & Funil" />
-      <Tabs defaultValue="tabela" className="flex-1 flex flex-col overflow-hidden">
+      <Tabs defaultValue="kanban_vendas" className="flex-1 flex flex-col overflow-hidden">
         <div className="px-4 pt-3 border-b border-border bg-card">
           <TabsList>
+            <TabsTrigger value="kanban_vendas" className="gap-1.5">
+              <TrendingUp className="h-3.5 w-3.5" /> Funil de Vendas
+            </TabsTrigger>
+            <TabsTrigger value="kanban_recuperacao" className="gap-1.5">
+              <RotateCcw className="h-3.5 w-3.5" /> Recuperação
+            </TabsTrigger>
             <TabsTrigger value="tabela">Lista de Pacientes</TabsTrigger>
-            <TabsTrigger value="kanban">Funil de Vendas</TabsTrigger>
           </TabsList>
         </div>
+        <TabsContent value="kanban_vendas" className="flex-1 flex flex-col overflow-hidden mt-0">
+          <SalesKanbanView />
+        </TabsContent>
+        <TabsContent value="kanban_recuperacao" className="flex-1 flex flex-col overflow-hidden mt-0">
+          <RecoveryKanbanView />
+        </TabsContent>
         <TabsContent value="tabela" className="flex-1 flex overflow-hidden mt-0">
           <PatientTableView />
         </TabsContent>
-        <TabsContent value="kanban" className="flex-1 flex flex-col overflow-hidden mt-0">
-          <KanbanView />
-        </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+/* ── Generic Kanban Board ────────────────────────── */
+
+function GenericKanbanBoard<T extends string>({
+  stages,
+  leads,
+  setLeads,
+  title,
+}: {
+  stages: { id: T; label: string; color: string; description: string }[];
+  leads: Record<T, KanbanLead[]>;
+  setLeads: React.Dispatch<React.SetStateAction<Record<T, KanbanLead[]>>>;
+  title: string;
+}) {
+  const [draggedLead, setDraggedLead] = useState<{ lead: KanbanLead; fromStage: T } | null>(null);
+  const [assignedFilter, setAssignedFilter] = useState("Todos");
+
+  const allLeadsList = Object.values(leads).flat() as KanbanLead[];
+  const assignees = ["Todos", ...Array.from(new Set(allLeadsList.map((l) => l.assignedTo)))];
+
+  const handleDragStart = (lead: KanbanLead, fromStage: T) => setDraggedLead({ lead, fromStage });
+  const handleDragOver = (e: React.DragEvent) => e.preventDefault();
+
+  const handleDrop = (toStage: T) => {
+    if (!draggedLead || draggedLead.fromStage === toStage) return;
+    setLeads((prev) => {
+      const updated = { ...prev };
+      updated[draggedLead.fromStage] = prev[draggedLead.fromStage].filter((l) => l.id !== draggedLead.lead.id);
+      updated[toStage] = [...prev[toStage], draggedLead.lead];
+      return updated;
+    });
+    crmApi.updateStage(draggedLead.lead.id, toStage).catch(() => toast.error("Erro ao mover lead"));
+    setDraggedLead(null);
+  };
+
+  const filteredLeads = assignedFilter === "Todos"
+    ? leads
+    : Object.fromEntries(
+        Object.entries(leads).map(([stage, list]) => [stage, (list as KanbanLead[]).filter((l) => l.assignedTo === assignedFilter)])
+      ) as Record<T, KanbanLead[]>;
+
+  const visibleList = (Object.values(filteredLeads) as KanbanLead[][]).flat();
+  const totalValue = visibleList.reduce((sum, l) => sum + l.value, 0);
+
+  return (
+    <>
+      <div className="flex items-center justify-between px-6 py-3 border-b border-border bg-card flex-wrap gap-3">
+        <div className="flex items-center gap-6">
+          <div>
+            <span className="text-xs text-muted-foreground">Total no funil</span>
+            <p className="text-lg font-bold text-foreground">{visibleList.length} leads</p>
+          </div>
+          <div>
+            <span className="text-xs text-muted-foreground">Valor total</span>
+            <p className="text-lg font-bold text-foreground">R$ {totalValue.toLocaleString("pt-BR")}</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <UserPlus className="h-4 w-4 text-muted-foreground" />
+            <div className="flex items-center gap-1">
+              {assignees.map((a) => (
+                <button key={a} onClick={() => setAssignedFilter(a)}
+                  className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors whitespace-nowrap ${
+                    assignedFilter === a ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:text-foreground"
+                  }`}>{a}</button>
+              ))}
+            </div>
+          </div>
+          <button className="flex items-center gap-2 h-9 px-4 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors">
+            <Plus className="h-4 w-4" /> Novo Lead
+          </button>
+        </div>
+      </div>
+
+      <div className="flex-1 flex gap-3 p-4 overflow-x-auto">
+        {stages.map((stage) => {
+          const stageLeads = filteredLeads[stage.id] || [];
+          const stageValue = stageLeads.reduce((sum, l) => sum + l.value, 0);
+          return (
+            <div key={stage.id} className="flex flex-col w-[280px] shrink-0 bg-muted/30 rounded-xl"
+              onDragOver={handleDragOver} onDrop={() => handleDrop(stage.id)}>
+              <div className="flex items-center gap-2 px-3 py-3 border-b border-border/50">
+                <div className={`h-2.5 w-2.5 rounded-full ${stage.color}`} />
+                <div className="flex-1 min-w-0">
+                  <span className="text-sm font-semibold text-foreground">{stage.label}</span>
+                  <p className="text-[9px] text-muted-foreground truncate">{stage.description}</p>
+                </div>
+                <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded-full">{stageLeads.length}</span>
+              </div>
+              {stageValue > 0 && (
+                <div className="px-3 py-1.5">
+                  <span className="text-[11px] text-muted-foreground">R$ {stageValue.toLocaleString("pt-BR")}</span>
+                </div>
+              )}
+              <div className="flex-1 overflow-y-auto px-2 pb-2 space-y-2">
+                {stageLeads.map((lead) => (
+                  <KanbanCard key={lead.id} lead={lead} onDragStart={() => handleDragStart(lead, stage.id)} />
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
+/* ── Sales Kanban ────────────────────────────────── */
+
+function SalesKanbanView() {
+  const [leads, setLeads] = useState<Record<SalesStage, KanbanLead[]>>(mockSalesKanban);
+
+  useEffect(() => {
+    crmApi.kanban().then(({ data }) => {
+      if (data && typeof data === 'object' && 'lead' in (data as Record<string, unknown>)) {
+        setLeads(data as Record<SalesStage, KanbanLead[]>);
+      }
+    });
+  }, []);
+
+  return <GenericKanbanBoard stages={salesStages} leads={leads} setLeads={setLeads} title="Funil de Vendas" />;
+}
+
+/* ── Recovery Kanban ─────────────────────────────── */
+
+function RecoveryKanbanView() {
+  const [leads, setLeads] = useState<Record<RecoveryStage, KanbanLead[]>>(mockRecoveryKanban);
+
+  return <GenericKanbanBoard stages={recoveryStages} leads={leads} setLeads={setLeads} title="Recuperação de Vendas" />;
+}
+
+/* ── Kanban Card ─────────────────────────────────── */
+
+function KanbanCard({ lead, onDragStart }: { lead: KanbanLead; onDragStart: () => void }) {
+  const navigate = useNavigate();
+  const daysAgo = Math.floor((Date.now() - lead.lastContact.getTime()) / 86400000);
+  const isStale = daysAgo > 3;
+
+  const handleOpenChat = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigate({ to: "/chat", search: { lead: lead.name } });
+  };
+
+  const handleCall = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const cleanPhone = lead.phone.replace(/\D/g, "");
+    const phoneWithPlus = cleanPhone.startsWith("55") ? `+${cleanPhone}` : `+55${cleanPhone}`;
+    window.location.href = `tel:${phoneWithPlus}`;
+    toast.success(`Ligando para ${lead.name}...`, { description: lead.phone });
+  };
+
+  const level = lead.consciousnessLevel
+    ? consciousnessLevels.find((l) => l.id === lead.consciousnessLevel)
+    : null;
+
+  return (
+    <div draggable onDragStart={onDragStart}
+      className={`bg-card rounded-lg border p-3 cursor-grab active:cursor-grabbing hover:shadow-md transition-shadow ${
+        isStale ? "border-warning/50" : "border-border"
+      }`}>
+      <div className="flex items-start justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <LeadAvatar initials={lead.initials} avatarUrl={lead.avatarUrl} avatarColor={lead.avatarColor} size="sm" />
+          <div>
+            <p className="text-sm font-medium text-card-foreground leading-tight">{lead.name}</p>
+            <p className="text-[11px] text-muted-foreground">{lead.origin}</p>
+          </div>
+        </div>
+        <button className="p-1 rounded hover:bg-muted transition-colors text-muted-foreground">
+          <MoreHorizontal className="h-3.5 w-3.5" />
+        </button>
+      </div>
+
+      {/* Nível de Consciência */}
+      {level && (
+        <div className="flex items-center gap-1.5 mb-2 px-2 py-1 rounded-md text-[10px] font-medium"
+          style={{ backgroundColor: `${level.color}15`, color: level.color }}>
+          <span>{level.icon}</span>
+          <span>{level.label}</span>
+        </div>
+      )}
+
+      <p className="text-sm font-semibold text-primary mb-2">R$ {lead.value.toLocaleString("pt-BR")}</p>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-1.5">
+          <div className="h-5 w-5 rounded-full bg-primary/15 flex items-center justify-center text-[8px] font-bold text-primary">
+            {lead.assignedInitials}
+          </div>
+          <span className="text-[11px] text-muted-foreground">{lead.assignedTo}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={handleCall} className="p-1.5 rounded-lg hover:bg-chart-2/15 text-muted-foreground hover:text-chart-2 transition-colors" title={`Ligar: ${lead.phone}`}>
+            <Phone className="h-3.5 w-3.5" />
+          </button>
+          <button onClick={handleOpenChat} className="p-1.5 rounded-lg hover:bg-primary/15 text-muted-foreground hover:text-primary transition-colors" title={`Chat com ${lead.name}`}>
+            <MessageSquare className="h-3.5 w-3.5" />
+          </button>
+          <div className={`flex items-center gap-0.5 ${isStale ? "text-warning" : "text-muted-foreground/50"}`}>
+            <Clock className="h-3 w-3" />
+            <span className="text-[10px]">{daysAgo}d</span>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -131,17 +342,12 @@ function PatientTableView() {
   return (
     <main className="flex-1 flex overflow-hidden">
       <div className={`flex flex-col border-r border-border bg-card ${selectedPatient ? "w-[55%]" : "flex-1"}`}>
-        {/* Toolbar */}
         <div className="flex items-center gap-3 px-4 py-3 border-b border-border">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <input
-              type="text"
-              placeholder="Buscar por nome, telefone ou e-mail..."
-              value={searchTerm}
+            <input type="text" placeholder="Buscar por nome, telefone ou e-mail..." value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full h-9 pl-9 pr-4 rounded-lg bg-muted border-0 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-            />
+              className="w-full h-9 pl-9 pr-4 rounded-lg bg-muted border-0 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring" />
           </div>
           <SyncAvatarsButton />
           <button className="h-9 px-3 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors flex items-center gap-1.5">
@@ -149,18 +355,14 @@ function PatientTableView() {
           </button>
         </div>
 
-        {/* Filters */}
         <div className="flex items-center gap-2 px-4 py-2 border-b border-border/50 overflow-x-auto">
           <Filter className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
           <div className="flex items-center gap-1">
             {origins.map((o) => (
-              <button
-                key={o}
-                onClick={() => setOriginFilter(o)}
+              <button key={o} onClick={() => setOriginFilter(o)}
                 className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors whitespace-nowrap ${
                   originFilter === o ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:text-foreground"
-                }`}
-              >{o}</button>
+                }`}>{o}</button>
             ))}
           </div>
           <div className="h-4 w-px bg-border mx-1" />
@@ -168,24 +370,19 @@ function PatientTableView() {
             {statuses.map((s) => {
               const label = s === "Todos" ? "Todos" : statusLabels[s as Patient["status"]].label;
               return (
-                <button
-                  key={s}
-                  onClick={() => setStatusFilter(s)}
+                <button key={s} onClick={() => setStatusFilter(s)}
                   className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors whitespace-nowrap ${
                     statusFilter === s ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:text-foreground"
-                  }`}
-                >{label}</button>
+                  }`}>{label}</button>
               );
             })}
           </div>
         </div>
 
-        {/* Count */}
         <div className="px-4 py-2 text-xs text-muted-foreground">
           {filtered.length} paciente{filtered.length !== 1 ? "s" : ""} encontrado{filtered.length !== 1 ? "s" : ""}
         </div>
 
-        {/* Table */}
         <div className="flex-1 overflow-y-auto">
           <table className="w-full">
             <thead className="sticky top-0 bg-card">
@@ -200,13 +397,10 @@ function PatientTableView() {
             </thead>
             <tbody>
               {filtered.map((patient) => (
-                <tr
-                  key={patient.id}
-                  onClick={() => setSelectedPatient(patient)}
+                <tr key={patient.id} onClick={() => setSelectedPatient(patient)}
                   className={`border-b border-border/50 cursor-pointer transition-colors ${
                     selectedPatient?.id === patient.id ? "bg-primary/5" : "hover:bg-muted/50"
-                  }`}
-                >
+                  }`}>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3">
                       <LeadAvatar initials={patient.initials} avatarUrl={patient.avatarUrl} avatarColor={patient.avatarColor} size="sm" />
@@ -240,190 +434,6 @@ function PatientTableView() {
         <PatientDetail patient={selectedPatient} onClose={() => setSelectedPatient(null)} />
       )}
     </main>
-  );
-}
-
-/* ── Kanban View (merged from /funil) ────────────── */
-
-function KanbanView() {
-  const emptyKanban: Record<KanbanStage, KanbanLead[]> = {
-    lead: [], em_contato: [], followup_1: [], followup_2: [], followup_3: [],
-    sem_resposta: [], desqualificado: [], paciente_agendado: [],
-  };
-  const [leads, setLeads] = useState<Record<KanbanStage, KanbanLead[]>>(emptyKanban);
-  const [draggedLead, setDraggedLead] = useState<{ lead: KanbanLead; fromStage: KanbanStage } | null>(null);
-  const [assignedFilter, setAssignedFilter] = useState("Todos");
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    crmApi.kanban().then(({ data }) => {
-      if (data) setLeads(data as Record<KanbanStage, KanbanLead[]>);
-      setLoading(false);
-    });
-  }, []);
-
-  const allLeadsList: KanbanLead[] = Object.values(leads).flat();
-  const assignees = ["Todos", ...Array.from(new Set(allLeadsList.map((l: KanbanLead) => l.assignedTo)))];
-
-  const handleDragStart = (lead: KanbanLead, fromStage: KanbanStage) => {
-    setDraggedLead({ lead, fromStage });
-  };
-
-  const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); };
-
-  const handleDrop = (toStage: KanbanStage) => {
-    if (!draggedLead || draggedLead.fromStage === toStage) return;
-    setLeads((prev) => {
-      const updated = { ...prev };
-      updated[draggedLead.fromStage] = prev[draggedLead.fromStage].filter((l: KanbanLead) => l.id !== draggedLead.lead.id);
-      updated[toStage] = [...prev[toStage], draggedLead.lead];
-      return updated;
-    });
-    // Persist stage change to backend
-    crmApi.updateStage(draggedLead.lead.id, toStage).catch(() => toast.error("Erro ao mover lead"));
-    setDraggedLead(null);
-  };
-
-  // Apply filter
-  const filteredLeads: Record<KanbanStage, KanbanLead[]> = assignedFilter === "Todos"
-    ? leads
-    : Object.fromEntries(
-        Object.entries(leads).map(([stage, list]) => [stage, (list as KanbanLead[]).filter((l: KanbanLead) => l.assignedTo === assignedFilter)])
-      ) as Record<KanbanStage, KanbanLead[]>;
-
-  const visibleList: KanbanLead[] = Object.values(filteredLeads).flat();
-  const totalValue = visibleList.reduce((sum: number, l: KanbanLead) => sum + l.value, 0);
-
-  return (
-    <>
-      {/* Summary bar */}
-      <div className="flex items-center justify-between px-6 py-3 border-b border-border bg-card flex-wrap gap-3">
-        <div className="flex items-center gap-6">
-          <div>
-            <span className="text-xs text-muted-foreground">Total no funil</span>
-            <p className="text-lg font-bold text-foreground">{visibleList.length} leads</p>
-          </div>
-          <div>
-            <span className="text-xs text-muted-foreground">Valor total</span>
-            <p className="text-lg font-bold text-foreground">R$ {totalValue.toLocaleString("pt-BR")}</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <UserPlus className="h-4 w-4 text-muted-foreground" />
-            <div className="flex items-center gap-1">
-              {assignees.map((a) => (
-                <button
-                  key={a}
-                  onClick={() => setAssignedFilter(a)}
-                  className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors whitespace-nowrap ${
-                    assignedFilter === a ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:text-foreground"
-                  }`}
-                >{a}</button>
-              ))}
-            </div>
-          </div>
-          <button className="flex items-center gap-2 h-9 px-4 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors">
-            <Plus className="h-4 w-4" /> Novo Lead
-          </button>
-        </div>
-      </div>
-
-      {/* Kanban Board */}
-      <div className="flex-1 flex gap-3 p-4 overflow-x-auto">
-        {kanbanStages.map((stage) => {
-          const stageLeads = filteredLeads[stage.id];
-          const stageValue = stageLeads.reduce((sum: number, l: KanbanLead) => sum + l.value, 0);
-          return (
-            <div
-              key={stage.id}
-              className="flex flex-col w-[280px] shrink-0 bg-muted/30 rounded-xl"
-              onDragOver={handleDragOver}
-              onDrop={() => handleDrop(stage.id)}
-            >
-              <div className="flex items-center gap-2 px-3 py-3 border-b border-border/50">
-                <div className={`h-2.5 w-2.5 rounded-full ${stage.color}`} />
-                <span className="text-sm font-semibold text-foreground flex-1">{stage.label}</span>
-                <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded-full">{stageLeads.length}</span>
-              </div>
-              {stageValue > 0 && (
-                <div className="px-3 py-1.5">
-                  <span className="text-[11px] text-muted-foreground">R$ {stageValue.toLocaleString("pt-BR")}</span>
-                </div>
-              )}
-              <div className="flex-1 overflow-y-auto px-2 pb-2 space-y-2">
-                {stageLeads.map((lead) => (
-                  <KanbanCard key={lead.id} lead={lead} onDragStart={() => handleDragStart(lead, stage.id)} />
-                ))}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </>
-  );
-}
-
-function KanbanCard({ lead, onDragStart }: { lead: KanbanLead; onDragStart: () => void }) {
-  const navigate = useNavigate();
-  const daysAgo = Math.floor((Date.now() - lead.lastContact.getTime()) / 86400000);
-  const isStale = daysAgo > 3;
-
-  const handleOpenChat = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    navigate({ to: "/chat", search: { lead: lead.name } });
-  };
-
-  const handleCall = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    const cleanPhone = lead.phone.replace(/\D/g, "");
-    const phoneWithPlus = cleanPhone.startsWith("55") ? `+${cleanPhone}` : `+55${cleanPhone}`;
-    window.location.href = `tel:${phoneWithPlus}`;
-    toast.success(`Ligando para ${lead.name}...`, { description: lead.phone });
-  };
-
-  return (
-    <div
-      draggable
-      onDragStart={onDragStart}
-      className={`bg-card rounded-lg border p-3 cursor-grab active:cursor-grabbing hover:shadow-md transition-shadow ${
-        isStale ? "border-warning/50" : "border-border"
-      }`}
-    >
-      <div className="flex items-start justify-between mb-2">
-        <div className="flex items-center gap-2">
-          <LeadAvatar initials={lead.initials} avatarUrl={lead.avatarUrl} avatarColor={lead.avatarColor} size="sm" />
-          <div>
-            <p className="text-sm font-medium text-card-foreground leading-tight">{lead.name}</p>
-            <p className="text-[11px] text-muted-foreground">{lead.origin}</p>
-          </div>
-        </div>
-        <button className="p-1 rounded hover:bg-muted transition-colors text-muted-foreground">
-          <MoreHorizontal className="h-3.5 w-3.5" />
-        </button>
-      </div>
-      <p className="text-sm font-semibold text-primary mb-2">R$ {lead.value.toLocaleString("pt-BR")}</p>
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-1.5">
-          <div className="h-5 w-5 rounded-full bg-primary/15 flex items-center justify-center text-[8px] font-bold text-primary">
-            {lead.assignedInitials}
-          </div>
-          <span className="text-[11px] text-muted-foreground">{lead.assignedTo}</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <button onClick={handleCall} className="p-1.5 rounded-lg hover:bg-chart-2/15 text-muted-foreground hover:text-chart-2 transition-colors" title={`Ligar: ${lead.phone}`}>
-            <Phone className="h-3.5 w-3.5" />
-          </button>
-          <button onClick={handleOpenChat} className="p-1.5 rounded-lg hover:bg-primary/15 text-muted-foreground hover:text-primary transition-colors" title={`Chat com ${lead.name}`}>
-            <MessageSquare className="h-3.5 w-3.5" />
-          </button>
-          <div className={`flex items-center gap-0.5 ${isStale ? "text-warning" : "text-muted-foreground/50"}`}>
-            <Clock className="h-3 w-3" />
-            <span className="text-[10px]">{daysAgo}d</span>
-          </div>
-        </div>
-      </div>
-    </div>
   );
 }
 

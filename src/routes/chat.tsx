@@ -885,7 +885,9 @@ function ChatPage() {
     }
   }, [messages]);
 
-  const handleFinishAttendance = (lead: Lead, farewellMessage?: string) => {
+  const handleFinishAttendance = (lead: Lead, outcome?: string, options?: { farewellMessage?: string; consciousnessLevel?: string }) => {
+    const farewellMessage = options?.farewellMessage;
+
     // Send farewell message via WhatsApp if provided
     if (farewellMessage) {
       handleSendMessage(farewellMessage, "text");
@@ -902,12 +904,27 @@ function ChatPage() {
         return;
       }
       const durationMin = data?.duration ? Math.floor(data.duration / 60) : 0;
-      toast.success(`Atendimento finalizado`, {
+
+      const outcomeLabels: Record<string, string> = {
+        atendido: "Atendido ✅",
+        followup: "Movido para Follow-up 🔄",
+        orcamento: "Encaminhado para Orçamento 📋",
+      };
+      const outcomeLabel = outcomeLabels[outcome || "atendido"] || "Finalizado";
+
+      toast.success(`Atendimento finalizado — ${outcomeLabel}`, {
         description: `${lead.name} — Duração: ${durationMin}min`,
       });
     });
 
-    // Add system message BEFORE removing lead
+    // System message
+    const outcomeMessages: Record<string, string> = {
+      atendido: "✅ Atendimento finalizado — Cliente atendido.",
+      followup: "🔄 Atendimento finalizado — Movido para follow-up de recuperação.",
+      orcamento: "📋 Atendimento finalizado — Encaminhado para orçamento.",
+    };
+    const sysContent = outcomeMessages[outcome || "atendido"] || "✅ Atendimento finalizado.";
+
     setMessages((prev) => {
       const updated = {
         ...prev,
@@ -916,7 +933,7 @@ function ChatPage() {
           {
             id: `sys-close-${Date.now()}`,
             leadId: lead.id,
-            content: "✅ Atendimento finalizado.",
+            content: sysContent,
             sender: "attendant" as const,
             type: "text" as const,
             timestamp: new Date(),
@@ -927,13 +944,15 @@ function ChatPage() {
       return updated;
     });
 
-    // Keep lead in myLeads with "finished" status (like WhatsApp Web — history stays)
+    // Keep lead in myLeads with "finished" status
     setMyLeads((prev) =>
       prev.map((l) => l.id === lead.id ? { ...l, status: "finished" as const } : l)
     );
 
-    // Open satisfaction survey dialog
-    setSurveyLead(lead);
+    // Open satisfaction survey dialog only for "atendido"
+    if (outcome === "atendido" || !outcome) {
+      setSurveyLead(lead);
+    }
   };
 
   const handleSendSurvey = (lead: Lead, rating: number, comment: string) => {

@@ -6,7 +6,8 @@ import { toast } from "sonner";
 import { adminListUsers, tagsApi, whatsappApi, type LeadTagApi } from "@/lib/vpsApi";
 import { useWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
 import { useAuth } from "@/hooks/useAuth";
-import { FinishAttendanceDialog } from "./FinishAttendanceDialog";
+import { FinishAttendanceDialog, type FinishOutcome } from "./FinishAttendanceDialog";
+import type { ConsciousnessLevel } from "@/data/crmMockData";
 import { exportChatToPdf } from "@/lib/chatPdfExport";
 
 function formatLastSeen(date: Date): string {
@@ -32,7 +33,7 @@ interface ChatHeaderProps {
   lead: Lead;
   onClose: () => void;
   onTransfer?: (lead: Lead, toAttendantId: string, toAttendantName: string, reason: string) => void;
-  onFinishAttendance?: (lead: Lead, farewellMessage?: string) => void;
+  onFinishAttendance?: (lead: Lead, outcome: FinishOutcome, options?: { farewellMessage?: string; consciousnessLevel?: ConsciousnessLevel }) => void;
   onReturnToQueue?: (lead: Lead) => void;
   leadTagIds?: string[];
   onToggleTag?: (leadId: string, tagId: string) => void;
@@ -368,9 +369,9 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onRe
         lead={lead}
         open={showFinishDialog}
         onClose={() => setShowFinishDialog(false)}
-        onFinish={(l, msg) => {
+        onFinish={(l, outcome, options) => {
           setShowFinishDialog(false);
-          onFinishAttendance?.(l, msg);
+          onFinishAttendance?.(l, outcome, options);
         }}
         onReturnToQueue={(l) => {
           setShowFinishDialog(false);
