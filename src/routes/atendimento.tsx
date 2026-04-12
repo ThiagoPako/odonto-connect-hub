@@ -453,7 +453,7 @@ function ConsultaPage() {
                           disabled={!pacienteSelecionado}
                           className="flex items-center gap-2 h-10 px-5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-md hover:shadow-lg"
                         >
-                          <Play className="h-4 w-4" /> Iniciar Atendimento
+                         <Play className="h-4 w-4" /> Iniciar Consulta
                         </button>
                       ) : (
                         <button
