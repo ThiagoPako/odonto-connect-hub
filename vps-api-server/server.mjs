@@ -2760,9 +2760,9 @@ app.post('/api/sessions/assign', async (req, res) => {
       [user.id, attendantName, leadId]
     );
 
-    // Auto-move lead to "em_contato" in CRM kanban
+    // Auto-move lead to "em_atendimento" in CRM kanban
     await pool.query(
-      `UPDATE crm_leads SET kanban_stage = 'em_contato', status = 'em_contato', updated_at = NOW() WHERE id = $1`,
+      `UPDATE crm_leads SET kanban_stage = 'em_atendimento', status = 'em_atendimento', updated_at = NOW() WHERE id = $1`,
       [leadId]
     ).catch(err => console.error('Failed to update kanban_stage:', err.message));
 
@@ -2783,18 +2783,59 @@ app.post('/api/sessions/assign', async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════
+// CRM LEADS (Kanban + List)
+// ═══════════════════════════════════════════════════════════════
+
+const SALES_STAGES = ['lead', 'em_atendimento', 'orcamento', 'orcamento_enviado', 'orcamento_aprovado'];
+const RECOVERY_STAGES = ['followup', 'followup_2', 'followup_3', 'sem_resposta', 'orcamento_reprovado', 'desqualificado'];
+const ALL_KANBAN_STAGES = [...SALES_STAGES, ...RECOVERY_STAGES];
+const VALID_CONSCIOUSNESS = ['inconsciente', 'consciente_problema', 'consciente_solucao', 'consciente_produto', 'consciente_total'];
+
 // Update lead kanban stage (manual move)
 app.patch('/api/crm/leads/:id/stage', async (req, res) => {
   try {
-    await verifyUser(req);
-    const { stage } = req.body;
-    const validStages = ['lead', 'em_contato', 'followup_1', 'followup_2', 'followup_3', 'sem_resposta', 'desqualificado', 'paciente_agendado'];
-    if (!stage || !validStages.includes(stage)) {
-      return res.status(400).json({ error: `Stage inválido. Válidos: ${validStages.join(', ')}` });
+    const { user } = await verifyUser(req);
+    const { stage, reason } = req.body;
+    if (!stage || !ALL_KANBAN_STAGES.includes(stage)) {
+      return res.status(400).json({ error: `Stage inválido. Válidos: ${ALL_KANBAN_STAGES.join(', ')}` });
     }
+
+    // Get current stage for audit
+    const { rows: current } = await pool.query('SELECT kanban_stage FROM crm_leads WHERE id = $1', [req.params.id]);
+    if (current.length === 0) return res.status(404).json({ error: 'Lead não encontrado' });
+    const fromStage = current[0].kanban_stage;
+
     const { rows } = await pool.query(
       `UPDATE crm_leads SET kanban_stage = $1, status = $1, updated_at = NOW() WHERE id = $2 RETURNING id, nome, kanban_stage`,
       [stage, req.params.id]
+    );
+
+    // Log movement
+    const profile = await getProfileByEmail(user.email);
+    await pool.query(
+      `INSERT INTO kanban_movements (lead_id, from_stage, to_stage, moved_by, moved_by_name, reason)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [req.params.id, fromStage, stage, user.id, profile?.name || user.email, reason || null]
+    ).catch(err => console.error('Failed to log kanban movement:', err.message));
+
+    res.json(rows[0]);
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+// Update lead consciousness level
+app.patch('/api/crm/leads/:id/consciousness', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { level } = req.body;
+    if (!level || !VALID_CONSCIOUSNESS.includes(level)) {
+      return res.status(400).json({ error: `Nível inválido. Válidos: ${VALID_CONSCIOUSNESS.join(', ')}` });
+    }
+    const { rows } = await pool.query(
+      `UPDATE crm_leads SET consciousness_level = $1, updated_at = NOW() WHERE id = $2 RETURNING id, nome, consciousness_level`,
+      [level, req.params.id]
     );
     if (rows.length === 0) return res.status(404).json({ error: 'Lead não encontrado' });
     res.json(rows[0]);
@@ -2803,9 +2844,35 @@ app.patch('/api/crm/leads/:id/stage', async (req, res) => {
   }
 });
 
-// ═══════════════════════════════════════════════════════════════
-// CRM LEADS (Kanban + List)
-// ═══════════════════════════════════════════════════════════════
+// Assign lead to attendant
+app.patch('/api/crm/leads/:id/assign', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { assignedTo, assignedToName } = req.body;
+    const { rows } = await pool.query(
+      `UPDATE crm_leads SET assigned_to = $1, assigned_to_name = $2, updated_at = NOW() WHERE id = $3 RETURNING id, nome, assigned_to, assigned_to_name`,
+      [assignedTo || null, assignedToName || null, req.params.id]
+    );
+    if (rows.length === 0) return res.status(404).json({ error: 'Lead não encontrado' });
+    res.json(rows[0]);
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+// Get kanban movement history for a lead
+app.get('/api/crm/leads/:id/movements', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { rows } = await pool.query(
+      `SELECT * FROM kanban_movements WHERE lead_id = $1 ORDER BY created_at DESC LIMIT 50`,
+      [req.params.id]
+    );
+    res.json(rows);
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
 
 // List all CRM leads (with optional kanban grouping)
 app.get('/api/crm/leads', async (req, res) => {
@@ -2832,24 +2899,25 @@ app.get('/api/crm/leads', async (req, res) => {
     const { rows } = await pool.query(query, params);
 
     if (grouped === 'kanban') {
-      const stages = ['lead', 'em_contato', 'followup_1', 'followup_2', 'followup_3', 'sem_resposta', 'desqualificado', 'paciente_agendado'];
       const kanban = {};
-      for (const stage of stages) kanban[stage] = [];
+      for (const stage of ALL_KANBAN_STAGES) kanban[stage] = [];
       for (const row of rows) {
-        const stage = stages.includes(row.kanban_stage) ? row.kanban_stage : 'lead';
+        const stage = ALL_KANBAN_STAGES.includes(row.kanban_stage) ? row.kanban_stage : 'lead';
         kanban[stage].push({
           id: row.id,
           name: row.nome,
           initials: (row.nome || '').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase(),
           phone: row.telefone || '',
           origin: row.origem || 'WhatsApp',
-          value: 0,
-          assignedTo: row.attendant_name || 'Sem atendente',
-          assignedInitials: (row.attendant_name || 'SA').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase(),
+          value: Number(row.valor) || 0,
+          assignedTo: row.assigned_to_name || row.attendant_name || 'Sem atendente',
+          assignedInitials: (row.assigned_to_name || row.attendant_name || 'SA').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase(),
           lastContact: row.updated_at || row.created_at,
           avatarColor: 'bg-chart-1',
           avatarUrl: row.avatar_url || null,
           kanbanStage: stage,
+          consciousnessLevel: row.consciousness_level || null,
+          budgetId: row.orcamento_id || null,
         });
       }
       return res.json(kanban);
