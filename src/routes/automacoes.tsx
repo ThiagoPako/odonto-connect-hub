@@ -292,6 +292,8 @@ function AutomacoesPage() {
             )}
           </div>
         </div>
+        </>
+        )}
       </main>
     </div>
   );
