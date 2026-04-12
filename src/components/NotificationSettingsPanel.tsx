@@ -1,7 +1,13 @@
 import { useState } from "react";
-import { Bell, Volume2, VolumeX, MonitorSmartphone, Flame } from "lucide-react";
+import { Bell, Volume2, VolumeX, MonitorSmartphone, Flame, Play } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
-import { isSoundEnabled, setSoundEnabled, playNotificationSound, isRecoverySoundEnabled, setRecoverySoundEnabled, playRecoverySound } from "@/lib/notificationSound";
+import { Button } from "@/components/ui/button";
+import {
+  isSoundEnabled, setSoundEnabled, playNotificationSound,
+  isRecoverySoundEnabled, setRecoverySoundEnabled, playRecoverySound,
+  getSoundType, setSoundType, previewSound,
+  SOUND_OPTIONS, type SoundType,
+} from "@/lib/notificationSound";
 import { isPushEnabled, setPushEnabled, requestNotificationPermission } from "@/lib/browserNotification";
 import { toast } from "sonner";
 
@@ -9,6 +15,7 @@ export function NotificationSettingsPanel() {
   const [soundOn, setSoundOn] = useState(isSoundEnabled);
   const [pushOn, setPushOn] = useState(isPushEnabled);
   const [recoverySoundOn, setRecoverySoundOn] = useState(isRecoverySoundEnabled);
+  const [currentSound, setCurrentSound] = useState<SoundType>(getSoundType);
 
   const handleSoundToggle = (checked: boolean) => {
     setSoundOn(checked);
@@ -30,6 +37,12 @@ export function NotificationSettingsPanel() {
     } else {
       toast.info("Som de recuperação desativado");
     }
+  };
+
+  const handleSoundTypeChange = (type: SoundType) => {
+    setCurrentSound(type);
+    setSoundType(type);
+    previewSound(type);
   };
 
   const handlePushToggle = async (checked: boolean) => {
@@ -65,6 +78,7 @@ export function NotificationSettingsPanel() {
       </div>
 
       <div className="space-y-1 divide-y divide-border/50">
+        {/* Sound toggle */}
         <div className="flex items-center justify-between py-3">
           <div className="flex items-center gap-3">
             {soundOn ? (
@@ -82,9 +96,31 @@ export function NotificationSettingsPanel() {
           <Switch checked={soundOn} onCheckedChange={handleSoundToggle} />
         </div>
 
+        {/* Sound type selector */}
+        {soundOn && (
+          <div className="py-3 pl-7">
+            <p className="text-xs font-medium text-muted-foreground mb-2">Tipo de som</p>
+            <div className="flex gap-2">
+              {SOUND_OPTIONS.map((opt) => (
+                <Button
+                  key={opt.value}
+                  variant={currentSound === opt.value ? "default" : "outline"}
+                  size="sm"
+                  className="gap-1.5 text-xs"
+                  onClick={() => handleSoundTypeChange(opt.value)}
+                >
+                  <Play className="h-3 w-3" />
+                  {opt.label}
+                </Button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Recovery sound toggle */}
         <div className="flex items-center justify-between py-3">
           <div className="flex items-center gap-3">
-            <Flame className="h-4 w-4 text-orange-500" />
+            <Flame className="h-4 w-4 text-destructive" />
             <div>
               <p className="text-sm font-medium text-foreground">Som de recuperação urgente</p>
               <p className="text-xs text-muted-foreground">
@@ -95,6 +131,7 @@ export function NotificationSettingsPanel() {
           <Switch checked={recoverySoundOn} onCheckedChange={handleRecoverySoundToggle} />
         </div>
 
+        {/* Push notification toggle */}
         <div className="flex items-center justify-between py-3">
           <div className="flex items-center gap-3">
             <MonitorSmartphone className="h-4 w-4 text-muted-foreground" />
