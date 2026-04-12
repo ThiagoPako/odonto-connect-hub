@@ -52,6 +52,7 @@ function ComissoesPage() {
   const [selectedDentista, setSelectedDentista] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("todos");
   const [showAddModal, setShowAddModal] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
   const loadAll = useCallback(async () => {
     try {
