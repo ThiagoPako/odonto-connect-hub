@@ -1,5 +1,5 @@
 import type { Lead } from "@/data/chatMockData";
-import { Clock, UserPlus, CheckCircle2 } from "lucide-react";
+import { Clock, UserPlus, CheckCircle2, Flame } from "lucide-react";
 import { LeadAvatar } from "@/components/LeadAvatar";
 
 type PresenceStatus = "online" | "offline" | "typing" | "recording";
