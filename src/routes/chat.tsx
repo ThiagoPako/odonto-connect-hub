@@ -1486,6 +1486,9 @@ function ChatPage() {
                   replyingTo={replyingTo}
                   onCancelReply={() => setReplyingTo(null)}
                   attendantName={currentUser?.name}
+                  leadId={selectedLead.id}
+                  crmStage={crmStages[selectedLead.id]}
+                  onStageChange={(leadId, stage) => setCrmStages((prev) => ({ ...prev, [leadId]: stage }))}
                 />
               )}
             </>

@@ -1,11 +1,20 @@
 import { useState, useRef, useMemo, useCallback, useEffect } from "react";
-import { contatosApi, type Contato } from "@/lib/vpsApi";
-import { Send, Paperclip, Smile, Image, MapPin, UserCircle, BarChart3, FileText, Video, Sticker, X, Bold, Italic, Strikethrough, Code, List, Zap, Loader2 } from "lucide-react";
+import { contatosApi, crmApi, type Contato } from "@/lib/vpsApi";
+import { Send, Paperclip, Smile, Image, MapPin, UserCircle, BarChart3, FileText, Video, Sticker, X, Bold, Italic, Strikethrough, Code, List, Zap, Loader2, Kanban, Check } from "lucide-react";
+import { toast } from "sonner";
 import { AudioRecorder } from "./AudioRecorder";
 import { getClinicLocation } from "@/components/ClinicLocationPanel";
 import { getAttendanceSettings, type QuickReply } from "@/components/AttendanceSettingsPanel";
 import type { MessageType, ChatMessage, LocationData, ContactData, PollData, ReplyData, ListData } from "@/data/chatMockData";
-import { toast } from "sonner";
+
+const CRM_STAGES = [
+  { id: "lead", label: "Lead", emoji: "📥", color: "#6b7280" },
+  { id: "em_atendimento", label: "Em Atendimento", emoji: "💬", color: "#3b82f6" },
+  { id: "orcamento", label: "Orçamento", emoji: "📋", color: "#3b82f6" },
+  { id: "followup", label: "Follow-up", emoji: "🔄", color: "#f59e0b" },
+  { id: "orcamento_enviado", label: "Orç. Enviado", emoji: "📨", color: "#8b5cf6" },
+  { id: "orcamento_aprovado", label: "Aprovado", emoji: "✅", color: "#22c55e" },
+];
 
 interface MessageInputProps {
   onSendMessage: (content: string, type: MessageType, extra?: Partial<ChatMessage>) => void;
@@ -13,6 +22,9 @@ interface MessageInputProps {
   disabled?: boolean;
   replyingTo?: ReplyData | null;
   onCancelReply?: () => void;
+  leadId?: string;
+  crmStage?: string;
+  onStageChange?: (leadId: string, stage: string) => void;
 }
 
 const QUICK_EMOJIS = ["👍", "❤️", "😁", "🦷", "✨", "🙏", "🎉", "💪", "😄", "🪥", "💉", "🩺", "😊", "👏", "💙"];
@@ -21,10 +33,12 @@ interface MessageInputInternalProps extends MessageInputProps {
   attendantName?: string;
 }
 
-export function MessageInput({ onSendMessage, onPresenceChange, disabled, replyingTo, onCancelReply, attendantName }: MessageInputProps & { attendantName?: string }) {
+export function MessageInput({ onSendMessage, onPresenceChange, disabled, replyingTo, onCancelReply, attendantName, leadId, crmStage, onStageChange }: MessageInputProps & { attendantName?: string }) {
   const [message, setMessage] = useState("");
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [showStageMenu, setShowStageMenu] = useState(false);
+  const [updatingStage, setUpdatingStage] = useState(false);
   const [showLocationForm, setShowLocationForm] = useState(false);
   const [showContactForm, setShowContactForm] = useState(false);
   const [showPollForm, setShowPollForm] = useState(false);
@@ -595,6 +609,43 @@ export function MessageInput({ onSendMessage, onPresenceChange, disabled, replyi
         </div>
       )}
 
+      {/* CRM Stage picker */}
+      {showStageMenu && (
+        <div className="flex items-center gap-1.5 px-3 py-2 border-b border-border bg-muted/30 flex-wrap">
+          <Kanban className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+          <span className="text-[11px] text-muted-foreground font-medium mr-1">Etapa:</span>
+          {CRM_STAGES.map((stage) => {
+            const isActive = crmStage === stage.id;
+            return (
+              <button
+                key={stage.id}
+                disabled={updatingStage}
+                onClick={async () => {
+                  if (!leadId) return;
+                  setUpdatingStage(true);
+                  const { error } = await crmApi.updateStage(leadId, stage.id, "Marcado via chat");
+                  if (error) {
+                    toast.error("Erro ao atualizar etapa");
+                  } else {
+                    onStageChange?.(leadId, stage.id);
+                    toast.success(`${stage.emoji} Marcado como "${stage.label}"`);
+                  }
+                  setUpdatingStage(false);
+                  setShowStageMenu(false);
+                }}
+                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium transition-colors shrink-0 disabled:opacity-50 ${
+                  isActive ? "text-white shadow-sm" : "hover:opacity-80"
+                }`}
+                style={isActive ? { backgroundColor: stage.color } : { backgroundColor: stage.color + "20", color: stage.color }}
+              >
+                {stage.emoji} {stage.label}
+                {isActive && <Check className="h-3 w-3" />}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       <div className="p-3">
         {/* Formatting toolbar */}
         {message.length > 0 && (
@@ -614,10 +665,18 @@ export function MessageInput({ onSendMessage, onPresenceChange, disabled, replyi
 
         <div className="flex items-end gap-2">
           <button
-            onClick={() => { setShowAttachMenu(!showAttachMenu); setShowEmojiPicker(false); }}
+            onClick={() => { setShowAttachMenu(!showAttachMenu); setShowEmojiPicker(false); setShowStageMenu(false); }}
             className="p-2.5 rounded-full hover:bg-muted transition-colors text-muted-foreground hover:text-foreground shrink-0"
           >
             <Paperclip className="h-5 w-5" />
+          </button>
+
+          <button
+            onClick={() => { setShowStageMenu(!showStageMenu); setShowAttachMenu(false); setShowEmojiPicker(false); }}
+            className={`p-2.5 rounded-full transition-colors shrink-0 ${showStageMenu ? "bg-primary/10 text-primary" : "hover:bg-muted text-muted-foreground hover:text-foreground"}`}
+            title="Marcar etapa do funil"
+          >
+            <Kanban className="h-5 w-5" />
           </button>
 
           <div className="flex-1 flex items-end gap-2 relative">
@@ -668,7 +727,7 @@ export function MessageInput({ onSendMessage, onPresenceChange, disabled, replyi
           </div>
 
           <button
-            onClick={() => { setShowEmojiPicker(!showEmojiPicker); setShowAttachMenu(false); }}
+            onClick={() => { setShowEmojiPicker(!showEmojiPicker); setShowAttachMenu(false); setShowStageMenu(false); }}
             className="p-2.5 rounded-full hover:bg-muted transition-colors text-muted-foreground hover:text-foreground shrink-0"
           >
             <Smile className="h-5 w-5" />
