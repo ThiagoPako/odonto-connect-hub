@@ -49,9 +49,9 @@ export function LeadListItem({ lead, isSelected, onSelect, showAssignButton, onA
           <span className={`text-sm font-semibold truncate transition-colors ${isSelected ? "text-primary" : "text-foreground"}`}>
             {lead.name}
           </span>
-          <div className="flex items-center gap-1 text-muted-foreground shrink-0">
+          <div className={`flex items-center gap-1 shrink-0 ${getWaitUrgencyClass(lead)}`}>
             <Clock className="h-3 w-3" />
-            <span className="text-[11px] font-medium">{timeAgo}</span>
+            <span className="text-[11px] font-medium">{lead.status === "waiting" ? `⏳ ${getDetailedWaitTime(lead.lastMessageTime)}` : timeAgo}</span>
           </div>
         </div>
 
