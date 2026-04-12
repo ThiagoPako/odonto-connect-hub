@@ -182,6 +182,10 @@ function ComissoesPage() {
                     {s === "todos" ? "Todos" : statusCfg[s]?.label || s}
                   </button>
                 ))}
+                <button onClick={() => setShowAddModal(true)}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-medium bg-primary text-primary-foreground hover:bg-primary/90 ml-2">
+                  <Plus className="h-3 w-3" /> Nova
+                </button>
               </div>
             </div>
 
@@ -244,6 +248,15 @@ function ComissoesPage() {
             </div>
           </div>
         </div>
+
+        {showAddModal && (
+          <AddComissaoModal
+            dentistas={dentistas}
+            pacientes={pacientes}
+            onSave={handleCreateComissao}
+            onClose={() => setShowAddModal(false)}
+          />
+        )}
       </main>
     </div>
   );
