@@ -444,6 +444,23 @@ function KanbanCard({ lead, onDragStart, onLeadAssigned }: { lead: KanbanLead; o
 
 const PAGE_SIZE = 25;
 
+function HighlightText({ text, query }: { text: string; query: string }) {
+  if (!query.trim() || !text) return <>{text}</>;
+  const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const parts = text.split(new RegExp(`(${escaped})`, "gi"));
+  return (
+    <>
+      {parts.map((part, i) =>
+        part.toLowerCase() === query.toLowerCase() ? (
+          <mark key={i} className="bg-primary/25 text-foreground rounded-sm px-0.5">{part}</mark>
+        ) : (
+          <span key={i}>{part}</span>
+        )
+      )}
+    </>
+  );
+}
+
 function PatientTableView() {
   const [searchTerm, setSearchTerm] = useState("");
   const [originFilter, setOriginFilter] = useState("Todos");
@@ -614,8 +631,8 @@ function PatientTableView() {
                     <div className="flex items-center gap-3">
                       <LeadAvatar initials={patient.initials} avatarUrl={patient.avatarUrl} avatarColor={patient.avatarColor} size="sm" />
                       <div>
-                        <p className="text-sm font-medium text-foreground">{patient.name}</p>
-                        <p className="text-[11px] text-muted-foreground">{patient.phone}</p>
+                        <p className="text-sm font-medium text-foreground"><HighlightText text={patient.name} query={searchTerm} /></p>
+                        <p className="text-[11px] text-muted-foreground"><HighlightText text={patient.phone} query={searchTerm} /></p>
                       </div>
                     </div>
                   </td>
