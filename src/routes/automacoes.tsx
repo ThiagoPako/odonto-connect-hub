@@ -1332,7 +1332,7 @@ function SolutionsGrid({
       )}
 
       {/* Solutions Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
         {solutions.map((sol, index) => {
           const existingFlow = flows.find(f => f.type === sol.type);
           const isActive = existingFlow?.active;
@@ -1344,86 +1344,94 @@ function SolutionsGrid({
           return (
             <div
               key={sol.id}
-              className={`group relative bg-card rounded-2xl border p-5 transition-all duration-300 hover:shadow-card-hover animate-slide-up ${
+              className={`group relative bg-card rounded-2xl border p-5 transition-all duration-300 hover-lift card-glow animate-slide-up ${
                 isActive
-                  ? "border-primary/40 shadow-card"
-                  : "border-border hover:border-primary/30"
+                  ? "border-primary/40 shadow-card hover:shadow-glow-primary"
+                  : "border-border hover:border-primary/30 hover:shadow-card-hover"
               }`}
-              style={{ animationDelay: `${index * 50}ms`, animationFillMode: 'both' }}
+              style={{ animationDelay: `${index * 60}ms`, animationFillMode: 'both' }}
             >
-              {/* Status indicator */}
+              {/* Status badge */}
               {isActive && (
-                <div className="absolute top-3 right-3">
-                  <span className="relative flex h-2.5 w-2.5">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75" />
-                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-success" />
+                <div className="absolute top-4 right-4">
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-success/15 text-success">
+                    <span className="relative flex h-1.5 w-1.5">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75" />
+                      <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-success" />
+                    </span>
+                    Ativa
                   </span>
                 </div>
               )}
 
               {sol.hasDelay && !isConfigured && (
-                <span className="absolute top-3 right-3 px-2 py-0.5 rounded-full text-[10px] font-medium bg-warning/15 text-warning">
-                  Em Atraso
+                <span className="absolute top-4 right-4 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-warning/15 text-warning">
+                  <AlertTriangle className="h-2.5 w-2.5" /> Atraso
                 </span>
               )}
 
-              {/* Icon */}
-              <div className={`h-11 w-11 rounded-xl bg-gradient-to-br ${iconData.gradient} flex items-center justify-center mb-4 shadow-sm group-hover:scale-105 transition-transform duration-200`}>
-                <IconComp className="h-5 w-5 text-primary-foreground" strokeWidth={1.8} />
+              {/* Icon with glow */}
+              <div className={`relative h-12 w-12 rounded-2xl bg-gradient-to-br ${iconData.gradient} flex items-center justify-center mb-4 shadow-sm icon-bounce`}>
+                <IconComp className="h-6 w-6 text-primary-foreground" strokeWidth={1.6} />
+                <div className={`absolute inset-0 rounded-2xl bg-gradient-to-br ${iconData.gradient} opacity-0 group-hover:opacity-30 blur-xl transition-opacity duration-500`} />
               </div>
 
               {/* Title */}
-              <h3 className="font-semibold text-foreground text-sm mb-1.5 font-heading">{sol.name}</h3>
+              <h3 className="font-bold text-foreground text-sm mb-1 font-heading group-hover:text-primary transition-colors duration-200">{sol.name}</h3>
 
               {/* Description */}
-              <p className="text-xs text-muted-foreground mb-3 line-clamp-2 leading-relaxed">{sol.description}</p>
+              <p className="text-[11px] text-muted-foreground mb-3 line-clamp-2 leading-relaxed">{sol.description}</p>
 
-              {/* Patient count */}
-              <div className="flex items-center gap-1.5 mb-4">
-                <Users className="h-3.5 w-3.5 text-muted-foreground" />
+              {/* Patient count — vibrant */}
+              <div className="flex items-center gap-2 mb-3 p-2 rounded-lg bg-muted/50">
+                <Users className="h-3.5 w-3.5 text-primary" />
                 <span className="text-xs text-muted-foreground">
-                  <span className="font-semibold text-foreground">{patientCount}</span> pacientes
+                  <span className="font-bold text-foreground">{patientCount}</span> pacientes elegíveis
                 </span>
               </div>
 
-              {/* Steps preview */}
-              <div className="flex items-center gap-1 mb-4">
-                {sol.defaultSteps.map((step, i) => (
-                  <div key={step.id} className="flex items-center gap-1">
-                    <span className={`inline-flex items-center justify-center h-5 w-5 rounded-md text-[10px] font-medium ${iconData.bg} text-foreground`}>
-                      {step.channel === "whatsapp" ? "📱" : step.channel === "sms" ? "💬" : "✉️"}
-                    </span>
-                    {i < sol.defaultSteps.length - 1 && (
-                      <ArrowRight className="h-3 w-3 text-muted-foreground/40" />
-                    )}
-                  </div>
-                ))}
-                <span className="text-[10px] text-muted-foreground ml-1">{sol.defaultSteps.length} etapas</span>
+              {/* Steps preview — timeline dots */}
+              <div className="flex items-center gap-0.5 mb-4">
+                {sol.defaultSteps.map((step, i) => {
+                  const StepIcon = step.channel === "whatsapp" ? MessageSquare : step.channel === "sms" ? Smartphone : Mail;
+                  const stepColor = step.channel === "whatsapp" ? "text-success bg-success/10" : step.channel === "sms" ? "text-chart-2 bg-chart-2/10" : "text-chart-4 bg-chart-4/10";
+                  return (
+                    <div key={step.id} className="flex items-center gap-0.5">
+                      <span className={`inline-flex items-center justify-center h-6 w-6 rounded-lg text-[10px] font-medium ${stepColor}`}>
+                        <StepIcon className="h-3 w-3" />
+                      </span>
+                      {i < sol.defaultSteps.length - 1 && (
+                        <div className="w-3 h-px bg-border" />
+                      )}
+                    </div>
+                  );
+                })}
+                <span className="text-[10px] text-muted-foreground ml-1.5 font-medium">{sol.defaultSteps.length} etapas</span>
               </div>
 
-              {/* Action */}
+              {/* Action button */}
               {isActive ? (
                 <button
                   onClick={() => onActivate(sol)}
-                  className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-primary/10 text-primary text-xs font-medium hover:bg-primary/15 transition-colors"
+                  className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-success/10 text-success text-xs font-semibold hover:bg-success/20 transition-all duration-200"
                 >
-                  <CheckCircle2 className="h-3.5 w-3.5" />
+                  <CheckCircle2 className="h-4 w-4" />
                   Ativa — Editar
                 </button>
               ) : isConfigured ? (
                 <button
                   onClick={() => onActivate(sol)}
-                  className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-muted text-foreground text-xs font-medium hover:bg-muted/80 transition-colors"
+                  className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-muted text-foreground text-xs font-semibold hover:bg-primary/10 hover:text-primary transition-all duration-200"
                 >
-                  <Edit2 className="h-3.5 w-3.5" />
+                  <Edit2 className="h-4 w-4" />
                   Editar configuração
                 </button>
               ) : (
                 <button
                   onClick={() => onActivate(sol)}
-                  className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border border-primary text-primary text-xs font-medium hover:bg-primary hover:text-primary-foreground transition-all duration-200"
+                  className={`w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all duration-300 border-2 border-transparent bg-gradient-to-r ${iconData.gradient} text-primary-foreground hover:shadow-md hover:scale-[1.02]`}
                 >
-                  <Rocket className="h-3.5 w-3.5" />
+                  <Rocket className="h-4 w-4" />
                   Ativar Solução
                 </button>
               )}
