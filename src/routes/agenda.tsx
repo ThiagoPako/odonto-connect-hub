@@ -137,9 +137,9 @@ function AgendaPage() {
         {/* Controls */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <button className="p-1.5 rounded-lg hover:bg-muted"><ChevronLeft className="h-4 w-4 text-muted-foreground" /></button>
-            <span className="text-sm font-semibold text-foreground">08 de Abril, 2026 — Quarta-feira</span>
-            <button className="p-1.5 rounded-lg hover:bg-muted"><ChevronRight className="h-4 w-4 text-muted-foreground" /></button>
+            <button onClick={() => setDateOffset(d => d - 1)} className="p-1.5 rounded-lg hover:bg-muted"><ChevronLeft className="h-4 w-4 text-muted-foreground" /></button>
+            <span className="text-sm font-semibold text-foreground capitalize">{dateDisplay}</span>
+            <button onClick={() => setDateOffset(d => d + 1)} className="p-1.5 rounded-lg hover:bg-muted"><ChevronRight className="h-4 w-4 text-muted-foreground" /></button>
           </div>
           <div className="flex items-center gap-2">
             {/* View mode toggle */}
