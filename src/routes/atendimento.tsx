@@ -64,6 +64,9 @@ function AtendimentoPage() {
     medicamento: "", dosagem: "", posologia: "", duracao: ""
   });
   const timerRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
+  const [aiState, setAiState] = useState<TranscriptionState>({
+    status: 'idle', transcription: '', report: '', reportId: '', error: '',
+  });
 
   const pacientesFiltrados = mockPacientes.filter(p =>
     p.nome.toLowerCase().includes(busca.toLowerCase())
