@@ -6,6 +6,7 @@
 const SOUND_ENABLED_KEY = "odonto_notification_sound";
 const RECOVERY_SOUND_KEY = "odonto_recovery_sound";
 const SOUND_TYPE_KEY = "odonto_sound_type";
+const SOUND_VOLUME_KEY = "odonto_sound_volume";
 
 export type SoundType = "ding" | "beep" | "chime";
 
