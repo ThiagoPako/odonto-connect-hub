@@ -139,6 +139,20 @@ function ConsultaPage() {
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, []);
 
+  // Keyboard shortcut: R to toggle recording panel
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (e.code === "KeyR" && !e.ctrlKey && !e.metaKey && atendimentoAtivo && tabAtiva === "consulta") {
+        e.preventDefault();
+        setMostrarGravacao(prev => !prev);
+      }
+    }
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [atendimentoAtivo, tabAtiva]);
+
   const handleGravacaoCompleta = useCallback((blob: Blob, duration: number) => {
     const gravacao: GravacaoConsulta = {
       id: `grav-${Date.now()}`,
