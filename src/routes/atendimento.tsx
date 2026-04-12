@@ -8,6 +8,7 @@ import {
   User, Phone, Mail, Heart, Pill, Stethoscope, Send, Plus, Trash2,
   Save, ChevronRight, Activity, ClipboardList, ExternalLink, Timer,
   Printer, Loader2, Bot, Sparkles, CalendarCheck, MessageSquare,
+  Calendar,
 } from "lucide-react";
 import { exportarPrescricaoPdf } from "@/lib/prescricaoPdfExport";
 import { ClinicalAudioRecorder } from "@/components/ClinicalAudioRecorder";
@@ -17,11 +18,13 @@ import {
   getAlergias, getCondicoesCriticas, getAnamnese, getOdontograma, temAlertasMedicos,
   type Paciente
 } from "@/data/registroCentral";
+import { mockAppointments, type Appointment } from "@/data/agendaMockData";
 import { aiApi } from "@/lib/vpsApi";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/atendimento")({
-  component: AtendimentoPage,
+  ssr: false,
+  component: ConsultaPage,
 });
 
 interface Prescricao {
