@@ -501,14 +501,6 @@ function PatientTableView() {
   // Reset page when filters change
   useEffect(() => { setPage(1); }, [searchTerm, originFilter, statusFilter]);
 
-  const filtered = patients.filter((p) => {
-    const matchOrigin = originFilter === "Todos" || p.origin === originFilter;
-    return matchOrigin;
-  });
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const safePage = Math.min(page, totalPages);
-  const paginated = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
   return (
     <main className="flex-1 flex overflow-hidden">
