@@ -17,12 +17,21 @@ export const SOUND_OPTIONS: { value: SoundType; label: string }[] = [
 ];
 
 let audioCtx: AudioContext | null = null;
+let masterGain: GainNode | null = null;
 
 function getAudioContext(): AudioContext {
   if (!audioCtx) {
     audioCtx = new AudioContext();
+    masterGain = audioCtx.createGain();
+    masterGain.gain.value = getVolume();
+    masterGain.connect(audioCtx.destination);
   }
   return audioCtx;
+}
+
+function getMasterGain(): GainNode {
+  getAudioContext();
+  return masterGain!;
 }
 
 export function isSoundEnabled(): boolean {
@@ -54,6 +63,24 @@ export function getSoundType(): SoundType {
 
 export function setSoundType(type: SoundType): void {
   localStorage.setItem(SOUND_TYPE_KEY, type);
+}
+
+/** Volume 0-100, stored as percentage */
+export function getVolume(): number {
+  if (typeof window === "undefined") return 70;
+  const val = localStorage.getItem(SOUND_VOLUME_KEY);
+  if (val === null) return 70;
+  const n = parseInt(val, 10);
+  return isNaN(n) ? 70 : Math.max(0, Math.min(100, n));
+}
+
+export function setVolume(volume: number): void {
+  const clamped = Math.max(0, Math.min(100, volume));
+  localStorage.setItem(SOUND_VOLUME_KEY, String(clamped));
+  // Update live master gain if already created
+  if (masterGain) {
+    masterGain.gain.value = clamped / 100;
+  }
 }
 
 function playDing(ctx: AudioContext) {
