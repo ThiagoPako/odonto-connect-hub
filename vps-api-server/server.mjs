@@ -5745,6 +5745,7 @@ app.listen(PORT, async () => {
         created_at TIMESTAMPTZ DEFAULT NOW(),
         updated_at TIMESTAMPTZ DEFAULT NOW()
       )`,
+    ];
 
     for (const sql of migrations) {
       try {
