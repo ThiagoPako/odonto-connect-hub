@@ -1,11 +1,10 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import {
   type Patient, type KanbanLead,
   type SalesStage, type RecoveryStage,
   salesStages, recoveryStages,
-  mockSalesKanban, mockRecoveryKanban,
   consciousnessLevels, type ConsciousnessLevel,
 } from "@/data/crmMockData";
 import { crmApi } from "@/lib/vpsApi";
@@ -14,7 +13,7 @@ import {
   Search, Plus, Filter, Phone, Mail, Calendar, DollarSign,
   ChevronRight, MoreHorizontal, UserPlus, ExternalLink,
   Clock, MessageSquare, GripVertical, RefreshCw, RotateCcw,
-  TrendingUp, Target,
+  TrendingUp, Target, Loader2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { whatsappApi } from "@/lib/vpsApi";
@@ -111,14 +110,31 @@ function GenericKanbanBoard<T extends string>({
 
   const handleDrop = (toStage: T) => {
     if (!draggedLead || draggedLead.fromStage === toStage) return;
+    const movedLead = draggedLead.lead;
+    const fromStage = draggedLead.fromStage;
     setLeads((prev) => {
       const updated = { ...prev };
-      updated[draggedLead.fromStage] = prev[draggedLead.fromStage].filter((l) => l.id !== draggedLead.lead.id);
-      updated[toStage] = [...prev[toStage], draggedLead.lead];
+      updated[fromStage] = prev[fromStage].filter((l) => l.id !== movedLead.id);
+      updated[toStage] = [...prev[toStage], movedLead];
       return updated;
     });
-    crmApi.updateStage(draggedLead.lead.id, toStage).catch(() => toast.error("Erro ao mover lead"));
     setDraggedLead(null);
+
+    // Persist to API
+    crmApi.updateStage(movedLead.id, toStage as string).then(({ error }) => {
+      if (error) {
+        toast.error("Erro ao mover lead: " + error);
+        // Rollback
+        setLeads((prev) => {
+          const updated = { ...prev };
+          updated[toStage] = prev[toStage].filter((l) => l.id !== movedLead.id);
+          updated[fromStage] = [...prev[fromStage], movedLead];
+          return updated;
+        });
+      } else {
+        toast.success(`${movedLead.name} movido para ${stages.find(s => s.id === toStage)?.label || toStage}`);
+      }
+    });
   };
 
   const filteredLeads = assignedFilter === "Todos"
@@ -205,33 +221,58 @@ function normalizeLead(raw: any): KanbanLead {
 }
 
 function SalesKanbanView() {
-  const [leads, setLeads] = useState<Record<SalesStage, KanbanLead[]>>(mockSalesKanban);
+  const emptyStages: Record<SalesStage, KanbanLead[]> = {
+    lead: [], em_atendimento: [], orcamento: [], orcamento_enviado: [], orcamento_aprovado: [],
+  };
+  const [leads, setLeads] = useState<Record<SalesStage, KanbanLead[]>>(emptyStages);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     crmApi.kanban().then(({ data }) => {
       if (data && typeof data === 'object') {
         const raw = data as Record<string, any[]>;
-        const emptyStages: Record<SalesStage, KanbanLead[]> = {
-          lead: [], em_atendimento: [], orcamento: [], orcamento_enviado: [], orcamento_aprovado: [],
-        };
-        for (const key of Object.keys(emptyStages) as SalesStage[]) {
+        const result = { ...emptyStages };
+        for (const key of Object.keys(result) as SalesStage[]) {
           if (Array.isArray(raw[key])) {
-            emptyStages[key] = raw[key].map(normalizeLead);
+            result[key] = raw[key].map(normalizeLead);
           }
         }
-        setLeads(emptyStages);
+        setLeads(result);
       }
+      setLoading(false);
     });
   }, []);
 
+  if (loading) return <div className="flex-1 flex items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
   return <GenericKanbanBoard stages={salesStages} leads={leads} setLeads={setLeads} title="Funil de Vendas" />;
 }
 
 /* ── Recovery Kanban ─────────────────────────────── */
 
 function RecoveryKanbanView() {
-  const [leads, setLeads] = useState<Record<RecoveryStage, KanbanLead[]>>(mockRecoveryKanban);
+  const emptyStages: Record<RecoveryStage, KanbanLead[]> = {
+    followup: [], followup_2: [], followup_3: [], sem_resposta: [], orcamento_reprovado: [], desqualificado: [],
+  };
+  const [leads, setLeads] = useState<Record<RecoveryStage, KanbanLead[]>>(emptyStages);
+  const [loading, setLoading] = useState(true);
 
+  useEffect(() => {
+    crmApi.kanban().then(({ data }) => {
+      if (data && typeof data === 'object') {
+        const raw = data as Record<string, any[]>;
+        const result = { ...emptyStages };
+        for (const key of Object.keys(result) as RecoveryStage[]) {
+          if (Array.isArray(raw[key])) {
+            result[key] = raw[key].map(normalizeLead);
+          }
+        }
+        setLeads(result);
+      }
+      setLoading(false);
+    });
+  }, []);
+
+  if (loading) return <div className="flex-1 flex items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
   return <GenericKanbanBoard stages={recoveryStages} leads={leads} setLeads={setLeads} title="Recuperação de Vendas" />;
 }
 
@@ -239,6 +280,10 @@ function RecoveryKanbanView() {
 
 function KanbanCard({ lead, onDragStart }: { lead: KanbanLead; onDragStart: () => void }) {
   const navigate = useNavigate();
+  const [showLevelMenu, setShowLevelMenu] = useState(false);
+  const [currentLevel, setCurrentLevel] = useState<ConsciousnessLevel | undefined>(lead.consciousnessLevel);
+  const menuRef = useRef<HTMLDivElement>(null);
+
   const lastContactDate = lead.lastContact instanceof Date ? lead.lastContact : new Date(lead.lastContact);
   const daysAgo = Math.floor((Date.now() - lastContactDate.getTime()) / 86400000);
   const isStale = daysAgo > 3;
@@ -256,9 +301,28 @@ function KanbanCard({ lead, onDragStart }: { lead: KanbanLead; onDragStart: () =
     toast.success(`Ligando para ${lead.name}...`, { description: lead.phone });
   };
 
-  const level = lead.consciousnessLevel
-    ? consciousnessLevels.find((l) => l.id === lead.consciousnessLevel)
-    : null;
+  const handleSetLevel = (levelId: ConsciousnessLevel) => {
+    setCurrentLevel(levelId);
+    setShowLevelMenu(false);
+    crmApi.updateConsciousness(lead.id, levelId).then(({ error }) => {
+      if (error) {
+        toast.error("Erro ao atualizar nível: " + error);
+        setCurrentLevel(lead.consciousnessLevel);
+      }
+    });
+  };
+
+  // Close menu on outside click
+  useEffect(() => {
+    if (!showLevelMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setShowLevelMenu(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showLevelMenu]);
+
+  const level = currentLevel ? consciousnessLevels.find((l) => l.id === currentLevel) : null;
 
   return (
     <div draggable onDragStart={onDragStart}
@@ -278,14 +342,32 @@ function KanbanCard({ lead, onDragStart }: { lead: KanbanLead; onDragStart: () =
         </button>
       </div>
 
-      {/* Nível de Consciência */}
-      {level && (
-        <div className="flex items-center gap-1.5 mb-2 px-2 py-1 rounded-md text-[10px] font-medium"
-          style={{ backgroundColor: `${level.color}15`, color: level.color }}>
-          <span>{level.icon}</span>
-          <span>{level.label}</span>
-        </div>
-      )}
+      {/* Nível de Consciência — clickable */}
+      <div className="relative mb-2" ref={menuRef}>
+        <button
+          onClick={(e) => { e.stopPropagation(); setShowLevelMenu(!showLevelMenu); }}
+          className={`flex items-center gap-1.5 w-full px-2 py-1 rounded-md text-[10px] font-medium transition-colors ${
+            level ? "" : "bg-muted text-muted-foreground hover:text-foreground"
+          }`}
+          style={level ? { backgroundColor: `${level.color}15`, color: level.color } : undefined}
+        >
+          <Target className="h-3 w-3" />
+          <span>{level ? `${level.icon} ${level.label}` : "Definir nível"}</span>
+        </button>
+        {showLevelMenu && (
+          <div className="absolute z-50 top-full left-0 mt-1 bg-popover border border-border rounded-lg shadow-lg py-1 w-48">
+            {consciousnessLevels.map((cl) => (
+              <button key={cl.id} onClick={(e) => { e.stopPropagation(); handleSetLevel(cl.id); }}
+                className={`flex items-center gap-2 w-full px-3 py-1.5 text-[11px] hover:bg-muted transition-colors text-left ${
+                  currentLevel === cl.id ? "bg-muted font-semibold" : ""
+                }`}>
+                <span>{cl.icon}</span>
+                <span style={{ color: cl.color }}>{cl.label}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
 
       <p className="text-sm font-semibold text-primary mb-2">R$ {lead.value.toLocaleString("pt-BR")}</p>
       <div className="flex items-center justify-between">
