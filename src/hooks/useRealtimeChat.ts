@@ -152,7 +152,15 @@ export function useRealtimeChat(options: RealtimeChatOptions) {
         }
       });
 
-      es.onerror = () => {
+      es.addEventListener("lead_returned_from_recovery", (e) => {
+        try {
+          const data: LeadRecoveryReturn = JSON.parse(e.data);
+          leadRecoveryRef.current?.(data);
+        } catch (err) {
+          console.error("SSE lead_returned_from_recovery parse error:", err);
+        }
+      });
+
         es?.close();
         clearInterval(keepaliveInterval);
         retries++;
