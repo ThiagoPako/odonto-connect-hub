@@ -5,7 +5,7 @@ import { LeadListItem } from "@/components/chat/LeadListItem";
 import { ConversationView } from "@/components/chat/ConversationView";
 import { MessageInput } from "@/components/chat/MessageInput";
 import { ChatHeader } from "@/components/chat/ChatHeader";
-import { Users, MessageSquare, Inbox, Filter, Tags, UserPlus, Wifi, RefreshCw } from "lucide-react";
+import { Users, MessageSquare, Inbox, Filter, Kanban, UserPlus, Wifi, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { NewChatFromContactDialog } from "@/components/chat/NewChatFromContactDialog";
 import { SatisfactionSurveyDialog } from "@/components/chat/SatisfactionSurveyDialog";
