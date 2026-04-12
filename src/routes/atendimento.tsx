@@ -571,37 +571,109 @@ function AtendimentoPage() {
                           <h3 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-4">
                             <FileText className="h-4 w-4 text-primary" /> Relatório da Consulta (IA)
                           </h3>
-                          <div className="bg-muted/30 rounded-xl border border-dashed border-border/60 p-8 text-center">
-                            <Activity className="h-10 w-10 text-primary/30 mx-auto mb-3" />
-                            <p className="text-sm font-medium text-foreground mb-1">Transcrição e Análise por IA</p>
-                            <p className="text-xs text-muted-foreground max-w-md mx-auto mb-4">
-                              Após gravar a consulta, o agente de IA irá transcrever a conversa, gerar um relatório
-                              clínico detalhado e salvar no prontuário do paciente. Esse relatório será usado para
-                              follow-ups automáticos.
-                            </p>
-                            {gravacoes.length > 0 ? (
-                              <div className="space-y-3">
-                                <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-success/10 text-success text-xs font-medium">
-                                  <Mic className="h-3 w-3" /> {gravacoes.length} gravação(ões) prontas para transcrição
+
+                          {/* Status: Transcribing */}
+                          {aiState.status === 'transcribing' && (
+                            <div className="flex flex-col items-center py-8 gap-3">
+                              <Loader2 className="h-8 w-8 text-primary animate-spin" />
+                              <p className="text-sm font-medium text-foreground">Transcrevendo áudio com Whisper...</p>
+                              <p className="text-xs text-muted-foreground">Isso pode levar alguns segundos</p>
+                            </div>
+                          )}
+
+                          {/* Status: Generating report */}
+                          {aiState.status === 'generating' && (
+                            <div className="flex flex-col items-center py-8 gap-3">
+                              <Bot className="h-8 w-8 text-primary animate-pulse" />
+                              <p className="text-sm font-medium text-foreground">Gerando relatório clínico com IA...</p>
+                              {aiState.transcription && (
+                                <div className="bg-muted/30 rounded-xl p-4 text-left w-full max-w-lg mt-2">
+                                  <p className="text-[10px] text-muted-foreground uppercase font-semibold mb-1">Transcrição capturada</p>
+                                  <p className="text-xs text-foreground line-clamp-4">{aiState.transcription}</p>
                                 </div>
-                                <div className="bg-card border border-border/40 rounded-xl p-4 text-left max-w-lg mx-auto">
-                                  <p className="text-[10px] text-muted-foreground uppercase font-semibold mb-2">Preview do relatório (exemplo)</p>
-                                  <div className="text-xs text-muted-foreground space-y-2">
-                                    <p><strong className="text-foreground">Contexto:</strong> {queixaPrincipal || "Queixa principal não preenchida"}</p>
-                                    <p><strong className="text-foreground">Procedimento:</strong> {procedimentoRealizado || "Procedimento não registrado"}</p>
-                                    {dente && <p><strong className="text-foreground">Dente/Região:</strong> {dente}</p>}
-                                    {prescricoes.length > 0 && (
-                                      <p><strong className="text-foreground">Prescrições:</strong> {prescricoes.map(r => `${r.medicamento} ${r.dosagem}`).join(", ")}</p>
-                                    )}
-                                    <p><strong className="text-foreground">Tempo de consulta:</strong> {formatTime(tempoAtendimento)}</p>
-                                    <p className="text-primary/60 italic mt-2">⚡ Transcrição e insights serão gerados pelo agente IA quando ativado</p>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Status: Error */}
+                          {aiState.status === 'error' && (
+                            <div className="bg-destructive/5 border border-destructive/20 rounded-xl p-4 text-center">
+                              <AlertTriangle className="h-6 w-6 text-destructive mx-auto mb-2" />
+                              <p className="text-sm font-medium text-destructive mb-1">Erro na geração</p>
+                              <p className="text-xs text-destructive/70">{aiState.error}</p>
+                              <button
+                                onClick={handleTranscreverIA}
+                                className="mt-3 h-8 px-4 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors"
+                              >
+                                Tentar novamente
+                              </button>
+                            </div>
+                          )}
+
+                          {/* Status: Done — show full report */}
+                          {aiState.status === 'done' && (
+                            <div className="space-y-4">
+                              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-success/10 text-success text-xs font-medium">
+                                <Sparkles className="h-3 w-3" /> Relatório gerado e salvo no prontuário
+                              </div>
+
+                              {/* Transcription */}
+                              <details className="group">
+                                <summary className="cursor-pointer text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1.5">
+                                  <Mic className="h-3 w-3" /> Ver transcrição completa
+                                </summary>
+                                <div className="mt-2 bg-muted/30 rounded-xl p-4 text-xs text-foreground whitespace-pre-wrap max-h-48 overflow-y-auto">
+                                  {aiState.transcription}
+                                </div>
+                              </details>
+
+                              {/* Report */}
+                              <div className="bg-card border border-primary/20 rounded-xl p-5">
+                                <div className="prose prose-sm max-w-none text-foreground text-xs leading-relaxed"
+                                     dangerouslySetInnerHTML={{
+                                       __html: aiState.report
+                                         .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                                         .replace(/^### (.*$)/gm, '<h4 class="text-sm font-semibold text-foreground mt-3 mb-1">$1</h4>')
+                                         .replace(/^## (.*$)/gm, '<h3 class="text-sm font-bold text-foreground mt-4 mb-2">$1</h3>')
+                                         .replace(/^# (.*$)/gm, '<h2 class="text-base font-bold text-foreground mt-4 mb-2">$1</h2>')
+                                         .replace(/^- (.*$)/gm, '<li class="ml-4 list-disc text-muted-foreground">$1</li>')
+                                         .replace(/\n\n/g, '<br/><br/>')
+                                         .replace(/\n/g, '<br/>')
+                                     }}
+                                />
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Status: Idle — show instructions */}
+                          {aiState.status === 'idle' && (
+                            <div className="bg-muted/30 rounded-xl border border-dashed border-border/60 p-8 text-center">
+                              <Activity className="h-10 w-10 text-primary/30 mx-auto mb-3" />
+                              <p className="text-sm font-medium text-foreground mb-1">Transcrição e Análise por IA</p>
+                              <p className="text-xs text-muted-foreground max-w-md mx-auto mb-4">
+                                Grave a consulta e clique em "Transcrever com IA" para gerar automaticamente
+                                o relatório clínico. O relatório será salvo no prontuário do paciente e usado
+                                para follow-ups automáticos pelo agente de IA.
+                              </p>
+                              {gravacoes.length > 0 ? (
+                                <div className="space-y-3">
+                                  <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-success/10 text-success text-xs font-medium">
+                                    <Mic className="h-3 w-3" /> {gravacoes.length} gravação(ões) prontas
+                                  </div>
+                                  <div>
+                                    <button
+                                      onClick={handleTranscreverIA}
+                                      className="h-9 px-5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors inline-flex items-center gap-2"
+                                    >
+                                      <Sparkles className="h-4 w-4" /> Transcrever e Gerar Relatório
+                                    </button>
                                   </div>
                                 </div>
-                              </div>
-                            ) : (
-                              <p className="text-xs text-muted-foreground/60">Grave a consulta para habilitar a geração do relatório</p>
-                            )}
-                          </div>
+                              ) : (
+                                <p className="text-xs text-muted-foreground/60">Grave a consulta para habilitar</p>
+                              )}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
