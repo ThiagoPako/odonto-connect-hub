@@ -585,8 +585,12 @@ function ChatPage() {
   useEffect(() => {
     if (!leadSearch) return;
     const allLeads = [...myLeads, ...queue];
+    if (allLeads.length === 0) return; // wait for leads to load
+
     const match = allLeads.find(
       (l) => l.name.toLowerCase() === leadSearch.toLowerCase()
+        || l.id === leadSearch
+        || l.phone === leadSearch
     );
     if (match) {
       if (match.status === "waiting") {
@@ -613,8 +617,10 @@ function ChatPage() {
         setSelectedLead(match);
         setActiveTab("mine");
       }
+      // Clear the search param after selecting
+      navigate({ to: "/chat", search: { lead: "" }, replace: true });
     }
-  }, [leadSearch]);
+  }, [leadSearch, myLeads.length, queue.length]);
 
   const handleAssign = (lead: Lead) => {
     setQueue((prev) => prev.filter((l) => l.id !== lead.id));
