@@ -245,13 +245,20 @@ function ConsultaPage() {
       started_at: startedAt,
     });
 
+    // Update appointment status to "finalizado" on VPS
+    if (appointmentSelecionado) {
+      agendaApi.update(appointmentSelecionado.id, { status: "finalizado" }).then(() => {
+        fetchAgenda(); // Refresh agenda list
+      }).catch(() => {});
+    }
+
     if (error) {
       console.error("Erro ao salvar consulta:", error);
       toast.error(`Consulta finalizada localmente — erro ao salvar: ${error}`);
     } else {
       toast.success(`Consulta finalizada — ${formatTime(tempoAtendimento)} de atendimento`);
     }
-  }, [pacienteSelecionado, appointmentSelecionado, tempoAtendimento, queixaPrincipal, procedimentoRealizado, dente, notas, prescricoes, gravacoes, aiState.reportId]);
+  }, [pacienteSelecionado, appointmentSelecionado, tempoAtendimento, queixaPrincipal, procedimentoRealizado, dente, notas, prescricoes, gravacoes, aiState.reportId, fetchAgenda]);
 
   useEffect(() => {
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
