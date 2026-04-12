@@ -4,14 +4,15 @@ import {
   Play, Pause, Plus, Clock, MessageSquare, Mail, Smartphone,
   Zap, Settings2, Send, CheckCircle2, Edit2, Save, Loader2, RotateCcw,
   Trash2, Copy, GripVertical, ChevronDown, ChevronUp, X, Sparkles,
-  AlertTriangle, Eye, EyeOff, BarChart3,
+  AlertTriangle, Eye, EyeOff, BarChart3, Info, Rocket,
 } from "lucide-react";
 import { AutomationReportPanel } from "@/components/AutomationReportPanel";
 import { useState, useEffect, useCallback } from "react";
 import {
   mockAutomationFlows, automationTypes, triggerOptions, delayOptions,
-  availableVariables, messageTemplates,
+  availableVariables, messageTemplates, preConfiguredSolutions,
   type AutomationFlow, type AutomationStep, type AutomationType, type AutomationChannel,
+  type PreConfiguredSolution,
 } from "@/data/automationMockData";
 import { automationsApi, type FollowupAutomationConfig } from "@/lib/vpsApi";
 import { toast } from "sonner";
@@ -40,7 +41,7 @@ function AutomacoesPage() {
   const [showFollowupConfig, setShowFollowupConfig] = useState(false);
   const [editingFlow, setEditingFlow] = useState<AutomationFlow | null>(null);
   const [loadingFlows, setLoadingFlows] = useState(true);
-  const [activeTab, setActiveTab] = useState<"flows" | "report">("flows");
+  const [activeTab, setActiveTab] = useState<"solutions" | "flows" | "report">("solutions");
 
   const [followupConfig, setFollowupConfig] = useState<FollowupAutomationConfig | null>(null);
   const [loadingConfig, setLoadingConfig] = useState(true);
@@ -130,6 +131,35 @@ function AutomacoesPage() {
     automationsApi.createFlow(newFlow).catch(() => toast.error("Erro ao criar fluxo"));
   };
 
+  const activateSolution = (solution: PreConfiguredSolution) => {
+    // Check if a flow for this solution type already exists
+    const existing = flows.find(f => f.type === solution.type);
+    if (existing) {
+      setActiveTab("flows");
+      setSelectedFlow(existing);
+      setEditingFlow({ ...existing, steps: existing.steps.map(s => ({ ...s })) });
+      toast.info(`Fluxo "${existing.name}" já existe. Abrindo para edição.`);
+      return;
+    }
+    const newFlow: AutomationFlow = {
+      id: `af${Date.now()}`,
+      name: solution.name,
+      description: solution.description,
+      type: solution.type,
+      active: false,
+      trigger: solution.trigger,
+      steps: solution.defaultSteps.map(s => ({ ...s, id: `s${Date.now()}-${Math.random().toString(36).slice(2, 6)}` })),
+      stats: { sent: 0, responded: 0, converted: 0 },
+      createdAt: new Date().toLocaleDateString("pt-BR"),
+    };
+    setFlows((prev) => [newFlow, ...prev]);
+    setActiveTab("flows");
+    setSelectedFlow(newFlow);
+    setEditingFlow(newFlow);
+    toast.success(`Solução "${solution.name}" ativada! Personalize as mensagens.`);
+    automationsApi.createFlow(newFlow).catch(() => toast.error("Erro ao salvar fluxo"));
+  };
+
   const saveEditedFlow = (updated: AutomationFlow) => {
     const withUpdate = { ...updated, updatedAt: new Date().toLocaleDateString("pt-BR") };
     setFlows((prev) => prev.map((f) => f.id === updated.id ? withUpdate : f));
@@ -158,6 +188,12 @@ function AutomacoesPage() {
         {/* Tab switcher */}
         <div className="flex items-center gap-1 bg-muted rounded-lg p-0.5 w-fit">
           <button
+            onClick={() => setActiveTab("solutions")}
+            className={`px-4 py-1.5 rounded-md text-xs font-medium transition-colors ${activeTab === "solutions" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+          >
+            <Rocket className="h-3.5 w-3.5 inline mr-1.5" />Soluções
+          </button>
+          <button
             onClick={() => setActiveTab("flows")}
             className={`px-4 py-1.5 rounded-md text-xs font-medium transition-colors ${activeTab === "flows" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
           >
@@ -171,7 +207,13 @@ function AutomacoesPage() {
           </button>
         </div>
 
-        {activeTab === "report" ? (
+        {activeTab === "solutions" ? (
+          <SolutionsGrid
+            solutions={preConfiguredSolutions}
+            flows={flows}
+            onActivate={activateSolution}
+          />
+        ) : activeTab === "report" ? (
           <AutomationReportPanel />
         ) : (
           <>
@@ -1089,6 +1131,109 @@ function StepItem({ step, isLast, index }: { step: AutomationStep; isLast: boole
             )
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Solutions Grid ─────────────────────────────────────────
+
+function SolutionsGrid({
+  solutions, flows, onActivate,
+}: {
+  solutions: PreConfiguredSolution[];
+  flows: AutomationFlow[];
+  onActivate: (s: PreConfiguredSolution) => void;
+}) {
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-lg font-semibold text-foreground">Soluções Pré-Configuradas</h2>
+        <p className="text-sm text-muted-foreground mt-1">
+          Ative soluções prontas para os cenários mais comuns da sua clínica. Cada solução vem com mensagens e gatilhos já configurados.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {solutions.map((sol) => {
+          const existingFlow = flows.find(f => f.type === sol.type);
+          const isActive = existingFlow?.active;
+          const isConfigured = !!existingFlow;
+
+          return (
+            <div
+              key={sol.id}
+              className={`relative bg-card rounded-xl border-2 p-5 transition-all hover:shadow-md ${
+                isActive
+                  ? "border-primary/50 shadow-sm"
+                  : sol.hasDelay
+                    ? "border-warning/50"
+                    : "border-border"
+              }`}
+            >
+              {/* Delay badge */}
+              {sol.hasDelay && !isConfigured && (
+                <span className="absolute top-3 right-12 px-2 py-0.5 rounded-full text-[10px] font-medium bg-warning/15 text-warning">
+                  Atividade em Atraso
+                </span>
+              )}
+
+              {/* Info icon */}
+              <button className="absolute top-3 right-3 text-muted-foreground/50 hover:text-muted-foreground transition-colors" title={sol.description}>
+                <Info className="h-4 w-4" />
+              </button>
+
+              {/* Icon */}
+              <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center text-2xl mb-4">
+                {sol.icon}
+              </div>
+
+              {/* Name */}
+              <h3 className="font-semibold text-foreground text-sm mb-2">{sol.name}</h3>
+
+              {/* Patient count */}
+              <p className="text-xs text-muted-foreground mb-4">
+                Total de Pacientes: {sol.totalPacientes ?? 0}
+              </p>
+
+              {/* Description on hover */}
+              <p className="text-xs text-muted-foreground mb-4 line-clamp-2">{sol.description}</p>
+
+              {/* Steps preview */}
+              <div className="text-[11px] text-muted-foreground/70 mb-4 space-y-0.5">
+                {sol.defaultSteps.map((step, i) => (
+                  <div key={step.id} className="flex items-center gap-1.5">
+                    <span className="font-medium text-primary">{i + 1}.</span>
+                    <span>{step.channel === "whatsapp" ? "📱" : step.channel === "sms" ? "💬" : "✉️"}</span>
+                    <span>{step.delay}</span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Action */}
+              {isActive ? (
+                <div className="flex items-center gap-2 text-xs font-medium text-primary">
+                  <CheckCircle2 className="h-4 w-4" />
+                  <span>Ativa</span>
+                </div>
+              ) : isConfigured ? (
+                <button
+                  onClick={() => onActivate(sol)}
+                  className="text-xs font-medium text-primary hover:underline"
+                >
+                  Editar configuração
+                </button>
+              ) : (
+                <button
+                  onClick={() => onActivate(sol)}
+                  className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg border border-primary text-primary text-xs font-medium hover:bg-primary/5 transition-colors"
+                >
+                  Ativar
+                </button>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
