@@ -7,7 +7,7 @@ import {
   AlertTriangle, Eye, EyeOff, BarChart3, Info, Rocket,
   CalendarCheck, Cake, CalendarX, UserX, Bell, DollarSign, FileText, Stethoscope,
   Users, ArrowRight, type LucideIcon, TrendingUp, Activity, Timer,
-  CirclePlay, Workflow, Target, ShieldCheck,
+  Workflow, Target, ShieldCheck,
 } from "lucide-react";
 import { AutomationReportPanel } from "@/components/AutomationReportPanel";
 import { useState, useEffect, useCallback } from "react";
