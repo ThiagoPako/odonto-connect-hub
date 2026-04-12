@@ -789,6 +789,17 @@ export const aiApi = {
 
   getReports: (patientId: string) =>
     vpsApiFetch<ClinicalReportApi[]>(`/ai/reports/${encodeURIComponent(patientId)}`),
+
+  generateFollowupMessages: (body: { reportId: string; patientName?: string; patientPhone?: string }) =>
+    vpsApiFetch<{ messages: Array<{ delay_days: number; text: string }>; summary: string }>('/ai/followup-messages', { method: 'POST', body }),
+
+  scheduleFollowup: (body: {
+    reportId: string;
+    patientName?: string;
+    patientPhone?: string;
+    messages: Array<{ delay_days: number; text: string }>;
+    instance?: string;
+  }) => vpsApiFetch<{ success: boolean; flowId: string; jobs: Array<{ id: string; scheduled_at: string; delay_days: number; message: string }> }>('/ai/schedule-followup', { method: 'POST', body }),
 };
 
 // ─── Health check ───────────────────────────────────────────

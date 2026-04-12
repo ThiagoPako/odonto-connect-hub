@@ -6070,6 +6070,179 @@ app.get('/api/ai/reports/:patientId', async (req, res) => {
   }
 });
 
+// ─── Generate AI follow-up messages based on clinical report ─
+app.post('/api/ai/followup-messages', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    const { reportId, patientName, patientPhone } = req.body;
+    if (!reportId) return res.status(400).json({ error: 'reportId é obrigatório' });
+
+    // Fetch the clinical report
+    const { rows: reports } = await pool.query(
+      'SELECT report, queixa_principal, procedimento, dente_regiao, prescricoes FROM clinical_reports WHERE id = $1 LIMIT 1',
+      [reportId]
+    );
+    if (reports.length === 0) return res.status(404).json({ error: 'Relatório não encontrado' });
+    const report = reports[0];
+
+    // Get OpenAI settings
+    const { rows: aiRows } = await pool.query("SELECT api_key, model, enabled FROM ai_settings WHERE provider = 'openai' LIMIT 1");
+    if (aiRows.length === 0 || !aiRows[0].api_key || !aiRows[0].enabled) {
+      return res.status(400).json({ error: 'OpenAI não está configurada.' });
+    }
+    const { api_key: openaiKey, model } = aiRows[0];
+
+    const systemPrompt = `Você é um assistente de follow-up odontológico. Baseado no relatório clínico de uma consulta, gere 3 mensagens de follow-up personalizadas para enviar ao paciente via WhatsApp.
+
+As mensagens devem:
+- Ser calorosas, empáticas e profissionais
+- Referenciar detalhes específicos da consulta (procedimento, orientações)
+- Usar emojis de forma moderada
+- Ser curtas (máx 200 caracteres cada)
+- Incluir chamada para ação quando apropriado
+
+Retorne em formato JSON:
+{
+  "messages": [
+    {"delay_days": 1, "text": "mensagem 1 - pós-consulta imediato, verificar se está tudo bem"},
+    {"delay_days": 3, "text": "mensagem 2 - acompanhamento, reforçar orientações"},
+    {"delay_days": 7, "text": "mensagem 3 - follow-up final, lembrar próximo retorno"}
+  ],
+  "summary": "breve resumo do que o follow-up aborda"
+}`;
+
+    const userMsg = `## Relatório Clínico:
+${report.report}
+
+## Dados:
+- Paciente: ${patientName || 'Não informado'}
+- Queixa: ${report.queixa_principal || 'N/A'}
+- Procedimento: ${report.procedimento || 'N/A'}
+- Região: ${report.dente_regiao || 'N/A'}
+- Prescrições: ${JSON.stringify(report.prescricoes || [])}
+
+Gere as mensagens de follow-up personalizadas. Use {{nome}} como variável para o nome do paciente.`;
+
+    const gptRes = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${openaiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: model || 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userMsg },
+        ],
+        temperature: 0.7,
+        max_tokens: 1000,
+        response_format: { type: 'json_object' },
+      }),
+    });
+
+    if (!gptRes.ok) {
+      const errText = await gptRes.text();
+      console.error('GPT followup error:', gptRes.status, errText);
+      return res.status(500).json({ error: `Erro ao gerar mensagens: ${gptRes.status}` });
+    }
+
+    const gptData = await gptRes.json();
+    const content = gptData.choices?.[0]?.message?.content || '{}';
+    let parsed;
+    try { parsed = JSON.parse(content); } catch { parsed = { messages: [], summary: '' }; }
+
+    res.json(parsed);
+  } catch (err) {
+    if (err.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('Followup messages error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Schedule follow-up from clinical report ────────────────
+app.post('/api/ai/schedule-followup', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    const { reportId, patientName, patientPhone, messages, instance } = req.body;
+
+    if (!reportId || !patientPhone || !messages || !Array.isArray(messages) || messages.length === 0) {
+      return res.status(400).json({ error: 'reportId, patientPhone e messages são obrigatórios' });
+    }
+
+    // Resolve instance — use first connected if not provided
+    let instanceName = instance;
+    if (!instanceName && EVOLUTION_API_KEY) {
+      try {
+        const instResult = await evolutionFetch('/instance/fetchInstances');
+        const instances = Array.isArray(instResult.data) ? instResult.data : [];
+        const connected = instances.find(i => (i.connectionStatus || i.status) === 'open');
+        if (connected) instanceName = connected.name || connected.instanceName;
+      } catch {}
+    }
+
+    const flowId = `followup-report-${reportId}`;
+    const flowName = `Follow-up IA: ${patientName || patientPhone}`;
+    const now = new Date();
+
+    // Create a temporary automation flow for tracking
+    await pool.query(`
+      INSERT INTO automation_flows (id, name, description, type, active, trigger_event, steps, stats, created_by)
+      VALUES ($1, $2, $3, 'pos_consulta', true, 'Relatório clínico IA', $4, '{"sent":0,"responded":0,"converted":0}', $5)
+      ON CONFLICT (id) DO UPDATE SET steps = EXCLUDED.steps, updated_at = NOW()
+    `, [
+      flowId, flowName,
+      `Follow-up automático gerado pela IA baseado no relatório clínico ${reportId}`,
+      JSON.stringify(messages.map((m, i) => ({
+        id: `s-${Date.now()}-${i}`,
+        delay: `${m.delay_days} dia(s)`,
+        delayMinutes: m.delay_days * 1440,
+        channel: 'whatsapp',
+        message: m.text,
+        variables: ['nome'],
+      }))),
+      user.id,
+    ]);
+
+    // Schedule automation jobs
+    const jobIds = [];
+    const phone = patientPhone.replace(/\D/g, '');
+    const formattedPhone = phone.startsWith('55') ? phone : `55${phone}`;
+
+    for (let i = 0; i < messages.length; i++) {
+      const msg = messages[i];
+      const scheduledAt = new Date(now.getTime() + (msg.delay_days * 86400000));
+      const personalizedMsg = (msg.text || '').replace(/\{\{nome\}\}/g, patientName || 'Paciente');
+
+      const jobId = randomUUID();
+      await pool.query(`
+        INSERT INTO automation_jobs (id, flow_id, flow_name, step_index, patient_name, patient_phone, instance, variables, message, channel, status, scheduled_at, trigger_event)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'whatsapp', 'pending', $10, 'clinical_report_followup')
+      `, [
+        jobId, flowId, flowName, i,
+        patientName || '', formattedPhone,
+        instanceName || '',
+        JSON.stringify({ nome: patientName || 'Paciente', reportId }),
+        personalizedMsg, scheduledAt,
+      ]);
+      jobIds.push({ id: jobId, scheduled_at: scheduledAt, delay_days: msg.delay_days, message: personalizedMsg });
+    }
+
+    // Link report to follow-up
+    await pool.query(`
+      UPDATE clinical_reports SET metadata = jsonb_set(COALESCE(metadata, '{}'), '{followup_flow_id}', $1)
+      WHERE id = $2
+    `, [JSON.stringify(flowId), reportId]);
+
+    console.log(`🤖 Follow-up IA agendado: ${jobIds.length} mensagens para ${patientName} (${formattedPhone})`);
+    res.json({ success: true, flowId, jobs: jobIds });
+  } catch (err) {
+    if (err.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('Schedule followup error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════
 // START SERVER
 
