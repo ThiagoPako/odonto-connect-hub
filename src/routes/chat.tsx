@@ -65,6 +65,7 @@ function ChatPage() {
   const [historyHasMore, setHistoryHasMore] = useState<Record<string, boolean>>({});
   const [historyLoading, setHistoryLoading] = useState(false);
   const [presenceMap, setPresenceMap] = useState<Record<string, { status: "online" | "offline" | "typing" | "recording"; lastSeen: Date | null }>>({});
+  const [crmStages, setCrmStages] = useState<Record<string, string>>({});
 
   // Refs for stable closure access in SSE callback
   const queueRef = useRef(queue);
