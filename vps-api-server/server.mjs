@@ -536,7 +536,32 @@ app.post('/api/auth/admin-reset-password', async (req, res) => {
   }
 });
 
-// ─── Admin: list all users ──────────────────────────────────
+// ─── Admin: upload avatar for any user ──────────────────────
+app.post('/api/auth/users/:userId/avatar', async (req, res) => {
+  try {
+    await verifyAdmin(req);
+    const { userId } = req.params;
+    const { avatar } = req.body;
+
+    if (!avatar) return res.status(400).json({ error: 'Imagem é obrigatória' });
+    if (!avatar.startsWith('data:image/')) return res.status(400).json({ error: 'Formato inválido. Envie uma imagem.' });
+    if (avatar.length > 7 * 1024 * 1024) return res.status(400).json({ error: 'Imagem deve ter no máximo 5MB' });
+
+    // Verify user exists
+    const { rows: users } = await pool.query('SELECT id FROM profiles WHERE id = $1', [userId]);
+    if (users.length === 0) return res.status(404).json({ error: 'Usuário não encontrado' });
+
+    const avatarUrl = await saveMediaToDisk(avatar, null, 'avatar.jpg');
+    if (!avatarUrl) return res.status(500).json({ error: 'Erro ao salvar imagem' });
+
+    await pool.query('UPDATE profiles SET avatar_url = $1, updated_at = NOW() WHERE id = $2', [avatarUrl, userId]);
+    res.json({ avatar_url: avatarUrl });
+  } catch (error) {
+    console.error('Admin avatar upload error:', error);
+    res.status(error.message === 'Admin access required' ? 403 : 500).json({ error: error.message });
+  }
+});
+
 app.get('/api/auth/users', async (req, res) => {
   try {
     await verifyAdmin(req);
