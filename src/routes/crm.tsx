@@ -543,7 +543,7 @@ function PatientTableView() {
         </div>
 
         <div className="px-4 py-2 text-xs text-muted-foreground flex items-center justify-between">
-          <span>{filtered.length} paciente{filtered.length !== 1 ? "s" : ""} encontrado{filtered.length !== 1 ? "s" : ""}</span>
+          <span>{total} paciente{total !== 1 ? "s" : ""} encontrado{total !== 1 ? "s" : ""}</span>
           {totalPages > 1 && (
             <span>Página {safePage} de {totalPages}</span>
           )}
@@ -556,12 +556,12 @@ function PatientTableView() {
               <span className="ml-2 text-sm text-muted-foreground">Carregando pacientes...</span>
             </div>
           )}
-          {!loading && filtered.length === 0 && (
+          {!loading && patients.length === 0 && (
             <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
               Nenhum paciente encontrado
             </div>
           )}
-          {!loading && paginated.length > 0 && (
+          {!loading && patients.length > 0 && (
           <table className="w-full">
             <thead className="sticky top-0 bg-card">
               <tr className="border-b border-border text-left">
