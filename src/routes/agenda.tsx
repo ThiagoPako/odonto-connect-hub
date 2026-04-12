@@ -107,6 +107,16 @@ function AgendaPage() {
     navigate({ to: "/atendimento", search: { appointmentId: appointment.id } });
   }, [navigate]);
 
+  const handleReschedule = useCallback(async (id: string, newDate: string, newTime: string) => {
+    const { error } = await agendaApi.update(id, { status: "confirmado", hora: newTime, data: newDate });
+    if (!error) {
+      toast.success("Consulta reagendada com sucesso!");
+      fetchAgenda();
+    } else {
+      toast.error("Erro ao reagendar: " + error);
+    }
+  }, [fetchAgenda]);
+
   const filtered = appointments
     .filter((a) => selectedProfessional === "all" || a.professional.includes(selectedProfessional))
     .filter((a) => !searchTerm || a.patientName.toLowerCase().includes(searchTerm.toLowerCase()));
@@ -200,8 +210,8 @@ function AgendaPage() {
           </div>
         ) : (
           <>
-            {viewMode === "kanban" && <KanbanView filtered={filtered} selectedProfessional={selectedProfessional} onAtender={handleAtender} onUpdateStatus={handleUpdateStatus} />}
-            {viewMode === "lista" && <ListView filtered={filtered} onAtender={handleAtender} onUpdateStatus={handleUpdateStatus} />}
+            {viewMode === "kanban" && <KanbanView filtered={filtered} selectedProfessional={selectedProfessional} onAtender={handleAtender} onUpdateStatus={handleUpdateStatus} onReschedule={handleReschedule} />}
+            {viewMode === "lista" && <ListView filtered={filtered} onAtender={handleAtender} onUpdateStatus={handleUpdateStatus} onReschedule={handleReschedule} />}
             {viewMode === "calendario" && <CalendarView filtered={filtered} selectedProfessional={selectedProfessional} />}
           </>
         )}
@@ -218,7 +228,7 @@ function AgendaPage() {
 }
 
 /* ===================== KANBAN VIEW ===================== */
-function KanbanView({ filtered, selectedProfessional, onAtender, onUpdateStatus }: { filtered: Appointment[]; selectedProfessional: string; onAtender: (a: Appointment) => void; onUpdateStatus: (id: string, status: string) => void }) {
+function KanbanView({ filtered, selectedProfessional, onAtender, onUpdateStatus, onReschedule }: { filtered: Appointment[]; selectedProfessional: string; onAtender: (a: Appointment) => void; onUpdateStatus: (id: string, status: string) => void; onReschedule: (id: string, date: string, time: string) => void }) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
       {mockProfessionals
@@ -241,7 +251,7 @@ function KanbanView({ filtered, selectedProfessional, onAtender, onUpdateStatus 
                 {profAppts.length === 0 ? (
                   <p className="text-xs text-muted-foreground text-center py-6">Sem consultas</p>
                 ) : (
-                  profAppts.map((appt) => <AppointmentCard key={appt.id} appointment={appt} onAtender={onAtender} onUpdateStatus={onUpdateStatus} />)
+                  profAppts.map((appt) => <AppointmentCard key={appt.id} appointment={appt} onAtender={onAtender} onUpdateStatus={onUpdateStatus} onReschedule={onReschedule} />)
                 )}
               </div>
             </div>
@@ -252,7 +262,7 @@ function KanbanView({ filtered, selectedProfessional, onAtender, onUpdateStatus 
 }
 
 /* ===================== LIST VIEW ===================== */
-function ListView({ filtered, onAtender, onUpdateStatus }: { filtered: Appointment[]; onAtender: (a: Appointment) => void; onUpdateStatus: (id: string, status: string) => void }) {
+function ListView({ filtered, onAtender, onUpdateStatus, onReschedule }: { filtered: Appointment[]; onAtender: (a: Appointment) => void; onUpdateStatus: (id: string, status: string) => void; onReschedule: (id: string, date: string, time: string) => void }) {
   const sorted = [...filtered].sort((a, b) => a.time.localeCompare(b.time));
 
   return (
@@ -495,9 +505,12 @@ function CalendarView({ filtered, selectedProfessional }: { filtered: Appointmen
 }
 
 /* ===================== APPOINTMENT CARD (Kanban) ===================== */
-function AppointmentCard({ appointment: a, onAtender, onUpdateStatus }: { appointment: Appointment; onAtender: (a: Appointment) => void; onUpdateStatus: (id: string, status: string) => void }) {
+function AppointmentCard({ appointment: a, onAtender, onUpdateStatus, onReschedule }: { appointment: Appointment; onAtender: (a: Appointment) => void; onUpdateStatus: (id: string, status: string) => void; onReschedule: (id: string, date: string, time: string) => void }) {
   const cfg = statusConfig[a.status];
   const [showHistory, setShowHistory] = useState(false);
+  const [showReschedule, setShowReschedule] = useState(false);
+  const [rescheduleDate, setRescheduleDate] = useState("");
+  const [rescheduleTime, setRescheduleTime] = useState(a.time);
 
   const historico = a.pacienteId ? getHistorico(a.pacienteId).slice(0, 4) : [];
   const alergias = a.pacienteId ? getAlergias(a.pacienteId) : [];
@@ -606,9 +619,9 @@ function AppointmentCard({ appointment: a, onAtender, onUpdateStatus }: { appoin
               <UserCheck className="h-3 w-3 text-primary" />
             </button>
           )}
-          {a.status === "faltou" && (
-            <button className="p-1 rounded hover:bg-warning/10" title="Reagendar">
-              <RefreshCw className="h-3 w-3 text-warning" />
+          {a.status !== "finalizado" && (
+            <button onClick={() => setShowReschedule(!showReschedule)} className="p-1 rounded hover:bg-warning/10" title="Reagendar">
+              <RefreshCw className={`h-3 w-3 ${a.status === "faltou" ? "text-warning" : "text-muted-foreground"}`} />
             </button>
           )}
           <button className="p-1 rounded hover:bg-muted" title="WhatsApp">
@@ -619,6 +632,43 @@ function AppointmentCard({ appointment: a, onAtender, onUpdateStatus }: { appoin
           </button>
         </div>
       </div>
+
+      {/* Reschedule popover */}
+      {showReschedule && (
+        <div className="bg-muted/50 rounded-lg p-2 space-y-2 border border-border/50 animate-fade-in">
+          <p className="text-[10px] font-semibold text-foreground">Reagendar consulta</p>
+          <div className="flex gap-2">
+            <input
+              type="date"
+              value={rescheduleDate}
+              onChange={(e) => setRescheduleDate(e.target.value)}
+              className="flex-1 h-7 px-2 rounded bg-background border border-border text-[11px] text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+            />
+            <select
+              value={rescheduleTime}
+              onChange={(e) => setRescheduleTime(e.target.value)}
+              className="w-20 h-7 px-1 rounded bg-background border border-border text-[11px] text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+            >
+              {HORARIOS.map((h) => <option key={h} value={h}>{h}</option>)}
+            </select>
+          </div>
+          <div className="flex justify-end gap-1.5">
+            <button onClick={() => setShowReschedule(false)} className="px-2 py-1 text-[10px] text-muted-foreground hover:bg-muted rounded">
+              Cancelar
+            </button>
+            <button
+              onClick={() => {
+                if (!rescheduleDate) { toast.error("Selecione a nova data"); return; }
+                onReschedule(a.id, rescheduleDate, rescheduleTime);
+                setShowReschedule(false);
+              }}
+              className="px-2.5 py-1 text-[10px] font-medium bg-primary text-primary-foreground rounded hover:bg-primary/90 transition-colors"
+            >
+              Confirmar
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

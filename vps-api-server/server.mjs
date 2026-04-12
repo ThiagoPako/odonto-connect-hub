@@ -1792,11 +1792,12 @@ app.put('/api/agenda/:id', async (req, res) => {
   try {
     await verifyUser(req);
     const { id } = req.params;
-    const { status, hora, duracao, procedimento, observacoes, sala } = req.body;
+    const { status, hora, duracao, procedimento, observacoes, sala, data } = req.body;
     const sets = [];
     const params = [];
     if (status) { params.push(status); sets.push(`status = $${params.length}`); }
     if (hora) { params.push(hora); sets.push(`hora = $${params.length}`); }
+    if (data) { params.push(data); sets.push(`data = $${params.length}`); }
     if (duracao) { params.push(duracao); sets.push(`duracao = $${params.length}`); }
     if (procedimento) { params.push(procedimento); sets.push(`procedimento = $${params.length}`); }
     if (observacoes !== undefined) { params.push(observacoes); sets.push(`observacoes = $${params.length}`); }
