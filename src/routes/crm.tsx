@@ -505,7 +505,7 @@ function PatientTableView() {
     } finally {
       setLoading(false);
     }
-  }, [searchTerm, statusFilter, originFilter, safePage]);
+  }, [searchTerm, statusFilter, originFilter, safePage, sortBy, sortDir]);
 
   useEffect(() => {
     const timer = setTimeout(() => void loadPatients(), 300);
@@ -579,11 +579,28 @@ function PatientTableView() {
           <table className="w-full">
             <thead className="sticky top-0 bg-card">
               <tr className="border-b border-border text-left">
-                <th className="px-4 py-2 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Paciente</th>
-                <th className="px-4 py-2 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Origem</th>
-                <th className="px-4 py-2 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Status</th>
-                <th className="px-4 py-2 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Faturamento</th>
-                <th className="px-4 py-2 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Última Visita</th>
+                {([
+                  ["nome", "Paciente"],
+                  ["origem", "Origem"],
+                  ["status", "Status"],
+                  ["valor", "Faturamento"],
+                  ["updated_at", "Última Visita"],
+                ] as const).map(([col, label]) => (
+                  <th
+                    key={col}
+                    onClick={() => toggleSort(col)}
+                    className="px-4 py-2 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider cursor-pointer select-none hover:text-foreground transition-colors"
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      {label}
+                      {sortBy === col ? (
+                        <span className="text-primary">{sortDir === "asc" ? "↑" : "↓"}</span>
+                      ) : (
+                        <span className="opacity-0 group-hover:opacity-30">↕</span>
+                      )}
+                    </span>
+                  </th>
+                ))}
                 <th className="w-10" />
               </tr>
             </thead>
