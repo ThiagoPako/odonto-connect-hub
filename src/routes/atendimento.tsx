@@ -123,6 +123,7 @@ function ConsultaPage() {
     if (!pacienteSelecionado) return;
     setAtendimentoAtivo(true);
     setTempoAtendimento(0);
+    setTabAtiva("consulta");
     timerRef.current = setInterval(() => setTempoAtendimento(t => t + 1), 1000);
     toast.success(`Consulta iniciada — ${pacienteSelecionado.nome}`);
   }, [pacienteSelecionado]);
