@@ -211,6 +211,11 @@ function TratamentosPage() {
                 className="h-9 px-3 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 flex items-center gap-1 shrink-0">
                 <Plus className="h-3.5 w-3.5" /> Novo
               </button>
+              <button onClick={handleExportPdf}
+                className="h-9 w-9 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-muted flex items-center justify-center shrink-0"
+                title="Exportar PDF">
+                <Download className="h-3.5 w-3.5" />
+              </button>
             </div>
             <div className="space-y-1.5 max-h-[calc(100vh-200px)] overflow-y-auto">
               {filtered.map((t, i) => {
