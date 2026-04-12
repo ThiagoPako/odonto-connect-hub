@@ -620,9 +620,9 @@ function AppointmentCard({ appointment: a, onAtender, onUpdateStatus, onReschedu
               <UserCheck className="h-3 w-3 text-primary" />
             </button>
           )}
-          {a.status === "faltou" && (
-            <button className="p-1 rounded hover:bg-warning/10" title="Reagendar">
-              <RefreshCw className="h-3 w-3 text-warning" />
+          {a.status !== "finalizado" && (
+            <button onClick={() => setShowReschedule(!showReschedule)} className="p-1 rounded hover:bg-warning/10" title="Reagendar">
+              <RefreshCw className={`h-3 w-3 ${a.status === "faltou" ? "text-warning" : "text-muted-foreground"}`} />
             </button>
           )}
           <button className="p-1 rounded hover:bg-muted" title="WhatsApp">
@@ -633,6 +633,43 @@ function AppointmentCard({ appointment: a, onAtender, onUpdateStatus, onReschedu
           </button>
         </div>
       </div>
+
+      {/* Reschedule popover */}
+      {showReschedule && (
+        <div className="bg-muted/50 rounded-lg p-2 space-y-2 border border-border/50 animate-fade-in">
+          <p className="text-[10px] font-semibold text-foreground">Reagendar consulta</p>
+          <div className="flex gap-2">
+            <input
+              type="date"
+              value={rescheduleDate}
+              onChange={(e) => setRescheduleDate(e.target.value)}
+              className="flex-1 h-7 px-2 rounded bg-background border border-border text-[11px] text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+            />
+            <select
+              value={rescheduleTime}
+              onChange={(e) => setRescheduleTime(e.target.value)}
+              className="w-20 h-7 px-1 rounded bg-background border border-border text-[11px] text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+            >
+              {HORARIOS.map((h) => <option key={h} value={h}>{h}</option>)}
+            </select>
+          </div>
+          <div className="flex justify-end gap-1.5">
+            <button onClick={() => setShowReschedule(false)} className="px-2 py-1 text-[10px] text-muted-foreground hover:bg-muted rounded">
+              Cancelar
+            </button>
+            <button
+              onClick={() => {
+                if (!rescheduleDate) { toast.error("Selecione a nova data"); return; }
+                onReschedule(a.id, rescheduleDate, rescheduleTime);
+                setShowReschedule(false);
+              }}
+              className="px-2.5 py-1 text-[10px] font-medium bg-primary text-primary-foreground rounded hover:bg-primary/90 transition-colors"
+            >
+              Confirmar
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
