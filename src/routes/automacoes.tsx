@@ -207,7 +207,13 @@ function AutomacoesPage() {
           </button>
         </div>
 
-        {activeTab === "report" ? (
+        {activeTab === "solutions" ? (
+          <SolutionsGrid
+            solutions={preConfiguredSolutions}
+            flows={flows}
+            onActivate={activateSolution}
+          />
+        ) : activeTab === "report" ? (
           <AutomationReportPanel />
         ) : (
           <>
