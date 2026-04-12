@@ -453,6 +453,18 @@ function PatientTableView() {
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
+  const [sortBy, setSortBy] = useState<string>("updated_at");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+
+  const toggleSort = (col: string) => {
+    if (sortBy === col) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortBy(col);
+      setSortDir(col === "nome" ? "asc" : "desc");
+    }
+    setPage(1);
+  };
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
@@ -467,6 +479,8 @@ function PatientTableView() {
       if (searchTerm.trim()) params.search = searchTerm.trim();
       if (statusFilter !== "Todos") params.status = statusFilter;
       if (originFilter !== "Todos") params.origin = originFilter;
+      params.sort_by = sortBy;
+      params.sort_dir = sortDir;
       const { data } = await crmApi.list(params);
       if (data && data.rows && Array.isArray(data.rows)) {
         setTotal(data.total);
@@ -491,7 +505,7 @@ function PatientTableView() {
     } finally {
       setLoading(false);
     }
-  }, [searchTerm, statusFilter, originFilter, safePage]);
+  }, [searchTerm, statusFilter, originFilter, safePage, sortBy, sortDir]);
 
   useEffect(() => {
     const timer = setTimeout(() => void loadPatients(), 300);
@@ -565,11 +579,28 @@ function PatientTableView() {
           <table className="w-full">
             <thead className="sticky top-0 bg-card">
               <tr className="border-b border-border text-left">
-                <th className="px-4 py-2 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Paciente</th>
-                <th className="px-4 py-2 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Origem</th>
-                <th className="px-4 py-2 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Status</th>
-                <th className="px-4 py-2 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Faturamento</th>
-                <th className="px-4 py-2 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Última Visita</th>
+                {([
+                  ["nome", "Paciente"],
+                  ["origem", "Origem"],
+                  ["status", "Status"],
+                  ["valor", "Faturamento"],
+                  ["updated_at", "Última Visita"],
+                ] as const).map(([col, label]) => (
+                  <th
+                    key={col}
+                    onClick={() => toggleSort(col)}
+                    className="px-4 py-2 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider cursor-pointer select-none hover:text-foreground transition-colors"
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      {label}
+                      {sortBy === col ? (
+                        <span className="text-primary">{sortDir === "asc" ? "↑" : "↓"}</span>
+                      ) : (
+                        <span className="opacity-0 group-hover:opacity-30">↕</span>
+                      )}
+                    </span>
+                  </th>
+                ))}
                 <th className="w-10" />
               </tr>
             </thead>

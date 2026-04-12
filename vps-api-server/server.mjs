@@ -3195,9 +3195,15 @@ app.get('/api/crm/leads/:id/movements', async (req, res) => {
 app.get('/api/crm/leads', async (req, res) => {
   try {
     await verifyUser(req);
-    const { search, status, grouped, origin } = req.query;
+    const { search, status, grouped, origin, sort_by, sort_dir } = req.query;
     const limit = Math.min(Math.max(parseInt(req.query.limit) || 25, 1), 100);
     const offset = Math.max(parseInt(req.query.offset) || 0, 0);
+
+    // Whitelist sortable columns to prevent SQL injection
+    const SORTABLE_COLS = { nome: 'l.nome', origem: 'l.origem', status: 'l.status', valor: 'l.valor', updated_at: 'l.updated_at', created_at: 'l.created_at' };
+    const sortColumn = SORTABLE_COLS[sort_by] || 'l.updated_at';
+    const sortDirection = sort_dir === 'asc' ? 'ASC' : 'DESC';
+    const orderClause = `ORDER BY ${sortColumn} ${sortDirection} NULLS LAST, l.created_at DESC`;
 
     let whereClause = ' WHERE 1=1';
     const params = [];
@@ -3222,7 +3228,7 @@ app.get('/api/crm/leads', async (req, res) => {
 
     // For kanban, return all (no pagination) grouped
     if (grouped === 'kanban') {
-      const query = `SELECT l.*, s.attendant_name, s.status as session_status ${baseFrom} ${whereClause} ORDER BY l.updated_at DESC NULLS LAST, l.created_at DESC`;
+      const query = `SELECT l.*, s.attendant_name, s.status as session_status ${baseFrom} ${whereClause} ${orderClause}`;
       const { rows } = await pool.query(query, params);
       const kanban = {};
       for (const stage of ALL_KANBAN_STAGES) kanban[stage] = [];
@@ -3256,7 +3262,7 @@ app.get('/api/crm/leads', async (req, res) => {
     // Paginated data query
     const pIdx1 = params.length + 1;
     const pIdx2 = params.length + 2;
-    const dataQuery = `SELECT l.*, s.attendant_name, s.status as session_status ${baseFrom} ${whereClause} ORDER BY l.updated_at DESC NULLS LAST, l.created_at DESC LIMIT $${pIdx1} OFFSET $${pIdx2}`;
+    const dataQuery = `SELECT l.*, s.attendant_name, s.status as session_status ${baseFrom} ${whereClause} ${orderClause} LIMIT $${pIdx1} OFFSET $${pIdx2}`;
     const { rows } = await pool.query(dataQuery, [...params, limit, offset]);
 
     res.json({ rows, total, limit, offset });
