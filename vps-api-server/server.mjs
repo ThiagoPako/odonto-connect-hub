@@ -6564,6 +6564,89 @@ app.get('/api/sessions/active/:leadId', async (req, res) => {
   }
 });
 
+// ─── Switch Primary WhatsApp Instance ───────────────────────
+app.post('/api/whatsapp/switch-primary', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { newInstance, message } = req.body;
+    if (!newInstance || typeof newInstance !== 'string') {
+      return res.status(400).json({ error: 'newInstance é obrigatório' });
+    }
+    if (!message || typeof message !== 'string' || message.trim().length < 10) {
+      return res.status(400).json({ error: 'Mensagem deve ter no mínimo 10 caracteres' });
+    }
+
+    // 1. Find open attendances (status = 'em_atendimento')
+    const { rows: openChats } = await pool.query(
+      `SELECT DISTINCT c.lead_phone, c.instance_name
+       FROM chat_messages c
+       WHERE c.instance_name IS NOT NULL
+         AND c.instance_name != $1
+         AND c.created_at > NOW() - INTERVAL '7 days'
+         AND c.lead_phone IS NOT NULL
+       ORDER BY c.lead_phone`,
+      [newInstance]
+    );
+
+    // Also check attendance queue
+    const { rows: queueChats } = await pool.query(
+      `SELECT DISTINCT phone FROM attendance_queue
+       WHERE status IN ('waiting', 'in_progress')
+         AND phone IS NOT NULL`
+    );
+
+    // Merge unique phone numbers
+    const phoneSet = new Set();
+    [...openChats, ...queueChats].forEach(r => {
+      const phone = (r.lead_phone || r.phone || '').replace(/\D/g, '');
+      if (phone.length >= 10) phoneSet.add(phone);
+    });
+
+    const phones = Array.from(phoneSet);
+    let sent = 0;
+    let failed = 0;
+    const errors = [];
+
+    // 2. Send message to each patient via the NEW instance
+    for (const phone of phones) {
+      try {
+        await evolutionFetch(`/message/sendText/${newInstance}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
+          body: JSON.stringify({ number: phone, text: message.trim() }),
+        });
+        sent++;
+        // Small delay to avoid rate limiting
+        await new Promise(resolve => setTimeout(resolve, 500));
+      } catch (err) {
+        failed++;
+        errors.push({ phone, error: err.message });
+      }
+    }
+
+    // 3. Log the switch event
+    try {
+      await pool.query(
+        `INSERT INTO system_logs (event, details, created_at)
+         VALUES ('switch_primary_instance', $1, NOW())`,
+        [JSON.stringify({ newInstance, totalPhones: phones.length, sent, failed })]
+      );
+    } catch (_) { /* table may not exist yet */ }
+
+    res.json({
+      success: true,
+      newInstance,
+      totalPatients: phones.length,
+      sent,
+      failed,
+      errors: errors.length > 0 ? errors : undefined,
+    });
+  } catch (error) {
+    console.error('[switch-primary]', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 
 // ═══════════════════════════════════════════════════════════════
 // CHAT MESSAGES (persistência de histórico)
