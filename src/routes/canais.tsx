@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Plus, RefreshCw, Loader2, WifiOff, Smartphone, Wifi, Star } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import { fetchInstances, type EvolutionInstance } from "@/lib/evolutionApi";
+import { vpsApiFetch } from "@/lib/vpsApi";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/canais")({
@@ -78,17 +79,20 @@ function CanaisPage() {
     if (!pendingSwitchName) return;
     setSwitching(true);
     try {
+      const result = await vpsApiFetch<{ success: boolean; sent: number; failed: number; totalPatients: number }>(
+        '/whatsapp/switch-primary',
+        { method: 'POST', body: { newInstance: pendingSwitchName, message: switchMsg.trim() } }
+      );
+
       localStorage.setItem("wa_primary_instance", pendingSwitchName);
       setPrimaryInstance(pendingSwitchName);
 
-      // TODO: Integrar com backend para enviar mensagem para pacientes em atendimento aberto
-      // POST /api/whatsapp/switch-primary { newInstance, message: switchMsg }
-      console.log("Switching primary to:", pendingSwitchName, "Message:", switchMsg);
-
-      toast.success(`"${pendingSwitchName}" agora é a conexão principal. Mensagens de aviso serão enviadas.`);
+      toast.success(
+        `"${pendingSwitchName}" agora é a conexão principal. ${result.sent} paciente(s) notificado(s).${result.failed > 0 ? ` ${result.failed} falha(s).` : ''}`
+      );
       setSwitchDialogOpen(false);
     } catch (err) {
-      toast.error("Erro ao trocar conexão principal");
+      toast.error(err instanceof Error ? err.message : "Erro ao trocar conexão principal");
     } finally {
       setSwitching(false);
     }
