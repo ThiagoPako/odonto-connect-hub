@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { useState, useEffect, useCallback } from "react";
-import { pacientesApi } from "@/lib/vpsApi";
+import { pacientesApi, type HistoricoConsulta } from "@/lib/vpsApi";
 import { OdontogramaChart, OdontogramaEditor } from "@/components/OdontogramaChart";
 import { toast } from "sonner";
 import {
@@ -419,7 +419,7 @@ function NovoPacienteModal({ onClose, onSaved }: { onClose: () => void; onSaved:
 }
 
 /* ─── Patient Detail Modal ─── */
-type DetailTab = "dados" | "anamnese" | "odontograma";
+type DetailTab = "dados" | "anamnese" | "odontograma" | "historico";
 
 interface AnamneseData {
   id?: string;

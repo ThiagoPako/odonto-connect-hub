@@ -1847,6 +1847,29 @@ app.put('/api/pacientes/:id/odontograma', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
+// HISTORICO DE CONSULTAS (por paciente)
+// ═══════════════════════════════════════════════════════════════
+
+app.get('/api/pacientes/:id/historico', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { rows } = await pool.query(
+      `SELECT a.id, a.data, a.hora, a.duracao, a.procedimento, a.status, a.observacoes,
+              d.nome as dentista_nome, d.especialidade as dentista_especialidade
+       FROM agendamentos a
+       LEFT JOIN dentistas d ON a.dentista_id = d.id
+       WHERE a.paciente_id = $1
+       ORDER BY a.data DESC, a.hora DESC`,
+      [req.params.id]
+    );
+    res.json(rows);
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
 // AGENDA
 // ═══════════════════════════════════════════════════════════════
 

@@ -215,7 +215,20 @@ export const pacientesApi = {
   saveAnamnese: (id: string, body: unknown) => vpsApiFetch(`/pacientes/${id}/anamnese`, { method: 'PUT', body }),
   getOdontograma: (id: string) => vpsApiFetch(`/pacientes/${id}/odontograma`),
   saveOdontograma: (id: string, body: unknown) => vpsApiFetch(`/pacientes/${id}/odontograma`, { method: 'PUT', body }),
+  getHistorico: (id: string) => vpsApiFetch<HistoricoConsulta[]>(`/pacientes/${id}/historico`),
 };
+
+export interface HistoricoConsulta {
+  id: string;
+  data: string;
+  hora: string;
+  duracao: number;
+  procedimento: string | null;
+  status: string;
+  observacoes: string | null;
+  dentista_nome: string | null;
+  dentista_especialidade: string | null;
+}
 
 // ─── Agenda ─────────────────────────────────────────────────
 
