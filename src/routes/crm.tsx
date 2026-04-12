@@ -453,6 +453,18 @@ function PatientTableView() {
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
+  const [sortBy, setSortBy] = useState<string>("updated_at");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+
+  const toggleSort = (col: string) => {
+    if (sortBy === col) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortBy(col);
+      setSortDir(col === "nome" ? "asc" : "desc");
+    }
+    setPage(1);
+  };
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
@@ -467,6 +479,8 @@ function PatientTableView() {
       if (searchTerm.trim()) params.search = searchTerm.trim();
       if (statusFilter !== "Todos") params.status = statusFilter;
       if (originFilter !== "Todos") params.origin = originFilter;
+      params.sort_by = sortBy;
+      params.sort_dir = sortDir;
       const { data } = await crmApi.list(params);
       if (data && data.rows && Array.isArray(data.rows)) {
         setTotal(data.total);
