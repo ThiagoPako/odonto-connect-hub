@@ -4162,7 +4162,27 @@ let solutionCronInterval = null;
 
 async function processSolutionTriggers() {
   try {
-    const today = new Date().toISOString().slice(0, 10);
+    // Check business hours config
+    const { rows: settingsRows } = await pool.query(
+      `SELECT value FROM app_settings WHERE key = 'solution_hours'`
+    );
+    const hoursConfig = settingsRows.length > 0 ? settingsRows[0].value : { inicio: '08:00', fim: '18:00', diasSemana: ['SEG','TER','QUA','QUI','SEX'] };
+
+    const now = new Date();
+    const currentTime = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/Sao_Paulo' });
+    const currentDay = ['DOM','SEG','TER','QUA','QUI','SEX','SAB'][now.getDay()];
+
+    if (hoursConfig.inicio && currentTime < hoursConfig.inicio) {
+      return; // Before business hours
+    }
+    if (hoursConfig.fim && currentTime > hoursConfig.fim) {
+      return; // After business hours
+    }
+    if (hoursConfig.diasSemana && hoursConfig.diasSemana.length > 0 && !hoursConfig.diasSemana.includes(currentDay)) {
+      return; // Not a business day
+    }
+
+    const today = now.toISOString().slice(0, 10);
 
     // Map each solution trigger to its query
     const solutionQueries = [
