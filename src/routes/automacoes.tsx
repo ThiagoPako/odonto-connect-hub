@@ -1358,7 +1358,7 @@ function SolutionsGrid({
               key={sol.id}
               className={`group relative bg-card rounded-2xl border p-5 transition-all duration-500 hover-lift card-glow animate-slide-up ${
                 isActive
-                  ? "border-primary/50 shadow-[0_0_20px_-4px_hsl(var(--primary)/0.35),0_0_40px_-8px_hsl(var(--primary)/0.2)] ring-1 ring-primary/20"
+                  ? "border-primary/40 shadow-[0_0_24px_-4px_hsl(var(--primary)/0.4),0_0_48px_-8px_hsl(var(--primary)/0.2),inset_0_1px_0_0_hsl(var(--primary)/0.15)] ring-1 ring-primary/30 bg-gradient-to-b from-primary/[0.04] to-transparent"
                   : "border-border hover:border-primary/30 hover:shadow-card-hover"
               }`}
               style={{ animationDelay: `${index * 60}ms`, animationFillMode: 'both' }}
@@ -1380,19 +1380,6 @@ function SolutionsGrid({
                   </button>
                 )}
               </div>
-
-              {/* Status indicator */}
-              {isActive && (
-                <div className="absolute top-4 right-4">
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-success/15 text-success">
-                    <span className="relative flex h-1.5 w-1.5">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75" />
-                      <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-success" />
-                    </span>
-                    Ativa
-                  </span>
-                </div>
-              )}
 
               {sol.hasDelay && !isConfigured && (
                 <span className="absolute top-4 right-4 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-warning/15 text-warning">
