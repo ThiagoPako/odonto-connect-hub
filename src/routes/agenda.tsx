@@ -232,7 +232,7 @@ function KanbanView({ filtered, selectedProfessional, onAtender, onUpdateStatus 
                 {profAppts.length === 0 ? (
                   <p className="text-xs text-muted-foreground text-center py-6">Sem consultas</p>
                 ) : (
-                  profAppts.map((appt) => <AppointmentCard key={appt.id} appointment={appt} />)
+                  profAppts.map((appt) => <AppointmentCard key={appt.id} appointment={appt} onAtender={onAtender} onUpdateStatus={onUpdateStatus} />)
                 )}
               </div>
             </div>
@@ -243,7 +243,7 @@ function KanbanView({ filtered, selectedProfessional, onAtender, onUpdateStatus 
 }
 
 /* ===================== LIST VIEW ===================== */
-function ListView({ filtered }: { filtered: Appointment[] }) {
+function ListView({ filtered, onAtender, onUpdateStatus }: { filtered: Appointment[]; onAtender: (a: Appointment) => void; onUpdateStatus: (id: string, status: string) => void }) {
   const sorted = [...filtered].sort((a, b) => a.time.localeCompare(b.time));
 
   return (
