@@ -5,6 +5,20 @@ import { LeadAvatar } from "@/components/LeadAvatar";
 
 type PresenceStatus = "online" | "offline" | "typing" | "recording";
 
+const CRM_STAGE_LABELS: Record<string, { label: string; emoji: string; color: string }> = {
+  lead: { label: "Lead", emoji: "📥", color: "#6b7280" },
+  em_atendimento: { label: "Atendimento", emoji: "💬", color: "#3b82f6" },
+  orcamento: { label: "Orçamento", emoji: "📋", color: "#3b82f6" },
+  orcamento_enviado: { label: "Orç. Enviado", emoji: "📨", color: "#8b5cf6" },
+  orcamento_aprovado: { label: "Aprovado", emoji: "✅", color: "#22c55e" },
+  followup: { label: "Follow-up", emoji: "🔄", color: "#f59e0b" },
+  followup_2: { label: "Follow-up 2", emoji: "🔄", color: "#f59e0b" },
+  followup_3: { label: "Follow-up 3", emoji: "🔄", color: "#ef4444" },
+  sem_resposta: { label: "Sem Resposta", emoji: "⏳", color: "#6b7280" },
+  orcamento_reprovado: { label: "Orç. Reprovado", emoji: "❌", color: "#ef4444" },
+  desqualificado: { label: "Desqualificado", emoji: "🚫", color: "#6b7280" },
+};
+
 interface LeadListItemProps {
   lead: Lead;
   isSelected: boolean;
@@ -14,9 +28,10 @@ interface LeadListItemProps {
   tagIds?: string[];
   allTags?: LeadTagApi[];
   presence?: PresenceStatus;
+  crmStage?: string;
 }
 
-export function LeadListItem({ lead, isSelected, onSelect, showAssignButton, onAssign, tagIds = [], allTags = [], presence = "offline" }: LeadListItemProps) {
+export function LeadListItem({ lead, isSelected, onSelect, showAssignButton, onAssign, tagIds = [], allTags = [], presence = "offline", crmStage }: LeadListItemProps) {
   const timeAgo = getTimeAgo(lead.lastMessageTime);
 
   return (
@@ -46,10 +61,20 @@ export function LeadListItem({ lead, isSelected, onSelect, showAssignButton, onA
 
       <div className="flex-1 min-w-0 relative z-10">
         <div className="flex items-center justify-between mb-0.5">
-          <span className={`text-sm font-semibold truncate transition-colors ${isSelected ? "text-primary" : "text-foreground"}`}>
-            {lead.name}
-          </span>
-          <div className={`flex items-center gap-1 shrink-0 ${getWaitUrgencyClass(lead)}`}>
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className={`text-sm font-semibold truncate transition-colors ${isSelected ? "text-primary" : "text-foreground"}`}>
+              {lead.name}
+            </span>
+            {crmStage && CRM_STAGE_LABELS[crmStage] && crmStage !== "lead" && (
+              <span
+                className="inline-flex items-center gap-0.5 px-1.5 py-0 rounded-full text-[8px] font-bold text-white leading-4 shadow-sm shrink-0"
+                style={{ backgroundColor: CRM_STAGE_LABELS[crmStage].color }}
+              >
+                {CRM_STAGE_LABELS[crmStage].emoji} {CRM_STAGE_LABELS[crmStage].label}
+              </span>
+            )}
+          </div>
+          <div className={`flex items-center gap-1 shrink-0 ml-1 ${getWaitUrgencyClass(lead)}`}>
             <Clock className="h-3 w-3" />
             <span className="text-[11px] font-medium">{lead.status === "waiting" ? `⏳ ${getDetailedWaitTime(lead.lastMessageTime)}` : timeAgo}</span>
           </div>

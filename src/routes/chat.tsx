@@ -65,6 +65,7 @@ function ChatPage() {
   const [historyHasMore, setHistoryHasMore] = useState<Record<string, boolean>>({});
   const [historyLoading, setHistoryLoading] = useState(false);
   const [presenceMap, setPresenceMap] = useState<Record<string, { status: "online" | "offline" | "typing" | "recording"; lastSeen: Date | null }>>({});
+  const [crmStages, setCrmStages] = useState<Record<string, string>>({});
 
   // Refs for stable closure access in SSE callback
   const queueRef = useRef(queue);
@@ -93,6 +94,18 @@ function ChatPage() {
     });
     tagsApi.list().then(({ data }) => { if (data) setAvailableTags(data); });
     tagsApi.assignments().then(({ data }) => { if (data) setLeadTagAssignments(data); });
+
+    // Load CRM stages for all leads
+    crmApi.kanban().then(({ data }) => {
+      if (!data) return;
+      const stages: Record<string, string> = {};
+      for (const [stage, leads] of Object.entries(data as Record<string, any[]>)) {
+        for (const lead of leads) {
+          stages[lead.id] = stage;
+        }
+      }
+      setCrmStages(stages);
+    });
 
     // Load leads from queue/active from backend
     queueLeadsApi.list().then(({ data }) => {
@@ -1420,6 +1433,7 @@ function ChatPage() {
                   tagIds={leadTagAssignments[lead.id] || []}
                   allTags={availableTags}
                   presence={presenceMap[lead.id]?.status}
+                  crmStage={crmStages[lead.id]}
                 />
               ))
             )}
