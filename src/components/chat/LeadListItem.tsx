@@ -49,9 +49,9 @@ export function LeadListItem({ lead, isSelected, onSelect, showAssignButton, onA
           <span className={`text-sm font-semibold truncate transition-colors ${isSelected ? "text-primary" : "text-foreground"}`}>
             {lead.name}
           </span>
-          <div className="flex items-center gap-1 text-muted-foreground shrink-0">
+          <div className={`flex items-center gap-1 shrink-0 ${getWaitUrgencyClass(lead)}`}>
             <Clock className="h-3 w-3" />
-            <span className="text-[11px] font-medium">{timeAgo}</span>
+            <span className="text-[11px] font-medium">{lead.status === "waiting" ? `⏳ ${getDetailedWaitTime(lead.lastMessageTime)}` : timeAgo}</span>
           </div>
         </div>
 
@@ -145,4 +145,29 @@ function getTimeAgo(date: Date): string {
   if (diff < 3600) return `${Math.floor(diff / 60)}min`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
   return `${Math.floor(diff / 86400)}d`;
+}
+
+function getDetailedWaitTime(date: Date): string {
+  const diff = Math.floor((Date.now() - date.getTime()) / 1000);
+  if (diff < 60) return "agora";
+  if (diff < 3600) {
+    const m = Math.floor(diff / 60);
+    return `${m} min`;
+  }
+  if (diff < 86400) {
+    const h = Math.floor(diff / 3600);
+    const m = Math.floor((diff % 3600) / 60);
+    return m > 0 ? `${h}h ${m}min` : `${h}h`;
+  }
+  const d = Math.floor(diff / 86400);
+  const h = Math.floor((diff % 86400) / 3600);
+  return h > 0 ? `${d}d ${h}h` : `${d}d`;
+}
+
+function getWaitUrgencyClass(lead: { status: string; lastMessageTime: Date }): string {
+  if (lead.status !== "waiting") return "text-muted-foreground";
+  const diff = Math.floor((Date.now() - lead.lastMessageTime.getTime()) / 1000);
+  if (diff < 300) return "text-success";        // < 5min — green
+  if (diff < 900) return "text-warning";         // 5-15min — yellow
+  return "text-destructive animate-pulse";       // > 15min — red pulsing
 }
