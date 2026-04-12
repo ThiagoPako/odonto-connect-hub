@@ -218,7 +218,7 @@ export const pacientesApi = {
 export const agendaApi = {
   list: (params?: Record<string, string>) => vpsApiFetch<AgendamentoVPS[]>('/agenda', { params }),
   create: (body: unknown) => vpsApiFetch('/agenda', { method: 'POST', body }),
-  update: (id: string, body: { status?: string; hora?: string; duracao?: number; procedimento?: string; observacoes?: string; sala?: string }) =>
+  update: (id: string, body: { status?: string; hora?: string; data?: string; duracao?: number; procedimento?: string; observacoes?: string; sala?: string }) =>
     vpsApiFetch(`/agenda/${encodeURIComponent(id)}`, { method: 'PUT', body }),
 };
 
