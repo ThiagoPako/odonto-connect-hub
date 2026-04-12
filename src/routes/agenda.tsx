@@ -211,8 +211,8 @@ function AgendaPage() {
           </div>
         ) : (
           <>
-            {viewMode === "kanban" && <KanbanView filtered={filtered} selectedProfessional={selectedProfessional} onAtender={handleAtender} onUpdateStatus={handleUpdateStatus} />}
-            {viewMode === "lista" && <ListView filtered={filtered} onAtender={handleAtender} onUpdateStatus={handleUpdateStatus} />}
+            {viewMode === "kanban" && <KanbanView filtered={filtered} selectedProfessional={selectedProfessional} onAtender={handleAtender} onUpdateStatus={handleUpdateStatus} onReschedule={handleReschedule} />}
+            {viewMode === "lista" && <ListView filtered={filtered} onAtender={handleAtender} onUpdateStatus={handleUpdateStatus} onReschedule={handleReschedule} />}
             {viewMode === "calendario" && <CalendarView filtered={filtered} selectedProfessional={selectedProfessional} />}
           </>
         )}
