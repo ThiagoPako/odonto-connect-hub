@@ -1825,7 +1825,40 @@ app.put('/api/agenda/:id', async (req, res) => {
       ).catch(err => console.error('Failed to update lead status:', err.message));
     }
 
-    res.json(rows[0]);
+    const updated = rows[0];
+    res.json(updated);
+
+    // ── WhatsApp notification on reschedule (date or time changed) ──
+    if ((data || hora) && updated.telefone && EVOLUTION_API_KEY) {
+      (async () => {
+        try {
+          // Fetch connected instance
+          const instResult = await evolutionFetch('/instance/fetchInstances');
+          const instances = Array.isArray(instResult) ? instResult : [];
+          const connected = instances.find(i => (i.connectionStatus || i.status) === 'open');
+          if (!connected) return;
+          const instName = connected.name || connected.instanceName;
+
+          const phone = updated.telefone.replace(/\D/g, '');
+          if (!phone) return;
+
+          const dataFormatted = updated.data
+            ? new Date(updated.data + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+            : '—';
+          const firstName = (updated.paciente_nome || '').split(' ')[0] || 'Paciente';
+
+          const msg = `📋 *Consulta Reagendada*\n\nOlá, ${firstName}! 👋\n\nSua consulta foi reagendada:\n\n📅 *Nova data:* ${dataFormatted}\n⏰ *Horário:* ${updated.hora || '—'}\n🦷 *Procedimento:* ${updated.procedimento || 'Consulta'}\n👨‍⚕️ *Profissional:* ${updated.dentista_nome || '—'}\n\nCaso precise reagendar novamente, entre em contato.\n\n_Odonto Connect_`;
+
+          await evolutionFetch(`/message/sendText/${instName}`, {
+            method: 'POST',
+            body: JSON.stringify({ number: phone, text: msg }),
+          });
+          console.log(`📲 Reschedule notification sent to ${phone}`);
+        } catch (err) {
+          console.error('⚠️ Failed to send reschedule notification:', err.message);
+        }
+      })();
+    }
   } catch (error) {
     if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
     console.error('❌ Error updating appointment:', error.message);
