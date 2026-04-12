@@ -4640,7 +4640,49 @@ app.patch('/api/crm/leads/:id/assign', async (req, res) => {
   }
 });
 
-// Get kanban movement history for a lead
+// POST /api/crm/leads/:id/convert-to-patient — register lead as patient
+app.post('/api/crm/leads/:id/convert-to-patient', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { id } = req.params;
+
+    // Fetch lead data
+    const { rows: leadRows } = await pool.query(
+      'SELECT id, nome, telefone, email, cpf, origem, observacoes FROM crm_leads WHERE id = $1', [id]
+    );
+    if (leadRows.length === 0) return res.status(404).json({ error: 'Lead não encontrado' });
+    const lead = leadRows[0];
+
+    // Check if patient already exists with same phone
+    if (lead.telefone) {
+      const clean = lead.telefone.replace(/\D/g, '');
+      const { rows: existing } = await pool.query(
+        "SELECT id FROM pacientes WHERE REPLACE(REPLACE(REPLACE(telefone, ' ', ''), '-', ''), '+', '') LIKE '%' || $1", [clean.slice(-8)]
+      );
+      if (existing.length > 0) {
+        return res.status(409).json({ error: 'Paciente já cadastrado com este telefone', paciente_id: existing[0].id });
+      }
+    }
+
+    // Create patient from lead data
+    const pacienteId = crypto.randomUUID();
+    await pool.query(
+      'INSERT INTO pacientes (id, nome, cpf, telefone, email, observacoes) VALUES ($1,$2,$3,$4,$5,$6)',
+      [pacienteId, lead.nome, lead.cpf || null, lead.telefone || null, lead.email || null, `Origem CRM: ${lead.origem || '—'}. ${lead.observacoes || ''}`]
+    );
+
+    // Update lead status to 'paciente'
+    await pool.query("UPDATE crm_leads SET status = 'paciente', updated_at = NOW() WHERE id = $1", [id]);
+
+    res.json({ success: true, paciente_id: pacienteId, nome: lead.nome });
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('❌ Error converting lead to patient:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
 app.get('/api/crm/leads/:id/movements', async (req, res) => {
   try {
     await verifyUser(req);
