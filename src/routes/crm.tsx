@@ -110,14 +110,31 @@ function GenericKanbanBoard<T extends string>({
 
   const handleDrop = (toStage: T) => {
     if (!draggedLead || draggedLead.fromStage === toStage) return;
+    const movedLead = draggedLead.lead;
+    const fromStage = draggedLead.fromStage;
     setLeads((prev) => {
       const updated = { ...prev };
-      updated[draggedLead.fromStage] = prev[draggedLead.fromStage].filter((l) => l.id !== draggedLead.lead.id);
-      updated[toStage] = [...prev[toStage], draggedLead.lead];
+      updated[fromStage] = prev[fromStage].filter((l) => l.id !== movedLead.id);
+      updated[toStage] = [...prev[toStage], movedLead];
       return updated;
     });
-    crmApi.updateStage(draggedLead.lead.id, toStage).catch(() => toast.error("Erro ao mover lead"));
     setDraggedLead(null);
+
+    // Persist to API
+    crmApi.updateStage(movedLead.id, toStage as string).then(({ error }) => {
+      if (error) {
+        toast.error("Erro ao mover lead: " + error);
+        // Rollback
+        setLeads((prev) => {
+          const updated = { ...prev };
+          updated[toStage] = prev[toStage].filter((l) => l.id !== movedLead.id);
+          updated[fromStage] = [...prev[fromStage], movedLead];
+          return updated;
+        });
+      } else {
+        toast.success(`${movedLead.name} movido para ${stages.find(s => s.id === toStage)?.label || toStage}`);
+      }
+    });
   };
 
   const filteredLeads = assignedFilter === "Todos"
