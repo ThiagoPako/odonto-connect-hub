@@ -247,7 +247,7 @@ function TabVisaoGeral({
 
   return (
     <>
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 animate-slide-up" style={{ animationFillMode: 'both' }}>
         <KpiCard title="Saldo Total" value={`R$ ${saldoTotal.toLocaleString("pt-BR")}`} icon={Wallet} />
         <KpiCard title="Entradas (Mês)" value={`R$ ${totalEntradas.toLocaleString("pt-BR")}`} change="Receitas" changeType="positive" icon={ArrowUpRight} />
         <KpiCard title="Saídas (Mês)" value={`R$ ${totalSaidas.toLocaleString("pt-BR")}`} change="Despesas" changeType="negative" icon={ArrowDownRight} />
