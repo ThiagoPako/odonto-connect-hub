@@ -43,13 +43,13 @@ function AgendaPage() {
       <DashboardHeader title="Agenda e Recepção" />
       <main className="flex-1 p-6 space-y-5 overflow-auto">
         {/* Stats bar */}
-        <div className="grid grid-cols-3 sm:grid-cols-6 gap-3">
+        <div className="grid grid-cols-3 sm:grid-cols-6 gap-3 animate-slide-up" style={{ animationFillMode: 'both' }}>
           {(["confirmado", "aguardando", "em_atendimento", "finalizado", "faltou", "encaixe"] as const).map((s) => {
             const cfg = statusConfig[s];
             const Icon = cfg.icon;
             return (
-              <div key={s} className="bg-card rounded-xl border border-border p-3 flex items-center gap-2">
-                <div className={`h-7 w-7 rounded-lg flex items-center justify-center ${cfg.color}`}>
+              <div key={s} className="group bg-card rounded-xl border border-border p-3 flex items-center gap-2 hover-lift hover:shadow-glow-primary transition-all duration-300">
+                <div className={`h-7 w-7 rounded-lg flex items-center justify-center ${cfg.color} group-hover:shadow-[0_0_10px_-2px_currentColor] transition-shadow duration-300`}>
                   <Icon className="h-3.5 w-3.5" />
                 </div>
                 <div>
@@ -135,7 +135,7 @@ function KanbanView({ filtered, selectedProfessional }: { filtered: Appointment[
         .map((prof) => {
           const profAppts = filtered.filter((a) => a.professional === prof.name).sort((a, b) => a.time.localeCompare(b.time));
           return (
-            <div key={prof.id} className="bg-card rounded-xl border border-border overflow-hidden">
+            <div key={prof.id} className="bg-card rounded-xl border border-border overflow-hidden shadow-card hover:shadow-card-hover transition-all duration-300">
               <div className="flex items-center gap-2 p-3 border-b border-border">
                 <div className={`h-7 w-7 rounded-full ${prof.color} flex items-center justify-center text-[10px] font-bold text-white`}>
                   {prof.initials}
@@ -403,7 +403,7 @@ function AppointmentCard({ appointment: a }: { appointment: Appointment }) {
   const condicoes = a.pacienteId ? getCondicoesCriticas(a.pacienteId) : [];
 
   return (
-    <div className={`rounded-lg border border-border/50 p-2.5 space-y-2 ${a.status === "faltou" ? "opacity-50" : ""}`}>
+    <div className={`rounded-lg border border-border/50 p-2.5 space-y-2 hover-lift hover:shadow-glow-primary transition-all duration-300 ${a.status === "faltou" ? "opacity-50" : ""}`}>
       <div className="flex items-center justify-between">
         <span className="text-xs font-bold text-foreground">{a.time}</span>
         <span className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${cfg.color}`}>{cfg.label}</span>
