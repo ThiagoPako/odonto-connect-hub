@@ -239,6 +239,7 @@ function normalizeLead(raw: any): KanbanLead {
     lastContact: raw.lastContact instanceof Date ? raw.lastContact : new Date(raw.lastContact),
     value: raw.value ?? 0,
     assignedAvatarUrl: raw.assignedAvatarUrl ?? raw.assigned_avatar_url ?? null,
+    pacienteId: raw.pacienteId ?? raw.paciente_id ?? null,
   };
 }
 
