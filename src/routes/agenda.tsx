@@ -785,10 +785,33 @@ function NovoAgendamentoDialog({
         <div className="space-y-4 mt-2 max-h-[70vh] overflow-y-auto pr-1">
           {/* Paciente + Telefone */}
           <div className="grid grid-cols-2 gap-3">
-            <div>
+            <div className="relative">
               <label className={labelCls}>Paciente *</label>
-              <input type="text" placeholder="Nome do paciente" value={form.paciente_nome}
-                onChange={(e) => handleChange("paciente_nome", e.target.value)} className={inputCls} maxLength={100} />
+              <input type="text" placeholder="Buscar paciente..." value={form.paciente_nome}
+                onChange={(e) => handlePatientSearch(e.target.value)}
+                onFocus={() => { if (form.paciente_nome.length >= 2) setShowSuggestions(true); }}
+                onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+                className={inputCls} maxLength={100} autoComplete="off" />
+              {showSuggestions && pacientesFiltered.length > 0 && (
+                <div ref={suggestionsRef} className="absolute z-50 top-full left-0 right-0 mt-1 bg-card border border-border rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                  {pacientesFiltered.map((pac: any) => (
+                    <button key={pac.id} type="button"
+                      onMouseDown={(e) => { e.preventDefault(); selectPaciente(pac); }}
+                      className="w-full text-left px-3 py-2 hover:bg-muted transition-colors flex items-center gap-2 text-sm">
+                      <div className="h-6 w-6 rounded-full bg-primary/15 flex items-center justify-center text-[9px] font-bold text-primary shrink-0">
+                        {(pac.nome || "").split(" ").filter((_: string, i: number, a: string[]) => i === 0 || i === a.length - 1).map((n: string) => n[0]).join("").toUpperCase()}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-xs font-medium text-foreground truncate">{pac.nome}</p>
+                        {pac.telefone && <p className="text-[10px] text-muted-foreground">{pac.telefone}</p>}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {form.paciente_id && (
+                <p className="text-[10px] text-success mt-0.5">✓ Paciente vinculado</p>
+              )}
             </div>
             <div>
               <label className={labelCls}>Telefone (WhatsApp)</label>
