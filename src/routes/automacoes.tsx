@@ -1201,7 +1201,7 @@ function SolutionsGrid({
 
               {/* Patient count */}
               <p className="text-xs text-muted-foreground mb-4">
-                Total de Pacientes: {sol.totalPacientes ?? 0}
+                Total de Pacientes: <span className="font-semibold text-foreground">{counts[sol.type] ?? sol.totalPacientes ?? 0}</span>
               </p>
 
               {/* Description on hover */}
