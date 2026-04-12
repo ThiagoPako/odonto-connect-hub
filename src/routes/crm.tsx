@@ -456,7 +456,26 @@ function KanbanCard({ lead, stageId, onDragStart, onLeadAssigned }: { lead: Kanb
           <button onClick={handleCall} className="p-1.5 rounded-lg hover:bg-chart-2/15 text-muted-foreground hover:text-chart-2 transition-colors" title={`Ligar: ${lead.phone}`}>
             <Phone className="h-3.5 w-3.5" />
           </button>
-          <button onClick={handleOpenChat} disabled={assuming} className="p-1.5 rounded-lg hover:bg-primary/15 text-muted-foreground hover:text-primary transition-colors disabled:opacity-50" title={assuming ? "Assumindo..." : `Assumir e atender ${lead.name}`}>
+          <button
+            onClick={handleOpenChat}
+            disabled={assuming || !!isAttendedByOther}
+            className={`p-1.5 rounded-lg transition-colors disabled:opacity-50 ${
+              isAttendedByOther
+                ? "bg-warning/10 text-warning cursor-not-allowed"
+                : isAttendedByMe
+                  ? "bg-success/15 text-success hover:bg-success/25"
+                  : "hover:bg-primary/15 text-muted-foreground hover:text-primary"
+            }`}
+            title={
+              isAttendedByOther
+                ? `Em atendimento por ${activeSession?.attendantName}`
+                : isAttendedByMe
+                  ? `Continuar atendimento de ${lead.name}`
+                  : assuming
+                    ? "Assumindo..."
+                    : `Assumir e atender ${lead.name}`
+            }
+          >
             {assuming ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MessageSquare className="h-3.5 w-3.5" />}
           </button>
           <div className={`flex items-center gap-0.5 ${isStale ? "text-warning" : "text-muted-foreground/50"}`}>
