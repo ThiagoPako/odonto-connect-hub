@@ -300,23 +300,51 @@ function RecoveryKanbanView() {
 
 /* ── Kanban Card ─────────────────────────────────── */
 
-function KanbanCard({ lead, onDragStart, onLeadAssigned }: { lead: KanbanLead; onDragStart: () => void; onLeadAssigned?: (leadId: string, userName: string, userInitials: string, avatarUrl?: string | null) => void }) {
+function KanbanCard({ lead, stageId, onDragStart, onLeadAssigned }: { lead: KanbanLead; stageId: string; onDragStart: () => void; onLeadAssigned?: (leadId: string, userName: string, userInitials: string, avatarUrl?: string | null) => void }) {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [showLevelMenu, setShowLevelMenu] = useState(false);
   const [currentLevel, setCurrentLevel] = useState<ConsciousnessLevel | undefined>(lead.consciousnessLevel);
   const [assuming, setAssuming] = useState(false);
+  const [activeSession, setActiveSession] = useState<{ active: boolean; attendantName?: string; isCurrentUser?: boolean } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const lastContactDate = lead.lastContact instanceof Date ? lead.lastContact : new Date(lead.lastContact);
   const daysAgo = Math.floor((Date.now() - lastContactDate.getTime()) / 86400000);
   const isStale = daysAgo > 3;
 
+  // Check if lead already has an active session
+  useEffect(() => {
+    if (stageId === "em_atendimento") {
+      sessionsApi.checkActive(lead.id).then(({ data }) => {
+        if (data) setActiveSession(data);
+      });
+    }
+  }, [lead.id, stageId]);
+
+  const isAttendedByOther = activeSession?.active && !activeSession?.isCurrentUser;
+  const isAttendedByMe = activeSession?.active && activeSession?.isCurrentUser;
+
   const handleOpenChat = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!user) return;
+    if (!user || isAttendedByOther) return;
+
+    // If already attended by current user, just navigate
+    if (isAttendedByMe) {
+      navigate({ to: "/chat", search: { lead: lead.name } });
+      return;
+    }
+
     setAssuming(true);
     try {
+      // Check again server-side to prevent race condition
+      const { data: check } = await sessionsApi.checkActive(lead.id);
+      if (check?.active && !check?.isCurrentUser) {
+        toast.error(`${lead.name} já está sendo atendido por ${check.attendantName}`);
+        setActiveSession(check);
+        return;
+      }
+
       // 1. Assign attendance session
       await sessionsApi.assign({ leadId: lead.id });
       // 2. Move to "em_atendimento" stage
