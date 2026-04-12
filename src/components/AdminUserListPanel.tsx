@@ -140,9 +140,13 @@ export function AdminUserListPanel() {
                     key={u.id}
                     className={`flex items-center gap-3 p-3 ${!u.active ? "opacity-50" : ""}`}
                   >
-                    <div className="h-9 w-9 rounded-lg gradient-primary flex items-center justify-center text-[11px] font-bold text-primary-foreground shrink-0">
-                      {initials}
-                    </div>
+                    {u.avatar_url ? (
+                      <img src={u.avatar_url} alt={u.name} className="h-9 w-9 rounded-lg object-cover shrink-0" />
+                    ) : (
+                      <div className="h-9 w-9 rounded-lg gradient-primary flex items-center justify-center text-[11px] font-bold text-primary-foreground shrink-0">
+                        {initials}
+                      </div>
+                    )}
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium truncate">{u.name}</p>
                       <p className="text-xs text-muted-foreground truncate">{u.email}</p>
