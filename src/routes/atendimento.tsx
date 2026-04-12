@@ -60,9 +60,9 @@ interface FollowupState {
   error: string;
 }
 
-function AtendimentoPage() {
+function ConsultaPage() {
   const [pacienteSelecionado, setPacienteSelecionado] = useState<Paciente | null>(null);
-  const [busca, setBusca] = useState("");
+  const [appointmentSelecionado, setAppointmentSelecionado] = useState<Appointment | null>(null);
   const [atendimentoAtivo, setAtendimentoAtivo] = useState(false);
   const [tempoAtendimento, setTempoAtendimento] = useState(0);
   const [tabAtiva, setTabAtiva] = useState<TabAtiva>("consulta");
@@ -83,9 +83,42 @@ function AtendimentoPage() {
     status: 'idle', messages: [], summary: '', jobs: [], error: '',
   });
 
-  const pacientesFiltrados = mockPacientes.filter(p =>
-    p.nome.toLowerCase().includes(busca.toLowerCase())
-  );
+  // Today's agenda — filter appointments for today
+  const hoje = new Date().toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
+  const agendaHoje = mockAppointments.filter(a => a.date === "08/04/2026"); // In production, filter by hoje
+
+  const statusOrder: Record<string, number> = { em_atendimento: 0, aguardando: 1, confirmado: 2, encaixe: 3, finalizado: 4, faltou: 5 };
+  const agendaOrdenada = [...agendaHoje].sort((a, b) => {
+    const sa = statusOrder[a.status] ?? 99;
+    const sb = statusOrder[b.status] ?? 99;
+    if (sa !== sb) return sa - sb;
+    return a.time.localeCompare(b.time);
+  });
+
+  const handleSelecionarAgendamento = useCallback((apt: Appointment) => {
+    if (atendimentoAtivo) return;
+    setAppointmentSelecionado(apt);
+    // Try to find patient in registry
+    const paciente = apt.pacienteId ? getPacienteById(apt.pacienteId) : mockPacientes.find(p => p.nome === apt.patientName);
+    if (paciente) {
+      setPacienteSelecionado(paciente);
+    } else {
+      // Create a temporary patient object from appointment data
+      setPacienteSelecionado({
+        id: apt.id,
+        nome: apt.patientName,
+        telefone: apt.phone,
+        email: "",
+        dataNascimento: "",
+        cpf: "",
+        endereco: "",
+        convenio: "",
+        ultimaConsulta: "",
+        status: "ativo",
+      } as Paciente);
+    }
+    setProcedimentoRealizado(apt.procedure);
+  }, [atendimentoAtivo]);
 
   const iniciarAtendimento = useCallback(() => {
     if (!pacienteSelecionado) return;
