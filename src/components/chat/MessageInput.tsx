@@ -1,11 +1,21 @@
 import { useState, useRef, useMemo, useCallback, useEffect } from "react";
-import { contatosApi, type Contato } from "@/lib/vpsApi";
-import { Send, Paperclip, Smile, Image, MapPin, UserCircle, BarChart3, FileText, Video, Sticker, X, Bold, Italic, Strikethrough, Code, List, Zap, Loader2 } from "lucide-react";
+import { contatosApi, crmApi, type Contato } from "@/lib/vpsApi";
+import { Send, Paperclip, Smile, Image, MapPin, UserCircle, BarChart3, FileText, Video, Sticker, X, Bold, Italic, Strikethrough, Code, List, Zap, Loader2, Kanban, Check } from "lucide-react";
+import { toast } from "sonner";
 import { AudioRecorder } from "./AudioRecorder";
 import { getClinicLocation } from "@/components/ClinicLocationPanel";
 import { getAttendanceSettings, type QuickReply } from "@/components/AttendanceSettingsPanel";
 import type { MessageType, ChatMessage, LocationData, ContactData, PollData, ReplyData, ListData } from "@/data/chatMockData";
 import { toast } from "sonner";
+
+const CRM_STAGES = [
+  { id: "lead", label: "Lead", emoji: "📥", color: "#6b7280" },
+  { id: "em_atendimento", label: "Em Atendimento", emoji: "💬", color: "#3b82f6" },
+  { id: "orcamento", label: "Orçamento", emoji: "📋", color: "#3b82f6" },
+  { id: "followup", label: "Follow-up", emoji: "🔄", color: "#f59e0b" },
+  { id: "orcamento_enviado", label: "Orç. Enviado", emoji: "📨", color: "#8b5cf6" },
+  { id: "orcamento_aprovado", label: "Aprovado", emoji: "✅", color: "#22c55e" },
+];
 
 interface MessageInputProps {
   onSendMessage: (content: string, type: MessageType, extra?: Partial<ChatMessage>) => void;
@@ -13,6 +23,9 @@ interface MessageInputProps {
   disabled?: boolean;
   replyingTo?: ReplyData | null;
   onCancelReply?: () => void;
+  leadId?: string;
+  crmStage?: string;
+  onStageChange?: (leadId: string, stage: string) => void;
 }
 
 const QUICK_EMOJIS = ["👍", "❤️", "😁", "🦷", "✨", "🙏", "🎉", "💪", "😄", "🪥", "💉", "🩺", "😊", "👏", "💙"];
@@ -21,7 +34,7 @@ interface MessageInputInternalProps extends MessageInputProps {
   attendantName?: string;
 }
 
-export function MessageInput({ onSendMessage, onPresenceChange, disabled, replyingTo, onCancelReply, attendantName }: MessageInputProps & { attendantName?: string }) {
+export function MessageInput({ onSendMessage, onPresenceChange, disabled, replyingTo, onCancelReply, attendantName, leadId, crmStage, onStageChange }: MessageInputProps & { attendantName?: string }) {
   const [message, setMessage] = useState("");
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
