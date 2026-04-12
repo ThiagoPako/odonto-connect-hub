@@ -45,6 +45,7 @@ function AutomacoesPage() {
 
   const [followupConfig, setFollowupConfig] = useState<FollowupAutomationConfig | null>(null);
   const [loadingConfig, setLoadingConfig] = useState(true);
+  const [solutionCounts, setSolutionCounts] = useState<Record<string, number>>({});
 
   // Load flows from API, fallback to mock data
   useEffect(() => {
@@ -67,6 +68,11 @@ function AutomacoesPage() {
       .then((res) => { if (res.data) setFollowupConfig(res.data); })
       .catch(() => {})
       .finally(() => setLoadingConfig(false));
+
+    // Load real patient counts for solutions
+    automationsApi.getSolutionCounts()
+      .then((res) => { if (res.data) setSolutionCounts(res.data); })
+      .catch(() => {});
   }, []);
 
   const filtered = filterType === "all" ? flows : flows.filter((f) => f.type === filterType);
@@ -212,6 +218,7 @@ function AutomacoesPage() {
             solutions={preConfiguredSolutions}
             flows={flows}
             onActivate={activateSolution}
+            counts={solutionCounts}
           />
         ) : activeTab === "report" ? (
           <AutomationReportPanel />
@@ -1139,11 +1146,12 @@ function StepItem({ step, isLast, index }: { step: AutomationStep; isLast: boole
 // ─── Solutions Grid ─────────────────────────────────────────
 
 function SolutionsGrid({
-  solutions, flows, onActivate,
+  solutions, flows, onActivate, counts,
 }: {
   solutions: PreConfiguredSolution[];
   flows: AutomationFlow[];
   onActivate: (s: PreConfiguredSolution) => void;
+  counts: Record<string, number>;
 }) {
   return (
     <div className="space-y-6">
@@ -1193,7 +1201,7 @@ function SolutionsGrid({
 
               {/* Patient count */}
               <p className="text-xs text-muted-foreground mb-4">
-                Total de Pacientes: {sol.totalPacientes ?? 0}
+                Total de Pacientes: <span className="font-semibold text-foreground">{counts[sol.type] ?? sol.totalPacientes ?? 0}</span>
               </p>
 
               {/* Description on hover */}
