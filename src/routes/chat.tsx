@@ -16,7 +16,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useRealtimeChat, type IncomingMessage } from "@/hooks/useRealtimeChat";
 import { whatsappApi, transferApi, sessionsApi, queuesApi, messagesApi, queueLeadsApi, mediaApi, crmApi, type ChatMessageApi } from "@/lib/vpsApi";
 import { useWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
-import { playNotificationSound } from "@/lib/notificationSound";
+import { playNotificationSound, playRecoverySound } from "@/lib/notificationSound";
 import { showBrowserNotification, requestNotificationPermission } from "@/lib/browserNotification";
 import { setChatUnreadCount } from "@/lib/chatUnreadStore";
 import {
@@ -384,6 +384,16 @@ function ChatPage() {
     setQueue((prev) => prev.map(setPriority));
     setMyLeads((prev) => prev.map(setPriority));
     toast.info(`🔥 ${data.leadName} respondeu do follow-up e voltou à fila com prioridade!`, { duration: 6000 });
+
+    // Play special recovery sound (urgent double-ding)
+    playRecoverySound();
+
+    // Send browser push notification
+    showBrowserNotification(
+      "🔥 Lead de Recuperação!",
+      `${data.leadName} respondeu do follow-up e voltou à fila com prioridade!`,
+      data.leadName,
+    );
   }, []);
 
   useRealtimeChat({ onMessage: handleIncomingMessage, onPresence: handlePresenceUpdate, onQueueAssigned: handleQueueAssigned, onMessageStatus: handleMessageStatusUpdate, onLeadRecoveryReturn: handleLeadRecoveryReturn });

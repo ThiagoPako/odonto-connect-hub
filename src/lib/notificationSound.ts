@@ -64,3 +64,60 @@ export function playNotificationSound() {
     // Silently fail if audio not available
   }
 }
+
+/**
+ * Urgent recovery sound — triple ascending ding for high-priority lead returns
+ */
+export function playRecoverySound() {
+  if (!isSoundEnabled()) return;
+
+  try {
+    const ctx = getAudioContext();
+    if (ctx.state === "suspended") {
+      ctx.resume();
+    }
+
+    const now = ctx.currentTime;
+
+    // Three ascending urgent tones
+    const notes = [
+      { freq: 880, start: 0, end: 0.2 },
+      { freq: 1108.73, start: 0.15, end: 0.35 },
+      { freq: 1318.51, start: 0.3, end: 0.55 },
+    ];
+
+    for (const note of notes) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(note.freq, now + note.start);
+      gain.gain.setValueAtTime(0.2, now + note.start);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + note.end);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now + note.start);
+      osc.stop(now + note.end);
+    }
+
+    // Repeat after short pause for urgency
+    setTimeout(() => {
+      try {
+        const now2 = ctx.currentTime;
+        for (const note of notes) {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = "sine";
+          osc.frequency.setValueAtTime(note.freq, now2 + note.start);
+          gain.gain.setValueAtTime(0.18, now2 + note.start);
+          gain.gain.exponentialRampToValueAtTime(0.001, now2 + note.end);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(now2 + note.start);
+          osc.stop(now2 + note.end);
+        }
+      } catch { /* ignore */ }
+    }, 700);
+  } catch {
+    // Silently fail if audio not available
+  }
+}
