@@ -2880,6 +2880,130 @@ const RECOVERY_STAGES = ['followup', 'followup_2', 'followup_3', 'sem_resposta',
 const ALL_KANBAN_STAGES = [...SALES_STAGES, ...RECOVERY_STAGES];
 const VALID_CONSCIOUSNESS = ['inconsciente', 'consciente_problema', 'consciente_solucao', 'consciente_produto', 'consciente_total'];
 
+// ─── Follow-up Automation Config (in-memory, persisted to DB) ───
+let followupAutomationConfig = {
+  enabled: true,
+  stages: ['followup', 'followup_2', 'followup_3'],
+  messages: {
+    followup: 'Olá {{nome}}! 😊 Obrigado pelo seu contato com a Odonto Connect. Gostaríamos de saber: podemos ajudar com mais alguma informação sobre o tratamento que conversamos? Estamos à disposição!',
+    followup_2: '{{nome}}, passando para dar um oi! 👋 Ainda temos condições especiais para o procedimento que conversamos. Quer saber mais? Responda esta mensagem!',
+    followup_3: 'Oi {{nome}}, última chamada! 🦷 Seu orçamento ainda está disponível e temos horários esta semana. Posso agendar uma avaliação para você?',
+  },
+  delaySeconds: 30, // delay before sending (gives time to cancel)
+};
+
+// Load config from DB on startup
+(async () => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT value FROM system_settings WHERE key = 'followup_automation' LIMIT 1`
+    );
+    if (rows.length > 0) {
+      followupAutomationConfig = { ...followupAutomationConfig, ...JSON.parse(rows[0].value) };
+      console.log('✅ Follow-up automation config loaded from DB');
+    }
+  } catch {
+    console.log('ℹ️ No follow-up automation config in DB, using defaults');
+  }
+})();
+
+// Helper: send follow-up WhatsApp message when lead enters a follow-up stage
+async function triggerFollowupAutomation(leadId, toStage) {
+  if (!followupAutomationConfig.enabled) return;
+  if (!followupAutomationConfig.stages.includes(toStage)) return;
+
+  try {
+    // Get lead data
+    const { rows: leads } = await pool.query(
+      'SELECT id, nome, telefone FROM crm_leads WHERE id = $1', [leadId]
+    );
+    if (leads.length === 0) return;
+    const lead = leads[0];
+    if (!lead.telefone) {
+      console.log(`⚠️ Follow-up automation: lead ${leadId} has no phone number`);
+      return;
+    }
+
+    // Get message template
+    const template = followupAutomationConfig.messages[toStage];
+    if (!template) return;
+
+    // Replace variables
+    const message = template.replace(/\{\{nome\}\}/g, lead.nome || 'Paciente');
+
+    // Find first connected WhatsApp instance
+    const instResult = await evolutionFetch('/instance/fetchInstances');
+    const instances = instResult.data || [];
+    const connected = instances.find(i => i.status === 'open' || i.connectionStatus === 'open');
+    if (!connected) {
+      console.log('⚠️ Follow-up automation: no connected WhatsApp instance');
+      return;
+    }
+
+    const instanceName = connected.instanceName || connected.instance?.instanceName;
+    const phone = lead.telefone.replace(/\D/g, '');
+
+    console.log(`🤖 Follow-up automation: sending message to ${phone} via ${instanceName} (stage: ${toStage})`);
+
+    // Send with delay
+    setTimeout(async () => {
+      try {
+        await evolutionFetch(`/message/sendText/${instanceName}`, {
+          method: 'POST',
+          body: JSON.stringify({ number: phone, text: message }),
+        });
+        console.log(`✅ Follow-up automation: message sent to ${lead.nome} (${phone})`);
+
+        // Log in kanban_movements
+        await pool.query(
+          `INSERT INTO kanban_movements (lead_id, from_stage, to_stage, moved_by_name, reason)
+           VALUES ($1, $2, $2, $3, $4)`,
+          [leadId, toStage, 'Sistema (Automação)', `Follow-up automático enviado via WhatsApp`]
+        ).catch(() => {});
+      } catch (err) {
+        console.error(`❌ Follow-up automation: failed to send to ${phone}:`, err.message);
+      }
+    }, (followupAutomationConfig.delaySeconds || 30) * 1000);
+
+  } catch (err) {
+    console.error('❌ Follow-up automation error:', err.message);
+  }
+}
+
+// GET/PUT follow-up automation settings
+app.get('/api/automations/followup', async (req, res) => {
+  try {
+    await verifyUser(req);
+    res.json(followupAutomationConfig);
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+app.put('/api/automations/followup', async (req, res) => {
+  try {
+    await verifyAdmin(req);
+    const { enabled, messages, stages, delaySeconds } = req.body;
+    if (typeof enabled === 'boolean') followupAutomationConfig.enabled = enabled;
+    if (messages && typeof messages === 'object') {
+      followupAutomationConfig.messages = { ...followupAutomationConfig.messages, ...messages };
+    }
+    if (Array.isArray(stages)) followupAutomationConfig.stages = stages;
+    if (typeof delaySeconds === 'number') followupAutomationConfig.delaySeconds = delaySeconds;
+
+    // Persist to DB
+    await pool.query(
+      `INSERT INTO system_settings (key, value) VALUES ('followup_automation', $1)
+       ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()`,
+      [JSON.stringify(followupAutomationConfig)]
+    ).catch(err => console.error('Failed to persist followup automation config:', err.message));
+
+    res.json(followupAutomationConfig);
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
 // Update lead kanban stage (manual move)
 app.patch('/api/crm/leads/:id/stage', async (req, res) => {
   try {
@@ -2906,6 +3030,11 @@ app.patch('/api/crm/leads/:id/stage', async (req, res) => {
        VALUES ($1, $2, $3, $4, $5, $6)`,
       [req.params.id, fromStage, stage, user.id, profile?.name || user.email, reason || null]
     ).catch(err => console.error('Failed to log kanban movement:', err.message));
+
+    // 🤖 Trigger follow-up automation if entering a follow-up stage
+    if (RECOVERY_STAGES.includes(stage) && stage.startsWith('followup')) {
+      triggerFollowupAutomation(req.params.id, stage).catch(() => {});
+    }
 
     res.json(rows[0]);
   } catch (error) {
