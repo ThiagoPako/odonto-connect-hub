@@ -1,5 +1,5 @@
 import type { Lead } from "@/data/chatMockData";
-import type { LeadTagApi } from "@/lib/vpsApi";
+import { Clock, UserPlus, CheckCircle2 } from "lucide-react";
 import { Clock, UserPlus, CheckCircle2 } from "lucide-react";
 import { LeadAvatar } from "@/components/LeadAvatar";
 
@@ -23,10 +23,7 @@ interface LeadListItemProps {
   lead: Lead;
   isSelected: boolean;
   onSelect: (lead: Lead) => void;
-  showAssignButton?: boolean;
-  onAssign?: (lead: Lead) => void;
-  tagIds?: string[];
-  allTags?: LeadTagApi[];
+  presence?: PresenceStatus;
   presence?: PresenceStatus;
   crmStage?: string;
 }
