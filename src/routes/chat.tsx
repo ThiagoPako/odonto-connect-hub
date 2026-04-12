@@ -942,6 +942,7 @@ function ChatPage() {
         if (error) {
           console.error("Erro ao mover lead no CRM:", error);
         } else {
+          setCrmStages((prev) => ({ ...prev, [lead.id]: targetStage }));
           const destLabel = outcome === "followup" ? "Follow-up (Recuperação)" : "Orçamento (Funil de Vendas)";
           toast.info(`Lead movido para "${destLabel}" no CRM`, { duration: 4000 });
         }
