@@ -123,6 +123,7 @@ function ConsultaPage() {
     if (!pacienteSelecionado) return;
     setAtendimentoAtivo(true);
     setTempoAtendimento(0);
+    setTabAtiva("consulta");
     timerRef.current = setInterval(() => setTempoAtendimento(t => t + 1), 1000);
     toast.success(`Consulta iniciada — ${pacienteSelecionado.nome}`);
   }, [pacienteSelecionado]);
@@ -447,20 +448,20 @@ function ConsultaPage() {
                 }`}>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-4">
-                      {!atendimentoAtivo ? (
-                        <button
-                          onClick={iniciarAtendimento}
-                          disabled={!pacienteSelecionado}
-                          className="flex items-center gap-2 h-10 px-5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-md hover:shadow-lg"
-                        >
-                         <Play className="h-4 w-4" /> Iniciar Consulta
-                        </button>
-                      ) : (
+                      {atendimentoAtivo ? (
                         <button
                           onClick={finalizarAtendimento}
                           className="flex items-center gap-2 h-10 px-5 rounded-xl bg-destructive text-destructive-foreground text-sm font-semibold hover:bg-destructive/90 transition-all shadow-md"
                         >
                           <Square className="h-4 w-4" /> Finalizar
+                        </button>
+                      ) : (
+                        <button
+                          onClick={iniciarAtendimento}
+                          disabled={!pacienteSelecionado}
+                          className="flex items-center gap-2 h-10 px-5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-md hover:shadow-lg"
+                        >
+                          <Play className="h-4 w-4" /> Iniciar Consulta
                         </button>
                       )}
                       {pacienteSelecionado && (
