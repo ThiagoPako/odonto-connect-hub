@@ -357,13 +357,10 @@ function ConsultaPage() {
   ];
 
   return (
-    <SidebarProvider>
-      <div className="flex min-h-screen w-full bg-background">
-        <AppSidebar />
-        <div className="flex-1 flex flex-col overflow-hidden">
-          <DashboardHeader title="Consulta" />
-          <main className="flex-1 overflow-auto p-6">
-            <div className="max-w-[1600px] mx-auto grid grid-cols-12 gap-6">
+    <div className="flex-1 flex flex-col overflow-hidden">
+      <DashboardHeader title="Consulta" />
+      <main className="flex-1 overflow-auto p-6">
+        <div className="max-w-[1600px] mx-auto grid grid-cols-12 gap-6">
 
               {/* Coluna esquerda — Agenda do Dia */}
               <div className="col-span-3 space-y-4">
