@@ -94,7 +94,26 @@ function AutomacoesPage() {
                 </button>
               ))}
             </div>
-            <button className="flex items-center gap-2 h-8 px-4 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors">
+            <button
+              onClick={() => {
+                const newFlow: AutomationFlow = {
+                  id: `af${Date.now()}`,
+                  name: "Novo Fluxo",
+                  type: "pos_consulta",
+                  active: false,
+                  trigger: "Definir gatilho...",
+                  steps: [
+                    { id: `s${Date.now()}`, delay: "Imediato", channel: "whatsapp", message: "Olá {{nome}}!", variables: ["nome"] },
+                  ],
+                  stats: { sent: 0, responded: 0, converted: 0 },
+                  createdAt: new Date().toLocaleDateString("pt-BR"),
+                };
+                setFlows((prev) => [newFlow, ...prev]);
+                setSelectedFlow(newFlow);
+                toast.success("Novo fluxo criado! Edite os detalhes.");
+              }}
+              className="flex items-center gap-2 h-8 px-4 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors"
+            >
               <Plus className="h-3.5 w-3.5" /> Novo Fluxo
             </button>
           </div>
