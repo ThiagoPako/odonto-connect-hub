@@ -8,7 +8,7 @@ import {
   User, Phone, Mail, Heart, Pill, Stethoscope, Send, Plus, Trash2,
   Save, ChevronRight, Activity, ClipboardList, ExternalLink, Timer,
   Printer, Loader2, Bot, Sparkles, CalendarCheck, MessageSquare,
-  Calendar,
+  Calendar, RefreshCw,
 } from "lucide-react";
 import { exportarPrescricaoPdf } from "@/lib/prescricaoPdfExport";
 import { ClinicalAudioRecorder } from "@/components/ClinicalAudioRecorder";
@@ -18,12 +18,17 @@ import {
   getAlergias, getCondicoesCriticas, getAnamnese, getOdontograma, temAlertasMedicos,
   type Paciente
 } from "@/data/registroCentral";
-import { mockAppointments, type Appointment } from "@/data/agendaMockData";
-import { aiApi, consultationsApi } from "@/lib/vpsApi";
+import { type Appointment } from "@/data/agendaMockData";
+import { aiApi, consultationsApi, agendaApi, type AgendamentoVPS } from "@/lib/vpsApi";
 import { toast } from "sonner";
+
+type SearchParams = { appointmentId?: string };
 
 export const Route = createFileRoute("/atendimento")({
   ssr: false,
+  validateSearch: (search: Record<string, unknown>): SearchParams => ({
+    appointmentId: typeof search.appointmentId === "string" ? search.appointmentId : undefined,
+  }),
   component: ConsultaPage,
 });
 
@@ -61,6 +66,7 @@ interface FollowupState {
 }
 
 function ConsultaPage() {
+  const { appointmentId } = Route.useSearch();
   const [pacienteSelecionado, setPacienteSelecionado] = useState<Paciente | null>(null);
   const [appointmentSelecionado, setAppointmentSelecionado] = useState<Appointment | null>(null);
   const [atendimentoAtivo, setAtendimentoAtivo] = useState(false);
@@ -84,9 +90,82 @@ function ConsultaPage() {
     status: 'idle', messages: [], summary: '', jobs: [], error: '',
   });
 
-  // Today's agenda — filter appointments for today
-  const hoje = new Date().toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
-  const agendaHoje = mockAppointments.filter(a => a.date === "08/04/2026"); // In production, filter by hoje
+  // VPS agenda state
+  const [agendaHoje, setAgendaHoje] = useState<Appointment[]>([]);
+  const [loadingAgenda, setLoadingAgenda] = useState(true);
+
+  /** Convert VPS agendamento to local Appointment shape */
+  const vpsToAppointment = useCallback((a: AgendamentoVPS): Appointment => {
+    const name = a.paciente_nome || "Paciente";
+    const initials = name.split(" ").filter((_: string, i: number, arr: string[]) => i === 0 || i === arr.length - 1).map((n: string) => n[0]).join("").toUpperCase();
+    const colors = ["bg-chart-1","bg-chart-2","bg-chart-3","bg-chart-4","bg-chart-5","bg-primary","bg-dental-cyan"];
+    const colorIdx = name.length % colors.length;
+    const profName = a.dentista_nome || "Dr. Não atribuído";
+    const profInitials = profName.split(" ").filter((_: string, i: number, arr: string[]) => i === 0 || i === arr.length - 1).map((n: string) => n[0]).join("").toUpperCase();
+    const statusMap: Record<string, Appointment["status"]> = {
+      agendado: "confirmado", confirmado: "confirmado", aguardando: "aguardando",
+      em_atendimento: "em_atendimento", finalizado: "finalizado", realizado: "finalizado",
+      faltou: "faltou", cancelado: "faltou", desmarcado: "faltou", encaixe: "encaixe",
+    };
+    return {
+      id: a.id,
+      pacienteId: a.paciente_id,
+      patientName: name,
+      patientInitials: initials,
+      avatarColor: colors[colorIdx],
+      professional: profName,
+      professionalInitials: profInitials,
+      room: a.sala || "Sala 1",
+      procedure: a.procedimento || "Consulta",
+      date: a.data,
+      time: a.hora || "08:00",
+      duration: a.duracao || 30,
+      status: statusMap[a.status] || "confirmado",
+      phone: "",
+      confirmed: a.status === "confirmado",
+    };
+  }, []);
+
+  // Fetch today's agenda from VPS
+  const fetchAgenda = useCallback(async () => {
+    setLoadingAgenda(true);
+    const today = new Date().toISOString().split("T")[0];
+    const { data, error } = await agendaApi.list({ data: today });
+    if (!error && data && Array.isArray(data)) {
+      const converted = data.map(vpsToAppointment);
+      setAgendaHoje(converted);
+
+      // Auto-select appointment from URL param
+      if (appointmentId && !appointmentSelecionado) {
+        const target = converted.find((a: Appointment) => a.id === appointmentId);
+        if (target) {
+          setAppointmentSelecionado(target);
+          const paciente = target.pacienteId ? getPacienteById(target.pacienteId) : mockPacientes.find(p => p.nome === target.patientName);
+          if (paciente) {
+            setPacienteSelecionado(paciente);
+          } else {
+            setPacienteSelecionado({
+              id: target.pacienteId || target.id,
+              nome: target.patientName,
+              telefone: target.phone || "",
+              email: "",
+              dataNascimento: new Date(),
+              cpf: "",
+              endereco: "",
+              sexo: "masculino",
+              criadoEm: new Date(),
+            });
+          }
+          setProcedimentoRealizado(target.procedure);
+        }
+      }
+    } else {
+      setAgendaHoje([]);
+    }
+    setLoadingAgenda(false);
+  }, [appointmentId, vpsToAppointment]);
+
+  useEffect(() => { fetchAgenda(); }, [fetchAgenda]);
 
   const statusOrder: Record<string, number> = { em_atendimento: 0, aguardando: 1, confirmado: 2, encaixe: 3, finalizado: 4, faltou: 5 };
   const agendaOrdenada = [...agendaHoje].sort((a, b) => {
@@ -120,14 +199,22 @@ function ConsultaPage() {
     setProcedimentoRealizado(apt.procedure);
   }, [atendimentoAtivo]);
 
-  const iniciarAtendimento = useCallback(() => {
+  const iniciarAtendimento = useCallback(async () => {
     if (!pacienteSelecionado) return;
     setAtendimentoAtivo(true);
     setTempoAtendimento(0);
     setTabAtiva("consulta");
     timerRef.current = setInterval(() => setTempoAtendimento(t => t + 1), 1000);
+
+    // Update appointment status to "em_atendimento" on VPS
+    if (appointmentSelecionado) {
+      agendaApi.update(appointmentSelecionado.id, { status: "em_atendimento" }).then(() => {
+        fetchAgenda(); // Refresh agenda list
+      }).catch(() => {});
+    }
+
     toast.success(`Consulta iniciada — ${pacienteSelecionado.nome}`);
-  }, [pacienteSelecionado]);
+  }, [pacienteSelecionado, appointmentSelecionado, fetchAgenda]);
 
   const finalizarAtendimento = useCallback(async () => {
     setAtendimentoAtivo(false);
@@ -158,13 +245,20 @@ function ConsultaPage() {
       started_at: startedAt,
     });
 
+    // Update appointment status to "finalizado" on VPS
+    if (appointmentSelecionado) {
+      agendaApi.update(appointmentSelecionado.id, { status: "finalizado" }).then(() => {
+        fetchAgenda(); // Refresh agenda list
+      }).catch(() => {});
+    }
+
     if (error) {
       console.error("Erro ao salvar consulta:", error);
       toast.error(`Consulta finalizada localmente — erro ao salvar: ${error}`);
     } else {
       toast.success(`Consulta finalizada — ${formatTime(tempoAtendimento)} de atendimento`);
     }
-  }, [pacienteSelecionado, appointmentSelecionado, tempoAtendimento, queixaPrincipal, procedimentoRealizado, dente, notas, prescricoes, gravacoes, aiState.reportId]);
+  }, [pacienteSelecionado, appointmentSelecionado, tempoAtendimento, queixaPrincipal, procedimentoRealizado, dente, notas, prescricoes, gravacoes, aiState.reportId, fetchAgenda]);
 
   useEffect(() => {
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
@@ -372,69 +466,77 @@ function ConsultaPage() {
                 <div className="bg-card rounded-2xl border border-border/60 p-4 shadow-card animate-slide-up">
                   <h2 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
                     <Calendar className="h-4 w-4 text-primary" /> Agenda do Dia
+                    <button onClick={fetchAgenda} className="ml-auto p-1 rounded hover:bg-muted" title="Atualizar">
+                      <RefreshCw className={`h-3 w-3 text-muted-foreground ${loadingAgenda ? "animate-spin" : ""}`} />
+                    </button>
                   </h2>
                   <p className="text-[11px] text-muted-foreground mb-3">
-                    {agendaOrdenada.length} agendamento{agendaOrdenada.length !== 1 ? "s" : ""} hoje
+                    {loadingAgenda ? "Carregando..." : `${agendaOrdenada.length} agendamento${agendaOrdenada.length !== 1 ? "s" : ""} hoje`}
                   </p>
                   <div className="space-y-1.5 max-h-[55vh] overflow-y-auto">
-                    {agendaOrdenada.map(apt => {
-                      const sel = appointmentSelecionado?.id === apt.id;
-                      const statusColors: Record<string, string> = {
-                        em_atendimento: "border-primary bg-primary/5 ring-1 ring-primary/20",
-                        aguardando: "border-warning/40 bg-warning/5",
-                        confirmado: "border-success/30 bg-success/5",
-                        encaixe: "border-accent bg-accent/5",
-                        finalizado: "border-border/40 bg-muted/30 opacity-60",
-                        faltou: "border-destructive/20 bg-destructive/5 opacity-50",
-                      };
-                      const statusLabels: Record<string, string> = {
-                        em_atendimento: "Em atendimento",
-                        aguardando: "Aguardando",
-                        confirmado: "Confirmado",
-                        encaixe: "Encaixe",
-                        finalizado: "Finalizado",
-                        faltou: "Faltou",
-                      };
-                      const statusDotColors: Record<string, string> = {
-                        em_atendimento: "bg-primary",
-                        aguardando: "bg-warning",
-                        confirmado: "bg-success",
-                        encaixe: "bg-accent-foreground",
-                        finalizado: "bg-muted-foreground",
-                        faltou: "bg-destructive",
-                      };
-                      return (
-                        <button
-                          key={apt.id}
-                          onClick={() => handleSelecionarAgendamento(apt)}
-                          disabled={atendimentoAtivo && !sel}
-                          className={`w-full text-left p-3 rounded-xl border transition-all duration-200 ${
-                            sel
-                              ? "border-primary bg-primary/5 shadow-[0_0_16px_-4px_hsl(var(--primary)/0.3)] ring-1 ring-primary/20"
-                              : statusColors[apt.status] || "border-border/40"
-                          } ${atendimentoAtivo && !sel ? "opacity-30 cursor-not-allowed" : "cursor-pointer hover:shadow-sm"}`}
-                        >
-                          <div className="flex items-center gap-2.5">
-                            <div className={`h-8 w-8 rounded-lg ${apt.avatarColor} flex items-center justify-center text-[10px] font-bold text-white shrink-0`}>
-                              {apt.patientInitials}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-medium text-foreground truncate">{apt.patientName}</p>
-                              <p className="text-[11px] text-muted-foreground truncate">{apt.procedure}</p>
-                            </div>
-                          </div>
-                          <div className="flex items-center justify-between mt-2">
-                            <span className="text-[11px] font-mono text-muted-foreground">{apt.time} • {apt.duration}min</span>
-                            <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                              <span className={`h-1.5 w-1.5 rounded-full ${statusDotColors[apt.status] || "bg-muted"}`} />
-                              {statusLabels[apt.status] || apt.status}
-                            </span>
-                          </div>
-                        </button>
-                      );
-                    })}
-                    {agendaOrdenada.length === 0 && (
+                    {loadingAgenda ? (
+                      <div className="flex items-center justify-center py-8">
+                        <Loader2 className="h-5 w-5 text-primary animate-spin" />
+                      </div>
+                    ) : agendaOrdenada.length === 0 ? (
                       <p className="text-xs text-muted-foreground text-center py-6">Nenhum agendamento hoje</p>
+                    ) : (
+                      agendaOrdenada.map(apt => {
+                        const sel = appointmentSelecionado?.id === apt.id;
+                        const statusColors: Record<string, string> = {
+                          em_atendimento: "border-primary bg-primary/5 ring-1 ring-primary/20",
+                          aguardando: "border-warning/40 bg-warning/5",
+                          confirmado: "border-success/30 bg-success/5",
+                          encaixe: "border-accent bg-accent/5",
+                          finalizado: "border-border/40 bg-muted/30 opacity-60",
+                          faltou: "border-destructive/20 bg-destructive/5 opacity-50",
+                        };
+                        const statusLabels: Record<string, string> = {
+                          em_atendimento: "Em atendimento",
+                          aguardando: "Aguardando",
+                          confirmado: "Confirmado",
+                          encaixe: "Encaixe",
+                          finalizado: "Finalizado",
+                          faltou: "Faltou",
+                        };
+                        const statusDotColors: Record<string, string> = {
+                          em_atendimento: "bg-primary",
+                          aguardando: "bg-warning",
+                          confirmado: "bg-success",
+                          encaixe: "bg-accent-foreground",
+                          finalizado: "bg-muted-foreground",
+                          faltou: "bg-destructive",
+                        };
+                        return (
+                          <button
+                            key={apt.id}
+                            onClick={() => handleSelecionarAgendamento(apt)}
+                            disabled={atendimentoAtivo && !sel}
+                            className={`w-full text-left p-3 rounded-xl border transition-all duration-200 ${
+                              sel
+                                ? "border-primary bg-primary/5 shadow-[0_0_16px_-4px_hsl(var(--primary)/0.3)] ring-1 ring-primary/20"
+                                : statusColors[apt.status] || "border-border/40"
+                            } ${atendimentoAtivo && !sel ? "opacity-30 cursor-not-allowed" : "cursor-pointer hover:shadow-sm"}`}
+                          >
+                            <div className="flex items-center gap-2.5">
+                              <div className={`h-8 w-8 rounded-lg ${apt.avatarColor} flex items-center justify-center text-[10px] font-bold text-white shrink-0`}>
+                                {apt.patientInitials}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-medium text-foreground truncate">{apt.patientName}</p>
+                                <p className="text-[11px] text-muted-foreground truncate">{apt.procedure}</p>
+                              </div>
+                            </div>
+                            <div className="flex items-center justify-between mt-2">
+                              <span className="text-[11px] font-mono text-muted-foreground">{apt.time} • {apt.duration}min</span>
+                              <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                                <span className={`h-1.5 w-1.5 rounded-full ${statusDotColors[apt.status] || "bg-muted"}`} />
+                                {statusLabels[apt.status] || apt.status}
+                              </span>
+                            </div>
+                          </button>
+                        );
+                      })
                     )}
                   </div>
                 </div>

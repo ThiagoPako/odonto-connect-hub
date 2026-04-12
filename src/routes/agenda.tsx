@@ -1,13 +1,15 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import {
   Clock, CheckCircle2, XCircle, UserCheck, Plus, ChevronLeft, ChevronRight,
   Phone, MessageSquare, AlertTriangle, RefreshCw, Search, ExternalLink, History, HeartPulse,
-  LayoutGrid, List, CalendarDays,
+  LayoutGrid, List, CalendarDays, Stethoscope, Loader2,
 } from "lucide-react";
-import { useState } from "react";
-import { mockAppointments, mockProfessionals, type Appointment } from "@/data/agendaMockData";
+import { useState, useEffect, useCallback } from "react";
+import { mockProfessionals, type Appointment } from "@/data/agendaMockData";
 import { getAlergias, getCondicoesCriticas, getHistorico } from "@/data/registroCentral";
+import { agendaApi, type AgendamentoVPS } from "@/lib/vpsApi";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/agenda")({
   ssr: false,
@@ -27,16 +29,87 @@ type ViewMode = "kanban" | "lista" | "calendario";
 
 const HOURS = Array.from({ length: 12 }, (_, i) => `${String(i + 7).padStart(2, "0")}:00`);
 
+/** Convert VPS agendamento to local Appointment shape */
+function vpsToAppointment(a: AgendamentoVPS): Appointment {
+  const name = a.paciente_nome || "Paciente";
+  const initials = name.split(" ").filter((_: string, i: number, arr: string[]) => i === 0 || i === arr.length - 1).map((n: string) => n[0]).join("").toUpperCase();
+  const colors = ["bg-chart-1","bg-chart-2","bg-chart-3","bg-chart-4","bg-chart-5","bg-primary","bg-dental-cyan"];
+  const colorIdx = name.length % colors.length;
+  const profName = a.dentista_nome || "Dr. Não atribuído";
+  const profInitials = profName.split(" ").filter((_: string, i: number, arr: string[]) => i === 0 || i === arr.length - 1).map((n: string) => n[0]).join("").toUpperCase();
+  const statusMap: Record<string, Appointment["status"]> = {
+    agendado: "confirmado", confirmado: "confirmado", aguardando: "aguardando",
+    em_atendimento: "em_atendimento", finalizado: "finalizado", realizado: "finalizado",
+    faltou: "faltou", cancelado: "faltou", desmarcado: "faltou", encaixe: "encaixe",
+  };
+  return {
+    id: a.id,
+    pacienteId: a.paciente_id,
+    patientName: name,
+    patientInitials: initials,
+    avatarColor: colors[colorIdx],
+    professional: profName,
+    professionalInitials: profInitials,
+    room: a.sala || "Sala 1",
+    procedure: a.procedimento || "Consulta",
+    date: a.data,
+    time: a.hora || "08:00",
+    duration: a.duracao || 30,
+    status: statusMap[a.status] || "confirmado",
+    phone: "",
+    confirmed: a.status === "confirmado",
+  };
+}
+
 function AgendaPage() {
+  const navigate = useNavigate();
   const [selectedProfessional, setSelectedProfessional] = useState<string>("all");
   const [searchTerm, setSearchTerm] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("kanban");
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [dateOffset, setDateOffset] = useState(0);
 
-  const filtered = mockAppointments
+  const currentDate = new Date();
+  currentDate.setDate(currentDate.getDate() + dateOffset);
+  const dateStr = currentDate.toISOString().split("T")[0]; // YYYY-MM-DD
+  const dateDisplay = currentDate.toLocaleDateString("pt-BR", { day: "2-digit", month: "long", year: "numeric", weekday: "long" });
+
+  const fetchAgenda = useCallback(async () => {
+    setLoading(true);
+    const { data, error } = await agendaApi.list({ data: dateStr });
+    if (error) {
+      toast.error("Erro ao carregar agenda: " + error);
+      setAppointments([]);
+    } else if (data && Array.isArray(data)) {
+      setAppointments(data.map(vpsToAppointment));
+    } else {
+      setAppointments([]);
+    }
+    setLoading(false);
+  }, [dateStr]);
+
+  useEffect(() => { fetchAgenda(); }, [fetchAgenda]);
+
+  const handleUpdateStatus = useCallback(async (id: string, status: string) => {
+    const { error } = await agendaApi.update(id, { status });
+    if (error) {
+      toast.error("Erro ao atualizar status: " + error);
+    } else {
+      toast.success("Status atualizado");
+      fetchAgenda();
+    }
+  }, [fetchAgenda]);
+
+  const handleAtender = useCallback((appointment: Appointment) => {
+    navigate({ to: "/atendimento", search: { appointmentId: appointment.id } });
+  }, [navigate]);
+
+  const filtered = appointments
     .filter((a) => selectedProfessional === "all" || a.professional.includes(selectedProfessional))
     .filter((a) => !searchTerm || a.patientName.toLowerCase().includes(searchTerm.toLowerCase()));
 
-  const countByStatus = (status: Appointment["status"]) => mockAppointments.filter((a) => a.status === status).length;
+  const countByStatus = (status: Appointment["status"]) => appointments.filter((a) => a.status === status).length;
 
   return (
     <div className="flex-1 flex flex-col min-h-screen">
@@ -64,9 +137,9 @@ function AgendaPage() {
         {/* Controls */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <button className="p-1.5 rounded-lg hover:bg-muted"><ChevronLeft className="h-4 w-4 text-muted-foreground" /></button>
-            <span className="text-sm font-semibold text-foreground">08 de Abril, 2026 — Quarta-feira</span>
-            <button className="p-1.5 rounded-lg hover:bg-muted"><ChevronRight className="h-4 w-4 text-muted-foreground" /></button>
+            <button onClick={() => setDateOffset(d => d - 1)} className="p-1.5 rounded-lg hover:bg-muted"><ChevronLeft className="h-4 w-4 text-muted-foreground" /></button>
+            <span className="text-sm font-semibold text-foreground capitalize">{dateDisplay}</span>
+            <button onClick={() => setDateOffset(d => d + 1)} className="p-1.5 rounded-lg hover:bg-muted"><ChevronRight className="h-4 w-4 text-muted-foreground" /></button>
           </div>
           <div className="flex items-center gap-2">
             {/* View mode toggle */}
@@ -118,16 +191,25 @@ function AgendaPage() {
         </div>
 
         {/* Views */}
-        {viewMode === "kanban" && <KanbanView filtered={filtered} selectedProfessional={selectedProfessional} />}
-        {viewMode === "lista" && <ListView filtered={filtered} />}
-        {viewMode === "calendario" && <CalendarView filtered={filtered} selectedProfessional={selectedProfessional} />}
+        {loading ? (
+          <div className="flex items-center justify-center py-20">
+            <Loader2 className="h-8 w-8 text-primary animate-spin" />
+            <span className="ml-3 text-sm text-muted-foreground">Carregando agenda...</span>
+          </div>
+        ) : (
+          <>
+            {viewMode === "kanban" && <KanbanView filtered={filtered} selectedProfessional={selectedProfessional} onAtender={handleAtender} onUpdateStatus={handleUpdateStatus} />}
+            {viewMode === "lista" && <ListView filtered={filtered} onAtender={handleAtender} onUpdateStatus={handleUpdateStatus} />}
+            {viewMode === "calendario" && <CalendarView filtered={filtered} selectedProfessional={selectedProfessional} />}
+          </>
+        )}
       </main>
     </div>
   );
 }
 
 /* ===================== KANBAN VIEW ===================== */
-function KanbanView({ filtered, selectedProfessional }: { filtered: Appointment[]; selectedProfessional: string }) {
+function KanbanView({ filtered, selectedProfessional, onAtender, onUpdateStatus }: { filtered: Appointment[]; selectedProfessional: string; onAtender: (a: Appointment) => void; onUpdateStatus: (id: string, status: string) => void }) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
       {mockProfessionals
@@ -150,7 +232,7 @@ function KanbanView({ filtered, selectedProfessional }: { filtered: Appointment[
                 {profAppts.length === 0 ? (
                   <p className="text-xs text-muted-foreground text-center py-6">Sem consultas</p>
                 ) : (
-                  profAppts.map((appt) => <AppointmentCard key={appt.id} appointment={appt} />)
+                  profAppts.map((appt) => <AppointmentCard key={appt.id} appointment={appt} onAtender={onAtender} onUpdateStatus={onUpdateStatus} />)
                 )}
               </div>
             </div>
@@ -161,7 +243,7 @@ function KanbanView({ filtered, selectedProfessional }: { filtered: Appointment[
 }
 
 /* ===================== LIST VIEW ===================== */
-function ListView({ filtered }: { filtered: Appointment[] }) {
+function ListView({ filtered, onAtender, onUpdateStatus }: { filtered: Appointment[]; onAtender: (a: Appointment) => void; onUpdateStatus: (id: string, status: string) => void }) {
   const sorted = [...filtered].sort((a, b) => a.time.localeCompare(b.time));
 
   return (
@@ -250,8 +332,18 @@ function ListView({ filtered }: { filtered: Appointment[] }) {
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-end gap-1">
+                      {(a.status === "confirmado" || a.status === "aguardando") && (
+                        <button
+                          onClick={() => onAtender(a)}
+                          className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+                          title="Iniciar atendimento"
+                        >
+                          <Stethoscope className="h-3 w-3" />
+                          <span className="text-[10px] font-medium">Atender</span>
+                        </button>
+                      )}
                       {a.status === "aguardando" && (
-                        <button className="p-1.5 rounded-lg hover:bg-primary/10" title="Check-in">
+                        <button onClick={() => onUpdateStatus(a.id, "confirmado")} className="p-1.5 rounded-lg hover:bg-primary/10" title="Confirmar">
                           <UserCheck className="h-3.5 w-3.5 text-primary" />
                         </button>
                       )}
@@ -394,7 +486,7 @@ function CalendarView({ filtered, selectedProfessional }: { filtered: Appointmen
 }
 
 /* ===================== APPOINTMENT CARD (Kanban) ===================== */
-function AppointmentCard({ appointment: a }: { appointment: Appointment }) {
+function AppointmentCard({ appointment: a, onAtender, onUpdateStatus }: { appointment: Appointment; onAtender: (a: Appointment) => void; onUpdateStatus: (id: string, status: string) => void }) {
   const cfg = statusConfig[a.status];
   const [showHistory, setShowHistory] = useState(false);
 
@@ -490,8 +582,18 @@ function AppointmentCard({ appointment: a }: { appointment: Appointment }) {
       <div className="flex items-center justify-between text-[10px] text-muted-foreground">
         <span>{a.room} · {a.duration}min</span>
         <div className="flex items-center gap-1">
+          {(a.status === "confirmado" || a.status === "aguardando") && (
+            <button
+              onClick={() => onAtender(a)}
+              className="flex items-center gap-1 px-2 py-1 rounded-md bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+              title="Iniciar atendimento"
+            >
+              <Stethoscope className="h-3 w-3" />
+              <span className="text-[9px] font-medium">Atender</span>
+            </button>
+          )}
           {a.status === "aguardando" && (
-            <button className="p-1 rounded hover:bg-primary/10" title="Check-in">
+            <button onClick={() => onUpdateStatus(a.id, "confirmado")} className="p-1 rounded hover:bg-primary/10" title="Confirmar">
               <UserCheck className="h-3 w-3 text-primary" />
             </button>
           )}
