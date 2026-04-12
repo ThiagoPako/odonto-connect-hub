@@ -34,8 +34,8 @@ export function ActiveAttendanceCard({
 
   return (
     <div
-      className={`group bg-card rounded-2xl border p-5 transition-all duration-300 shadow-card hover:shadow-card-hover relative overflow-hidden ${
-        isIdle ? "border-destructive/40 pulse-danger" : "border-border/60"
+      className={`group bg-card rounded-2xl border p-5 transition-all duration-300 shadow-card hover:shadow-glow-primary hover-lift relative overflow-hidden ${
+        isIdle ? "border-destructive/40 pulse-danger animate-[borderPulse_3s_ease-in-out_infinite] shadow-[0_0_20px_-4px_hsl(var(--destructive)/0.3)]" : "border-border/60 hover:border-primary/30"
       }`}
     >
       {/* Status indicator line */}

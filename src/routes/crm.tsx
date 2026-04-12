@@ -183,7 +183,7 @@ function GenericKanbanBoard<T extends string>({
           const stageLeads = filteredLeads[stage.id] || [];
           const stageValue = stageLeads.reduce((sum, l) => sum + l.value, 0);
           return (
-            <div key={stage.id} className="flex flex-col w-[280px] shrink-0 bg-muted/30 rounded-xl"
+            <div key={stage.id} className="flex flex-col w-[280px] shrink-0 bg-muted/30 rounded-xl border border-border/40 shadow-card hover:shadow-card-hover transition-all duration-300"
               onDragOver={handleDragOver} onDrop={() => handleDrop(stage.id)}>
               <div className="flex items-center gap-2 px-3 py-3 border-b border-border/50">
                 <div className={`h-2.5 w-2.5 rounded-full ${stage.color}`} />
@@ -397,8 +397,8 @@ function KanbanCard({ lead, stageId, onDragStart, onLeadAssigned }: { lead: Kanb
 
   return (
     <div draggable onDragStart={onDragStart}
-      className={`bg-card rounded-lg border p-3 cursor-grab active:cursor-grabbing hover:shadow-md transition-shadow ${
-        isStale ? "border-warning/50" : "border-border"
+      className={`bg-card rounded-xl border p-3 cursor-grab active:cursor-grabbing hover:shadow-glow-primary hover-lift transition-all duration-300 ${
+        isStale ? "border-warning/50 shadow-[0_0_12px_-4px_hsl(var(--warning)/0.3)]" : "border-border hover:border-primary/30"
       }`}>
       <div className="flex items-start justify-between mb-2">
         <div className="flex items-center gap-2">
