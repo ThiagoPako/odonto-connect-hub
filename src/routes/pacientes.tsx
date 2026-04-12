@@ -28,6 +28,9 @@ import {
   Save,
   Loader2,
   Trash2,
+  Filter,
+  ChevronDown,
+  RotateCcw,
 } from "lucide-react";
 
 export const Route = createFileRoute("/pacientes")({
@@ -80,6 +83,11 @@ function PacientesPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [selectedPaciente, setSelectedPaciente] = useState<PacienteAPI | null>(null);
+  const [showFilters, setShowFilters] = useState(false);
+  const [filterConvenio, setFilterConvenio] = useState("");
+  const [filterSexo, setFilterSexo] = useState("");
+  const [filterIdadeMin, setFilterIdadeMin] = useState("");
+  const [filterIdadeMax, setFilterIdadeMax] = useState("");
 
   const loadPacientes = useCallback(async () => {
     setLoading(true);
@@ -89,7 +97,6 @@ function PacientesPage() {
         toast.error("Erro ao carregar pacientes: " + error);
       } else if (Array.isArray(data)) {
         setPacientes(data);
-        // Se veio pacienteId na URL, selecionar
         if (pacienteId) {
           const found = data.find((p: PacienteAPI) => p.id === pacienteId);
           if (found) setSelectedPaciente(found);
@@ -106,12 +113,38 @@ function PacientesPage() {
     loadPacientes();
   }, [loadPacientes]);
 
-  const filtered = pacientes.filter(
-    (p) =>
+  // Unique convenios for filter dropdown
+  const convenios = [...new Set(pacientes.map((p) => p.convenio).filter(Boolean))] as string[];
+
+  const hasActiveFilters = filterConvenio || filterSexo || filterIdadeMin || filterIdadeMax;
+
+  const filtered = pacientes.filter((p) => {
+    // Text search
+    const matchesSearch =
       p.nome.toLowerCase().includes(searchTerm.toLowerCase()) ||
       (p.cpf && p.cpf.includes(searchTerm)) ||
-      (p.telefone && p.telefone.includes(searchTerm))
-  );
+      (p.telefone && p.telefone.includes(searchTerm));
+    if (!matchesSearch) return false;
+
+    // Convenio filter
+    if (filterConvenio === "__particular") {
+      if (p.convenio) return false;
+    } else if (filterConvenio && p.convenio !== filterConvenio) {
+      return false;
+    }
+
+    // Sexo filter
+    if (filterSexo && (p.sexo || "").toLowerCase() !== filterSexo.toLowerCase()) return false;
+
+    // Age range filter
+    const idade = calcularIdade(p.data_nascimento);
+    if (filterIdadeMin && idade !== null && idade < Number(filterIdadeMin)) return false;
+    if (filterIdadeMax && idade !== null && idade > Number(filterIdadeMax)) return false;
+    // If no birth date and age filter active, exclude
+    if ((filterIdadeMin || filterIdadeMax) && idade === null) return false;
+
+    return true;
+  });
 
   const comConvenio = pacientes.filter((p) => p.convenio).length;
 
