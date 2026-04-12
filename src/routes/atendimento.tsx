@@ -7,7 +7,7 @@ import {
   Play, Square, Mic, FileText, Receipt, AlertTriangle, Clock,
   User, Phone, Mail, Heart, Pill, Stethoscope, Send, Plus, Trash2,
   Save, ChevronRight, Activity, ClipboardList, ExternalLink, Timer,
-  Printer,
+  Printer, Loader2, Bot, Sparkles,
 } from "lucide-react";
 import { exportarPrescricaoPdf } from "@/lib/prescricaoPdfExport";
 import { AudioRecorder } from "@/components/chat/AudioRecorder";
@@ -16,6 +16,7 @@ import {
   getAlergias, getCondicoesCriticas, getAnamnese, temAlertasMedicos,
   type Paciente
 } from "@/data/registroCentral";
+import { aiApi } from "@/lib/vpsApi";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/atendimento")({
