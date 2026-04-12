@@ -194,38 +194,44 @@ function AutomacoesPage() {
       <DashboardHeader title="Automação de Relacionamento" />
       <main className="flex-1 p-6 space-y-6 overflow-auto">
         {/* Tab switcher */}
-        <div className="flex items-center gap-1 bg-muted rounded-lg p-0.5 w-fit">
-          <button
-            onClick={() => setActiveTab("solutions")}
-            className={`px-4 py-1.5 rounded-md text-xs font-medium transition-colors ${activeTab === "solutions" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
-          >
-            <Rocket className="h-3.5 w-3.5 inline mr-1.5" />Soluções
-          </button>
-          <button
-            onClick={() => setActiveTab("flows")}
-            className={`px-4 py-1.5 rounded-md text-xs font-medium transition-colors ${activeTab === "flows" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
-          >
-            <Zap className="h-3.5 w-3.5 inline mr-1.5" />Fluxos
-          </button>
-          <button
-            onClick={() => setActiveTab("report")}
-            className={`px-4 py-1.5 rounded-md text-xs font-medium transition-colors ${activeTab === "report" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
-          >
-            <BarChart3 className="h-3.5 w-3.5 inline mr-1.5" />Relatórios
-          </button>
+        <div className="flex items-center gap-1 bg-muted rounded-xl p-1 w-fit">
+          {([
+            { key: "solutions" as const, label: "Soluções", icon: Rocket },
+            { key: "flows" as const, label: "Fluxos", icon: Zap },
+            { key: "report" as const, label: "Relatórios", icon: BarChart3 },
+          ]).map(tab => {
+            const TabIcon = tab.icon;
+            const isActive = activeTab === tab.key;
+            return (
+              <button
+                key={tab.key}
+                onClick={() => setActiveTab(tab.key)}
+                className={`relative px-4 py-2 rounded-lg text-xs font-medium transition-all duration-300 ${
+                  isActive
+                    ? "bg-background text-foreground shadow-sm scale-[1.02]"
+                    : "text-muted-foreground hover:text-foreground hover:bg-background/50"
+                }`}
+              >
+                <TabIcon className={`h-3.5 w-3.5 inline mr-1.5 transition-colors duration-300 ${isActive ? "text-primary" : ""}`} />
+                {tab.label}
+              </button>
+            );
+          })}
         </div>
 
-        {activeTab === "solutions" ? (
-          <SolutionsGrid
-            solutions={preConfiguredSolutions}
-            flows={flows}
-            onActivate={activateSolution}
-            counts={solutionCounts}
-          />
-        ) : activeTab === "report" ? (
-          <AutomationReportPanel />
-        ) : (
-          <>
+        {/* Tab content with transition */}
+        <div key={activeTab} className="animate-tab-content">
+          {activeTab === "solutions" ? (
+            <SolutionsGrid
+              solutions={preConfiguredSolutions}
+              flows={flows}
+              onActivate={activateSolution}
+              counts={solutionCounts}
+            />
+          ) : activeTab === "report" ? (
+            <AutomationReportPanel />
+          ) : (
+            <div className="space-y-6">
         {/* KPIs */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           <MiniKpi icon={Zap} label="Fluxos Ativos" value={flows.filter((f) => f.active).length.toString()} total={flows.length.toString()} />
@@ -260,7 +266,7 @@ function AutomacoesPage() {
         {/* Header + filter */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
           <div>
-            <h2 className="text-lg font-semibold text-foreground">Fluxos de Automação</h2>
+            <h2 className="text-lg font-semibold text-foreground font-heading">Fluxos de Automação</h2>
             <p className="text-sm text-muted-foreground">Crie, edite e gerencie seus fluxos de relacionamento</p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
@@ -297,7 +303,7 @@ function AutomacoesPage() {
           {/* Flow list */}
           <div className="lg:col-span-1 space-y-3">
             {filtered.length === 0 && (
-              <div className="bg-card rounded-xl border border-dashed border-border p-8 text-center">
+              <div className="bg-card rounded-2xl border border-dashed border-border p-8 text-center">
                 <Zap className="h-8 w-8 text-muted-foreground/30 mx-auto mb-3" />
                 <p className="text-sm text-muted-foreground mb-3">Nenhum fluxo encontrado</p>
                 <button onClick={createNewFlow} className="text-xs text-primary hover:underline font-medium">
@@ -335,9 +341,9 @@ function AutomacoesPage() {
                 onDelete={() => deleteFlow(selectedFlow.id)}
               />
             ) : (
-              <div className="bg-card rounded-xl border border-border p-8 flex flex-col items-center justify-center text-center h-full min-h-[400px]">
+              <div className="bg-card rounded-2xl border border-border p-8 flex flex-col items-center justify-center text-center h-full min-h-[400px]">
                 <Zap className="h-12 w-12 text-muted-foreground/30 mb-4" />
-                <h3 className="text-sm font-semibold text-foreground mb-1">Selecione um fluxo</h3>
+                <h3 className="text-sm font-semibold text-foreground mb-1 font-heading">Selecione um fluxo</h3>
                 <p className="text-xs text-muted-foreground max-w-xs mb-4">
                   Clique em um fluxo ao lado para visualizar, editar ou criar novos fluxos de relacionamento.
                 </p>
@@ -348,8 +354,9 @@ function AutomacoesPage() {
             )}
           </div>
         </div>
-          </>
-        )}
+            </div>
+          )}
+        </div>
       </main>
     </div>
   );
