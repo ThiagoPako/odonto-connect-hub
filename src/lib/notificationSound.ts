@@ -4,6 +4,7 @@
  */
 
 const SOUND_ENABLED_KEY = "odonto_notification_sound";
+const RECOVERY_SOUND_KEY = "odonto_recovery_sound";
 
 let audioCtx: AudioContext | null = null;
 
@@ -22,6 +23,16 @@ export function isSoundEnabled(): boolean {
 
 export function setSoundEnabled(enabled: boolean): void {
   localStorage.setItem(SOUND_ENABLED_KEY, String(enabled));
+}
+
+export function isRecoverySoundEnabled(): boolean {
+  if (typeof window === "undefined") return true;
+  const val = localStorage.getItem(RECOVERY_SOUND_KEY);
+  return val !== "false";
+}
+
+export function setRecoverySoundEnabled(enabled: boolean): void {
+  localStorage.setItem(RECOVERY_SOUND_KEY, String(enabled));
 }
 
 export function playNotificationSound() {
@@ -69,7 +80,7 @@ export function playNotificationSound() {
  * Urgent recovery sound — triple ascending ding for high-priority lead returns
  */
 export function playRecoverySound() {
-  if (!isSoundEnabled()) return;
+  if (!isRecoverySoundEnabled()) return;
 
   try {
     const ctx = getAudioContext();
