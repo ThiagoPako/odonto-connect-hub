@@ -240,6 +240,9 @@ function PacientesPage() {
           <PacienteDetailModal
             paciente={selectedPaciente}
             onClose={() => setSelectedPaciente(null)}
+            onUpdated={() => {
+              loadPacientes();
+            }}
           />
         )}
       </main>
@@ -419,20 +422,80 @@ function NovoPacienteModal({ onClose, onSaved }: { onClose: () => void; onSaved:
 function PacienteDetailModal({
   paciente,
   onClose,
+  onUpdated,
 }: {
   paciente: PacienteAPI;
   onClose: () => void;
+  onUpdated?: () => void;
 }) {
-  const idade = calcularIdade(paciente.data_nascimento);
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({
+    nome: paciente.nome,
+    cpf: paciente.cpf || "",
+    data_nascimento: paciente.data_nascimento ? paciente.data_nascimento.split("T")[0] : "",
+    sexo: paciente.sexo || "",
+    telefone: paciente.telefone || "",
+    email: paciente.email || "",
+    convenio: paciente.convenio || "",
+    endereco: paciente.endereco || "",
+    observacoes: paciente.observacoes || "",
+  });
 
-  const fields = [
-    { icon: FileHeart, label: "Nome", value: paciente.nome },
-    { icon: Calendar, label: "Nascimento", value: paciente.data_nascimento ? new Date(paciente.data_nascimento).toLocaleDateString("pt-BR") : "—" },
-    { icon: Phone, label: "Telefone", value: paciente.telefone || "—" },
-    { icon: Mail, label: "E-mail", value: paciente.email || "—" },
-    { icon: MapPin, label: "Endereço", value: paciente.endereco || "—" },
-    { icon: Shield, label: "Convênio", value: paciente.convenio || "Particular" },
-  ];
+  const handleChange = (field: string, value: string) => {
+    setForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleSave = async () => {
+    if (!form.nome.trim()) {
+      toast.error("Nome é obrigatório");
+      return;
+    }
+    setSaving(true);
+    try {
+      const { error } = await pacientesApi.update(paciente.id, {
+        nome: form.nome.trim(),
+        cpf: form.cpf.trim() || null,
+        telefone: form.telefone.trim() || null,
+        email: form.email.trim() || null,
+        data_nascimento: form.data_nascimento || null,
+        sexo: form.sexo || null,
+        convenio: form.convenio.trim() || null,
+        endereco: form.endereco.trim() || null,
+        observacoes: form.observacoes.trim() || null,
+      });
+      if (error) {
+        toast.error("Erro ao salvar: " + error);
+      } else {
+        toast.success("Paciente atualizado!");
+        setEditing(false);
+        onUpdated?.();
+      }
+    } catch {
+      toast.error("Erro de conexão");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleCancel = () => {
+    setForm({
+      nome: paciente.nome,
+      cpf: paciente.cpf || "",
+      data_nascimento: paciente.data_nascimento ? paciente.data_nascimento.split("T")[0] : "",
+      sexo: paciente.sexo || "",
+      telefone: paciente.telefone || "",
+      email: paciente.email || "",
+      convenio: paciente.convenio || "",
+      endereco: paciente.endereco || "",
+      observacoes: paciente.observacoes || "",
+    });
+    setEditing(false);
+  };
+
+  const idade = calcularIdade(form.data_nascimento || null);
+
+  const inputClass = "w-full h-9 px-3 rounded-lg bg-background border border-border/60 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30";
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
@@ -441,42 +504,160 @@ function PacienteDetailModal({
         <div className="flex items-center justify-between px-6 py-4 border-b border-border/60 shrink-0">
           <div className="flex items-center gap-4">
             <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center text-sm font-bold text-primary">
-              {getInitials(paciente.nome)}
+              {getInitials(form.nome || paciente.nome)}
             </div>
             <div>
-              <h2 className="text-lg font-bold text-foreground font-heading">{paciente.nome}</h2>
+              <h2 className="text-lg font-bold text-foreground font-heading">{editing ? form.nome : paciente.nome}</h2>
               <p className="text-xs text-muted-foreground">
                 {idade !== null ? `${idade} anos` : ""}
-                {paciente.cpf ? ` • CPF: ${paciente.cpf}` : ""}
-                {paciente.convenio ? ` • ${paciente.convenio}` : ""}
+                {(editing ? form.cpf : paciente.cpf) ? ` • CPF: ${editing ? form.cpf : paciente.cpf}` : ""}
+                {(editing ? form.convenio : paciente.convenio) ? ` • ${editing ? form.convenio : paciente.convenio}` : ""}
               </p>
             </div>
           </div>
-          <button onClick={onClose} className="p-2 rounded-lg hover:bg-muted/60 transition-colors">
-            <X className="h-4 w-4 text-muted-foreground" />
-          </button>
+          <div className="flex items-center gap-2">
+            {!editing ? (
+              <button
+                onClick={() => setEditing(true)}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary/10 text-primary text-xs font-semibold hover:bg-primary/20 transition-colors"
+              >
+                <Edit className="h-3.5 w-3.5" />
+                Editar
+              </button>
+            ) : (
+              <>
+                <button
+                  onClick={handleCancel}
+                  className="px-4 py-2 rounded-xl text-xs font-medium text-muted-foreground hover:bg-muted/60 transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors shadow-sm disabled:opacity-50"
+                >
+                  {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                  Salvar
+                </button>
+              </>
+            )}
+            <button onClick={onClose} className="p-2 rounded-lg hover:bg-muted/60 transition-colors">
+              <X className="h-4 w-4 text-muted-foreground" />
+            </button>
+          </div>
         </div>
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-fade-in">
-            {fields.map((f) => (
-              <div key={f.label} className="bg-muted/30 rounded-xl p-4 flex items-start gap-3">
-                <f.icon className="h-4 w-4 text-primary mt-0.5 shrink-0" />
-                <div>
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">{f.label}</p>
-                  <p className="text-sm text-foreground mt-0.5">{f.value}</p>
-                </div>
+            {/* Nome */}
+            <div className="col-span-1 md:col-span-2 bg-muted/30 rounded-xl p-4 flex items-start gap-3">
+              <FileHeart className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+              <div className="flex-1">
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Nome</p>
+                {editing ? (
+                  <input value={form.nome} onChange={(e) => handleChange("nome", e.target.value)} className={inputClass + " mt-1"} />
+                ) : (
+                  <p className="text-sm text-foreground mt-0.5">{paciente.nome}</p>
+                )}
               </div>
-            ))}
+            </div>
+
+            {/* CPF */}
+            <div className="bg-muted/30 rounded-xl p-4 flex items-start gap-3">
+              <FileHeart className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+              <div className="flex-1">
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">CPF</p>
+                {editing ? (
+                  <input value={form.cpf} onChange={(e) => handleChange("cpf", e.target.value)} placeholder="000.000.000-00" className={inputClass + " mt-1"} />
+                ) : (
+                  <p className="text-sm text-foreground mt-0.5">{paciente.cpf || "—"}</p>
+                )}
+              </div>
+            </div>
+
+            {/* Nascimento */}
+            <div className="bg-muted/30 rounded-xl p-4 flex items-start gap-3">
+              <Calendar className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+              <div className="flex-1">
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Nascimento</p>
+                {editing ? (
+                  <input type="date" value={form.data_nascimento} onChange={(e) => handleChange("data_nascimento", e.target.value)} className={inputClass + " mt-1"} />
+                ) : (
+                  <p className="text-sm text-foreground mt-0.5">{paciente.data_nascimento ? new Date(paciente.data_nascimento).toLocaleDateString("pt-BR") : "—"}</p>
+                )}
+              </div>
+            </div>
+
+            {/* Telefone */}
+            <div className="bg-muted/30 rounded-xl p-4 flex items-start gap-3">
+              <Phone className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+              <div className="flex-1">
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Telefone</p>
+                {editing ? (
+                  <input value={form.telefone} onChange={(e) => handleChange("telefone", e.target.value)} placeholder="(11) 99999-0000" className={inputClass + " mt-1"} />
+                ) : (
+                  <p className="text-sm text-foreground mt-0.5">{paciente.telefone || "—"}</p>
+                )}
+              </div>
+            </div>
+
+            {/* Email */}
+            <div className="bg-muted/30 rounded-xl p-4 flex items-start gap-3">
+              <Mail className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+              <div className="flex-1">
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">E-mail</p>
+                {editing ? (
+                  <input type="email" value={form.email} onChange={(e) => handleChange("email", e.target.value)} placeholder="email@exemplo.com" className={inputClass + " mt-1"} />
+                ) : (
+                  <p className="text-sm text-foreground mt-0.5">{paciente.email || "—"}</p>
+                )}
+              </div>
+            </div>
+
+            {/* Convênio */}
+            <div className="bg-muted/30 rounded-xl p-4 flex items-start gap-3">
+              <Shield className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+              <div className="flex-1">
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Convênio</p>
+                {editing ? (
+                  <input value={form.convenio} onChange={(e) => handleChange("convenio", e.target.value)} placeholder="Particular" className={inputClass + " mt-1"} />
+                ) : (
+                  <p className="text-sm text-foreground mt-0.5">{paciente.convenio || "Particular"}</p>
+                )}
+              </div>
+            </div>
+
+            {/* Endereço */}
+            <div className="col-span-1 md:col-span-2 bg-muted/30 rounded-xl p-4 flex items-start gap-3">
+              <MapPin className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+              <div className="flex-1">
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Endereço</p>
+                {editing ? (
+                  <input value={form.endereco} onChange={(e) => handleChange("endereco", e.target.value)} placeholder="Rua, número — Cidade, UF" className={inputClass + " mt-1"} />
+                ) : (
+                  <p className="text-sm text-foreground mt-0.5">{paciente.endereco || "—"}</p>
+                )}
+              </div>
+            </div>
           </div>
 
-          {paciente.observacoes && (
-            <div className="mt-4 bg-warning/5 border border-warning/20 rounded-xl p-4">
-              <p className="text-[10px] uppercase tracking-wider text-warning font-semibold mb-1">Observações</p>
-              <p className="text-xs text-foreground">{paciente.observacoes}</p>
-            </div>
-          )}
+          {/* Observações */}
+          <div className="mt-4 bg-warning/5 border border-warning/20 rounded-xl p-4">
+            <p className="text-[10px] uppercase tracking-wider text-warning font-semibold mb-1">Observações</p>
+            {editing ? (
+              <textarea
+                rows={3}
+                value={form.observacoes}
+                onChange={(e) => handleChange("observacoes", e.target.value)}
+                placeholder="Observações relevantes..."
+                className="w-full px-3 py-2 rounded-lg bg-background border border-border/60 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none mt-1"
+              />
+            ) : (
+              <p className="text-xs text-foreground">{paciente.observacoes || "Nenhuma observação."}</p>
+            )}
+          </div>
         </div>
       </div>
     </div>
