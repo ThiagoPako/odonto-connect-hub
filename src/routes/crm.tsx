@@ -196,13 +196,30 @@ function GenericKanbanBoard<T extends string>({
 
 /* ── Sales Kanban ────────────────────────────────── */
 
+function normalizeLead(raw: any): KanbanLead {
+  return {
+    ...raw,
+    lastContact: raw.lastContact instanceof Date ? raw.lastContact : new Date(raw.lastContact),
+    value: raw.value ?? 0,
+  };
+}
+
 function SalesKanbanView() {
   const [leads, setLeads] = useState<Record<SalesStage, KanbanLead[]>>(mockSalesKanban);
 
   useEffect(() => {
     crmApi.kanban().then(({ data }) => {
-      if (data && typeof data === 'object' && 'lead' in (data as Record<string, unknown>)) {
-        setLeads(data as Record<SalesStage, KanbanLead[]>);
+      if (data && typeof data === 'object') {
+        const raw = data as Record<string, any[]>;
+        const emptyStages: Record<SalesStage, KanbanLead[]> = {
+          lead: [], em_atendimento: [], orcamento: [], orcamento_enviado: [], orcamento_aprovado: [],
+        };
+        for (const key of Object.keys(emptyStages) as SalesStage[]) {
+          if (Array.isArray(raw[key])) {
+            emptyStages[key] = raw[key].map(normalizeLead);
+          }
+        }
+        setLeads(emptyStages);
       }
     });
   }, []);
@@ -222,7 +239,8 @@ function RecoveryKanbanView() {
 
 function KanbanCard({ lead, onDragStart }: { lead: KanbanLead; onDragStart: () => void }) {
   const navigate = useNavigate();
-  const daysAgo = Math.floor((Date.now() - lead.lastContact.getTime()) / 86400000);
+  const lastContactDate = lead.lastContact instanceof Date ? lead.lastContact : new Date(lead.lastContact);
+  const daysAgo = Math.floor((Date.now() - lastContactDate.getTime()) / 86400000);
   const isStale = daysAgo > 3;
 
   const handleOpenChat = (e: React.MouseEvent) => {
