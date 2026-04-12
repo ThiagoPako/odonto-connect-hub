@@ -14,7 +14,7 @@ import {
   Search, Plus, Filter, Phone, Mail, Calendar, DollarSign,
   ChevronRight, MoreHorizontal, UserPlus, ExternalLink,
   Clock, MessageSquare, GripVertical, RefreshCw, RotateCcw,
-  TrendingUp, Target, Loader2, UserCheck,
+  TrendingUp, Target, Loader2, UserCheck, Link2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { whatsappApi } from "@/lib/vpsApi";
