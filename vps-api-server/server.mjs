@@ -2805,6 +2805,7 @@ app.delete('/api/orcamentos/:id', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════
 // DASHBOARD KPIs
 // ═══════════════════════════════════════════════════════════════
+app.get('/api/dashboard/kpis', async (req, res) => {
   try {
     await verifyUser(req);
     const today = new Date().toISOString().split('T')[0];
