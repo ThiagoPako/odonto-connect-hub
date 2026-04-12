@@ -6990,4 +6990,9 @@ app.listen(PORT, async () => {
   processCampaignScheduler();
   campaignSchedulerInterval = setInterval(processCampaignScheduler, 60 * 1000);
   console.log('   📢 Campaign scheduler ativo (a cada 60s)');
+
+  // Start appointment reminder cron (every 1h)
+  processAppointmentReminders();
+  appointmentReminderInterval = setInterval(processAppointmentReminders, 60 * 60 * 1000);
+  console.log('   🔔 Lembrete de consulta 24h ativo (a cada 1h)');
 });
