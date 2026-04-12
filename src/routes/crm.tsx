@@ -239,6 +239,7 @@ function normalizeLead(raw: any): KanbanLead {
     lastContact: raw.lastContact instanceof Date ? raw.lastContact : new Date(raw.lastContact),
     value: raw.value ?? 0,
     assignedAvatarUrl: raw.assignedAvatarUrl ?? raw.assigned_avatar_url ?? null,
+    pacienteId: raw.pacienteId ?? raw.paciente_id ?? null,
   };
 }
 
@@ -446,7 +447,19 @@ function KanbanCard({ lead, stageId, onDragStart, onLeadAssigned }: { lead: Kanb
         <div className="flex items-center gap-2">
           <LeadAvatar initials={lead.initials} avatarUrl={lead.avatarUrl} avatarColor={lead.avatarColor} size="sm" />
           <div>
-            <p className="text-sm font-medium text-card-foreground leading-tight">{lead.name}</p>
+            <div className="flex items-center gap-1.5">
+              <p className="text-sm font-medium text-card-foreground leading-tight">{lead.name}</p>
+              {lead.pacienteId && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); navigate({ to: "/pacientes", search: { pacienteId: lead.pacienteId! } }); }}
+                  className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-success/15 text-success text-[9px] font-medium hover:bg-success/25 transition-colors"
+                  title="Paciente cadastrado — clique para ver"
+                >
+                  <UserCheck className="h-2.5 w-2.5" />
+                  Paciente
+                </button>
+              )}
+            </div>
             <p className="text-[11px] text-muted-foreground">{lead.origin}</p>
           </div>
         </div>
