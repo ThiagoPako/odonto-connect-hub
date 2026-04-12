@@ -6987,6 +6987,16 @@ app.get('/api/health', async (_req, res) => {
   }
 });
 
+app.get('/api/version', (_req, res) => {
+  res.json({
+    app: 'Odonto Connect API',
+    version: '1.8.0',
+    build: '2026-04-12',
+    node: process.version,
+    uptime: Math.floor(process.uptime()) + 's',
+  });
+});
+
 // ═══════════════════════════════════════════════════════════════
 // USER PREFERENCES (notification settings sync)
 // ═══════════════════════════════════════════════════════════════
