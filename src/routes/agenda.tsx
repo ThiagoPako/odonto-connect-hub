@@ -5,10 +5,10 @@ import {
   Phone, MessageSquare, AlertTriangle, RefreshCw, Search, ExternalLink, History, HeartPulse,
   LayoutGrid, List, CalendarDays, Stethoscope, Loader2,
 } from "lucide-react";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { mockProfessionals, type Appointment } from "@/data/agendaMockData";
 import { getAlergias, getCondicoesCriticas, getHistorico } from "@/data/registroCentral";
-import { agendaApi, whatsappApi, type AgendamentoVPS } from "@/lib/vpsApi";
+import { agendaApi, whatsappApi, pacientesApi, type AgendamentoVPS } from "@/lib/vpsApi";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
