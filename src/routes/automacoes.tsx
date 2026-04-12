@@ -255,6 +255,7 @@ function AutomacoesPage() {
               solutions={preConfiguredSolutions}
               flows={flows}
               onActivate={activateSolution}
+              onToggleActive={toggleActive}
               counts={solutionCounts}
             />
           ) : activeTab === "report" ? (
@@ -1209,11 +1210,12 @@ const solutionIconMap: Record<string, { icon: LucideIcon; gradient: string; bg: 
 // ─── Solutions Grid ─────────────────────────────────────────
 
 function SolutionsGrid({
-  solutions, flows, onActivate, counts,
+  solutions, flows, onActivate, onToggleActive, counts,
 }: {
   solutions: PreConfiguredSolution[];
   flows: AutomationFlow[];
   onActivate: (s: PreConfiguredSolution) => void;
+  onToggleActive: (id: string) => void;
   counts: Record<string, number>;
 }) {
   const [hoursConfig, setHoursConfig] = useState({ inicio: '08:00', fim: '18:00', diasSemana: ['SEG','TER','QUA','QUI','SEX'] });
@@ -1341,17 +1343,45 @@ function SolutionsGrid({
           const IconComp = iconData.icon;
           const patientCount = counts[sol.type] ?? sol.totalPacientes ?? 0;
 
+          const handleToggle = () => {
+            if (!isConfigured) {
+              // First activation — create the flow
+              onActivate(sol);
+            } else if (existingFlow) {
+              // Toggle existing flow active/inactive
+              onToggleActive(existingFlow.id);
+            }
+          };
+
           return (
             <div
               key={sol.id}
-              className={`group relative bg-card rounded-2xl border p-5 transition-all duration-300 hover-lift card-glow animate-slide-up ${
+              className={`group relative bg-card rounded-2xl border p-5 transition-all duration-500 hover-lift card-glow animate-slide-up ${
                 isActive
-                  ? "border-primary/40 shadow-card hover:shadow-glow-primary"
+                  ? "border-primary/50 shadow-[0_0_20px_-4px_hsl(var(--primary)/0.35),0_0_40px_-8px_hsl(var(--primary)/0.2)] ring-1 ring-primary/20"
                   : "border-border hover:border-primary/30 hover:shadow-card-hover"
               }`}
               style={{ animationDelay: `${index * 60}ms`, animationFillMode: 'both' }}
             >
-              {/* Status badge */}
+              {/* Top bar: switch + edit button */}
+              <div className="flex items-center justify-between mb-4">
+                <Switch
+                  checked={!!isActive}
+                  onCheckedChange={handleToggle}
+                  className="data-[state=checked]:bg-primary"
+                />
+                {isActive && (
+                  <button
+                    onClick={() => onActivate(sol)}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-semibold text-primary bg-primary/10 hover:bg-primary/20 transition-all duration-200 animate-fade-in"
+                  >
+                    <Settings2 className="h-3 w-3" />
+                    Configurar
+                  </button>
+                )}
+              </div>
+
+              {/* Status indicator */}
               {isActive && (
                 <div className="absolute top-4 right-4">
                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-success/15 text-success">
@@ -1371,7 +1401,7 @@ function SolutionsGrid({
               )}
 
               {/* Icon with glow */}
-              <div className={`relative h-12 w-12 rounded-2xl bg-gradient-to-br ${iconData.gradient} flex items-center justify-center mb-4 shadow-sm icon-bounce`}>
+              <div className={`relative h-12 w-12 rounded-2xl bg-gradient-to-br ${iconData.gradient} flex items-center justify-center mb-4 shadow-sm icon-bounce ${isActive ? 'shadow-[0_0_16px_-2px_hsl(var(--primary)/0.4)]' : ''}`}>
                 <IconComp className="h-6 w-6 text-primary-foreground" strokeWidth={1.6} />
                 <div className={`absolute inset-0 rounded-2xl bg-gradient-to-br ${iconData.gradient} opacity-0 group-hover:opacity-30 blur-xl transition-opacity duration-500`} />
               </div>
@@ -1382,7 +1412,7 @@ function SolutionsGrid({
               {/* Description */}
               <p className="text-[11px] text-muted-foreground mb-3 line-clamp-2 leading-relaxed">{sol.description}</p>
 
-              {/* Patient count — vibrant */}
+              {/* Patient count */}
               <div className="flex items-center gap-2 mb-3 p-2 rounded-lg bg-muted/50">
                 <Users className="h-3.5 w-3.5 text-primary" />
                 <span className="text-xs text-muted-foreground">
@@ -1390,8 +1420,8 @@ function SolutionsGrid({
                 </span>
               </div>
 
-              {/* Steps preview — timeline dots */}
-              <div className="flex items-center gap-0.5 mb-4">
+              {/* Steps preview */}
+              <div className="flex items-center gap-0.5">
                 {sol.defaultSteps.map((step, i) => {
                   const StepIcon = step.channel === "whatsapp" ? MessageSquare : step.channel === "sms" ? Smartphone : Mail;
                   const stepColor = step.channel === "whatsapp" ? "text-success bg-success/10" : step.channel === "sms" ? "text-chart-2 bg-chart-2/10" : "text-chart-4 bg-chart-4/10";
@@ -1408,33 +1438,6 @@ function SolutionsGrid({
                 })}
                 <span className="text-[10px] text-muted-foreground ml-1.5 font-medium">{sol.defaultSteps.length} etapas</span>
               </div>
-
-              {/* Action button */}
-              {isActive ? (
-                <button
-                  onClick={() => onActivate(sol)}
-                  className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-success/10 text-success text-xs font-semibold hover:bg-success/20 transition-all duration-200"
-                >
-                  <CheckCircle2 className="h-4 w-4" />
-                  Ativa — Editar
-                </button>
-              ) : isConfigured ? (
-                <button
-                  onClick={() => onActivate(sol)}
-                  className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-muted text-foreground text-xs font-semibold hover:bg-primary/10 hover:text-primary transition-all duration-200"
-                >
-                  <Edit2 className="h-4 w-4" />
-                  Editar configuração
-                </button>
-              ) : (
-                <button
-                  onClick={() => onActivate(sol)}
-                  className={`w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all duration-300 border-2 border-transparent bg-gradient-to-r ${iconData.gradient} text-primary-foreground hover:shadow-md hover:scale-[1.02]`}
-                >
-                  <Rocket className="h-4 w-4" />
-                  Ativar Solução
-                </button>
-              )}
             </div>
           );
         })}
