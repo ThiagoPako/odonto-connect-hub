@@ -155,13 +155,28 @@ function AutomacoesPage() {
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Automação de Relacionamento" />
       <main className="flex-1 p-6 space-y-6 overflow-auto">
+        {/* Tab switcher */}
+        <div className="flex items-center gap-1 bg-muted rounded-lg p-0.5 w-fit">
+          <button
+            onClick={() => setActiveTab("flows")}
+            className={`px-4 py-1.5 rounded-md text-xs font-medium transition-colors ${activeTab === "flows" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+          >
+            <Zap className="h-3.5 w-3.5 inline mr-1.5" />Fluxos
+          </button>
+          <button
+            onClick={() => setActiveTab("report")}
+            className={`px-4 py-1.5 rounded-md text-xs font-medium transition-colors ${activeTab === "report" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+          >
+            <BarChart3 className="h-3.5 w-3.5 inline mr-1.5" />Relatórios
+          </button>
+        </div>
+
+        {activeTab === "report" ? (
+          <AutomationReportPanel />
+        ) : (
+        <>
         {/* KPIs */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <MiniKpi icon={Zap} label="Fluxos Ativos" value={flows.filter((f) => f.active).length.toString()} total={flows.length.toString()} />
-          <MiniKpi icon={Send} label="Mensagens Enviadas" value={totalSent.toString()} />
-          <MiniKpi icon={MessageSquare} label="Taxa de Resposta" value={`${responseRate}%`} highlight={Number(responseRate) > 40} />
-          <MiniKpi icon={CheckCircle2} label="Conversões" value={totalConverted.toString()} />
-        </div>
 
         {/* Best practices tip */}
         <div className="flex items-start gap-3 p-4 rounded-xl bg-primary/5 border border-primary/20">
