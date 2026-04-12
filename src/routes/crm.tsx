@@ -406,27 +406,33 @@ function PatientTableView() {
 
   const loadPatients = useCallback(async () => {
     setLoading(true);
-    const params: Record<string, string> = {};
-    if (searchTerm.trim()) params.search = searchTerm.trim();
-    if (statusFilter !== "Todos") params.status = statusFilter;
-    const { data } = await crmApi.list(params);
-    if (data && Array.isArray(data)) {
-      setPatients(data.map((r: any) => ({
-        id: r.id,
-        name: r.nome,
-        initials: (r.nome || '').split(' ').map((w: string) => w[0]).join('').slice(0, 2).toUpperCase(),
-        phone: r.telefone || '',
-        email: r.email || '',
-        origin: r.origem || 'WhatsApp',
-        status: r.status === 'em_contato' ? 'ativo' : (r.status === 'novo' ? 'lead' : r.status) as Patient["status"],
-        lastVisit: r.updated_at ? new Date(r.updated_at) : undefined,
-        createdAt: new Date(r.created_at),
-        totalSpent: 0,
-        avatarColor: 'bg-chart-1',
-        avatarUrl: r.avatar_url,
-      })));
+    try {
+      const params: Record<string, string> = {};
+      if (searchTerm.trim()) params.search = searchTerm.trim();
+      if (statusFilter !== "Todos") params.status = statusFilter;
+      const { data } = await crmApi.list(params);
+      if (data && Array.isArray(data)) {
+        setPatients(data.map((r: any) => ({
+          id: r.id,
+          name: r.nome,
+          initials: (r.nome || '').split(' ').map((w: string) => w[0]).join('').slice(0, 2).toUpperCase(),
+          phone: r.telefone || '',
+          email: r.email || '',
+          origin: r.origem || 'WhatsApp',
+          status: r.status === 'em_contato' ? 'ativo' : (r.status === 'novo' ? 'lead' : r.status) as Patient["status"],
+          lastVisit: r.updated_at ? new Date(r.updated_at) : undefined,
+          createdAt: new Date(r.created_at),
+          totalSpent: 0,
+          avatarColor: 'bg-chart-1',
+          avatarUrl: r.avatar_url,
+        })));
+      }
+    } catch (err) {
+      console.error("Erro ao carregar pacientes:", err);
+      toast.error("Erro ao carregar lista de pacientes");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, [searchTerm, statusFilter]);
 
   useEffect(() => {
