@@ -3295,6 +3295,88 @@ app.patch('/api/automations/flows/:id/toggle', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
+// AUTOMATION SOLUTIONS — Dynamic Patient Counts
+// ═══════════════════════════════════════════════════════════════
+
+app.get('/api/automations/solution-counts', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const today = new Date().toISOString().slice(0, 10);
+
+    const [
+      agendaSemConfirmacao,
+      aniversariantes,
+      desmarcacoes,
+      faltas,
+      faltasPrimeira,
+      inadimplencia,
+      orcamentosAbertos,
+      tratamentoSemAgenda,
+    ] = await Promise.all([
+      // Agendamento sem Confirmação: agendamentos futuros com status 'agendado' (não confirmado)
+      pool.query(
+        `SELECT COUNT(DISTINCT paciente_id) as total FROM agendamentos WHERE data >= $1 AND status = 'agendado'`,
+        [today]
+      ),
+      // Aniversariantes: pacientes com aniversário este mês
+      pool.query(
+        `SELECT COUNT(*) as total FROM pacientes WHERE EXTRACT(MONTH FROM data_nascimento) = EXTRACT(MONTH FROM CURRENT_DATE) AND EXTRACT(DAY FROM data_nascimento) >= EXTRACT(DAY FROM CURRENT_DATE)`
+      ),
+      // Desmarcações: agendamentos com status 'desmarcado' ou 'cancelado' nos últimos 30 dias
+      pool.query(
+        `SELECT COUNT(DISTINCT paciente_id) as total FROM agendamentos WHERE status IN ('desmarcado','cancelado') AND data >= CURRENT_DATE - INTERVAL '30 days'`
+      ),
+      // Faltas: agendamentos com status 'faltou' nos últimos 30 dias
+      pool.query(
+        `SELECT COUNT(DISTINCT paciente_id) as total FROM agendamentos WHERE status = 'faltou' AND data >= CURRENT_DATE - INTERVAL '30 days'`
+      ),
+      // Faltas 1ª Consulta: pacientes que faltaram e nunca tiveram consulta 'realizado'
+      pool.query(
+        `SELECT COUNT(DISTINCT a.paciente_id) as total FROM agendamentos a
+         WHERE a.status = 'faltou'
+         AND a.data >= CURRENT_DATE - INTERVAL '30 days'
+         AND NOT EXISTS (SELECT 1 FROM agendamentos b WHERE b.paciente_id = a.paciente_id AND b.status IN ('realizado','confirmado','atendido'))`
+      ),
+      // Inadimplência: financeiro com tipo receita e valor em parcelas vencidas (simplificado: orçamentos aprovados sem receita correspondente)
+      pool.query(
+        `SELECT COUNT(DISTINCT o.paciente_id) as total FROM orcamentos o
+         WHERE o.status = 'aprovado'
+         AND NOT EXISTS (
+           SELECT 1 FROM financeiro f WHERE f.paciente_id = o.paciente_id AND f.tipo = 'receita' AND f.valor >= o.valor_total
+         )`
+      ),
+      // Orçamentos em Aberto: orçamentos com status 'pendente'
+      pool.query(
+        `SELECT COUNT(DISTINCT paciente_id) as total FROM orcamentos WHERE status = 'pendente'`
+      ),
+      // Tratamento sem Agendamento: tratamentos ativos sem agendamento futuro
+      pool.query(
+        `SELECT COUNT(DISTINCT t.paciente_id) as total FROM tratamentos t
+         WHERE t.status IN ('planejado','em_andamento','ativo')
+         AND NOT EXISTS (
+           SELECT 1 FROM agendamentos a WHERE a.paciente_id = t.paciente_id AND a.data >= $1 AND a.status NOT IN ('cancelado','desmarcado','faltou')
+         )`,
+        [today]
+      ),
+    ]);
+
+    res.json({
+      confirmacao_agenda: Number(agendaSemConfirmacao.rows[0].total),
+      aniversario: Number(aniversariantes.rows[0].total),
+      desmarcacao: Number(desmarcacoes.rows[0].total),
+      faltas: Number(faltas.rows[0].total),
+      faltas_primeira: Number(faltasPrimeira.rows[0].total),
+      inadimplencia: Number(inadimplencia.rows[0].total),
+      orcamento_aberto: Number(orcamentosAbertos.rows[0].total),
+      tratamento_sem_agenda: Number(tratamentoSemAgenda.rows[0].total),
+    });
+  } catch (error) {
+    console.error('Solution counts error:', error.message);
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
 // AUTOMATION SCHEDULER — Job Queue, Triggers & Real Send
 // ═══════════════════════════════════════════════════════════════
 
