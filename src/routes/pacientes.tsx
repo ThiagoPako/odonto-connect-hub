@@ -524,6 +524,7 @@ function PacienteDetailModal({
     { key: "dados", label: "Dados", icon: FileHeart },
     { key: "anamnese", label: "Anamnese", icon: ClipboardList },
     { key: "odontograma", label: "Odontograma", icon: Smile },
+    { key: "historico", label: "Histórico", icon: History },
   ];
 
   return (
@@ -665,6 +666,10 @@ function PacienteDetailModal({
 
           {activeTab === "odontograma" && (
             <OdontogramaTab pacienteId={paciente.id} />
+          )}
+
+          {activeTab === "historico" && (
+            <HistoricoTab pacienteId={paciente.id} />
           )}
         </div>
       </div>
