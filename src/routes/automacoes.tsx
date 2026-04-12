@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import {
   Play, Pause, Plus, Clock, MessageSquare, Mail, Smartphone,
-  Zap, Settings2, Send, CheckCircle2, Edit2, Save, Loader2,
+  Zap, Settings2, Send, CheckCircle2, Edit2, Save, Loader2, RotateCcw,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import {
@@ -94,7 +94,26 @@ function AutomacoesPage() {
                 </button>
               ))}
             </div>
-            <button className="flex items-center gap-2 h-8 px-4 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors">
+            <button
+              onClick={() => {
+                const newFlow: AutomationFlow = {
+                  id: `af${Date.now()}`,
+                  name: "Novo Fluxo",
+                  type: "pos_consulta",
+                  active: false,
+                  trigger: "Definir gatilho...",
+                  steps: [
+                    { id: `s${Date.now()}`, delay: "Imediato", channel: "whatsapp", message: "Olá {{nome}}!", variables: ["nome"] },
+                  ],
+                  stats: { sent: 0, responded: 0, converted: 0 },
+                  createdAt: new Date().toLocaleDateString("pt-BR"),
+                };
+                setFlows((prev) => [newFlow, ...prev]);
+                setSelectedFlow(newFlow);
+                toast.success("Novo fluxo criado! Edite os detalhes.");
+              }}
+              className="flex items-center gap-2 h-8 px-4 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors"
+            >
               <Plus className="h-3.5 w-3.5" /> Novo Fluxo
             </button>
           </div>
@@ -148,11 +167,15 @@ function FollowupAutomationCard({
   const [saving, setSaving] = useState(false);
   const [editMessages, setEditMessages] = useState<Record<string, string>>({});
   const [editDelay, setEditDelay] = useState<number>(30);
+  const [editDelayDays, setEditDelayDays] = useState<Record<string, number>>({});
+  const [editReturnOnReply, setEditReturnOnReply] = useState(true);
 
   useEffect(() => {
     if (config) {
       setEditMessages(config.messages);
       setEditDelay(config.delaySeconds);
+      setEditDelayDays(config.delayDays || {});
+      setEditReturnOnReply(config.returnToQueueOnReply !== false);
     }
   }, [config]);
 
@@ -180,6 +203,8 @@ function FollowupAutomationCard({
       const res = await automationsApi.updateFollowup({
         messages: editMessages,
         delaySeconds: editDelay,
+        delayDays: editDelayDays,
+        returnToQueueOnReply: editReturnOnReply,
       });
       if (res.data) {
         onUpdate(res.data);
@@ -264,7 +289,20 @@ function FollowupAutomationCard({
             <h4 className="text-xs font-semibold text-foreground">Mensagens por Etapa</h4>
             {(config.stages || []).map((stage) => (
               <div key={stage} className="space-y-1.5">
-                <label className="text-xs font-medium text-foreground">{stageLabels[stage] || stage}</label>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-medium text-foreground">{stageLabels[stage] || stage}</label>
+                  <div className="flex items-center gap-2">
+                    <label className="text-[10px] text-muted-foreground">Dias após setagem:</label>
+                    <Input
+                      type="number"
+                      value={editDelayDays[stage] ?? 0}
+                      onChange={(e) => setEditDelayDays((prev) => ({ ...prev, [stage]: Number(e.target.value) }))}
+                      className="w-16 h-6 text-xs"
+                      min={0}
+                      max={365}
+                    />
+                  </div>
+                </div>
                 <Textarea
                   value={editMessages[stage] || ""}
                   onChange={(e) => setEditMessages((prev) => ({ ...prev, [stage]: e.target.value }))}
@@ -275,6 +313,17 @@ function FollowupAutomationCard({
                 <p className="text-[10px] text-muted-foreground">Variáveis: {"{{nome}}"}</p>
               </div>
             ))}
+          </div>
+
+          <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50 border border-border">
+            <div className="flex items-center gap-2">
+              <RotateCcw className="h-4 w-4 text-primary" />
+              <div>
+                <p className="text-xs font-medium text-foreground">Retorno automático à fila</p>
+                <p className="text-[10px] text-muted-foreground">Quando o cliente responder, retorna à fila com prioridade + tag "Recuperação de Lead"</p>
+              </div>
+            </div>
+            <Switch checked={editReturnOnReply} onCheckedChange={setEditReturnOnReply} />
           </div>
 
           <div className="flex justify-end">

@@ -2789,6 +2789,71 @@ app.post('/api/webhook/evolution', async (req, res) => {
       }
     }
 
+    // ─── Auto-return from recovery stage to queue with priority ───
+    if (followupAutomationConfig.returnToQueueOnReply) {
+      try {
+        const { rows: leadStage } = await pool.query('SELECT kanban_stage FROM crm_leads WHERE id = $1', [lead.id]);
+        const currentStage = leadStage[0]?.kanban_stage;
+        if (currentStage && RECOVERY_STAGES.includes(currentStage)) {
+          // Move lead back to "lead" stage (top of funnel)
+          await pool.query(
+            `UPDATE crm_leads SET kanban_stage = 'em_atendimento', status = 'em_atendimento', priority = true, updated_at = NOW() WHERE id = $1`,
+            [lead.id]
+          );
+          // Log movement
+          await pool.query(
+            `INSERT INTO kanban_movements (lead_id, from_stage, to_stage, moved_by_name, reason)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [lead.id, currentStage, 'em_atendimento', 'Sistema (Auto-retorno)', 'Cliente respondeu durante recuperação — retornou à fila com prioridade']
+          ).catch(() => {});
+          // Add "Recuperação de Lead" tag
+          try {
+            // Ensure the tag exists
+            const { rows: existingTag } = await pool.query(
+              "SELECT id FROM lead_tags WHERE name = 'Recuperação de Lead' LIMIT 1"
+            );
+            let tagId;
+            if (existingTag.length > 0) {
+              tagId = existingTag[0].id;
+            } else {
+              tagId = crypto.randomUUID();
+              await pool.query(
+                "INSERT INTO lead_tags (id, name, color) VALUES ($1, $2, $3)",
+                [tagId, 'Recuperação de Lead', '#F59E0B']
+              );
+            }
+            // Assign tag to lead
+            await pool.query(
+              "INSERT INTO lead_tag_assignments (lead_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+              [lead.id.toString(), tagId]
+            );
+          } catch (tagErr) {
+            console.error('Failed to assign recovery tag:', tagErr.message);
+          }
+
+          // Create a new waiting session so lead appears at top of queue
+          const sessionId = crypto.randomUUID();
+          await pool.query(
+            `INSERT INTO attendance_sessions (id, lead_id, lead_phone, status, started_waiting_at)
+             VALUES ($1, $2, $3, 'waiting', NOW())
+             ON CONFLICT DO NOTHING`,
+            [sessionId, lead.id.toString(), phone]
+          ).catch(() => {});
+
+          console.log(`🔄 Lead ${lead.name} (${phone}) replied from recovery stage ${currentStage} → returned to queue with priority`);
+          broadcastSSE('lead_returned_from_recovery', {
+            leadId: lead.id,
+            leadName: lead.name || pushName,
+            phone,
+            fromStage: currentStage,
+            timestamp: new Date().toISOString(),
+          });
+        }
+      } catch (recoveryErr) {
+        console.error('Recovery auto-return error:', recoveryErr.message);
+      }
+    }
+
     // ─── Normal message (queue already assigned) ───
     await persistIncomingMessage({
       msgId,
@@ -2990,6 +3055,8 @@ let followupAutomationConfig = {
     followup_3: 'Oi {{nome}}, última chamada! 🦷 Seu orçamento ainda está disponível e temos horários esta semana. Posso agendar uma avaliação para você?',
   },
   delaySeconds: 30, // delay before sending (gives time to cancel)
+  delayDays: { followup: 0, followup_2: 3, followup_3: 7 }, // days after stage entry before sending
+  returnToQueueOnReply: true, // when client replies from recovery, return to queue with priority
 };
 
 // Load config from DB on startup
@@ -3045,9 +3112,22 @@ async function triggerFollowupAutomation(leadId, toStage) {
 
     console.log(`🤖 Follow-up automation: sending message to ${phone} via ${instanceName} (stage: ${toStage})`);
 
+    // Calculate total delay: delayDays + delaySeconds
+    const stageDays = (followupAutomationConfig.delayDays && followupAutomationConfig.delayDays[toStage]) || 0;
+    const totalDelayMs = (stageDays * 86400000) + ((followupAutomationConfig.delaySeconds || 30) * 1000);
+
+    console.log(`🤖 Follow-up automation: scheduling message to ${phone} via ${instanceName} (stage: ${toStage}, delay: ${stageDays}d + ${followupAutomationConfig.delaySeconds}s)`);
+
     // Send with delay
     setTimeout(async () => {
       try {
+        // Re-check if lead is still in the same stage (may have been moved/replied)
+        const { rows: checkLead } = await pool.query('SELECT kanban_stage FROM crm_leads WHERE id = $1', [leadId]);
+        if (checkLead.length === 0 || checkLead[0].kanban_stage !== toStage) {
+          console.log(`⏭️ Follow-up automation: lead ${leadId} no longer in ${toStage}, skipping send`);
+          return;
+        }
+
         await evolutionFetch(`/message/sendText/${instanceName}`, {
           method: 'POST',
           body: JSON.stringify({ number: phone, text: message }),
@@ -3063,7 +3143,7 @@ async function triggerFollowupAutomation(leadId, toStage) {
       } catch (err) {
         console.error(`❌ Follow-up automation: failed to send to ${phone}:`, err.message);
       }
-    }, (followupAutomationConfig.delaySeconds || 30) * 1000);
+    }, totalDelayMs);
 
   } catch (err) {
     console.error('❌ Follow-up automation error:', err.message);
@@ -3083,13 +3163,17 @@ app.get('/api/automations/followup', async (req, res) => {
 app.put('/api/automations/followup', async (req, res) => {
   try {
     await verifyAdmin(req);
-    const { enabled, messages, stages, delaySeconds } = req.body;
+    const { enabled, messages, stages, delaySeconds, delayDays, returnToQueueOnReply } = req.body;
     if (typeof enabled === 'boolean') followupAutomationConfig.enabled = enabled;
     if (messages && typeof messages === 'object') {
       followupAutomationConfig.messages = { ...followupAutomationConfig.messages, ...messages };
     }
     if (Array.isArray(stages)) followupAutomationConfig.stages = stages;
     if (typeof delaySeconds === 'number') followupAutomationConfig.delaySeconds = delaySeconds;
+    if (delayDays && typeof delayDays === 'object') {
+      followupAutomationConfig.delayDays = { ...followupAutomationConfig.delayDays, ...delayDays };
+    }
+    if (typeof returnToQueueOnReply === 'boolean') followupAutomationConfig.returnToQueueOnReply = returnToQueueOnReply;
 
     // Persist to DB
     await pool.query(
@@ -4230,6 +4314,7 @@ app.get('/api/queue/leads', async (req, res) => {
         l.queue_id,
         l.queue_name,
         l.origem,
+        l.priority,
         s.id as session_id,
         s.status as session_status,
         s.attendant_id,
@@ -4265,6 +4350,7 @@ app.get('/api/queue/leads', async (req, res) => {
         sessionStatus: r.session_status,
         attendantId: r.attendant_id,
         attendantName: r.attendant_name,
+        priority: r.priority || false,
       };
 
       if (r.session_status === 'active' && r.attendant_id) {
@@ -4273,6 +4359,13 @@ app.get('/api/queue/leads', async (req, res) => {
         queueLeads.push(lead);
       }
     }
+
+    // Sort queue: priority leads first, then by last message time
+    queueLeads.sort((a, b) => {
+      if (a.priority && !b.priority) return -1;
+      if (!a.priority && b.priority) return 1;
+      return new Date(b.lastMessageTime || 0) - new Date(a.lastMessageTime || 0);
+    });
 
     res.json({ queue: queueLeads, active: activeLeads });
 
