@@ -4314,6 +4314,7 @@ app.get('/api/queue/leads', async (req, res) => {
         l.queue_id,
         l.queue_name,
         l.origem,
+        l.priority,
         s.id as session_id,
         s.status as session_status,
         s.attendant_id,
