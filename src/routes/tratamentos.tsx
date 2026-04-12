@@ -2,11 +2,12 @@ import { createFileRoute } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import {
   Search, CheckCircle2, Clock, Pause, PlayCircle, CalendarDays,
-  FileText, Plus, Loader2, X, Trash2,
+  FileText, Plus, Loader2, X, Trash2, Download,
 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import { tratamentosApi, dentistasApi, pacientesApi } from "@/lib/vpsApi";
 import { toast } from "sonner";
+import { exportarTratamentosPdf } from "@/lib/tratamentosPdfExport";
 
 export const Route = createFileRoute("/tratamentos")({
   ssr: false,
@@ -163,6 +164,17 @@ function TratamentosPage() {
     loadAll();
   };
 
+  const handleExportPdf = () => {
+    const ativos = tratamentos.filter(t => t.status !== 'finalizado');
+    if (ativos.length === 0) { toast.error("Nenhum tratamento em andamento para exportar."); return; }
+    exportarTratamentosPdf(ativos.map(t => ({
+      ...t,
+      etapas_total: 0,
+      etapas_concluidas: 0,
+    })));
+    toast.success("Relatório gerado com sucesso!");
+  };
+
   const filtered = tratamentos.filter(
     t => !searchTerm || t.paciente_nome.toLowerCase().includes(searchTerm.toLowerCase()) || t.descricao.toLowerCase().includes(searchTerm.toLowerCase())
   );
@@ -198,6 +210,11 @@ function TratamentosPage() {
               <button onClick={() => setShowAddModal(true)}
                 className="h-9 px-3 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 flex items-center gap-1 shrink-0">
                 <Plus className="h-3.5 w-3.5" /> Novo
+              </button>
+              <button onClick={handleExportPdf}
+                className="h-9 w-9 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-muted flex items-center justify-center shrink-0"
+                title="Exportar PDF">
+                <Download className="h-3.5 w-3.5" />
               </button>
             </div>
             <div className="space-y-1.5 max-h-[calc(100vh-200px)] overflow-y-auto">
