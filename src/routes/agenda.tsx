@@ -3,12 +3,12 @@ import { DashboardHeader } from "@/components/DashboardHeader";
 import {
   Clock, CheckCircle2, XCircle, UserCheck, Plus, ChevronLeft, ChevronRight,
   Phone, MessageSquare, AlertTriangle, RefreshCw, Search, ExternalLink, History, HeartPulse,
-  LayoutGrid, List, CalendarDays, Stethoscope, Loader2, X,
+  LayoutGrid, List, CalendarDays, Stethoscope, Loader2,
 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import { mockProfessionals, type Appointment } from "@/data/agendaMockData";
 import { getAlergias, getCondicoesCriticas, getHistorico } from "@/data/registroCentral";
-import { agendaApi, type AgendamentoVPS } from "@/lib/vpsApi";
+import { agendaApi, whatsappApi, type AgendamentoVPS } from "@/lib/vpsApi";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
@@ -205,6 +205,7 @@ function AgendaPage() {
             {viewMode === "calendario" && <CalendarView filtered={filtered} selectedProfessional={selectedProfessional} />}
           </>
         )}
+
         <NovoAgendamentoDialog
           open={showNovoDialog}
           onOpenChange={setShowNovoDialog}
@@ -628,9 +629,7 @@ const PROCEDIMENTOS = [
   "Tratamento de canal", "Implante", "Manutenção ortodôntica",
   "Instalação aparelho", "Clareamento", "Cirurgia", "Prótese", "Outro",
 ];
-
 const SALAS = ["Sala 1", "Sala 2", "Sala 3", "Sala 4"];
-
 const HORARIOS = Array.from({ length: 26 }, (_, i) => {
   const h = Math.floor(i / 2) + 7;
   const m = i % 2 === 0 ? "00" : "30";
@@ -640,6 +639,7 @@ const HORARIOS = Array.from({ length: 26 }, (_, i) => {
 interface NovoAgendamentoForm {
   paciente_nome: string;
   paciente_id: string;
+  telefone: string;
   dentista_id: string;
   data: string;
   hora: string;
@@ -647,6 +647,7 @@ interface NovoAgendamentoForm {
   procedimento: string;
   sala: string;
   observacoes: string;
+  enviar_whatsapp: boolean;
 }
 
 function NovoAgendamentoDialog({
@@ -657,25 +658,37 @@ function NovoAgendamentoDialog({
   defaultDate: string;
   onCreated: () => void;
 }) {
-  const [form, setForm] = useState<NovoAgendamentoForm>({
-    paciente_nome: "", paciente_id: "",
+  const emptyForm: NovoAgendamentoForm = {
+    paciente_nome: "", paciente_id: "", telefone: "",
     dentista_id: mockProfessionals[0]?.id || "",
     data: defaultDate, hora: "08:00", duracao: 30,
-    procedimento: "Consulta avaliação", sala: "Sala 1", observacoes: "",
-  });
+    procedimento: "Consulta avaliação", sala: "Sala 1",
+    observacoes: "", enviar_whatsapp: true,
+  };
+  const [form, setForm] = useState<NovoAgendamentoForm>(emptyForm);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (open) setForm((f) => ({ ...f, data: defaultDate }));
   }, [open, defaultDate]);
 
-  const handleChange = (field: keyof NovoAgendamentoForm, value: string | number) => {
+  const handleChange = (field: keyof NovoAgendamentoForm, value: string | number | boolean) => {
     setForm((f) => ({ ...f, [field]: value }));
+  };
+
+  const formatDateBR = (dateStr: string) => {
+    const [y, m, d] = dateStr.split("-");
+    return `${d}/${m}/${y}`;
   };
 
   const handleSubmit = async () => {
     if (!form.paciente_nome.trim()) { toast.error("Informe o nome do paciente"); return; }
     if (!form.dentista_id) { toast.error("Selecione o profissional"); return; }
+    if (form.enviar_whatsapp && !form.telefone.replace(/\D/g, "")) {
+      toast.error("Informe o telefone para enviar confirmação via WhatsApp");
+      return;
+    }
+
     setSaving(true);
     const prof = mockProfessionals.find((p) => p.id === form.dentista_id);
     const { error } = await agendaApi.create({
@@ -687,17 +700,42 @@ function NovoAgendamentoDialog({
       procedimento: form.procedimento, sala: form.sala,
       observacoes: form.observacoes || undefined, status: "agendado",
     });
-    setSaving(false);
+
     if (error) {
+      setSaving(false);
       toast.error("Erro ao criar agendamento: " + error);
+      return;
+    }
+
+    // Send WhatsApp confirmation
+    if (form.enviar_whatsapp && form.telefone.replace(/\D/g, "")) {
+      const phone = form.telefone.replace(/\D/g, "");
+      const dataBR = formatDateBR(form.data);
+      const msg = `✅ *Agendamento Confirmado*\n\nOlá, ${form.paciente_nome.split(" ")[0]}! 👋\n\nSeu agendamento foi confirmado:\n\n📅 *Data:* ${dataBR}\n⏰ *Horário:* ${form.hora}\n🦷 *Procedimento:* ${form.procedimento}\n👨‍⚕️ *Profissional:* ${prof?.name || "—"}\n\nCaso precise reagendar, entre em contato conosco.\n\n_Odonto Connect_`;
+      try {
+        // Use first available WhatsApp instance
+        const { data: instances } = await whatsappApi.instances();
+        const activeInstance = Array.isArray(instances)
+          ? instances.find((i: any) => i.connectionStatus === "open" || i.state === "open")
+          : null;
+        if (activeInstance) {
+          const instanceName = activeInstance.instance?.instanceName || activeInstance.instanceName || activeInstance.name;
+          await whatsappApi.sendText(instanceName, phone, msg);
+          toast.success("Confirmação enviada via WhatsApp! ✅");
+        } else {
+          toast.warning("Agendamento criado, mas nenhuma instância WhatsApp ativa para enviar confirmação.");
+        }
+      } catch (whatsErr: any) {
+        toast.warning("Agendamento criado, mas falha ao enviar WhatsApp: " + (whatsErr?.message || "erro"));
+      }
     } else {
       toast.success("Agendamento criado com sucesso!");
-      onOpenChange(false);
-      setForm({ paciente_nome: "", paciente_id: "", dentista_id: mockProfessionals[0]?.id || "",
-        data: defaultDate, hora: "08:00", duracao: 30, procedimento: "Consulta avaliação",
-        sala: "Sala 1", observacoes: "" });
-      onCreated();
     }
+
+    setSaving(false);
+    onOpenChange(false);
+    setForm({ ...emptyForm, data: defaultDate });
+    onCreated();
   };
 
   const inputCls = "w-full h-9 px-3 rounded-lg bg-muted border border-border text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary";
@@ -712,12 +750,22 @@ function NovoAgendamentoDialog({
             Novo Agendamento
           </DialogTitle>
         </DialogHeader>
-        <div className="space-y-4 mt-2">
-          <div>
-            <label className={labelCls}>Paciente *</label>
-            <input type="text" placeholder="Nome do paciente" value={form.paciente_nome}
-              onChange={(e) => handleChange("paciente_nome", e.target.value)} className={inputCls} maxLength={100} />
+        <div className="space-y-4 mt-2 max-h-[70vh] overflow-y-auto pr-1">
+          {/* Paciente + Telefone */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={labelCls}>Paciente *</label>
+              <input type="text" placeholder="Nome do paciente" value={form.paciente_nome}
+                onChange={(e) => handleChange("paciente_nome", e.target.value)} className={inputCls} maxLength={100} />
+            </div>
+            <div>
+              <label className={labelCls}>Telefone (WhatsApp)</label>
+              <input type="tel" placeholder="55 11 99999-0000" value={form.telefone}
+                onChange={(e) => handleChange("telefone", e.target.value)} className={inputCls} maxLength={20} />
+            </div>
           </div>
+
+          {/* Data + Hora */}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className={labelCls}>Data *</label>
@@ -730,6 +778,8 @@ function NovoAgendamentoDialog({
               </select>
             </div>
           </div>
+
+          {/* Profissional + Duração */}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className={labelCls}>Profissional *</label>
@@ -744,6 +794,8 @@ function NovoAgendamentoDialog({
               </select>
             </div>
           </div>
+
+          {/* Procedimento + Sala */}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className={labelCls}>Procedimento</label>
@@ -758,12 +810,28 @@ function NovoAgendamentoDialog({
               </select>
             </div>
           </div>
+
+          {/* Observações */}
           <div>
             <label className={labelCls}>Observações</label>
             <textarea placeholder="Observações opcionais..." value={form.observacoes}
               onChange={(e) => handleChange("observacoes", e.target.value)}
               className={`${inputCls} h-16 resize-none py-2`} maxLength={500} />
           </div>
+
+          {/* WhatsApp toggle */}
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={form.enviar_whatsapp}
+              onChange={(e) => handleChange("enviar_whatsapp", e.target.checked)}
+              className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+            />
+            <MessageSquare className="h-3.5 w-3.5 text-success" />
+            <span className="text-xs text-foreground">Enviar confirmação via WhatsApp</span>
+          </label>
+
+          {/* Actions */}
           <div className="flex justify-end gap-2 pt-2">
             <button onClick={() => onOpenChange(false)}
               className="h-9 px-4 rounded-lg text-xs font-medium text-muted-foreground hover:bg-muted transition-colors">
