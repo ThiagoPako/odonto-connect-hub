@@ -1,11 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import {
-  Play, Pause, Plus, Clock, MessageSquare, Mail, Smartphone,
+  Play, Pause, Plus, Clock, MessageSquare,
   Zap, Settings2, Send, CheckCircle2, Edit2, Save, Loader2, RotateCcw,
   Trash2, Copy, GripVertical, ChevronDown, ChevronUp, X, Sparkles,
-  AlertTriangle, Eye, EyeOff, Phone, User, Calendar, XCircle,
-  RefreshCw, ListChecks,
+  AlertTriangle, Eye, EyeOff, ListChecks, RefreshCw,
 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import {
