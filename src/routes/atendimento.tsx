@@ -10,7 +10,7 @@ import {
   Printer, Loader2, Bot, Sparkles, CalendarCheck, MessageSquare,
 } from "lucide-react";
 import { exportarPrescricaoPdf } from "@/lib/prescricaoPdfExport";
-import { AudioRecorder } from "@/components/chat/AudioRecorder";
+import { ClinicalAudioRecorder } from "@/components/ClinicalAudioRecorder";
 import { OdontogramaEditor } from "@/components/OdontogramaChart";
 import {
   mockPacientes, getPacienteById, getPacienteIniciais, getPacienteIdade,
@@ -447,17 +447,7 @@ function AtendimentoPage() {
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-4">
-                      <div className="flex items-center gap-3 flex-1">
-                        <AudioRecorder onRecordingComplete={handleGravacaoCompleta} />
-                        <div>
-                          <p className="text-xs font-medium text-foreground">Gravar consulta</p>
-                          <p className="text-[11px] text-muted-foreground">
-                            Clique no 🎙️ para iniciar. Grave quantas vezes quiser durante o atendimento.
-                          </p>
-                        </div>
-                      </div>
-                    </div>
+                    <ClinicalAudioRecorder onRecordingComplete={handleGravacaoCompleta} />
 
                     {gravacoes.length > 0 && (
                       <div className="mt-3 space-y-2">
