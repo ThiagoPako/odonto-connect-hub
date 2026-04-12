@@ -4360,6 +4360,13 @@ app.get('/api/queue/leads', async (req, res) => {
       }
     }
 
+    // Sort queue: priority leads first, then by last message time
+    queueLeads.sort((a, b) => {
+      if (a.priority && !b.priority) return -1;
+      if (!a.priority && b.priority) return 1;
+      return new Date(b.lastMessageTime || 0) - new Date(a.lastMessageTime || 0);
+    });
+
     res.json({ queue: queueLeads, active: activeLeads });
 
     // Background: batch-sync missing avatars
