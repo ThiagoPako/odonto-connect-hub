@@ -4716,7 +4716,48 @@ app.post('/api/crm/leads/:id/link-patient', async (req, res) => {
 });
 
 
-app.get('/api/crm/leads/:id/movements', async (req, res) => {
+// GET /api/crm/leads/:id/history — appointment history for a lead
+app.get('/api/crm/leads/:id/history', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { id } = req.params;
+
+    // Get lead's paciente_id and phone
+    const { rows: leadRows } = await pool.query('SELECT paciente_id, telefone FROM crm_leads WHERE id = $1', [id]);
+    if (leadRows.length === 0) return res.status(404).json({ error: 'Lead não encontrado' });
+    const { paciente_id, telefone } = leadRows[0];
+
+    let appointments = [];
+    if (paciente_id) {
+      const { rows } = await pool.query(
+        `SELECT a.id, a.data, a.hora, a.procedimento, a.status, d.nome as dentista_nome
+         FROM agendamentos a LEFT JOIN dentistas d ON a.dentista_id = d.id
+         WHERE a.paciente_id = $1 ORDER BY a.data DESC, a.hora DESC LIMIT 10`,
+        [paciente_id]
+      );
+      appointments = rows;
+    } else if (telefone) {
+      // Try matching by phone
+      const clean = telefone.replace(/\D/g, '');
+      const { rows } = await pool.query(
+        `SELECT a.id, a.data, a.hora, a.procedimento, a.status, d.nome as dentista_nome
+         FROM agendamentos a
+         LEFT JOIN dentistas d ON a.dentista_id = d.id
+         LEFT JOIN pacientes p ON a.paciente_id = p.id
+         WHERE REPLACE(REPLACE(REPLACE(p.telefone, ' ', ''), '-', ''), '+', '') LIKE '%' || $1
+         ORDER BY a.data DESC, a.hora DESC LIMIT 10`,
+        [clean.slice(-8)]
+      );
+      appointments = rows;
+    }
+
+    res.json(appointments);
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    res.status(500).json({ error: error.message });
+  }
+});
+
   try {
     await verifyUser(req);
     const { rows } = await pool.query(
