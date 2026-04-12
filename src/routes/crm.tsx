@@ -306,8 +306,11 @@ function KanbanCard({ lead, stageId, onDragStart, onLeadAssigned }: { lead: Kanb
   const [showLevelMenu, setShowLevelMenu] = useState(false);
   const [currentLevel, setCurrentLevel] = useState<ConsciousnessLevel | undefined>(lead.consciousnessLevel);
   const [assuming, setAssuming] = useState(false);
+  const [converting, setConverting] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
   const [activeSession, setActiveSession] = useState<{ active: boolean; attendantName?: string; isCurrentUser?: boolean } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const cardMenuRef = useRef<HTMLDivElement>(null);
 
   const lastContactDate = lead.lastContact instanceof Date ? lead.lastContact : new Date(lead.lastContact);
   const daysAgo = Math.floor((Date.now() - lastContactDate.getTime()) / 86400000);
