@@ -117,6 +117,16 @@ function AgendaPage() {
     }
   }, [fetchAgenda]);
 
+  const handleMoveToProfessional = useCallback(async (appointmentId: string, profId: string, profName: string) => {
+    const { error } = await agendaApi.update(appointmentId, { dentista_id: profId, dentista_nome: profName });
+    if (!error) {
+      toast.success(`Consulta transferida para ${profName}`);
+      fetchAgenda();
+    } else {
+      toast.error("Erro ao transferir: " + error);
+    }
+  }, [fetchAgenda]);
+
   const filtered = appointments
     .filter((a) => selectedProfessional === "all" || a.professional.includes(selectedProfessional))
     .filter((a) => !searchTerm || a.patientName.toLowerCase().includes(searchTerm.toLowerCase()));
