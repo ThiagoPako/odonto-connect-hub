@@ -1787,6 +1787,49 @@ app.post('/api/agenda', async (req, res) => {
   }
 });
 
+// PUT /api/agenda/:id — update appointment (status, etc.)
+app.put('/api/agenda/:id', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { id } = req.params;
+    const { status, hora, duracao, procedimento, observacoes, sala } = req.body;
+    const sets = [];
+    const params = [];
+    if (status) { params.push(status); sets.push(`status = $${params.length}`); }
+    if (hora) { params.push(hora); sets.push(`hora = $${params.length}`); }
+    if (duracao) { params.push(duracao); sets.push(`duracao = $${params.length}`); }
+    if (procedimento) { params.push(procedimento); sets.push(`procedimento = $${params.length}`); }
+    if (observacoes !== undefined) { params.push(observacoes); sets.push(`observacoes = $${params.length}`); }
+    if (sala) { params.push(sala); sets.push(`sala = $${params.length}`); }
+    if (sets.length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
+    params.push(id);
+    const query = `UPDATE agendamentos SET ${sets.join(', ')}, updated_at = NOW() WHERE id = $${params.length} RETURNING *`;
+    const { rows } = await pool.query(query, params);
+    if (rows.length === 0) return res.status(404).json({ error: 'Agendamento não encontrado' });
+
+    // If status changed to 'em_atendimento', update CRM lead
+    if (status === 'em_atendimento' && rows[0].paciente_id) {
+      pool.query(
+        `UPDATE crm_leads SET kanban_stage = 'em_atendimento', status = 'em_atendimento', updated_at = NOW() WHERE id = $1`,
+        [rows[0].paciente_id]
+      ).catch(err => console.error('Failed to update lead status:', err.message));
+    }
+    // If status changed to 'finalizado' or 'realizado', update CRM lead
+    if ((status === 'finalizado' || status === 'realizado') && rows[0].paciente_id) {
+      pool.query(
+        `UPDATE crm_leads SET kanban_stage = 'pos_consulta', status = 'pos_consulta', updated_at = NOW() WHERE id = $1`,
+        [rows[0].paciente_id]
+      ).catch(err => console.error('Failed to update lead status:', err.message));
+    }
+
+    res.json(rows[0]);
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('❌ Error updating appointment:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════
 // FINANCEIRO
 // ═══════════════════════════════════════════════════════════════
