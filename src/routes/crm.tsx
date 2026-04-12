@@ -280,6 +280,10 @@ function RecoveryKanbanView() {
 
 function KanbanCard({ lead, onDragStart }: { lead: KanbanLead; onDragStart: () => void }) {
   const navigate = useNavigate();
+  const [showLevelMenu, setShowLevelMenu] = useState(false);
+  const [currentLevel, setCurrentLevel] = useState<ConsciousnessLevel | undefined>(lead.consciousnessLevel);
+  const menuRef = useRef<HTMLDivElement>(null);
+
   const lastContactDate = lead.lastContact instanceof Date ? lead.lastContact : new Date(lead.lastContact);
   const daysAgo = Math.floor((Date.now() - lastContactDate.getTime()) / 86400000);
   const isStale = daysAgo > 3;
@@ -297,9 +301,28 @@ function KanbanCard({ lead, onDragStart }: { lead: KanbanLead; onDragStart: () =
     toast.success(`Ligando para ${lead.name}...`, { description: lead.phone });
   };
 
-  const level = lead.consciousnessLevel
-    ? consciousnessLevels.find((l) => l.id === lead.consciousnessLevel)
-    : null;
+  const handleSetLevel = (levelId: ConsciousnessLevel) => {
+    setCurrentLevel(levelId);
+    setShowLevelMenu(false);
+    crmApi.updateConsciousness(lead.id, levelId).then(({ error }) => {
+      if (error) {
+        toast.error("Erro ao atualizar nível: " + error);
+        setCurrentLevel(lead.consciousnessLevel);
+      }
+    });
+  };
+
+  // Close menu on outside click
+  useEffect(() => {
+    if (!showLevelMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setShowLevelMenu(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showLevelMenu]);
+
+  const level = currentLevel ? consciousnessLevels.find((l) => l.id === currentLevel) : null;
 
   return (
     <div draggable onDragStart={onDragStart}
@@ -319,14 +342,32 @@ function KanbanCard({ lead, onDragStart }: { lead: KanbanLead; onDragStart: () =
         </button>
       </div>
 
-      {/* Nível de Consciência */}
-      {level && (
-        <div className="flex items-center gap-1.5 mb-2 px-2 py-1 rounded-md text-[10px] font-medium"
-          style={{ backgroundColor: `${level.color}15`, color: level.color }}>
-          <span>{level.icon}</span>
-          <span>{level.label}</span>
-        </div>
-      )}
+      {/* Nível de Consciência — clickable */}
+      <div className="relative mb-2" ref={menuRef}>
+        <button
+          onClick={(e) => { e.stopPropagation(); setShowLevelMenu(!showLevelMenu); }}
+          className={`flex items-center gap-1.5 w-full px-2 py-1 rounded-md text-[10px] font-medium transition-colors ${
+            level ? "" : "bg-muted text-muted-foreground hover:text-foreground"
+          }`}
+          style={level ? { backgroundColor: `${level.color}15`, color: level.color } : undefined}
+        >
+          <Target className="h-3 w-3" />
+          <span>{level ? `${level.icon} ${level.label}` : "Definir nível"}</span>
+        </button>
+        {showLevelMenu && (
+          <div className="absolute z-50 top-full left-0 mt-1 bg-popover border border-border rounded-lg shadow-lg py-1 w-48">
+            {consciousnessLevels.map((cl) => (
+              <button key={cl.id} onClick={(e) => { e.stopPropagation(); handleSetLevel(cl.id); }}
+                className={`flex items-center gap-2 w-full px-3 py-1.5 text-[11px] hover:bg-muted transition-colors text-left ${
+                  currentLevel === cl.id ? "bg-muted font-semibold" : ""
+                }`}>
+                <span>{cl.icon}</span>
+                <span style={{ color: cl.color }}>{cl.label}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
 
       <p className="text-sm font-semibold text-primary mb-2">R$ {lead.value.toLocaleString("pt-BR")}</p>
       <div className="flex items-center justify-between">
