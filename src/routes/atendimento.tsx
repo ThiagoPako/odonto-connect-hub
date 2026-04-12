@@ -132,8 +132,34 @@ function ConsultaPage() {
   const finalizarAtendimento = useCallback(() => {
     setAtendimentoAtivo(false);
     if (timerRef.current) clearInterval(timerRef.current);
-    toast.success("Consulta finalizada e relatório salvo!");
-  }, []);
+
+    // Save to patient consultation history (mock — in production, POST to VPS)
+    if (pacienteSelecionado) {
+      const registro = {
+        id: `cons-${Date.now()}`,
+        pacienteId: pacienteSelecionado.id,
+        data: new Date().toISOString(),
+        duracao: tempoAtendimento,
+        queixa: queixaPrincipal,
+        procedimento: procedimentoRealizado,
+        dente,
+        notas,
+        gravacoes: gravacoes.length,
+        dentista: "Dr. Ricardo Mendes",
+      };
+      // Store in sessionStorage as mock history
+      const key = `consulta_hist_${pacienteSelecionado.id}`;
+      const existing = JSON.parse(sessionStorage.getItem(key) || "[]");
+      existing.push(registro);
+      sessionStorage.setItem(key, JSON.stringify(existing));
+
+      toast.success(`Consulta finalizada — ${formatTime(tempoAtendimento)} de atendimento`);
+    } else {
+      toast.success("Consulta finalizada!");
+    }
+
+    setMostrarGravacao(false);
+  }, [pacienteSelecionado, tempoAtendimento, queixaPrincipal, procedimentoRealizado, dente, notas, gravacoes]);
 
   useEffect(() => {
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
