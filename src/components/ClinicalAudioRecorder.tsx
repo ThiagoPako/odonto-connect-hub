@@ -131,38 +131,55 @@ export function ClinicalAudioRecorder({ onRecordingComplete }: ClinicalAudioReco
     return (
       <button
         onClick={startRecording}
-        className="group flex items-center gap-3 h-14 px-6 rounded-2xl bg-primary text-primary-foreground font-semibold text-sm hover:bg-primary/90 transition-all shadow-md hover:shadow-lg active:scale-[0.97]"
+        className="group flex items-center gap-4 w-full py-5 px-6 rounded-2xl bg-destructive/10 border-2 border-dashed border-destructive/30 hover:border-destructive/60 hover:bg-destructive/15 transition-all active:scale-[0.98] cursor-pointer"
       >
-        <div className="h-9 w-9 rounded-xl bg-primary-foreground/20 flex items-center justify-center group-hover:bg-primary-foreground/30 transition-colors">
-          <Mic className="h-5 w-5" />
+        <div className="relative">
+          <div className="h-16 w-16 rounded-full bg-destructive flex items-center justify-center shadow-lg group-hover:shadow-[0_0_20px_4px_hsl(var(--destructive)/0.35)] transition-all">
+            <Mic className="h-7 w-7 text-destructive-foreground" />
+          </div>
         </div>
-        Gravar Consulta
+        <div className="text-left">
+          <p className="text-base font-bold text-foreground">Gravar Consulta</p>
+          <p className="text-xs text-muted-foreground mt-0.5">Clique para iniciar a gravação do áudio da consulta</p>
+        </div>
       </button>
     );
   }
 
   return (
-    <div className="w-full space-y-3">
-      {/* Recording indicator + timer */}
-      <div className="flex items-center gap-3">
-        <div className="h-3 w-3 rounded-full bg-destructive animate-pulse shadow-[0_0_8px_2px_hsl(var(--destructive)/0.4)]" />
-        <span className="text-xs font-semibold text-destructive uppercase tracking-wider">Gravando</span>
-        <span className="font-mono text-2xl font-bold text-foreground tabular-nums tracking-tight">
-          {formatTime(duration)}
-        </span>
+    <div className="w-full space-y-4">
+      {/* Big recording button + timer row */}
+      <div className="flex items-center gap-5">
+        {/* Pulsating red circle */}
+        <div className="relative shrink-0">
+          <div className="absolute inset-0 rounded-full bg-destructive/30 animate-ping" />
+          <div className="relative h-16 w-16 rounded-full bg-destructive flex items-center justify-center shadow-[0_0_24px_6px_hsl(var(--destructive)/0.4)]">
+            <Mic className="h-7 w-7 text-destructive-foreground" />
+          </div>
+        </div>
+
+        <div className="flex-1">
+          <div className="flex items-center gap-2 mb-1">
+            <div className="h-2.5 w-2.5 rounded-full bg-destructive animate-pulse" />
+            <span className="text-xs font-bold text-destructive uppercase tracking-widest">Gravando consulta</span>
+          </div>
+          <span className="font-mono text-3xl font-black text-foreground tabular-nums tracking-tight">
+            {formatTime(duration)}
+          </span>
+        </div>
       </div>
 
       {/* Large waveform */}
-      <div className="flex items-end justify-center gap-[3px] h-16 bg-destructive/5 rounded-xl px-4 py-2 border border-destructive/15">
+      <div className="flex items-end justify-center gap-[3px] h-20 bg-destructive/5 rounded-2xl px-5 py-3 border border-destructive/20">
         {waveformBars.map((h, i) => (
           <div
             key={i}
             className="rounded-full transition-all duration-75"
             style={{
-              width: 4,
-              height: h,
+              width: 5,
+              height: h * 1.3,
               minHeight: 6,
-              background: `hsl(var(--destructive) / ${0.3 + (h / 56) * 0.5})`,
+              background: `hsl(var(--destructive) / ${0.25 + (h / 56) * 0.55})`,
             }}
           />
         ))}
@@ -172,13 +189,13 @@ export function ClinicalAudioRecorder({ onRecordingComplete }: ClinicalAudioReco
       <div className="flex items-center gap-3">
         <button
           onClick={cancelRecording}
-          className="flex items-center gap-2 h-10 px-4 rounded-xl border border-border text-muted-foreground text-sm font-medium hover:bg-muted/60 hover:text-foreground transition-all"
+          className="flex items-center gap-2 h-11 px-5 rounded-xl border border-border text-muted-foreground text-sm font-medium hover:bg-muted/60 hover:text-foreground transition-all"
         >
           <Trash2 className="h-4 w-4" /> Descartar
         </button>
         <button
           onClick={stopAndSave}
-          className="flex items-center gap-2 h-10 px-5 rounded-xl bg-success text-success-foreground text-sm font-semibold hover:bg-success/90 transition-all shadow-md"
+          className="flex items-center gap-2 h-11 px-6 rounded-xl bg-success text-success-foreground text-sm font-bold hover:bg-success/90 transition-all shadow-md hover:shadow-lg"
         >
           <Square className="h-4 w-4" /> Parar e Salvar
         </button>
