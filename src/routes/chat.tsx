@@ -1433,6 +1433,7 @@ function ChatPage() {
                   tagIds={leadTagAssignments[lead.id] || []}
                   allTags={availableTags}
                   presence={presenceMap[lead.id]?.status}
+                  crmStage={crmStages[lead.id]}
                 />
               ))
             )}
