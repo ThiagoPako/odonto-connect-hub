@@ -501,6 +501,7 @@ function PatientTableView() {
               Nenhum paciente encontrado
             </div>
           )}
+          {!loading && filtered.length > 0 && (
           <table className="w-full">
             <thead className="sticky top-0 bg-card">
               <tr className="border-b border-border text-left">
@@ -544,6 +545,7 @@ function PatientTableView() {
               ))}
             </tbody>
           </table>
+          )}
         </div>
       </div>
 
