@@ -73,6 +73,7 @@ function TratamentosPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [showAddModal, setShowAddModal] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
   const loadAll = useCallback(async () => {
     try {
