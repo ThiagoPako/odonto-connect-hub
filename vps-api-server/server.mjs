@@ -3085,13 +3085,17 @@ app.get('/api/automations/followup', async (req, res) => {
 app.put('/api/automations/followup', async (req, res) => {
   try {
     await verifyAdmin(req);
-    const { enabled, messages, stages, delaySeconds } = req.body;
+    const { enabled, messages, stages, delaySeconds, delayDays, returnToQueueOnReply } = req.body;
     if (typeof enabled === 'boolean') followupAutomationConfig.enabled = enabled;
     if (messages && typeof messages === 'object') {
       followupAutomationConfig.messages = { ...followupAutomationConfig.messages, ...messages };
     }
     if (Array.isArray(stages)) followupAutomationConfig.stages = stages;
     if (typeof delaySeconds === 'number') followupAutomationConfig.delaySeconds = delaySeconds;
+    if (delayDays && typeof delayDays === 'object') {
+      followupAutomationConfig.delayDays = { ...followupAutomationConfig.delayDays, ...delayDays };
+    }
+    if (typeof returnToQueueOnReply === 'boolean') followupAutomationConfig.returnToQueueOnReply = returnToQueueOnReply;
 
     // Persist to DB
     await pool.query(
