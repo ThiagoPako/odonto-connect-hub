@@ -346,6 +346,9 @@ export const crmApi = {
 
 export const orcamentosApi = {
   list: () => vpsApiFetch('/orcamentos'),
+  create: (body: unknown) => vpsApiFetch('/orcamentos', { method: 'POST', body }),
+  update: (id: string, body: unknown) => vpsApiFetch(`/orcamentos/${id}`, { method: 'PUT', body }),
+  delete: (id: string) => vpsApiFetch(`/orcamentos/${id}`, { method: 'DELETE' }),
   updateStatus: (id: string, status: string) =>
     vpsApiFetch<{ success: boolean; budget: any; leadMoved: boolean }>(`/orcamentos/${id}/status`, { method: 'PATCH', body: { status } }),
 };
