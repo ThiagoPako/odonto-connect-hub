@@ -37,6 +37,8 @@ export function MessageInput({ onSendMessage, onPresenceChange, disabled, replyi
   const [message, setMessage] = useState("");
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [showStageMenu, setShowStageMenu] = useState(false);
+  const [updatingStage, setUpdatingStage] = useState(false);
   const [showLocationForm, setShowLocationForm] = useState(false);
   const [showContactForm, setShowContactForm] = useState(false);
   const [showPollForm, setShowPollForm] = useState(false);
