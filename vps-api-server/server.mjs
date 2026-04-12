@@ -1705,13 +1705,13 @@ app.get('/api/pacientes', async (req, res) => {
 app.post('/api/pacientes', async (req, res) => {
   try {
     await verifyUser(req);
-    const { nome, cpf, telefone, email, data_nascimento, endereco, observacoes } = req.body;
+    const { nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes } = req.body;
     const id = crypto.randomUUID();
     await pool.query(
-      'INSERT INTO pacientes (id, nome, cpf, telefone, email, data_nascimento, endereco, observacoes) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
-      [id, nome, cpf, telefone, email, data_nascimento, endereco, observacoes]
+      'INSERT INTO pacientes (id, nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
+      [id, nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes]
     );
-    res.json({ id, nome, cpf, telefone, email });
+    res.json({ id, nome, cpf, telefone, email, sexo, convenio });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -1720,10 +1720,10 @@ app.post('/api/pacientes', async (req, res) => {
 app.put('/api/pacientes/:id', async (req, res) => {
   try {
     await verifyUser(req);
-    const { nome, cpf, telefone, email, data_nascimento, endereco, observacoes } = req.body;
+    const { nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes } = req.body;
     await pool.query(
-      'UPDATE pacientes SET nome=$1, cpf=$2, telefone=$3, email=$4, data_nascimento=$5, endereco=$6, observacoes=$7, updated_at=NOW() WHERE id=$8',
-      [nome, cpf, telefone, email, data_nascimento, endereco, observacoes, req.params.id]
+      'UPDATE pacientes SET nome=$1, cpf=$2, telefone=$3, email=$4, data_nascimento=$5, sexo=$6, convenio=$7, endereco=$8, observacoes=$9, updated_at=NOW() WHERE id=$10',
+      [nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes, req.params.id]
     );
     res.json({ success: true });
   } catch (error) {
