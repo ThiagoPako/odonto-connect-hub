@@ -1180,7 +1180,13 @@ function ChatPage() {
   const filteredByStatus = activeTab === "mine" && filterStatus !== "all" ? baseList.filter((l) => l.status === filterStatus) : baseList;
   const filteredByQueue = filterQueue ? filteredByStatus.filter((l) => l.queueId === filterQueue) : filteredByStatus;
   const filteredByStage = filterStage ? filteredByQueue.filter((l) => crmStages[l.id] === filterStage) : filteredByQueue;
-  const currentList = [...filteredByStage].sort((a, b) => a.lastMessageTime.getTime() - b.lastMessageTime.getTime());
+  const currentList = [...filteredByStage].sort((a, b) => {
+    // Priority leads (recovery) always at the top
+    if (a.priority && !b.priority) return -1;
+    if (!a.priority && b.priority) return 1;
+    // Then by most recent message
+    return b.lastMessageTime.getTime() - a.lastMessageTime.getTime();
+  });
 
   const handleSyncPhotos = useCallback(async () => {
     const instanceName = connectedInstances[0]?.instanceName;
