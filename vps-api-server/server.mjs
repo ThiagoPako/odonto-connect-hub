@@ -1792,7 +1792,7 @@ app.put('/api/agenda/:id', async (req, res) => {
   try {
     await verifyUser(req);
     const { id } = req.params;
-    const { status, hora, duracao, procedimento, observacoes, sala, data } = req.body;
+    const { status, hora, duracao, procedimento, observacoes, sala, data, dentista_id, dentista_nome } = req.body;
     const sets = [];
     const params = [];
     if (status) { params.push(status); sets.push(`status = $${params.length}`); }
@@ -1802,6 +1802,8 @@ app.put('/api/agenda/:id', async (req, res) => {
     if (procedimento) { params.push(procedimento); sets.push(`procedimento = $${params.length}`); }
     if (observacoes !== undefined) { params.push(observacoes); sets.push(`observacoes = $${params.length}`); }
     if (sala) { params.push(sala); sets.push(`sala = $${params.length}`); }
+    if (dentista_id) { params.push(dentista_id); sets.push(`dentista_id = $${params.length}`); }
+    if (dentista_nome) { params.push(dentista_nome); sets.push(`dentista_nome = $${params.length}`); }
     if (sets.length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
     params.push(id);
     const query = `UPDATE agendamentos SET ${sets.join(', ')}, updated_at = NOW() WHERE id = $${params.length} RETURNING *`;

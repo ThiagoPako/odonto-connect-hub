@@ -117,6 +117,16 @@ function AgendaPage() {
     }
   }, [fetchAgenda]);
 
+  const handleMoveToProfessional = useCallback(async (appointmentId: string, profId: string, profName: string) => {
+    const { error } = await agendaApi.update(appointmentId, { dentista_id: profId, dentista_nome: profName });
+    if (!error) {
+      toast.success(`Consulta transferida para ${profName}`);
+      fetchAgenda();
+    } else {
+      toast.error("Erro ao transferir: " + error);
+    }
+  }, [fetchAgenda]);
+
   const filtered = appointments
     .filter((a) => selectedProfessional === "all" || a.professional.includes(selectedProfessional))
     .filter((a) => !searchTerm || a.patientName.toLowerCase().includes(searchTerm.toLowerCase()));
@@ -210,7 +220,7 @@ function AgendaPage() {
           </div>
         ) : (
           <>
-            {viewMode === "kanban" && <KanbanView filtered={filtered} selectedProfessional={selectedProfessional} onAtender={handleAtender} onUpdateStatus={handleUpdateStatus} onReschedule={handleReschedule} />}
+            {viewMode === "kanban" && <KanbanView filtered={filtered} selectedProfessional={selectedProfessional} onAtender={handleAtender} onUpdateStatus={handleUpdateStatus} onReschedule={handleReschedule} onMoveToProfessional={handleMoveToProfessional} />}
             {viewMode === "lista" && <ListView filtered={filtered} onAtender={handleAtender} onUpdateStatus={handleUpdateStatus} onReschedule={handleReschedule} />}
             {viewMode === "calendario" && <CalendarView filtered={filtered} selectedProfessional={selectedProfessional} />}
           </>
@@ -228,15 +238,39 @@ function AgendaPage() {
 }
 
 /* ===================== KANBAN VIEW ===================== */
-function KanbanView({ filtered, selectedProfessional, onAtender, onUpdateStatus, onReschedule }: { filtered: Appointment[]; selectedProfessional: string; onAtender: (a: Appointment) => void; onUpdateStatus: (id: string, status: string) => void; onReschedule: (id: string, date: string, time: string) => void }) {
+function KanbanView({ filtered, selectedProfessional, onAtender, onUpdateStatus, onReschedule, onMoveToProfessional }: {
+  filtered: Appointment[]; selectedProfessional: string;
+  onAtender: (a: Appointment) => void; onUpdateStatus: (id: string, status: string) => void;
+  onReschedule: (id: string, date: string, time: string) => void;
+  onMoveToProfessional: (id: string, profId: string, profName: string) => void;
+}) {
+  const [dragOverProf, setDragOverProf] = useState<string | null>(null);
+
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
       {mockProfessionals
         .filter((p) => selectedProfessional === "all" || p.name.includes(selectedProfessional))
         .map((prof) => {
           const profAppts = filtered.filter((a) => a.professional === prof.name).sort((a, b) => a.time.localeCompare(b.time));
+          const isDragOver = dragOverProf === prof.id;
           return (
-            <div key={prof.id} className="bg-card rounded-xl border border-border overflow-hidden shadow-card hover:shadow-card-hover transition-all duration-300">
+            <div
+              key={prof.id}
+              className={`bg-card rounded-xl border overflow-hidden shadow-card transition-all duration-300 ${
+                isDragOver ? "border-primary shadow-glow-primary ring-2 ring-primary/20" : "border-border hover:shadow-card-hover"
+              }`}
+              onDragOver={(e) => { e.preventDefault(); setDragOverProf(prof.id); }}
+              onDragLeave={() => setDragOverProf(null)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDragOverProf(null);
+                const appointmentId = e.dataTransfer.getData("appointmentId");
+                const fromProf = e.dataTransfer.getData("fromProfessional");
+                if (appointmentId && fromProf !== prof.name) {
+                  onMoveToProfessional(appointmentId, prof.id, prof.name);
+                }
+              }}
+            >
               <div className="flex items-center gap-2 p-3 border-b border-border">
                 <div className={`h-7 w-7 rounded-full ${prof.color} flex items-center justify-center text-[10px] font-bold text-white`}>
                   {prof.initials}
@@ -247,9 +281,11 @@ function KanbanView({ filtered, selectedProfessional, onAtender, onUpdateStatus,
                 </div>
                 <span className="text-[10px] font-medium text-muted-foreground">{profAppts.length} consultas</span>
               </div>
-              <div className="p-2 space-y-1.5 max-h-[500px] overflow-y-auto">
+              <div className={`p-2 space-y-1.5 max-h-[500px] overflow-y-auto min-h-[60px] ${isDragOver ? "bg-primary/5" : ""}`}>
                 {profAppts.length === 0 ? (
-                  <p className="text-xs text-muted-foreground text-center py-6">Sem consultas</p>
+                  <p className="text-xs text-muted-foreground text-center py-6">
+                    {isDragOver ? "Solte aqui para transferir" : "Sem consultas"}
+                  </p>
                 ) : (
                   profAppts.map((appt) => <AppointmentCard key={appt.id} appointment={appt} onAtender={onAtender} onUpdateStatus={onUpdateStatus} onReschedule={onReschedule} />)
                 )}
@@ -517,7 +553,15 @@ function AppointmentCard({ appointment: a, onAtender, onUpdateStatus, onReschedu
   const condicoes = a.pacienteId ? getCondicoesCriticas(a.pacienteId) : [];
 
   return (
-    <div className={`rounded-lg border border-border/50 p-2.5 space-y-2 hover-lift hover:shadow-glow-primary transition-all duration-300 ${a.status === "faltou" ? "opacity-50" : ""}`}>
+    <div
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData("appointmentId", a.id);
+        e.dataTransfer.setData("fromProfessional", a.professional);
+        e.dataTransfer.effectAllowed = "move";
+      }}
+      className={`rounded-lg border border-border/50 p-2.5 space-y-2 hover-lift hover:shadow-glow-primary transition-all duration-300 cursor-grab active:cursor-grabbing ${a.status === "faltou" ? "opacity-50" : ""}`}
+    >
       <div className="flex items-center justify-between">
         <span className="text-xs font-bold text-foreground">{a.time}</span>
         <span className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${cfg.color}`}>{cfg.label}</span>
