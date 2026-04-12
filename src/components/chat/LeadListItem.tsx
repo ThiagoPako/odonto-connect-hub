@@ -1,5 +1,4 @@
 import type { Lead } from "@/data/chatMockData";
-import type { LeadTagApi } from "@/lib/vpsApi";
 import { Clock, UserPlus, CheckCircle2 } from "lucide-react";
 import { LeadAvatar } from "@/components/LeadAvatar";
 
@@ -25,13 +24,11 @@ interface LeadListItemProps {
   onSelect: (lead: Lead) => void;
   showAssignButton?: boolean;
   onAssign?: (lead: Lead) => void;
-  tagIds?: string[];
-  allTags?: LeadTagApi[];
   presence?: PresenceStatus;
   crmStage?: string;
 }
 
-export function LeadListItem({ lead, isSelected, onSelect, showAssignButton, onAssign, tagIds = [], allTags = [], presence = "offline", crmStage }: LeadListItemProps) {
+export function LeadListItem({ lead, isSelected, onSelect, showAssignButton, onAssign, presence = "offline", crmStage }: LeadListItemProps) {
   const timeAgo = getTimeAgo(lead.lastMessageTime);
 
   return (
@@ -112,20 +109,6 @@ export function LeadListItem({ lead, isSelected, onSelect, showAssignButton, onA
           </div>
         ) : (
           <p className="text-xs text-muted-foreground truncate leading-relaxed">{lead.lastMessage}</p>
-        )}
-
-        {tagIds.length > 0 && (
-          <div className="flex items-center gap-1 mt-1 flex-wrap">
-            {allTags.filter((t) => tagIds.includes(t.id)).map((tag) => (
-              <span
-                key={tag.id}
-                className="inline-flex items-center gap-0.5 px-1.5 py-0 rounded-full text-[9px] font-semibold text-white leading-4 shadow-sm"
-                style={{ backgroundColor: tag.color }}
-              >
-                {tag.icon} {tag.name}
-              </span>
-            ))}
-          </div>
         )}
 
         {lead.queueName && (

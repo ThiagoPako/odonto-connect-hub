@@ -43,8 +43,6 @@ interface ChatHeaderProps {
   onTransfer?: (lead: Lead, toAttendantId: string, toAttendantName: string, reason: string) => void;
   onFinishAttendance?: (lead: Lead, outcome: FinishOutcome, options?: { farewellMessage?: string; consciousnessLevel?: ConsciousnessLevel }) => void;
   onReturnToQueue?: (lead: Lead) => void;
-  leadTagIds?: string[];
-  onToggleTag?: (leadId: string, tagId: string) => void;
   messages?: ChatMessage[];
   presence?: PresenceDisplay;
   lastSeen?: Date | null;
@@ -52,7 +50,7 @@ interface ChatHeaderProps {
   onStageChange?: (leadId: string, stage: string) => void;
 }
 
-export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onReturnToQueue, leadTagIds = [], onToggleTag, messages = [], presence = "offline", lastSeen, crmStage, onStageChange }: ChatHeaderProps) {
+export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onReturnToQueue, messages = [], presence = "offline", lastSeen, crmStage, onStageChange }: ChatHeaderProps) {
   const { user: currentUser } = useAuth();
   const { connected: connectedInstances } = useWhatsAppInstances();
   const [calling, setCalling] = useState(false);
