@@ -1,8 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState, useCallback, useEffect, useRef } from "react";
 import { DashboardHeader } from "@/components/DashboardHeader";
-import { AppSidebar } from "@/components/AppSidebar";
-import { SidebarProvider } from "@/components/ui/sidebar";
 import {
   Play, Square, Mic, FileText, Receipt, AlertTriangle, Clock,
   User, Phone, Mail, Heart, Pill, Stethoscope, Send, Plus, Trash2,
@@ -472,13 +470,10 @@ function ConsultaPage() {
   ];
 
   return (
-    <SidebarProvider>
-      <div className="flex min-h-screen w-full bg-background">
-        <AppSidebar />
-        <div className="flex-1 flex flex-col overflow-hidden">
-          <DashboardHeader title="Consulta" />
-          <main className="flex-1 overflow-auto p-6">
-            <div className="max-w-[1600px] mx-auto grid grid-cols-12 gap-6">
+    <div className="flex-1 flex flex-col overflow-hidden">
+      <DashboardHeader title="Consulta" />
+      <main className="flex-1 overflow-auto p-6">
+        <div className="max-w-[1600px] mx-auto grid grid-cols-12 gap-6">
 
               {/* Coluna esquerda — Agenda do Dia */}
               <div className="col-span-3 space-y-4">
@@ -1211,9 +1206,7 @@ function ConsultaPage() {
                 )}
               </div>
             </div>
-          </main>
-        </div>
-      </div>
-    </SidebarProvider>
+      </main>
+    </div>
   );
 }
