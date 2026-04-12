@@ -14,7 +14,7 @@ import {
   Search, Plus, Filter, Phone, Mail, Calendar, DollarSign,
   ChevronRight, MoreHorizontal, UserPlus, ExternalLink,
   Clock, MessageSquare, GripVertical, RefreshCw, RotateCcw,
-  TrendingUp, Target, Loader2, UserCheck,
+  TrendingUp, Target, Loader2, UserCheck, Link2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { whatsappApi } from "@/lib/vpsApi";
@@ -404,11 +404,25 @@ function KanbanCard({ lead, stageId, onDragStart, onLeadAssigned }: { lead: Kanb
     try {
       const { data, error } = await crmApi.convertToPatient(lead.id);
       if (error) {
-        if (error.includes("já cadastrado")) {
-          toast.info(`${lead.name} já está cadastrado como paciente`);
-        } else {
-          toast.error("Erro: " + error);
-        }
+        toast.error("Erro: " + error);
+      } else if (data?.conflict) {
+        // Patient already exists — offer to link
+        const pacId = data.paciente_id;
+        const pacNome = data.paciente_nome || "paciente existente";
+        toast(`${lead.name} já possui cadastro como "${pacNome}"`, {
+          description: "Deseja vincular este lead ao paciente existente?",
+          duration: 15000,
+          action: {
+            label: "Vincular",
+            onClick: async () => {
+              const { error: linkErr } = await crmApi.linkToPatient(lead.id, pacId);
+              if (linkErr) toast.error("Erro ao vincular: " + linkErr);
+              else toast.success(`${lead.name} vinculado a ${pacNome}!`, {
+                action: { label: "Ver paciente", onClick: () => navigate({ to: "/pacientes", search: { pacienteId: pacId } }) },
+              });
+            },
+          },
+        });
       } else {
         toast.success(`${lead.name} cadastrado como paciente!`, {
           action: { label: "Ver paciente", onClick: () => navigate({ to: "/pacientes", search: { pacienteId: data?.paciente_id } }) },
