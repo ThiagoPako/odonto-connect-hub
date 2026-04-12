@@ -84,11 +84,16 @@ function CanaisPage() {
         { method: 'POST', body: { newInstance: pendingSwitchName, message: switchMsg.trim() } }
       );
 
+      if (result.error || !result.data) {
+        throw new Error(result.error || 'Erro desconhecido');
+      }
+
       localStorage.setItem("wa_primary_instance", pendingSwitchName);
       setPrimaryInstance(pendingSwitchName);
 
+      const { sent, failed } = result.data;
       toast.success(
-        `"${pendingSwitchName}" agora é a conexão principal. ${result.sent} paciente(s) notificado(s).${result.failed > 0 ? ` ${result.failed} falha(s).` : ''}`
+        `"${pendingSwitchName}" agora é a conexão principal. ${sent} paciente(s) notificado(s).${failed > 0 ? ` ${failed} falha(s).` : ''}`
       );
       setSwitchDialogOpen(false);
     } catch (err) {
