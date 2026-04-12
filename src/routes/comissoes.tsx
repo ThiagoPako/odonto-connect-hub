@@ -234,18 +234,25 @@ function ComissoesPage() {
                             </span>
                           </td>
                           <td className="px-4 py-2.5 text-center">
-                            {entry.status === "pendente" && (
-                              <button onClick={() => handleStatusChange(entry.id, "aprovado")}
-                                className="px-2 py-0.5 rounded text-[10px] font-medium bg-chart-1/15 text-chart-1 hover:bg-chart-1/25">
-                                Aprovar
+                            <div className="flex items-center justify-center gap-1">
+                              {entry.status === "pendente" && (
+                                <button onClick={() => handleStatusChange(entry.id, "aprovado")}
+                                  className="px-2 py-0.5 rounded text-[10px] font-medium bg-chart-1/15 text-chart-1 hover:bg-chart-1/25">
+                                  Aprovar
+                                </button>
+                              )}
+                              {entry.status === "aprovado" && (
+                                <button onClick={() => handleStatusChange(entry.id, "pago")}
+                                  className="px-2 py-0.5 rounded text-[10px] font-medium bg-success/15 text-success hover:bg-success/25">
+                                  Pagar
+                                </button>
+                              )}
+                              <button onClick={() => setDeleteTarget(entry.id)}
+                                className="p-1 rounded hover:bg-destructive/15 text-muted-foreground hover:text-destructive transition-colors"
+                                title="Excluir comissão">
+                                <Trash2 className="h-3.5 w-3.5" />
                               </button>
-                            )}
-                            {entry.status === "aprovado" && (
-                              <button onClick={() => handleStatusChange(entry.id, "pago")}
-                                className="px-2 py-0.5 rounded text-[10px] font-medium bg-success/15 text-success hover:bg-success/25">
-                                Pagar
-                              </button>
-                            )}
+                            </div>
                           </td>
                         </tr>
                       );
