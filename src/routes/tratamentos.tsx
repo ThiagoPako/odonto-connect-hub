@@ -164,6 +164,17 @@ function TratamentosPage() {
     loadAll();
   };
 
+  const handleExportPdf = () => {
+    const ativos = tratamentos.filter(t => t.status !== 'finalizado');
+    if (ativos.length === 0) { toast.error("Nenhum tratamento em andamento para exportar."); return; }
+    exportarTratamentosPdf(ativos.map(t => ({
+      ...t,
+      etapas_total: 0,
+      etapas_concluidas: 0,
+    })));
+    toast.success("Relatório gerado com sucesso!");
+  };
+
   const filtered = tratamentos.filter(
     t => !searchTerm || t.paciente_nome.toLowerCase().includes(searchTerm.toLowerCase()) || t.descricao.toLowerCase().includes(searchTerm.toLowerCase())
   );
