@@ -405,7 +405,30 @@ function KanbanCard({ lead, stageId, onDragStart, onLeadAssigned }: { lead: Kanb
       const { data, error } = await crmApi.convertToPatient(lead.id);
       if (error) {
         if (error.includes("já cadastrado")) {
-          toast.info(`${lead.name} já está cadastrado como paciente`);
+          // Extract paciente info from response — try to parse from raw fetch
+          const rawRes = await fetch(`${import.meta.env.VITE_API_URL || "https://odontoconnect.tech:3002"}/api/crm/leads/${lead.id}/convert-to-patient`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("token")}` },
+          });
+          const body = await rawRes.json().catch(() => ({}));
+          const pacId = body.paciente_id;
+          const pacNome = body.paciente_nome || "paciente existente";
+
+          toast(`${lead.name} já possui cadastro como "${pacNome}"`, {
+            description: "Deseja vincular este lead ao paciente existente?",
+            duration: 15000,
+            action: {
+              label: "Vincular",
+              onClick: async () => {
+                if (!pacId) return;
+                const { error: linkErr } = await crmApi.linkToPatient(lead.id, pacId);
+                if (linkErr) toast.error("Erro ao vincular: " + linkErr);
+                else toast.success(`${lead.name} vinculado a ${pacNome}!`, {
+                  action: { label: "Ver paciente", onClick: () => navigate({ to: "/pacientes", search: { pacienteId: pacId } }) },
+                });
+              },
+            },
+          });
         } else {
           toast.error("Erro: " + error);
         }
