@@ -3047,9 +3047,22 @@ async function triggerFollowupAutomation(leadId, toStage) {
 
     console.log(`🤖 Follow-up automation: sending message to ${phone} via ${instanceName} (stage: ${toStage})`);
 
+    // Calculate total delay: delayDays + delaySeconds
+    const stageDays = (followupAutomationConfig.delayDays && followupAutomationConfig.delayDays[toStage]) || 0;
+    const totalDelayMs = (stageDays * 86400000) + ((followupAutomationConfig.delaySeconds || 30) * 1000);
+
+    console.log(`🤖 Follow-up automation: scheduling message to ${phone} via ${instanceName} (stage: ${toStage}, delay: ${stageDays}d + ${followupAutomationConfig.delaySeconds}s)`);
+
     // Send with delay
     setTimeout(async () => {
       try {
+        // Re-check if lead is still in the same stage (may have been moved/replied)
+        const { rows: checkLead } = await pool.query('SELECT kanban_stage FROM crm_leads WHERE id = $1', [leadId]);
+        if (checkLead.length === 0 || checkLead[0].kanban_stage !== toStage) {
+          console.log(`⏭️ Follow-up automation: lead ${leadId} no longer in ${toStage}, skipping send`);
+          return;
+        }
+
         await evolutionFetch(`/message/sendText/${instanceName}`, {
           method: 'POST',
           body: JSON.stringify({ number: phone, text: message }),
@@ -3065,7 +3078,7 @@ async function triggerFollowupAutomation(leadId, toStage) {
       } catch (err) {
         console.error(`❌ Follow-up automation: failed to send to ${phone}:`, err.message);
       }
-    }, (followupAutomationConfig.delaySeconds || 30) * 1000);
+    }, totalDelayMs);
 
   } catch (err) {
     console.error('❌ Follow-up automation error:', err.message);
