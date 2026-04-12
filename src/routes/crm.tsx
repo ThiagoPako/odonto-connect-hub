@@ -221,33 +221,58 @@ function normalizeLead(raw: any): KanbanLead {
 }
 
 function SalesKanbanView() {
-  const [leads, setLeads] = useState<Record<SalesStage, KanbanLead[]>>(mockSalesKanban);
+  const emptyStages: Record<SalesStage, KanbanLead[]> = {
+    lead: [], em_atendimento: [], orcamento: [], orcamento_enviado: [], orcamento_aprovado: [],
+  };
+  const [leads, setLeads] = useState<Record<SalesStage, KanbanLead[]>>(emptyStages);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     crmApi.kanban().then(({ data }) => {
       if (data && typeof data === 'object') {
         const raw = data as Record<string, any[]>;
-        const emptyStages: Record<SalesStage, KanbanLead[]> = {
-          lead: [], em_atendimento: [], orcamento: [], orcamento_enviado: [], orcamento_aprovado: [],
-        };
-        for (const key of Object.keys(emptyStages) as SalesStage[]) {
+        const result = { ...emptyStages };
+        for (const key of Object.keys(result) as SalesStage[]) {
           if (Array.isArray(raw[key])) {
-            emptyStages[key] = raw[key].map(normalizeLead);
+            result[key] = raw[key].map(normalizeLead);
           }
         }
-        setLeads(emptyStages);
+        setLeads(result);
       }
+      setLoading(false);
     });
   }, []);
 
+  if (loading) return <div className="flex-1 flex items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
   return <GenericKanbanBoard stages={salesStages} leads={leads} setLeads={setLeads} title="Funil de Vendas" />;
 }
 
 /* ── Recovery Kanban ─────────────────────────────── */
 
 function RecoveryKanbanView() {
-  const [leads, setLeads] = useState<Record<RecoveryStage, KanbanLead[]>>(mockRecoveryKanban);
+  const emptyStages: Record<RecoveryStage, KanbanLead[]> = {
+    followup: [], followup_2: [], followup_3: [], sem_resposta: [], orcamento_reprovado: [], desqualificado: [],
+  };
+  const [leads, setLeads] = useState<Record<RecoveryStage, KanbanLead[]>>(emptyStages);
+  const [loading, setLoading] = useState(true);
 
+  useEffect(() => {
+    crmApi.kanban().then(({ data }) => {
+      if (data && typeof data === 'object') {
+        const raw = data as Record<string, any[]>;
+        const result = { ...emptyStages };
+        for (const key of Object.keys(result) as RecoveryStage[]) {
+          if (Array.isArray(raw[key])) {
+            result[key] = raw[key].map(normalizeLead);
+          }
+        }
+        setLeads(result);
+      }
+      setLoading(false);
+    });
+  }, []);
+
+  if (loading) return <div className="flex-1 flex items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
   return <GenericKanbanBoard stages={recoveryStages} leads={leads} setLeads={setLeads} title="Recuperação de Vendas" />;
 }
 
