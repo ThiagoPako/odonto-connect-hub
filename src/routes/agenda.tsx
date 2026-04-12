@@ -229,7 +229,7 @@ function AgendaPage() {
 }
 
 /* ===================== KANBAN VIEW ===================== */
-function KanbanView({ filtered, selectedProfessional, onAtender, onUpdateStatus }: { filtered: Appointment[]; selectedProfessional: string; onAtender: (a: Appointment) => void; onUpdateStatus: (id: string, status: string) => void }) {
+function KanbanView({ filtered, selectedProfessional, onAtender, onUpdateStatus, onReschedule }: { filtered: Appointment[]; selectedProfessional: string; onAtender: (a: Appointment) => void; onUpdateStatus: (id: string, status: string) => void; onReschedule: (id: string, date: string, time: string) => void }) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
       {mockProfessionals
@@ -252,7 +252,7 @@ function KanbanView({ filtered, selectedProfessional, onAtender, onUpdateStatus 
                 {profAppts.length === 0 ? (
                   <p className="text-xs text-muted-foreground text-center py-6">Sem consultas</p>
                 ) : (
-                  profAppts.map((appt) => <AppointmentCard key={appt.id} appointment={appt} onAtender={onAtender} onUpdateStatus={onUpdateStatus} />)
+                  profAppts.map((appt) => <AppointmentCard key={appt.id} appointment={appt} onAtender={onAtender} onUpdateStatus={onUpdateStatus} onReschedule={onReschedule} />)
                 )}
               </div>
             </div>
@@ -263,7 +263,7 @@ function KanbanView({ filtered, selectedProfessional, onAtender, onUpdateStatus 
 }
 
 /* ===================== LIST VIEW ===================== */
-function ListView({ filtered, onAtender, onUpdateStatus }: { filtered: Appointment[]; onAtender: (a: Appointment) => void; onUpdateStatus: (id: string, status: string) => void }) {
+function ListView({ filtered, onAtender, onUpdateStatus, onReschedule }: { filtered: Appointment[]; onAtender: (a: Appointment) => void; onUpdateStatus: (id: string, status: string) => void; onReschedule: (id: string, date: string, time: string) => void }) {
   const sorted = [...filtered].sort((a, b) => a.time.localeCompare(b.time));
 
   return (
