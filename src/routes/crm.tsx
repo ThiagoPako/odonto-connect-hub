@@ -1,11 +1,10 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import {
   type Patient, type KanbanLead,
   type SalesStage, type RecoveryStage,
   salesStages, recoveryStages,
-  mockSalesKanban, mockRecoveryKanban,
   consciousnessLevels, type ConsciousnessLevel,
 } from "@/data/crmMockData";
 import { crmApi } from "@/lib/vpsApi";
@@ -14,7 +13,7 @@ import {
   Search, Plus, Filter, Phone, Mail, Calendar, DollarSign,
   ChevronRight, MoreHorizontal, UserPlus, ExternalLink,
   Clock, MessageSquare, GripVertical, RefreshCw, RotateCcw,
-  TrendingUp, Target,
+  TrendingUp, Target, Loader2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { whatsappApi } from "@/lib/vpsApi";
