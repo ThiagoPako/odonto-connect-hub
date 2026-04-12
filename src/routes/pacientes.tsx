@@ -1211,6 +1211,8 @@ function HistoricoTab({ pacienteId }: { pacienteId: string }) {
   );
 }
 
+/* ─── Helper: List Card ─── */
+function ListCard({ label, icon: Icon, items, color }: { label: string; icon: typeof AlertTriangle; items: string[]; color: string }) {
   return (
     <div className="bg-muted/30 rounded-xl p-4">
       <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-2 flex items-center gap-1.5">
