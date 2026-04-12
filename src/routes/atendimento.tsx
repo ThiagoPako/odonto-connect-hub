@@ -1038,9 +1038,7 @@ function ConsultaPage() {
                 )}
               </div>
             </div>
-          </main>
-        </div>
-      </div>
-    </SidebarProvider>
+      </main>
+    </div>
   );
 }
