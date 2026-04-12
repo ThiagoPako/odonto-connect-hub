@@ -4657,10 +4657,15 @@ app.post('/api/crm/leads/:id/convert-to-patient', async (req, res) => {
     if (lead.telefone) {
       const clean = lead.telefone.replace(/\D/g, '');
       const { rows: existing } = await pool.query(
-        "SELECT id FROM pacientes WHERE REPLACE(REPLACE(REPLACE(telefone, ' ', ''), '-', ''), '+', '') LIKE '%' || $1", [clean.slice(-8)]
+        "SELECT id, nome, telefone FROM pacientes WHERE REPLACE(REPLACE(REPLACE(telefone, ' ', ''), '-', ''), '+', '') LIKE '%' || $1", [clean.slice(-8)]
       );
       if (existing.length > 0) {
-        return res.status(409).json({ error: 'Paciente já cadastrado com este telefone', paciente_id: existing[0].id });
+        return res.status(409).json({
+          error: 'Paciente já cadastrado com este telefone',
+          paciente_id: existing[0].id,
+          paciente_nome: existing[0].nome,
+          paciente_telefone: existing[0].telefone,
+        });
       }
     }
 
@@ -4671,13 +4676,40 @@ app.post('/api/crm/leads/:id/convert-to-patient', async (req, res) => {
       [pacienteId, lead.nome, lead.cpf || null, lead.telefone || null, lead.email || null, `Origem CRM: ${lead.origem || '—'}. ${lead.observacoes || ''}`]
     );
 
-    // Update lead status to 'paciente'
-    await pool.query("UPDATE crm_leads SET status = 'paciente', updated_at = NOW() WHERE id = $1", [id]);
+    // Update lead status to 'paciente' and link paciente_id
+    await pool.query("UPDATE crm_leads SET status = 'paciente', paciente_id = $2, updated_at = NOW() WHERE id = $1", [id, pacienteId]);
 
     res.json({ success: true, paciente_id: pacienteId, nome: lead.nome });
   } catch (error) {
     if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
     console.error('❌ Error converting lead to patient:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/crm/leads/:id/link-patient — link lead to existing patient
+app.post('/api/crm/leads/:id/link-patient', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { id } = req.params;
+    const { paciente_id } = req.body;
+    if (!paciente_id) return res.status(400).json({ error: 'paciente_id obrigatório' });
+
+    // Verify lead exists
+    const { rows: leadRows } = await pool.query('SELECT id, nome FROM crm_leads WHERE id = $1', [id]);
+    if (leadRows.length === 0) return res.status(404).json({ error: 'Lead não encontrado' });
+
+    // Verify patient exists
+    const { rows: pacRows } = await pool.query('SELECT id, nome FROM pacientes WHERE id = $1', [paciente_id]);
+    if (pacRows.length === 0) return res.status(404).json({ error: 'Paciente não encontrado' });
+
+    // Link: update lead with paciente_id and status
+    await pool.query("UPDATE crm_leads SET paciente_id = $2, status = 'paciente', updated_at = NOW() WHERE id = $1", [id, paciente_id]);
+
+    res.json({ success: true, paciente_id, paciente_nome: pacRows[0].nome, lead_nome: leadRows[0].nome });
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('❌ Error linking lead to patient:', error.message);
     res.status(500).json({ error: error.message });
   }
 });
