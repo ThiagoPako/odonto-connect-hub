@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import {
   Play, Pause, Plus, Clock, MessageSquare, Mail, Smartphone,
-  Zap, Settings2, Send, CheckCircle2, Edit2, Save, Loader2,
+  Zap, Settings2, Send, CheckCircle2, Edit2, Save, Loader2, RotateCcw,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import {
