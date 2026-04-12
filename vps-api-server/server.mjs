@@ -5860,6 +5860,217 @@ app.put('/api/user/preferences', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
+// AI SETTINGS & TRANSCRIPTION
+// ═══════════════════════════════════════════════════════════════
+
+// GET all AI settings (keys masked for frontend)
+app.get('/api/ai/settings', async (req, res) => {
+  try {
+    await verifyAdmin(req);
+    const { rows } = await pool.query('SELECT provider, api_key, model, enabled FROM ai_settings ORDER BY provider');
+    // Mask keys for display
+    const masked = rows.map(r => ({
+      ...r,
+      api_key: r.api_key ? r.api_key.slice(0, 8) + '...' + r.api_key.slice(-4) : '',
+    }));
+    res.json(masked);
+  } catch (err) {
+    if (err.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    if (err.message === 'Admin access required') return res.status(403).json({ error: err.message });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Save/update AI provider settings
+app.post('/api/ai/settings', async (req, res) => {
+  try {
+    await verifyAdmin(req);
+    const { provider, api_key, model, enabled } = req.body;
+    if (!provider) return res.status(400).json({ error: 'Provider é obrigatório' });
+
+    // Only update api_key if a full key is provided (not masked)
+    const isNewKey = api_key && !api_key.includes('...');
+
+    if (isNewKey) {
+      await pool.query(`
+        INSERT INTO ai_settings (provider, api_key, model, enabled, updated_at)
+        VALUES ($1, $2, $3, $4, NOW())
+        ON CONFLICT (provider) DO UPDATE SET
+          api_key = EXCLUDED.api_key,
+          model = EXCLUDED.model,
+          enabled = EXCLUDED.enabled,
+          updated_at = NOW()
+      `, [provider, api_key, model || 'gpt-4o-mini', enabled !== false]);
+    } else {
+      // Update only model/enabled, keep existing key
+      await pool.query(`
+        INSERT INTO ai_settings (provider, api_key, model, enabled, updated_at)
+        VALUES ($1, '', $2, $3, NOW())
+        ON CONFLICT (provider) DO UPDATE SET
+          model = EXCLUDED.model,
+          enabled = EXCLUDED.enabled,
+          updated_at = NOW()
+      `, [provider, model || 'gpt-4o-mini', enabled !== false]);
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    if (err.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    if (err.message === 'Admin access required') return res.status(403).json({ error: err.message });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Transcribe audio via OpenAI Whisper ────────────────────
+app.post('/api/ai/transcribe', express.raw({ type: ['audio/*', 'application/octet-stream'], limit: '50mb' }), async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+
+    // Get OpenAI key from DB
+    const { rows } = await pool.query("SELECT api_key, enabled FROM ai_settings WHERE provider = 'openai' LIMIT 1");
+    if (rows.length === 0 || !rows[0].api_key || !rows[0].enabled) {
+      return res.status(400).json({ error: 'OpenAI não está configurada. Vá em Configurações > IA para adicionar a API key.' });
+    }
+
+    const openaiKey = rows[0].api_key;
+
+    // Save audio to temp file
+    const tmpDir = await mkdtemp(path.join(tmpdir(), 'whisper-'));
+    const audioPath = path.join(tmpDir, 'audio.webm');
+    await writeFile(audioPath, req.body);
+
+    // Call OpenAI Whisper
+    const FormData = (await import('form-data')).default;
+    const form = new FormData();
+    const { createReadStream } = await import('fs');
+    form.append('file', createReadStream(audioPath), { filename: 'audio.webm', contentType: 'audio/webm' });
+    form.append('model', 'whisper-1');
+    form.append('language', 'pt');
+    form.append('response_format', 'text');
+
+    const whisperRes = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${openaiKey}`,
+        ...form.getHeaders(),
+      },
+      body: form,
+    });
+
+    // Cleanup temp
+    await rm(tmpDir, { recursive: true, force: true });
+
+    if (!whisperRes.ok) {
+      const errText = await whisperRes.text();
+      console.error('Whisper error:', whisperRes.status, errText);
+      return res.status(500).json({ error: `Erro na transcrição: ${whisperRes.status}` });
+    }
+
+    const transcription = await whisperRes.text();
+    res.json({ transcription });
+  } catch (err) {
+    console.error('Transcription error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Generate clinical report via OpenAI GPT ────────────────
+app.post('/api/ai/clinical-report', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    const { transcription, queixaPrincipal, procedimento, dente, prescricoes, patientId, patientName, durationSeconds } = req.body;
+
+    if (!transcription) return res.status(400).json({ error: 'Transcrição é obrigatória' });
+
+    // Get OpenAI settings
+    const { rows } = await pool.query("SELECT api_key, model, enabled FROM ai_settings WHERE provider = 'openai' LIMIT 1");
+    if (rows.length === 0 || !rows[0].api_key || !rows[0].enabled) {
+      return res.status(400).json({ error: 'OpenAI não está configurada.' });
+    }
+
+    const { api_key: openaiKey, model } = rows[0];
+
+    const systemPrompt = `Você é um assistente clínico odontológico. Gere um relatório clínico estruturado e profissional baseado na transcrição da consulta. O relatório deve conter:
+
+1. **Resumo da Consulta** — breve parágrafo sobre o que foi discutido
+2. **Queixa do Paciente** — o que o paciente relatou
+3. **Exame Clínico** — achados durante o exame
+4. **Diagnóstico** — hipótese diagnóstica baseada na transcrição
+5. **Procedimento Realizado** — o que foi feito durante a consulta
+6. **Prescrições** — medicamentos prescritos (se houver)
+7. **Orientações ao Paciente** — recomendações pós-consulta
+8. **Plano de Tratamento** — próximos passos sugeridos
+9. **Follow-up Sugerido** — quando retornar e pontos a acompanhar
+
+Use linguagem técnica odontológica mas clara. Formato Markdown.`;
+
+    const userMsg = `## Contexto do atendimento:
+- Queixa principal: ${queixaPrincipal || 'Não informada'}
+- Procedimento: ${procedimento || 'Não informado'}
+- Dente/Região: ${dente || 'Não especificado'}
+- Prescrições: ${prescricoes?.length > 0 ? prescricoes.map(p => `${p.medicamento} ${p.dosagem} ${p.posologia}`).join('; ') : 'Nenhuma'}
+- Duração: ${durationSeconds ? Math.round(durationSeconds / 60) + ' minutos' : 'Não informada'}
+
+## Transcrição da consulta:
+${transcription}`;
+
+    const gptRes = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${openaiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: model || 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userMsg },
+        ],
+        temperature: 0.3,
+        max_tokens: 2000,
+      }),
+    });
+
+    if (!gptRes.ok) {
+      const errText = await gptRes.text();
+      console.error('GPT error:', gptRes.status, errText);
+      return res.status(500).json({ error: `Erro ao gerar relatório: ${gptRes.status}` });
+    }
+
+    const gptData = await gptRes.json();
+    const report = gptData.choices?.[0]?.message?.content || 'Erro: relatório vazio';
+
+    // Save to DB
+    const reportId = randomUUID();
+    await pool.query(`
+      INSERT INTO clinical_reports (id, patient_id, patient_name, attendant_id, attendant_name, transcription, report, queixa_principal, procedimento, dente_regiao, prescricoes, duration_seconds)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+    `, [reportId, patientId || 'unknown', patientName || '', user.id, '', transcription, report, queixaPrincipal || '', procedimento || '', dente || '', JSON.stringify(prescricoes || []), durationSeconds || 0]);
+
+    res.json({ id: reportId, report, transcription });
+  } catch (err) {
+    console.error('Clinical report error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Get clinical reports for a patient ─────────────────────
+app.get('/api/ai/reports/:patientId', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { patientId } = req.params;
+    const { rows } = await pool.query(
+      'SELECT id, patient_name, transcription, report, queixa_principal, procedimento, dente_regiao, prescricoes, duration_seconds, created_at FROM clinical_reports WHERE patient_id = $1 ORDER BY created_at DESC LIMIT 50',
+      [patientId]
+    );
+    res.json(rows);
+  } catch (err) {
+    if (err.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
 // START SERVER
 
 app.listen(PORT, async () => {
@@ -6050,6 +6261,34 @@ app.listen(PORT, async () => {
         created_at TIMESTAMPTZ DEFAULT NOW(),
         updated_at TIMESTAMPTZ DEFAULT NOW()
       )`,
+      `CREATE TABLE IF NOT EXISTS ai_settings (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        provider TEXT NOT NULL UNIQUE,
+        api_key TEXT NOT NULL DEFAULT '',
+        model TEXT DEFAULT 'gpt-4o-mini',
+        enabled BOOLEAN DEFAULT true,
+        config JSONB DEFAULT '{}',
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )`,
+      `CREATE TABLE IF NOT EXISTS clinical_reports (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        patient_id TEXT NOT NULL,
+        patient_name TEXT,
+        attendant_id TEXT,
+        attendant_name TEXT,
+        transcription TEXT,
+        report TEXT,
+        queixa_principal TEXT,
+        procedimento TEXT,
+        dente_regiao TEXT,
+        prescricoes JSONB DEFAULT '[]',
+        duration_seconds INTEGER,
+        audio_url TEXT,
+        metadata JSONB DEFAULT '{}',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_clinical_reports_patient ON clinical_reports(patient_id)`,
     ];
 
     for (const sql of migrations) {

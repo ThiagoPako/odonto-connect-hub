@@ -1,5 +1,5 @@
 # Memory: index.md
-Updated: 4d ago
+Updated: now
 
 # Project Memory
 
@@ -10,6 +10,7 @@ Módulos: Chat/Fila, Phoenix (contingência WA), Dashboard Admin, VoIP, IA Finan
 
 ## Memories
 - [Design tokens](mem://design/tokens) — Dental blue palette, semantic colors, pulse-danger animation
+- [AI Integration](mem://features/ai-integration) — OpenAI Whisper transcription, GPT clinical reports, Manus for Meta Ads
 - [CRM Kanban flow](mem://features/crm-kanban-flow) — Dois kanbans (Vendas + Recuperação), níveis de consciência como tags
 - [Data sync](mem://features/data-sync) — registroCentral.ts como fonte única de verdade
 - [Backend funcional](mem://constraints/functional-backend) — Todo botão deve ter implementação real
