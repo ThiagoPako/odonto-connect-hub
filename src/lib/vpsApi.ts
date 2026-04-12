@@ -715,6 +715,10 @@ export const campaignsApi = {
     vpsApiFetch<{ success: boolean; ativo: boolean }>(`/campaigns/${id}/toggle`, { method: 'PATCH' }),
   duplicate: (id: string) =>
     vpsApiFetch<{ success: boolean; id: string }>(`/campaigns/${id}/duplicate`, { method: 'POST' }),
+  execute: (id: string) =>
+    vpsApiFetch<{ success: boolean; enqueued: number; total: number; skipped: number }>(`/campaigns/${id}/execute`, { method: 'POST' }),
+  jobs: (id: string) =>
+    vpsApiFetch<{ summary: Record<string, number>; recent: Array<{ patient_name: string; patient_phone: string; status: string; sent_at: string; error: string; scheduled_at: string }> }>(`/campaigns/${id}/jobs`),
 };
 
 // ─── Health check ───────────────────────────────────────────

@@ -5792,4 +5792,9 @@ app.listen(PORT, async () => {
   checkInactivePatientsTrigger();
   automationCronInterval = setInterval(checkInactivePatientsTrigger, 6 * 60 * 60 * 1000);
   console.log('   📅 Cron de pacientes inativos ativo (a cada 6h)');
+
+  // Start campaign scheduler (every 60s)
+  processCampaignScheduler();
+  campaignSchedulerInterval = setInterval(processCampaignScheduler, 60 * 1000);
+  console.log('   📢 Campaign scheduler ativo (a cada 60s)');
 });
