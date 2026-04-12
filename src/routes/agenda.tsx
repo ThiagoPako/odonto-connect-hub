@@ -238,15 +238,39 @@ function AgendaPage() {
 }
 
 /* ===================== KANBAN VIEW ===================== */
-function KanbanView({ filtered, selectedProfessional, onAtender, onUpdateStatus, onReschedule }: { filtered: Appointment[]; selectedProfessional: string; onAtender: (a: Appointment) => void; onUpdateStatus: (id: string, status: string) => void; onReschedule: (id: string, date: string, time: string) => void }) {
+function KanbanView({ filtered, selectedProfessional, onAtender, onUpdateStatus, onReschedule, onMoveToProfessional }: {
+  filtered: Appointment[]; selectedProfessional: string;
+  onAtender: (a: Appointment) => void; onUpdateStatus: (id: string, status: string) => void;
+  onReschedule: (id: string, date: string, time: string) => void;
+  onMoveToProfessional: (id: string, profId: string, profName: string) => void;
+}) {
+  const [dragOverProf, setDragOverProf] = useState<string | null>(null);
+
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
       {mockProfessionals
         .filter((p) => selectedProfessional === "all" || p.name.includes(selectedProfessional))
         .map((prof) => {
           const profAppts = filtered.filter((a) => a.professional === prof.name).sort((a, b) => a.time.localeCompare(b.time));
+          const isDragOver = dragOverProf === prof.id;
           return (
-            <div key={prof.id} className="bg-card rounded-xl border border-border overflow-hidden shadow-card hover:shadow-card-hover transition-all duration-300">
+            <div
+              key={prof.id}
+              className={`bg-card rounded-xl border overflow-hidden shadow-card transition-all duration-300 ${
+                isDragOver ? "border-primary shadow-glow-primary ring-2 ring-primary/20" : "border-border hover:shadow-card-hover"
+              }`}
+              onDragOver={(e) => { e.preventDefault(); setDragOverProf(prof.id); }}
+              onDragLeave={() => setDragOverProf(null)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDragOverProf(null);
+                const appointmentId = e.dataTransfer.getData("appointmentId");
+                const fromProf = e.dataTransfer.getData("fromProfessional");
+                if (appointmentId && fromProf !== prof.name) {
+                  onMoveToProfessional(appointmentId, prof.id, prof.name);
+                }
+              }}
+            >
               <div className="flex items-center gap-2 p-3 border-b border-border">
                 <div className={`h-7 w-7 rounded-full ${prof.color} flex items-center justify-center text-[10px] font-bold text-white`}>
                   {prof.initials}
@@ -257,9 +281,11 @@ function KanbanView({ filtered, selectedProfessional, onAtender, onUpdateStatus,
                 </div>
                 <span className="text-[10px] font-medium text-muted-foreground">{profAppts.length} consultas</span>
               </div>
-              <div className="p-2 space-y-1.5 max-h-[500px] overflow-y-auto">
+              <div className={`p-2 space-y-1.5 max-h-[500px] overflow-y-auto min-h-[60px] ${isDragOver ? "bg-primary/5" : ""}`}>
                 {profAppts.length === 0 ? (
-                  <p className="text-xs text-muted-foreground text-center py-6">Sem consultas</p>
+                  <p className="text-xs text-muted-foreground text-center py-6">
+                    {isDragOver ? "Solte aqui para transferir" : "Sem consultas"}
+                  </p>
                 ) : (
                   profAppts.map((appt) => <AppointmentCard key={appt.id} appointment={appt} onAtender={onAtender} onUpdateStatus={onUpdateStatus} onReschedule={onReschedule} />)
                 )}
