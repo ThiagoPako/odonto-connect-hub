@@ -647,67 +647,83 @@ function FlowCard({
 // ─── Flow Detail (read-only view) ──────────────────────────
 
 function FlowDetail({ flow, onEdit, onDelete }: { flow: AutomationFlow; onEdit: () => void; onDelete: () => void }) {
-  const typeInfo = automationTypes.find((t) => t.id === flow.type);
+  const iconData = solutionIconMap[flow.type] || { icon: Zap, gradient: "from-primary to-primary-glow", bg: "bg-primary/10" };
+  const TypeIcon = iconData.icon;
   const responseRate = flow.stats.sent > 0 ? ((flow.stats.responded / flow.stats.sent) * 100).toFixed(1) : "0";
   const conversionRate = flow.stats.responded > 0 ? ((flow.stats.converted / flow.stats.responded) * 100).toFixed(1) : "0";
 
   return (
-    <div className="space-y-4">
-      <div className="bg-card rounded-xl border border-border p-5">
-        <div className="flex items-center justify-between mb-1">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-1">
-              <h3 className="text-base font-semibold text-foreground">{flow.name}</h3>
-              <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${
-                flow.active ? "bg-success/15 text-success" : "bg-muted text-muted-foreground"
-              }`}>
-                {flow.active ? "Ativo" : "Inativo"}
-              </span>
+    <div className="space-y-4 animate-fade-in">
+      {/* Header */}
+      <div className="bg-card rounded-2xl border border-border p-5 shadow-card">
+        <div className="flex items-start justify-between mb-4">
+          <div className="flex items-start gap-3 flex-1 min-w-0">
+            <div className={`h-11 w-11 rounded-xl bg-gradient-to-br ${iconData.gradient} flex items-center justify-center shrink-0`}>
+              <TypeIcon className="h-5 w-5 text-primary-foreground" strokeWidth={1.8} />
             </div>
-            {flow.description && (
-              <p className="text-xs text-muted-foreground mb-2">{flow.description}</p>
-            )}
-            <p className="text-xs text-muted-foreground">
-              Gatilho: <span className="text-foreground font-medium">{flow.trigger}</span>
-            </p>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 mb-1">
+                <h3 className="text-base font-semibold text-foreground font-heading">{flow.name}</h3>
+                <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-semibold ${
+                  flow.active ? "bg-success/15 text-success" : "bg-muted text-muted-foreground"
+                }`}>
+                  {flow.active ? "● Ativo" : "Inativo"}
+                </span>
+              </div>
+              {flow.description && <p className="text-xs text-muted-foreground mb-1.5">{flow.description}</p>}
+              <p className="text-xs text-muted-foreground">Gatilho: <span className="text-foreground font-medium">{flow.trigger}</span></p>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <button onClick={onEdit} className="flex items-center gap-1.5 h-7 px-3 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors">
-              <Edit2 className="h-3 w-3" /> Editar
+          <div className="flex items-center gap-2 shrink-0">
+            <button onClick={onEdit} className="flex items-center gap-1.5 h-8 px-4 rounded-xl bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors">
+              <Edit2 className="h-3.5 w-3.5" /> Editar
             </button>
             <AlertDialog>
               <AlertDialogTrigger asChild>
-                <button className="flex items-center gap-1.5 h-7 px-3 rounded-lg bg-destructive/10 text-destructive text-xs font-medium hover:bg-destructive/20 transition-colors">
-                  <Trash2 className="h-3 w-3" /> Excluir
+                <button className="flex items-center gap-1.5 h-8 px-3 rounded-xl bg-destructive/10 text-destructive text-xs font-medium hover:bg-destructive/20 transition-colors">
+                  <Trash2 className="h-3.5 w-3.5" />
                 </button>
               </AlertDialogTrigger>
               <AlertDialogContent>
                 <AlertDialogHeader>
                   <AlertDialogTitle>Excluir fluxo</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    Tem certeza que deseja excluir "{flow.name}"? Esta ação não pode ser desfeita.
-                  </AlertDialogDescription>
+                  <AlertDialogDescription>Tem certeza que deseja excluir "{flow.name}"?</AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
                   <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                  <AlertDialogAction onClick={onDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-                    Excluir
-                  </AlertDialogAction>
+                  <AlertDialogAction onClick={onDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Excluir</AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>
           </div>
         </div>
-        <div className="grid grid-cols-4 gap-3 mt-4">
-          <StatBox label="Enviadas" value={flow.stats.sent.toString()} />
-          <StatBox label="Respondidas" value={flow.stats.responded.toString()} />
-          <StatBox label="Taxa Resposta" value={`${responseRate}%`} />
-          <StatBox label="Conversões" value={`${conversionRate}%`} />
+        <div className="grid grid-cols-4 gap-3">
+          <div className="bg-muted/50 rounded-xl p-3 text-center">
+            <Send className="h-3.5 w-3.5 text-muted-foreground mx-auto mb-1" />
+            <p className="text-lg font-bold text-foreground font-heading">{flow.stats.sent}</p>
+            <p className="text-[10px] text-muted-foreground">Enviadas</p>
+          </div>
+          <div className="bg-muted/50 rounded-xl p-3 text-center">
+            <MessageSquare className="h-3.5 w-3.5 text-muted-foreground mx-auto mb-1" />
+            <p className="text-lg font-bold text-foreground font-heading">{flow.stats.responded}</p>
+            <p className="text-[10px] text-muted-foreground">Respondidas</p>
+          </div>
+          <div className="bg-chart-2/10 rounded-xl p-3 text-center">
+            <p className="text-lg font-bold text-chart-2 font-heading">{responseRate}%</p>
+            <p className="text-[10px] text-muted-foreground">Taxa Resposta</p>
+          </div>
+          <div className="bg-success/10 rounded-xl p-3 text-center">
+            <p className="text-lg font-bold text-success font-heading">{conversionRate}%</p>
+            <p className="text-[10px] text-muted-foreground">Conversões</p>
+          </div>
         </div>
       </div>
 
-      <div className="bg-card rounded-xl border border-border p-5">
-        <h4 className="text-sm font-semibold text-card-foreground mb-4">Etapas do Fluxo ({flow.steps.length})</h4>
+      {/* Steps */}
+      <div className="bg-card rounded-2xl border border-border p-5 shadow-card">
+        <h4 className="text-sm font-semibold text-card-foreground mb-5 font-heading flex items-center gap-2">
+          <Zap className="h-4 w-4 text-primary" /> Etapas do Fluxo ({flow.steps.length})
+        </h4>
         <div className="space-y-0">
           {flow.steps.map((step, i) => (
             <StepItem key={step.id} step={step} isLast={i === flow.steps.length - 1} index={i} />
@@ -715,23 +731,21 @@ function FlowDetail({ flow, onEdit, onDelete }: { flow: AutomationFlow; onEdit: 
         </div>
       </div>
 
-      {/* Warnings / best practices */}
       {flow.steps.length > 5 && (
-        <div className="flex items-start gap-2 p-3 rounded-lg bg-warning/10 border border-warning/30">
+        <div className="flex items-start gap-2.5 p-4 rounded-xl bg-warning/10 border border-warning/30">
           <AlertTriangle className="h-4 w-4 text-warning shrink-0 mt-0.5" />
-          <p className="text-xs text-warning">
-            <strong>Atenção:</strong> Este fluxo possui {flow.steps.length} etapas. Recomendamos no máximo 3-5 etapas para evitar saturação.
-          </p>
+          <p className="text-xs text-warning"><strong>Atenção:</strong> {flow.steps.length} etapas — recomendamos no máximo 3-5.</p>
         </div>
       )}
 
-      <div className="bg-card rounded-xl border border-border p-5">
-        <h4 className="text-sm font-semibold text-card-foreground mb-3">Variáveis Utilizadas</h4>
+      {/* Variables */}
+      <div className="bg-card rounded-2xl border border-border p-5 shadow-card">
+        <h4 className="text-sm font-semibold text-card-foreground mb-3 font-heading">Variáveis Utilizadas</h4>
         <div className="flex flex-wrap gap-2">
           {Array.from(new Set(flow.steps.flatMap((s) => s.variables))).map((v) => {
             const info = availableVariables.find(av => av.key === v);
             return (
-              <span key={v} className="px-2.5 py-1 rounded-lg bg-primary/10 text-primary text-xs font-mono" title={info?.label}>
+              <span key={v} className="px-3 py-1.5 rounded-xl bg-primary/10 text-primary text-xs font-mono border border-primary/20" title={info?.label}>
                 {"{{" + v + "}}"}
               </span>
             );
@@ -741,7 +755,6 @@ function FlowDetail({ flow, onEdit, onDelete }: { flow: AutomationFlow; onEdit: 
     </div>
   );
 }
-
 // ─── Flow Editor ────────────────────────────────────────────
 
 function FlowEditor({
