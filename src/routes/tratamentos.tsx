@@ -73,6 +73,7 @@ function TratamentosPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [showAddModal, setShowAddModal] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
   const loadAll = useCallback(async () => {
     try {
@@ -152,6 +153,16 @@ function TratamentosPage() {
     loadAll();
   };
 
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    const { error } = await tratamentosApi.delete(deleteTarget) as any;
+    if (error) { toast.error("Erro ao excluir: " + error); return; }
+    toast.success("Tratamento excluído com sucesso!");
+    setDeleteTarget(null);
+    if (selectedId === deleteTarget) { setSelectedId(null); setEtapas([]); }
+    loadAll();
+  };
+
   const filtered = tratamentos.filter(
     t => !searchTerm || t.paciente_nome.toLowerCase().includes(searchTerm.toLowerCase()) || t.descricao.toLowerCase().includes(searchTerm.toLowerCase())
   );
@@ -227,9 +238,16 @@ function TratamentosPage() {
                       <p className="text-xs text-muted-foreground">{selected.dentista_nome} · {selected.descricao}</p>
                       {selected.plano && <p className="text-xs text-muted-foreground mt-0.5">Plano: {selected.plano}</p>}
                     </div>
-                    <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${(treatmentStatusCfg[selected.status] || treatmentStatusCfg.planejado).color}`}>
-                      {(treatmentStatusCfg[selected.status] || treatmentStatusCfg.planejado).label}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${(treatmentStatusCfg[selected.status] || treatmentStatusCfg.planejado).color}`}>
+                        {(treatmentStatusCfg[selected.status] || treatmentStatusCfg.planejado).label}
+                      </span>
+                      <button onClick={() => setDeleteTarget(selected.id)}
+                        className="p-1.5 rounded-lg hover:bg-destructive/15 text-muted-foreground hover:text-destructive transition-colors"
+                        title="Excluir tratamento">
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
                   </div>
                   <div className="grid grid-cols-4 gap-3">
                     <StatBox label="Progresso" value={totalSteps > 0 ? `${progress.toFixed(0)}%` : 'N/A'} />
@@ -309,6 +327,33 @@ function TratamentosPage() {
         </div>
 
         {showAddModal && <AddTratamentoModal onSave={handleCreate} onClose={() => setShowAddModal(false)} />}
+
+        {deleteTarget && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+            <div className="bg-card rounded-2xl border border-border/60 shadow-xl w-full max-w-sm mx-4 animate-slide-up p-6 space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-full bg-destructive/15 flex items-center justify-center">
+                  <Trash2 className="h-5 w-5 text-destructive" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-foreground">Excluir Tratamento</h3>
+                  <p className="text-xs text-muted-foreground">Esta ação não pode ser desfeita.</p>
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground">Tem certeza que deseja excluir este tratamento e todas as suas etapas permanentemente?</p>
+              <div className="flex justify-end gap-2">
+                <button onClick={() => setDeleteTarget(null)}
+                  className="px-4 py-2 rounded-xl text-xs font-medium border border-border hover:bg-muted transition-colors">
+                  Cancelar
+                </button>
+                <button onClick={handleDelete}
+                  className="px-4 py-2 rounded-xl text-xs font-medium bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors">
+                  Excluir
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );
