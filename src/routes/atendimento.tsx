@@ -139,7 +139,24 @@ function ConsultaPage() {
       if (appointmentId && !appointmentSelecionado) {
         const target = converted.find((a: Appointment) => a.id === appointmentId);
         if (target) {
-          handleSelecionarAgendamentoInternal(target);
+          setAppointmentSelecionado(target);
+          const paciente = target.pacienteId ? getPacienteById(target.pacienteId) : mockPacientes.find(p => p.nome === target.patientName);
+          if (paciente) {
+            setPacienteSelecionado(paciente);
+          } else {
+            setPacienteSelecionado({
+              id: target.pacienteId || target.id,
+              nome: target.patientName,
+              telefone: target.phone || "",
+              email: "",
+              dataNascimento: new Date(),
+              cpf: "",
+              endereco: "",
+              sexo: "masculino",
+              criadoEm: new Date(),
+            });
+          }
+          setProcedimentoRealizado(target.procedure);
         }
       }
     } else {
