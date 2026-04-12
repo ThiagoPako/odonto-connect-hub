@@ -484,9 +484,136 @@ function ConsultaPage() {
                   </div>
                 </div>
 
-                {/* Gravação movida para dentro da aba Consulta */}
+                {/* Tabs */}
+                {atendimentoAtivo && (
+                  <div className="animate-slide-up" style={{ animationDelay: "100ms" }}>
+                    <div className="flex gap-1 bg-muted/40 rounded-xl p-1 border border-border/40">
+                      {tabs.map(tab => (
+                        <button
+                          key={tab.key}
+                          onClick={() => setTabAtiva(tab.key)}
+                          className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-medium transition-all duration-200 ${
+                            tabAtiva === tab.key
+                              ? "bg-card text-foreground shadow-sm border border-border/60"
+                              : "text-muted-foreground hover:text-foreground"
+                          }`}
+                        >
+                          <tab.icon className="h-3.5 w-3.5" /> {tab.label}
+                        </button>
+                      ))}
+                    </div>
 
-                      {/* Tab Prescrição */}
+                    <div className="mt-4">
+                      {/* Tab Consulta */}
+                      {tabAtiva === "consulta" && (
+                        <div className="space-y-4">
+                          {/* Botão para abrir gravação */}
+                          <div className="bg-card rounded-2xl border border-border/60 p-4 shadow-card">
+                            <div className="flex items-center justify-between">
+                              <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                                <Mic className="h-4 w-4 text-primary" /> Gravação da Consulta
+                              </h3>
+                              <div className="flex items-center gap-2">
+                                {gravacoes.length > 0 && (
+                                  <button
+                                    onClick={handleTranscreverIA}
+                                    disabled={aiState.status === 'transcribing' || aiState.status === 'generating'}
+                                    className="flex items-center gap-1.5 h-8 px-4 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+                                  >
+                                    {aiState.status === 'transcribing' || aiState.status === 'generating' ? (
+                                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                    ) : (
+                                      <Sparkles className="h-3.5 w-3.5" />
+                                    )}
+                                    {aiState.status === 'transcribing' ? 'Transcrevendo...' :
+                                     aiState.status === 'generating' ? 'Gerando relatório...' :
+                                     aiState.status === 'done' ? 'Gerar novamente' :
+                                     'Transcrever com IA'}
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => setMostrarGravacao(prev => !prev)}
+                                  className={`flex items-center gap-1.5 h-8 px-4 rounded-lg text-xs font-medium transition-colors ${
+                                    mostrarGravacao
+                                      ? "bg-destructive/10 text-destructive hover:bg-destructive/20"
+                                      : "bg-destructive/10 text-destructive hover:bg-destructive/20"
+                                  }`}
+                                >
+                                  <Mic className="h-3.5 w-3.5" />
+                                  {mostrarGravacao ? "Fechar Gravação" : "Gravar Consulta"}
+                                </button>
+                              </div>
+                            </div>
+
+                            {mostrarGravacao && (
+                              <div className="mt-3">
+                                <ClinicalAudioRecorder onRecordingComplete={handleGravacaoCompleta} />
+                              </div>
+                            )}
+
+                            {gravacoes.length > 0 && (
+                              <div className="mt-3 space-y-2">
+                                {gravacoes.map((g, idx) => (
+                                  <div key={g.id} className="flex items-center gap-3 bg-muted/40 rounded-lg px-3 py-2">
+                                    <Activity className="h-3.5 w-3.5 text-primary" />
+                                    <span className="text-xs text-foreground font-medium">Gravação {idx + 1}</span>
+                                    <span className="text-xs text-muted-foreground">{formatTime(g.duration)}</span>
+                                    <span className="text-[10px] text-muted-foreground ml-auto">
+                                      {g.timestamp.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
+                                    </span>
+                                    <button
+                                      onClick={() => setGravacoes(prev => prev.filter(x => x.id !== g.id))}
+                                      className="text-muted-foreground hover:text-destructive transition-colors"
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="bg-card rounded-2xl border border-border/60 p-5 shadow-card">
+                            <label className="text-xs font-semibold text-foreground mb-2 block">Queixa Principal</label>
+                            <textarea
+                              value={queixaPrincipal}
+                              onChange={e => setQueixaPrincipal(e.target.value)}
+                              placeholder="Descreva a queixa principal do paciente..."
+                              className="w-full h-20 rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none"
+                            />
+                          </div>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div className="bg-card rounded-2xl border border-border/60 p-5 shadow-card">
+                              <label className="text-xs font-semibold text-foreground mb-2 block">Procedimento Realizado</label>
+                              <textarea
+                                value={procedimentoRealizado}
+                                onChange={e => setProcedimentoRealizado(e.target.value)}
+                                placeholder="Descreva o procedimento..."
+                                className="w-full h-28 rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none"
+                              />
+                            </div>
+                            <div className="bg-card rounded-2xl border border-border/60 p-5 shadow-card">
+                              <label className="text-xs font-semibold text-foreground mb-2 block">Dente / Região</label>
+                              <input
+                                type="text"
+                                value={dente}
+                                onChange={e => setDente(e.target.value)}
+                                placeholder="Ex: 36, quadrante superior direito..."
+                                className="w-full h-9 rounded-lg border border-border bg-muted/30 px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 mb-3"
+                              />
+                              <label className="text-xs font-semibold text-foreground mb-2 block">Observações Clínicas</label>
+                              <textarea
+                                value={notas}
+                                onChange={e => setNotas(e.target.value)}
+                                placeholder="Observações adicionais..."
+                                className="w-full h-20 rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+
                       {tabAtiva === "prescricao" && (
                         <div className="bg-card rounded-2xl border border-border/60 p-5 shadow-card space-y-4">
                           <div className="flex items-center justify-between">
