@@ -113,6 +113,7 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onRe
     } else {
       const stageInfo = CRM_QUICK_STAGES.find((s) => s.id === stageId);
       setCurrentStage(stageId);
+      onStageChange?.(lead.id, stageId);
       toast.success(`${stageInfo?.emoji} Lead marcado como "${stageInfo?.label}" no CRM`);
     }
     setUpdatingStage(false);
