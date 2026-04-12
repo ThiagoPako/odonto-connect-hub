@@ -124,13 +124,13 @@ function ConsultaPage() {
     setAtendimentoAtivo(true);
     setTempoAtendimento(0);
     timerRef.current = setInterval(() => setTempoAtendimento(t => t + 1), 1000);
-    toast.success(`Atendimento iniciado para ${pacienteSelecionado.nome}`);
+    toast.success(`Consulta iniciada — ${pacienteSelecionado.nome}`);
   }, [pacienteSelecionado]);
 
   const finalizarAtendimento = useCallback(() => {
     setAtendimentoAtivo(false);
     if (timerRef.current) clearInterval(timerRef.current);
-    toast.success("Atendimento finalizado e relatório salvo!");
+    toast.success("Consulta finalizada e relatório salvo!");
   }, []);
 
   useEffect(() => {
