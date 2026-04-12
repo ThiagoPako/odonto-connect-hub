@@ -11,9 +11,10 @@ import {
 } from "lucide-react";
 import { exportarPrescricaoPdf } from "@/lib/prescricaoPdfExport";
 import { AudioRecorder } from "@/components/chat/AudioRecorder";
+import { OdontogramaEditor } from "@/components/OdontogramaChart";
 import {
   mockPacientes, getPacienteById, getPacienteIniciais, getPacienteIdade,
-  getAlergias, getCondicoesCriticas, getAnamnese, temAlertasMedicos,
+  getAlergias, getCondicoesCriticas, getAnamnese, getOdontograma, temAlertasMedicos,
   type Paciente
 } from "@/data/registroCentral";
 import { toast } from "sonner";
@@ -37,7 +38,7 @@ interface GravacaoConsulta {
   timestamp: Date;
 }
 
-type TabAtiva = "consulta" | "prescricao" | "orcamento" | "relatorio";
+type TabAtiva = "consulta" | "odontograma" | "prescricao" | "orcamento" | "relatorio";
 
 function AtendimentoPage() {
   const [pacienteSelecionado, setPacienteSelecionado] = useState<Paciente | null>(null);
@@ -124,8 +125,27 @@ function AtendimentoPage() {
   const condicoes = pacienteSelecionado ? getCondicoesCriticas(pacienteSelecionado.id) : [];
   const temAlertas = pacienteSelecionado ? temAlertasMedicos(pacienteSelecionado.id) : false;
 
+  // Odontograma state — load from patient data
+  const odontogramaBase = pacienteSelecionado ? getOdontograma(pacienteSelecionado.id) : undefined;
+  const [dentesOdontograma, setDentesOdontograma] = useState<import("@/data/pacientesMockData").DenteInfo[]>([]);
+
+  // Reset odontograma when patient changes
+  useEffect(() => {
+    if (odontogramaBase) {
+      setDentesOdontograma([...odontogramaBase.dentes]);
+    } else {
+      // Generate default teeth (all healthy)
+      const allTeeth = [
+        ...[18,17,16,15,14,13,12,11,21,22,23,24,25,26,27,28],
+        ...[48,47,46,45,44,43,42,41,31,32,33,34,35,36,37,38],
+      ].map(n => ({ numero: n, status: "saudavel" as const }));
+      setDentesOdontograma(allTeeth);
+    }
+  }, [pacienteSelecionado?.id]);
+
   const tabs: { key: TabAtiva; label: string; icon: typeof FileText }[] = [
     { key: "consulta", label: "Consulta", icon: Stethoscope },
+    { key: "odontograma", label: "Odontograma", icon: Activity },
     { key: "prescricao", label: "Prescrição", icon: Pill },
     { key: "orcamento", label: "Orçamento", icon: Receipt },
     { key: "relatorio", label: "Relatório IA", icon: FileText },
@@ -460,6 +480,19 @@ function AtendimentoPage() {
                           {prescricoes.length === 0 && (
                             <p className="text-xs text-muted-foreground text-center py-6">Nenhuma prescrição adicionada</p>
                           )}
+                        </div>
+                      )}
+
+                      {/* Tab Odontograma */}
+                      {tabAtiva === "odontograma" && (
+                        <div className="bg-card rounded-2xl border border-border/60 p-5 shadow-card">
+                          <h3 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-4">
+                            <Activity className="h-4 w-4 text-primary" /> Odontograma Interativo
+                          </h3>
+                          <OdontogramaEditor
+                            dentes={dentesOdontograma}
+                            onChange={setDentesOdontograma}
+                          />
                         </div>
                       )}
 
