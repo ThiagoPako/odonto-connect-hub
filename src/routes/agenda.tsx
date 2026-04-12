@@ -506,9 +506,12 @@ function CalendarView({ filtered, selectedProfessional }: { filtered: Appointmen
 }
 
 /* ===================== APPOINTMENT CARD (Kanban) ===================== */
-function AppointmentCard({ appointment: a, onAtender, onUpdateStatus }: { appointment: Appointment; onAtender: (a: Appointment) => void; onUpdateStatus: (id: string, status: string) => void }) {
+function AppointmentCard({ appointment: a, onAtender, onUpdateStatus, onReschedule }: { appointment: Appointment; onAtender: (a: Appointment) => void; onUpdateStatus: (id: string, status: string) => void; onReschedule: (id: string, date: string, time: string) => void }) {
   const cfg = statusConfig[a.status];
   const [showHistory, setShowHistory] = useState(false);
+  const [showReschedule, setShowReschedule] = useState(false);
+  const [rescheduleDate, setRescheduleDate] = useState("");
+  const [rescheduleTime, setRescheduleTime] = useState(a.time);
 
   const historico = a.pacienteId ? getHistorico(a.pacienteId).slice(0, 4) : [];
   const alergias = a.pacienteId ? getAlergias(a.pacienteId) : [];
