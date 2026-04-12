@@ -1,5 +1,6 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useState, useEffect, useCallback, useRef } from "react";
+import { useAuth } from "@/hooks/useAuth";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import {
   type Patient, type KanbanLead,
@@ -7,7 +8,7 @@ import {
   salesStages, recoveryStages,
   consciousnessLevels, type ConsciousnessLevel,
 } from "@/data/crmMockData";
-import { crmApi } from "@/lib/vpsApi";
+import { crmApi, sessionsApi } from "@/lib/vpsApi";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Search, Plus, Filter, Phone, Mail, Calendar, DollarSign,
@@ -199,7 +200,26 @@ function GenericKanbanBoard<T extends string>({
               )}
               <div className="flex-1 overflow-y-auto px-2 pb-2 space-y-2">
                 {stageLeads.map((lead) => (
-                  <KanbanCard key={lead.id} lead={lead} onDragStart={() => handleDragStart(lead, stage.id)} />
+                  <KanbanCard
+                    key={lead.id}
+                    lead={lead}
+                    onDragStart={() => handleDragStart(lead, stage.id)}
+                    onLeadAssigned={(leadId, userName, userInitials, avatarUrl) => {
+                      // Move lead to em_atendimento and update assigned info
+                      setLeads((prev) => {
+                        const updated = { ...prev };
+                        // Remove from current stage
+                        for (const key of Object.keys(updated) as T[]) {
+                          updated[key] = updated[key].filter((l) => l.id !== leadId);
+                        }
+                        // Add to em_atendimento with updated info
+                        const targetStage = ("em_atendimento" in updated ? "em_atendimento" : stage.id) as T;
+                        const updatedLead = { ...lead, assignedTo: userName, assignedInitials: userInitials, assignedAvatarUrl: avatarUrl };
+                        updated[targetStage] = [...(updated[targetStage] || []), updatedLead];
+                        return updated;
+                      });
+                    }}
+                  />
                 ))}
               </div>
             </div>
@@ -217,6 +237,7 @@ function normalizeLead(raw: any): KanbanLead {
     ...raw,
     lastContact: raw.lastContact instanceof Date ? raw.lastContact : new Date(raw.lastContact),
     value: raw.value ?? 0,
+    assignedAvatarUrl: raw.assignedAvatarUrl ?? raw.assigned_avatar_url ?? null,
   };
 }
 
@@ -278,18 +299,39 @@ function RecoveryKanbanView() {
 
 /* ── Kanban Card ─────────────────────────────────── */
 
-function KanbanCard({ lead, onDragStart }: { lead: KanbanLead; onDragStart: () => void }) {
+function KanbanCard({ lead, onDragStart, onLeadAssigned }: { lead: KanbanLead; onDragStart: () => void; onLeadAssigned?: (leadId: string, userName: string, userInitials: string, avatarUrl?: string | null) => void }) {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [showLevelMenu, setShowLevelMenu] = useState(false);
   const [currentLevel, setCurrentLevel] = useState<ConsciousnessLevel | undefined>(lead.consciousnessLevel);
+  const [assuming, setAssuming] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const lastContactDate = lead.lastContact instanceof Date ? lead.lastContact : new Date(lead.lastContact);
   const daysAgo = Math.floor((Date.now() - lastContactDate.getTime()) / 86400000);
   const isStale = daysAgo > 3;
 
-  const handleOpenChat = (e: React.MouseEvent) => {
+  const handleOpenChat = async (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (!user) return;
+    setAssuming(true);
+    try {
+      // 1. Assign attendance session
+      await sessionsApi.assign({ leadId: lead.id });
+      // 2. Move to "em_atendimento" stage
+      await crmApi.updateStage(lead.id, "em_atendimento", "Assumiu atendimento via Kanban");
+      // 3. Assign lead to current user
+      const userInitials = user.name.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase();
+      await crmApi.assign(lead.id, user.id, user.name);
+      // Notify parent to update the kanban state
+      onLeadAssigned?.(lead.id, user.name, userInitials, user.avatar_url);
+      toast.success(`Atendimento de ${lead.name} iniciado`);
+    } catch {
+      toast.error("Erro ao assumir atendimento");
+    } finally {
+      setAssuming(false);
+    }
+    // Navigate to chat
     navigate({ to: "/chat", search: { lead: lead.name } });
   };
 
@@ -372,17 +414,21 @@ function KanbanCard({ lead, onDragStart }: { lead: KanbanLead; onDragStart: () =
       <p className="text-sm font-semibold text-primary mb-2">R$ {lead.value.toLocaleString("pt-BR")}</p>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5">
-          <div className="h-5 w-5 rounded-full bg-primary/15 flex items-center justify-center text-[8px] font-bold text-primary">
-            {lead.assignedInitials}
-          </div>
+          {lead.assignedAvatarUrl ? (
+            <img src={lead.assignedAvatarUrl} alt={lead.assignedTo} className="h-5 w-5 rounded-full object-cover" />
+          ) : (
+            <div className="h-5 w-5 rounded-full bg-primary/15 flex items-center justify-center text-[8px] font-bold text-primary">
+              {lead.assignedInitials}
+            </div>
+          )}
           <span className="text-[11px] text-muted-foreground">{lead.assignedTo}</span>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={handleCall} className="p-1.5 rounded-lg hover:bg-chart-2/15 text-muted-foreground hover:text-chart-2 transition-colors" title={`Ligar: ${lead.phone}`}>
             <Phone className="h-3.5 w-3.5" />
           </button>
-          <button onClick={handleOpenChat} className="p-1.5 rounded-lg hover:bg-primary/15 text-muted-foreground hover:text-primary transition-colors" title={`Chat com ${lead.name}`}>
-            <MessageSquare className="h-3.5 w-3.5" />
+          <button onClick={handleOpenChat} disabled={assuming} className="p-1.5 rounded-lg hover:bg-primary/15 text-muted-foreground hover:text-primary transition-colors disabled:opacity-50" title={assuming ? "Assumindo..." : `Assumir e atender ${lead.name}`}>
+            {assuming ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MessageSquare className="h-3.5 w-3.5" />}
           </button>
           <div className={`flex items-center gap-0.5 ${isStale ? "text-warning" : "text-muted-foreground/50"}`}>
             <Clock className="h-3 w-3" />

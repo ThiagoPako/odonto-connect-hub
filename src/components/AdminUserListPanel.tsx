@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import { adminListUsers, adminUpdateUser } from "@/lib/vpsApi";
+import { useState, useEffect, useRef } from "react";
+import { adminListUsers, adminUpdateUser, adminUploadUserAvatar } from "@/lib/vpsApi";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { Users, RefreshCcw, Pencil, UserX, UserCheck, Search } from "lucide-react";
+import { Users, RefreshCcw, Pencil, UserX, UserCheck, Search, Camera, Loader2 } from "lucide-react";
 
 interface UserRow {
   id: string;
@@ -140,9 +140,13 @@ export function AdminUserListPanel() {
                     key={u.id}
                     className={`flex items-center gap-3 p-3 ${!u.active ? "opacity-50" : ""}`}
                   >
-                    <div className="h-9 w-9 rounded-lg gradient-primary flex items-center justify-center text-[11px] font-bold text-primary-foreground shrink-0">
-                      {initials}
-                    </div>
+                    {u.avatar_url ? (
+                      <img src={u.avatar_url} alt={u.name} className="h-9 w-9 rounded-lg object-cover shrink-0" />
+                    ) : (
+                      <div className="h-9 w-9 rounded-lg gradient-primary flex items-center justify-center text-[11px] font-bold text-primary-foreground shrink-0">
+                        {initials}
+                      </div>
+                    )}
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium truncate">{u.name}</p>
                       <p className="text-xs text-muted-foreground truncate">{u.email}</p>

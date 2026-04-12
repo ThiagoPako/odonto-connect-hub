@@ -25,6 +25,7 @@ export interface KanbanLead {
   value: number;
   assignedTo: string;
   assignedInitials: string;
+  assignedAvatarUrl?: string | null;
   lastContact: Date;
   avatarColor: string;
   avatarUrl?: string | null;

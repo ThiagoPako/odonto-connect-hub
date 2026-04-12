@@ -295,12 +295,28 @@ function SidebarUserFooter({ expanded }: { expanded: boolean }) {
     navigate({ to: "/login" });
   };
 
+  const avatarElement = user?.avatar_url ? (
+    <img src={user.avatar_url} alt={user.name} className="h-8 w-8 rounded-lg object-cover shadow-sm" />
+  ) : (
+    <div className="h-8 w-8 rounded-lg gradient-primary flex items-center justify-center text-[10px] font-bold text-primary-foreground shadow-sm">
+      {initials}
+    </div>
+  );
+
+  const avatarSmall = user?.avatar_url ? (
+    <img src={user.avatar_url} alt={user.name} className="h-7 w-7 rounded-lg object-cover shadow-sm" />
+  ) : (
+    <div className="h-7 w-7 rounded-lg gradient-primary flex items-center justify-center text-[10px] font-bold text-primary-foreground shadow-sm">
+      {initials}
+    </div>
+  );
+
   if (!expanded) {
     return (
       <div className="p-2 border-t border-sidebar-border shrink-0 space-y-1">
-        <div className="h-8 w-8 rounded-lg gradient-primary flex items-center justify-center text-[10px] font-bold text-primary-foreground shadow-sm mx-auto">
-          {initials}
-        </div>
+        <Link to="/perfil" className="block mx-auto w-fit" title="Meu Perfil">
+          {avatarElement}
+        </Link>
         <button
           onClick={handleLogout}
           className="flex items-center justify-center h-8 w-8 mx-auto rounded-lg text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-foreground transition-all"
@@ -314,15 +330,13 @@ function SidebarUserFooter({ expanded }: { expanded: boolean }) {
 
   return (
     <div className="p-2 border-t border-sidebar-border shrink-0 space-y-1">
-      <div className="flex items-center gap-2.5 px-2 py-1.5">
-        <div className="h-7 w-7 rounded-lg gradient-primary flex items-center justify-center text-[10px] font-bold text-primary-foreground shadow-sm">
-          {initials}
-        </div>
+      <Link to="/perfil" className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-sidebar-accent transition-colors">
+        {avatarSmall}
         <div className="flex-1 min-w-0">
           <p className="text-[11px] font-semibold text-sidebar-foreground leading-tight truncate">{user?.name ?? "Usuário"}</p>
           <p className="text-[9px] text-muted-foreground capitalize">{user?.role ?? ""}</p>
         </div>
-      </div>
+      </Link>
       <button
         onClick={handleLogout}
         className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-[12px] text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-foreground transition-all w-full"

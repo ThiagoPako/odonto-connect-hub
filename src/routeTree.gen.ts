@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as TratamentosRouteImport } from './routes/tratamentos'
 import { Route as ReativacaoRouteImport } from './routes/reativacao'
 import { Route as ProntuarioRouteImport } from './routes/prontuario'
+import { Route as PerfilRouteImport } from './routes/perfil'
 import { Route as PainelDentistaRouteImport } from './routes/painel-dentista'
 import { Route as PainelComercialRouteImport } from './routes/painel-comercial'
 import { Route as PacientesRouteImport } from './routes/pacientes'
@@ -49,6 +50,11 @@ const ReativacaoRoute = ReativacaoRouteImport.update({
 const ProntuarioRoute = ProntuarioRouteImport.update({
   id: '/prontuario',
   path: '/prontuario',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PerfilRoute = PerfilRouteImport.update({
+  id: '/perfil',
+  path: '/perfil',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PainelDentistaRoute = PainelDentistaRouteImport.update({
@@ -191,6 +197,7 @@ export interface FileRoutesByFullPath {
   '/pacientes': typeof PacientesRoute
   '/painel-comercial': typeof PainelComercialRoute
   '/painel-dentista': typeof PainelDentistaRoute
+  '/perfil': typeof PerfilRoute
   '/prontuario': typeof ProntuarioRoute
   '/reativacao': typeof ReativacaoRoute
   '/tratamentos': typeof TratamentosRoute
@@ -219,6 +226,7 @@ export interface FileRoutesByTo {
   '/pacientes': typeof PacientesRoute
   '/painel-comercial': typeof PainelComercialRoute
   '/painel-dentista': typeof PainelDentistaRoute
+  '/perfil': typeof PerfilRoute
   '/prontuario': typeof ProntuarioRoute
   '/reativacao': typeof ReativacaoRoute
   '/tratamentos': typeof TratamentosRoute
@@ -248,6 +256,7 @@ export interface FileRoutesById {
   '/pacientes': typeof PacientesRoute
   '/painel-comercial': typeof PainelComercialRoute
   '/painel-dentista': typeof PainelDentistaRoute
+  '/perfil': typeof PerfilRoute
   '/prontuario': typeof ProntuarioRoute
   '/reativacao': typeof ReativacaoRoute
   '/tratamentos': typeof TratamentosRoute
@@ -278,6 +287,7 @@ export interface FileRouteTypes {
     | '/pacientes'
     | '/painel-comercial'
     | '/painel-dentista'
+    | '/perfil'
     | '/prontuario'
     | '/reativacao'
     | '/tratamentos'
@@ -306,6 +316,7 @@ export interface FileRouteTypes {
     | '/pacientes'
     | '/painel-comercial'
     | '/painel-dentista'
+    | '/perfil'
     | '/prontuario'
     | '/reativacao'
     | '/tratamentos'
@@ -334,6 +345,7 @@ export interface FileRouteTypes {
     | '/pacientes'
     | '/painel-comercial'
     | '/painel-dentista'
+    | '/perfil'
     | '/prontuario'
     | '/reativacao'
     | '/tratamentos'
@@ -363,6 +375,7 @@ export interface RootRouteChildren {
   PacientesRoute: typeof PacientesRoute
   PainelComercialRoute: typeof PainelComercialRoute
   PainelDentistaRoute: typeof PainelDentistaRoute
+  PerfilRoute: typeof PerfilRoute
   ProntuarioRoute: typeof ProntuarioRoute
   ReativacaoRoute: typeof ReativacaoRoute
   TratamentosRoute: typeof TratamentosRoute
@@ -389,6 +402,13 @@ declare module '@tanstack/react-router' {
       path: '/prontuario'
       fullPath: '/prontuario'
       preLoaderRoute: typeof ProntuarioRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/perfil': {
+      id: '/perfil'
+      path: '/perfil'
+      fullPath: '/perfil'
+      preLoaderRoute: typeof PerfilRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/painel-dentista': {
@@ -579,6 +599,7 @@ const rootRouteChildren: RootRouteChildren = {
   PacientesRoute: PacientesRoute,
   PainelComercialRoute: PainelComercialRoute,
   PainelDentistaRoute: PainelDentistaRoute,
+  PerfilRoute: PerfilRoute,
   ProntuarioRoute: ProntuarioRoute,
   ReativacaoRoute: ReativacaoRoute,
   TratamentosRoute: TratamentosRoute,
