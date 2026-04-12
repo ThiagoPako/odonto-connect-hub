@@ -1,8 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState, useCallback, useEffect, useRef } from "react";
 import { DashboardHeader } from "@/components/DashboardHeader";
-import { AppSidebar } from "@/components/AppSidebar";
-import { SidebarProvider } from "@/components/ui/sidebar";
 import {
   Play, Square, Mic, FileText, Receipt, AlertTriangle, Clock,
   User, Phone, Mail, Heart, Pill, Stethoscope, Send, Plus, Trash2,
