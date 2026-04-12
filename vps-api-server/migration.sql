@@ -350,6 +350,18 @@ CREATE TABLE IF NOT EXISTS contatos (
 CREATE INDEX IF NOT EXISTS idx_contatos_nome ON contatos(nome);
 CREATE INDEX IF NOT EXISTS idx_contatos_telefone ON contatos(telefone);
 
+-- Odontogramas (per-patient dental chart)
+CREATE TABLE IF NOT EXISTS odontogramas (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  paciente_id UUID NOT NULL REFERENCES pacientes(id) ON DELETE CASCADE,
+  dentes JSONB DEFAULT '[]',
+  observacoes TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(paciente_id)
+);
+CREATE INDEX IF NOT EXISTS idx_odontogramas_paciente ON odontogramas(paciente_id);
+
 -- Insert default tags
 INSERT INTO lead_tags (id, name, color, icon) VALUES
   (gen_random_uuid(), 'Urgente', '#EF4444', '🔴'),
