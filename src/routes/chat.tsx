@@ -96,7 +96,7 @@ function ChatPage() {
     tagsApi.assignments().then(({ data }) => { if (data) setLeadTagAssignments(data); });
 
     // Load CRM stages for all leads
-    crmApi.list({ grouped: 'kanban' }).then(({ data }) => {
+    crmApi.kanban().then(({ data }) => {
       if (!data) return;
       const stages: Record<string, string> = {};
       for (const [stage, leads] of Object.entries(data as Record<string, any[]>)) {
