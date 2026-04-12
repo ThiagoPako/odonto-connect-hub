@@ -1,6 +1,5 @@
 import type { Lead } from "@/data/chatMockData";
 import { Clock, UserPlus, CheckCircle2 } from "lucide-react";
-import { Clock, UserPlus, CheckCircle2 } from "lucide-react";
 import { LeadAvatar } from "@/components/LeadAvatar";
 
 type PresenceStatus = "online" | "offline" | "typing" | "recording";
@@ -23,12 +22,13 @@ interface LeadListItemProps {
   lead: Lead;
   isSelected: boolean;
   onSelect: (lead: Lead) => void;
-  presence?: PresenceStatus;
+  showAssignButton?: boolean;
+  onAssign?: (lead: Lead) => void;
   presence?: PresenceStatus;
   crmStage?: string;
 }
 
-export function LeadListItem({ lead, isSelected, onSelect, showAssignButton, onAssign, tagIds = [], allTags = [], presence = "offline", crmStage }: LeadListItemProps) {
+export function LeadListItem({ lead, isSelected, onSelect, showAssignButton, onAssign, presence = "offline", crmStage }: LeadListItemProps) {
   const timeAgo = getTimeAgo(lead.lastMessageTime);
 
   return (
