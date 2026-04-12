@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import { adminListUsers, adminUpdateUser } from "@/lib/vpsApi";
+import { useState, useEffect, useRef } from "react";
+import { adminListUsers, adminUpdateUser, adminUploadUserAvatar } from "@/lib/vpsApi";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { Users, RefreshCcw, Pencil, UserX, UserCheck, Search } from "lucide-react";
+import { Users, RefreshCcw, Pencil, UserX, UserCheck, Search, Camera, Loader2 } from "lucide-react";
 
 interface UserRow {
   id: string;
