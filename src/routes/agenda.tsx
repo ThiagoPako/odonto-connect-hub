@@ -682,6 +682,28 @@ function NovoAgendamentoDialog({
     }
   }, [open, defaultDate]);
 
+  const handlePatientSearch = (value: string) => {
+    handleChange("paciente_nome", value);
+    handleChange("paciente_id", "");
+    if (value.length >= 2) {
+      const q = value.toLowerCase();
+      setPacientesFiltered(pacientesList.filter((p: any) => p.nome?.toLowerCase().includes(q)).slice(0, 6));
+      setShowSuggestions(true);
+    } else {
+      setShowSuggestions(false);
+    }
+  };
+
+  const selectPaciente = (pac: any) => {
+    setForm((f) => ({
+      ...f,
+      paciente_nome: pac.nome || "",
+      paciente_id: pac.id || "",
+      telefone: pac.telefone || f.telefone,
+    }));
+    setShowSuggestions(false);
+  };
+
   const handleChange = (field: keyof NovoAgendamentoForm, value: string | number | boolean) => {
     setForm((f) => ({ ...f, [field]: value }));
   };
