@@ -79,6 +79,9 @@ export function useRealtimeChat(options: RealtimeChatOptions) {
   const messageStatusRef = useRef<MessageStatusHandler | undefined>(options.onMessageStatus);
   messageStatusRef.current = options.onMessageStatus;
 
+  const leadRecoveryRef = useRef<LeadRecoveryHandler | undefined>(options.onLeadRecoveryReturn);
+  leadRecoveryRef.current = options.onLeadRecoveryReturn;
+
   useEffect(() => {
     let es: EventSource | null = null;
     let retryTimeout: ReturnType<typeof setTimeout>;
