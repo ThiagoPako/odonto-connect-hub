@@ -733,6 +733,113 @@ function AtendimentoPage() {
                                      }}
                                 />
                               </div>
+
+                              {/* Follow-up AI Section */}
+                              <div className="bg-card border border-border/60 rounded-xl p-4 space-y-3">
+                                <div className="flex items-center justify-between">
+                                  <h4 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                                    <CalendarCheck className="h-4 w-4 text-primary" /> Follow-up Automático com IA
+                                  </h4>
+                                  {followupState.status === 'idle' && (
+                                    <button
+                                      onClick={handleGerarFollowup}
+                                      className="h-8 px-4 rounded-lg gradient-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition-all inline-flex items-center gap-1.5 shadow-glow-primary"
+                                    >
+                                      <Sparkles className="h-3 w-3" /> Gerar Follow-up
+                                    </button>
+                                  )}
+                                </div>
+
+                                {followupState.status === 'generating' && (
+                                  <div className="flex items-center gap-3 p-4 rounded-xl bg-primary/5 border border-primary/10">
+                                    <Loader2 className="h-5 w-5 text-primary animate-spin" />
+                                    <p className="text-xs text-foreground">Gerando mensagens personalizadas com base no relatório...</p>
+                                  </div>
+                                )}
+
+                                {followupState.status === 'error' && (
+                                  <div className="bg-destructive/5 border border-destructive/20 rounded-xl p-3 text-center">
+                                    <p className="text-xs text-destructive">{followupState.error}</p>
+                                    <button onClick={handleGerarFollowup} className="mt-2 text-xs text-primary hover:underline font-medium">Tentar novamente</button>
+                                  </div>
+                                )}
+
+                                {(followupState.status === 'ready' || followupState.status === 'scheduling') && (
+                                  <div className="space-y-3">
+                                    {followupState.summary && (
+                                      <p className="text-xs text-muted-foreground italic">{followupState.summary}</p>
+                                    )}
+                                    <div className="space-y-2">
+                                      {followupState.messages.map((msg, i) => (
+                                        <div key={i} className="flex items-start gap-3 p-3 rounded-xl bg-muted/30 border border-border/40">
+                                          <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+                                            <MessageSquare className="h-4 w-4 text-primary" />
+                                          </div>
+                                          <div className="flex-1 min-w-0">
+                                            <div className="flex items-center gap-2 mb-1">
+                                              <span className="text-[10px] font-semibold text-primary bg-primary/10 px-2 py-0.5 rounded-full">
+                                                Dia {msg.delay_days}
+                                              </span>
+                                              <span className="text-[10px] text-muted-foreground">via WhatsApp</span>
+                                            </div>
+                                            <p className="text-xs text-foreground">{msg.text}</p>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                    <div className="flex items-center gap-2 pt-1">
+                                      <button
+                                        onClick={handleAgendarFollowup}
+                                        disabled={followupState.status === 'scheduling'}
+                                        className="h-9 px-5 rounded-lg gradient-primary text-primary-foreground text-xs font-semibold hover:opacity-90 transition-all inline-flex items-center gap-2 shadow-glow-primary disabled:opacity-50"
+                                      >
+                                        {followupState.status === 'scheduling' ? (
+                                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                        ) : (
+                                          <Send className="h-3.5 w-3.5" />
+                                        )}
+                                        Agendar Follow-up
+                                      </button>
+                                      <button
+                                        onClick={handleGerarFollowup}
+                                        className="h-9 px-4 rounded-lg border border-border text-foreground text-xs font-medium hover:bg-muted transition-colors"
+                                      >
+                                        Regenerar
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
+
+                                {followupState.status === 'scheduled' && (
+                                  <div className="space-y-3">
+                                    <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-success/10 text-success text-xs font-medium">
+                                      <CalendarCheck className="h-3 w-3" /> {followupState.jobs.length} mensagens agendadas com sucesso
+                                    </div>
+                                    <div className="space-y-1.5">
+                                      {followupState.jobs.map((job, i) => (
+                                        <div key={job.id} className="flex items-center gap-3 p-2.5 rounded-lg bg-success/5 border border-success/10 text-xs">
+                                          <div className="h-6 w-6 rounded-md bg-success/10 flex items-center justify-center text-success font-bold text-[10px]">
+                                            D{job.delay_days}
+                                          </div>
+                                          <div className="flex-1 min-w-0">
+                                            <p className="text-foreground truncate">{job.message}</p>
+                                            <p className="text-[10px] text-muted-foreground">
+                                              Envio: {new Date(job.scheduled_at).toLocaleDateString('pt-BR')} às {new Date(job.scheduled_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                                            </p>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {followupState.status === 'idle' && (
+                                  <p className="text-xs text-muted-foreground">
+                                    Gere mensagens de follow-up personalizadas baseadas no relatório clínico.
+                                    A IA criará mensagens empáticas considerando o procedimento, orientações e plano de tratamento.
+                                  </p>
+                                )}
+                              </div>
                             </div>
                           )}
 
