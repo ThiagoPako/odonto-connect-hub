@@ -8,8 +8,9 @@ import {
 import { useState, useEffect, useCallback } from "react";
 import { mockProfessionals, type Appointment } from "@/data/agendaMockData";
 import { getAlergias, getCondicoesCriticas, getHistorico } from "@/data/registroCentral";
-import { agendaApi, type AgendamentoVPS } from "@/lib/vpsApi";
+import { agendaApi, whatsappApi, type AgendamentoVPS } from "@/lib/vpsApi";
 import { toast } from "sonner";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 export const Route = createFileRoute("/agenda")({
   ssr: false,
