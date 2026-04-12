@@ -102,6 +102,15 @@ function ComissoesPage() {
     loadAll();
   };
 
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    const { error } = await comissoesApi.delete(deleteTarget);
+    if (error) { toast.error("Erro ao excluir: " + error); return; }
+    toast.success("Comissão excluída com sucesso!");
+    setDeleteTarget(null);
+    loadAll();
+  };
+
   const profComissoes = (dId: string) => comissoes.filter(c => c.dentista_id === dId);
 
   const filteredEntries = (selectedDentista
