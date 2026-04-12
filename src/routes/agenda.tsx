@@ -186,7 +186,7 @@ function AgendaPage() {
                 <option key={p.id} value={p.name.split(" ")[1]}>{p.name}</option>
               ))}
             </select>
-            <button className="flex items-center gap-1.5 h-8 px-3 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors">
+            <button onClick={() => setShowNovoDialog(true)} className="flex items-center gap-1.5 h-8 px-3 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors">
               <Plus className="h-3.5 w-3.5" /> Agendar
             </button>
           </div>
