@@ -4,8 +4,9 @@ import {
   Play, Pause, Plus, Clock, MessageSquare, Mail, Smartphone,
   Zap, Settings2, Send, CheckCircle2, Edit2, Save, Loader2, RotateCcw,
   Trash2, Copy, GripVertical, ChevronDown, ChevronUp, X, Sparkles,
-  AlertTriangle, Eye, EyeOff,
+  AlertTriangle, Eye, EyeOff, BarChart3,
 } from "lucide-react";
+import { AutomationReportPanel } from "@/components/AutomationReportPanel";
 import { useState, useEffect, useCallback } from "react";
 import {
   mockAutomationFlows, automationTypes, triggerOptions, delayOptions,
@@ -39,6 +40,7 @@ function AutomacoesPage() {
   const [showFollowupConfig, setShowFollowupConfig] = useState(false);
   const [editingFlow, setEditingFlow] = useState<AutomationFlow | null>(null);
   const [loadingFlows, setLoadingFlows] = useState(true);
+  const [activeTab, setActiveTab] = useState<"flows" | "report">("flows");
 
   const [followupConfig, setFollowupConfig] = useState<FollowupAutomationConfig | null>(null);
   const [loadingConfig, setLoadingConfig] = useState(true);
@@ -153,6 +155,26 @@ function AutomacoesPage() {
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Automação de Relacionamento" />
       <main className="flex-1 p-6 space-y-6 overflow-auto">
+        {/* Tab switcher */}
+        <div className="flex items-center gap-1 bg-muted rounded-lg p-0.5 w-fit">
+          <button
+            onClick={() => setActiveTab("flows")}
+            className={`px-4 py-1.5 rounded-md text-xs font-medium transition-colors ${activeTab === "flows" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+          >
+            <Zap className="h-3.5 w-3.5 inline mr-1.5" />Fluxos
+          </button>
+          <button
+            onClick={() => setActiveTab("report")}
+            className={`px-4 py-1.5 rounded-md text-xs font-medium transition-colors ${activeTab === "report" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+          >
+            <BarChart3 className="h-3.5 w-3.5 inline mr-1.5" />Relatórios
+          </button>
+        </div>
+
+        {activeTab === "report" ? (
+          <AutomationReportPanel />
+        ) : (
+          <>
         {/* KPIs */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           <MiniKpi icon={Zap} label="Fluxos Ativos" value={flows.filter((f) => f.active).length.toString()} total={flows.length.toString()} />
@@ -275,6 +297,8 @@ function AutomacoesPage() {
             )}
           </div>
         </div>
+          </>
+        )}
       </main>
     </div>
   );

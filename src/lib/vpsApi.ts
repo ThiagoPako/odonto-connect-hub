@@ -695,6 +695,9 @@ export const automationsApi = {
   /** Toggle active status */
   toggleFlow: (id: string) =>
     vpsApiFetch<{ success: boolean; active: boolean }>(`/automations/flows/${id}/toggle`, { method: 'PATCH' }),
+  /** Get automation stats/report */
+  getStats: (days = 30) =>
+    vpsApiFetch<Record<string, unknown>>(`/automations/stats?days=${days}`),
 };
 
 // ─── Health check ───────────────────────────────────────────
