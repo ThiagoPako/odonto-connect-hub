@@ -279,18 +279,39 @@ function RecoveryKanbanView() {
 
 /* ── Kanban Card ─────────────────────────────────── */
 
-function KanbanCard({ lead, onDragStart }: { lead: KanbanLead; onDragStart: () => void }) {
+function KanbanCard({ lead, onDragStart, onLeadAssigned }: { lead: KanbanLead; onDragStart: () => void; onLeadAssigned?: (leadId: string, userName: string, userInitials: string, avatarUrl?: string | null) => void }) {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [showLevelMenu, setShowLevelMenu] = useState(false);
   const [currentLevel, setCurrentLevel] = useState<ConsciousnessLevel | undefined>(lead.consciousnessLevel);
+  const [assuming, setAssuming] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const lastContactDate = lead.lastContact instanceof Date ? lead.lastContact : new Date(lead.lastContact);
   const daysAgo = Math.floor((Date.now() - lastContactDate.getTime()) / 86400000);
   const isStale = daysAgo > 3;
 
-  const handleOpenChat = (e: React.MouseEvent) => {
+  const handleOpenChat = async (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (!user) return;
+    setAssuming(true);
+    try {
+      // 1. Assign attendance session
+      await sessionsApi.assign({ leadId: lead.id });
+      // 2. Move to "em_atendimento" stage
+      await crmApi.updateStage(lead.id, "em_atendimento", "Assumiu atendimento via Kanban");
+      // 3. Assign lead to current user
+      const userInitials = user.name.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase();
+      await crmApi.assign(lead.id, user.id, user.name);
+      // Notify parent to update the kanban state
+      onLeadAssigned?.(lead.id, user.name, userInitials, user.avatar_url);
+      toast.success(`Atendimento de ${lead.name} iniciado`);
+    } catch {
+      toast.error("Erro ao assumir atendimento");
+    } finally {
+      setAssuming(false);
+    }
+    // Navigate to chat
     navigate({ to: "/chat", search: { lead: lead.name } });
   };
 
