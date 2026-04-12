@@ -4660,8 +4660,9 @@ app.post('/api/crm/leads/:id/convert-to-patient', async (req, res) => {
         "SELECT id, nome, telefone FROM pacientes WHERE REPLACE(REPLACE(REPLACE(telefone, ' ', ''), '-', ''), '+', '') LIKE '%' || $1", [clean.slice(-8)]
       );
       if (existing.length > 0) {
-        return res.status(409).json({
-          error: 'Paciente já cadastrado com este telefone',
+        return res.json({
+          success: false,
+          conflict: true,
           paciente_id: existing[0].id,
           paciente_nome: existing[0].nome,
           paciente_telefone: existing[0].telefone,
