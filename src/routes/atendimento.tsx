@@ -441,46 +441,45 @@ function ConsultaPage() {
               {/* Coluna central — Atendimento */}
               <div className="col-span-9 space-y-4">
 
-                {/* Barra de controle do atendimento */}
-                <div className={`rounded-2xl border p-4 transition-all duration-500 animate-slide-up ${
+                {/* Barra de controle do atendimento — sutil */}
+                <div className={`rounded-xl border px-4 py-3 transition-all duration-300 animate-slide-up ${
                   atendimentoAtivo
-                    ? "bg-primary/5 border-primary/30 shadow-[0_0_24px_-6px_hsl(var(--primary)/0.25)] ring-1 ring-primary/10"
+                    ? "bg-card border-border/60 shadow-sm"
                     : "bg-card border-border/60 shadow-card"
                 }`}>
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                      {atendimentoAtivo ? (
-                        <button
-                          onClick={finalizarAtendimento}
-                          className="flex items-center gap-2 h-10 px-5 rounded-xl bg-destructive text-destructive-foreground text-sm font-semibold hover:bg-destructive/90 transition-all shadow-md"
-                        >
-                          <Square className="h-4 w-4" /> Finalizar
-                        </button>
-                      ) : (
+                    <div className="flex items-center gap-3">
+                      {!atendimentoAtivo && (
                         <button
                           onClick={iniciarAtendimento}
                           disabled={!pacienteSelecionado}
-                          className="flex items-center gap-2 h-10 px-5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-md hover:shadow-lg"
+                          className="flex items-center gap-2 h-9 px-4 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                         >
-                          <Play className="h-4 w-4" /> Iniciar Consulta
+                          <Play className="h-3.5 w-3.5" /> Iniciar Consulta
                         </button>
                       )}
                       {pacienteSelecionado && (
-                        <div className="text-sm">
-                          <span className="text-muted-foreground">Paciente: </span>
-                          <span className="font-semibold text-foreground">{pacienteSelecionado.nome}</span>
-                        </div>
+                        <span className="text-xs text-muted-foreground">
+                          Paciente: <span className="font-medium text-foreground">{pacienteSelecionado.nome}</span>
+                        </span>
                       )}
                     </div>
-                    {atendimentoAtivo && (
-                      <div className="flex items-center gap-2">
-                        <div className="h-2.5 w-2.5 rounded-full bg-success animate-pulse" />
-                        <span className="font-mono text-sm font-semibold text-foreground flex items-center gap-1.5">
-                          <Timer className="h-4 w-4 text-primary" />
-                          {formatTime(tempoAtendimento)}
-                        </span>
-                      </div>
-                    )}
+                    <div className="flex items-center gap-3">
+                      {atendimentoAtivo && (
+                        <>
+                          <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground font-mono tabular-nums">
+                            <div className="h-1.5 w-1.5 rounded-full bg-success animate-pulse" />
+                            {formatTime(tempoAtendimento)}
+                          </span>
+                          <button
+                            onClick={finalizarAtendimento}
+                            className="flex items-center gap-1.5 h-8 px-3 rounded-lg border border-border text-xs font-medium text-muted-foreground hover:text-destructive hover:border-destructive/30 hover:bg-destructive/5 transition-all"
+                          >
+                            <Square className="h-3 w-3" /> Finalizar
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </div>
                 </div>
 
