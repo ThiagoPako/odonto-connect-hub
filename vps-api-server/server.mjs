@@ -3411,6 +3411,13 @@ const TRIGGER_MAP = {
   '30 dias antes do retorno': 'lembrete_retorno',
   '7 dias antes do retorno': 'lembrete_retorno',
   'Data de aniversário do paciente': 'aniversario',
+  'Agendamento criado sem confirmação': 'confirmacao_agenda',
+  'Consulta desmarcada pelo paciente': 'desmarcacao',
+  'Paciente não compareceu à consulta': 'faltas',
+  'Paciente faltou à primeira consulta': 'faltas_primeira',
+  'Parcela ou pagamento em atraso': 'inadimplencia',
+  'Orçamento criado e não aprovado': 'orcamento_aberto',
+  'Tratamento ativo sem agendamento futuro': 'tratamento_sem_agenda',
 };
 
 // Core: enqueue all steps of matching flows for a given trigger event
