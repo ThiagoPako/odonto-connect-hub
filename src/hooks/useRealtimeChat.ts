@@ -45,16 +45,25 @@ export interface MessageStatusUpdate {
   instance: string;
 }
 
+export interface LeadRecoveryReturn {
+  leadId: string;
+  leadName: string;
+  phone: string;
+  previousStage: string;
+}
+
 type MessageHandler = (msg: IncomingMessage) => void;
 type PresenceHandler = (update: PresenceUpdate) => void;
 type QueueAssignHandler = (assignment: QueueAssignment) => void;
 type MessageStatusHandler = (update: MessageStatusUpdate) => void;
+type LeadRecoveryHandler = (data: LeadRecoveryReturn) => void;
 
 interface RealtimeChatOptions {
   onMessage: MessageHandler;
   onPresence?: PresenceHandler;
   onQueueAssigned?: QueueAssignHandler;
   onMessageStatus?: MessageStatusHandler;
+  onLeadRecoveryReturn?: LeadRecoveryHandler;
 }
 
 export function useRealtimeChat(options: RealtimeChatOptions) {
@@ -69,6 +78,9 @@ export function useRealtimeChat(options: RealtimeChatOptions) {
 
   const messageStatusRef = useRef<MessageStatusHandler | undefined>(options.onMessageStatus);
   messageStatusRef.current = options.onMessageStatus;
+
+  const leadRecoveryRef = useRef<LeadRecoveryHandler | undefined>(options.onLeadRecoveryReturn);
+  leadRecoveryRef.current = options.onLeadRecoveryReturn;
 
   useEffect(() => {
     let es: EventSource | null = null;
@@ -92,6 +104,7 @@ export function useRealtimeChat(options: RealtimeChatOptions) {
       es.addEventListener("presence_update", onAnyEvent);
       es.addEventListener("queue_assigned", onAnyEvent);
       es.addEventListener("message_status_update", onAnyEvent);
+      es.addEventListener("lead_returned_from_recovery", onAnyEvent);
       es.addEventListener("ping", onAnyEvent);
 
       clearInterval(keepaliveInterval);
@@ -136,6 +149,15 @@ export function useRealtimeChat(options: RealtimeChatOptions) {
           messageStatusRef.current?.(data);
         } catch (err) {
           console.error("SSE message_status_update parse error:", err);
+        }
+      });
+
+      es.addEventListener("lead_returned_from_recovery", (e) => {
+        try {
+          const data: LeadRecoveryReturn = JSON.parse(e.data);
+          leadRecoveryRef.current?.(data);
+        } catch (err) {
+          console.error("SSE lead_returned_from_recovery parse error:", err);
         }
       });
 
