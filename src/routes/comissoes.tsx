@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import {
-  DollarSign, CheckCircle2, Clock, CreditCard, Users, ChevronRight, Loader2, Plus, X,
+  DollarSign, CheckCircle2, Clock, CreditCard, Users, ChevronRight, Loader2, Plus, X, Trash2,
 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import { comissoesApi, dentistasApi, pacientesApi } from "@/lib/vpsApi";
@@ -51,6 +51,7 @@ function ComissoesPage() {
   const [selectedDentista, setSelectedDentista] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("todos");
   const [showAddModal, setShowAddModal] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
   const loadAll = useCallback(async () => {
     try {
@@ -97,6 +98,15 @@ function ComissoesPage() {
     if (error) { toast.error("Erro ao criar comissão: " + error); return; }
     toast.success("Comissão registrada com sucesso!");
     setShowAddModal(false);
+    loadAll();
+  };
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    const { error } = await comissoesApi.delete(deleteTarget);
+    if (error) { toast.error("Erro ao excluir: " + error); return; }
+    toast.success("Comissão excluída com sucesso!");
+    setDeleteTarget(null);
     loadAll();
   };
 
@@ -223,18 +233,25 @@ function ComissoesPage() {
                             </span>
                           </td>
                           <td className="px-4 py-2.5 text-center">
-                            {entry.status === "pendente" && (
-                              <button onClick={() => handleStatusChange(entry.id, "aprovado")}
-                                className="px-2 py-0.5 rounded text-[10px] font-medium bg-chart-1/15 text-chart-1 hover:bg-chart-1/25">
-                                Aprovar
+                            <div className="flex items-center justify-center gap-1">
+                              {entry.status === "pendente" && (
+                                <button onClick={() => handleStatusChange(entry.id, "aprovado")}
+                                  className="px-2 py-0.5 rounded text-[10px] font-medium bg-chart-1/15 text-chart-1 hover:bg-chart-1/25">
+                                  Aprovar
+                                </button>
+                              )}
+                              {entry.status === "aprovado" && (
+                                <button onClick={() => handleStatusChange(entry.id, "pago")}
+                                  className="px-2 py-0.5 rounded text-[10px] font-medium bg-success/15 text-success hover:bg-success/25">
+                                  Pagar
+                                </button>
+                              )}
+                              <button onClick={() => setDeleteTarget(entry.id)}
+                                className="p-1 rounded hover:bg-destructive/15 text-muted-foreground hover:text-destructive transition-colors"
+                                title="Excluir comissão">
+                                <Trash2 className="h-3.5 w-3.5" />
                               </button>
-                            )}
-                            {entry.status === "aprovado" && (
-                              <button onClick={() => handleStatusChange(entry.id, "pago")}
-                                className="px-2 py-0.5 rounded text-[10px] font-medium bg-success/15 text-success hover:bg-success/25">
-                                Pagar
-                              </button>
-                            )}
+                            </div>
                           </td>
                         </tr>
                       );
@@ -256,6 +273,33 @@ function ComissoesPage() {
             onSave={handleCreateComissao}
             onClose={() => setShowAddModal(false)}
           />
+        )}
+
+        {deleteTarget && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+            <div className="bg-card rounded-2xl border border-border/60 shadow-xl w-full max-w-sm mx-4 animate-slide-up p-6 space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-full bg-destructive/15 flex items-center justify-center">
+                  <Trash2 className="h-5 w-5 text-destructive" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-foreground">Excluir Comissão</h3>
+                  <p className="text-xs text-muted-foreground">Esta ação não pode ser desfeita.</p>
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground">Tem certeza que deseja excluir esta comissão permanentemente?</p>
+              <div className="flex justify-end gap-2">
+                <button onClick={() => setDeleteTarget(null)}
+                  className="px-4 py-2 rounded-xl text-xs font-medium border border-border hover:bg-muted transition-colors">
+                  Cancelar
+                </button>
+                <button onClick={handleDelete}
+                  className="px-4 py-2 rounded-xl text-xs font-medium bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors">
+                  Excluir
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </main>
     </div>
