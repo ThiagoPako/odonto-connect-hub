@@ -117,6 +117,21 @@ export function NotificationSettingsPanel() {
                 </Button>
               ))}
             </div>
+
+            {/* Volume slider */}
+            <div className="mt-3 flex items-center gap-3">
+              <Volume1 className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+              <Slider
+                value={[vol]}
+                onValueChange={([v]) => { setVol(v); setVolume(v); }}
+                onValueCommit={() => previewSound(currentSound)}
+                min={0}
+                max={100}
+                step={5}
+                className="flex-1"
+              />
+              <span className="text-xs text-muted-foreground w-8 text-right">{vol}%</span>
+            </div>
           </div>
         )}
 
