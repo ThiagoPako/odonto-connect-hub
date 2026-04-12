@@ -191,9 +191,18 @@ function AgendaPage() {
         </div>
 
         {/* Views */}
-        {viewMode === "kanban" && <KanbanView filtered={filtered} selectedProfessional={selectedProfessional} />}
-        {viewMode === "lista" && <ListView filtered={filtered} />}
-        {viewMode === "calendario" && <CalendarView filtered={filtered} selectedProfessional={selectedProfessional} />}
+        {loading ? (
+          <div className="flex items-center justify-center py-20">
+            <Loader2 className="h-8 w-8 text-primary animate-spin" />
+            <span className="ml-3 text-sm text-muted-foreground">Carregando agenda...</span>
+          </div>
+        ) : (
+          <>
+            {viewMode === "kanban" && <KanbanView filtered={filtered} selectedProfessional={selectedProfessional} onAtender={handleAtender} onUpdateStatus={handleUpdateStatus} />}
+            {viewMode === "lista" && <ListView filtered={filtered} onAtender={handleAtender} onUpdateStatus={handleUpdateStatus} />}
+            {viewMode === "calendario" && <CalendarView filtered={filtered} selectedProfessional={selectedProfessional} />}
+          </>
+        )}
       </main>
     </div>
   );
