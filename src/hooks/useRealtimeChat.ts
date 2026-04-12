@@ -161,6 +161,7 @@ export function useRealtimeChat(options: RealtimeChatOptions) {
         }
       });
 
+      es.onerror = () => {
         es?.close();
         clearInterval(keepaliveInterval);
         retries++;
