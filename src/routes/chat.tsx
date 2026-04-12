@@ -12,6 +12,8 @@ import { SatisfactionSurveyDialog } from "@/components/chat/SatisfactionSurveyDi
 import type { Contato } from "@/lib/vpsApi";
 import type { AttendanceQueue } from "@/data/queueData";
 import { toast } from "sonner";
+import { playRecoverySound } from "@/lib/notificationSound";
+import { showBrowserNotification } from "@/lib/browserNotification";
 import { useAuth } from "@/hooks/useAuth";
 import { useRealtimeChat, type IncomingMessage } from "@/hooks/useRealtimeChat";
 import { whatsappApi, transferApi, sessionsApi, queuesApi, messagesApi, queueLeadsApi, mediaApi, crmApi, type ChatMessageApi } from "@/lib/vpsApi";
