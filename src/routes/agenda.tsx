@@ -622,3 +622,229 @@ function AppointmentCard({ appointment: a, onAtender, onUpdateStatus }: { appoin
     </div>
   );
 }
+
+/* ===================== NOVO AGENDAMENTO DIALOG ===================== */
+const PROCEDIMENTOS = [
+  "Consulta avaliação", "Profilaxia", "Restauração", "Extração",
+  "Tratamento de canal", "Implante", "Manutenção ortodôntica",
+  "Instalação aparelho", "Clareamento", "Cirurgia", "Prótese", "Outro",
+];
+const SALAS = ["Sala 1", "Sala 2", "Sala 3", "Sala 4"];
+const HORARIOS = Array.from({ length: 26 }, (_, i) => {
+  const h = Math.floor(i / 2) + 7;
+  const m = i % 2 === 0 ? "00" : "30";
+  return `${String(h).padStart(2, "0")}:${m}`;
+}).filter((h) => parseInt(h.split(":")[0]) <= 19);
+
+interface NovoAgendamentoForm {
+  paciente_nome: string;
+  paciente_id: string;
+  telefone: string;
+  dentista_id: string;
+  data: string;
+  hora: string;
+  duracao: number;
+  procedimento: string;
+  sala: string;
+  observacoes: string;
+  enviar_whatsapp: boolean;
+}
+
+function NovoAgendamentoDialog({
+  open, onOpenChange, defaultDate, onCreated,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  defaultDate: string;
+  onCreated: () => void;
+}) {
+  const emptyForm: NovoAgendamentoForm = {
+    paciente_nome: "", paciente_id: "", telefone: "",
+    dentista_id: mockProfessionals[0]?.id || "",
+    data: defaultDate, hora: "08:00", duracao: 30,
+    procedimento: "Consulta avaliação", sala: "Sala 1",
+    observacoes: "", enviar_whatsapp: true,
+  };
+  const [form, setForm] = useState<NovoAgendamentoForm>(emptyForm);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (open) setForm((f) => ({ ...f, data: defaultDate }));
+  }, [open, defaultDate]);
+
+  const handleChange = (field: keyof NovoAgendamentoForm, value: string | number | boolean) => {
+    setForm((f) => ({ ...f, [field]: value }));
+  };
+
+  const formatDateBR = (dateStr: string) => {
+    const [y, m, d] = dateStr.split("-");
+    return `${d}/${m}/${y}`;
+  };
+
+  const handleSubmit = async () => {
+    if (!form.paciente_nome.trim()) { toast.error("Informe o nome do paciente"); return; }
+    if (!form.dentista_id) { toast.error("Selecione o profissional"); return; }
+    if (form.enviar_whatsapp && !form.telefone.replace(/\D/g, "")) {
+      toast.error("Informe o telefone para enviar confirmação via WhatsApp");
+      return;
+    }
+
+    setSaving(true);
+    const prof = mockProfessionals.find((p) => p.id === form.dentista_id);
+    const { error } = await agendaApi.create({
+      paciente_id: form.paciente_id || form.paciente_nome.toLowerCase().replace(/\s+/g, "_"),
+      paciente_nome: form.paciente_nome.trim(),
+      dentista_id: form.dentista_id,
+      dentista_nome: prof?.name || "",
+      data: form.data, hora: form.hora, duracao: form.duracao,
+      procedimento: form.procedimento, sala: form.sala,
+      observacoes: form.observacoes || undefined, status: "agendado",
+    });
+
+    if (error) {
+      setSaving(false);
+      toast.error("Erro ao criar agendamento: " + error);
+      return;
+    }
+
+    // Send WhatsApp confirmation
+    if (form.enviar_whatsapp && form.telefone.replace(/\D/g, "")) {
+      const phone = form.telefone.replace(/\D/g, "");
+      const dataBR = formatDateBR(form.data);
+      const msg = `✅ *Agendamento Confirmado*\n\nOlá, ${form.paciente_nome.split(" ")[0]}! 👋\n\nSeu agendamento foi confirmado:\n\n📅 *Data:* ${dataBR}\n⏰ *Horário:* ${form.hora}\n🦷 *Procedimento:* ${form.procedimento}\n👨‍⚕️ *Profissional:* ${prof?.name || "—"}\n\nCaso precise reagendar, entre em contato conosco.\n\n_Odonto Connect_`;
+      try {
+        // Use first available WhatsApp instance
+        const { data: instances } = await whatsappApi.instances();
+        const activeInstance = Array.isArray(instances)
+          ? instances.find((i: any) => i.connectionStatus === "open" || i.state === "open")
+          : null;
+        if (activeInstance) {
+          const instanceName = activeInstance.instance?.instanceName || activeInstance.instanceName || activeInstance.name;
+          await whatsappApi.sendText(instanceName, phone, msg);
+          toast.success("Confirmação enviada via WhatsApp! ✅");
+        } else {
+          toast.warning("Agendamento criado, mas nenhuma instância WhatsApp ativa para enviar confirmação.");
+        }
+      } catch (whatsErr: any) {
+        toast.warning("Agendamento criado, mas falha ao enviar WhatsApp: " + (whatsErr?.message || "erro"));
+      }
+    } else {
+      toast.success("Agendamento criado com sucesso!");
+    }
+
+    setSaving(false);
+    onOpenChange(false);
+    setForm({ ...emptyForm, data: defaultDate });
+    onCreated();
+  };
+
+  const inputCls = "w-full h-9 px-3 rounded-lg bg-muted border border-border text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary";
+  const labelCls = "text-xs font-medium text-foreground mb-1 block";
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-base">
+            <CalendarDays className="h-4 w-4 text-primary" />
+            Novo Agendamento
+          </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 mt-2 max-h-[70vh] overflow-y-auto pr-1">
+          {/* Paciente + Telefone */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={labelCls}>Paciente *</label>
+              <input type="text" placeholder="Nome do paciente" value={form.paciente_nome}
+                onChange={(e) => handleChange("paciente_nome", e.target.value)} className={inputCls} maxLength={100} />
+            </div>
+            <div>
+              <label className={labelCls}>Telefone (WhatsApp)</label>
+              <input type="tel" placeholder="55 11 99999-0000" value={form.telefone}
+                onChange={(e) => handleChange("telefone", e.target.value)} className={inputCls} maxLength={20} />
+            </div>
+          </div>
+
+          {/* Data + Hora */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={labelCls}>Data *</label>
+              <input type="date" value={form.data} onChange={(e) => handleChange("data", e.target.value)} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Horário *</label>
+              <select value={form.hora} onChange={(e) => handleChange("hora", e.target.value)} className={inputCls}>
+                {HORARIOS.map((h) => <option key={h} value={h}>{h}</option>)}
+              </select>
+            </div>
+          </div>
+
+          {/* Profissional + Duração */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={labelCls}>Profissional *</label>
+              <select value={form.dentista_id} onChange={(e) => handleChange("dentista_id", e.target.value)} className={inputCls}>
+                {mockProfessionals.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>Duração</label>
+              <select value={form.duracao} onChange={(e) => handleChange("duracao", parseInt(e.target.value))} className={inputCls}>
+                {[15,30,45,60,90,120].map((d) => <option key={d} value={d}>{d} min</option>)}
+              </select>
+            </div>
+          </div>
+
+          {/* Procedimento + Sala */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={labelCls}>Procedimento</label>
+              <select value={form.procedimento} onChange={(e) => handleChange("procedimento", e.target.value)} className={inputCls}>
+                {PROCEDIMENTOS.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>Sala</label>
+              <select value={form.sala} onChange={(e) => handleChange("sala", e.target.value)} className={inputCls}>
+                {SALAS.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+          </div>
+
+          {/* Observações */}
+          <div>
+            <label className={labelCls}>Observações</label>
+            <textarea placeholder="Observações opcionais..." value={form.observacoes}
+              onChange={(e) => handleChange("observacoes", e.target.value)}
+              className={`${inputCls} h-16 resize-none py-2`} maxLength={500} />
+          </div>
+
+          {/* WhatsApp toggle */}
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={form.enviar_whatsapp}
+              onChange={(e) => handleChange("enviar_whatsapp", e.target.checked)}
+              className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+            />
+            <MessageSquare className="h-3.5 w-3.5 text-success" />
+            <span className="text-xs text-foreground">Enviar confirmação via WhatsApp</span>
+          </label>
+
+          {/* Actions */}
+          <div className="flex justify-end gap-2 pt-2">
+            <button onClick={() => onOpenChange(false)}
+              className="h-9 px-4 rounded-lg text-xs font-medium text-muted-foreground hover:bg-muted transition-colors">
+              Cancelar
+            </button>
+            <button onClick={handleSubmit} disabled={saving}
+              className="h-9 px-5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-2">
+              {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              Criar Agendamento
+            </button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
