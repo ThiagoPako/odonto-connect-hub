@@ -42,7 +42,7 @@ function ComissoesPage() {
       <DashboardHeader title="Gestão de Comissões" />
       <main className="flex-1 p-6 overflow-auto space-y-5">
         {/* KPIs */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 animate-slide-up" style={{ animationFillMode: 'both' }}>
           <KpiBox icon={DollarSign} label="Faturamento Total" value={`R$ ${(totalRevenue / 1000).toFixed(1)}k`} color="text-primary" />
           <KpiBox icon={Clock} label="Pendente" value={`R$ ${totalPending.toFixed(0)}`} color="text-warning" />
           <KpiBox icon={CheckCircle2} label="Aprovado" value={`R$ ${totalApproved.toFixed(0)}`} color="text-chart-1" />
@@ -70,8 +70,8 @@ function ComissoesPage() {
                 <button
                   key={prof.id}
                   onClick={() => setSelectedProf(prof)}
-                  className={`w-full text-left px-3 py-3 rounded-xl border transition-all ${
-                    selectedProf?.id === prof.id ? "bg-primary/5 border-primary/30" : "border-transparent hover:bg-muted"
+                  className={`w-full text-left px-3 py-3 rounded-xl border transition-all duration-300 hover-lift ${
+                    selectedProf?.id === prof.id ? "bg-primary/5 border-primary/30 shadow-[0_0_16px_-4px_hsl(var(--primary)/0.3)]" : "border-transparent hover:bg-muted hover:shadow-card"
                   }`}
                 >
                   <div className="flex items-center gap-2.5 mb-2">
@@ -176,12 +176,15 @@ function ComissoesPage() {
 
 function KpiBox({ icon: Icon, label, value, color }: { icon: React.ElementType; label: string; value: string; color: string }) {
   return (
-    <div className="bg-card rounded-xl border border-border p-4">
-      <div className="flex items-center gap-2 mb-1">
-        <Icon className={`h-4 w-4 ${color}`} />
+    <div className="group bg-card rounded-xl border border-border p-4 hover-lift hover:shadow-glow-primary transition-all duration-300 relative overflow-hidden">
+      <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-bl from-primary/5 to-transparent rounded-bl-full pointer-events-none" />
+      <div className="flex items-center gap-2 mb-1 relative z-10">
+        <div className={`h-7 w-7 rounded-lg bg-primary/10 flex items-center justify-center group-hover:shadow-[0_0_10px_-2px_currentColor] transition-shadow duration-300`}>
+          <Icon className={`h-3.5 w-3.5 ${color}`} />
+        </div>
         <span className="text-[10px] text-muted-foreground">{label}</span>
       </div>
-      <p className="text-lg font-bold text-foreground">{value}</p>
+      <p className="text-lg font-bold text-foreground relative z-10">{value}</p>
     </div>
   );
 }

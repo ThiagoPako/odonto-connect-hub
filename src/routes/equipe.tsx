@@ -30,11 +30,13 @@ function EquipePage() {
           <p className="text-sm text-muted-foreground">Acompanhe a equipe e performance individual</p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {teamMembers.map((member) => {
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-slide-up" style={{ animationFillMode: 'both' }}>
+          {teamMembers.map((member, index) => {
             const st = statusConfig[member.status];
             return (
-              <div key={member.name} className="bg-card rounded-xl border border-border p-5 hover:shadow-md transition-shadow">
+              <div key={member.name} className={`bg-card rounded-xl border p-5 hover-lift hover:shadow-glow-primary transition-all duration-300 relative overflow-hidden animate-slide-up ${
+                member.status === "online" ? "border-success/30" : member.status === "attending" ? "border-warning/30 shadow-[0_0_16px_-4px_hsl(var(--warning)/0.2)]" : "border-border"
+              }`} style={{ animationDelay: `${index * 80}ms`, animationFillMode: 'both' }}>
                 <div className="flex items-start justify-between mb-4">
                   <div className="flex items-center gap-3">
                     <div className="relative">

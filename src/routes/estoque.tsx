@@ -33,7 +33,7 @@ function EstoquePage() {
       <DashboardHeader title="Controle de Estoque" />
       <main className="flex-1 p-6 space-y-5 overflow-auto">
         {/* KPIs */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 animate-slide-up" style={{ animationFillMode: 'both' }}>
           <KpiMini icon={Package} label="Itens Cadastrados" value={mockInventory.length.toString()} />
           <KpiMini icon={AlertTriangle} label="Estoque Baixo" value={lowStock.length.toString()} alert={lowStock.length > 0} />
           <KpiMini icon={AlertTriangle} label="Sem Estoque" value={outOfStock.length.toString()} alert={outOfStock.length > 0} />
@@ -176,12 +176,15 @@ function EstoquePage() {
 
 function KpiMini({ icon: Icon, label, value, alert }: { icon: React.ElementType; label: string; value: string; alert?: boolean }) {
   return (
-    <div className={`bg-card rounded-xl border p-4 space-y-1 ${alert ? "border-warning/50" : "border-border"}`}>
-      <div className="flex items-center gap-2 text-muted-foreground">
-        <Icon className={`h-4 w-4 ${alert ? "text-warning" : ""}`} />
+    <div className={`group bg-card rounded-xl border p-4 space-y-1 hover-lift hover:shadow-glow-primary transition-all duration-300 relative overflow-hidden ${alert ? "border-warning/50" : "border-border"}`}>
+      <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-bl from-primary/5 to-transparent rounded-bl-full pointer-events-none" />
+      <div className="flex items-center gap-2 text-muted-foreground relative z-10">
+        <div className={`h-7 w-7 rounded-lg flex items-center justify-center ${alert ? "bg-warning/15" : "bg-primary/10"} group-hover:shadow-[0_0_10px_-2px_currentColor] transition-shadow duration-300`}>
+          <Icon className={`h-3.5 w-3.5 ${alert ? "text-warning" : "text-primary"}`} />
+        </div>
         <span className="text-[11px] font-medium">{label}</span>
       </div>
-      <p className={`text-lg font-bold ${alert ? "text-warning" : "text-foreground"}`}>{value}</p>
+      <p className={`text-lg font-bold ${alert ? "text-warning" : "text-foreground"} relative z-10`}>{value}</p>
     </div>
   );
 }
