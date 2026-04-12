@@ -2439,6 +2439,19 @@ app.delete('/api/estoque/:id', async (req, res) => {
   }
 });
 
+app.get('/api/estoque-movimentos', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { rows } = await pool.query(`
+      SELECT em.*, e.nome as item_nome FROM estoque_movimentos em
+      LEFT JOIN estoque e ON e.id = em.item_id
+      ORDER BY em.created_at DESC LIMIT 100
+    `);
+    res.json(rows);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+
 app.get('/api/estoque/:id/movimentos', async (req, res) => {
   try {
     await verifyUser(req);
