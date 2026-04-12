@@ -553,7 +553,15 @@ function AppointmentCard({ appointment: a, onAtender, onUpdateStatus, onReschedu
   const condicoes = a.pacienteId ? getCondicoesCriticas(a.pacienteId) : [];
 
   return (
-    <div className={`rounded-lg border border-border/50 p-2.5 space-y-2 hover-lift hover:shadow-glow-primary transition-all duration-300 ${a.status === "faltou" ? "opacity-50" : ""}`}>
+    <div
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData("appointmentId", a.id);
+        e.dataTransfer.setData("fromProfessional", a.professional);
+        e.dataTransfer.effectAllowed = "move";
+      }}
+      className={`rounded-lg border border-border/50 p-2.5 space-y-2 hover-lift hover:shadow-glow-primary transition-all duration-300 cursor-grab active:cursor-grabbing ${a.status === "faltou" ? "opacity-50" : ""}`}
+    >
       <div className="flex items-center justify-between">
         <span className="text-xs font-bold text-foreground">{a.time}</span>
         <span className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${cfg.color}`}>{cfg.label}</span>
