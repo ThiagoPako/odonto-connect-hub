@@ -1,9 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import {
-  DollarSign, CheckCircle2, Clock, CreditCard, Users, ChevronRight, Loader2, Plus, X,
+  DollarSign, CheckCircle2, Clock, CreditCard, Users, ChevronRight, Loader2, Plus, X, Trash2,
 } from "lucide-react";
-import { Trash2 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import { comissoesApi, dentistasApi, pacientesApi } from "@/lib/vpsApi";
 import { toast } from "sonner";
