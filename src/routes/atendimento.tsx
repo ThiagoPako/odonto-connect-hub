@@ -1,0 +1,536 @@
+import { createFileRoute } from "@tanstack/react-router";
+import { useState, useCallback, useEffect, useRef } from "react";
+import { DashboardHeader } from "@/components/DashboardHeader";
+import { AppSidebar } from "@/components/AppSidebar";
+import { SidebarProvider } from "@/components/ui/sidebar";
+import {
+  Play, Square, Mic, FileText, Receipt, AlertTriangle, Clock,
+  User, Phone, Mail, Heart, Pill, Stethoscope, Send, Plus, Trash2,
+  Save, ChevronRight, Activity, ClipboardList, ExternalLink, Timer
+} from "lucide-react";
+import { AudioRecorder } from "@/components/chat/AudioRecorder";
+import {
+  mockPacientes, getPacienteById, getPacienteIniciais, getPacienteIdade,
+  getAlergias, getCondicoesCriticas, getAnamnese, temAlertasMedicos,
+  type Paciente
+} from "@/data/registroCentral";
+import { toast } from "sonner";
+
+export const Route = createFileRoute("/atendimento")({
+  component: AtendimentoPage,
+});
+
+interface Prescricao {
+  id: string;
+  medicamento: string;
+  dosagem: string;
+  posologia: string;
+  duracao: string;
+}
+
+interface GravacaoConsulta {
+  id: string;
+  blob: Blob;
+  duration: number;
+  timestamp: Date;
+}
+
+type TabAtiva = "consulta" | "prescricao" | "orcamento" | "relatorio";
+
+function AtendimentoPage() {
+  const [pacienteSelecionado, setPacienteSelecionado] = useState<Paciente | null>(null);
+  const [busca, setBusca] = useState("");
+  const [atendimentoAtivo, setAtendimentoAtivo] = useState(false);
+  const [tempoAtendimento, setTempoAtendimento] = useState(0);
+  const [tabAtiva, setTabAtiva] = useState<TabAtiva>("consulta");
+  const [notas, setNotas] = useState("");
+  const [queixaPrincipal, setQueixaPrincipal] = useState("");
+  const [procedimentoRealizado, setProcedimentoRealizado] = useState("");
+  const [dente, setDente] = useState("");
+  const [gravacoes, setGravacoes] = useState<GravacaoConsulta[]>([]);
+  const [prescricoes, setPrescricoes] = useState<Prescricao[]>([]);
+  const [novaPrescricao, setNovaPrescricao] = useState<Omit<Prescricao, "id">>({
+    medicamento: "", dosagem: "", posologia: "", duracao: ""
+  });
+  const timerRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
+
+  const pacientesFiltrados = mockPacientes.filter(p =>
+    p.nome.toLowerCase().includes(busca.toLowerCase())
+  );
+
+  const iniciarAtendimento = useCallback(() => {
+    if (!pacienteSelecionado) return;
+    setAtendimentoAtivo(true);
+    setTempoAtendimento(0);
+    timerRef.current = setInterval(() => setTempoAtendimento(t => t + 1), 1000);
+    toast.success(`Atendimento iniciado para ${pacienteSelecionado.nome}`);
+  }, [pacienteSelecionado]);
+
+  const finalizarAtendimento = useCallback(() => {
+    setAtendimentoAtivo(false);
+    if (timerRef.current) clearInterval(timerRef.current);
+    toast.success("Atendimento finalizado e relatório salvo!");
+  }, []);
+
+  useEffect(() => {
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, []);
+
+  const handleGravacaoCompleta = useCallback((blob: Blob, duration: number) => {
+    const gravacao: GravacaoConsulta = {
+      id: `grav-${Date.now()}`,
+      blob,
+      duration,
+      timestamp: new Date(),
+    };
+    setGravacoes(prev => [...prev, gravacao]);
+    toast.success(`Áudio gravado (${formatTime(duration)})`);
+  }, []);
+
+  const adicionarPrescricao = useCallback(() => {
+    if (!novaPrescricao.medicamento) return;
+    setPrescricoes(prev => [...prev, { ...novaPrescricao, id: `rx-${Date.now()}` }]);
+    setNovaPrescricao({ medicamento: "", dosagem: "", posologia: "", duracao: "" });
+    toast.success("Prescrição adicionada");
+  }, [novaPrescricao]);
+
+  const removerPrescricao = useCallback((id: string) => {
+    setPrescricoes(prev => prev.filter(p => p.id !== id));
+  }, []);
+
+  const formatTime = (s: number) =>
+    `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+
+  const alergias = pacienteSelecionado ? getAlergias(pacienteSelecionado.id) : [];
+  const condicoes = pacienteSelecionado ? getCondicoesCriticas(pacienteSelecionado.id) : [];
+  const temAlertas = pacienteSelecionado ? temAlertasMedicos(pacienteSelecionado.id) : false;
+
+  const tabs: { key: TabAtiva; label: string; icon: typeof FileText }[] = [
+    { key: "consulta", label: "Consulta", icon: Stethoscope },
+    { key: "prescricao", label: "Prescrição", icon: Pill },
+    { key: "orcamento", label: "Orçamento", icon: Receipt },
+    { key: "relatorio", label: "Relatório IA", icon: FileText },
+  ];
+
+  return (
+    <SidebarProvider>
+      <div className="flex min-h-screen w-full bg-background">
+        <AppSidebar />
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <DashboardHeader title="Atendimento Clínico" />
+          <main className="flex-1 overflow-auto p-6">
+            <div className="max-w-[1600px] mx-auto grid grid-cols-12 gap-6">
+
+              {/* Coluna esquerda — Seleção de paciente */}
+              <div className="col-span-3 space-y-4">
+                <div className="bg-card rounded-2xl border border-border/60 p-4 shadow-card animate-slide-up">
+                  <h2 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
+                    <User className="h-4 w-4 text-primary" /> Paciente
+                  </h2>
+                  <input
+                    type="text"
+                    placeholder="Buscar paciente..."
+                    value={busca}
+                    onChange={e => setBusca(e.target.value)}
+                    className="w-full h-9 rounded-lg border border-border bg-muted/40 px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 mb-3"
+                  />
+                  <div className="space-y-1.5 max-h-[50vh] overflow-y-auto">
+                    {pacientesFiltrados.map(p => {
+                      const sel = pacienteSelecionado?.id === p.id;
+                      const iniciais = getPacienteIniciais(p);
+                      return (
+                        <button
+                          key={p.id}
+                          onClick={() => { setPacienteSelecionado(p); setBusca(""); }}
+                          disabled={atendimentoAtivo && !sel}
+                          className={`w-full flex items-center gap-3 p-2.5 rounded-xl text-left transition-all duration-300 hover-lift ${
+                            sel
+                              ? "border border-primary bg-primary/5 shadow-[0_0_16px_-4px_hsl(var(--primary)/0.3)] ring-1 ring-primary/20"
+                              : "border border-transparent hover:bg-muted/60 hover:border-border/60"
+                          } ${atendimentoAtivo && !sel ? "opacity-40 cursor-not-allowed" : "cursor-pointer"}`}
+                        >
+                          <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center text-primary text-xs font-bold shrink-0">
+                            {iniciais}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-foreground truncate">{p.nome}</p>
+                            <p className="text-[11px] text-muted-foreground">{p.telefone}</p>
+                          </div>
+                          {temAlertasMedicos(p.id) && (
+                            <AlertTriangle className="h-3.5 w-3.5 text-warning shrink-0 ml-auto" />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Alertas médicos */}
+                {pacienteSelecionado && temAlertas && (
+                  <div className="bg-destructive/5 border border-destructive/20 rounded-2xl p-4 animate-slide-up" style={{ animationDelay: "50ms" }}>
+                    <h3 className="text-xs font-semibold text-destructive flex items-center gap-1.5 mb-2">
+                      <AlertTriangle className="h-3.5 w-3.5" /> ALERTAS MÉDICOS
+                    </h3>
+                    {alergias.length > 0 && (
+                      <div className="mb-2">
+                        <p className="text-[10px] text-destructive/70 font-medium uppercase">Alergias</p>
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {alergias.map(a => (
+                            <span key={a} className="px-2 py-0.5 rounded-full bg-destructive/10 text-destructive text-[10px] font-medium">{a}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {condicoes.length > 0 && (
+                      <div>
+                        <p className="text-[10px] text-destructive/70 font-medium uppercase">Condições</p>
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {condicoes.map(c => (
+                            <span key={c} className="px-2 py-0.5 rounded-full bg-destructive/10 text-destructive text-[10px] font-medium">{c}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Info paciente */}
+                {pacienteSelecionado && (
+                  <div className="bg-card rounded-2xl border border-border/60 p-4 shadow-card animate-slide-up" style={{ animationDelay: "100ms" }}>
+                    <div className="space-y-2 text-xs text-muted-foreground">
+                      <p className="flex items-center gap-2"><Phone className="h-3 w-3" /> {pacienteSelecionado.telefone}</p>
+                      <p className="flex items-center gap-2"><Mail className="h-3 w-3" /> {pacienteSelecionado.email}</p>
+                      <p className="flex items-center gap-2"><Heart className="h-3 w-3" /> {getPacienteIdade(pacienteSelecionado)} anos</p>
+                      {pacienteSelecionado.convenio && (
+                        <p className="flex items-center gap-2"><ClipboardList className="h-3 w-3" /> {pacienteSelecionado.convenio}</p>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Coluna central — Atendimento */}
+              <div className="col-span-9 space-y-4">
+
+                {/* Barra de controle do atendimento */}
+                <div className={`rounded-2xl border p-4 transition-all duration-500 animate-slide-up ${
+                  atendimentoAtivo
+                    ? "bg-primary/5 border-primary/30 shadow-[0_0_24px_-6px_hsl(var(--primary)/0.25)] ring-1 ring-primary/10"
+                    : "bg-card border-border/60 shadow-card"
+                }`}>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      {!atendimentoAtivo ? (
+                        <button
+                          onClick={iniciarAtendimento}
+                          disabled={!pacienteSelecionado}
+                          className="flex items-center gap-2 h-10 px-5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-md hover:shadow-lg"
+                        >
+                          <Play className="h-4 w-4" /> Iniciar Atendimento
+                        </button>
+                      ) : (
+                        <button
+                          onClick={finalizarAtendimento}
+                          className="flex items-center gap-2 h-10 px-5 rounded-xl bg-destructive text-destructive-foreground text-sm font-semibold hover:bg-destructive/90 transition-all shadow-md"
+                        >
+                          <Square className="h-4 w-4" /> Finalizar
+                        </button>
+                      )}
+                      {pacienteSelecionado && (
+                        <div className="text-sm">
+                          <span className="text-muted-foreground">Paciente: </span>
+                          <span className="font-semibold text-foreground">{pacienteSelecionado.nome}</span>
+                        </div>
+                      )}
+                    </div>
+                    {atendimentoAtivo && (
+                      <div className="flex items-center gap-2">
+                        <div className="h-2.5 w-2.5 rounded-full bg-success animate-pulse" />
+                        <span className="font-mono text-sm font-semibold text-foreground flex items-center gap-1.5">
+                          <Timer className="h-4 w-4 text-primary" />
+                          {formatTime(tempoAtendimento)}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Gravação de áudio da consulta */}
+                {atendimentoAtivo && (
+                  <div className="bg-card rounded-2xl border border-border/60 p-4 shadow-card animate-slide-up" style={{ animationDelay: "50ms" }}>
+                    <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
+                      <Mic className="h-4 w-4 text-primary" /> Gravação da Consulta
+                      <span className="text-[10px] text-muted-foreground bg-muted/60 px-2 py-0.5 rounded-full ml-auto">
+                        Futuro: Transcrição IA automática
+                      </span>
+                    </h3>
+                    <div className="flex items-center gap-3">
+                      <AudioRecorder
+                        onRecordingComplete={handleGravacaoCompleta}
+                      />
+                      <span className="text-xs text-muted-foreground">
+                        Grave a consulta para gerar relatórios automáticos com IA
+                      </span>
+                    </div>
+                    {gravacoes.length > 0 && (
+                      <div className="mt-3 space-y-2">
+                        {gravacoes.map((g, idx) => (
+                          <div key={g.id} className="flex items-center gap-3 bg-muted/40 rounded-lg px-3 py-2">
+                            <Activity className="h-3.5 w-3.5 text-primary" />
+                            <span className="text-xs text-foreground font-medium">Gravação {idx + 1}</span>
+                            <span className="text-xs text-muted-foreground">{formatTime(g.duration)}</span>
+                            <span className="text-[10px] text-muted-foreground ml-auto">
+                              {g.timestamp.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
+                            </span>
+                            <button
+                              onClick={() => setGravacoes(prev => prev.filter(x => x.id !== g.id))}
+                              className="text-muted-foreground hover:text-destructive transition-colors"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Tabs */}
+                {atendimentoAtivo && (
+                  <div className="animate-slide-up" style={{ animationDelay: "100ms" }}>
+                    <div className="flex gap-1 bg-muted/40 rounded-xl p-1 border border-border/40">
+                      {tabs.map(tab => (
+                        <button
+                          key={tab.key}
+                          onClick={() => setTabAtiva(tab.key)}
+                          className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-medium transition-all duration-200 ${
+                            tabAtiva === tab.key
+                              ? "bg-card text-foreground shadow-sm border border-border/60"
+                              : "text-muted-foreground hover:text-foreground"
+                          }`}
+                        >
+                          <tab.icon className="h-3.5 w-3.5" /> {tab.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="mt-4">
+                      {/* Tab Consulta */}
+                      {tabAtiva === "consulta" && (
+                        <div className="space-y-4">
+                          <div className="bg-card rounded-2xl border border-border/60 p-5 shadow-card">
+                            <label className="text-xs font-semibold text-foreground mb-2 block">Queixa Principal</label>
+                            <textarea
+                              value={queixaPrincipal}
+                              onChange={e => setQueixaPrincipal(e.target.value)}
+                              placeholder="Descreva a queixa principal do paciente..."
+                              className="w-full h-20 rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none"
+                            />
+                          </div>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div className="bg-card rounded-2xl border border-border/60 p-5 shadow-card">
+                              <label className="text-xs font-semibold text-foreground mb-2 block">Procedimento Realizado</label>
+                              <textarea
+                                value={procedimentoRealizado}
+                                onChange={e => setProcedimentoRealizado(e.target.value)}
+                                placeholder="Descreva o procedimento..."
+                                className="w-full h-28 rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none"
+                              />
+                            </div>
+                            <div className="bg-card rounded-2xl border border-border/60 p-5 shadow-card">
+                              <label className="text-xs font-semibold text-foreground mb-2 block">Dente / Região</label>
+                              <input
+                                type="text"
+                                value={dente}
+                                onChange={e => setDente(e.target.value)}
+                                placeholder="Ex: 36, quadrante superior direito..."
+                                className="w-full h-9 rounded-lg border border-border bg-muted/30 px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 mb-3"
+                              />
+                              <label className="text-xs font-semibold text-foreground mb-2 block">Observações Clínicas</label>
+                              <textarea
+                                value={notas}
+                                onChange={e => setNotas(e.target.value)}
+                                placeholder="Observações adicionais..."
+                                className="w-full h-20 rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Tab Prescrição */}
+                      {tabAtiva === "prescricao" && (
+                        <div className="bg-card rounded-2xl border border-border/60 p-5 shadow-card space-y-4">
+                          <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                            <Pill className="h-4 w-4 text-primary" /> Receituário
+                          </h3>
+                          <div className="grid grid-cols-4 gap-3">
+                            <input
+                              type="text" placeholder="Medicamento"
+                              value={novaPrescricao.medicamento}
+                              onChange={e => setNovaPrescricao(p => ({ ...p, medicamento: e.target.value }))}
+                              className="h-9 rounded-lg border border-border bg-muted/30 px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                            />
+                            <input
+                              type="text" placeholder="Dosagem (ex: 500mg)"
+                              value={novaPrescricao.dosagem}
+                              onChange={e => setNovaPrescricao(p => ({ ...p, dosagem: e.target.value }))}
+                              className="h-9 rounded-lg border border-border bg-muted/30 px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                            />
+                            <input
+                              type="text" placeholder="Posologia (ex: 8/8h)"
+                              value={novaPrescricao.posologia}
+                              onChange={e => setNovaPrescricao(p => ({ ...p, posologia: e.target.value }))}
+                              className="h-9 rounded-lg border border-border bg-muted/30 px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                            />
+                            <div className="flex gap-2">
+                              <input
+                                type="text" placeholder="Duração (ex: 7 dias)"
+                                value={novaPrescricao.duracao}
+                                onChange={e => setNovaPrescricao(p => ({ ...p, duracao: e.target.value }))}
+                                className="h-9 flex-1 rounded-lg border border-border bg-muted/30 px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                              />
+                              <button
+                                onClick={adicionarPrescricao}
+                                className="h-9 w-9 rounded-lg bg-primary text-primary-foreground flex items-center justify-center hover:bg-primary/90 transition-all shrink-0"
+                              >
+                                <Plus className="h-4 w-4" />
+                              </button>
+                            </div>
+                          </div>
+                          {prescricoes.length > 0 && (
+                            <div className="border border-border/40 rounded-xl overflow-hidden">
+                              <table className="w-full text-sm">
+                                <thead>
+                                  <tr className="bg-muted/40 text-muted-foreground text-xs">
+                                    <th className="text-left p-3 font-medium">Medicamento</th>
+                                    <th className="text-left p-3 font-medium">Dosagem</th>
+                                    <th className="text-left p-3 font-medium">Posologia</th>
+                                    <th className="text-left p-3 font-medium">Duração</th>
+                                    <th className="p-3 w-10" />
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {prescricoes.map(rx => (
+                                    <tr key={rx.id} className="border-t border-border/30">
+                                      <td className="p-3 font-medium text-foreground">{rx.medicamento}</td>
+                                      <td className="p-3 text-muted-foreground">{rx.dosagem}</td>
+                                      <td className="p-3 text-muted-foreground">{rx.posologia}</td>
+                                      <td className="p-3 text-muted-foreground">{rx.duracao}</td>
+                                      <td className="p-3">
+                                        <button onClick={() => removerPrescricao(rx.id)} className="text-muted-foreground hover:text-destructive transition-colors">
+                                          <Trash2 className="h-3.5 w-3.5" />
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                          {prescricoes.length === 0 && (
+                            <p className="text-xs text-muted-foreground text-center py-6">Nenhuma prescrição adicionada</p>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Tab Orçamento */}
+                      {tabAtiva === "orcamento" && (
+                        <div className="bg-card rounded-2xl border border-border/60 p-5 shadow-card">
+                          <h3 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-4">
+                            <Receipt className="h-4 w-4 text-primary" /> Orçamento Rápido
+                          </h3>
+                          <div className="text-center py-8">
+                            <Receipt className="h-10 w-10 text-muted-foreground/40 mx-auto mb-3" />
+                            <p className="text-sm text-muted-foreground mb-3">
+                              Crie um orçamento para este atendimento
+                            </p>
+                            <a
+                              href="/orcamentos"
+                              className="inline-flex items-center gap-2 h-9 px-4 rounded-lg bg-primary/10 text-primary text-sm font-medium hover:bg-primary/20 transition-colors"
+                            >
+                              <ExternalLink className="h-3.5 w-3.5" /> Abrir módulo Orçamentos
+                            </a>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Tab Relatório IA */}
+                      {tabAtiva === "relatorio" && (
+                        <div className="bg-card rounded-2xl border border-border/60 p-5 shadow-card">
+                          <h3 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-4">
+                            <FileText className="h-4 w-4 text-primary" /> Relatório da Consulta (IA)
+                          </h3>
+                          <div className="bg-muted/30 rounded-xl border border-dashed border-border/60 p-8 text-center">
+                            <Activity className="h-10 w-10 text-primary/30 mx-auto mb-3" />
+                            <p className="text-sm font-medium text-foreground mb-1">Transcrição e Análise por IA</p>
+                            <p className="text-xs text-muted-foreground max-w-md mx-auto mb-4">
+                              Após gravar a consulta, o agente de IA irá transcrever a conversa, gerar um relatório
+                              clínico detalhado e salvar no prontuário do paciente. Esse relatório será usado para
+                              follow-ups automáticos.
+                            </p>
+                            {gravacoes.length > 0 ? (
+                              <div className="space-y-3">
+                                <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-success/10 text-success text-xs font-medium">
+                                  <Mic className="h-3 w-3" /> {gravacoes.length} gravação(ões) prontas para transcrição
+                                </div>
+                                <div className="bg-card border border-border/40 rounded-xl p-4 text-left max-w-lg mx-auto">
+                                  <p className="text-[10px] text-muted-foreground uppercase font-semibold mb-2">Preview do relatório (exemplo)</p>
+                                  <div className="text-xs text-muted-foreground space-y-2">
+                                    <p><strong className="text-foreground">Contexto:</strong> {queixaPrincipal || "Queixa principal não preenchida"}</p>
+                                    <p><strong className="text-foreground">Procedimento:</strong> {procedimentoRealizado || "Procedimento não registrado"}</p>
+                                    {dente && <p><strong className="text-foreground">Dente/Região:</strong> {dente}</p>}
+                                    {prescricoes.length > 0 && (
+                                      <p><strong className="text-foreground">Prescrições:</strong> {prescricoes.map(r => `${r.medicamento} ${r.dosagem}`).join(", ")}</p>
+                                    )}
+                                    <p><strong className="text-foreground">Tempo de consulta:</strong> {formatTime(tempoAtendimento)}</p>
+                                    <p className="text-primary/60 italic mt-2">⚡ Transcrição e insights serão gerados pelo agente IA quando ativado</p>
+                                  </div>
+                                </div>
+                              </div>
+                            ) : (
+                              <p className="text-xs text-muted-foreground/60">Grave a consulta para habilitar a geração do relatório</p>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Estado vazio */}
+                {!atendimentoAtivo && !pacienteSelecionado && (
+                  <div className="bg-card rounded-2xl border border-border/60 p-12 shadow-card text-center animate-slide-up">
+                    <Stethoscope className="h-12 w-12 text-primary/20 mx-auto mb-4" />
+                    <h3 className="text-lg font-semibold text-foreground mb-2">Módulo de Atendimento</h3>
+                    <p className="text-sm text-muted-foreground max-w-md mx-auto">
+                      Selecione um paciente na lista ao lado para iniciar um atendimento clínico.
+                      Grave a consulta, faça prescrições e gere relatórios automáticos com IA.
+                    </p>
+                  </div>
+                )}
+
+                {/* Paciente selecionado mas atendimento não iniciado */}
+                {!atendimentoAtivo && pacienteSelecionado && (
+                  <div className="bg-card rounded-2xl border border-border/60 p-8 shadow-card text-center animate-slide-up">
+                    <div className="h-14 w-14 rounded-2xl bg-primary/10 flex items-center justify-center text-primary text-lg font-bold mx-auto mb-4">
+                      {getPacienteIniciais(pacienteSelecionado)}
+                    </div>
+                    <h3 className="text-lg font-semibold text-foreground mb-1">{pacienteSelecionado.nome}</h3>
+                    <p className="text-sm text-muted-foreground mb-4">{getPacienteIdade(pacienteSelecionado)} anos • {pacienteSelecionado.telefone}</p>
+                    <button
+                      onClick={iniciarAtendimento}
+                      className="inline-flex items-center gap-2 h-11 px-6 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-all shadow-md hover:shadow-lg"
+                    >
+                      <Play className="h-4 w-4" /> Iniciar Atendimento
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </main>
+        </div>
+      </div>
+    </SidebarProvider>
+  );
+}
