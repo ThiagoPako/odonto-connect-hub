@@ -3228,7 +3228,7 @@ app.get('/api/crm/leads', async (req, res) => {
 
     // For kanban, return all (no pagination) grouped
     if (grouped === 'kanban') {
-      const query = `SELECT l.*, s.attendant_name, s.status as session_status ${baseFrom} ${whereClause} ORDER BY l.updated_at DESC NULLS LAST, l.created_at DESC`;
+      const query = `SELECT l.*, s.attendant_name, s.status as session_status ${baseFrom} ${whereClause} ${orderClause}`;
       const { rows } = await pool.query(query, params);
       const kanban = {};
       for (const stage of ALL_KANBAN_STAGES) kanban[stage] = [];
@@ -3262,7 +3262,7 @@ app.get('/api/crm/leads', async (req, res) => {
     // Paginated data query
     const pIdx1 = params.length + 1;
     const pIdx2 = params.length + 2;
-    const dataQuery = `SELECT l.*, s.attendant_name, s.status as session_status ${baseFrom} ${whereClause} ORDER BY l.updated_at DESC NULLS LAST, l.created_at DESC LIMIT $${pIdx1} OFFSET $${pIdx2}`;
+    const dataQuery = `SELECT l.*, s.attendant_name, s.status as session_status ${baseFrom} ${whereClause} ${orderClause} LIMIT $${pIdx1} OFFSET $${pIdx2}`;
     const { rows } = await pool.query(dataQuery, [...params, limit, offset]);
 
     res.json({ rows, total, limit, offset });
