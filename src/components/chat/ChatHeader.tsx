@@ -48,9 +48,11 @@ interface ChatHeaderProps {
   messages?: ChatMessage[];
   presence?: PresenceDisplay;
   lastSeen?: Date | null;
+  crmStage?: string;
+  onStageChange?: (leadId: string, stage: string) => void;
 }
 
-export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onReturnToQueue, leadTagIds = [], onToggleTag, messages = [], presence = "offline", lastSeen }: ChatHeaderProps) {
+export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onReturnToQueue, leadTagIds = [], onToggleTag, messages = [], presence = "offline", lastSeen, crmStage, onStageChange }: ChatHeaderProps) {
   const { user: currentUser } = useAuth();
   const { connected: connectedInstances } = useWhatsAppInstances();
   const [calling, setCalling] = useState(false);
@@ -61,7 +63,7 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onRe
   const [loading, setLoading] = useState(false);
   const [selectedAtt, setSelectedAtt] = useState<Attendant | null>(null);
   const [reason, setReason] = useState("");
-  const [currentStage, setCurrentStage] = useState<string | null>(null);
+  const [currentStage, setCurrentStage] = useState<string | null>(crmStage || null);
   const [updatingStage, setUpdatingStage] = useState(false);
 
   const handleClose = () => {
@@ -111,6 +113,7 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onRe
     } else {
       const stageInfo = CRM_QUICK_STAGES.find((s) => s.id === stageId);
       setCurrentStage(stageId);
+      onStageChange?.(lead.id, stageId);
       toast.success(`${stageInfo?.emoji} Lead marcado como "${stageInfo?.label}" no CRM`);
     }
     setUpdatingStage(false);

@@ -942,6 +942,7 @@ function ChatPage() {
         if (error) {
           console.error("Erro ao mover lead no CRM:", error);
         } else {
+          setCrmStages((prev) => ({ ...prev, [lead.id]: targetStage }));
           const destLabel = outcome === "followup" ? "Follow-up (Recuperação)" : "Orçamento (Funil de Vendas)";
           toast.info(`Lead movido para "${destLabel}" no CRM`, { duration: 4000 });
         }
@@ -1444,7 +1445,7 @@ function ChatPage() {
         <div className="flex-1 flex flex-col bg-background">
           {selectedLead ? (
             <>
-              <ChatHeader lead={selectedLead} onClose={() => setSelectedLead(null)} onTransfer={handleTransfer} onFinishAttendance={handleFinishAttendance} onReturnToQueue={handleReturnToQueue} leadTagIds={leadTagAssignments[selectedLead.id] || []} onToggleTag={handleToggleTag} messages={currentMessages} presence={presenceMap[selectedLead.id]?.status ?? "offline"} lastSeen={presenceMap[selectedLead.id]?.lastSeen ?? null} />
+              <ChatHeader lead={selectedLead} onClose={() => setSelectedLead(null)} onTransfer={handleTransfer} onFinishAttendance={handleFinishAttendance} onReturnToQueue={handleReturnToQueue} leadTagIds={leadTagAssignments[selectedLead.id] || []} onToggleTag={handleToggleTag} messages={currentMessages} presence={presenceMap[selectedLead.id]?.status ?? "offline"} lastSeen={presenceMap[selectedLead.id]?.lastSeen ?? null} crmStage={crmStages[selectedLead.id]} onStageChange={(leadId, stage) => setCrmStages((prev) => ({ ...prev, [leadId]: stage }))} />
               <ConversationView
                 messages={currentMessages}
                 leadName={selectedLead.name}
