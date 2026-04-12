@@ -1,6 +1,3 @@
-# Memory: index.md
-Updated: now
-
 # Project Memory
 
 ## Core
@@ -10,8 +7,9 @@ Módulos: Chat/Fila, Phoenix (contingência WA), Dashboard Admin, VoIP, IA Finan
 
 ## Memories
 - [Design tokens](mem://design/tokens) — Dental blue palette, semantic colors, pulse-danger animation
-- [AI Integration](mem://features/ai-integration) — OpenAI Whisper transcription, GPT clinical reports, Manus for Meta Ads
-- [CRM Kanban flow](mem://features/crm-kanban-flow) — Dois kanbans (Vendas + Recuperação), níveis de consciência como tags
-- [Data sync](mem://features/data-sync) — registroCentral.ts como fonte única de verdade
+- [AI Integration](mem://features/ai-integration) — OpenAI Whisper transcription, GPT clinical reports, VPS backend
+- [Meta Ads Manus](mem://features/meta-ads-manus) — Meta Graph API sync, campaign dashboard, AI insights
+- [CRM Kanban Flow](mem://features/crm-kanban-flow) — CRM pipeline with drag-and-drop
+- [Data Sync](mem://features/data-sync) — WhatsApp contact sync, automation jobs
+- [No Lovable Cloud](mem://constraints/no-lovable-cloud) — VPS Hostinger backend, no Supabase
 - [Backend funcional](mem://constraints/functional-backend) — Todo botão deve ter implementação real
-- [Sem Lovable Cloud](mem://constraints/no-lovable-cloud) — Backend externo VPS Hostinger

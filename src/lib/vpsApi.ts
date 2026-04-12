@@ -800,6 +800,11 @@ export const aiApi = {
     messages: Array<{ delay_days: number; text: string }>;
     instance?: string;
   }) => vpsApiFetch<{ success: boolean; flowId: string; jobs: Array<{ id: string; scheduled_at: string; delay_days: number; message: string }> }>('/ai/schedule-followup', { method: 'POST', body }),
+
+  // Meta Ads / Manus AI
+  getMetaAdsOverview: () => vpsApiFetch<import('@/components/MetaAdsDashboard').MetaOverview>('/ai/meta-ads/overview'),
+  syncMetaAds: () => vpsApiFetch<{ success: boolean; synced: number; ai_insight: string | null }>('/ai/meta-ads/sync', { method: 'POST' }),
+  getMetaAdsInsight: () => vpsApiFetch<{ insight: string }>('/ai/meta-ads/insight'),
 };
 
 // ─── Health check ───────────────────────────────────────────

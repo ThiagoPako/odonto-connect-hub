@@ -6244,6 +6244,299 @@ app.post('/api/ai/schedule-followup', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
+// META ADS — MANUS AI INTEGRATION
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Helper: get Manus AI settings from ai_settings table
+ */
+async function getManusSettings() {
+  const result = await pool.query(`SELECT * FROM ai_settings WHERE provider = 'manus' AND enabled = true`);
+  return result.rows[0] || null;
+}
+
+/**
+ * Helper: call Meta Graph API with access token from Manus config
+ */
+async function metaGraphFetch(path, accessToken, params = {}) {
+  const url = new URL(`https://graph.facebook.com/v19.0${path}`);
+  url.searchParams.set('access_token', accessToken);
+  for (const [k, v] of Object.entries(params)) {
+    url.searchParams.set(k, String(v));
+  }
+  const resp = await fetch(url.toString());
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(`Meta API ${resp.status}: ${JSON.stringify(err.error || err)}`);
+  }
+  return resp.json();
+}
+
+/**
+ * Helper: use Manus AI (or OpenAI fallback) to analyze campaign data
+ */
+async function generateMetaAdsInsight(campaigns) {
+  // Try OpenAI for analysis since Manus AI may not have a direct analysis endpoint
+  const openaiSettings = await pool.query(`SELECT * FROM ai_settings WHERE provider = 'openai' AND enabled = true`);
+  const openai = openaiSettings.rows[0];
+  if (!openai?.api_key) return null;
+
+  const summary = campaigns.map(c =>
+    `- ${c.name}: R$${c.spend} investido, ${c.impressions} impressões, ${c.clicks} cliques, CTR ${c.ctr}%, ${c.leads} leads, CPL R$${c.cost_per_lead || 'N/A'}`
+  ).join('\n');
+
+  const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openai.api_key}` },
+    body: JSON.stringify({
+      model: openai.model || 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: 'Você é um analista de marketing digital para clínicas odontológicas. Analise as campanhas do Meta Ads e forneça insights acionáveis em português. Seja direto, máximo 4 frases.' },
+        { role: 'user', content: `Analise essas campanhas do Meta Ads:\n${summary}\n\nDê insights sobre performance, otimização e recomendações.` },
+      ],
+      max_tokens: 300,
+      temperature: 0.7,
+    }),
+  });
+  if (!resp.ok) return null;
+  const data = await resp.json();
+  return data.choices?.[0]?.message?.content || null;
+}
+
+// GET /api/ai/meta-ads/overview — return aggregated Meta Ads data
+app.get('/api/ai/meta-ads/overview', async (req, res) => {
+  try {
+    await verifyUser(req);
+
+    const manus = await getManusSettings();
+    const connected = !!manus?.api_key;
+
+    // Try to get cached insights from DB
+    const campaignsResult = await pool.query(`
+      SELECT c.campaign_id, c.name, c.status, c.objective,
+        COALESCE(SUM(i.impressions), 0)::int AS impressions,
+        COALESCE(SUM(i.clicks), 0)::int AS clicks,
+        COALESCE(SUM(i.spend), 0)::numeric AS spend,
+        COALESCE(SUM(i.reach), 0)::int AS reach,
+        CASE WHEN COALESCE(SUM(i.impressions), 0) > 0
+          THEN ROUND((COALESCE(SUM(i.clicks), 0)::numeric / SUM(i.impressions) * 100), 2)
+          ELSE 0 END AS ctr,
+        CASE WHEN COALESCE(SUM(i.clicks), 0) > 0
+          THEN ROUND(COALESCE(SUM(i.spend), 0) / SUM(i.clicks), 2)
+          ELSE 0 END AS cpc,
+        CASE WHEN COALESCE(SUM(i.impressions), 0) > 0
+          THEN ROUND(COALESCE(SUM(i.spend), 0) / SUM(i.impressions) * 1000, 2)
+          ELSE 0 END AS cpm,
+        COALESCE(SUM(i.leads), 0)::int AS leads,
+        COALESCE(SUM(i.conversions), 0)::int AS conversions,
+        CASE WHEN COALESCE(SUM(i.leads), 0) > 0
+          THEN ROUND(COALESCE(SUM(i.spend), 0) / SUM(i.leads), 2)
+          ELSE NULL END AS cost_per_lead,
+        CASE WHEN COALESCE(SUM(i.conversions), 0) > 0
+          THEN ROUND(COALESCE(SUM(i.spend), 0) / SUM(i.conversions), 2)
+          ELSE NULL END AS cost_per_conversion
+      FROM meta_ads_campaigns c
+      LEFT JOIN meta_ads_insights i ON c.campaign_id = i.campaign_id
+      GROUP BY c.campaign_id, c.name, c.status, c.objective
+      ORDER BY spend DESC
+    `);
+
+    const campaigns = campaignsResult.rows.map(r => ({
+      ...r,
+      spend: parseFloat(r.spend) || 0,
+      ctr: parseFloat(r.ctr) || 0,
+      cpc: parseFloat(r.cpc) || 0,
+      cpm: parseFloat(r.cpm) || 0,
+      cost_per_lead: r.cost_per_lead ? parseFloat(r.cost_per_lead) : null,
+      cost_per_conversion: r.cost_per_conversion ? parseFloat(r.cost_per_conversion) : null,
+    }));
+
+    const total_spend = campaigns.reduce((s, c) => s + c.spend, 0);
+    const total_impressions = campaigns.reduce((s, c) => s + c.impressions, 0);
+    const total_clicks = campaigns.reduce((s, c) => s + c.clicks, 0);
+    const total_leads = campaigns.reduce((s, c) => s + c.leads, 0);
+    const total_conversions = campaigns.reduce((s, c) => s + c.conversions, 0);
+
+    // Get last sync time
+    const syncResult = await pool.query(`SELECT last_sync FROM meta_ads_accounts ORDER BY last_sync DESC NULLS LAST LIMIT 1`);
+    const lastSync = syncResult.rows[0]?.last_sync;
+
+    res.json({
+      connected,
+      total_spend,
+      total_impressions,
+      total_clicks,
+      total_leads,
+      total_conversions,
+      avg_ctr: total_impressions > 0 ? parseFloat(((total_clicks / total_impressions) * 100).toFixed(2)) : 0,
+      avg_cpc: total_clicks > 0 ? parseFloat((total_spend / total_clicks).toFixed(2)) : 0,
+      avg_cpl: total_leads > 0 ? parseFloat((total_spend / total_leads).toFixed(2)) : 0,
+      campaigns,
+      last_sync: lastSync ? new Date(lastSync).toLocaleString('pt-BR') : null,
+    });
+  } catch (err) {
+    if (err.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('Meta Ads overview error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/ai/meta-ads/sync — sync campaigns from Meta Graph API
+app.post('/api/ai/meta-ads/sync', async (req, res) => {
+  try {
+    await verifyAdmin(req);
+
+    const manus = await getManusSettings();
+    if (!manus?.api_key) {
+      return res.status(400).json({ error: 'Manus AI não configurado. Vá em Configurações → IA e adicione a API key.' });
+    }
+
+    // The Manus api_key field stores the Meta Ads access token
+    const accessToken = manus.api_key;
+
+    // Manus config may store ad_account_id in the config JSONB
+    const config = typeof manus.config === 'string' ? JSON.parse(manus.config) : (manus.config || {});
+    let adAccountId = config.ad_account_id;
+
+    // If no ad_account_id configured, try to discover it
+    if (!adAccountId) {
+      const meData = await metaGraphFetch('/me/adaccounts', accessToken, { fields: 'id,name,account_status' });
+      if (meData.data && meData.data.length > 0) {
+        adAccountId = meData.data[0].id;
+        // Save discovered account
+        await pool.query(`
+          INSERT INTO meta_ads_accounts (account_id, account_name, access_token, connected, last_sync)
+          VALUES ($1, $2, $3, true, NOW())
+          ON CONFLICT (account_id) DO UPDATE SET account_name = $2, access_token = $3, connected = true, last_sync = NOW()
+        `, [adAccountId, meData.data[0].name || adAccountId, accessToken]);
+        // Save ad_account_id to config
+        await pool.query(`UPDATE ai_settings SET config = config || $1::jsonb WHERE provider = 'manus'`, [
+          JSON.stringify({ ad_account_id: adAccountId }),
+        ]);
+      } else {
+        return res.status(400).json({ error: 'Nenhuma conta de anúncio encontrada. Verifique o token de acesso.' });
+      }
+    }
+
+    // Fetch campaigns
+    const campaignsData = await metaGraphFetch(`/${adAccountId}/campaigns`, accessToken, {
+      fields: 'id,name,status,objective,daily_budget,lifetime_budget,start_time,stop_time',
+      limit: 50,
+    });
+
+    const campaigns = campaignsData.data || [];
+    let synced = 0;
+
+    for (const c of campaigns) {
+      await pool.query(`
+        INSERT INTO meta_ads_campaigns (campaign_id, account_id, name, status, objective, daily_budget, lifetime_budget, start_time, stop_time, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+        ON CONFLICT (campaign_id) DO UPDATE SET
+          name = $3, status = $4, objective = $5, daily_budget = $6, lifetime_budget = $7,
+          start_time = $8, stop_time = $9, updated_at = NOW()
+      `, [
+        c.id, adAccountId, c.name, c.status, c.objective,
+        c.daily_budget ? parseFloat(c.daily_budget) / 100 : null,
+        c.lifetime_budget ? parseFloat(c.lifetime_budget) / 100 : null,
+        c.start_time || null, c.stop_time || null,
+      ]);
+
+      // Fetch insights for each campaign (last 30 days)
+      try {
+        const insightsData = await metaGraphFetch(`/${c.id}/insights`, accessToken, {
+          fields: 'impressions,clicks,spend,reach,ctr,cpc,cpm,actions',
+          date_preset: 'last_30d',
+          time_increment: 'all_days',
+        });
+
+        for (const ins of (insightsData.data || [])) {
+          const actions = ins.actions || [];
+          const leads = actions.find(a => a.action_type === 'lead')?.value || 0;
+          const conversions = actions.find(a => a.action_type === 'offsite_conversion.fb_pixel_purchase')?.value || 0;
+
+          await pool.query(`
+            INSERT INTO meta_ads_insights (campaign_id, date_start, date_stop, impressions, clicks, spend, reach, ctr, cpc, cpm, actions, leads, conversions, cost_per_lead, cost_per_conversion)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            ON CONFLICT (campaign_id, date_start) DO UPDATE SET
+              impressions = $4, clicks = $5, spend = $6, reach = $7, ctr = $8, cpc = $9, cpm = $10,
+              actions = $11, leads = $12, conversions = $13, cost_per_lead = $14, cost_per_conversion = $15
+          `, [
+            c.id, ins.date_start, ins.date_stop,
+            parseInt(ins.impressions) || 0, parseInt(ins.clicks) || 0,
+            parseFloat(ins.spend) || 0, parseInt(ins.reach) || 0,
+            parseFloat(ins.ctr) || 0, parseFloat(ins.cpc) || 0, parseFloat(ins.cpm) || 0,
+            JSON.stringify(actions), parseInt(leads) || 0, parseInt(conversions) || 0,
+            leads > 0 ? parseFloat(ins.spend) / parseInt(leads) : null,
+            conversions > 0 ? parseFloat(ins.spend) / parseInt(conversions) : null,
+          ]);
+        }
+      } catch (insErr) {
+        console.warn(`⚠️ Insights fetch failed for campaign ${c.id}: ${insErr.message}`);
+      }
+
+      synced++;
+    }
+
+    // Update last_sync
+    await pool.query(`UPDATE meta_ads_accounts SET last_sync = NOW() WHERE account_id = $1`, [adAccountId]);
+
+    // Generate AI insight
+    let aiInsight = null;
+    if (synced > 0) {
+      try {
+        const freshCampaigns = await pool.query(`
+          SELECT c.name, COALESCE(SUM(i.spend),0) AS spend, COALESCE(SUM(i.impressions),0) AS impressions,
+            COALESCE(SUM(i.clicks),0) AS clicks,
+            CASE WHEN SUM(i.impressions)>0 THEN ROUND(SUM(i.clicks)::numeric/SUM(i.impressions)*100,2) ELSE 0 END AS ctr,
+            COALESCE(SUM(i.leads),0) AS leads,
+            CASE WHEN SUM(i.leads)>0 THEN ROUND(SUM(i.spend)/SUM(i.leads),2) ELSE NULL END AS cost_per_lead
+          FROM meta_ads_campaigns c LEFT JOIN meta_ads_insights i ON c.campaign_id=i.campaign_id
+          GROUP BY c.name ORDER BY spend DESC LIMIT 10
+        `);
+        aiInsight = await generateMetaAdsInsight(freshCampaigns.rows);
+      } catch (aiErr) {
+        console.warn('⚠️ AI insight generation failed:', aiErr.message);
+      }
+    }
+
+    console.log(`📊 Meta Ads sync: ${synced} campanhas sincronizadas`);
+    res.json({ success: true, synced, ai_insight: aiInsight });
+  } catch (err) {
+    if (err.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('Meta Ads sync error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/ai/meta-ads/insight — generate AI insight on demand
+app.get('/api/ai/meta-ads/insight', async (req, res) => {
+  try {
+    await verifyUser(req);
+
+    const campaignsResult = await pool.query(`
+      SELECT c.name, COALESCE(SUM(i.spend),0) AS spend, COALESCE(SUM(i.impressions),0) AS impressions,
+        COALESCE(SUM(i.clicks),0) AS clicks,
+        CASE WHEN SUM(i.impressions)>0 THEN ROUND(SUM(i.clicks)::numeric/SUM(i.impressions)*100,2) ELSE 0 END AS ctr,
+        COALESCE(SUM(i.leads),0) AS leads,
+        CASE WHEN SUM(i.leads)>0 THEN ROUND(SUM(i.spend)/SUM(i.leads),2) ELSE NULL END AS cost_per_lead
+      FROM meta_ads_campaigns c LEFT JOIN meta_ads_insights i ON c.campaign_id=i.campaign_id
+      GROUP BY c.name ORDER BY spend DESC LIMIT 10
+    `);
+
+    if (campaignsResult.rows.length === 0) {
+      return res.json({ insight: 'Nenhuma campanha encontrada. Sincronize os dados primeiro.' });
+    }
+
+    const insight = await generateMetaAdsInsight(campaignsResult.rows);
+    res.json({ insight: insight || 'Não foi possível gerar análise. Verifique a API key da OpenAI.' });
+  } catch (err) {
+    if (err.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('Meta Ads insight error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
 // START SERVER
 
 app.listen(PORT, async () => {
@@ -6462,6 +6755,53 @@ app.listen(PORT, async () => {
         created_at TIMESTAMPTZ DEFAULT NOW()
       )`,
       `CREATE INDEX IF NOT EXISTS idx_clinical_reports_patient ON clinical_reports(patient_id)`,
+      // Meta Ads tables
+      `CREATE TABLE IF NOT EXISTS meta_ads_accounts (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        account_id TEXT NOT NULL UNIQUE,
+        account_name TEXT NOT NULL,
+        access_token TEXT,
+        connected BOOLEAN DEFAULT false,
+        last_sync TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )`,
+      `CREATE TABLE IF NOT EXISTS meta_ads_campaigns (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        account_id TEXT NOT NULL,
+        campaign_id TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        status TEXT DEFAULT 'ACTIVE',
+        objective TEXT,
+        daily_budget NUMERIC(12,2),
+        lifetime_budget NUMERIC(12,2),
+        start_time TIMESTAMPTZ,
+        stop_time TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )`,
+      `CREATE TABLE IF NOT EXISTS meta_ads_insights (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        campaign_id TEXT NOT NULL,
+        date_start DATE NOT NULL,
+        date_stop DATE NOT NULL,
+        impressions INTEGER DEFAULT 0,
+        clicks INTEGER DEFAULT 0,
+        spend NUMERIC(12,2) DEFAULT 0,
+        reach INTEGER DEFAULT 0,
+        ctr NUMERIC(8,4) DEFAULT 0,
+        cpc NUMERIC(8,2) DEFAULT 0,
+        cpm NUMERIC(8,2) DEFAULT 0,
+        actions JSONB DEFAULT '[]',
+        leads INTEGER DEFAULT 0,
+        conversions INTEGER DEFAULT 0,
+        cost_per_lead NUMERIC(8,2),
+        cost_per_conversion NUMERIC(8,2),
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(campaign_id, date_start)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_meta_insights_campaign ON meta_ads_insights(campaign_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_meta_insights_date ON meta_ads_insights(date_start DESC)`,
+      `CREATE INDEX IF NOT EXISTS idx_meta_campaigns_account ON meta_ads_campaigns(account_id)`,
     ];
 
     for (const sql of migrations) {
