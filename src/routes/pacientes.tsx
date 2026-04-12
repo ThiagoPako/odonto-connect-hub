@@ -419,7 +419,7 @@ function NovoPacienteModal({ onClose, onSaved }: { onClose: () => void; onSaved:
 }
 
 /* ─── Patient Detail Modal ─── */
-type DetailTab = "dados" | "anamnese";
+type DetailTab = "dados" | "anamnese" | "odontograma";
 
 interface AnamneseData {
   id?: string;
@@ -523,6 +523,7 @@ function PacienteDetailModal({
   const tabs: { key: DetailTab; label: string; icon: typeof FileHeart }[] = [
     { key: "dados", label: "Dados", icon: FileHeart },
     { key: "anamnese", label: "Anamnese", icon: ClipboardList },
+    { key: "odontograma", label: "Odontograma", icon: Smile },
   ];
 
   return (
@@ -660,6 +661,10 @@ function PacienteDetailModal({
 
           {activeTab === "anamnese" && (
             <AnamneseTab pacienteId={paciente.id} />
+          )}
+
+          {activeTab === "odontograma" && (
+            <OdontogramaTab pacienteId={paciente.id} />
           )}
         </div>
       </div>
@@ -958,7 +963,158 @@ function AnamneseTab({ pacienteId }: { pacienteId: string }) {
   );
 }
 
-/* ─── Helper: List Card ─── */
+/* ─── Odontograma Tab ─── */
+interface OdontogramaDBData {
+  id?: string;
+  paciente_id: string;
+  dentes: import("@/data/pacientesMockData").DenteInfo[];
+  observacoes: string | null;
+  updated_at?: string;
+}
+
+function OdontogramaTab({ pacienteId }: { pacienteId: string }) {
+  const [data, setData] = useState<OdontogramaDBData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [editingOdonto, setEditingOdonto] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  // Initialize all 32 teeth as saudavel
+  const allTeeth: import("@/data/pacientesMockData").DenteInfo[] = [
+    ...[18,17,16,15,14,13,12,11,21,22,23,24,25,26,27,28].map(n => ({ numero: n, status: "saudavel" as const })),
+    ...[48,47,46,45,44,43,42,41,31,32,33,34,35,36,37,38].map(n => ({ numero: n, status: "saudavel" as const })),
+  ];
+
+  const [dentes, setDentes] = useState(allTeeth);
+  const [obs, setObs] = useState("");
+
+  const loadOdontograma = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data: result } = await pacientesApi.getOdontograma(pacienteId);
+      if (result) {
+        const d = result as OdontogramaDBData;
+        setData(d);
+        const parsedDentes = typeof d.dentes === "string" ? JSON.parse(d.dentes) : d.dentes;
+        if (Array.isArray(parsedDentes) && parsedDentes.length > 0) {
+          // Merge with allTeeth to ensure all 32 teeth exist
+          const map = new Map(parsedDentes.map((t: import("@/data/pacientesMockData").DenteInfo) => [t.numero, t]));
+          setDentes(allTeeth.map(t => (map.get(t.numero) as import("@/data/pacientesMockData").DenteInfo) || t));
+        }
+        setObs(d.observacoes || "");
+      }
+    } catch {
+      // No odontograma yet
+    } finally {
+      setLoading(false);
+    }
+  }, [pacienteId]);
+
+  useEffect(() => { loadOdontograma(); }, [loadOdontograma]);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const { data: result, error } = await pacientesApi.saveOdontograma(pacienteId, {
+        dentes,
+        observacoes: obs.trim() || null,
+      });
+      if (error) {
+        toast.error("Erro ao salvar: " + error);
+      } else {
+        toast.success("Odontograma salvo!");
+        setData(result as OdontogramaDBData);
+        setEditingOdonto(false);
+      }
+    } catch {
+      toast.error("Erro de conexão");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="h-5 w-5 animate-spin text-primary" />
+        <span className="ml-2 text-sm text-muted-foreground">Carregando odontograma...</span>
+      </div>
+    );
+  }
+
+  if (!editingOdonto) {
+    const hasData = data && Array.isArray(typeof data.dentes === "string" ? JSON.parse(data.dentes as unknown as string) : data.dentes) && (typeof data.dentes === "string" ? JSON.parse(data.dentes as unknown as string) : data.dentes).some((d: import("@/data/pacientesMockData").DenteInfo) => d.status !== "saudavel");
+
+    if (!hasData) {
+      return (
+        <div className="text-center py-16 animate-fade-in">
+          <Smile className="h-10 w-10 text-muted-foreground/30 mx-auto" />
+          <p className="text-sm text-muted-foreground mt-3">Odontograma não preenchido.</p>
+          <button
+            onClick={() => setEditingOdonto(true)}
+            className="mt-4 px-5 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors"
+          >
+            Preencher Odontograma
+          </button>
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-4 animate-fade-in">
+        <div className="flex justify-between items-center">
+          {data?.updated_at && (
+            <p className="text-[10px] text-muted-foreground">Atualizado em {new Date(data.updated_at).toLocaleDateString("pt-BR")}</p>
+          )}
+          <button
+            onClick={() => setEditingOdonto(true)}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary/10 text-primary text-xs font-semibold hover:bg-primary/20 transition-colors"
+          >
+            <Edit className="h-3.5 w-3.5" />
+            Editar Odontograma
+          </button>
+        </div>
+        <OdontogramaChart dentes={dentes} />
+        {obs && (
+          <div className="bg-warning/5 border border-warning/20 rounded-xl p-4">
+            <p className="text-[10px] uppercase tracking-wider text-warning font-semibold mb-1">Observações</p>
+            <p className="text-xs text-foreground">{obs}</p>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Edit mode
+  return (
+    <div className="space-y-4 animate-fade-in">
+      <div className="flex justify-end gap-2">
+        <button onClick={() => setEditingOdonto(false)} className="px-4 py-2 rounded-xl text-xs font-medium text-muted-foreground hover:bg-muted/60 transition-colors">
+          Cancelar
+        </button>
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors shadow-sm disabled:opacity-50"
+        >
+          {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+          Salvar Odontograma
+        </button>
+      </div>
+      <OdontogramaEditor dentes={dentes} onChange={setDentes} />
+      <div>
+        <label className="text-xs font-medium text-muted-foreground mb-1 block">Observações</label>
+        <textarea
+          rows={3}
+          value={obs}
+          onChange={(e) => setObs(e.target.value)}
+          placeholder="Anotações sobre o odontograma..."
+          className="w-full px-3 py-2 rounded-lg bg-background border border-border/60 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none"
+        />
+      </div>
+    </div>
+  );
+}
+
 function ListCard({ label, icon: Icon, items, color }: { label: string; icon: typeof AlertTriangle; items: string[]; color: string }) {
   return (
     <div className="bg-muted/30 rounded-xl p-4">

@@ -1803,6 +1803,50 @@ app.put('/api/pacientes/:id/anamnese', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
+// ODONTOGRAMA
+// ═══════════════════════════════════════════════════════════════
+
+app.get('/api/pacientes/:id/odontograma', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { rows } = await pool.query('SELECT * FROM odontogramas WHERE paciente_id = $1', [req.params.id]);
+    res.json(rows[0] || null);
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/api/pacientes/:id/odontograma', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const id = req.params.id;
+    const { dentes, observacoes } = req.body;
+
+    const { rows: existing } = await pool.query('SELECT id FROM odontogramas WHERE paciente_id = $1', [id]);
+
+    if (existing.length > 0) {
+      await pool.query(
+        `UPDATE odontogramas SET dentes=$1, observacoes=$2, updated_at=NOW() WHERE paciente_id=$3`,
+        [JSON.stringify(dentes), observacoes || null, id]
+      );
+    } else {
+      await pool.query(
+        `INSERT INTO odontogramas (paciente_id, dentes, observacoes) VALUES ($1, $2, $3)`,
+        [id, JSON.stringify(dentes), observacoes || null]
+      );
+    }
+
+    const { rows } = await pool.query('SELECT * FROM odontogramas WHERE paciente_id = $1', [id]);
+    res.json(rows[0]);
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('❌ Error saving odontograma:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
 // AGENDA
 // ═══════════════════════════════════════════════════════════════
 

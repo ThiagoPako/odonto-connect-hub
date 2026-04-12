@@ -213,6 +213,8 @@ export const pacientesApi = {
   delete: (id: string) => vpsApiFetch(`/pacientes/${id}`, { method: 'DELETE' }),
   getAnamnese: (id: string) => vpsApiFetch(`/pacientes/${id}/anamnese`),
   saveAnamnese: (id: string, body: unknown) => vpsApiFetch(`/pacientes/${id}/anamnese`, { method: 'PUT', body }),
+  getOdontograma: (id: string) => vpsApiFetch(`/pacientes/${id}/odontograma`),
+  saveOdontograma: (id: string, body: unknown) => vpsApiFetch(`/pacientes/${id}/odontograma`, { method: 'PUT', body }),
 };
 
 // ─── Agenda ─────────────────────────────────────────────────
