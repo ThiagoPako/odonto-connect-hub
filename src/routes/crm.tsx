@@ -490,6 +490,17 @@ function PatientTableView() {
         </div>
 
         <div className="flex-1 overflow-y-auto">
+          {loading && (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="h-6 w-6 animate-spin text-primary" />
+              <span className="ml-2 text-sm text-muted-foreground">Carregando pacientes...</span>
+            </div>
+          )}
+          {!loading && filtered.length === 0 && (
+            <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
+              Nenhum paciente encontrado
+            </div>
+          )}
           <table className="w-full">
             <thead className="sticky top-0 bg-card">
               <tr className="border-b border-border text-left">
