@@ -390,6 +390,81 @@ app.post('/api/auth/change-password', async (req, res) => {
   }
 });
 
+// ─── Update Profile ─────────────────────────────────────────
+app.put('/api/auth/profile', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    const { name, email } = req.body;
+    if (!name || !name.trim()) return res.status(400).json({ error: 'Nome é obrigatório' });
+
+    const updates = ['name = $1', 'updated_at = NOW()'];
+    const values = [name.trim()];
+    let idx = 2;
+
+    if (email && email.trim()) {
+      const normalizedEmail = email.toLowerCase().trim();
+      // Check if email is taken by another user
+      const { rows: existing } = await pool.query(
+        'SELECT id FROM profiles WHERE email = $1 AND id != $2',
+        [normalizedEmail, user.id]
+      );
+      if (existing.length > 0) return res.status(409).json({ error: 'Email já em uso por outro usuário' });
+      updates.push(`email = $${idx}`);
+      values.push(normalizedEmail);
+      idx++;
+    }
+
+    values.push(user.id);
+    await pool.query(
+      `UPDATE profiles SET ${updates.join(', ')} WHERE id = $${idx}`,
+      values
+    );
+
+    // Return updated profile
+    const { rows } = await pool.query(
+      'SELECT id, name, email, avatar_url, role FROM profiles WHERE id = $1',
+      [user.id]
+    );
+    res.json(rows[0]);
+  } catch (error) {
+    console.error('Update profile error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ─── Upload Avatar ──────────────────────────────────────────
+app.post('/api/auth/avatar', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    const { avatar } = req.body; // base64 data URI
+
+    if (!avatar) return res.status(400).json({ error: 'Imagem é obrigatória' });
+
+    // Validate it's an image
+    if (!avatar.startsWith('data:image/')) {
+      return res.status(400).json({ error: 'Formato inválido. Envie uma imagem.' });
+    }
+
+    // Check size (~5MB in base64 ≈ 6.67MB string)
+    if (avatar.length > 7 * 1024 * 1024) {
+      return res.status(400).json({ error: 'Imagem deve ter no máximo 5MB' });
+    }
+
+    const avatarUrl = await saveMediaToDisk(avatar, null, 'avatar.jpg');
+    if (!avatarUrl) return res.status(500).json({ error: 'Erro ao salvar imagem' });
+
+    await pool.query(
+      'UPDATE profiles SET avatar_url = $1, updated_at = NOW() WHERE id = $2',
+      [avatarUrl, user.id]
+    );
+
+    res.json({ avatar_url: avatarUrl });
+  } catch (error) {
+    console.error('Avatar upload error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ─── Forgot Password (notifica admin) ───────────────────────
 app.post('/api/auth/forgot-password', async (req, res) => {
   try {

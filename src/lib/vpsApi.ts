@@ -127,18 +127,17 @@ export const profileApi = {
     vpsApiFetch<{ success: boolean }>('/auth/change-password', { method: 'POST', body: { currentPassword, newPassword } }),
   uploadAvatar: async (file: File) => {
     try {
-      const token = getToken();
-      const response = await fetch(`${VPS_API_BASE}/auth/avatar`, {
-        method: 'POST',
-        headers: {
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          'Content-Type': file.type || 'image/jpeg',
-        },
-        body: file,
+      // Convert file to base64 data URI
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
       });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) return { data: null, error: data.error || `HTTP ${response.status}` };
-      return { data: data as { avatar_url: string }, error: null };
+      return vpsApiFetch<{ avatar_url: string }>('/auth/avatar', {
+        method: 'POST',
+        body: { avatar: base64 },
+      });
     } catch (error: unknown) {
       return { data: null, error: error instanceof Error ? error.message : 'Erro de rede' };
     }
