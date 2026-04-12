@@ -730,6 +730,67 @@ export const campaignsApi = {
     vpsApiFetch<{ summary: Record<string, number>; recent: Array<{ patient_name: string; patient_phone: string; status: string; sent_at: string; error: string; scheduled_at: string }> }>(`/campaigns/${id}/jobs`),
 };
 
+// ─── AI Settings & Transcription ────────────────────────────
+
+export interface AISettingApi {
+  provider: string;
+  api_key: string;
+  model: string;
+  enabled: boolean;
+}
+
+export interface ClinicalReportApi {
+  id: string;
+  patient_name: string;
+  transcription: string;
+  report: string;
+  queixa_principal: string;
+  procedimento: string;
+  dente_regiao: string;
+  prescricoes: Array<{ medicamento: string; dosagem: string; posologia: string; duracao: string }>;
+  duration_seconds: number;
+  created_at: string;
+}
+
+export const aiApi = {
+  getSettings: () => vpsApiFetch<AISettingApi[]>('/ai/settings'),
+  saveSettings: (body: { provider: string; api_key: string; model?: string; enabled?: boolean }) =>
+    vpsApiFetch<{ success: boolean }>('/ai/settings', { method: 'POST', body }),
+
+  transcribe: async (audioBlob: Blob): Promise<{ data: { transcription: string } | null; error: string | null }> => {
+    try {
+      const token = getToken();
+      const response = await fetch(`${VPS_API_BASE}/ai/transcribe`, {
+        method: 'POST',
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          'Content-Type': audioBlob.type || 'audio/webm',
+        },
+        body: audioBlob,
+      });
+      const data = await response.json();
+      if (!response.ok) return { data: null, error: data.error || `HTTP ${response.status}` };
+      return { data, error: null };
+    } catch (err: unknown) {
+      return { data: null, error: err instanceof Error ? err.message : 'Erro de rede' };
+    }
+  },
+
+  generateReport: (body: {
+    transcription: string;
+    queixaPrincipal?: string;
+    procedimento?: string;
+    dente?: string;
+    prescricoes?: Array<{ medicamento: string; dosagem: string; posologia: string; duracao: string }>;
+    patientId?: string;
+    patientName?: string;
+    durationSeconds?: number;
+  }) => vpsApiFetch<{ id: string; report: string; transcription: string }>('/ai/clinical-report', { method: 'POST', body }),
+
+  getReports: (patientId: string) =>
+    vpsApiFetch<ClinicalReportApi[]>(`/ai/reports/${encodeURIComponent(patientId)}`),
+};
+
 // ─── Health check ───────────────────────────────────────────
 
 export const healthCheck = () => vpsApiFetch('/health');

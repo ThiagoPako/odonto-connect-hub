@@ -8,6 +8,7 @@ import { NotificationSettingsPanel } from "@/components/NotificationSettingsPane
 import { QueueManagementPanel } from "@/components/QueueManagementPanel";
 import { AttendanceSettingsPanel } from "@/components/AttendanceSettingsPanel";
 import { TagManagementPanel } from "@/components/TagManagementPanel";
+import { AISettingsPanel } from "@/components/AISettingsPanel";
 import { Settings } from "lucide-react";
 
 export const Route = createFileRoute("/configuracoes")({
@@ -33,6 +34,7 @@ function ConfiguracoesPage() {
         </div>
 
         <div className="max-w-3xl space-y-6">
+          <AISettingsPanel />
           <TagManagementPanel />
           <AttendanceSettingsPanel />
           <QueueManagementPanel />
