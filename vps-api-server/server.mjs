@@ -3195,9 +3195,15 @@ app.get('/api/crm/leads/:id/movements', async (req, res) => {
 app.get('/api/crm/leads', async (req, res) => {
   try {
     await verifyUser(req);
-    const { search, status, grouped, origin } = req.query;
+    const { search, status, grouped, origin, sort_by, sort_dir } = req.query;
     const limit = Math.min(Math.max(parseInt(req.query.limit) || 25, 1), 100);
     const offset = Math.max(parseInt(req.query.offset) || 0, 0);
+
+    // Whitelist sortable columns to prevent SQL injection
+    const SORTABLE_COLS = { nome: 'l.nome', origem: 'l.origem', status: 'l.status', valor: 'l.valor', updated_at: 'l.updated_at', created_at: 'l.created_at' };
+    const sortColumn = SORTABLE_COLS[sort_by] || 'l.updated_at';
+    const sortDirection = sort_dir === 'asc' ? 'ASC' : 'DESC';
+    const orderClause = `ORDER BY ${sortColumn} ${sortDirection} NULLS LAST, l.created_at DESC`;
 
     let whereClause = ' WHERE 1=1';
     const params = [];
