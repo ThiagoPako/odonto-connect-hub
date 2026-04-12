@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import {
   Search, CheckCircle2, Clock, Pause, PlayCircle, CalendarDays,
-  FileText, Plus, Loader2, X, Trash2,
+  FileText, Plus, Loader2, X, Trash2, Download,
 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import { tratamentosApi, dentistasApi, pacientesApi } from "@/lib/vpsApi";
