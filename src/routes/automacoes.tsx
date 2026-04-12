@@ -5,6 +5,8 @@ import {
   Zap, Settings2, Send, CheckCircle2, Edit2, Save, Loader2, RotateCcw,
   Trash2, Copy, GripVertical, ChevronDown, ChevronUp, X, Sparkles,
   AlertTriangle, Eye, EyeOff, BarChart3, Info, Rocket,
+  CalendarCheck, Cake, CalendarX, UserX, Bell, DollarSign, FileText, Stethoscope,
+  Users, ArrowRight, type LucideIcon,
 } from "lucide-react";
 import { AutomationReportPanel } from "@/components/AutomationReportPanel";
 import { useState, useEffect, useCallback } from "react";
@@ -1143,6 +1145,19 @@ function StepItem({ step, isLast, index }: { step: AutomationStep; isLast: boole
   );
 }
 
+// ─── Solution Icon Map ──────────────────────────────────────
+
+const solutionIconMap: Record<string, { icon: LucideIcon; gradient: string; bg: string }> = {
+  confirmacao_agenda: { icon: CalendarCheck, gradient: "from-chart-2 to-info", bg: "bg-chart-2/10" },
+  aniversario: { icon: Cake, gradient: "from-chart-5 to-warning", bg: "bg-chart-5/10" },
+  desmarcacao: { icon: CalendarX, gradient: "from-warning to-chart-4", bg: "bg-warning/10" },
+  faltas: { icon: UserX, gradient: "from-destructive to-chart-5", bg: "bg-destructive/10" },
+  faltas_primeira: { icon: Bell, gradient: "from-chart-4 to-destructive", bg: "bg-chart-4/10" },
+  inadimplencia: { icon: DollarSign, gradient: "from-warning to-chart-3", bg: "bg-warning/10" },
+  orcamento_aberto: { icon: FileText, gradient: "from-chart-3 to-primary", bg: "bg-chart-3/10" },
+  tratamento_sem_agenda: { icon: Stethoscope, gradient: "from-primary to-dental-cyan", bg: "bg-primary/10" },
+};
+
 // ─── Solutions Grid ─────────────────────────────────────────
 
 function SolutionsGrid({
@@ -1187,39 +1202,40 @@ function SolutionsGrid({
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-lg font-semibold text-foreground">Soluções Pré-Configuradas</h2>
-          <p className="text-sm text-muted-foreground mt-1">
-            Ative soluções prontas para os cenários mais comuns da sua clínica.
+          <h2 className="text-lg font-semibold text-foreground font-heading">Soluções Inteligentes</h2>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Automações prontas para os cenários mais comuns da sua clínica
           </p>
         </div>
         <button
           onClick={() => setShowHoursConfig(!showHoursConfig)}
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-border text-sm font-medium hover:bg-muted transition-colors"
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-border text-sm font-medium hover:bg-muted transition-all hover:shadow-sm"
         >
           <Clock className="h-4 w-4 text-primary" />
-          Horário de Envio: {hoursConfig.inicio} — {hoursConfig.fim}
+          {hoursConfig.inicio} — {hoursConfig.fim}
           {showHoursConfig ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
         </button>
       </div>
 
       {/* Business Hours Config */}
       {showHoursConfig && (
-        <div className="bg-card rounded-xl border border-primary/20 p-5 space-y-4">
+        <div className="bg-card rounded-xl border border-primary/20 p-5 space-y-4 animate-fade-in">
           <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-lg bg-primary/15 flex items-center justify-center">
-              <Clock className="h-5 w-5 text-primary" />
+            <div className="h-10 w-10 rounded-xl gradient-primary flex items-center justify-center">
+              <Clock className="h-5 w-5 text-primary-foreground" />
             </div>
             <div>
-              <h3 className="text-sm font-semibold text-foreground">Horário Comercial para Envio Automático</h3>
-              <p className="text-xs text-muted-foreground">Mensagens só serão enviadas dentro do horário e dias configurados</p>
+              <h3 className="text-sm font-semibold text-foreground">Horário Comercial</h3>
+              <p className="text-xs text-muted-foreground">Mensagens só serão enviadas dentro do horário configurado</p>
             </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">Horário Início</label>
+              <label className="text-xs font-medium text-muted-foreground">Início</label>
               <Input
                 type="time"
                 value={hoursConfig.inicio}
@@ -1228,7 +1244,7 @@ function SolutionsGrid({
               />
             </div>
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">Horário Fim</label>
+              <label className="text-xs font-medium text-muted-foreground">Fim</label>
               <Input
                 type="time"
                 value={hoursConfig.fim}
@@ -1258,84 +1274,109 @@ function SolutionsGrid({
           </div>
 
           <div className="flex items-center justify-between pt-2 border-t border-border">
-            <p className="text-[11px] text-muted-foreground">
-              Fuso: América/São Paulo (BRT)
-            </p>
+            <p className="text-[11px] text-muted-foreground">Fuso: América/São Paulo (BRT)</p>
             <Button size="sm" onClick={saveHours} disabled={savingHours}>
               {savingHours ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Save className="h-3.5 w-3.5 mr-1.5" />}
-              Salvar Horário
+              Salvar
             </Button>
           </div>
         </div>
       )}
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {solutions.map((sol) => {
+      {/* Solutions Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {solutions.map((sol, index) => {
           const existingFlow = flows.find(f => f.type === sol.type);
           const isActive = existingFlow?.active;
           const isConfigured = !!existingFlow;
+          const iconData = solutionIconMap[sol.type] || { icon: Zap, gradient: "from-primary to-primary-glow", bg: "bg-primary/10" };
+          const IconComp = iconData.icon;
+          const patientCount = counts[sol.type] ?? sol.totalPacientes ?? 0;
 
           return (
             <div
               key={sol.id}
-              className={`relative bg-card rounded-xl border-2 p-5 transition-all hover:shadow-md ${
+              className={`group relative bg-card rounded-2xl border p-5 transition-all duration-300 hover:shadow-card-hover animate-slide-up ${
                 isActive
-                  ? "border-primary/50 shadow-sm"
-                  : sol.hasDelay
-                    ? "border-warning/50"
-                    : "border-border"
+                  ? "border-primary/40 shadow-card"
+                  : "border-border hover:border-primary/30"
               }`}
+              style={{ animationDelay: `${index * 50}ms`, animationFillMode: 'both' }}
             >
+              {/* Status indicator */}
+              {isActive && (
+                <div className="absolute top-3 right-3">
+                  <span className="relative flex h-2.5 w-2.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75" />
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-success" />
+                  </span>
+                </div>
+              )}
+
               {sol.hasDelay && !isConfigured && (
-                <span className="absolute top-3 right-12 px-2 py-0.5 rounded-full text-[10px] font-medium bg-warning/15 text-warning">
-                  Atividade em Atraso
+                <span className="absolute top-3 right-3 px-2 py-0.5 rounded-full text-[10px] font-medium bg-warning/15 text-warning">
+                  Em Atraso
                 </span>
               )}
 
-              <button className="absolute top-3 right-3 text-muted-foreground/50 hover:text-muted-foreground transition-colors" title={sol.description}>
-                <Info className="h-4 w-4" />
-              </button>
-
-              <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center text-2xl mb-4">
-                {sol.icon}
+              {/* Icon */}
+              <div className={`h-11 w-11 rounded-xl bg-gradient-to-br ${iconData.gradient} flex items-center justify-center mb-4 shadow-sm group-hover:scale-105 transition-transform duration-200`}>
+                <IconComp className="h-5 w-5 text-primary-foreground" strokeWidth={1.8} />
               </div>
 
-              <h3 className="font-semibold text-foreground text-sm mb-2">{sol.name}</h3>
+              {/* Title */}
+              <h3 className="font-semibold text-foreground text-sm mb-1.5 font-heading">{sol.name}</h3>
 
-              <p className="text-xs text-muted-foreground mb-4">
-                Total de Pacientes: <span className="font-semibold text-foreground">{counts[sol.type] ?? sol.totalPacientes ?? 0}</span>
-              </p>
+              {/* Description */}
+              <p className="text-xs text-muted-foreground mb-3 line-clamp-2 leading-relaxed">{sol.description}</p>
 
-              <p className="text-xs text-muted-foreground mb-4 line-clamp-2">{sol.description}</p>
+              {/* Patient count */}
+              <div className="flex items-center gap-1.5 mb-4">
+                <Users className="h-3.5 w-3.5 text-muted-foreground" />
+                <span className="text-xs text-muted-foreground">
+                  <span className="font-semibold text-foreground">{patientCount}</span> pacientes
+                </span>
+              </div>
 
-              <div className="text-[11px] text-muted-foreground/70 mb-4 space-y-0.5">
+              {/* Steps preview */}
+              <div className="flex items-center gap-1 mb-4">
                 {sol.defaultSteps.map((step, i) => (
-                  <div key={step.id} className="flex items-center gap-1.5">
-                    <span className="font-medium text-primary">{i + 1}.</span>
-                    <span>{step.channel === "whatsapp" ? "📱" : step.channel === "sms" ? "💬" : "✉️"}</span>
-                    <span>{step.delay}</span>
+                  <div key={step.id} className="flex items-center gap-1">
+                    <span className={`inline-flex items-center justify-center h-5 w-5 rounded-md text-[10px] font-medium ${iconData.bg} text-foreground`}>
+                      {step.channel === "whatsapp" ? "📱" : step.channel === "sms" ? "💬" : "✉️"}
+                    </span>
+                    {i < sol.defaultSteps.length - 1 && (
+                      <ArrowRight className="h-3 w-3 text-muted-foreground/40" />
+                    )}
                   </div>
                 ))}
+                <span className="text-[10px] text-muted-foreground ml-1">{sol.defaultSteps.length} etapas</span>
               </div>
 
+              {/* Action */}
               {isActive ? (
-                <div className="flex items-center gap-2 text-xs font-medium text-primary">
-                  <CheckCircle2 className="h-4 w-4" />
-                  <span>Ativa</span>
-                </div>
+                <button
+                  onClick={() => onActivate(sol)}
+                  className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-primary/10 text-primary text-xs font-medium hover:bg-primary/15 transition-colors"
+                >
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                  Ativa — Editar
+                </button>
               ) : isConfigured ? (
                 <button
                   onClick={() => onActivate(sol)}
-                  className="text-xs font-medium text-primary hover:underline"
+                  className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-muted text-foreground text-xs font-medium hover:bg-muted/80 transition-colors"
                 >
+                  <Edit2 className="h-3.5 w-3.5" />
                   Editar configuração
                 </button>
               ) : (
                 <button
                   onClick={() => onActivate(sol)}
-                  className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg border border-primary text-primary text-xs font-medium hover:bg-primary/5 transition-colors"
+                  className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border border-primary text-primary text-xs font-medium hover:bg-primary hover:text-primary-foreground transition-all duration-200"
                 >
-                  Ativar
+                  <Rocket className="h-3.5 w-3.5" />
+                  Ativar Solução
                 </button>
               )}
             </div>
