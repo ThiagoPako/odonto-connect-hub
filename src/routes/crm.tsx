@@ -394,17 +394,21 @@ function KanbanCard({ lead, onDragStart, onLeadAssigned }: { lead: KanbanLead; o
       <p className="text-sm font-semibold text-primary mb-2">R$ {lead.value.toLocaleString("pt-BR")}</p>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5">
-          <div className="h-5 w-5 rounded-full bg-primary/15 flex items-center justify-center text-[8px] font-bold text-primary">
-            {lead.assignedInitials}
-          </div>
+          {lead.assignedAvatarUrl ? (
+            <img src={lead.assignedAvatarUrl} alt={lead.assignedTo} className="h-5 w-5 rounded-full object-cover" />
+          ) : (
+            <div className="h-5 w-5 rounded-full bg-primary/15 flex items-center justify-center text-[8px] font-bold text-primary">
+              {lead.assignedInitials}
+            </div>
+          )}
           <span className="text-[11px] text-muted-foreground">{lead.assignedTo}</span>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={handleCall} className="p-1.5 rounded-lg hover:bg-chart-2/15 text-muted-foreground hover:text-chart-2 transition-colors" title={`Ligar: ${lead.phone}`}>
             <Phone className="h-3.5 w-3.5" />
           </button>
-          <button onClick={handleOpenChat} className="p-1.5 rounded-lg hover:bg-primary/15 text-muted-foreground hover:text-primary transition-colors" title={`Chat com ${lead.name}`}>
-            <MessageSquare className="h-3.5 w-3.5" />
+          <button onClick={handleOpenChat} disabled={assuming} className="p-1.5 rounded-lg hover:bg-primary/15 text-muted-foreground hover:text-primary transition-colors disabled:opacity-50" title={assuming ? "Assumindo..." : `Assumir e atender ${lead.name}`}>
+            {assuming ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MessageSquare className="h-3.5 w-3.5" />}
           </button>
           <div className={`flex items-center gap-0.5 ${isStale ? "text-warning" : "text-muted-foreground/50"}`}>
             <Clock className="h-3 w-3" />
