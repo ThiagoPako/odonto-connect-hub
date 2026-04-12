@@ -123,7 +123,7 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onRe
       return;
     }
     try {
-      await exportChatToPdf(lead, messages);
+      await exportChatToPdf(messages, lead.name, lead.phone);
       toast.success("PDF gerado com sucesso!");
     } catch {
       toast.error("Erro ao gerar PDF");
