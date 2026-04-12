@@ -101,6 +101,61 @@ function AtendimentoPage() {
     toast.success(`Áudio gravado (${formatTime(duration)})`);
   }, []);
 
+  const handleTranscreverIA = useCallback(async () => {
+    if (gravacoes.length === 0) {
+      toast.error("Grave a consulta primeiro");
+      return;
+    }
+    setAiState(prev => ({ ...prev, status: 'transcribing', error: '' }));
+    setTabAtiva("relatorio");
+
+    try {
+      // Combine all recordings into one blob
+      const combinedBlob = new Blob(gravacoes.map(g => g.blob), { type: 'audio/webm' });
+
+      // Step 1: Transcribe
+      const { data: transData, error: transError } = await aiApi.transcribe(combinedBlob);
+      if (transError || !transData) {
+        setAiState(prev => ({ ...prev, status: 'error', error: transError || 'Erro na transcrição' }));
+        toast.error(transError || 'Erro na transcrição');
+        return;
+      }
+
+      setAiState(prev => ({ ...prev, transcription: transData.transcription, status: 'generating' }));
+
+      // Step 2: Generate clinical report
+      const { data: reportData, error: reportError } = await aiApi.generateReport({
+        transcription: transData.transcription,
+        queixaPrincipal,
+        procedimento: procedimentoRealizado,
+        dente,
+        prescricoes,
+        patientId: pacienteSelecionado?.id,
+        patientName: pacienteSelecionado?.nome,
+        durationSeconds: tempoAtendimento,
+      });
+
+      if (reportError || !reportData) {
+        setAiState(prev => ({ ...prev, status: 'error', error: reportError || 'Erro ao gerar relatório' }));
+        toast.error(reportError || 'Erro ao gerar relatório');
+        return;
+      }
+
+      setAiState({
+        status: 'done',
+        transcription: transData.transcription,
+        report: reportData.report,
+        reportId: reportData.id,
+        error: '',
+      });
+      toast.success("Relatório clínico gerado e salvo no prontuário!");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Erro desconhecido';
+      setAiState(prev => ({ ...prev, status: 'error', error: msg }));
+      toast.error(msg);
+    }
+  }, [gravacoes, queixaPrincipal, procedimentoRealizado, dente, prescricoes, pacienteSelecionado, tempoAtendimento]);
+
   const adicionarPrescricao = useCallback(() => {
     if (!novaPrescricao.medicamento) return;
     setPrescricoes(prev => [...prev, { ...novaPrescricao, id: `rx-${Date.now()}` }]);
