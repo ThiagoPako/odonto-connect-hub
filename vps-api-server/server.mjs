@@ -3566,6 +3566,177 @@ app.get('/api/automations/stats', async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════
+// BROADCAST CAMPAIGNS (Disparos) CRUD
+// ═══════════════════════════════════════════════════════════════
+
+// List all campaigns
+app.get('/api/campaigns', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { rows } = await pool.query(
+      `SELECT * FROM broadcast_campaigns ORDER BY created_at DESC`
+    );
+    const campaigns = rows.map(r => ({
+      id: r.id,
+      nome: r.nome,
+      template: typeof r.template === 'string' ? JSON.parse(r.template) : r.template,
+      tipo: r.tipo,
+      diasSemana: typeof r.dias_semana === 'string' ? JSON.parse(r.dias_semana) : r.dias_semana,
+      horarioInicio: r.horario_inicio,
+      horarioFim: r.horario_fim,
+      dataInicio: r.data_inicio,
+      dataFim: r.data_fim,
+      campanhaPerpetua: r.campanha_perpetua,
+      usarHorarioClinica: r.usar_horario_clinica,
+      publico: r.publico,
+      filtroCustom: r.filtro_custom,
+      numeroEnvio: r.numero_envio,
+      contatosAlcancaveis: r.contatos_alcancaveis || 0,
+      capacidadeDiaria: r.capacidade_diaria || 232,
+      intervaloSpam: r.intervalo_spam || 7,
+      ativo: r.ativo,
+      stats: typeof r.stats === 'string' ? JSON.parse(r.stats) : r.stats,
+      criadoEm: r.created_at ? new Date(r.created_at).toLocaleDateString('pt-BR') : '',
+    }));
+    res.json(campaigns);
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+// Create campaign
+app.post('/api/campaigns', async (req, res) => {
+  try {
+    const user = await verifyUser(req);
+    const { nome, template, tipo, diasSemana, horarioInicio, horarioFim, dataInicio, dataFim,
+      campanhaPerpetua, usarHorarioClinica, publico, filtroCustom, numeroEnvio,
+      contatosAlcancaveis, capacidadeDiaria, intervaloSpam, ativo } = req.body;
+
+    if (!nome) return res.status(400).json({ error: 'Nome obrigatório' });
+
+    const id = `camp_${Date.now()}`;
+    await pool.query(
+      `INSERT INTO broadcast_campaigns
+        (id, nome, template, tipo, dias_semana, horario_inicio, horario_fim, data_inicio, data_fim,
+         campanha_perpetua, usar_horario_clinica, publico, filtro_custom, numero_envio,
+         contatos_alcancaveis, capacidade_diaria, intervalo_spam, ativo, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
+      [id, nome, JSON.stringify(template || {}), tipo || 'unico',
+       JSON.stringify(diasSemana || []), horarioInicio, horarioFim, dataInicio, dataFim,
+       campanhaPerpetua || false, usarHorarioClinica || false,
+       publico || 'todos', filtroCustom, numeroEnvio,
+       contatosAlcancaveis || 0, capacidadeDiaria || 232, intervaloSpam || 7,
+       ativo || false, user.id]
+    );
+    res.json({ success: true, id });
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+// Update campaign
+app.put('/api/campaigns/:id', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { id } = req.params;
+    const fields = req.body;
+    const sets = [];
+    const vals = [];
+    let idx = 1;
+
+    const fieldMap = {
+      nome: 'nome', tipo: 'tipo', publico: 'publico', filtroCustom: 'filtro_custom',
+      numeroEnvio: 'numero_envio', horarioInicio: 'horario_inicio', horarioFim: 'horario_fim',
+      dataInicio: 'data_inicio', dataFim: 'data_fim',
+      campanhaPerpetua: 'campanha_perpetua', usarHorarioClinica: 'usar_horario_clinica',
+      contatosAlcancaveis: 'contatos_alcancaveis', capacidadeDiaria: 'capacidade_diaria',
+      intervaloSpam: 'intervalo_spam', ativo: 'ativo',
+    };
+
+    for (const [jsKey, dbCol] of Object.entries(fieldMap)) {
+      if (fields[jsKey] !== undefined) {
+        sets.push(`${dbCol} = $${idx++}`);
+        vals.push(fields[jsKey]);
+      }
+    }
+    if (fields.template !== undefined) {
+      sets.push(`template = $${idx++}`);
+      vals.push(JSON.stringify(fields.template));
+    }
+    if (fields.diasSemana !== undefined) {
+      sets.push(`dias_semana = $${idx++}`);
+      vals.push(JSON.stringify(fields.diasSemana));
+    }
+    if (fields.stats !== undefined) {
+      sets.push(`stats = $${idx++}`);
+      vals.push(JSON.stringify(fields.stats));
+    }
+
+    if (sets.length === 0) return res.json({ success: true });
+    sets.push(`updated_at = NOW()`);
+    vals.push(id);
+    await pool.query(`UPDATE broadcast_campaigns SET ${sets.join(', ')} WHERE id = $${idx}`, vals);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+// Delete campaign
+app.delete('/api/campaigns/:id', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { id } = req.params;
+    await pool.query('DELETE FROM broadcast_campaigns WHERE id = $1', [id]);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+// Toggle campaign active
+app.patch('/api/campaigns/:id/toggle', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { id } = req.params;
+    const { rows } = await pool.query(
+      `UPDATE broadcast_campaigns SET ativo = NOT ativo, updated_at = NOW() WHERE id = $1 RETURNING ativo`, [id]
+    );
+    if (rows.length === 0) return res.status(404).json({ error: 'Campanha não encontrada' });
+    res.json({ success: true, ativo: rows[0].ativo });
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+// Duplicate campaign
+app.post('/api/campaigns/:id/duplicate', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { id } = req.params;
+    const { rows } = await pool.query('SELECT * FROM broadcast_campaigns WHERE id = $1', [id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Campanha não encontrada' });
+    const orig = rows[0];
+    const newId = `camp_${Date.now()}`;
+    await pool.query(
+      `INSERT INTO broadcast_campaigns
+        (id, nome, template, tipo, dias_semana, horario_inicio, horario_fim, data_inicio, data_fim,
+         campanha_perpetua, usar_horario_clinica, publico, filtro_custom, numero_envio,
+         contatos_alcancaveis, capacidade_diaria, intervalo_spam, ativo, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
+      [newId, orig.nome + ' (cópia)', orig.template, orig.tipo, orig.dias_semana,
+       orig.horario_inicio, orig.horario_fim, orig.data_inicio, orig.data_fim,
+       orig.campanha_perpetua, orig.usar_horario_clinica, orig.publico, orig.filtro_custom,
+       orig.numero_envio, orig.contatos_alcancaveis, orig.capacidade_diaria,
+       orig.intervalo_spam, false, orig.created_by]
+    );
+    res.json({ success: true, id: newId });
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
 
 let automationSchedulerInterval = null;
 
@@ -5319,6 +5490,30 @@ app.listen(PORT, async () => {
         created_at TIMESTAMPTZ DEFAULT NOW()
       )`,
       `CREATE INDEX IF NOT EXISTS idx_automation_jobs_pending ON automation_jobs (status, scheduled_at) WHERE status = 'pending'`,
+      `CREATE TABLE IF NOT EXISTS broadcast_campaigns (
+        id TEXT PRIMARY KEY,
+        nome TEXT NOT NULL,
+        template JSONB NOT NULL DEFAULT '{}',
+        tipo TEXT NOT NULL DEFAULT 'unico',
+        dias_semana JSONB DEFAULT '[]',
+        horario_inicio TEXT,
+        horario_fim TEXT,
+        data_inicio TEXT,
+        data_fim TEXT,
+        campanha_perpetua BOOLEAN DEFAULT false,
+        usar_horario_clinica BOOLEAN DEFAULT false,
+        publico TEXT DEFAULT 'todos',
+        filtro_custom TEXT,
+        numero_envio TEXT,
+        contatos_alcancaveis INTEGER DEFAULT 0,
+        capacidade_diaria INTEGER DEFAULT 232,
+        intervalo_spam INTEGER DEFAULT 7,
+        ativo BOOLEAN DEFAULT false,
+        stats JSONB NOT NULL DEFAULT '{"enviadas":0,"entregues":0,"lidas":0,"respondidas":0,"erros":0}',
+        created_by UUID,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )`,
 
     for (const sql of migrations) {
       try {

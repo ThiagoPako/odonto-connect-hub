@@ -700,6 +700,23 @@ export const automationsApi = {
     vpsApiFetch<Record<string, unknown>>(`/automations/stats?days=${days}`),
 };
 
+// ─── Broadcast Campaigns (Disparos) ────────────────────────
+
+export const campaignsApi = {
+  list: () =>
+    vpsApiFetch<import('@/data/disparosMockData').DisparoProgramado[]>('/campaigns'),
+  create: (campaign: Omit<import('@/data/disparosMockData').DisparoProgramado, 'id' | 'stats' | 'criadoEm'>) =>
+    vpsApiFetch<{ success: boolean; id: string }>('/campaigns', { method: 'POST', body: campaign }),
+  update: (id: string, data: Partial<import('@/data/disparosMockData').DisparoProgramado>) =>
+    vpsApiFetch<{ success: boolean }>(`/campaigns/${id}`, { method: 'PUT', body: data }),
+  remove: (id: string) =>
+    vpsApiFetch<{ success: boolean }>(`/campaigns/${id}`, { method: 'DELETE' }),
+  toggle: (id: string) =>
+    vpsApiFetch<{ success: boolean; ativo: boolean }>(`/campaigns/${id}/toggle`, { method: 'PATCH' }),
+  duplicate: (id: string) =>
+    vpsApiFetch<{ success: boolean; id: string }>(`/campaigns/${id}/duplicate`, { method: 'POST' }),
+};
+
 // ─── Health check ───────────────────────────────────────────
 
 export const healthCheck = () => vpsApiFetch('/health');
