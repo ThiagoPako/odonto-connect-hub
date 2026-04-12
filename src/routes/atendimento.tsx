@@ -316,51 +316,79 @@ function ConsultaPage() {
       <div className="flex min-h-screen w-full bg-background">
         <AppSidebar />
         <div className="flex-1 flex flex-col overflow-hidden">
-          <DashboardHeader title="Atendimento Clínico" />
+          <DashboardHeader title="Consulta" />
           <main className="flex-1 overflow-auto p-6">
             <div className="max-w-[1600px] mx-auto grid grid-cols-12 gap-6">
 
-              {/* Coluna esquerda — Seleção de paciente */}
+              {/* Coluna esquerda — Agenda do Dia */}
               <div className="col-span-3 space-y-4">
                 <div className="bg-card rounded-2xl border border-border/60 p-4 shadow-card animate-slide-up">
                   <h2 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
-                    <User className="h-4 w-4 text-primary" /> Paciente
+                    <Calendar className="h-4 w-4 text-primary" /> Agenda do Dia
                   </h2>
-                  <input
-                    type="text"
-                    placeholder="Buscar paciente..."
-                    value={busca}
-                    onChange={e => setBusca(e.target.value)}
-                    className="w-full h-9 rounded-lg border border-border bg-muted/40 px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 mb-3"
-                  />
-                  <div className="space-y-1.5 max-h-[50vh] overflow-y-auto">
-                    {pacientesFiltrados.map(p => {
-                      const sel = pacienteSelecionado?.id === p.id;
-                      const iniciais = getPacienteIniciais(p);
+                  <p className="text-[11px] text-muted-foreground mb-3">
+                    {agendaOrdenada.length} agendamento{agendaOrdenada.length !== 1 ? "s" : ""} hoje
+                  </p>
+                  <div className="space-y-1.5 max-h-[55vh] overflow-y-auto">
+                    {agendaOrdenada.map(apt => {
+                      const sel = appointmentSelecionado?.id === apt.id;
+                      const statusColors: Record<string, string> = {
+                        em_atendimento: "border-primary bg-primary/5 ring-1 ring-primary/20",
+                        aguardando: "border-warning/40 bg-warning/5",
+                        confirmado: "border-success/30 bg-success/5",
+                        encaixe: "border-accent bg-accent/5",
+                        finalizado: "border-border/40 bg-muted/30 opacity-60",
+                        faltou: "border-destructive/20 bg-destructive/5 opacity-50",
+                      };
+                      const statusLabels: Record<string, string> = {
+                        em_atendimento: "Em atendimento",
+                        aguardando: "Aguardando",
+                        confirmado: "Confirmado",
+                        encaixe: "Encaixe",
+                        finalizado: "Finalizado",
+                        faltou: "Faltou",
+                      };
+                      const statusDotColors: Record<string, string> = {
+                        em_atendimento: "bg-primary",
+                        aguardando: "bg-warning",
+                        confirmado: "bg-success",
+                        encaixe: "bg-accent-foreground",
+                        finalizado: "bg-muted-foreground",
+                        faltou: "bg-destructive",
+                      };
                       return (
                         <button
-                          key={p.id}
-                          onClick={() => { setPacienteSelecionado(p); setBusca(""); }}
+                          key={apt.id}
+                          onClick={() => handleSelecionarAgendamento(apt)}
                           disabled={atendimentoAtivo && !sel}
-                          className={`w-full flex items-center gap-3 p-2.5 rounded-xl text-left transition-all duration-300 hover-lift ${
+                          className={`w-full text-left p-3 rounded-xl border transition-all duration-200 ${
                             sel
-                              ? "border border-primary bg-primary/5 shadow-[0_0_16px_-4px_hsl(var(--primary)/0.3)] ring-1 ring-primary/20"
-                              : "border border-transparent hover:bg-muted/60 hover:border-border/60"
-                          } ${atendimentoAtivo && !sel ? "opacity-40 cursor-not-allowed" : "cursor-pointer"}`}
+                              ? "border-primary bg-primary/5 shadow-[0_0_16px_-4px_hsl(var(--primary)/0.3)] ring-1 ring-primary/20"
+                              : statusColors[apt.status] || "border-border/40"
+                          } ${atendimentoAtivo && !sel ? "opacity-30 cursor-not-allowed" : "cursor-pointer hover:shadow-sm"}`}
                         >
-                          <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center text-primary text-xs font-bold shrink-0">
-                            {iniciais}
+                          <div className="flex items-center gap-2.5">
+                            <div className={`h-8 w-8 rounded-lg ${apt.avatarColor} flex items-center justify-center text-[10px] font-bold text-white shrink-0`}>
+                              {apt.patientInitials}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-foreground truncate">{apt.patientName}</p>
+                              <p className="text-[11px] text-muted-foreground truncate">{apt.procedure}</p>
+                            </div>
                           </div>
-                          <div className="min-w-0">
-                            <p className="text-sm font-medium text-foreground truncate">{p.nome}</p>
-                            <p className="text-[11px] text-muted-foreground">{p.telefone}</p>
+                          <div className="flex items-center justify-between mt-2">
+                            <span className="text-[11px] font-mono text-muted-foreground">{apt.time} • {apt.duration}min</span>
+                            <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                              <span className={`h-1.5 w-1.5 rounded-full ${statusDotColors[apt.status] || "bg-muted"}`} />
+                              {statusLabels[apt.status] || apt.status}
+                            </span>
                           </div>
-                          {temAlertasMedicos(p.id) && (
-                            <AlertTriangle className="h-3.5 w-3.5 text-warning shrink-0 ml-auto" />
-                          )}
                         </button>
                       );
                     })}
+                    {agendaOrdenada.length === 0 && (
+                      <p className="text-xs text-muted-foreground text-center py-6">Nenhum agendamento hoje</p>
+                    )}
                   </div>
                 </div>
 
