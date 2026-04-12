@@ -445,6 +445,8 @@ export const sessionsApi = {
     vpsApiFetch<{ success: boolean; id: string }>('/sessions/start', { method: 'POST', body }),
   assign: (body: { leadId: string }) =>
     vpsApiFetch<{ success: boolean; id: string; waitTime: number }>('/sessions/assign', { method: 'POST', body }),
+  checkActive: (leadId: string) =>
+    vpsApiFetch<{ active: boolean; attendantId?: string; attendantName?: string; isCurrentUser?: boolean }>(`/sessions/active/${leadId}`),
   firstResponse: (body: { leadId: string }) =>
     vpsApiFetch('/sessions/first-response', { method: 'POST', body }),
   close: (body: { leadId: string; leadPhone?: string; instance?: string }) =>
