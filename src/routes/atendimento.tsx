@@ -115,7 +115,9 @@ function ConsultaPage() {
         convenio: "",
         ultimaConsulta: "",
         status: "ativo",
-      } as Paciente);
+        sexo: "M",
+        criadoEm: "",
+      });
     }
     setProcedimentoRealizado(apt.procedure);
   }, [atendimentoAtivo]);
