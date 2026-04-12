@@ -33,7 +33,7 @@ function AutomacoesPage() {
 
   useEffect(() => {
     automationsApi.getFollowup()
-      .then(setFollowupConfig)
+      .then((res) => { if (res.data) setFollowupConfig(res.data); })
       .catch(() => {})
       .finally(() => setLoadingConfig(false));
   }, []);
