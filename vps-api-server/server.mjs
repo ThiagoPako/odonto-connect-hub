@@ -2959,6 +2959,57 @@ app.post('/api/webhook/evolution', async (req, res) => {
       }
     }
 
+    // ─── Auto-confirm appointment when patient replies SIM to reminder ───
+    try {
+      const normalizedReply = (resolvedContent || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      const isConfirmation = ['sim', 'confirmo', 'confirmado', 'ok', 'yes', 'vou', 'estarei', 'pode confirmar', 'confirmada'].some(
+        kw => normalizedReply === kw || normalizedReply.startsWith(kw + ' ') || normalizedReply.startsWith(kw + '!')
+      );
+
+      if (isConfirmation) {
+        // Check if there's a recent reminder sent to this phone
+        const { rows: reminderJobs } = await pool.query(
+          `SELECT aj.id, aj.flow_id FROM automation_jobs aj
+           WHERE aj.trigger_event = 'appointment_reminder'
+             AND aj.status = 'sent'
+             AND aj.patient_phone LIKE $1
+             AND aj.sent_at >= NOW() - INTERVAL '48 hours'
+           ORDER BY aj.sent_at DESC LIMIT 1`,
+          [`%${phoneSuffix}`]
+        );
+
+        if (reminderJobs.length > 0) {
+          const reminderId = reminderJobs[0].flow_id.replace('reminder_', '');
+          // Update appointment status to confirmed
+          const { rowCount } = await pool.query(
+            `UPDATE agendamentos SET status = 'confirmado', updated_at = NOW()
+             WHERE id = $1 AND status NOT IN ('finalizado', 'realizado', 'cancelado')`,
+            [reminderId]
+          );
+
+          if (rowCount > 0) {
+            // Mark reminder as confirmed
+            await pool.query(
+              `UPDATE automation_jobs SET variables = jsonb_set(COALESCE(variables::jsonb, '{}'), '{confirmed}', 'true')
+               WHERE id = $1`,
+              [reminderJobs[0].id]
+            ).catch(() => {});
+
+            // Send confirmation reply
+            const confirmMsg = `✅ *Presença confirmada!*\n\nObrigado por confirmar. Aguardamos você na data agendada. 😊\n\n_Odonto Connect_`;
+            await evolutionFetch(`/message/sendText/${instance}`, {
+              method: 'POST',
+              body: JSON.stringify({ number: `${phone}@s.whatsapp.net`, text: confirmMsg }),
+            }).catch(err => console.error('Failed to send confirm reply:', err.message));
+
+            console.log(`✅ Auto-confirmed appointment ${reminderId} via WhatsApp reply from ${phone}`);
+          }
+        }
+      }
+    } catch (confirmErr) {
+      console.error('Auto-confirm error:', confirmErr.message);
+    }
+
     res.json({ processed: true, leadId: lead.id });
   } catch (error) {
     console.error('Webhook error:', error);
