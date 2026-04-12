@@ -1153,14 +1153,121 @@ function SolutionsGrid({
   onActivate: (s: PreConfiguredSolution) => void;
   counts: Record<string, number>;
 }) {
+  const [hoursConfig, setHoursConfig] = useState({ inicio: '08:00', fim: '18:00', diasSemana: ['SEG','TER','QUA','QUI','SEX'] });
+  const [savingHours, setSavingHours] = useState(false);
+  const [showHoursConfig, setShowHoursConfig] = useState(false);
+
+  const allDays = ['SEG','TER','QUA','QUI','SEX','SAB','DOM'];
+  const dayLabels: Record<string, string> = { SEG: 'Seg', TER: 'Ter', QUA: 'Qua', QUI: 'Qui', SEX: 'Sex', SAB: 'Sáb', DOM: 'Dom' };
+
+  useEffect(() => {
+    automationsApi.getSolutionHours()
+      .then(res => { if (res.data) setHoursConfig(res.data); })
+      .catch(() => {});
+  }, []);
+
+  const saveHours = async () => {
+    setSavingHours(true);
+    try {
+      const res = await automationsApi.updateSolutionHours(hoursConfig);
+      if (res.data) { setHoursConfig(res.data); toast.success('Horário de envio salvo'); }
+      else toast.error(res.error || 'Erro ao salvar');
+    } catch { toast.error('Erro ao salvar'); }
+    finally { setSavingHours(false); }
+  };
+
+  const toggleDay = (day: string) => {
+    setHoursConfig(prev => ({
+      ...prev,
+      diasSemana: prev.diasSemana.includes(day)
+        ? prev.diasSemana.filter(d => d !== day)
+        : [...prev.diasSemana, day],
+    }));
+  };
+
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-lg font-semibold text-foreground">Soluções Pré-Configuradas</h2>
-        <p className="text-sm text-muted-foreground mt-1">
-          Ative soluções prontas para os cenários mais comuns da sua clínica. Cada solução vem com mensagens e gatilhos já configurados.
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold text-foreground">Soluções Pré-Configuradas</h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            Ative soluções prontas para os cenários mais comuns da sua clínica.
+          </p>
+        </div>
+        <button
+          onClick={() => setShowHoursConfig(!showHoursConfig)}
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-border text-sm font-medium hover:bg-muted transition-colors"
+        >
+          <Clock className="h-4 w-4 text-primary" />
+          Horário de Envio: {hoursConfig.inicio} — {hoursConfig.fim}
+          {showHoursConfig ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+        </button>
       </div>
+
+      {/* Business Hours Config */}
+      {showHoursConfig && (
+        <div className="bg-card rounded-xl border border-primary/20 p-5 space-y-4">
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-lg bg-primary/15 flex items-center justify-center">
+              <Clock className="h-5 w-5 text-primary" />
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-foreground">Horário Comercial para Envio Automático</h3>
+              <p className="text-xs text-muted-foreground">Mensagens só serão enviadas dentro do horário e dias configurados</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Horário Início</label>
+              <Input
+                type="time"
+                value={hoursConfig.inicio}
+                onChange={e => setHoursConfig(prev => ({ ...prev, inicio: e.target.value }))}
+                className="h-9"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Horário Fim</label>
+              <Input
+                type="time"
+                value={hoursConfig.fim}
+                onChange={e => setHoursConfig(prev => ({ ...prev, fim: e.target.value }))}
+                className="h-9"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground">Dias da Semana</label>
+            <div className="flex gap-1.5 flex-wrap">
+              {allDays.map(day => (
+                <button
+                  key={day}
+                  onClick={() => toggleDay(day)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                    hoursConfig.diasSemana.includes(day)
+                      ? 'bg-primary text-primary-foreground'
+                      : 'bg-muted text-muted-foreground hover:bg-muted/80'
+                  }`}
+                >
+                  {dayLabels[day]}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between pt-2 border-t border-border">
+            <p className="text-[11px] text-muted-foreground">
+              Fuso: América/São Paulo (BRT)
+            </p>
+            <Button size="sm" onClick={saveHours} disabled={savingHours}>
+              {savingHours ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Save className="h-3.5 w-3.5 mr-1.5" />}
+              Salvar Horário
+            </Button>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {solutions.map((sol) => {
@@ -1179,35 +1286,28 @@ function SolutionsGrid({
                     : "border-border"
               }`}
             >
-              {/* Delay badge */}
               {sol.hasDelay && !isConfigured && (
                 <span className="absolute top-3 right-12 px-2 py-0.5 rounded-full text-[10px] font-medium bg-warning/15 text-warning">
                   Atividade em Atraso
                 </span>
               )}
 
-              {/* Info icon */}
               <button className="absolute top-3 right-3 text-muted-foreground/50 hover:text-muted-foreground transition-colors" title={sol.description}>
                 <Info className="h-4 w-4" />
               </button>
 
-              {/* Icon */}
               <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center text-2xl mb-4">
                 {sol.icon}
               </div>
 
-              {/* Name */}
               <h3 className="font-semibold text-foreground text-sm mb-2">{sol.name}</h3>
 
-              {/* Patient count */}
               <p className="text-xs text-muted-foreground mb-4">
                 Total de Pacientes: <span className="font-semibold text-foreground">{counts[sol.type] ?? sol.totalPacientes ?? 0}</span>
               </p>
 
-              {/* Description on hover */}
               <p className="text-xs text-muted-foreground mb-4 line-clamp-2">{sol.description}</p>
 
-              {/* Steps preview */}
               <div className="text-[11px] text-muted-foreground/70 mb-4 space-y-0.5">
                 {sol.defaultSteps.map((step, i) => (
                   <div key={step.id} className="flex items-center gap-1.5">
@@ -1218,7 +1318,6 @@ function SolutionsGrid({
                 ))}
               </div>
 
-              {/* Action */}
               {isActive ? (
                 <div className="flex items-center gap-2 text-xs font-medium text-primary">
                   <CheckCircle2 className="h-4 w-4" />
