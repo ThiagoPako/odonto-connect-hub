@@ -3166,31 +3166,39 @@ app.get('/api/crm/leads/:id/movements', async (req, res) => {
   }
 });
 
-// List all CRM leads (with optional kanban grouping)
+// List all CRM leads (with optional kanban grouping + server-side pagination)
 app.get('/api/crm/leads', async (req, res) => {
   try {
     await verifyUser(req);
-    const { search, status, grouped } = req.query;
-    let query = `SELECT l.*, s.attendant_name, s.status as session_status
-                 FROM crm_leads l
-                 LEFT JOIN LATERAL (
-                   SELECT attendant_name, status FROM attendance_sessions
-                   WHERE lead_id = l.id::text ORDER BY created_at DESC LIMIT 1
-                 ) s ON true
-                 WHERE 1=1`;
+    const { search, status, grouped, origin } = req.query;
+    const limit = Math.min(Math.max(parseInt(req.query.limit) || 25, 1), 100);
+    const offset = Math.max(parseInt(req.query.offset) || 0, 0);
+
+    let whereClause = ' WHERE 1=1';
     const params = [];
     if (search) {
       params.push(`%${search}%`);
-      query += ` AND (l.nome ILIKE $${params.length} OR l.telefone ILIKE $${params.length} OR l.email ILIKE $${params.length})`;
+      whereClause += ` AND (l.nome ILIKE $${params.length} OR l.telefone ILIKE $${params.length} OR l.email ILIKE $${params.length})`;
     }
     if (status && status !== 'todos') {
       params.push(status);
-      query += ` AND l.status = $${params.length}`;
+      whereClause += ` AND l.status = $${params.length}`;
     }
-    query += ' ORDER BY l.updated_at DESC NULLS LAST, l.created_at DESC';
-    const { rows } = await pool.query(query, params);
+    if (origin && origin !== 'Todos') {
+      params.push(origin);
+      whereClause += ` AND l.origem = $${params.length}`;
+    }
 
+    const baseFrom = `FROM crm_leads l
+                 LEFT JOIN LATERAL (
+                   SELECT attendant_name, status FROM attendance_sessions
+                   WHERE lead_id = l.id::text ORDER BY created_at DESC LIMIT 1
+                 ) s ON true`;
+
+    // For kanban, return all (no pagination) grouped
     if (grouped === 'kanban') {
+      const query = `SELECT l.*, s.attendant_name, s.status as session_status ${baseFrom} ${whereClause} ORDER BY l.updated_at DESC NULLS LAST, l.created_at DESC`;
+      const { rows } = await pool.query(query, params);
       const kanban = {};
       for (const stage of ALL_KANBAN_STAGES) kanban[stage] = [];
       for (const row of rows) {
@@ -3215,7 +3223,18 @@ app.get('/api/crm/leads', async (req, res) => {
       return res.json(kanban);
     }
 
-    res.json(rows);
+    // Count total for pagination metadata
+    const countQuery = `SELECT COUNT(*) as total ${baseFrom} ${whereClause}`;
+    const { rows: countRows } = await pool.query(countQuery, params);
+    const total = parseInt(countRows[0].total);
+
+    // Paginated data query
+    const pIdx1 = params.length + 1;
+    const pIdx2 = params.length + 2;
+    const dataQuery = `SELECT l.*, s.attendant_name, s.status as session_status ${baseFrom} ${whereClause} ORDER BY l.updated_at DESC NULLS LAST, l.created_at DESC LIMIT $${pIdx1} OFFSET $${pIdx2}`;
+    const { rows } = await pool.query(dataQuery, [...params, limit, offset]);
+
+    res.json({ rows, total, limit, offset });
   } catch (error) {
     res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
   }
