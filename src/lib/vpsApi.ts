@@ -273,6 +273,8 @@ export const crmApi = {
     vpsApiFetch<Array<{ id: string; from_stage: string; to_stage: string; moved_by_name: string; reason: string; created_at: string }>>(`/crm/leads/${id}/movements`),
   convertToPatient: (id: string) =>
     vpsApiFetch<{ success: boolean; paciente_id: string; nome: string }>(`/crm/leads/${id}/convert-to-patient`, { method: 'POST' }),
+  linkToPatient: (id: string, pacienteId: string) =>
+    vpsApiFetch<{ success: boolean; paciente_id: string; paciente_nome: string }>(`/crm/leads/${id}/link-patient`, { method: 'POST', body: { paciente_id: pacienteId } }),
 };
 
 // ─── Orçamentos ─────────────────────────────────────────────
