@@ -4149,6 +4149,37 @@ app.post('/api/messages/import-whatsapp', async (req, res) => {
   }
 });
 
+// Check if a lead has an active attendance session
+app.get('/api/sessions/active/:leadId', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    const { leadId } = req.params;
+    if (!leadId) return res.status(400).json({ error: 'leadId obrigatório' });
+
+    const { rows } = await pool.query(
+      `SELECT s.id, s.attendant_id, s.attendant_name, s.assigned_at, s.status
+       FROM attendance_sessions s
+       WHERE s.lead_id = $1 AND s.status = 'active'
+       ORDER BY s.assigned_at DESC LIMIT 1`,
+      [leadId]
+    );
+
+    if (rows.length === 0) {
+      return res.json({ active: false });
+    }
+
+    const session = rows[0];
+    res.json({
+      active: true,
+      attendantId: session.attendant_id,
+      attendantName: session.attendant_name,
+      isCurrentUser: session.attendant_id === user.id,
+    });
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
 
 // ═══════════════════════════════════════════════════════════════
 // CHAT MESSAGES (persistência de histórico)
