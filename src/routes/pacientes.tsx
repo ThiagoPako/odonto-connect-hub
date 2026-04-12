@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { useState, useEffect, useCallback } from "react";
-import { pacientesApi } from "@/lib/vpsApi";
+import { pacientesApi, type HistoricoConsulta } from "@/lib/vpsApi";
 import { OdontogramaChart, OdontogramaEditor } from "@/components/OdontogramaChart";
 import { toast } from "sonner";
 import {
@@ -419,7 +419,7 @@ function NovoPacienteModal({ onClose, onSaved }: { onClose: () => void; onSaved:
 }
 
 /* ─── Patient Detail Modal ─── */
-type DetailTab = "dados" | "anamnese" | "odontograma";
+type DetailTab = "dados" | "anamnese" | "odontograma" | "historico";
 
 interface AnamneseData {
   id?: string;
@@ -524,6 +524,7 @@ function PacienteDetailModal({
     { key: "dados", label: "Dados", icon: FileHeart },
     { key: "anamnese", label: "Anamnese", icon: ClipboardList },
     { key: "odontograma", label: "Odontograma", icon: Smile },
+    { key: "historico", label: "Histórico", icon: History },
   ];
 
   return (
@@ -665,6 +666,10 @@ function PacienteDetailModal({
 
           {activeTab === "odontograma" && (
             <OdontogramaTab pacienteId={paciente.id} />
+          )}
+
+          {activeTab === "historico" && (
+            <HistoricoTab pacienteId={paciente.id} />
           )}
         </div>
       </div>
@@ -1115,6 +1120,98 @@ function OdontogramaTab({ pacienteId }: { pacienteId: string }) {
   );
 }
 
+/* ─── Histórico Tab ─── */
+const statusColors: Record<string, { bg: string; text: string; label: string }> = {
+  agendado: { bg: "bg-blue-500/10", text: "text-blue-600", label: "Agendado" },
+  confirmado: { bg: "bg-emerald-500/10", text: "text-emerald-600", label: "Confirmado" },
+  realizado: { bg: "bg-green-500/10", text: "text-green-600", label: "Realizado" },
+  atendido: { bg: "bg-green-500/10", text: "text-green-600", label: "Atendido" },
+  finalizado: { bg: "bg-green-500/10", text: "text-green-600", label: "Finalizado" },
+  cancelado: { bg: "bg-red-500/10", text: "text-red-600", label: "Cancelado" },
+  desmarcado: { bg: "bg-orange-500/10", text: "text-orange-600", label: "Desmarcado" },
+  faltou: { bg: "bg-red-500/10", text: "text-red-600", label: "Faltou" },
+  em_atendimento: { bg: "bg-primary/10", text: "text-primary", label: "Em atendimento" },
+};
+
+function HistoricoTab({ pacienteId }: { pacienteId: string }) {
+  const [consultas, setConsultas] = useState<HistoricoConsulta[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data, error } = await pacientesApi.getHistorico(pacienteId);
+      if (error) toast.error("Erro ao carregar histórico");
+      else if (data) setConsultas(data);
+    } catch {
+      toast.error("Erro de conexão");
+    } finally {
+      setLoading(false);
+    }
+  }, [pacienteId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="h-5 w-5 animate-spin text-primary" />
+        <span className="ml-2 text-sm text-muted-foreground">Carregando histórico...</span>
+      </div>
+    );
+  }
+
+  if (consultas.length === 0) {
+    return (
+      <div className="text-center py-16 animate-fade-in">
+        <History className="h-10 w-10 text-muted-foreground/30 mx-auto" />
+        <p className="text-sm text-muted-foreground mt-3">Nenhuma consulta registrada.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3 animate-fade-in">
+      <p className="text-xs text-muted-foreground">{consultas.length} consulta{consultas.length !== 1 ? "s" : ""} encontrada{consultas.length !== 1 ? "s" : ""}</p>
+      {consultas.map((c) => {
+        const sc = statusColors[c.status] || { bg: "bg-muted/30", text: "text-muted-foreground", label: c.status };
+        const dataFormatted = c.data ? new Date(c.data).toLocaleDateString("pt-BR") : "—";
+        const horaFormatted = c.hora ? c.hora.slice(0, 5) : "";
+        return (
+          <div key={c.id} className="bg-muted/30 rounded-xl p-4 border border-border/40 hover:border-border/60 transition-colors">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Calendar className="h-3.5 w-3.5 text-primary shrink-0" />
+                  <span className="text-sm font-semibold text-foreground">{dataFormatted}</span>
+                  {horaFormatted && <span className="text-xs text-muted-foreground">às {horaFormatted}</span>}
+                  {c.duracao && <span className="text-[10px] text-muted-foreground">• {c.duracao}min</span>}
+                </div>
+                {c.procedimento && (
+                  <p className="text-sm text-foreground mt-1.5 font-medium">{c.procedimento}</p>
+                )}
+                {c.dentista_nome && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Dr(a). {c.dentista_nome}
+                    {c.dentista_especialidade && <span className="text-muted-foreground/60"> — {c.dentista_especialidade}</span>}
+                  </p>
+                )}
+                {c.observacoes && (
+                  <p className="text-xs text-muted-foreground mt-1.5 italic">"{c.observacoes}"</p>
+                )}
+              </div>
+              <span className={`shrink-0 px-2.5 py-1 rounded-full text-[10px] font-bold ${sc.bg} ${sc.text}`}>
+                {sc.label}
+              </span>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ─── Helper: List Card ─── */
 function ListCard({ label, icon: Icon, items, color }: { label: string; icon: typeof AlertTriangle; items: string[]; color: string }) {
   return (
     <div className="bg-muted/30 rounded-xl p-4">
