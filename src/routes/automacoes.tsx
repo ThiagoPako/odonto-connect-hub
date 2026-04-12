@@ -177,6 +177,11 @@ function AutomacoesPage() {
           <>
         {/* KPIs */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          <MiniKpi icon={Zap} label="Fluxos Ativos" value={flows.filter((f) => f.active).length.toString()} total={flows.length.toString()} />
+          <MiniKpi icon={Send} label="Mensagens Enviadas" value={totalSent.toString()} />
+          <MiniKpi icon={MessageSquare} label="Taxa de Resposta" value={`${responseRate}%`} highlight={Number(responseRate) > 40} />
+          <MiniKpi icon={CheckCircle2} label="Conversões" value={totalConverted.toString()} />
+        </div>
 
         {/* Best practices tip */}
         <div className="flex items-start gap-3 p-4 rounded-xl bg-primary/5 border border-primary/20">
