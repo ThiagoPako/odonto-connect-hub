@@ -807,6 +807,45 @@ export const aiApi = {
   getMetaAdsInsight: () => vpsApiFetch<{ insight: string }>('/ai/meta-ads/insight'),
 };
 
+// ─── Consultations ──────────────────────────────────────────
+
+export interface ConsultationRecord {
+  id: string;
+  patient_name: string;
+  dentist_name: string;
+  queixa_principal: string;
+  procedimento: string;
+  dente_regiao: string;
+  observacoes: string;
+  prescricoes: Array<{ medicamento: string; dosagem: string; posologia: string; duracao: string }>;
+  duration_seconds: number;
+  gravacoes_count: number;
+  clinical_report_id: string | null;
+  status: string;
+  started_at: string;
+  finished_at: string;
+}
+
+export const consultationsApi = {
+  finalize: (body: {
+    patient_id: string;
+    patient_name?: string;
+    appointment_id?: string;
+    queixa_principal?: string;
+    procedimento?: string;
+    dente_regiao?: string;
+    observacoes?: string;
+    prescricoes?: Array<{ medicamento: string; dosagem: string; posologia: string; duracao: string }>;
+    duration_seconds?: number;
+    gravacoes_count?: number;
+    clinical_report_id?: string;
+    started_at?: string;
+  }) => vpsApiFetch<{ id: string; finished_at: string }>('/consultations', { method: 'POST', body }),
+
+  getHistory: (patientId: string) =>
+    vpsApiFetch<ConsultationRecord[]>(`/consultations/${encodeURIComponent(patientId)}`),
+};
+
 // ─── Health check ───────────────────────────────────────────
 
 export const healthCheck = () => vpsApiFetch('/health');
