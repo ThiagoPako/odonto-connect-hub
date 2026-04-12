@@ -602,6 +602,53 @@ function ConsultaPage() {
                     </div>
                   </div>
                 )}
+
+                {/* Histórico de consultas anteriores */}
+                {pacienteSelecionado && (
+                  <div className="bg-card rounded-2xl border border-border/60 p-4 shadow-card animate-slide-up" style={{ animationDelay: "150ms" }}>
+                    <h3 className="text-xs font-semibold text-foreground flex items-center gap-1.5 mb-3">
+                      <Clock className="h-3.5 w-3.5 text-primary" /> Histórico de Consultas
+                    </h3>
+                    {loadingHistorico ? (
+                      <div className="flex items-center justify-center py-4">
+                        <Loader2 className="h-4 w-4 text-primary animate-spin" />
+                      </div>
+                    ) : historicoConsultas.length === 0 ? (
+                      <p className="text-[10px] text-muted-foreground text-center py-3">Nenhuma consulta anterior registrada</p>
+                    ) : (
+                      <div className="space-y-2 max-h-[30vh] overflow-y-auto">
+                        {historicoConsultas.map((c) => {
+                          const date = c.finished_at ? new Date(c.finished_at) : null;
+                          const mins = Math.floor((c.duration_seconds || 0) / 60);
+                          return (
+                            <div key={c.id} className="p-2.5 rounded-xl border border-border/40 bg-muted/20 hover:bg-muted/40 transition-colors">
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="text-[10px] font-semibold text-foreground">
+                                  {date ? date.toLocaleDateString("pt-BR") : "—"}
+                                </span>
+                                <span className="text-[9px] text-muted-foreground">
+                                  {mins > 0 ? `${mins}min` : "—"}
+                                </span>
+                              </div>
+                              {c.procedimento && (
+                                <p className="text-[10px] text-primary font-medium truncate">{c.procedimento}</p>
+                              )}
+                              {c.queixa_principal && (
+                                <p className="text-[10px] text-muted-foreground truncate mt-0.5">Queixa: {c.queixa_principal}</p>
+                              )}
+                              {c.dente_regiao && (
+                                <p className="text-[10px] text-muted-foreground truncate">Dente: {c.dente_regiao}</p>
+                              )}
+                              {c.dentist_name && (
+                                <p className="text-[9px] text-muted-foreground/70 mt-1">{c.dentist_name}</p>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Coluna central — Atendimento */}
