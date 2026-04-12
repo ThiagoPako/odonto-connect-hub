@@ -240,33 +240,7 @@ export function AutomationReportPanel() {
         </Card>
       </div>
 
-      {/* Per-flow performance */}
-      {flowConversionData.length > 0 && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center gap-2">
-              <TrendingUp className="h-4 w-4 text-chart-3" />
-              Desempenho por Fluxo (%)
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={Math.max(180, flowConversionData.length * 50)}>
-              <BarChart data={flowConversionData} layout="vertical" margin={{ left: 10, right: 16, top: 4, bottom: 4 }}>
-                <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="hsl(var(--border))" />
-                <XAxis type="number" domain={[0, 100]} tickFormatter={(v) => `${v}%`} fontSize={10} tick={{ fill: "hsl(var(--muted-foreground))" }} />
-                <YAxis type="category" dataKey="name" width={120} fontSize={11} tick={{ fill: "hsl(var(--foreground))" }} />
-                <Tooltip
-                  contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 12 }}
-                  formatter={(value: number) => [`${value.toFixed(1)}%`]}
-                />
-                <Bar dataKey="resposta" name="Resposta" fill="hsl(var(--chart-4))" radius={[0, 4, 4, 0]} barSize={14} />
-                <Bar dataKey="conversao" name="Conversão" fill="hsl(var(--chart-3))" radius={[0, 4, 4, 0]} barSize={14} />
-                <Legend wrapperStyle={{ fontSize: 11 }} />
-              </BarChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
-      )}
+
 
       {/* Flow detail table */}
       <Card>
