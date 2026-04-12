@@ -175,6 +175,31 @@ CREATE INDEX IF NOT EXISTS idx_financeiro_tipo ON financeiro(tipo);
 CREATE INDEX IF NOT EXISTS idx_pacientes_nome ON pacientes(nome);
 CREATE INDEX IF NOT EXISTS idx_crm_leads_status ON crm_leads(status);
 
+-- Anamneses
+CREATE TABLE IF NOT EXISTS anamneses (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  paciente_id UUID NOT NULL REFERENCES pacientes(id) ON DELETE CASCADE,
+  alergias TEXT[] DEFAULT '{}',
+  medicamentos TEXT[] DEFAULT '{}',
+  doencas_preexistentes TEXT[] DEFAULT '{}',
+  cirurgias_anteriores TEXT[] DEFAULT '{}',
+  fumante BOOLEAN DEFAULT false,
+  etilista BOOLEAN DEFAULT false,
+  gestante BOOLEAN DEFAULT false,
+  diabetes BOOLEAN DEFAULT false,
+  cardiopatia BOOLEAN DEFAULT false,
+  hepatite BOOLEAN DEFAULT false,
+  hiv BOOLEAN DEFAULT false,
+  hemofilia BOOLEAN DEFAULT false,
+  epilepsia BOOLEAN DEFAULT false,
+  pressao_arterial TEXT,
+  observacoes TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(paciente_id)
+);
+CREATE INDEX IF NOT EXISTS idx_anamneses_paciente ON anamneses(paciente_id);
+
 -- Add avatar_url to crm_leads (WhatsApp profile picture)
 ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS avatar_url TEXT;
 
