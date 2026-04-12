@@ -6,7 +6,6 @@ import { AudioRecorder } from "./AudioRecorder";
 import { getClinicLocation } from "@/components/ClinicLocationPanel";
 import { getAttendanceSettings, type QuickReply } from "@/components/AttendanceSettingsPanel";
 import type { MessageType, ChatMessage, LocationData, ContactData, PollData, ReplyData, ListData } from "@/data/chatMockData";
-import { toast } from "sonner";
 
 const CRM_STAGES = [
   { id: "lead", label: "Lead", emoji: "📥", color: "#6b7280" },
