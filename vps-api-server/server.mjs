@@ -3737,6 +3737,237 @@ app.post('/api/campaigns/:id/duplicate', async (req, res) => {
   }
 });
 
+// Execute campaign — resolve contacts by audience, enqueue jobs
+app.post('/api/campaigns/:id/execute', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { id } = req.params;
+
+    const { rows: campRows } = await pool.query('SELECT * FROM broadcast_campaigns WHERE id = $1', [id]);
+    if (campRows.length === 0) return res.status(404).json({ error: 'Campanha não encontrada' });
+    const camp = campRows[0];
+    const template = typeof camp.template === 'string' ? JSON.parse(camp.template) : camp.template;
+    const message = template?.mensagem || template?.message || '';
+    if (!message) return res.status(400).json({ error: 'Template sem mensagem configurada' });
+
+    // Resolve instance
+    let instance = camp.numero_envio;
+    if (!instance) {
+      try {
+        const instResult = await evolutionFetch('/instance/fetchInstances');
+        const connected = (Array.isArray(instResult.data) ? instResult.data : [])
+          .filter(i => (i.connectionStatus || i.status) === 'open');
+        if (connected.length > 0) instance = connected[0].name || connected[0].instanceName;
+      } catch {}
+    }
+    if (!instance) return res.status(400).json({ error: 'Nenhuma instância WhatsApp conectada' });
+
+    // Resolve contacts by audience type
+    let contacts = [];
+    const publico = camp.publico || 'todos';
+
+    if (publico === 'todos') {
+      const { rows } = await pool.query(
+        `SELECT DISTINCT COALESCE(c.nome, cl.nome) AS nome, COALESCE(c.telefone, cl.telefone) AS telefone
+         FROM crm_leads cl LEFT JOIN contatos c ON c.telefone = cl.telefone
+         WHERE COALESCE(c.telefone, cl.telefone) IS NOT NULL AND COALESCE(c.telefone, cl.telefone) != ''
+         LIMIT $1`, [camp.capacidade_diaria || 232]);
+      contacts = rows;
+    } else if (publico === 'ativos') {
+      const { rows } = await pool.query(
+        `SELECT DISTINCT cl.nome, cl.telefone FROM crm_leads cl
+         INNER JOIN chat_messages cm ON cm.phone = cl.telefone
+         WHERE cl.telefone IS NOT NULL AND cl.telefone != '' AND cm.timestamp > NOW() - INTERVAL '180 days'
+         LIMIT $1`, [camp.capacidade_diaria || 232]);
+      contacts = rows;
+    } else if (publico === 'inativos') {
+      const { rows } = await pool.query(
+        `SELECT DISTINCT cl.nome, cl.telefone FROM crm_leads cl
+         LEFT JOIN chat_messages cm ON cm.phone = cl.telefone AND cm.timestamp > NOW() - INTERVAL '90 days'
+         WHERE cl.telefone IS NOT NULL AND cl.telefone != '' AND cm.id IS NULL
+         LIMIT $1`, [camp.capacidade_diaria || 232]);
+      contacts = rows;
+    } else if (publico === 'aniversariantes') {
+      const { rows } = await pool.query(
+        `SELECT nome, telefone FROM contatos
+         WHERE telefone IS NOT NULL AND telefone != '' AND EXTRACT(MONTH FROM data_nascimento) = EXTRACT(MONTH FROM NOW())
+         LIMIT $1`, [camp.capacidade_diaria || 232]);
+      contacts = rows;
+    } else {
+      const { rows } = await pool.query(
+        `SELECT DISTINCT COALESCE(c.nome, cl.nome) AS nome, COALESCE(c.telefone, cl.telefone) AS telefone
+         FROM crm_leads cl LEFT JOIN contatos c ON c.telefone = cl.telefone
+         WHERE COALESCE(c.telefone, cl.telefone) IS NOT NULL AND COALESCE(c.telefone, cl.telefone) != ''
+         LIMIT $1`, [camp.capacidade_diaria || 232]);
+      contacts = rows;
+    }
+
+    if (contacts.length === 0) return res.json({ success: true, enqueued: 0, message: 'Nenhum contato encontrado para este público' });
+
+    // Anti-spam: skip contacts that received this campaign within intervalo_spam days
+    const spamDays = camp.intervalo_spam || 7;
+    const { rows: recentlySent } = await pool.query(
+      `SELECT DISTINCT patient_phone FROM automation_jobs
+       WHERE trigger_event = 'campaign' AND status = 'sent' AND sent_at > NOW() - INTERVAL '1 day' * $1 AND flow_id = $2`,
+      [spamDays, id]);
+    const recentPhones = new Set(recentlySent.map(r => normalizeWhatsappNumber(r.patient_phone)));
+
+    // Enqueue jobs with 2s stagger
+    let enqueued = 0;
+    const now = new Date();
+    for (const contact of contacts) {
+      const phone = normalizeWhatsappNumber(contact.telefone);
+      if (recentPhones.has(phone)) continue;
+
+      const personalizedMsg = message
+        .replace(/\{\{nome\}\}/gi, contact.nome || 'Cliente')
+        .replace(/\{\{telefone\}\}/gi, contact.telefone || '');
+
+      const scheduledAt = new Date(now.getTime() + enqueued * 2000);
+      await pool.query(
+        `INSERT INTO automation_jobs (flow_id, flow_name, step_index, patient_name, patient_phone, instance, message, channel, status, scheduled_at, trigger_event)
+         VALUES ($1, $2, 0, $3, $4, $5, $6, 'whatsapp', 'pending', $7, 'campaign')`,
+        [id, camp.nome, contact.nome, phone, instance, personalizedMsg, scheduledAt]);
+      enqueued++;
+    }
+
+    // Update campaign stats
+    await pool.query(
+      `UPDATE broadcast_campaigns SET ativo = true,
+        stats = jsonb_set(stats, '{enviadas}', to_jsonb(COALESCE((stats->>'enviadas')::int, 0) + $1)),
+        contatos_alcancaveis = $2, updated_at = NOW()
+       WHERE id = $3`, [enqueued, contacts.length, id]);
+
+    console.log(`📢 Campaign "${camp.nome}" executed: ${enqueued} enqueued (${contacts.length - enqueued} skipped by spam filter)`);
+    res.json({ success: true, enqueued, total: contacts.length, skipped: contacts.length - enqueued });
+  } catch (error) {
+    console.error('❌ Campaign execute error:', error.message);
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+// Campaign job stats
+app.get('/api/campaigns/:id/jobs', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { id } = req.params;
+    const { rows: summary } = await pool.query(
+      `SELECT status, COUNT(*)::int AS count FROM automation_jobs WHERE flow_id = $1 AND trigger_event = 'campaign' GROUP BY status`, [id]);
+    const { rows: recent } = await pool.query(
+      `SELECT patient_name, patient_phone, status, sent_at, error, scheduled_at
+       FROM automation_jobs WHERE flow_id = $1 AND trigger_event = 'campaign' ORDER BY created_at DESC LIMIT 50`, [id]);
+    res.json({ summary: Object.fromEntries(summary.map(s => [s.status, s.count])), recent });
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+// Campaign scheduler — auto-execute recurrent campaigns
+let campaignSchedulerInterval = null;
+
+async function processCampaignScheduler() {
+  try {
+    const { rows: activeCampaigns } = await pool.query(
+      `SELECT * FROM broadcast_campaigns WHERE ativo = true AND tipo = 'recorrente'`);
+    if (activeCampaigns.length === 0) return;
+
+    const now = new Date();
+    const currentDay = ['DOM', 'SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SAB'][now.getDay()];
+    const currentTime = now.toTimeString().slice(0, 5);
+
+    for (const camp of activeCampaigns) {
+      const diasSemana = typeof camp.dias_semana === 'string' ? JSON.parse(camp.dias_semana) : (camp.dias_semana || []);
+      if (diasSemana.length > 0 && !diasSemana.includes(currentDay)) continue;
+      if (camp.horario_inicio && currentTime < camp.horario_inicio) continue;
+      if (camp.horario_fim && currentTime > camp.horario_fim) continue;
+
+      // Skip if already executed today
+      const { rows: todayJobs } = await pool.query(
+        `SELECT 1 FROM automation_jobs WHERE flow_id = $1 AND trigger_event = 'campaign' AND created_at::date = CURRENT_DATE LIMIT 1`, [camp.id]);
+      if (todayJobs.length > 0) continue;
+
+      console.log(`📢 Auto-executing campaign "${camp.nome}" (${currentDay} ${currentTime})`);
+      try {
+        const template = typeof camp.template === 'string' ? JSON.parse(camp.template) : camp.template;
+        const message = template?.mensagem || template?.message || '';
+        if (!message) continue;
+
+        let instance = camp.numero_envio;
+        if (!instance) {
+          const instResult = await evolutionFetch('/instance/fetchInstances');
+          const connected = (Array.isArray(instResult.data) ? instResult.data : [])
+            .filter(i => (i.connectionStatus || i.status) === 'open');
+          if (connected.length > 0) instance = connected[0].name || connected[0].instanceName;
+        }
+        if (!instance) continue;
+
+        let contacts = [];
+        const publico = camp.publico || 'todos';
+        const limit = [camp.capacidade_diaria || 232];
+
+        if (publico === 'ativos') {
+          const { rows } = await pool.query(
+            `SELECT DISTINCT cl.nome, cl.telefone FROM crm_leads cl
+             INNER JOIN chat_messages cm ON cm.phone = cl.telefone
+             WHERE cl.telefone IS NOT NULL AND cl.telefone != '' AND cm.timestamp > NOW() - INTERVAL '180 days'
+             LIMIT $1`, limit);
+          contacts = rows;
+        } else if (publico === 'inativos') {
+          const { rows } = await pool.query(
+            `SELECT DISTINCT cl.nome, cl.telefone FROM crm_leads cl
+             LEFT JOIN chat_messages cm ON cm.phone = cl.telefone AND cm.timestamp > NOW() - INTERVAL '90 days'
+             WHERE cl.telefone IS NOT NULL AND cl.telefone != '' AND cm.id IS NULL LIMIT $1`, limit);
+          contacts = rows;
+        } else if (publico === 'aniversariantes') {
+          const { rows } = await pool.query(
+            `SELECT nome, telefone FROM contatos
+             WHERE telefone IS NOT NULL AND telefone != '' AND EXTRACT(MONTH FROM data_nascimento) = EXTRACT(MONTH FROM NOW())
+             LIMIT $1`, limit);
+          contacts = rows;
+        } else {
+          const { rows } = await pool.query(
+            `SELECT DISTINCT COALESCE(c.nome, cl.nome) AS nome, COALESCE(c.telefone, cl.telefone) AS telefone
+             FROM crm_leads cl LEFT JOIN contatos c ON c.telefone = cl.telefone
+             WHERE COALESCE(c.telefone, cl.telefone) IS NOT NULL AND COALESCE(c.telefone, cl.telefone) != ''
+             LIMIT $1`, limit);
+          contacts = rows;
+        }
+
+        const spamDays = camp.intervalo_spam || 7;
+        const { rows: recentlySent } = await pool.query(
+          `SELECT DISTINCT patient_phone FROM automation_jobs
+           WHERE trigger_event = 'campaign' AND status = 'sent' AND sent_at > NOW() - INTERVAL '1 day' * $1 AND flow_id = $2`,
+          [spamDays, camp.id]);
+        const recentPhones = new Set(recentlySent.map(r => normalizeWhatsappNumber(r.patient_phone)));
+
+        let enqueued = 0;
+        const enqueueTime = new Date();
+        for (const contact of contacts) {
+          const phone = normalizeWhatsappNumber(contact.telefone);
+          if (recentPhones.has(phone)) continue;
+          const personalizedMsg = message.replace(/\{\{nome\}\}/gi, contact.nome || 'Cliente').replace(/\{\{telefone\}\}/gi, contact.telefone || '');
+          const scheduledAt = new Date(enqueueTime.getTime() + enqueued * 2000);
+          await pool.query(
+            `INSERT INTO automation_jobs (flow_id, flow_name, step_index, patient_name, patient_phone, instance, message, channel, status, scheduled_at, trigger_event)
+             VALUES ($1, $2, 0, $3, $4, $5, $6, 'whatsapp', 'pending', $7, 'campaign')`,
+            [camp.id, camp.nome, contact.nome, phone, instance, personalizedMsg, scheduledAt]);
+          enqueued++;
+        }
+
+        if (enqueued > 0) {
+          await pool.query(
+            `UPDATE broadcast_campaigns SET stats = jsonb_set(stats, '{enviadas}', to_jsonb(COALESCE((stats->>'enviadas')::int, 0) + $1)), updated_at = NOW() WHERE id = $2`,
+            [enqueued, camp.id]);
+          console.log(`   ✅ Campaign "${camp.nome}" auto-enqueued ${enqueued} messages`);
+        }
+      } catch (campErr) {
+        console.error(`   ❌ Campaign "${camp.nome}" auto-execute error:`, campErr.message);
+      }
+    }
+  } catch (err) {
+    console.error('❌ Campaign scheduler error:', err.message);
+  }
+}
 
 let automationSchedulerInterval = null;
 
