@@ -396,6 +396,8 @@ function KanbanCard({ lead, onDragStart }: { lead: KanbanLead; onDragStart: () =
 
 /* ── Patient Table View ──────────────────────────── */
 
+const PAGE_SIZE = 25;
+
 function PatientTableView() {
   const [searchTerm, setSearchTerm] = useState("");
   const [originFilter, setOriginFilter] = useState("Todos");
@@ -403,6 +405,7 @@ function PatientTableView() {
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(1);
 
   const loadPatients = useCallback(async () => {
     setLoading(true);
@@ -440,10 +443,17 @@ function PatientTableView() {
     return () => clearTimeout(timer);
   }, [loadPatients]);
 
+  // Reset page when filters change
+  useEffect(() => { setPage(1); }, [searchTerm, originFilter, statusFilter]);
+
   const filtered = patients.filter((p) => {
     const matchOrigin = originFilter === "Todos" || p.origin === originFilter;
     return matchOrigin;
   });
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const paginated = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
   return (
     <main className="flex-1 flex overflow-hidden">
@@ -485,8 +495,11 @@ function PatientTableView() {
           </div>
         </div>
 
-        <div className="px-4 py-2 text-xs text-muted-foreground">
-          {filtered.length} paciente{filtered.length !== 1 ? "s" : ""} encontrado{filtered.length !== 1 ? "s" : ""}
+        <div className="px-4 py-2 text-xs text-muted-foreground flex items-center justify-between">
+          <span>{filtered.length} paciente{filtered.length !== 1 ? "s" : ""} encontrado{filtered.length !== 1 ? "s" : ""}</span>
+          {totalPages > 1 && (
+            <span>Página {safePage} de {totalPages}</span>
+          )}
         </div>
 
         <div className="flex-1 overflow-y-auto">
@@ -501,7 +514,7 @@ function PatientTableView() {
               Nenhum paciente encontrado
             </div>
           )}
-          {!loading && filtered.length > 0 && (
+          {!loading && paginated.length > 0 && (
           <table className="w-full">
             <thead className="sticky top-0 bg-card">
               <tr className="border-b border-border text-left">
@@ -514,7 +527,7 @@ function PatientTableView() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((patient) => (
+              {paginated.map((patient) => (
                 <tr key={patient.id} onClick={() => setSelectedPatient(patient)}
                   className={`border-b border-border/50 cursor-pointer transition-colors ${
                     selectedPatient?.id === patient.id ? "bg-primary/5" : "hover:bg-muted/50"
@@ -547,6 +560,53 @@ function PatientTableView() {
           </table>
           )}
         </div>
+
+        {/* Pagination controls */}
+        {!loading && totalPages > 1 && (
+          <div className="flex items-center justify-between px-4 py-2.5 border-t border-border bg-card">
+            <button
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={safePage <= 1}
+              className="px-3 py-1.5 rounded-lg text-xs font-medium bg-muted text-muted-foreground hover:text-foreground hover:bg-accent transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              ← Anterior
+            </button>
+            <div className="flex items-center gap-1">
+              {Array.from({ length: Math.min(totalPages, 7) }, (_, i) => {
+                let pageNum: number;
+                if (totalPages <= 7) {
+                  pageNum = i + 1;
+                } else if (safePage <= 4) {
+                  pageNum = i + 1;
+                } else if (safePage >= totalPages - 3) {
+                  pageNum = totalPages - 6 + i;
+                } else {
+                  pageNum = safePage - 3 + i;
+                }
+                return (
+                  <button
+                    key={pageNum}
+                    onClick={() => setPage(pageNum)}
+                    className={`min-w-[28px] h-7 rounded text-xs font-medium transition-colors ${
+                      pageNum === safePage
+                        ? "bg-primary text-primary-foreground"
+                        : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                    }`}
+                  >
+                    {pageNum}
+                  </button>
+                );
+              })}
+            </div>
+            <button
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={safePage >= totalPages}
+              className="px-3 py-1.5 rounded-lg text-xs font-medium bg-muted text-muted-foreground hover:text-foreground hover:bg-accent transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Próxima →
+            </button>
+          </div>
+        )}
       </div>
 
       {selectedPatient && (
