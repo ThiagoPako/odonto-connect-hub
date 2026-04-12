@@ -1099,44 +1099,33 @@ function FlowEditor({
 
 // ─── Shared components ──────────────────────────────────────
 
-function StatBox({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="bg-muted/50 rounded-lg p-2.5 text-center">
-      <p className="text-[10px] text-muted-foreground mb-0.5">{label}</p>
-      <p className="text-sm font-bold text-foreground">{value}</p>
-    </div>
-  );
-}
-
 function StepItem({ step, isLast, index }: { step: AutomationStep; isLast: boolean; index: number }) {
   const channelIcon = step.channel === "whatsapp" ? MessageSquare : step.channel === "sms" ? Smartphone : Mail;
   const channelLabel = step.channel === "whatsapp" ? "WhatsApp" : step.channel === "sms" ? "SMS" : "E-mail";
+  const channelColor = step.channel === "whatsapp" ? "text-success" : step.channel === "sms" ? "text-chart-2" : "text-chart-4";
 
   return (
-    <div className="flex gap-3">
+    <div className="flex gap-4 animate-slide-up" style={{ animationDelay: `${index * 80}ms`, animationFillMode: 'both' }}>
       <div className="flex flex-col items-center">
-        <div className="h-8 w-8 rounded-full bg-primary/15 flex items-center justify-center text-primary text-xs font-bold shrink-0">
+        <div className="h-9 w-9 rounded-xl gradient-primary flex items-center justify-center text-primary-foreground text-xs font-bold shrink-0 shadow-sm">
           {index + 1}
         </div>
-        {!isLast && <div className="w-px flex-1 bg-border my-1" />}
+        {!isLast && <div className="w-0.5 flex-1 my-1.5 bg-gradient-to-b from-primary/30 to-border rounded-full" />}
       </div>
-      <div className={`flex-1 ${!isLast ? "pb-4" : ""}`}>
-        <div className="flex items-center gap-2 mb-1.5">
-          <span className="flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
+      <div className={`flex-1 ${!isLast ? "pb-5" : ""}`}>
+        <div className="flex items-center gap-2.5 mb-2">
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-muted text-[11px] font-medium text-muted-foreground">
             <Clock className="h-3 w-3" /> {step.delay}
           </span>
-          <span className="text-muted-foreground/30">·</span>
-          <span className="flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
+          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-muted text-[11px] font-medium ${channelColor}`}>
             {(() => { const Icon = channelIcon; return <Icon className="h-3 w-3" />; })()}
             {channelLabel}
           </span>
         </div>
-        <div className="bg-muted/50 rounded-lg p-3 text-xs text-foreground leading-relaxed border border-border/50">
+        <div className="bg-muted/40 rounded-2xl rounded-tl-md p-4 text-xs text-foreground leading-relaxed border border-border/50">
           {step.message.split(/(\{\{[^}]+\}\})/).map((part, i) =>
             part.startsWith("{{") ? (
-              <span key={i} className="px-1 py-0.5 rounded bg-primary/10 text-primary font-mono text-[11px]">
-                {part}
-              </span>
+              <span key={i} className="px-1.5 py-0.5 rounded-md bg-primary/10 text-primary font-mono text-[11px] font-medium">{part}</span>
             ) : (
               <span key={i}>{part}</span>
             )
@@ -1146,7 +1135,6 @@ function StepItem({ step, isLast, index }: { step: AutomationStep; isLast: boole
     </div>
   );
 }
-
 // ─── Solution Icon Map ──────────────────────────────────────
 
 const solutionIconMap: Record<string, { icon: LucideIcon; gradient: string; bg: string }> = {
