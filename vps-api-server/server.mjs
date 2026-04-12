@@ -4758,6 +4758,7 @@ app.get('/api/crm/leads/:id/history', async (req, res) => {
   }
 });
 
+app.get('/api/crm/leads/:id/movements', async (req, res) => {
   try {
     await verifyUser(req);
     const { rows } = await pool.query(
