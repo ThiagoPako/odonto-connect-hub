@@ -131,6 +131,35 @@ function AutomacoesPage() {
     automationsApi.createFlow(newFlow).catch(() => toast.error("Erro ao criar fluxo"));
   };
 
+  const activateSolution = (solution: PreConfiguredSolution) => {
+    // Check if a flow for this solution type already exists
+    const existing = flows.find(f => f.type === solution.type);
+    if (existing) {
+      setActiveTab("flows");
+      setSelectedFlow(existing);
+      setEditingFlow({ ...existing, steps: existing.steps.map(s => ({ ...s })) });
+      toast.info(`Fluxo "${existing.name}" já existe. Abrindo para edição.`);
+      return;
+    }
+    const newFlow: AutomationFlow = {
+      id: `af${Date.now()}`,
+      name: solution.name,
+      description: solution.description,
+      type: solution.type,
+      active: false,
+      trigger: solution.trigger,
+      steps: solution.defaultSteps.map(s => ({ ...s, id: `s${Date.now()}-${Math.random().toString(36).slice(2, 6)}` })),
+      stats: { sent: 0, responded: 0, converted: 0 },
+      createdAt: new Date().toLocaleDateString("pt-BR"),
+    };
+    setFlows((prev) => [newFlow, ...prev]);
+    setActiveTab("flows");
+    setSelectedFlow(newFlow);
+    setEditingFlow(newFlow);
+    toast.success(`Solução "${solution.name}" ativada! Personalize as mensagens.`);
+    automationsApi.createFlow(newFlow).catch(() => toast.error("Erro ao salvar fluxo"));
+  };
+
   const saveEditedFlow = (updated: AutomationFlow) => {
     const withUpdate = { ...updated, updatedAt: new Date().toLocaleDateString("pt-BR") };
     setFlows((prev) => prev.map((f) => f.id === updated.id ? withUpdate : f));
