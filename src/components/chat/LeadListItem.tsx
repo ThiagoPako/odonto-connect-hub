@@ -35,9 +35,13 @@ export function LeadListItem({ lead, isSelected, onSelect, showAssignButton, onA
     <div
       onClick={() => onSelect(lead)}
       className={`lead-list-item flex items-start gap-3 px-4 py-3.5 cursor-pointer border-b border-border/30 relative overflow-hidden ${
-        isSelected
-          ? "bg-primary/5 border-l-[3px] border-l-primary shadow-sm"
-          : "hover:bg-muted/40 border-l-[3px] border-l-transparent"
+        lead.priority
+          ? isSelected
+            ? "bg-warning/10 border-l-[3px] border-l-warning shadow-sm"
+            : "bg-warning/5 border-l-[3px] border-l-warning hover:bg-warning/10"
+          : isSelected
+            ? "bg-primary/5 border-l-[3px] border-l-primary shadow-sm"
+            : "hover:bg-muted/40 border-l-[3px] border-l-transparent"
       }`}
     >
       {/* Subtle gradient overlay on selected */}
