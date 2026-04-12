@@ -1,9 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import type { Lead, ChatMessage } from "@/data/chatMockData";
-import { Phone, Video, MoreVertical, X, ArrowRightLeft, Loader2, ArrowLeft, Tags, Check, CheckCircle2, Download } from "lucide-react";
+import { Phone, Video, X, ArrowRightLeft, Loader2, ArrowLeft, Check, CheckCircle2, Download, Kanban } from "lucide-react";
 import { LeadAvatar } from "@/components/LeadAvatar";
 import { toast } from "sonner";
-import { adminListUsers, tagsApi, whatsappApi, type LeadTagApi } from "@/lib/vpsApi";
+import { adminListUsers, crmApi, whatsappApi } from "@/lib/vpsApi";
 import { useWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
 import { useAuth } from "@/hooks/useAuth";
 import { FinishAttendanceDialog, type FinishOutcome } from "./FinishAttendanceDialog";
@@ -29,6 +29,14 @@ interface Attendant {
 
 type PresenceDisplay = "online" | "offline" | "typing" | "recording";
 
+// CRM stages available for quick-marking from chat
+const CRM_QUICK_STAGES = [
+  { id: "orcamento", label: "Orçamento", emoji: "📋", color: "#3b82f6", description: "Marcar que quer orçamento" },
+  { id: "followup", label: "Follow-up", emoji: "🔄", color: "#f59e0b", description: "Precisa de acompanhamento" },
+  { id: "orcamento_enviado", label: "Orçamento Enviado", emoji: "📨", color: "#8b5cf6", description: "Orçamento já foi enviado" },
+  { id: "orcamento_aprovado", label: "Orçamento Aprovado", emoji: "✅", color: "#22c55e", description: "Orçamento foi aprovado" },
+];
+
 interface ChatHeaderProps {
   lead: Lead;
   onClose: () => void;
@@ -47,99 +55,101 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onRe
   const { connected: connectedInstances } = useWhatsAppInstances();
   const [calling, setCalling] = useState(false);
   const [showTransfer, setShowTransfer] = useState(false);
-  const [showTagMenu, setShowTagMenu] = useState(false);
+  const [showStageMenu, setShowStageMenu] = useState(false);
   const [showFinishDialog, setShowFinishDialog] = useState(false);
   const [attendants, setAttendants] = useState<Attendant[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedAtt, setSelectedAtt] = useState<Attendant | null>(null);
   const [reason, setReason] = useState("");
-  const [allTags, setAllTags] = useState<LeadTagApi[]>([]);
-
-  useEffect(() => {
-    tagsApi.list().then(({ data }) => { if (data) setAllTags(data); });
-  }, []);
-
-  useEffect(() => {
-    if (!showTransfer) return;
-    setLoading(true);
-    adminListUsers().then(({ data, error }) => {
-      if (data && Array.isArray(data)) {
-        const list: Attendant[] = data
-          .filter((u) => u.active && u.id !== currentUser?.id)
-          .map((u) => ({
-            id: u.id,
-            name: u.name,
-            initials: u.name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase(),
-          }));
-        setAttendants(list);
-      } else if (error) {
-        toast.error("Erro ao carregar atendentes");
-      }
-      setLoading(false);
-    });
-  }, [showTransfer, currentUser?.id]);
-
-  const handleConfirmTransfer = () => {
-    if (!selectedAtt) return;
-    const trimmed = reason.trim();
-    if (!trimmed) {
-      toast.error("Informe o motivo da transferência");
-      return;
-    }
-    onTransfer?.(lead, selectedAtt.id, selectedAtt.name, trimmed);
-    setShowTransfer(false);
-    setSelectedAtt(null);
-    setReason("");
-    toast.success(`Atendimento transferido para ${selectedAtt.name}`, {
-      description: `${lead.name} foi transferido com sucesso`,
-    });
-  };
+  const [currentStage, setCurrentStage] = useState<string | null>(null);
+  const [updatingStage, setUpdatingStage] = useState(false);
 
   const handleClose = () => {
     setShowTransfer(false);
+    setShowStageMenu(false);
     setSelectedAtt(null);
     setReason("");
   };
 
-  const handleDownloadPdf = () => {
-    if (messages.length === 0) {
-      toast.error("Nenhuma mensagem para exportar");
-      return;
+  const handleConfirmTransfer = () => {
+    if (selectedAtt && reason.trim()) {
+      onTransfer?.(lead, selectedAtt.id, selectedAtt.name, reason.trim());
+      setShowTransfer(false);
+      setSelectedAtt(null);
+      setReason("");
     }
-    exportChatToPdf(messages, lead.name, lead.phone);
-    toast.success("Exportação iniciada", { description: "Use Ctrl+P para salvar como PDF" });
   };
 
-  const handleCall = async (isVideo: boolean) => {
-    if (!lead.phone) {
-      toast.error("Contato sem número de telefone");
+  const handleOpenTransfer = () => {
+    setShowTransfer(!showTransfer);
+    setShowStageMenu(false);
+    if (!showTransfer && attendants.length === 0) {
+      setLoading(true);
+      adminListUsers()
+        .then(({ data }) => {
+          if (data) {
+            setAttendants(
+              data
+                .filter((u: any) => u.id !== currentUser?.id)
+                .map((u: any) => ({
+                  id: u.id,
+                  name: u.name || u.email,
+                  initials: (u.name || u.email || "?").split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase(),
+                }))
+            );
+          }
+        })
+        .finally(() => setLoading(false));
+    }
+  };
+
+  const handleSetStage = async (stageId: string) => {
+    setUpdatingStage(true);
+    const { error } = await crmApi.updateStage(lead.id, stageId, `Marcado via chat`);
+    if (error) {
+      toast.error("Erro ao atualizar fase do lead no CRM");
+    } else {
+      const stageInfo = CRM_QUICK_STAGES.find((s) => s.id === stageId);
+      setCurrentStage(stageId);
+      toast.success(`${stageInfo?.emoji} Lead marcado como "${stageInfo?.label}" no CRM`);
+    }
+    setUpdatingStage(false);
+    setShowStageMenu(false);
+  };
+
+  const handleDownloadPdf = async () => {
+    if (messages.length === 0) {
+      toast.info("Nenhuma mensagem para exportar");
       return;
     }
+    try {
+      await exportChatToPdf(messages, lead.name, lead.phone);
+      toast.success("PDF gerado com sucesso!");
+    } catch {
+      toast.error("Erro ao gerar PDF");
+    }
+  };
+
+  const handleCall = async (video: boolean) => {
     const cleanNumber = lead.phone.replace(/\D/g, "");
-    
-    // Try Evolution API call first
-    const instance = connectedInstances[0]?.instanceName;
-    if (instance) {
+    if (!cleanNumber) {
+      toast.error("Número inválido para ligação");
+      return;
+    }
+    if (connectedInstances.length > 0) {
       setCalling(true);
-      toast.info(isVideo ? "Iniciando chamada de vídeo..." : "Iniciando ligação...");
       try {
-        const { error } = await whatsappApi.offerCall(instance, cleanNumber, isVideo);
-        if (error) {
-          // Fallback: open WhatsApp directly
-          window.open(`https://wa.me/${cleanNumber}`, "_blank");
-          toast.info("Abrindo WhatsApp para ligar manualmente");
-        } else {
-          toast.success(isVideo ? "Chamada de vídeo iniciada!" : "Ligação iniciada!");
-        }
-      } catch (err: any) {
-        // Fallback: open WhatsApp directly
-        window.open(`https://wa.me/${cleanNumber}`, "_blank");
-        toast.info("Abrindo WhatsApp para ligar manualmente");
+        const instance = connectedInstances[0].instanceName;
+        const result = await whatsappApi.sendPresence(instance, cleanNumber, "composing");
+        toast.info(video ? "Iniciando chamada de vídeo..." : "Iniciando ligação...", {
+          description: `Via ${instance} para ${cleanNumber}`,
+        });
+      } catch {
+        toast.error("Erro ao iniciar chamada");
       } finally {
-        setCalling(false);
+        setTimeout(() => setCalling(false), 3000);
       }
     } else {
-      // No instance connected — open WhatsApp directly
       window.open(`https://wa.me/${cleanNumber}`, "_blank");
       toast.info("Abrindo WhatsApp para ligar");
     }
@@ -158,14 +168,10 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onRe
           <div>
             <div className="flex items-center gap-2">
               <p className="text-sm font-semibold text-foreground">{lead.name}</p>
-              {leadTagIds.length > 0 && (
-                <div className="flex items-center gap-1">
-                  {allTags.filter((t) => leadTagIds.includes(t.id)).map((tag) => (
-                    <span key={tag.id} className="inline-flex items-center gap-0.5 px-1.5 py-0 rounded-full text-[9px] font-semibold text-white shadow-sm" style={{ backgroundColor: tag.color }}>
-                      {tag.icon} {tag.name}
-                    </span>
-                  ))}
-                </div>
+              {currentStage && (
+                <span className="inline-flex items-center gap-0.5 px-1.5 py-0 rounded-full text-[9px] font-semibold text-white shadow-sm" style={{ backgroundColor: CRM_QUICK_STAGES.find((s) => s.id === currentStage)?.color || "#6b7280" }}>
+                  {CRM_QUICK_STAGES.find((s) => s.id === currentStage)?.emoji} {CRM_QUICK_STAGES.find((s) => s.id === currentStage)?.label}
+                </span>
               )}
             </div>
             {presence === "typing" ? (
@@ -219,14 +225,14 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onRe
             <Download className="h-4 w-4" />
           </button>
           <button
-            onClick={() => { setShowTagMenu(!showTagMenu); setShowTransfer(false); }}
-            className={`p-2.5 rounded-xl transition-all ${showTagMenu ? "bg-primary/10 text-primary shadow-sm" : "hover:bg-muted text-muted-foreground hover:text-foreground"}`}
-            title="Tags"
+            onClick={() => { setShowStageMenu(!showStageMenu); setShowTransfer(false); }}
+            className={`p-2.5 rounded-xl transition-all ${showStageMenu ? "bg-primary/10 text-primary shadow-sm" : "hover:bg-muted text-muted-foreground hover:text-foreground"}`}
+            title="Fase do CRM"
           >
-            <Tags className="h-4 w-4" />
+            <Kanban className="h-4 w-4" />
           </button>
           <button
-            onClick={() => { setShowTransfer(!showTransfer); setShowTagMenu(false); handleClose(); }}
+            onClick={handleOpenTransfer}
             className={`p-2.5 rounded-xl transition-all ${showTransfer ? "bg-primary/10 text-primary shadow-sm" : "hover:bg-muted text-muted-foreground hover:text-foreground"}`}
             title="Transferir atendimento"
           >
@@ -333,33 +339,31 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onRe
           </div>
         )}
 
-        {showTagMenu && (
-          <div className="absolute top-full right-4 mt-1 w-56 bg-card border border-border rounded-xl shadow-lg z-50 overflow-hidden">
+        {showStageMenu && (
+          <div className="absolute top-full right-4 mt-1 w-64 bg-card border border-border rounded-xl shadow-lg z-50 overflow-hidden">
             <div className="px-3 py-2 border-b border-border/50">
-              <p className="text-xs font-semibold text-foreground">Tags do Lead</p>
-              <p className="text-[11px] text-muted-foreground">Clique para adicionar/remover</p>
+              <p className="text-xs font-semibold text-foreground">Fase do Lead no CRM</p>
+              <p className="text-[11px] text-muted-foreground">Marcar sem finalizar o atendimento</p>
             </div>
-            <div className="py-1 max-h-48 overflow-y-auto">
-              {allTags.length === 0 ? (
-                <p className="text-xs text-muted-foreground text-center py-4">Nenhuma tag criada. Vá em Configurações.</p>
-              ) : (
-                allTags.map((tag) => {
-                  const active = leadTagIds.includes(tag.id);
-                  return (
-                    <button
-                      key={tag.id}
-                      onClick={() => onToggleTag?.(lead.id, tag.id)}
-                      className="w-full flex items-center gap-2 px-3 py-2 hover:bg-muted/50 transition-colors text-left"
-                    >
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold text-white" style={{ backgroundColor: tag.color }}>
-                        {tag.icon} {tag.name}
-                      </span>
-                      <span className="flex-1" />
-                      {active && <Check className="h-3.5 w-3.5 text-primary" />}
-                    </button>
-                  );
-                })
-              )}
+            <div className="py-1">
+              {CRM_QUICK_STAGES.map((stage) => {
+                const isActive = currentStage === stage.id;
+                return (
+                  <button
+                    key={stage.id}
+                    onClick={() => handleSetStage(stage.id)}
+                    disabled={updatingStage}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-muted/50 transition-colors text-left disabled:opacity-50"
+                  >
+                    <span className="text-base">{stage.emoji}</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-foreground">{stage.label}</p>
+                      <p className="text-[10px] text-muted-foreground truncate">{stage.description}</p>
+                    </div>
+                    {isActive && <Check className="h-3.5 w-3.5 text-primary shrink-0" />}
+                  </button>
+                );
+              })}
             </div>
           </div>
         )}
