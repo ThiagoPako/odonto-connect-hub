@@ -218,6 +218,7 @@ function AutomacoesPage() {
             solutions={preConfiguredSolutions}
             flows={flows}
             onActivate={activateSolution}
+            counts={solutionCounts}
           />
         ) : activeTab === "report" ? (
           <AutomationReportPanel />
@@ -1145,11 +1146,12 @@ function StepItem({ step, isLast, index }: { step: AutomationStep; isLast: boole
 // ─── Solutions Grid ─────────────────────────────────────────
 
 function SolutionsGrid({
-  solutions, flows, onActivate,
+  solutions, flows, onActivate, counts,
 }: {
   solutions: PreConfiguredSolution[];
   flows: AutomationFlow[];
   onActivate: (s: PreConfiguredSolution) => void;
+  counts: Record<string, number>;
 }) {
   return (
     <div className="space-y-6">
