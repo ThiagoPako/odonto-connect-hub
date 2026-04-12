@@ -1,10 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import {
-  DollarSign, CheckCircle2, Clock, CreditCard, Users, ChevronRight, Loader2,
+  DollarSign, CheckCircle2, Clock, CreditCard, Users, ChevronRight, Loader2, Plus, X,
 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
-import { comissoesApi, dentistasApi } from "@/lib/vpsApi";
+import { comissoesApi, dentistasApi, pacientesApi } from "@/lib/vpsApi";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/comissoes")({
@@ -45,17 +45,21 @@ function getInitials(name: string) {
 
 function ComissoesPage() {
   const [dentistas, setDentistas] = useState<DentistaRow[]>([]);
+  const [pacientes, setPacientes] = useState<{ id: string; nome: string }[]>([]);
   const [comissoes, setComissoes] = useState<ComissaoRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedDentista, setSelectedDentista] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("todos");
+  const [showAddModal, setShowAddModal] = useState(false);
 
   const loadAll = useCallback(async () => {
     try {
-      const [dRes, cRes] = await Promise.all([dentistasApi.list(), comissoesApi.list()]);
+      const [dRes, cRes, pRes] = await Promise.all([dentistasApi.list(), comissoesApi.list(), pacientesApi.list()]);
       const dData = (dRes as any).data || dRes || [];
       const cData = (cRes as any).data || cRes || [];
+      const pData = (pRes as any).data || pRes || [];
       setDentistas(Array.isArray(dData) ? dData : []);
+      setPacientes(Array.isArray(pData) ? pData.map((p: any) => ({ id: p.id, nome: p.nome })) : []);
       setComissoes(Array.isArray(cData) ? cData.map((r: any) => ({
         id: r.id,
         dentista_id: r.dentista_id,
