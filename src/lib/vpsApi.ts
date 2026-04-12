@@ -81,6 +81,13 @@ export async function vpsApiFetch<T = unknown>(
     }
 
     const response = await fetch(url, fetchOptions);
+
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      // Server returned HTML instead of JSON — API is unreachable
+      return { data: null, error: 'Servidor indisponível. Verifique se a API está rodando no VPS (pm2 status).' };
+    }
+
     const data = await response.json();
 
     if (!response.ok) {
@@ -97,6 +104,9 @@ export async function vpsApiFetch<T = unknown>(
     return { data, error: null };
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Erro de rede';
+    if (message.includes('is not valid JSON') || message.includes('Unexpected token')) {
+      return { data: null, error: 'Servidor indisponível. Verifique se a API está rodando no VPS (pm2 status).' };
+    }
     return { data: null, error: message };
   }
 }
