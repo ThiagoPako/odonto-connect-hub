@@ -196,8 +196,8 @@
 
   .shadow-card-hover {
     box-shadow:
-      0 2px 4px hsl(0 0% 0% / 0.04),
-      0 8px 24px hsl(0 0% 0% / 0.06);
+      0 4px 8px hsl(0 0% 0% / 0.05),
+      0 12px 32px hsl(0 0% 0% / 0.08);
   }
 
   .shadow-glow {
@@ -206,16 +206,71 @@
       0 4px 16px hsl(0 0% 0% / 0.04);
   }
 
+  .shadow-glow-primary {
+    box-shadow:
+      0 0 24px hsl(187 85% 43% / 0.2),
+      0 4px 16px hsl(0 0% 0% / 0.04);
+  }
+
   .animate-fade-in {
     animation: fadeIn 0.3s ease-out;
   }
 
   .animate-slide-up {
-    animation: slideUp 0.35s ease-out;
+    animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   .animate-tab-content {
-    animation: tabFadeIn 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+    animation: tabFadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .animate-float {
+    animation: float 3s ease-in-out infinite;
+  }
+
+  .animate-shimmer-bg {
+    background-size: 200% 100%;
+    animation: shimmerBg 3s linear infinite;
+  }
+
+  .hover-lift {
+    transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.25s ease;
+  }
+
+  .hover-lift:hover {
+    transform: translateY(-3px);
+  }
+
+  .icon-bounce {
+    transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+
+  .icon-bounce:hover {
+    transform: scale(1.12);
+  }
+
+  .card-glow {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .card-glow::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(
+      circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
+      hsl(187 85% 43% / 0.06) 0%,
+      transparent 60%
+    );
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .card-glow:hover::before {
+    opacity: 1;
   }
 }
 
@@ -229,18 +284,28 @@
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes slideUp {
-  from { opacity: 0; transform: translateY(8px); }
+  from { opacity: 0; transform: translateY(12px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes tabFadeIn {
-  from { opacity: 0; transform: translateY(6px) scale(0.995); }
+  from { opacity: 0; transform: translateY(8px) scale(0.995); }
   to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
+
+@keyframes shimmerBg {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
 }
 
 /* ─── Chat Animations ────────────────────────────────────── */
