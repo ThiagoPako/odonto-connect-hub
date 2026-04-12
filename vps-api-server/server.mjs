@@ -2596,6 +2596,9 @@ app.post('/api/webhook/evolution', async (req, res) => {
       lead = { id: newId, name: pushName, phone, queue_id: null, awaiting_queue_selection: true, avatar_url: null };
       console.log(`🆕 New lead created: ${pushName} (${phone})`);
 
+      // 🤖 Trigger "Lead entrou no CRM" automation
+      triggerAutomationFlows('Lead entrou no CRM', { name: pushName, phone }).catch(() => {});
+
       // Auto-save to contatos table (skip if phone already exists)
       try {
         const existingContato = await pool.query('SELECT id FROM contatos WHERE telefone = $1', [phone]);
@@ -3829,6 +3832,17 @@ app.post('/api/sessions/close', async (req, res) => {
     }
 
     console.log(`✅ Session closed for lead ${leadId} (duration: ${session?.duration_seconds || 0}s)`);
+
+    // 🤖 Trigger "Após consulta finalizada" automation
+    if (leadPhone) {
+      const leadName = session?.attendant_name || leadId;
+      // Get lead name from DB
+      const { rows: leadRows } = await pool.query('SELECT nome FROM crm_leads WHERE id = $1', [leadId]).catch(() => ({ rows: [] }));
+      const name = leadRows[0]?.nome || leadId;
+      triggerAutomationFlows('Após consulta finalizada', { name, phone: leadPhone }).catch(() => {});
+      triggerAutomationFlows('Atendimento finalizado sem agendamento', { name, phone: leadPhone }).catch(() => {});
+    }
+
     res.json({ success: true, sessionId: session?.id, duration: session?.duration_seconds });
   } catch (error) {
     res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
@@ -5247,4 +5261,14 @@ app.listen(PORT, async () => {
   syncWhatsAppContacts(); // Run once on startup
   syncInterval = setInterval(syncWhatsAppContacts, 30 * 60 * 1000);
   console.log('   📇 Auto-sync de contatos WhatsApp ativo (a cada 30 min)');
+
+  // Start automation job scheduler (every 30s)
+  processAutomationJobs();
+  automationSchedulerInterval = setInterval(processAutomationJobs, 30 * 1000);
+  console.log('   🤖 Automation scheduler ativo (a cada 30s)');
+
+  // Start inactive patients cron (every 6h)
+  checkInactivePatientsTrigger();
+  automationCronInterval = setInterval(checkInactivePatientsTrigger, 6 * 60 * 60 * 1000);
+  console.log('   📅 Cron de pacientes inativos ativo (a cada 6h)');
 });
