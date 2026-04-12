@@ -2,10 +2,11 @@ import { createFileRoute } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import {
   Search, CheckCircle2, Clock, Pause, PlayCircle, CalendarDays,
-  FileText, Plus, Loader2,
+  FileText, Plus, Loader2, X, Trash2,
 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
-import { tratamentosApi } from "@/lib/vpsApi";
+import { tratamentosApi, dentistasApi, pacientesApi } from "@/lib/vpsApi";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/tratamentos")({
   ssr: false,
@@ -39,6 +40,12 @@ interface EtapaRow {
   observacoes: string;
 }
 
+interface EtapaForm {
+  descricao: string;
+  dente: string;
+  valor: string;
+}
+
 const treatmentStatusCfg: Record<string, { label: string; color: string; icon: React.ElementType }> = {
   planejado: { label: "Planejado", color: "bg-chart-1/15 text-chart-1", icon: FileText },
   em_andamento: { label: "Em Andamento", color: "bg-primary/15 text-primary", icon: PlayCircle },
@@ -65,6 +72,7 @@ function TratamentosPage() {
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
+  const [showAddModal, setShowAddModal] = useState(false);
 
   const loadAll = useCallback(async () => {
     try {
@@ -113,6 +121,37 @@ function TratamentosPage() {
     else setEtapas([]);
   }, [selectedId, loadEtapas]);
 
+  const handleCreate = async (data: { paciente_id: string; dentista_id: string; descricao: string; plano: string; observacoes: string; etapas: EtapaForm[] }) => {
+    const valorTotal = data.etapas.reduce((s, e) => s + (Number(e.valor) || 0), 0);
+    const { error, data: created } = await tratamentosApi.create({
+      paciente_id: data.paciente_id,
+      dentista_id: data.dentista_id,
+      descricao: data.descricao,
+      plano: data.plano,
+      observacoes: data.observacoes,
+      valor: valorTotal,
+      status: 'planejado',
+    }) as any;
+    if (error) { toast.error("Erro ao criar tratamento: " + error); return; }
+
+    const tratId = created?.id || (created as any)?.rows?.[0]?.id;
+    if (tratId && data.etapas.length > 0) {
+      for (let i = 0; i < data.etapas.length; i++) {
+        const et = data.etapas[i];
+        await tratamentosApi.addEtapa(tratId, {
+          descricao: et.descricao,
+          dente: et.dente,
+          valor: Number(et.valor) || 0,
+          ordem: i + 1,
+          status: 'pendente',
+        });
+      }
+    }
+    toast.success("Tratamento criado com sucesso!");
+    setShowAddModal(false);
+    loadAll();
+  };
+
   const filtered = tratamentos.filter(
     t => !searchTerm || t.paciente_nome.toLowerCase().includes(searchTerm.toLowerCase()) || t.descricao.toLowerCase().includes(searchTerm.toLowerCase())
   );
@@ -138,11 +177,17 @@ function TratamentosPage() {
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
           {/* Treatment list */}
           <div className="lg:col-span-3 space-y-3">
-            <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-              <input type="text" placeholder="Buscar tratamento..." value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full h-9 pl-8 pr-3 rounded-lg bg-muted border-0 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary" />
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                <input type="text" placeholder="Buscar tratamento..." value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full h-9 pl-8 pr-3 rounded-lg bg-muted border-0 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary" />
+              </div>
+              <button onClick={() => setShowAddModal(true)}
+                className="h-9 px-3 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 flex items-center gap-1 shrink-0">
+                <Plus className="h-3.5 w-3.5" /> Novo
+              </button>
             </div>
             <div className="space-y-1.5 max-h-[calc(100vh-200px)] overflow-y-auto">
               {filtered.map((t, i) => {
@@ -262,7 +307,186 @@ function TratamentosPage() {
             )}
           </div>
         </div>
+
+        {showAddModal && <AddTratamentoModal onSave={handleCreate} onClose={() => setShowAddModal(false)} />}
       </main>
+    </div>
+  );
+}
+
+function AddTratamentoModal({
+  onSave,
+  onClose,
+}: {
+  onSave: (data: { paciente_id: string; dentista_id: string; descricao: string; plano: string; observacoes: string; etapas: EtapaForm[] }) => void;
+  onClose: () => void;
+}) {
+  const [dentistas, setDentistas] = useState<{ id: string; nome: string; especialidade: string }[]>([]);
+  const [pacientes, setPacientes] = useState<{ id: string; nome: string }[]>([]);
+  const [loadingData, setLoadingData] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [pacienteSearch, setPacienteSearch] = useState('');
+
+  const [form, setForm] = useState({
+    paciente_id: '',
+    dentista_id: '',
+    descricao: '',
+    plano: '',
+    observacoes: '',
+  });
+
+  const [etapasForm, setEtapasForm] = useState<EtapaForm[]>([
+    { descricao: '', dente: '', valor: '' },
+  ]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const [dRes, pRes] = await Promise.all([dentistasApi.list(), pacientesApi.list()]);
+        const dData = (dRes as any).data || dRes || [];
+        const pData = (pRes as any).data || pRes || [];
+        const dList = Array.isArray(dData) ? dData.map((d: any) => ({ id: d.id, nome: d.nome, especialidade: d.especialidade || '' })) : [];
+        const pList = Array.isArray(pData) ? pData.map((p: any) => ({ id: p.id, nome: p.nome })) : [];
+        setDentistas(dList);
+        setPacientes(pList);
+        setForm(f => ({ ...f, dentista_id: dList[0]?.id || '', paciente_id: pList[0]?.id || '' }));
+      } catch (err) { console.error(err); }
+      finally { setLoadingData(false); }
+    })();
+  }, []);
+
+  const filteredPacientes = pacientes.filter(p =>
+    !pacienteSearch || p.nome.toLowerCase().includes(pacienteSearch.toLowerCase())
+  ).slice(0, 50);
+
+  const addEtapa = () => setEtapasForm([...etapasForm, { descricao: '', dente: '', valor: '' }]);
+  const removeEtapa = (idx: number) => setEtapasForm(etapasForm.filter((_, i) => i !== idx));
+  const updateEtapa = (idx: number, field: keyof EtapaForm, value: string) => {
+    const updated = [...etapasForm];
+    updated[idx] = { ...updated[idx], [field]: value };
+    setEtapasForm(updated);
+  };
+
+  const valorTotal = etapasForm.reduce((s, e) => s + (Number(e.valor) || 0), 0);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!form.paciente_id || !form.dentista_id || !form.descricao) return;
+    const validEtapas = etapasForm.filter(et => et.descricao.trim());
+    setSaving(true);
+    await onSave({ ...form, etapas: validEtapas });
+    setSaving(false);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+      <div className="bg-card rounded-2xl border border-border/60 shadow-xl w-full max-w-2xl mx-4 animate-slide-up max-h-[90vh] overflow-hidden flex flex-col">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border/60 shrink-0">
+          <h2 className="text-lg font-bold text-foreground font-heading">Novo Tratamento</h2>
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-muted/60"><X className="h-4 w-4 text-muted-foreground" /></button>
+        </div>
+
+        {loadingData ? (
+          <div className="flex items-center justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
+        ) : (
+          <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-6 space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">Paciente</label>
+                <input type="text" placeholder="Buscar paciente..." value={pacienteSearch}
+                  onChange={(e) => setPacienteSearch(e.target.value)}
+                  className="w-full h-9 px-3 rounded-lg bg-background border border-border/60 text-xs text-foreground mb-1 focus:outline-none focus:ring-1 focus:ring-primary" />
+                <select value={form.paciente_id} onChange={(e) => setForm({ ...form, paciente_id: e.target.value })}
+                  className="w-full h-10 px-3 rounded-xl bg-background border border-border/60 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30">
+                  {filteredPacientes.map(p => <option key={p.id} value={p.id}>{p.nome}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">Dentista</label>
+                <select value={form.dentista_id} onChange={(e) => setForm({ ...form, dentista_id: e.target.value })}
+                  className="w-full h-10 px-3 rounded-xl bg-background border border-border/60 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 mt-[calc(2.25rem+0.25rem)]">
+                  {dentistas.map(d => <option key={d.id} value={d.id}>{d.nome} — {d.especialidade}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Descrição do Tratamento</label>
+              <input type="text" value={form.descricao} onChange={(e) => setForm({ ...form, descricao: e.target.value })}
+                placeholder="Ex: Implante dentário superior" required
+                className="w-full h-10 px-4 rounded-xl bg-background border border-border/60 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30" />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">Plano/Convênio</label>
+                <input type="text" value={form.plano} onChange={(e) => setForm({ ...form, plano: e.target.value })}
+                  placeholder="Particular, Amil, etc."
+                  className="w-full h-10 px-4 rounded-xl bg-background border border-border/60 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30" />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">Valor Total (etapas)</label>
+                <div className="h-10 px-4 rounded-xl bg-muted/50 border border-border/60 flex items-center text-sm font-bold text-foreground">
+                  R$ {valorTotal.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Observações</label>
+              <textarea value={form.observacoes} onChange={(e) => setForm({ ...form, observacoes: e.target.value })}
+                placeholder="Notas adicionais..." rows={2}
+                className="w-full px-4 py-2 rounded-xl bg-background border border-border/60 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none" />
+            </div>
+
+            {/* Etapas */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-xs font-semibold text-foreground">Etapas do Tratamento</label>
+                <button type="button" onClick={addEtapa}
+                  className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium bg-primary/10 text-primary hover:bg-primary/20">
+                  <Plus className="h-3 w-3" /> Adicionar Etapa
+                </button>
+              </div>
+              <div className="space-y-2">
+                {etapasForm.map((et, idx) => (
+                  <div key={idx} className="flex items-start gap-2 bg-muted/30 rounded-lg p-3 border border-border/40">
+                    <span className="h-6 w-6 rounded-full bg-primary/15 text-primary flex items-center justify-center text-[10px] font-bold shrink-0 mt-0.5">
+                      {idx + 1}
+                    </span>
+                    <div className="flex-1 grid grid-cols-3 gap-2">
+                      <input type="text" value={et.descricao} onChange={(e) => updateEtapa(idx, 'descricao', e.target.value)}
+                        placeholder="Procedimento"
+                        className="col-span-1 h-8 px-3 rounded-lg bg-background border border-border/60 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary" />
+                      <input type="text" value={et.dente} onChange={(e) => updateEtapa(idx, 'dente', e.target.value)}
+                        placeholder="Dente (ex: 14)"
+                        className="h-8 px-3 rounded-lg bg-background border border-border/60 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary" />
+                      <input type="number" value={et.valor} onChange={(e) => updateEtapa(idx, 'valor', e.target.value)}
+                        placeholder="Valor (R$)" min="0" step="0.01"
+                        className="h-8 px-3 rounded-lg bg-background border border-border/60 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary" />
+                    </div>
+                    {etapasForm.length > 1 && (
+                      <button type="button" onClick={() => removeEtapa(idx)}
+                        className="p-1 rounded hover:bg-destructive/15 text-muted-foreground hover:text-destructive shrink-0 mt-0.5">
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-border/40">
+              <button type="button" onClick={onClose}
+                className="px-4 py-2 rounded-xl text-xs font-medium border border-border hover:bg-muted transition-colors">Cancelar</button>
+              <button type="submit" disabled={saving || !form.paciente_id || !form.dentista_id || !form.descricao}
+                className="px-5 py-2 rounded-xl text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1.5">
+                {saving && <Loader2 className="h-3 w-3 animate-spin" />} Criar Tratamento
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
     </div>
   );
 }
