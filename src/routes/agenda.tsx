@@ -667,9 +667,19 @@ function NovoAgendamentoDialog({
   };
   const [form, setForm] = useState<NovoAgendamentoForm>(emptyForm);
   const [saving, setSaving] = useState(false);
+  const [pacientesList, setPacientesList] = useState<any[]>([]);
+  const [pacientesFiltered, setPacientesFiltered] = useState<any[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const suggestionsRef = useRef<HTMLDivElement>(null);
 
+  // Load patients list on open
   useEffect(() => {
-    if (open) setForm((f) => ({ ...f, data: defaultDate }));
+    if (open) {
+      setForm((f) => ({ ...f, data: defaultDate }));
+      pacientesApi.list().then(({ data }) => {
+        if (Array.isArray(data)) setPacientesList(data);
+      });
+    }
   }, [open, defaultDate]);
 
   const handleChange = (field: keyof NovoAgendamentoForm, value: string | number | boolean) => {
