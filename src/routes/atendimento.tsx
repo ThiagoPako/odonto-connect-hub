@@ -100,6 +100,23 @@ function AtendimentoPage() {
     setPrescricoes(prev => prev.filter(p => p.id !== id));
   }, []);
 
+  const imprimirPrescricao = useCallback(() => {
+    if (!pacienteSelecionado || prescricoes.length === 0) {
+      toast.error("Adicione ao menos uma prescrição antes de imprimir");
+      return;
+    }
+    exportarPrescricaoPdf({
+      pacienteNome: pacienteSelecionado.nome,
+      pacienteTelefone: pacienteSelecionado.telefone,
+      pacienteIdade: getPacienteIdade(pacienteSelecionado),
+      profissional: "Dr. Ricardo Mendes",
+      croProfissional: "CRO-SP 12345",
+      prescricoes,
+      observacoes: notas || undefined,
+    });
+    toast.success("Prescrição gerada para impressão");
+  }, [pacienteSelecionado, prescricoes, notas]);
+
   const formatTime = (s: number) =>
     `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 
