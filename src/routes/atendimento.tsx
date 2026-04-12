@@ -448,10 +448,15 @@ function AtendimentoPage() {
                     </div>
 
                     <div className="flex items-center gap-4">
-                      <AudioRecorder onRecordingComplete={handleGravacaoCompleta} />
-                      <span className="text-xs text-muted-foreground">
-                        Clique no microfone para gravar. O Dr. pode iniciar e parar a gravação quando quiser.
-                      </span>
+                      <div className="flex items-center gap-3 flex-1">
+                        <AudioRecorder onRecordingComplete={handleGravacaoCompleta} />
+                        <div>
+                          <p className="text-xs font-medium text-foreground">Gravar consulta</p>
+                          <p className="text-[11px] text-muted-foreground">
+                            Clique no 🎙️ para iniciar. Grave quantas vezes quiser durante o atendimento.
+                          </p>
+                        </div>
+                      </div>
                     </div>
 
                     {gravacoes.length > 0 && (
