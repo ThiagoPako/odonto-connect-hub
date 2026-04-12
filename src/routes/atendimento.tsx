@@ -481,63 +481,62 @@ function ConsultaPage() {
                     ) : agendaOrdenada.length === 0 ? (
                       <p className="text-xs text-muted-foreground text-center py-6">Nenhum agendamento hoje</p>
                     ) : (
-                      const sel = appointmentSelecionado?.id === apt.id;
-                      const statusColors: Record<string, string> = {
-                        em_atendimento: "border-primary bg-primary/5 ring-1 ring-primary/20",
-                        aguardando: "border-warning/40 bg-warning/5",
-                        confirmado: "border-success/30 bg-success/5",
-                        encaixe: "border-accent bg-accent/5",
-                        finalizado: "border-border/40 bg-muted/30 opacity-60",
-                        faltou: "border-destructive/20 bg-destructive/5 opacity-50",
-                      };
-                      const statusLabels: Record<string, string> = {
-                        em_atendimento: "Em atendimento",
-                        aguardando: "Aguardando",
-                        confirmado: "Confirmado",
-                        encaixe: "Encaixe",
-                        finalizado: "Finalizado",
-                        faltou: "Faltou",
-                      };
-                      const statusDotColors: Record<string, string> = {
-                        em_atendimento: "bg-primary",
-                        aguardando: "bg-warning",
-                        confirmado: "bg-success",
-                        encaixe: "bg-accent-foreground",
-                        finalizado: "bg-muted-foreground",
-                        faltou: "bg-destructive",
-                      };
-                      return (
-                        <button
-                          key={apt.id}
-                          onClick={() => handleSelecionarAgendamento(apt)}
-                          disabled={atendimentoAtivo && !sel}
-                          className={`w-full text-left p-3 rounded-xl border transition-all duration-200 ${
-                            sel
-                              ? "border-primary bg-primary/5 shadow-[0_0_16px_-4px_hsl(var(--primary)/0.3)] ring-1 ring-primary/20"
-                              : statusColors[apt.status] || "border-border/40"
-                          } ${atendimentoAtivo && !sel ? "opacity-30 cursor-not-allowed" : "cursor-pointer hover:shadow-sm"}`}
-                        >
-                          <div className="flex items-center gap-2.5">
-                            <div className={`h-8 w-8 rounded-lg ${apt.avatarColor} flex items-center justify-center text-[10px] font-bold text-white shrink-0`}>
-                              {apt.patientInitials}
+                      agendaOrdenada.map(apt => {
+                        const sel = appointmentSelecionado?.id === apt.id;
+                        const statusColors: Record<string, string> = {
+                          em_atendimento: "border-primary bg-primary/5 ring-1 ring-primary/20",
+                          aguardando: "border-warning/40 bg-warning/5",
+                          confirmado: "border-success/30 bg-success/5",
+                          encaixe: "border-accent bg-accent/5",
+                          finalizado: "border-border/40 bg-muted/30 opacity-60",
+                          faltou: "border-destructive/20 bg-destructive/5 opacity-50",
+                        };
+                        const statusLabels: Record<string, string> = {
+                          em_atendimento: "Em atendimento",
+                          aguardando: "Aguardando",
+                          confirmado: "Confirmado",
+                          encaixe: "Encaixe",
+                          finalizado: "Finalizado",
+                          faltou: "Faltou",
+                        };
+                        const statusDotColors: Record<string, string> = {
+                          em_atendimento: "bg-primary",
+                          aguardando: "bg-warning",
+                          confirmado: "bg-success",
+                          encaixe: "bg-accent-foreground",
+                          finalizado: "bg-muted-foreground",
+                          faltou: "bg-destructive",
+                        };
+                        return (
+                          <button
+                            key={apt.id}
+                            onClick={() => handleSelecionarAgendamento(apt)}
+                            disabled={atendimentoAtivo && !sel}
+                            className={`w-full text-left p-3 rounded-xl border transition-all duration-200 ${
+                              sel
+                                ? "border-primary bg-primary/5 shadow-[0_0_16px_-4px_hsl(var(--primary)/0.3)] ring-1 ring-primary/20"
+                                : statusColors[apt.status] || "border-border/40"
+                            } ${atendimentoAtivo && !sel ? "opacity-30 cursor-not-allowed" : "cursor-pointer hover:shadow-sm"}`}
+                          >
+                            <div className="flex items-center gap-2.5">
+                              <div className={`h-8 w-8 rounded-lg ${apt.avatarColor} flex items-center justify-center text-[10px] font-bold text-white shrink-0`}>
+                                {apt.patientInitials}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-medium text-foreground truncate">{apt.patientName}</p>
+                                <p className="text-[11px] text-muted-foreground truncate">{apt.procedure}</p>
+                              </div>
                             </div>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-medium text-foreground truncate">{apt.patientName}</p>
-                              <p className="text-[11px] text-muted-foreground truncate">{apt.procedure}</p>
+                            <div className="flex items-center justify-between mt-2">
+                              <span className="text-[11px] font-mono text-muted-foreground">{apt.time} • {apt.duration}min</span>
+                              <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                                <span className={`h-1.5 w-1.5 rounded-full ${statusDotColors[apt.status] || "bg-muted"}`} />
+                                {statusLabels[apt.status] || apt.status}
+                              </span>
                             </div>
-                          </div>
-                          <div className="flex items-center justify-between mt-2">
-                            <span className="text-[11px] font-mono text-muted-foreground">{apt.time} • {apt.duration}min</span>
-                            <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                              <span className={`h-1.5 w-1.5 rounded-full ${statusDotColors[apt.status] || "bg-muted"}`} />
-                              {statusLabels[apt.status] || apt.status}
-                            </span>
-                          </div>
-                        </button>
-                      );
-                    })}
-                    {agendaOrdenada.length === 0 && (
-                      <p className="text-xs text-muted-foreground text-center py-6">Nenhum agendamento hoje</p>
+                          </button>
+                        );
+                      })
                     )}
                   </div>
                 </div>
