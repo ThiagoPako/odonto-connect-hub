@@ -188,6 +188,25 @@ export async function adminUpdateUser(id: string, data: { name?: string; email?:
   });
 }
 
+export async function adminUploadUserAvatar(userId: string, file: File) {
+  try {
+    const token = getToken();
+    const response = await fetch(`${VPS_API_BASE}/auth/users/${userId}/avatar`, {
+      method: 'POST',
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        'Content-Type': file.type || 'image/jpeg',
+      },
+      body: file,
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) return { data: null, error: data.error || `HTTP ${response.status}` };
+    return { data: data as { avatar_url: string }, error: null };
+  } catch (error: unknown) {
+    return { data: null, error: error instanceof Error ? error.message : 'Erro de rede' };
+  }
+}
+
 // ─── Pacientes ──────────────────────────────────────────────
 
 export const pacientesApi = {
