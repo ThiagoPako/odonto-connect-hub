@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Bell, Volume2, VolumeX, MonitorSmartphone, Flame, Play, Volume1 } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Bell, Volume2, VolumeX, MonitorSmartphone, Flame, Play, Volume1, RefreshCw } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
@@ -11,6 +11,7 @@ import {
   SOUND_OPTIONS, type SoundType,
 } from "@/lib/notificationSound";
 import { isPushEnabled, setPushEnabled, requestNotificationPermission } from "@/lib/browserNotification";
+import { fetchPreferences, savePreferences, type NotificationPreferences } from "@/lib/preferencesSync";
 import { toast } from "sonner";
 
 export function NotificationSettingsPanel() {
@@ -19,10 +20,41 @@ export function NotificationSettingsPanel() {
   const [recoverySoundOn, setRecoverySoundOn] = useState(isRecoverySoundEnabled);
   const [currentSound, setCurrentSound] = useState<SoundType>(getSoundType);
   const [vol, setVol] = useState(getVolume);
+  const [syncing, setSyncing] = useState(false);
+  const [synced, setSynced] = useState(false);
+
+  // Load preferences from server on mount
+  useEffect(() => {
+    setSyncing(true);
+    fetchPreferences()
+      .then((prefs) => {
+        setSoundOn(prefs.sound_enabled);
+        setCurrentSound(prefs.sound_type);
+        setVol(prefs.sound_volume);
+        setRecoverySoundOn(prefs.recovery_sound_enabled);
+        setPushOn(prefs.push_enabled);
+        setSynced(true);
+      })
+      .finally(() => setSyncing(false));
+  }, []);
+
+  const currentPrefs = (): NotificationPreferences => ({
+    sound_enabled: soundOn,
+    sound_type: currentSound,
+    sound_volume: vol,
+    recovery_sound_enabled: recoverySoundOn,
+    push_enabled: pushOn,
+  });
+
+  const syncToServer = (overrides: Partial<NotificationPreferences> = {}) => {
+    const prefs = { ...currentPrefs(), ...overrides };
+    savePreferences(prefs);
+  };
 
   const handleSoundToggle = (checked: boolean) => {
     setSoundOn(checked);
     setSoundEnabled(checked);
+    syncToServer({ sound_enabled: checked });
     if (checked) {
       playNotificationSound();
       toast.success("Som de notificação ativado");
@@ -34,6 +66,7 @@ export function NotificationSettingsPanel() {
   const handleRecoverySoundToggle = (checked: boolean) => {
     setRecoverySoundOn(checked);
     setRecoverySoundEnabled(checked);
+    syncToServer({ recovery_sound_enabled: checked });
     if (checked) {
       playRecoverySound();
       toast.success("Som de recuperação ativado");
@@ -46,6 +79,17 @@ export function NotificationSettingsPanel() {
     setCurrentSound(type);
     setSoundType(type);
     previewSound(type);
+    syncToServer({ sound_type: type });
+  };
+
+  const handleVolumeChange = ([v]: number[]) => {
+    setVol(v);
+    setVolume(v);
+  };
+
+  const handleVolumeCommit = () => {
+    previewSound(currentSound);
+    syncToServer({ sound_volume: vol });
   };
 
   const handlePushToggle = async (checked: boolean) => {
@@ -57,10 +101,12 @@ export function NotificationSettingsPanel() {
       }
       setPushOn(true);
       setPushEnabled(true);
+      syncToServer({ push_enabled: true });
       toast.success("Notificações push ativadas");
     } else {
       setPushOn(false);
       setPushEnabled(false);
+      syncToServer({ push_enabled: false });
       toast.info("Notificações push desativadas");
     }
   };
@@ -70,14 +116,22 @@ export function NotificationSettingsPanel() {
 
   return (
     <div className="rounded-xl border border-border bg-card p-5">
-      <div className="flex items-center gap-3 mb-4">
-        <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center">
-          <Bell className="h-4.5 w-4.5 text-primary" />
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-3">
+          <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center">
+            <Bell className="h-4.5 w-4.5 text-primary" />
+          </div>
+          <div>
+            <h3 className="text-sm font-semibold text-foreground">Notificações</h3>
+            <p className="text-xs text-muted-foreground">Configurações de alertas e sons</p>
+          </div>
         </div>
-        <div>
-          <h3 className="text-sm font-semibold text-foreground">Notificações</h3>
-          <p className="text-xs text-muted-foreground">Configurações de alertas e sons</p>
-        </div>
+        {synced && (
+          <span className="text-[10px] text-muted-foreground flex items-center gap-1">
+            <RefreshCw className="h-3 w-3" />
+            Sincronizado
+          </span>
+        )}
       </div>
 
       <div className="space-y-1 divide-y divide-border/50">
@@ -96,10 +150,10 @@ export function NotificationSettingsPanel() {
               </p>
             </div>
           </div>
-          <Switch checked={soundOn} onCheckedChange={handleSoundToggle} />
+          <Switch checked={soundOn} onCheckedChange={handleSoundToggle} disabled={syncing} />
         </div>
 
-        {/* Sound type selector */}
+        {/* Sound type selector + volume */}
         {soundOn && (
           <div className="py-3 pl-7">
             <p className="text-xs font-medium text-muted-foreground mb-2">Tipo de som</p>
@@ -123,8 +177,8 @@ export function NotificationSettingsPanel() {
               <Volume1 className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
               <Slider
                 value={[vol]}
-                onValueChange={([v]) => { setVol(v); setVolume(v); }}
-                onValueCommit={() => previewSound(currentSound)}
+                onValueChange={handleVolumeChange}
+                onValueCommit={handleVolumeCommit}
                 min={0}
                 max={100}
                 step={5}
@@ -146,7 +200,7 @@ export function NotificationSettingsPanel() {
               </p>
             </div>
           </div>
-          <Switch checked={recoverySoundOn} onCheckedChange={handleRecoverySoundToggle} />
+          <Switch checked={recoverySoundOn} onCheckedChange={handleRecoverySoundToggle} disabled={syncing} />
         </div>
 
         {/* Push notification toggle */}
@@ -165,7 +219,7 @@ export function NotificationSettingsPanel() {
           <Switch
             checked={pushOn}
             onCheckedChange={handlePushToggle}
-            disabled={pushDenied}
+            disabled={pushDenied || syncing}
           />
         </div>
       </div>

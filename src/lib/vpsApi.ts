@@ -35,7 +35,7 @@ function resetAuthFailureCount() {
 
 // ─── Auth helpers ───────────────────────────────────────────
 
-function getAuthHeaders(): Record<string, string> {
+export function getAuthHeaders(): Record<string, string> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (typeof window !== 'undefined') {
     const token = localStorage.getItem(TOKEN_KEY);
