@@ -27,6 +27,7 @@ import {
   Edit,
   Save,
   Loader2,
+  Trash2,
 } from "lucide-react";
 
 export const Route = createFileRoute("/pacientes")({
@@ -454,6 +455,8 @@ function PacienteDetailModal({
   const [activeTab, setActiveTab] = useState<DetailTab>("dados");
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [form, setForm] = useState({
     nome: paciente.nome,
     cpf: paciente.cpf || "",
@@ -547,13 +550,22 @@ function PacienteDetailModal({
           </div>
           <div className="flex items-center gap-2">
             {activeTab === "dados" && !editing && (
-              <button
-                onClick={() => setEditing(true)}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary/10 text-primary text-xs font-semibold hover:bg-primary/20 transition-colors"
-              >
-                <Edit className="h-3.5 w-3.5" />
-                Editar
-              </button>
+              <>
+                <button
+                  onClick={() => setShowDeleteConfirm(true)}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-destructive/10 text-destructive text-xs font-semibold hover:bg-destructive/20 transition-colors"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Excluir
+                </button>
+                <button
+                  onClick={() => setEditing(true)}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary/10 text-primary text-xs font-semibold hover:bg-primary/20 transition-colors"
+                >
+                  <Edit className="h-3.5 w-3.5" />
+                  Editar
+                </button>
+              </>
             )}
             {activeTab === "dados" && editing && (
               <>
