@@ -242,9 +242,27 @@ function KanbanView({ filtered, selectedProfessional, onAtender, onUpdateStatus,
   filtered: Appointment[]; selectedProfessional: string;
   onAtender: (a: Appointment) => void; onUpdateStatus: (id: string, status: string) => void;
   onReschedule: (id: string, date: string, time: string) => void;
-  onMoveToProfessional: (id: string, profId: string, profName: string) => void;
+  onMoveToProfessional: (id: string, profId: string, profName: string) => Promise<void>;
 }) {
   const [dragOverProf, setDragOverProf] = useState<string | null>(null);
+  const [transferringId, setTransferringId] = useState<string | null>(null);
+  const [droppedId, setDroppedId] = useState<string | null>(null);
+
+  const handleDrop = async (e: React.DragEvent, prof: { id: string; name: string }) => {
+    e.preventDefault();
+    setDragOverProf(null);
+    const appointmentId = e.dataTransfer.getData("appointmentId");
+    const fromProf = e.dataTransfer.getData("fromProfessional");
+    if (!appointmentId || fromProf === prof.name) return;
+    setTransferringId(appointmentId);
+    try {
+      await onMoveToProfessional(appointmentId, prof.id, prof.name);
+      setDroppedId(appointmentId);
+      setTimeout(() => setDroppedId(null), 600);
+    } finally {
+      setTransferringId(null);
+    }
+  };
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
@@ -257,19 +275,11 @@ function KanbanView({ filtered, selectedProfessional, onAtender, onUpdateStatus,
             <div
               key={prof.id}
               className={`bg-card rounded-xl border overflow-hidden shadow-card transition-all duration-300 ${
-                isDragOver ? "border-primary shadow-glow-primary ring-2 ring-primary/20" : "border-border hover:shadow-card-hover"
+                isDragOver ? "border-primary shadow-glow-primary ring-2 ring-primary/20 scale-[1.02]" : "border-border hover:shadow-card-hover"
               }`}
               onDragOver={(e) => { e.preventDefault(); setDragOverProf(prof.id); }}
               onDragLeave={() => setDragOverProf(null)}
-              onDrop={(e) => {
-                e.preventDefault();
-                setDragOverProf(null);
-                const appointmentId = e.dataTransfer.getData("appointmentId");
-                const fromProf = e.dataTransfer.getData("fromProfessional");
-                if (appointmentId && fromProf !== prof.name) {
-                  onMoveToProfessional(appointmentId, prof.id, prof.name);
-                }
-              }}
+              onDrop={(e) => handleDrop(e, prof)}
             >
               <div className="flex items-center gap-2 p-3 border-b border-border">
                 <div className={`h-7 w-7 rounded-full ${prof.color} flex items-center justify-center text-[10px] font-bold text-white`}>
@@ -281,13 +291,23 @@ function KanbanView({ filtered, selectedProfessional, onAtender, onUpdateStatus,
                 </div>
                 <span className="text-[10px] font-medium text-muted-foreground">{profAppts.length} consultas</span>
               </div>
-              <div className={`p-2 space-y-1.5 max-h-[500px] overflow-y-auto min-h-[60px] ${isDragOver ? "bg-primary/5" : ""}`}>
+              <div className={`p-2 space-y-1.5 max-h-[500px] overflow-y-auto min-h-[60px] transition-colors duration-200 ${isDragOver ? "bg-primary/5" : ""}`}>
                 {profAppts.length === 0 ? (
                   <p className="text-xs text-muted-foreground text-center py-6">
                     {isDragOver ? "Solte aqui para transferir" : "Sem consultas"}
                   </p>
                 ) : (
-                  profAppts.map((appt) => <AppointmentCard key={appt.id} appointment={appt} onAtender={onAtender} onUpdateStatus={onUpdateStatus} onReschedule={onReschedule} />)
+                  profAppts.map((appt) => (
+                    <AppointmentCard
+                      key={appt.id}
+                      appointment={appt}
+                      onAtender={onAtender}
+                      onUpdateStatus={onUpdateStatus}
+                      onReschedule={onReschedule}
+                      isTransferring={transferringId === appt.id}
+                      justDropped={droppedId === appt.id}
+                    />
+                  ))
                 )}
               </div>
             </div>
