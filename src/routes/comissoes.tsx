@@ -3,6 +3,7 @@ import { DashboardHeader } from "@/components/DashboardHeader";
 import {
   DollarSign, CheckCircle2, Clock, CreditCard, Users, ChevronRight, Loader2, Plus, X,
 } from "lucide-react";
+import { Trash2 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import { comissoesApi, dentistasApi, pacientesApi } from "@/lib/vpsApi";
 import { toast } from "sonner";
