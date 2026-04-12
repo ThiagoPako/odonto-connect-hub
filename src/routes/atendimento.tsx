@@ -8,6 +8,7 @@ import {
   User, Phone, Mail, Heart, Pill, Stethoscope, Send, Plus, Trash2,
   Save, ChevronRight, Activity, ClipboardList, ExternalLink, Timer,
   Printer, Loader2, Bot, Sparkles, CalendarCheck, MessageSquare,
+  Calendar,
 } from "lucide-react";
 import { exportarPrescricaoPdf } from "@/lib/prescricaoPdfExport";
 import { ClinicalAudioRecorder } from "@/components/ClinicalAudioRecorder";
@@ -17,11 +18,13 @@ import {
   getAlergias, getCondicoesCriticas, getAnamnese, getOdontograma, temAlertasMedicos,
   type Paciente
 } from "@/data/registroCentral";
+import { mockAppointments, type Appointment } from "@/data/agendaMockData";
 import { aiApi } from "@/lib/vpsApi";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/atendimento")({
-  component: AtendimentoPage,
+  ssr: false,
+  component: ConsultaPage,
 });
 
 interface Prescricao {
@@ -57,9 +60,9 @@ interface FollowupState {
   error: string;
 }
 
-function AtendimentoPage() {
+function ConsultaPage() {
   const [pacienteSelecionado, setPacienteSelecionado] = useState<Paciente | null>(null);
-  const [busca, setBusca] = useState("");
+  const [appointmentSelecionado, setAppointmentSelecionado] = useState<Appointment | null>(null);
   const [atendimentoAtivo, setAtendimentoAtivo] = useState(false);
   const [tempoAtendimento, setTempoAtendimento] = useState(0);
   const [tabAtiva, setTabAtiva] = useState<TabAtiva>("consulta");
@@ -80,22 +83,54 @@ function AtendimentoPage() {
     status: 'idle', messages: [], summary: '', jobs: [], error: '',
   });
 
-  const pacientesFiltrados = mockPacientes.filter(p =>
-    p.nome.toLowerCase().includes(busca.toLowerCase())
-  );
+  // Today's agenda — filter appointments for today
+  const hoje = new Date().toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
+  const agendaHoje = mockAppointments.filter(a => a.date === "08/04/2026"); // In production, filter by hoje
+
+  const statusOrder: Record<string, number> = { em_atendimento: 0, aguardando: 1, confirmado: 2, encaixe: 3, finalizado: 4, faltou: 5 };
+  const agendaOrdenada = [...agendaHoje].sort((a, b) => {
+    const sa = statusOrder[a.status] ?? 99;
+    const sb = statusOrder[b.status] ?? 99;
+    if (sa !== sb) return sa - sb;
+    return a.time.localeCompare(b.time);
+  });
+
+  const handleSelecionarAgendamento = useCallback((apt: Appointment) => {
+    if (atendimentoAtivo) return;
+    setAppointmentSelecionado(apt);
+    // Try to find patient in registry
+    const paciente = apt.pacienteId ? getPacienteById(apt.pacienteId) : mockPacientes.find(p => p.nome === apt.patientName);
+    if (paciente) {
+      setPacienteSelecionado(paciente);
+    } else {
+      // Create a temporary patient object from appointment data
+      setPacienteSelecionado({
+        id: apt.id,
+        nome: apt.patientName,
+        telefone: apt.phone,
+        email: "",
+        dataNascimento: new Date(),
+        cpf: "",
+        endereco: "",
+        sexo: "masculino",
+        criadoEm: new Date(),
+      });
+    }
+    setProcedimentoRealizado(apt.procedure);
+  }, [atendimentoAtivo]);
 
   const iniciarAtendimento = useCallback(() => {
     if (!pacienteSelecionado) return;
     setAtendimentoAtivo(true);
     setTempoAtendimento(0);
     timerRef.current = setInterval(() => setTempoAtendimento(t => t + 1), 1000);
-    toast.success(`Atendimento iniciado para ${pacienteSelecionado.nome}`);
+    toast.success(`Consulta iniciada — ${pacienteSelecionado.nome}`);
   }, [pacienteSelecionado]);
 
   const finalizarAtendimento = useCallback(() => {
     setAtendimentoAtivo(false);
     if (timerRef.current) clearInterval(timerRef.current);
-    toast.success("Atendimento finalizado e relatório salvo!");
+    toast.success("Consulta finalizada e relatório salvo!");
   }, []);
 
   useEffect(() => {
@@ -281,51 +316,79 @@ function AtendimentoPage() {
       <div className="flex min-h-screen w-full bg-background">
         <AppSidebar />
         <div className="flex-1 flex flex-col overflow-hidden">
-          <DashboardHeader title="Atendimento Clínico" />
+          <DashboardHeader title="Consulta" />
           <main className="flex-1 overflow-auto p-6">
             <div className="max-w-[1600px] mx-auto grid grid-cols-12 gap-6">
 
-              {/* Coluna esquerda — Seleção de paciente */}
+              {/* Coluna esquerda — Agenda do Dia */}
               <div className="col-span-3 space-y-4">
                 <div className="bg-card rounded-2xl border border-border/60 p-4 shadow-card animate-slide-up">
                   <h2 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
-                    <User className="h-4 w-4 text-primary" /> Paciente
+                    <Calendar className="h-4 w-4 text-primary" /> Agenda do Dia
                   </h2>
-                  <input
-                    type="text"
-                    placeholder="Buscar paciente..."
-                    value={busca}
-                    onChange={e => setBusca(e.target.value)}
-                    className="w-full h-9 rounded-lg border border-border bg-muted/40 px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 mb-3"
-                  />
-                  <div className="space-y-1.5 max-h-[50vh] overflow-y-auto">
-                    {pacientesFiltrados.map(p => {
-                      const sel = pacienteSelecionado?.id === p.id;
-                      const iniciais = getPacienteIniciais(p);
+                  <p className="text-[11px] text-muted-foreground mb-3">
+                    {agendaOrdenada.length} agendamento{agendaOrdenada.length !== 1 ? "s" : ""} hoje
+                  </p>
+                  <div className="space-y-1.5 max-h-[55vh] overflow-y-auto">
+                    {agendaOrdenada.map(apt => {
+                      const sel = appointmentSelecionado?.id === apt.id;
+                      const statusColors: Record<string, string> = {
+                        em_atendimento: "border-primary bg-primary/5 ring-1 ring-primary/20",
+                        aguardando: "border-warning/40 bg-warning/5",
+                        confirmado: "border-success/30 bg-success/5",
+                        encaixe: "border-accent bg-accent/5",
+                        finalizado: "border-border/40 bg-muted/30 opacity-60",
+                        faltou: "border-destructive/20 bg-destructive/5 opacity-50",
+                      };
+                      const statusLabels: Record<string, string> = {
+                        em_atendimento: "Em atendimento",
+                        aguardando: "Aguardando",
+                        confirmado: "Confirmado",
+                        encaixe: "Encaixe",
+                        finalizado: "Finalizado",
+                        faltou: "Faltou",
+                      };
+                      const statusDotColors: Record<string, string> = {
+                        em_atendimento: "bg-primary",
+                        aguardando: "bg-warning",
+                        confirmado: "bg-success",
+                        encaixe: "bg-accent-foreground",
+                        finalizado: "bg-muted-foreground",
+                        faltou: "bg-destructive",
+                      };
                       return (
                         <button
-                          key={p.id}
-                          onClick={() => { setPacienteSelecionado(p); setBusca(""); }}
+                          key={apt.id}
+                          onClick={() => handleSelecionarAgendamento(apt)}
                           disabled={atendimentoAtivo && !sel}
-                          className={`w-full flex items-center gap-3 p-2.5 rounded-xl text-left transition-all duration-300 hover-lift ${
+                          className={`w-full text-left p-3 rounded-xl border transition-all duration-200 ${
                             sel
-                              ? "border border-primary bg-primary/5 shadow-[0_0_16px_-4px_hsl(var(--primary)/0.3)] ring-1 ring-primary/20"
-                              : "border border-transparent hover:bg-muted/60 hover:border-border/60"
-                          } ${atendimentoAtivo && !sel ? "opacity-40 cursor-not-allowed" : "cursor-pointer"}`}
+                              ? "border-primary bg-primary/5 shadow-[0_0_16px_-4px_hsl(var(--primary)/0.3)] ring-1 ring-primary/20"
+                              : statusColors[apt.status] || "border-border/40"
+                          } ${atendimentoAtivo && !sel ? "opacity-30 cursor-not-allowed" : "cursor-pointer hover:shadow-sm"}`}
                         >
-                          <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center text-primary text-xs font-bold shrink-0">
-                            {iniciais}
+                          <div className="flex items-center gap-2.5">
+                            <div className={`h-8 w-8 rounded-lg ${apt.avatarColor} flex items-center justify-center text-[10px] font-bold text-white shrink-0`}>
+                              {apt.patientInitials}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-foreground truncate">{apt.patientName}</p>
+                              <p className="text-[11px] text-muted-foreground truncate">{apt.procedure}</p>
+                            </div>
                           </div>
-                          <div className="min-w-0">
-                            <p className="text-sm font-medium text-foreground truncate">{p.nome}</p>
-                            <p className="text-[11px] text-muted-foreground">{p.telefone}</p>
+                          <div className="flex items-center justify-between mt-2">
+                            <span className="text-[11px] font-mono text-muted-foreground">{apt.time} • {apt.duration}min</span>
+                            <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                              <span className={`h-1.5 w-1.5 rounded-full ${statusDotColors[apt.status] || "bg-muted"}`} />
+                              {statusLabels[apt.status] || apt.status}
+                            </span>
                           </div>
-                          {temAlertasMedicos(p.id) && (
-                            <AlertTriangle className="h-3.5 w-3.5 text-warning shrink-0 ml-auto" />
-                          )}
                         </button>
                       );
                     })}
+                    {agendaOrdenada.length === 0 && (
+                      <p className="text-xs text-muted-foreground text-center py-6">Nenhum agendamento hoje</p>
+                    )}
                   </div>
                 </div>
 
@@ -390,7 +453,7 @@ function AtendimentoPage() {
                           disabled={!pacienteSelecionado}
                           className="flex items-center gap-2 h-10 px-5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-md hover:shadow-lg"
                         >
-                          <Play className="h-4 w-4" /> Iniciar Atendimento
+                         <Play className="h-4 w-4" /> Iniciar Consulta
                         </button>
                       ) : (
                         <button
@@ -881,27 +944,32 @@ function AtendimentoPage() {
                 {!atendimentoAtivo && !pacienteSelecionado && (
                   <div className="bg-card rounded-2xl border border-border/60 p-12 shadow-card text-center animate-slide-up">
                     <Stethoscope className="h-12 w-12 text-primary/20 mx-auto mb-4" />
-                    <h3 className="text-lg font-semibold text-foreground mb-2">Módulo de Atendimento</h3>
+                    <h3 className="text-lg font-semibold text-foreground mb-2">Consulta</h3>
                     <p className="text-sm text-muted-foreground max-w-md mx-auto">
-                      Selecione um paciente na lista ao lado para iniciar um atendimento clínico.
-                      Grave a consulta, faça prescrições e gere relatórios automáticos com IA.
+                      Selecione um agendamento na agenda do dia ao lado para iniciar a consulta.
+                      Preencha os dados clínicos, grave o áudio e gere relatórios com IA.
                     </p>
                   </div>
                 )}
 
-                {/* Paciente selecionado mas atendimento não iniciado */}
+                {/* Paciente selecionado mas consulta não iniciada */}
                 {!atendimentoAtivo && pacienteSelecionado && (
                   <div className="bg-card rounded-2xl border border-border/60 p-8 shadow-card text-center animate-slide-up">
                     <div className="h-14 w-14 rounded-2xl bg-primary/10 flex items-center justify-center text-primary text-lg font-bold mx-auto mb-4">
                       {getPacienteIniciais(pacienteSelecionado)}
                     </div>
                     <h3 className="text-lg font-semibold text-foreground mb-1">{pacienteSelecionado.nome}</h3>
-                    <p className="text-sm text-muted-foreground mb-4">{getPacienteIdade(pacienteSelecionado)} anos • {pacienteSelecionado.telefone}</p>
+                    <p className="text-sm text-muted-foreground mb-1">{getPacienteIdade(pacienteSelecionado)} anos • {pacienteSelecionado.telefone}</p>
+                    {appointmentSelecionado && (
+                      <p className="text-xs text-primary font-medium mb-4">
+                        {appointmentSelecionado.procedure} • {appointmentSelecionado.time} • {appointmentSelecionado.room}
+                      </p>
+                    )}
                     <button
                       onClick={iniciarAtendimento}
                       className="inline-flex items-center gap-2 h-11 px-6 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-all shadow-md hover:shadow-lg"
                     >
-                      <Play className="h-4 w-4" /> Iniciar Atendimento
+                      <Play className="h-4 w-4" /> Iniciar Consulta
                     </button>
                   </div>
                 )}
