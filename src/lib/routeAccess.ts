@@ -7,6 +7,7 @@ export type AppRole = "admin" | "dentista" | "recepcionista" | "comercial" | "us
 
 /** Routes restricted to specific roles. Unlisted routes are public to all authenticated users. */
 export const routeRoleMap: Record<string, AppRole[]> = {
+  "/atendimento": ["admin", "dentista"],
   "/dentistas": ["admin"],
   "/prontuario": ["admin", "dentista"],
   "/tratamentos": ["admin", "dentista"],
