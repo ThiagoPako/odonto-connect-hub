@@ -157,7 +157,8 @@ function ContatosPage() {
             {contatos.map((contato) => (
               <div
                 key={contato.id}
-                className="bg-card border border-border rounded-xl p-4 flex items-center gap-4 hover:border-primary/30 transition-colors group"
+                className="bg-card border border-border rounded-xl p-4 flex items-center gap-4 hover:border-primary/30 transition-colors group cursor-pointer"
+                onClick={() => navigate({ to: "/chat", search: { lead: contato.telefone || contato.nome } })}
               >
                 {/* Avatar */}
                 <div className="h-11 w-11 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold text-sm shrink-0">
@@ -196,7 +197,7 @@ function ContatosPage() {
                 </div>
 
                 {/* Actions */}
-                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
                   <Button
                     variant="ghost"
                     size="icon"
@@ -216,7 +217,7 @@ function ContatosPage() {
                       size="icon"
                       className="h-8 w-8"
                       title="Abrir Chat"
-                      onClick={() => navigate({ to: "/chat", search: { lead: contato.nome } })}
+                      onClick={() => navigate({ to: "/chat", search: { lead: contato.telefone || contato.nome } })}
                     >
                       <MessageSquare className="h-4 w-4 text-primary" />
                     </Button>
