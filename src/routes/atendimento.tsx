@@ -40,6 +40,14 @@ interface GravacaoConsulta {
 
 type TabAtiva = "consulta" | "prescricao" | "orcamento" | "relatorio";
 
+interface TranscriptionState {
+  status: 'idle' | 'transcribing' | 'generating' | 'done' | 'error';
+  transcription: string;
+  report: string;
+  reportId: string;
+  error: string;
+}
+
 function AtendimentoPage() {
   const [pacienteSelecionado, setPacienteSelecionado] = useState<Paciente | null>(null);
   const [busca, setBusca] = useState("");
