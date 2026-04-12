@@ -7,6 +7,7 @@ import {
 import { useState, useEffect, useCallback } from "react";
 import { tratamentosApi, dentistasApi, pacientesApi } from "@/lib/vpsApi";
 import { toast } from "sonner";
+import { exportarTratamentosPdf } from "@/lib/tratamentosPdfExport";
 
 export const Route = createFileRoute("/tratamentos")({
   ssr: false,
