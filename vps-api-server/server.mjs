@@ -5117,4 +5117,9 @@ app.listen(PORT, async () => {
   syncWhatsAppContacts(); // Run once on startup
   syncInterval = setInterval(syncWhatsAppContacts, 30 * 60 * 1000);
   console.log('   📇 Auto-sync de contatos WhatsApp ativo (a cada 30 min)');
+
+  // Start automation scheduler every 30 seconds
+  processAutomationJobs(); // Run once on startup
+  automationSchedulerInterval = setInterval(processAutomationJobs, 30 * 1000);
+  console.log('   🤖 Automation scheduler ativo (a cada 30s)');
 });
