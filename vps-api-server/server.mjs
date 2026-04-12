@@ -3620,6 +3620,23 @@ app.patch('/api/crm/leads/:id/stage', async (req, res) => {
       triggerFollowupAutomation(req.params.id, stage).catch(() => {});
     }
 
+    // 🤖 Trigger automation flows based on stage change
+    const leadForAutomation = rows[0];
+    if (leadForAutomation) {
+      const { rows: leadDetail } = await pool.query('SELECT nome, telefone FROM crm_leads WHERE id = $1', [req.params.id]).catch(() => ({ rows: [] }));
+      const ld = leadDetail[0];
+      if (ld?.telefone) {
+        // Orçamento stage → trigger budget follow-up
+        if (stage === 'orcamento' || stage === 'orcamento_enviado') {
+          triggerAutomationFlows('Orçamento criado e não fechado', { name: ld.nome, phone: ld.telefone }).catch(() => {});
+        }
+        // Lead entering CRM stage
+        if (stage === 'lead' && fromStage !== 'lead') {
+          triggerAutomationFlows('Lead entrou no CRM', { name: ld.nome, phone: ld.telefone }).catch(() => {});
+        }
+      }
+    }
+
     res.json(rows[0]);
   } catch (error) {
     res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
