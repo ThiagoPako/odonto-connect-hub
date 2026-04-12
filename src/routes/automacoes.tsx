@@ -194,11 +194,32 @@ function AutomacoesPage() {
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Automação de Relacionamento" />
       <main className="flex-1 p-6 space-y-6 overflow-auto">
-        {/* Tab switcher */}
-        <div className="flex items-center gap-1 bg-muted rounded-xl p-1 w-fit">
+        {/* Hero header with gradient */}
+        <div className="relative overflow-hidden rounded-2xl gradient-primary p-6 shadow-glow-primary">
+          <div className="absolute inset-0 opacity-10">
+            <div className="absolute top-4 right-8 animate-float" style={{ animationDelay: '0s' }}>
+              <Workflow className="h-16 w-16 text-primary-foreground" strokeWidth={0.8} />
+            </div>
+            <div className="absolute bottom-4 right-32 animate-float" style={{ animationDelay: '1s' }}>
+              <Target className="h-10 w-10 text-primary-foreground" strokeWidth={0.8} />
+            </div>
+            <div className="absolute top-2 right-56 animate-float" style={{ animationDelay: '2s' }}>
+              <Activity className="h-8 w-8 text-primary-foreground" strokeWidth={0.8} />
+            </div>
+          </div>
+          <div className="relative z-10">
+            <h1 className="text-xl font-bold text-primary-foreground font-heading mb-1">Automação Inteligente</h1>
+            <p className="text-sm text-primary-foreground/80 max-w-md">
+              Engaje pacientes automaticamente com fluxos personalizados de WhatsApp, SMS e e-mail.
+            </p>
+          </div>
+        </div>
+
+        {/* Tab switcher — pill style */}
+        <div className="flex items-center gap-1.5 bg-card rounded-2xl p-1.5 w-fit border border-border shadow-card">
           {([
-            { key: "solutions" as const, label: "Soluções", icon: Rocket },
-            { key: "flows" as const, label: "Fluxos", icon: Zap },
+            { key: "solutions" as const, label: "Soluções", icon: Rocket, count: preConfiguredSolutions.length },
+            { key: "flows" as const, label: "Fluxos", icon: Zap, count: flows.length },
             { key: "report" as const, label: "Relatórios", icon: BarChart3 },
           ]).map(tab => {
             const TabIcon = tab.icon;
@@ -207,14 +228,21 @@ function AutomacoesPage() {
               <button
                 key={tab.key}
                 onClick={() => setActiveTab(tab.key)}
-                className={`relative px-4 py-2 rounded-lg text-xs font-medium transition-all duration-300 ${
+                className={`relative flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-semibold transition-all duration-300 ${
                   isActive
-                    ? "bg-background text-foreground shadow-sm scale-[1.02]"
-                    : "text-muted-foreground hover:text-foreground hover:bg-background/50"
+                    ? "gradient-primary text-primary-foreground shadow-glow-primary"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted"
                 }`}
               >
-                <TabIcon className={`h-3.5 w-3.5 inline mr-1.5 transition-colors duration-300 ${isActive ? "text-primary" : ""}`} />
+                <TabIcon className="h-4 w-4" strokeWidth={isActive ? 2.2 : 1.8} />
                 {tab.label}
+                {tab.count !== undefined && (
+                  <span className={`ml-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
+                    isActive ? "bg-primary-foreground/20 text-primary-foreground" : "bg-muted text-muted-foreground"
+                  }`}>
+                    {tab.count}
+                  </span>
+                )}
               </button>
             );
           })}
@@ -233,24 +261,26 @@ function AutomacoesPage() {
             <AutomationReportPanel />
           ) : (
             <div className="space-y-6">
-        {/* KPIs */}
+        {/* KPIs — vibrant cards */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <MiniKpi icon={Zap} label="Fluxos Ativos" value={flows.filter((f) => f.active).length.toString()} total={flows.length.toString()} />
-          <MiniKpi icon={Send} label="Mensagens Enviadas" value={totalSent.toString()} />
-          <MiniKpi icon={MessageSquare} label="Taxa de Resposta" value={`${responseRate}%`} highlight={Number(responseRate) > 40} />
-          <MiniKpi icon={CheckCircle2} label="Conversões" value={totalConverted.toString()} />
+          <KpiCardVibrant icon={Zap} label="Fluxos Ativos" value={flows.filter((f) => f.active).length.toString()} total={flows.length.toString()} color="from-primary to-primary-glow" />
+          <KpiCardVibrant icon={Send} label="Mensagens Enviadas" value={totalSent.toString()} color="from-chart-2 to-info" />
+          <KpiCardVibrant icon={TrendingUp} label="Taxa de Resposta" value={`${responseRate}%`} color="from-chart-3 to-success" highlight={Number(responseRate) > 40} />
+          <KpiCardVibrant icon={CheckCircle2} label="Conversões" value={totalConverted.toString()} color="from-warning to-chart-4" />
         </div>
 
-        {/* Best practices tip */}
-        <div className="flex items-start gap-3 p-4 rounded-xl bg-primary/5 border border-primary/20">
-          <Sparkles className="h-5 w-5 text-primary shrink-0 mt-0.5" />
+        {/* Best practices — more subtle */}
+        <div className="flex items-start gap-3 p-4 rounded-2xl bg-card border border-border shadow-card">
+          <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0 icon-bounce">
+            <Sparkles className="h-4 w-4 text-primary" />
+          </div>
           <div>
-            <p className="text-sm font-medium text-foreground mb-1">Dicas de Boas Práticas</p>
+            <p className="text-sm font-semibold text-foreground mb-1 font-heading">Boas Práticas</p>
             <ul className="text-xs text-muted-foreground space-y-0.5">
               <li>• Use <strong>no máximo 3 etapas</strong> por fluxo para não saturar o paciente</li>
               <li>• Espaçe as mensagens com <strong>intervalos de 2-7 dias</strong> entre cada etapa</li>
-              <li>• Sempre inclua uma <strong>opção de resposta</strong> clara na mensagem (ex: "Responda SIM")</li>
-              <li>• Personalize com variáveis como <code className="px-1 py-0.5 bg-muted rounded text-primary">{"{{nome}}"}</code> para maior engajamento</li>
+              <li>• Sempre inclua uma <strong>opção de resposta</strong> clara na mensagem</li>
+              <li>• Personalize com variáveis como <code className="px-1.5 py-0.5 bg-primary/10 rounded-md text-primary font-mono text-[10px]">{"{{nome}}"}</code></li>
             </ul>
           </div>
         </div>
@@ -267,35 +297,38 @@ function AutomacoesPage() {
         {/* Header + filter */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
           <div>
-            <h2 className="text-lg font-semibold text-foreground font-heading">Fluxos de Automação</h2>
+            <h2 className="text-lg font-bold text-foreground font-heading">Fluxos de Automação</h2>
             <p className="text-sm text-muted-foreground">Crie, edite e gerencie seus fluxos de relacionamento</p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            <div className="inline-flex h-8 items-center rounded-lg bg-muted p-0.5 text-sm">
+            <div className="inline-flex h-9 items-center rounded-xl bg-card border border-border p-1 text-sm shadow-card">
               <button
                 onClick={() => setFilterType("all")}
-                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${filterType === "all" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 ${filterType === "all" ? "gradient-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
               >
                 Todos ({flows.length})
               </button>
-              {automationTypes.map((t) => {
+              {automationTypes.slice(0, 6).map((t) => {
                 const count = flows.filter(f => f.type === t.id).length;
+                if (count === 0) return null;
+                const iconInfo = solutionIconMap[t.id];
+                const TIcon = iconInfo?.icon || Zap;
                 return (
                   <button
                     key={t.id}
                     onClick={() => setFilterType(t.id)}
-                    className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${filterType === t.id ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 flex items-center gap-1.5 ${filterType === t.id ? "gradient-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
                   >
-                    {t.icon} {t.label} {count > 0 ? `(${count})` : ""}
+                    <TIcon className="h-3 w-3" /> {t.label} ({count})
                   </button>
                 );
               })}
             </div>
             <button
               onClick={createNewFlow}
-              className="flex items-center gap-2 h-8 px-4 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors"
+              className="flex items-center gap-2 h-9 px-5 rounded-xl gradient-primary text-primary-foreground text-xs font-semibold hover:opacity-90 transition-all shadow-glow-primary hover-lift"
             >
-              <Plus className="h-3.5 w-3.5" /> Novo Fluxo
+              <Plus className="h-4 w-4" /> Novo Fluxo
             </button>
           </div>
         </div>
@@ -304,25 +337,28 @@ function AutomacoesPage() {
           {/* Flow list */}
           <div className="lg:col-span-1 space-y-3">
             {filtered.length === 0 && (
-              <div className="bg-card rounded-2xl border border-dashed border-border p-8 text-center">
-                <Zap className="h-8 w-8 text-muted-foreground/30 mx-auto mb-3" />
-                <p className="text-sm text-muted-foreground mb-3">Nenhum fluxo encontrado</p>
-                <button onClick={createNewFlow} className="text-xs text-primary hover:underline font-medium">
+              <div className="bg-card rounded-2xl border-2 border-dashed border-border p-8 text-center">
+                <div className="h-14 w-14 rounded-2xl bg-muted flex items-center justify-center mx-auto mb-4 animate-float">
+                  <Zap className="h-7 w-7 text-muted-foreground/40" />
+                </div>
+                <p className="text-sm font-medium text-muted-foreground mb-3">Nenhum fluxo encontrado</p>
+                <button onClick={createNewFlow} className="text-xs text-primary hover:underline font-semibold">
                   + Criar primeiro fluxo
                 </button>
               </div>
             )}
-            {filtered.map((flow) => (
-              <FlowCard
-                key={flow.id}
-                flow={flow}
-                isSelected={selectedFlow?.id === flow.id}
-                onSelect={() => { setSelectedFlow(flow); setEditingFlow(null); }}
-                onToggle={() => toggleActive(flow.id)}
-                onDelete={() => deleteFlow(flow.id)}
-                onDuplicate={() => duplicateFlow(flow)}
-                onEdit={() => { setSelectedFlow(flow); setEditingFlow({ ...flow, steps: flow.steps.map(s => ({ ...s })) }); }}
-              />
+            {filtered.map((flow, i) => (
+              <div key={flow.id} className="animate-slide-up" style={{ animationDelay: `${i * 60}ms`, animationFillMode: 'both' }}>
+                <FlowCard
+                  flow={flow}
+                  isSelected={selectedFlow?.id === flow.id}
+                  onSelect={() => { setSelectedFlow(flow); setEditingFlow(null); }}
+                  onToggle={() => toggleActive(flow.id)}
+                  onDelete={() => deleteFlow(flow.id)}
+                  onDuplicate={() => duplicateFlow(flow)}
+                  onEdit={() => { setSelectedFlow(flow); setEditingFlow({ ...flow, steps: flow.steps.map(s => ({ ...s })) }); }}
+                />
+              </div>
             ))}
           </div>
 
@@ -342,14 +378,16 @@ function AutomacoesPage() {
                 onDelete={() => deleteFlow(selectedFlow.id)}
               />
             ) : (
-              <div className="bg-card rounded-2xl border border-border p-8 flex flex-col items-center justify-center text-center h-full min-h-[400px]">
-                <Zap className="h-12 w-12 text-muted-foreground/30 mb-4" />
-                <h3 className="text-sm font-semibold text-foreground mb-1 font-heading">Selecione um fluxo</h3>
-                <p className="text-xs text-muted-foreground max-w-xs mb-4">
-                  Clique em um fluxo ao lado para visualizar, editar ou criar novos fluxos de relacionamento.
+              <div className="bg-card rounded-2xl border border-border p-10 flex flex-col items-center justify-center text-center h-full min-h-[400px] shadow-card">
+                <div className="h-16 w-16 rounded-2xl gradient-primary flex items-center justify-center mb-5 animate-float shadow-glow-primary">
+                  <Zap className="h-8 w-8 text-primary-foreground" />
+                </div>
+                <h3 className="text-base font-bold text-foreground mb-2 font-heading">Selecione um fluxo</h3>
+                <p className="text-xs text-muted-foreground max-w-xs mb-5">
+                  Clique em um fluxo ao lado para visualizar detalhes, métricas e editar mensagens.
                 </p>
-                <button onClick={createNewFlow} className="flex items-center gap-2 h-8 px-4 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors">
-                  <Plus className="h-3.5 w-3.5" /> Criar Novo Fluxo
+                <button onClick={createNewFlow} className="flex items-center gap-2 h-9 px-5 rounded-xl gradient-primary text-primary-foreground text-xs font-semibold hover:opacity-90 transition-all shadow-glow-primary hover-lift">
+                  <Plus className="h-4 w-4" /> Criar Novo Fluxo
                 </button>
               </div>
             )}
