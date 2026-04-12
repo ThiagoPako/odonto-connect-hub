@@ -440,6 +440,27 @@ function KanbanCard({ lead, stageId, onDragStart, onLeadAssigned }: { lead: Kanb
         )}
       </div>
 
+      {/* Active attendance badge */}
+      {activeSession?.active && (
+        <div className={`flex items-center gap-1.5 px-2 py-1 rounded-md mb-2 text-[10px] font-medium ${
+          isAttendedByMe ? "bg-success/10 text-success" : "bg-warning/10 text-warning"
+        }`}>
+          <div className="relative">
+            <div className={`h-4 w-4 rounded-full flex items-center justify-center text-[7px] font-bold text-white ${
+              isAttendedByMe ? "bg-success" : "bg-warning"
+            }`}>
+              {isAttendedByMe ? (user?.name || "").split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase() : (activeSession.attendantName || "?").split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase()}
+            </div>
+            <div className={`absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full border border-card ${
+              isAttendedByMe ? "bg-success" : "bg-warning"
+            }`} />
+          </div>
+          <span className="truncate">
+            {isAttendedByMe ? "Você está atendendo" : `${activeSession.attendantName} atendendo`}
+          </span>
+        </div>
+      )}
+
       <p className="text-sm font-semibold text-primary mb-2">R$ {lead.value.toLocaleString("pt-BR")}</p>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5">
