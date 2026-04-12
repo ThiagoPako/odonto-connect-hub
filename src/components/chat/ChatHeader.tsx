@@ -63,7 +63,7 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onRe
   const [loading, setLoading] = useState(false);
   const [selectedAtt, setSelectedAtt] = useState<Attendant | null>(null);
   const [reason, setReason] = useState("");
-  const [currentStage, setCurrentStage] = useState<string | null>(null);
+  const [currentStage, setCurrentStage] = useState<string | null>(crmStage || null);
   const [updatingStage, setUpdatingStage] = useState(false);
 
   const handleClose = () => {
