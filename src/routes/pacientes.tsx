@@ -240,6 +240,9 @@ function PacientesPage() {
           <PacienteDetailModal
             paciente={selectedPaciente}
             onClose={() => setSelectedPaciente(null)}
+            onUpdated={() => {
+              loadPacientes();
+            }}
           />
         )}
       </main>
