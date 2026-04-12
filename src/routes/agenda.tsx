@@ -332,8 +332,18 @@ function ListView({ filtered, onAtender, onUpdateStatus }: { filtered: Appointme
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-end gap-1">
+                      {(a.status === "confirmado" || a.status === "aguardando") && (
+                        <button
+                          onClick={() => onAtender(a)}
+                          className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+                          title="Iniciar atendimento"
+                        >
+                          <Stethoscope className="h-3 w-3" />
+                          <span className="text-[10px] font-medium">Atender</span>
+                        </button>
+                      )}
                       {a.status === "aguardando" && (
-                        <button className="p-1.5 rounded-lg hover:bg-primary/10" title="Check-in">
+                        <button onClick={() => onUpdateStatus(a.id, "confirmado")} className="p-1.5 rounded-lg hover:bg-primary/10" title="Confirmar">
                           <UserCheck className="h-3.5 w-3.5 text-primary" />
                         </button>
                       )}
