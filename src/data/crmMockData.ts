@@ -31,6 +31,7 @@ export interface KanbanLead {
   avatarUrl?: string | null;
   consciousnessLevel?: ConsciousnessLevel;
   budgetId?: string;
+  pacienteId?: string | null;
 }
 
 /* ── Kanban: Funil de Vendas ──────────────────────── */
