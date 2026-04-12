@@ -6041,6 +6041,11 @@ app.listen(PORT, async () => {
   automationCronInterval = setInterval(checkInactivePatientsTrigger, 6 * 60 * 60 * 1000);
   console.log('   📅 Cron de pacientes inativos ativo (a cada 6h)');
 
+  // Start solution triggers cron (every 2h)
+  setTimeout(() => processSolutionTriggers(), 10000); // delay 10s to let DB settle
+  solutionCronInterval = setInterval(processSolutionTriggers, 2 * 60 * 60 * 1000);
+  console.log('   🩺 Cron de soluções automáticas ativo (a cada 2h)');
+
   // Start campaign scheduler (every 60s)
   processCampaignScheduler();
   campaignSchedulerInterval = setInterval(processCampaignScheduler, 60 * 1000);
