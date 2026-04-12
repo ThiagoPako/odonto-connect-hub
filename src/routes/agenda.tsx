@@ -5,10 +5,10 @@ import {
   Phone, MessageSquare, AlertTriangle, RefreshCw, Search, ExternalLink, History, HeartPulse,
   LayoutGrid, List, CalendarDays, Stethoscope, Loader2,
 } from "lucide-react";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { mockProfessionals, type Appointment } from "@/data/agendaMockData";
 import { getAlergias, getCondicoesCriticas, getHistorico } from "@/data/registroCentral";
-import { agendaApi, whatsappApi, type AgendamentoVPS } from "@/lib/vpsApi";
+import { agendaApi, whatsappApi, pacientesApi, type AgendamentoVPS } from "@/lib/vpsApi";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
@@ -667,10 +667,42 @@ function NovoAgendamentoDialog({
   };
   const [form, setForm] = useState<NovoAgendamentoForm>(emptyForm);
   const [saving, setSaving] = useState(false);
+  const [pacientesList, setPacientesList] = useState<any[]>([]);
+  const [pacientesFiltered, setPacientesFiltered] = useState<any[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const suggestionsRef = useRef<HTMLDivElement>(null);
 
+  // Load patients list on open
   useEffect(() => {
-    if (open) setForm((f) => ({ ...f, data: defaultDate }));
+    if (open) {
+      setForm((f) => ({ ...f, data: defaultDate }));
+      pacientesApi.list().then(({ data }) => {
+        if (Array.isArray(data)) setPacientesList(data);
+      });
+    }
   }, [open, defaultDate]);
+
+  const handlePatientSearch = (value: string) => {
+    handleChange("paciente_nome", value);
+    handleChange("paciente_id", "");
+    if (value.length >= 2) {
+      const q = value.toLowerCase();
+      setPacientesFiltered(pacientesList.filter((p: any) => p.nome?.toLowerCase().includes(q)).slice(0, 6));
+      setShowSuggestions(true);
+    } else {
+      setShowSuggestions(false);
+    }
+  };
+
+  const selectPaciente = (pac: any) => {
+    setForm((f) => ({
+      ...f,
+      paciente_nome: pac.nome || "",
+      paciente_id: pac.id || "",
+      telefone: pac.telefone || f.telefone,
+    }));
+    setShowSuggestions(false);
+  };
 
   const handleChange = (field: keyof NovoAgendamentoForm, value: string | number | boolean) => {
     setForm((f) => ({ ...f, [field]: value }));
@@ -753,10 +785,33 @@ function NovoAgendamentoDialog({
         <div className="space-y-4 mt-2 max-h-[70vh] overflow-y-auto pr-1">
           {/* Paciente + Telefone */}
           <div className="grid grid-cols-2 gap-3">
-            <div>
+            <div className="relative">
               <label className={labelCls}>Paciente *</label>
-              <input type="text" placeholder="Nome do paciente" value={form.paciente_nome}
-                onChange={(e) => handleChange("paciente_nome", e.target.value)} className={inputCls} maxLength={100} />
+              <input type="text" placeholder="Buscar paciente..." value={form.paciente_nome}
+                onChange={(e) => handlePatientSearch(e.target.value)}
+                onFocus={() => { if (form.paciente_nome.length >= 2) setShowSuggestions(true); }}
+                onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+                className={inputCls} maxLength={100} autoComplete="off" />
+              {showSuggestions && pacientesFiltered.length > 0 && (
+                <div ref={suggestionsRef} className="absolute z-50 top-full left-0 right-0 mt-1 bg-card border border-border rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                  {pacientesFiltered.map((pac: any) => (
+                    <button key={pac.id} type="button"
+                      onMouseDown={(e) => { e.preventDefault(); selectPaciente(pac); }}
+                      className="w-full text-left px-3 py-2 hover:bg-muted transition-colors flex items-center gap-2 text-sm">
+                      <div className="h-6 w-6 rounded-full bg-primary/15 flex items-center justify-center text-[9px] font-bold text-primary shrink-0">
+                        {(pac.nome || "").split(" ").filter((_: string, i: number, a: string[]) => i === 0 || i === a.length - 1).map((n: string) => n[0]).join("").toUpperCase()}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-xs font-medium text-foreground truncate">{pac.nome}</p>
+                        {pac.telefone && <p className="text-[10px] text-muted-foreground">{pac.telefone}</p>}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {form.paciente_id && (
+                <p className="text-[10px] text-success mt-0.5">✓ Paciente vinculado</p>
+              )}
             </div>
             <div>
               <label className={labelCls}>Telefone (WhatsApp)</label>
