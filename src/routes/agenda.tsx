@@ -561,7 +561,7 @@ function CalendarView({ filtered, selectedProfessional }: { filtered: Appointmen
 }
 
 /* ===================== APPOINTMENT CARD (Kanban) ===================== */
-function AppointmentCard({ appointment: a, onAtender, onUpdateStatus, onReschedule }: { appointment: Appointment; onAtender: (a: Appointment) => void; onUpdateStatus: (id: string, status: string) => void; onReschedule: (id: string, date: string, time: string) => void }) {
+function AppointmentCard({ appointment: a, onAtender, onUpdateStatus, onReschedule, isTransferring, justDropped }: { appointment: Appointment; onAtender: (a: Appointment) => void; onUpdateStatus: (id: string, status: string) => void; onReschedule: (id: string, date: string, time: string) => void; isTransferring?: boolean; justDropped?: boolean }) {
   const cfg = statusConfig[a.status];
   const [showHistory, setShowHistory] = useState(false);
   const [showReschedule, setShowReschedule] = useState(false);
@@ -574,13 +574,17 @@ function AppointmentCard({ appointment: a, onAtender, onUpdateStatus, onReschedu
 
   return (
     <div
-      draggable
+      draggable={!isTransferring}
       onDragStart={(e) => {
         e.dataTransfer.setData("appointmentId", a.id);
         e.dataTransfer.setData("fromProfessional", a.professional);
         e.dataTransfer.effectAllowed = "move";
       }}
-      className={`rounded-lg border border-border/50 p-2.5 space-y-2 hover-lift hover:shadow-glow-primary transition-all duration-300 cursor-grab active:cursor-grabbing ${a.status === "faltou" ? "opacity-50" : ""}`}
+      className={`rounded-lg border border-border/50 p-2.5 space-y-2 hover-lift hover:shadow-glow-primary transition-all duration-300 ${
+        isTransferring ? "opacity-50 pointer-events-none animate-pulse" : ""
+      } ${justDropped ? "animate-scale-in ring-2 ring-primary/30 shadow-glow-primary" : ""} ${
+        !isTransferring ? "cursor-grab active:cursor-grabbing" : ""
+      } ${a.status === "faltou" ? "opacity-50" : ""}`}
     >
       <div className="flex items-center justify-between">
         <span className="text-xs font-bold text-foreground">{a.time}</span>
