@@ -1358,7 +1358,7 @@ function SolutionsGrid({
               key={sol.id}
               className={`group relative bg-card rounded-2xl border p-5 transition-all duration-500 hover-lift card-glow animate-slide-up ${
                 isActive
-                  ? "border-primary/40 shadow-[0_0_24px_-4px_hsl(var(--primary)/0.4),0_0_48px_-8px_hsl(var(--primary)/0.2),inset_0_1px_0_0_hsl(var(--primary)/0.15)] ring-1 ring-primary/30 bg-gradient-to-b from-primary/[0.04] to-transparent"
+                  ? "border-primary/40 shadow-[0_0_24px_-4px_hsl(var(--primary)/0.4),0_0_48px_-8px_hsl(var(--primary)/0.2),inset_0_1px_0_0_hsl(var(--primary)/0.15)] ring-1 ring-primary/30 bg-gradient-to-b from-primary/[0.04] to-transparent animate-[borderPulse_3s_ease-in-out_infinite]"
                   : "border-border hover:border-primary/30 hover:shadow-card-hover"
               }`}
               style={{ animationDelay: `${index * 60}ms`, animationFillMode: 'both' }}
