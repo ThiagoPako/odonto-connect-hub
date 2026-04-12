@@ -43,8 +43,6 @@ interface ChatHeaderProps {
   onTransfer?: (lead: Lead, toAttendantId: string, toAttendantName: string, reason: string) => void;
   onFinishAttendance?: (lead: Lead, outcome: FinishOutcome, options?: { farewellMessage?: string; consciousnessLevel?: ConsciousnessLevel }) => void;
   onReturnToQueue?: (lead: Lead) => void;
-  leadTagIds?: string[];
-  onToggleTag?: (leadId: string, tagId: string) => void;
   messages?: ChatMessage[];
   presence?: PresenceDisplay;
   lastSeen?: Date | null;
