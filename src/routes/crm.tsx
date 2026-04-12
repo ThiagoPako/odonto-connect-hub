@@ -309,6 +309,9 @@ function KanbanCard({ lead, stageId, onDragStart, onLeadAssigned }: { lead: Kanb
   const [assuming, setAssuming] = useState(false);
   const [converting, setConverting] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [historyData, setHistoryData] = useState<Array<{ id: string; data: string; hora: string; procedimento: string; status: string; dentista_nome: string }> | null>(null);
+  const [loadingHistory, setLoadingHistory] = useState(false);
   const [activeSession, setActiveSession] = useState<{ active: boolean; attendantName?: string; isCurrentUser?: boolean } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const cardMenuRef = useRef<HTMLDivElement>(null);
