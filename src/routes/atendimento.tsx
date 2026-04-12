@@ -419,37 +419,46 @@ function AtendimentoPage() {
                   </div>
                 </div>
 
-                {/* Gravação de áudio da consulta */}
+                {/* Gravação de áudio — botão fixo no painel de controle */}
                 {atendimentoAtivo && (
                   <div className="bg-card rounded-2xl border border-border/60 p-4 shadow-card animate-slide-up" style={{ animationDelay: "50ms" }}>
-                    <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
-                      <Mic className="h-4 w-4 text-primary" /> Gravação da Consulta
-                      {gravacoes.length > 0 && (
-                        <button
-                          onClick={handleTranscreverIA}
-                          disabled={aiState.status === 'transcribing' || aiState.status === 'generating'}
-                          className="flex items-center gap-1.5 ml-auto h-7 px-3 rounded-lg bg-primary text-primary-foreground text-[11px] font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
-                        >
-                          {aiState.status === 'transcribing' || aiState.status === 'generating' ? (
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                          ) : (
-                            <Sparkles className="h-3 w-3" />
-                          )}
-                          {aiState.status === 'transcribing' ? 'Transcrevendo...' :
-                           aiState.status === 'generating' ? 'Gerando relatório...' :
-                           aiState.status === 'done' ? 'Gerar novamente' :
-                           'Transcrever com IA'}
-                        </button>
-                      )}
-                    </h3>
-                    <div className="flex items-center gap-3">
-                      <AudioRecorder
-                        onRecordingComplete={handleGravacaoCompleta}
-                      />
-                      <span className="text-xs text-muted-foreground">
-                        Grave a consulta para gerar relatórios automáticos com IA
-                      </span>
+                    <div className="flex items-center justify-between mb-3">
+                      <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                        <Mic className="h-4 w-4 text-primary" /> Gravação da Consulta
+                      </h3>
+                      <div className="flex items-center gap-2">
+                        {gravacoes.length > 0 && (
+                          <button
+                            onClick={handleTranscreverIA}
+                            disabled={aiState.status === 'transcribing' || aiState.status === 'generating'}
+                            className="flex items-center gap-1.5 h-8 px-4 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+                          >
+                            {aiState.status === 'transcribing' || aiState.status === 'generating' ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Sparkles className="h-3.5 w-3.5" />
+                            )}
+                            {aiState.status === 'transcribing' ? 'Transcrevendo...' :
+                             aiState.status === 'generating' ? 'Gerando relatório...' :
+                             aiState.status === 'done' ? 'Gerar novamente' :
+                             'Transcrever com IA'}
+                          </button>
+                        )}
+                      </div>
                     </div>
+
+                    <div className="flex items-center gap-4">
+                      <div className="flex items-center gap-3 flex-1">
+                        <AudioRecorder onRecordingComplete={handleGravacaoCompleta} />
+                        <div>
+                          <p className="text-xs font-medium text-foreground">Gravar consulta</p>
+                          <p className="text-[11px] text-muted-foreground">
+                            Clique no 🎙️ para iniciar. Grave quantas vezes quiser durante o atendimento.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
                     {gravacoes.length > 0 && (
                       <div className="mt-3 space-y-2">
                         {gravacoes.map((g, idx) => (
