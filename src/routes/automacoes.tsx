@@ -586,21 +586,28 @@ function FollowupAutomationCard({
   );
 }
 
-// ─── Mini KPI ───────────────────────────────────────────────
+// ─── KPI Card Vibrant ───────────────────────────────────────
 
-function MiniKpi({ icon: Icon, label, value, total, highlight }: { icon: React.ElementType; label: string; value: string; total?: string; highlight?: boolean }) {
+function KpiCardVibrant({ icon: Icon, label, value, total, color, highlight }: {
+  icon: React.ElementType; label: string; value: string; total?: string; color: string; highlight?: boolean;
+}) {
   return (
-    <div className="flex items-center gap-3 bg-card rounded-2xl border border-border p-3.5 shadow-card">
-      <div className={`h-10 w-10 rounded-xl flex items-center justify-center shrink-0 ${highlight ? "gradient-primary" : "bg-muted"}`}>
-        <Icon className={`h-4.5 w-4.5 ${highlight ? "text-primary-foreground" : "text-muted-foreground"}`} />
-      </div>
-      <div className="min-w-0">
-        <p className="text-[11px] text-muted-foreground">{label}</p>
-        <div className="flex items-baseline gap-1">
-          <p className={`text-lg font-bold font-heading ${highlight ? "gradient-text" : "text-foreground"}`}>{value}</p>
-          {total && <span className="text-xs text-muted-foreground">/ {total}</span>}
+    <div className="group bg-card rounded-2xl border border-border p-4 shadow-card hover-lift hover:shadow-card-hover transition-all duration-300">
+      <div className="flex items-center gap-3">
+        <div className={`h-11 w-11 rounded-xl bg-gradient-to-br ${color} flex items-center justify-center shrink-0 icon-bounce shadow-sm`}>
+          <Icon className="h-5 w-5 text-primary-foreground" strokeWidth={2} />
+        </div>
+        <div className="min-w-0">
+          <p className="text-[11px] text-muted-foreground font-medium">{label}</p>
+          <div className="flex items-baseline gap-1.5">
+            <p className="text-xl font-bold font-heading text-foreground">{value}</p>
+            {total && <span className="text-xs text-muted-foreground font-medium">/ {total}</span>}
+          </div>
         </div>
       </div>
+      {highlight && (
+        <div className="mt-2 h-1 rounded-full bg-gradient-to-r from-chart-3 to-success opacity-60" />
+      )}
     </div>
   );
 }
