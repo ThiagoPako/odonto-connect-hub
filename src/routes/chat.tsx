@@ -14,7 +14,7 @@ import type { AttendanceQueue } from "@/data/queueData";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { useRealtimeChat, type IncomingMessage } from "@/hooks/useRealtimeChat";
-import { whatsappApi, transferApi, sessionsApi, tagsApi, queuesApi, messagesApi, queueLeadsApi, mediaApi, type LeadTagApi, type ChatMessageApi } from "@/lib/vpsApi";
+import { whatsappApi, transferApi, sessionsApi, tagsApi, queuesApi, messagesApi, queueLeadsApi, mediaApi, crmApi, type LeadTagApi, type ChatMessageApi } from "@/lib/vpsApi";
 import { useWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
 import { playNotificationSound } from "@/lib/notificationSound";
 import { showBrowserNotification, requestNotificationPermission } from "@/lib/browserNotification";
