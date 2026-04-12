@@ -4181,6 +4181,53 @@ async function processAutomationJobs() {
   }
 }
 
+// ─── Cron: Appointment Reminders 24h (runs every 1h) ────────
+let appointmentReminderInterval = null;
+
+async function processAppointmentReminders() {
+  try {
+    const instanceName = await getDefaultInstance();
+    if (!instanceName) return;
+
+    // Find appointments scheduled for tomorrow that haven't been reminded yet
+    const { rows: appointments } = await pool.query(`
+      SELECT a.id, a.paciente_id, a.paciente_nome, a.dentista_nome, a.data, a.hora, a.procedimento, a.duracao,
+             p.telefone
+      FROM agendamentos a
+      LEFT JOIN pacientes p ON p.id = a.paciente_id
+      WHERE a.data = (CURRENT_DATE + INTERVAL '1 day')::date
+        AND a.status NOT IN ('cancelado', 'desmarcado', 'faltou', 'finalizado', 'realizado')
+        AND a.id NOT IN (
+          SELECT REPLACE(flow_id, 'reminder_', '') FROM automation_jobs
+          WHERE trigger_event = 'appointment_reminder' AND status IN ('pending', 'sent')
+        )
+    `);
+
+    if (appointments.length === 0) return;
+    console.log(`🔔 Reminder: ${appointments.length} consultas amanhã para lembrar`);
+
+    for (const appt of appointments) {
+      const phone = normalizeWhatsappNumber(appt.telefone || '');
+      if (!phone) continue;
+
+      const [y, m, d] = (appt.data instanceof Date ? appt.data.toISOString().split('T')[0] : String(appt.data)).split('-');
+      const dataBR = `${d}/${m}/${y}`;
+      const firstName = (appt.paciente_nome || '').split(' ')[0];
+
+      const message = `🔔 *Lembrete de Consulta*\n\nOlá, ${firstName}! 👋\n\nLembramos que você tem uma consulta agendada para *amanhã*:\n\n📅 *Data:* ${dataBR}\n⏰ *Horário:* ${appt.hora}\n🦷 *Procedimento:* ${appt.procedimento || 'Consulta'}\n👨‍⚕️ *Profissional:* ${appt.dentista_nome || '—'}\n\nPor favor, confirme sua presença respondendo *SIM* ou entre em contato para reagendar.\n\n_Odonto Connect_`;
+
+      await pool.query(
+        `INSERT INTO automation_jobs (flow_id, flow_name, step_index, patient_name, patient_phone, instance, message, channel, scheduled_at, trigger_event, status)
+         VALUES ($1, $2, 0, $3, $4, $5, $6, 'whatsapp', NOW(), 'appointment_reminder', 'pending')`,
+        [`reminder_${appt.id}`, 'Lembrete 24h', appt.paciente_nome, phone, instanceName, message]
+      );
+      console.log(`   📩 Lembrete enfileirado para ${appt.paciente_nome} (${phone})`);
+    }
+  } catch (err) {
+    console.error('❌ Appointment reminder cron error:', err.message);
+  }
+}
+
 // ─── Cron: inactive patients & birthdays (runs every 6h) ────
 let automationCronInterval = null;
 
@@ -6990,4 +7037,9 @@ app.listen(PORT, async () => {
   processCampaignScheduler();
   campaignSchedulerInterval = setInterval(processCampaignScheduler, 60 * 1000);
   console.log('   📢 Campaign scheduler ativo (a cada 60s)');
+
+  // Start appointment reminder cron (every 1h)
+  processAppointmentReminders();
+  appointmentReminderInterval = setInterval(processAppointmentReminders, 60 * 60 * 1000);
+  console.log('   🔔 Lembrete de consulta 24h ativo (a cada 1h)');
 });
