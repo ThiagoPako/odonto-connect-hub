@@ -33,16 +33,33 @@ export const Route = createFileRoute("/automacoes")({
 });
 
 function AutomacoesPage() {
-  const [flows, setFlows] = useState<AutomationFlow[]>(mockAutomationFlows);
+  const [flows, setFlows] = useState<AutomationFlow[]>([]);
   const [selectedFlow, setSelectedFlow] = useState<AutomationFlow | null>(null);
   const [filterType, setFilterType] = useState<string>("all");
   const [showFollowupConfig, setShowFollowupConfig] = useState(false);
   const [editingFlow, setEditingFlow] = useState<AutomationFlow | null>(null);
+  const [loadingFlows, setLoadingFlows] = useState(true);
 
   const [followupConfig, setFollowupConfig] = useState<FollowupAutomationConfig | null>(null);
   const [loadingConfig, setLoadingConfig] = useState(true);
 
+  // Load flows from API, fallback to mock data
   useEffect(() => {
+    automationsApi.listFlows()
+      .then((res) => {
+        if (res.data && Array.isArray(res.data) && res.data.length > 0) {
+          setFlows(res.data);
+        } else {
+          // Seed mock data to DB on first load
+          setFlows(mockAutomationFlows);
+          mockAutomationFlows.forEach(flow => {
+            automationsApi.createFlow(flow).catch(() => {});
+          });
+        }
+      })
+      .catch(() => setFlows(mockAutomationFlows))
+      .finally(() => setLoadingFlows(false));
+
     automationsApi.getFollowup()
       .then((res) => { if (res.data) setFollowupConfig(res.data); })
       .catch(() => {})
@@ -55,6 +72,11 @@ function AutomacoesPage() {
     setFlows((prev) => prev.map((f) => f.id === id ? { ...f, active: !f.active } : f));
     const flow = flows.find(f => f.id === id);
     toast.success(flow?.active ? `"${flow.name}" pausado` : `"${flow?.name}" ativado`);
+    automationsApi.toggleFlow(id).catch(() => {
+      // Rollback on failure
+      setFlows((prev) => prev.map((f) => f.id === id ? { ...f, active: !f.active } : f));
+      toast.error("Erro ao alterar status");
+    });
   };
 
   const deleteFlow = (id: string) => {
@@ -63,6 +85,10 @@ function AutomacoesPage() {
     if (selectedFlow?.id === id) setSelectedFlow(null);
     if (editingFlow?.id === id) setEditingFlow(null);
     toast.success(`Fluxo "${flow?.name}" removido`);
+    automationsApi.deleteFlow(id).catch(() => {
+      if (flow) setFlows((prev) => [flow, ...prev]);
+      toast.error("Erro ao excluir fluxo");
+    });
   };
 
   const duplicateFlow = (flow: AutomationFlow) => {
@@ -78,6 +104,7 @@ function AutomacoesPage() {
     setFlows((prev) => [newFlow, ...prev]);
     setSelectedFlow(newFlow);
     toast.success(`Fluxo duplicado: "${newFlow.name}"`);
+    automationsApi.createFlow(newFlow).catch(() => toast.error("Erro ao salvar cópia"));
   };
 
   const createNewFlow = () => {
@@ -98,6 +125,7 @@ function AutomacoesPage() {
     setEditingFlow(newFlow);
     setSelectedFlow(newFlow);
     toast.success("Novo fluxo criado! Edite os detalhes.");
+    automationsApi.createFlow(newFlow).catch(() => toast.error("Erro ao criar fluxo"));
   };
 
   const saveEditedFlow = (updated: AutomationFlow) => {
@@ -106,6 +134,14 @@ function AutomacoesPage() {
     setSelectedFlow(withUpdate);
     setEditingFlow(null);
     toast.success(`Fluxo "${updated.name}" salvo`);
+    automationsApi.updateFlow(updated.id, {
+      name: updated.name,
+      description: updated.description,
+      type: updated.type,
+      trigger: updated.trigger,
+      steps: updated.steps,
+      active: updated.active,
+    }).catch(() => toast.error("Erro ao salvar no servidor"));
   };
 
   const totalSent = flows.reduce((a, f) => a + f.stats.sent, 0);
