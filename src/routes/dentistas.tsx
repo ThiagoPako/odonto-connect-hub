@@ -30,13 +30,13 @@ export const Route = createFileRoute("/dentistas")({
 function mapDentista(r: any): Dentista {
   return {
     id: r.id,
-    nome: r.nome || r.name || '',
+    nome: r.nome || '',
     email: r.email || '',
-    telefone: r.telefone || r.phone || '',
+    telefone: r.telefone || '',
     cro: r.cro || '',
-    especialidade: r.especialidade || r.specialty || '',
-    comissao: Number(r.comissao ?? r.commission ?? 35),
-    status: r.status === 'inativo' ? 'inativo' : 'ativo',
+    especialidade: r.especialidade || '',
+    comissao: Number(r.comissao_percentual ?? r.comissao ?? 35),
+    status: r.ativo === false ? 'inativo' : 'ativo',
     criadoEm: r.created_at ? new Date(r.created_at) : new Date(),
   };
 }
