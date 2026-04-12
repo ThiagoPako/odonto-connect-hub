@@ -189,7 +189,6 @@ function AgendaPage() {
             <button onClick={() => setShowNovoDialog(true)} className="flex items-center gap-1.5 h-8 px-3 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors">
               <Plus className="h-3.5 w-3.5" /> Agendar
             </button>
-            </button>
           </div>
         </div>
 
@@ -206,6 +205,13 @@ function AgendaPage() {
             {viewMode === "calendario" && <CalendarView filtered={filtered} selectedProfessional={selectedProfessional} />}
           </>
         )}
+
+        <NovoAgendamentoDialog
+          open={showNovoDialog}
+          onOpenChange={setShowNovoDialog}
+          defaultDate={dateStr}
+          onCreated={fetchAgenda}
+        />
       </main>
     </div>
   );
