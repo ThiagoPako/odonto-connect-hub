@@ -6,6 +6,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { fetchInstances, type EvolutionInstance } from "@/lib/evolutionApi";
 import { toast } from "sonner";
+import { playDisconnectAlert } from "@/lib/notificationSound";
 
 export interface ConnectedInstance extends EvolutionInstance {
   connectionState: "open" | "close" | "connecting";

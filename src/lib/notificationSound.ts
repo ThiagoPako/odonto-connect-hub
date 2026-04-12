@@ -242,3 +242,58 @@ export function playRecoverySound() {
     // Silently fail if audio not available
   }
 }
+
+/**
+ * Urgent disconnect alert — descending warning tones (low, urgent feel)
+ * Played when a WhatsApp connection drops.
+ */
+export function playDisconnectAlert() {
+  try {
+    const ctx = getAudioContext();
+    if (ctx.state === "suspended") ctx.resume();
+
+    const dest = getMasterGain();
+    const now = ctx.currentTime;
+
+    // Three descending warning tones
+    const tones = [
+      { freq: 880, start: 0, end: 0.25 },
+      { freq: 660, start: 0.2, end: 0.45 },
+      { freq: 440, start: 0.4, end: 0.7 },
+    ];
+
+    for (const t of tones) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sawtooth";
+      osc.frequency.setValueAtTime(t.freq, now + t.start);
+      gain.gain.setValueAtTime(0.12, now + t.start);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + t.end);
+      osc.connect(gain);
+      gain.connect(dest);
+      osc.start(now + t.start);
+      osc.stop(now + t.end);
+    }
+
+    // Repeat after 1s for urgency
+    setTimeout(() => {
+      try {
+        const now2 = ctx.currentTime;
+        for (const t of tones) {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = "sawtooth";
+          osc.frequency.setValueAtTime(t.freq, now2 + t.start);
+          gain.gain.setValueAtTime(0.1, now2 + t.start);
+          gain.gain.exponentialRampToValueAtTime(0.001, now2 + t.end);
+          osc.connect(gain);
+          gain.connect(dest);
+          osc.start(now2 + t.start);
+          osc.stop(now2 + t.end);
+        }
+      } catch { /* ignore */ }
+    }, 900);
+  } catch {
+    // Silently fail
+  }
+}
