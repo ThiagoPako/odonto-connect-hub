@@ -159,14 +159,6 @@ function ChatPage() {
     };
   }, []);
 
-  const handleToggleTag = useCallback((leadId: string, tagId: string) => {
-    setLeadTagAssignments((prev) => {
-      const current = prev[leadId] || [];
-      const updated = current.includes(tagId) ? current.filter((t) => t !== tagId) : [...current, tagId];
-      return { ...prev, [leadId]: updated };
-    });
-    tagsApi.toggle(leadId, tagId);
-  }, []);
 
   // ─── Dedup set — prevent duplicate messages ───
   const processedMsgIds = useRef(new Set<string>());
@@ -1186,8 +1178,8 @@ function ChatPage() {
   const baseList = activeTab === "queue" ? queue : myLeads;
   const filteredByStatus = activeTab === "mine" && filterStatus !== "all" ? baseList.filter((l) => l.status === filterStatus) : baseList;
   const filteredByQueue = filterQueue ? filteredByStatus.filter((l) => l.queueId === filterQueue) : filteredByStatus;
-  const filteredByTag = filterTag ? filteredByQueue.filter((l) => (leadTagAssignments[l.id] || []).includes(filterTag)) : filteredByQueue;
-  const currentList = [...filteredByTag].sort((a, b) => a.lastMessageTime.getTime() - b.lastMessageTime.getTime());
+  const filteredByStage = filterStage ? filteredByQueue.filter((l) => crmStages[l.id] === filterStage) : filteredByQueue;
+  const currentList = [...filteredByStage].sort((a, b) => a.lastMessageTime.getTime() - b.lastMessageTime.getTime());
 
   const handleSyncPhotos = useCallback(async () => {
     const instanceName = connectedInstances[0]?.instanceName;
@@ -1389,24 +1381,29 @@ function ChatPage() {
             </div>
           )}
 
-          {/* Tag Filter */}
-          {availableTags.length > 0 && (
-            <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-border shrink-0 overflow-x-auto">
-              <Tags className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-              {availableTags.map((tag) => (
-                <button
-                  key={tag.id}
-                  onClick={() => setFilterTag(filterTag === tag.id ? null : tag.id)}
-                  className={`px-2 py-0.5 rounded-full text-[11px] font-medium transition-colors shrink-0 ${
-                    filterTag === tag.id ? "text-white" : "text-muted-foreground hover:opacity-80"
-                  }`}
-                  style={filterTag === tag.id ? { backgroundColor: tag.color } : { backgroundColor: tag.color + "20", color: tag.color }}
-                >
-                  {tag.icon} {tag.name}
-                </button>
-              ))}
-            </div>
-          )}
+          {/* CRM Stage Filter */}
+          <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-border shrink-0 overflow-x-auto">
+            <Kanban className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            {[
+              { id: "lead", label: "Lead", emoji: "📥", color: "#6b7280" },
+              { id: "em_atendimento", label: "Atendimento", emoji: "💬", color: "#3b82f6" },
+              { id: "orcamento", label: "Orçamento", emoji: "📋", color: "#3b82f6" },
+              { id: "orcamento_enviado", label: "Orç. Enviado", emoji: "📨", color: "#8b5cf6" },
+              { id: "orcamento_aprovado", label: "Aprovado", emoji: "✅", color: "#22c55e" },
+              { id: "followup", label: "Follow-up", emoji: "🔄", color: "#f59e0b" },
+            ].map((stage) => (
+              <button
+                key={stage.id}
+                onClick={() => setFilterStage(filterStage === stage.id ? null : stage.id)}
+                className={`px-2 py-0.5 rounded-full text-[11px] font-medium transition-colors shrink-0 ${
+                  filterStage === stage.id ? "text-white" : "text-muted-foreground hover:opacity-80"
+                }`}
+                style={filterStage === stage.id ? { backgroundColor: stage.color } : { backgroundColor: stage.color + "20", color: stage.color }}
+              >
+                {stage.emoji} {stage.label}
+              </button>
+            ))}
+          </div>
           {/* Lead List */}
           <div className="flex-1 overflow-y-auto">
             {currentList.length === 0 ? (
@@ -1427,8 +1424,6 @@ function ChatPage() {
                   onSelect={setSelectedLead}
                   showAssignButton={activeTab === "queue"}
                   onAssign={handleAssign}
-                  tagIds={leadTagAssignments[lead.id] || []}
-                  allTags={availableTags}
                   presence={presenceMap[lead.id]?.status}
                   crmStage={crmStages[lead.id]}
                 />
@@ -1441,7 +1436,7 @@ function ChatPage() {
         <div className="flex-1 flex flex-col bg-background">
           {selectedLead ? (
             <>
-              <ChatHeader lead={selectedLead} onClose={() => setSelectedLead(null)} onTransfer={handleTransfer} onFinishAttendance={handleFinishAttendance} onReturnToQueue={handleReturnToQueue} leadTagIds={leadTagAssignments[selectedLead.id] || []} onToggleTag={handleToggleTag} messages={currentMessages} presence={presenceMap[selectedLead.id]?.status ?? "offline"} lastSeen={presenceMap[selectedLead.id]?.lastSeen ?? null} crmStage={crmStages[selectedLead.id]} onStageChange={(leadId, stage) => setCrmStages((prev) => ({ ...prev, [leadId]: stage }))} />
+              <ChatHeader lead={selectedLead} onClose={() => setSelectedLead(null)} onTransfer={handleTransfer} onFinishAttendance={handleFinishAttendance} onReturnToQueue={handleReturnToQueue} messages={currentMessages} presence={presenceMap[selectedLead.id]?.status ?? "offline"} lastSeen={presenceMap[selectedLead.id]?.lastSeen ?? null} crmStage={crmStages[selectedLead.id]} onStageChange={(leadId, stage) => setCrmStages((prev) => ({ ...prev, [leadId]: stage }))} />
               <ConversationView
                 messages={currentMessages}
                 leadName={selectedLead.name}
