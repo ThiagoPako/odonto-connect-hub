@@ -34,11 +34,15 @@ CREATE TABLE IF NOT EXISTS pacientes (
   telefone TEXT,
   email TEXT,
   data_nascimento DATE,
+  sexo TEXT,
+  convenio TEXT,
   endereco TEXT,
   observacoes TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS sexo TEXT;
+ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS convenio TEXT;
 
 -- Dentistas
 CREATE TABLE IF NOT EXISTS dentistas (
