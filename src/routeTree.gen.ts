@@ -33,6 +33,7 @@ import { Route as ChatRouteImport } from './routes/chat'
 import { Route as CanaisRouteImport } from './routes/canais'
 import { Route as CampanhasRouteImport } from './routes/campanhas'
 import { Route as AutomacoesRouteImport } from './routes/automacoes'
+import { Route as AtendimentoRouteImport } from './routes/atendimento'
 import { Route as AnalyticsRouteImport } from './routes/analytics'
 import { Route as AgendaRouteImport } from './routes/agenda'
 import { Route as IndexRouteImport } from './routes/index'
@@ -157,6 +158,11 @@ const AutomacoesRoute = AutomacoesRouteImport.update({
   path: '/automacoes',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AtendimentoRoute = AtendimentoRouteImport.update({
+  id: '/atendimento',
+  path: '/atendimento',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AnalyticsRoute = AnalyticsRouteImport.update({
   id: '/analytics',
   path: '/analytics',
@@ -177,6 +183,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/agenda': typeof AgendaRoute
   '/analytics': typeof AnalyticsRoute
+  '/atendimento': typeof AtendimentoRoute
   '/automacoes': typeof AutomacoesRoute
   '/campanhas': typeof CampanhasRoute
   '/canais': typeof CanaisRoute
@@ -206,6 +213,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/agenda': typeof AgendaRoute
   '/analytics': typeof AnalyticsRoute
+  '/atendimento': typeof AtendimentoRoute
   '/automacoes': typeof AutomacoesRoute
   '/campanhas': typeof CampanhasRoute
   '/canais': typeof CanaisRoute
@@ -236,6 +244,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/agenda': typeof AgendaRoute
   '/analytics': typeof AnalyticsRoute
+  '/atendimento': typeof AtendimentoRoute
   '/automacoes': typeof AutomacoesRoute
   '/campanhas': typeof CampanhasRoute
   '/canais': typeof CanaisRoute
@@ -267,6 +276,7 @@ export interface FileRouteTypes {
     | '/'
     | '/agenda'
     | '/analytics'
+    | '/atendimento'
     | '/automacoes'
     | '/campanhas'
     | '/canais'
@@ -296,6 +306,7 @@ export interface FileRouteTypes {
     | '/'
     | '/agenda'
     | '/analytics'
+    | '/atendimento'
     | '/automacoes'
     | '/campanhas'
     | '/canais'
@@ -325,6 +336,7 @@ export interface FileRouteTypes {
     | '/'
     | '/agenda'
     | '/analytics'
+    | '/atendimento'
     | '/automacoes'
     | '/campanhas'
     | '/canais'
@@ -355,6 +367,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AgendaRoute: typeof AgendaRoute
   AnalyticsRoute: typeof AnalyticsRoute
+  AtendimentoRoute: typeof AtendimentoRoute
   AutomacoesRoute: typeof AutomacoesRoute
   CampanhasRoute: typeof CampanhasRoute
   CanaisRoute: typeof CanaisRoute
@@ -551,6 +564,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AutomacoesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/atendimento': {
+      id: '/atendimento'
+      path: '/atendimento'
+      fullPath: '/atendimento'
+      preLoaderRoute: typeof AtendimentoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/analytics': {
       id: '/analytics'
       path: '/analytics'
@@ -579,6 +599,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AgendaRoute: AgendaRoute,
   AnalyticsRoute: AnalyticsRoute,
+  AtendimentoRoute: AtendimentoRoute,
   AutomacoesRoute: AutomacoesRoute,
   CampanhasRoute: CampanhasRoute,
   CanaisRoute: CanaisRoute,
