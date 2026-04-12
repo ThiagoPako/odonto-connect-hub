@@ -670,6 +670,24 @@ export interface FollowupAutomationConfig {
   returnToQueueOnReply: boolean;
 }
 
+export interface AutomationJob {
+  id: string;
+  flow_id: string;
+  flow_name: string;
+  step_index: number;
+  patient_name: string;
+  patient_phone: string;
+  instance: string;
+  variables: Record<string, string>;
+  message: string;
+  channel: string;
+  status: 'pending' | 'sent' | 'failed' | 'cancelled';
+  scheduled_at: string;
+  sent_at: string | null;
+  error: string | null;
+  created_at: string;
+}
+
 export const automationsApi = {
   /** Get follow-up automation config */
   getFollowup: () =>
