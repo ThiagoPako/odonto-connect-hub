@@ -6,6 +6,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { fetchInstances, type EvolutionInstance } from "@/lib/evolutionApi";
 import { toast } from "sonner";
+import { playDisconnectAlert } from "@/lib/notificationSound";
 
 export interface ConnectedInstance extends EvolutionInstance {
   connectionState: "open" | "close" | "connecting";
@@ -40,7 +41,8 @@ function detectChanges(newInstances: ConnectedInstance[]) {
     if (!oldState) continue; // new instance, skip
 
     if (oldState === "open" && newState !== "open") {
-      // Connection dropped
+      // Connection dropped — alert sound + toast
+      playDisconnectAlert();
       toast.error(`WhatsApp "${name}" desconectou`, {
         description: "Verifique a conexão na página de Canais",
         duration: 8000,
