@@ -63,6 +63,7 @@ const navSections: NavSection[] = [
       { title: "Pacientes", url: "/pacientes", icon: UserRound },
       { title: "Dentistas", url: "/dentistas", icon: Stethoscope },
       { title: "Prontuário", url: "/prontuario", icon: FileHeart },
+      { title: "Relatórios IA", url: "/relatorios-clinicos", icon: FileHeart },
       { title: "Orçamentos", url: "/orcamentos", icon: Receipt },
       { title: "Tratamentos", url: "/tratamentos", icon: ClipboardList },
     ],
