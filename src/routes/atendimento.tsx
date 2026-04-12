@@ -466,12 +466,21 @@ function ConsultaPage() {
                 <div className="bg-card rounded-2xl border border-border/60 p-4 shadow-card animate-slide-up">
                   <h2 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
                     <Calendar className="h-4 w-4 text-primary" /> Agenda do Dia
+                    <button onClick={fetchAgenda} className="ml-auto p-1 rounded hover:bg-muted" title="Atualizar">
+                      <RefreshCw className={`h-3 w-3 text-muted-foreground ${loadingAgenda ? "animate-spin" : ""}`} />
+                    </button>
                   </h2>
                   <p className="text-[11px] text-muted-foreground mb-3">
-                    {agendaOrdenada.length} agendamento{agendaOrdenada.length !== 1 ? "s" : ""} hoje
+                    {loadingAgenda ? "Carregando..." : `${agendaOrdenada.length} agendamento${agendaOrdenada.length !== 1 ? "s" : ""} hoje`}
                   </p>
                   <div className="space-y-1.5 max-h-[55vh] overflow-y-auto">
-                    {agendaOrdenada.map(apt => {
+                    {loadingAgenda ? (
+                      <div className="flex items-center justify-center py-8">
+                        <Loader2 className="h-5 w-5 text-primary animate-spin" />
+                      </div>
+                    ) : agendaOrdenada.length === 0 ? (
+                      <p className="text-xs text-muted-foreground text-center py-6">Nenhum agendamento hoje</p>
+                    ) : (
                       const sel = appointmentSelecionado?.id === apt.id;
                       const statusColors: Record<string, string> = {
                         em_atendimento: "border-primary bg-primary/5 ring-1 ring-primary/20",
