@@ -6,7 +6,7 @@ import { SidebarProvider } from "@/components/ui/sidebar";
 import {
   Play, Square, Mic, FileText, Receipt, AlertTriangle, Clock,
   User, Phone, Mail, Heart, Pill, Stethoscope, Send, Plus, Trash2,
-  Save, ChevronRight, Activity, ClipboardList, ExternalLink, Timer
+  Save, ChevronRight, Activity, ClipboardList, ExternalLink, Timer,
   Printer,
 } from "lucide-react";
 import { exportarPrescricaoPdf } from "@/lib/prescricaoPdfExport";
