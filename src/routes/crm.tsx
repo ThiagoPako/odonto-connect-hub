@@ -203,6 +203,7 @@ function GenericKanbanBoard<T extends string>({
                   <KanbanCard
                     key={lead.id}
                     lead={lead}
+                    stageId={stage.id}
                     onDragStart={() => handleDragStart(lead, stage.id)}
                     onLeadAssigned={(leadId, userName, userInitials, avatarUrl) => {
                       // Move lead to em_atendimento and update assigned info
