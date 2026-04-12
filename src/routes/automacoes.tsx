@@ -4,8 +4,9 @@ import {
   Play, Pause, Plus, Clock, MessageSquare, Mail, Smartphone,
   Zap, Settings2, Send, CheckCircle2, Edit2, Save, Loader2, RotateCcw,
   Trash2, Copy, GripVertical, ChevronDown, ChevronUp, X, Sparkles,
-  AlertTriangle, Eye, EyeOff,
+  AlertTriangle, Eye, EyeOff, BarChart3,
 } from "lucide-react";
+import { AutomationReportPanel } from "@/components/AutomationReportPanel";
 import { useState, useEffect, useCallback } from "react";
 import {
   mockAutomationFlows, automationTypes, triggerOptions, delayOptions,
