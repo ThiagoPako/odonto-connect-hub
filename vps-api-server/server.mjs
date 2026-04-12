@@ -2853,7 +2853,13 @@ app.get('/api/table/:tableName', async (req, res) => {
 app.get('/api/orcamentos', async (req, res) => {
   try {
     await verifyUser(req);
-    const { rows } = await pool.query('SELECT * FROM orcamentos ORDER BY created_at DESC');
+    const { rows } = await pool.query(`
+      SELECT o.*, p.nome as paciente_nome, d.nome as dentista_nome
+      FROM orcamentos o
+      LEFT JOIN pacientes p ON o.paciente_id = p.id
+      LEFT JOIN dentistas d ON o.dentista_id = d.id
+      ORDER BY o.created_at DESC
+    `);
     res.json(rows);
   } catch (error) {
     res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });

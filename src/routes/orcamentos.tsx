@@ -1,13 +1,10 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { getAlergias } from "@/data/registroCentral";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import {
   Plus, Search, DollarSign, CheckCircle2, XCircle, Clock, TrendingUp,
-  FileText, ChevronRight, CreditCard, ExternalLink, AlertTriangle,
-  Loader2,
+  FileText, CreditCard, ExternalLink, Loader2,
 } from "lucide-react";
-import { useState } from "react";
-import { mockBudgets, type Budget } from "@/data/orcamentoMockData";
+import { useState, useEffect, useCallback } from "react";
 import { orcamentosApi } from "@/lib/vpsApi";
 import { toast } from "sonner";
 
@@ -16,7 +13,22 @@ export const Route = createFileRoute("/orcamentos")({
   component: OrcamentosPage,
 });
 
-const statusConfig: Record<Budget["status"], { label: string; color: string }> = {
+interface OrcamentoRow {
+  id: string;
+  paciente_id: string;
+  paciente_nome: string;
+  dentista_nome: string;
+  itens: any[];
+  valor_total: number;
+  desconto: number;
+  status: string;
+  forma_pagamento: string;
+  parcelas: number;
+  observacoes: string;
+  created_at: string;
+}
+
+const statusConfig: Record<string, { label: string; color: string }> = {
   pendente: { label: "Pendente", color: "bg-warning/15 text-warning" },
   aprovado: { label: "Aprovado", color: "bg-success/15 text-success" },
   reprovado: { label: "Reprovado", color: "bg-destructive/15 text-destructive" },
@@ -24,20 +36,80 @@ const statusConfig: Record<Budget["status"], { label: string; color: string }> =
   finalizado: { label: "Finalizado", color: "bg-muted text-muted-foreground" },
 };
 
+function getInitials(name: string) {
+  return name.split(" ").filter((_, i, a) => i === 0 || i === a.length - 1).map(n => n[0]).join("").toUpperCase();
+}
+
+const AVATAR_COLORS = ["bg-chart-1", "bg-chart-2", "bg-chart-3", "bg-chart-4"];
+
+function mapOrcamento(r: any): OrcamentoRow {
+  let itens = r.itens || [];
+  if (typeof itens === 'string') try { itens = JSON.parse(itens); } catch { itens = []; }
+  return {
+    id: r.id,
+    paciente_id: r.paciente_id || '',
+    paciente_nome: r.paciente_nome || r.paciente_id || '',
+    dentista_nome: r.dentista_nome || '',
+    itens: Array.isArray(itens) ? itens : [],
+    valor_total: Number(r.valor_total) || 0,
+    desconto: Number(r.desconto) || 0,
+    status: r.status || 'pendente',
+    forma_pagamento: r.forma_pagamento || '',
+    parcelas: Number(r.parcelas) || 1,
+    observacoes: r.observacoes || '',
+    created_at: r.created_at ? new Date(r.created_at).toLocaleDateString("pt-BR") : '',
+  };
+}
+
 function OrcamentosPage() {
-  const [selectedBudget, setSelectedBudget] = useState<Budget | null>(null);
+  const [orcamentos, setOrcamentos] = useState<OrcamentoRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [searchTerm, setSearchTerm] = useState("");
 
-  const filtered = mockBudgets
-    .filter((b) => filterStatus === "all" || b.status === filterStatus)
-    .filter((b) => !searchTerm || b.patientName.toLowerCase().includes(searchTerm.toLowerCase()));
+  const loadAll = useCallback(async () => {
+    try {
+      const res = await orcamentosApi.list();
+      const data = (res as any).data || res || [];
+      setOrcamentos(Array.isArray(data) ? data.map(mapOrcamento) : []);
+    } catch (err) { console.error(err); }
+    finally { setLoading(false); }
+  }, []);
 
-  const totalPending = mockBudgets.filter((b) => b.status === "pendente").reduce((a, b) => a + b.finalValue, 0);
-  const totalApproved = mockBudgets.filter((b) => b.status === "aprovado" || b.status === "em_tratamento").reduce((a, b) => a + b.finalValue, 0);
-  const conversionRate = mockBudgets.length > 0
-    ? ((mockBudgets.filter((b) => ["aprovado", "em_tratamento", "finalizado"].includes(b.status)).length / mockBudgets.length) * 100).toFixed(0)
-    : "0";
+  useEffect(() => { loadAll(); }, [loadAll]);
+
+  const filtered = orcamentos
+    .filter(b => filterStatus === "all" || b.status === filterStatus)
+    .filter(b => !searchTerm || b.paciente_nome.toLowerCase().includes(searchTerm.toLowerCase()));
+
+  const totalPending = orcamentos.filter(b => b.status === "pendente").reduce((a, b) => a + (b.valor_total - b.desconto), 0);
+  const totalApproved = orcamentos.filter(b => ["aprovado", "em_tratamento"].includes(b.status)).reduce((a, b) => a + (b.valor_total - b.desconto), 0);
+  const conversionRate = orcamentos.length > 0
+    ? ((orcamentos.filter(b => ["aprovado", "em_tratamento", "finalizado"].includes(b.status)).length / orcamentos.length) * 100).toFixed(0) : "0";
+
+  const selected = orcamentos.find(o => o.id === selectedId) || null;
+
+  const handleStatusChange = async (id: string, newStatus: string) => {
+    const { data, error } = await orcamentosApi.updateStatus(id, newStatus);
+    if (error) { toast.error("Erro: " + error); return; }
+    const label = newStatus === 'aprovado' ? 'aprovado ✅' : newStatus === 'reprovado' ? 'reprovado ❌' : newStatus;
+    toast.success(`Orçamento ${label}`);
+    if ((data as any)?.leadMoved) {
+      const dest = newStatus === 'reprovado' ? 'Recuperação de Vendas' : 'Orçamento Aprovado';
+      toast.info(`Lead movido automaticamente para "${dest}" no CRM`);
+    }
+    loadAll();
+  };
+
+  if (loading) {
+    return (
+      <div className="flex-1 flex flex-col min-h-screen">
+        <DashboardHeader title="Orçamentos e Vendas" />
+        <div className="flex-1 flex items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex-1 flex flex-col min-h-screen">
@@ -45,7 +117,7 @@ function OrcamentosPage() {
       <main className="flex-1 p-6 space-y-5 overflow-auto">
         {/* KPIs */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 animate-slide-up" style={{ animationFillMode: 'both' }}>
-          <KpiMini icon={FileText} label="Total Orçamentos" value={mockBudgets.length.toString()} />
+          <KpiMini icon={FileText} label="Total Orçamentos" value={orcamentos.length.toString()} />
           <KpiMini icon={Clock} label="Valor Pendente" value={`R$ ${(totalPending / 1000).toFixed(1)}k`} />
           <KpiMini icon={DollarSign} label="Valor Aprovado" value={`R$ ${(totalApproved / 1000).toFixed(1)}k`} />
           <KpiMini icon={TrendingUp} label="Taxa Conversão" value={`${conversionRate}%`} />
@@ -56,78 +128,53 @@ function OrcamentosPage() {
           <div className="flex items-center gap-2">
             <div className="relative">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-              <input
-                type="text"
-                placeholder="Buscar paciente..."
-                value={searchTerm}
+              <input type="text" placeholder="Buscar paciente..." value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="h-8 pl-8 pr-3 rounded-lg bg-muted border-0 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary w-48"
-              />
+                className="h-8 pl-8 pr-3 rounded-lg bg-muted border-0 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary w-48" />
             </div>
             <div className="inline-flex h-8 items-center rounded-lg bg-muted p-0.5 text-sm">
-              {[{ id: "all", label: "Todos" }, { id: "pendente", label: "Pendentes" }, { id: "aprovado", label: "Aprovados" }, { id: "reprovado", label: "Reprovados" }].map((f) => (
-                <button
-                  key={f.id}
-                  onClick={() => setFilterStatus(f.id)}
-                  className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${filterStatus === f.id ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
-                >
+              {[{ id: "all", label: "Todos" }, { id: "pendente", label: "Pendentes" }, { id: "aprovado", label: "Aprovados" }, { id: "reprovado", label: "Reprovados" }].map(f => (
+                <button key={f.id} onClick={() => setFilterStatus(f.id)}
+                  className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${filterStatus === f.id ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>
                   {f.label}
                 </button>
               ))}
             </div>
           </div>
-          <button className="flex items-center gap-1.5 h-8 px-4 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90">
-            <Plus className="h-3.5 w-3.5" /> Novo Orçamento
-          </button>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
           {/* Budget list */}
           <div className="lg:col-span-1 space-y-2">
-            {filtered.map((b) => {
-              const cfg = statusConfig[b.status];
+            {filtered.map((b, i) => {
+              const cfg = statusConfig[b.status] || statusConfig.pendente;
+              const finalValue = b.valor_total - b.desconto;
               return (
-                <div
-                  key={b.id}
-                  onClick={() => setSelectedBudget(b)}
-                  className={`bg-card rounded-xl border p-4 cursor-pointer transition-all duration-300 hover-lift ${
-                    selectedBudget?.id === b.id ? "border-primary ring-1 ring-primary/20 shadow-[0_0_16px_-4px_hsl(var(--primary)/0.3)]" : "border-border hover:border-primary/40 hover:shadow-glow-primary"
-                  }`}
-                >
+                <div key={b.id} onClick={() => setSelectedId(b.id)}
+                  className={`bg-card rounded-xl border p-4 cursor-pointer transition-all duration-300 hover-lift ${selectedId === b.id ? "border-primary ring-1 ring-primary/20 shadow-[0_0_16px_-4px_hsl(var(--primary)/0.3)]" : "border-border hover:border-primary/40 hover:shadow-glow-primary"}`}>
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2">
-                      <div className={`h-7 w-7 rounded-full ${b.avatarColor} flex items-center justify-center text-[9px] font-bold text-white`}>
-                        {b.patientInitials}
+                      <div className={`h-7 w-7 rounded-full ${AVATAR_COLORS[i % AVATAR_COLORS.length]} flex items-center justify-center text-[9px] font-bold text-white`}>
+                        {getInitials(b.paciente_nome)}
                       </div>
-                      <span className="text-xs font-medium text-foreground">{b.patientName}</span>
-                      {b.pacienteId && (
-                        <Link to="/pacientes" search={{ pacienteId: b.pacienteId }} className="p-0.5 rounded hover:bg-primary/10" title="Ver ficha" onClick={(e) => e.stopPropagation()}>
-                          <ExternalLink className="h-3 w-3 text-primary" />
-                        </Link>
-                      )}
-                      {b.pacienteId && getAlergias(b.pacienteId).length > 0 && (
-                        <div className="h-4 w-4 rounded-full bg-destructive/15 flex items-center justify-center" title={`Alergias: ${getAlergias(b.pacienteId).join(", ")}`}>
-                          <AlertTriangle className="h-2.5 w-2.5 text-destructive" />
-                        </div>
-                      )}
+                      <span className="text-xs font-medium text-foreground">{b.paciente_nome}</span>
                     </div>
                     <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${cfg.color}`}>{cfg.label}</span>
                   </div>
                   <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-                    <span>{b.items.length} itens · {b.createdAt}</span>
-                    <span className="text-sm font-bold text-foreground">R$ {b.finalValue.toLocaleString("pt-BR")}</span>
+                    <span>{b.itens.length} itens · {b.created_at}</span>
+                    <span className="text-sm font-bold text-foreground">R$ {finalValue.toLocaleString("pt-BR")}</span>
                   </div>
                 </div>
               );
             })}
+            {filtered.length === 0 && <p className="text-xs text-muted-foreground text-center py-8">Nenhum orçamento encontrado</p>}
           </div>
 
           {/* Budget detail */}
           <div className="lg:col-span-2">
-            {selectedBudget ? (
-              <BudgetDetail budget={selectedBudget} onStatusChange={(newStatus) => {
-                setSelectedBudget({ ...selectedBudget, status: newStatus });
-              }} />
+            {selected ? (
+              <BudgetDetail budget={selected} onStatusChange={handleStatusChange} />
             ) : (
               <div className="bg-card rounded-xl border border-border p-8 flex flex-col items-center justify-center text-center min-h-[400px]">
                 <FileText className="h-12 w-12 text-muted-foreground/30 mb-4" />
@@ -157,25 +204,15 @@ function KpiMini({ icon: Icon, label, value }: { icon: React.ElementType; label:
   );
 }
 
-function BudgetDetail({ budget: b, onStatusChange }: { budget: Budget; onStatusChange: (status: Budget["status"]) => void }) {
-  const cfg = statusConfig[b.status];
+function BudgetDetail({ budget: b, onStatusChange }: { budget: OrcamentoRow; onStatusChange: (id: string, status: string) => void }) {
+  const cfg = statusConfig[b.status] || statusConfig.pendente;
   const [updating, setUpdating] = useState(false);
+  const finalValue = b.valor_total - b.desconto;
 
-  const handleStatusChange = async (newStatus: Budget["status"]) => {
+  const handleChange = async (newStatus: string) => {
     setUpdating(true);
-    const { data, error } = await orcamentosApi.updateStatus(b.id, newStatus);
+    await onStatusChange(b.id, newStatus);
     setUpdating(false);
-    if (error) {
-      toast.error("Erro ao atualizar orçamento: " + error);
-      return;
-    }
-    onStatusChange(newStatus);
-    const label = newStatus === 'aprovado' ? 'aprovado ✅' : newStatus === 'reprovado' ? 'reprovado ❌' : newStatus;
-    toast.success(`Orçamento ${label}`);
-    if (data?.leadMoved) {
-      const dest = newStatus === 'reprovado' ? 'Recuperação de Vendas' : 'Orçamento Aprovado';
-      toast.info(`Lead movido automaticamente para "${dest}" no CRM`);
-    }
   };
 
   return (
@@ -183,63 +220,51 @@ function BudgetDetail({ budget: b, onStatusChange }: { budget: Budget; onStatusC
       <div className="bg-card rounded-xl border border-border p-5">
         <div className="flex items-center justify-between mb-4">
           <div>
-            <div className="flex items-center gap-2">
-              <h3 className="text-base font-semibold text-foreground">{b.patientName}</h3>
-              {b.pacienteId && (
-                <Link to="/pacientes" search={{ pacienteId: b.pacienteId }} className="p-0.5 rounded hover:bg-primary/10" title="Ver ficha">
-                  <ExternalLink className="h-3.5 w-3.5 text-primary" />
-                </Link>
-              )}
-              {b.pacienteId && getAlergias(b.pacienteId).length > 0 && (
-                <div className="h-5 w-5 rounded-full bg-destructive/15 flex items-center justify-center" title={`Alergias: ${getAlergias(b.pacienteId).join(", ")}`}>
-                  <AlertTriangle className="h-3 w-3 text-destructive" />
-                </div>
-              )}
-            </div>
-            <p className="text-xs text-muted-foreground">Orçamento #{b.id} · {b.professional} · Criado em {b.createdAt}</p>
+            <h3 className="text-base font-semibold text-foreground">{b.paciente_nome}</h3>
+            <p className="text-xs text-muted-foreground">{b.dentista_nome || 'Sem dentista'} · Criado em {b.created_at}</p>
           </div>
           <span className={`px-3 py-1 rounded-full text-xs font-medium ${cfg.color}`}>{cfg.label}</span>
         </div>
 
         {/* Items table */}
-        <table className="w-full mb-4">
-          <thead>
-            <tr className="border-b border-border text-left">
-              <th className="pb-2 text-[11px] font-semibold text-muted-foreground uppercase">Procedimento</th>
-              <th className="pb-2 text-[11px] font-semibold text-muted-foreground uppercase text-center">Dente</th>
-              <th className="pb-2 text-[11px] font-semibold text-muted-foreground uppercase text-center">Qtd</th>
-              <th className="pb-2 text-[11px] font-semibold text-muted-foreground uppercase text-right">Unit.</th>
-              <th className="pb-2 text-[11px] font-semibold text-muted-foreground uppercase text-right">Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            {b.items.map((item) => (
-              <tr key={item.id} className="border-b border-border/30">
-                <td className="py-2 text-xs text-foreground">{item.procedure}</td>
-                <td className="py-2 text-xs text-muted-foreground text-center">{item.tooth || "—"}</td>
-                <td className="py-2 text-xs text-foreground text-center">{item.quantity}</td>
-                <td className="py-2 text-xs text-foreground text-right">R$ {item.unitPrice.toLocaleString("pt-BR")}</td>
-                <td className="py-2 text-xs font-medium text-foreground text-right">R$ {item.totalPrice.toLocaleString("pt-BR")}</td>
+        {b.itens.length > 0 && (
+          <table className="w-full mb-4">
+            <thead>
+              <tr className="border-b border-border text-left">
+                <th className="pb-2 text-[11px] font-semibold text-muted-foreground uppercase">Procedimento</th>
+                <th className="pb-2 text-[11px] font-semibold text-muted-foreground uppercase text-center">Dente</th>
+                <th className="pb-2 text-[11px] font-semibold text-muted-foreground uppercase text-center">Qtd</th>
+                <th className="pb-2 text-[11px] font-semibold text-muted-foreground uppercase text-right">Valor</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {b.itens.map((item: any, i: number) => (
+                <tr key={i} className="border-b border-border/30">
+                  <td className="py-2 text-xs text-foreground">{item.procedimento || item.procedure || item.descricao || '-'}</td>
+                  <td className="py-2 text-xs text-muted-foreground text-center">{item.dente || item.tooth || "—"}</td>
+                  <td className="py-2 text-xs text-foreground text-center">{item.quantidade || item.quantity || 1}</td>
+                  <td className="py-2 text-xs font-medium text-foreground text-right">R$ {Number(item.valor || item.totalPrice || 0).toLocaleString("pt-BR")}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
 
         {/* Totals */}
         <div className="space-y-1.5 border-t border-border pt-3">
           <div className="flex justify-between text-xs text-muted-foreground">
             <span>Subtotal</span>
-            <span>R$ {b.totalValue.toLocaleString("pt-BR")}</span>
+            <span>R$ {b.valor_total.toLocaleString("pt-BR")}</span>
           </div>
-          {b.discount > 0 && (
+          {b.desconto > 0 && (
             <div className="flex justify-between text-xs text-success">
               <span>Desconto</span>
-              <span>- R$ {b.discount.toLocaleString("pt-BR")}</span>
+              <span>- R$ {b.desconto.toLocaleString("pt-BR")}</span>
             </div>
           )}
           <div className="flex justify-between text-sm font-bold text-foreground pt-1">
             <span>Total</span>
-            <span>R$ {b.finalValue.toLocaleString("pt-BR")}</span>
+            <span>R$ {finalValue.toLocaleString("pt-BR")}</span>
           </div>
         </div>
       </div>
@@ -247,14 +272,14 @@ function BudgetDetail({ budget: b, onStatusChange }: { budget: Budget; onStatusC
       {/* Payment & actions */}
       <div className="bg-card rounded-xl border border-border p-5">
         <h4 className="text-sm font-semibold text-card-foreground mb-3">Pagamento</h4>
-        {b.paymentMethod ? (
+        {b.forma_pagamento ? (
           <div className="flex items-center gap-3">
             <CreditCard className="h-5 w-5 text-muted-foreground" />
             <div>
-              <p className="text-xs font-medium text-foreground">{b.paymentMethod}</p>
-              {b.installments && b.installments > 1 && (
+              <p className="text-xs font-medium text-foreground">{b.forma_pagamento}</p>
+              {b.parcelas > 1 && (
                 <p className="text-[11px] text-muted-foreground">
-                  {b.installments}x de R$ {(b.finalValue / b.installments).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                  {b.parcelas}x de R$ {(finalValue / b.parcelas).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
                 </p>
               )}
             </div>
@@ -265,11 +290,11 @@ function BudgetDetail({ budget: b, onStatusChange }: { budget: Budget; onStatusC
 
         {b.status === "pendente" && (
           <div className="flex items-center gap-2 mt-4">
-            <button disabled={updating} onClick={() => handleStatusChange("aprovado")}
+            <button disabled={updating} onClick={() => handleChange("aprovado")}
               className="flex items-center gap-1.5 h-8 px-4 rounded-lg bg-success text-white text-xs font-medium hover:bg-success/90 disabled:opacity-50">
               {updating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />} Aprovar
             </button>
-            <button disabled={updating} onClick={() => handleStatusChange("reprovado")}
+            <button disabled={updating} onClick={() => handleChange("reprovado")}
               className="flex items-center gap-1.5 h-8 px-4 rounded-lg bg-destructive text-white text-xs font-medium hover:bg-destructive/90 disabled:opacity-50">
               {updating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <XCircle className="h-3.5 w-3.5" />} Reprovar
             </button>
