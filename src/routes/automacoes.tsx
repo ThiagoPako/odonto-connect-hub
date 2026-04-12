@@ -160,9 +160,13 @@ function FollowupAutomationCard({
     if (!config) return;
     setSaving(true);
     try {
-      const updated = await automationsApi.updateFollowup({ enabled: !config.enabled });
-      onUpdate(updated);
-      toast.success(updated.enabled ? "Automação ativada" : "Automação desativada");
+      const res = await automationsApi.updateFollowup({ enabled: !config.enabled });
+      if (res.data) {
+        onUpdate(res.data);
+        toast.success(res.data.enabled ? "Automação ativada" : "Automação desativada");
+      } else {
+        toast.error(res.error || "Erro ao alterar automação");
+      }
     } catch {
       toast.error("Erro ao alterar automação");
     } finally {
@@ -173,12 +177,16 @@ function FollowupAutomationCard({
   const handleSave = async () => {
     setSaving(true);
     try {
-      const updated = await automationsApi.updateFollowup({
+      const res = await automationsApi.updateFollowup({
         messages: editMessages,
         delaySeconds: editDelay,
       });
-      onUpdate(updated);
-      toast.success("Configurações salvas");
+      if (res.data) {
+        onUpdate(res.data);
+        toast.success("Configurações salvas");
+      } else {
+        toast.error(res.error || "Erro ao salvar");
+      }
     } catch {
       toast.error("Erro ao salvar");
     } finally {
