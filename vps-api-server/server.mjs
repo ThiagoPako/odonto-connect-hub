@@ -4897,7 +4897,25 @@ app.listen(PORT, async () => {
         created_at TIMESTAMPTZ DEFAULT NOW(),
         updated_at TIMESTAMPTZ DEFAULT NOW()
       )`,
-
+      `CREATE TABLE IF NOT EXISTS automation_jobs (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        flow_id TEXT NOT NULL,
+        flow_name TEXT,
+        step_index INTEGER NOT NULL DEFAULT 0,
+        patient_name TEXT,
+        patient_phone TEXT NOT NULL,
+        instance TEXT,
+        variables JSONB DEFAULT '{}',
+        message TEXT NOT NULL,
+        channel TEXT DEFAULT 'whatsapp',
+        status TEXT DEFAULT 'pending',
+        scheduled_at TIMESTAMPTZ NOT NULL,
+        sent_at TIMESTAMPTZ,
+        error TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_automation_jobs_status_scheduled
+       ON automation_jobs (status, scheduled_at) WHERE status = 'pending'`,
     let applied = 0;
     for (const sql of migrations) {
       try {
