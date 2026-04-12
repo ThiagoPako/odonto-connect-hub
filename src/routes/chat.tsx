@@ -377,7 +377,16 @@ function ChatPage() {
     });
   }, [connectedInstances]);
 
-  useRealtimeChat({ onMessage: handleIncomingMessage, onPresence: handlePresenceUpdate, onQueueAssigned: handleQueueAssigned, onMessageStatus: handleMessageStatusUpdate });
+  // Handle lead returning from recovery (follow-up) with priority
+  const handleLeadRecoveryReturn = useCallback((data: import("@/hooks/useRealtimeChat").LeadRecoveryReturn) => {
+    const setPriority = (l: Lead): Lead =>
+      l.id === data.leadId ? { ...l, priority: true } : l;
+    setQueue((prev) => prev.map(setPriority));
+    setMyLeads((prev) => prev.map(setPriority));
+    toast.info(`🔥 ${data.leadName} respondeu do follow-up e voltou à fila com prioridade!`, { duration: 6000 });
+  }, []);
+
+  useRealtimeChat({ onMessage: handleIncomingMessage, onPresence: handlePresenceUpdate, onQueueAssigned: handleQueueAssigned, onMessageStatus: handleMessageStatusUpdate, onLeadRecoveryReturn: handleLeadRecoveryReturn });
 
   useEffect(() => {
     const currentLead = selectedLead;
