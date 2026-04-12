@@ -19,7 +19,7 @@ import {
   type Paciente
 } from "@/data/registroCentral";
 import { type Appointment } from "@/data/agendaMockData";
-import { aiApi, consultationsApi, agendaApi, type AgendamentoVPS } from "@/lib/vpsApi";
+import { aiApi, consultationsApi, agendaApi, type AgendamentoVPS, type ConsultationRecord } from "@/lib/vpsApi";
 import { toast } from "sonner";
 
 type SearchParams = { appointmentId?: string };
@@ -93,6 +93,25 @@ function ConsultaPage() {
   // VPS agenda state
   const [agendaHoje, setAgendaHoje] = useState<Appointment[]>([]);
   const [loadingAgenda, setLoadingAgenda] = useState(true);
+
+  // Consultation history
+  const [historicoConsultas, setHistoricoConsultas] = useState<ConsultationRecord[]>([]);
+  const [loadingHistorico, setLoadingHistorico] = useState(false);
+
+  // Fetch history when patient changes
+  useEffect(() => {
+    if (!pacienteSelecionado) {
+      setHistoricoConsultas([]);
+      return;
+    }
+    let cancelled = false;
+    setLoadingHistorico(true);
+    consultationsApi.getHistory(pacienteSelecionado.id).then(({ data }) => {
+      if (!cancelled && data) setHistoricoConsultas(data);
+      setLoadingHistorico(false);
+    }).catch(() => { if (!cancelled) setLoadingHistorico(false); });
+    return () => { cancelled = true; };
+  }, [pacienteSelecionado?.id]);
 
   /** Convert VPS agendamento to local Appointment shape */
   const vpsToAppointment = useCallback((a: AgendamentoVPS): Appointment => {
