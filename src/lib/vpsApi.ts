@@ -263,6 +263,45 @@ export const financeiroApi = {
   delete: (id: string) => vpsApiFetch(`/financeiro/${id}`, { method: 'DELETE' }),
 };
 
+// ─── Financeiro — Sub-módulos ───────────────────────────────
+
+export const finBanksApi = {
+  list: () => vpsApiFetch('/fin/banks'),
+  create: (body: unknown) => vpsApiFetch('/fin/banks', { method: 'POST', body }),
+  update: (id: string, body: unknown) => vpsApiFetch(`/fin/banks/${id}`, { method: 'PUT', body }),
+  delete: (id: string) => vpsApiFetch(`/fin/banks/${id}`, { method: 'DELETE' }),
+};
+
+export const finEmployeesApi = {
+  list: () => vpsApiFetch('/fin/employees'),
+  create: (body: unknown) => vpsApiFetch('/fin/employees', { method: 'POST', body }),
+  delete: (id: string) => vpsApiFetch(`/fin/employees/${id}`, { method: 'DELETE' }),
+};
+
+export const finPayrollsApi = {
+  list: (params?: Record<string, string>) => vpsApiFetch('/fin/payrolls', { params }),
+  create: (body: unknown) => vpsApiFetch('/fin/payrolls', { method: 'POST', body }),
+  update: (id: string, body: unknown) => vpsApiFetch(`/fin/payrolls/${id}`, { method: 'PUT', body }),
+};
+
+export const finBillsApi = {
+  list: () => vpsApiFetch('/fin/bills'),
+  create: (body: unknown) => vpsApiFetch('/fin/bills', { method: 'POST', body }),
+  update: (id: string, body: unknown) => vpsApiFetch(`/fin/bills/${id}`, { method: 'PUT', body }),
+  delete: (id: string) => vpsApiFetch(`/fin/bills/${id}`, { method: 'DELETE' }),
+};
+
+export const finMovementsApi = {
+  list: () => vpsApiFetch('/fin/movements'),
+  create: (body: unknown) => vpsApiFetch('/fin/movements', { method: 'POST', body }),
+};
+
+export const finOverdueApi = {
+  list: () => vpsApiFetch('/fin/overdue'),
+  create: (body: unknown) => vpsApiFetch('/fin/overdue', { method: 'POST', body }),
+  delete: (id: string) => vpsApiFetch(`/fin/overdue/${id}`, { method: 'DELETE' }),
+};
+
 // ─── Dentistas ──────────────────────────────────────────────
 
 export const dentistasApi = {
