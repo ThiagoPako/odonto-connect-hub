@@ -188,6 +188,12 @@ function AutomacoesPage() {
         {/* Tab switcher */}
         <div className="flex items-center gap-1 bg-muted rounded-lg p-0.5 w-fit">
           <button
+            onClick={() => setActiveTab("solutions")}
+            className={`px-4 py-1.5 rounded-md text-xs font-medium transition-colors ${activeTab === "solutions" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+          >
+            <Rocket className="h-3.5 w-3.5 inline mr-1.5" />Soluções
+          </button>
+          <button
             onClick={() => setActiveTab("flows")}
             className={`px-4 py-1.5 rounded-md text-xs font-medium transition-colors ${activeTab === "flows" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
           >
