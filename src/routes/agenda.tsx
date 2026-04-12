@@ -1,13 +1,15 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import {
   Clock, CheckCircle2, XCircle, UserCheck, Plus, ChevronLeft, ChevronRight,
   Phone, MessageSquare, AlertTriangle, RefreshCw, Search, ExternalLink, History, HeartPulse,
-  LayoutGrid, List, CalendarDays,
+  LayoutGrid, List, CalendarDays, Stethoscope, Loader2,
 } from "lucide-react";
-import { useState } from "react";
-import { mockAppointments, mockProfessionals, type Appointment } from "@/data/agendaMockData";
+import { useState, useEffect, useCallback } from "react";
+import { mockProfessionals, type Appointment } from "@/data/agendaMockData";
 import { getAlergias, getCondicoesCriticas, getHistorico } from "@/data/registroCentral";
+import { agendaApi, type AgendamentoVPS } from "@/lib/vpsApi";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/agenda")({
   ssr: false,
@@ -27,16 +29,87 @@ type ViewMode = "kanban" | "lista" | "calendario";
 
 const HOURS = Array.from({ length: 12 }, (_, i) => `${String(i + 7).padStart(2, "0")}:00`);
 
+/** Convert VPS agendamento to local Appointment shape */
+function vpsToAppointment(a: AgendamentoVPS): Appointment {
+  const name = a.paciente_nome || "Paciente";
+  const initials = name.split(" ").filter((_: string, i: number, arr: string[]) => i === 0 || i === arr.length - 1).map((n: string) => n[0]).join("").toUpperCase();
+  const colors = ["bg-chart-1","bg-chart-2","bg-chart-3","bg-chart-4","bg-chart-5","bg-primary","bg-dental-cyan"];
+  const colorIdx = name.length % colors.length;
+  const profName = a.dentista_nome || "Dr. Não atribuído";
+  const profInitials = profName.split(" ").filter((_: string, i: number, arr: string[]) => i === 0 || i === arr.length - 1).map((n: string) => n[0]).join("").toUpperCase();
+  const statusMap: Record<string, Appointment["status"]> = {
+    agendado: "confirmado", confirmado: "confirmado", aguardando: "aguardando",
+    em_atendimento: "em_atendimento", finalizado: "finalizado", realizado: "finalizado",
+    faltou: "faltou", cancelado: "faltou", desmarcado: "faltou", encaixe: "encaixe",
+  };
+  return {
+    id: a.id,
+    pacienteId: a.paciente_id,
+    patientName: name,
+    patientInitials: initials,
+    avatarColor: colors[colorIdx],
+    professional: profName,
+    professionalInitials: profInitials,
+    room: a.sala || "Sala 1",
+    procedure: a.procedimento || "Consulta",
+    date: a.data,
+    time: a.hora || "08:00",
+    duration: a.duracao || 30,
+    status: statusMap[a.status] || "confirmado",
+    phone: "",
+    confirmed: a.status === "confirmado",
+  };
+}
+
 function AgendaPage() {
+  const navigate = useNavigate();
   const [selectedProfessional, setSelectedProfessional] = useState<string>("all");
   const [searchTerm, setSearchTerm] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("kanban");
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [dateOffset, setDateOffset] = useState(0);
 
-  const filtered = mockAppointments
+  const currentDate = new Date();
+  currentDate.setDate(currentDate.getDate() + dateOffset);
+  const dateStr = currentDate.toISOString().split("T")[0]; // YYYY-MM-DD
+  const dateDisplay = currentDate.toLocaleDateString("pt-BR", { day: "2-digit", month: "long", year: "numeric", weekday: "long" });
+
+  const fetchAgenda = useCallback(async () => {
+    setLoading(true);
+    const { data, error } = await agendaApi.list({ data: dateStr });
+    if (error) {
+      toast.error("Erro ao carregar agenda: " + error);
+      setAppointments([]);
+    } else if (data && Array.isArray(data)) {
+      setAppointments(data.map(vpsToAppointment));
+    } else {
+      setAppointments([]);
+    }
+    setLoading(false);
+  }, [dateStr]);
+
+  useEffect(() => { fetchAgenda(); }, [fetchAgenda]);
+
+  const handleUpdateStatus = useCallback(async (id: string, status: string) => {
+    const { error } = await agendaApi.update(id, { status });
+    if (error) {
+      toast.error("Erro ao atualizar status: " + error);
+    } else {
+      toast.success("Status atualizado");
+      fetchAgenda();
+    }
+  }, [fetchAgenda]);
+
+  const handleAtender = useCallback((appointment: Appointment) => {
+    navigate({ to: "/atendimento", search: { appointmentId: appointment.id } });
+  }, [navigate]);
+
+  const filtered = appointments
     .filter((a) => selectedProfessional === "all" || a.professional.includes(selectedProfessional))
     .filter((a) => !searchTerm || a.patientName.toLowerCase().includes(searchTerm.toLowerCase()));
 
-  const countByStatus = (status: Appointment["status"]) => mockAppointments.filter((a) => a.status === status).length;
+  const countByStatus = (status: Appointment["status"]) => appointments.filter((a) => a.status === status).length;
 
   return (
     <div className="flex-1 flex flex-col min-h-screen">
