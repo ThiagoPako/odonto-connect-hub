@@ -129,37 +129,42 @@ function ConsultaPage() {
     toast.success(`Consulta iniciada — ${pacienteSelecionado.nome}`);
   }, [pacienteSelecionado]);
 
-  const finalizarAtendimento = useCallback(() => {
+  const finalizarAtendimento = useCallback(async () => {
     setAtendimentoAtivo(false);
     if (timerRef.current) clearInterval(timerRef.current);
+    setMostrarGravacao(false);
 
-    // Save to patient consultation history (mock — in production, POST to VPS)
-    if (pacienteSelecionado) {
-      const registro = {
-        id: `cons-${Date.now()}`,
-        pacienteId: pacienteSelecionado.id,
-        data: new Date().toISOString(),
-        duracao: tempoAtendimento,
-        queixa: queixaPrincipal,
-        procedimento: procedimentoRealizado,
-        dente,
-        notas,
-        gravacoes: gravacoes.length,
-        dentista: "Dr. Ricardo Mendes",
-      };
-      // Store in sessionStorage as mock history
-      const key = `consulta_hist_${pacienteSelecionado.id}`;
-      const existing = JSON.parse(sessionStorage.getItem(key) || "[]");
-      existing.push(registro);
-      sessionStorage.setItem(key, JSON.stringify(existing));
-
-      toast.success(`Consulta finalizada — ${formatTime(tempoAtendimento)} de atendimento`);
-    } else {
+    if (!pacienteSelecionado) {
       toast.success("Consulta finalizada!");
+      return;
     }
 
-    setMostrarGravacao(false);
-  }, [pacienteSelecionado, tempoAtendimento, queixaPrincipal, procedimentoRealizado, dente, notas, gravacoes]);
+    // Calculate started_at from duration
+    const startedAt = new Date(Date.now() - tempoAtendimento * 1000).toISOString();
+
+    // Persist to VPS backend
+    const { data, error } = await consultationsApi.finalize({
+      patient_id: pacienteSelecionado.id,
+      patient_name: pacienteSelecionado.nome,
+      appointment_id: appointmentSelecionado?.id,
+      queixa_principal: queixaPrincipal || undefined,
+      procedimento: procedimentoRealizado || undefined,
+      dente_regiao: dente || undefined,
+      observacoes: notas || undefined,
+      prescricoes: prescricoes.length > 0 ? prescricoes : undefined,
+      duration_seconds: tempoAtendimento,
+      gravacoes_count: gravacoes.length,
+      clinical_report_id: aiState.reportId || undefined,
+      started_at: startedAt,
+    });
+
+    if (error) {
+      console.error("Erro ao salvar consulta:", error);
+      toast.error(`Consulta finalizada localmente — erro ao salvar: ${error}`);
+    } else {
+      toast.success(`Consulta finalizada — ${formatTime(tempoAtendimento)} de atendimento`);
+    }
+  }, [pacienteSelecionado, appointmentSelecionado, tempoAtendimento, queixaPrincipal, procedimentoRealizado, dente, notas, prescricoes, gravacoes, aiState.reportId]);
 
   useEffect(() => {
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
