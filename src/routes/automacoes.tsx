@@ -270,7 +270,20 @@ function FollowupAutomationCard({
             <h4 className="text-xs font-semibold text-foreground">Mensagens por Etapa</h4>
             {(config.stages || []).map((stage) => (
               <div key={stage} className="space-y-1.5">
-                <label className="text-xs font-medium text-foreground">{stageLabels[stage] || stage}</label>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-medium text-foreground">{stageLabels[stage] || stage}</label>
+                  <div className="flex items-center gap-2">
+                    <label className="text-[10px] text-muted-foreground">Dias após setagem:</label>
+                    <Input
+                      type="number"
+                      value={editDelayDays[stage] ?? 0}
+                      onChange={(e) => setEditDelayDays((prev) => ({ ...prev, [stage]: Number(e.target.value) }))}
+                      className="w-16 h-6 text-xs"
+                      min={0}
+                      max={365}
+                    />
+                  </div>
+                </div>
                 <Textarea
                   value={editMessages[stage] || ""}
                   onChange={(e) => setEditMessages((prev) => ({ ...prev, [stage]: e.target.value }))}
@@ -281,6 +294,17 @@ function FollowupAutomationCard({
                 <p className="text-[10px] text-muted-foreground">Variáveis: {"{{nome}}"}</p>
               </div>
             ))}
+          </div>
+
+          <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50 border border-border">
+            <div className="flex items-center gap-2">
+              <RotateCcw className="h-4 w-4 text-primary" />
+              <div>
+                <p className="text-xs font-medium text-foreground">Retorno automático à fila</p>
+                <p className="text-[10px] text-muted-foreground">Quando o cliente responder, retorna à fila com prioridade + tag "Recuperação de Lead"</p>
+              </div>
+            </div>
+            <Switch checked={editReturnOnReply} onCheckedChange={setEditReturnOnReply} />
           </div>
 
           <div className="flex justify-end">
