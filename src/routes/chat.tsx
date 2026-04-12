@@ -991,10 +991,14 @@ function ChatPage() {
       return updated;
     });
 
-    // Keep lead in myLeads with "finished" status
-    setMyLeads((prev) =>
-      prev.map((l) => l.id === lead.id ? { ...l, status: "finished" as const } : l)
-    );
+    // Remove lead from myLeads and queue — attendance is done
+    setMyLeads((prev) => prev.filter((l) => l.id !== lead.id));
+    setQueue((prev) => prev.filter((l) => l.id !== lead.id));
+
+    // Deselect if this was the active lead
+    if (selectedLead?.id === lead.id) {
+      setSelectedLead(null);
+    }
 
     // Open satisfaction survey dialog only for "atendido"
     if (outcome === "atendido" || !outcome) {
