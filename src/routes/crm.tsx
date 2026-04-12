@@ -239,7 +239,8 @@ function RecoveryKanbanView() {
 
 function KanbanCard({ lead, onDragStart }: { lead: KanbanLead; onDragStart: () => void }) {
   const navigate = useNavigate();
-  const daysAgo = Math.floor((Date.now() - lead.lastContact.getTime()) / 86400000);
+  const lastContactDate = lead.lastContact instanceof Date ? lead.lastContact : new Date(lead.lastContact);
+  const daysAgo = Math.floor((Date.now() - lastContactDate.getTime()) / 86400000);
   const isStale = daysAgo > 3;
 
   const handleOpenChat = (e: React.MouseEvent) => {
