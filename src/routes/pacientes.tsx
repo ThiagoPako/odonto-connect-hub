@@ -6,6 +6,7 @@ import { OdontogramaChart, OdontogramaEditor } from "@/components/OdontogramaCha
 import { toast } from "sonner";
 import { type KanbanLead, mockSalesKanban, mockRecoveryKanban } from "@/data/crmMockData";
 import { crmApi } from "@/lib/vpsApi";
+import { demoPacientes } from "@/data/demoPacientes";
 import {
   Search,
   Users,
