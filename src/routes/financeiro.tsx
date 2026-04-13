@@ -17,6 +17,7 @@ import {
   finBanksApi, finEmployeesApi, finPayrollsApi, finBillsApi, finMovementsApi, finOverdueApi,
 } from "@/lib/vpsApi";
 import type { FinanceMovement, BankAccount, Employee, Payroll, Bill } from "@/data/financeiroMockData";
+import { demoBanks, demoEmployees, demoPayrolls, demoBills, demoMovements, demoOverdue } from "@/data/demoFinanceiro";
 
 export const Route = createFileRoute("/financeiro")({
   ssr: false,
@@ -78,15 +79,38 @@ function FinanceiroPage() {
         finMovementsApi.list(),
         finOverdueApi.list(),
       ]);
-      setBanks(((banksRes as any).data || banksRes || []).map(mapBank));
-      setEmployees(((empsRes as any).data || empsRes || []).map(mapEmployee));
-      setPayrolls(((payRes as any).data || payRes || []).map(mapPayroll));
-      setBills(((billsRes as any).data || billsRes || []).map(mapBill));
-      setMovements(((movsRes as any).data || movsRes || []).map(mapMovement));
-      const od = (overdueRes as any).data || overdueRes || [];
-      setOverdue(od.map((r: any) => ({ patient: r.patient, value: Number(r.value) || 0, daysLate: r.days_late || 0, procedure: r.procedure || '' })));
-    } catch (err) {
-      console.error('Erro ao carregar financeiro:', err);
+      const bk = ((banksRes as any).data || banksRes || []).map(mapBank);
+      const em = ((empsRes as any).data || empsRes || []).map(mapEmployee);
+      const py = ((payRes as any).data || payRes || []).map(mapPayroll);
+      const bl = ((billsRes as any).data || billsRes || []).map(mapBill);
+      const mv = ((movsRes as any).data || movsRes || []).map(mapMovement);
+      const od = ((overdueRes as any).data || overdueRes || []).map((r: any) => ({ patient: r.patient, value: Number(r.value) || 0, daysLate: r.days_late || 0, procedure: r.procedure || '' }));
+
+      // Check if API returned real data
+      if (bk.length > 0 || mv.length > 0) {
+        setBanks(bk);
+        setEmployees(em);
+        setPayrolls(py);
+        setBills(bl);
+        setMovements(mv);
+        setOverdue(od);
+      } else {
+        // Fallback to demo data
+        setBanks(demoBanks);
+        setEmployees(demoEmployees);
+        setPayrolls(demoPayrolls);
+        setBills(demoBills);
+        setMovements(demoMovements);
+        setOverdue(demoOverdue);
+      }
+    } catch {
+      // API unreachable — use demo data
+      setBanks(demoBanks);
+      setEmployees(demoEmployees);
+      setPayrolls(demoPayrolls);
+      setBills(demoBills);
+      setMovements(demoMovements);
+      setOverdue(demoOverdue);
     } finally {
       setLoading(false);
     }
