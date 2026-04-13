@@ -92,22 +92,32 @@ function PacientesPage() {
   const [filterSexo, setFilterSexo] = useState("");
   const [filterIdadeMin, setFilterIdadeMin] = useState("");
   const [filterIdadeMax, setFilterIdadeMax] = useState("");
+  const [usingDemo, setUsingDemo] = useState(false);
 
   const loadPacientes = useCallback(async () => {
     setLoading(true);
     try {
       const { data, error } = await pacientesApi.list();
       if (error) {
-        toast.error("Erro ao carregar pacientes: " + error);
-      } else if (Array.isArray(data)) {
+        // Fallback to demo data
+        setPacientes(demoPacientes as PacienteAPI[]);
+        setUsingDemo(true);
+      } else if (Array.isArray(data) && data.length > 0) {
         setPacientes(data);
+        setUsingDemo(false);
         if (pacienteId) {
           const found = data.find((p: PacienteAPI) => p.id === pacienteId);
           if (found) setSelectedPaciente(found);
         }
+      } else {
+        // Empty API result — use demo data
+        setPacientes(demoPacientes as PacienteAPI[]);
+        setUsingDemo(true);
       }
     } catch {
-      toast.error("Erro de conexão ao carregar pacientes");
+      // API unreachable — use demo data
+      setPacientes(demoPacientes as PacienteAPI[]);
+      setUsingDemo(true);
     } finally {
       setLoading(false);
     }
