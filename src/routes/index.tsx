@@ -146,6 +146,39 @@ function LandingPage() {
         </div>
       </section>
 
+      {/* Trusted By */}
+      <section className="py-16 px-4 sm:px-6 lg:px-8 border-b border-border">
+        <div className="max-w-6xl mx-auto">
+          <ScrollReveal>
+            <p className="text-center text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-10">
+              Quem confia no Odonto Connect
+            </p>
+          </ScrollReveal>
+          <ScrollReveal direction="up" delay={100}>
+            <div className="flex flex-wrap items-center justify-center gap-x-12 gap-y-6">
+              {[
+                { name: "Sorriso Perfeito", icon: "🦷" },
+                { name: "OdontoLife", icon: "✨" },
+                { name: "Dental Premium", icon: "💎" },
+                { name: "CliniSmile", icon: "😁" },
+                { name: "OralCenter", icon: "🏥" },
+                { name: "DentCare Plus", icon: "🦷" },
+                { name: "Odonto Excellence", icon: "⭐" },
+                { name: "SmileLab", icon: "🔬" },
+              ].map((clinic) => (
+                <div
+                  key={clinic.name}
+                  className="flex items-center gap-2 text-muted-foreground/50 hover:text-muted-foreground transition-colors select-none"
+                >
+                  <span className="text-xl opacity-60">{clinic.icon}</span>
+                  <span className="text-base font-heading font-semibold tracking-tight whitespace-nowrap">{clinic.name}</span>
+                </div>
+              ))}
+            </div>
+          </ScrollReveal>
+        </div>
+      </section>
+
       {/* Features */}
       <section id="funcionalidades" className="py-24 px-4 sm:px-6 lg:px-8 bg-card/50">
         <div className="max-w-7xl mx-auto">
