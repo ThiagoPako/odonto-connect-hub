@@ -14,9 +14,10 @@ interface Props {
 }
 
 const origens = ["WhatsApp", "Google Ads", "Meta Ads", "Instagram", "Indicação", "Site", "Telefone", "Outro"];
+const responsaveis = ["Ana", "Beatriz", "Carla", "Dr. Marcos", "Dr. Paula"];
 
 export function CreateLeadDialog({ open, onOpenChange, onCreated }: Props) {
-  const [form, setForm] = useState({ nome: "", telefone: "", email: "", origem: "WhatsApp", value: "" });
+  const [form, setForm] = useState({ nome: "", telefone: "", email: "", origem: "WhatsApp", value: "", responsavel: "" });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
