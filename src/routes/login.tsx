@@ -29,7 +29,7 @@ function LoginPage() {
   // Redirect if already authenticated (useEffect instead of conditional return before hooks)
   useEffect(() => {
     if (isAuthenticated) {
-      navigate({ to: "/" });
+      navigate({ to: "/dashboard" });
     }
   }, [isAuthenticated, navigate]);
 
@@ -39,7 +39,7 @@ function LoginPage() {
     setLoading(true);
     try {
       await login(email, password);
-      navigate({ to: "/" });
+      navigate({ to: "/dashboard" });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao fazer login");
     } finally {

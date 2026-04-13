@@ -34,7 +34,7 @@ import { useState, useMemo } from "react";
 import { useChatUnreadCount } from "@/lib/chatUnreadStore";
 import { useAuth } from "@/hooks/useAuth";
 import { useTheme } from "@/hooks/useTheme";
-import logoImg from "@/assets/logo.png";
+import logoImg from "@/assets/logo-horizontal.png";
 
 import { canAccessRoute } from "@/lib/routeAccess";
 
@@ -54,7 +54,7 @@ const navSections: NavSection[] = [
   {
     label: "Principal",
     items: [
-      { title: "Dashboard", url: "/", icon: LayoutDashboard },
+      { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
       { title: "Meu Painel", url: "/painel-dentista", icon: Stethoscope },
       { title: "Agenda", url: "/agenda", icon: CalendarDays },
     ],

@@ -21,7 +21,7 @@ function NotFoundComponent() {
         </p>
         <div className="mt-6">
           <Link
-            to="/"
+            to="/dashboard"
             className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
           >
             Voltar ao início
@@ -44,7 +44,7 @@ function UnauthorizedComponent() {
           Você não tem permissão para acessar esta página. Fale com o administrador.
         </p>
         <Link
-          to="/"
+          to="/dashboard"
           className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
         >
           Voltar ao Dashboard
@@ -63,6 +63,7 @@ export const Route = createRootRoute({
       { name: "description", content: "SaaS de gestão de atendimento odontológico com WhatsApp, CRM e IA financeira." },
     ],
     links: [
+      { rel: "icon", href: "/favicon.png", type: "image/png" },
       { rel: "stylesheet", href: appCss },
       { rel: "preconnect", href: "https://fonts.googleapis.com" },
       { rel: "stylesheet", href: "https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" },
@@ -107,16 +108,16 @@ function AuthGate() {
     );
   }
 
-  const isPublicPage = location.pathname === "/login";
+  const isPublicPage = location.pathname === "/login" || location.pathname === "/";
 
-  // If not authenticated and not on a public page, redirect to login
-  if (!isAuthenticated && !isPublicPage) {
-    return <RedirectToLogin />;
-  }
-
-  // Public pages — no sidebar
+  // Public pages — no sidebar, no auth required
   if (isPublicPage) {
     return <Outlet />;
+  }
+
+  // If not authenticated and not on a public page, redirect to login
+  if (!isAuthenticated) {
+    return <RedirectToLogin />;
   }
 
   // Role-based route protection
