@@ -8,6 +8,8 @@ import {
   LogOut,
   ChevronLeft,
   ChevronDown,
+  Sun,
+  Moon,
   Users,
   Megaphone,
   BarChart3,
@@ -31,6 +33,7 @@ import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { useState, useMemo } from "react";
 import { useChatUnreadCount } from "@/lib/chatUnreadStore";
 import { useAuth } from "@/hooks/useAuth";
+import { useTheme } from "@/hooks/useTheme";
 import logoImg from "@/assets/logo.png";
 
 import { canAccessRoute } from "@/lib/routeAccess";
@@ -286,6 +289,7 @@ function CollapsibleSection({
 
 function SidebarUserFooter({ expanded }: { expanded: boolean }) {
   const { user, logout } = useAuth();
+  const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
 
   const initials = user?.name
@@ -320,6 +324,13 @@ function SidebarUserFooter({ expanded }: { expanded: boolean }) {
           {avatarElement}
         </Link>
         <button
+          onClick={toggleTheme}
+          className="flex items-center justify-center h-8 w-8 mx-auto rounded-lg text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-foreground transition-all"
+          title={theme === "dark" ? "Modo claro" : "Modo escuro"}
+        >
+          {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+        </button>
+        <button
           onClick={handleLogout}
           className="flex items-center justify-center h-8 w-8 mx-auto rounded-lg text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-foreground transition-all"
           title="Sair"
@@ -339,6 +350,13 @@ function SidebarUserFooter({ expanded }: { expanded: boolean }) {
           <p className="text-[9px] text-muted-foreground capitalize">{user?.role ?? ""}</p>
         </div>
       </Link>
+      <button
+        onClick={toggleTheme}
+        className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-[12px] text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-foreground transition-all w-full"
+      >
+        {theme === "dark" ? <Sun className="h-4 w-4 shrink-0" /> : <Moon className="h-4 w-4 shrink-0" />}
+        <span>{theme === "dark" ? "Modo Claro" : "Modo Escuro"}</span>
+      </button>
       <button
         onClick={handleLogout}
         className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-[12px] text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-foreground transition-all w-full"
