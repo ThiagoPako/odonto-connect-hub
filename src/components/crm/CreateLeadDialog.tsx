@@ -37,7 +37,7 @@ export function CreateLeadDialog({ open, onOpenChange, onCreated }: Props) {
     if (data) {
       onCreated();
       onOpenChange(false);
-      setForm({ nome: "", telefone: "", email: "", origem: "WhatsApp", value: "" });
+      setForm({ nome: "", telefone: "", email: "", origem: "WhatsApp", value: "", responsavel: "" });
     }
   };
 
