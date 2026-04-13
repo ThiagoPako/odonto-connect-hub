@@ -681,6 +681,7 @@ function HighlightText({ text, query }: { text: string; query: string }) {
 }
 
 function PatientTableView() {
+  const [showNewLead, setShowNewLead] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [originFilter, setOriginFilter] = useState("Todos");
   const [statusFilter, setStatusFilter] = useState("Todos");
@@ -763,9 +764,10 @@ function PatientTableView() {
               className="w-full h-9 pl-9 pr-4 rounded-lg bg-muted border-0 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring" />
           </div>
           <SyncAvatarsButton />
-          <button className="h-9 px-3 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors flex items-center gap-1.5">
+          <button onClick={() => setShowNewLead(true)} className="h-9 px-3 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors flex items-center gap-1.5">
             <UserPlus className="h-4 w-4" /> Novo
           </button>
+          <CreateLeadDialog open={showNewLead} onOpenChange={setShowNewLead} onCreated={() => { toast.success("Paciente cadastrado!"); loadPatients(); }} />
         </div>
 
         <div className="flex items-center gap-2 px-4 py-2 border-b border-border/50 overflow-x-auto">
