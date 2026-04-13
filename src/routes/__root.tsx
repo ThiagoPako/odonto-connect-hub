@@ -63,6 +63,7 @@ export const Route = createRootRoute({
       { name: "description", content: "SaaS de gestão de atendimento odontológico com WhatsApp, CRM e IA financeira." },
     ],
     links: [
+      { rel: "icon", href: "/favicon.png", type: "image/png" },
       { rel: "stylesheet", href: appCss },
       { rel: "preconnect", href: "https://fonts.googleapis.com" },
       { rel: "stylesheet", href: "https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" },
