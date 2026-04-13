@@ -289,6 +289,7 @@ function CollapsibleSection({
 
 function SidebarUserFooter({ expanded }: { expanded: boolean }) {
   const { user, logout } = useAuth();
+  const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
 
   const initials = user?.name
