@@ -19,6 +19,7 @@ import {
 import { toast } from "sonner";
 import { whatsappApi } from "@/lib/vpsApi";
 import { LeadAvatar } from "@/components/LeadAvatar";
+import { CreateLeadDialog } from "@/components/crm/CreateLeadDialog";
 
 export const Route = createFileRoute("/crm")({
   ssr: false,
