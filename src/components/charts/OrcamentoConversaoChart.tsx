@@ -1,5 +1,6 @@
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from "recharts";
 import { ClientOnly } from "@/components/ClientOnly";
+import { chartTooltipStyle } from "@/lib/chartTheme";
 import { getOrcamentoKpis } from "@/data/dashboardKpis";
 
 const COLORS = [
@@ -45,13 +46,7 @@ export function OrcamentoConversaoChart() {
               ))}
             </Pie>
             <Tooltip
-              contentStyle={{
-                background: "hsl(220, 20%, 13%)",
-                border: "1px solid hsl(220, 13%, 20%)",
-                borderRadius: "12px",
-                fontSize: "12px",
-                color: "hsl(220, 10%, 95%)",
-              }}
+              contentStyle={chartTooltipStyle}
               formatter={(value: number, name: string) => [`${value} orçamento(s)`, name]}
             />
             <Legend

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
 import { ClientOnly } from "@/components/ClientOnly";
+import { chartTooltipStyle, chartTickFill, chartGridStroke } from "@/lib/chartTheme";
 
 const evolucaoData = [
   { mes: "Out", receita: 72000, despesa: 48000, saldo: 24000 },
@@ -45,11 +46,11 @@ function ReceitaDespesaChartInner() {
               <stop offset="100%" stopColor="hsl(0, 72%, 51%)" stopOpacity={0} />
             </linearGradient>
           </defs>
-          <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 13%, 91%)" strokeOpacity={0.5} />
-          <XAxis dataKey="mes" tick={{ fontSize: 11, fill: "hsl(200, 10%, 50%)" }} axisLine={false} tickLine={false} />
-          <YAxis tick={{ fontSize: 10, fill: "hsl(200, 10%, 50%)" }} axisLine={false} tickLine={false} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} width={40} />
+          <CartesianGrid strokeDasharray="3 3" stroke={chartGridStroke} strokeOpacity={0.5} />
+          <XAxis dataKey="mes" tick={{ fontSize: 11, fill: chartTickFill }} axisLine={false} tickLine={false} />
+          <YAxis tick={{ fontSize: 10, fill: chartTickFill }} axisLine={false} tickLine={false} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} width={40} />
           <Tooltip
-            contentStyle={{ background: "hsl(220, 20%, 97%)", border: "1px solid hsl(220, 13%, 91%)", borderRadius: "12px", fontSize: "12px" }}
+            contentStyle={chartTooltipStyle}
             formatter={(value: number, name: string) => {
               const labels: Record<string, string> = { receita: "Receita", despesa: "Despesa", saldo: "Saldo" };
               return [`R$ ${value.toLocaleString("pt-BR")}`, labels[name] || name];
