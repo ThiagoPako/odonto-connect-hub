@@ -34,7 +34,7 @@ import { useState, useMemo } from "react";
 import { useChatUnreadCount } from "@/lib/chatUnreadStore";
 import { useAuth } from "@/hooks/useAuth";
 import { useTheme } from "@/hooks/useTheme";
-import logoImg from "@/assets/logo-horizontal.png";
+import logoImg from "@/assets/symbol.jpg";
 
 import { canAccessRoute } from "@/lib/routeAccess";
 
