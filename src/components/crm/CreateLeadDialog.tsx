@@ -76,6 +76,17 @@ export function CreateLeadDialog({ open, onOpenChange, onCreated }: Props) {
               <Label>Valor estimado (R$)</Label>
               <Input type="number" value={form.value} onChange={(e) => setForm({ ...form, value: e.target.value })} placeholder="0" />
             </div>
+            <div className="col-span-2 space-y-2">
+              <Label>Responsável</Label>
+              <Select value={form.responsavel} onValueChange={(v) => setForm({ ...form, responsavel: v })}>
+                <SelectTrigger><SelectValue placeholder="Selecionar responsável" /></SelectTrigger>
+                <SelectContent>
+                  {responsaveis.map((r) => (
+                    <SelectItem key={r} value={r}>{r}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
           {error && <p className="text-sm text-destructive">{error}</p>}
           <Button onClick={handleSubmit} disabled={loading} className="w-full">
