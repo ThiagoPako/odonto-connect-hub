@@ -107,16 +107,16 @@ function AuthGate() {
     );
   }
 
-  const isPublicPage = location.pathname === "/login";
+  const isPublicPage = location.pathname === "/login" || location.pathname === "/";
 
-  // If not authenticated and not on a public page, redirect to login
-  if (!isAuthenticated && !isPublicPage) {
-    return <RedirectToLogin />;
-  }
-
-  // Public pages — no sidebar
+  // Public pages — no sidebar, no auth required
   if (isPublicPage) {
     return <Outlet />;
+  }
+
+  // If not authenticated and not on a public page, redirect to login
+  if (!isAuthenticated) {
+    return <RedirectToLogin />;
   }
 
   // Role-based route protection
