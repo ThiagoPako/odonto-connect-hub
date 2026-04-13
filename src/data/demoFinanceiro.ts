@@ -37,10 +37,10 @@ export const demoPayrolls: Payroll[] = demoEmployees.map((emp, i) => ({
 export const demoBills: Bill[] = [
   { id: "bill1", description: "Aluguel clínica", category: "aluguel", value: 8500, dueDate: `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, "0")}-10`, status: "pago", supplier: "Imobiliária Central", bankAccountId: "bk1", recurrent: true },
   { id: "bill2", description: "Material descartável — luvas e máscaras", category: "material", value: 2800, dueDate: `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, "0")}-15`, status: "pendente", supplier: "Dental Cremer", bankAccountId: "bk1", recurrent: false },
-  { id: "bill3", description: "Energia elétrica", category: "utilidades", value: 1200, dueDate: `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, "0")}-20`, status: "pendente", supplier: "Enel", bankAccountId: "bk1", recurrent: true },
-  { id: "bill4", description: "Software de gestão", category: "tecnologia", value: 450, dueDate: `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, "0")}-05`, status: "pago", supplier: "Odonto Connect", bankAccountId: "bk3", recurrent: true },
-  { id: "bill5", description: "Manutenção autoclave", category: "equipamento", value: 1500, dueDate: `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, "0")}-25`, status: "pendente", supplier: "Gnatus", recurrent: false },
-  { id: "bill6", description: "Internet fibra óptica", category: "utilidades", value: 350, dueDate: `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, "0")}-08`, status: "pago", supplier: "Vivo", bankAccountId: "bk1", recurrent: true },
+  { id: "bill3", description: "Energia elétrica", category: "energia", value: 1200, dueDate: `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, "0")}-20`, status: "pendente", supplier: "Enel", bankAccountId: "bk1", recurrent: true },
+  { id: "bill4", description: "Software de gestão", category: "software", value: 450, dueDate: `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, "0")}-05`, status: "pago", supplier: "Odonto Connect", bankAccountId: "bk3", recurrent: true },
+  { id: "bill5", description: "Manutenção autoclave", category: "manutencao", value: 1500, dueDate: `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, "0")}-25`, status: "pendente", supplier: "Gnatus", recurrent: false },
+  { id: "bill6", description: "Internet fibra óptica", category: "internet", value: 350, dueDate: `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, "0")}-08`, status: "pago", supplier: "Vivo", bankAccountId: "bk1", recurrent: true },
 ];
 
 function dateStr(daysAgo: number): string {
