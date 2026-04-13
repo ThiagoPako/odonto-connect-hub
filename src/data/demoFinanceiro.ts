@@ -58,11 +58,11 @@ export const demoMovements: FinanceMovement[] = [
   { id: "mov7", type: "entrada", description: "Consulta avaliação — Isabela Rodrigues", category: "consulta", value: 200, date: dateStr(5), bankAccountId: "bk1", bankName: "Itaú", patient: "Isabela Rodrigues" },
   { id: "mov8", type: "entrada", description: "Periodontia — Roberto Campos", category: "procedimento", value: 600, date: dateStr(7), bankAccountId: "bk1", bankName: "Itaú", patient: "Roberto Campos Silva" },
   { id: "mov9", type: "saida", description: "Aluguel clínica", category: "aluguel", value: 8500, date: dateStr(10), bankAccountId: "bk1", bankName: "Itaú", billId: "bill1" },
-  { id: "mov10", type: "saida", description: "Software de gestão", category: "tecnologia", value: 450, date: dateStr(5), bankAccountId: "bk3", bankName: "Nubank", billId: "bill4" },
-  { id: "mov11", type: "saida", description: "Internet", category: "utilidades", value: 350, date: dateStr(8), bankAccountId: "bk1", bankName: "Itaú", billId: "bill6" },
+  { id: "mov10", type: "saida", description: "Software de gestão", category: "software", value: 450, date: dateStr(5), bankAccountId: "bk3", bankName: "Nubank", billId: "bill4" },
+  { id: "mov11", type: "saida", description: "Internet", category: "internet", value: 350, date: dateStr(8), bankAccountId: "bk1", bankName: "Itaú", billId: "bill6" },
   { id: "mov12", type: "entrada", description: "Facetas em resina (6 unidades) — Juliana Pereira", category: "procedimento", value: 6000, date: dateStr(10), bankAccountId: "bk1", bankName: "Itaú", patient: "Juliana Martins Pereira" },
-  { id: "mov13", type: "saida", description: "Folha — Dr. Carlos Mendes", category: "folha", value: 12180, date: dateStr(0), bankAccountId: "bk1", bankName: "Itaú", payrollId: "pay1" },
-  { id: "mov14", type: "saida", description: "Folha — Dra. Ana Beatriz", category: "folha", value: 10100, date: dateStr(0), bankAccountId: "bk1", bankName: "Itaú", payrollId: "pay2" },
+  { id: "mov13", type: "saida", description: "Folha — Dr. Carlos Mendes", category: "salario", value: 12180, date: dateStr(0), bankAccountId: "bk1", bankName: "Itaú", payrollId: "pay1" },
+  { id: "mov14", type: "saida", description: "Folha — Dra. Ana Beatriz", category: "salario", value: 10100, date: dateStr(0), bankAccountId: "bk1", bankName: "Itaú", payrollId: "pay2" },
 ];
 
 export const demoOverdue = [
