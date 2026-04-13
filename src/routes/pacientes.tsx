@@ -1479,10 +1479,10 @@ function HistoricoTab({ pacienteId }: { pacienteId: string }) {
     setLoading(true);
     try {
       const { data, error } = await pacientesApi.getHistorico(pacienteId);
-      if (error) toast.error("Erro ao carregar histórico");
+      if (error) setConsultas([]);
       else if (data) setConsultas(data);
     } catch {
-      toast.error("Erro de conexão");
+      setConsultas([]);
     } finally {
       setLoading(false);
     }
