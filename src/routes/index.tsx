@@ -7,6 +7,7 @@ import {
 import logoHorizontal from "@/assets/logo-horizontal.png";
 import drLuisGustavo from "@/assets/dr-luis-gustavo.jpg";
 import { ScrollReveal } from "@/components/ScrollReveal";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { AnimatedCounter } from "@/components/AnimatedCounter";
 
 export const Route = createFileRoute("/")({
