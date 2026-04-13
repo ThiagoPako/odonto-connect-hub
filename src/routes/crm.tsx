@@ -95,12 +95,15 @@ function GenericKanbanBoard<T extends string>({
   leads,
   setLeads,
   title,
+  onRefresh,
 }: {
   stages: { id: T; label: string; color: string; description: string }[];
   leads: Record<T, KanbanLead[]>;
   setLeads: React.Dispatch<React.SetStateAction<Record<T, KanbanLead[]>>>;
   title: string;
+  onRefresh?: () => void;
 }) {
+  const [showNewLead, setShowNewLead] = useState(false);
   const [draggedLead, setDraggedLead] = useState<{ lead: KanbanLead; fromStage: T } | null>(null);
   const [assignedFilter, setAssignedFilter] = useState("Todos");
 
