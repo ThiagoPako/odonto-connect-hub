@@ -2,11 +2,12 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import {
   CalendarCheck, Users, MessageSquare, DollarSign, Bot, ShieldCheck,
   BarChart3, Zap, CheckCircle, ArrowRight, Star, Phone, Mail,
-  RefreshCcw, Brain, Flame, Clock, Target, TrendingUp,
+  RefreshCcw, Brain, Flame, Clock, Target, TrendingUp, HelpCircle,
 } from "lucide-react";
 import logoHorizontal from "@/assets/logo-horizontal.png";
 import drLuisGustavo from "@/assets/dr-luis-gustavo.jpg";
 import { ScrollReveal } from "@/components/ScrollReveal";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 
 export const Route = createFileRoute("/")({
   component: LandingPage,
@@ -60,6 +61,7 @@ function LandingPage() {
             <a href="#sobre" className="hover:text-foreground transition-colors">Sobre</a>
             <a href="#planos" className="hover:text-foreground transition-colors">Planos</a>
             <a href="#depoimentos" className="hover:text-foreground transition-colors">Depoimentos</a>
+            <a href="#faq" className="hover:text-foreground transition-colors">FAQ</a>
           </div>
           <div className="flex items-center gap-3">
             <Link to="/login" className="text-sm font-medium text-foreground hover:text-primary transition-colors">
