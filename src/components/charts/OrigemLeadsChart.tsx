@@ -1,5 +1,6 @@
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, Cell } from "recharts";
 import { ClientOnly } from "@/components/ClientOnly";
+import { chartTooltipStyle, chartTickFill } from "@/lib/chartTheme";
 import { mockPatients } from "@/data/crmMockData";
 
 const COLORS = [
@@ -38,18 +39,12 @@ export function OrigemLeadsChart() {
               dataKey="origin"
               type="category"
               width={90}
-              tick={{ fontSize: 11, fill: "hsl(200, 10%, 50%)" }}
+              tick={{ fontSize: 11, fill: chartTickFill }}
               axisLine={false}
               tickLine={false}
             />
             <Tooltip
-              contentStyle={{
-                background: "hsl(220, 20%, 13%)",
-                border: "1px solid hsl(220, 13%, 20%)",
-                borderRadius: "12px",
-                fontSize: "12px",
-                color: "hsl(220, 10%, 95%)",
-              }}
+              contentStyle={chartTooltipStyle}
               formatter={(value: number) => [`${value} paciente(s)`, "Quantidade"]}
               cursor={{ fill: "hsl(187, 85%, 43%, 0.08)" }}
             />

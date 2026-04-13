@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { PieChart, Pie, Cell, Tooltip } from "recharts";
 import { ClientOnly } from "@/components/ClientOnly";
+import { chartTooltipStyle } from "@/lib/chartTheme";
 import type { FinanceMovement } from "@/data/financeiroMockData";
 import { categoryLabels } from "@/data/financeiroMockData";
 
@@ -62,7 +63,7 @@ function DespesasPieInner({ data, total }: { data: { name: string; value: number
             ))}
           </Pie>
           <Tooltip
-            contentStyle={{ background: "hsl(220, 20%, 97%)", border: "1px solid hsl(220, 13%, 91%)", borderRadius: "12px", fontSize: "12px" }}
+            contentStyle={chartTooltipStyle}
             formatter={(value: number, name: string) => [
               `R$ ${value.toLocaleString("pt-BR")} (${Math.round((value / total) * 100)}%)`,
               name,
