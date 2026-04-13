@@ -5,6 +5,7 @@ import { pacientesApi, type HistoricoConsulta } from "@/lib/vpsApi";
 import { OdontogramaChart, OdontogramaEditor } from "@/components/OdontogramaChart";
 import { toast } from "sonner";
 import { type KanbanLead, mockSalesKanban, mockRecoveryKanban } from "@/data/crmMockData";
+import { crmApi } from "@/lib/vpsApi";
 import {
   Search,
   Users,
@@ -465,6 +466,15 @@ function NovoPacienteModal({ onClose, onSaved }: { onClose: () => void; onSaved:
         toast.error("Erro ao cadastrar: " + error);
       } else {
         toast.success(`${form.nome} cadastrado com sucesso!`);
+        // Move lead to "Orçamento Aprovado" in CRM
+        if (selectedLeadId) {
+          try {
+            await crmApi.updateStage(selectedLeadId, "orcamento_aprovado", "Convertido em paciente");
+            toast.success("Lead movido para 'Orçamento Aprovado' no CRM");
+          } catch {
+            toast.info("Paciente cadastrado, mas não foi possível atualizar o CRM");
+          }
+        }
         onSaved();
       }
     } catch {
