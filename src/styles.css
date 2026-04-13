@@ -177,6 +177,11 @@
       0 4px 16px hsl(0 0% 0% / 0.03);
   }
 
+  .dark .glass-card {
+    background: hsl(220 20% 13% / 0.85);
+    border-color: hsl(220 16% 20% / 0.6);
+  }
+
   .gradient-primary {
     background: linear-gradient(135deg, var(--color-primary), var(--color-primary-glow));
   }
