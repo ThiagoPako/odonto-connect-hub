@@ -8,6 +8,8 @@ import {
   LogOut,
   ChevronLeft,
   ChevronDown,
+  Sun,
+  Moon,
   Users,
   Megaphone,
   BarChart3,
@@ -31,6 +33,7 @@ import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { useState, useMemo } from "react";
 import { useChatUnreadCount } from "@/lib/chatUnreadStore";
 import { useAuth } from "@/hooks/useAuth";
+import { useTheme } from "@/hooks/useTheme";
 import logoImg from "@/assets/logo.png";
 
 import { canAccessRoute } from "@/lib/routeAccess";
