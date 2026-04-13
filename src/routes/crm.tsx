@@ -255,7 +255,8 @@ function SalesKanbanView() {
   const [leads, setLeads] = useState<Record<SalesStage, KanbanLead[]>>(emptyStages);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
+  const loadData = useCallback(() => {
+    setLoading(true);
     crmApi.kanban().then(({ data }) => {
       if (data && typeof data === 'object') {
         const raw = data as Record<string, any[]>;
@@ -271,8 +272,10 @@ function SalesKanbanView() {
     });
   }, []);
 
+  useEffect(() => { loadData(); }, [loadData]);
+
   if (loading) return <div className="flex-1 flex items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
-  return <GenericKanbanBoard stages={salesStages} leads={leads} setLeads={setLeads} title="Funil de Vendas" />;
+  return <GenericKanbanBoard stages={salesStages} leads={leads} setLeads={setLeads} title="Funil de Vendas" onRefresh={loadData} />;
 }
 
 /* ── Recovery Kanban ─────────────────────────────── */
