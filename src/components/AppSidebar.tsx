@@ -54,7 +54,7 @@ const navSections: NavSection[] = [
   {
     label: "Principal",
     items: [
-      { title: "Dashboard", url: "/", icon: LayoutDashboard },
+      { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
       { title: "Meu Painel", url: "/painel-dentista", icon: Stethoscope },
       { title: "Agenda", url: "/agenda", icon: CalendarDays },
     ],
