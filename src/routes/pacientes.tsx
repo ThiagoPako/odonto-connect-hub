@@ -382,6 +382,9 @@ function PacientesPage() {
 /* ─── Novo Paciente Modal ─── */
 function NovoPacienteModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
   const [saving, setSaving] = useState(false);
+  const [showLeadPicker, setShowLeadPicker] = useState(false);
+  const [leadSearch, setLeadSearch] = useState("");
+  const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [form, setForm] = useState({
     nome: "",
     cpf: "",
@@ -393,6 +396,47 @@ function NovoPacienteModal({ onClose, onSaved }: { onClose: () => void; onSaved:
     endereco: "",
     observacoes: "",
   });
+
+  // Collect all CRM leads from all stages
+  const allLeads = useMemo(() => {
+    const leads: { id: string; name: string; phone: string; origin: string; initials: string }[] = [];
+    const seen = new Set<string>();
+    const addLeads = (kanban: Record<string, KanbanLead[]>) => {
+      Object.values(kanban).forEach((arr) =>
+        arr.forEach((l) => {
+          if (!seen.has(l.id)) {
+            seen.add(l.id);
+            leads.push({ id: l.id, name: l.name, phone: l.phone, origin: l.origin, initials: l.initials });
+          }
+        })
+      );
+    };
+    addLeads(mockSalesKanban);
+    addLeads(mockRecoveryKanban);
+    return leads;
+  }, []);
+
+  const filteredLeads = useMemo(() => {
+    if (!leadSearch.trim()) return allLeads;
+    const q = leadSearch.toLowerCase();
+    return allLeads.filter(
+      (l) => l.name.toLowerCase().includes(q) || l.phone.includes(q)
+    );
+  }, [allLeads, leadSearch]);
+
+  const handleSelectLead = (lead: typeof allLeads[0]) => {
+    setSelectedLeadId(lead.id);
+    setForm((prev) => ({
+      ...prev,
+      nome: lead.name,
+      telefone: lead.phone,
+      observacoes: prev.observacoes
+        ? `${prev.observacoes}\nOrigem CRM: ${lead.origin}`
+        : `Origem CRM: ${lead.origin}`,
+    }));
+    setShowLeadPicker(false);
+    toast.success(`Dados do lead "${lead.name}" preenchidos`);
+  };
 
   const handleChange = (field: string, value: string) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -438,6 +482,73 @@ function NovoPacienteModal({ onClose, onSaved }: { onClose: () => void; onSaved:
           </button>
         </div>
         <form className="p-6 space-y-5" onSubmit={handleSubmit}>
+          {/* Lead pre-fill banner */}
+          <div className="rounded-xl border border-dashed border-primary/30 bg-primary/5 p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Users className="h-4 w-4 text-primary" />
+                <span className="text-xs font-semibold text-primary">Pré-cadastrar a partir de um Lead do CRM</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowLeadPicker(!showLeadPicker)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary/10 text-primary text-[11px] font-semibold hover:bg-primary/20 transition-colors"
+              >
+                {selectedLeadId ? (
+                  <>
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    Lead vinculado
+                  </>
+                ) : (
+                  <>
+                    <Search className="h-3.5 w-3.5" />
+                    Buscar Lead
+                  </>
+                )}
+              </button>
+            </div>
+
+            {showLeadPicker && (
+              <div className="mt-3 space-y-2 animate-fade-in">
+                <input
+                  type="text"
+                  placeholder="Buscar lead por nome ou telefone..."
+                  value={leadSearch}
+                  onChange={(e) => setLeadSearch(e.target.value)}
+                  className="w-full h-9 px-3 rounded-lg bg-background border border-border/60 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                />
+                <div className="max-h-40 overflow-y-auto space-y-1 scrollbar-thin">
+                  {filteredLeads.length === 0 && (
+                    <p className="text-[11px] text-muted-foreground text-center py-3">Nenhum lead encontrado</p>
+                  )}
+                  {filteredLeads.map((lead) => (
+                    <button
+                      key={lead.id}
+                      type="button"
+                      onClick={() => handleSelectLead(lead)}
+                      className={`flex items-center gap-3 w-full px-3 py-2 rounded-lg text-left transition-colors ${
+                        selectedLeadId === lead.id
+                          ? "bg-primary/15 border border-primary/30"
+                          : "hover:bg-muted/60 border border-transparent"
+                      }`}
+                    >
+                      <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center text-[10px] font-bold text-primary shrink-0">
+                        {lead.initials}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-semibold text-foreground truncate">{lead.name}</p>
+                        <p className="text-[10px] text-muted-foreground">{lead.phone} • {lead.origin}</p>
+                      </div>
+                      {selectedLeadId === lead.id && (
+                        <CheckCircle2 className="h-4 w-4 text-primary shrink-0" />
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2">
               <label className="text-xs font-medium text-muted-foreground mb-1 block">Nome completo *</label>
