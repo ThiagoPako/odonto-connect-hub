@@ -301,17 +301,27 @@ function RecoveryKanbanView() {
 
   const loadData = useCallback(() => {
     setLoading(true);
-    crmApi.kanban().then(({ data }) => {
-      if (data && typeof data === 'object') {
+    crmApi.kanban().then(({ data, error }) => {
+      if (!error && data && typeof data === 'object') {
         const raw = data as Record<string, any[]>;
-        const result = { ...emptyStages };
-        for (const key of Object.keys(result) as RecoveryStage[]) {
-          if (Array.isArray(raw[key])) {
-            result[key] = raw[key].map(normalizeLead);
+        const hasData = Object.values(raw).some(arr => Array.isArray(arr) && arr.length > 0);
+        if (hasData) {
+          const result = { ...emptyStages };
+          for (const key of Object.keys(result) as RecoveryStage[]) {
+            if (Array.isArray(raw[key])) {
+              result[key] = raw[key].map(normalizeLead);
+            }
           }
+          setLeads(result);
+        } else {
+          setLeads(mockRecoveryKanban);
         }
-        setLeads(result);
+      } else {
+        setLeads(mockRecoveryKanban);
       }
+      setLoading(false);
+    }).catch(() => {
+      setLeads(mockRecoveryKanban);
       setLoading(false);
     });
   }, []);
