@@ -80,14 +80,16 @@ function AgendaPage() {
 
   const fetchAgenda = useCallback(async () => {
     setLoading(true);
-    const { data, error } = await agendaApi.list({ data: dateStr });
-    if (error) {
-      toast.error("Erro ao carregar agenda: " + error);
-      setAppointments([]);
-    } else if (data && Array.isArray(data)) {
-      setAppointments(data.map(vpsToAppointment));
-    } else {
-      setAppointments([]);
+    try {
+      const { data, error } = await agendaApi.list({ data: dateStr });
+      if (error || !data || !Array.isArray(data) || data.length === 0) {
+        // Fallback to demo data
+        setAppointments(getDemoAppointments(dateStr));
+      } else {
+        setAppointments(data.map(vpsToAppointment));
+      }
+    } catch {
+      setAppointments(getDemoAppointments(dateStr));
     }
     setLoading(false);
   }, [dateStr]);
