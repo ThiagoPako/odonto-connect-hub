@@ -389,6 +389,8 @@ export const crmApi = {
     vpsApiFetch<{ success: boolean; paciente_id: string; paciente_nome: string }>(`/crm/leads/${id}/link-patient`, { method: 'POST', body: { paciente_id: pacienteId } }),
   history: (id: string) =>
     vpsApiFetch<Array<{ id: string; data: string; hora: string; procedimento: string; status: string; dentista_nome: string }>>(`/crm/leads/${id}/history`),
+  create: (body: { nome: string; telefone?: string; email?: string; origem?: string; stage?: string; value?: number }) =>
+    vpsApiFetch<any>('/crm/leads', { method: 'POST', body }),
 };
 
 // ─── Orçamentos ─────────────────────────────────────────────

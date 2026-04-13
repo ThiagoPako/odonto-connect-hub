@@ -19,6 +19,7 @@ import {
 import { toast } from "sonner";
 import { whatsappApi } from "@/lib/vpsApi";
 import { LeadAvatar } from "@/components/LeadAvatar";
+import { CreateLeadDialog } from "@/components/crm/CreateLeadDialog";
 
 export const Route = createFileRoute("/crm")({
   ssr: false,
@@ -94,12 +95,15 @@ function GenericKanbanBoard<T extends string>({
   leads,
   setLeads,
   title,
+  onRefresh,
 }: {
   stages: { id: T; label: string; color: string; description: string }[];
   leads: Record<T, KanbanLead[]>;
   setLeads: React.Dispatch<React.SetStateAction<Record<T, KanbanLead[]>>>;
   title: string;
+  onRefresh?: () => void;
 }) {
+  const [showNewLead, setShowNewLead] = useState(false);
   const [draggedLead, setDraggedLead] = useState<{ lead: KanbanLead; fromStage: T } | null>(null);
   const [assignedFilter, setAssignedFilter] = useState("Todos");
 
@@ -172,9 +176,10 @@ function GenericKanbanBoard<T extends string>({
               ))}
             </div>
           </div>
-          <button className="flex items-center gap-2 h-9 px-4 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors">
+          <button onClick={() => setShowNewLead(true)} className="flex items-center gap-2 h-9 px-4 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors">
             <Plus className="h-4 w-4" /> Novo Lead
           </button>
+          <CreateLeadDialog open={showNewLead} onOpenChange={setShowNewLead} onCreated={() => { toast.success("Lead cadastrado!"); onRefresh?.(); }} />
         </div>
       </div>
 
@@ -250,7 +255,8 @@ function SalesKanbanView() {
   const [leads, setLeads] = useState<Record<SalesStage, KanbanLead[]>>(emptyStages);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
+  const loadData = useCallback(() => {
+    setLoading(true);
     crmApi.kanban().then(({ data }) => {
       if (data && typeof data === 'object') {
         const raw = data as Record<string, any[]>;
@@ -266,8 +272,10 @@ function SalesKanbanView() {
     });
   }, []);
 
+  useEffect(() => { loadData(); }, [loadData]);
+
   if (loading) return <div className="flex-1 flex items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
-  return <GenericKanbanBoard stages={salesStages} leads={leads} setLeads={setLeads} title="Funil de Vendas" />;
+  return <GenericKanbanBoard stages={salesStages} leads={leads} setLeads={setLeads} title="Funil de Vendas" onRefresh={loadData} />;
 }
 
 /* ── Recovery Kanban ─────────────────────────────── */
@@ -279,7 +287,8 @@ function RecoveryKanbanView() {
   const [leads, setLeads] = useState<Record<RecoveryStage, KanbanLead[]>>(emptyStages);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
+  const loadData = useCallback(() => {
+    setLoading(true);
     crmApi.kanban().then(({ data }) => {
       if (data && typeof data === 'object') {
         const raw = data as Record<string, any[]>;
@@ -295,8 +304,10 @@ function RecoveryKanbanView() {
     });
   }, []);
 
+  useEffect(() => { loadData(); }, [loadData]);
+
   if (loading) return <div className="flex-1 flex items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
-  return <GenericKanbanBoard stages={recoveryStages} leads={leads} setLeads={setLeads} title="Recuperação de Vendas" />;
+  return <GenericKanbanBoard stages={recoveryStages} leads={leads} setLeads={setLeads} title="Recuperação de Vendas" onRefresh={loadData} />;
 }
 
 /* ── Kanban Card ─────────────────────────────────── */
@@ -670,6 +681,7 @@ function HighlightText({ text, query }: { text: string; query: string }) {
 }
 
 function PatientTableView() {
+  const [showNewLead, setShowNewLead] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [originFilter, setOriginFilter] = useState("Todos");
   const [statusFilter, setStatusFilter] = useState("Todos");
@@ -752,9 +764,10 @@ function PatientTableView() {
               className="w-full h-9 pl-9 pr-4 rounded-lg bg-muted border-0 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring" />
           </div>
           <SyncAvatarsButton />
-          <button className="h-9 px-3 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors flex items-center gap-1.5">
+          <button onClick={() => setShowNewLead(true)} className="h-9 px-3 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors flex items-center gap-1.5">
             <UserPlus className="h-4 w-4" /> Novo
           </button>
+          <CreateLeadDialog open={showNewLead} onOpenChange={setShowNewLead} onCreated={() => { toast.success("Paciente cadastrado!"); loadPatients(); }} />
         </div>
 
         <div className="flex items-center gap-2 px-4 py-2 border-b border-border/50 overflow-x-auto">
