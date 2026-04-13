@@ -257,17 +257,28 @@ function SalesKanbanView() {
 
   const loadData = useCallback(() => {
     setLoading(true);
-    crmApi.kanban().then(({ data }) => {
-      if (data && typeof data === 'object') {
+    crmApi.kanban().then(({ data, error }) => {
+      if (!error && data && typeof data === 'object') {
         const raw = data as Record<string, any[]>;
-        const result = { ...emptyStages };
-        for (const key of Object.keys(result) as SalesStage[]) {
-          if (Array.isArray(raw[key])) {
-            result[key] = raw[key].map(normalizeLead);
+        const hasData = Object.values(raw).some(arr => Array.isArray(arr) && arr.length > 0);
+        if (hasData) {
+          const result = { ...emptyStages };
+          for (const key of Object.keys(result) as SalesStage[]) {
+            if (Array.isArray(raw[key])) {
+              result[key] = raw[key].map(normalizeLead);
+            }
           }
+          setLeads(result);
+        } else {
+          setLeads(mockSalesKanban);
         }
-        setLeads(result);
+      } else {
+        // Fallback to mock data for demo
+        setLeads(mockSalesKanban);
       }
+      setLoading(false);
+    }).catch(() => {
+      setLeads(mockSalesKanban);
       setLoading(false);
     });
   }, []);
