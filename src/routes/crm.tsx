@@ -176,9 +176,10 @@ function GenericKanbanBoard<T extends string>({
               ))}
             </div>
           </div>
-          <button className="flex items-center gap-2 h-9 px-4 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors">
+          <button onClick={() => setShowNewLead(true)} className="flex items-center gap-2 h-9 px-4 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors">
             <Plus className="h-4 w-4" /> Novo Lead
           </button>
+          <CreateLeadDialog open={showNewLead} onOpenChange={setShowNewLead} onCreated={() => { toast.success("Lead cadastrado!"); onRefresh?.(); }} />
         </div>
       </div>
 
