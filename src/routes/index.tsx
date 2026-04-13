@@ -8,6 +8,7 @@ import logoHorizontal from "@/assets/logo-horizontal.png";
 import drLuisGustavo from "@/assets/dr-luis-gustavo.jpg";
 import { ScrollReveal } from "@/components/ScrollReveal";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { AnimatedCounter } from "@/components/AnimatedCounter";
 
 export const Route = createFileRoute("/")({
   component: LandingPage,
@@ -221,12 +222,14 @@ function LandingPage() {
                 </p>
                 <div className="grid grid-cols-3 gap-4 pt-4">
                   {[
-                    { val: "15+", label: "Anos de experiência" },
-                    { val: "500+", label: "Clínicas atendidas" },
-                    { val: "98%", label: "Satisfação" },
+                    { num: 15, suffix: "+", label: "Anos de experiência" },
+                    { num: 500, suffix: "+", label: "Clínicas atendidas" },
+                    { num: 98, suffix: "%", label: "Satisfação" },
                   ].map((s) => (
                     <div key={s.label} className="text-center">
-                      <p className="text-2xl font-heading font-bold gradient-text">{s.val}</p>
+                      <p className="text-2xl font-heading font-bold gradient-text">
+                        <AnimatedCounter value={s.num} suffix={s.suffix} />
+                      </p>
                       <p className="text-xs text-muted-foreground mt-1">{s.label}</p>
                     </div>
                   ))}
