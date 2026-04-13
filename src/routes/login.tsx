@@ -39,7 +39,7 @@ function LoginPage() {
     setLoading(true);
     try {
       await login(email, password);
-      navigate({ to: "/" });
+      navigate({ to: "/dashboard" });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao fazer login");
     } finally {
