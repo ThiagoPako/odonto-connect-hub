@@ -2,11 +2,12 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import {
   CalendarCheck, Users, MessageSquare, DollarSign, Bot, ShieldCheck,
   BarChart3, Zap, CheckCircle, ArrowRight, Star, Phone, Mail,
-  RefreshCcw, Brain, Flame, Clock, Target, TrendingUp,
+  RefreshCcw, Brain, Flame, Clock, Target, TrendingUp, HelpCircle,
 } from "lucide-react";
 import logoHorizontal from "@/assets/logo-horizontal.png";
 import drLuisGustavo from "@/assets/dr-luis-gustavo.jpg";
 import { ScrollReveal } from "@/components/ScrollReveal";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 
 export const Route = createFileRoute("/")({
   component: LandingPage,
@@ -60,6 +61,7 @@ function LandingPage() {
             <a href="#sobre" className="hover:text-foreground transition-colors">Sobre</a>
             <a href="#planos" className="hover:text-foreground transition-colors">Planos</a>
             <a href="#depoimentos" className="hover:text-foreground transition-colors">Depoimentos</a>
+            <a href="#faq" className="hover:text-foreground transition-colors">FAQ</a>
           </div>
           <div className="flex items-center gap-3">
             <Link to="/login" className="text-sm font-medium text-foreground hover:text-primary transition-colors">
@@ -324,6 +326,45 @@ function LandingPage() {
               </ScrollReveal>
             ))}
           </div>
+        </div>
+      </section>
+
+      {/* FAQ */}
+      <section id="faq" className="py-24 px-4 sm:px-6 lg:px-8 bg-card/50">
+        <div className="max-w-3xl mx-auto">
+          <ScrollReveal>
+            <div className="text-center mb-16">
+              <h2 className="text-3xl sm:text-4xl font-heading font-bold text-foreground">
+                Perguntas <span className="gradient-text">Frequentes</span>
+              </h2>
+              <p className="mt-4 text-lg text-muted-foreground">
+                Tire suas dúvidas sobre o Odonto Connect
+              </p>
+            </div>
+          </ScrollReveal>
+          <ScrollReveal direction="up" duration={600}>
+            <Accordion type="single" collapsible className="space-y-3">
+              {[
+                { q: "Preciso instalar algum software no computador?", a: "Não! O Odonto Connect é 100% online (SaaS). Basta acessar pelo navegador de qualquer computador, tablet ou celular. Não precisa instalar nada." },
+                { q: "Como funciona a IA Agente Autônomo?", a: "A IA atende seus pacientes via WhatsApp de forma autônoma: responde dúvidas, agenda consultas, envia lembretes e faz follow-up. Você configura as regras e a IA cuida do resto 24 horas por dia." },
+                { q: "O que é o Sistema Fênix de WhatsApp?", a: "É nossa tecnologia exclusiva de contingência. Se uma instância do WhatsApp cair, o sistema automaticamente redireciona para outra instância ativa, garantindo que sua clínica nunca fique sem atendimento." },
+                { q: "Como funciona a reativação de pacientes pelo CRM?", a: "O CRM possui um funil de recuperação com follow-ups automáticos. Pacientes inativos ou que não responderam entram em uma sequência inteligente de contato via WhatsApp, aumentando significativamente a taxa de retorno." },
+                { q: "Posso migrar meus dados de outro sistema?", a: "Sim! Nossa equipe auxilia na migração completa dos dados de pacientes, agenda e financeiro. O processo é rápido e sem perda de informações." },
+                { q: "Quantas pessoas podem usar o sistema ao mesmo tempo?", a: "Não há limite de usuários simultâneos. Toda a equipe — recepcionistas, dentistas, gestores — pode acessar ao mesmo tempo com permissões personalizadas por função." },
+                { q: "O sistema emite relatórios financeiros?", a: "Sim! O módulo financeiro integrado gera relatórios de faturamento, fluxo de caixa, contas a pagar/receber, comissões por dentista e muito mais. Tudo atualizado em tempo real." },
+                { q: "Existe período de teste gratuito?", a: "Sim! Oferecemos 7 dias grátis com acesso completo a todas as funcionalidades. Sem necessidade de cartão de crédito e sem compromisso." },
+              ].map((item, i) => (
+                <AccordionItem key={i} value={`faq-${i}`} className="rounded-xl border border-border bg-card px-6 shadow-card">
+                  <AccordionTrigger className="text-sm font-semibold text-foreground hover:text-primary py-5 text-left">
+                    {item.q}
+                  </AccordionTrigger>
+                  <AccordionContent className="text-sm text-muted-foreground leading-relaxed pb-5">
+                    {item.a}
+                  </AccordionContent>
+                </AccordionItem>
+              ))}
+            </Accordion>
+          </ScrollReveal>
         </div>
       </section>
 
