@@ -14,9 +14,10 @@ interface Props {
 }
 
 const origens = ["WhatsApp", "Google Ads", "Meta Ads", "Instagram", "Indicação", "Site", "Telefone", "Outro"];
+const responsaveis = ["Ana", "Beatriz", "Carla", "Dr. Marcos", "Dr. Paula"];
 
 export function CreateLeadDialog({ open, onOpenChange, onCreated }: Props) {
-  const [form, setForm] = useState({ nome: "", telefone: "", email: "", origem: "WhatsApp", value: "" });
+  const [form, setForm] = useState({ nome: "", telefone: "", email: "", origem: "WhatsApp", value: "", responsavel: "" });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -36,7 +37,7 @@ export function CreateLeadDialog({ open, onOpenChange, onCreated }: Props) {
     if (data) {
       onCreated();
       onOpenChange(false);
-      setForm({ nome: "", telefone: "", email: "", origem: "WhatsApp", value: "" });
+      setForm({ nome: "", telefone: "", email: "", origem: "WhatsApp", value: "", responsavel: "" });
     }
   };
 
@@ -74,6 +75,17 @@ export function CreateLeadDialog({ open, onOpenChange, onCreated }: Props) {
             <div className="space-y-2">
               <Label>Valor estimado (R$)</Label>
               <Input type="number" value={form.value} onChange={(e) => setForm({ ...form, value: e.target.value })} placeholder="0" />
+            </div>
+            <div className="col-span-2 space-y-2">
+              <Label>Responsável</Label>
+              <Select value={form.responsavel} onValueChange={(v) => setForm({ ...form, responsavel: v })}>
+                <SelectTrigger><SelectValue placeholder="Selecionar responsável" /></SelectTrigger>
+                <SelectContent>
+                  {responsaveis.map((r) => (
+                    <SelectItem key={r} value={r}>{r}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
           {error && <p className="text-sm text-destructive">{error}</p>}
