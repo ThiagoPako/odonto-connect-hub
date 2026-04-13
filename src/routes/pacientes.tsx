@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { pacientesApi, type HistoricoConsulta } from "@/lib/vpsApi";
 import { OdontogramaChart, OdontogramaEditor } from "@/components/OdontogramaChart";
 import { toast } from "sonner";
+import { type KanbanLead, mockSalesKanban, mockRecoveryKanban } from "@/data/crmMockData";
 import {
   Search,
   Users,
