@@ -1,0 +1,193 @@
+/**
+ * Dados de demonstração — pacientes fictícios para apresentação do sistema.
+ * Formato compatível com PacienteAPI usado pela página de pacientes.
+ */
+
+export interface DemoPaciente {
+  id: string;
+  nome: string;
+  cpf: string | null;
+  telefone: string | null;
+  email: string | null;
+  data_nascimento: string | null;
+  sexo: string | null;
+  endereco: string | null;
+  convenio: string | null;
+  observacoes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+const hoje = new Date().toISOString();
+const ontem = new Date(Date.now() - 86400000).toISOString();
+
+export const demoPacientes: DemoPaciente[] = [
+  {
+    id: "demo-1",
+    nome: "Maria Silva Santos",
+    cpf: "123.456.789-01",
+    telefone: "(11) 99999-1001",
+    email: "maria.silva@email.com",
+    data_nascimento: "1985-03-15",
+    sexo: "feminino",
+    endereco: "Rua das Flores, 123 — São Paulo, SP",
+    convenio: "Amil Dental",
+    observacoes: "Paciente regular, tratamento ortodôntico em andamento. Alérgica a dipirona.",
+    created_at: "2024-01-10T10:00:00Z",
+    updated_at: hoje,
+  },
+  {
+    id: "demo-2",
+    nome: "João Pedro Oliveira",
+    cpf: "987.654.321-02",
+    telefone: "(11) 98888-2002",
+    email: "joao.oliveira@email.com",
+    data_nascimento: "1978-07-22",
+    sexo: "masculino",
+    endereco: "Av. Paulista, 1000 — São Paulo, SP",
+    convenio: null,
+    observacoes: "Fumante há 15 anos. Implante realizado em dez/2024. Proservação em 6 meses.",
+    created_at: "2024-02-05T14:30:00Z",
+    updated_at: hoje,
+  },
+  {
+    id: "demo-3",
+    nome: "Ana Beatriz Ferreira",
+    cpf: "456.789.123-03",
+    telefone: "(11) 97777-3003",
+    email: "ana.ferreira@email.com",
+    data_nascimento: "2000-01-30",
+    sexo: "feminino",
+    endereco: "Rua Oscar Freire, 200 — São Paulo, SP",
+    convenio: "Bradesco Dental",
+    observacoes: "Clareamento dental concluído. Retorno agendado para avaliação.",
+    created_at: "2024-03-18T09:00:00Z",
+    updated_at: hoje,
+  },
+  {
+    id: "demo-4",
+    nome: "Carlos Eduardo Mendes",
+    cpf: "321.654.987-04",
+    telefone: "(11) 96666-4004",
+    email: "carlos.mendes@email.com",
+    data_nascimento: "1965-09-10",
+    sexo: "masculino",
+    endereco: "Rua Consolação, 800 — São Paulo, SP",
+    convenio: "SulAmérica",
+    observacoes: "ATENÇÃO: Cardiopata. Solicitar liberação do cardiologista antes de procedimentos cirúrgicos. Uso de AAS e Atenolol.",
+    created_at: "2023-11-20T11:00:00Z",
+    updated_at: hoje,
+  },
+  {
+    id: "demo-5",
+    nome: "Fernanda Costa Lima",
+    cpf: "654.321.987-05",
+    telefone: "(11) 95555-5005",
+    email: "fernanda.lima@email.com",
+    data_nascimento: "1992-11-03",
+    sexo: "feminino",
+    endereco: "Rua Augusta, 500 — São Paulo, SP",
+    convenio: "Amil Dental",
+    observacoes: "Diabetes tipo 2 — controle glicêmico regular. Solicitar HbA1c antes de procedimentos. Alérgica a amoxicilina.",
+    created_at: "2024-05-12T16:00:00Z",
+    updated_at: hoje,
+  },
+  {
+    id: "demo-6",
+    nome: "Rafael Souza Martins",
+    cpf: "111.222.333-06",
+    telefone: "(11) 94444-6006",
+    email: "rafael.martins@email.com",
+    data_nascimento: "1990-04-25",
+    sexo: "masculino",
+    endereco: "Rua Bela Cintra, 350 — São Paulo, SP",
+    convenio: null,
+    observacoes: "Tratamento de canal finalizado (dente 36). Restauração definitiva pendente.",
+    created_at: "2024-06-01T08:00:00Z",
+    updated_at: hoje,
+  },
+  {
+    id: "demo-7",
+    nome: "Isabela Rodrigues",
+    cpf: "222.333.444-07",
+    telefone: "(11) 93333-7007",
+    email: "isabela.rodrigues@email.com",
+    data_nascimento: "1988-12-18",
+    sexo: "feminino",
+    endereco: "Al. Santos, 1200 — São Paulo, SP",
+    convenio: "OdontoPrev",
+    observacoes: "Gestante — 28 semanas. Apenas procedimentos de urgência até pós-parto.",
+    created_at: "2024-07-15T10:30:00Z",
+    updated_at: hoje,
+  },
+  {
+    id: "demo-8",
+    nome: "Lucas Gabriel Almeida",
+    cpf: "333.444.555-08",
+    telefone: "(11) 92222-8008",
+    email: "lucas.almeida@email.com",
+    data_nascimento: "2015-06-10",
+    sexo: "masculino",
+    endereco: "Rua Haddock Lobo, 100 — São Paulo, SP",
+    convenio: "Porto Seguro Odonto",
+    observacoes: "Paciente pediátrico. Selante aplicado em molares. Pais orientados sobre higiene bucal.",
+    created_at: "2024-08-20T14:00:00Z",
+    updated_at: hoje,
+  },
+  {
+    id: "demo-9",
+    nome: "Patrícia Nunes Barbosa",
+    cpf: "444.555.666-09",
+    telefone: "(11) 91111-9009",
+    email: "patricia.nunes@email.com",
+    data_nascimento: "1975-02-28",
+    sexo: "feminino",
+    endereco: "Rua da Consolação, 1500 — São Paulo, SP",
+    convenio: "MetLife Dental",
+    observacoes: "Prótese parcial removível superior. Ajuste realizado. Proservação em 3 meses.",
+    created_at: "2024-09-10T09:45:00Z",
+    updated_at: hoje,
+  },
+  {
+    id: "demo-10",
+    nome: "Thiago Henrique Dias",
+    cpf: "555.666.777-10",
+    telefone: "(11) 90000-1010",
+    email: "thiago.dias@email.com",
+    data_nascimento: "1998-08-05",
+    sexo: "masculino",
+    endereco: "Av. Rebouças, 600 — São Paulo, SP",
+    convenio: null,
+    observacoes: "Extração de sisos (4 dentes) agendada. Exames pré-operatórios em dia.",
+    created_at: ontem,
+    updated_at: hoje,
+  },
+  {
+    id: "demo-11",
+    nome: "Juliana Martins Pereira",
+    cpf: "666.777.888-11",
+    telefone: "(11) 98765-1111",
+    email: "juliana.pereira@email.com",
+    data_nascimento: "1982-05-20",
+    sexo: "feminino",
+    endereco: "Rua Pamplona, 250 — São Paulo, SP",
+    convenio: "Bradesco Dental",
+    observacoes: "Facetas em resina nos dentes anteriores superiores. Satisfeita com resultado.",
+    created_at: hoje,
+    updated_at: hoje,
+  },
+  {
+    id: "demo-12",
+    nome: "Roberto Campos Silva",
+    cpf: "777.888.999-12",
+    telefone: "(11) 97654-1212",
+    email: "roberto.campos@email.com",
+    data_nascimento: "1970-10-12",
+    sexo: "masculino",
+    endereco: "Av. Faria Lima, 3000 — São Paulo, SP",
+    convenio: "Unimed Odonto",
+    observacoes: "Hipertensão controlada. Periodontite em tratamento — raspagem subgengival concluída.",
+    created_at: hoje,
+    updated_at: hoje,
+  },
+];
