@@ -17,6 +17,7 @@ import {
   finBanksApi, finEmployeesApi, finPayrollsApi, finBillsApi, finMovementsApi, finOverdueApi,
 } from "@/lib/vpsApi";
 import type { FinanceMovement, BankAccount, Employee, Payroll, Bill } from "@/data/financeiroMockData";
+import { demoBanks, demoEmployees, demoPayrolls, demoBills, demoMovements, demoOverdue } from "@/data/demoFinanceiro";
 
 export const Route = createFileRoute("/financeiro")({
   ssr: false,
