@@ -3,9 +3,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2 } from "lucide-react";
-import { useState } from "react";
+import { Loader2, Megaphone } from "lucide-react";
+import { useEffect, useState } from "react";
 import { crmApi } from "@/lib/vpsApi";
+import { CANAIS, getCampanhas, getPendingUtm, linkLeadToCampaign } from "@/data/campanhasStore";
+import { toast } from "sonner";
 
 interface Props {
   open: boolean;
@@ -13,13 +15,30 @@ interface Props {
   onCreated: () => void;
 }
 
-const origens = ["WhatsApp", "Google Ads", "Meta Ads", "Instagram", "Indicação", "Site", "Telefone", "Outro"];
+const origens = ["WhatsApp", "Google Ads", "Meta Ads", "Instagram", "TikTok", "YouTube", "Indicação", "Site", "Telefone", "Outro"];
 const responsaveis = ["Ana", "Beatriz", "Carla", "Dr. Marcos", "Dr. Paula"];
 
 export function CreateLeadDialog({ open, onOpenChange, onCreated }: Props) {
   const [form, setForm] = useState({ nome: "", telefone: "", email: "", origem: "WhatsApp", value: "", responsavel: "" });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pendingCampaign, setPendingCampaign] = useState<{ nome: string; canal: string } | null>(null);
+
+  // Detecta UTM pendente quando o dialog abre
+  useEffect(() => {
+    if (!open) return;
+    const pending = getPendingUtm();
+    if (!pending) {
+      setPendingCampaign(null);
+      return;
+    }
+    const camp = getCampanhas().find((c) => c.id === pending.campaignId);
+    const canal = CANAIS.find((c) => c.id === pending.canal);
+    if (camp && canal) {
+      setPendingCampaign({ nome: camp.nome, canal: canal.label });
+      setForm((f) => ({ ...f, origem: canal.label.split(" (")[0] }));
+    }
+  }, [open]);
 
   const handleSubmit = async () => {
     if (!form.nome.trim()) return setError("Nome é obrigatório");
@@ -35,9 +54,15 @@ export function CreateLeadDialog({ open, onOpenChange, onCreated }: Props) {
     setLoading(false);
     if (apiError) return setError(apiError);
     if (data) {
+      // Vincula lead à campanha de origem (se houver UTM pendente)
+      const linked = linkLeadToCampaign(data.id ?? form.nome, form.nome.trim());
+      if (linked) {
+        toast.success(`Lead vinculado à campanha "${linked.campaign.nome}" (${CANAIS.find((c) => c.id === linked.canal)?.label})`);
+      }
       onCreated();
       onOpenChange(false);
       setForm({ nome: "", telefone: "", email: "", origem: "WhatsApp", value: "", responsavel: "" });
+      setPendingCampaign(null);
     }
   };
 
