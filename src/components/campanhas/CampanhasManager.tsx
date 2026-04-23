@@ -101,8 +101,6 @@ export function CampanhasManager() {
                   )}
                 </div>
 
-                </div>
-
                 <div className="mb-2 -mx-1">
                   <div className="flex items-center justify-between px-1 mb-1">
                     <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Últimos 7 dias</span>
