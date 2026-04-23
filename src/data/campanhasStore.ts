@@ -60,7 +60,14 @@ export interface Campaign {
   budget?: number;
   criadaEm: number;
   hits: CampaignLeadHit[];
+  /** Nome da instância WhatsApp escolhida para resolver {{number}}.
+   *  Se ausente ou "auto", usa a primeira instância conectada. */
+  instanceName?: string;
+  /** Última instância usada após fallback automático (para auditoria). */
+  lastResolvedInstance?: string;
 }
+
+export const AUTO_INSTANCE = "__auto__";
 
 const STORAGE_KEY = "odonto-campanhas";
 const PENDING_UTM_KEY = "odonto-pending-utm";
