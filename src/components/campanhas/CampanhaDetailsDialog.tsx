@@ -333,6 +333,35 @@ export function CampanhaDetailsDialog({ open, onOpenChange, campaign }: Props) {
           </TabsContent>
         </Tabs>
       </DialogContent>
+
+      {/* Confirmação de fallback automático */}
+      <AlertDialog open={!!fallbackPrompt} onOpenChange={(o) => { if (!o) dismissFallback(); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <WifiOff className="h-5 w-5 text-destructive" />
+              Instância WhatsApp desconectada
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm">
+                <p>
+                  A instância <strong className="text-foreground">{fallbackPrompt?.from}</strong>, salva nesta campanha
+                  para resolver <code className="px-1 rounded bg-muted">{`{{number}}`}</code>, está offline.
+                </p>
+                <p>
+                  Deseja trocar automaticamente para{" "}
+                  <strong className="text-foreground">{fallbackPrompt?.to}</strong> (próxima conectada)?
+                  Os links da campanha serão atualizados imediatamente.
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={dismissFallback}>Manter atual</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmFallback}>Usar {fallbackPrompt?.to}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   );
 }
