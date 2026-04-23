@@ -4,6 +4,7 @@ import { AppSidebar } from "@/components/AppSidebar";
 import { WhatsAppConnectionBanner } from "@/components/WhatsAppConnectionBanner";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import { canAccessRoute } from "@/lib/routeAccess";
+import { captureUtmFromUrl } from "@/data/campanhasStore";
 import { Loader2, ShieldAlert } from "lucide-react";
 
 import appCss from "../styles.css?url";
@@ -99,6 +100,9 @@ function RootComponent() {
 function AuthGate() {
   const { isAuthenticated, isLoading, user } = useAuth();
   const location = useLocation();
+
+  // Captura UTMs ao carregar a aplicação
+  useEffect(() => { captureUtmFromUrl(); }, []);
 
   if (isLoading) {
     return (
