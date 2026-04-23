@@ -15,8 +15,10 @@ export interface ConnectedInstance extends EvolutionInstance {
 let cachedInstances: ConnectedInstance[] = [];
 let lastFetchTime = 0;
 const CACHE_TTL = 30_000; // 30 seconds
-const POLL_INTERVAL = 15_000; // 15 seconds for real-time monitoring
+const POLL_INTERVAL_IDLE = 15_000; // background polling
+const POLL_INTERVAL_ACTIVE = 5_000; // when a dialog/section is actively observing
 const listeners = new Set<() => void>();
+const activeObservers = new Set<symbol>(); // consumers that need fast polling
 
 // Track previous states for change detection
 let previousStateMap = new Map<string, "open" | "close" | "connecting">();
