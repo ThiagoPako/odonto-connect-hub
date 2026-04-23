@@ -101,12 +101,41 @@ export function CreateCampanhaDialog({ open, onOpenChange, onCreated, initial }:
 
           <div className="space-y-2">
             <Label htmlFor="destino">URL de destino</Label>
-            <Input id="destino" value={destino} onChange={(e) => setDestino(e.target.value)} placeholder="https://wa.me/{{number}} ou https://seusite.com/landing" />
+            <Input
+              id="destino"
+              value={destino}
+              onChange={(e) => setDestino(e.target.value)}
+              placeholder="https://wa.me/{{number}} ou https://seusite.com/landing"
+              aria-invalid={blockedByNumberVar}
+              className={blockedByNumberVar ? "border-destructive focus-visible:ring-destructive" : ""}
+            />
             <p className="text-xs text-muted-foreground">
               Para onde o lead vai ao clicar no anúncio. Use{" "}
               <code className="px-1 rounded bg-muted text-foreground">{`{{number}}`}</code>{" "}
               para inserir automaticamente o número da instância WhatsApp principal conectada.
             </p>
+            {blockedByNumberVar && (
+              <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-2.5 text-xs text-destructive">
+                <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="font-medium">Nenhuma instância WhatsApp conectada.</p>
+                  <p className="text-destructive/80">
+                    O destino usa <code className="px-1 rounded bg-background">{`{{number}}`}</code>, mas não há número principal disponível.
+                    Conecte uma instância em{" "}
+                    <Link to="/canais" className="underline font-medium" onClick={() => onOpenChange(false)}>
+                      Canais
+                    </Link>{" "}
+                    ou remova a variável do destino para continuar.
+                  </p>
+                </div>
+              </div>
+            )}
+            {usesNumberVar && !blockedByNumberVar && (
+              <p className="text-xs text-success flex items-center gap-1.5">
+                <span>●</span>
+                <span>{`{{number}}`} → {principalNumber}</span>
+              </p>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-4">
