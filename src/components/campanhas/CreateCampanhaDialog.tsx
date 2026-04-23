@@ -6,11 +6,14 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
-import { AlertCircle } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { AlertCircle, Smartphone } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import { CANAIS, upsertCampanha, type Campaign, type CanalCampanha } from "@/data/campanhasStore";
 import { useWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
 import { toast } from "sonner";
+
+const AUTO_INSTANCE = "__auto__";
 
 interface Props {
   open: boolean;
