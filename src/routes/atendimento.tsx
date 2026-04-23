@@ -18,6 +18,7 @@ import {
 } from "@/data/registroCentral";
 import { type Appointment } from "@/data/agendaMockData";
 import { aiApi, consultationsApi, agendaApi, type AgendamentoVPS, type ConsultationRecord } from "@/lib/vpsApi";
+import { getDemoConsultas } from "@/data/demoConsultas";
 import { toast } from "sonner";
 
 type SearchParams = { appointmentId?: string };
@@ -105,9 +106,18 @@ function ConsultaPage() {
     let cancelled = false;
     setLoadingHistorico(true);
     consultationsApi.getHistory(pacienteSelecionado.id).then(({ data }) => {
-      if (!cancelled && data) setHistoricoConsultas(data);
+      if (cancelled) return;
+      if (data && data.length > 0) {
+        setHistoricoConsultas(data);
+      } else {
+        setHistoricoConsultas(getDemoConsultas(pacienteSelecionado.id));
+      }
       setLoadingHistorico(false);
-    }).catch(() => { if (!cancelled) setLoadingHistorico(false); });
+    }).catch(() => {
+      if (cancelled) return;
+      setHistoricoConsultas(getDemoConsultas(pacienteSelecionado.id));
+      setLoadingHistorico(false);
+    });
     return () => { cancelled = true; };
   }, [pacienteSelecionado?.id]);
 
