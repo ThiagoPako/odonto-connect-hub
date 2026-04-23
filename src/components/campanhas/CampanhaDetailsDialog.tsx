@@ -7,6 +7,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Copy, ExternalLink, TrendingUp, Users, Target, DollarSign, Check } from "lucide-react";
 import { CANAIS, buildTrackingLink, computeMetrics, type Campaign, type CanalCampanha } from "@/data/campanhasStore";
 import { CampanhaTimelineChart } from "./CampanhaTimelineChart";
+import { CampanhaLeadsTable } from "./CampanhaLeadsTable";
 import { toast } from "sonner";
 
 interface Props {
@@ -170,31 +171,7 @@ export function CampanhaDetailsDialog({ open, onOpenChange, campaign }: Props) {
           {/* LEADS */}
           <TabsContent value="leads" className="flex-1 overflow-hidden mt-4">
             <ScrollArea className="h-[50vh] pr-3">
-              <div className="space-y-2">
-                {campaign.hits.length === 0 && (
-                  <div className="text-center py-8 text-sm text-muted-foreground">Nenhum clique registrado ainda.</div>
-                )}
-                {[...campaign.hits].reverse().map((hit, i) => {
-                  const canal = CANAIS.find((c) => c.id === hit.canal);
-                  return (
-                    <div key={i} className="flex items-center gap-3 rounded-lg border border-border p-3">
-                      <span className="text-xl">{canal?.icon}</span>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">{hit.leadName ?? "Visitante anônimo"}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {canal?.label} · {new Date(hit.timestamp).toLocaleString("pt-BR")}
-                        </p>
-                      </div>
-                      {hit.convertido && (
-                        <Badge variant="default" className="bg-success">
-                          Convertido {hit.valor ? `· R$ ${hit.valor.toLocaleString("pt-BR")}` : ""}
-                        </Badge>
-                      )}
-                      {hit.leadId && !hit.convertido && <Badge variant="secondary">Lead</Badge>}
-                    </div>
-                  );
-                })}
-              </div>
+              <CampanhaLeadsTable campaign={campaign} onNavigate={() => onOpenChange(false)} />
             </ScrollArea>
           </TabsContent>
         </Tabs>
