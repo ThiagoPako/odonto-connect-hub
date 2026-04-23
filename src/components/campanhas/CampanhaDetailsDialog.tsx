@@ -113,6 +113,10 @@ export function CampanhaDetailsDialog({ open, onOpenChange, campaign }: Props) {
                 <MetricCard icon={DollarSign} label="Receita" value={`R$ ${metrics.receita.toLocaleString("pt-BR")}`} />
               </div>
 
+              <div className="mb-4">
+                <CampanhaTimelineChart campaign={campaign} />
+              </div>
+
               <div className="rounded-lg border border-border p-4">
                 <h4 className="font-medium text-sm mb-3">Performance por canal</h4>
                 <div className="space-y-2">
