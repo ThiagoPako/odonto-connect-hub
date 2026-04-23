@@ -105,9 +105,18 @@ function ConsultaPage() {
     let cancelled = false;
     setLoadingHistorico(true);
     consultationsApi.getHistory(pacienteSelecionado.id).then(({ data }) => {
-      if (!cancelled && data) setHistoricoConsultas(data);
+      if (cancelled) return;
+      if (data && data.length > 0) {
+        setHistoricoConsultas(data);
+      } else {
+        setHistoricoConsultas(getDemoConsultas(pacienteSelecionado.id));
+      }
       setLoadingHistorico(false);
-    }).catch(() => { if (!cancelled) setLoadingHistorico(false); });
+    }).catch(() => {
+      if (cancelled) return;
+      setHistoricoConsultas(getDemoConsultas(pacienteSelecionado.id));
+      setLoadingHistorico(false);
+    });
     return () => { cancelled = true; };
   }, [pacienteSelecionado?.id]);
 
