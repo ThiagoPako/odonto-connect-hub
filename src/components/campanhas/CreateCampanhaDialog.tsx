@@ -29,16 +29,25 @@ export function CreateCampanhaDialog({ open, onOpenChange, onCreated, initial }:
   const [budget, setBudget] = useState<string>(initial?.budget?.toString() ?? "");
   const [canais, setCanais] = useState<CanalCampanha[]>(initial?.canais ?? ["meta_ads", "google_ads", "tiktok"]);
   const [ativa, setAtiva] = useState(initial?.ativa ?? true);
+  const [instanceName, setInstanceName] = useState<string>(initial?.instanceName ?? AUTO_INSTANCE);
 
-  const { connected } = useWhatsAppInstances();
-  const principalNumber = useMemo(() => {
-    const owner = connected[0]?.owner;
+  const { instances, connected } = useWhatsAppInstances();
+
+  // Resolve instância selecionada (ou "auto" → primeira conectada)
+  const selectedInstance = useMemo(() => {
+    if (instanceName === AUTO_INSTANCE) return connected[0];
+    return instances.find((i) => i.instanceName === instanceName);
+  }, [instanceName, instances, connected]);
+
+  const resolvedNumber = useMemo(() => {
+    const owner = selectedInstance?.owner;
     if (!owner) return "";
     return owner.split("@")[0].replace(/\D/g, "");
-  }, [connected]);
+  }, [selectedInstance]);
 
+  const isSelectedConnected = selectedInstance?.connectionState === "open";
   const usesNumberVar = /\{\{\s*number\s*\}\}/i.test(destino);
-  const blockedByNumberVar = usesNumberVar && !principalNumber;
+  const blockedByNumberVar = usesNumberVar && (!resolvedNumber || !isSelectedConnected);
 
   function toggleCanal(id: CanalCampanha) {
     setCanais((prev) => (prev.includes(id) ? prev.filter((c) => c !== id) : [...prev, id]));
@@ -58,8 +67,8 @@ export function CreateCampanhaDialog({ open, onOpenChange, onCreated, initial }:
       return;
     }
     if (blockedByNumberVar) {
-      toast.error("Conecte uma instância WhatsApp principal antes de salvar", {
-        description: "O destino usa {{number}}, mas nenhuma instância está conectada.",
+      toast.error("Conecte ou selecione uma instância WhatsApp válida", {
+        description: "O destino usa {{number}}, mas a instância escolhida não está conectada.",
       });
       return;
     }
@@ -71,6 +80,7 @@ export function CreateCampanhaDialog({ open, onOpenChange, onCreated, initial }:
       canais,
       ativa,
       budget: budget ? Number(budget) : undefined,
+      instanceName: instanceName === AUTO_INSTANCE ? undefined : instanceName,
       criadaEm: initial?.criadaEm ?? Date.now(),
       hits: initial?.hits ?? [],
     };
