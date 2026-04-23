@@ -7,6 +7,7 @@ import { CANAIS, computeMetrics, deleteCampanha, getCampanhas, type Campaign } f
 import { CreateCampanhaDialog } from "./CreateCampanhaDialog";
 import { CampanhaDetailsDialog } from "./CampanhaDetailsDialog";
 import { CampanhaSparkline } from "./CampanhaSparkline";
+import { ChannelLogo } from "./ChannelLogo";
 import { toast } from "sonner";
 import {
   AlertDialog,
