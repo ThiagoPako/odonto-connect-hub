@@ -108,6 +108,16 @@ export interface UtmExtras {
   term?: string;
   /** utm_id — ID externo do anúncio/ad set (ex: "adset_123") */
   id?: string;
+  /** Número principal da instância WhatsApp conectada — substitui {{number}} no destino */
+  number?: string;
+}
+
+/** Substitui placeholders dinâmicos ({{number}}) no destino antes de aplicar UTMs. */
+function resolveDestino(destino: string, number?: string): string {
+  if (!destino) return destino;
+  // Remove tudo que não é dígito do número principal
+  const clean = (number ?? "").replace(/\D/g, "");
+  return destino.replace(/\{\{\s*number\s*\}\}/gi, clean);
 }
 
 export function buildTrackingLink(
@@ -119,8 +129,9 @@ export function buildTrackingLink(
   if (!canal) return campaign.destino;
   const term = extras.term?.trim();
   const utmId = extras.id?.trim();
+  const destino = resolveDestino(campaign.destino, extras.number);
   try {
-    const url = new URL(campaign.destino, typeof window !== "undefined" ? window.location.origin : "https://app.local");
+    const url = new URL(destino, typeof window !== "undefined" ? window.location.origin : "https://app.local");
     url.searchParams.set("utm_source", canal.utmSource);
     url.searchParams.set("utm_medium", canal.utmMedium);
     url.searchParams.set("utm_campaign", slugify(campaign.nome));
@@ -140,7 +151,7 @@ export function buildTrackingLink(
       `cid=${campaign.id}`,
     ];
     const qs = parts.join("&");
-    return campaign.destino.includes("?") ? `${campaign.destino}&${qs}` : `${campaign.destino}?${qs}`;
+    return destino.includes("?") ? `${destino}&${qs}` : `${destino}?${qs}`;
   }
 }
 
