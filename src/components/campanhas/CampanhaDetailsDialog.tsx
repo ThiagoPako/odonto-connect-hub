@@ -8,6 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Copy, ExternalLink, TrendingUp, Users, Target, DollarSign, Check, Settings2 } from "lucide-react";
 import { CANAIS, buildTrackingLink, computeMetrics, type Campaign, type CanalCampanha, type UtmExtras } from "@/data/campanhasStore";
+import { useWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
 import { CampanhaTimelineChart } from "./CampanhaTimelineChart";
 import { CampanhaLeadsTable } from "./CampanhaLeadsTable";
 import { toast } from "sonner";
