@@ -10,6 +10,7 @@ import { Plus, RefreshCw, Loader2, WifiOff, Smartphone, Wifi, Star } from "lucid
 import { useState, useEffect, useCallback } from "react";
 import { fetchInstances, type EvolutionInstance } from "@/lib/evolutionApi";
 import { vpsApiFetch } from "@/lib/vpsApi";
+import { pingWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/canais")({
