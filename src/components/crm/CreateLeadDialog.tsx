@@ -55,9 +55,11 @@ export function CreateLeadDialog({ open, onOpenChange, onCreated }: Props) {
     if (apiError) return setError(apiError);
     if (data) {
       // Vincula lead à campanha de origem (se houver UTM pendente)
-      const linked = linkLeadToCampaign(data.id ?? form.nome, form.nome.trim());
+      const linked = await linkLeadToCampaign(data.id ?? form.nome, form.nome.trim());
       if (linked) {
-        toast.success(`Lead vinculado à campanha "${linked.campaign.nome}" (${CANAIS.find((c) => c.id === linked.canal)?.label})`);
+        toast.success(`Lead vinculado à campanha "${linked.campaign.nome}" (${CANAIS.find((c) => c.id === linked.canal)?.label})`, {
+          description: "Tags de origem aplicadas automaticamente no CRM.",
+        });
       }
       onCreated();
       onOpenChange(false);
