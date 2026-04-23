@@ -19,7 +19,7 @@ interface Props {
 export function CreateCampanhaDialog({ open, onOpenChange, onCreated, initial }: Props) {
   const [nome, setNome] = useState(initial?.nome ?? "");
   const [descricao, setDescricao] = useState(initial?.descricao ?? "");
-  const [destino, setDestino] = useState(initial?.destino ?? "https://wa.me/5511999990000?text=Olá");
+  const [destino, setDestino] = useState(initial?.destino ?? "https://wa.me/{{number}}?text=Olá");
   const [budget, setBudget] = useState<string>(initial?.budget?.toString() ?? "");
   const [canais, setCanais] = useState<CanalCampanha[]>(initial?.canais ?? ["meta_ads", "google_ads", "tiktok"]);
   const [ativa, setAtiva] = useState(initial?.ativa ?? true);
