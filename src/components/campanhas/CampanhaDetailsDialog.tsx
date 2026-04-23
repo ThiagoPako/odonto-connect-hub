@@ -87,6 +87,24 @@ export function CampanhaDetailsDialog({ open, onOpenChange, campaign }: Props) {
                     Cada canal tem um link único com parâmetros UTM. Use o link correspondente no anúncio de cada plataforma.
                     Quando alguém clicar e virar lead, o sistema marca automaticamente a origem no CRM.
                   </p>
+                  {campaign.destino.includes("{{number}}") && (
+                    <p className="text-xs mt-2 flex items-center gap-1.5">
+                      <span className={principalNumber ? "text-success" : "text-destructive"}>●</span>
+                      {principalNumber ? (
+                        <>
+                          <span className="text-muted-foreground">Variável </span>
+                          <code className="px-1 rounded bg-background">{`{{number}}`}</code>
+                          <span className="text-muted-foreground">→</span>
+                          <code className="px-1 rounded bg-background">{principalNumber}</code>
+                          {principalName && <span className="text-muted-foreground">({principalName})</span>}
+                        </>
+                      ) : (
+                        <span className="text-destructive">
+                          Nenhuma instância WhatsApp conectada — {`{{number}}`} ficará vazio.
+                        </span>
+                      )}
+                    </p>
+                  )}
                 </div>
 
                 {campaign.canais.map((canalId) => {
