@@ -23,15 +23,22 @@ export function CampanhaDetailsDialog({ open, onOpenChange, campaign }: Props) {
   const [copiedCanal, setCopiedCanal] = useState<CanalCampanha | null>(null);
   const [extrasByCanal, setExtrasByCanal] = useState<Record<string, UtmExtras>>({});
   const [openExtras, setOpenExtras] = useState<Record<string, boolean>>({});
-  const { connected } = useWhatsAppInstances();
+  const { instances, connected } = useWhatsAppInstances();
 
-  // Número da instância principal (primeira conectada). Extrai apenas dígitos do JID.
+  // Instância vinculada à campanha (se houver) — senão, primeira conectada.
+  const linkedInstance = useMemo(() => {
+    if (campaign?.instanceName) {
+      return instances.find((i) => i.instanceName === campaign.instanceName);
+    }
+    return connected[0];
+  }, [campaign, instances, connected]);
+
   const principalNumber = useMemo(() => {
-    const owner = connected[0]?.owner;
+    const owner = linkedInstance?.owner;
     if (!owner) return "";
     return owner.split("@")[0].replace(/\D/g, "");
-  }, [connected]);
-  const principalName = connected[0]?.instanceName ?? null;
+  }, [linkedInstance]);
+  const principalName = linkedInstance?.instanceName ?? null;
 
   const metrics = useMemo(() => (campaign ? computeMetrics(campaign) : null), [campaign]);
 

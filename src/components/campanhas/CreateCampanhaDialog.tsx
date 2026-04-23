@@ -6,11 +6,14 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
-import { AlertCircle } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { AlertCircle, Smartphone } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import { CANAIS, upsertCampanha, type Campaign, type CanalCampanha } from "@/data/campanhasStore";
 import { useWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
 import { toast } from "sonner";
+
+const AUTO_INSTANCE = "__auto__";
 
 interface Props {
   open: boolean;
@@ -26,16 +29,25 @@ export function CreateCampanhaDialog({ open, onOpenChange, onCreated, initial }:
   const [budget, setBudget] = useState<string>(initial?.budget?.toString() ?? "");
   const [canais, setCanais] = useState<CanalCampanha[]>(initial?.canais ?? ["meta_ads", "google_ads", "tiktok"]);
   const [ativa, setAtiva] = useState(initial?.ativa ?? true);
+  const [instanceName, setInstanceName] = useState<string>(initial?.instanceName ?? AUTO_INSTANCE);
 
-  const { connected } = useWhatsAppInstances();
-  const principalNumber = useMemo(() => {
-    const owner = connected[0]?.owner;
+  const { instances, connected } = useWhatsAppInstances();
+
+  // Resolve instância selecionada (ou "auto" → primeira conectada)
+  const selectedInstance = useMemo(() => {
+    if (instanceName === AUTO_INSTANCE) return connected[0];
+    return instances.find((i) => i.instanceName === instanceName);
+  }, [instanceName, instances, connected]);
+
+  const resolvedNumber = useMemo(() => {
+    const owner = selectedInstance?.owner;
     if (!owner) return "";
     return owner.split("@")[0].replace(/\D/g, "");
-  }, [connected]);
+  }, [selectedInstance]);
 
+  const isSelectedConnected = selectedInstance?.connectionState === "open";
   const usesNumberVar = /\{\{\s*number\s*\}\}/i.test(destino);
-  const blockedByNumberVar = usesNumberVar && !principalNumber;
+  const blockedByNumberVar = usesNumberVar && (!resolvedNumber || !isSelectedConnected);
 
   function toggleCanal(id: CanalCampanha) {
     setCanais((prev) => (prev.includes(id) ? prev.filter((c) => c !== id) : [...prev, id]));
@@ -55,8 +67,8 @@ export function CreateCampanhaDialog({ open, onOpenChange, onCreated, initial }:
       return;
     }
     if (blockedByNumberVar) {
-      toast.error("Conecte uma instância WhatsApp principal antes de salvar", {
-        description: "O destino usa {{number}}, mas nenhuma instância está conectada.",
+      toast.error("Conecte ou selecione uma instância WhatsApp válida", {
+        description: "O destino usa {{number}}, mas a instância escolhida não está conectada.",
       });
       return;
     }
@@ -68,6 +80,7 @@ export function CreateCampanhaDialog({ open, onOpenChange, onCreated, initial }:
       canais,
       ativa,
       budget: budget ? Number(budget) : undefined,
+      instanceName: instanceName === AUTO_INSTANCE ? undefined : instanceName,
       criadaEm: initial?.criadaEm ?? Date.now(),
       hits: initial?.hits ?? [],
     };
@@ -112,31 +125,80 @@ export function CreateCampanhaDialog({ open, onOpenChange, onCreated, initial }:
             <p className="text-xs text-muted-foreground">
               Para onde o lead vai ao clicar no anúncio. Use{" "}
               <code className="px-1 rounded bg-muted text-foreground">{`{{number}}`}</code>{" "}
-              para inserir automaticamente o número da instância WhatsApp principal conectada.
+              para inserir automaticamente o número da instância WhatsApp escolhida abaixo.
             </p>
-            {blockedByNumberVar && (
-              <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-2.5 text-xs text-destructive">
-                <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
-                <div className="space-y-1">
-                  <p className="font-medium">Nenhuma instância WhatsApp conectada.</p>
-                  <p className="text-destructive/80">
-                    O destino usa <code className="px-1 rounded bg-background">{`{{number}}`}</code>, mas não há número principal disponível.
-                    Conecte uma instância em{" "}
-                    <Link to="/canais" className="underline font-medium" onClick={() => onOpenChange(false)}>
-                      Canais
-                    </Link>{" "}
-                    ou remova a variável do destino para continuar.
-                  </p>
-                </div>
-              </div>
-            )}
-            {usesNumberVar && !blockedByNumberVar && (
-              <p className="text-xs text-success flex items-center gap-1.5">
-                <span>●</span>
-                <span>{`{{number}}`} → {principalNumber}</span>
-              </p>
-            )}
           </div>
+
+          {usesNumberVar && (
+            <div className="space-y-2">
+              <Label htmlFor="instance" className="flex items-center gap-1.5">
+                <Smartphone className="h-3.5 w-3.5" />
+                Instância WhatsApp para <code className="px-1 rounded bg-muted text-foreground text-xs">{`{{number}}`}</code>
+              </Label>
+              <Select value={instanceName} onValueChange={setInstanceName}>
+                <SelectTrigger id="instance" className={blockedByNumberVar ? "border-destructive" : ""}>
+                  <SelectValue placeholder="Selecione uma instância" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={AUTO_INSTANCE}>
+                    <span className="flex items-center gap-2">
+                      <span className="text-muted-foreground">Automática</span>
+                      <span className="text-xs text-muted-foreground">
+                        (primeira conectada{connected[0] ? ` — ${connected[0].instanceName}` : ""})
+                      </span>
+                    </span>
+                  </SelectItem>
+                  {instances.length === 0 && (
+                    <div className="px-2 py-1.5 text-xs text-muted-foreground">Nenhuma instância cadastrada</div>
+                  )}
+                  {instances.map((inst) => {
+                    const num = inst.owner ? inst.owner.split("@")[0].replace(/\D/g, "") : "";
+                    const isOnline = inst.connectionState === "open";
+                    return (
+                      <SelectItem key={inst.instanceName} value={inst.instanceName}>
+                        <span className="flex items-center gap-2">
+                          <span className={`h-1.5 w-1.5 rounded-full ${isOnline ? "bg-success" : "bg-muted-foreground"}`} />
+                          <span className="font-medium">{inst.instanceName}</span>
+                          {num && <span className="text-xs text-muted-foreground">+{num}</span>}
+                          {!isOnline && <span className="text-xs text-destructive">(offline)</span>}
+                        </span>
+                      </SelectItem>
+                    );
+                  })}
+                </SelectContent>
+              </Select>
+
+              {blockedByNumberVar ? (
+                <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-2.5 text-xs text-destructive">
+                  <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <p className="font-medium">
+                      {!selectedInstance
+                        ? "Nenhuma instância WhatsApp disponível."
+                        : !isSelectedConnected
+                        ? `A instância "${selectedInstance.instanceName}" está desconectada.`
+                        : "Instância sem número associado."}
+                    </p>
+                    <p className="text-destructive/80">
+                      Conecte ou escolha outra instância em{" "}
+                      <Link to="/canais" className="underline font-medium" onClick={() => onOpenChange(false)}>
+                        Canais
+                      </Link>{" "}
+                      ou remova <code className="px-1 rounded bg-background">{`{{number}}`}</code> do destino.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-xs text-success flex items-center gap-1.5">
+                  <span>●</span>
+                  <span>
+                    <code className="px-1 rounded bg-muted text-foreground">{`{{number}}`}</code> → +{resolvedNumber}{" "}
+                    <span className="text-muted-foreground">({selectedInstance?.instanceName})</span>
+                  </span>
+                </p>
+              )}
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
