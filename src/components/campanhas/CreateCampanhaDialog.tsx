@@ -27,6 +27,16 @@ export function CreateCampanhaDialog({ open, onOpenChange, onCreated, initial }:
   const [canais, setCanais] = useState<CanalCampanha[]>(initial?.canais ?? ["meta_ads", "google_ads", "tiktok"]);
   const [ativa, setAtiva] = useState(initial?.ativa ?? true);
 
+  const { connected } = useWhatsAppInstances();
+  const principalNumber = useMemo(() => {
+    const owner = connected[0]?.owner;
+    if (!owner) return "";
+    return owner.split("@")[0].replace(/\D/g, "");
+  }, [connected]);
+
+  const usesNumberVar = /\{\{\s*number\s*\}\}/i.test(destino);
+  const blockedByNumberVar = usesNumberVar && !principalNumber;
+
   function toggleCanal(id: CanalCampanha) {
     setCanais((prev) => (prev.includes(id) ? prev.filter((c) => c !== id) : [...prev, id]));
   }
@@ -42,6 +52,12 @@ export function CreateCampanhaDialog({ open, onOpenChange, onCreated, initial }:
     }
     if (canais.length === 0) {
       toast.error("Selecione pelo menos um canal");
+      return;
+    }
+    if (blockedByNumberVar) {
+      toast.error("Conecte uma instância WhatsApp principal antes de salvar", {
+        description: "O destino usa {{number}}, mas nenhuma instância está conectada.",
+      });
       return;
     }
     const camp: Campaign = {
