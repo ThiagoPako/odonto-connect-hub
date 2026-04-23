@@ -10,6 +10,37 @@ interface Props {
   className?: string;
 }
 
+/* ─────────────── Standardized Badge wrapper ─────────────── */
+
+export type ChannelBadgeSize = "sm" | "md" | "lg";
+
+interface BadgeProps {
+  canal: CanalCampanha;
+  size?: ChannelBadgeSize;
+  title?: string;
+  className?: string;
+}
+
+/** Standardized container for channel logos: ring, shadow, padding, rounded.
+ *  Sizes — sm: 28px box / 16px logo · md: 36px box / 20px logo · lg: 44px box / 24px logo. */
+export function ChannelBadge({ canal, size = "md", title, className = "" }: BadgeProps) {
+  const dims =
+    size === "sm"
+      ? { box: "h-7 w-7", logo: 16 }
+      : size === "lg"
+        ? { box: "h-11 w-11", logo: 24 }
+        : { box: "h-9 w-9", logo: 20 };
+
+  return (
+    <span
+      title={title}
+      className={`inline-flex shrink-0 items-center justify-center rounded-lg bg-background ring-1 ring-border shadow-sm ${dims.box} ${className}`}
+    >
+      <ChannelLogo canal={canal} size={dims.logo} />
+    </span>
+  );
+}
+
 export function ChannelLogo({ canal, size = 20, className = "" }: Props) {
   const s = { width: size, height: size };
   switch (canal) {
