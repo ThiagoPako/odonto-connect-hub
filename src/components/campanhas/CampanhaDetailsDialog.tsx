@@ -47,7 +47,7 @@ export function CampanhaDetailsDialog({ open, onOpenChange, campaign }: Props) {
   const [copiedCanal, setCopiedCanal] = useState<CanalCampanha | null>(null);
   const [extrasByCanal, setExtrasByCanal] = useState<Record<string, UtmExtras>>({});
   const [openExtras, setOpenExtras] = useState<Record<string, boolean>>({});
-  const { instances, connected } = useWhatsAppInstances();
+  const { instances, connected } = useWhatsAppInstances({ active: open });
 
   // Override local da instância (após fallback aceito); persistido também na campanha
   const [activeInstanceName, setActiveInstanceName] = useState<string | undefined>(campaign?.instanceName);

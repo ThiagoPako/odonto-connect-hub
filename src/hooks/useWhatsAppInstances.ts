@@ -15,8 +15,10 @@ export interface ConnectedInstance extends EvolutionInstance {
 let cachedInstances: ConnectedInstance[] = [];
 let lastFetchTime = 0;
 const CACHE_TTL = 30_000; // 30 seconds
-const POLL_INTERVAL = 15_000; // 15 seconds for real-time monitoring
+const POLL_INTERVAL_IDLE = 15_000; // background polling
+const POLL_INTERVAL_ACTIVE = 5_000; // when a dialog/section is actively observing
 const listeners = new Set<() => void>();
+const activeObservers = new Set<symbol>(); // consumers that need fast polling
 
 // Track previous states for change detection
 let previousStateMap = new Map<string, "open" | "close" | "connecting">();
@@ -85,22 +87,38 @@ async function refreshInstances(): Promise<ConnectedInstance[]> {
 
 // Global polling — starts when first listener mounts, stops when all unmount
 let pollTimer: ReturnType<typeof setInterval> | null = null;
+let currentPollInterval: number | null = null;
+
+function desiredInterval(): number {
+  return activeObservers.size > 0 ? POLL_INTERVAL_ACTIVE : POLL_INTERVAL_IDLE;
+}
 
 function startPolling() {
-  if (pollTimer) return;
+  const target = desiredInterval();
+  if (pollTimer && currentPollInterval === target) return;
+  if (pollTimer) clearInterval(pollTimer);
+  currentPollInterval = target;
   pollTimer = setInterval(() => {
     void refreshInstances();
-  }, POLL_INTERVAL);
+  }, target);
 }
 
 function stopPolling() {
   if (pollTimer) {
     clearInterval(pollTimer);
     pollTimer = null;
+    currentPollInterval = null;
   }
 }
 
-export function useWhatsAppInstances() {
+/** Restart polling timer if the desired interval changed (e.g. observer added/removed). */
+function syncPollingRate() {
+  if (listeners.size === 0) return;
+  if (currentPollInterval !== desiredInterval()) startPolling();
+}
+
+export function useWhatsAppInstances(options?: { active?: boolean }) {
+  const active = options?.active ?? false;
   const [instances, setInstances] = useState<ConnectedInstance[]>(cachedInstances);
   const [loading, setLoading] = useState(cachedInstances.length === 0);
 
@@ -108,7 +126,6 @@ export function useWhatsAppInstances() {
     const handler = () => setInstances([...cachedInstances]);
     listeners.add(handler);
 
-    // Start polling when at least one consumer is mounted
     if (listeners.size === 1) startPolling();
 
     return () => {
@@ -116,6 +133,20 @@ export function useWhatsAppInstances() {
       if (listeners.size === 0) stopPolling();
     };
   }, []);
+
+  // Register/unregister this consumer as an "active observer" needing fast polling
+  useEffect(() => {
+    if (!active) return;
+    const token = Symbol("wa-observer");
+    activeObservers.add(token);
+    syncPollingRate();
+    // Trigger an immediate refresh so the dialog/section sees fresh state right away
+    void refreshInstances();
+    return () => {
+      activeObservers.delete(token);
+      syncPollingRate();
+    };
+  }, [active]);
 
   useEffect(() => {
     if (Date.now() - lastFetchTime > CACHE_TTL) {

@@ -25,7 +25,7 @@ const steps = [
 ];
 
 export function NovoDisparoWizard({ open, onClose, onSave, editData }: NovoDisparoWizardProps) {
-  const { connected: connectedInstances, instances: allInstances } = useWhatsAppInstances();
+  const { connected: connectedInstances, instances: allInstances } = useWhatsAppInstances({ active: open });
   const [step, setStep] = useState(1);
   const [publico, setPublico] = useState<"todos" | "ativos" | "inativos" | "aniversariantes" | "custom">("todos");
   const [mensagem, setMensagem] = useState("");
