@@ -17,6 +17,7 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Copy, ExternalLink, TrendingUp, Users, Target, DollarSign, Check, Settings2, WifiOff } from "lucide-react";
+import { ChannelLogo } from "./ChannelLogo";
 import {
   AUTO_INSTANCE,
   CANAIS,
@@ -194,37 +195,65 @@ export function CampanhaDetailsDialog({ open, onOpenChange, campaign }: Props) {
                   const isExtrasOpen = openExtras[canalId] ?? false;
                   const hasExtras = !!(extras.term || extras.id);
                   return (
-                    <div key={canalId} className="rounded-lg border border-border p-3 space-y-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span className="text-2xl shrink-0">{canal.icon}</span>
+                    <div
+                      key={canalId}
+                      className="rounded-xl border border-border bg-card p-3.5 space-y-3 transition-shadow hover:shadow-sm"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="h-10 w-10 shrink-0 rounded-lg bg-muted/60 flex items-center justify-center ring-1 ring-border">
+                            <ChannelLogo canal={canalId} size={22} />
+                          </div>
                           <div className="min-w-0">
-                            <p className="font-medium text-sm truncate">{canal.label}</p>
-                            <p className="text-xs text-muted-foreground">{hits} clique{hits !== 1 ? "s" : ""}</p>
+                            <p className="font-medium text-sm truncate leading-tight">{canal.label}</p>
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                              {hits} clique{hits !== 1 ? "s" : ""}
+                            </p>
                           </div>
                         </div>
-                        <div className="flex gap-1 shrink-0">
+                        <div className="flex gap-1.5 shrink-0">
                           <Button
                             size="sm"
                             variant={isExtrasOpen || hasExtras ? "secondary" : "ghost"}
                             onClick={() => setOpenExtras((p) => ({ ...p, [canalId]: !isExtrasOpen }))}
                             title="Parâmetros extras (utm_term, utm_id)"
+                            className="h-8 w-8 p-0"
                           >
-                            <Settings2 className="h-3 w-3" />
+                            <Settings2 className="h-3.5 w-3.5" />
                           </Button>
-                          <Button size="sm" variant="outline" onClick={() => window.open(link, "_blank")}>
-                            <ExternalLink className="h-3 w-3" />
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => window.open(link, "_blank")}
+                            title="Abrir link em nova aba"
+                            className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
+                          >
+                            <ExternalLink className="h-3.5 w-3.5" />
                           </Button>
-                          <Button size="sm" onClick={() => copyLink(canalId)} variant={isCopied ? "default" : "secondary"}>
-                            {isCopied ? <Check className="h-3 w-3 mr-1" /> : <Copy className="h-3 w-3 mr-1" />}
-                            {isCopied ? "Copiado" : "Copiar link"}
+                          <Button
+                            size="sm"
+                            onClick={() => copyLink(canalId)}
+                            variant={isCopied ? "default" : "secondary"}
+                            className="h-8 shadow-sm"
+                          >
+                            {isCopied ? (
+                              <>
+                                <Check className="h-3.5 w-3.5 mr-1.5" />
+                                Copiado
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="h-3.5 w-3.5 mr-1.5" />
+                                Copiar link
+                              </>
+                            )}
                           </Button>
                         </div>
                       </div>
 
                       {isExtrasOpen && (
-                        <div className="grid grid-cols-2 gap-2 pt-1">
-                          <div className="space-y-1">
+                        <div className="grid grid-cols-2 gap-2 pt-1 border-t border-border">
+                          <div className="space-y-1 pt-2">
                             <Label htmlFor={`term-${canalId}`} className="text-[10px] uppercase tracking-wide text-muted-foreground">
                               utm_term <span className="normal-case">(palavra-chave)</span>
                             </Label>
@@ -236,7 +265,7 @@ export function CampanhaDetailsDialog({ open, onOpenChange, campaign }: Props) {
                               className="h-8 text-xs"
                             />
                           </div>
-                          <div className="space-y-1">
+                          <div className="space-y-1 pt-2">
                             <Label htmlFor={`id-${canalId}`} className="text-[10px] uppercase tracking-wide text-muted-foreground">
                               utm_id <span className="normal-case">(ID do anúncio)</span>
                             </Label>
@@ -250,10 +279,6 @@ export function CampanhaDetailsDialog({ open, onOpenChange, campaign }: Props) {
                           </div>
                         </div>
                       )}
-
-                      <div className="rounded bg-muted px-2 py-1.5 font-mono text-[11px] text-muted-foreground break-all">
-                        {link}
-                      </div>
                     </div>
                   );
                 })}
@@ -287,7 +312,7 @@ export function CampanhaDetailsDialog({ open, onOpenChange, campaign }: Props) {
                       <div key={canalId} className="space-y-1">
                         <div className="flex items-center justify-between text-sm">
                           <span className="flex items-center gap-2">
-                            <span>{canal.icon}</span>
+                            <ChannelLogo canal={canalId} size={16} />
                             <span>{canal.label}</span>
                           </span>
                           <span className="font-medium">{hits} ({pct.toFixed(0)}%)</span>

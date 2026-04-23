@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { AlertCircle, Wifi, WifiOff, Sparkles } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import { AUTO_INSTANCE, CANAIS, upsertCampanha, type Campaign, type CanalCampanha } from "@/data/campanhasStore";
+import { ChannelLogo } from "./ChannelLogo";
 import { useWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
 import { toast } from "sonner";
 
@@ -227,16 +228,25 @@ export function CreateCampanhaDialog({ open, onOpenChange, onCreated, initial }:
             <Label>Canais de divulgação</Label>
             <p className="text-xs text-muted-foreground">Selecione onde a campanha vai rodar — um link único será gerado para cada canal.</p>
             <div className="grid grid-cols-2 gap-2 pt-2">
-              {CANAIS.map((c) => (
-                <label
-                  key={c.id}
-                  className="flex items-center gap-2 rounded-md border border-border p-2 cursor-pointer hover:bg-accent transition-colors"
-                >
-                  <Checkbox checked={canais.includes(c.id)} onCheckedChange={() => toggleCanal(c.id)} />
-                  <span className="text-lg">{c.icon}</span>
-                  <span className="text-sm font-medium">{c.label}</span>
-                </label>
-              ))}
+              {CANAIS.map((c) => {
+                const checked = canais.includes(c.id);
+                return (
+                  <label
+                    key={c.id}
+                    className={`flex items-center gap-2.5 rounded-lg border p-2.5 cursor-pointer transition-all ${
+                      checked
+                        ? "border-primary bg-primary/5 shadow-sm"
+                        : "border-border hover:bg-accent hover:border-accent-foreground/20"
+                    }`}
+                  >
+                    <Checkbox checked={checked} onCheckedChange={() => toggleCanal(c.id)} />
+                    <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-background ring-1 ring-border shrink-0">
+                      <ChannelLogo canal={c.id} size={16} />
+                    </span>
+                    <span className="text-sm font-medium truncate">{c.label}</span>
+                  </label>
+                );
+              })}
             </div>
           </div>
         </div>
