@@ -48,6 +48,8 @@ function CanaisPage() {
     try {
       const list = await fetchInstances();
       setInstances(list.map((inst) => ({ ...inst, connectionState: inst.status })));
+      // Propaga para outros consumidores (campanhas, disparos, etc) sem esperar o polling
+      pingWhatsAppInstances();
     } catch (err) {
       if (showLoader || instances.length === 0) {
         setError(err instanceof Error ? err.message : "Erro ao carregar instâncias");
