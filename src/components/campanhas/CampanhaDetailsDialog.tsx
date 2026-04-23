@@ -17,7 +17,7 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Copy, ExternalLink, TrendingUp, Users, Target, DollarSign, Check, Settings2, WifiOff } from "lucide-react";
-import { ChannelLogo } from "./ChannelLogo";
+import { ChannelBadge, ChannelLogo } from "./ChannelLogo";
 import {
   AUTO_INSTANCE,
   CANAIS,
@@ -201,9 +201,7 @@ export function CampanhaDetailsDialog({ open, onOpenChange, campaign }: Props) {
                     >
                       <div className="flex items-center justify-between gap-3">
                         <div className="flex items-center gap-3 min-w-0">
-                          <div className="h-10 w-10 shrink-0 rounded-lg bg-muted/60 flex items-center justify-center ring-1 ring-border">
-                            <ChannelLogo canal={canalId} size={22} />
-                          </div>
+                          <ChannelBadge canal={canalId} size="md" />
                           <div className="min-w-0">
                             <p className="font-medium text-sm truncate leading-tight">{canal.label}</p>
                             <p className="text-xs text-muted-foreground mt-0.5">
