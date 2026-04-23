@@ -43,93 +43,127 @@ export function CampanhasManager() {
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
+    <div className="space-y-6">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
-          <h2 className="text-lg font-semibold">Campanhas com tracking</h2>
-          <p className="text-sm text-muted-foreground">
+          <h2 className="text-xl font-semibold tracking-tight">Campanhas com tracking</h2>
+          <p className="text-sm text-muted-foreground mt-0.5">
             Gere links únicos por canal e identifique automaticamente a origem dos leads no CRM.
           </p>
         </div>
-        <Button onClick={() => { setEditing(null); setOpenCreate(true); }}>
+        <Button
+          size="default"
+          onClick={() => { setEditing(null); setOpenCreate(true); }}
+          className="shadow-sm hover:shadow-md transition-shadow"
+        >
           <Plus className="h-4 w-4 mr-2" />
           Nova campanha
         </Button>
       </div>
 
       {campanhas.length === 0 ? (
-        <Card className="p-12 text-center">
-          <Megaphone className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
-          <p className="font-medium">Nenhuma campanha ainda</p>
-          <p className="text-sm text-muted-foreground mt-1">Crie sua primeira campanha para gerar links de tracking.</p>
-          <Button className="mt-4" onClick={() => setOpenCreate(true)}>
+        <Card className="p-16 text-center border-dashed bg-muted/30">
+          <div className="h-14 w-14 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto mb-4">
+            <Megaphone className="h-7 w-7 text-primary" />
+          </div>
+          <p className="font-semibold text-base">Nenhuma campanha ainda</p>
+          <p className="text-sm text-muted-foreground mt-1 max-w-sm mx-auto">
+            Crie sua primeira campanha para gerar links de tracking e medir conversões por canal.
+          </p>
+          <Button className="mt-5 shadow-sm" onClick={() => setOpenCreate(true)}>
             <Plus className="h-4 w-4 mr-2" />
             Criar campanha
           </Button>
         </Card>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
           {campanhas.map((c) => {
             const m = computeMetrics(c);
             return (
               <Card
                 key={c.id}
-                className="p-4 cursor-pointer hover:border-primary transition-colors group"
+                className="relative p-5 cursor-pointer group transition-all duration-200 hover:border-primary/60 hover:shadow-lg hover:-translate-y-0.5 overflow-hidden"
                 onClick={() => setDetails(c)}
               >
-                <div className="flex items-start justify-between gap-2 mb-3">
+                {/* Accent bar */}
+                <div
+                  className={`absolute inset-x-0 top-0 h-1 ${c.ativa ? "bg-gradient-to-r from-primary to-primary/40" : "bg-muted"}`}
+                />
+
+                {/* Header */}
+                <div className="flex items-start justify-between gap-3 mb-4">
                   <div className="flex-1 min-w-0">
-                    <h3 className="font-semibold truncate">{c.nome}</h3>
-                    <p className="text-xs text-muted-foreground line-clamp-1 mt-0.5">
+                    <h3 className="font-semibold text-base leading-tight truncate">{c.nome}</h3>
+                    <p className="text-xs text-muted-foreground line-clamp-1 mt-1">
                       {c.descricao || "Sem descrição"}
                     </p>
                   </div>
-                  <Badge variant={c.ativa ? "default" : "secondary"}>{c.ativa ? "Ativa" : "Pausada"}</Badge>
+                  <Badge
+                    variant={c.ativa ? "default" : "secondary"}
+                    className={c.ativa ? "shadow-sm" : ""}
+                  >
+                    <span className={`mr-1.5 h-1.5 w-1.5 rounded-full ${c.ativa ? "bg-current animate-pulse" : "bg-current"}`} />
+                    {c.ativa ? "Ativa" : "Pausada"}
+                  </Badge>
                 </div>
 
-                <div className="flex flex-wrap gap-1 mb-3">
+                {/* Channels */}
+                <div className="flex flex-wrap items-center gap-1.5 mb-4">
                   {c.canais.slice(0, 5).map((canalId) => {
                     const canal = CANAIS.find((x) => x.id === canalId);
                     return (
-                      <span key={canalId} className="text-lg" title={canal?.label}>
+                      <span
+                        key={canalId}
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-muted text-base ring-1 ring-border"
+                        title={canal?.label}
+                      >
                         {canal?.icon}
                       </span>
                     );
                   })}
                   {c.canais.length > 5 && (
-                    <span className="text-xs text-muted-foreground self-center ml-1">+{c.canais.length - 5}</span>
+                    <span className="text-xs font-medium text-muted-foreground ml-1">
+                      +{c.canais.length - 5}
+                    </span>
                   )}
                 </div>
 
-                <div className="mb-2 -mx-1">
-                  <div className="flex items-center justify-between px-1 mb-1">
-                    <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Últimos 7 dias</span>
+                {/* Sparkline */}
+                <div className="mb-4 rounded-lg bg-muted/40 p-2.5">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-[10px] uppercase tracking-wider font-medium text-muted-foreground">
+                      Últimos 7 dias
+                    </span>
                   </div>
-                  <CampanhaSparkline campaign={c} days={7} height={48} />
+                  <CampanhaSparkline campaign={c} days={7} height={44} />
                 </div>
 
-                <div className="grid grid-cols-3 gap-2 mb-3 pt-3 border-t border-border">
+                {/* Stats */}
+                <div className="grid grid-cols-3 gap-2 pt-4 border-t border-border">
                   <Stat icon={MousePointerClick} value={m.totalHits} label="cliques" />
                   <Stat icon={Users} value={m.leadsIdentificados} label="leads" />
                   <Stat icon={DollarSign} value={m.conversoes} label="vendas" />
                 </div>
 
-                <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                {/* Actions — slide up on hover */}
+                <div className="flex gap-2 mt-4 opacity-0 translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-200">
                   <Button
                     size="sm"
-                    variant="outline"
-                    className="flex-1"
+                    variant="secondary"
+                    className="flex-1 h-8"
                     onClick={(e) => { e.stopPropagation(); setEditing(c); setOpenCreate(true); }}
                   >
-                    <Edit className="h-3 w-3 mr-1" />
+                    <Edit className="h-3.5 w-3.5 mr-1.5" />
                     Editar
                   </Button>
                   <Button
                     size="sm"
-                    variant="outline"
+                    variant="ghost"
+                    className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
                     onClick={(e) => { e.stopPropagation(); setDeleteId(c.id); }}
+                    aria-label="Excluir campanha"
                   >
-                    <Trash2 className="h-3 w-3" />
+                    <Trash2 className="h-3.5 w-3.5" />
                   </Button>
                 </div>
               </Card>
@@ -157,7 +191,9 @@ export function CampanhasManager() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete}>Excluir</AlertDialogAction>
+            <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Excluir
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -167,12 +203,12 @@ export function CampanhasManager() {
 
 function Stat({ icon: Icon, value, label }: { icon: typeof Users; value: number; label: string }) {
   return (
-    <div className="text-center">
-      <div className="flex items-center justify-center gap-1 text-muted-foreground">
-        <Icon className="h-3 w-3" />
-        <span className="text-sm font-semibold text-foreground">{value}</span>
+    <div className="text-center group/stat">
+      <div className="flex items-center justify-center gap-1.5 mb-0.5">
+        <Icon className="h-3.5 w-3.5 text-muted-foreground group-hover/stat:text-primary transition-colors" />
+        <span className="text-base font-semibold text-foreground tabular-nums">{value}</span>
       </div>
-      <p className="text-[10px] text-muted-foreground uppercase tracking-wide">{label}</p>
+      <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">{label}</p>
     </div>
   );
 }
