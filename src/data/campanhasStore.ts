@@ -58,6 +58,8 @@ export interface Campaign {
   canais: CanalCampanha[]; // canais ativos para essa campanha
   ativa: boolean;
   budget?: number;
+  /** Nome da instância WhatsApp escolhida para substituir {{number}}. Se vazio, usa a primeira conectada. */
+  instanceName?: string;
   criadaEm: number;
   hits: CampaignLeadHit[];
 }
