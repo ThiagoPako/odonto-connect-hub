@@ -7,19 +7,22 @@ import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { AlertCircle, Smartphone } from "lucide-react";
+import { AlertCircle, Wifi, WifiOff, Sparkles } from "lucide-react";
 import { Link } from "@tanstack/react-router";
-import { CANAIS, upsertCampanha, type Campaign, type CanalCampanha } from "@/data/campanhasStore";
+import { AUTO_INSTANCE, CANAIS, upsertCampanha, type Campaign, type CanalCampanha } from "@/data/campanhasStore";
 import { useWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
 import { toast } from "sonner";
-
-const AUTO_INSTANCE = "__auto__";
 
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreated?: (c: Campaign) => void;
   initial?: Campaign;
+}
+
+function ownerToNumber(owner?: string): string {
+  if (!owner) return "";
+  return owner.split("@")[0].replace(/\D/g, "");
 }
 
 export function CreateCampanhaDialog({ open, onOpenChange, onCreated, initial }: Props) {
@@ -33,21 +36,19 @@ export function CreateCampanhaDialog({ open, onOpenChange, onCreated, initial }:
 
   const { instances, connected } = useWhatsAppInstances();
 
-  // Resolve instância selecionada (ou "auto" → primeira conectada)
+  const usesNumberVar = /\{\{\s*number\s*\}\}/i.test(destino);
+
+  // Resolve a instância selecionada para preview/validação
   const selectedInstance = useMemo(() => {
     if (instanceName === AUTO_INSTANCE) return connected[0];
     return instances.find((i) => i.instanceName === instanceName);
   }, [instanceName, instances, connected]);
 
-  const resolvedNumber = useMemo(() => {
-    const owner = selectedInstance?.owner;
-    if (!owner) return "";
-    return owner.split("@")[0].replace(/\D/g, "");
-  }, [selectedInstance]);
-
+  const resolvedNumber = ownerToNumber(selectedInstance?.owner);
   const isSelectedConnected = selectedInstance?.connectionState === "open";
-  const usesNumberVar = /\{\{\s*number\s*\}\}/i.test(destino);
-  const blockedByNumberVar = usesNumberVar && (!resolvedNumber || !isSelectedConnected);
+
+  // Bloqueio: usa {{number}} mas não há número resolvível
+  const blockedByNumberVar = usesNumberVar && (!selectedInstance || !isSelectedConnected || !resolvedNumber);
 
   function toggleCanal(id: CanalCampanha) {
     setCanais((prev) => (prev.includes(id) ? prev.filter((c) => c !== id) : [...prev, id]));
@@ -67,8 +68,8 @@ export function CreateCampanhaDialog({ open, onOpenChange, onCreated, initial }:
       return;
     }
     if (blockedByNumberVar) {
-      toast.error("Conecte ou selecione uma instância WhatsApp válida", {
-        description: "O destino usa {{number}}, mas a instância escolhida não está conectada.",
+      toast.error("A instância selecionada não está conectada", {
+        description: "Escolha outra instância conectada ou remova {{number}} do destino.",
       });
       return;
     }
@@ -80,9 +81,10 @@ export function CreateCampanhaDialog({ open, onOpenChange, onCreated, initial }:
       canais,
       ativa,
       budget: budget ? Number(budget) : undefined,
-      instanceName: instanceName === AUTO_INSTANCE ? undefined : instanceName,
       criadaEm: initial?.criadaEm ?? Date.now(),
       hits: initial?.hits ?? [],
+      instanceName: usesNumberVar ? instanceName : undefined,
+      lastResolvedInstance: initial?.lastResolvedInstance,
     };
     upsertCampanha(camp);
     toast.success(initial ? "Campanha atualizada" : "Campanha criada — links de tracking gerados!");
@@ -125,43 +127,46 @@ export function CreateCampanhaDialog({ open, onOpenChange, onCreated, initial }:
             <p className="text-xs text-muted-foreground">
               Para onde o lead vai ao clicar no anúncio. Use{" "}
               <code className="px-1 rounded bg-muted text-foreground">{`{{number}}`}</code>{" "}
-              para inserir automaticamente o número da instância WhatsApp escolhida abaixo.
+              para inserir automaticamente o número da instância WhatsApp escolhida.
             </p>
           </div>
 
+          {/* Seletor de instância — só aparece se usa {{number}} */}
           {usesNumberVar && (
-            <div className="space-y-2">
-              <Label htmlFor="instance" className="flex items-center gap-1.5">
-                <Smartphone className="h-3.5 w-3.5" />
-                Instância WhatsApp para <code className="px-1 rounded bg-muted text-foreground text-xs">{`{{number}}`}</code>
+            <div className="space-y-2 rounded-md border border-border bg-muted/30 p-3">
+              <Label htmlFor="instance" className="flex items-center gap-2">
+                <Sparkles className="h-3.5 w-3.5 text-primary" />
+                Instância WhatsApp para <code className="px-1 rounded bg-background text-xs">{`{{number}}`}</code>
               </Label>
               <Select value={instanceName} onValueChange={setInstanceName}>
-                <SelectTrigger id="instance" className={blockedByNumberVar ? "border-destructive" : ""}>
+                <SelectTrigger id="instance">
                   <SelectValue placeholder="Selecione uma instância" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value={AUTO_INSTANCE}>
-                    <span className="flex items-center gap-2">
-                      <span className="text-muted-foreground">Automática</span>
-                      <span className="text-xs text-muted-foreground">
-                        (primeira conectada{connected[0] ? ` — ${connected[0].instanceName}` : ""})
-                      </span>
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="h-3.5 w-3.5 text-primary" />
+                      <span>Automática (primeira conectada)</span>
+                    </div>
                   </SelectItem>
                   {instances.length === 0 && (
                     <div className="px-2 py-1.5 text-xs text-muted-foreground">Nenhuma instância cadastrada</div>
                   )}
                   {instances.map((inst) => {
-                    const num = inst.owner ? inst.owner.split("@")[0].replace(/\D/g, "") : "";
-                    const isOnline = inst.connectionState === "open";
+                    const online = inst.connectionState === "open";
+                    const num = ownerToNumber(inst.owner);
                     return (
                       <SelectItem key={inst.instanceName} value={inst.instanceName}>
-                        <span className="flex items-center gap-2">
-                          <span className={`h-1.5 w-1.5 rounded-full ${isOnline ? "bg-success" : "bg-muted-foreground"}`} />
+                        <div className="flex items-center gap-2">
+                          {online ? (
+                            <Wifi className="h-3.5 w-3.5 text-success" />
+                          ) : (
+                            <WifiOff className="h-3.5 w-3.5 text-muted-foreground" />
+                          )}
                           <span className="font-medium">{inst.instanceName}</span>
-                          {num && <span className="text-xs text-muted-foreground">+{num}</span>}
-                          {!isOnline && <span className="text-xs text-destructive">(offline)</span>}
-                        </span>
+                          {num && <span className="text-xs text-muted-foreground">({num})</span>}
+                          {!online && <span className="text-[10px] uppercase text-muted-foreground">offline</span>}
+                        </div>
                       </SelectItem>
                     );
                   })}
@@ -174,29 +179,33 @@ export function CreateCampanhaDialog({ open, onOpenChange, onCreated, initial }:
                   <div className="space-y-1">
                     <p className="font-medium">
                       {!selectedInstance
-                        ? "Nenhuma instância WhatsApp disponível."
+                        ? "Nenhuma instância selecionada disponível."
                         : !isSelectedConnected
-                        ? `A instância "${selectedInstance.instanceName}" está desconectada.`
-                        : "Instância sem número associado."}
+                          ? `"${selectedInstance.instanceName}" está desconectada.`
+                          : "Não foi possível obter o número."}
                     </p>
                     <p className="text-destructive/80">
-                      Conecte ou escolha outra instância em{" "}
+                      Escolha outra instância conectada ou conecte uma em{" "}
                       <Link to="/canais" className="underline font-medium" onClick={() => onOpenChange(false)}>
                         Canais
-                      </Link>{" "}
-                      ou remova <code className="px-1 rounded bg-background">{`{{number}}`}</code> do destino.
+                      </Link>.
                     </p>
                   </div>
                 </div>
               ) : (
                 <p className="text-xs text-success flex items-center gap-1.5">
-                  <span>●</span>
+                  <Wifi className="h-3 w-3" />
                   <span>
-                    <code className="px-1 rounded bg-muted text-foreground">{`{{number}}`}</code> → +{resolvedNumber}{" "}
-                    <span className="text-muted-foreground">({selectedInstance?.instanceName})</span>
+                    {`{{number}}`} → <strong>{resolvedNumber}</strong>
+                    {selectedInstance && (
+                      <span className="text-muted-foreground"> ({selectedInstance.instanceName})</span>
+                    )}
                   </span>
                 </p>
               )}
+              <p className="text-[11px] text-muted-foreground">
+                A escolha é salva na campanha. Se a instância cair, será oferecido fallback automático para a próxima conectada.
+              </p>
             </div>
           )}
 
@@ -237,7 +246,7 @@ export function CreateCampanhaDialog({ open, onOpenChange, onCreated, initial }:
           <Button
             onClick={handleSubmit}
             disabled={blockedByNumberVar}
-            title={blockedByNumberVar ? "Conecte uma instância WhatsApp para usar {{number}}" : undefined}
+            title={blockedByNumberVar ? "Selecione uma instância WhatsApp conectada" : undefined}
           >
             {initial ? "Salvar" : "Criar campanha"}
           </Button>
