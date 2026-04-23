@@ -103,20 +103,43 @@ export function getCampanhaById(id: string): Campaign | undefined {
 
 /* ─────────────── Geração de Links UTM ─────────────── */
 
-export function buildTrackingLink(campaign: Campaign, canalId: CanalCampanha): string {
+export interface UtmExtras {
+  /** utm_term — palavra-chave/segmento (ex: "implante-dentario") */
+  term?: string;
+  /** utm_id — ID externo do anúncio/ad set (ex: "adset_123") */
+  id?: string;
+}
+
+export function buildTrackingLink(
+  campaign: Campaign,
+  canalId: CanalCampanha,
+  extras: UtmExtras = {}
+): string {
   const canal = CANAIS.find((c) => c.id === canalId);
   if (!canal) return campaign.destino;
+  const term = extras.term?.trim();
+  const utmId = extras.id?.trim();
   try {
     const url = new URL(campaign.destino, typeof window !== "undefined" ? window.location.origin : "https://app.local");
     url.searchParams.set("utm_source", canal.utmSource);
     url.searchParams.set("utm_medium", canal.utmMedium);
     url.searchParams.set("utm_campaign", slugify(campaign.nome));
     url.searchParams.set("utm_content", canal.id);
+    if (term) url.searchParams.set("utm_term", slugify(term));
+    if (utmId) url.searchParams.set("utm_id", utmId);
     url.searchParams.set("cid", campaign.id);
     return url.toString();
   } catch {
-    // destino não é URL válida — anexa querystring crua
-    const qs = `utm_source=${canal.utmSource}&utm_medium=${canal.utmMedium}&utm_campaign=${slugify(campaign.nome)}&utm_content=${canal.id}&cid=${campaign.id}`;
+    const parts = [
+      `utm_source=${canal.utmSource}`,
+      `utm_medium=${canal.utmMedium}`,
+      `utm_campaign=${slugify(campaign.nome)}`,
+      `utm_content=${canal.id}`,
+      ...(term ? [`utm_term=${slugify(term)}`] : []),
+      ...(utmId ? [`utm_id=${encodeURIComponent(utmId)}`] : []),
+      `cid=${campaign.id}`,
+    ];
+    const qs = parts.join("&");
     return campaign.destino.includes("?") ? `${campaign.destino}&${qs}` : `${campaign.destino}?${qs}`;
   }
 }
