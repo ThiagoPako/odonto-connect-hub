@@ -172,7 +172,13 @@ export function CreateCampanhaDialog({ open, onOpenChange, onCreated, initial }:
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
-          <Button onClick={handleSubmit}>{initial ? "Salvar" : "Criar campanha"}</Button>
+          <Button
+            onClick={handleSubmit}
+            disabled={blockedByNumberVar}
+            title={blockedByNumberVar ? "Conecte uma instância WhatsApp para usar {{number}}" : undefined}
+          >
+            {initial ? "Salvar" : "Criar campanha"}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
