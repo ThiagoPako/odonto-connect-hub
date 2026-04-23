@@ -1,13 +1,32 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Copy, ExternalLink, TrendingUp, Users, Target, DollarSign, Check, Settings2 } from "lucide-react";
-import { CANAIS, buildTrackingLink, computeMetrics, type Campaign, type CanalCampanha, type UtmExtras } from "@/data/campanhasStore";
+import { Copy, ExternalLink, TrendingUp, Users, Target, DollarSign, Check, Settings2, WifiOff } from "lucide-react";
+import {
+  AUTO_INSTANCE,
+  CANAIS,
+  buildTrackingLink,
+  computeMetrics,
+  upsertCampanha,
+  type Campaign,
+  type CanalCampanha,
+  type UtmExtras,
+} from "@/data/campanhasStore";
 import { useWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
 import { CampanhaTimelineChart } from "./CampanhaTimelineChart";
 import { CampanhaLeadsTable } from "./CampanhaLeadsTable";
@@ -19,19 +38,77 @@ interface Props {
   campaign: Campaign | null;
 }
 
+function ownerToNumber(owner?: string): string {
+  if (!owner) return "";
+  return owner.split("@")[0].replace(/\D/g, "");
+}
+
 export function CampanhaDetailsDialog({ open, onOpenChange, campaign }: Props) {
   const [copiedCanal, setCopiedCanal] = useState<CanalCampanha | null>(null);
   const [extrasByCanal, setExtrasByCanal] = useState<Record<string, UtmExtras>>({});
   const [openExtras, setOpenExtras] = useState<Record<string, boolean>>({});
-  const { connected } = useWhatsAppInstances();
+  const { instances, connected } = useWhatsAppInstances();
 
-  // Número da instância principal (primeira conectada). Extrai apenas dígitos do JID.
-  const principalNumber = useMemo(() => {
-    const owner = connected[0]?.owner;
-    if (!owner) return "";
-    return owner.split("@")[0].replace(/\D/g, "");
-  }, [connected]);
-  const principalName = connected[0]?.instanceName ?? null;
+  // Override local da instância (após fallback aceito); persistido também na campanha
+  const [activeInstanceName, setActiveInstanceName] = useState<string | undefined>(campaign?.instanceName);
+  const [fallbackPrompt, setFallbackPrompt] = useState<{ from: string; to: string } | null>(null);
+  const [dismissedFallback, setDismissedFallback] = useState<string | null>(null);
+
+  useEffect(() => {
+    setActiveInstanceName(campaign?.instanceName);
+    setDismissedFallback(null);
+    setFallbackPrompt(null);
+  }, [campaign?.id, campaign?.instanceName]);
+
+  const usesNumberVar = campaign ? /\{\{\s*number\s*\}\}/i.test(campaign.destino) : false;
+
+  const preferred = useMemo(() => {
+    const name = activeInstanceName;
+    if (!name || name === AUTO_INSTANCE) return connected[0];
+    return instances.find((i) => i.instanceName === name);
+  }, [activeInstanceName, instances, connected]);
+
+  const preferredOnline = preferred?.connectionState === "open";
+  const principalNumber = preferredOnline ? ownerToNumber(preferred?.owner) : "";
+  const principalName = preferred?.instanceName ?? null;
+
+  // Detecta queda da instância salva e propõe fallback automático
+  useEffect(() => {
+    if (!open || !campaign || !usesNumberVar) return;
+    const savedName = activeInstanceName ?? campaign.instanceName;
+    if (!savedName || savedName === AUTO_INSTANCE) return;
+
+    const saved = instances.find((i) => i.instanceName === savedName);
+    const isDown = !saved || saved.connectionState !== "open";
+    if (!isDown) return;
+
+    const next = connected.find((i) => i.instanceName !== savedName);
+    if (!next) return;
+    if (dismissedFallback === next.instanceName) return;
+    if (fallbackPrompt) return;
+
+    setFallbackPrompt({ from: savedName, to: next.instanceName });
+  }, [open, campaign, instances, connected, usesNumberVar, activeInstanceName, dismissedFallback, fallbackPrompt]);
+
+  function confirmFallback() {
+    if (!fallbackPrompt || !campaign) return;
+    const { to } = fallbackPrompt;
+    setActiveInstanceName(to);
+    upsertCampanha({
+      ...campaign,
+      instanceName: to,
+      lastResolvedInstance: to,
+    });
+    toast.success(`Links agora usam "${to}"`, {
+      description: "A instância anterior estava offline. Troca salva na campanha.",
+    });
+    setFallbackPrompt(null);
+  }
+
+  function dismissFallback() {
+    if (fallbackPrompt) setDismissedFallback(fallbackPrompt.to);
+    setFallbackPrompt(null);
+  }
 
   const metrics = useMemo(() => (campaign ? computeMetrics(campaign) : null), [campaign]);
 
