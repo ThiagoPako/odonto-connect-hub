@@ -6,6 +6,7 @@ import { Plus, Megaphone, MousePointerClick, Users, DollarSign, Trash2, Edit } f
 import { CANAIS, computeMetrics, deleteCampanha, getCampanhas, type Campaign } from "@/data/campanhasStore";
 import { CreateCampanhaDialog } from "./CreateCampanhaDialog";
 import { CampanhaDetailsDialog } from "./CampanhaDetailsDialog";
+import { CampanhaSparkline } from "./CampanhaSparkline";
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -98,6 +99,13 @@ export function CampanhasManager() {
                   {c.canais.length > 5 && (
                     <span className="text-xs text-muted-foreground self-center ml-1">+{c.canais.length - 5}</span>
                   )}
+                </div>
+
+                <div className="mb-2 -mx-1">
+                  <div className="flex items-center justify-between px-1 mb-1">
+                    <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Últimos 7 dias</span>
+                  </div>
+                  <CampanhaSparkline campaign={c} days={7} height={48} />
                 </div>
 
                 <div className="grid grid-cols-3 gap-2 mb-3 pt-3 border-t border-border">

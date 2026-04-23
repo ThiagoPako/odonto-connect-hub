@@ -265,7 +265,78 @@ export function computeMetrics(camp: Campaign): CampanhaMetrics {
   };
 }
 
-/* ─────────────── Seed demo ─────────────── */
+/* ─────────────── Série temporal ─────────────── */
+
+export interface DailyPoint {
+  date: string;        // YYYY-MM-DD
+  label: string;       // "12/04"
+  total: number;       // total de cliques no dia
+  anonimos: number;    // cliques sem leadId
+  leads: number;       // cliques com leadId
+  conversoes: number;  // hits convertidos
+  receita: number;
+  porCanal: Partial<Record<CanalCampanha, number>>;
+}
+
+function ymd(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** Série diária agregada dos últimos `days` dias (inclui dias zerados). */
+export function computeDailySeries(camp: Campaign, days = 7): DailyPoint[] {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const map = new Map<string, DailyPoint>();
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(today.getDate() - i);
+    const key = ymd(d);
+    map.set(key, {
+      date: key,
+      label: `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}`,
+      total: 0, anonimos: 0, leads: 0, conversoes: 0, receita: 0,
+      porCanal: {},
+    });
+  }
+  const cutoff = today.getTime() - (days - 1) * 86400000;
+  for (const h of camp.hits) {
+    if (h.timestamp < cutoff) continue;
+    const d = new Date(h.timestamp);
+    d.setHours(0, 0, 0, 0);
+    const point = map.get(ymd(d));
+    if (!point) continue;
+    point.total++;
+    if (h.leadId) point.leads++; else point.anonimos++;
+    if (h.convertido) {
+      point.conversoes++;
+      point.receita += h.valor ?? 0;
+    }
+    point.porCanal[h.canal] = (point.porCanal[h.canal] ?? 0) + 1;
+  }
+  return Array.from(map.values());
+}
+
+/** Estatística agregada por canal ao longo do período. */
+export interface CanalStats {
+  canal: CanalCampanha;
+  total: number;
+  anonimos: number;
+  leads: number;
+  conversoes: number;
+  receita: number;
+}
+
+export function computeCanalStats(camp: Campaign): CanalStats[] {
+  const map = new Map<CanalCampanha, CanalStats>();
+  for (const h of camp.hits) {
+    const cur = map.get(h.canal) ?? { canal: h.canal, total: 0, anonimos: 0, leads: 0, conversoes: 0, receita: 0 };
+    cur.total++;
+    if (h.leadId) cur.leads++; else cur.anonimos++;
+    if (h.convertido) { cur.conversoes++; cur.receita += h.valor ?? 0; }
+    map.set(h.canal, cur);
+  }
+  return Array.from(map.values()).sort((a, b) => b.total - a.total);
+}
 
 function seedDemo(): Campaign[] {
   const now = Date.now();

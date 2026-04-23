@@ -6,6 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Copy, ExternalLink, TrendingUp, Users, Target, DollarSign, Check } from "lucide-react";
 import { CANAIS, buildTrackingLink, computeMetrics, type Campaign, type CanalCampanha } from "@/data/campanhasStore";
+import { CampanhaTimelineChart } from "./CampanhaTimelineChart";
 import { toast } from "sonner";
 
 interface Props {
@@ -110,6 +111,10 @@ export function CampanhaDetailsDialog({ open, onOpenChange, campaign }: Props) {
                 <MetricCard icon={Target} label="Leads identificados" value={metrics.leadsIdentificados.toString()} />
                 <MetricCard icon={TrendingUp} label="Conversões" value={metrics.conversoes.toString()} />
                 <MetricCard icon={DollarSign} label="Receita" value={`R$ ${metrics.receita.toLocaleString("pt-BR")}`} />
+              </div>
+
+              <div className="mb-4">
+                <CampanhaTimelineChart campaign={campaign} />
               </div>
 
               <div className="rounded-lg border border-border p-4">
