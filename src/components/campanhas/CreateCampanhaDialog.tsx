@@ -82,9 +82,11 @@ export function CreateCampanhaDialog({ open, onOpenChange, onCreated, initial }:
 
           <div className="space-y-2">
             <Label htmlFor="destino">URL de destino</Label>
-            <Input id="destino" value={destino} onChange={(e) => setDestino(e.target.value)} placeholder="https://wa.me/5511... ou https://seusite.com/landing" />
+            <Input id="destino" value={destino} onChange={(e) => setDestino(e.target.value)} placeholder="https://wa.me/{{number}} ou https://seusite.com/landing" />
             <p className="text-xs text-muted-foreground">
-              Para onde o lead vai ao clicar no anúncio. Aceita links de WhatsApp, landing pages, formulários, etc.
+              Para onde o lead vai ao clicar no anúncio. Use{" "}
+              <code className="px-1 rounded bg-muted text-foreground">{`{{number}}`}</code>{" "}
+              para inserir automaticamente o número da instância WhatsApp principal conectada.
             </p>
           </div>
 
