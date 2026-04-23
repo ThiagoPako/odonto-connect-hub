@@ -127,6 +127,16 @@ function GenericKanbanBoard<T extends string>({
     });
     setDraggedLead(null);
 
+    // Conversão automática de campanha quando lead chega em "orcamento_aprovado"
+    if ((toStage as string) === "orcamento_aprovado") {
+      const affected = markLeadConverted(movedLead.id, movedLead.value);
+      if (affected.length > 0) {
+        toast.success(`Conversão registrada em ${affected.length} campanha(s)`, {
+          description: `${movedLead.name} → R$ ${(movedLead.value || 0).toLocaleString("pt-BR")}`,
+        });
+      }
+    }
+
     // Persist to API
     crmApi.updateStage(movedLead.id, toStage as string).then(({ error }) => {
       if (error) {
