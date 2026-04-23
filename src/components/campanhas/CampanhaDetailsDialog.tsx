@@ -23,13 +23,22 @@ export function CampanhaDetailsDialog({ open, onOpenChange, campaign }: Props) {
   const [copiedCanal, setCopiedCanal] = useState<CanalCampanha | null>(null);
   const [extrasByCanal, setExtrasByCanal] = useState<Record<string, UtmExtras>>({});
   const [openExtras, setOpenExtras] = useState<Record<string, boolean>>({});
+  const { connected } = useWhatsAppInstances();
+
+  // Número da instância principal (primeira conectada). Extrai apenas dígitos do JID.
+  const principalNumber = useMemo(() => {
+    const owner = connected[0]?.owner;
+    if (!owner) return "";
+    return owner.split("@")[0].replace(/\D/g, "");
+  }, [connected]);
+  const principalName = connected[0]?.instanceName ?? null;
 
   const metrics = useMemo(() => (campaign ? computeMetrics(campaign) : null), [campaign]);
 
   if (!campaign || !metrics) return null;
 
   function getExtras(canal: CanalCampanha): UtmExtras {
-    return extrasByCanal[canal] ?? {};
+    return { number: principalNumber, ...(extrasByCanal[canal] ?? {}) };
   }
   function setExtras(canal: CanalCampanha, patch: Partial<UtmExtras>) {
     setExtrasByCanal((prev) => ({ ...prev, [canal]: { ...prev[canal], ...patch } }));
