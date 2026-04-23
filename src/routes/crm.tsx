@@ -21,6 +21,7 @@ import { toast } from "sonner";
 import { whatsappApi } from "@/lib/vpsApi";
 import { LeadAvatar } from "@/components/LeadAvatar";
 import { CreateLeadDialog } from "@/components/crm/CreateLeadDialog";
+import { markLeadConverted } from "@/data/campanhasStore";
 
 export const Route = createFileRoute("/crm")({
   ssr: false,
@@ -125,6 +126,16 @@ function GenericKanbanBoard<T extends string>({
       return updated;
     });
     setDraggedLead(null);
+
+    // Conversão automática de campanha quando lead chega em "orcamento_aprovado"
+    if ((toStage as string) === "orcamento_aprovado") {
+      const affected = markLeadConverted(movedLead.id, movedLead.value);
+      if (affected.length > 0) {
+        toast.success(`Conversão registrada em ${affected.length} campanha(s)`, {
+          description: `${movedLead.name} → R$ ${(movedLead.value || 0).toLocaleString("pt-BR")}`,
+        });
+      }
+    }
 
     // Persist to API
     crmApi.updateStage(movedLead.id, toStage as string).then(({ error }) => {
@@ -461,6 +472,11 @@ function KanbanCard({ lead, stageId, onDragStart, onLeadAssigned }: { lead: Kanb
           },
         });
       } else {
+        // Marca lead como convertido nas campanhas
+        const affected = markLeadConverted(lead.id, lead.value);
+        if (affected.length > 0) {
+          toast.success(`Conversão atribuída a ${affected.length} campanha(s) — receita R$ ${(lead.value || 0).toLocaleString("pt-BR")}`);
+        }
         toast.success(`${lead.name} cadastrado como paciente!`, {
           action: { label: "Ver paciente", onClick: () => navigate({ to: "/pacientes", search: { pacienteId: data?.paciente_id } }) },
         });

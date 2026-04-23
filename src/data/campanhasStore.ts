@@ -191,6 +191,35 @@ export function linkLeadToCampaign(leadId: string, leadName: string): { campaign
   return { campaign: camp, canal: pending.canal };
 }
 
+/**
+ * Marca um lead como convertido em todas as campanhas onde ele aparece.
+ * Atualiza o hit existente com convertido=true e valor (se fornecido).
+ * Retorna a lista de campanhas afetadas.
+ */
+export function markLeadConverted(leadId: string, valor?: number): Campaign[] {
+  if (!leadId) return [];
+  const list = getCampanhas();
+  const affected: Campaign[] = [];
+  for (const camp of list) {
+    let touched = false;
+    for (const hit of camp.hits) {
+      if (hit.leadId === leadId && !hit.convertido) {
+        hit.convertido = true;
+        if (valor !== undefined) hit.valor = valor;
+        touched = true;
+      }
+    }
+    if (touched) affected.push(camp);
+  }
+  if (affected.length > 0) saveCampanhas(list);
+  return affected;
+}
+
+/** Verifica se um lead está vinculado a alguma campanha. */
+export function findCampaignsByLead(leadId: string): Campaign[] {
+  return getCampanhas().filter((c) => c.hits.some((h) => h.leadId === leadId));
+}
+
 /* ─────────────── Métricas ─────────────── */
 
 export interface CampanhaMetrics {
