@@ -18,6 +18,7 @@ import {
 } from "@/data/registroCentral";
 import { type Appointment } from "@/data/agendaMockData";
 import { aiApi, consultationsApi, agendaApi, type AgendamentoVPS, type ConsultationRecord } from "@/lib/vpsApi";
+import { getDemoConsultas } from "@/data/demoConsultas";
 import { toast } from "sonner";
 
 type SearchParams = { appointmentId?: string };
