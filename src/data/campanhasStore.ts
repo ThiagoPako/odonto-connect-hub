@@ -177,8 +177,9 @@ export function registerHit(
   saveCampanhas(list);
 }
 
-/** Vincula um lead recém-criado ao UTM pendente, retornando a campanha de origem. */
-export function linkLeadToCampaign(leadId: string, leadName: string): { campaign: Campaign; canal: CanalCampanha } | null {
+/** Vincula um lead recém-criado ao UTM pendente, retornando a campanha de origem.
+ *  Também cria/aplica automaticamente as tags "Origem: <Canal>" e "Campanha: <Nome>" no CRM. */
+export async function linkLeadToCampaign(leadId: string, leadName: string): Promise<{ campaign: Campaign; canal: CanalCampanha } | null> {
   const pending = getPendingUtm();
   if (!pending) return null;
   const camp = getCampanhaById(pending.campaignId);
@@ -187,6 +188,16 @@ export function linkLeadToCampaign(leadId: string, leadName: string): { campaign
     return null;
   }
   registerHit(camp.id, pending.canal, { leadId, leadName });
+
+  // Auto-aplica tags de origem + campanha
+  try {
+    const { ensureCampaignTags, applyTagsToLead } = await import("./leadTags");
+    const canal = CANAIS.find((c) => c.id === pending.canal);
+    const canalLabel = canal ? canal.label.split(" (")[0] : pending.canal;
+    const tagIds = ensureCampaignTags(pending.canal, canalLabel, camp.nome);
+    applyTagsToLead(leadId, tagIds);
+  } catch {}
+
   clearPendingUtm();
   return { campaign: camp, canal: pending.canal };
 }
