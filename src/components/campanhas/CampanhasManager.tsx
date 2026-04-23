@@ -7,7 +7,7 @@ import { CANAIS, computeMetrics, deleteCampanha, getCampanhas, type Campaign } f
 import { CreateCampanhaDialog } from "./CreateCampanhaDialog";
 import { CampanhaDetailsDialog } from "./CampanhaDetailsDialog";
 import { CampanhaSparkline } from "./CampanhaSparkline";
-import { ChannelLogo } from "./ChannelLogo";
+import { ChannelBadge } from "./ChannelLogo";
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -112,18 +112,10 @@ export function CampanhasManager() {
                 <div className="flex flex-wrap items-center gap-1.5 mb-4">
                   {c.canais.slice(0, 5).map((canalId) => {
                     const canal = CANAIS.find((x) => x.id === canalId);
-                    return (
-                      <span
-                        key={canalId}
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-background ring-1 ring-border shadow-sm"
-                        title={canal?.label}
-                      >
-                        <ChannelLogo canal={canalId} size={18} />
-                      </span>
-                    );
+                    return <ChannelBadge key={canalId} canal={canalId} size="sm" title={canal?.label} />;
                   })}
                   {c.canais.length > 5 && (
-                    <span className="inline-flex h-8 px-2 items-center justify-center rounded-full bg-muted text-xs font-semibold text-muted-foreground ring-1 ring-border">
+                    <span className="inline-flex h-7 px-2 items-center justify-center rounded-lg bg-background text-xs font-semibold text-muted-foreground ring-1 ring-border shadow-sm">
                       +{c.canais.length - 5}
                     </span>
                   )}

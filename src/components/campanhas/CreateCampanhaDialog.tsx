@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { AlertCircle, Wifi, WifiOff, Sparkles } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import { AUTO_INSTANCE, CANAIS, upsertCampanha, type Campaign, type CanalCampanha } from "@/data/campanhasStore";
-import { ChannelLogo } from "./ChannelLogo";
+import { ChannelBadge } from "./ChannelLogo";
 import { useWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
 import { toast } from "sonner";
 
