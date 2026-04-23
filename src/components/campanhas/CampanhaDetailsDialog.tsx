@@ -2,10 +2,12 @@ import { useMemo, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Copy, ExternalLink, TrendingUp, Users, Target, DollarSign, Check } from "lucide-react";
-import { CANAIS, buildTrackingLink, computeMetrics, type Campaign, type CanalCampanha } from "@/data/campanhasStore";
+import { Copy, ExternalLink, TrendingUp, Users, Target, DollarSign, Check, Settings2 } from "lucide-react";
+import { CANAIS, buildTrackingLink, computeMetrics, type Campaign, type CanalCampanha, type UtmExtras } from "@/data/campanhasStore";
 import { CampanhaTimelineChart } from "./CampanhaTimelineChart";
 import { CampanhaLeadsTable } from "./CampanhaLeadsTable";
 import { toast } from "sonner";
@@ -18,14 +20,23 @@ interface Props {
 
 export function CampanhaDetailsDialog({ open, onOpenChange, campaign }: Props) {
   const [copiedCanal, setCopiedCanal] = useState<CanalCampanha | null>(null);
+  const [extrasByCanal, setExtrasByCanal] = useState<Record<string, UtmExtras>>({});
+  const [openExtras, setOpenExtras] = useState<Record<string, boolean>>({});
 
   const metrics = useMemo(() => (campaign ? computeMetrics(campaign) : null), [campaign]);
 
   if (!campaign || !metrics) return null;
 
+  function getExtras(canal: CanalCampanha): UtmExtras {
+    return extrasByCanal[canal] ?? {};
+  }
+  function setExtras(canal: CanalCampanha, patch: Partial<UtmExtras>) {
+    setExtrasByCanal((prev) => ({ ...prev, [canal]: { ...prev[canal], ...patch } }));
+  }
+
   async function copyLink(canal: CanalCampanha) {
     if (!campaign) return;
-    const link = buildTrackingLink(campaign, canal);
+    const link = buildTrackingLink(campaign, canal, getExtras(canal));
     try {
       await navigator.clipboard.writeText(link);
       setCopiedCanal(canal);
@@ -71,9 +82,12 @@ export function CampanhaDetailsDialog({ open, onOpenChange, campaign }: Props) {
                 {campaign.canais.map((canalId) => {
                   const canal = CANAIS.find((c) => c.id === canalId);
                   if (!canal) return null;
-                  const link = buildTrackingLink(campaign, canalId);
+                  const extras = getExtras(canalId);
+                  const link = buildTrackingLink(campaign, canalId, extras);
                   const hits = metrics.porCanal[canalId] ?? 0;
                   const isCopied = copiedCanal === canalId;
+                  const isExtrasOpen = openExtras[canalId] ?? false;
+                  const hasExtras = !!(extras.term || extras.id);
                   return (
                     <div key={canalId} className="rounded-lg border border-border p-3 space-y-2">
                       <div className="flex items-center justify-between gap-2">
@@ -85,6 +99,14 @@ export function CampanhaDetailsDialog({ open, onOpenChange, campaign }: Props) {
                           </div>
                         </div>
                         <div className="flex gap-1 shrink-0">
+                          <Button
+                            size="sm"
+                            variant={isExtrasOpen || hasExtras ? "secondary" : "ghost"}
+                            onClick={() => setOpenExtras((p) => ({ ...p, [canalId]: !isExtrasOpen }))}
+                            title="Parâmetros extras (utm_term, utm_id)"
+                          >
+                            <Settings2 className="h-3 w-3" />
+                          </Button>
                           <Button size="sm" variant="outline" onClick={() => window.open(link, "_blank")}>
                             <ExternalLink className="h-3 w-3" />
                           </Button>
@@ -94,6 +116,36 @@ export function CampanhaDetailsDialog({ open, onOpenChange, campaign }: Props) {
                           </Button>
                         </div>
                       </div>
+
+                      {isExtrasOpen && (
+                        <div className="grid grid-cols-2 gap-2 pt-1">
+                          <div className="space-y-1">
+                            <Label htmlFor={`term-${canalId}`} className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                              utm_term <span className="normal-case">(palavra-chave)</span>
+                            </Label>
+                            <Input
+                              id={`term-${canalId}`}
+                              value={extras.term ?? ""}
+                              onChange={(e) => setExtras(canalId, { term: e.target.value })}
+                              placeholder="ex: implante-dentario"
+                              className="h-8 text-xs"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <Label htmlFor={`id-${canalId}`} className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                              utm_id <span className="normal-case">(ID do anúncio)</span>
+                            </Label>
+                            <Input
+                              id={`id-${canalId}`}
+                              value={extras.id ?? ""}
+                              onChange={(e) => setExtras(canalId, { id: e.target.value })}
+                              placeholder="ex: adset_123"
+                              className="h-8 text-xs"
+                            />
+                          </div>
+                        </div>
+                      )}
+
                       <div className="rounded bg-muted px-2 py-1.5 font-mono text-[11px] text-muted-foreground break-all">
                         {link}
                       </div>
