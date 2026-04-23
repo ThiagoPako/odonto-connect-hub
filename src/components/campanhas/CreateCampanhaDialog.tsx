@@ -240,9 +240,7 @@ export function CreateCampanhaDialog({ open, onOpenChange, onCreated, initial }:
                     }`}
                   >
                     <Checkbox checked={checked} onCheckedChange={() => toggleCanal(c.id)} />
-                    <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-background ring-1 ring-border shrink-0">
-                      <ChannelLogo canal={c.id} size={16} />
-                    </span>
+                    <ChannelBadge canal={c.id} size="sm" />
                     <span className="text-sm font-medium truncate">{c.label}</span>
                   </label>
                 );
