@@ -115,15 +115,15 @@ export function CampanhasManager() {
                     return (
                       <span
                         key={canalId}
-                        className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-muted text-base ring-1 ring-border"
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-background ring-1 ring-border shadow-sm"
                         title={canal?.label}
                       >
-                        {canal?.icon}
+                        <ChannelLogo canal={canalId} size={18} />
                       </span>
                     );
                   })}
                   {c.canais.length > 5 && (
-                    <span className="text-xs font-medium text-muted-foreground ml-1">
+                    <span className="inline-flex h-8 px-2 items-center justify-center rounded-full bg-muted text-xs font-semibold text-muted-foreground ring-1 ring-border">
                       +{c.canais.length - 5}
                     </span>
                   )}
