@@ -8,6 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Copy, ExternalLink, TrendingUp, Users, Target, DollarSign, Check, Settings2 } from "lucide-react";
 import { CANAIS, buildTrackingLink, computeMetrics, type Campaign, type CanalCampanha, type UtmExtras } from "@/data/campanhasStore";
+import { useWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
 import { CampanhaTimelineChart } from "./CampanhaTimelineChart";
 import { CampanhaLeadsTable } from "./CampanhaLeadsTable";
 import { toast } from "sonner";
@@ -22,13 +23,22 @@ export function CampanhaDetailsDialog({ open, onOpenChange, campaign }: Props) {
   const [copiedCanal, setCopiedCanal] = useState<CanalCampanha | null>(null);
   const [extrasByCanal, setExtrasByCanal] = useState<Record<string, UtmExtras>>({});
   const [openExtras, setOpenExtras] = useState<Record<string, boolean>>({});
+  const { connected } = useWhatsAppInstances();
+
+  // Número da instância principal (primeira conectada). Extrai apenas dígitos do JID.
+  const principalNumber = useMemo(() => {
+    const owner = connected[0]?.owner;
+    if (!owner) return "";
+    return owner.split("@")[0].replace(/\D/g, "");
+  }, [connected]);
+  const principalName = connected[0]?.instanceName ?? null;
 
   const metrics = useMemo(() => (campaign ? computeMetrics(campaign) : null), [campaign]);
 
   if (!campaign || !metrics) return null;
 
   function getExtras(canal: CanalCampanha): UtmExtras {
-    return extrasByCanal[canal] ?? {};
+    return { number: principalNumber, ...(extrasByCanal[canal] ?? {}) };
   }
   function setExtras(canal: CanalCampanha, patch: Partial<UtmExtras>) {
     setExtrasByCanal((prev) => ({ ...prev, [canal]: { ...prev[canal], ...patch } }));
@@ -77,6 +87,24 @@ export function CampanhaDetailsDialog({ open, onOpenChange, campaign }: Props) {
                     Cada canal tem um link único com parâmetros UTM. Use o link correspondente no anúncio de cada plataforma.
                     Quando alguém clicar e virar lead, o sistema marca automaticamente a origem no CRM.
                   </p>
+                  {campaign.destino.includes("{{number}}") && (
+                    <p className="text-xs mt-2 flex items-center gap-1.5">
+                      <span className={principalNumber ? "text-success" : "text-destructive"}>●</span>
+                      {principalNumber ? (
+                        <>
+                          <span className="text-muted-foreground">Variável </span>
+                          <code className="px-1 rounded bg-background">{`{{number}}`}</code>
+                          <span className="text-muted-foreground">→</span>
+                          <code className="px-1 rounded bg-background">{principalNumber}</code>
+                          {principalName && <span className="text-muted-foreground">({principalName})</span>}
+                        </>
+                      ) : (
+                        <span className="text-destructive">
+                          Nenhuma instância WhatsApp conectada — {`{{number}}`} ficará vazio.
+                        </span>
+                      )}
+                    </p>
+                  )}
                 </div>
 
                 {campaign.canais.map((canalId) => {

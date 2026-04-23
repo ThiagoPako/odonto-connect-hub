@@ -19,7 +19,7 @@ interface Props {
 export function CreateCampanhaDialog({ open, onOpenChange, onCreated, initial }: Props) {
   const [nome, setNome] = useState(initial?.nome ?? "");
   const [descricao, setDescricao] = useState(initial?.descricao ?? "");
-  const [destino, setDestino] = useState(initial?.destino ?? "https://wa.me/5511999990000?text=Olá");
+  const [destino, setDestino] = useState(initial?.destino ?? "https://wa.me/{{number}}?text=Olá");
   const [budget, setBudget] = useState<string>(initial?.budget?.toString() ?? "");
   const [canais, setCanais] = useState<CanalCampanha[]>(initial?.canais ?? ["meta_ads", "google_ads", "tiktok"]);
   const [ativa, setAtiva] = useState(initial?.ativa ?? true);
@@ -82,9 +82,11 @@ export function CreateCampanhaDialog({ open, onOpenChange, onCreated, initial }:
 
           <div className="space-y-2">
             <Label htmlFor="destino">URL de destino</Label>
-            <Input id="destino" value={destino} onChange={(e) => setDestino(e.target.value)} placeholder="https://wa.me/5511... ou https://seusite.com/landing" />
+            <Input id="destino" value={destino} onChange={(e) => setDestino(e.target.value)} placeholder="https://wa.me/{{number}} ou https://seusite.com/landing" />
             <p className="text-xs text-muted-foreground">
-              Para onde o lead vai ao clicar no anúncio. Aceita links de WhatsApp, landing pages, formulários, etc.
+              Para onde o lead vai ao clicar no anúncio. Use{" "}
+              <code className="px-1 rounded bg-muted text-foreground">{`{{number}}`}</code>{" "}
+              para inserir automaticamente o número da instância WhatsApp principal conectada.
             </p>
           </div>
 
