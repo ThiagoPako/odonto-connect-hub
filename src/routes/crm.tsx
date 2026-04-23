@@ -472,6 +472,11 @@ function KanbanCard({ lead, stageId, onDragStart, onLeadAssigned }: { lead: Kanb
           },
         });
       } else {
+        // Marca lead como convertido nas campanhas
+        const affected = markLeadConverted(lead.id, lead.value);
+        if (affected.length > 0) {
+          toast.success(`Conversão atribuída a ${affected.length} campanha(s) — receita R$ ${(lead.value || 0).toLocaleString("pt-BR")}`);
+        }
         toast.success(`${lead.name} cadastrado como paciente!`, {
           action: { label: "Ver paciente", onClick: () => navigate({ to: "/pacientes", search: { pacienteId: data?.paciente_id } }) },
         });
