@@ -20,14 +20,23 @@ interface Props {
 
 export function CampanhaDetailsDialog({ open, onOpenChange, campaign }: Props) {
   const [copiedCanal, setCopiedCanal] = useState<CanalCampanha | null>(null);
+  const [extrasByCanal, setExtrasByCanal] = useState<Record<string, UtmExtras>>({});
+  const [openExtras, setOpenExtras] = useState<Record<string, boolean>>({});
 
   const metrics = useMemo(() => (campaign ? computeMetrics(campaign) : null), [campaign]);
 
   if (!campaign || !metrics) return null;
 
+  function getExtras(canal: CanalCampanha): UtmExtras {
+    return extrasByCanal[canal] ?? {};
+  }
+  function setExtras(canal: CanalCampanha, patch: Partial<UtmExtras>) {
+    setExtrasByCanal((prev) => ({ ...prev, [canal]: { ...prev[canal], ...patch } }));
+  }
+
   async function copyLink(canal: CanalCampanha) {
     if (!campaign) return;
-    const link = buildTrackingLink(campaign, canal);
+    const link = buildTrackingLink(campaign, canal, getExtras(canal));
     try {
       await navigator.clipboard.writeText(link);
       setCopiedCanal(canal);
