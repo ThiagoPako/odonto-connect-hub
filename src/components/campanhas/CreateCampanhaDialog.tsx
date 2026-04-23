@@ -34,7 +34,7 @@ export function CreateCampanhaDialog({ open, onOpenChange, onCreated, initial }:
   const [ativa, setAtiva] = useState(initial?.ativa ?? true);
   const [instanceName, setInstanceName] = useState<string>(initial?.instanceName ?? AUTO_INSTANCE);
 
-  const { instances, connected } = useWhatsAppInstances();
+  const { instances, connected } = useWhatsAppInstances({ active: open });
 
   const usesNumberVar = /\{\{\s*number\s*\}\}/i.test(destino);
 
