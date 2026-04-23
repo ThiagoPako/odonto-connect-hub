@@ -10,6 +10,7 @@ import { Plus, RefreshCw, Loader2, WifiOff, Smartphone, Wifi, Star } from "lucid
 import { useState, useEffect, useCallback } from "react";
 import { fetchInstances, type EvolutionInstance } from "@/lib/evolutionApi";
 import { vpsApiFetch } from "@/lib/vpsApi";
+import { pingWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/canais")({
@@ -47,6 +48,8 @@ function CanaisPage() {
     try {
       const list = await fetchInstances();
       setInstances(list.map((inst) => ({ ...inst, connectionState: inst.status })));
+      // Propaga para outros consumidores (campanhas, disparos, etc) sem esperar o polling
+      pingWhatsAppInstances();
     } catch (err) {
       if (showLoader || instances.length === 0) {
         setError(err instanceof Error ? err.message : "Erro ao carregar instâncias");

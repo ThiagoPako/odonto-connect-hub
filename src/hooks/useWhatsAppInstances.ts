@@ -100,6 +100,23 @@ function stopPolling() {
   }
 }
 
+/** Força refresh imediato — chamar após conectar/desconectar uma instância. */
+export function pingWhatsAppInstances() {
+  void refreshInstances();
+}
+
+// Refresh imediato quando a aba volta a ficar visível (usuário trocou para Canais e voltou)
+if (typeof window !== "undefined") {
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && listeners.size > 0) {
+      void refreshInstances();
+    }
+  });
+  window.addEventListener("focus", () => {
+    if (listeners.size > 0) void refreshInstances();
+  });
+}
+
 export function useWhatsAppInstances() {
   const [instances, setInstances] = useState<ConnectedInstance[]>(cachedInstances);
   const [loading, setLoading] = useState(cachedInstances.length === 0);
