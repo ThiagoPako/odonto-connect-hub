@@ -845,52 +845,64 @@ function NovoAgendamentoDialog({
     }
 
     setSaving(true);
-    const prof = mockProfessionals.find((p) => p.id === form.dentista_id);
-    const { error } = await agendaApi.create({
-      paciente_id: form.paciente_id || form.paciente_nome.toLowerCase().replace(/\s+/g, "_"),
-      paciente_nome: form.paciente_nome.trim(),
-      dentista_id: form.dentista_id,
-      dentista_nome: prof?.name || "",
-      data: form.data, hora: form.hora, duracao: form.duracao,
-      procedimento: form.procedimento, sala: form.sala,
-      observacoes: form.observacoes || undefined, status: "agendado",
-    });
-
-    if (error) {
-      setSaving(false);
-      toast.error("Erro ao criar agendamento: " + error);
-      return;
-    }
-
-    // Send WhatsApp confirmation
-    if (form.enviar_whatsapp && form.telefone.replace(/\D/g, "")) {
-      const phone = form.telefone.replace(/\D/g, "");
-      const dataBR = formatDateBR(form.data);
-      const msg = `✅ *Agendamento Confirmado*\n\nOlá, ${form.paciente_nome.split(" ")[0]}! 👋\n\nSeu agendamento foi confirmado:\n\n📅 *Data:* ${dataBR}\n⏰ *Horário:* ${form.hora}\n🦷 *Procedimento:* ${form.procedimento}\n👨‍⚕️ *Profissional:* ${prof?.name || "—"}\n\nCaso precise reagendar, entre em contato conosco.\n\n_Odonto Connect_`;
+    try {
+      const prof = mockProfessionals.find((p) => p.id === form.dentista_id);
+      let result;
       try {
-        // Use first available WhatsApp instance
-        const { data: instances } = await whatsappApi.instances();
-        const activeInstance = Array.isArray(instances)
-          ? instances.find((i: any) => i.connectionStatus === "open" || i.state === "open")
-          : null;
-        if (activeInstance) {
-          const instanceName = activeInstance.instance?.instanceName || activeInstance.instanceName || activeInstance.name;
-          await whatsappApi.sendText(instanceName, phone, msg);
-          toast.success("Confirmação enviada via WhatsApp! ✅");
-        } else {
-          toast.warning("Agendamento criado, mas nenhuma instância WhatsApp ativa para enviar confirmação.");
-        }
-      } catch (whatsErr: any) {
-        toast.warning("Agendamento criado, mas falha ao enviar WhatsApp: " + (whatsErr?.message || "erro"));
+        result = await agendaApi.create({
+          paciente_id: form.paciente_id || form.paciente_nome.toLowerCase().replace(/\s+/g, "_"),
+          paciente_nome: form.paciente_nome.trim(),
+          dentista_id: form.dentista_id,
+          dentista_nome: prof?.name || "",
+          data: form.data, hora: form.hora, duracao: form.duracao,
+          procedimento: form.procedimento, sala: form.sala,
+          observacoes: form.observacoes || undefined, status: "agendado",
+        });
+      } catch (netErr: any) {
+        console.error("[agenda.create] network/exception:", netErr);
+        toast.error("Falha de conexão com a API: " + (netErr?.message || "erro desconhecido"));
+        return;
       }
-    } else {
-      toast.success("Agendamento criado com sucesso!");
-    }
 
-    setSaving(false);
-    onOpenChange(false);
-    setForm({ ...emptyForm, data: defaultDate });
-    onCreated();
+      const { error } = result || {};
+      if (error) {
+        toast.error("Erro ao criar agendamento: " + error);
+        return;
+      }
+
+      // Send WhatsApp confirmation
+      if (form.enviar_whatsapp && form.telefone.replace(/\D/g, "")) {
+        const phone = form.telefone.replace(/\D/g, "");
+        const dataBR = formatDateBR(form.data);
+        const msg = `✅ *Agendamento Confirmado*\n\nOlá, ${form.paciente_nome.split(" ")[0]}! 👋\n\nSeu agendamento foi confirmado:\n\n📅 *Data:* ${dataBR}\n⏰ *Horário:* ${form.hora}\n🦷 *Procedimento:* ${form.procedimento}\n👨‍⚕️ *Profissional:* ${prof?.name || "—"}\n\nCaso precise reagendar, entre em contato conosco.\n\n_Odonto Connect_`;
+        try {
+          const { data: instances } = await whatsappApi.instances();
+          const activeInstance = Array.isArray(instances)
+            ? instances.find((i: any) => i.connectionStatus === "open" || i.state === "open")
+            : null;
+          if (activeInstance) {
+            const instanceName = activeInstance.instance?.instanceName || activeInstance.instanceName || activeInstance.name;
+            await whatsappApi.sendText(instanceName, phone, msg);
+            toast.success("Confirmação enviada via WhatsApp! ✅");
+          } else {
+            toast.warning("Agendamento criado, mas nenhuma instância WhatsApp ativa para enviar confirmação.");
+          }
+        } catch (whatsErr: any) {
+          toast.warning("Agendamento criado, mas falha ao enviar WhatsApp: " + (whatsErr?.message || "erro"));
+        }
+      } else {
+        toast.success("Agendamento criado com sucesso!");
+      }
+
+      onOpenChange(false);
+      setForm({ ...emptyForm, data: defaultDate });
+      onCreated();
+    } catch (err: any) {
+      console.error("[agenda.handleSubmit] unexpected error:", err);
+      toast.error("Erro inesperado: " + (err?.message || "tente novamente"));
+    } finally {
+      setSaving(false);
+    }
   };
 
   const inputCls = "w-full h-9 px-3 rounded-lg bg-muted border border-border text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary";
