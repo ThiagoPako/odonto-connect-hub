@@ -38,9 +38,10 @@ import {
 } from "lucide-react";
 
 export const Route = createFileRoute("/pacientes")({
-  validateSearch: (search: Record<string, unknown>) => ({
-    pacienteId: (search.pacienteId as string) || undefined,
-  }),
+  validateSearch: (search: Record<string, unknown>): { pacienteId?: string } => {
+    const id = search.pacienteId;
+    return typeof id === "string" && id.length > 0 ? { pacienteId: id } : {};
+  },
   ssr: false,
   component: PacientesPage,
 });
