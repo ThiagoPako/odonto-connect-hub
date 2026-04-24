@@ -3117,7 +3117,7 @@ app.get('/api/dentista/painel/:id?', async (req, res) => {
 
     const dentistaId = dentista.id;
 
-    const [atendHojeRows, agendaRows, orcamentosRows, prontuariosRows, comissoesRows] = await Promise.all([
+    const [atendHojeRows, agendaRows, orcamentosRows, prontuariosRows, comissoesRows, tratamentosRows] = await Promise.all([
       // Atendimentos de hoje
       safe(
         `SELECT a.id, a.paciente_id, a.paciente_nome, p.nome as p_nome, a.hora, a.procedimento,
@@ -3170,6 +3170,17 @@ app.get('/api/dentista/painel/:id?', async (req, res) => {
           WHERE c.dentista_id = $1
           ORDER BY c.data DESC
           LIMIT 100`,
+        [dentistaId]
+      ),
+      // Tratamentos do dentista (todos os pacientes)
+      safe(
+        `SELECT t.id, t.paciente_id, t.descricao, t.dente, t.valor, t.status, t.plano,
+                t.observacoes, t.created_at, t.updated_at, p.nome as paciente_nome
+           FROM tratamentos t
+           LEFT JOIN pacientes p ON p.id = t.paciente_id
+          WHERE t.dentista_id = $1
+          ORDER BY t.created_at DESC
+          LIMIT 200`,
         [dentistaId]
       ),
     ]);
