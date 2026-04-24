@@ -439,7 +439,90 @@ app.get('/api/health', async (req, res) => {
     });
   }
 
-  // ─── 3. Evolution API (warning — does not block deploy) ────────────────
+  // ─── 3. Schema migrations (critical — only runs if DB is up) ───────────
+  if (checks.database.status === 'ok') {
+    try {
+      const t0 = Date.now();
+      // Single round-trip: fetch all required tables and columns
+      const tableNames = [...new Set(REQUIRED_SCHEMA.map((s) => s.table))];
+      const tablesRes = await pool.query(
+        `SELECT table_name FROM information_schema.tables
+         WHERE table_schema = 'public' AND table_name = ANY($1::text[])`,
+        [tableNames]
+      );
+      const presentTables = new Set(tablesRes.rows.map((r) => r.table_name));
+
+      const colChecks = REQUIRED_SCHEMA.filter((s) => s.column);
+      let presentColumns = new Set();
+      if (colChecks.length > 0) {
+        const colsRes = await pool.query(
+          `SELECT table_name, column_name FROM information_schema.columns
+           WHERE table_schema = 'public'
+             AND (table_name, column_name) IN (${colChecks
+               .map((_, i) => `($${i * 2 + 1}, $${i * 2 + 2})`)
+               .join(',')})`,
+          colChecks.flatMap((c) => [c.table, c.column])
+        );
+        presentColumns = new Set(colsRes.rows.map((r) => `${r.table_name}.${r.column_name}`));
+      }
+
+      const missing = [];
+      for (const req of REQUIRED_SCHEMA) {
+        if (!presentTables.has(req.table)) {
+          missing.push({
+            migration: req.migration,
+            table: req.table,
+            column: req.column || null,
+            reason: 'table_missing',
+          });
+        } else if (req.column && !presentColumns.has(`${req.table}.${req.column}`)) {
+          missing.push({
+            migration: req.migration,
+            table: req.table,
+            column: req.column,
+            reason: 'column_missing',
+          });
+        }
+      }
+
+      const latency = Date.now() - t0;
+      if (missing.length === 0) {
+        checks.schema = {
+          status: 'ok',
+          latency_ms: latency,
+          checked: REQUIRED_SCHEMA.length,
+        };
+      } else {
+        const missingMigrations = [...new Set(missing.map((m) => m.migration))];
+        checks.schema = {
+          status: 'down',
+          latency_ms: latency,
+          checked: REQUIRED_SCHEMA.length,
+          missing_count: missing.length,
+          missing_migrations: missingMigrations,
+        };
+        errors.push({
+          code: 'SCHEMA_MIGRATION_MISSING',
+          severity: 'critical',
+          dependency: 'schema',
+          message: `${missing.length} required schema element(s) missing — run pending migrations: ${missingMigrations.join(', ')}`,
+          detail: { missing, missing_migrations: missingMigrations },
+        });
+      }
+    } catch (err) {
+      checks.schema = { status: 'down', error: String(err?.message || err) };
+      errors.push({
+        code: 'SCHEMA_CHECK_FAILED',
+        severity: 'critical',
+        dependency: 'schema',
+        message: `Could not verify schema state: ${String(err?.message || err)}`,
+      });
+    }
+  } else {
+    checks.schema = { status: 'skipped', reason: 'database_unavailable' };
+  }
+
+  // ─── 4. Evolution API (warning — does not block deploy) ────────────────
   try {
     const t0 = Date.now();
     const ctrl = new AbortController();
