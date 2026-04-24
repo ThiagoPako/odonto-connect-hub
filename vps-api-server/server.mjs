@@ -2512,6 +2512,12 @@ app.post('/api/tratamentos', async (req, res) => {
       'INSERT INTO tratamentos (id, paciente_id, dentista_id, descricao, dente, valor, status, plano, observacoes) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
       [id, paciente_id, dentista_id, descricao, dente, valor, status || 'planejado', plano, observacoes]
     );
+    try {
+      broadcastSSE('tratamento_changed', {
+        action: 'created', id, paciente_id, dentista_id, descricao, dente, valor,
+        status: status || 'planejado', plano, observacoes, ts: Date.now(),
+      });
+    } catch (e) { console.error('SSE tratamento_changed error:', e); }
     res.json({ id, success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -2534,6 +2540,15 @@ app.put('/api/tratamentos/:id', async (req, res) => {
     params.push(req.params.id);
     await pool.query(`UPDATE tratamentos SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length}`, params);
     const { rows } = await pool.query('SELECT * FROM tratamentos WHERE id=$1', [req.params.id]);
+    try {
+      broadcastSSE('tratamento_changed', {
+        action: 'updated', id: req.params.id,
+        paciente_id: rows[0]?.paciente_id, dentista_id: rows[0]?.dentista_id,
+        descricao: rows[0]?.descricao, dente: rows[0]?.dente, valor: rows[0]?.valor,
+        status: rows[0]?.status, plano: rows[0]?.plano, observacoes: rows[0]?.observacoes,
+        ts: Date.now(),
+      });
+    } catch (e) { console.error('SSE tratamento_changed error:', e); }
     res.json(rows[0]);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -2543,7 +2558,15 @@ app.put('/api/tratamentos/:id', async (req, res) => {
 app.delete('/api/tratamentos/:id', async (req, res) => {
   try {
     await verifyUser(req);
+    const { rows: prev } = await pool.query('SELECT paciente_id, dentista_id FROM tratamentos WHERE id=$1', [req.params.id]);
     await pool.query('DELETE FROM tratamentos WHERE id=$1', [req.params.id]);
+    try {
+      broadcastSSE('tratamento_changed', {
+        action: 'deleted', id: req.params.id,
+        paciente_id: prev[0]?.paciente_id, dentista_id: prev[0]?.dentista_id,
+        ts: Date.now(),
+      });
+    } catch (e) { console.error('SSE tratamento_changed error:', e); }
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
