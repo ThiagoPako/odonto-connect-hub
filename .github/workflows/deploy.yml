@@ -125,12 +125,44 @@ jobs:
               sleep 2
             done
 
-            # Log full health payload for diagnostics
-            curl -s http://127.0.0.1:3002/api/health 2>/dev/null || true
-            echo ""
+            # Pretty-print structured health payload for diagnostics
+            HEALTH_PAYLOAD=$(curl -s http://127.0.0.1:3002/api/health 2>/dev/null || echo '{}')
+            echo "=== /api/health payload ==="
+            echo "$HEALTH_PAYLOAD" | node -e "
+              let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{
+                try{
+                  const h=JSON.parse(d);
+                  console.log('Status   :', h.status);
+                  console.log('Code     :', h.code);
+                  console.log('Message  :', h.message);
+                  console.log('Uptime   :', h.uptime_s+'s');
+                  console.log('Latency  :', h.response_time_ms+'ms');
+                  if(h.checks) for(const [k,v] of Object.entries(h.checks)){
+                    console.log('  ['+k+']', JSON.stringify(v));
+                  }
+                  if(h.errors && h.errors.length){
+                    console.log('--- Errors ---');
+                    for(const e of h.errors){
+                      console.log('  ['+e.severity.toUpperCase()+'] '+e.code+' ('+e.dependency+')');
+                      console.log('    → '+e.message);
+                      if(e.detail) console.log('    detail: '+JSON.stringify(e.detail));
+                    }
+                  }
+                  if(h.summary){
+                    console.log('Summary  :', JSON.stringify(h.summary));
+                  }
+                }catch(e){console.log('(unparseable response)', d.slice(0,500));}
+              });" 2>/dev/null || echo "$HEALTH_PAYLOAD"
+            echo "==========================="
 
             if [ "$API_READY" != "1" ]; then
-              echo "ERROR: API not responding after 30s"
+              # Extract failure code for at-a-glance diagnosis
+              FAIL_CODE=$(echo "$HEALTH_PAYLOAD" | node -e "
+                let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{
+                  try{const h=JSON.parse(d);console.log(h.code||'UNKNOWN');}
+                  catch(e){console.log('NO_RESPONSE');}
+                });" 2>/dev/null || echo 'NO_RESPONSE')
+              echo "ERROR: API healthcheck failed — code: $FAIL_CODE"
               pm2 logs odonto-api --lines 30 --nostream 2>/dev/null || true
               false
             fi
