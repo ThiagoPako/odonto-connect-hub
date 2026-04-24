@@ -3073,6 +3073,213 @@ app.get('/api/comercial/painel', async (req, res) => {
 
 
 // ═══════════════════════════════════════════════════════════════
+// PAINEL DENTISTA — agregação para um dentista (KPIs + listas)
+// GET /api/dentista/painel/:id?  (sem id => auto-detect pelo email do user)
+// Admin pode consultar qualquer dentista; demais só o próprio (match por email).
+// ═══════════════════════════════════════════════════════════════
+app.get('/api/dentista/painel/:id?', async (req, res) => {
+  try {
+    const user = await verifyUser(req);
+    const today = new Date().toISOString().split('T')[0];
+
+    const safe = async (sql, params = []) => {
+      try { return await pool.query(sql, params); }
+      catch (err) {
+        if (err.code === '42P01' || err.code === '42703') return { rows: [] };
+        throw err;
+      }
+    };
+
+    // Resolve dentista alvo
+    let dentista = null;
+    if (req.params.id) {
+      const r = await safe('SELECT * FROM dentistas WHERE id = $1 LIMIT 1', [req.params.id]);
+      dentista = r.rows[0] || null;
+    } else if (user.email) {
+      const r = await safe('SELECT * FROM dentistas WHERE LOWER(email) = LOWER($1) LIMIT 1', [user.email]);
+      dentista = r.rows[0] || null;
+    }
+
+    // Fallback: se admin e nada resolvido, pega o primeiro
+    if (!dentista && user.role === 'admin') {
+      const r = await safe('SELECT * FROM dentistas ORDER BY nome ASC LIMIT 1');
+      dentista = r.rows[0] || null;
+    }
+
+    if (!dentista) {
+      return res.status(404).json({ error: 'Dentista não encontrado para o usuário atual' });
+    }
+
+    // Autorização: admin pode tudo; demais só ver o próprio
+    if (user.role !== 'admin' && (user.email || '').toLowerCase() !== (dentista.email || '').toLowerCase()) {
+      return res.status(403).json({ error: 'Acesso negado a este painel' });
+    }
+
+    const dentistaId = dentista.id;
+
+    const [atendHojeRows, agendaRows, orcamentosRows, prontuariosRows, comissoesRows] = await Promise.all([
+      // Atendimentos de hoje
+      safe(
+        `SELECT a.id, a.paciente_id, a.paciente_nome, p.nome as p_nome, a.hora, a.procedimento,
+                a.status, a.tipo, a.valor
+           FROM agendamentos a
+           LEFT JOIN pacientes p ON p.id = a.paciente_id
+          WHERE a.dentista_id = $1 AND a.data = $2
+          ORDER BY a.hora ASC`,
+        [dentistaId, today]
+      ),
+      // Agenda completa (hoje + próximos 30 dias)
+      safe(
+        `SELECT a.id, a.paciente_id, a.paciente_nome, p.nome as p_nome, a.data, a.hora,
+                a.duracao, a.tipo, a.status, a.observacoes, a.procedimento
+           FROM agendamentos a
+           LEFT JOIN pacientes p ON p.id = a.paciente_id
+          WHERE a.dentista_id = $1 AND a.data >= $2 AND a.data <= ($2::date + INTERVAL '30 days')
+          ORDER BY a.data ASC, a.hora ASC`,
+        [dentistaId, today]
+      ),
+      // Orçamentos do dentista
+      safe(
+        `SELECT o.id, o.paciente_id, o.paciente_nome, p.nome as p_nome, o.itens,
+                o.valor_total, o.status, o.created_at
+           FROM orcamentos o
+           LEFT JOIN pacientes p ON p.id = o.paciente_id
+          WHERE o.dentista_id = $1
+          ORDER BY o.created_at DESC
+          LIMIT 50`,
+        [dentistaId]
+      ),
+      // Prontuários do dentista
+      safe(
+        `SELECT pr.id, pr.paciente_id, pr.paciente_nome, p.nome as p_nome,
+                pr.titulo, pr.descricao, pr.tipo, pr.created_at,
+                p.alergias
+           FROM prontuarios pr
+           LEFT JOIN pacientes p ON p.id = pr.paciente_id
+          WHERE pr.dentista_id = $1
+          ORDER BY pr.created_at DESC
+          LIMIT 50`,
+        [dentistaId]
+      ),
+      // Comissões do dentista
+      safe(
+        `SELECT c.id, c.paciente_id, c.procedimento, c.descricao, c.valor, c.percentual,
+                c.data, c.status, p.nome as paciente_nome
+           FROM comissoes c
+           LEFT JOIN pacientes p ON p.id = c.paciente_id
+          WHERE c.dentista_id = $1
+          ORDER BY c.data DESC
+          LIMIT 100`,
+        [dentistaId]
+      ),
+    ]);
+
+    // Normalização → shape esperado pelo frontend
+    const atendimentos = atendHojeRows.rows.map(r => {
+      const nome = r.p_nome || r.paciente_nome || 'Paciente';
+      const parts = String(nome).trim().split(/\s+/);
+      const iniciais = ((parts[0]?.[0] || '') + (parts[parts.length - 1]?.[0] || '')).toUpperCase();
+      return {
+        id: r.id,
+        pacienteId: r.paciente_id || undefined,
+        pacienteNome: nome,
+        pacienteIniciais: iniciais || 'P',
+        horario: (r.hora || '').slice(0, 5),
+        tipo: r.tipo || 'consulta',
+        status: r.status || 'agendado',
+        procedimento: r.procedimento || '—',
+        valor: r.valor != null ? Number(r.valor) : undefined,
+      };
+    });
+
+    const agenda = agendaRows.rows.map(r => ({
+      id: r.id,
+      pacienteId: r.paciente_id || undefined,
+      pacienteNome: r.p_nome || r.paciente_nome || 'Paciente',
+      data: r.data,
+      horario: (r.hora || '').slice(0, 5),
+      duracao: Number(r.duracao || 30),
+      tipo: r.tipo || 'consulta',
+      status: r.status || 'agendado',
+      observacao: r.observacoes || undefined,
+    }));
+
+    const orcamentos = orcamentosRows.rows.map(r => {
+      let itens = r.itens;
+      if (typeof itens === 'string') { try { itens = JSON.parse(itens); } catch { itens = []; } }
+      if (!Array.isArray(itens)) itens = [];
+      const norm = itens.map(i => ({
+        procedimento: i.procedimento || i.descricao || '—',
+        valor: Number(i.valor || i.valor_unitario || 0),
+        quantidade: Number(i.quantidade || 1),
+      }));
+      return {
+        id: r.id,
+        pacienteId: r.paciente_id || undefined,
+        pacienteNome: r.p_nome || r.paciente_nome || 'Paciente',
+        itens: norm,
+        total: Number(r.valor_total || norm.reduce((s, i) => s + i.valor * i.quantidade, 0)),
+        status: r.status || 'pendente',
+        criadoEm: r.created_at,
+      };
+    });
+
+    const prontuarios = prontuariosRows.rows.map(r => {
+      const nome = r.p_nome || r.paciente_nome || 'Paciente';
+      const parts = String(nome).trim().split(/\s+/);
+      const iniciais = ((parts[0]?.[0] || '') + (parts[parts.length - 1]?.[0] || '')).toUpperCase();
+      let alergias = r.alergias;
+      if (typeof alergias === 'string') { try { alergias = JSON.parse(alergias); } catch { alergias = []; } }
+      if (!Array.isArray(alergias)) alergias = [];
+      return {
+        id: r.id,
+        pacienteId: r.paciente_id || undefined,
+        pacienteNome: nome,
+        pacienteIniciais: iniciais || 'P',
+        ultimaConsulta: r.created_at,
+        diagnostico: r.titulo || r.tipo || '—',
+        tratamento: r.descricao || '—',
+        observacoes: r.descricao || '',
+        alergias,
+      };
+    });
+
+    const comissoes = comissoesRows.rows.map(r => ({
+      id: r.id,
+      pacienteNome: r.paciente_nome || '—',
+      procedimento: r.procedimento || r.descricao || '—',
+      data: r.data,
+      valorProcedimento: Number(r.valor || 0),
+      percentual: Number(r.percentual || 0),
+      valorComissao: Number(r.valor || 0) * Number(r.percentual || 0) / 100,
+      status: r.status || 'pendente',
+    }));
+
+    res.json({
+      dentista: {
+        id: dentista.id,
+        nome: dentista.nome,
+        email: dentista.email,
+        telefone: dentista.telefone,
+        cro: dentista.cro,
+        especialidade: dentista.especialidade,
+        comissao: Number(dentista.comissao_percentual || dentista.comissao || 0),
+        status: dentista.ativo === false ? 'inativo' : 'ativo',
+      },
+      atendimentos,
+      agenda,
+      orcamentos,
+      prontuarios,
+      comissoes,
+    });
+  } catch (error) {
+    const status = error.message === 'Unauthorized' ? 401 : 500;
+    res.status(status).json({ error: error.message });
+  }
+});
+
+
+// ═══════════════════════════════════════════════════════════════
 // GENERIC TABLE (for CRM, estoque, etc.)
 // ═══════════════════════════════════════════════════════════════
 
