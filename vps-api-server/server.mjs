@@ -3266,6 +3266,20 @@ app.get('/api/dentista/painel/:id?', async (req, res) => {
       status: r.status || 'pendente',
     }));
 
+    const tratamentos = tratamentosRows.rows.map(r => ({
+      id: r.id,
+      pacienteId: r.paciente_id || undefined,
+      pacienteNome: r.paciente_nome || 'Paciente',
+      descricao: r.descricao || '',
+      dente: r.dente || '',
+      valor: Number(r.valor || 0),
+      status: r.status || 'planejado',
+      plano: r.plano || '',
+      observacoes: r.observacoes || '',
+      criadoEm: r.created_at,
+      atualizadoEm: r.updated_at,
+    }));
+
     res.json({
       dentista: {
         id: dentista.id,
@@ -3282,6 +3296,7 @@ app.get('/api/dentista/painel/:id?', async (req, res) => {
       orcamentos,
       prontuarios,
       comissoes,
+      tratamentos,
     });
   } catch (error) {
     const status = error.message === 'Unauthorized' ? 401 : 500;
