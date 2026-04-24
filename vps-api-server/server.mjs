@@ -3280,6 +3280,382 @@ app.get('/api/dentista/painel/:id?', async (req, res) => {
 
 
 // ═══════════════════════════════════════════════════════════════
+// REATIVAÇÃO DE PACIENTES INATIVOS
+// Regras configuráveis + envio em massa via WhatsApp
+// ═══════════════════════════════════════════════════════════════
+
+const REACTIVATION_VALID_ORIGINS = ['instagram','facebook','google','indicacao','whatsapp','site','todos'];
+const REACTIVATION_VALID_STATUS  = ['ativo','pausado','rascunho'];
+
+// Helpers locais
+function reactivationFillTemplate(tpl, ctx) {
+  if (!tpl) return '';
+  return String(tpl)
+    .replaceAll('{nome}', ctx.nome || '')
+    .replaceAll('{tratamento}', ctx.tratamento || '')
+    .replaceAll('{dias_inativo}', String(ctx.dias_inativo || 0));
+}
+
+function reactivationInitials(nome) {
+  const parts = String(nome || '').trim().split(/\s+/);
+  return ((parts[0]?.[0] || '') + (parts[parts.length - 1]?.[0] || '')).toUpperCase() || 'P';
+}
+
+// Normaliza telefone (mantém apenas dígitos; prepende 55 se faltar DDI)
+function reactivationNormalizePhone(raw) {
+  const digits = String(raw || '').replace(/\D/g, '');
+  if (!digits) return '';
+  if (digits.startsWith('55')) return digits;
+  if (digits.length >= 10) return `55${digits}`;
+  return digits;
+}
+
+// Resolve nome de paciente -> origem (cruza com crm_leads via telefone/email)
+async function reactivationOriginsByPaciente(safeQuery) {
+  // Mapa paciente_id -> origem (preferência: crm_leads)
+  const r = await safeQuery(
+    `SELECT p.id AS paciente_id, COALESCE(NULLIF(l.origem,''), 'site') AS origem
+       FROM pacientes p
+       LEFT JOIN crm_leads l
+              ON (p.telefone IS NOT NULL AND regexp_replace(p.telefone,'\\D','','g') = regexp_replace(l.telefone,'\\D','','g'))
+              OR (p.email IS NOT NULL AND LOWER(p.email) = LOWER(l.email))`
+  );
+  const map = new Map();
+  for (const row of r.rows) map.set(row.paciente_id, row.origem || 'site');
+  return map;
+}
+
+// Constrói lista de pacientes inativos que satisfazem a regra
+async function reactivationFetchMatching(rule) {
+  const safe = async (sql, params = []) => {
+    try { return await pool.query(sql, params); }
+    catch (err) {
+      if (err.code === '42P01' || err.code === '42703') return { rows: [] };
+      throw err;
+    }
+  };
+
+  // Última visita = MAX(agendamentos.data) com status concluido/finalizado/atendido
+  // Pacientes sem nenhum agendamento contam como "inativos desde sempre" (usa created_at).
+  const r = await safe(
+    `WITH ult AS (
+       SELECT a.paciente_id, MAX(a.data) AS ultima_visita
+         FROM agendamentos a
+        WHERE a.status IN ('concluido','finalizado','atendido','realizado')
+        GROUP BY a.paciente_id
+     )
+     SELECT p.id, p.nome, p.telefone, p.email, p.created_at,
+            COALESCE(ult.ultima_visita, p.created_at::date) AS ultima_visita,
+            (CURRENT_DATE - COALESCE(ult.ultima_visita, p.created_at::date))::int AS dias_inativo,
+            COALESCE(NULLIF(l.origem,''), 'site') AS origem,
+            l.id AS lead_id
+       FROM pacientes p
+       LEFT JOIN ult ON ult.paciente_id = p.id
+       LEFT JOIN crm_leads l
+              ON (p.telefone IS NOT NULL AND regexp_replace(p.telefone,'\\D','','g') = regexp_replace(l.telefone,'\\D','','g'))
+              OR (p.email IS NOT NULL AND LOWER(p.email) = LOWER(l.email))
+      WHERE (CURRENT_DATE - COALESCE(ult.ultima_visita, p.created_at::date)) >= $1
+      ORDER BY dias_inativo DESC
+      LIMIT 500`,
+    [rule.inactive_days]
+  );
+
+  let rows = r.rows;
+  if (rule.origin && rule.origin !== 'todos') {
+    rows = rows.filter(x => (x.origem || 'site') === rule.origin);
+  }
+  return rows;
+}
+
+// Lista regras
+app.get('/api/reativacao/rules', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { rows } = await pool.query(
+      `SELECT r.*,
+              (SELECT COUNT(*)::int FROM reactivation_sends s WHERE s.rule_id = r.id) AS sent_count,
+              (SELECT COUNT(*)::int FROM reactivation_sends s WHERE s.rule_id = r.id AND s.status = 'respondido') AS responded_count
+         FROM reactivation_rules r
+        ORDER BY r.created_at DESC`
+    );
+
+    // matched count (pode ser custoso → calcular sob demanda apenas para regras ativas/rascunho)
+    const enriched = await Promise.all(rows.map(async (r) => {
+      let matched = 0;
+      try {
+        const m = await reactivationFetchMatching(r);
+        matched = m.length;
+      } catch { matched = 0; }
+      const responseRate = r.sent_count > 0
+        ? Math.round((r.responded_count / r.sent_count) * 1000) / 10
+        : 0;
+      return {
+        id: r.id,
+        name: r.name,
+        inactiveDays: r.inactive_days,
+        origin: r.origin,
+        messageTemplate: r.message_template,
+        status: r.status,
+        matchedPatients: matched,
+        sentCount: r.sent_count,
+        respondedCount: r.responded_count,
+        responseRate,
+        lastRun: r.last_run_at,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+      };
+    }));
+
+    res.json(enriched);
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+// Cria regra
+app.post('/api/reativacao/rules', async (req, res) => {
+  try {
+    const user = await verifyUser(req);
+    const { name, inactiveDays, origin, messageTemplate, status } = req.body || {};
+    if (!name || !messageTemplate) {
+      return res.status(400).json({ error: 'name e messageTemplate são obrigatórios' });
+    }
+    const days = Number(inactiveDays);
+    if (!Number.isInteger(days) || days < 1 || days > 3650) {
+      return res.status(400).json({ error: 'inactiveDays deve ser inteiro entre 1 e 3650' });
+    }
+    const orig = REACTIVATION_VALID_ORIGINS.includes(origin) ? origin : 'todos';
+    const st = REACTIVATION_VALID_STATUS.includes(status) ? status : 'rascunho';
+
+    const { rows } = await pool.query(
+      `INSERT INTO reactivation_rules (name, inactive_days, origin, message_template, status, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [String(name).slice(0, 200), days, orig, String(messageTemplate).slice(0, 4000), st, user.id]
+    );
+    res.status(201).json(rows[0]);
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+// Atualiza regra (incl. status)
+app.put('/api/reativacao/rules/:id', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { name, inactiveDays, origin, messageTemplate, status } = req.body || {};
+    const sets = []; const params = [];
+    if (name !== undefined) { params.push(String(name).slice(0, 200)); sets.push(`name=$${params.length}`); }
+    if (inactiveDays !== undefined) {
+      const d = Number(inactiveDays);
+      if (!Number.isInteger(d) || d < 1 || d > 3650) {
+        return res.status(400).json({ error: 'inactiveDays inválido' });
+      }
+      params.push(d); sets.push(`inactive_days=$${params.length}`);
+    }
+    if (origin !== undefined) {
+      if (!REACTIVATION_VALID_ORIGINS.includes(origin)) {
+        return res.status(400).json({ error: 'origin inválida' });
+      }
+      params.push(origin); sets.push(`origin=$${params.length}`);
+    }
+    if (messageTemplate !== undefined) {
+      params.push(String(messageTemplate).slice(0, 4000)); sets.push(`message_template=$${params.length}`);
+    }
+    if (status !== undefined) {
+      if (!REACTIVATION_VALID_STATUS.includes(status)) {
+        return res.status(400).json({ error: 'status inválido' });
+      }
+      params.push(status); sets.push(`status=$${params.length}`);
+    }
+    if (!sets.length) return res.status(400).json({ error: 'Nada para atualizar' });
+    params.push(req.params.id);
+    await pool.query(
+      `UPDATE reactivation_rules SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length}`,
+      params
+    );
+    const { rows } = await pool.query('SELECT * FROM reactivation_rules WHERE id=$1', [req.params.id]);
+    if (!rows[0]) return res.status(404).json({ error: 'Regra não encontrada' });
+    res.json(rows[0]);
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+// Remove regra
+app.delete('/api/reativacao/rules/:id', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const r = await pool.query('DELETE FROM reactivation_rules WHERE id=$1', [req.params.id]);
+    if (r.rowCount === 0) return res.status(404).json({ error: 'Regra não encontrada' });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+// Lista pacientes que satisfazem a regra
+app.get('/api/reativacao/rules/:id/patients', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { rows: rulRows } = await pool.query('SELECT * FROM reactivation_rules WHERE id=$1', [req.params.id]);
+    const rule = rulRows[0];
+    if (!rule) return res.status(404).json({ error: 'Regra não encontrada' });
+
+    const matches = await reactivationFetchMatching(rule);
+    const out = matches.map(m => ({
+      id: m.id,
+      leadId: m.lead_id || null,
+      name: m.nome,
+      initials: reactivationInitials(m.nome),
+      phone: m.telefone || '',
+      email: m.email || '',
+      origin: m.origem || 'site',
+      lastVisit: m.ultima_visita,
+      daysSince: Number(m.dias_inativo || 0),
+    }));
+    res.json(out);
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+// Dispara mensagens para pacientes selecionados
+// body: { patientIds: string[] }   (se vazio → todos os matched)
+app.post('/api/reativacao/rules/:id/send', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { rows: rulRows } = await pool.query('SELECT * FROM reactivation_rules WHERE id=$1', [req.params.id]);
+    const rule = rulRows[0];
+    if (!rule) return res.status(404).json({ error: 'Regra não encontrada' });
+    if (rule.status === 'pausado') {
+      return res.status(400).json({ error: 'Regra está pausada' });
+    }
+
+    const instance = await getDefaultInstance();
+    if (!instance) {
+      return res.status(400).json({ error: 'Nenhuma instância WhatsApp ativa configurada' });
+    }
+
+    const requested = Array.isArray(req.body?.patientIds) ? req.body.patientIds : [];
+    let matches = await reactivationFetchMatching(rule);
+    if (requested.length > 0) {
+      const set = new Set(requested);
+      matches = matches.filter(m => set.has(m.id));
+    }
+    if (!matches.length) {
+      return res.status(400).json({ error: 'Nenhum paciente para enviar' });
+    }
+
+    let sent = 0, failed = 0;
+    const errors = [];
+
+    for (const m of matches) {
+      const phone = reactivationNormalizePhone(m.telefone);
+      const message = reactivationFillTemplate(rule.message_template, {
+        nome: (m.nome || '').split(/\s+/)[0],
+        tratamento: '',
+        dias_inativo: m.dias_inativo,
+      });
+
+      if (!phone) {
+        failed++;
+        await pool.query(
+          `INSERT INTO reactivation_sends (rule_id, paciente_id, lead_id, phone, message, status, error_message)
+           VALUES ($1,$2,$3,$4,$5,'falhou',$6)`,
+          [rule.id, m.id, m.lead_id, '', message, 'Telefone ausente']
+        ).catch(() => {});
+        errors.push({ pacienteId: m.id, error: 'Telefone ausente' });
+        continue;
+      }
+
+      try {
+        await evolutionFetch(`/message/sendText/${instance}`, {
+          method: 'POST',
+          body: JSON.stringify({ number: phone, text: message }),
+        });
+        sent++;
+        await pool.query(
+          `INSERT INTO reactivation_sends (rule_id, paciente_id, lead_id, phone, message, status)
+           VALUES ($1,$2,$3,$4,$5,'enviado')`,
+          [rule.id, m.id, m.lead_id, phone, message]
+        ).catch(() => {});
+
+        // Move o lead correspondente para a fase 'reativacao' do CRM (se existir)
+        if (m.lead_id) {
+          await pool.query(
+            `UPDATE crm_leads SET kanban_stage='reativacao', status='reativacao', updated_at=NOW() WHERE id=$1`,
+            [m.lead_id]
+          ).catch(() => {});
+        }
+      } catch (err) {
+        failed++;
+        const errMsg = String(err?.message || err).slice(0, 500);
+        await pool.query(
+          `INSERT INTO reactivation_sends (rule_id, paciente_id, lead_id, phone, message, status, error_message)
+           VALUES ($1,$2,$3,$4,$5,'falhou',$6)`,
+          [rule.id, m.id, m.lead_id, phone, message, errMsg]
+        ).catch(() => {});
+        errors.push({ pacienteId: m.id, error: errMsg });
+      }
+    }
+
+    await pool.query(
+      `UPDATE reactivation_rules SET last_run_at=NOW(), status=CASE WHEN status='rascunho' THEN 'ativo' ELSE status END, updated_at=NOW() WHERE id=$1`,
+      [rule.id]
+    );
+
+    res.json({ success: true, sent, failed, total: matches.length, errors: errors.slice(0, 20) });
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+// KPIs agregados
+app.get('/api/reativacao/kpis', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const safe = async (sql, params = []) => {
+      try { return await pool.query(sql, params); }
+      catch (err) {
+        if (err.code === '42P01' || err.code === '42703') return { rows: [] };
+        throw err;
+      }
+    };
+
+    const [activeRules, sendsAgg, ruleList] = await Promise.all([
+      safe(`SELECT COUNT(*)::int AS total FROM reactivation_rules WHERE status='ativo'`),
+      safe(`SELECT
+              COUNT(*) FILTER (WHERE status='enviado')::int AS sent,
+              COUNT(*) FILTER (WHERE status='respondido')::int AS responded
+            FROM reactivation_sends`),
+      safe(`SELECT * FROM reactivation_rules`),
+    ]);
+
+    let totalMatched = 0;
+    for (const r of ruleList.rows) {
+      try {
+        const m = await reactivationFetchMatching(r);
+        totalMatched += m.length;
+      } catch { /* ignore */ }
+    }
+
+    const sent = Number(sendsAgg.rows[0]?.sent || 0);
+    const responded = Number(sendsAgg.rows[0]?.responded || 0);
+    const responseRate = sent > 0 ? Math.round((responded / sent) * 1000) / 10 : 0;
+
+    res.json({
+      activeRules: Number(activeRules.rows[0]?.total || 0),
+      inactivePatients: totalMatched,
+      messagesSent: sent,
+      responseRate,
+    });
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+
+// ═══════════════════════════════════════════════════════════════
 // GENERIC TABLE (for CRM, estoque, etc.)
 // ═══════════════════════════════════════════════════════════════
 
