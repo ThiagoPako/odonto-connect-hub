@@ -2803,7 +2803,7 @@ app.delete('/api/orcamentos/:id', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
-// DASHBOARD KPIs
+// DASHBOARD KPIs — agregação completa para a tela /dashboard
 // ═══════════════════════════════════════════════════════════════
 app.get('/api/dashboard/kpis', async (req, res) => {
   try {
@@ -2811,23 +2811,138 @@ app.get('/api/dashboard/kpis', async (req, res) => {
     const today = new Date().toISOString().split('T')[0];
     const firstDayOfMonth = `${today.substring(0, 7)}-01`;
 
-    const [pacientes, agendaHoje, receitas, despesas] = await Promise.all([
-      pool.query('SELECT COUNT(*) as total FROM pacientes'),
-      pool.query('SELECT COUNT(*) as total FROM agendamentos WHERE data = $1', [today]),
-      pool.query('SELECT COALESCE(SUM(valor), 0) as total FROM financeiro WHERE tipo = $1 AND data >= $2', ['receita', firstDayOfMonth]),
-      pool.query('SELECT COALESCE(SUM(valor), 0) as total FROM financeiro WHERE tipo = $1 AND data >= $2', ['despesa', firstDayOfMonth]),
+    // Helper: silencia erro se a tabela ainda não existe (migration pendente)
+    const safe = async (sql, params = []) => {
+      try {
+        return await pool.query(sql, params);
+      } catch (err) {
+        if (err.code === '42P01' || err.code === '42703') return { rows: [] };
+        throw err;
+      }
+    };
+
+    const [
+      pacientesTotal,
+      agendaHojeRows,
+      receitasMes,
+      despesasMes,
+      orcamentosRows,
+      crmLeadsRows,
+      pacientesAtivos,
+      pacientesInativos,
+      estoqueRows,
+    ] = await Promise.all([
+      safe('SELECT COUNT(*)::int AS total FROM pacientes'),
+      safe('SELECT status, COUNT(*)::int AS qtd FROM agendamentos WHERE data = $1 GROUP BY status', [today]),
+      safe('SELECT COALESCE(SUM(valor), 0)::numeric AS total FROM financeiro WHERE tipo = $1 AND data >= $2', ['receita', firstDayOfMonth]),
+      safe('SELECT COALESCE(SUM(valor), 0)::numeric AS total FROM financeiro WHERE tipo = $1 AND data >= $2', ['despesa', firstDayOfMonth]),
+      safe(`SELECT status, COUNT(*)::int AS qtd, COALESCE(SUM(valor_final), 0)::numeric AS soma
+            FROM orcamentos GROUP BY status`),
+      safe(`SELECT stage, COUNT(*)::int AS qtd FROM crm_leads GROUP BY stage`),
+      safe("SELECT COUNT(*)::int AS total FROM pacientes WHERE status = 'ativo' OR status IS NULL"),
+      safe("SELECT COUNT(*)::int AS total FROM pacientes WHERE status = 'inativo'"),
+      safe(`SELECT id, nome AS name, quantidade_atual AS current_stock,
+                   quantidade_minima AS min_stock, custo_unitario AS unit_cost
+            FROM estoque`),
     ]);
 
+    // ── AGENDA ──────────────────────────────────────────────────
+    const agendaCounts = { finalizado: 0, em_atendimento: 0, aguardando: 0, confirmado: 0, faltou: 0, encaixe: 0 };
+    let agendaTotal = 0;
+    for (const r of agendaHojeRows.rows) {
+      agendaCounts[r.status] = Number(r.qtd);
+      agendaTotal += Number(r.qtd);
+    }
+    const taxaPresenca = agendaTotal > 0 ? Math.round(((agendaTotal - agendaCounts.faltou) / agendaTotal) * 100) : 0;
+
+    // ── ORÇAMENTOS ──────────────────────────────────────────────
+    const orcAgg = { total: 0, pendentes: 0, aprovados: 0, reprovados: 0, valorAprovado: 0 };
+    for (const r of orcamentosRows.rows) {
+      const qtd = Number(r.qtd);
+      const soma = Number(r.soma);
+      orcAgg.total += qtd;
+      if (r.status === 'pendente') orcAgg.pendentes += qtd;
+      if (['aprovado', 'em_tratamento', 'finalizado'].includes(r.status)) {
+        orcAgg.aprovados += qtd;
+        orcAgg.valorAprovado += soma;
+      }
+      if (r.status === 'reprovado') orcAgg.reprovados += qtd;
+    }
+    const taxaConversao = orcAgg.total > 0 ? Math.round((orcAgg.aprovados / orcAgg.total) * 100) : 0;
+    const ticketMedio = orcAgg.aprovados > 0 ? Math.round(orcAgg.valorAprovado / orcAgg.aprovados) : 0;
+
+    // ── CRM ────────────────────────────────────────────────────
+    let totalLeadsKanban = 0;
+    let semResposta = 0;
+    for (const r of crmLeadsRows.rows) {
+      totalLeadsKanban += Number(r.qtd);
+      if (r.stage === 'sem_resposta') semResposta = Number(r.qtd);
+    }
+
+    // ── ESTOQUE ─────────────────────────────────────────────────
+    const itensAbaixo = [];
+    const itensSem = [];
+    let valorEstoque = 0;
+    for (const item of estoqueRows.rows) {
+      const cur = Number(item.current_stock || 0);
+      const min = Number(item.min_stock || 0);
+      const cost = Number(item.unit_cost || 0);
+      valorEstoque += cur * cost;
+      if (cur === 0) itensSem.push(item.name);
+      else if (cur < min) itensAbaixo.push(item.name);
+    }
+
     res.json({
-      totalPacientes: Number(pacientes.rows[0].total),
-      agendaHoje: Number(agendaHoje.rows[0].total),
-      receitaMensal: Number(receitas.rows[0].total),
-      despesaMensal: Number(despesas.rows[0].total),
+      // shape legado mantido para retro-compat
+      totalPacientes: Number(pacientesTotal.rows[0]?.total || 0),
+      agendaHoje: agendaTotal,
+      receitaMensal: Number(receitasMes.rows[0]?.total || 0),
+      despesaMensal: Number(despesasMes.rows[0]?.total || 0),
+
+      // shape expandido consumido pela tela /dashboard
+      agenda: {
+        total: agendaTotal,
+        finalizados: agendaCounts.finalizado,
+        emAtendimento: agendaCounts.em_atendimento,
+        aguardando: agendaCounts.aguardando + agendaCounts.confirmado,
+        faltas: agendaCounts.faltou,
+        encaixes: agendaCounts.encaixe,
+        taxaPresenca,
+      },
+      orcamentos: {
+        total: orcAgg.total,
+        pendentes: orcAgg.pendentes,
+        aprovados: orcAgg.aprovados,
+        reprovados: orcAgg.reprovados,
+        valorAprovado: orcAgg.valorAprovado,
+        taxaConversao,
+        ticketMedio,
+      },
+      crm: {
+        totalLeadsKanban,
+        semResposta,
+        ativos: Number(pacientesAtivos.rows[0]?.total || 0),
+        inativos: Number(pacientesInativos.rows[0]?.total || 0),
+        receitaTotal: Number(receitasMes.rows[0]?.total || 0),
+      },
+      pacientes: {
+        totalCadastrados: Number(pacientesTotal.rows[0]?.total || 0),
+      },
+      estoque: {
+        totalItens: estoqueRows.rows.length,
+        abaixoMinimo: itensAbaixo.length,
+        itensAbaixoMinimo: itensAbaixo.slice(0, 5),
+        semEstoque: itensSem.length,
+        itensSemEstoque: itensSem.slice(0, 5),
+        valorTotalEstoque: valorEstoque,
+      },
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    const status = error.message === 'Unauthorized' ? 401 : 500;
+    res.status(status).json({ error: error.message });
   }
 });
+
 
 // ═══════════════════════════════════════════════════════════════
 // GENERIC TABLE (for CRM, estoque, etc.)
@@ -6530,6 +6645,41 @@ app.post('/api/messages/import-whatsapp', async (req, res) => {
     } else {
       res.status(500).json({ error: error.message });
     }
+  }
+});
+
+// List all active attendance sessions (for /dashboard widget)
+app.get('/api/sessions/active', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const sql = `
+      SELECT
+        s.id,
+        s.lead_id,
+        COALESCE(l.nome, l.telefone, '—') AS lead_nome,
+        COALESCE(s.attendant_name, '—') AS attendant_name,
+        s.assigned_at AS started_at,
+        (
+          SELECT m.body FROM chat_messages m
+          WHERE m.lead_id = s.lead_id
+          ORDER BY m.created_at DESC LIMIT 1
+        ) AS last_message
+      FROM attendance_sessions s
+      LEFT JOIN crm_leads l ON l.id = s.lead_id
+      WHERE s.status = 'active'
+      ORDER BY s.assigned_at DESC
+      LIMIT 30
+    `;
+    try {
+      const { rows } = await pool.query(sql);
+      res.json(rows);
+    } catch (err) {
+      if (err.code === '42P01' || err.code === '42703') return res.json([]);
+      throw err;
+    }
+  } catch (error) {
+    const status = error.message === 'Unauthorized' ? 401 : 500;
+    res.status(status).json({ error: error.message });
   }
 });
 
