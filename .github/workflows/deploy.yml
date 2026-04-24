@@ -60,8 +60,8 @@ jobs:
 
               # Verify rollback brought API back
               for i in $(seq 1 15); do
-                RB_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3002/api/messages/unread 2>/dev/null || echo "000")
-                if [ "$RB_STATUS" = "401" ] || [ "$RB_STATUS" = "200" ]; then
+                RB_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3002/api/health 2>/dev/null || echo "000")
+                if [ "$RB_STATUS" = "200" ]; then
                   echo "Rollback API healthy (HTTP $RB_STATUS) after ${i}x2s"
                   pm2 save
                   echo "=== ROLLBACK COMPLETE — system restored to $PREVIOUS_COMMIT ==="
