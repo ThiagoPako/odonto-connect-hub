@@ -410,7 +410,43 @@ export const dashboardApi = {
   kpis: () => vpsApiFetch<DashboardKpis>('/dashboard/kpis'),
 };
 
+// ─── Painel Comercial ───────────────────────────────────────
+
+export interface ComercialKpis {
+  atendimentosHoje: number;
+  agendamentosHoje: number;
+  taxaConversao: number;
+  leadsPendentes: number;
+}
+export interface ComercialFollowUp {
+  id: string;
+  leadName: string;
+  type: 'retorno' | 'confirmacao' | 'reativacao';
+  scheduledAt: string;
+  note: string;
+}
+export interface ComercialConversion {
+  origin: string;
+  leads: number;
+  convertidos: number;
+  rate: number;
+}
+export interface ComercialPainel {
+  attendantId: string;
+  kpis: ComercialKpis;
+  followUps: ComercialFollowUp[];
+  conversionByOrigin: ComercialConversion[];
+}
+
+export const comercialApi = {
+  painel: (attendantId?: string) =>
+    vpsApiFetch<ComercialPainel>('/comercial/painel', {
+      params: attendantId ? { attendantId } : undefined,
+    }),
+};
+
 // ─── CRM Leads ──────────────────────────────────────────────
+
 
 export const crmApi = {
   list: (params?: Record<string, string>) =>
