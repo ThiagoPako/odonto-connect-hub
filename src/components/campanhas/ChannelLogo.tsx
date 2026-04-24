@@ -66,7 +66,8 @@ export function ChannelBadge({ canal, size = "md", compact = false, title, class
 }
 
 export function ChannelLogo({ canal, size = 20, className = "" }: Props) {
-  const s = { width: size, height: size };
+  // size=0 → caller controls dimensions via className (used by ChannelBadge).
+  const s = size > 0 ? { width: size, height: size } : {};
   switch (canal) {
     case "meta_ads":
       // Meta logo (infinity-like)
