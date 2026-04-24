@@ -383,6 +383,7 @@ app.get('/api/health', async (req, res) => {
     api: { status: 'ok' },
     env: { status: 'unknown' },
     database: { status: 'unknown' },
+    schema: { status: 'unknown' },
     evolution: { status: 'unknown' },
   };
 
