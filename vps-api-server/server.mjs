@@ -342,6 +342,8 @@ app.post('/api/auth/login', async (req, res) => {
 //   EVOLUTION_API_TIMEOUT         — Evolution API exceeded timeout (degraded)
 //   EVOLUTION_API_ERROR           — Evolution API returned non-2xx (degraded)
 //   MISSING_ENV_VAR               — required env var not set (e.g. JWT_SECRET)
+//   SCHEMA_MIGRATION_MISSING      — critical migration not applied (table/column absent)
+//   SCHEMA_CHECK_FAILED           — could not introspect information_schema
 //
 // Severity:
 //   critical → returns HTTP 503, blocks deploy
@@ -351,6 +353,29 @@ const HEALTH_DB_TIMEOUT_MS = 5000;
 const HEALTH_EVOLUTION_TIMEOUT_MS = 3000;
 const REQUIRED_ENV_VARS = ['JWT_SECRET', 'PG_HOST', 'PG_DATABASE', 'PG_USER'];
 
+// Critical schema markers — each entry maps a migration to a table (and optional
+// column) that MUST exist after the migration ran. If any are missing, the
+// deploy is rejected with SCHEMA_MIGRATION_MISSING.
+//
+// Format: { migration, table, column? }  — column is optional (table-only check).
+const REQUIRED_SCHEMA = [
+  { migration: 'migration.sql',                   table: 'profiles' },
+  { migration: 'migration.sql',                   table: 'user_roles' },
+  { migration: 'migration-chat-messages.sql',     table: 'chat_messages' },
+  { migration: 'migration-chat-messages.sql',     table: 'chat_read_status' },
+  { migration: 'migration-push-subscriptions.sql', table: 'push_subscriptions' },
+  { migration: 'migration-crm-kanban.sql',        table: 'kanban_movements' },
+  { migration: 'migration-crm-kanban.sql',        table: 'crm_leads', column: 'consciousness_level' },
+  { migration: 'migration-crm-kanban.sql',        table: 'crm_leads', column: 'assigned_to' },
+  { migration: 'migration-crm-kanban.sql',        table: 'crm_leads', column: 'paciente_id' },
+  { migration: 'migration-priority-recovery.sql', table: 'crm_leads', column: 'priority' },
+  { migration: 'migration-user-preferences.sql',  table: 'user_preferences' },
+  { migration: 'migration-ai-settings.sql',       table: 'ai_settings' },
+  { migration: 'migration-ai-settings.sql',       table: 'clinical_reports' },
+  { migration: 'migration-reativacao.sql',        table: 'reactivation_rules' },
+  { migration: 'migration-reativacao.sql',        table: 'reactivation_sends' },
+];
+
 app.get('/api/health', async (req, res) => {
   const startedAt = Date.now();
   const errors = []; // standardized: { code, severity, dependency, message, detail? }
@@ -358,6 +383,7 @@ app.get('/api/health', async (req, res) => {
     api: { status: 'ok' },
     env: { status: 'unknown' },
     database: { status: 'unknown' },
+    schema: { status: 'unknown' },
     evolution: { status: 'unknown' },
   };
 
@@ -413,7 +439,90 @@ app.get('/api/health', async (req, res) => {
     });
   }
 
-  // ─── 3. Evolution API (warning — does not block deploy) ────────────────
+  // ─── 3. Schema migrations (critical — only runs if DB is up) ───────────
+  if (checks.database.status === 'ok') {
+    try {
+      const t0 = Date.now();
+      // Single round-trip: fetch all required tables and columns
+      const tableNames = [...new Set(REQUIRED_SCHEMA.map((s) => s.table))];
+      const tablesRes = await pool.query(
+        `SELECT table_name FROM information_schema.tables
+         WHERE table_schema = 'public' AND table_name = ANY($1::text[])`,
+        [tableNames]
+      );
+      const presentTables = new Set(tablesRes.rows.map((r) => r.table_name));
+
+      const colChecks = REQUIRED_SCHEMA.filter((s) => s.column);
+      let presentColumns = new Set();
+      if (colChecks.length > 0) {
+        const colsRes = await pool.query(
+          `SELECT table_name, column_name FROM information_schema.columns
+           WHERE table_schema = 'public'
+             AND (table_name, column_name) IN (${colChecks
+               .map((_, i) => `($${i * 2 + 1}, $${i * 2 + 2})`)
+               .join(',')})`,
+          colChecks.flatMap((c) => [c.table, c.column])
+        );
+        presentColumns = new Set(colsRes.rows.map((r) => `${r.table_name}.${r.column_name}`));
+      }
+
+      const missing = [];
+      for (const req of REQUIRED_SCHEMA) {
+        if (!presentTables.has(req.table)) {
+          missing.push({
+            migration: req.migration,
+            table: req.table,
+            column: req.column || null,
+            reason: 'table_missing',
+          });
+        } else if (req.column && !presentColumns.has(`${req.table}.${req.column}`)) {
+          missing.push({
+            migration: req.migration,
+            table: req.table,
+            column: req.column,
+            reason: 'column_missing',
+          });
+        }
+      }
+
+      const latency = Date.now() - t0;
+      if (missing.length === 0) {
+        checks.schema = {
+          status: 'ok',
+          latency_ms: latency,
+          checked: REQUIRED_SCHEMA.length,
+        };
+      } else {
+        const missingMigrations = [...new Set(missing.map((m) => m.migration))];
+        checks.schema = {
+          status: 'down',
+          latency_ms: latency,
+          checked: REQUIRED_SCHEMA.length,
+          missing_count: missing.length,
+          missing_migrations: missingMigrations,
+        };
+        errors.push({
+          code: 'SCHEMA_MIGRATION_MISSING',
+          severity: 'critical',
+          dependency: 'schema',
+          message: `${missing.length} required schema element(s) missing — run pending migrations: ${missingMigrations.join(', ')}`,
+          detail: { missing, missing_migrations: missingMigrations },
+        });
+      }
+    } catch (err) {
+      checks.schema = { status: 'down', error: String(err?.message || err) };
+      errors.push({
+        code: 'SCHEMA_CHECK_FAILED',
+        severity: 'critical',
+        dependency: 'schema',
+        message: `Could not verify schema state: ${String(err?.message || err)}`,
+      });
+    }
+  } else {
+    checks.schema = { status: 'skipped', reason: 'database_unavailable' };
+  }
+
+  // ─── 4. Evolution API (warning — does not block deploy) ────────────────
   try {
     const t0 = Date.now();
     const ctrl = new AbortController();
