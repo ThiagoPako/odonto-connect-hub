@@ -354,7 +354,41 @@ app.post('/api/auth/login', async (req, res) => {
 //
 const HEALTH_DB_TIMEOUT_MS = 5000;
 const HEALTH_EVOLUTION_TIMEOUT_MS = 3000;
+const HEALTH_REDIS_TIMEOUT_MS = 2000;
 const REQUIRED_ENV_VARS = ['JWT_SECRET', 'PG_HOST', 'PG_DATABASE', 'PG_USER'];
+
+// ─── Optional Redis client (auto-detected) ─────────────────────────────
+// If REDIS_URL or REDIS_HOST is set, we lazily create a singleton client
+// used only for /api/health PINGs. Other modules can import getRedisClient()
+// to reuse it for caches/queues. If neither env is set, the check is skipped.
+const REDIS_URL = process.env.REDIS_URL
+  || (process.env.REDIS_HOST
+    ? `redis://${process.env.REDIS_PASSWORD ? `:${encodeURIComponent(process.env.REDIS_PASSWORD)}@` : ''}${process.env.REDIS_HOST}:${process.env.REDIS_PORT || 6379}`
+    : null);
+
+let _redisClient = null;
+let _redisModule = null;
+async function getRedisClient() {
+  if (!REDIS_URL) return null;
+  if (_redisClient && _redisClient.isOpen) return _redisClient;
+  if (!_redisModule) {
+    try {
+      _redisModule = await import('redis');
+    } catch {
+      return null; // package not installed
+    }
+  }
+  if (!_redisClient) {
+    _redisClient = _redisModule.createClient({
+      url: REDIS_URL,
+      socket: { connectTimeout: HEALTH_REDIS_TIMEOUT_MS, reconnectStrategy: (r) => Math.min(r * 200, 5000) },
+    });
+    _redisClient.on('error', (e) => console.error('[redis] client error:', e?.message || e));
+  }
+  if (!_redisClient.isOpen) await _redisClient.connect();
+  return _redisClient;
+}
+export { getRedisClient };
 
 // Critical schema markers — each entry maps a migration to a table (and optional
 // column) that MUST exist after the migration ran. If any are missing, the
