@@ -958,13 +958,16 @@ export interface AISettingApi {
 
 export interface ClinicalReportApi {
   id: string;
+  patient_id?: string;
   patient_name: string;
+  attendant_id?: string;
+  attendant_name?: string;
   transcription: string;
   report: string;
   queixa_principal: string;
   procedimento: string;
   dente_regiao: string;
-  prescricoes: Array<{ medicamento: string; dosagem: string; posologia: string; duracao: string }>;
+  prescricoes: Array<{ medicamento: string; dosagem: string; posologia: string; duracao: string }> | string;
   duration_seconds: number;
   created_at: string;
 }
