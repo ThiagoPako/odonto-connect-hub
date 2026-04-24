@@ -616,6 +616,8 @@ function AgendaTab({
   );
 }
 
+// ─── Orçamentos Tab ─────────────────────────────────────────
+
 function OrcamentosTab({ orcamentos }: { orcamentos: PainelOrcamento[] }) {
   const statusConfig: Record<string, { label: string; color: string }> = {
     pendente: { label: "Pendente", color: "bg-warning/10 text-warning" },
