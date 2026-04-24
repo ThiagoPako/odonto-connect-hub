@@ -66,6 +66,14 @@ function PainelDentistaPage() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Realtime: recarrega painel quando tratamentos mudam (deste dentista)
+  useTratamentoRealtime((evt) => {
+    load();
+    if (evt.action === "created") toast.info("Novo tratamento criado");
+    else if (evt.action === "updated") toast.info("Tratamento atualizado");
+    else if (evt.action === "deleted") toast.info("Tratamento removido");
+  }, data?.dentista?.id || id || undefined);
+
   if (loading && !data) {
     return (
       <div className="flex-1 flex flex-col min-h-screen">
