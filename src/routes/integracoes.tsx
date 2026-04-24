@@ -10,6 +10,8 @@ import {
   mockAdAccounts, mockAdCampaigns, mockCrmCrossData,
   type AdCampaign, type CrmCrossData,
 } from "@/data/adsMockData";
+import { MetaAdsConnectPanel } from "@/components/meta-ads/MetaAdsConnectPanel";
+import { MetaAdsDashboard } from "@/components/MetaAdsDashboard";
 
 export const Route = createFileRoute("/integracoes")({
   ssr: false,
@@ -60,7 +62,13 @@ function IntegracoesPage() {
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Integrações — Tráfego Pago" />
       <main className="flex-1 p-6 space-y-6 overflow-auto">
-        {/* Connected accounts */}
+        {/* Meta Ads connect — token + ad account ID */}
+        <MetaAdsConnectPanel />
+
+        {/* Meta Ads live dashboard (after connecting) */}
+        <MetaAdsDashboard />
+
+        {/* Connected accounts (mock — Google + outras) */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {mockAdAccounts.map((acc) => (
             <div key={acc.accountId} className="bg-card rounded-xl border border-border p-4 flex items-center gap-4">
