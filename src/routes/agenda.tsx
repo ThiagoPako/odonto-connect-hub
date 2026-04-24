@@ -785,7 +785,7 @@ function NovoAgendamentoDialog({
 }) {
   const emptyForm: NovoAgendamentoForm = {
     paciente_nome: "", paciente_id: "", telefone: "",
-    dentista_id: mockProfessionals[0]?.id || "",
+    dentista_id: "",
     data: defaultDate, hora: "08:00", duracao: 30,
     procedimento: "Consulta avaliação", sala: "Sala 1",
     observacoes: "", enviar_whatsapp: true,
@@ -795,14 +795,21 @@ function NovoAgendamentoDialog({
   const [pacientesList, setPacientesList] = useState<any[]>([]);
   const [pacientesFiltered, setPacientesFiltered] = useState<any[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [dentistasList, setDentistasList] = useState<Array<{ id: string; nome: string }>>([]);
   const suggestionsRef = useRef<HTMLDivElement>(null);
 
-  // Load patients list on open
+  // Load patients + dentistas when opening
   useEffect(() => {
     if (open) {
       setForm((f) => ({ ...f, data: defaultDate }));
       pacientesApi.list().then(({ data }) => {
         if (Array.isArray(data)) setPacientesList(data);
+      });
+      dentistasApi.list().then(({ data }) => {
+        if (Array.isArray(data) && data.length > 0) {
+          setDentistasList(data);
+          setForm((f) => ({ ...f, dentista_id: f.dentista_id || data[0].id }));
+        }
       });
     }
   }, [open, defaultDate]);
