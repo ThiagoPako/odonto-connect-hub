@@ -102,7 +102,7 @@ function DashboardPage() {
               <p className="font-medium text-foreground">Banco de dados vazio</p>
               <p className="text-xs text-muted-foreground mt-0.5">
                 Cadastre pacientes, agendamentos e orçamentos para ver os indicadores reais aqui.
-                Comece em <Link to="/pacientes" className="text-primary hover:underline">Pacientes</Link> ou <Link to="/agenda" className="text-primary hover:underline">Agenda</Link>.
+                Comece em <Link to="/pacientes" search={{ pacienteId: undefined }} className="text-primary hover:underline">Pacientes</Link> ou <Link to="/agenda" className="text-primary hover:underline">Agenda</Link>.
               </p>
             </div>
           </div>
