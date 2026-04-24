@@ -560,7 +560,64 @@ app.get('/api/health', async (req, res) => {
     checks.schema = { status: 'skipped', reason: 'database_unavailable' };
   }
 
-  // ─── 4. Evolution API (warning — does not block deploy) ────────────────
+  // ─── 4. Redis (warning — auto-detected via REDIS_URL/REDIS_HOST) ───────
+  if (!REDIS_URL) {
+    checks.redis = { status: 'not_configured', reason: 'REDIS_URL/REDIS_HOST not set' };
+  } else {
+    const t0 = Date.now();
+    try {
+      const client = await Promise.race([
+        getRedisClient(),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('REDIS_TIMEOUT')), HEALTH_REDIS_TIMEOUT_MS)
+        ),
+      ]);
+      if (!client) {
+        checks.redis = { status: 'degraded', error: 'redis package unavailable' };
+        errors.push({
+          code: 'REDIS_CONNECTION_FAILED',
+          severity: 'warning',
+          dependency: 'redis',
+          message: 'REDIS_URL set but redis client could not be initialized',
+        });
+      } else {
+        const pong = await Promise.race([
+          client.ping(),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('REDIS_TIMEOUT')), HEALTH_REDIS_TIMEOUT_MS)
+          ),
+        ]);
+        const latency = Date.now() - t0;
+        if (pong === 'PONG') {
+          checks.redis = { status: 'ok', latency_ms: latency };
+        } else {
+          checks.redis = { status: 'degraded', latency_ms: latency, response: pong };
+          errors.push({
+            code: 'REDIS_PING_FAILED',
+            severity: 'warning',
+            dependency: 'redis',
+            message: `Redis PING returned unexpected response: ${String(pong)}`,
+            detail: { response: pong },
+          });
+        }
+      }
+    } catch (err) {
+      const msg = String(err?.message || err);
+      const isTimeout = msg === 'REDIS_TIMEOUT';
+      checks.redis = { status: 'degraded', error: msg, latency_ms: Date.now() - t0 };
+      errors.push({
+        code: isTimeout ? 'REDIS_TIMEOUT' : 'REDIS_CONNECTION_FAILED',
+        severity: 'warning',
+        dependency: 'redis',
+        message: isTimeout
+          ? `Redis did not respond within ${HEALTH_REDIS_TIMEOUT_MS}ms`
+          : `Cannot connect to Redis: ${msg}`,
+        detail: { url: REDIS_URL.replace(/:[^:@/]+@/, ':***@') },
+      });
+    }
+  }
+
+  // ─── 5. Evolution API (warning — does not block deploy) ────────────────
   try {
     const t0 = Date.now();
     const ctrl = new AbortController();
