@@ -352,10 +352,54 @@ app.post('/api/auth/login', async (req, res) => {
 //   critical → returns HTTP 503, blocks deploy
 //   warning  → returns HTTP 200, surfaces in errors[] for visibility
 //
-const HEALTH_DB_TIMEOUT_MS = 5000;
-const HEALTH_EVOLUTION_TIMEOUT_MS = 3000;
-const HEALTH_REDIS_TIMEOUT_MS = 2000;
+// ─── Health check tunables (override via env vars) ─────────────────────
+// Per-dependency timeout (ms) and max retry attempts. Retries use exponential
+// backoff and only kick in for transient failures (timeouts, network errors,
+// connection refused). Schema/env checks are deterministic and never retried.
+const numEnv = (k, d) => {
+  const v = parseInt(process.env[k] || '', 10);
+  return Number.isFinite(v) && v >= 0 ? v : d;
+};
+const HEALTH_DB_TIMEOUT_MS        = numEnv('HEALTH_DB_TIMEOUT_MS',        5000);
+const HEALTH_DB_RETRIES           = numEnv('HEALTH_DB_RETRIES',           2);
+const HEALTH_EVOLUTION_TIMEOUT_MS = numEnv('HEALTH_EVOLUTION_TIMEOUT_MS', 3000);
+const HEALTH_EVOLUTION_RETRIES    = numEnv('HEALTH_EVOLUTION_RETRIES',    1);
+const HEALTH_REDIS_TIMEOUT_MS     = numEnv('HEALTH_REDIS_TIMEOUT_MS',     2000);
+const HEALTH_REDIS_RETRIES        = numEnv('HEALTH_REDIS_RETRIES',        2);
+const HEALTH_RETRY_BACKOFF_MS     = numEnv('HEALTH_RETRY_BACKOFF_MS',     200);
+const HEALTH_RETRY_BACKOFF_MAX_MS = numEnv('HEALTH_RETRY_BACKOFF_MAX_MS', 1500);
 const REQUIRED_ENV_VARS = ['JWT_SECRET', 'PG_HOST', 'PG_DATABASE', 'PG_USER'];
+
+// Run `fn` with timeout + exponential backoff retries on transient errors.
+// Returns { value, attempts, total_ms } on success.
+// Throws { message, code, attempts, total_ms, last_error } on final failure.
+async function withRetry(label, fn, { timeoutMs, retries }) {
+  const t0 = Date.now();
+  let lastErr = null;
+  const maxAttempts = retries + 1;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const value = await Promise.race([
+        Promise.resolve().then(() => fn({ attempt })),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(Object.assign(new Error(`${label}_TIMEOUT`), { _timeout: true })), timeoutMs)
+        ),
+      ]);
+      return { value, attempts: attempt, total_ms: Date.now() - t0 };
+    } catch (err) {
+      lastErr = err;
+      if (attempt >= maxAttempts) break;
+      const backoff = Math.min(HEALTH_RETRY_BACKOFF_MS * 2 ** (attempt - 1), HEALTH_RETRY_BACKOFF_MAX_MS);
+      await new Promise((r) => setTimeout(r, backoff));
+    }
+  }
+  const e = new Error(lastErr?.message || `${label} failed`);
+  e.attempts = maxAttempts;
+  e.total_ms = Date.now() - t0;
+  e.timedOut = !!lastErr?._timeout;
+  e.cause = lastErr;
+  throw e;
+}
 
 // ─── Optional Redis client (auto-detected) ─────────────────────────────
 // If REDIS_URL or REDIS_HOST is set, we lazily create a singleton client
@@ -440,40 +484,46 @@ app.get('/api/health', async (req, res) => {
     checks.env = { status: 'ok' };
   }
 
-  // ─── 2. Database (critical) ────────────────────────────────────────────
+  // ─── 2. Database (critical, retried) ───────────────────────────────────
   try {
-    const t0 = Date.now();
-    const queryPromise = pool.query('SELECT 1 AS ok');
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('DB_TIMEOUT')), HEALTH_DB_TIMEOUT_MS)
+    const { value: r, attempts, total_ms } = await withRetry(
+      'DB',
+      () => pool.query('SELECT 1 AS ok'),
+      { timeoutMs: HEALTH_DB_TIMEOUT_MS, retries: HEALTH_DB_RETRIES }
     );
-    const r = await Promise.race([queryPromise, timeoutPromise]);
-    const latency = Date.now() - t0;
-
     if (r.rows?.[0]?.ok === 1) {
-      checks.database = { status: 'ok', latency_ms: latency };
+      checks.database = { status: 'ok', latency_ms: total_ms, attempts };
     } else {
-      checks.database = { status: 'down', latency_ms: latency };
+      checks.database = { status: 'down', latency_ms: total_ms, attempts };
       errors.push({
         code: 'DB_QUERY_FAILED',
         severity: 'critical',
         dependency: 'database',
         message: 'Postgres connected but SELECT 1 returned unexpected result',
-        detail: { rows: r.rows },
+        detail: { rows: r.rows, attempts },
       });
     }
   } catch (err) {
-    const msg = String(err?.message || err);
-    const isTimeout = msg === 'DB_TIMEOUT';
-    checks.database = { status: 'down', error: msg };
+    checks.database = {
+      status: 'down',
+      error: String(err?.message || err),
+      attempts: err.attempts,
+      latency_ms: err.total_ms,
+    };
     errors.push({
-      code: isTimeout ? 'DB_TIMEOUT' : 'DB_CONNECTION_FAILED',
+      code: err.timedOut ? 'DB_TIMEOUT' : 'DB_CONNECTION_FAILED',
       severity: 'critical',
       dependency: 'database',
-      message: isTimeout
-        ? `Postgres query exceeded ${HEALTH_DB_TIMEOUT_MS}ms`
-        : `Cannot connect to Postgres: ${msg}`,
-      detail: { host: process.env.PG_HOST, port: process.env.PG_PORT, db: process.env.PG_DATABASE },
+      message: err.timedOut
+        ? `Postgres query exceeded ${HEALTH_DB_TIMEOUT_MS}ms after ${err.attempts} attempt(s)`
+        : `Cannot connect to Postgres after ${err.attempts} attempt(s): ${err.message}`,
+      detail: {
+        host: process.env.PG_HOST,
+        port: process.env.PG_PORT,
+        db: process.env.PG_DATABASE,
+        attempts: err.attempts,
+        timeout_ms: HEALTH_DB_TIMEOUT_MS,
+      },
     });
   }
 
@@ -560,110 +610,101 @@ app.get('/api/health', async (req, res) => {
     checks.schema = { status: 'skipped', reason: 'database_unavailable' };
   }
 
-  // ─── 4. Redis (warning — auto-detected via REDIS_URL/REDIS_HOST) ───────
+  // ─── 4. Redis (warning — auto-detected, retried) ──────────────────────
   if (!REDIS_URL) {
     checks.redis = { status: 'not_configured', reason: 'REDIS_URL/REDIS_HOST not set' };
   } else {
-    const t0 = Date.now();
     try {
-      const client = await Promise.race([
-        getRedisClient(),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('REDIS_TIMEOUT')), HEALTH_REDIS_TIMEOUT_MS)
-        ),
-      ]);
-      if (!client) {
-        checks.redis = { status: 'degraded', error: 'redis package unavailable' };
+      const { value: pong, attempts, total_ms } = await withRetry(
+        'REDIS',
+        async () => {
+          const client = await getRedisClient();
+          if (!client) throw new Error('redis package unavailable');
+          return client.ping();
+        },
+        { timeoutMs: HEALTH_REDIS_TIMEOUT_MS, retries: HEALTH_REDIS_RETRIES }
+      );
+      if (pong === 'PONG') {
+        checks.redis = { status: 'ok', latency_ms: total_ms, attempts };
+      } else {
+        checks.redis = { status: 'degraded', latency_ms: total_ms, attempts, response: pong };
         errors.push({
-          code: 'REDIS_CONNECTION_FAILED',
+          code: 'REDIS_PING_FAILED',
           severity: 'warning',
           dependency: 'redis',
-          message: 'REDIS_URL set but redis client could not be initialized',
+          message: `Redis PING returned unexpected response: ${String(pong)}`,
+          detail: { response: pong, attempts },
         });
-      } else {
-        const pong = await Promise.race([
-          client.ping(),
-          new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('REDIS_TIMEOUT')), HEALTH_REDIS_TIMEOUT_MS)
-          ),
-        ]);
-        const latency = Date.now() - t0;
-        if (pong === 'PONG') {
-          checks.redis = { status: 'ok', latency_ms: latency };
-        } else {
-          checks.redis = { status: 'degraded', latency_ms: latency, response: pong };
-          errors.push({
-            code: 'REDIS_PING_FAILED',
-            severity: 'warning',
-            dependency: 'redis',
-            message: `Redis PING returned unexpected response: ${String(pong)}`,
-            detail: { response: pong },
-          });
-        }
       }
     } catch (err) {
-      const msg = String(err?.message || err);
-      const isTimeout = msg === 'REDIS_TIMEOUT';
-      checks.redis = { status: 'degraded', error: msg, latency_ms: Date.now() - t0 };
+      checks.redis = {
+        status: 'degraded',
+        error: String(err?.message || err),
+        attempts: err.attempts,
+        latency_ms: err.total_ms,
+      };
       errors.push({
-        code: isTimeout ? 'REDIS_TIMEOUT' : 'REDIS_CONNECTION_FAILED',
+        code: err.timedOut ? 'REDIS_TIMEOUT' : 'REDIS_CONNECTION_FAILED',
         severity: 'warning',
         dependency: 'redis',
-        message: isTimeout
-          ? `Redis did not respond within ${HEALTH_REDIS_TIMEOUT_MS}ms`
-          : `Cannot connect to Redis: ${msg}`,
-        detail: { url: REDIS_URL.replace(/:[^:@/]+@/, ':***@') },
+        message: err.timedOut
+          ? `Redis did not respond within ${HEALTH_REDIS_TIMEOUT_MS}ms after ${err.attempts} attempt(s)`
+          : `Cannot connect to Redis after ${err.attempts} attempt(s): ${err.message}`,
+        detail: {
+          url: REDIS_URL.replace(/:[^:@/]+@/, ':***@'),
+          attempts: err.attempts,
+          timeout_ms: HEALTH_REDIS_TIMEOUT_MS,
+        },
       });
     }
   }
 
-  // ─── 5. Evolution API (warning — does not block deploy) ────────────────
+  // ─── 5. Evolution API (warning, retried) ───────────────────────────────
   try {
-    const t0 = Date.now();
-    const ctrl = new AbortController();
-    const to = setTimeout(() => ctrl.abort(), HEALTH_EVOLUTION_TIMEOUT_MS);
-    let r = null;
-    let fetchErr = null;
-    try {
-      r = await fetch(`${EVOLUTION_API_URL}/`, { signal: ctrl.signal });
-    } catch (e) {
-      fetchErr = e;
-    } finally {
-      clearTimeout(to);
-    }
-    const latency = Date.now() - t0;
-
-    if (fetchErr) {
-      const isAbort = fetchErr?.name === 'AbortError';
-      checks.evolution = { status: 'degraded', latency_ms: latency };
-      errors.push({
-        code: isAbort ? 'EVOLUTION_API_TIMEOUT' : 'EVOLUTION_API_UNREACHABLE',
-        severity: 'warning',
-        dependency: 'evolution',
-        message: isAbort
-          ? `Evolution API did not respond within ${HEALTH_EVOLUTION_TIMEOUT_MS}ms`
-          : `Cannot reach Evolution API: ${String(fetchErr?.message || fetchErr)}`,
-        detail: { url: EVOLUTION_API_URL },
-      });
-    } else if (!r.ok) {
-      checks.evolution = { status: 'degraded', latency_ms: latency, http_status: r.status };
+    const { value: r, attempts, total_ms } = await withRetry(
+      'EVOLUTION',
+      async ({ attempt }) => {
+        const ctrl = new AbortController();
+        const to = setTimeout(() => ctrl.abort(), HEALTH_EVOLUTION_TIMEOUT_MS);
+        try {
+          return await fetch(`${EVOLUTION_API_URL}/`, { signal: ctrl.signal });
+        } finally {
+          clearTimeout(to);
+        }
+      },
+      { timeoutMs: HEALTH_EVOLUTION_TIMEOUT_MS + 500, retries: HEALTH_EVOLUTION_RETRIES }
+    );
+    if (!r.ok) {
+      checks.evolution = { status: 'degraded', latency_ms: total_ms, attempts, http_status: r.status };
       errors.push({
         code: 'EVOLUTION_API_ERROR',
         severity: 'warning',
         dependency: 'evolution',
-        message: `Evolution API returned HTTP ${r.status}`,
-        detail: { url: EVOLUTION_API_URL, http_status: r.status },
+        message: `Evolution API returned HTTP ${r.status} after ${attempts} attempt(s)`,
+        detail: { url: EVOLUTION_API_URL, http_status: r.status, attempts },
       });
     } else {
-      checks.evolution = { status: 'ok', latency_ms: latency };
+      checks.evolution = { status: 'ok', latency_ms: total_ms, attempts };
     }
   } catch (err) {
-    checks.evolution = { status: 'degraded', error: String(err?.message || err) };
+    checks.evolution = {
+      status: 'degraded',
+      error: String(err?.message || err),
+      attempts: err.attempts,
+      latency_ms: err.total_ms,
+    };
     errors.push({
-      code: 'EVOLUTION_API_UNREACHABLE',
+      code: err.timedOut ? 'EVOLUTION_API_TIMEOUT' : 'EVOLUTION_API_UNREACHABLE',
       severity: 'warning',
       dependency: 'evolution',
-      message: `Unexpected error checking Evolution API: ${String(err?.message || err)}`,
+      message: err.timedOut
+        ? `Evolution API did not respond within ${HEALTH_EVOLUTION_TIMEOUT_MS}ms after ${err.attempts} attempt(s)`
+        : `Cannot reach Evolution API after ${err.attempts} attempt(s): ${err.message}`,
+      detail: {
+        url: EVOLUTION_API_URL,
+        attempts: err.attempts,
+        timeout_ms: HEALTH_EVOLUTION_TIMEOUT_MS,
+      },
     });
   }
 
@@ -690,6 +731,14 @@ app.get('/api/health', async (req, res) => {
       critical: criticalErrors.length,
       warnings: warnings.length,
       failed_dependencies: [...new Set(errors.map((e) => e.dependency))],
+      total_attempts: Object.values(checks).reduce((s, c) => s + (c?.attempts || 0), 0),
+    },
+    config: {
+      db: { timeout_ms: HEALTH_DB_TIMEOUT_MS, retries: HEALTH_DB_RETRIES },
+      redis: { timeout_ms: HEALTH_REDIS_TIMEOUT_MS, retries: HEALTH_REDIS_RETRIES },
+      evolution: { timeout_ms: HEALTH_EVOLUTION_TIMEOUT_MS, retries: HEALTH_EVOLUTION_RETRIES },
+      backoff_ms: HEALTH_RETRY_BACKOFF_MS,
+      backoff_max_ms: HEALTH_RETRY_BACKOFF_MAX_MS,
     },
   });
 });
