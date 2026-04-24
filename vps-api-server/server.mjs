@@ -344,6 +344,9 @@ app.post('/api/auth/login', async (req, res) => {
 //   MISSING_ENV_VAR               — required env var not set (e.g. JWT_SECRET)
 //   SCHEMA_MIGRATION_MISSING      — critical migration not applied (table/column absent)
 //   SCHEMA_CHECK_FAILED           — could not introspect information_schema
+//   REDIS_CONNECTION_FAILED       — Redis configured but unreachable (warning)
+//   REDIS_PING_FAILED             — Redis connected but PING returned unexpected (warning)
+//   REDIS_TIMEOUT                 — Redis exceeded HEALTH_REDIS_TIMEOUT_MS (warning)
 //
 // Severity:
 //   critical → returns HTTP 503, blocks deploy
@@ -351,7 +354,41 @@ app.post('/api/auth/login', async (req, res) => {
 //
 const HEALTH_DB_TIMEOUT_MS = 5000;
 const HEALTH_EVOLUTION_TIMEOUT_MS = 3000;
+const HEALTH_REDIS_TIMEOUT_MS = 2000;
 const REQUIRED_ENV_VARS = ['JWT_SECRET', 'PG_HOST', 'PG_DATABASE', 'PG_USER'];
+
+// ─── Optional Redis client (auto-detected) ─────────────────────────────
+// If REDIS_URL or REDIS_HOST is set, we lazily create a singleton client
+// used only for /api/health PINGs. Other modules can import getRedisClient()
+// to reuse it for caches/queues. If neither env is set, the check is skipped.
+const REDIS_URL = process.env.REDIS_URL
+  || (process.env.REDIS_HOST
+    ? `redis://${process.env.REDIS_PASSWORD ? `:${encodeURIComponent(process.env.REDIS_PASSWORD)}@` : ''}${process.env.REDIS_HOST}:${process.env.REDIS_PORT || 6379}`
+    : null);
+
+let _redisClient = null;
+let _redisModule = null;
+async function getRedisClient() {
+  if (!REDIS_URL) return null;
+  if (_redisClient && _redisClient.isOpen) return _redisClient;
+  if (!_redisModule) {
+    try {
+      _redisModule = await import('redis');
+    } catch {
+      return null; // package not installed
+    }
+  }
+  if (!_redisClient) {
+    _redisClient = _redisModule.createClient({
+      url: REDIS_URL,
+      socket: { connectTimeout: HEALTH_REDIS_TIMEOUT_MS, reconnectStrategy: (r) => Math.min(r * 200, 5000) },
+    });
+    _redisClient.on('error', (e) => console.error('[redis] client error:', e?.message || e));
+  }
+  if (!_redisClient.isOpen) await _redisClient.connect();
+  return _redisClient;
+}
+export { getRedisClient };
 
 // Critical schema markers — each entry maps a migration to a table (and optional
 // column) that MUST exist after the migration ran. If any are missing, the
@@ -384,6 +421,7 @@ app.get('/api/health', async (req, res) => {
     env: { status: 'unknown' },
     database: { status: 'unknown' },
     schema: { status: 'unknown' },
+    redis: { status: 'unknown' },
     evolution: { status: 'unknown' },
   };
 
@@ -522,7 +560,64 @@ app.get('/api/health', async (req, res) => {
     checks.schema = { status: 'skipped', reason: 'database_unavailable' };
   }
 
-  // ─── 4. Evolution API (warning — does not block deploy) ────────────────
+  // ─── 4. Redis (warning — auto-detected via REDIS_URL/REDIS_HOST) ───────
+  if (!REDIS_URL) {
+    checks.redis = { status: 'not_configured', reason: 'REDIS_URL/REDIS_HOST not set' };
+  } else {
+    const t0 = Date.now();
+    try {
+      const client = await Promise.race([
+        getRedisClient(),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('REDIS_TIMEOUT')), HEALTH_REDIS_TIMEOUT_MS)
+        ),
+      ]);
+      if (!client) {
+        checks.redis = { status: 'degraded', error: 'redis package unavailable' };
+        errors.push({
+          code: 'REDIS_CONNECTION_FAILED',
+          severity: 'warning',
+          dependency: 'redis',
+          message: 'REDIS_URL set but redis client could not be initialized',
+        });
+      } else {
+        const pong = await Promise.race([
+          client.ping(),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('REDIS_TIMEOUT')), HEALTH_REDIS_TIMEOUT_MS)
+          ),
+        ]);
+        const latency = Date.now() - t0;
+        if (pong === 'PONG') {
+          checks.redis = { status: 'ok', latency_ms: latency };
+        } else {
+          checks.redis = { status: 'degraded', latency_ms: latency, response: pong };
+          errors.push({
+            code: 'REDIS_PING_FAILED',
+            severity: 'warning',
+            dependency: 'redis',
+            message: `Redis PING returned unexpected response: ${String(pong)}`,
+            detail: { response: pong },
+          });
+        }
+      }
+    } catch (err) {
+      const msg = String(err?.message || err);
+      const isTimeout = msg === 'REDIS_TIMEOUT';
+      checks.redis = { status: 'degraded', error: msg, latency_ms: Date.now() - t0 };
+      errors.push({
+        code: isTimeout ? 'REDIS_TIMEOUT' : 'REDIS_CONNECTION_FAILED',
+        severity: 'warning',
+        dependency: 'redis',
+        message: isTimeout
+          ? `Redis did not respond within ${HEALTH_REDIS_TIMEOUT_MS}ms`
+          : `Cannot connect to Redis: ${msg}`,
+        detail: { url: REDIS_URL.replace(/:[^:@/]+@/, ':***@') },
+      });
+    }
+  }
+
+  // ─── 5. Evolution API (warning — does not block deploy) ────────────────
   try {
     const t0 = Date.now();
     const ctrl = new AbortController();
@@ -8239,14 +8334,8 @@ app.post('/api/push/unsubscribe', async (req, res) => {
 
 // ═══════════════════════════════════════════════════════════════
 
-app.get('/api/health', async (_req, res) => {
-  try {
-    await pool.query('SELECT 1');
-    res.json({ status: 'ok', database: 'connected', timestamp: new Date().toISOString() });
-  } catch (error) {
-    res.status(500).json({ status: 'error', database: 'disconnected', error: error.message });
-  }
-});
+// /api/health is defined earlier with full dependency checks
+// (db, schema, redis, evolution, env vars). Do not redefine here.
 
 app.get('/api/version', (_req, res) => {
   res.json({
