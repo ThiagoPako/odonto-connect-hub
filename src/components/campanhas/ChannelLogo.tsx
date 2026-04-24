@@ -175,6 +175,13 @@ export function ChannelLogo({ canal, size = 20, className = "" }: Props) {
       );
 
     default:
-      return null;
+      // Neutral placeholder for unknown channels — keeps box dimensions stable.
+      return (
+        <span
+          className={`inline-block rounded-sm bg-muted ${className}`}
+          style={size > 0 ? { width: size, height: size } : undefined}
+          aria-hidden="true"
+        />
+      );
   }
 }
