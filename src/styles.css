@@ -54,6 +54,15 @@
   --color-primary-glow: var(--primary-glow);
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-heading: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+
+  /* ChannelBadge sizing tokens — single source of truth across cards, chips, dialogs */
+  --channel-badge-xs: 1.25rem;   /* 20px */
+  --channel-badge-sm: 1.75rem;   /* 28px */
+  --channel-badge-md: 2.25rem;   /* 36px */
+  --channel-badge-lg: 2.75rem;   /* 44px */
+  --channel-badge-xl: 3.5rem;    /* 56px */
+  --channel-badge-compact-scale: 0.8;
+  --channel-logo-ratio: 0.56;     /* logo SVG ≈ 56% of box */
 }
 
 :root {
