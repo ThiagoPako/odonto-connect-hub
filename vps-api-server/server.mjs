@@ -659,53 +659,52 @@ app.get('/api/health', async (req, res) => {
     }
   }
 
-  // ─── 5. Evolution API (warning — does not block deploy) ────────────────
+  // ─── 5. Evolution API (warning, retried) ───────────────────────────────
   try {
-    const t0 = Date.now();
-    const ctrl = new AbortController();
-    const to = setTimeout(() => ctrl.abort(), HEALTH_EVOLUTION_TIMEOUT_MS);
-    let r = null;
-    let fetchErr = null;
-    try {
-      r = await fetch(`${EVOLUTION_API_URL}/`, { signal: ctrl.signal });
-    } catch (e) {
-      fetchErr = e;
-    } finally {
-      clearTimeout(to);
-    }
-    const latency = Date.now() - t0;
-
-    if (fetchErr) {
-      const isAbort = fetchErr?.name === 'AbortError';
-      checks.evolution = { status: 'degraded', latency_ms: latency };
-      errors.push({
-        code: isAbort ? 'EVOLUTION_API_TIMEOUT' : 'EVOLUTION_API_UNREACHABLE',
-        severity: 'warning',
-        dependency: 'evolution',
-        message: isAbort
-          ? `Evolution API did not respond within ${HEALTH_EVOLUTION_TIMEOUT_MS}ms`
-          : `Cannot reach Evolution API: ${String(fetchErr?.message || fetchErr)}`,
-        detail: { url: EVOLUTION_API_URL },
-      });
-    } else if (!r.ok) {
-      checks.evolution = { status: 'degraded', latency_ms: latency, http_status: r.status };
+    const { value: r, attempts, total_ms } = await withRetry(
+      'EVOLUTION',
+      async ({ attempt }) => {
+        const ctrl = new AbortController();
+        const to = setTimeout(() => ctrl.abort(), HEALTH_EVOLUTION_TIMEOUT_MS);
+        try {
+          return await fetch(`${EVOLUTION_API_URL}/`, { signal: ctrl.signal });
+        } finally {
+          clearTimeout(to);
+        }
+      },
+      { timeoutMs: HEALTH_EVOLUTION_TIMEOUT_MS + 500, retries: HEALTH_EVOLUTION_RETRIES }
+    );
+    if (!r.ok) {
+      checks.evolution = { status: 'degraded', latency_ms: total_ms, attempts, http_status: r.status };
       errors.push({
         code: 'EVOLUTION_API_ERROR',
         severity: 'warning',
         dependency: 'evolution',
-        message: `Evolution API returned HTTP ${r.status}`,
-        detail: { url: EVOLUTION_API_URL, http_status: r.status },
+        message: `Evolution API returned HTTP ${r.status} after ${attempts} attempt(s)`,
+        detail: { url: EVOLUTION_API_URL, http_status: r.status, attempts },
       });
     } else {
-      checks.evolution = { status: 'ok', latency_ms: latency };
+      checks.evolution = { status: 'ok', latency_ms: total_ms, attempts };
     }
   } catch (err) {
-    checks.evolution = { status: 'degraded', error: String(err?.message || err) };
+    checks.evolution = {
+      status: 'degraded',
+      error: String(err?.message || err),
+      attempts: err.attempts,
+      latency_ms: err.total_ms,
+    };
     errors.push({
-      code: 'EVOLUTION_API_UNREACHABLE',
+      code: err.timedOut ? 'EVOLUTION_API_TIMEOUT' : 'EVOLUTION_API_UNREACHABLE',
       severity: 'warning',
       dependency: 'evolution',
-      message: `Unexpected error checking Evolution API: ${String(err?.message || err)}`,
+      message: err.timedOut
+        ? `Evolution API did not respond within ${HEALTH_EVOLUTION_TIMEOUT_MS}ms after ${err.attempts} attempt(s)`
+        : `Cannot reach Evolution API after ${err.attempts} attempt(s): ${err.message}`,
+      detail: {
+        url: EVOLUTION_API_URL,
+        attempts: err.attempts,
+        timeout_ms: HEALTH_EVOLUTION_TIMEOUT_MS,
+      },
     });
   }
 
