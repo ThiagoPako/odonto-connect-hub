@@ -60,8 +60,8 @@ jobs:
 
               # Verify rollback brought API back
               for i in $(seq 1 15); do
-                RB_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3002/api/messages/unread 2>/dev/null || echo "000")
-                if [ "$RB_STATUS" = "401" ] || [ "$RB_STATUS" = "200" ]; then
+                RB_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3002/api/health 2>/dev/null || echo "000")
+                if [ "$RB_STATUS" = "200" ]; then
                   echo "Rollback API healthy (HTTP $RB_STATUS) after ${i}x2s"
                   pm2 save
                   echo "=== ROLLBACK COMPLETE — system restored to $PREVIOUS_COMMIT ==="
@@ -112,18 +112,22 @@ jobs:
             pm2 start /root/odonto-connect/ecosystem.config.cjs --update-env
 
             # ─── Wait for API to be ready (up to 30s) ──────────────────────
-            echo "Waiting for API healthcheck..."
+            echo "Waiting for API healthcheck (/api/health)..."
             API_READY=0
             for i in $(seq 1 15); do
-              API_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3002/api/messages/unread 2>/dev/null || echo "000")
-              if [ "$API_STATUS" = "401" ] || [ "$API_STATUS" = "200" ]; then
-                echo "API ready (HTTP $API_STATUS) after ${i}x2s"
+              API_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3002/api/health 2>/dev/null || echo "000")
+              if [ "$API_STATUS" = "200" ]; then
+                echo "API healthy (HTTP $API_STATUS) after ${i}x2s"
                 API_READY=1
                 break
               fi
               echo "  attempt $i: HTTP $API_STATUS — retrying in 2s..."
               sleep 2
             done
+
+            # Log full health payload for diagnostics
+            curl -s http://127.0.0.1:3002/api/health 2>/dev/null || true
+            echo ""
 
             if [ "$API_READY" != "1" ]; then
               echo "ERROR: API not responding after 30s"
