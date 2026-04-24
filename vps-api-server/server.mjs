@@ -344,6 +344,9 @@ app.post('/api/auth/login', async (req, res) => {
 //   MISSING_ENV_VAR               — required env var not set (e.g. JWT_SECRET)
 //   SCHEMA_MIGRATION_MISSING      — critical migration not applied (table/column absent)
 //   SCHEMA_CHECK_FAILED           — could not introspect information_schema
+//   REDIS_CONNECTION_FAILED       — Redis configured but unreachable (warning)
+//   REDIS_PING_FAILED             — Redis connected but PING returned unexpected (warning)
+//   REDIS_TIMEOUT                 — Redis exceeded HEALTH_REDIS_TIMEOUT_MS (warning)
 //
 // Severity:
 //   critical → returns HTTP 503, blocks deploy
