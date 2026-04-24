@@ -99,7 +99,7 @@ function PainelDentistaPage() {
     );
   }
 
-  const { dentista, atendimentos, agenda, orcamentos, prontuarios, comissoes } = data;
+  const { dentista, atendimentos, agenda, orcamentos, prontuarios, comissoes, tratamentos } = data;
 
   const tabs: { key: Tab; label: string; icon: typeof Stethoscope; count: number }[] = [
     { key: "atendimentos", label: "Atendimentos", icon: Stethoscope, count: atendimentos.length },
