@@ -331,6 +331,54 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
+// ─── Health check (used by deploy validation + monitoring) ──────────────
+app.get('/api/health', async (req, res) => {
+  const startedAt = Date.now();
+  const checks = {
+    api: { status: 'ok' },
+    database: { status: 'unknown' },
+    evolution: { status: 'unknown' },
+  };
+  let overallOk = true;
+
+  // DB connectivity (required)
+  try {
+    const t0 = Date.now();
+    const r = await pool.query('SELECT 1 AS ok');
+    checks.database = {
+      status: r.rows?.[0]?.ok === 1 ? 'ok' : 'degraded',
+      latency_ms: Date.now() - t0,
+    };
+    if (checks.database.status !== 'ok') overallOk = false;
+  } catch (err) {
+    overallOk = false;
+    checks.database = { status: 'down', error: String(err?.message || err) };
+  }
+
+  // Evolution API (optional — degraded if down, doesn't fail health)
+  try {
+    const t0 = Date.now();
+    const ctrl = new AbortController();
+    const to = setTimeout(() => ctrl.abort(), 3000);
+    const r = await fetch(`${EVOLUTION_API_URL}/`, { signal: ctrl.signal }).catch(() => null);
+    clearTimeout(to);
+    checks.evolution = {
+      status: r && r.ok ? 'ok' : 'degraded',
+      latency_ms: Date.now() - t0,
+    };
+  } catch {
+    checks.evolution = { status: 'degraded' };
+  }
+
+  res.status(overallOk ? 200 : 503).json({
+    status: overallOk ? 'ok' : 'degraded',
+    uptime_s: Math.round(process.uptime()),
+    timestamp: new Date().toISOString(),
+    response_time_ms: Date.now() - startedAt,
+    checks,
+  });
+});
+
 app.get('/api/auth/me', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
