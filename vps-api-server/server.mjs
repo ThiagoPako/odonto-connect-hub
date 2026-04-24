@@ -352,10 +352,54 @@ app.post('/api/auth/login', async (req, res) => {
 //   critical → returns HTTP 503, blocks deploy
 //   warning  → returns HTTP 200, surfaces in errors[] for visibility
 //
-const HEALTH_DB_TIMEOUT_MS = 5000;
-const HEALTH_EVOLUTION_TIMEOUT_MS = 3000;
-const HEALTH_REDIS_TIMEOUT_MS = 2000;
+// ─── Health check tunables (override via env vars) ─────────────────────
+// Per-dependency timeout (ms) and max retry attempts. Retries use exponential
+// backoff and only kick in for transient failures (timeouts, network errors,
+// connection refused). Schema/env checks are deterministic and never retried.
+const numEnv = (k, d) => {
+  const v = parseInt(process.env[k] || '', 10);
+  return Number.isFinite(v) && v >= 0 ? v : d;
+};
+const HEALTH_DB_TIMEOUT_MS        = numEnv('HEALTH_DB_TIMEOUT_MS',        5000);
+const HEALTH_DB_RETRIES           = numEnv('HEALTH_DB_RETRIES',           2);
+const HEALTH_EVOLUTION_TIMEOUT_MS = numEnv('HEALTH_EVOLUTION_TIMEOUT_MS', 3000);
+const HEALTH_EVOLUTION_RETRIES    = numEnv('HEALTH_EVOLUTION_RETRIES',    1);
+const HEALTH_REDIS_TIMEOUT_MS     = numEnv('HEALTH_REDIS_TIMEOUT_MS',     2000);
+const HEALTH_REDIS_RETRIES        = numEnv('HEALTH_REDIS_RETRIES',        2);
+const HEALTH_RETRY_BACKOFF_MS     = numEnv('HEALTH_RETRY_BACKOFF_MS',     200);
+const HEALTH_RETRY_BACKOFF_MAX_MS = numEnv('HEALTH_RETRY_BACKOFF_MAX_MS', 1500);
 const REQUIRED_ENV_VARS = ['JWT_SECRET', 'PG_HOST', 'PG_DATABASE', 'PG_USER'];
+
+// Run `fn` with timeout + exponential backoff retries on transient errors.
+// Returns { value, attempts, total_ms } on success.
+// Throws { message, code, attempts, total_ms, last_error } on final failure.
+async function withRetry(label, fn, { timeoutMs, retries }) {
+  const t0 = Date.now();
+  let lastErr = null;
+  const maxAttempts = retries + 1;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const value = await Promise.race([
+        Promise.resolve().then(() => fn({ attempt })),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(Object.assign(new Error(`${label}_TIMEOUT`), { _timeout: true })), timeoutMs)
+        ),
+      ]);
+      return { value, attempts: attempt, total_ms: Date.now() - t0 };
+    } catch (err) {
+      lastErr = err;
+      if (attempt >= maxAttempts) break;
+      const backoff = Math.min(HEALTH_RETRY_BACKOFF_MS * 2 ** (attempt - 1), HEALTH_RETRY_BACKOFF_MAX_MS);
+      await new Promise((r) => setTimeout(r, backoff));
+    }
+  }
+  const e = new Error(lastErr?.message || `${label} failed`);
+  e.attempts = maxAttempts;
+  e.total_ms = Date.now() - t0;
+  e.timedOut = !!lastErr?._timeout;
+  e.cause = lastErr;
+  throw e;
+}
 
 // ─── Optional Redis client (auto-detected) ─────────────────────────────
 // If REDIS_URL or REDIS_HOST is set, we lazily create a singleton client
