@@ -952,7 +952,7 @@ function NovoAgendamentoDialog({
       if (form.enviar_whatsapp && form.telefone.replace(/\D/g, "")) {
         const phone = form.telefone.replace(/\D/g, "");
         const dataBR = formatDateBR(form.data);
-        const msg = `✅ *Agendamento Confirmado*\n\nOlá, ${form.paciente_nome.split(" ")[0]}! 👋\n\nSeu agendamento foi confirmado:\n\n📅 *Data:* ${dataBR}\n⏰ *Horário:* ${form.hora}\n🦷 *Procedimento:* ${form.procedimento}\n👨‍⚕️ *Profissional:* ${prof?.name || "—"}\n\nCaso precise reagendar, entre em contato conosco.\n\n_Odonto Connect_`;
+        const msg = `✅ *Agendamento Confirmado*\n\nOlá, ${form.paciente_nome.split(" ")[0]}! 👋\n\nSeu agendamento foi confirmado:\n\n📅 *Data:* ${dataBR}\n⏰ *Horário:* ${form.hora}\n🦷 *Procedimento:* ${form.procedimento}\n👨‍⚕️ *Profissional:* ${profName || "—"}\n\nCaso precise reagendar, entre em contato conosco.\n\n_Odonto Connect_`;
         try {
           const { data: instances } = await whatsappApi.instances();
           const activeInstance = Array.isArray(instances)
