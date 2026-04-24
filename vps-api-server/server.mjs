@@ -484,40 +484,46 @@ app.get('/api/health', async (req, res) => {
     checks.env = { status: 'ok' };
   }
 
-  // ─── 2. Database (critical) ────────────────────────────────────────────
+  // ─── 2. Database (critical, retried) ───────────────────────────────────
   try {
-    const t0 = Date.now();
-    const queryPromise = pool.query('SELECT 1 AS ok');
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('DB_TIMEOUT')), HEALTH_DB_TIMEOUT_MS)
+    const { value: r, attempts, total_ms } = await withRetry(
+      'DB',
+      () => pool.query('SELECT 1 AS ok'),
+      { timeoutMs: HEALTH_DB_TIMEOUT_MS, retries: HEALTH_DB_RETRIES }
     );
-    const r = await Promise.race([queryPromise, timeoutPromise]);
-    const latency = Date.now() - t0;
-
     if (r.rows?.[0]?.ok === 1) {
-      checks.database = { status: 'ok', latency_ms: latency };
+      checks.database = { status: 'ok', latency_ms: total_ms, attempts };
     } else {
-      checks.database = { status: 'down', latency_ms: latency };
+      checks.database = { status: 'down', latency_ms: total_ms, attempts };
       errors.push({
         code: 'DB_QUERY_FAILED',
         severity: 'critical',
         dependency: 'database',
         message: 'Postgres connected but SELECT 1 returned unexpected result',
-        detail: { rows: r.rows },
+        detail: { rows: r.rows, attempts },
       });
     }
   } catch (err) {
-    const msg = String(err?.message || err);
-    const isTimeout = msg === 'DB_TIMEOUT';
-    checks.database = { status: 'down', error: msg };
+    checks.database = {
+      status: 'down',
+      error: String(err?.message || err),
+      attempts: err.attempts,
+      latency_ms: err.total_ms,
+    };
     errors.push({
-      code: isTimeout ? 'DB_TIMEOUT' : 'DB_CONNECTION_FAILED',
+      code: err.timedOut ? 'DB_TIMEOUT' : 'DB_CONNECTION_FAILED',
       severity: 'critical',
       dependency: 'database',
-      message: isTimeout
-        ? `Postgres query exceeded ${HEALTH_DB_TIMEOUT_MS}ms`
-        : `Cannot connect to Postgres: ${msg}`,
-      detail: { host: process.env.PG_HOST, port: process.env.PG_PORT, db: process.env.PG_DATABASE },
+      message: err.timedOut
+        ? `Postgres query exceeded ${HEALTH_DB_TIMEOUT_MS}ms after ${err.attempts} attempt(s)`
+        : `Cannot connect to Postgres after ${err.attempts} attempt(s): ${err.message}`,
+      detail: {
+        host: process.env.PG_HOST,
+        port: process.env.PG_PORT,
+        db: process.env.PG_DATABASE,
+        attempts: err.attempts,
+        timeout_ms: HEALTH_DB_TIMEOUT_MS,
+      },
     });
   }
 
