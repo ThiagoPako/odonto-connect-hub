@@ -365,8 +365,49 @@ export const prontuariosApi = {
 
 // ─── Dashboard ──────────────────────────────────────────────
 
+export interface DashboardKpis {
+  totalPacientes: number;
+  agendaHoje: number;
+  receitaMensal: number;
+  despesaMensal: number;
+  agenda: {
+    total: number;
+    finalizados: number;
+    emAtendimento: number;
+    aguardando: number;
+    faltas: number;
+    encaixes: number;
+    taxaPresenca: number;
+  };
+  orcamentos: {
+    total: number;
+    pendentes: number;
+    aprovados: number;
+    reprovados: number;
+    valorAprovado: number;
+    taxaConversao: number;
+    ticketMedio: number;
+  };
+  crm: {
+    totalLeadsKanban: number;
+    semResposta: number;
+    ativos: number;
+    inativos: number;
+    receitaTotal: number;
+  };
+  pacientes: { totalCadastrados: number };
+  estoque: {
+    totalItens: number;
+    abaixoMinimo: number;
+    itensAbaixoMinimo: string[];
+    semEstoque: number;
+    itensSemEstoque: string[];
+    valorTotalEstoque: number;
+  };
+}
+
 export const dashboardApi = {
-  kpis: () => vpsApiFetch('/dashboard/kpis'),
+  kpis: () => vpsApiFetch<DashboardKpis>('/dashboard/kpis'),
 };
 
 // ─── CRM Leads ──────────────────────────────────────────────
