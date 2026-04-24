@@ -1052,7 +1052,11 @@ function NovoAgendamentoDialog({
             <div>
               <label className={labelCls}>Profissional *</label>
               <select value={form.dentista_id} onChange={(e) => handleChange("dentista_id", e.target.value)} className={inputCls}>
-                {mockProfessionals.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                {dentistasList.length > 0 ? (
+                  dentistasList.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)
+                ) : (
+                  <option value="" disabled>Nenhum profissional cadastrado — vá em /dentistas</option>
+                )}
               </select>
             </div>
             <div>
