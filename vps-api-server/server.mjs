@@ -2945,10 +2945,138 @@ app.get('/api/dashboard/kpis', async (req, res) => {
 
 
 // ═══════════════════════════════════════════════════════════════
+// PAINEL COMERCIAL — KPIs + follow-ups + conversão por origem
+// GET /api/comercial/painel?attendantId=<uuid|me>
+// Quando attendantId omitido OU = 'me' e role != admin → escopo do user logado
+// ═══════════════════════════════════════════════════════════════
+app.get('/api/comercial/painel', async (req, res) => {
+  try {
+    const user = await verifyUser(req);
+    const today = new Date().toISOString().split('T')[0];
+    const requested = (req.query.attendantId || '').toString();
+
+    // Admin pode passar attendantId arbitrário; caso contrário usa o próprio.
+    const attendantId = (user.role === 'admin' && requested && requested !== 'me')
+      ? requested
+      : user.id;
+
+    const safe = async (sql, params = []) => {
+      try { return await pool.query(sql, params); }
+      catch (err) {
+        if (err.code === '42P01' || err.code === '42703') return { rows: [] };
+        throw err;
+      }
+    };
+
+    const [
+      atendimentosHojeRows,
+      agendamentosHojeRows,
+      leadsPendentesRows,
+      conversionRows,
+      followUpsRows,
+    ] = await Promise.all([
+      // Atendimentos do atendente hoje (sessões assumidas hoje)
+      safe(
+        `SELECT COUNT(*)::int AS total
+           FROM attendance_sessions
+          WHERE attendant_id = $1
+            AND assigned_at::date = $2`,
+        [attendantId, today]
+      ),
+      // Agendamentos criados hoje vinculados a leads atribuídos a este atendente
+      safe(
+        `SELECT COUNT(*)::int AS total
+           FROM agendamentos a
+           LEFT JOIN crm_leads l ON l.id::text = a.paciente_id::text
+          WHERE a.created_at::date = $1
+            AND (l.assigned_to = $2 OR a.created_by = $2)`,
+        [today, attendantId]
+      ),
+      // Leads pendentes do atendente: sem_resposta ou aguardando ação
+      safe(
+        `SELECT COUNT(*)::int AS total
+           FROM crm_leads
+          WHERE assigned_to = $1
+            AND kanban_stage IN ('sem_resposta','primeiro_contato','em_negociacao')`,
+        [attendantId]
+      ),
+      // Conversão por origem (todos leads do atendente)
+      safe(
+        `SELECT COALESCE(NULLIF(origem,''), 'Outros') AS origin,
+                COUNT(*)::int AS leads,
+                COUNT(*) FILTER (WHERE kanban_stage IN ('paciente_agendado','em_atendimento','pos_consulta','finalizado'))::int AS convertidos
+           FROM crm_leads
+          WHERE assigned_to = $1 OR $1 IS NULL
+          GROUP BY origem
+          ORDER BY leads DESC
+          LIMIT 8`,
+        [attendantId]
+      ),
+      // Follow-ups: leads com follow_up_at <= now() OU em sem_resposta
+      safe(
+        `SELECT id, nome AS lead_name, kanban_stage, follow_up_at, last_message, updated_at
+           FROM crm_leads
+          WHERE assigned_to = $1
+            AND (
+              (follow_up_at IS NOT NULL AND follow_up_at <= NOW() + INTERVAL '2 days')
+              OR kanban_stage IN ('sem_resposta','primeiro_contato')
+            )
+          ORDER BY COALESCE(follow_up_at, updated_at) ASC
+          LIMIT 12`,
+        [attendantId]
+      ),
+    ]);
+
+    const atendimentosHoje = Number(atendimentosHojeRows.rows[0]?.total || 0);
+    const agendamentosHoje = Number(agendamentosHojeRows.rows[0]?.total || 0);
+    const leadsPendentes = Number(leadsPendentesRows.rows[0]?.total || 0);
+    const taxaConversao = atendimentosHoje > 0
+      ? Math.round((agendamentosHoje / atendimentosHoje) * 100)
+      : 0;
+
+    const conversionByOrigin = conversionRows.rows.map(r => ({
+      origin: r.origin,
+      leads: Number(r.leads),
+      convertidos: Number(r.convertidos),
+      rate: Number(r.leads) > 0
+        ? Math.round((Number(r.convertidos) / Number(r.leads)) * 1000) / 10
+        : 0,
+    }));
+
+    const stageToType = {
+      sem_resposta: 'reativacao',
+      primeiro_contato: 'retorno',
+      em_negociacao: 'confirmacao',
+    };
+
+    const followUps = followUpsRows.rows.map(r => ({
+      id: r.id,
+      leadName: r.lead_name || 'Lead sem nome',
+      type: stageToType[r.kanban_stage] || 'retorno',
+      scheduledAt: r.follow_up_at
+        ? new Date(r.follow_up_at).toISOString()
+        : new Date(r.updated_at).toISOString(),
+      note: r.last_message ? String(r.last_message).slice(0, 80) : 'Sem nota',
+    }));
+
+    res.json({
+      attendantId,
+      kpis: { atendimentosHoje, agendamentosHoje, taxaConversao, leadsPendentes },
+      followUps,
+      conversionByOrigin,
+    });
+  } catch (error) {
+    const status = error.message === 'Unauthorized' ? 401 : 500;
+    res.status(status).json({ error: error.message });
+  }
+});
+
+
+// ═══════════════════════════════════════════════════════════════
 // GENERIC TABLE (for CRM, estoque, etc.)
 // ═══════════════════════════════════════════════════════════════
 
-app.get('/api/table/:tableName', async (req, res) => {
+
   try {
     await verifyUser(req);
     const allowedTables = ['crm_leads', 'estoque', 'tratamentos', 'orcamentos', 'comissoes', 'prontuarios'];
