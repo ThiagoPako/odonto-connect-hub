@@ -119,8 +119,8 @@ export function CampanhaLeadsTable({ campaign, onNavigate }: Props) {
                   )}
                 </TableCell>
                 <TableCell className="hidden sm:table-cell">
-                  <span className="inline-flex items-center gap-1.5 text-xs">
-                    <span>{row.canalIcon}</span>
+                  <span className="inline-flex items-center gap-2 text-xs">
+                    <ChannelBadge canal={row.canal as CanalCampanha} size="xs" title={row.canalLabel} />
                     <span className="truncate max-w-[120px]">{row.canalLabel}</span>
                   </span>
                 </TableCell>
