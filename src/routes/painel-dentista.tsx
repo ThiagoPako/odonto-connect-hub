@@ -13,6 +13,8 @@ import {
   type PainelTratamento,
 } from "@/lib/vpsApi";
 import { TratamentoFromAgendaDialog } from "@/components/dentista/TratamentoFromAgendaDialog";
+import { useTratamentoRealtime } from "@/hooks/useTratamentoRealtime";
+import { toast } from "sonner";
 import {
   CalendarDays,
   Clock,
@@ -63,6 +65,14 @@ function PainelDentistaPage() {
   }, [id]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Realtime: recarrega painel quando tratamentos mudam (deste dentista)
+  useTratamentoRealtime((evt) => {
+    load();
+    if (evt.action === "created") toast.info("Novo tratamento criado");
+    else if (evt.action === "updated") toast.info("Tratamento atualizado");
+    else if (evt.action === "deleted") toast.info("Tratamento removido");
+  }, data?.dentista?.id || id || undefined);
 
   if (loading && !data) {
     return (
