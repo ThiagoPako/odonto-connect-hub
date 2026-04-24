@@ -224,7 +224,14 @@ function PainelDentistaPage() {
         {/* Tab Content */}
         <div className="animate-fade-in">
           {activeTab === "atendimentos" && <AtendimentosTab atendimentos={atendimentos} />}
-          {activeTab === "agenda" && <AgendaTab agenda={agenda} />}
+          {activeTab === "agenda" && (
+            <AgendaTab
+              agenda={agenda}
+              tratamentos={tratamentos}
+              dentistaId={dentista.id}
+              onChanged={load}
+            />
+          )}
           {activeTab === "comissoes" && (
             <ComissoesTab
               comissoes={comissoes}
