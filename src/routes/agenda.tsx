@@ -905,16 +905,33 @@ function NovoAgendamentoDialog({
       return;
     }
 
+    // Dentista deve ser UUID válido (banco exige UUID na FK)
+    if (!UUID_RE.test(form.dentista_id)) {
+      toast.error("Cadastre um profissional em /dentistas antes de criar agendamentos. O ID do profissional precisa ser um UUID válido.");
+      return;
+    }
+    // Paciente_id também precisa ser UUID se preenchido
+    if (form.paciente_id && !UUID_RE.test(form.paciente_id)) {
+      toast.error("Selecione o paciente na lista de sugestões para vincular um cadastro válido.");
+      return;
+    }
+    if (!form.paciente_id) {
+      toast.error("Selecione o paciente na lista de sugestões (clique em uma opção). É necessário um paciente cadastrado.");
+      return;
+    }
+
     setSaving(true);
     try {
-      const prof = mockProfessionals.find((p) => p.id === form.dentista_id);
+      const profFromList = dentistasList.find((p) => p.id === form.dentista_id);
+      const profFromMock = mockProfessionals.find((p) => p.id === form.dentista_id);
+      const profName = profFromList?.nome || profFromMock?.name || "";
       let result;
       try {
         result = await agendaApi.create({
-          paciente_id: form.paciente_id || form.paciente_nome.toLowerCase().replace(/\s+/g, "_"),
+          paciente_id: form.paciente_id,
           paciente_nome: form.paciente_nome.trim(),
           dentista_id: form.dentista_id,
-          dentista_nome: prof?.name || "",
+          dentista_nome: profName,
           data: form.data, hora: form.hora, duracao: form.duracao,
           procedimento: form.procedimento, sala: form.sala,
           observacoes: form.observacoes || undefined, status: "agendado",
