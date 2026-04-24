@@ -731,6 +731,14 @@ app.get('/api/health', async (req, res) => {
       critical: criticalErrors.length,
       warnings: warnings.length,
       failed_dependencies: [...new Set(errors.map((e) => e.dependency))],
+      total_attempts: Object.values(checks).reduce((s, c) => s + (c?.attempts || 0), 0),
+    },
+    config: {
+      db: { timeout_ms: HEALTH_DB_TIMEOUT_MS, retries: HEALTH_DB_RETRIES },
+      redis: { timeout_ms: HEALTH_REDIS_TIMEOUT_MS, retries: HEALTH_REDIS_RETRIES },
+      evolution: { timeout_ms: HEALTH_EVOLUTION_TIMEOUT_MS, retries: HEALTH_EVOLUTION_RETRIES },
+      backoff_ms: HEALTH_RETRY_BACKOFF_MS,
+      backoff_max_ms: HEALTH_RETRY_BACKOFF_MAX_MS,
     },
   });
 });
