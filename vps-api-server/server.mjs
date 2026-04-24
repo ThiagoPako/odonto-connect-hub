@@ -3073,8 +3073,10 @@ app.get('/api/comercial/painel', async (req, res) => {
 
 
 // ═══════════════════════════════════════════════════════════════
+// GENERIC TABLE (for CRM, estoque, etc.)
+// ═══════════════════════════════════════════════════════════════
 
-app.get('/api/table/:tableName', async (req, res) => {
+
   try {
     await verifyUser(req);
     const allowedTables = ['crm_leads', 'estoque', 'tratamentos', 'orcamentos', 'comissoes', 'prontuarios'];
