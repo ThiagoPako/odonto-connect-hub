@@ -12,7 +12,7 @@ interface Props {
 
 /* ─────────────── Standardized Badge wrapper ─────────────── */
 
-export type ChannelBadgeSize = "sm" | "md" | "lg";
+export type ChannelBadgeSize = "xs" | "sm" | "md" | "lg" | "xl";
 
 interface BadgeProps {
   canal: CanalCampanha;
@@ -22,14 +22,18 @@ interface BadgeProps {
 }
 
 /** Standardized container for channel logos: ring, shadow, padding, rounded.
- *  Sizes — sm: 28px box / 16px logo · md: 36px box / 20px logo · lg: 44px box / 24px logo. */
+ *  Sizes — xs: 20px box / 12px logo · sm: 28px box / 16px logo · md: 36px box / 20px logo · lg: 44px box / 24px logo · xl: 56px box / 32px logo. */
 export function ChannelBadge({ canal, size = "md", title, className = "" }: BadgeProps) {
   const dims =
-    size === "sm"
-      ? { box: "h-7 w-7", logo: 16 }
-      : size === "lg"
-        ? { box: "h-11 w-11", logo: 24 }
-        : { box: "h-9 w-9", logo: 20 };
+    size === "xs"
+      ? { box: "h-5 w-5 rounded-md", logo: 12 }
+      : size === "sm"
+        ? { box: "h-7 w-7", logo: 16 }
+        : size === "lg"
+          ? { box: "h-11 w-11", logo: 24 }
+          : size === "xl"
+            ? { box: "h-14 w-14 rounded-xl", logo: 32 }
+            : { box: "h-9 w-9", logo: 20 };
 
   return (
     <span
