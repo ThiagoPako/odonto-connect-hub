@@ -31,6 +31,8 @@ import {
   TrendingUp,
   Loader2,
   RefreshCw,
+  Plus,
+  Pencil,
 } from "lucide-react";
 
 export const Route = createFileRoute("/painel-dentista")({
