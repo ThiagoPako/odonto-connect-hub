@@ -17,42 +17,50 @@ export type ChannelBadgeSize = "xs" | "sm" | "md" | "lg" | "xl";
 interface BadgeProps {
   canal: CanalCampanha;
   size?: ChannelBadgeSize;
-  /** Compact mode: shrinks the box one step and uses tighter radius, keeping ring + shadow. */
+  /** Compact mode: shrinks the box by --channel-badge-compact-scale, keeping ring + shadow. */
   compact?: boolean;
   title?: string;
   className?: string;
 }
 
+/** Map size → CSS variable defined in src/styles.css (single source of truth). */
+const SIZE_VAR: Record<ChannelBadgeSize, string> = {
+  xs: "var(--channel-badge-xs)",
+  sm: "var(--channel-badge-sm)",
+  md: "var(--channel-badge-md)",
+  lg: "var(--channel-badge-lg)",
+  xl: "var(--channel-badge-xl)",
+};
+
+/** Radius scales with size token for visual consistency across breakpoints. */
+const RADIUS_CLASS: Record<ChannelBadgeSize, string> = {
+  xs: "rounded",
+  sm: "rounded-md",
+  md: "rounded-lg",
+  lg: "rounded-lg",
+  xl: "rounded-xl",
+};
+
 /** Standardized container for channel logos: ring, shadow, padding, rounded.
- *  Sizes — xs: 20px / sm: 28px / md: 36px / lg: 44px / xl: 56px.
- *  `compact` shrinks the box ~20% and tightens the radius for dense layouts. */
+ *  All dimensions resolve from theme tokens (--channel-badge-*) so cards,
+ *  chips, tables, and dialogs stay perfectly in sync. */
 export function ChannelBadge({ canal, size = "md", compact = false, title, className = "" }: BadgeProps) {
-  const dims = compact
-    ? size === "xs"
-      ? { box: "h-4 w-4 rounded", logo: 10 }
-      : size === "sm"
-        ? { box: "h-6 w-6 rounded-md", logo: 14 }
-        : size === "lg"
-          ? { box: "h-9 w-9 rounded-lg", logo: 20 }
-          : size === "xl"
-            ? { box: "h-12 w-12 rounded-lg", logo: 28 }
-            : { box: "h-7 w-7 rounded-md", logo: 16 }
-    : size === "xs"
-      ? { box: "h-5 w-5 rounded-md", logo: 12 }
-      : size === "sm"
-        ? { box: "h-7 w-7 rounded-lg", logo: 16 }
-        : size === "lg"
-          ? { box: "h-11 w-11 rounded-lg", logo: 24 }
-          : size === "xl"
-            ? { box: "h-14 w-14 rounded-xl", logo: 32 }
-            : { box: "h-9 w-9 rounded-lg", logo: 20 };
+  const boxSize = compact
+    ? `calc(${SIZE_VAR[size]} * var(--channel-badge-compact-scale))`
+    : SIZE_VAR[size];
 
   return (
     <span
       title={title}
-      className={`inline-flex shrink-0 items-center justify-center bg-background ring-1 ring-border shadow-sm ${dims.box} ${className}`}
+      style={{ width: boxSize, height: boxSize }}
+      className={`inline-flex shrink-0 items-center justify-center bg-background ring-1 ring-border shadow-sm ${RADIUS_CLASS[size]} ${className}`}
     >
-      <ChannelLogo canal={canal} size={dims.logo} />
+      <ChannelLogo
+        canal={canal}
+        // Logo SVG sized via ratio token — keeps padding proportional at every size.
+        size={0}
+        className="w-[calc(100%*var(--channel-logo-ratio))] h-[calc(100%*var(--channel-logo-ratio))]"
+      />
     </span>
   );
 }
