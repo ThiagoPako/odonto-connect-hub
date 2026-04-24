@@ -8334,14 +8334,8 @@ app.post('/api/push/unsubscribe', async (req, res) => {
 
 // ═══════════════════════════════════════════════════════════════
 
-app.get('/api/health', async (_req, res) => {
-  try {
-    await pool.query('SELECT 1');
-    res.json({ status: 'ok', database: 'connected', timestamp: new Date().toISOString() });
-  } catch (error) {
-    res.status(500).json({ status: 'error', database: 'disconnected', error: error.message });
-  }
-});
+// /api/health is defined earlier with full dependency checks
+// (db, schema, redis, evolution, env vars). Do not redefine here.
 
 app.get('/api/version', (_req, res) => {
   res.json({
