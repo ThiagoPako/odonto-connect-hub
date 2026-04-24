@@ -421,6 +421,7 @@ app.get('/api/health', async (req, res) => {
     env: { status: 'unknown' },
     database: { status: 'unknown' },
     schema: { status: 'unknown' },
+    redis: { status: 'unknown' },
     evolution: { status: 'unknown' },
   };
 
