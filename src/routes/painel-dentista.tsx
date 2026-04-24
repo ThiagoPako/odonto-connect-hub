@@ -10,7 +10,9 @@ import {
   type PainelOrcamento,
   type PainelProntuario,
   type PainelComissao,
+  type PainelTratamento,
 } from "@/lib/vpsApi";
+import { TratamentoFromAgendaDialog } from "@/components/dentista/TratamentoFromAgendaDialog";
 import {
   CalendarDays,
   Clock,
