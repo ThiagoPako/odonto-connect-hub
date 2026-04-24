@@ -837,10 +837,62 @@ function NovoAgendamentoDialog({
   };
 
   const handleSubmit = async () => {
+    // Nome
     if (!form.paciente_nome.trim()) { toast.error("Informe o nome do paciente"); return; }
+    if (form.paciente_nome.trim().length < 2) { toast.error("Nome do paciente muito curto"); return; }
+
+    // Profissional
     if (!form.dentista_id) { toast.error("Selecione o profissional"); return; }
-    if (form.enviar_whatsapp && !form.telefone.replace(/\D/g, "")) {
+
+    // Telefone (obrigatório se WhatsApp; se preenchido, valida formato)
+    const telDigits = form.telefone.replace(/\D/g, "");
+    if (form.enviar_whatsapp && !telDigits) {
       toast.error("Informe o telefone para enviar confirmação via WhatsApp");
+      return;
+    }
+    if (telDigits && (telDigits.length < 10 || telDigits.length > 13)) {
+      toast.error("Telefone inválido. Use DDD + número (ex: 55 11 99999-0000)");
+      return;
+    }
+
+    // Data (formato YYYY-MM-DD e não pode ser passada)
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(form.data)) {
+      toast.error("Data inválida");
+      return;
+    }
+    const dataObj = new Date(form.data + "T00:00:00");
+    if (isNaN(dataObj.getTime())) {
+      toast.error("Data inválida");
+      return;
+    }
+    const hoje = new Date();
+    hoje.setHours(0, 0, 0, 0);
+    if (dataObj < hoje) {
+      toast.error("Não é possível agendar para uma data passada");
+      return;
+    }
+
+    // Hora (HH:MM)
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(form.hora)) {
+      toast.error("Horário inválido. Use o formato HH:MM");
+      return;
+    }
+
+    // Duração (5 a 480 min)
+    if (!Number.isFinite(form.duracao) || form.duracao < 5 || form.duracao > 480) {
+      toast.error("Duração deve estar entre 5 e 480 minutos");
+      return;
+    }
+
+    // Sala
+    if (!form.sala || !form.sala.trim()) {
+      toast.error("Selecione a sala de atendimento");
+      return;
+    }
+
+    // Procedimento
+    if (!form.procedimento || !form.procedimento.trim()) {
+      toast.error("Informe o procedimento");
       return;
     }
 
