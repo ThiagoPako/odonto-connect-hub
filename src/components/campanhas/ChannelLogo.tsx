@@ -17,28 +17,40 @@ export type ChannelBadgeSize = "xs" | "sm" | "md" | "lg" | "xl";
 interface BadgeProps {
   canal: CanalCampanha;
   size?: ChannelBadgeSize;
+  /** Compact mode: shrinks the box one step and uses tighter radius, keeping ring + shadow. */
+  compact?: boolean;
   title?: string;
   className?: string;
 }
 
 /** Standardized container for channel logos: ring, shadow, padding, rounded.
- *  Sizes — xs: 20px box / 12px logo · sm: 28px box / 16px logo · md: 36px box / 20px logo · lg: 44px box / 24px logo · xl: 56px box / 32px logo. */
-export function ChannelBadge({ canal, size = "md", title, className = "" }: BadgeProps) {
-  const dims =
-    size === "xs"
+ *  Sizes — xs: 20px / sm: 28px / md: 36px / lg: 44px / xl: 56px.
+ *  `compact` shrinks the box ~20% and tightens the radius for dense layouts. */
+export function ChannelBadge({ canal, size = "md", compact = false, title, className = "" }: BadgeProps) {
+  const dims = compact
+    ? size === "xs"
+      ? { box: "h-4 w-4 rounded", logo: 10 }
+      : size === "sm"
+        ? { box: "h-6 w-6 rounded-md", logo: 14 }
+        : size === "lg"
+          ? { box: "h-9 w-9 rounded-lg", logo: 20 }
+          : size === "xl"
+            ? { box: "h-12 w-12 rounded-lg", logo: 28 }
+            : { box: "h-7 w-7 rounded-md", logo: 16 }
+    : size === "xs"
       ? { box: "h-5 w-5 rounded-md", logo: 12 }
       : size === "sm"
-        ? { box: "h-7 w-7", logo: 16 }
+        ? { box: "h-7 w-7 rounded-lg", logo: 16 }
         : size === "lg"
-          ? { box: "h-11 w-11", logo: 24 }
+          ? { box: "h-11 w-11 rounded-lg", logo: 24 }
           : size === "xl"
             ? { box: "h-14 w-14 rounded-xl", logo: 32 }
-            : { box: "h-9 w-9", logo: 20 };
+            : { box: "h-9 w-9 rounded-lg", logo: 20 };
 
   return (
     <span
       title={title}
-      className={`inline-flex shrink-0 items-center justify-center rounded-lg bg-background ring-1 ring-border shadow-sm ${dims.box} ${className}`}
+      className={`inline-flex shrink-0 items-center justify-center bg-background ring-1 ring-border shadow-sm ${dims.box} ${className}`}
     >
       <ChannelLogo canal={canal} size={dims.logo} />
     </span>
