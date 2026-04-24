@@ -6648,6 +6648,41 @@ app.post('/api/messages/import-whatsapp', async (req, res) => {
   }
 });
 
+// List all active attendance sessions (for /dashboard widget)
+app.get('/api/sessions/active', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const sql = `
+      SELECT
+        s.id,
+        s.lead_id,
+        COALESCE(l.nome, l.telefone, '—') AS lead_nome,
+        COALESCE(s.attendant_name, '—') AS attendant_name,
+        s.assigned_at AS started_at,
+        (
+          SELECT m.body FROM chat_messages m
+          WHERE m.lead_id = s.lead_id
+          ORDER BY m.created_at DESC LIMIT 1
+        ) AS last_message
+      FROM attendance_sessions s
+      LEFT JOIN crm_leads l ON l.id = s.lead_id
+      WHERE s.status = 'active'
+      ORDER BY s.assigned_at DESC
+      LIMIT 30
+    `;
+    try {
+      const { rows } = await pool.query(sql);
+      res.json(rows);
+    } catch (err) {
+      if (err.code === '42P01' || err.code === '42703') return res.json([]);
+      throw err;
+    }
+  } catch (error) {
+    const status = error.message === 'Unauthorized' ? 401 : 500;
+    res.status(status).json({ error: error.message });
+  }
+});
+
 // Check if a lead has an active attendance session
 app.get('/api/sessions/active/:leadId', async (req, res) => {
   try {
