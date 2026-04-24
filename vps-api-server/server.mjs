@@ -332,50 +332,161 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 // ─── Health check (used by deploy validation + monitoring) ──────────────
+//
+// Standardized error codes (stable contract — do not rename):
+//   HEALTH_OK                     — all required deps healthy
+//   DB_CONNECTION_FAILED          — Postgres unreachable / auth refused
+//   DB_QUERY_FAILED               — connected but SELECT 1 returned unexpected
+//   DB_TIMEOUT                    — query exceeded HEALTH_DB_TIMEOUT_MS
+//   EVOLUTION_API_UNREACHABLE     — Evolution API did not respond (degraded)
+//   EVOLUTION_API_TIMEOUT         — Evolution API exceeded timeout (degraded)
+//   EVOLUTION_API_ERROR           — Evolution API returned non-2xx (degraded)
+//   MISSING_ENV_VAR               — required env var not set (e.g. JWT_SECRET)
+//
+// Severity:
+//   critical → returns HTTP 503, blocks deploy
+//   warning  → returns HTTP 200, surfaces in errors[] for visibility
+//
+const HEALTH_DB_TIMEOUT_MS = 5000;
+const HEALTH_EVOLUTION_TIMEOUT_MS = 3000;
+const REQUIRED_ENV_VARS = ['JWT_SECRET', 'PG_HOST', 'PG_DATABASE', 'PG_USER'];
+
 app.get('/api/health', async (req, res) => {
   const startedAt = Date.now();
+  const errors = []; // standardized: { code, severity, dependency, message, detail? }
   const checks = {
     api: { status: 'ok' },
+    env: { status: 'unknown' },
     database: { status: 'unknown' },
     evolution: { status: 'unknown' },
   };
-  let overallOk = true;
 
-  // DB connectivity (required)
-  try {
-    const t0 = Date.now();
-    const r = await pool.query('SELECT 1 AS ok');
-    checks.database = {
-      status: r.rows?.[0]?.ok === 1 ? 'ok' : 'degraded',
-      latency_ms: Date.now() - t0,
-    };
-    if (checks.database.status !== 'ok') overallOk = false;
-  } catch (err) {
-    overallOk = false;
-    checks.database = { status: 'down', error: String(err?.message || err) };
+  // ─── 1. Required env vars ──────────────────────────────────────────────
+  const missingEnv = REQUIRED_ENV_VARS.filter((k) => !process.env[k]);
+  if (missingEnv.length > 0) {
+    checks.env = { status: 'down', missing: missingEnv };
+    errors.push({
+      code: 'MISSING_ENV_VAR',
+      severity: 'critical',
+      dependency: 'env',
+      message: `Required environment variables not set: ${missingEnv.join(', ')}`,
+      detail: { missing: missingEnv },
+    });
+  } else {
+    checks.env = { status: 'ok' };
   }
 
-  // Evolution API (optional — degraded if down, doesn't fail health)
+  // ─── 2. Database (critical) ────────────────────────────────────────────
+  try {
+    const t0 = Date.now();
+    const queryPromise = pool.query('SELECT 1 AS ok');
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('DB_TIMEOUT')), HEALTH_DB_TIMEOUT_MS)
+    );
+    const r = await Promise.race([queryPromise, timeoutPromise]);
+    const latency = Date.now() - t0;
+
+    if (r.rows?.[0]?.ok === 1) {
+      checks.database = { status: 'ok', latency_ms: latency };
+    } else {
+      checks.database = { status: 'down', latency_ms: latency };
+      errors.push({
+        code: 'DB_QUERY_FAILED',
+        severity: 'critical',
+        dependency: 'database',
+        message: 'Postgres connected but SELECT 1 returned unexpected result',
+        detail: { rows: r.rows },
+      });
+    }
+  } catch (err) {
+    const msg = String(err?.message || err);
+    const isTimeout = msg === 'DB_TIMEOUT';
+    checks.database = { status: 'down', error: msg };
+    errors.push({
+      code: isTimeout ? 'DB_TIMEOUT' : 'DB_CONNECTION_FAILED',
+      severity: 'critical',
+      dependency: 'database',
+      message: isTimeout
+        ? `Postgres query exceeded ${HEALTH_DB_TIMEOUT_MS}ms`
+        : `Cannot connect to Postgres: ${msg}`,
+      detail: { host: process.env.PG_HOST, port: process.env.PG_PORT, db: process.env.PG_DATABASE },
+    });
+  }
+
+  // ─── 3. Evolution API (warning — does not block deploy) ────────────────
   try {
     const t0 = Date.now();
     const ctrl = new AbortController();
-    const to = setTimeout(() => ctrl.abort(), 3000);
-    const r = await fetch(`${EVOLUTION_API_URL}/`, { signal: ctrl.signal }).catch(() => null);
-    clearTimeout(to);
-    checks.evolution = {
-      status: r && r.ok ? 'ok' : 'degraded',
-      latency_ms: Date.now() - t0,
-    };
-  } catch {
-    checks.evolution = { status: 'degraded' };
+    const to = setTimeout(() => ctrl.abort(), HEALTH_EVOLUTION_TIMEOUT_MS);
+    let r = null;
+    let fetchErr = null;
+    try {
+      r = await fetch(`${EVOLUTION_API_URL}/`, { signal: ctrl.signal });
+    } catch (e) {
+      fetchErr = e;
+    } finally {
+      clearTimeout(to);
+    }
+    const latency = Date.now() - t0;
+
+    if (fetchErr) {
+      const isAbort = fetchErr?.name === 'AbortError';
+      checks.evolution = { status: 'degraded', latency_ms: latency };
+      errors.push({
+        code: isAbort ? 'EVOLUTION_API_TIMEOUT' : 'EVOLUTION_API_UNREACHABLE',
+        severity: 'warning',
+        dependency: 'evolution',
+        message: isAbort
+          ? `Evolution API did not respond within ${HEALTH_EVOLUTION_TIMEOUT_MS}ms`
+          : `Cannot reach Evolution API: ${String(fetchErr?.message || fetchErr)}`,
+        detail: { url: EVOLUTION_API_URL },
+      });
+    } else if (!r.ok) {
+      checks.evolution = { status: 'degraded', latency_ms: latency, http_status: r.status };
+      errors.push({
+        code: 'EVOLUTION_API_ERROR',
+        severity: 'warning',
+        dependency: 'evolution',
+        message: `Evolution API returned HTTP ${r.status}`,
+        detail: { url: EVOLUTION_API_URL, http_status: r.status },
+      });
+    } else {
+      checks.evolution = { status: 'ok', latency_ms: latency };
+    }
+  } catch (err) {
+    checks.evolution = { status: 'degraded', error: String(err?.message || err) };
+    errors.push({
+      code: 'EVOLUTION_API_UNREACHABLE',
+      severity: 'warning',
+      dependency: 'evolution',
+      message: `Unexpected error checking Evolution API: ${String(err?.message || err)}`,
+    });
   }
 
+  // ─── Aggregate ─────────────────────────────────────────────────────────
+  const criticalErrors = errors.filter((e) => e.severity === 'critical');
+  const warnings = errors.filter((e) => e.severity === 'warning');
+  const overallOk = criticalErrors.length === 0;
+  const status = !overallOk ? 'down' : warnings.length > 0 ? 'degraded' : 'ok';
+
   res.status(overallOk ? 200 : 503).json({
-    status: overallOk ? 'ok' : 'degraded',
+    status,
+    code: overallOk ? 'HEALTH_OK' : criticalErrors[0].code,
+    message: overallOk
+      ? warnings.length > 0
+        ? `API healthy with ${warnings.length} warning(s)`
+        : 'All systems operational'
+      : `Health check failed: ${criticalErrors.map((e) => e.code).join(', ')}`,
     uptime_s: Math.round(process.uptime()),
     timestamp: new Date().toISOString(),
     response_time_ms: Date.now() - startedAt,
     checks,
+    errors,
+    summary: {
+      critical: criticalErrors.length,
+      warnings: warnings.length,
+      failed_dependencies: [...new Set(errors.map((e) => e.dependency))],
+    },
   });
 });
 
