@@ -445,6 +445,84 @@ export const comercialApi = {
     }),
 };
 
+// ─── Painel Dentista ────────────────────────────────────────
+
+export interface DentistaPainelInfo {
+  id: string;
+  nome: string;
+  email: string;
+  telefone?: string;
+  cro?: string;
+  especialidade?: string;
+  comissao: number;
+  status: 'ativo' | 'inativo';
+}
+export interface PainelAtendimento {
+  id: string;
+  pacienteId?: string;
+  pacienteNome: string;
+  pacienteIniciais: string;
+  horario: string;
+  tipo: string;
+  status: 'agendado' | 'em_atendimento' | 'concluido' | 'cancelado';
+  procedimento: string;
+  valor?: number;
+}
+export interface PainelAgenda {
+  id: string;
+  pacienteId?: string;
+  pacienteNome: string;
+  data: string;
+  horario: string;
+  duracao: number;
+  tipo: string;
+  status: 'agendado' | 'confirmado' | 'cancelado';
+  observacao?: string;
+}
+export interface PainelOrcamento {
+  id: string;
+  pacienteId?: string;
+  pacienteNome: string;
+  itens: { procedimento: string; valor: number; quantidade: number }[];
+  total: number;
+  status: 'pendente' | 'aprovado' | 'recusado' | 'em_andamento' | 'reprovado' | 'em_tratamento' | 'finalizado';
+  criadoEm: string;
+}
+export interface PainelProntuario {
+  id: string;
+  pacienteId?: string;
+  pacienteNome: string;
+  pacienteIniciais: string;
+  ultimaConsulta: string;
+  diagnostico: string;
+  tratamento: string;
+  observacoes: string;
+  alergias: string[];
+}
+export interface PainelComissao {
+  id: string;
+  pacienteNome: string;
+  procedimento: string;
+  data: string;
+  valorProcedimento: number;
+  percentual: number;
+  valorComissao: number;
+  status: 'pendente' | 'aprovada' | 'paga' | 'aprovado' | 'pago';
+}
+export interface DentistaPainel {
+  dentista: DentistaPainelInfo;
+  atendimentos: PainelAtendimento[];
+  agenda: PainelAgenda[];
+  orcamentos: PainelOrcamento[];
+  prontuarios: PainelProntuario[];
+  comissoes: PainelComissao[];
+}
+
+export const painelDentistaApi = {
+  get: (dentistaId?: string) =>
+    vpsApiFetch<DentistaPainel>(dentistaId ? `/dentista/painel/${dentistaId}` : '/dentista/painel'),
+};
+
 // ─── CRM Leads ──────────────────────────────────────────────
 
 
