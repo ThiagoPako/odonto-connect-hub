@@ -1141,6 +1141,83 @@ export const consultationsApi = {
     vpsApiFetch<ConsultationRecord[]>(`/consultations/${encodeURIComponent(patientId)}`),
 };
 
+// ─── Reativação de pacientes inativos ───────────────────────
+
+export type ReactivationOrigin =
+  | 'instagram' | 'facebook' | 'google' | 'indicacao' | 'whatsapp' | 'site' | 'todos';
+export type ReactivationStatus = 'ativo' | 'pausado' | 'rascunho';
+
+export interface ReactivationRule {
+  id: string;
+  name: string;
+  inactiveDays: number;
+  origin: ReactivationOrigin;
+  messageTemplate: string;
+  status: ReactivationStatus;
+  matchedPatients: number;
+  sentCount: number;
+  respondedCount: number;
+  responseRate: number;
+  lastRun: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ReactivationPatient {
+  id: string;
+  leadId: string | null;
+  name: string;
+  initials: string;
+  phone: string;
+  email: string;
+  origin: ReactivationOrigin;
+  lastVisit: string;
+  daysSince: number;
+}
+
+export interface ReactivationKpis {
+  activeRules: number;
+  inactivePatients: number;
+  messagesSent: number;
+  responseRate: number;
+}
+
+export interface ReactivationSendResult {
+  success: boolean;
+  sent: number;
+  failed: number;
+  total: number;
+  errors: { pacienteId: string; error: string }[];
+}
+
+export const reativacaoApi = {
+  listRules: () => vpsApiFetch<ReactivationRule[]>('/reativacao/rules'),
+  kpis: () => vpsApiFetch<ReactivationKpis>('/reativacao/kpis'),
+  createRule: (body: {
+    name: string;
+    inactiveDays: number;
+    origin: ReactivationOrigin;
+    messageTemplate: string;
+    status?: ReactivationStatus;
+  }) => vpsApiFetch<ReactivationRule>('/reativacao/rules', { method: 'POST', body }),
+  updateRule: (id: string, body: Partial<{
+    name: string;
+    inactiveDays: number;
+    origin: ReactivationOrigin;
+    messageTemplate: string;
+    status: ReactivationStatus;
+  }>) => vpsApiFetch<ReactivationRule>(`/reativacao/rules/${id}`, { method: 'PUT', body }),
+  deleteRule: (id: string) =>
+    vpsApiFetch<{ success: boolean }>(`/reativacao/rules/${id}`, { method: 'DELETE' }),
+  patients: (id: string) =>
+    vpsApiFetch<ReactivationPatient[]>(`/reativacao/rules/${id}/patients`),
+  send: (id: string, patientIds: string[] = []) =>
+    vpsApiFetch<ReactivationSendResult>(`/reativacao/rules/${id}/send`, {
+      method: 'POST',
+      body: { patientIds },
+    }),
+};
+
 // ─── Health check ───────────────────────────────────────────
 
 export const healthCheck = () => vpsApiFetch('/health');

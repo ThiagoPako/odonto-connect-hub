@@ -2,45 +2,26 @@ import { createFileRoute } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import {
   RefreshCcw, MessageSquare, Send, Clock, Users, Plus, X,
-  Filter, Instagram, Facebook, Globe, Phone, Search,
-  CheckCircle2, AlertCircle, ChevronRight, Trash2, Edit2,
+  Instagram, Facebook, Globe, Phone, Search,
+  CheckCircle2, AlertCircle, Loader2, Trash2, PlayCircle, PauseCircle,
 } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  reativacaoApi,
+  type ReactivationRule,
+  type ReactivationOrigin,
+  type ReactivationStatus,
+  type ReactivationPatient,
+  type ReactivationKpis,
+} from "@/lib/vpsApi";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/reativacao")({
   ssr: false,
   component: ReativacaoPage,
 });
 
-type ChannelOrigin = "instagram" | "facebook" | "google" | "indicacao" | "whatsapp" | "site" | "todos";
-
-interface ReactivationRule {
-  id: string;
-  name: string;
-  inactiveDays: number;
-  origin: ChannelOrigin;
-  messageTemplate: string;
-  status: "ativo" | "pausado" | "rascunho";
-  matchedPatients: number;
-  sentCount: number;
-  responseRate: number;
-  lastRun?: string;
-}
-
-interface InactivePatient {
-  id: string;
-  name: string;
-  initials: string;
-  avatarColor: string;
-  lastVisit: string;
-  daysSince: number;
-  origin: ChannelOrigin;
-  phone: string;
-  treatments: string;
-  selected: boolean;
-}
-
-const originConfig: Record<ChannelOrigin, { label: string; icon: React.ElementType; color: string }> = {
+const originConfig: Record<ReactivationOrigin, { label: string; icon: React.ElementType; color: string }> = {
   instagram: { label: "Instagram", icon: Instagram, color: "text-chart-3" },
   facebook: { label: "Facebook", icon: Facebook, color: "text-chart-1" },
   google: { label: "Google Ads", icon: Globe, color: "text-chart-4" },
@@ -50,94 +31,168 @@ const originConfig: Record<ChannelOrigin, { label: string; icon: React.ElementTy
   todos: { label: "Todos", icon: Users, color: "text-muted-foreground" },
 };
 
-const mockRules: ReactivationRule[] = [
-  { id: "r1", name: "Inativos 6m — Instagram", inactiveDays: 180, origin: "instagram", messageTemplate: "Olá {nome}! Sentimos sua falta 😊 Que tal agendar uma consulta de revisão? Temos horários disponíveis esta semana!", status: "ativo", matchedPatients: 14, sentCount: 10, responseRate: 40, lastRun: "05/04/2026" },
-  { id: "r2", name: "Inativos 3m — Todos", inactiveDays: 90, origin: "todos", messageTemplate: "Oi {nome}, tudo bem? Já faz um tempo que não te vemos por aqui. Agende sua consulta de retorno!", status: "ativo", matchedPatients: 23, sentCount: 18, responseRate: 33, lastRun: "03/04/2026" },
-  { id: "r3", name: "Inativos 1 ano — Google", inactiveDays: 365, origin: "google", messageTemplate: "Olá {nome}! Já faz mais de 1 ano desde sua última visita. Cuide do seu sorriso, agende agora!", status: "pausado", matchedPatients: 8, sentCount: 0, responseRate: 0 },
-  { id: "r4", name: "Inativos 6m — Facebook", inactiveDays: 180, origin: "facebook", messageTemplate: "Oi {nome}! Estamos com condições especiais para retorno. Aproveite e agende sua consulta!", status: "rascunho", matchedPatients: 5, sentCount: 0, responseRate: 0 },
-];
-
-const mockPatients: InactivePatient[] = [
-  { id: "pt1", name: "Camila Rodrigues", initials: "CR", avatarColor: "bg-chart-1", lastVisit: "15/09/2025", daysSince: 205, origin: "instagram", phone: "(11) 99123-4567", treatments: "Limpeza, Clareamento", selected: false },
-  { id: "pt2", name: "Bruno Almeida", initials: "BA", avatarColor: "bg-chart-2", lastVisit: "20/08/2025", daysSince: 231, origin: "instagram", phone: "(11) 98765-4321", treatments: "Restauração, Profilaxia", selected: false },
-  { id: "pt3", name: "Fernanda Costa", initials: "FC", avatarColor: "bg-chart-3", lastVisit: "01/10/2025", daysSince: 189, origin: "instagram", phone: "(11) 97654-3210", treatments: "Ortodontia", selected: false },
-  { id: "pt4", name: "Rafael Souza", initials: "RS", avatarColor: "bg-chart-4", lastVisit: "10/07/2025", daysSince: 272, origin: "instagram", phone: "(11) 96543-2109", treatments: "Implante, Coroa", selected: false },
-  { id: "pt5", name: "Julia Martins", initials: "JM", avatarColor: "bg-chart-5", lastVisit: "05/11/2025", daysSince: 154, origin: "facebook", phone: "(11) 95432-1098", treatments: "Limpeza", selected: false },
-  { id: "pt6", name: "Diego Pereira", initials: "DP", avatarColor: "bg-chart-1", lastVisit: "12/06/2025", daysSince: 300, origin: "google", phone: "(11) 94321-0987", treatments: "Canal, Restauração", selected: false },
-  { id: "pt7", name: "Larissa Ferreira", initials: "LF", avatarColor: "bg-chart-2", lastVisit: "28/09/2025", daysSince: 192, origin: "instagram", phone: "(11) 93210-9876", treatments: "Profilaxia", selected: false },
-  { id: "pt8", name: "Thiago Nunes", initials: "TN", avatarColor: "bg-chart-3", lastVisit: "03/08/2025", daysSince: 248, origin: "indicacao", phone: "(11) 92109-8765", treatments: "Extração, Prótese", selected: false },
-];
-
-const statusCfg: Record<ReactivationRule["status"], { label: string; color: string }> = {
+const statusCfg: Record<ReactivationStatus, { label: string; color: string }> = {
   ativo: { label: "Ativo", color: "bg-success/15 text-success" },
   pausado: { label: "Pausado", color: "bg-warning/15 text-warning" },
   rascunho: { label: "Rascunho", color: "bg-muted text-muted-foreground" },
 };
 
+const avatarColors = ["bg-chart-1", "bg-chart-2", "bg-chart-3", "bg-chart-4", "bg-chart-5"];
+
 function ReativacaoPage() {
-  const [rules, setRules] = useState(mockRules);
+  const [rules, setRules] = useState<ReactivationRule[]>([]);
+  const [kpis, setKpis] = useState<ReactivationKpis | null>(null);
+  const [loadingRules, setLoadingRules] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
   const [selectedRule, setSelectedRule] = useState<ReactivationRule | null>(null);
   const [showNewForm, setShowNewForm] = useState(false);
-  const [patients, setPatients] = useState(mockPatients);
+
+  const [patients, setPatients] = useState<ReactivationPatient[]>([]);
+  const [loadingPatients, setLoadingPatients] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [searchTerm, setSearchTerm] = useState("");
+  const [sending, setSending] = useState(false);
 
   // New rule form state
   const [newName, setNewName] = useState("");
   const [newDays, setNewDays] = useState(180);
-  const [newOrigin, setNewOrigin] = useState<ChannelOrigin>("instagram");
-  const [newMessage, setNewMessage] = useState("Olá {nome}! Sentimos sua falta 😊 Agende sua consulta de retorno!");
+  const [newOrigin, setNewOrigin] = useState<ReactivationOrigin>("todos");
+  const [newMessage, setNewMessage] = useState(
+    "Olá {nome}! Sentimos sua falta 😊 Agende sua consulta de retorno!"
+  );
 
-  const filteredPatients = patients.filter((p) => {
-    const matchesRule = selectedRule
-      ? (selectedRule.origin === "todos" || p.origin === selectedRule.origin) && p.daysSince >= selectedRule.inactiveDays
-      : true;
-    const matchesSearch = !searchTerm || p.name.toLowerCase().includes(searchTerm.toLowerCase());
-    return matchesRule && matchesSearch;
-  });
+  const loadAll = useCallback(async () => {
+    setLoadingRules(true);
+    setError(null);
+    const [rulesRes, kpisRes] = await Promise.all([
+      reativacaoApi.listRules(),
+      reativacaoApi.kpis(),
+    ]);
+    if (rulesRes.error) setError(rulesRes.error);
+    setRules(rulesRes.data || []);
+    setKpis(kpisRes.data || null);
+    setLoadingRules(false);
+  }, []);
 
-  const selectedCount = filteredPatients.filter((p) => p.selected).length;
+  useEffect(() => { loadAll(); }, [loadAll]);
 
-  const handleCreateRule = () => {
-    if (!newName.trim()) return;
-    const newRule: ReactivationRule = {
-      id: `r${Date.now()}`,
-      name: newName,
+  // Reload selected rule's patients whenever selected changes
+  useEffect(() => {
+    if (!selectedRule) {
+      setPatients([]);
+      setSelectedIds(new Set());
+      return;
+    }
+    let cancelled = false;
+    setLoadingPatients(true);
+    reativacaoApi.patients(selectedRule.id).then((res) => {
+      if (cancelled) return;
+      setPatients(res.data || []);
+      setSelectedIds(new Set());
+      setLoadingPatients(false);
+      if (res.error) toast.error(res.error);
+    });
+    return () => { cancelled = true; };
+  }, [selectedRule?.id]);
+
+  const filteredPatients = useMemo(() => {
+    if (!searchTerm) return patients;
+    const q = searchTerm.toLowerCase();
+    return patients.filter((p) => p.name.toLowerCase().includes(q) || p.phone.includes(q));
+  }, [patients, searchTerm]);
+
+  const selectedCount = selectedIds.size;
+
+  const togglePatient = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const selectAll = () => {
+    const visibleIds = filteredPatients.map((p) => p.id);
+    const allSelected = visibleIds.every((id) => selectedIds.has(id));
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allSelected) visibleIds.forEach((id) => next.delete(id));
+      else visibleIds.forEach((id) => next.add(id));
+      return next;
+    });
+  };
+
+  const handleCreateRule = async () => {
+    if (!newName.trim() || !newMessage.trim()) {
+      toast.error("Preencha nome e mensagem");
+      return;
+    }
+    const { data, error: err } = await reativacaoApi.createRule({
+      name: newName.trim(),
       inactiveDays: newDays,
       origin: newOrigin,
       messageTemplate: newMessage,
       status: "rascunho",
-      matchedPatients: mockPatients.filter(
-        (p) => (newOrigin === "todos" || p.origin === newOrigin) && p.daysSince >= newDays
-      ).length,
-      sentCount: 0,
-      responseRate: 0,
-    };
-    setRules([newRule, ...rules]);
-    setSelectedRule(newRule);
+    });
+    if (err || !data) {
+      toast.error(err || "Falha ao criar regra");
+      return;
+    }
+    toast.success("Regra criada");
     setShowNewForm(false);
     setNewName("");
     setNewDays(180);
-    setNewOrigin("instagram");
+    setNewOrigin("todos");
     setNewMessage("Olá {nome}! Sentimos sua falta 😊 Agende sua consulta de retorno!");
+    await loadAll();
   };
 
-  const togglePatient = (id: string) => {
-    setPatients(patients.map((p) => (p.id === id ? { ...p, selected: !p.selected } : p)));
+  const handleToggleStatus = async (rule: ReactivationRule) => {
+    const next: ReactivationStatus = rule.status === "ativo" ? "pausado" : "ativo";
+    const { error: err } = await reativacaoApi.updateRule(rule.id, { status: next });
+    if (err) { toast.error(err); return; }
+    toast.success(next === "ativo" ? "Regra ativada" : "Regra pausada");
+    await loadAll();
+    if (selectedRule?.id === rule.id) {
+      setSelectedRule({ ...rule, status: next });
+    }
   };
 
-  const selectAll = () => {
-    const ids = new Set(filteredPatients.map((p) => p.id));
-    const allSelected = filteredPatients.every((p) => p.selected);
-    setPatients(patients.map((p) => (ids.has(p.id) ? { ...p, selected: !allSelected } : p)));
+  const handleDeleteRule = async (rule: ReactivationRule) => {
+    if (!window.confirm(`Excluir regra "${rule.name}"?`)) return;
+    const { error: err } = await reativacaoApi.deleteRule(rule.id);
+    if (err) { toast.error(err); return; }
+    toast.success("Regra excluída");
+    if (selectedRule?.id === rule.id) setSelectedRule(null);
+    await loadAll();
   };
 
-  // KPIs
-  const totalActive = rules.filter((r) => r.status === "ativo").length;
-  const totalMatched = rules.reduce((s, r) => s + r.matchedPatients, 0);
-  const totalSent = rules.reduce((s, r) => s + r.sentCount, 0);
-  const avgResponse = rules.filter((r) => r.sentCount > 0).length > 0
-    ? (rules.filter((r) => r.sentCount > 0).reduce((s, r) => s + r.responseRate, 0) / rules.filter((r) => r.sentCount > 0).length)
-    : 0;
+  const handleSend = async () => {
+    if (!selectedRule) return;
+    const ids = Array.from(selectedIds);
+    if (!ids.length) {
+      toast.error("Selecione ao menos um paciente");
+      return;
+    }
+    if (!window.confirm(`Enviar mensagem para ${ids.length} paciente(s)?`)) return;
+    setSending(true);
+    const { data, error: err } = await reativacaoApi.send(selectedRule.id, ids);
+    setSending(false);
+    if (err || !data) { toast.error(err || "Falha no envio"); return; }
+    toast.success(`Enviadas: ${data.sent} • Falhas: ${data.failed}`);
+    setSelectedIds(new Set());
+    await loadAll();
+    // refresh patients
+    const r = await reativacaoApi.patients(selectedRule.id);
+    setPatients(r.data || []);
+  };
+
+  const totalActive = kpis?.activeRules ?? 0;
+  const totalMatched = kpis?.inactivePatients ?? 0;
+  const totalSent = kpis?.messagesSent ?? 0;
+  const avgResponse = kpis?.responseRate ?? 0;
 
   return (
     <div className="flex-1 flex flex-col min-h-screen">
@@ -150,6 +205,12 @@ function ReativacaoPage() {
           <KpiBox icon={Send} label="Mensagens Enviadas" value={String(totalSent)} color="text-chart-1" />
           <KpiBox icon={MessageSquare} label="Taxa de Resposta" value={`${avgResponse.toFixed(0)}%`} color="text-success" />
         </div>
+
+        {error && (
+          <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive flex items-center gap-2">
+            <AlertCircle className="h-3.5 w-3.5" /> {error}
+          </div>
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
           {/* Rules list */}
@@ -164,37 +225,65 @@ function ReativacaoPage() {
               </button>
             </div>
 
-            {rules.map((rule) => {
-              const oCfg = originConfig[rule.origin];
-              const sCfg = statusCfg[rule.status];
-              return (
-                <button
-                  key={rule.id}
-                  onClick={() => { setSelectedRule(rule); setShowNewForm(false); }}
-                  className={`w-full text-left px-3 py-3 rounded-xl border transition-all ${
-                    selectedRule?.id === rule.id ? "bg-primary/5 border-primary/30" : "border-transparent hover:bg-muted"
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-xs font-medium text-foreground truncate pr-2">{rule.name}</span>
-                    <span className={`px-1.5 py-0.5 rounded text-[9px] font-medium shrink-0 ${sCfg.color}`}>{sCfg.label}</span>
-                  </div>
-                  <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
-                    <span className="flex items-center gap-0.5">
-                      <oCfg.icon className={`h-2.5 w-2.5 ${oCfg.color}`} /> {oCfg.label}
-                    </span>
-                    <span>≥{rule.inactiveDays} dias</span>
-                    <span>{rule.matchedPatients} pacientes</span>
-                  </div>
-                  {rule.sentCount > 0 && (
-                    <div className="flex items-center gap-3 mt-1 text-[10px]">
-                      <span className="text-chart-1">{rule.sentCount} enviadas</span>
-                      <span className="text-success">{rule.responseRate}% resposta</span>
+            {loadingRules && rules.length === 0 ? (
+              <div className="py-8 text-center"><Loader2 className="h-5 w-5 animate-spin mx-auto text-muted-foreground" /></div>
+            ) : rules.length === 0 ? (
+              <div className="py-8 text-center text-xs text-muted-foreground">
+                Nenhuma regra criada. Crie a primeira para reativar pacientes inativos.
+              </div>
+            ) : (
+              rules.map((rule) => {
+                const oCfg = originConfig[rule.origin];
+                const sCfg = statusCfg[rule.status];
+                return (
+                  <div
+                    key={rule.id}
+                    className={`group w-full text-left px-3 py-3 rounded-xl border transition-all ${
+                      selectedRule?.id === rule.id ? "bg-primary/5 border-primary/30" : "border-transparent hover:bg-muted"
+                    }`}
+                  >
+                    <button
+                      onClick={() => { setSelectedRule(rule); setShowNewForm(false); }}
+                      className="w-full text-left"
+                    >
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="text-xs font-medium text-foreground truncate pr-2">{rule.name}</span>
+                        <span className={`px-1.5 py-0.5 rounded text-[9px] font-medium shrink-0 ${sCfg.color}`}>{sCfg.label}</span>
+                      </div>
+                      <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
+                        <span className="flex items-center gap-0.5">
+                          <oCfg.icon className={`h-2.5 w-2.5 ${oCfg.color}`} /> {oCfg.label}
+                        </span>
+                        <span>≥{rule.inactiveDays} dias</span>
+                        <span>{rule.matchedPatients} pacientes</span>
+                      </div>
+                      {rule.sentCount > 0 && (
+                        <div className="flex items-center gap-3 mt-1 text-[10px]">
+                          <span className="text-chart-1">{rule.sentCount} enviadas</span>
+                          <span className="text-success">{rule.responseRate}% resposta</span>
+                        </div>
+                      )}
+                    </button>
+                    <div className="flex items-center gap-1 mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleToggleStatus(rule); }}
+                        className="text-[10px] px-1.5 py-0.5 rounded bg-muted hover:bg-muted/70 text-muted-foreground flex items-center gap-1"
+                        title={rule.status === "ativo" ? "Pausar" : "Ativar"}
+                      >
+                        {rule.status === "ativo" ? <PauseCircle className="h-3 w-3" /> : <PlayCircle className="h-3 w-3" />}
+                        {rule.status === "ativo" ? "Pausar" : "Ativar"}
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleDeleteRule(rule); }}
+                        className="text-[10px] px-1.5 py-0.5 rounded bg-destructive/10 text-destructive hover:bg-destructive/20 flex items-center gap-1"
+                      >
+                        <Trash2 className="h-3 w-3" /> Excluir
+                      </button>
                     </div>
-                  )}
-                </button>
-              );
-            })}
+                  </div>
+                );
+              })
+            )}
           </div>
 
           {/* Detail / Form */}
@@ -233,7 +322,7 @@ function ReativacaoPage() {
                 <div>
                   <label className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Origem do Paciente</label>
                   <div className="mt-1.5 flex flex-wrap gap-1.5">
-                    {(Object.keys(originConfig) as ChannelOrigin[]).map((key) => {
+                    {(Object.keys(originConfig) as ReactivationOrigin[]).map((key) => {
                       const cfg = originConfig[key];
                       return (
                         <button
@@ -264,11 +353,7 @@ function ReativacaoPage() {
                   <p className="text-[9px] text-muted-foreground mt-1">Variáveis: {"{nome}"}, {"{tratamento}"}, {"{dias_inativo}"}</p>
                 </div>
 
-                <div className="flex items-center justify-between pt-2 border-t border-border">
-                  <p className="text-xs text-muted-foreground">
-                    <Users className="inline h-3 w-3 mr-1" />
-                    {mockPatients.filter((p) => (newOrigin === "todos" || p.origin === newOrigin) && p.daysSince >= newDays).length} pacientes correspondem
-                  </p>
+                <div className="flex items-center justify-end pt-2 border-t border-border">
                   <button
                     onClick={handleCreateRule}
                     disabled={!newName.trim()}
@@ -290,7 +375,9 @@ function ReativacaoPage() {
                           {(() => { const C = originConfig[selectedRule.origin]; return <><C.icon className={`h-3 w-3 ${C.color}`} /> {C.label}</>; })()}
                         </span>
                         <span>≥ {selectedRule.inactiveDays} dias inativo</span>
-                        {selectedRule.lastRun && <span>Último envio: {selectedRule.lastRun}</span>}
+                        {selectedRule.lastRun && (
+                          <span>Último envio: {new Date(selectedRule.lastRun).toLocaleString("pt-BR")}</span>
+                        )}
                       </div>
                     </div>
                     <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${statusCfg[selectedRule.status].color}`}>
@@ -300,7 +387,7 @@ function ReativacaoPage() {
 
                   <div className="bg-muted/50 rounded-lg p-3 mb-3">
                     <p className="text-[10px] text-muted-foreground uppercase font-medium mb-1">Mensagem</p>
-                    <p className="text-xs text-foreground">{selectedRule.messageTemplate}</p>
+                    <p className="text-xs text-foreground whitespace-pre-wrap">{selectedRule.messageTemplate}</p>
                   </div>
 
                   <div className="grid grid-cols-3 gap-3">
@@ -333,50 +420,69 @@ function ReativacaoPage() {
                           className="h-7 pl-6 pr-2 w-36 rounded-md bg-muted border-0 text-[10px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                         />
                       </div>
-                      <button onClick={selectAll} className="px-2 py-1 rounded-md bg-muted text-[10px] font-medium text-muted-foreground hover:text-foreground">
-                        {filteredPatients.every((p) => p.selected) ? "Desmarcar" : "Selecionar"} Todos
+                      <button
+                        onClick={selectAll}
+                        disabled={filteredPatients.length === 0}
+                        className="px-2 py-1 rounded-md bg-muted text-[10px] font-medium text-muted-foreground hover:text-foreground disabled:opacity-50"
+                      >
+                        {filteredPatients.length > 0 && filteredPatients.every((p) => selectedIds.has(p.id))
+                          ? "Desmarcar"
+                          : "Selecionar"} Todos
                       </button>
                     </div>
                   </div>
 
-                  <div className="space-y-1">
-                    {filteredPatients.map((patient) => {
-                      const oCfg = originConfig[patient.origin];
-                      return (
-                        <div
-                          key={patient.id}
-                          className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors cursor-pointer ${
-                            patient.selected ? "bg-primary/5" : "hover:bg-muted/50"
-                          }`}
-                          onClick={() => togglePatient(patient.id)}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={patient.selected}
-                            onChange={() => togglePatient(patient.id)}
-                            className="h-3.5 w-3.5 rounded border-border accent-primary shrink-0"
-                          />
-                          <div className={`h-7 w-7 rounded-full ${patient.avatarColor} flex items-center justify-center text-[9px] font-bold text-white shrink-0`}>
-                            {patient.initials}
+                  {loadingPatients ? (
+                    <div className="py-8 text-center"><Loader2 className="h-5 w-5 animate-spin mx-auto text-muted-foreground" /></div>
+                  ) : (
+                    <div className="space-y-1">
+                      {filteredPatients.map((patient, idx) => {
+                        const oCfg = originConfig[patient.origin] || originConfig.site;
+                        const checked = selectedIds.has(patient.id);
+                        const avatarColor = avatarColors[idx % avatarColors.length];
+                        return (
+                          <div
+                            key={patient.id}
+                            className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors cursor-pointer ${
+                              checked ? "bg-primary/5" : "hover:bg-muted/50"
+                            }`}
+                            onClick={() => togglePatient(patient.id)}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => togglePatient(patient.id)}
+                              onClick={(e) => e.stopPropagation()}
+                              className="h-3.5 w-3.5 rounded border-border accent-primary shrink-0"
+                            />
+                            <div className={`h-7 w-7 rounded-full ${avatarColor} flex items-center justify-center text-[9px] font-bold text-white shrink-0`}>
+                              {patient.initials}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-medium text-foreground truncate">{patient.name}</p>
+                              <p className="text-[10px] text-muted-foreground truncate">{patient.phone || "Sem telefone"}</p>
+                            </div>
+                            <div className="text-right shrink-0">
+                              <p className="text-[10px] text-warning font-medium">{patient.daysSince} dias</p>
+                              <p className="text-[9px] text-muted-foreground">
+                                {patient.lastVisit
+                                  ? new Date(patient.lastVisit).toLocaleDateString("pt-BR")
+                                  : "—"}
+                              </p>
+                            </div>
+                            <span className={`flex items-center gap-0.5 text-[9px] shrink-0 ${oCfg.color}`}>
+                              <oCfg.icon className="h-2.5 w-2.5" /> {oCfg.label}
+                            </span>
                           </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-xs font-medium text-foreground truncate">{patient.name}</p>
-                            <p className="text-[10px] text-muted-foreground truncate">{patient.treatments}</p>
-                          </div>
-                          <div className="text-right shrink-0">
-                            <p className="text-[10px] text-warning font-medium">{patient.daysSince} dias</p>
-                            <p className="text-[9px] text-muted-foreground">{patient.lastVisit}</p>
-                          </div>
-                          <span className={`flex items-center gap-0.5 text-[9px] shrink-0 ${oCfg.color}`}>
-                            <oCfg.icon className="h-2.5 w-2.5" /> {oCfg.label}
-                          </span>
+                        );
+                      })}
+                      {filteredPatients.length === 0 && (
+                        <div className="py-8 text-center text-xs text-muted-foreground">
+                          Nenhum paciente corresponde aos critérios desta regra.
                         </div>
-                      );
-                    })}
-                    {filteredPatients.length === 0 && (
-                      <div className="py-8 text-center text-xs text-muted-foreground">Nenhum paciente encontrado com esses critérios.</div>
-                    )}
-                  </div>
+                      )}
+                    </div>
+                  )}
 
                   {selectedCount > 0 && (
                     <div className="mt-4 pt-3 border-t border-border flex items-center justify-between">
@@ -384,10 +490,20 @@ function ReativacaoPage() {
                         <CheckCircle2 className="inline h-3 w-3 text-primary mr-1" />
                         {selectedCount} paciente{selectedCount > 1 ? "s" : ""} selecionado{selectedCount > 1 ? "s" : ""}
                       </p>
-                      <button className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-success text-white text-xs font-medium hover:bg-success/90">
-                        <Send className="h-3.5 w-3.5" /> Enviar Mensagem via WhatsApp
+                      <button
+                        onClick={handleSend}
+                        disabled={sending || selectedRule.status === "pausado"}
+                        className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-success text-white text-xs font-medium hover:bg-success/90 disabled:opacity-50"
+                      >
+                        {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                        {sending ? "Enviando…" : "Enviar via WhatsApp"}
                       </button>
                     </div>
+                  )}
+                  {selectedRule.status === "pausado" && (
+                    <p className="mt-2 text-[10px] text-warning flex items-center gap-1">
+                      <Clock className="h-3 w-3" /> Regra pausada — ative-a para enviar mensagens.
+                    </p>
                   )}
                 </div>
               </>
