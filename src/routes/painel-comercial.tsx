@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { useAuth } from "@/hooks/useAuth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -6,58 +7,21 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import {
-  Headset,
-  MessageSquare,
-  CalendarCheck,
-  TrendingUp,
-  Clock,
-  AlertCircle,
-  Users,
-  BarChart3,
+  Headset, MessageSquare, CalendarCheck, TrendingUp, Clock, AlertCircle,
+  Users, BarChart3, Loader2,
 } from "lucide-react";
+import { comercialApi, type ComercialPainel } from "@/lib/vpsApi";
 
 export const Route = createFileRoute("/painel-comercial")({
   ssr: false,
   component: PainelComercialPage,
 });
 
-/* ── Mock Data ───────────────────────────────────── */
-
-interface FollowUp {
-  id: string;
-  leadName: string;
-  type: "retorno" | "confirmacao" | "reativacao";
-  scheduledAt: string;
-  note: string;
-}
-
-const mockFollowUps: FollowUp[] = [
-  { id: "1", leadName: "João Santos", type: "retorno", scheduledAt: "Hoje, 14:00", note: "Enviar tabela de preços" },
-  { id: "2", leadName: "Carlos Ferreira", type: "retorno", scheduledAt: "Hoje, 16:30", note: "Explicar opções de implante" },
-  { id: "3", leadName: "Patrícia Lima", type: "confirmacao", scheduledAt: "Amanhã, 09:00", note: "Confirmar interesse nas lentes" },
-  { id: "4", leadName: "Roberto Alves", type: "reativacao", scheduledAt: "Amanhã, 11:00", note: "Reativar com promoção de implante" },
-];
-
-const kpis = {
-  atendimentosHoje: 18,
-  agendamentosHoje: 6,
-  taxaConversao: 33,
-  leadsPendentes: 4,
-};
-
 const followUpTypeConfig: Record<string, { label: string; class: string }> = {
   retorno: { label: "Retorno", class: "bg-primary/15 text-primary" },
   confirmacao: { label: "Confirmação", class: "bg-chart-2/15 text-chart-2" },
   reativacao: { label: "Reativação", class: "bg-chart-4/15 text-chart-4" },
 };
-
-const conversionByOrigin = [
-  { origin: "Instagram", leads: 32, convertidos: 12, rate: 37.5 },
-  { origin: "Google Ads", leads: 28, convertidos: 14, rate: 50 },
-  { origin: "Indicação", leads: 15, convertidos: 10, rate: 66.7 },
-  { origin: "Meta Ads", leads: 20, convertidos: 6, rate: 30 },
-  { origin: "Site", leads: 10, convertidos: 3, rate: 30 },
-];
 
 const chartColors = [
   "hsl(var(--primary))",
@@ -67,10 +31,50 @@ const chartColors = [
   "hsl(var(--chart-5))",
 ];
 
-/* ── Component ───────────────────────────────────── */
+const EMPTY: ComercialPainel = {
+  attendantId: "",
+  kpis: { atendimentosHoje: 0, agendamentosHoje: 0, taxaConversao: 0, leadsPendentes: 0 },
+  followUps: [],
+  conversionByOrigin: [],
+};
+
+function formatScheduled(iso: string): string {
+  try {
+    const d = new Date(iso);
+    const today = new Date();
+    const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
+    const sameDay = (a: Date, b: Date) =>
+      a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+    const hh = d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+    if (sameDay(d, today)) return `Hoje, ${hh}`;
+    if (sameDay(d, tomorrow)) return `Amanhã, ${hh}`;
+    return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "short" }) + `, ${hh}`;
+  } catch { return iso; }
+}
 
 function PainelComercialPage() {
   const { user } = useAuth();
+  const [data, setData] = useState<ComercialPainel>(EMPTY);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      setLoading(true);
+      setError(null);
+      const { data: res, error: err } = await comercialApi.painel();
+      if (cancelled) return;
+      if (err) setError(err);
+      else if (res) setData(res);
+      setLoading(false);
+    }
+    load();
+    const interval = setInterval(load, 60_000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, []);
+
+  const { kpis, followUps, conversionByOrigin } = data;
 
   return (
     <div className="flex-1 flex flex-col min-h-screen">
@@ -89,7 +93,15 @@ function PainelComercialPage() {
               Visão geral do seu dia — leads e follow-ups
             </p>
           </div>
+          {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground ml-auto" />}
         </div>
+
+        {error && (
+          <div className="flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+            <AlertCircle className="h-4 w-4" />
+            <span>Erro ao carregar painel: {error}</span>
+          </div>
+        )}
 
         {/* KPIs */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -109,20 +121,24 @@ function PainelComercialPage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              {mockFollowUps.map((fu) => (
-                <div key={fu.id} className="p-3 rounded-xl border bg-card hover:bg-muted/50 transition-colors">
+              {followUps.length === 0 && !loading ? (
+                <p className="text-sm text-muted-foreground text-center py-6">
+                  Sem follow-ups pendentes 🎉
+                </p>
+              ) : followUps.map((fu) => (
+                <Link key={fu.id} to="/crm" className="block p-3 rounded-xl border bg-card hover:bg-muted/50 transition-colors">
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-sm font-medium">{fu.leadName}</span>
                     <Badge variant="outline" className={`text-[10px] ${followUpTypeConfig[fu.type]?.class ?? ""}`}>
                       {followUpTypeConfig[fu.type]?.label ?? fu.type}
                     </Badge>
                   </div>
-                  <p className="text-xs text-muted-foreground mb-1">{fu.note}</p>
+                  <p className="text-xs text-muted-foreground mb-1 line-clamp-1">{fu.note}</p>
                   <div className="flex items-center gap-1 text-xs text-muted-foreground">
                     <Clock className="h-3 w-3" />
-                    {fu.scheduledAt}
+                    {formatScheduled(fu.scheduledAt)}
                   </div>
-                </div>
+                </Link>
               ))}
             </CardContent>
           </Card>
@@ -136,22 +152,31 @@ function PainelComercialPage() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <ResponsiveContainer width="100%" height={220}>
-                <BarChart data={conversionByOrigin} layout="vertical" margin={{ left: 10, right: 16, top: 4, bottom: 4 }}>
-                  <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="hsl(var(--border))" />
-                  <XAxis type="number" domain={[0, 100]} tickFormatter={(v) => `${v}%`} fontSize={11} tick={{ fill: "hsl(var(--muted-foreground))" }} />
-                  <YAxis type="category" dataKey="origin" width={80} fontSize={12} tick={{ fill: "hsl(var(--foreground))" }} />
-                  <Tooltip
-                    contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 12 }}
-                    formatter={(value: number) => [`${value.toFixed(1)}%`, "Conversão"]}
-                  />
-                  <Bar dataKey="rate" radius={[0, 6, 6, 0]} barSize={18}>
-                    {conversionByOrigin.map((_, i) => (
-                      <Cell key={i} fill={chartColors[i % chartColors.length]} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+              {conversionByOrigin.length === 0 && !loading ? (
+                <p className="text-sm text-muted-foreground text-center py-12">
+                  Nenhum lead atribuído ainda.
+                </p>
+              ) : (
+                <ResponsiveContainer width="100%" height={220}>
+                  <BarChart data={conversionByOrigin} layout="vertical" margin={{ left: 10, right: 16, top: 4, bottom: 4 }}>
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="hsl(var(--border))" />
+                    <XAxis type="number" domain={[0, 100]} tickFormatter={(v) => `${v}%`} fontSize={11} tick={{ fill: "hsl(var(--muted-foreground))" }} />
+                    <YAxis type="category" dataKey="origin" width={80} fontSize={12} tick={{ fill: "hsl(var(--foreground))" }} />
+                    <Tooltip
+                      contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 12 }}
+                      formatter={(value: number, _n, p: any) => [
+                        `${value.toFixed(1)}% (${p.payload.convertidos}/${p.payload.leads})`,
+                        "Conversão",
+                      ]}
+                    />
+                    <Bar dataKey="rate" radius={[0, 6, 6, 0]} barSize={18}>
+                      {conversionByOrigin.map((_, i) => (
+                        <Cell key={i} fill={chartColors[i % chartColors.length]} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
             </CardContent>
           </Card>
 
@@ -186,8 +211,6 @@ function PainelComercialPage() {
     </div>
   );
 }
-
-/* ── Sub-components ──────────────────────────────── */
 
 function KpiMini({ icon: Icon, label, value, color, bg }: {
   icon: typeof MessageSquare; label: string; value: string | number; color: string; bg: string;
