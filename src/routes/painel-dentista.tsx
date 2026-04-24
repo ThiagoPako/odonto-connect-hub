@@ -600,11 +600,21 @@ function AgendaTab({
           </div>
         </div>
       )}
+
+      {dialogPaciente && (
+        <TratamentoFromAgendaDialog
+          open={dialogOpen}
+          onOpenChange={setDialogOpen}
+          pacienteId={dialogPaciente.id}
+          pacienteNome={dialogPaciente.nome}
+          dentistaId={dentistaId}
+          tratamento={dialogTratamento}
+          onSaved={onChanged}
+        />
+      )}
     </div>
   );
 }
-
-// ─── Orçamentos Tab ─────────────────────────────────────────
 
 function OrcamentosTab({ orcamentos }: { orcamentos: PainelOrcamento[] }) {
   const statusConfig: Record<string, { label: string; color: string }> = {
