@@ -1,15 +1,10 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { KpiCard } from "@/components/KpiCard";
 import { ActiveAttendanceCard } from "@/components/ActiveAttendanceCard";
 import { GhostModePanel } from "@/components/GhostModePanel";
-import {
-  getAgendaKpis,
-  getOrcamentoKpis,
-  getCrmKpis,
-  getEstoqueKpis,
-  getPacienteKpis,
-} from "@/data/dashboardKpis";
+import { dashboardApi, type DashboardKpis, vpsApiFetch } from "@/lib/vpsApi";
 import { OrcamentoConversaoChart } from "@/components/charts/OrcamentoConversaoChart";
 import { OrigemLeadsChart } from "@/components/charts/OrigemLeadsChart";
 import { AgendaStatusChart } from "@/components/charts/AgendaStatusChart";
@@ -18,7 +13,7 @@ import {
   CalendarCheck, Users, FileText, DollarSign, Package,
   AlertTriangle, TrendingUp, Activity,
   UserCheck, UserX, Clock, CheckCircle, XCircle, BarChart3,
-  ExternalLink,
+  ExternalLink, Loader2, AlertCircle,
 } from "lucide-react";
 
 export const Route = createFileRoute("/dashboard")({
@@ -26,24 +21,92 @@ export const Route = createFileRoute("/dashboard")({
   component: DashboardPage,
 });
 
-const mockAttendances = [
-  { patientName: "Maria Silva", patientInitials: "MS", attendantName: "Ana", attendantInitials: "AR", lastMessage: "Gostaria de saber o valor do implante...", startedAt: new Date(Date.now() - 3 * 60 * 1000) },
-  { patientName: "João Santos", patientInitials: "JS", attendantName: "Carla", attendantInitials: "CM", lastMessage: "Posso parcelar em quantas vezes?", startedAt: new Date(Date.now() - 7 * 60 * 1000) },
-  { patientName: "Pedro Costa", patientInitials: "PC", attendantName: "Ana", attendantInitials: "AR", lastMessage: "Qual horário disponível para amanhã?", startedAt: new Date(Date.now() - 1 * 60 * 1000) },
-  { patientName: "Lucia Ferreira", patientInitials: "LF", attendantName: "Beatriz", attendantInitials: "BL", lastMessage: "Obrigada, vou confirmar com meu marido", startedAt: new Date(Date.now() - 12 * 60 * 1000) },
-];
+interface ActiveSession {
+  id: string;
+  lead_id: string;
+  lead_nome: string;
+  attendant_name: string;
+  last_message: string | null;
+  started_at: string;
+}
+
+const EMPTY_KPIS: DashboardKpis = {
+  totalPacientes: 0,
+  agendaHoje: 0,
+  receitaMensal: 0,
+  despesaMensal: 0,
+  agenda: { total: 0, finalizados: 0, emAtendimento: 0, aguardando: 0, faltas: 0, encaixes: 0, taxaPresenca: 0 },
+  orcamentos: { total: 0, pendentes: 0, aprovados: 0, reprovados: 0, valorAprovado: 0, taxaConversao: 0, ticketMedio: 0 },
+  crm: { totalLeadsKanban: 0, semResposta: 0, ativos: 0, inativos: 0, receitaTotal: 0 },
+  pacientes: { totalCadastrados: 0 },
+  estoque: { totalItens: 0, abaixoMinimo: 0, itensAbaixoMinimo: [], semEstoque: 0, itensSemEstoque: [], valorTotalEstoque: 0 },
+};
+
+function getInitials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
 
 function DashboardPage() {
-  const agenda = getAgendaKpis();
-  const orcamento = getOrcamentoKpis();
-  const crm = getCrmKpis();
-  const estoque = getEstoqueKpis();
-  const pacientes = getPacienteKpis();
+  const [kpis, setKpis] = useState<DashboardKpis>(EMPTY_KPIS);
+  const [sessions, setSessions] = useState<ActiveSession[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      setLoading(true);
+      setError(null);
+      const [{ data, error: kpiErr }, { data: sess }] = await Promise.all([
+        dashboardApi.kpis(),
+        vpsApiFetch<ActiveSession[]>("/sessions/active", { background: true }),
+      ]);
+      if (cancelled) return;
+      if (kpiErr) setError(kpiErr);
+      if (data) setKpis(data);
+      if (Array.isArray(sess)) setSessions(sess);
+      setLoading(false);
+    }
+    load();
+    const interval = setInterval(load, 60_000); // refresh a cada 60s
+    return () => { cancelled = true; clearInterval(interval); };
+  }, []);
+
+  const { agenda, orcamentos: orcamento, crm, estoque, pacientes } = kpis;
+  const isEmpty = !loading && !error && pacientes.totalCadastrados === 0 && agenda.total === 0;
 
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Dashboard" />
       <main className="flex-1 p-8 space-y-8 overflow-auto">
+
+        {loading && (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Atualizando KPIs...
+          </div>
+        )}
+
+        {error && (
+          <div className="flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+            <AlertCircle className="h-4 w-4" />
+            <span>Erro ao carregar dashboard: {error}</span>
+          </div>
+        )}
+
+        {isEmpty && (
+          <div className="rounded-xl border border-warning/40 bg-warning/5 px-4 py-3 text-sm text-warning-foreground flex items-start gap-3">
+            <AlertCircle className="h-4 w-4 text-warning shrink-0 mt-0.5" />
+            <div>
+              <p className="font-medium text-foreground">Banco de dados vazio</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Cadastre pacientes, agendamentos e orçamentos para ver os indicadores reais aqui.
+                Comece em <Link to="/pacientes" className="text-primary hover:underline">Pacientes</Link> ou <Link to="/agenda" className="text-primary hover:underline">Agenda</Link>.
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* === AGENDA DO DIA === */}
         <section className="animate-slide-up" style={{ animationDelay: '0ms', animationFillMode: 'both' }}>
@@ -102,7 +165,7 @@ function DashboardPage() {
             <KpiCard title="Pacientes Ativos" value={String(crm.ativos)} changeType="positive" icon={UserCheck} />
             <KpiCard title="Leads no Funil" value={String(crm.totalLeadsKanban)} change={`${crm.semResposta} sem resposta`} changeType={crm.semResposta > 0 ? "negative" : "neutral"} icon={TrendingUp} />
             <KpiCard title="Inativos" value={String(crm.inativos)} change="Reativar" changeType="negative" icon={UserX} />
-            <KpiCard title="Receita Total" value={`R$ ${crm.receitaTotal.toLocaleString("pt-BR")}`} icon={DollarSign} />
+            <KpiCard title="Receita Mensal" value={`R$ ${crm.receitaTotal.toLocaleString("pt-BR")}`} icon={DollarSign} />
           </div>
         </section>
 
@@ -155,11 +218,25 @@ function DashboardPage() {
             </div>
             <GhostModePanel />
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {mockAttendances.map((a) => (
-              <ActiveAttendanceCard key={a.patientName} {...a} />
-            ))}
-          </div>
+          {sessions.length === 0 ? (
+            <div className="rounded-xl border border-border/60 bg-muted/30 p-8 text-center text-sm text-muted-foreground">
+              Nenhum atendimento ativo no momento. <Link to="/chat" className="text-primary hover:underline">Abrir chat</Link>.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {sessions.map((s) => (
+                <ActiveAttendanceCard
+                  key={s.id}
+                  patientName={s.lead_nome}
+                  patientInitials={getInitials(s.lead_nome)}
+                  attendantName={s.attendant_name || "—"}
+                  attendantInitials={getInitials(s.attendant_name || "—")}
+                  lastMessage={s.last_message || "(sem mensagens)"}
+                  startedAt={new Date(s.started_at)}
+                />
+              ))}
+            </div>
+          )}
         </section>
 
       </main>
