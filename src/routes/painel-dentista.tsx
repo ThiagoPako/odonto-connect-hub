@@ -10,7 +10,9 @@ import {
   type PainelOrcamento,
   type PainelProntuario,
   type PainelComissao,
+  type PainelTratamento,
 } from "@/lib/vpsApi";
+import { TratamentoFromAgendaDialog } from "@/components/dentista/TratamentoFromAgendaDialog";
 import {
   CalendarDays,
   Clock,
@@ -29,6 +31,8 @@ import {
   TrendingUp,
   Loader2,
   RefreshCw,
+  Plus,
+  Pencil,
 } from "lucide-react";
 
 export const Route = createFileRoute("/painel-dentista")({
@@ -95,7 +99,7 @@ function PainelDentistaPage() {
     );
   }
 
-  const { dentista, atendimentos, agenda, orcamentos, prontuarios, comissoes } = data;
+  const { dentista, atendimentos, agenda, orcamentos, prontuarios, comissoes, tratamentos } = data;
 
   const tabs: { key: Tab; label: string; icon: typeof Stethoscope; count: number }[] = [
     { key: "atendimentos", label: "Atendimentos", icon: Stethoscope, count: atendimentos.length },
@@ -220,7 +224,14 @@ function PainelDentistaPage() {
         {/* Tab Content */}
         <div className="animate-fade-in">
           {activeTab === "atendimentos" && <AtendimentosTab atendimentos={atendimentos} />}
-          {activeTab === "agenda" && <AgendaTab agenda={agenda} />}
+          {activeTab === "agenda" && (
+            <AgendaTab
+              agenda={agenda}
+              tratamentos={tratamentos}
+              dentistaId={dentista.id}
+              onChanged={load}
+            />
+          )}
           {activeTab === "comissoes" && (
             <ComissoesTab
               comissoes={comissoes}
@@ -413,11 +424,49 @@ function AtendimentosTab({ atendimentos }: { atendimentos: PainelAtendimento[] }
 
 // ─── Agenda Tab ─────────────────────────────────────────────
 
-function AgendaTab({ agenda }: { agenda: PainelAgenda[] }) {
+function AgendaTab({
+  agenda,
+  tratamentos,
+  dentistaId,
+  onChanged,
+}: {
+  agenda: PainelAgenda[];
+  tratamentos: PainelTratamento[];
+  dentistaId: string;
+  onChanged: () => void;
+}) {
   const today = new Date().toISOString().split("T")[0];
   const sameDay = (d: string) => String(d).slice(0, 10) === today;
   const agendaHoje = agenda.filter((a) => sameDay(a.data));
   const agendaFutura = agenda.filter((a) => !sameDay(a.data));
+
+  // Estado do diálogo
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [dialogPaciente, setDialogPaciente] = useState<{ id: string; nome: string } | null>(null);
+  const [dialogTratamento, setDialogTratamento] = useState<PainelTratamento | null>(null);
+
+  const abrirNovo = (pacienteId: string, pacienteNome: string) => {
+    setDialogPaciente({ id: pacienteId, nome: pacienteNome });
+    setDialogTratamento(null);
+    setDialogOpen(true);
+  };
+
+  const abrirEditar = (t: PainelTratamento) => {
+    setDialogPaciente({ id: t.pacienteId || "", nome: t.pacienteNome });
+    setDialogTratamento(t);
+    setDialogOpen(true);
+  };
+
+  // Mapeia tratamento ativo por paciente (mais recente não finalizado)
+  const tratamentoAtivoPorPaciente = new Map<string, PainelTratamento>();
+  tratamentos.forEach((t) => {
+    if (!t.pacienteId) return;
+    if (t.status === "finalizado") return;
+    const existing = tratamentoAtivoPorPaciente.get(t.pacienteId);
+    if (!existing || new Date(t.criadoEm) > new Date(existing.criadoEm)) {
+      tratamentoAtivoPorPaciente.set(t.pacienteId, t);
+    }
+  });
 
   const statusColor: Record<string, string> = {
     agendado: "border-l-info",
@@ -425,46 +474,95 @@ function AgendaTab({ agenda }: { agenda: PainelAgenda[] }) {
     cancelado: "border-l-destructive",
   };
 
-  const renderAgendaItem = (item: PainelAgenda) => (
-    <div
-      key={item.id}
-      className={`bg-card rounded-xl border border-border/60 p-4 shadow-card border-l-4 ${
-        statusColor[item.status] || "border-l-muted"
-      } flex items-center gap-4`}
-    >
-      <div className="text-center min-w-[60px]">
-        <p className="text-lg font-bold text-foreground font-heading">{item.horario}</p>
-        <p className="text-[10px] text-muted-foreground">{item.duracao}min</p>
-      </div>
-      <div className="flex-1">
-        <div className="flex items-center gap-1.5">
-          <p className="text-sm font-semibold text-foreground">{item.pacienteNome}</p>
-          {item.pacienteId && (
-            <Link
-              to="/pacientes"
-              search={{ pacienteId: item.pacienteId }}
-              className="p-0.5 rounded hover:bg-primary/10"
-              title="Ver ficha"
-            >
-              <ExternalLink className="h-3 w-3 text-primary" />
-            </Link>
-          )}
-        </div>
-        <p className="text-xs text-muted-foreground capitalize mt-0.5">{item.tipo}</p>
-      </div>
-      <span
-        className={`text-[10px] font-bold uppercase tracking-wider ${
-          item.status === "confirmado"
-            ? "text-success"
-            : item.status === "cancelado"
-            ? "text-destructive"
-            : "text-info"
-        }`}
+  const statusTratLabel: Record<string, { label: string; color: string }> = {
+    planejado: { label: "Planejado", color: "bg-info/10 text-info border-info/30" },
+    em_andamento: { label: "Em andamento", color: "bg-success/10 text-success border-success/30" },
+    pausado: { label: "Pausado", color: "bg-warning/10 text-warning border-warning/30" },
+    finalizado: { label: "Finalizado", color: "bg-muted text-muted-foreground border-border" },
+  };
+
+  const renderAgendaItem = (item: PainelAgenda) => {
+    const tratAtivo = item.pacienteId ? tratamentoAtivoPorPaciente.get(item.pacienteId) : null;
+    const tratStyle = tratAtivo ? statusTratLabel[tratAtivo.status] || { label: tratAtivo.status, color: "bg-muted text-muted-foreground border-border" } : null;
+
+    return (
+      <div
+        key={item.id}
+        className={`bg-card rounded-xl border border-border/60 p-4 shadow-card border-l-4 ${
+          statusColor[item.status] || "border-l-muted"
+        } flex items-center gap-4 flex-wrap`}
       >
-        {item.status}
-      </span>
-    </div>
-  );
+        <div className="text-center min-w-[60px]">
+          <p className="text-lg font-bold text-foreground font-heading">{item.horario}</p>
+          <p className="text-[10px] text-muted-foreground">{item.duracao}min</p>
+        </div>
+        <div className="flex-1 min-w-[200px]">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <p className="text-sm font-semibold text-foreground">{item.pacienteNome}</p>
+            {item.pacienteId && (
+              <Link
+                to="/pacientes"
+                search={{ pacienteId: item.pacienteId }}
+                className="p-0.5 rounded hover:bg-primary/10"
+                title="Ver ficha"
+              >
+                <ExternalLink className="h-3 w-3 text-primary" />
+              </Link>
+            )}
+            {tratAtivo && tratStyle && (
+              <button
+                type="button"
+                onClick={() => abrirEditar(tratAtivo)}
+                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border hover:opacity-80 transition-opacity ${tratStyle.color}`}
+                title="Editar tratamento ativo"
+              >
+                <Stethoscope className="h-3 w-3" />
+                {tratStyle.label}
+              </button>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground capitalize mt-0.5">{item.tipo}</p>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {item.pacienteId && (
+            tratAtivo ? (
+              <button
+                type="button"
+                onClick={() => abrirEditar(tratAtivo)}
+                className="inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-border text-xs font-medium text-foreground hover:bg-muted transition-colors"
+                title="Editar tratamento"
+              >
+                <Pencil className="h-3 w-3" />
+                Tratamento
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => abrirNovo(item.pacienteId!, item.pacienteNome)}
+                className="inline-flex items-center gap-1 h-8 px-3 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition-opacity"
+                title="Criar tratamento"
+              >
+                <Plus className="h-3 w-3" />
+                Tratamento
+              </button>
+            )
+          )}
+          <span
+            className={`text-[10px] font-bold uppercase tracking-wider ${
+              item.status === "confirmado"
+                ? "text-success"
+                : item.status === "cancelado"
+                ? "text-destructive"
+                : "text-info"
+            }`}
+          >
+            {item.status}
+          </span>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-6">
@@ -501,6 +599,18 @@ function AgendaTab({ agenda }: { agenda: PainelAgenda[] }) {
             ))}
           </div>
         </div>
+      )}
+
+      {dialogPaciente && (
+        <TratamentoFromAgendaDialog
+          open={dialogOpen}
+          onOpenChange={setDialogOpen}
+          pacienteId={dialogPaciente.id}
+          pacienteNome={dialogPaciente.nome}
+          dentistaId={dentistaId}
+          tratamento={dialogTratamento}
+          onSaved={onChanged}
+        />
       )}
     </div>
   );

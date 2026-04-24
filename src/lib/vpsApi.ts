@@ -509,6 +509,19 @@ export interface PainelComissao {
   valorComissao: number;
   status: 'pendente' | 'aprovada' | 'paga' | 'aprovado' | 'pago';
 }
+export interface PainelTratamento {
+  id: string;
+  pacienteId?: string;
+  pacienteNome: string;
+  descricao: string;
+  dente: string;
+  valor: number;
+  status: 'planejado' | 'em_andamento' | 'pausado' | 'finalizado' | string;
+  plano: string;
+  observacoes: string;
+  criadoEm: string;
+  atualizadoEm?: string;
+}
 export interface DentistaPainel {
   dentista: DentistaPainelInfo;
   atendimentos: PainelAtendimento[];
@@ -516,6 +529,7 @@ export interface DentistaPainel {
   orcamentos: PainelOrcamento[];
   prontuarios: PainelProntuario[];
   comissoes: PainelComissao[];
+  tratamentos: PainelTratamento[];
 }
 
 export const painelDentistaApi = {
