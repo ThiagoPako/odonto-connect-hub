@@ -8,7 +8,9 @@ import {
 import { useState, useEffect, useCallback, useRef } from "react";
 import { mockProfessionals, type Appointment } from "@/data/agendaMockData";
 import { getAlergias, getCondicoesCriticas, getHistorico } from "@/data/registroCentral";
-import { agendaApi, whatsappApi, pacientesApi, type AgendamentoVPS } from "@/lib/vpsApi";
+import { agendaApi, whatsappApi, pacientesApi, dentistasApi, type AgendamentoVPS } from "@/lib/vpsApi";
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 import { getDemoAppointments } from "@/data/demoAgenda";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
