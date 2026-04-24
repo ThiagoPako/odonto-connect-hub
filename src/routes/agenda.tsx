@@ -8,7 +8,9 @@ import {
 import { useState, useEffect, useCallback, useRef } from "react";
 import { mockProfessionals, type Appointment } from "@/data/agendaMockData";
 import { getAlergias, getCondicoesCriticas, getHistorico } from "@/data/registroCentral";
-import { agendaApi, whatsappApi, pacientesApi, type AgendamentoVPS } from "@/lib/vpsApi";
+import { agendaApi, whatsappApi, pacientesApi, dentistasApi, type AgendamentoVPS } from "@/lib/vpsApi";
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 import { getDemoAppointments } from "@/data/demoAgenda";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -783,7 +785,7 @@ function NovoAgendamentoDialog({
 }) {
   const emptyForm: NovoAgendamentoForm = {
     paciente_nome: "", paciente_id: "", telefone: "",
-    dentista_id: mockProfessionals[0]?.id || "",
+    dentista_id: "",
     data: defaultDate, hora: "08:00", duracao: 30,
     procedimento: "Consulta avaliação", sala: "Sala 1",
     observacoes: "", enviar_whatsapp: true,
@@ -793,14 +795,21 @@ function NovoAgendamentoDialog({
   const [pacientesList, setPacientesList] = useState<any[]>([]);
   const [pacientesFiltered, setPacientesFiltered] = useState<any[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [dentistasList, setDentistasList] = useState<Array<{ id: string; nome: string }>>([]);
   const suggestionsRef = useRef<HTMLDivElement>(null);
 
-  // Load patients list on open
+  // Load patients + dentistas when opening
   useEffect(() => {
     if (open) {
       setForm((f) => ({ ...f, data: defaultDate }));
       pacientesApi.list().then(({ data }) => {
         if (Array.isArray(data)) setPacientesList(data);
+      });
+      dentistasApi.list().then(({ data }) => {
+        if (Array.isArray(data) && data.length > 0) {
+          setDentistasList(data);
+          setForm((f) => ({ ...f, dentista_id: f.dentista_id || data[0].id }));
+        }
       });
     }
   }, [open, defaultDate]);
@@ -896,16 +905,33 @@ function NovoAgendamentoDialog({
       return;
     }
 
+    // Dentista deve ser UUID válido (banco exige UUID na FK)
+    if (!UUID_RE.test(form.dentista_id)) {
+      toast.error("Cadastre um profissional em /dentistas antes de criar agendamentos. O ID do profissional precisa ser um UUID válido.");
+      return;
+    }
+    // Paciente_id também precisa ser UUID se preenchido
+    if (form.paciente_id && !UUID_RE.test(form.paciente_id)) {
+      toast.error("Selecione o paciente na lista de sugestões para vincular um cadastro válido.");
+      return;
+    }
+    if (!form.paciente_id) {
+      toast.error("Selecione o paciente na lista de sugestões (clique em uma opção). É necessário um paciente cadastrado.");
+      return;
+    }
+
     setSaving(true);
     try {
-      const prof = mockProfessionals.find((p) => p.id === form.dentista_id);
+      const profFromList = dentistasList.find((p) => p.id === form.dentista_id);
+      const profFromMock = mockProfessionals.find((p) => p.id === form.dentista_id);
+      const profName = profFromList?.nome || profFromMock?.name || "";
       let result;
       try {
         result = await agendaApi.create({
-          paciente_id: form.paciente_id || form.paciente_nome.toLowerCase().replace(/\s+/g, "_"),
+          paciente_id: form.paciente_id,
           paciente_nome: form.paciente_nome.trim(),
           dentista_id: form.dentista_id,
-          dentista_nome: prof?.name || "",
+          dentista_nome: profName,
           data: form.data, hora: form.hora, duracao: form.duracao,
           procedimento: form.procedimento, sala: form.sala,
           observacoes: form.observacoes || undefined, status: "agendado",
@@ -926,7 +952,7 @@ function NovoAgendamentoDialog({
       if (form.enviar_whatsapp && form.telefone.replace(/\D/g, "")) {
         const phone = form.telefone.replace(/\D/g, "");
         const dataBR = formatDateBR(form.data);
-        const msg = `✅ *Agendamento Confirmado*\n\nOlá, ${form.paciente_nome.split(" ")[0]}! 👋\n\nSeu agendamento foi confirmado:\n\n📅 *Data:* ${dataBR}\n⏰ *Horário:* ${form.hora}\n🦷 *Procedimento:* ${form.procedimento}\n👨‍⚕️ *Profissional:* ${prof?.name || "—"}\n\nCaso precise reagendar, entre em contato conosco.\n\n_Odonto Connect_`;
+        const msg = `✅ *Agendamento Confirmado*\n\nOlá, ${form.paciente_nome.split(" ")[0]}! 👋\n\nSeu agendamento foi confirmado:\n\n📅 *Data:* ${dataBR}\n⏰ *Horário:* ${form.hora}\n🦷 *Procedimento:* ${form.procedimento}\n👨‍⚕️ *Profissional:* ${profName || "—"}\n\nCaso precise reagendar, entre em contato conosco.\n\n_Odonto Connect_`;
         try {
           const { data: instances } = await whatsappApi.instances();
           const activeInstance = Array.isArray(instances)
@@ -1026,7 +1052,11 @@ function NovoAgendamentoDialog({
             <div>
               <label className={labelCls}>Profissional *</label>
               <select value={form.dentista_id} onChange={(e) => handleChange("dentista_id", e.target.value)} className={inputCls}>
-                {mockProfessionals.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                {dentistasList.length > 0 ? (
+                  dentistasList.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)
+                ) : (
+                  <option value="" disabled>Nenhum profissional cadastrado — vá em /dentistas</option>
+                )}
               </select>
             </div>
             <div>
