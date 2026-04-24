@@ -4120,7 +4120,7 @@ app.get('/api/reativacao/kpis', async (req, res) => {
 // GENERIC TABLE (for CRM, estoque, etc.)
 // ═══════════════════════════════════════════════════════════════
 
-
+app.get('/api/generic/:tableName', async (req, res) => {
   try {
     await verifyUser(req);
     const allowedTables = ['crm_leads', 'estoque', 'tratamentos', 'orcamentos', 'comissoes', 'prontuarios'];
