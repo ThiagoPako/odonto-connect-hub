@@ -65,7 +65,19 @@ function DashboardPage() {
       ]);
       if (cancelled) return;
       if (kpiErr) setError(kpiErr);
-      if (data) setKpis(data);
+      if (data) {
+        // Merge with EMPTY_KPIS so legacy backend payloads (missing nested keys) don't crash the UI
+        const d = data as Partial<DashboardKpis>;
+        setKpis({
+          ...EMPTY_KPIS,
+          ...d,
+          agenda: { ...EMPTY_KPIS.agenda, ...(d.agenda || {}) },
+          orcamentos: { ...EMPTY_KPIS.orcamentos, ...(d.orcamentos || {}) },
+          crm: { ...EMPTY_KPIS.crm, ...(d.crm || {}) },
+          pacientes: { ...EMPTY_KPIS.pacientes, ...(d.pacientes || {}), totalCadastrados: d.pacientes?.totalCadastrados ?? d.totalPacientes ?? 0 },
+          estoque: { ...EMPTY_KPIS.estoque, ...(d.estoque || {}) },
+        });
+      }
       if (Array.isArray(sess)) setSessions(sess);
       setLoading(false);
     }
