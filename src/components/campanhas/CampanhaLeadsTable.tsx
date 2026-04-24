@@ -4,7 +4,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ChevronLeft, ChevronRight, ExternalLink, Phone } from "lucide-react";
-import { CANAIS, type Campaign } from "@/data/campanhasStore";
+import { CANAIS, type Campaign, type CanalCampanha } from "@/data/campanhasStore";
+import { ChannelBadge } from "./ChannelLogo";
 import { mockKanbanLeads } from "@/data/crmMockData";
 
 interface Props {
