@@ -7612,6 +7612,140 @@ app.get('/api/ai/reports/:patientId', async (req, res) => {
   }
 });
 
+// ─── List clinical reports with filters (period, status, patient, dentist) ──
+// GET /api/ai/reports?from=YYYY-MM-DD&to=YYYY-MM-DD&status=com_prescricao|sem_prescricao|todos&patientId=&attendantId=&q=
+app.get('/api/ai/reports', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    const { from, to, status, patientId, attendantId, q, limit } = req.query;
+
+    const where = [];
+    const params = [];
+    let idx = 1;
+
+    if (from) { where.push(`created_at >= $${idx++}`); params.push(from); }
+    if (to)   { where.push(`created_at <= ($${idx++}::date + INTERVAL '1 day')`); params.push(to); }
+    if (patientId) { where.push(`patient_id = $${idx++}`); params.push(patientId); }
+    if (attendantId) { where.push(`attendant_id = $${idx++}`); params.push(attendantId); }
+    if (q) {
+      where.push(`(LOWER(patient_name) LIKE $${idx} OR LOWER(queixa_principal) LIKE $${idx} OR LOWER(procedimento) LIKE $${idx})`);
+      params.push(`%${String(q).toLowerCase()}%`); idx++;
+    }
+    if (status === 'com_prescricao') where.push(`jsonb_array_length(COALESCE(prescricoes, '[]'::jsonb)) > 0`);
+    if (status === 'sem_prescricao') where.push(`(prescricoes IS NULL OR jsonb_array_length(COALESCE(prescricoes, '[]'::jsonb)) = 0)`);
+
+    // Non-admin users only see their own reports
+    if (user.role !== 'admin' && user.role !== 'gerente') {
+      where.push(`attendant_id = $${idx++}`);
+      params.push(user.id);
+    }
+
+    const lim = Math.min(parseInt(limit) || 200, 1000);
+    const sql = `
+      SELECT id, patient_id, patient_name, attendant_id, attendant_name,
+             transcription, report, queixa_principal, procedimento, dente_regiao,
+             prescricoes, duration_seconds, created_at
+      FROM clinical_reports
+      ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+      ORDER BY created_at DESC
+      LIMIT ${lim}
+    `;
+    const { rows } = await pool.query(sql, params);
+
+    // Aggregated stats
+    const total = rows.length;
+    const comPrescricao = rows.filter(r => Array.isArray(r.prescricoes) ? r.prescricoes.length > 0 : (r.prescricoes && JSON.parse(r.prescricoes || '[]').length > 0)).length;
+    const totalDuration = rows.reduce((s, r) => s + (r.duration_seconds || 0), 0);
+    const pacientesUnicos = new Set(rows.map(r => r.patient_id)).size;
+
+    res.json({
+      reports: rows,
+      stats: {
+        total,
+        com_prescricao: comPrescricao,
+        sem_prescricao: total - comPrescricao,
+        pacientes_unicos: pacientesUnicos,
+        duracao_total_min: Math.round(totalDuration / 60),
+      },
+    });
+  } catch (err) {
+    if (err.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('❌ List clinical reports error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Export clinical reports as CSV ─────────────────────────
+// GET /api/ai/reports/export.csv?from=&to=&status=&patientId=&attendantId=&token=<JWT>
+app.get('/api/ai/reports/export.csv', async (req, res) => {
+  try {
+    // Allow token via query string for direct browser download links
+    if (req.query.token && !req.headers.authorization) {
+      req.headers.authorization = `Bearer ${req.query.token}`;
+    }
+    const { user } = await verifyUser(req);
+    const { from, to, status, patientId, attendantId, q } = req.query;
+
+    const where = [];
+    const params = [];
+    let idx = 1;
+    if (from) { where.push(`created_at >= $${idx++}`); params.push(from); }
+    if (to)   { where.push(`created_at <= ($${idx++}::date + INTERVAL '1 day')`); params.push(to); }
+    if (patientId) { where.push(`patient_id = $${idx++}`); params.push(patientId); }
+    if (attendantId) { where.push(`attendant_id = $${idx++}`); params.push(attendantId); }
+    if (q) {
+      where.push(`(LOWER(patient_name) LIKE $${idx} OR LOWER(queixa_principal) LIKE $${idx} OR LOWER(procedimento) LIKE $${idx})`);
+      params.push(`%${String(q).toLowerCase()}%`); idx++;
+    }
+    if (status === 'com_prescricao') where.push(`jsonb_array_length(COALESCE(prescricoes, '[]'::jsonb)) > 0`);
+    if (status === 'sem_prescricao') where.push(`(prescricoes IS NULL OR jsonb_array_length(COALESCE(prescricoes, '[]'::jsonb)) = 0)`);
+    if (user.role !== 'admin' && user.role !== 'gerente') {
+      where.push(`attendant_id = $${idx++}`);
+      params.push(user.id);
+    }
+
+    const sql = `
+      SELECT created_at, patient_name, attendant_name, queixa_principal, procedimento,
+             dente_regiao, duration_seconds, prescricoes
+      FROM clinical_reports
+      ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+      ORDER BY created_at DESC LIMIT 5000
+    `;
+    const { rows } = await pool.query(sql, params);
+
+    const esc = (v) => {
+      if (v === null || v === undefined) return '';
+      const s = String(v).replace(/"/g, '""').replace(/\r?\n/g, ' ');
+      return `"${s}"`;
+    };
+    const header = ['Data', 'Hora', 'Paciente', 'Dentista', 'Queixa', 'Procedimento', 'Dente/Região', 'Duração (min)', 'Nº Prescrições'].map(esc).join(',');
+    const lines = rows.map(r => {
+      const d = new Date(r.created_at);
+      const presc = Array.isArray(r.prescricoes) ? r.prescricoes : (typeof r.prescricoes === 'string' ? JSON.parse(r.prescricoes || '[]') : []);
+      return [
+        d.toLocaleDateString('pt-BR'),
+        d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+        r.patient_name || '',
+        r.attendant_name || '',
+        r.queixa_principal || '',
+        r.procedimento || '',
+        r.dente_regiao || '',
+        Math.round((r.duration_seconds || 0) / 60),
+        presc.length,
+      ].map(esc).join(',');
+    });
+
+    const csv = '\uFEFF' + [header, ...lines].join('\n');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="relatorios-clinicos-${new Date().toISOString().slice(0, 10)}.csv"`);
+    res.send(csv);
+  } catch (err) {
+    if (err.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('❌ Export CSV error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── Consultations — finalize & history ─────────────────────
 
 // POST /api/consultations — save a finalized consultation
