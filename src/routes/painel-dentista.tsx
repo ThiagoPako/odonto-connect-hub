@@ -13,6 +13,8 @@ import {
   type PainelTratamento,
 } from "@/lib/vpsApi";
 import { TratamentoFromAgendaDialog } from "@/components/dentista/TratamentoFromAgendaDialog";
+import { useTratamentoRealtime } from "@/hooks/useTratamentoRealtime";
+import { toast } from "sonner";
 import {
   CalendarDays,
   Clock,
