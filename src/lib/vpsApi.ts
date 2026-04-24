@@ -1036,13 +1036,16 @@ export interface AISettingApi {
 
 export interface ClinicalReportApi {
   id: string;
+  patient_id?: string;
   patient_name: string;
+  attendant_id?: string;
+  attendant_name?: string;
   transcription: string;
   report: string;
   queixa_principal: string;
   procedimento: string;
   dente_regiao: string;
-  prescricoes: Array<{ medicamento: string; dosagem: string; posologia: string; duracao: string }>;
+  prescricoes: Array<{ medicamento: string; dosagem: string; posologia: string; duracao: string }> | string;
   duration_seconds: number;
   created_at: string;
 }
@@ -1084,6 +1087,40 @@ export const aiApi = {
 
   getReports: (patientId: string) =>
     vpsApiFetch<ClinicalReportApi[]>(`/ai/reports/${encodeURIComponent(patientId)}`),
+
+  listReports: (filters?: {
+    from?: string; to?: string; status?: 'todos' | 'com_prescricao' | 'sem_prescricao';
+    patientId?: string; attendantId?: string; q?: string; limit?: number;
+  }) => {
+    const params: Record<string, string> = {};
+    if (filters?.from) params.from = filters.from;
+    if (filters?.to) params.to = filters.to;
+    if (filters?.status && filters.status !== 'todos') params.status = filters.status;
+    if (filters?.patientId) params.patientId = filters.patientId;
+    if (filters?.attendantId) params.attendantId = filters.attendantId;
+    if (filters?.q) params.q = filters.q;
+    if (filters?.limit) params.limit = String(filters.limit);
+    return vpsApiFetch<{
+      reports: ClinicalReportApi[];
+      stats: { total: number; com_prescricao: number; sem_prescricao: number; pacientes_unicos: number; duracao_total_min: number };
+    }>('/ai/reports', { params });
+  },
+
+  exportReportsCsvUrl: (filters?: {
+    from?: string; to?: string; status?: 'todos' | 'com_prescricao' | 'sem_prescricao';
+    patientId?: string; attendantId?: string; q?: string;
+  }) => {
+    const params = new URLSearchParams();
+    if (filters?.from) params.set('from', filters.from);
+    if (filters?.to) params.set('to', filters.to);
+    if (filters?.status && filters.status !== 'todos') params.set('status', filters.status);
+    if (filters?.patientId) params.set('patientId', filters.patientId);
+    if (filters?.attendantId) params.set('attendantId', filters.attendantId);
+    if (filters?.q) params.set('q', filters.q);
+    const token = getToken();
+    if (token) params.set('token', token);
+    return `${VPS_API_BASE}/ai/reports/export.csv?${params.toString()}`;
+  },
 
   generateFollowupMessages: (body: { reportId: string; patientName?: string; patientPhone?: string }) =>
     vpsApiFetch<{ messages: Array<{ delay_days: number; text: string }>; summary: string }>('/ai/followup-messages', { method: 'POST', body }),
