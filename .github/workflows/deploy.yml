@@ -14,27 +14,82 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          command_timeout: 10m
+          command_timeout: 15m
           script_stop: true
           script: |
             set -e
             echo "=== Starting deploy $(date) ==="
 
             cd /root/odonto-connect
+
+            # ─── Capture current commit for rollback ───────────────────────
+            PREVIOUS_COMMIT=$(git rev-parse HEAD)
+            echo "Previous commit (rollback target): $PREVIOUS_COMMIT"
+            echo "$PREVIOUS_COMMIT" > /root/odonto-connect/.last-good-commit.tmp
+
             git fetch origin main
+            NEW_COMMIT=$(git rev-parse origin/main)
+            echo "New commit: $NEW_COMMIT"
             git reset --hard origin/main
 
-            # Install deps
+            # ─── Rollback function ─────────────────────────────────────────
+            rollback() {
+              echo ""
+              echo "!!! DEPLOY FAILED — INITIATING AUTOMATIC ROLLBACK !!!"
+              echo "Reverting from $NEW_COMMIT to $PREVIOUS_COMMIT"
+              cd /root/odonto-connect
+              git reset --hard "$PREVIOUS_COMMIT" || {
+                echo "FATAL: git reset failed during rollback"
+                exit 2
+              }
+
+              echo "Reinstalling dependencies for rollback commit..."
+              if command -v bun &> /dev/null; then
+                bun install --frozen-lockfile 2>/dev/null || bun install || npm install
+              else
+                npm ci 2>/dev/null || npm install
+              fi
+
+              echo "Rebuilding frontend for rollback commit..."
+              npm run build || echo "WARNING: rollback build failed — keeping previous dist if present"
+
+              echo "Restarting services with rollback code..."
+              pm2 delete odonto-connect odonto-api 2>/dev/null || true
+              pm2 start /root/odonto-connect/ecosystem.config.cjs --update-env
+              sleep 3
+
+              # Verify rollback brought API back
+              for i in $(seq 1 15); do
+                RB_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3002/api/messages/unread 2>/dev/null || echo "000")
+                if [ "$RB_STATUS" = "401" ] || [ "$RB_STATUS" = "200" ]; then
+                  echo "Rollback API healthy (HTTP $RB_STATUS) after ${i}x2s"
+                  pm2 save
+                  echo "=== ROLLBACK COMPLETE — system restored to $PREVIOUS_COMMIT ==="
+                  exit 1
+                fi
+                echo "  rollback attempt $i: HTTP $RB_STATUS — retrying in 2s..."
+                sleep 2
+              done
+
+              echo "FATAL: rollback also failed — manual intervention required"
+              pm2 logs odonto-api --lines 30 --nostream 2>/dev/null || true
+              exit 2
+            }
+
+            # Trap any error from this point on → rollback
+            trap rollback ERR
+
+            # ─── Install deps ──────────────────────────────────────────────
             if command -v bun &> /dev/null; then
               bun install --frozen-lockfile 2>/dev/null || bun install
             else
               npm ci 2>/dev/null || npm install
             fi
 
-            # Build frontend
+            # ─── Build frontend ────────────────────────────────────────────
             npm run build
 
-            # Run pending migrations BEFORE restarting services
+            # ─── Run pending migrations BEFORE restarting services ────────
             cat /root/odonto-connect/vps-api-server/migration.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             cat /root/odonto-connect/vps-api-server/migration-chat-messages.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             cat /root/odonto-connect/vps-api-server/migration-push-subscriptions.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
@@ -42,50 +97,76 @@ jobs:
             cat /root/odonto-connect/vps-api-server/migration-priority-recovery.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             cat /root/odonto-connect/vps-api-server/migration-user-preferences.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             cat /root/odonto-connect/vps-api-server/migration-ai-settings.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
+            cat /root/odonto-connect/vps-api-server/migration-reativacao.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             echo "=== Migrations applied ==="
 
-            # Restart services
+            # ─── Pre-flight syntax check on server.mjs ─────────────────────
+            echo "Validating server.mjs syntax..."
+            node --check /root/odonto-connect/vps-api-server/server.mjs || {
+              echo "ERROR: server.mjs has a syntax error — aborting before restart"
+              false
+            }
+
+            # ─── Restart services ──────────────────────────────────────────
             pm2 delete odonto-connect odonto-api 2>/dev/null || true
             pm2 start /root/odonto-connect/ecosystem.config.cjs --update-env
 
-            # Wait for API to be ready (up to 30s)
+            # ─── Wait for API to be ready (up to 30s) ──────────────────────
             echo "Waiting for API healthcheck..."
+            API_READY=0
             for i in $(seq 1 15); do
               API_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3002/api/messages/unread 2>/dev/null || echo "000")
               if [ "$API_STATUS" = "401" ] || [ "$API_STATUS" = "200" ]; then
                 echo "API ready (HTTP $API_STATUS) after ${i}x2s"
+                API_READY=1
                 break
               fi
               echo "  attempt $i: HTTP $API_STATUS — retrying in 2s..."
               sleep 2
             done
 
-            # Final check
-            API_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3002/api/messages/unread 2>/dev/null || echo "000")
-            if [ "$API_STATUS" != "401" ] && [ "$API_STATUS" != "200" ]; then
-              echo "ERROR: API not responding (HTTP $API_STATUS)"
-              pm2 logs odonto-api --lines 20 --nostream 2>/dev/null || true
-              exit 1
+            if [ "$API_READY" != "1" ]; then
+              echo "ERROR: API not responding after 30s"
+              pm2 logs odonto-api --lines 30 --nostream 2>/dev/null || true
+              false
             fi
 
-            # Wait for frontend to be ready (up to 20s)
+            # ─── Detect crash loop (PM2 restart count) ─────────────────────
+            RESTARTS=$(pm2 jlist | node -e "
+              let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{
+                try{const a=JSON.parse(d);const x=a.find(p=>p.name==='odonto-api');
+                console.log(x?x.pm2_env.restart_time:0);}catch(e){console.log(0);}
+              });" 2>/dev/null || echo 0)
+            echo "odonto-api restart count: $RESTARTS"
+            if [ "$RESTARTS" -gt 5 ]; then
+              echo "ERROR: odonto-api is in a restart loop ($RESTARTS restarts)"
+              pm2 logs odonto-api --lines 30 --nostream 2>/dev/null || true
+              false
+            fi
+
+            # ─── Wait for frontend to be ready (up to 20s) ─────────────────
             echo "Waiting for frontend healthcheck..."
+            FE_READY=0
             for i in $(seq 1 10); do
               FE_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3000/login 2>/dev/null || echo "000")
               if [ "$FE_STATUS" = "200" ]; then
                 echo "Frontend ready (HTTP $FE_STATUS) after ${i}x2s"
+                FE_READY=1
                 break
               fi
               echo "  attempt $i: HTTP $FE_STATUS — retrying in 2s..."
               sleep 2
             done
 
-            FE_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3000/login 2>/dev/null || echo "000")
-            if [ "$FE_STATUS" != "200" ]; then
-              echo "WARNING: Frontend not responding (HTTP $FE_STATUS)"
+            if [ "$FE_READY" != "1" ]; then
+              echo "ERROR: Frontend not responding"
               pm2 logs odonto-connect --lines 20 --nostream 2>/dev/null || true
-              exit 1
+              false
             fi
 
+            # ─── Success: clear trap, persist PM2 ──────────────────────────
+            trap - ERR
             pm2 save
-            echo "=== Deploy complete $(date) ==="
+            echo "$NEW_COMMIT" > /root/odonto-connect/.last-good-commit
+            rm -f /root/odonto-connect/.last-good-commit.tmp
+            echo "=== Deploy complete $(date) — commit $NEW_COMMIT ==="
