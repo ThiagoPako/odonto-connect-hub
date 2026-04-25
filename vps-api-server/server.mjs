@@ -9861,6 +9861,15 @@ app.listen(PORT, async () => {
       `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS alerta_retorno_canal TEXT`,
       `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS alerta_retorno_quando TEXT`,
       `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS evento_titulo TEXT`,
+      // Fase A — refinamentos da agenda
+      `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS marcadores JSONB DEFAULT '[]'::jsonb`,
+      `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS como_conheceu TEXT`,
+      `CREATE TABLE IF NOT EXISTS agenda_marcadores (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        nome TEXT NOT NULL UNIQUE,
+        cor TEXT NOT NULL DEFAULT '#06b6d4',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )`,
       `CREATE INDEX IF NOT EXISTS idx_agendamentos_serie ON agendamentos(serie_id)`,
       `CREATE INDEX IF NOT EXISTS idx_agendamentos_data ON agendamentos(data)`,
       `CREATE INDEX IF NOT EXISTS idx_agendamentos_dentista_data ON agendamentos(dentista_id, data)`,
