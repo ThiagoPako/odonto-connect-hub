@@ -61,6 +61,14 @@ export function NovoAgendamentoModal({
   const [pacienteError, setPacienteError] = useState(false);
   const sugRef = useRef<HTMLDivElement>(null);
 
+  // Refs para foco em validação
+  const pacienteInputRef = useRef<HTMLInputElement>(null);
+  const dentistaTriggerRef = useRef<HTMLButtonElement>(null);
+  const dataInputRef = useRef<HTMLInputElement>(null);
+  const horaInputRef = useRef<HTMLDivElement>(null);
+  const duracaoInputRef = useRef<HTMLInputElement>(null);
+  const telefoneFieldRef = useRef<HTMLDivElement>(null);
+
   // Form Consulta
   const [pacienteId, setPacienteId] = useState("");
   const [pacienteNome, setPacienteNome] = useState("");
@@ -147,32 +155,54 @@ export function NovoAgendamentoModal({
   };
 
   // Validação básica
-  const validateConsulta = (): string | null => {
+  type CampoErro = "paciente" | "dentista" | "data" | "hora" | "duracao" | "telefone" | "outro";
+  const validateConsulta = (): { msg: string; campo: CampoErro } | null => {
     if (!pacienteId || !UUID_RE.test(pacienteId)) {
-      return search.trim().length > 0
-        ? "Clique no nome do paciente da lista"
-        : "Busque e selecione um paciente";
+      return {
+        msg: search.trim().length > 0 ? "Clique no nome do paciente da lista" : "Busque e selecione um paciente",
+        campo: "paciente",
+      };
     }
-    if (!dentistaId || !UUID_RE.test(dentistaId)) return "Selecione um profissional";
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return "Informe a data";
-    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(hora)) return "Informe o horário (HH:MM)";
-    if (duracao < 5 || duracao > 480) return "Duração entre 5 e 480 minutos";
-    if (multiplo && (qtdSessoes < 2 || qtdSessoes > 52)) return "Sessões entre 2 e 52";
-    if (multiplo && (intervaloDias < 1 || intervaloDias > 180)) return "Intervalo entre 1 e 180 dias";
+    if (!dentistaId || !UUID_RE.test(dentistaId)) return { msg: "Selecione um profissional", campo: "dentista" };
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return { msg: "Informe a data", campo: "data" };
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(hora)) return { msg: "Informe o horário (HH:MM)", campo: "hora" };
+    if (duracao < 5 || duracao > 480) return { msg: "Duração entre 5 e 480 minutos", campo: "duracao" };
+    if (multiplo && (qtdSessoes < 2 || qtdSessoes > 52)) return { msg: "Sessões entre 2 e 52", campo: "outro" };
+    if (multiplo && (intervaloDias < 1 || intervaloDias > 180)) return { msg: "Intervalo entre 1 e 180 dias", campo: "outro" };
     if (confirmacaoCanal === "whatsapp" && confirmacaoQuando && !telefone.replace(/\D/g, ""))
-      return "Informe o telefone para WhatsApp";
+      return { msg: "Informe o telefone para WhatsApp", campo: "telefone" };
     return null;
+  };
+
+  const focusCampo = (campo: CampoErro) => {
+    const refMap: Record<CampoErro, React.RefObject<HTMLElement | null>> = {
+      paciente: pacienteInputRef,
+      dentista: dentistaTriggerRef,
+      data: dataInputRef,
+      hora: horaInputRef,
+      duracao: duracaoInputRef,
+      telefone: telefoneFieldRef,
+      outro: pacienteInputRef,
+    };
+    const el = refMap[campo]?.current;
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      setTimeout(() => {
+        if (typeof (el as HTMLInputElement).focus === "function") (el as HTMLInputElement).focus();
+      }, 200);
+    }
   };
 
   const handleSubmitConsulta = async () => {
     console.log("[Agenda] Submit consulta", { pacienteId, dentistaId, data, hora, duracao });
     const err = validateConsulta();
     if (err) {
-      toast.error(err, { duration: 5000 });
-      if (!pacienteId) {
+      toast.error(err.msg, { duration: 5000 });
+      if (err.campo === "paciente") {
         setPacienteError(true);
         setShowSugg(true);
       }
+      focusCampo(err.campo);
       return;
     }
     setSaving(true);
@@ -301,6 +331,7 @@ export function NovoAgendamentoModal({
                   }`}
                 />
                 <Input
+                  ref={pacienteInputRef}
                   placeholder="Buscar paciente por nome..."
                   value={search}
                   onChange={(e) => {
@@ -333,7 +364,7 @@ export function NovoAgendamentoModal({
                 </div>
               )}
               {pacienteId && (
-                <div className="mt-2 flex items-center gap-2 flex-wrap">
+                <div ref={telefoneFieldRef} tabIndex={-1} className="mt-2 flex items-center gap-2 flex-wrap">
                   <Badge variant="secondary"><Phone className="h-3 w-3 mr-1" />{telefone || "—"}</Badge>
                   {email && <Badge variant="secondary"><Mail className="h-3 w-3 mr-1" />{email}</Badge>}
                   <label className="flex items-center gap-1.5 text-sm ml-auto">
@@ -360,7 +391,7 @@ export function NovoAgendamentoModal({
               <div>
                 <Label className="mb-1 block">Profissional</Label>
                 <Select value={dentistaId} onValueChange={setDentistaId}>
-                  <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+                  <SelectTrigger ref={dentistaTriggerRef}><SelectValue placeholder="Selecione" /></SelectTrigger>
                   <SelectContent>
                     {dentistas.filter((d) => d?.id).map((d) => (
                       <SelectItem key={d.id} value={d.id}>{d.nome}</SelectItem>
@@ -395,15 +426,15 @@ export function NovoAgendamentoModal({
             <div className="grid grid-cols-4 gap-3">
               <div>
                 <Label className="mb-1 block">Data</Label>
-                <Input type="date" value={data} onChange={(e) => setData(e.target.value)} />
+                <Input ref={dataInputRef} type="date" value={data} onChange={(e) => setData(e.target.value)} />
               </div>
-              <div>
+              <div ref={horaInputRef} tabIndex={-1}>
                 <Label className="mb-1 block">Horário</Label>
                 <AnalogTimePicker value={hora} onChange={setHora} />
               </div>
               <div>
                 <Label className="mb-1 block">Duração (min)</Label>
-                <Input type="number" min={5} max={480} value={duracao} onChange={(e) => setDuracao(Number(e.target.value))} />
+                <Input ref={duracaoInputRef} type="number" min={5} max={480} value={duracao} onChange={(e) => setDuracao(Number(e.target.value))} />
               </div>
               <div>
                 <Label className="mb-1 block">Sala</Label>
