@@ -1056,9 +1056,23 @@ function NovoAgendamentoDialog({
           {/* Profissional + Duração */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className={labelCls}>Profissional *</label>
-              <select value={form.dentista_id} onChange={(e) => handleChange("dentista_id", e.target.value)} className={inputCls}>
-                {dentistasList.length > 0 ? (
+              <label className={labelCls}>
+                Profissional *
+                {loadingDentistas && (
+                  <span className="ml-2 inline-flex items-center gap-1 text-[10px] font-normal text-muted-foreground">
+                    <Loader2 className="h-3 w-3 animate-spin" /> carregando...
+                  </span>
+                )}
+              </label>
+              <select
+                value={form.dentista_id}
+                onChange={(e) => handleChange("dentista_id", e.target.value)}
+                disabled={loadingDentistas}
+                className={`${inputCls} ${loadingDentistas ? "opacity-60 cursor-wait" : ""}`}
+              >
+                {loadingDentistas ? (
+                  <option value="" disabled>Carregando profissionais...</option>
+                ) : dentistasList.length > 0 ? (
                   dentistasList.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)
                 ) : (
                   <option value="" disabled>Nenhum profissional cadastrado — vá em /dentistas</option>
