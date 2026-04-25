@@ -123,7 +123,7 @@ export function NovoAgendamentoModal({
         setPacienteId(""); setPacienteNome(""); setTelefone(""); setEmail("");
         setProcedimento(""); setObservacoes(""); setSala("Sala 1");
         setPrimeiraConsulta(false); setMultiplo(false); setQtdSessoes(4); setIntervaloDias(7);
-        setRetornoQuando(""); setSearch("");
+        setRetornoQuando(""); setSearch(""); setPacienteError(false);
         setMarcadores([]); setComoConheceu("");
         setEventoTitulo(""); setDiaInteiro(false); setEscopo("dentista");
       }, 300);
