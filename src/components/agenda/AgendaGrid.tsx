@@ -1,9 +1,11 @@
 import { useMemo } from "react";
 import type { AgendamentoVPS } from "@/lib/vpsApi";
+import { CheckCircle2, Clock, AlertCircle, XCircle, PlayCircle, CircleDot, User2 } from "lucide-react";
 
 interface Prof {
   id: string;
   nome: string;
+  especialidade?: string | null;
   cor?: string | null;
 }
 
@@ -17,22 +19,25 @@ interface Props {
   onAppointmentClick: (apt: AgendamentoVPS) => void;
 }
 
-const PROF_COLOR_FALLBACK = [
-  "bg-chart-1/15 border-chart-1",
-  "bg-chart-2/15 border-chart-2",
-  "bg-chart-3/15 border-chart-3",
-  "bg-chart-4/15 border-chart-4",
-  "bg-chart-5/15 border-chart-5",
-  "bg-primary/15 border-primary",
+const PROF_COLORS = [
+  { bar: "bg-chart-1", soft: "bg-chart-1/10", text: "text-chart-1" },
+  { bar: "bg-chart-2", soft: "bg-chart-2/10", text: "text-chart-2" },
+  { bar: "bg-chart-3", soft: "bg-chart-3/10", text: "text-chart-3" },
+  { bar: "bg-chart-4", soft: "bg-chart-4/10", text: "text-chart-4" },
+  { bar: "bg-chart-5", soft: "bg-chart-5/10", text: "text-chart-5" },
+  { bar: "bg-primary", soft: "bg-primary/10", text: "text-primary" },
 ];
 
-const STATUS_BADGE: Record<string, string> = {
-  agendado: "border-primary",
-  confirmado: "border-success",
-  em_atendimento: "border-primary",
-  finalizado: "border-muted-foreground",
-  faltou: "border-destructive",
-  cancelado: "border-destructive",
+const STATUS_STYLE: Record<
+  string,
+  { side: string; chip: string; icon: typeof Clock; label: string }
+> = {
+  agendado:        { side: "bg-primary",          chip: "bg-primary/15 text-primary",                icon: Clock,        label: "Agendado" },
+  confirmado:      { side: "bg-emerald-500",      chip: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400", icon: CheckCircle2, label: "Confirmado" },
+  em_atendimento:  { side: "bg-blue-500",         chip: "bg-blue-500/15 text-blue-600 dark:text-blue-400",          icon: PlayCircle,   label: "Em atendimento" },
+  finalizado:      { side: "bg-muted-foreground", chip: "bg-muted text-muted-foreground",            icon: CheckCircle2, label: "Finalizado" },
+  faltou:          { side: "bg-amber-500",        chip: "bg-amber-500/15 text-amber-600 dark:text-amber-400",       icon: AlertCircle,  label: "Faltou" },
+  cancelado:       { side: "bg-destructive",      chip: "bg-destructive/15 text-destructive",        icon: XCircle,      label: "Cancelado" },
 };
 
 function buildSlots(inicio: string, fim: string, intervalo: number): string[] {
@@ -54,6 +59,15 @@ function timeToMin(t: string) {
   return h * 60 + m;
 }
 
+function initials(name: string) {
+  return name
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((s) => s[0]?.toUpperCase() ?? "")
+    .join("");
+}
+
 export function AgendaGrid({
   professionals, appointments, intervalo, inicio, fim, onCellClick, onAppointmentClick,
 }: Props) {
@@ -61,6 +75,7 @@ export function AgendaGrid({
   const startMin = timeToMin(inicio);
   const SLOT_HEIGHT = 32; // px por slot
   const totalHeight = slots.length * SLOT_HEIGHT;
+  const slotsPerHour = Math.max(1, Math.round(60 / intervalo));
 
   // Agrupa appointments por profissional
   const byProf = useMemo(() => {
@@ -82,22 +97,31 @@ export function AgendaGrid({
   }
 
   return (
-    <div className="flex-1 overflow-auto bg-card rounded-lg border border-border/60">
+    <div className="flex-1 overflow-auto bg-card rounded-xl border border-border/60 shadow-sm">
       <div className="min-w-fit">
         {/* Header com nomes dos profissionais */}
         <div
-          className="grid sticky top-0 z-10 bg-card border-b border-border"
-          style={{ gridTemplateColumns: `64px repeat(${professionals.length}, minmax(160px, 1fr))` }}
+          className="grid sticky top-0 z-20 bg-card/95 backdrop-blur border-b border-border"
+          style={{ gridTemplateColumns: `64px repeat(${professionals.length}, minmax(180px, 1fr))` }}
         >
           <div className="border-r border-border/60" />
           {professionals.map((p, i) => {
-            const color = PROF_COLOR_FALLBACK[i % PROF_COLOR_FALLBACK.length];
+            const c = PROF_COLORS[i % PROF_COLORS.length];
             return (
               <div
                 key={p.id}
-                className={`px-3 py-2 border-r border-border/60 border-t-2 ${color.split(" ")[1]}`}
+                className="px-3 py-2.5 border-r border-border/60 flex items-center gap-2.5"
               >
-                <div className="text-sm font-medium text-foreground truncate">{p.nome}</div>
+                <div className={`h-8 w-8 rounded-full ${c.soft} ${c.text} flex items-center justify-center text-xs font-semibold ring-1 ring-border/40`}>
+                  {initials(p.nome) || <User2 className="h-4 w-4" />}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-semibold text-foreground truncate leading-tight">{p.nome}</div>
+                  {p.especialidade && (
+                    <div className="text-[10px] text-muted-foreground truncate leading-tight">{p.especialidade}</div>
+                  )}
+                </div>
+                <div className={`h-1.5 w-1.5 rounded-full ${c.bar}`} />
               </div>
             );
           })}
@@ -107,37 +131,54 @@ export function AgendaGrid({
         <div
           className="relative grid"
           style={{
-            gridTemplateColumns: `64px repeat(${professionals.length}, minmax(160px, 1fr))`,
+            gridTemplateColumns: `64px repeat(${professionals.length}, minmax(180px, 1fr))`,
             height: totalHeight,
           }}
         >
           {/* Coluna de horários */}
-          <div className="border-r border-border/60 relative">
-            {slots.map((s, i) => (
-              <div
-                key={s}
-                className="text-[11px] text-muted-foreground pr-2 text-right border-b border-border/40"
-                style={{ height: SLOT_HEIGHT, lineHeight: `${SLOT_HEIGHT}px` }}
-              >
-                {i % Math.max(1, Math.round(60 / intervalo)) === 0 ? s : ""}
-              </div>
-            ))}
+          <div className="border-r border-border/60 relative bg-muted/20">
+            {slots.map((s, i) => {
+              const isHour = i % slotsPerHour === 0;
+              return (
+                <div
+                  key={s}
+                  className={`text-[11px] pr-2 text-right ${
+                    isHour
+                      ? "text-foreground font-semibold border-b border-border/60"
+                      : "text-muted-foreground/60 border-b border-border/20"
+                  }`}
+                  style={{ height: SLOT_HEIGHT, lineHeight: `${SLOT_HEIGHT}px` }}
+                >
+                  {isHour ? s : ""}
+                </div>
+              );
+            })}
           </div>
 
           {/* Colunas dos profissionais */}
-          {professionals.map((prof) => {
+          {professionals.map((prof, profIdx) => {
             const apts = byProf.get(prof.id) || [];
+            const profColor = PROF_COLORS[profIdx % PROF_COLORS.length];
             return (
               <div key={prof.id} className="relative border-r border-border/60">
                 {/* células base (clicáveis) */}
-                {slots.map((s) => (
-                  <div
-                    key={s}
-                    onClick={() => onCellClick(prof.id, s)}
-                    className="border-b border-border/40 hover:bg-muted/40 cursor-pointer transition-colors"
-                    style={{ height: SLOT_HEIGHT }}
-                  />
-                ))}
+                {slots.map((s, i) => {
+                  const isHour = i % slotsPerHour === 0;
+                  return (
+                    <div
+                      key={s}
+                      onClick={() => onCellClick(prof.id, s)}
+                      className={`group hover:bg-primary/5 cursor-pointer transition-colors ${
+                        isHour ? "border-b border-border/60" : "border-b border-border/15"
+                      }`}
+                      style={{ height: SLOT_HEIGHT }}
+                    >
+                      <div className="opacity-0 group-hover:opacity-100 transition-opacity h-full flex items-center justify-center">
+                        <span className="text-[10px] text-primary font-medium">+ {s}</span>
+                      </div>
+                    </div>
+                  );
+                })}
 
                 {/* agendamentos sobrepostos */}
                 {apts.map((a) => {
@@ -145,8 +186,10 @@ export function AgendaGrid({
                   if (min < 0 || min >= slots.length * intervalo) return null;
                   const top = (min / intervalo) * SLOT_HEIGHT;
                   const height = Math.max(SLOT_HEIGHT, ((a.duracao || 30) / intervalo) * SLOT_HEIGHT);
-                  const statusBorder = STATUS_BADGE[a.status] || "border-primary";
-                  const bg = a.categoria_cor || "bg-primary/20";
+                  const status = STATUS_STYLE[a.status] || STATUS_STYLE.agendado;
+                  const StatusIcon = status.icon;
+                  const compact = height < 50;
+
                   return (
                     <button
                       key={a.id}
@@ -154,16 +197,39 @@ export function AgendaGrid({
                         e.stopPropagation();
                         onAppointmentClick(a);
                       }}
-                      className={`absolute left-1 right-1 rounded border-l-4 ${statusBorder} ${bg} px-2 py-1 text-left text-xs hover:shadow-md transition-shadow overflow-hidden`}
+                      className={`absolute left-1 right-1 rounded-md bg-card border border-border/60 shadow-sm hover:shadow-md hover:-translate-y-px hover:border-primary/40 transition-all overflow-hidden text-left group/apt`}
                       style={{ top, height: height - 2 }}
-                      title={`${a.paciente_nome} — ${a.procedimento || ""}`}
+                      title={`${a.paciente_nome} — ${a.procedimento || ""} (${status.label})`}
                     >
-                      <div className="font-medium text-foreground truncate">{a.paciente_nome}</div>
-                      {a.procedimento && (
-                        <div className="text-[10px] text-muted-foreground truncate">{a.procedimento}</div>
-                      )}
-                      <div className="text-[10px] text-muted-foreground">
-                        {a.hora}{a.duracao ? ` · ${a.duracao}min` : ""}
+                      {/* Barra colorida lateral (status) */}
+                      <div className={`absolute left-0 top-0 bottom-0 w-1 ${status.side}`} />
+                      {/* Faixa de cor do profissional no topo */}
+                      <div className={`absolute right-0 top-0 bottom-0 w-0.5 ${profColor.bar} opacity-60`} />
+
+                      <div className={`pl-2.5 pr-2 ${compact ? "py-1" : "py-1.5"} h-full flex flex-col gap-0.5`}>
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <CircleDot className="h-2.5 w-2.5 text-primary shrink-0" />
+                          <span className="text-[11px] font-semibold text-foreground truncate flex-1">
+                            {a.paciente_nome}
+                          </span>
+                          {!compact && (
+                            <span className={`inline-flex items-center gap-0.5 text-[9px] px-1 py-px rounded-sm ${status.chip} font-medium shrink-0`}>
+                              <StatusIcon className="h-2.5 w-2.5" />
+                            </span>
+                          )}
+                        </div>
+                        {!compact && a.procedimento && (
+                          <div className="text-[10px] text-muted-foreground truncate pl-4">
+                            {a.procedimento}
+                          </div>
+                        )}
+                        {!compact && (
+                          <div className="mt-auto flex items-center gap-1.5 text-[9px] text-muted-foreground pl-4">
+                            <Clock className="h-2.5 w-2.5" />
+                            <span className="font-medium">{a.hora}</span>
+                            {a.duracao ? <span>· {a.duracao}min</span> : null}
+                          </div>
+                        )}
                       </div>
                     </button>
                   );
