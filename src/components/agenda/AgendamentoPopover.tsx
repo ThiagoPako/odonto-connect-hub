@@ -27,6 +27,7 @@ const STATUS_OPTIONS: { value: string; label: string; icon: React.ElementType; c
 
 export function AgendamentoPopover({ appointment, open, onOpenChange, onChanged }: Props) {
   const [saving, setSaving] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   if (!appointment) return null;
 
   const handleStatusChange = async (status: string) => {
