@@ -156,6 +156,8 @@ export function EditarAgendamentoModal({ appointment, open, onOpenChange, onSave
       hora,
       duracao,
       procedimento,
+      categoria,
+      categoria_cor: categoriaCor,
       status,
       sala,
       observacoes,
