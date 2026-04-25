@@ -6,9 +6,12 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { AlertTriangle, Loader2 } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { AlertTriangle, Check, ChevronsUpDown, Loader2 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { agendaApi, dentistasApi, type AgendamentoVPS } from "@/lib/vpsApi";
+import { agendaApi, dentistasApi, procedimentosCatalogoApi, type AgendamentoVPS, type ProcedimentoCatalogo } from "@/lib/vpsApi";
 
 interface Prof { id: string; nome: string }
 
