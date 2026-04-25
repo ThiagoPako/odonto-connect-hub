@@ -2302,6 +2302,40 @@ app.get('/api/agenda', async (req, res) => {
   }
 });
 
+// ─── Marcadores da agenda (tags coloridas) ─────────────────
+app.get('/api/agenda/marcadores', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { rows } = await pool.query('SELECT * FROM agenda_marcadores ORDER BY nome ASC');
+    res.json(rows);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/api/agenda/marcadores', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { nome, cor } = req.body;
+    if (!nome || !nome.trim()) return res.status(400).json({ error: 'Nome obrigatório' });
+    const id = crypto.randomUUID();
+    const corFinal = (cor || '#06b6d4').slice(0, 9);
+    try {
+      await pool.query('INSERT INTO agenda_marcadores (id, nome, cor) VALUES ($1,$2,$3)', [id, nome.trim(), corFinal]);
+      res.json({ id, nome: nome.trim(), cor: corFinal });
+    } catch (err) {
+      if (err.code === '23505') return res.status(409).json({ error: 'Marcador com este nome já existe' });
+      throw err;
+    }
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.delete('/api/agenda/marcadores/:id', async (req, res) => {
+  try {
+    await verifyUser(req);
+    await pool.query('DELETE FROM agenda_marcadores WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
 app.post('/api/agenda', async (req, res) => {
   try {
     await verifyUser(req);
