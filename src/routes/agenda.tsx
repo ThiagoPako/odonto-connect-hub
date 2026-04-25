@@ -120,6 +120,23 @@ function AgendaPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 px-2 py-1 rounded-md border bg-background">
+              <Clock className="h-3.5 w-3.5 text-muted-foreground" />
+              <Select value={String(intervalo)} onValueChange={(v) => setIntervalo(Number(v))}>
+                <SelectTrigger className="h-7 w-[110px] border-0 shadow-none focus:ring-0 px-1 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="5">5 minutos</SelectItem>
+                  <SelectItem value="10">10 minutos</SelectItem>
+                  <SelectItem value="15">15 minutos</SelectItem>
+                  <SelectItem value="20">20 minutos</SelectItem>
+                  <SelectItem value="30">30 minutos</SelectItem>
+                  <SelectItem value="45">45 minutos</SelectItem>
+                  <SelectItem value="60">1 hora</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
             <Button size="sm" variant="outline" onClick={loadAppointments} disabled={loading}>
               <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
             </Button>
