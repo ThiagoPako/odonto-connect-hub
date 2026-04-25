@@ -348,8 +348,9 @@ export function NovoAgendamentoModal({
                 </p>
               )}
               {!pacienteId && search.trim().length >= 2 && filteredPacientes.length > 0 && (
-                <p className="mt-1.5 text-xs text-muted-foreground">
-                  ⚠️ Clique em um paciente da lista acima para selecioná-lo.
+                <p className={`mt-1.5 text-xs flex items-center gap-1 ${pacienteError ? "text-destructive font-medium" : "text-muted-foreground"}`}>
+                  <AlertCircle className="h-3 w-3" />
+                  Clique em um paciente da lista acima para selecioná-lo.
                 </p>
               )}
             </div>
