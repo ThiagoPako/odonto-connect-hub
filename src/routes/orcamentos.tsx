@@ -331,6 +331,13 @@ function BudgetDetail({ budget: b, onStatusChange, onExecute }: { budget: Orcame
           </div>
         )}
 
+        {(b.status === "aprovado" || b.status === "em_tratamento") && (
+          <button onClick={onExecute}
+            className="mt-4 flex items-center gap-1.5 h-9 px-4 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition">
+            <PlayCircle className="h-4 w-4" /> Executar plano de tratamento
+          </button>
+        )}
+
         {b.status === "reprovado" && (
           <div className="mt-3 p-2 rounded-lg bg-destructive/10 text-destructive text-xs">
             ❌ Orçamento reprovado — lead movido para Recuperação de Vendas no CRM
