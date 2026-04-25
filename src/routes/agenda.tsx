@@ -305,9 +305,11 @@ function KanbanView({ filtered, selectedProfessional, professionals, onAtender, 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
       {professionals
-        .filter((p) => selectedProfessional === "all" || p.name.includes(selectedProfessional))
+        .filter((p) => selectedProfessional === "all" || p.id === selectedProfessional)
         .map((prof) => {
-          const profAppts = filtered.filter((a) => a.professional === prof.name).sort((a, b) => a.time.localeCompare(b.time));
+          const profAppts = filtered
+            .filter((a) => (a.professionalId ? a.professionalId === prof.id : a.professional === prof.name))
+            .sort((a, b) => a.time.localeCompare(b.time));
           const isDragOver = dragOverProf === prof.id;
           return (
             <div
