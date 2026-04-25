@@ -169,7 +169,10 @@ export function NovoAgendamentoModal({
     const err = validateConsulta();
     if (err) {
       toast.error(err, { duration: 5000 });
-      if (!pacienteId) setShowSugg(true);
+      if (!pacienteId) {
+        setPacienteError(true);
+        setShowSugg(true);
+      }
       return;
     }
     setSaving(true);
