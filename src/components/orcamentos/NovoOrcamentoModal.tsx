@@ -28,10 +28,27 @@ import { OdontogramaInterativo, type FaceSelection, type Face } from "./Odontogr
 import { DEFAULT_PRINT_CONFIG, type OrcamentoItemEstruturado, type PrintConfig } from "./types";
 import { OrcamentoPrintPreview } from "./OrcamentoPrintPreview";
 
+interface OrcamentoEdit {
+  id: string;
+  paciente_id: string;
+  dentista_id?: string | null;
+  titulo?: string | null;
+  itens: any[];
+  valor_total: number;
+  desconto: number;
+  observacoes?: string | null;
+  forma_pagamento?: string | null;
+  parcelas?: number;
+  print_config?: PrintConfig | null;
+  odontograma_snapshot?: FaceSelection[] | null;
+}
+
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   pacientePreSelecionadoId?: string | null;
+  /** Quando informado, o modal entra em modo "editar" (chama update em vez de create) */
+  orcamentoEditar?: OrcamentoEdit | null;
   onSaved?: () => void;
 }
 
@@ -48,6 +65,7 @@ export function NovoOrcamentoModal({
   open,
   onOpenChange,
   pacientePreSelecionadoId,
+  orcamentoEditar,
   onSaved,
 }: Props) {
   const [pacientes, setPacientes] = useState<any[]>([]);
