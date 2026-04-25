@@ -68,8 +68,13 @@ export function AdminCreateUserPanel() {
         toast.error("Selecione uma especialidade");
         return;
       }
-      if (!Number.isFinite(comissaoNum) || comissaoNum < 0 || comissaoNum > 100) {
-        toast.error("Comissão deve ser um número entre 0 e 100");
+      if (comissaoError || !Number.isFinite(comissaoNum) || comissaoNum < 0 || comissaoNum > 100) {
+        toast.error(comissaoError || "Comissão deve ser um número entre 0 e 100");
+        return;
+      }
+      // Reforça regra de no máximo 2 casas decimais (defesa em profundidade)
+      if (!/^\d{1,3}(\.\d{1,2})?$/.test(comissao)) {
+        toast.error("Comissão deve ter no máximo 2 casas decimais");
         return;
       }
     }
