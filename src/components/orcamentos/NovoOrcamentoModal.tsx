@@ -121,6 +121,34 @@ export function NovoOrcamentoModal({
     }
   }, [open]);
 
+  // Carrega dados ao entrar em modo edição
+  useEffect(() => {
+    if (!open || !orcamentoEditar) return;
+    setPacienteId(orcamentoEditar.paciente_id || "");
+    setDentistaId(orcamentoEditar.dentista_id || "");
+    setTitulo(orcamentoEditar.titulo || "Plano de tratamento");
+    setObservacoes(orcamentoEditar.observacoes || "");
+    setDesconto(Number(orcamentoEditar.desconto) || 0);
+    setFormaPagamento(orcamentoEditar.forma_pagamento || "");
+    setParcelas(Number(orcamentoEditar.parcelas) || 1);
+    if (orcamentoEditar.print_config) setPrintConfig(orcamentoEditar.print_config);
+    // Reidrata itens — aceita formato estruturado novo OU itens antigos (sem id local)
+    const reHidratados: OrcamentoItemEstruturado[] = (orcamentoEditar.itens || []).map((it: any) => ({
+      id: it.id || uid(),
+      procedimento_id: it.procedimento_id || "",
+      procedimento_nome: it.procedimento_nome || it.procedimento || it.descricao || "Procedimento",
+      procedimento_codigo: it.procedimento_codigo || it.codigo || null,
+      dente: it.dente ?? null,
+      faces: Array.isArray(it.faces) ? it.faces : [],
+      quantidade: Number(it.quantidade) || 1,
+      valor_unitario: Number(it.valor_unitario || it.valor) || 0,
+      valor_total: Number(it.valor_total || it.valor) || 0,
+      cor: it.cor,
+      observacao: it.observacao || it.observacoes || undefined,
+    }));
+    setItens(reHidratados);
+  }, [open, orcamentoEditar]);
+
   const procAtivo = procedimentos.find((p) => p.id === procedimentoAtivoId);
 
   // Selections agregadas para o odontograma (cor por dente = cor do último procedimento aplicado)
