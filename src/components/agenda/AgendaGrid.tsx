@@ -30,15 +30,30 @@ const PROF_COLORS = [
 
 const STATUS_STYLE: Record<
   string,
-  { side: string; chip: string; icon: typeof Clock; label: string }
+  { chip: string; icon: typeof Clock; label: string; ring: string }
 > = {
-  agendado:        { side: "bg-primary",          chip: "bg-primary/15 text-primary",                icon: Clock,        label: "Agendado" },
-  confirmado:      { side: "bg-emerald-500",      chip: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400", icon: CheckCircle2, label: "Confirmado" },
-  em_atendimento:  { side: "bg-blue-500",         chip: "bg-blue-500/15 text-blue-600 dark:text-blue-400",          icon: PlayCircle,   label: "Em atendimento" },
-  finalizado:      { side: "bg-muted-foreground", chip: "bg-muted text-muted-foreground",            icon: CheckCircle2, label: "Finalizado" },
-  faltou:          { side: "bg-amber-500",        chip: "bg-amber-500/15 text-amber-600 dark:text-amber-400",       icon: AlertCircle,  label: "Faltou" },
-  cancelado:       { side: "bg-destructive",      chip: "bg-destructive/15 text-destructive",        icon: XCircle,      label: "Cancelado" },
+  agendado:        { chip: "bg-primary/15 text-primary",                                              icon: Clock,        label: "Agendado",      ring: "ring-primary/30" },
+  confirmado:      { chip: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",                icon: CheckCircle2, label: "Confirmado",    ring: "ring-emerald-500/40" },
+  em_atendimento:  { chip: "bg-blue-500/15 text-blue-600 dark:text-blue-400",                         icon: PlayCircle,   label: "Em atendimento",ring: "ring-blue-500/40" },
+  finalizado:      { chip: "bg-muted text-muted-foreground",                                          icon: CheckCircle2, label: "Finalizado",    ring: "ring-muted-foreground/30" },
+  faltou:          { chip: "bg-amber-500/15 text-amber-600 dark:text-amber-400",                      icon: AlertCircle,  label: "Faltou",        ring: "ring-amber-500/40" },
+  cancelado:       { chip: "bg-destructive/15 text-destructive",                                      icon: XCircle,      label: "Cancelado",     ring: "ring-destructive/40" },
 };
+
+// hex helpers para cor da categoria (procedimento)
+function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
+  const m = /^#?([a-f\d]{6}|[a-f\d]{3})$/i.exec(hex.trim());
+  if (!m) return null;
+  let h = m[1];
+  if (h.length === 3) h = h.split("").map((c) => c + c).join("");
+  const n = parseInt(h, 16);
+  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+}
+function withAlpha(hex: string, a: number): string | null {
+  const c = hexToRgb(hex);
+  if (!c) return null;
+  return `rgba(${c.r}, ${c.g}, ${c.b}, ${a})`;
+}
 
 function buildSlots(inicio: string, fim: string, intervalo: number): string[] {
   const [hi, mi] = inicio.split(":").map(Number);
