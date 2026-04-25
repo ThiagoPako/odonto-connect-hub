@@ -8,12 +8,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toast } from "sonner";
 import { UserPlus } from "lucide-react";
 import { CompleteDentistaDialog, type CompleteDentistaTarget } from "@/components/CompleteDentistaDialog";
+import { especialidades } from "@/data/dentistasMockData";
 
 export function AdminCreateUserPanel() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState("user");
+  const [especialidade, setEspecialidade] = useState("Clínica Geral");
+  const [comissao, setComissao] = useState<string>("35");
   const [completeOpen, setCompleteOpen] = useState(false);
   const [completeTarget, setCompleteTarget] = useState<CompleteDentistaTarget | null>(null);
   const [loading, setLoading] = useState(false);
@@ -27,6 +30,18 @@ export function AdminCreateUserPanel() {
     if (password.length < 6) {
       toast.error("Senha deve ter pelo menos 6 caracteres");
       return;
+    }
+
+    const comissaoNum = Number(comissao);
+    if (role === "dentista") {
+      if (!especialidade.trim()) {
+        toast.error("Selecione uma especialidade");
+        return;
+      }
+      if (!Number.isFinite(comissaoNum) || comissaoNum < 0 || comissaoNum > 100) {
+        toast.error("Comissão deve ser um número entre 0 e 100");
+        return;
+      }
     }
 
     setLoading(true);
@@ -82,8 +97,8 @@ export function AdminCreateUserPanel() {
           email: userEmail,
           telefone: "",
           cro: "",
-          especialidade: "Clínica Geral",
-          comissao_percentual: 35,
+          especialidade,
+          comissao_percentual: comissaoNum,
           ativo: true,
         });
 
@@ -94,7 +109,7 @@ export function AdminCreateUserPanel() {
           });
         } else {
           toast.success(`Resumo do cadastro de ${createdName}`, {
-            description: "✓ Usuário criado com sucesso\n✓ Registro em /dentistas criado\n✓ Disponível na Agenda",
+            description: `✓ Usuário criado com sucesso\n✓ Registro em /dentistas criado (${especialidade}, ${comissaoNum}%)\n✓ Disponível na Agenda`,
             duration: 6000,
           });
           const newId =
@@ -108,7 +123,7 @@ export function AdminCreateUserPanel() {
               email: userEmail,
               telefone: "",
               cro: "",
-              especialidade: "Clínica Geral",
+              especialidade,
             });
             setCompleteOpen(true);
           }
@@ -122,6 +137,8 @@ export function AdminCreateUserPanel() {
     setEmail("");
     setPassword("");
     setRole("user");
+    setEspecialidade("Clínica Geral");
+    setComissao("35");
     setLoading(false);
   };
 
@@ -185,6 +202,39 @@ export function AdminCreateUserPanel() {
                 </SelectContent>
               </Select>
             </div>
+
+            {role === "dentista" && (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="user-especialidade">Especialidade</Label>
+                  <Select value={especialidade} onValueChange={setEspecialidade}>
+                    <SelectTrigger id="user-especialidade">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {especialidades.map((esp) => (
+                        <SelectItem key={esp} value={esp}>
+                          {esp}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="user-comissao">Comissão (%)</Label>
+                  <Input
+                    id="user-comissao"
+                    type="number"
+                    min={0}
+                    max={100}
+                    step={0.5}
+                    placeholder="35"
+                    value={comissao}
+                    onChange={(e) => setComissao(e.target.value)}
+                  />
+                </div>
+              </>
+            )}
           </div>
           <Button type="submit" disabled={loading} className="w-full sm:w-auto">
             <UserPlus className="h-4 w-4 mr-2" />
