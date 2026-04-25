@@ -2,15 +2,17 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import {
   Plus, Search, DollarSign, CheckCircle2, XCircle, Clock, TrendingUp,
-  FileText, CreditCard, ExternalLink, Loader2,
+  FileText, CreditCard, ExternalLink, Loader2, Printer, Pencil, Trash2,
+  PlayCircle,
 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
-import { orcamentosApi } from "@/lib/vpsApi";
+import { orcamentosApi, pacientesApi, dentistasApi } from "@/lib/vpsApi";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { NovoOrcamentoModal } from "@/components/orcamentos/NovoOrcamentoModal";
 import { ExecucaoModal } from "@/components/orcamentos/ExecucaoModal";
-import { PlayCircle } from "lucide-react";
+import { OrcamentoPrintPreview } from "@/components/orcamentos/OrcamentoPrintPreview";
+import { DEFAULT_PRINT_CONFIG } from "@/components/orcamentos/types";
 
 export const Route = createFileRoute("/orcamentos")({
   ssr: false,
@@ -21,7 +23,13 @@ interface OrcamentoRow {
   id: string;
   paciente_id: string;
   paciente_nome: string;
+  paciente_telefone?: string;
+  paciente_cpf?: string;
+  dentista_id?: string | null;
   dentista_nome: string;
+  dentista_cro?: string;
+  dentista_especialidade?: string;
+  titulo?: string;
   itens: any[];
   valor_total: number;
   desconto: number;
@@ -30,6 +38,9 @@ interface OrcamentoRow {
   parcelas: number;
   observacoes: string;
   created_at: string;
+  print_config?: any;
+  odontograma_snapshot?: any[];
+  raw?: any;
 }
 
 const statusConfig: Record<string, { label: string; color: string }> = {
@@ -49,11 +60,21 @@ const AVATAR_COLORS = ["bg-chart-1", "bg-chart-2", "bg-chart-3", "bg-chart-4"];
 function mapOrcamento(r: any): OrcamentoRow {
   let itens = r.itens || [];
   if (typeof itens === 'string') try { itens = JSON.parse(itens); } catch { itens = []; }
+  let odon = r.odontograma_snapshot || [];
+  if (typeof odon === 'string') try { odon = JSON.parse(odon); } catch { odon = []; }
+  let pcfg = r.print_config || null;
+  if (typeof pcfg === 'string') try { pcfg = JSON.parse(pcfg); } catch { pcfg = null; }
   return {
     id: r.id,
     paciente_id: r.paciente_id || '',
     paciente_nome: r.paciente_nome || r.paciente_id || '',
+    paciente_telefone: r.paciente_telefone || '',
+    paciente_cpf: r.paciente_cpf || '',
+    dentista_id: r.dentista_id || null,
     dentista_nome: r.dentista_nome || '',
+    dentista_cro: r.dentista_cro || '',
+    dentista_especialidade: r.dentista_especialidade || '',
+    titulo: r.titulo || 'Plano de tratamento',
     itens: Array.isArray(itens) ? itens : [],
     valor_total: Number(r.valor_total) || 0,
     desconto: Number(r.desconto) || 0,
@@ -62,6 +83,9 @@ function mapOrcamento(r: any): OrcamentoRow {
     parcelas: Number(r.parcelas) || 1,
     observacoes: r.observacoes || '',
     created_at: r.created_at ? new Date(r.created_at).toLocaleDateString("pt-BR") : '',
+    print_config: pcfg,
+    odontograma_snapshot: Array.isArray(odon) ? odon : [],
+    raw: r,
   };
 }
 
@@ -73,6 +97,10 @@ function OrcamentosPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [novoOpen, setNovoOpen] = useState(false);
   const [execOpen, setExecOpen] = useState(false);
+  const [printOpen, setPrintOpen] = useState(false);
+  const [editing, setEditing] = useState<OrcamentoRow | null>(null);
+  const [pacienteCache, setPacienteCache] = useState<Record<string, any>>({});
+  const [dentistaCache, setDentistaCache] = useState<Record<string, any>>({});
 
   const loadAll = useCallback(async () => {
     try {
@@ -84,6 +112,37 @@ function OrcamentosPage() {
   }, []);
 
   useEffect(() => { loadAll(); }, [loadAll]);
+
+  // Pré-carrega pacientes/dentistas para enriquecer o print preview
+  useEffect(() => {
+    Promise.all([pacientesApi.list(), dentistasApi.list()]).then(([p, d]) => {
+      const pacs = ((p as any).data || p || []) as any[];
+      const dens = ((d as any).data || d || []) as any[];
+      const pMap: Record<string, any> = {}; pacs.forEach(x => { pMap[x.id] = x; });
+      const dMap: Record<string, any> = {}; dens.forEach(x => { dMap[x.id] = x; });
+      setPacienteCache(pMap);
+      setDentistaCache(dMap);
+    }).catch(() => {});
+  }, []);
+
+  const handleExcluir = async (id: string) => {
+    if (!confirm("Excluir este orçamento? Esta ação não pode ser desfeita.")) return;
+    const res = await orcamentosApi.delete(id);
+    if ((res as any).error) { toast.error("Erro: " + (res as any).error); return; }
+    toast.success("Orçamento excluído");
+    if (selectedId === id) setSelectedId(null);
+    loadAll();
+  };
+
+  const handleEditar = (o: OrcamentoRow) => {
+    setEditing(o);
+    setNovoOpen(true);
+  };
+
+  const handleImprimir = (o: OrcamentoRow) => {
+    setSelectedId(o.id);
+    setPrintOpen(true);
+  };
 
   const filtered = orcamentos
     .filter(b => filterStatus === "all" || b.status === filterStatus)
@@ -187,6 +246,9 @@ function OrcamentosPage() {
                 budget={selected}
                 onStatusChange={handleStatusChange}
                 onExecute={() => setExecOpen(true)}
+                onPrint={() => handleImprimir(selected)}
+                onEdit={() => handleEditar(selected)}
+                onDelete={() => handleExcluir(selected.id)}
               />
             ) : (
               <div className="bg-card rounded-xl border border-border p-8 flex flex-col items-center justify-center text-center min-h-[400px]">
@@ -201,7 +263,21 @@ function OrcamentosPage() {
 
       <NovoOrcamentoModal
         open={novoOpen}
-        onOpenChange={setNovoOpen}
+        onOpenChange={(v) => { setNovoOpen(v); if (!v) setEditing(null); }}
+        orcamentoEditar={editing ? {
+          id: editing.id,
+          paciente_id: editing.paciente_id,
+          dentista_id: editing.dentista_id,
+          titulo: editing.titulo,
+          itens: editing.itens,
+          valor_total: editing.valor_total,
+          desconto: editing.desconto,
+          observacoes: editing.observacoes,
+          forma_pagamento: editing.forma_pagamento,
+          parcelas: editing.parcelas,
+          print_config: editing.print_config,
+          odontograma_snapshot: editing.odontograma_snapshot as any,
+        } : null}
         onSaved={loadAll}
       />
       <ExecucaoModal
@@ -211,10 +287,49 @@ function OrcamentosPage() {
           id: selected.id,
           paciente_id: selected.paciente_id,
           paciente_nome: selected.paciente_nome,
+          dentista_id: selected.dentista_id,
           itens: selected.itens,
         } : null}
         onChanged={loadAll}
       />
+
+      {selected && (
+        <OrcamentoPrintPreview
+          open={printOpen}
+          onOpenChange={setPrintOpen}
+          paciente={{
+            nome: selected.paciente_nome,
+            telefone: pacienteCache[selected.paciente_id]?.telefone || selected.paciente_telefone,
+            cpf: pacienteCache[selected.paciente_id]?.cpf || selected.paciente_cpf,
+          }}
+          dentista={selected.dentista_id ? {
+            nome: dentistaCache[selected.dentista_id]?.nome || selected.dentista_nome,
+            cro: dentistaCache[selected.dentista_id]?.cro,
+            especialidade: dentistaCache[selected.dentista_id]?.especialidade,
+          } : null}
+          titulo={selected.titulo || "Plano de tratamento"}
+          itens={selected.itens.map((it: any) => ({
+            id: it.id || String(Math.random()),
+            procedimento_id: it.procedimento_id || "",
+            procedimento_nome: it.procedimento_nome || it.procedimento || it.descricao || "Procedimento",
+            procedimento_codigo: it.procedimento_codigo || it.codigo || null,
+            dente: it.dente ?? null,
+            faces: Array.isArray(it.faces) ? it.faces : [],
+            quantidade: Number(it.quantidade) || 1,
+            valor_unitario: Number(it.valor_unitario || it.valor) || 0,
+            valor_total: Number(it.valor_total || it.valor) || 0,
+            cor: it.cor,
+          }))}
+          subtotal={selected.valor_total}
+          desconto={selected.desconto}
+          total={selected.valor_total - selected.desconto}
+          observacoes={selected.observacoes}
+          formaPagamento={selected.forma_pagamento}
+          parcelas={selected.parcelas}
+          selections={selected.odontograma_snapshot || []}
+          config={selected.print_config || DEFAULT_PRINT_CONFIG}
+        />
+      )}
     </div>
   );
 }
@@ -234,10 +349,22 @@ function KpiMini({ icon: Icon, label, value }: { icon: React.ElementType; label:
   );
 }
 
-function BudgetDetail({ budget: b, onStatusChange, onExecute }: { budget: OrcamentoRow; onStatusChange: (id: string, status: string) => void; onExecute: () => void }) {
+interface BudgetDetailProps {
+  budget: OrcamentoRow;
+  onStatusChange: (id: string, status: string) => void;
+  onExecute: () => void;
+  onPrint: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}
+
+function BudgetDetail({ budget: b, onStatusChange, onExecute, onPrint, onEdit, onDelete }: BudgetDetailProps) {
   const cfg = statusConfig[b.status] || statusConfig.pendente;
   const [updating, setUpdating] = useState(false);
   const finalValue = b.valor_total - b.desconto;
+  // Edição/exclusão só permitidas em estágios iniciais
+  const podeEditar = b.status === "pendente";
+  const podeExcluir = b.status === "pendente" || b.status === "reprovado";
 
   const handleChange = async (newStatus: string) => {
     setUpdating(true);
@@ -248,12 +375,42 @@ function BudgetDetail({ budget: b, onStatusChange, onExecute }: { budget: Orcame
   return (
     <div className="space-y-4">
       <div className="bg-card rounded-xl border border-border p-5">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h3 className="text-base font-semibold text-foreground">{b.paciente_nome}</h3>
-            <p className="text-xs text-muted-foreground">{b.dentista_nome || 'Sem dentista'} · Criado em {b.created_at}</p>
+        <div className="flex items-start justify-between mb-4 gap-3">
+          <div className="min-w-0">
+            <h3 className="text-base font-semibold text-foreground truncate">{b.titulo || "Plano de tratamento"}</h3>
+            <p className="text-xs text-muted-foreground truncate">
+              <span className="font-medium text-foreground">{b.paciente_nome}</span> ·{" "}
+              {b.dentista_nome || "Sem dentista"} · Criado em {b.created_at}
+            </p>
           </div>
-          <span className={`px-3 py-1 rounded-full text-xs font-medium ${cfg.color}`}>{cfg.label}</span>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <span className={`px-3 py-1 rounded-full text-xs font-medium ${cfg.color}`}>{cfg.label}</span>
+            <button
+              onClick={onPrint}
+              title="Imprimir orçamento"
+              className="h-8 w-8 inline-flex items-center justify-center rounded-lg border border-border hover:bg-muted text-muted-foreground hover:text-foreground transition"
+            >
+              <Printer className="h-3.5 w-3.5" />
+            </button>
+            {podeEditar && (
+              <button
+                onClick={onEdit}
+                title="Editar orçamento"
+                className="h-8 w-8 inline-flex items-center justify-center rounded-lg border border-border hover:bg-muted text-muted-foreground hover:text-foreground transition"
+              >
+                <Pencil className="h-3.5 w-3.5" />
+              </button>
+            )}
+            {podeExcluir && (
+              <button
+                onClick={onDelete}
+                title="Excluir orçamento"
+                className="h-8 w-8 inline-flex items-center justify-center rounded-lg border border-border hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Items table */}
@@ -262,7 +419,7 @@ function BudgetDetail({ budget: b, onStatusChange, onExecute }: { budget: Orcame
             <thead>
               <tr className="border-b border-border text-left">
                 <th className="pb-2 text-[11px] font-semibold text-muted-foreground uppercase">Procedimento</th>
-                <th className="pb-2 text-[11px] font-semibold text-muted-foreground uppercase text-center">Dente</th>
+                <th className="pb-2 text-[11px] font-semibold text-muted-foreground uppercase text-center">Dente / Faces</th>
                 <th className="pb-2 text-[11px] font-semibold text-muted-foreground uppercase text-center">Qtd</th>
                 <th className="pb-2 text-[11px] font-semibold text-muted-foreground uppercase text-right">Valor</th>
               </tr>
@@ -270,10 +427,32 @@ function BudgetDetail({ budget: b, onStatusChange, onExecute }: { budget: Orcame
             <tbody>
               {b.itens.map((item: any, i: number) => (
                 <tr key={i} className="border-b border-border/30">
-                  <td className="py-2 text-xs text-foreground">{item.procedimento || item.procedure || item.descricao || '-'}</td>
-                  <td className="py-2 text-xs text-muted-foreground text-center">{item.dente || item.tooth || "—"}</td>
+                  <td className="py-2 text-xs text-foreground">
+                    <div className="flex items-center gap-1.5">
+                      {item.cor && <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: item.cor }} />}
+                      <span>{item.procedimento_nome || item.procedimento || item.descricao || '-'}</span>
+                      {item.procedimento_versao && (
+                        <span
+                          title="Versão do catálogo congelada neste orçamento"
+                          className="px-1 py-0.5 rounded bg-muted text-muted-foreground text-[9px] font-mono"
+                        >
+                          v{item.procedimento_versao}
+                        </span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="py-2 text-xs text-muted-foreground text-center">
+                    {item.dente ? (
+                      <span>
+                        {item.dente}
+                        {Array.isArray(item.faces) && item.faces.length > 0 && (
+                          <span className="ml-1 text-[10px] text-primary">{item.faces.join("")}</span>
+                        )}
+                      </span>
+                    ) : "—"}
+                  </td>
                   <td className="py-2 text-xs text-foreground text-center">{item.quantidade || item.quantity || 1}</td>
-                  <td className="py-2 text-xs font-medium text-foreground text-right">R$ {Number(item.valor || item.totalPrice || 0).toLocaleString("pt-BR")}</td>
+                  <td className="py-2 text-xs font-medium text-foreground text-right">R$ {Number(item.valor_total || item.valor || 0).toLocaleString("pt-BR")}</td>
                 </tr>
               ))}
             </tbody>

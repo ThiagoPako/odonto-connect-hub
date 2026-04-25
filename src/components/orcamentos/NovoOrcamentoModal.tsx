@@ -28,10 +28,27 @@ import { OdontogramaInterativo, type FaceSelection, type Face } from "./Odontogr
 import { DEFAULT_PRINT_CONFIG, type OrcamentoItemEstruturado, type PrintConfig } from "./types";
 import { OrcamentoPrintPreview } from "./OrcamentoPrintPreview";
 
+interface OrcamentoEdit {
+  id: string;
+  paciente_id: string;
+  dentista_id?: string | null;
+  titulo?: string | null;
+  itens: any[];
+  valor_total: number;
+  desconto: number;
+  observacoes?: string | null;
+  forma_pagamento?: string | null;
+  parcelas?: number;
+  print_config?: PrintConfig | null;
+  odontograma_snapshot?: FaceSelection[] | null;
+}
+
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   pacientePreSelecionadoId?: string | null;
+  /** Quando informado, o modal entra em modo "editar" (chama update em vez de create) */
+  orcamentoEditar?: OrcamentoEdit | null;
   onSaved?: () => void;
 }
 
@@ -48,6 +65,7 @@ export function NovoOrcamentoModal({
   open,
   onOpenChange,
   pacientePreSelecionadoId,
+  orcamentoEditar,
   onSaved,
 }: Props) {
   const [pacientes, setPacientes] = useState<any[]>([]);
@@ -102,6 +120,34 @@ export function NovoOrcamentoModal({
       setShowPrint(false);
     }
   }, [open]);
+
+  // Carrega dados ao entrar em modo edição
+  useEffect(() => {
+    if (!open || !orcamentoEditar) return;
+    setPacienteId(orcamentoEditar.paciente_id || "");
+    setDentistaId(orcamentoEditar.dentista_id || "");
+    setTitulo(orcamentoEditar.titulo || "Plano de tratamento");
+    setObservacoes(orcamentoEditar.observacoes || "");
+    setDesconto(Number(orcamentoEditar.desconto) || 0);
+    setFormaPagamento(orcamentoEditar.forma_pagamento || "");
+    setParcelas(Number(orcamentoEditar.parcelas) || 1);
+    if (orcamentoEditar.print_config) setPrintConfig(orcamentoEditar.print_config);
+    // Reidrata itens — aceita formato estruturado novo OU itens antigos (sem id local)
+    const reHidratados: OrcamentoItemEstruturado[] = (orcamentoEditar.itens || []).map((it: any) => ({
+      id: it.id || uid(),
+      procedimento_id: it.procedimento_id || "",
+      procedimento_nome: it.procedimento_nome || it.procedimento || it.descricao || "Procedimento",
+      procedimento_codigo: it.procedimento_codigo || it.codigo || null,
+      dente: it.dente ?? null,
+      faces: Array.isArray(it.faces) ? it.faces : [],
+      quantidade: Number(it.quantidade) || 1,
+      valor_unitario: Number(it.valor_unitario || it.valor) || 0,
+      valor_total: Number(it.valor_total || it.valor) || 0,
+      cor: it.cor,
+      observacao: it.observacao || it.observacoes || undefined,
+    }));
+    setItens(reHidratados);
+  }, [open, orcamentoEditar]);
 
   const procAtivo = procedimentos.find((p) => p.id === procedimentoAtivoId);
 
@@ -259,9 +305,11 @@ export function NovoOrcamentoModal({
         print_config: printConfig,
         odontograma_snapshot: selections,
       };
-      const res = await orcamentosApi.create(body);
+      const res = orcamentoEditar
+        ? await orcamentosApi.update(orcamentoEditar.id, body)
+        : await orcamentosApi.create(body);
       if ((res as any).error) throw new Error((res as any).error);
-      toast.success("Orçamento criado com sucesso");
+      toast.success(orcamentoEditar ? "Orçamento atualizado" : "Orçamento criado com sucesso");
       onSaved?.();
       onOpenChange(false);
     } catch (err: any) {
@@ -276,7 +324,7 @@ export function NovoOrcamentoModal({
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="max-w-6xl max-h-[92vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="text-base">Novo Orçamento / Plano de Tratamento</DialogTitle>
+            <DialogTitle className="text-base">{orcamentoEditar ? "Editar Orçamento" : "Novo Orçamento / Plano de Tratamento"}</DialogTitle>
           </DialogHeader>
 
           <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
