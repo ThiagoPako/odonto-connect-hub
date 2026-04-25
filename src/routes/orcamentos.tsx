@@ -144,6 +144,9 @@ function OrcamentosPage() {
               ))}
             </div>
           </div>
+          <Button size="sm" onClick={() => setNovoOpen(true)} className="h-8 text-xs gap-1.5">
+            <Plus className="h-3.5 w-3.5" /> Novo Orçamento
+          </Button>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
@@ -188,6 +191,12 @@ function OrcamentosPage() {
           </div>
         </div>
       </main>
+
+      <NovoOrcamentoModal
+        open={novoOpen}
+        onOpenChange={setNovoOpen}
+        onSaved={loadAll}
+      />
     </div>
   );
 }
