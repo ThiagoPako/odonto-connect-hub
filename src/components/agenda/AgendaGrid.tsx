@@ -257,10 +257,17 @@ export function AgendaGrid({
                   const compact = height < 50;
 
                   // Cor da CATEGORIA/PROCEDIMENTO (identidade visual principal)
+                  // Ajuste automático de contraste para tema claro/escuro:
+                  //  - bg: tint sutil (mais opaco no claro, mais discreto no escuro)
+                  //  - borda/lado: cor "ink" (escurecida no claro, clareada no escuro)
+                  //  - texto da categoria: também usa ink p/ legibilidade
                   const catHex = a.categoria_cor || "";
-                  const catBg = withAlpha(catHex, 0.10) || undefined;
-                  const catBorder = withAlpha(catHex, 0.55) || undefined;
-                  const catSide = catHex || undefined;
+                  const ink = catHex ? inkFromHex(catHex, isDark) : undefined;
+                  const catBg = catHex
+                    ? withAlpha(catHex, isDark ? 0.18 : 0.10) || undefined
+                    : undefined;
+                  const catBorder = ink || undefined;
+                  const catSide = ink || undefined;
 
                   return (
                     <button
@@ -308,7 +315,10 @@ export function AgendaGrid({
                                 style={{ background: catSide }}
                               />
                             )}
-                            <span className="text-[10px] text-foreground/80 font-medium truncate">
+                            <span
+                              className="text-[10px] font-medium truncate"
+                              style={ink ? { color: ink } : undefined}
+                            >
                               {a.categoria || a.procedimento}
                             </span>
                           </div>
