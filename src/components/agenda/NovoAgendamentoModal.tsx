@@ -65,7 +65,7 @@ export function NovoAgendamentoModal({
   const pacienteInputRef = useRef<HTMLInputElement>(null);
   const dentistaTriggerRef = useRef<HTMLButtonElement>(null);
   const dataInputRef = useRef<HTMLInputElement>(null);
-  const horaInputRef = useRef<HTMLInputElement>(null);
+  const horaInputRef = useRef<HTMLDivElement>(null);
   const duracaoInputRef = useRef<HTMLInputElement>(null);
   const telefoneFieldRef = useRef<HTMLDivElement>(null);
 
