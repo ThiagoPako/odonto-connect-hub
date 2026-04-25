@@ -39,6 +39,7 @@ import { Route as AtendimentoRouteImport } from './routes/atendimento'
 import { Route as AnalyticsRouteImport } from './routes/analytics'
 import { Route as AgendaRouteImport } from './routes/agenda'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ConfiguracoesAgendaRouteImport } from './routes/configuracoes.agenda'
 
 const TratamentosRoute = TratamentosRouteImport.update({
   id: '/tratamentos',
@@ -190,6 +191,11 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ConfiguracoesAgendaRoute = ConfiguracoesAgendaRouteImport.update({
+  id: '/agenda',
+  path: '/agenda',
+  getParentRoute: () => ConfiguracoesRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -201,7 +207,7 @@ export interface FileRoutesByFullPath {
   '/canais': typeof CanaisRoute
   '/chat': typeof ChatRoute
   '/comissoes': typeof ComissoesRoute
-  '/configuracoes': typeof ConfiguracoesRoute
+  '/configuracoes': typeof ConfiguracoesRouteWithChildren
   '/contatos': typeof ContatosRoute
   '/crm': typeof CrmRoute
   '/dashboard': typeof DashboardRoute
@@ -222,6 +228,7 @@ export interface FileRoutesByFullPath {
   '/reativacao': typeof ReativacaoRoute
   '/relatorios-clinicos': typeof RelatoriosClinicosRoute
   '/tratamentos': typeof TratamentosRoute
+  '/configuracoes/agenda': typeof ConfiguracoesAgendaRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -233,7 +240,7 @@ export interface FileRoutesByTo {
   '/canais': typeof CanaisRoute
   '/chat': typeof ChatRoute
   '/comissoes': typeof ComissoesRoute
-  '/configuracoes': typeof ConfiguracoesRoute
+  '/configuracoes': typeof ConfiguracoesRouteWithChildren
   '/contatos': typeof ContatosRoute
   '/crm': typeof CrmRoute
   '/dashboard': typeof DashboardRoute
@@ -254,6 +261,7 @@ export interface FileRoutesByTo {
   '/reativacao': typeof ReativacaoRoute
   '/relatorios-clinicos': typeof RelatoriosClinicosRoute
   '/tratamentos': typeof TratamentosRoute
+  '/configuracoes/agenda': typeof ConfiguracoesAgendaRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -266,7 +274,7 @@ export interface FileRoutesById {
   '/canais': typeof CanaisRoute
   '/chat': typeof ChatRoute
   '/comissoes': typeof ComissoesRoute
-  '/configuracoes': typeof ConfiguracoesRoute
+  '/configuracoes': typeof ConfiguracoesRouteWithChildren
   '/contatos': typeof ContatosRoute
   '/crm': typeof CrmRoute
   '/dashboard': typeof DashboardRoute
@@ -287,6 +295,7 @@ export interface FileRoutesById {
   '/reativacao': typeof ReativacaoRoute
   '/relatorios-clinicos': typeof RelatoriosClinicosRoute
   '/tratamentos': typeof TratamentosRoute
+  '/configuracoes/agenda': typeof ConfiguracoesAgendaRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -321,6 +330,7 @@ export interface FileRouteTypes {
     | '/reativacao'
     | '/relatorios-clinicos'
     | '/tratamentos'
+    | '/configuracoes/agenda'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -353,6 +363,7 @@ export interface FileRouteTypes {
     | '/reativacao'
     | '/relatorios-clinicos'
     | '/tratamentos'
+    | '/configuracoes/agenda'
   id:
     | '__root__'
     | '/'
@@ -385,6 +396,7 @@ export interface FileRouteTypes {
     | '/reativacao'
     | '/relatorios-clinicos'
     | '/tratamentos'
+    | '/configuracoes/agenda'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -397,7 +409,7 @@ export interface RootRouteChildren {
   CanaisRoute: typeof CanaisRoute
   ChatRoute: typeof ChatRoute
   ComissoesRoute: typeof ComissoesRoute
-  ConfiguracoesRoute: typeof ConfiguracoesRoute
+  ConfiguracoesRoute: typeof ConfiguracoesRouteWithChildren
   ContatosRoute: typeof ContatosRoute
   CrmRoute: typeof CrmRoute
   DashboardRoute: typeof DashboardRoute
@@ -632,8 +644,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/configuracoes/agenda': {
+      id: '/configuracoes/agenda'
+      path: '/agenda'
+      fullPath: '/configuracoes/agenda'
+      preLoaderRoute: typeof ConfiguracoesAgendaRouteImport
+      parentRoute: typeof ConfiguracoesRoute
+    }
   }
 }
+
+interface ConfiguracoesRouteChildren {
+  ConfiguracoesAgendaRoute: typeof ConfiguracoesAgendaRoute
+}
+
+const ConfiguracoesRouteChildren: ConfiguracoesRouteChildren = {
+  ConfiguracoesAgendaRoute: ConfiguracoesAgendaRoute,
+}
+
+const ConfiguracoesRouteWithChildren = ConfiguracoesRoute._addFileChildren(
+  ConfiguracoesRouteChildren,
+)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
@@ -645,7 +676,7 @@ const rootRouteChildren: RootRouteChildren = {
   CanaisRoute: CanaisRoute,
   ChatRoute: ChatRoute,
   ComissoesRoute: ComissoesRoute,
-  ConfiguracoesRoute: ConfiguracoesRoute,
+  ConfiguracoesRoute: ConfiguracoesRouteWithChildren,
   ContatosRoute: ContatosRoute,
   CrmRoute: CrmRoute,
   DashboardRoute: DashboardRoute,

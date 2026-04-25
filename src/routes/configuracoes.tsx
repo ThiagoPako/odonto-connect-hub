@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { AdminResetPanel } from "@/components/AdminResetPanel";
@@ -19,6 +19,8 @@ import {
   Bot,
   Headphones,
   ShieldAlert,
+  CalendarClock,
+  ChevronRight,
 } from "lucide-react";
 
 export const Route = createFileRoute("/configuracoes")({
@@ -28,6 +30,7 @@ export const Route = createFileRoute("/configuracoes")({
 
 type TabId =
   | "clinica"
+  | "agenda"
   | "atendimento"
   | "ia"
   | "tags"
@@ -44,6 +47,7 @@ interface TabDef {
 
 const TABS: TabDef[] = [
   { id: "clinica", label: "Clínica", description: "Endereço e dados da unidade", icon: Building2 },
+  { id: "agenda", label: "Agenda", description: "Horários de funcionamento e regras de agendamento", icon: CalendarClock },
   { id: "atendimento", label: "Atendimento", description: "Fila, regras e tempo de atendimento", icon: Headphones },
   { id: "ia", label: "Inteligência Artificial", description: "Provedor, chave e modelos da IA", icon: Bot },
   { id: "tags", label: "Tags", description: "Etiquetas usadas em leads e contatos", icon: Tag },
@@ -115,6 +119,21 @@ function ConfiguracoesPage() {
 
             <div className="space-y-6">
               {activeTab === "clinica" && <ClinicLocationPanel />}
+
+              {activeTab === "agenda" && (
+                <div className="bg-card rounded-xl border border-border/60 shadow-card p-5">
+                  <h4 className="text-sm font-semibold mb-1">Configurações da Agenda</h4>
+                  <p className="text-sm text-muted-foreground mb-4">
+                    Defina os horários de funcionamento da clínica, regras de agendamento e horários por profissional.
+                  </p>
+                  <Link
+                    to="/configuracoes/agenda"
+                    className="inline-flex items-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
+                  >
+                    Abrir configurações <ChevronRight className="h-4 w-4" />
+                  </Link>
+                </div>
+              )}
 
               {activeTab === "atendimento" && (
                 <>
