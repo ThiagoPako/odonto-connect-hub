@@ -5,7 +5,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { useEffect, useState, useCallback } from "react";
-import { Plus, Pencil, Trash2, Loader2, Search } from "lucide-react";
+import { Plus, Pencil, Trash2, Loader2, Search, History } from "lucide-react";
 import { procedimentosCatalogoApi, type ProcedimentoCatalogo } from "@/lib/vpsApi";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
+import { HistoricoVersoesModal } from "@/components/procedimentos/HistoricoVersoesModal";
 
 export const Route = createFileRoute("/procedimentos")({
   ssr: false,
@@ -28,6 +29,9 @@ function ProcedimentosCatalogoPage() {
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<ProcedimentoCatalogo | null>(null);
   const [open, setOpen] = useState(false);
+  const [motivoVersao, setMotivoVersao] = useState("");
+  const [historicoId, setHistoricoId] = useState<string | null>(null);
+  const [historicoNome, setHistoricoNome] = useState<string>("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -55,13 +59,19 @@ function ProcedimentosCatalogoPage() {
   const salvar = async () => {
     if (!editing) return;
     if (!editing.nome.trim()) { toast.error("Nome obrigatório"); return; }
-    const body = { ...editing };
+    const body: any = { ...editing };
+    if (editing.id && motivoVersao.trim()) body.motivo_versao = motivoVersao.trim();
     const res = editing.id
       ? await procedimentosCatalogoApi.update(editing.id, body)
       : await procedimentosCatalogoApi.create(body);
     if ((res as any).error) { toast.error((res as any).error); return; }
-    toast.success(editing.id ? "Procedimento atualizado" : "Procedimento criado");
-    setOpen(false); setEditing(null);
+    const novaVersao = (res as any).data?._nova_versao || (res as any)._nova_versao;
+    toast.success(
+      editing.id
+        ? novaVersao ? `Procedimento atualizado — versão v${novaVersao.versao} criada` : "Procedimento atualizado"
+        : "Procedimento criado"
+    );
+    setOpen(false); setEditing(null); setMotivoVersao("");
     load();
   };
 
