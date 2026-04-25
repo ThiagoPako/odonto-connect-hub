@@ -304,6 +304,7 @@ export function NovoAgendamentoModal({
                   {filteredPacientes.map((p) => (
                     <button
                       key={p.id}
+                      type="button"
                       onClick={() => handleSelectPaciente(p)}
                       className="w-full text-left px-3 py-2 hover:bg-muted text-sm"
                     >
