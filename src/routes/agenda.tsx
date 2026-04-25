@@ -159,7 +159,13 @@ function AgendaPage() {
   }, [fetchAgenda]);
 
   const filtered = appointments
-    .filter((a) => selectedProfessional === "all" || a.professional.includes(selectedProfessional))
+    .filter((a) => {
+      if (selectedProfessional === "all") return true;
+      if (a.professionalId && a.professionalId === selectedProfessional) return true;
+      // Fallback for demo/legacy data without ID: match by name
+      const prof = professionals.find((p) => p.id === selectedProfessional);
+      return prof ? a.professional === prof.name : false;
+    })
     .filter((a) => !searchTerm || a.patientName.toLowerCase().includes(searchTerm.toLowerCase()));
 
   const countByStatus = (status: Appointment["status"]) => appointments.filter((a) => a.status === status).length;
