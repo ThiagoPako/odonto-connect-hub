@@ -125,7 +125,8 @@ function ProcedimentosCatalogoPage() {
                   <th className="px-3 py-2 font-semibold text-right">Convênio</th>
                   <th className="px-3 py-2 font-semibold text-center">Duração</th>
                   <th className="px-3 py-2 font-semibold text-center">Dente / Face</th>
-                  <th className="px-3 py-2 w-20"></th>
+                  <th className="px-3 py-2 font-semibold text-center">Versão</th>
+                  <th className="px-3 py-2 w-28"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
