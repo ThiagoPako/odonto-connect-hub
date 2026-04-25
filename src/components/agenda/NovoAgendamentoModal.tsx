@@ -428,7 +428,7 @@ export function NovoAgendamentoModal({
                 <Label className="mb-1 block">Data</Label>
                 <Input ref={dataInputRef} type="date" value={data} onChange={(e) => setData(e.target.value)} />
               </div>
-              <div ref={horaInputRef as unknown as React.RefObject<HTMLDivElement>} tabIndex={-1}>
+              <div ref={horaInputRef} tabIndex={-1}>
                 <Label className="mb-1 block">Horário</Label>
                 <AnalogTimePicker value={hora} onChange={setHora} />
               </div>
