@@ -493,7 +493,7 @@ export function NovoAgendamentoModal({
 
             <div className="flex justify-end gap-2 pt-2">
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancelar</Button>
-              <Button type="submit" disabled={saving}>
+              <Button type="button" disabled={saving} onClick={() => void handleSubmitConsulta()}>
                 {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 {multiplo ? `Agendar ${qtdSessoes} sessões` : "Agendar"}
               </Button>
@@ -518,7 +518,7 @@ export function NovoAgendamentoModal({
             />
             <div className="flex justify-end gap-2 pt-2">
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancelar</Button>
-              <Button type="submit" disabled={saving}>
+              <Button type="button" disabled={saving} onClick={() => void handleSubmitCompromissoEvento()}>
                 {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 Criar compromisso
               </Button>
@@ -543,7 +543,7 @@ export function NovoAgendamentoModal({
             />
             <div className="flex justify-end gap-2 pt-2">
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancelar</Button>
-              <Button type="submit" disabled={saving}>
+              <Button type="button" disabled={saving} onClick={() => void handleSubmitCompromissoEvento()}>
                 {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 Criar evento
               </Button>
