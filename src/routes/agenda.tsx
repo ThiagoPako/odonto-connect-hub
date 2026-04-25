@@ -6,7 +6,7 @@ import {
   LayoutGrid, List, CalendarDays, Stethoscope, Loader2,
 } from "lucide-react";
 import { useState, useEffect, useCallback, useRef } from "react";
-import { mockProfessionals, type Appointment } from "@/data/agendaMockData";
+import { mockProfessionals as mockProfessionalsRaw, type Appointment, type Professional } from "@/data/agendaMockData";
 import { getAlergias, getCondicoesCriticas, getHistorico } from "@/data/registroCentral";
 import { agendaApi, whatsappApi, pacientesApi, dentistasApi, type AgendamentoVPS } from "@/lib/vpsApi";
 
@@ -74,11 +74,34 @@ function AgendaPage() {
   const [loading, setLoading] = useState(true);
   const [dateOffset, setDateOffset] = useState(0);
   const [showNovoDialog, setShowNovoDialog] = useState(false);
+  const [professionals, setProfessionals] = useState<Professional[]>(mockProfessionalsRaw);
 
   const currentDate = new Date();
   currentDate.setDate(currentDate.getDate() + dateOffset);
   const dateStr = currentDate.toISOString().split("T")[0]; // YYYY-MM-DD
   const dateDisplay = currentDate.toLocaleDateString("pt-BR", { day: "2-digit", month: "long", year: "numeric", weekday: "long" });
+
+  // Carrega dentistas reais e mescla com mock como fallback
+  useEffect(() => {
+    dentistasApi.list().then(({ data }) => {
+      if (Array.isArray(data) && data.length > 0) {
+        const colors = ["bg-chart-1", "bg-chart-2", "bg-chart-3", "bg-chart-4", "bg-chart-5", "bg-primary", "bg-dental-cyan"];
+        const real: Professional[] = data.map((d: any, idx: number) => ({
+          id: d.id,
+          name: d.nome || "Dentista",
+          initials: (d.nome || "?")
+            .split(" ")
+            .filter((_: string, i: number, arr: string[]) => i === 0 || i === arr.length - 1)
+            .map((n: string) => n[0])
+            .join("")
+            .toUpperCase(),
+          specialty: d.especialidade || "Clínico Geral",
+          color: colors[idx % colors.length],
+        }));
+        setProfessionals(real);
+      }
+    }).catch(() => { /* mantém mock */ });
+  }, []);
 
   const fetchAgenda = useCallback(async () => {
     setLoading(true);
@@ -209,8 +232,8 @@ function AgendaPage() {
               className="h-8 px-3 rounded-lg bg-muted border-0 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
             >
               <option value="all">Todos profissionais</option>
-              {mockProfessionals.map((p) => (
-                <option key={p.id} value={p.name.split(" ")[1]}>{p.name}</option>
+              {professionals.map((p) => (
+                <option key={p.id} value={p.name.split(" ")[1] || p.name}>{p.name}</option>
               ))}
             </select>
             <button onClick={() => setShowNovoDialog(true)} className="flex items-center gap-1.5 h-8 px-3 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors">
@@ -227,9 +250,9 @@ function AgendaPage() {
           </div>
         ) : (
           <>
-            {viewMode === "kanban" && <KanbanView filtered={filtered} selectedProfessional={selectedProfessional} onAtender={handleAtender} onUpdateStatus={handleUpdateStatus} onReschedule={handleReschedule} onMoveToProfessional={handleMoveToProfessional} />}
+            {viewMode === "kanban" && <KanbanView filtered={filtered} selectedProfessional={selectedProfessional} professionals={professionals} onAtender={handleAtender} onUpdateStatus={handleUpdateStatus} onReschedule={handleReschedule} onMoveToProfessional={handleMoveToProfessional} />}
             {viewMode === "lista" && <ListView filtered={filtered} onAtender={handleAtender} onUpdateStatus={handleUpdateStatus} onReschedule={handleReschedule} />}
-            {viewMode === "calendario" && <CalendarView filtered={filtered} selectedProfessional={selectedProfessional} />}
+            {viewMode === "calendario" && <CalendarView filtered={filtered} selectedProfessional={selectedProfessional} professionals={professionals} />}
           </>
         )}
 
@@ -245,8 +268,9 @@ function AgendaPage() {
 }
 
 /* ===================== KANBAN VIEW ===================== */
-function KanbanView({ filtered, selectedProfessional, onAtender, onUpdateStatus, onReschedule, onMoveToProfessional }: {
+function KanbanView({ filtered, selectedProfessional, professionals, onAtender, onUpdateStatus, onReschedule, onMoveToProfessional }: {
   filtered: Appointment[]; selectedProfessional: string;
+  professionals: Professional[];
   onAtender: (a: Appointment) => void; onUpdateStatus: (id: string, status: string) => void;
   onReschedule: (id: string, date: string, time: string) => void;
   onMoveToProfessional: (id: string, profId: string, profName: string) => Promise<void>;
@@ -273,7 +297,7 @@ function KanbanView({ filtered, selectedProfessional, onAtender, onUpdateStatus,
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-      {mockProfessionals
+      {professionals
         .filter((p) => selectedProfessional === "all" || p.name.includes(selectedProfessional))
         .map((prof) => {
           const profAppts = filtered.filter((a) => a.professional === prof.name).sort((a, b) => a.time.localeCompare(b.time));
@@ -458,8 +482,8 @@ function ListView({ filtered, onAtender, onUpdateStatus, onReschedule }: { filte
 }
 
 /* ===================== CALENDAR VIEW ===================== */
-function CalendarView({ filtered, selectedProfessional }: { filtered: Appointment[]; selectedProfessional: string }) {
-  const professionals = mockProfessionals.filter(
+function CalendarView({ filtered, selectedProfessional, professionals: allProfessionals }: { filtered: Appointment[]; selectedProfessional: string; professionals: Professional[] }) {
+  const professionals = allProfessionals.filter(
     (p) => selectedProfessional === "all" || p.name.includes(selectedProfessional)
   );
 
@@ -929,7 +953,7 @@ function NovoAgendamentoDialog({
     setSaving(true);
     try {
       const profFromList = dentistasList.find((p) => p.id === form.dentista_id);
-      const profFromMock = mockProfessionals.find((p) => p.id === form.dentista_id);
+      const profFromMock = mockProfessionalsRaw.find((p) => p.id === form.dentista_id);
       const profName = profFromList?.nome || profFromMock?.name || "";
       let result;
       try {
