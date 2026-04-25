@@ -281,7 +281,11 @@ export function NovoAgendamentoModal({
           </TabsList>
 
           {/* ════ CONSULTA ════ */}
-          <TabsContent value="consulta" className="space-y-4 mt-4">
+          <TabsContent value="consulta" className="mt-4">
+          <form
+            onSubmit={(e) => { e.preventDefault(); e.stopPropagation(); void handleSubmitConsulta(); }}
+            className="space-y-4"
+          >
             {/* Paciente search */}
             <div className="relative">
               <Label className="mb-1 block">Paciente</Label>
