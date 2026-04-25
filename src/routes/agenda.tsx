@@ -534,7 +534,7 @@ function CalendarView({ filtered, selectedProfessional, professionals: allProfes
                   {hour}
                 </td>
                 {professionals.map((prof) => {
-                  const appts = getApptForSlot(prof.name, hour);
+                  const appts = getApptForSlot(prof, hour);
                   return (
                     <td key={prof.id} className="px-1.5 py-1 align-top min-w-[180px]">
                       {appts.length === 0 ? (
