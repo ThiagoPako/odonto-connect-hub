@@ -205,6 +205,12 @@ export function AgendaGrid({
                   const StatusIcon = status.icon;
                   const compact = height < 50;
 
+                  // Cor da CATEGORIA/PROCEDIMENTO (identidade visual principal)
+                  const catHex = a.categoria_cor || "";
+                  const catBg = withAlpha(catHex, 0.10) || undefined;
+                  const catBorder = withAlpha(catHex, 0.55) || undefined;
+                  const catSide = catHex || undefined;
+
                   return (
                     <button
                       key={a.id}
@@ -212,37 +218,61 @@ export function AgendaGrid({
                         e.stopPropagation();
                         onAppointmentClick(a);
                       }}
-                      className={`absolute left-1 right-1 rounded-md bg-card border border-border/60 shadow-sm hover:shadow-md hover:-translate-y-px hover:border-primary/40 transition-all overflow-hidden text-left group/apt`}
-                      style={{ top, height: height - 2 }}
-                      title={`${a.paciente_nome} — ${a.procedimento || ""} (${status.label})`}
+                      className={`absolute left-1 right-1 rounded-md border shadow-sm hover:shadow-md hover:-translate-y-px transition-all overflow-hidden text-left group/apt ${catHex ? "" : "bg-card border-border/60 hover:border-primary/40"}`}
+                      style={{
+                        top,
+                        height: height - 2,
+                        background: catBg,
+                        borderColor: catBorder,
+                      }}
+                      title={`${a.paciente_nome} — ${a.categoria || a.procedimento || ""} (${status.label})`}
                     >
-                      {/* Barra colorida lateral (status) */}
-                      <div className={`absolute left-0 top-0 bottom-0 w-1 ${status.side}`} />
-                      {/* Faixa de cor do profissional no topo */}
+                      {/* Barra colorida lateral = COR DA CATEGORIA/PROCEDIMENTO */}
+                      <div
+                        className={`absolute left-0 top-0 bottom-0 w-1.5 ${catSide ? "" : "bg-primary"}`}
+                        style={catSide ? { background: catSide } : undefined}
+                      />
+                      {/* Faixa fina à direita = cor do profissional */}
                       <div className={`absolute right-0 top-0 bottom-0 w-0.5 ${profColor.bar} opacity-60`} />
 
-                      <div className={`pl-2.5 pr-2 ${compact ? "py-1" : "py-1.5"} h-full flex flex-col gap-0.5`}>
+                      <div className={`pl-3 pr-2 ${compact ? "py-1" : "py-1.5"} h-full flex flex-col gap-0.5`}>
                         <div className="flex items-center gap-1.5 min-w-0">
-                          <CircleDot className="h-2.5 w-2.5 text-primary shrink-0" />
                           <span className="text-[11px] font-semibold text-foreground truncate flex-1">
                             {a.paciente_nome}
                           </span>
                           {!compact && (
-                            <span className={`inline-flex items-center gap-0.5 text-[9px] px-1 py-px rounded-sm ${status.chip} font-medium shrink-0`}>
+                            <span
+                              className={`inline-flex items-center gap-0.5 text-[9px] px-1 py-px rounded-sm ${status.chip} font-medium shrink-0`}
+                              title={status.label}
+                            >
                               <StatusIcon className="h-2.5 w-2.5" />
                             </span>
                           )}
                         </div>
-                        {!compact && a.procedimento && (
-                          <div className="text-[10px] text-muted-foreground truncate pl-4">
-                            {a.procedimento}
+                        {!compact && (a.categoria || a.procedimento) && (
+                          <div className="flex items-center gap-1 min-w-0">
+                            {catSide && (
+                              <span
+                                className="h-1.5 w-1.5 rounded-full shrink-0"
+                                style={{ background: catSide }}
+                              />
+                            )}
+                            <span className="text-[10px] text-foreground/80 font-medium truncate">
+                              {a.categoria || a.procedimento}
+                            </span>
                           </div>
                         )}
                         {!compact && (
-                          <div className="mt-auto flex items-center gap-1.5 text-[9px] text-muted-foreground pl-4">
+                          <div className="mt-auto flex items-center gap-1.5 text-[9px] text-muted-foreground">
                             <Clock className="h-2.5 w-2.5" />
                             <span className="font-medium">{a.hora}</span>
                             {a.duracao ? <span>· {a.duracao}min</span> : null}
+                          </div>
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
                           </div>
                         )}
                       </div>
