@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { AgendamentoVPS } from "@/lib/vpsApi";
 import { CheckCircle2, Clock, AlertCircle, XCircle, PlayCircle, CircleDot, User2 } from "lucide-react";
 
@@ -54,6 +54,56 @@ function withAlpha(hex: string, a: number): string | null {
   if (!c) return null;
   return `rgba(${c.r}, ${c.g}, ${c.b}, ${a})`;
 }
+// Luminância relativa (WCAG) para escolher texto contrastante
+function relLuminance({ r, g, b }: { r: number; g: number; b: number }): number {
+  const srgb = [r, g, b].map((v) => {
+    const s = v / 255;
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * srgb[0] + 0.7152 * srgb[1] + 0.0722 * srgb[2];
+}
+/** Retorna cor de texto com contraste adequado para um fundo hex. */
+function readableText(hex: string): string {
+  const c = hexToRgb(hex);
+  if (!c) return "hsl(var(--foreground))";
+  // Texto escuro em fundos claros; texto claro em fundos escuros
+  return relLuminance(c) > 0.55 ? "#0b0f14" : "#ffffff";
+}
+/** Versão "ink" da cor: escurece se muito clara, mantém se já escura — boa para texto/bordas sobre fundo neutro. */
+function inkFromHex(hex: string, isDark: boolean): string {
+  const c = hexToRgb(hex);
+  if (!c) return "hsl(var(--foreground))";
+  const lum = relLuminance(c);
+  // No tema escuro, queremos cores mais claras; no claro, mais escuras
+  if (isDark) {
+    if (lum < 0.3) {
+      // clarear
+      const f = 0.55;
+      return `rgb(${Math.round(c.r + (255 - c.r) * f)}, ${Math.round(c.g + (255 - c.g) * f)}, ${Math.round(c.b + (255 - c.b) * f)})`;
+    }
+    return `rgb(${c.r}, ${c.g}, ${c.b})`;
+  } else {
+    if (lum > 0.6) {
+      // escurecer
+      const f = 0.55;
+      return `rgb(${Math.round(c.r * (1 - f))}, ${Math.round(c.g * (1 - f))}, ${Math.round(c.b * (1 - f))})`;
+    }
+    return `rgb(${c.r}, ${c.g}, ${c.b})`;
+  }
+}
+function useIsDark(): boolean {
+  const [dark, setDark] = useState<boolean>(() =>
+    typeof document !== "undefined" && document.documentElement.classList.contains("dark")
+  );
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const el = document.documentElement;
+    const obs = new MutationObserver(() => setDark(el.classList.contains("dark")));
+    obs.observe(el, { attributes: true, attributeFilter: ["class"] });
+    return () => obs.disconnect();
+  }, []);
+  return dark;
+}
 
 function buildSlots(inicio: string, fim: string, intervalo: number): string[] {
   const [hi, mi] = inicio.split(":").map(Number);
@@ -86,6 +136,7 @@ function initials(name: string) {
 export function AgendaGrid({
   professionals, appointments, intervalo, inicio, fim, onCellClick, onAppointmentClick,
 }: Props) {
+  const isDark = useIsDark();
   const slots = useMemo(() => buildSlots(inicio, fim, intervalo), [inicio, fim, intervalo]);
   const startMin = timeToMin(inicio);
   const SLOT_HEIGHT = 32; // px por slot
@@ -206,10 +257,17 @@ export function AgendaGrid({
                   const compact = height < 50;
 
                   // Cor da CATEGORIA/PROCEDIMENTO (identidade visual principal)
+                  // Ajuste automático de contraste para tema claro/escuro:
+                  //  - bg: tint sutil (mais opaco no claro, mais discreto no escuro)
+                  //  - borda/lado: cor "ink" (escurecida no claro, clareada no escuro)
+                  //  - texto da categoria: também usa ink p/ legibilidade
                   const catHex = a.categoria_cor || "";
-                  const catBg = withAlpha(catHex, 0.10) || undefined;
-                  const catBorder = withAlpha(catHex, 0.55) || undefined;
-                  const catSide = catHex || undefined;
+                  const ink = catHex ? inkFromHex(catHex, isDark) : undefined;
+                  const catBg = catHex
+                    ? withAlpha(catHex, isDark ? 0.18 : 0.10) || undefined
+                    : undefined;
+                  const catBorder = ink || undefined;
+                  const catSide = ink || undefined;
 
                   return (
                     <button
@@ -257,7 +315,10 @@ export function AgendaGrid({
                                 style={{ background: catSide }}
                               />
                             )}
-                            <span className="text-[10px] text-foreground/80 font-medium truncate">
+                            <span
+                              className="text-[10px] font-medium truncate"
+                              style={ink ? { color: ink } : undefined}
+                            >
                               {a.categoria || a.procedimento}
                             </span>
                           </div>
