@@ -23,7 +23,13 @@ interface OrcamentoRow {
   id: string;
   paciente_id: string;
   paciente_nome: string;
+  paciente_telefone?: string;
+  paciente_cpf?: string;
+  dentista_id?: string | null;
   dentista_nome: string;
+  dentista_cro?: string;
+  dentista_especialidade?: string;
+  titulo?: string;
   itens: any[];
   valor_total: number;
   desconto: number;
@@ -32,6 +38,9 @@ interface OrcamentoRow {
   parcelas: number;
   observacoes: string;
   created_at: string;
+  print_config?: any;
+  odontograma_snapshot?: any[];
+  raw?: any;
 }
 
 const statusConfig: Record<string, { label: string; color: string }> = {
@@ -51,11 +60,21 @@ const AVATAR_COLORS = ["bg-chart-1", "bg-chart-2", "bg-chart-3", "bg-chart-4"];
 function mapOrcamento(r: any): OrcamentoRow {
   let itens = r.itens || [];
   if (typeof itens === 'string') try { itens = JSON.parse(itens); } catch { itens = []; }
+  let odon = r.odontograma_snapshot || [];
+  if (typeof odon === 'string') try { odon = JSON.parse(odon); } catch { odon = []; }
+  let pcfg = r.print_config || null;
+  if (typeof pcfg === 'string') try { pcfg = JSON.parse(pcfg); } catch { pcfg = null; }
   return {
     id: r.id,
     paciente_id: r.paciente_id || '',
     paciente_nome: r.paciente_nome || r.paciente_id || '',
+    paciente_telefone: r.paciente_telefone || '',
+    paciente_cpf: r.paciente_cpf || '',
+    dentista_id: r.dentista_id || null,
     dentista_nome: r.dentista_nome || '',
+    dentista_cro: r.dentista_cro || '',
+    dentista_especialidade: r.dentista_especialidade || '',
+    titulo: r.titulo || 'Plano de tratamento',
     itens: Array.isArray(itens) ? itens : [],
     valor_total: Number(r.valor_total) || 0,
     desconto: Number(r.desconto) || 0,
@@ -64,6 +83,9 @@ function mapOrcamento(r: any): OrcamentoRow {
     parcelas: Number(r.parcelas) || 1,
     observacoes: r.observacoes || '',
     created_at: r.created_at ? new Date(r.created_at).toLocaleDateString("pt-BR") : '',
+    print_config: pcfg,
+    odontograma_snapshot: Array.isArray(odon) ? odon : [],
+    raw: r,
   };
 }
 
