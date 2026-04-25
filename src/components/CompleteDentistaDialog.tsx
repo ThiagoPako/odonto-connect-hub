@@ -113,12 +113,24 @@ export function CompleteDentistaDialog({
       toast.error("Selecione uma especialidade.");
       return;
     }
+    const comissaoNum = Number(comissao);
+    if (
+      comissaoError ||
+      !Number.isFinite(comissaoNum) ||
+      comissaoNum < 0 ||
+      comissaoNum > 100 ||
+      !/^\d{1,3}(\.\d{1,2})?$/.test(comissao)
+    ) {
+      toast.error(comissaoError || "Comissão inválida (0–100, até 2 casas decimais)");
+      return;
+    }
 
     setSaving(true);
     const { error } = await dentistasApi.update(dentista.id, {
       telefone: telefone.trim(),
       cro: cro.trim(),
       especialidade,
+      comissao_percentual: comissaoNum,
     });
     setSaving(false);
 
