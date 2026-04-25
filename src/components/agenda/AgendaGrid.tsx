@@ -257,14 +257,13 @@ export function AgendaGrid({
                   const compact = height < 50;
 
                   // Cor da CATEGORIA/PROCEDIMENTO (identidade visual principal)
-                  // Ajuste automático de contraste para tema claro/escuro:
-                  //  - bg: tint sutil (mais opaco no claro, mais discreto no escuro)
-                  //  - borda/lado: cor "ink" (escurecida no claro, clareada no escuro)
-                  //  - texto da categoria: também usa ink p/ legibilidade
-                  const catHex = a.categoria_cor || "";
-                  const ink = catHex ? inkFromHex(catHex, isDark) : undefined;
-                  const catBg = catHex
-                    ? withAlpha(catHex, isDark ? 0.18 : 0.10) || undefined
+                  // Validamos o hex: vazio OU formato inválido => fallback neutro (sem cor),
+                  // mantendo legibilidade com tokens do tema.
+                  const rawHex = (a.categoria_cor || "").trim();
+                  const validHex = rawHex && hexToRgb(rawHex) ? rawHex : "";
+                  const ink = validHex ? inkFromHex(validHex, isDark) : undefined;
+                  const catBg = validHex
+                    ? withAlpha(validHex, isDark ? 0.18 : 0.10) || undefined
                     : undefined;
                   const catBorder = ink || undefined;
                   const catSide = ink || undefined;
@@ -276,19 +275,25 @@ export function AgendaGrid({
                         e.stopPropagation();
                         onAppointmentClick(a);
                       }}
-                      className={`absolute left-1 right-1 rounded-md border shadow-sm hover:shadow-md hover:-translate-y-px transition-all overflow-hidden text-left group/apt ${catHex ? "" : "bg-card border-border/60 hover:border-primary/40"}`}
+                      className={`absolute left-1 right-1 rounded-md border shadow-sm hover:shadow-md hover:-translate-y-px transition-all overflow-hidden text-left group/apt ${
+                        validHex
+                          ? "hover:border-foreground/40"
+                          : "bg-muted/40 border-dashed border-border hover:border-primary/40 hover:bg-muted/60"
+                      }`}
                       style={{
                         top,
                         height: height - 2,
                         background: catBg,
                         borderColor: catBorder,
                       }}
-                      title={`${a.paciente_nome} — ${a.categoria || a.procedimento || ""} (${status.label})`}
+                      title={`${a.paciente_nome} — ${a.categoria || a.procedimento || "Sem categoria"} (${status.label})`}
                     >
-                      {/* Barra colorida lateral = COR DA CATEGORIA/PROCEDIMENTO */}
+                      {/* Barra lateral: cor da categoria OU listrada neutra (fallback) */}
                       <div
-                        className={`absolute left-0 top-0 bottom-0 w-1.5 ${catSide ? "" : "bg-primary"}`}
-                        style={catSide ? { background: catSide } : undefined}
+                        className={`absolute left-0 top-0 bottom-0 w-1.5 ${
+                          validHex ? "" : "bg-[repeating-linear-gradient(135deg,hsl(var(--muted-foreground)/0.35)_0_4px,transparent_4px_8px)]"
+                        }`}
+                        style={validHex ? { background: catSide } : undefined}
                       />
                       {/* Faixa fina à direita = cor do profissional */}
                       <div className={`absolute right-0 top-0 bottom-0 w-0.5 ${profColor.bar} opacity-60`} />
@@ -307,19 +312,26 @@ export function AgendaGrid({
                             </span>
                           )}
                         </div>
-                        {!compact && (a.categoria || a.procedimento) && (
+                        {!compact && (
                           <div className="flex items-center gap-1 min-w-0">
-                            {catSide && (
+                            {validHex ? (
                               <span
                                 className="h-1.5 w-1.5 rounded-full shrink-0"
                                 style={{ background: catSide }}
                               />
+                            ) : (
+                              <span
+                                className="h-1.5 w-1.5 rounded-full shrink-0 ring-1 ring-muted-foreground/40"
+                                aria-hidden
+                              />
                             )}
                             <span
-                              className="text-[10px] font-medium truncate"
+                              className={`text-[10px] font-medium truncate ${
+                                validHex ? "" : (a.categoria || a.procedimento) ? "text-foreground/80" : "text-muted-foreground italic"
+                              }`}
                               style={ink ? { color: ink } : undefined}
                             >
-                              {a.categoria || a.procedimento}
+                              {a.categoria || a.procedimento || "Sem categoria"}
                             </span>
                           </div>
                         )}
