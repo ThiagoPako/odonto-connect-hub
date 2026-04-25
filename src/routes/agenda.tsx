@@ -268,8 +268,9 @@ function AgendaPage() {
 }
 
 /* ===================== KANBAN VIEW ===================== */
-function KanbanView({ filtered, selectedProfessional, onAtender, onUpdateStatus, onReschedule, onMoveToProfessional }: {
+function KanbanView({ filtered, selectedProfessional, professionals, onAtender, onUpdateStatus, onReschedule, onMoveToProfessional }: {
   filtered: Appointment[]; selectedProfessional: string;
+  professionals: Professional[];
   onAtender: (a: Appointment) => void; onUpdateStatus: (id: string, status: string) => void;
   onReschedule: (id: string, date: string, time: string) => void;
   onMoveToProfessional: (id: string, profId: string, profName: string) => Promise<void>;
@@ -296,7 +297,7 @@ function KanbanView({ filtered, selectedProfessional, onAtender, onUpdateStatus,
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-      {mockProfessionals
+      {professionals
         .filter((p) => selectedProfessional === "all" || p.name.includes(selectedProfessional))
         .map((prof) => {
           const profAppts = filtered.filter((a) => a.professional === prof.name).sort((a, b) => a.time.localeCompare(b.time));
