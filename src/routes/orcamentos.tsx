@@ -2,15 +2,17 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import {
   Plus, Search, DollarSign, CheckCircle2, XCircle, Clock, TrendingUp,
-  FileText, CreditCard, ExternalLink, Loader2,
+  FileText, CreditCard, ExternalLink, Loader2, Printer, Pencil, Trash2,
+  PlayCircle,
 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
-import { orcamentosApi } from "@/lib/vpsApi";
+import { orcamentosApi, pacientesApi, dentistasApi } from "@/lib/vpsApi";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { NovoOrcamentoModal } from "@/components/orcamentos/NovoOrcamentoModal";
 import { ExecucaoModal } from "@/components/orcamentos/ExecucaoModal";
-import { PlayCircle } from "lucide-react";
+import { OrcamentoPrintPreview } from "@/components/orcamentos/OrcamentoPrintPreview";
+import { DEFAULT_PRINT_CONFIG } from "@/components/orcamentos/types";
 
 export const Route = createFileRoute("/orcamentos")({
   ssr: false,
