@@ -117,13 +117,17 @@ export function AdminCreateUserPanel() {
           description: `✓ Usuário criado com sucesso\nℹ Já existia em /dentistas (${existing.nome || existing.email}) — não duplicado\n✓ Disponível na Agenda`,
           duration: 8000,
         });
+        const existingComissao = Number(
+          existing.comissao_percentual ?? existing.comissao
+        );
         setCompleteTarget({
           id: existing.id,
           nome: existing.nome || userName,
           email: existing.email || userEmail,
           telefone: existing.telefone || "",
           cro: existing.cro || "",
-          especialidade: existing.especialidade || "Clínica Geral",
+          especialidade: existing.especialidade || especialidade,
+          comissao: Number.isFinite(existingComissao) ? existingComissao : comissaoNum,
         });
         setCompleteOpen(true);
       } else {
