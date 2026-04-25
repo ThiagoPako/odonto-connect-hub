@@ -312,19 +312,26 @@ export function AgendaGrid({
                             </span>
                           )}
                         </div>
-                        {!compact && (a.categoria || a.procedimento) && (
+                        {!compact && (
                           <div className="flex items-center gap-1 min-w-0">
-                            {catSide && (
+                            {validHex ? (
                               <span
                                 className="h-1.5 w-1.5 rounded-full shrink-0"
                                 style={{ background: catSide }}
                               />
+                            ) : (
+                              <span
+                                className="h-1.5 w-1.5 rounded-full shrink-0 ring-1 ring-muted-foreground/40"
+                                aria-hidden
+                              />
                             )}
                             <span
-                              className="text-[10px] font-medium truncate"
+                              className={`text-[10px] font-medium truncate ${
+                                validHex ? "" : (a.categoria || a.procedimento) ? "text-foreground/80" : "text-muted-foreground italic"
+                              }`}
                               style={ink ? { color: ink } : undefined}
                             >
-                              {a.categoria || a.procedimento}
+                              {a.categoria || a.procedimento || "Sem categoria"}
                             </span>
                           </div>
                         )}
