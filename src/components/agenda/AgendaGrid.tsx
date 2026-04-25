@@ -136,6 +136,7 @@ function initials(name: string) {
 export function AgendaGrid({
   professionals, appointments, intervalo, inicio, fim, onCellClick, onAppointmentClick,
 }: Props) {
+  const isDark = useIsDark();
   const slots = useMemo(() => buildSlots(inicio, fim, intervalo), [inicio, fim, intervalo]);
   const startMin = timeToMin(inicio);
   const SLOT_HEIGHT = 32; // px por slot
