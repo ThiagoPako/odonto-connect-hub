@@ -6,7 +6,7 @@ import {
   LayoutGrid, List, CalendarDays, Stethoscope, Loader2,
 } from "lucide-react";
 import { useState, useEffect, useCallback, useRef } from "react";
-import { mockProfessionals, type Appointment } from "@/data/agendaMockData";
+import { mockProfessionals as mockProfessionalsRaw, type Appointment, type Professional } from "@/data/agendaMockData";
 import { getAlergias, getCondicoesCriticas, getHistorico } from "@/data/registroCentral";
 import { agendaApi, whatsappApi, pacientesApi, dentistasApi, type AgendamentoVPS } from "@/lib/vpsApi";
 
