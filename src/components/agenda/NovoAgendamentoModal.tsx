@@ -518,16 +518,21 @@ export function NovoAgendamentoModal({
               observacoes={observacoes} setObservacoes={setObservacoes}
             />
             <div className="flex justify-end gap-2 pt-2">
-              <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancelar</Button>
-              <Button onClick={handleSubmitCompromissoEvento} disabled={saving}>
+              <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancelar</Button>
+              <Button type="submit" disabled={saving}>
                 {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 Criar compromisso
               </Button>
             </div>
+          </form>
           </TabsContent>
 
           {/* ════ EVENTO ════ */}
-          <TabsContent value="evento" className="space-y-4 mt-4">
+          <TabsContent value="evento" className="mt-4">
+          <form
+            onSubmit={(e) => { e.preventDefault(); e.stopPropagation(); void handleSubmitCompromissoEvento(); }}
+            className="space-y-4"
+          >
             <CompromissoEventoForm
               titulo="Evento"
               eventoTitulo={eventoTitulo} setEventoTitulo={setEventoTitulo}
@@ -541,12 +546,13 @@ export function NovoAgendamentoModal({
               observacoes={observacoes} setObservacoes={setObservacoes}
             />
             <div className="flex justify-end gap-2 pt-2">
-              <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancelar</Button>
-              <Button onClick={handleSubmitCompromissoEvento} disabled={saving}>
+              <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancelar</Button>
+              <Button type="submit" disabled={saving}>
                 {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 Criar evento
               </Button>
             </div>
+          </form>
           </TabsContent>
         </Tabs>
       </DialogContent>
