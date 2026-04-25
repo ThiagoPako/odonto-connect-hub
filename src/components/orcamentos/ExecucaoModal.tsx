@@ -10,6 +10,7 @@ import { Loader2, CheckCircle2, FileSignature, MapPin, Lock } from "lucide-react
 import { execucoesApi, type ExecucaoRow } from "@/lib/vpsApi";
 import { toast } from "sonner";
 import { SignaturePad, type SignatureResult } from "@/components/SignaturePad";
+import { LgpdConsent, emptyLgpdConsent, type LgpdConsentValue } from "@/components/LgpdConsent";
 
 interface OrcamentoMin {
   id: string;
@@ -32,6 +33,7 @@ export function ExecucaoModal({ open, onOpenChange, orcamento, onChanged }: Prop
   const [executingItem, setExecutingItem] = useState<any | null>(null);
   const [hasSig, setHasSig] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [consent, setConsent] = useState<LgpdConsentValue>(emptyLgpdConsent());
   const sigRef = useRef<(() => SignatureResult | null) | null>(null);
 
   const load = useCallback(async () => {
