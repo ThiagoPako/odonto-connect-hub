@@ -198,6 +198,27 @@ export function CompleteDentistaDialog({
               </SelectContent>
             </Select>
           </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="dentista-comissao">Comissão (%)</Label>
+            <Input
+              id="dentista-comissao"
+              type="text"
+              inputMode="decimal"
+              placeholder="35"
+              value={comissao}
+              onChange={(e) => handleComissaoChange(e.target.value)}
+              aria-invalid={!!comissaoError}
+              aria-describedby="dentista-comissao-hint"
+              className={comissaoError ? "border-destructive focus-visible:ring-destructive" : ""}
+            />
+            <p
+              id="dentista-comissao-hint"
+              className={`text-xs ${comissaoError ? "text-destructive" : "text-muted-foreground"}`}
+            >
+              {comissaoError ?? "Valor entre 0 e 100, até 2 casas decimais."}
+            </p>
+          </div>
         </div>
 
         <DialogFooter className="gap-2 sm:gap-2">
@@ -209,7 +230,7 @@ export function CompleteDentistaDialog({
           >
             Pular por enquanto
           </Button>
-          <Button type="button" onClick={handleSave} disabled={saving}>
+          <Button type="button" onClick={handleSave} disabled={saving || !!comissaoError}>
             {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
             {saving ? "Salvando..." : "Salvar dados"}
           </Button>
