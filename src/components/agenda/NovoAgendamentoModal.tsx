@@ -490,16 +490,21 @@ export function NovoAgendamentoModal({
             </div>
 
             <div className="flex justify-end gap-2 pt-2">
-              <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancelar</Button>
-              <Button onClick={handleSubmitConsulta} disabled={saving}>
+              <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancelar</Button>
+              <Button type="submit" disabled={saving}>
                 {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 {multiplo ? `Agendar ${qtdSessoes} sessões` : "Agendar"}
               </Button>
             </div>
+          </form>
           </TabsContent>
 
           {/* ════ COMPROMISSO ════ */}
-          <TabsContent value="compromisso" className="space-y-4 mt-4">
+          <TabsContent value="compromisso" className="mt-4">
+          <form
+            onSubmit={(e) => { e.preventDefault(); e.stopPropagation(); void handleSubmitCompromissoEvento(); }}
+            className="space-y-4"
+          >
             <CompromissoEventoForm
               titulo="Compromisso"
               eventoTitulo={eventoTitulo} setEventoTitulo={setEventoTitulo}
