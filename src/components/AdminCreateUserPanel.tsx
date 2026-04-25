@@ -32,6 +32,18 @@ export function AdminCreateUserPanel() {
       return;
     }
 
+    const comissaoNum = Number(comissao);
+    if (role === "dentista") {
+      if (!especialidade.trim()) {
+        toast.error("Selecione uma especialidade");
+        return;
+      }
+      if (!Number.isFinite(comissaoNum) || comissaoNum < 0 || comissaoNum > 100) {
+        toast.error("Comissão deve ser um número entre 0 e 100");
+        return;
+      }
+    }
+
     setLoading(true);
     const userName = name.trim();
     const { data, error } = await adminCreateUser(userName, email.trim(), password, role);
