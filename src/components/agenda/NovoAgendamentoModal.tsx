@@ -391,7 +391,7 @@ export function NovoAgendamentoModal({
               <div>
                 <Label className="mb-1 block">Profissional</Label>
                 <Select value={dentistaId} onValueChange={setDentistaId}>
-                  <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+                  <SelectTrigger ref={dentistaTriggerRef}><SelectValue placeholder="Selecione" /></SelectTrigger>
                   <SelectContent>
                     {dentistas.filter((d) => d?.id).map((d) => (
                       <SelectItem key={d.id} value={d.id}>{d.nome}</SelectItem>
