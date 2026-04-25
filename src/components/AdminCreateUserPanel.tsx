@@ -8,12 +8,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toast } from "sonner";
 import { UserPlus } from "lucide-react";
 import { CompleteDentistaDialog, type CompleteDentistaTarget } from "@/components/CompleteDentistaDialog";
+import { especialidades } from "@/data/dentistasMockData";
 
 export function AdminCreateUserPanel() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState("user");
+  const [especialidade, setEspecialidade] = useState("Clínica Geral");
+  const [comissao, setComissao] = useState<string>("35");
   const [completeOpen, setCompleteOpen] = useState(false);
   const [completeTarget, setCompleteTarget] = useState<CompleteDentistaTarget | null>(null);
   const [loading, setLoading] = useState(false);
