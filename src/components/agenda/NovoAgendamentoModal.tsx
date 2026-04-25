@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Calendar, Stethoscope, MapPin, Phone, Mail, MessageSquare, BellRing, Repeat, Search, Sparkles, AlertCircle } from "lucide-react";
+import { Loader2, Calendar, Stethoscope, MapPin, Phone, Mail, MessageSquare, BellRing, Repeat, Search, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { agendaApi, pacientesApi, dentistasApi, type AgendamentoVPS, type MarcadorAgenda } from "@/lib/vpsApi";
 import { AnalogTimePicker } from "./AnalogTimePicker";
@@ -20,7 +20,7 @@ interface Props {
   defaultDate: string; // YYYY-MM-DD
   defaultHora?: string;
   defaultDentistaId?: string;
-  onCreated: () => void;
+  onCreated: () => void | Promise<void>;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -58,16 +58,7 @@ export function NovoAgendamentoModal({
   const [dentistas, setDentistas] = useState<Dentista[]>([]);
   const [search, setSearch] = useState("");
   const [showSugg, setShowSugg] = useState(false);
-  const [pacienteError, setPacienteError] = useState(false);
   const sugRef = useRef<HTMLDivElement>(null);
-
-  // Refs para foco em validação
-  const pacienteInputRef = useRef<HTMLInputElement>(null);
-  const dentistaTriggerRef = useRef<HTMLButtonElement>(null);
-  const dataInputRef = useRef<HTMLInputElement>(null);
-  const horaInputRef = useRef<HTMLDivElement>(null);
-  const duracaoInputRef = useRef<HTMLInputElement>(null);
-  const telefoneFieldRef = useRef<HTMLDivElement>(null);
 
   // Form Consulta
   const [pacienteId, setPacienteId] = useState("");
@@ -131,7 +122,7 @@ export function NovoAgendamentoModal({
         setPacienteId(""); setPacienteNome(""); setTelefone(""); setEmail("");
         setProcedimento(""); setObservacoes(""); setSala("Sala 1");
         setPrimeiraConsulta(false); setMultiplo(false); setQtdSessoes(4); setIntervaloDias(7);
-        setRetornoQuando(""); setSearch(""); setPacienteError(false);
+        setRetornoQuando(""); setSearch("");
         setMarcadores([]); setComoConheceu("");
         setEventoTitulo(""); setDiaInteiro(false); setEscopo("dentista");
       }, 300);
@@ -151,58 +142,38 @@ export function NovoAgendamentoModal({
     setEmail(p.email || "");
     setSearch(p.nome);
     setShowSugg(false);
-    setPacienteError(false);
   };
 
   // Validação básica
-  type CampoErro = "paciente" | "dentista" | "data" | "hora" | "duracao" | "telefone" | "outro";
-  const validateConsulta = (): { msg: string; campo: CampoErro } | null => {
+  const validateConsulta = (): string | null => {
     if (!pacienteId || !UUID_RE.test(pacienteId)) {
-      return {
-        msg: search.trim().length > 0 ? "Clique no nome do paciente da lista" : "Busque e selecione um paciente",
-        campo: "paciente",
-      };
+      return search.trim().length > 0
+        ? "Paciente não selecionado. Clique no nome do paciente na lista de sugestões abaixo do campo de busca."
+        : "Busque e clique no nome do paciente na lista de sugestões para selecioná-lo.";
     }
-    if (!dentistaId || !UUID_RE.test(dentistaId)) return { msg: "Selecione um profissional", campo: "dentista" };
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return { msg: "Informe a data", campo: "data" };
-    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(hora)) return { msg: "Informe o horário (HH:MM)", campo: "hora" };
-    if (duracao < 5 || duracao > 480) return { msg: "Duração entre 5 e 480 minutos", campo: "duracao" };
-    if (multiplo && (qtdSessoes < 2 || qtdSessoes > 52)) return { msg: "Sessões entre 2 e 52", campo: "outro" };
-    if (multiplo && (intervaloDias < 1 || intervaloDias > 180)) return { msg: "Intervalo entre 1 e 180 dias", campo: "outro" };
+    if (!dentistaId || !UUID_RE.test(dentistaId)) return "Selecione um profissional.";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return "Data inválida.";
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(hora)) return "Horário inválido (HH:MM).";
+    if (duracao < 5 || duracao > 480) return "Duração entre 5 e 480 minutos.";
+    if (multiplo && (qtdSessoes < 2 || qtdSessoes > 52)) return "Quantidade de sessões entre 2 e 52.";
+    if (multiplo && (intervaloDias < 1 || intervaloDias > 180)) return "Intervalo entre 1 e 180 dias.";
     if (confirmacaoCanal === "whatsapp" && confirmacaoQuando && !telefone.replace(/\D/g, ""))
-      return { msg: "Informe o telefone para WhatsApp", campo: "telefone" };
+      return "Informe o telefone para enviar confirmação por WhatsApp.";
     return null;
   };
 
-  const focusCampo = (campo: CampoErro) => {
-    const refMap: Record<CampoErro, React.RefObject<HTMLElement | null>> = {
-      paciente: pacienteInputRef,
-      dentista: dentistaTriggerRef,
-      data: dataInputRef,
-      hora: horaInputRef,
-      duracao: duracaoInputRef,
-      telefone: telefoneFieldRef,
-      outro: pacienteInputRef,
-    };
-    const el = refMap[campo]?.current;
-    if (el) {
-      el.scrollIntoView({ behavior: "smooth", block: "center" });
-      setTimeout(() => {
-        if (typeof (el as HTMLInputElement).focus === "function") (el as HTMLInputElement).focus();
-      }, 200);
-    }
+  const handleCreatedSuccess = async () => {
+    onOpenChange(false);
+    await Promise.resolve(onCreated());
   };
 
-  const handleSubmitConsulta = async () => {
+  const handleSubmitConsulta = async (e?: FormEvent<HTMLFormElement>) => {
+    e?.preventDefault();
     console.log("[Agenda] Submit consulta", { pacienteId, dentistaId, data, hora, duracao });
     const err = validateConsulta();
     if (err) {
-      toast.error(err.msg, { duration: 5000 });
-      if (err.campo === "paciente") {
-        setPacienteError(true);
-        setShowSugg(true);
-      }
-      focusCampo(err.campo);
+      toast.error(err, { duration: 5000 });
+      if (!pacienteId) setShowSugg(true);
       return;
     }
     setSaving(true);
@@ -255,8 +226,7 @@ export function NovoAgendamentoModal({
         if (error) { toast.error("Erro ao criar agendamento: " + error); return; }
         toast.success("Agendamento criado");
       }
-      onCreated();
-      onOpenChange(false);
+      await handleCreatedSuccess();
     } catch (e: any) {
       console.error("[Agenda] Erro inesperado", e);
       toast.error("Erro inesperado: " + (e?.message || String(e)));
@@ -265,7 +235,8 @@ export function NovoAgendamentoModal({
     }
   };
 
-  const handleSubmitCompromissoEvento = async () => {
+  const handleSubmitCompromissoEvento = async (e?: FormEvent<HTMLFormElement>) => {
+    e?.preventDefault();
     if (!data) { toast.error("Informe a data."); return; }
     if (!diaInteiro && !/^([01]\d|2[0-3]):[0-5]\d$/.test(hora)) { toast.error("Horário inválido."); return; }
     if (escopo === "dentista" && !dentistaId) { toast.error("Selecione um profissional ou marque 'Clínica'."); return; }
@@ -291,8 +262,7 @@ export function NovoAgendamentoModal({
       } as Partial<AgendamentoVPS>);
       if (error) { toast.error("Erro: " + error); return; }
       toast.success(`${tab === "compromisso" ? "Compromisso" : "Evento"} criado`);
-      onCreated();
-      onOpenChange(false);
+      await handleCreatedSuccess();
     } finally {
       setSaving(false);
     }
@@ -317,36 +287,19 @@ export function NovoAgendamentoModal({
 
           {/* ════ CONSULTA ════ */}
           <TabsContent value="consulta" className="mt-4">
-          <form
-            onSubmit={(e) => { e.preventDefault(); e.stopPropagation(); void handleSubmitConsulta(); }}
-            className="space-y-4"
-          >
+            <form className="space-y-4" onSubmit={handleSubmitConsulta}>
             {/* Paciente search */}
             <div className="relative">
-              <Label className={`mb-1 block ${pacienteError ? "text-destructive" : ""}`}>Paciente</Label>
+              <Label className="mb-1 block">Paciente</Label>
               <div className="relative">
-                <Search
-                  className={`absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 ${
-                    pacienteError ? "text-destructive" : "text-muted-foreground"
-                  }`}
-                />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
-                  ref={pacienteInputRef}
                   placeholder="Buscar paciente por nome..."
                   value={search}
-                  onChange={(e) => {
-                    setSearch(e.target.value);
-                    setShowSugg(true);
-                    setPacienteId("");
-                    setPacienteError(false);
-                  }}
+                  onChange={(e) => { setSearch(e.target.value); setShowSugg(true); setPacienteId(""); }}
                   onFocus={() => setShowSugg(true)}
-                  aria-invalid={pacienteError}
-                  className={`pl-9 ${pacienteError ? "pr-9 border-destructive ring-2 ring-destructive/30 focus-visible:ring-destructive" : ""}`}
+                  className="pl-9"
                 />
-                {pacienteError && (
-                  <AlertCircle className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-destructive animate-pulse" />
-                )}
               </div>
               {showSugg && filteredPacientes.length > 0 && (
                 <div ref={sugRef} className="absolute z-50 mt-1 w-full bg-popover border border-border rounded-md shadow-lg max-h-60 overflow-y-auto">
@@ -364,7 +317,7 @@ export function NovoAgendamentoModal({
                 </div>
               )}
               {pacienteId && (
-                <div ref={telefoneFieldRef} tabIndex={-1} className="mt-2 flex items-center gap-2 flex-wrap">
+                <div className="mt-2 flex items-center gap-2 flex-wrap">
                   <Badge variant="secondary"><Phone className="h-3 w-3 mr-1" />{telefone || "—"}</Badge>
                   {email && <Badge variant="secondary"><Mail className="h-3 w-3 mr-1" />{email}</Badge>}
                   <label className="flex items-center gap-1.5 text-sm ml-auto">
@@ -379,9 +332,8 @@ export function NovoAgendamentoModal({
                 </p>
               )}
               {!pacienteId && search.trim().length >= 2 && filteredPacientes.length > 0 && (
-                <p className={`mt-1.5 text-xs flex items-center gap-1 ${pacienteError ? "text-destructive font-medium" : "text-muted-foreground"}`}>
-                  <AlertCircle className="h-3 w-3" />
-                  Clique em um paciente da lista acima para selecioná-lo.
+                <p className="mt-1.5 text-xs text-muted-foreground">
+                  ⚠️ Clique em um paciente da lista acima para selecioná-lo.
                 </p>
               )}
             </div>
@@ -391,7 +343,7 @@ export function NovoAgendamentoModal({
               <div>
                 <Label className="mb-1 block">Profissional</Label>
                 <Select value={dentistaId} onValueChange={setDentistaId}>
-                  <SelectTrigger ref={dentistaTriggerRef}><SelectValue placeholder="Selecione" /></SelectTrigger>
+                  <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
                   <SelectContent>
                     {dentistas.filter((d) => d?.id).map((d) => (
                       <SelectItem key={d.id} value={d.id}>{d.nome}</SelectItem>
@@ -426,15 +378,15 @@ export function NovoAgendamentoModal({
             <div className="grid grid-cols-4 gap-3">
               <div>
                 <Label className="mb-1 block">Data</Label>
-                <Input ref={dataInputRef} type="date" value={data} onChange={(e) => setData(e.target.value)} />
+                <Input type="date" value={data} onChange={(e) => setData(e.target.value)} />
               </div>
-              <div ref={horaInputRef} tabIndex={-1}>
+              <div>
                 <Label className="mb-1 block">Horário</Label>
                 <AnalogTimePicker value={hora} onChange={setHora} />
               </div>
               <div>
                 <Label className="mb-1 block">Duração (min)</Label>
-                <Input ref={duracaoInputRef} type="number" min={5} max={480} value={duracao} onChange={(e) => setDuracao(Number(e.target.value))} />
+                <Input type="number" min={5} max={480} value={duracao} onChange={(e) => setDuracao(Number(e.target.value))} />
               </div>
               <div>
                 <Label className="mb-1 block">Sala</Label>
@@ -546,15 +498,12 @@ export function NovoAgendamentoModal({
                 {multiplo ? `Agendar ${qtdSessoes} sessões` : "Agendar"}
               </Button>
             </div>
-          </form>
+            </form>
           </TabsContent>
 
           {/* ════ COMPROMISSO ════ */}
           <TabsContent value="compromisso" className="mt-4">
-          <form
-            onSubmit={(e) => { e.preventDefault(); e.stopPropagation(); void handleSubmitCompromissoEvento(); }}
-            className="space-y-4"
-          >
+            <form className="space-y-4" onSubmit={handleSubmitCompromissoEvento}>
             <CompromissoEventoForm
               titulo="Compromisso"
               eventoTitulo={eventoTitulo} setEventoTitulo={setEventoTitulo}
@@ -574,15 +523,12 @@ export function NovoAgendamentoModal({
                 Criar compromisso
               </Button>
             </div>
-          </form>
+            </form>
           </TabsContent>
 
           {/* ════ EVENTO ════ */}
           <TabsContent value="evento" className="mt-4">
-          <form
-            onSubmit={(e) => { e.preventDefault(); e.stopPropagation(); void handleSubmitCompromissoEvento(); }}
-            className="space-y-4"
-          >
+            <form className="space-y-4" onSubmit={handleSubmitCompromissoEvento}>
             <CompromissoEventoForm
               titulo="Evento"
               eventoTitulo={eventoTitulo} setEventoTitulo={setEventoTitulo}
@@ -602,7 +548,7 @@ export function NovoAgendamentoModal({
                 Criar evento
               </Button>
             </div>
-          </form>
+            </form>
           </TabsContent>
         </Tabs>
       </DialogContent>
