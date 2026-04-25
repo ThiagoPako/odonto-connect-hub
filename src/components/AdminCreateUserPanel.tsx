@@ -7,12 +7,15 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { UserPlus } from "lucide-react";
+import { CompleteDentistaDialog, type CompleteDentistaTarget } from "@/components/CompleteDentistaDialog";
 
 export function AdminCreateUserPanel() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState("user");
+  const [completeOpen, setCompleteOpen] = useState(false);
+  const [completeTarget, setCompleteTarget] = useState<CompleteDentistaTarget | null>(null);
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -64,13 +67,22 @@ export function AdminCreateUserPanel() {
           description: `✓ Usuário criado com sucesso\nℹ Já existia em /dentistas (${existing.nome || existing.email}) — não duplicado\n✓ Disponível na Agenda`,
           duration: 8000,
         });
+        setCompleteTarget({
+          id: existing.id,
+          nome: existing.nome || userName,
+          email: existing.email || userEmail,
+          telefone: existing.telefone || "",
+          cro: existing.cro || "",
+          especialidade: existing.especialidade || "Clínica Geral",
+        });
+        setCompleteOpen(true);
       } else {
-        const { error: dErr } = await dentistasApi.create({
+        const { data: createdDent, error: dErr } = await dentistasApi.create({
           nome: userName,
           email: userEmail,
           telefone: "",
           cro: "",
-          especialidade: "Clínico Geral",
+          especialidade: "Clínica Geral",
           comissao_percentual: 35,
           ativo: true,
         });
@@ -85,6 +97,21 @@ export function AdminCreateUserPanel() {
             description: "✓ Usuário criado com sucesso\n✓ Registro em /dentistas criado\n✓ Disponível na Agenda",
             duration: 6000,
           });
+          const newId =
+            (createdDent as any)?.id ||
+            (createdDent as any)?.data?.id ||
+            (createdDent as any)?.dentista?.id;
+          if (newId) {
+            setCompleteTarget({
+              id: newId,
+              nome: userName,
+              email: userEmail,
+              telefone: "",
+              cro: "",
+              especialidade: "Clínica Geral",
+            });
+            setCompleteOpen(true);
+          }
         }
       }
     } else {
@@ -165,6 +192,12 @@ export function AdminCreateUserPanel() {
           </Button>
         </form>
       </CardContent>
+
+      <CompleteDentistaDialog
+        open={completeOpen}
+        onOpenChange={setCompleteOpen}
+        dentista={completeTarget}
+      />
     </Card>
   );
 }
