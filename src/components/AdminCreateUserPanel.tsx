@@ -30,13 +30,34 @@ export function AdminCreateUserPanel() {
     const { data, error } = await adminCreateUser(name.trim(), email.trim(), password, role);
     if (error) {
       toast.error("Erro ao criar usuário: " + error);
-    } else {
-      toast.success(`Usuário ${data?.user?.name} criado com sucesso!`);
-      setName("");
-      setEmail("");
-      setPassword("");
-      setRole("user");
+      setLoading(false);
+      return;
     }
+
+    toast.success(`Usuário ${data?.user?.name} criado com sucesso!`);
+
+    // Se for dentista, cria também o registro clínico em /dentistas
+    if (role === "dentista") {
+      const { error: dErr } = await dentistasApi.create({
+        nome: name.trim(),
+        email: email.trim(),
+        telefone: "",
+        cro: "",
+        especialidade: "Clínico Geral",
+        comissao_percentual: 35,
+        ativo: true,
+      });
+      if (dErr) {
+        toast.warning("Usuário criado, mas falhou ao adicionar em Dentistas: " + dErr);
+      } else {
+        toast.success("Dentista também adicionado à agenda");
+      }
+    }
+
+    setName("");
+    setEmail("");
+    setPassword("");
+    setRole("user");
     setLoading(false);
   };
 
