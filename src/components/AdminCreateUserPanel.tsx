@@ -17,9 +17,39 @@ export function AdminCreateUserPanel() {
   const [role, setRole] = useState("user");
   const [especialidade, setEspecialidade] = useState("Clínica Geral");
   const [comissao, setComissao] = useState<string>("35");
+  const [comissaoError, setComissaoError] = useState<string | null>(null);
   const [completeOpen, setCompleteOpen] = useState(false);
   const [completeTarget, setCompleteTarget] = useState<CompleteDentistaTarget | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // Aceita apenas dígitos com até 2 casas decimais e bloqueia >100. Vazio é permitido (mostra erro).
+  const handleComissaoChange = (raw: string) => {
+    // Normaliza vírgula para ponto
+    let v = raw.replace(",", ".").trim();
+    // Permite vazio ou string que casa com o padrão progressivo
+    if (v === "") {
+      setComissao("");
+      setComissaoError("Informe a comissão");
+      return;
+    }
+    // Bloqueia caracteres não numéricos / múltiplos pontos / mais de 2 decimais
+    if (!/^\d{0,3}(\.\d{0,2})?$/.test(v)) {
+      // Não atualiza estado — input rejeita silenciosamente
+      return;
+    }
+    const num = Number(v);
+    if (Number.isFinite(num) && num > 100) {
+      setComissao("100");
+      setComissaoError(null);
+      return;
+    }
+    setComissao(v);
+    if (!Number.isFinite(num) || num < 0 || num > 100) {
+      setComissaoError("Comissão deve estar entre 0 e 100");
+    } else {
+      setComissaoError(null);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
