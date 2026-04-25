@@ -6,9 +6,12 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { AlertTriangle, Loader2 } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { AlertTriangle, Check, ChevronsUpDown, Loader2 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { agendaApi, dentistasApi, type AgendamentoVPS } from "@/lib/vpsApi";
+import { agendaApi, dentistasApi, procedimentosCatalogoApi, type AgendamentoVPS, type ProcedimentoCatalogo } from "@/lib/vpsApi";
 
 interface Prof { id: string; nome: string }
 
@@ -48,11 +51,15 @@ export function EditarAgendamentoModal({ appointment, open, onOpenChange, onSave
   const [hora, setHora] = useState("");
   const [duracao, setDuracao] = useState(30);
   const [procedimento, setProcedimento] = useState("");
+  const [categoria, setCategoria] = useState<string>("");
+  const [categoriaCor, setCategoriaCor] = useState<string>("");
   const [status, setStatus] = useState("agendado");
   const [sala, setSala] = useState("");
   const [observacoes, setObservacoes] = useState("");
   const [dentistaId, setDentistaId] = useState("");
   const [profs, setProfs] = useState<Prof[]>([]);
+  const [catalogo, setCatalogo] = useState<ProcedimentoCatalogo[]>([]);
+  const [comboOpen, setComboOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [dayAppts, setDayAppts] = useState<AgendamentoVPS[]>([]);
   const [loadingDay, setLoadingDay] = useState(false);
@@ -62,6 +69,9 @@ export function EditarAgendamentoModal({ appointment, open, onOpenChange, onSave
     dentistasApi.list().then(({ data }) => {
       if (Array.isArray(data)) setProfs(data as Prof[]);
     }).catch(() => {});
+    procedimentosCatalogoApi.list().then(({ data }) => {
+      if (Array.isArray(data)) setCatalogo(data.filter((p) => p.ativo));
+    }).catch(() => {});
   }, [open]);
 
   useEffect(() => {
@@ -70,11 +80,33 @@ export function EditarAgendamentoModal({ appointment, open, onOpenChange, onSave
     setHora(appointment.hora || "");
     setDuracao(appointment.duracao || 30);
     setProcedimento(appointment.procedimento || "");
+    setCategoria(appointment.categoria || "");
+    setCategoriaCor(appointment.categoria_cor || "");
     setStatus(appointment.status || "agendado");
     setSala(appointment.sala || "");
     setObservacoes(appointment.observacoes || "");
     setDentistaId(appointment.dentista_id || "");
   }, [appointment]);
+
+  // Agrupa catálogo por categoria para o combobox
+  const catalogoPorCategoria = useMemo(() => {
+    const map = new Map<string, ProcedimentoCatalogo[]>();
+    for (const p of catalogo) {
+      const cat = p.categoria || "Sem categoria";
+      const arr = map.get(cat) || [];
+      arr.push(p);
+      map.set(cat, arr);
+    }
+    return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
+  }, [catalogo]);
+
+  const handlePickProcedimento = (p: ProcedimentoCatalogo) => {
+    setProcedimento(p.nome);
+    setCategoria(p.categoria || "");
+    setCategoriaCor(p.cor || "");
+    if (p.duracao_minutos) setDuracao(p.duracao_minutos);
+    setComboOpen(false);
+  };
 
   // Carrega agendamentos do dia/profissional para checar conflitos
   useEffect(() => {
@@ -124,6 +156,8 @@ export function EditarAgendamentoModal({ appointment, open, onOpenChange, onSave
       hora,
       duracao,
       procedimento,
+      categoria,
+      categoria_cor: categoriaCor,
       status,
       sala,
       observacoes,
@@ -198,7 +232,72 @@ export function EditarAgendamentoModal({ appointment, open, onOpenChange, onSave
 
           <div className="space-y-1.5">
             <Label className="text-xs">Procedimento</Label>
-            <Input value={procedimento} onChange={(e) => setProcedimento(e.target.value)} />
+            <Popover open={comboOpen} onOpenChange={setComboOpen}>
+              <PopoverTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  role="combobox"
+                  aria-expanded={comboOpen}
+                  className="w-full justify-between font-normal"
+                >
+                  <span className="flex items-center gap-2 min-w-0">
+                    {categoriaCor && (
+                      <span
+                        className="h-2.5 w-2.5 rounded-full shrink-0"
+                        style={{ background: categoriaCor }}
+                      />
+                    )}
+                    <span className={cn("truncate", !procedimento && "text-muted-foreground")}>
+                      {procedimento || "Selecione um procedimento…"}
+                    </span>
+                    {categoria && (
+                      <span className="text-[10px] text-muted-foreground shrink-0">· {categoria}</span>
+                    )}
+                  </span>
+                  <ChevronsUpDown className="h-4 w-4 opacity-50 shrink-0" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                <Command>
+                  <CommandInput placeholder="Buscar procedimento ou categoria…" />
+                  <CommandList>
+                    <CommandEmpty>Nenhum procedimento encontrado.</CommandEmpty>
+                    {catalogoPorCategoria.map(([cat, items]) => (
+                      <CommandGroup key={cat} heading={cat}>
+                        {items.map((p) => (
+                          <CommandItem
+                            key={p.id}
+                            value={`${p.nome} ${p.categoria || ""} ${p.codigo || ""}`}
+                            onSelect={() => handlePickProcedimento(p)}
+                          >
+                            <Check
+                              className={cn(
+                                "mr-2 h-4 w-4",
+                                procedimento === p.nome ? "opacity-100" : "opacity-0"
+                              )}
+                            />
+                            <span
+                              className="h-2.5 w-2.5 rounded-full mr-2 shrink-0"
+                              style={{ background: p.cor || "var(--muted-foreground)" }}
+                            />
+                            <span className="flex-1 truncate">{p.nome}</span>
+                            {p.duracao_minutos > 0 && (
+                              <span className="ml-2 text-[10px] text-muted-foreground">
+                                {p.duracao_minutos}min
+                              </span>
+                            )}
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                    ))}
+                  </CommandList>
+                </Command>
+              </PopoverContent>
+            </Popover>
+            <p className="text-[10px] text-muted-foreground">
+              Selecionar atualiza a categoria, cor e duração padrão automaticamente.
+            </p>
           </div>
 
           <div className="space-y-1.5">
