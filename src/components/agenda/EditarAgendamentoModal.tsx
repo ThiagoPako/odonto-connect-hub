@@ -51,11 +51,15 @@ export function EditarAgendamentoModal({ appointment, open, onOpenChange, onSave
   const [hora, setHora] = useState("");
   const [duracao, setDuracao] = useState(30);
   const [procedimento, setProcedimento] = useState("");
+  const [categoria, setCategoria] = useState<string>("");
+  const [categoriaCor, setCategoriaCor] = useState<string>("");
   const [status, setStatus] = useState("agendado");
   const [sala, setSala] = useState("");
   const [observacoes, setObservacoes] = useState("");
   const [dentistaId, setDentistaId] = useState("");
   const [profs, setProfs] = useState<Prof[]>([]);
+  const [catalogo, setCatalogo] = useState<ProcedimentoCatalogo[]>([]);
+  const [comboOpen, setComboOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [dayAppts, setDayAppts] = useState<AgendamentoVPS[]>([]);
   const [loadingDay, setLoadingDay] = useState(false);
@@ -64,6 +68,9 @@ export function EditarAgendamentoModal({ appointment, open, onOpenChange, onSave
     if (!open) return;
     dentistasApi.list().then(({ data }) => {
       if (Array.isArray(data)) setProfs(data as Prof[]);
+    }).catch(() => {});
+    procedimentosCatalogoApi.list().then(({ data }) => {
+      if (Array.isArray(data)) setCatalogo(data.filter((p) => p.ativo));
     }).catch(() => {});
   }, [open]);
 
