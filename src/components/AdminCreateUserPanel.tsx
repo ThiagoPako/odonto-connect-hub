@@ -97,8 +97,8 @@ export function AdminCreateUserPanel() {
           email: userEmail,
           telefone: "",
           cro: "",
-          especialidade: "Clínica Geral",
-          comissao_percentual: 35,
+          especialidade,
+          comissao_percentual: comissaoNum,
           ativo: true,
         });
 
@@ -109,7 +109,7 @@ export function AdminCreateUserPanel() {
           });
         } else {
           toast.success(`Resumo do cadastro de ${createdName}`, {
-            description: "✓ Usuário criado com sucesso\n✓ Registro em /dentistas criado\n✓ Disponível na Agenda",
+            description: `✓ Usuário criado com sucesso\n✓ Registro em /dentistas criado (${especialidade}, ${comissaoNum}%)\n✓ Disponível na Agenda`,
             duration: 6000,
           });
           const newId =
@@ -123,7 +123,7 @@ export function AdminCreateUserPanel() {
               email: userEmail,
               telefone: "",
               cro: "",
-              especialidade: "Clínica Geral",
+              especialidade,
             });
             setCompleteOpen(true);
           }
