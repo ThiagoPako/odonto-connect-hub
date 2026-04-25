@@ -3444,6 +3444,32 @@ app.delete('/api/prontuarios/:id', async (req, res) => {
 // ORÇAMENTOS — POST completo (missing)
 // ═══════════════════════════════════════════════════════════════
 
+/**
+ * Para cada item do orçamento que referencie `procedimento_id` mas não tenha
+ * `procedimento_versao_id`, congela a versão atualmente vigente — assim o
+ * orçamento mantém preços/requisitos históricos mesmo se o catálogo mudar.
+ */
+async function congelarVersoesItens(itens) {
+  if (!Array.isArray(itens) || itens.length === 0) return itens || [];
+  const out = [];
+  for (const it of itens) {
+    if (it && it.procedimento_id && !it.procedimento_versao_id) {
+      const { rows } = await pool.query(
+        `SELECT id, versao FROM procedimentos_catalogo_versoes
+         WHERE procedimento_id=$1 AND valido_ate IS NULL
+         ORDER BY versao DESC LIMIT 1`,
+        [it.procedimento_id]
+      );
+      if (rows[0]) {
+        out.push({ ...it, procedimento_versao_id: rows[0].id, procedimento_versao: rows[0].versao });
+        continue;
+      }
+    }
+    out.push(it);
+  }
+  return out;
+}
+
 app.post('/api/orcamentos', async (req, res) => {
   try {
     await verifyUser(req);
@@ -3451,6 +3477,7 @@ app.post('/api/orcamentos', async (req, res) => {
       paciente_id, dentista_id, itens, valor_total, desconto, status, validade,
       observacoes, forma_pagamento, parcelas, titulo, print_config, odontograma_snapshot,
     } = req.body;
+    const itensCongelados = await congelarVersoesItens(itens);
     const id = crypto.randomUUID();
     await pool.query(
       `INSERT INTO orcamentos (
@@ -3458,7 +3485,7 @@ app.post('/api/orcamentos', async (req, res) => {
         observacoes, forma_pagamento, parcelas, titulo, print_config, odontograma_snapshot
       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
       [
-        id, paciente_id, dentista_id, JSON.stringify(itens || []),
+        id, paciente_id, dentista_id, JSON.stringify(itensCongelados),
         valor_total, desconto || 0, status || 'pendente', validade,
         observacoes, forma_pagamento, parcelas || 1,
         titulo || null,
