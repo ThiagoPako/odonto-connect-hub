@@ -202,6 +202,39 @@ export function AdminCreateUserPanel() {
                 </SelectContent>
               </Select>
             </div>
+
+            {role === "dentista" && (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="user-especialidade">Especialidade</Label>
+                  <Select value={especialidade} onValueChange={setEspecialidade}>
+                    <SelectTrigger id="user-especialidade">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {especialidades.map((esp) => (
+                        <SelectItem key={esp} value={esp}>
+                          {esp}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="user-comissao">Comissão (%)</Label>
+                  <Input
+                    id="user-comissao"
+                    type="number"
+                    min={0}
+                    max={100}
+                    step={0.5}
+                    placeholder="35"
+                    value={comissao}
+                    onChange={(e) => setComissao(e.target.value)}
+                  />
+                </div>
+              </>
+            )}
           </div>
           <Button type="submit" disabled={loading} className="w-full sm:w-auto">
             <UserPlus className="h-4 w-4 mr-2" />
