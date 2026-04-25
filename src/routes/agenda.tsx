@@ -2,7 +2,8 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { Button } from "@/components/ui/button";
-import { Plus, ChevronLeft, ChevronRight, Settings, RefreshCw } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Plus, ChevronLeft, ChevronRight, Settings, RefreshCw, Clock } from "lucide-react";
 import { toast } from "sonner";
 import { agendaApi, dentistasApi, clinicaApi, type AgendamentoVPS, type ClinicaConfig } from "@/lib/vpsApi";
 import { AgendaMiniCalendar } from "@/components/agenda/AgendaMiniCalendar";
@@ -77,7 +78,16 @@ function AgendaPage() {
     return { inicio: h.inicio, fim: h.fim };
   }, [config, currentDate]);
 
-  const intervalo = config?.intervalo_agenda || 30;
+  const [intervaloOverride, setIntervaloOverride] = useState<number | null>(() => {
+    if (typeof window === "undefined") return null;
+    const v = window.localStorage.getItem("agenda:intervalo");
+    return v ? Number(v) : null;
+  });
+  const intervalo = intervaloOverride ?? config?.intervalo_agenda ?? 30;
+  const setIntervalo = (v: number) => {
+    setIntervaloOverride(v);
+    try { window.localStorage.setItem("agenda:intervalo", String(v)); } catch {}
+  };
 
   const visibleProfs = profs.filter((p) => selectedProfs.includes(p.id));
   const visibleApts = appointments.filter((a) => !a.dentista_id || selectedProfs.includes(a.dentista_id));
@@ -110,6 +120,23 @@ function AgendaPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 px-2 py-1 rounded-md border bg-background">
+              <Clock className="h-3.5 w-3.5 text-muted-foreground" />
+              <Select value={String(intervalo)} onValueChange={(v) => setIntervalo(Number(v))}>
+                <SelectTrigger className="h-7 w-[110px] border-0 shadow-none focus:ring-0 px-1 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="5">5 minutos</SelectItem>
+                  <SelectItem value="10">10 minutos</SelectItem>
+                  <SelectItem value="15">15 minutos</SelectItem>
+                  <SelectItem value="20">20 minutos</SelectItem>
+                  <SelectItem value="30">30 minutos</SelectItem>
+                  <SelectItem value="45">45 minutos</SelectItem>
+                  <SelectItem value="60">1 hora</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
             <Button size="sm" variant="outline" onClick={loadAppointments} disabled={loading}>
               <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
             </Button>
