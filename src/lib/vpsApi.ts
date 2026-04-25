@@ -249,6 +249,34 @@ export const agendaApi = {
     vpsApiFetch(`/agenda/${encodeURIComponent(id)}`, { method: 'PUT', body }),
 };
 
+// ─── Clínica config (horários + regras de agenda) ────────────
+
+export type DiaSemana = 'dom' | 'seg' | 'ter' | 'qua' | 'qui' | 'sex' | 'sab';
+export type HorarioDia = { ativo: boolean; inicio: string; fim: string };
+export type HorariosSemana = Record<DiaSemana, HorarioDia>;
+
+export interface ClinicaConfig {
+  id: number;
+  horarios: HorariosSemana;
+  intervalo_agenda: number;
+  limitar_mesmo_horario: boolean;
+  permitir_horario_indisponivel: boolean;
+  habilitar_sessoes_procedimento: boolean;
+  updated_at: string;
+}
+
+export const clinicaApi = {
+  getConfig: () => vpsApiFetch<ClinicaConfig>('/clinica/config'),
+  updateConfig: (body: Partial<Omit<ClinicaConfig, 'id' | 'updated_at'>>) =>
+    vpsApiFetch<ClinicaConfig>('/clinica/config', { method: 'PUT', body }),
+  getDentistaHorarios: (dentistaId: string) =>
+    vpsApiFetch<{ id: string; nome: string; usar_horario_clinica: boolean; horarios: HorariosSemana; herdado?: boolean }>(
+      `/dentistas/${encodeURIComponent(dentistaId)}/horarios`
+    ),
+  updateDentistaHorarios: (dentistaId: string, body: { usar_horario_clinica?: boolean; horarios?: HorariosSemana | null }) =>
+    vpsApiFetch(`/dentistas/${encodeURIComponent(dentistaId)}/horarios`, { method: 'PUT', body }),
+};
+
 export interface AgendamentoVPS {
   id: string;
   paciente_id: string;
