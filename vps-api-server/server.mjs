@@ -2513,7 +2513,128 @@ app.delete('/api/dentistas/:id', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
-// FINANCEIRO — PUT / DELETE (missing)
+// CLINICA CONFIG — horários globais + regras de agenda
+// ═══════════════════════════════════════════════════════════════
+
+const DEFAULT_HORARIOS = {
+  dom: { ativo: false, inicio: '09:00', fim: '18:00' },
+  seg: { ativo: true,  inicio: '09:00', fim: '18:00' },
+  ter: { ativo: true,  inicio: '09:00', fim: '18:00' },
+  qua: { ativo: true,  inicio: '09:00', fim: '18:00' },
+  qui: { ativo: true,  inicio: '09:00', fim: '18:00' },
+  sex: { ativo: true,  inicio: '09:00', fim: '18:00' },
+  sab: { ativo: false, inicio: '09:00', fim: '13:00' },
+};
+
+function validateHorarios(h) {
+  if (!h || typeof h !== 'object') return false;
+  const dias = ['dom','seg','ter','qua','qui','sex','sab'];
+  const re = /^([01]\d|2[0-3]):[0-5]\d$/;
+  for (const d of dias) {
+    const v = h[d];
+    if (!v || typeof v.ativo !== 'boolean') return false;
+    if (!re.test(v.inicio) || !re.test(v.fim)) return false;
+    if (v.inicio >= v.fim) return false;
+  }
+  return true;
+}
+
+app.get('/api/clinica/config', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { rows } = await pool.query('SELECT * FROM clinica_config WHERE id=1');
+    if (rows.length === 0) {
+      // fallback: cria registro default
+      await pool.query('INSERT INTO clinica_config (id) VALUES (1) ON CONFLICT (id) DO NOTHING');
+      const { rows: r2 } = await pool.query('SELECT * FROM clinica_config WHERE id=1');
+      return res.json(r2[0]);
+    }
+    res.json(rows[0]);
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/api/clinica/config', async (req, res) => {
+  try {
+    await verifyAdmin(req);
+    const { horarios, intervalo_agenda, limitar_mesmo_horario, permitir_horario_indisponivel, habilitar_sessoes_procedimento } = req.body || {};
+    const sets = []; const params = [];
+    if (horarios !== undefined) {
+      if (!validateHorarios(horarios)) return res.status(400).json({ error: 'Horários inválidos' });
+      params.push(JSON.stringify(horarios)); sets.push(`horarios=$${params.length}::jsonb`);
+    }
+    if (intervalo_agenda !== undefined) {
+      if (![5, 15, 20, 30, 60].includes(Number(intervalo_agenda))) return res.status(400).json({ error: 'Intervalo deve ser 5, 15, 20, 30 ou 60' });
+      params.push(Number(intervalo_agenda)); sets.push(`intervalo_agenda=$${params.length}`);
+    }
+    if (limitar_mesmo_horario !== undefined) { params.push(!!limitar_mesmo_horario); sets.push(`limitar_mesmo_horario=$${params.length}`); }
+    if (permitir_horario_indisponivel !== undefined) { params.push(!!permitir_horario_indisponivel); sets.push(`permitir_horario_indisponivel=$${params.length}`); }
+    if (habilitar_sessoes_procedimento !== undefined) { params.push(!!habilitar_sessoes_procedimento); sets.push(`habilitar_sessoes_procedimento=$${params.length}`); }
+    if (sets.length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
+    await pool.query(`UPDATE clinica_config SET ${sets.join(', ')}, updated_at=NOW() WHERE id=1`, params);
+    const { rows } = await pool.query('SELECT * FROM clinica_config WHERE id=1');
+    res.json(rows[0]);
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    if (error.message === 'Admin only') return res.status(403).json({ error: 'Admin only' });
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// DENTISTAS — Horários (override por profissional)
+// ═══════════════════════════════════════════════════════════════
+
+app.get('/api/dentistas/:id/horarios', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { rows } = await pool.query(
+      'SELECT id, nome, usar_horario_clinica, horarios FROM dentistas WHERE id=$1',
+      [req.params.id]
+    );
+    if (rows.length === 0) return res.status(404).json({ error: 'Dentista não encontrado' });
+    const d = rows[0];
+    if (d.usar_horario_clinica || !d.horarios) {
+      const { rows: c } = await pool.query('SELECT horarios FROM clinica_config WHERE id=1');
+      return res.json({ id: d.id, nome: d.nome, usar_horario_clinica: true, horarios: c[0]?.horarios || DEFAULT_HORARIOS, herdado: true });
+    }
+    res.json({ ...d, herdado: false });
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/api/dentistas/:id/horarios', async (req, res) => {
+  try {
+    await verifyAdmin(req);
+    const { usar_horario_clinica, horarios } = req.body || {};
+    const sets = []; const params = [];
+    if (usar_horario_clinica !== undefined) {
+      params.push(!!usar_horario_clinica); sets.push(`usar_horario_clinica=$${params.length}`);
+    }
+    if (horarios !== undefined) {
+      if (horarios === null) {
+        sets.push(`horarios=NULL`);
+      } else {
+        if (!validateHorarios(horarios)) return res.status(400).json({ error: 'Horários inválidos' });
+        params.push(JSON.stringify(horarios)); sets.push(`horarios=$${params.length}::jsonb`);
+      }
+    }
+    if (sets.length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
+    params.push(req.params.id);
+    await pool.query(`UPDATE dentistas SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length}`, params);
+    const { rows } = await pool.query('SELECT id, nome, usar_horario_clinica, horarios FROM dentistas WHERE id=$1', [req.params.id]);
+    res.json(rows[0]);
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    if (error.message === 'Admin only') return res.status(403).json({ error: 'Admin only' });
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════
 
 app.put('/api/financeiro/:id', async (req, res) => {
