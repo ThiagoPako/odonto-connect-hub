@@ -61,6 +61,14 @@ export function NovoAgendamentoModal({
   const [pacienteError, setPacienteError] = useState(false);
   const sugRef = useRef<HTMLDivElement>(null);
 
+  // Refs para foco em validação
+  const pacienteInputRef = useRef<HTMLInputElement>(null);
+  const dentistaTriggerRef = useRef<HTMLButtonElement>(null);
+  const dataInputRef = useRef<HTMLInputElement>(null);
+  const horaInputRef = useRef<HTMLInputElement>(null);
+  const duracaoInputRef = useRef<HTMLInputElement>(null);
+  const telefoneFieldRef = useRef<HTMLDivElement>(null);
+
   // Form Consulta
   const [pacienteId, setPacienteId] = useState("");
   const [pacienteNome, setPacienteNome] = useState("");
