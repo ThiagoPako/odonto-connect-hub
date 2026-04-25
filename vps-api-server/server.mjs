@@ -10021,6 +10021,47 @@ app.listen(PORT, async () => {
       `ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS titulo TEXT`,
       `ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS print_config JSONB DEFAULT '{"logo":true,"valores":true,"odontograma":true,"assinatura":true,"desconto":true,"observacoes":true}'::jsonb`,
       `ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS odontograma_snapshot JSONB`,
+
+      // Fase C — Execuções de procedimentos + Assinaturas eletrônicas
+      `CREATE TABLE IF NOT EXISTS procedimento_execucoes (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        orcamento_id UUID REFERENCES orcamentos(id) ON DELETE CASCADE,
+        orcamento_item_id TEXT,
+        paciente_id UUID,
+        dentista_id UUID,
+        procedimento_id UUID,
+        procedimento_nome TEXT,
+        dente INTEGER,
+        faces JSONB DEFAULT '[]'::jsonb,
+        valor NUMERIC(10,2) DEFAULT 0,
+        observacoes TEXT,
+        status TEXT DEFAULT 'executado',
+        executado_em TIMESTAMPTZ DEFAULT NOW(),
+        assinatura_id UUID,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_execucoes_orcamento ON procedimento_execucoes(orcamento_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_execucoes_paciente ON procedimento_execucoes(paciente_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_execucoes_dentista ON procedimento_execucoes(dentista_id)`,
+      `CREATE TABLE IF NOT EXISTS assinaturas_eletronicas (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        paciente_id UUID,
+        dentista_id UUID,
+        contexto TEXT,             -- 'orcamento' | 'execucao' | 'consentimento'
+        contexto_id UUID,           -- referência ao registro assinado
+        assinatura_base64 TEXT NOT NULL,  -- canvas → PNG base64
+        latitude DOUBLE PRECISION,
+        longitude DOUBLE PRECISION,
+        accuracy_m DOUBLE PRECISION,
+        ip_address TEXT,
+        user_agent TEXT,
+        verificacao_canal TEXT,    -- 'sms' | 'whatsapp' | 'none'
+        verificacao_codigo TEXT,
+        verificacao_em TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_assinaturas_paciente ON assinaturas_eletronicas(paciente_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_assinaturas_contexto ON assinaturas_eletronicas(contexto, contexto_id)`,
     ];
 
     for (const sql of migrations) {
