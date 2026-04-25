@@ -67,13 +67,22 @@ export function AdminCreateUserPanel() {
           description: `✓ Usuário criado com sucesso\nℹ Já existia em /dentistas (${existing.nome || existing.email}) — não duplicado\n✓ Disponível na Agenda`,
           duration: 8000,
         });
+        setCompleteTarget({
+          id: existing.id,
+          nome: existing.nome || userName,
+          email: existing.email || userEmail,
+          telefone: existing.telefone || "",
+          cro: existing.cro || "",
+          especialidade: existing.especialidade || "Clínica Geral",
+        });
+        setCompleteOpen(true);
       } else {
-        const { error: dErr } = await dentistasApi.create({
+        const { data: createdDent, error: dErr } = await dentistasApi.create({
           nome: userName,
           email: userEmail,
           telefone: "",
           cro: "",
-          especialidade: "Clínico Geral",
+          especialidade: "Clínica Geral",
           comissao_percentual: 35,
           ativo: true,
         });
@@ -88,6 +97,21 @@ export function AdminCreateUserPanel() {
             description: "✓ Usuário criado com sucesso\n✓ Registro em /dentistas criado\n✓ Disponível na Agenda",
             duration: 6000,
           });
+          const newId =
+            (createdDent as any)?.id ||
+            (createdDent as any)?.data?.id ||
+            (createdDent as any)?.dentista?.id;
+          if (newId) {
+            setCompleteTarget({
+              id: newId,
+              nome: userName,
+              email: userEmail,
+              telefone: "",
+              cro: "",
+              especialidade: "Clínica Geral",
+            });
+            setCompleteOpen(true);
+          }
         }
       }
     } else {
