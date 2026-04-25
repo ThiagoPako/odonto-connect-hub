@@ -88,6 +88,10 @@ export function NovoAgendamentoModal({
   const [qtdSessoes, setQtdSessoes] = useState(4);
   const [intervaloDias, setIntervaloDias] = useState(7);
 
+  // Marcadores + Como conheceu (Fase A)
+  const [marcadores, setMarcadores] = useState<MarcadorAgenda[]>([]);
+  const [comoConheceu, setComoConheceu] = useState<string>("");
+
   // Compromisso/Evento
   const [escopo, setEscopo] = useState<"dentista" | "clinica">("dentista");
   const [diaInteiro, setDiaInteiro] = useState(false);
