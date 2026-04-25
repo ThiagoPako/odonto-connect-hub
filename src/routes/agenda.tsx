@@ -240,7 +240,7 @@ function AgendaPage() {
             >
               <option value="all">Todos profissionais</option>
               {professionals.map((p) => (
-                <option key={p.id} value={p.name.split(" ")[1] || p.name}>{p.name}</option>
+                <option key={p.id} value={p.id}>{p.name}</option>
               ))}
             </select>
             <button onClick={() => setShowNovoDialog(true)} className="flex items-center gap-1.5 h-8 px-3 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors">
