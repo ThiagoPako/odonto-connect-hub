@@ -246,6 +246,9 @@ function OrcamentosPage() {
                 budget={selected}
                 onStatusChange={handleStatusChange}
                 onExecute={() => setExecOpen(true)}
+                onPrint={() => handleImprimir(selected)}
+                onEdit={() => handleEditar(selected)}
+                onDelete={() => handleExcluir(selected.id)}
               />
             ) : (
               <div className="bg-card rounded-xl border border-border p-8 flex flex-col items-center justify-center text-center min-h-[400px]">
@@ -260,7 +263,21 @@ function OrcamentosPage() {
 
       <NovoOrcamentoModal
         open={novoOpen}
-        onOpenChange={setNovoOpen}
+        onOpenChange={(v) => { setNovoOpen(v); if (!v) setEditing(null); }}
+        orcamentoEditar={editing ? {
+          id: editing.id,
+          paciente_id: editing.paciente_id,
+          dentista_id: editing.dentista_id,
+          titulo: editing.titulo,
+          itens: editing.itens,
+          valor_total: editing.valor_total,
+          desconto: editing.desconto,
+          observacoes: editing.observacoes,
+          forma_pagamento: editing.forma_pagamento,
+          parcelas: editing.parcelas,
+          print_config: editing.print_config,
+          odontograma_snapshot: editing.odontograma_snapshot as any,
+        } : null}
         onSaved={loadAll}
       />
       <ExecucaoModal
@@ -270,10 +287,49 @@ function OrcamentosPage() {
           id: selected.id,
           paciente_id: selected.paciente_id,
           paciente_nome: selected.paciente_nome,
+          dentista_id: selected.dentista_id,
           itens: selected.itens,
         } : null}
         onChanged={loadAll}
       />
+
+      {selected && (
+        <OrcamentoPrintPreview
+          open={printOpen}
+          onOpenChange={setPrintOpen}
+          paciente={{
+            nome: selected.paciente_nome,
+            telefone: pacienteCache[selected.paciente_id]?.telefone || selected.paciente_telefone,
+            cpf: pacienteCache[selected.paciente_id]?.cpf || selected.paciente_cpf,
+          }}
+          dentista={selected.dentista_id ? {
+            nome: dentistaCache[selected.dentista_id]?.nome || selected.dentista_nome,
+            cro: dentistaCache[selected.dentista_id]?.cro,
+            especialidade: dentistaCache[selected.dentista_id]?.especialidade,
+          } : null}
+          titulo={selected.titulo || "Plano de tratamento"}
+          itens={selected.itens.map((it: any) => ({
+            id: it.id || String(Math.random()),
+            procedimento_id: it.procedimento_id || "",
+            procedimento_nome: it.procedimento_nome || it.procedimento || it.descricao || "Procedimento",
+            procedimento_codigo: it.procedimento_codigo || it.codigo || null,
+            dente: it.dente ?? null,
+            faces: Array.isArray(it.faces) ? it.faces : [],
+            quantidade: Number(it.quantidade) || 1,
+            valor_unitario: Number(it.valor_unitario || it.valor) || 0,
+            valor_total: Number(it.valor_total || it.valor) || 0,
+            cor: it.cor,
+          }))}
+          subtotal={selected.valor_total}
+          desconto={selected.desconto}
+          total={selected.valor_total - selected.desconto}
+          observacoes={selected.observacoes}
+          formaPagamento={selected.forma_pagamento}
+          parcelas={selected.parcelas}
+          selections={selected.odontograma_snapshot || []}
+          config={selected.print_config || DEFAULT_PRINT_CONFIG}
+        />
+      )}
     </div>
   );
 }
