@@ -6,6 +6,7 @@ import { CheckCircle2, Clock, UserCheck, XCircle, Phone, FileText, Edit3, Trash2
 import { useState } from "react";
 import { toast } from "sonner";
 import { agendaApi, type AgendamentoVPS } from "@/lib/vpsApi";
+import { EditarAgendamentoModal } from "./EditarAgendamentoModal";
 
 interface Props {
   appointment: AgendamentoVPS | null;
