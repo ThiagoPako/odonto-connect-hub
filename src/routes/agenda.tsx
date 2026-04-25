@@ -52,6 +52,7 @@ function vpsToAppointment(a: AgendamentoVPS): Appointment {
     patientName: name,
     patientInitials: initials,
     avatarColor: colors[colorIdx],
+    professionalId: a.dentista_id,
     professional: profName,
     professionalInitials: profInitials,
     room: a.sala || "Sala 1",
