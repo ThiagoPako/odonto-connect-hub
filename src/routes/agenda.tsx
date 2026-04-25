@@ -620,6 +620,7 @@ function AppointmentCard({ appointment: a, onAtender, onUpdateStatus, onReschedu
       onDragStart={(e) => {
         e.dataTransfer.setData("appointmentId", a.id);
         e.dataTransfer.setData("fromProfessional", a.professional);
+        if (a.professionalId) e.dataTransfer.setData("fromProfessionalId", a.professionalId);
         e.dataTransfer.effectAllowed = "move";
       }}
       className={`rounded-lg border border-border/50 p-2.5 space-y-2 hover-lift hover:shadow-glow-primary transition-all duration-300 ${
