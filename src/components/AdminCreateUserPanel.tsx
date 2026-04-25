@@ -259,19 +259,30 @@ export function AdminCreateUserPanel() {
                   <Label htmlFor="user-comissao">Comissão (%)</Label>
                   <Input
                     id="user-comissao"
-                    type="number"
-                    min={0}
-                    max={100}
-                    step={0.5}
+                    type="text"
+                    inputMode="decimal"
                     placeholder="35"
                     value={comissao}
-                    onChange={(e) => setComissao(e.target.value)}
+                    onChange={(e) => handleComissaoChange(e.target.value)}
+                    aria-invalid={!!comissaoError}
+                    aria-describedby="user-comissao-hint"
+                    className={comissaoError ? "border-destructive focus-visible:ring-destructive" : ""}
                   />
+                  <p
+                    id="user-comissao-hint"
+                    className={`text-xs ${comissaoError ? "text-destructive" : "text-muted-foreground"}`}
+                  >
+                    {comissaoError ?? "Valor entre 0 e 100, até 2 casas decimais."}
+                  </p>
                 </div>
               </>
             )}
           </div>
-          <Button type="submit" disabled={loading} className="w-full sm:w-auto">
+          <Button
+            type="submit"
+            disabled={loading || (role === "dentista" && !!comissaoError)}
+            className="w-full sm:w-auto"
+          >
             <UserPlus className="h-4 w-4 mr-2" />
             {loading ? "Criando..." : "Criar Usuário"}
           </Button>
