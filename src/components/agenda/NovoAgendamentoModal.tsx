@@ -165,7 +165,11 @@ export function NovoAgendamentoModal({
   const handleSubmitConsulta = async () => {
     console.log("[Agenda] Submit consulta", { pacienteId, dentistaId, data, hora, duracao });
     const err = validateConsulta();
-    if (err) { toast.error(err); return; }
+    if (err) {
+      toast.error(err, { duration: 5000 });
+      if (!pacienteId) setShowSugg(true);
+      return;
+    }
     setSaving(true);
     const profName = dentistas.find((d) => d.id === dentistaId)?.nome || "";
     const cat = CATEGORIAS.find((c) => c.value === categoria);
