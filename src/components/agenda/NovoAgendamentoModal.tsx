@@ -588,11 +588,11 @@ function CompromissoEventoForm(props: {
           <>
             <div>
               <Label className="mb-1 block">Início</Label>
-              <Input type="time" value={props.hora} onChange={(e) => props.setHora(e.target.value)} />
+              <AnalogTimePicker value={props.hora} onChange={props.setHora} />
             </div>
             <div>
               <Label className="mb-1 block">Fim</Label>
-              <Input type="time" value={props.horaFim} onChange={(e) => props.setHoraFim(e.target.value)} />
+              <AnalogTimePicker value={props.horaFim} onChange={props.setHoraFim} />
             </div>
           </>
         )}
