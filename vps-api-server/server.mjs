@@ -10167,10 +10167,37 @@ app.listen(PORT, async () => {
         requer_face BOOLEAN DEFAULT false,
         ativo BOOLEAN DEFAULT true,
         descricao TEXT,
+        versao_atual INTEGER DEFAULT 1,
         created_at TIMESTAMPTZ DEFAULT NOW(),
         updated_at TIMESTAMPTZ DEFAULT NOW()
       )`,
+      `ALTER TABLE procedimentos_catalogo ADD COLUMN IF NOT EXISTS versao_atual INTEGER DEFAULT 1`,
       `CREATE INDEX IF NOT EXISTS idx_procedimentos_catalogo_ativo ON procedimentos_catalogo(ativo)`,
+
+      // Histórico/versionamento de procedimentos — snapshot imutável usado por orçamentos antigos
+      `CREATE TABLE IF NOT EXISTS procedimentos_catalogo_versoes (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        procedimento_id UUID NOT NULL REFERENCES procedimentos_catalogo(id) ON DELETE CASCADE,
+        versao INTEGER NOT NULL,
+        codigo TEXT,
+        nome TEXT NOT NULL,
+        categoria TEXT,
+        valor_particular NUMERIC(10,2) DEFAULT 0,
+        valor_convenio NUMERIC(10,2) DEFAULT 0,
+        duracao_minutos INTEGER DEFAULT 30,
+        cor TEXT,
+        requer_dente BOOLEAN DEFAULT true,
+        requer_face BOOLEAN DEFAULT false,
+        descricao TEXT,
+        motivo TEXT,                    -- ex: 'criação', 'reajuste preço', 'mudança requisitos'
+        alterado_por UUID,              -- user_id que alterou
+        valido_desde TIMESTAMPTZ DEFAULT NOW(),
+        valido_ate TIMESTAMPTZ,         -- preenchido quando uma nova versão é criada
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE (procedimento_id, versao)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_proc_versoes_procedimento ON procedimentos_catalogo_versoes(procedimento_id, versao DESC)`,
+      `CREATE INDEX IF NOT EXISTS idx_proc_versoes_validade ON procedimentos_catalogo_versoes(procedimento_id, valido_desde DESC)`,
       // Itens estruturados do orçamento (cada linha = procedimento aplicado a 1 dente/região)
       `ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS titulo TEXT`,
       `ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS print_config JSONB DEFAULT '{"logo":true,"valores":true,"odontograma":true,"assinatura":true,"desconto":true,"observacoes":true}'::jsonb`,
