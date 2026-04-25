@@ -9,6 +9,8 @@ import { orcamentosApi } from "@/lib/vpsApi";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { NovoOrcamentoModal } from "@/components/orcamentos/NovoOrcamentoModal";
+import { ExecucaoModal } from "@/components/orcamentos/ExecucaoModal";
+import { PlayCircle } from "lucide-react";
 
 export const Route = createFileRoute("/orcamentos")({
   ssr: false,
@@ -70,6 +72,7 @@ function OrcamentosPage() {
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [searchTerm, setSearchTerm] = useState("");
   const [novoOpen, setNovoOpen] = useState(false);
+  const [execOpen, setExecOpen] = useState(false);
 
   const loadAll = useCallback(async () => {
     try {
@@ -180,7 +183,11 @@ function OrcamentosPage() {
           {/* Budget detail */}
           <div className="lg:col-span-2">
             {selected ? (
-              <BudgetDetail budget={selected} onStatusChange={handleStatusChange} />
+              <BudgetDetail
+                budget={selected}
+                onStatusChange={handleStatusChange}
+                onExecute={() => setExecOpen(true)}
+              />
             ) : (
               <div className="bg-card rounded-xl border border-border p-8 flex flex-col items-center justify-center text-center min-h-[400px]">
                 <FileText className="h-12 w-12 text-muted-foreground/30 mb-4" />
@@ -196,6 +203,17 @@ function OrcamentosPage() {
         open={novoOpen}
         onOpenChange={setNovoOpen}
         onSaved={loadAll}
+      />
+      <ExecucaoModal
+        open={execOpen}
+        onOpenChange={setExecOpen}
+        orcamento={selected ? {
+          id: selected.id,
+          paciente_id: selected.paciente_id,
+          paciente_nome: selected.paciente_nome,
+          itens: selected.itens,
+        } : null}
+        onChanged={loadAll}
       />
     </div>
   );
