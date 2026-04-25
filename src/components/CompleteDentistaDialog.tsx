@@ -29,6 +29,7 @@ export interface CompleteDentistaTarget {
   telefone?: string;
   cro?: string;
   especialidade?: string;
+  comissao?: number;
 }
 
 interface Props {
@@ -56,6 +57,8 @@ export function CompleteDentistaDialog({
   const [telefone, setTelefone] = useState("");
   const [cro, setCro] = useState("");
   const [especialidade, setEspecialidade] = useState("Clínica Geral");
+  const [comissao, setComissao] = useState<string>("35");
+  const [comissaoError, setComissaoError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -63,8 +66,36 @@ export function CompleteDentistaDialog({
       setTelefone(dentista.telefone || "");
       setCro(dentista.cro || "");
       setEspecialidade(dentista.especialidade || "Clínica Geral");
+      setComissao(
+        typeof dentista.comissao === "number" && Number.isFinite(dentista.comissao)
+          ? String(dentista.comissao)
+          : "35"
+      );
+      setComissaoError(null);
     }
   }, [dentista]);
+
+  const handleComissaoChange = (raw: string) => {
+    const v = raw.replace(",", ".").trim();
+    if (v === "") {
+      setComissao("");
+      setComissaoError("Informe a comissão");
+      return;
+    }
+    if (!/^\d{0,3}(\.\d{0,2})?$/.test(v)) return;
+    const num = Number(v);
+    if (Number.isFinite(num) && num > 100) {
+      setComissao("100");
+      setComissaoError(null);
+      return;
+    }
+    setComissao(v);
+    if (!Number.isFinite(num) || num < 0 || num > 100) {
+      setComissaoError("Comissão deve estar entre 0 e 100");
+    } else {
+      setComissaoError(null);
+    }
+  };
 
   if (!dentista) return null;
 
@@ -82,12 +113,24 @@ export function CompleteDentistaDialog({
       toast.error("Selecione uma especialidade.");
       return;
     }
+    const comissaoNum = Number(comissao);
+    if (
+      comissaoError ||
+      !Number.isFinite(comissaoNum) ||
+      comissaoNum < 0 ||
+      comissaoNum > 100 ||
+      !/^\d{1,3}(\.\d{1,2})?$/.test(comissao)
+    ) {
+      toast.error(comissaoError || "Comissão inválida (0–100, até 2 casas decimais)");
+      return;
+    }
 
     setSaving(true);
     const { error } = await dentistasApi.update(dentista.id, {
       telefone: telefone.trim(),
       cro: cro.trim(),
       especialidade,
+      comissao_percentual: comissaoNum,
     });
     setSaving(false);
 
@@ -155,6 +198,27 @@ export function CompleteDentistaDialog({
               </SelectContent>
             </Select>
           </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="dentista-comissao">Comissão (%)</Label>
+            <Input
+              id="dentista-comissao"
+              type="text"
+              inputMode="decimal"
+              placeholder="35"
+              value={comissao}
+              onChange={(e) => handleComissaoChange(e.target.value)}
+              aria-invalid={!!comissaoError}
+              aria-describedby="dentista-comissao-hint"
+              className={comissaoError ? "border-destructive focus-visible:ring-destructive" : ""}
+            />
+            <p
+              id="dentista-comissao-hint"
+              className={`text-xs ${comissaoError ? "text-destructive" : "text-muted-foreground"}`}
+            >
+              {comissaoError ?? "Valor entre 0 e 100, até 2 casas decimais."}
+            </p>
+          </div>
         </div>
 
         <DialogFooter className="gap-2 sm:gap-2">
@@ -166,7 +230,7 @@ export function CompleteDentistaDialog({
           >
             Pular por enquanto
           </Button>
-          <Button type="button" onClick={handleSave} disabled={saving}>
+          <Button type="button" onClick={handleSave} disabled={saving || !!comissaoError}>
             {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
             {saving ? "Salvando..." : "Salvar dados"}
           </Button>
