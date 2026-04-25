@@ -641,11 +641,33 @@ export const crmApi = {
 
 export const orcamentosApi = {
   list: () => vpsApiFetch('/orcamentos'),
-  create: (body: unknown) => vpsApiFetch('/orcamentos', { method: 'POST', body }),
+  create: (body: unknown) => vpsApiFetch<{ id: string; success: boolean }>('/orcamentos', { method: 'POST', body }),
   update: (id: string, body: unknown) => vpsApiFetch(`/orcamentos/${id}`, { method: 'PUT', body }),
   delete: (id: string) => vpsApiFetch(`/orcamentos/${id}`, { method: 'DELETE' }),
   updateStatus: (id: string, status: string) =>
     vpsApiFetch<{ success: boolean; budget: any; leadMoved: boolean }>(`/orcamentos/${id}/status`, { method: 'PATCH', body: { status } }),
+};
+
+// ─── Catálogo de Procedimentos (Fase B) ──────────────────────
+export interface ProcedimentoCatalogo {
+  id: string;
+  codigo: string | null;
+  nome: string;
+  categoria: string | null;
+  valor_particular: number;
+  valor_convenio: number;
+  duracao_minutos: number;
+  cor: string;
+  requer_dente: boolean;
+  requer_face: boolean;
+  ativo: boolean;
+  descricao: string | null;
+}
+export const procedimentosCatalogoApi = {
+  list: () => vpsApiFetch<ProcedimentoCatalogo[]>('/procedimentos-catalogo'),
+  create: (body: Partial<ProcedimentoCatalogo>) => vpsApiFetch<ProcedimentoCatalogo>('/procedimentos-catalogo', { method: 'POST', body }),
+  update: (id: string, body: Partial<ProcedimentoCatalogo>) => vpsApiFetch<ProcedimentoCatalogo>(`/procedimentos-catalogo/${id}`, { method: 'PUT', body }),
+  delete: (id: string) => vpsApiFetch(`/procedimentos-catalogo/${id}`, { method: 'DELETE' }),
 };
 
 // ─── WhatsApp (via proxy) ───────────────────────────────────
