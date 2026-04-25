@@ -495,11 +495,15 @@ function ListView({ filtered, onAtender, onUpdateStatus, onReschedule }: { filte
 /* ===================== CALENDAR VIEW ===================== */
 function CalendarView({ filtered, selectedProfessional, professionals: allProfessionals }: { filtered: Appointment[]; selectedProfessional: string; professionals: Professional[] }) {
   const professionals = allProfessionals.filter(
-    (p) => selectedProfessional === "all" || p.name.includes(selectedProfessional)
+    (p) => selectedProfessional === "all" || p.id === selectedProfessional
   );
 
-  const getApptForSlot = (profName: string, hour: string) => {
-    return filtered.filter((a) => a.professional === profName && a.time.startsWith(hour.split(":")[0]));
+  const getApptForSlot = (prof: Professional, hour: string) => {
+    return filtered.filter(
+      (a) =>
+        (a.professionalId ? a.professionalId === prof.id : a.professional === prof.name) &&
+        a.time.startsWith(hour.split(":")[0])
+    );
   };
 
   return (
