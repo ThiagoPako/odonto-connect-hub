@@ -796,6 +796,7 @@ function NovoAgendamentoDialog({
   const [pacientesFiltered, setPacientesFiltered] = useState<any[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [dentistasList, setDentistasList] = useState<Array<{ id: string; nome: string }>>([]);
+  const [loadingDentistas, setLoadingDentistas] = useState(false);
   const suggestionsRef = useRef<HTMLDivElement>(null);
 
   // Load patients + dentistas when opening
@@ -805,12 +806,17 @@ function NovoAgendamentoDialog({
       pacientesApi.list().then(({ data }) => {
         if (Array.isArray(data)) setPacientesList(data);
       });
-      dentistasApi.list().then(({ data }) => {
-        if (Array.isArray(data) && data.length > 0) {
-          setDentistasList(data);
-          setForm((f) => ({ ...f, dentista_id: f.dentista_id || data[0].id }));
-        }
-      });
+      setLoadingDentistas(true);
+      dentistasApi.list()
+        .then(({ data }) => {
+          if (Array.isArray(data) && data.length > 0) {
+            setDentistasList(data);
+            setForm((f) => ({ ...f, dentista_id: f.dentista_id || data[0].id }));
+          } else {
+            setDentistasList([]);
+          }
+        })
+        .finally(() => setLoadingDentistas(false));
     }
   }, [open, defaultDate]);
 
