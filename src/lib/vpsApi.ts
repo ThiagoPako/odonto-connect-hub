@@ -335,6 +335,8 @@ export interface AgendamentoVPS {
   evento_titulo?: string;
   serie_id?: string | null;
   telefone?: string;
+  marcadores?: Array<{ id: string; nome: string; cor: string }>;
+  como_conheceu?: string | null;
 }
 
 // ─── Financeiro ─────────────────────────────────────────────
