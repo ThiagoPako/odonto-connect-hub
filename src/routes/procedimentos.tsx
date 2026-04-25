@@ -143,8 +143,20 @@ function ProcedimentosCatalogoPage() {
                       {p.requer_dente && <span className="px-1.5 py-0.5 mx-0.5 rounded bg-primary/10 text-primary text-[10px]">Dente</span>}
                       {p.requer_face && <span className="px-1.5 py-0.5 mx-0.5 rounded bg-accent/30 text-accent-foreground text-[10px]">Face</span>}
                     </td>
+                    <td className="px-3 py-2 text-center">
+                      <span className="px-1.5 py-0.5 rounded bg-muted text-muted-foreground text-[10px] font-mono">
+                        v{p.versao_atual ?? 1}
+                      </span>
+                    </td>
                     <td className="px-3 py-2">
                       <div className="flex justify-end gap-1">
+                        <button
+                          onClick={() => { setHistoricoId(p.id); setHistoricoNome(p.nome); }}
+                          title="Ver histórico de versões"
+                          className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-primary"
+                        >
+                          <History className="h-3.5 w-3.5" />
+                        </button>
                         <button onClick={() => editar(p)} className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"><Pencil className="h-3.5 w-3.5" /></button>
                         <button onClick={() => excluir(p.id)} className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>
                       </div>
