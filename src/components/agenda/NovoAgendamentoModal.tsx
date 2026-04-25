@@ -58,6 +58,7 @@ export function NovoAgendamentoModal({
   const [dentistas, setDentistas] = useState<Dentista[]>([]);
   const [search, setSearch] = useState("");
   const [showSugg, setShowSugg] = useState(false);
+  const [pacienteError, setPacienteError] = useState(false);
   const sugRef = useRef<HTMLDivElement>(null);
 
   // Form Consulta
