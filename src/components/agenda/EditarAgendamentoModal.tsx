@@ -232,7 +232,72 @@ export function EditarAgendamentoModal({ appointment, open, onOpenChange, onSave
 
           <div className="space-y-1.5">
             <Label className="text-xs">Procedimento</Label>
-            <Input value={procedimento} onChange={(e) => setProcedimento(e.target.value)} />
+            <Popover open={comboOpen} onOpenChange={setComboOpen}>
+              <PopoverTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  role="combobox"
+                  aria-expanded={comboOpen}
+                  className="w-full justify-between font-normal"
+                >
+                  <span className="flex items-center gap-2 min-w-0">
+                    {categoriaCor && (
+                      <span
+                        className="h-2.5 w-2.5 rounded-full shrink-0"
+                        style={{ background: categoriaCor }}
+                      />
+                    )}
+                    <span className={cn("truncate", !procedimento && "text-muted-foreground")}>
+                      {procedimento || "Selecione um procedimento…"}
+                    </span>
+                    {categoria && (
+                      <span className="text-[10px] text-muted-foreground shrink-0">· {categoria}</span>
+                    )}
+                  </span>
+                  <ChevronsUpDown className="h-4 w-4 opacity-50 shrink-0" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                <Command>
+                  <CommandInput placeholder="Buscar procedimento ou categoria…" />
+                  <CommandList>
+                    <CommandEmpty>Nenhum procedimento encontrado.</CommandEmpty>
+                    {catalogoPorCategoria.map(([cat, items]) => (
+                      <CommandGroup key={cat} heading={cat}>
+                        {items.map((p) => (
+                          <CommandItem
+                            key={p.id}
+                            value={`${p.nome} ${p.categoria || ""} ${p.codigo || ""}`}
+                            onSelect={() => handlePickProcedimento(p)}
+                          >
+                            <Check
+                              className={cn(
+                                "mr-2 h-4 w-4",
+                                procedimento === p.nome ? "opacity-100" : "opacity-0"
+                              )}
+                            />
+                            <span
+                              className="h-2.5 w-2.5 rounded-full mr-2 shrink-0"
+                              style={{ background: p.cor || "var(--muted-foreground)" }}
+                            />
+                            <span className="flex-1 truncate">{p.nome}</span>
+                            {p.duracao_minutos > 0 && (
+                              <span className="ml-2 text-[10px] text-muted-foreground">
+                                {p.duracao_minutos}min
+                              </span>
+                            )}
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                    ))}
+                  </CommandList>
+                </Command>
+              </PopoverContent>
+            </Popover>
+            <p className="text-[10px] text-muted-foreground">
+              Selecionar atualiza a categoria, cor e duração padrão automaticamente.
+            </p>
           </div>
 
           <div className="space-y-1.5">
