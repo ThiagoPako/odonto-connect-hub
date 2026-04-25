@@ -174,6 +174,7 @@ export function AdminCreateUserPanel() {
     setRole("user");
     setEspecialidade("Clínica Geral");
     setComissao("35");
+    setComissaoError(null);
     setLoading(false);
   };
 
