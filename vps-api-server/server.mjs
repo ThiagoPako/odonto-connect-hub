@@ -9604,6 +9604,35 @@ app.listen(PORT, async () => {
       `CREATE INDEX IF NOT EXISTS idx_consultations_patient ON consultations(patient_id)`,
       `CREATE INDEX IF NOT EXISTS idx_consultations_dentist ON consultations(dentist_id)`,
       `CREATE INDEX IF NOT EXISTS idx_consultations_finished ON consultations(finished_at DESC)`,
+
+      // ─── Clinica config (singleton id=1) — horários globais e regras ───
+      `CREATE TABLE IF NOT EXISTS clinica_config (
+        id INTEGER PRIMARY KEY DEFAULT 1,
+        horarios JSONB DEFAULT '{
+          "dom": {"ativo": false, "inicio": "09:00", "fim": "18:00"},
+          "seg": {"ativo": true,  "inicio": "09:00", "fim": "18:00"},
+          "ter": {"ativo": true,  "inicio": "09:00", "fim": "18:00"},
+          "qua": {"ativo": true,  "inicio": "09:00", "fim": "18:00"},
+          "qui": {"ativo": true,  "inicio": "09:00", "fim": "18:00"},
+          "sex": {"ativo": true,  "inicio": "09:00", "fim": "18:00"},
+          "sab": {"ativo": false, "inicio": "09:00", "fim": "13:00"}
+        }'::jsonb,
+        intervalo_agenda INTEGER DEFAULT 30,
+        limitar_mesmo_horario BOOLEAN DEFAULT true,
+        permitir_horario_indisponivel BOOLEAN DEFAULT false,
+        habilitar_sessoes_procedimento BOOLEAN DEFAULT false,
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        CONSTRAINT clinica_config_singleton CHECK (id = 1)
+      )`,
+      `INSERT INTO clinica_config (id) VALUES (1) ON CONFLICT (id) DO NOTHING`,
+
+      // ─── Dentistas: horários próprios (override) ───
+      `ALTER TABLE dentistas ADD COLUMN IF NOT EXISTS usar_horario_clinica BOOLEAN DEFAULT true`,
+      `ALTER TABLE dentistas ADD COLUMN IF NOT EXISTS horarios JSONB`,
+
+      // ─── Agenda: serie_id para múltiplo agendamento (recorrência) ───
+      `ALTER TABLE agenda ADD COLUMN IF NOT EXISTS serie_id UUID`,
+      `CREATE INDEX IF NOT EXISTS idx_agenda_serie ON agenda(serie_id)`,
     ];
 
     for (const sql of migrations) {
