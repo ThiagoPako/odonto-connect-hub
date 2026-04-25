@@ -74,11 +74,34 @@ function AgendaPage() {
   const [loading, setLoading] = useState(true);
   const [dateOffset, setDateOffset] = useState(0);
   const [showNovoDialog, setShowNovoDialog] = useState(false);
+  const [professionals, setProfessionals] = useState<Professional[]>(mockProfessionalsRaw);
 
   const currentDate = new Date();
   currentDate.setDate(currentDate.getDate() + dateOffset);
   const dateStr = currentDate.toISOString().split("T")[0]; // YYYY-MM-DD
   const dateDisplay = currentDate.toLocaleDateString("pt-BR", { day: "2-digit", month: "long", year: "numeric", weekday: "long" });
+
+  // Carrega dentistas reais e mescla com mock como fallback
+  useEffect(() => {
+    dentistasApi.list().then(({ data }) => {
+      if (Array.isArray(data) && data.length > 0) {
+        const colors = ["bg-chart-1", "bg-chart-2", "bg-chart-3", "bg-chart-4", "bg-chart-5", "bg-primary", "bg-dental-cyan"];
+        const real: Professional[] = data.map((d: any, idx: number) => ({
+          id: d.id,
+          name: d.nome || "Dentista",
+          initials: (d.nome || "?")
+            .split(" ")
+            .filter((_: string, i: number, arr: string[]) => i === 0 || i === arr.length - 1)
+            .map((n: string) => n[0])
+            .join("")
+            .toUpperCase(),
+          specialty: d.especialidade || "Clínico Geral",
+          color: colors[idx % colors.length],
+        }));
+        setProfessionals(real);
+      }
+    }).catch(() => { /* mantém mock */ });
+  }, []);
 
   const fetchAgenda = useCallback(async () => {
     setLoading(true);
