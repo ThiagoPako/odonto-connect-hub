@@ -41,14 +41,18 @@ function AgendaPage() {
 
   // Load profs + config
   useEffect(() => {
-    dentistasApi.list().then(({ data }) => {
-      if (Array.isArray(data)) {
-        const list = data as Prof[];
-        setProfs(list);
-        setSelectedProfs(list.map((p) => p.id));
-      }
-    });
-    clinicaApi.getConfig().then(({ data }) => data && setConfig(data));
+    dentistasApi.list()
+      .then(({ data }) => {
+        if (Array.isArray(data)) {
+          const list = (data as Prof[]).filter((p) => p?.id);
+          setProfs(list);
+          setSelectedProfs(list.map((p) => p.id));
+        }
+      })
+      .catch((err) => console.error("[agenda] dentistas:", err));
+    clinicaApi.getConfig()
+      .then(({ data }) => data && setConfig(data))
+      .catch((err) => console.error("[agenda] config:", err));
   }, []);
 
   // Load appointments for current date
