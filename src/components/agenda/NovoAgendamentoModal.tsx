@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Calendar, Stethoscope, MapPin, Phone, Mail, MessageSquare, BellRing, Repeat, Search, Sparkles } from "lucide-react";
+import { Loader2, Calendar, Stethoscope, MapPin, Phone, Mail, MessageSquare, BellRing, Repeat, Search, Sparkles, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 import { agendaApi, pacientesApi, dentistasApi, type AgendamentoVPS, type MarcadorAgenda } from "@/lib/vpsApi";
 import { AnalogTimePicker } from "./AnalogTimePicker";
@@ -58,6 +58,7 @@ export function NovoAgendamentoModal({
   const [dentistas, setDentistas] = useState<Dentista[]>([]);
   const [search, setSearch] = useState("");
   const [showSugg, setShowSugg] = useState(false);
+  const [pacienteError, setPacienteError] = useState(false);
   const sugRef = useRef<HTMLDivElement>(null);
 
   // Form Consulta
@@ -122,7 +123,7 @@ export function NovoAgendamentoModal({
         setPacienteId(""); setPacienteNome(""); setTelefone(""); setEmail("");
         setProcedimento(""); setObservacoes(""); setSala("Sala 1");
         setPrimeiraConsulta(false); setMultiplo(false); setQtdSessoes(4); setIntervaloDias(7);
-        setRetornoQuando(""); setSearch("");
+        setRetornoQuando(""); setSearch(""); setPacienteError(false);
         setMarcadores([]); setComoConheceu("");
         setEventoTitulo(""); setDiaInteiro(false); setEscopo("dentista");
       }, 300);
@@ -142,6 +143,7 @@ export function NovoAgendamentoModal({
     setEmail(p.email || "");
     setSearch(p.nome);
     setShowSugg(false);
+    setPacienteError(false);
   };
 
   // Validação básica
@@ -167,7 +169,10 @@ export function NovoAgendamentoModal({
     const err = validateConsulta();
     if (err) {
       toast.error(err, { duration: 5000 });
-      if (!pacienteId) setShowSugg(true);
+      if (!pacienteId) {
+        setPacienteError(true);
+        setShowSugg(true);
+      }
       return;
     }
     setSaving(true);
@@ -288,16 +293,29 @@ export function NovoAgendamentoModal({
           >
             {/* Paciente search */}
             <div className="relative">
-              <Label className="mb-1 block">Paciente</Label>
+              <Label className={`mb-1 block ${pacienteError ? "text-destructive" : ""}`}>Paciente</Label>
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Search
+                  className={`absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 ${
+                    pacienteError ? "text-destructive" : "text-muted-foreground"
+                  }`}
+                />
                 <Input
                   placeholder="Buscar paciente por nome..."
                   value={search}
-                  onChange={(e) => { setSearch(e.target.value); setShowSugg(true); setPacienteId(""); }}
+                  onChange={(e) => {
+                    setSearch(e.target.value);
+                    setShowSugg(true);
+                    setPacienteId("");
+                    setPacienteError(false);
+                  }}
                   onFocus={() => setShowSugg(true)}
-                  className="pl-9"
+                  aria-invalid={pacienteError}
+                  className={`pl-9 ${pacienteError ? "pr-9 border-destructive ring-2 ring-destructive/30 focus-visible:ring-destructive" : ""}`}
                 />
+                {pacienteError && (
+                  <AlertCircle className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-destructive animate-pulse" />
+                )}
               </div>
               {showSugg && filteredPacientes.length > 0 && (
                 <div ref={sugRef} className="absolute z-50 mt-1 w-full bg-popover border border-border rounded-md shadow-lg max-h-60 overflow-y-auto">
@@ -330,8 +348,9 @@ export function NovoAgendamentoModal({
                 </p>
               )}
               {!pacienteId && search.trim().length >= 2 && filteredPacientes.length > 0 && (
-                <p className="mt-1.5 text-xs text-muted-foreground">
-                  ⚠️ Clique em um paciente da lista acima para selecioná-lo.
+                <p className={`mt-1.5 text-xs flex items-center gap-1 ${pacienteError ? "text-destructive font-medium" : "text-muted-foreground"}`}>
+                  <AlertCircle className="h-3 w-3" />
+                  Clique em um paciente da lista acima para selecioná-lo.
                 </p>
               )}
             </div>
