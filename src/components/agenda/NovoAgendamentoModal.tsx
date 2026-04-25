@@ -148,17 +148,17 @@ export function NovoAgendamentoModal({
   const validateConsulta = (): string | null => {
     if (!pacienteId || !UUID_RE.test(pacienteId)) {
       return search.trim().length > 0
-        ? "Paciente não selecionado. Clique no nome do paciente na lista de sugestões abaixo do campo de busca."
-        : "Busque e clique no nome do paciente na lista de sugestões para selecioná-lo.";
+        ? "Clique no nome do paciente da lista"
+        : "Busque e selecione um paciente";
     }
-    if (!dentistaId || !UUID_RE.test(dentistaId)) return "Selecione um profissional.";
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return "Data inválida.";
-    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(hora)) return "Horário inválido (HH:MM).";
-    if (duracao < 5 || duracao > 480) return "Duração entre 5 e 480 minutos.";
-    if (multiplo && (qtdSessoes < 2 || qtdSessoes > 52)) return "Quantidade de sessões entre 2 e 52.";
-    if (multiplo && (intervaloDias < 1 || intervaloDias > 180)) return "Intervalo entre 1 e 180 dias.";
+    if (!dentistaId || !UUID_RE.test(dentistaId)) return "Selecione um profissional";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return "Informe a data";
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(hora)) return "Informe o horário (HH:MM)";
+    if (duracao < 5 || duracao > 480) return "Duração entre 5 e 480 minutos";
+    if (multiplo && (qtdSessoes < 2 || qtdSessoes > 52)) return "Sessões entre 2 e 52";
+    if (multiplo && (intervaloDias < 1 || intervaloDias > 180)) return "Intervalo entre 1 e 180 dias";
     if (confirmacaoCanal === "whatsapp" && confirmacaoQuando && !telefone.replace(/\D/g, ""))
-      return "Informe o telefone para enviar confirmação por WhatsApp.";
+      return "Informe o telefone para WhatsApp";
     return null;
   };
 
