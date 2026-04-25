@@ -137,6 +137,8 @@ export function AdminCreateUserPanel() {
     setEmail("");
     setPassword("");
     setRole("user");
+    setEspecialidade("Clínica Geral");
+    setComissao("35");
     setLoading(false);
   };
 
