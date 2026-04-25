@@ -232,8 +232,8 @@ function AgendaPage() {
               className="h-8 px-3 rounded-lg bg-muted border-0 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
             >
               <option value="all">Todos profissionais</option>
-              {mockProfessionals.map((p) => (
-                <option key={p.id} value={p.name.split(" ")[1]}>{p.name}</option>
+              {professionals.map((p) => (
+                <option key={p.id} value={p.name.split(" ")[1] || p.name}>{p.name}</option>
               ))}
             </select>
             <button onClick={() => setShowNovoDialog(true)} className="flex items-center gap-1.5 h-8 px-3 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors">
@@ -250,9 +250,9 @@ function AgendaPage() {
           </div>
         ) : (
           <>
-            {viewMode === "kanban" && <KanbanView filtered={filtered} selectedProfessional={selectedProfessional} onAtender={handleAtender} onUpdateStatus={handleUpdateStatus} onReschedule={handleReschedule} onMoveToProfessional={handleMoveToProfessional} />}
+            {viewMode === "kanban" && <KanbanView filtered={filtered} selectedProfessional={selectedProfessional} professionals={professionals} onAtender={handleAtender} onUpdateStatus={handleUpdateStatus} onReschedule={handleReschedule} onMoveToProfessional={handleMoveToProfessional} />}
             {viewMode === "lista" && <ListView filtered={filtered} onAtender={handleAtender} onUpdateStatus={handleUpdateStatus} onReschedule={handleReschedule} />}
-            {viewMode === "calendario" && <CalendarView filtered={filtered} selectedProfessional={selectedProfessional} />}
+            {viewMode === "calendario" && <CalendarView filtered={filtered} selectedProfessional={selectedProfessional} professionals={professionals} />}
           </>
         )}
 
@@ -952,7 +952,7 @@ function NovoAgendamentoDialog({
     setSaving(true);
     try {
       const profFromList = dentistasList.find((p) => p.id === form.dentista_id);
-      const profFromMock = mockProfessionals.find((p) => p.id === form.dentista_id);
+      const profFromMock = mockProfessionalsRaw.find((p) => p.id === form.dentista_id);
       const profName = profFromList?.nome || profFromMock?.name || "";
       let result;
       try {
