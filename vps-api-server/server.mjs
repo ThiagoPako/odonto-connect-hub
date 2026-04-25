@@ -3513,8 +3513,80 @@ app.delete('/api/orcamentos/:id', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
-// PROCEDIMENTOS — Catálogo (Fase B)
+// PROCEDIMENTOS — Catálogo + Versionamento (Fase B)
 // ═══════════════════════════════════════════════════════════════
+
+/**
+ * Cria uma nova versão imutável do procedimento (snapshot histórico).
+ * - Fecha a versão anterior preenchendo `valido_ate`.
+ * - Incrementa `versao_atual` no procedimento.
+ * - Retorna o registro da versão criada.
+ */
+async function criarVersaoProcedimento(client, procedimentoId, motivo, alteradoPor) {
+  // Busca o estado atual do procedimento (após o UPDATE/INSERT)
+  const { rows } = await client.query(
+    'SELECT * FROM procedimentos_catalogo WHERE id=$1',
+    [procedimentoId]
+  );
+  if (!rows[0]) return null;
+  const p = rows[0];
+
+  // Fecha versão anterior (se existir)
+  await client.query(
+    `UPDATE procedimentos_catalogo_versoes
+       SET valido_ate = NOW()
+     WHERE procedimento_id = $1 AND valido_ate IS NULL`,
+    [procedimentoId]
+  );
+
+  // Próxima versão sequencial
+  const { rows: maxRows } = await client.query(
+    `SELECT COALESCE(MAX(versao), 0) AS m FROM procedimentos_catalogo_versoes WHERE procedimento_id=$1`,
+    [procedimentoId]
+  );
+  const proximaVersao = Number(maxRows[0].m) + 1;
+
+  const versaoId = crypto.randomUUID();
+  await client.query(
+    `INSERT INTO procedimentos_catalogo_versoes
+      (id, procedimento_id, versao, codigo, nome, categoria,
+       valor_particular, valor_convenio, duracao_minutos, cor,
+       requer_dente, requer_face, descricao, motivo, alterado_por)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+    [
+      versaoId, procedimentoId, proximaVersao,
+      p.codigo, p.nome, p.categoria,
+      p.valor_particular, p.valor_convenio, p.duracao_minutos, p.cor,
+      p.requer_dente, p.requer_face, p.descricao,
+      motivo || null, alteradoPor || null,
+    ]
+  );
+
+  // Atualiza versao_atual no registro vivo
+  await client.query(
+    `UPDATE procedimentos_catalogo SET versao_atual=$1 WHERE id=$2`,
+    [proximaVersao, procedimentoId]
+  );
+
+  return { id: versaoId, versao: proximaVersao };
+}
+
+/** Detecta se uma alteração realmente justifica nova versão (campos relevantes para histórico) */
+function alteracaoExigeVersao(antes, depois) {
+  const camposVersionaveis = [
+    'codigo', 'nome', 'categoria', 'valor_particular', 'valor_convenio',
+    'duracao_minutos', 'requer_dente', 'requer_face', 'descricao',
+  ];
+  return camposVersionaveis.some((c) => {
+    if (depois[c] === undefined) return false;
+    // normaliza numéricos para comparação tolerante
+    const a = antes[c];
+    const b = depois[c];
+    if (typeof a === 'number' || typeof b === 'number') return Number(a) !== Number(b);
+    return String(a ?? '') !== String(b ?? '');
+  });
+}
+
 app.get('/api/procedimentos-catalogo', async (req, res) => {
   try {
     await verifyUser(req);
@@ -3528,44 +3600,80 @@ app.get('/api/procedimentos-catalogo', async (req, res) => {
 });
 
 app.post('/api/procedimentos-catalogo', async (req, res) => {
+  const client = await pool.connect();
   try {
-    await verifyUser(req);
+    const user = await verifyUser(req);
     const {
       codigo, nome, categoria, valor_particular, valor_convenio,
       duracao_minutos, cor, requer_dente, requer_face, descricao,
     } = req.body;
     if (!nome) return res.status(400).json({ error: 'Nome é obrigatório' });
+
+    await client.query('BEGIN');
     const id = crypto.randomUUID();
-    await pool.query(
+    await client.query(
       `INSERT INTO procedimentos_catalogo
-        (id, codigo, nome, categoria, valor_particular, valor_convenio, duracao_minutos, cor, requer_dente, requer_face, descricao)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        (id, codigo, nome, categoria, valor_particular, valor_convenio, duracao_minutos, cor, requer_dente, requer_face, descricao, versao_atual)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,1)`,
       [id, codigo || null, nome, categoria || null,
        valor_particular || 0, valor_convenio || 0, duracao_minutos || 30,
        cor || '#0d9488', requer_dente !== false, !!requer_face, descricao || null]
     );
+    // Versão inicial (motivo: criação)
+    await criarVersaoProcedimento(client, id, 'criação', user?.id || null);
+    await client.query('COMMIT');
+
     const { rows } = await pool.query('SELECT * FROM procedimentos_catalogo WHERE id=$1', [id]);
     res.json(rows[0]);
   } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
     res.status(500).json({ error: error.message });
+  } finally {
+    client.release();
   }
 });
 
 app.put('/api/procedimentos-catalogo/:id', async (req, res) => {
+  const client = await pool.connect();
   try {
-    await verifyUser(req);
+    const user = await verifyUser(req);
+    const procId = req.params.id;
     const fields = ['codigo','nome','categoria','valor_particular','valor_convenio','duracao_minutos','cor','requer_dente','requer_face','descricao','ativo'];
+
+    // Snapshot anterior (para decidir se cria nova versão)
+    const { rows: beforeRows } = await client.query('SELECT * FROM procedimentos_catalogo WHERE id=$1', [procId]);
+    const antes = beforeRows[0];
+    if (!antes) return res.status(404).json({ error: 'Procedimento não encontrado' });
+
     const sets = []; const params = [];
     for (const f of fields) {
       if (req.body[f] !== undefined) { params.push(req.body[f]); sets.push(`${f}=$${params.length}`); }
     }
     if (!sets.length) return res.status(400).json({ error: 'Nada para atualizar' });
-    params.push(req.params.id);
-    await pool.query(`UPDATE procedimentos_catalogo SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length}`, params);
-    const { rows } = await pool.query('SELECT * FROM procedimentos_catalogo WHERE id=$1', [req.params.id]);
-    res.json(rows[0]);
+
+    await client.query('BEGIN');
+    params.push(procId);
+    await client.query(`UPDATE procedimentos_catalogo SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length}`, params);
+
+    // Cria nova versão somente se houve mudança em campo versionável
+    let novaVersao = null;
+    if (alteracaoExigeVersao(antes, req.body)) {
+      novaVersao = await criarVersaoProcedimento(
+        client,
+        procId,
+        req.body.motivo_versao || 'atualização',
+        user?.id || null
+      );
+    }
+    await client.query('COMMIT');
+
+    const { rows } = await pool.query('SELECT * FROM procedimentos_catalogo WHERE id=$1', [procId]);
+    res.json({ ...rows[0], _nova_versao: novaVersao });
   } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
     res.status(500).json({ error: error.message });
+  } finally {
+    client.release();
   }
 });
 
@@ -3576,6 +3684,42 @@ app.delete('/api/procedimentos-catalogo/:id', async (req, res) => {
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+// Histórico completo de versões de um procedimento
+app.get('/api/procedimentos-catalogo/:id/versoes', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { rows } = await pool.query(
+      `SELECT * FROM procedimentos_catalogo_versoes
+       WHERE procedimento_id=$1
+       ORDER BY versao DESC`,
+      [req.params.id]
+    );
+    res.json(rows);
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+// Resolve a versão vigente em uma data específica (para reabrir orçamentos antigos)
+app.get('/api/procedimentos-catalogo/:id/versao-em', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { data } = req.query; // ISO string
+    if (!data) return res.status(400).json({ error: 'parâmetro `data` (ISO) obrigatório' });
+    const { rows } = await pool.query(
+      `SELECT * FROM procedimentos_catalogo_versoes
+       WHERE procedimento_id=$1
+         AND valido_desde <= $2
+         AND (valido_ate IS NULL OR valido_ate > $2)
+       ORDER BY versao DESC LIMIT 1`,
+      [req.params.id, data]
+    );
+    res.json(rows[0] || null);
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
   }
 });
 
