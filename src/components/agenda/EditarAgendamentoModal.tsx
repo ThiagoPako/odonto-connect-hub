@@ -80,11 +80,33 @@ export function EditarAgendamentoModal({ appointment, open, onOpenChange, onSave
     setHora(appointment.hora || "");
     setDuracao(appointment.duracao || 30);
     setProcedimento(appointment.procedimento || "");
+    setCategoria(appointment.categoria || "");
+    setCategoriaCor(appointment.categoria_cor || "");
     setStatus(appointment.status || "agendado");
     setSala(appointment.sala || "");
     setObservacoes(appointment.observacoes || "");
     setDentistaId(appointment.dentista_id || "");
   }, [appointment]);
+
+  // Agrupa catálogo por categoria para o combobox
+  const catalogoPorCategoria = useMemo(() => {
+    const map = new Map<string, ProcedimentoCatalogo[]>();
+    for (const p of catalogo) {
+      const cat = p.categoria || "Sem categoria";
+      const arr = map.get(cat) || [];
+      arr.push(p);
+      map.set(cat, arr);
+    }
+    return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
+  }, [catalogo]);
+
+  const handlePickProcedimento = (p: ProcedimentoCatalogo) => {
+    setProcedimento(p.nome);
+    setCategoria(p.categoria || "");
+    setCategoriaCor(p.cor || "");
+    if (p.duracao_minutos) setDuracao(p.duracao_minutos);
+    setComboOpen(false);
+  };
 
   // Carrega agendamentos do dia/profissional para checar conflitos
   useEffect(() => {
