@@ -482,8 +482,8 @@ function ListView({ filtered, onAtender, onUpdateStatus, onReschedule }: { filte
 }
 
 /* ===================== CALENDAR VIEW ===================== */
-function CalendarView({ filtered, selectedProfessional }: { filtered: Appointment[]; selectedProfessional: string }) {
-  const professionals = mockProfessionals.filter(
+function CalendarView({ filtered, selectedProfessional, professionals: allProfessionals }: { filtered: Appointment[]; selectedProfessional: string; professionals: Professional[] }) {
+  const professionals = allProfessionals.filter(
     (p) => selectedProfessional === "all" || p.name.includes(selectedProfessional)
   );
 
