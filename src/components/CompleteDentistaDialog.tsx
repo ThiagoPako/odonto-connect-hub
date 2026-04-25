@@ -29,6 +29,7 @@ export interface CompleteDentistaTarget {
   telefone?: string;
   cro?: string;
   especialidade?: string;
+  comissao?: number;
 }
 
 interface Props {
@@ -56,6 +57,8 @@ export function CompleteDentistaDialog({
   const [telefone, setTelefone] = useState("");
   const [cro, setCro] = useState("");
   const [especialidade, setEspecialidade] = useState("Clínica Geral");
+  const [comissao, setComissao] = useState<string>("35");
+  const [comissaoError, setComissaoError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -63,8 +66,36 @@ export function CompleteDentistaDialog({
       setTelefone(dentista.telefone || "");
       setCro(dentista.cro || "");
       setEspecialidade(dentista.especialidade || "Clínica Geral");
+      setComissao(
+        typeof dentista.comissao === "number" && Number.isFinite(dentista.comissao)
+          ? String(dentista.comissao)
+          : "35"
+      );
+      setComissaoError(null);
     }
   }, [dentista]);
+
+  const handleComissaoChange = (raw: string) => {
+    const v = raw.replace(",", ".").trim();
+    if (v === "") {
+      setComissao("");
+      setComissaoError("Informe a comissão");
+      return;
+    }
+    if (!/^\d{0,3}(\.\d{0,2})?$/.test(v)) return;
+    const num = Number(v);
+    if (Number.isFinite(num) && num > 100) {
+      setComissao("100");
+      setComissaoError(null);
+      return;
+    }
+    setComissao(v);
+    if (!Number.isFinite(num) || num < 0 || num > 100) {
+      setComissaoError("Comissão deve estar entre 0 e 100");
+    } else {
+      setComissaoError(null);
+    }
+  };
 
   if (!dentista) return null;
 
