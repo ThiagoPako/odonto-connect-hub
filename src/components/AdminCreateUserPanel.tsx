@@ -27,19 +27,20 @@ export function AdminCreateUserPanel() {
     }
 
     setLoading(true);
-    const { data, error } = await adminCreateUser(name.trim(), email.trim(), password, role);
+    const userName = name.trim();
+    const { data, error } = await adminCreateUser(userName, email.trim(), password, role);
     if (error) {
       toast.error("Erro ao criar usuário: " + error);
       setLoading(false);
       return;
     }
 
-    toast.success(`Usuário ${data?.user?.name} criado com sucesso!`);
+    const createdName = data?.user?.name || userName;
 
-    // Se for dentista, cria também o registro clínico em /dentistas
+    // Se for dentista, cria também o registro clínico em /dentistas e mostra resumo final
     if (role === "dentista") {
       const { error: dErr } = await dentistasApi.create({
-        nome: name.trim(),
+        nome: userName,
         email: email.trim(),
         telefone: "",
         cro: "",
@@ -47,11 +48,20 @@ export function AdminCreateUserPanel() {
         comissao_percentual: 35,
         ativo: true,
       });
+
       if (dErr) {
-        toast.warning("Usuário criado, mas falhou ao adicionar em Dentistas: " + dErr);
+        toast.error(`Resumo do cadastro de ${createdName}`, {
+          description: `✓ Usuário criado com sucesso\n✗ Falha ao criar em /dentistas: ${dErr}\n\nAcesse /dentistas e cadastre manualmente para aparecer na agenda.`,
+          duration: 10000,
+        });
       } else {
-        toast.success("Dentista também adicionado à agenda");
+        toast.success(`Resumo do cadastro de ${createdName}`, {
+          description: "✓ Usuário criado com sucesso\n✓ Registro em /dentistas criado\n✓ Disponível na Agenda",
+          duration: 6000,
+        });
       }
+    } else {
+      toast.success(`Usuário ${createdName} criado com sucesso!`);
     }
 
     setName("");
