@@ -353,7 +353,7 @@ export function NovoAgendamentoModal({
               </div>
               <div>
                 <Label className="mb-1 block">Horário</Label>
-                <Input type="time" value={hora} onChange={(e) => setHora(e.target.value)} />
+                <AnalogTimePicker value={hora} onChange={setHora} />
               </div>
               <div>
                 <Label className="mb-1 block">Duração (min)</Label>
@@ -368,6 +368,39 @@ export function NovoAgendamentoModal({
             <div>
               <Label className="mb-1 block">Procedimento</Label>
               <Input value={procedimento} onChange={(e) => setProcedimento(e.target.value)} placeholder={categoriaSel?.label || "Ex: Restauração dente 16"} />
+            </div>
+
+            {/* Marcadores + Como conheceu (Fase A) */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="rounded-lg border border-border/60 p-3 bg-gradient-to-br from-card to-muted/20">
+                <Label className="mb-2 block text-xs uppercase tracking-wide text-muted-foreground font-semibold">
+                  Marcadores
+                </Label>
+                <MarcadoresSelector value={marcadores} onChange={setMarcadores} />
+              </div>
+              <div className="rounded-lg border border-border/60 p-3 bg-gradient-to-br from-card to-muted/20">
+                <Label className="mb-2 block text-xs uppercase tracking-wide text-muted-foreground font-semibold flex items-center gap-1">
+                  <Sparkles className="h-3 w-3 text-primary" />
+                  Como conheceu?
+                </Label>
+                <Select value={comoConheceu || "_none"} onValueChange={(v) => setComoConheceu(v === "_none" ? "" : v)}>
+                  <SelectTrigger className="h-8">
+                    <SelectValue placeholder="Origem do paciente" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="_none">— Não informado</SelectItem>
+                    <SelectItem value="indicacao">👥 Indicação</SelectItem>
+                    <SelectItem value="instagram">📸 Instagram</SelectItem>
+                    <SelectItem value="facebook">👍 Facebook</SelectItem>
+                    <SelectItem value="google">🔍 Google</SelectItem>
+                    <SelectItem value="site">🌐 Site da clínica</SelectItem>
+                    <SelectItem value="whatsapp">💬 WhatsApp</SelectItem>
+                    <SelectItem value="passou">🚶 Passou em frente</SelectItem>
+                    <SelectItem value="convenio">🏥 Convênio</SelectItem>
+                    <SelectItem value="outro">✨ Outro</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
 
             {/* Múltiplo agendamento */}
