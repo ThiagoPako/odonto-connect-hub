@@ -16,6 +16,7 @@ export function AdminCreateUserPanel() {
   const [role, setRole] = useState("user");
   const [completeOpen, setCompleteOpen] = useState(false);
   const [completeTarget, setCompleteTarget] = useState<CompleteDentistaTarget | null>(null);
+  const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
