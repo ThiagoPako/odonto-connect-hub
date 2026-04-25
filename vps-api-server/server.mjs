@@ -3508,7 +3508,10 @@ app.put('/api/orcamentos/:id', async (req, res) => {
       forma_pagamento, parcelas, titulo, print_config, odontograma_snapshot,
     } = req.body;
     const sets = []; const params = [];
-    if (itens !== undefined) { params.push(JSON.stringify(itens)); sets.push(`itens=$${params.length}`); }
+    if (itens !== undefined) {
+      const itensCongelados = await congelarVersoesItens(itens);
+      params.push(JSON.stringify(itensCongelados)); sets.push(`itens=$${params.length}`);
+    }
     if (valor_total !== undefined) { params.push(valor_total); sets.push(`valor_total=$${params.length}`); }
     if (desconto !== undefined) { params.push(desconto); sets.push(`desconto=$${params.length}`); }
     if (status !== undefined) { params.push(status); sets.push(`status=$${params.length}`); }
