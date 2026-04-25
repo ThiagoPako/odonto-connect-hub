@@ -7,13 +7,15 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { UserPlus } from "lucide-react";
+import { CompleteDentistaDialog, type CompleteDentistaTarget } from "@/components/CompleteDentistaDialog";
 
 export function AdminCreateUserPanel() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState("user");
-  const [loading, setLoading] = useState(false);
+  const [completeOpen, setCompleteOpen] = useState(false);
+  const [completeTarget, setCompleteTarget] = useState<CompleteDentistaTarget | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
