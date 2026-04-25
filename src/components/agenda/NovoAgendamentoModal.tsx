@@ -319,6 +319,16 @@ export function NovoAgendamentoModal({
                   </label>
                 </div>
               )}
+              {!pacienteId && search.trim().length >= 2 && filteredPacientes.length === 0 && (
+                <p className="mt-1.5 text-xs text-warning">
+                  Nenhum paciente encontrado com esse nome. Cadastre o paciente antes de agendar.
+                </p>
+              )}
+              {!pacienteId && search.trim().length >= 2 && filteredPacientes.length > 0 && (
+                <p className="mt-1.5 text-xs text-muted-foreground">
+                  ⚠️ Clique em um paciente da lista acima para selecioná-lo.
+                </p>
+              )}
             </div>
 
             {/* Profissional + Categoria */}
