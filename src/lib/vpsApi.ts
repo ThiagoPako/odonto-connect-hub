@@ -244,9 +244,30 @@ export interface HistoricoConsulta {
 
 export const agendaApi = {
   list: (params?: Record<string, string>) => vpsApiFetch<AgendamentoVPS[]>('/agenda', { params }),
-  create: (body: unknown) => vpsApiFetch('/agenda', { method: 'POST', body }),
+  create: (body: unknown) => vpsApiFetch<{ id: string; success: boolean }>('/agenda', { method: 'POST', body }),
+  createSerie: (body: {
+    paciente_id: string;
+    dentista_id: string;
+    data_inicio: string;
+    hora: string;
+    duracao?: number;
+    procedimento?: string;
+    quantidade: number;
+    intervalo_dias: number;
+    categoria?: string;
+    categoria_cor?: string;
+    primeira_consulta?: boolean;
+    confirmacao_canal?: string;
+    confirmacao_quando?: string;
+    sala?: string;
+    observacoes?: string;
+  }) => vpsApiFetch<{ serie_id: string; total: number; agendamentos: { id: string; data: string }[] }>(
+    '/agenda/serie', { method: 'POST', body }
+  ),
   update: (id: string, body: { status?: string; hora?: string; data?: string; duracao?: number; procedimento?: string; observacoes?: string; sala?: string; dentista_id?: string; dentista_nome?: string }) =>
     vpsApiFetch(`/agenda/${encodeURIComponent(id)}`, { method: 'PUT', body }),
+  delete: (id: string, opts?: { serie?: boolean }) =>
+    vpsApiFetch(`/agenda/${encodeURIComponent(id)}${opts?.serie ? '?serie=true' : ''}`, { method: 'DELETE' }),
 };
 
 // ─── Clínica config (horários + regras de agenda) ────────────
@@ -290,6 +311,19 @@ export interface AgendamentoVPS {
   status: string;
   observacoes: string;
   sala?: string;
+  tipo?: string;
+  primeira_consulta?: boolean;
+  dia_inteiro?: boolean;
+  escopo?: string;
+  categoria?: string;
+  categoria_cor?: string;
+  confirmacao_canal?: string;
+  confirmacao_quando?: string;
+  alerta_retorno_canal?: string;
+  alerta_retorno_quando?: string;
+  evento_titulo?: string;
+  serie_id?: string | null;
+  telefone?: string;
 }
 
 // ─── Financeiro ─────────────────────────────────────────────
