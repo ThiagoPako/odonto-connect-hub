@@ -5,7 +5,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { useEffect, useState, useCallback } from "react";
-import { Plus, Pencil, Trash2, Loader2, Search } from "lucide-react";
+import { Plus, Pencil, Trash2, Loader2, Search, History } from "lucide-react";
 import { procedimentosCatalogoApi, type ProcedimentoCatalogo } from "@/lib/vpsApi";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
+import { HistoricoVersoesModal } from "@/components/procedimentos/HistoricoVersoesModal";
 
 export const Route = createFileRoute("/procedimentos")({
   ssr: false,
@@ -28,6 +29,9 @@ function ProcedimentosCatalogoPage() {
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<ProcedimentoCatalogo | null>(null);
   const [open, setOpen] = useState(false);
+  const [motivoVersao, setMotivoVersao] = useState("");
+  const [historicoId, setHistoricoId] = useState<string | null>(null);
+  const [historicoNome, setHistoricoNome] = useState<string>("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -47,21 +51,28 @@ function ProcedimentosCatalogoPage() {
       cor: CORES[0], requer_dente: true, requer_face: false,
       ativo: true, descricao: null,
     });
+    setMotivoVersao("");
     setOpen(true);
   };
 
-  const editar = (p: ProcedimentoCatalogo) => { setEditing({ ...p }); setOpen(true); };
+  const editar = (p: ProcedimentoCatalogo) => { setEditing({ ...p }); setMotivoVersao(""); setOpen(true); };
 
   const salvar = async () => {
     if (!editing) return;
     if (!editing.nome.trim()) { toast.error("Nome obrigatório"); return; }
-    const body = { ...editing };
+    const body: any = { ...editing };
+    if (editing.id && motivoVersao.trim()) body.motivo_versao = motivoVersao.trim();
     const res = editing.id
       ? await procedimentosCatalogoApi.update(editing.id, body)
       : await procedimentosCatalogoApi.create(body);
     if ((res as any).error) { toast.error((res as any).error); return; }
-    toast.success(editing.id ? "Procedimento atualizado" : "Procedimento criado");
-    setOpen(false); setEditing(null);
+    const novaVersao = (res as any).data?._nova_versao || (res as any)._nova_versao;
+    toast.success(
+      editing.id
+        ? novaVersao ? `Procedimento atualizado — versão v${novaVersao.versao} criada` : "Procedimento atualizado"
+        : "Procedimento criado"
+    );
+    setOpen(false); setEditing(null); setMotivoVersao("");
     load();
   };
 
@@ -115,7 +126,8 @@ function ProcedimentosCatalogoPage() {
                   <th className="px-3 py-2 font-semibold text-right">Convênio</th>
                   <th className="px-3 py-2 font-semibold text-center">Duração</th>
                   <th className="px-3 py-2 font-semibold text-center">Dente / Face</th>
-                  <th className="px-3 py-2 w-20"></th>
+                  <th className="px-3 py-2 font-semibold text-center">Versão</th>
+                  <th className="px-3 py-2 w-28"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
@@ -132,8 +144,20 @@ function ProcedimentosCatalogoPage() {
                       {p.requer_dente && <span className="px-1.5 py-0.5 mx-0.5 rounded bg-primary/10 text-primary text-[10px]">Dente</span>}
                       {p.requer_face && <span className="px-1.5 py-0.5 mx-0.5 rounded bg-accent/30 text-accent-foreground text-[10px]">Face</span>}
                     </td>
+                    <td className="px-3 py-2 text-center">
+                      <span className="px-1.5 py-0.5 rounded bg-muted text-muted-foreground text-[10px] font-mono">
+                        v{p.versao_atual ?? 1}
+                      </span>
+                    </td>
                     <td className="px-3 py-2">
                       <div className="flex justify-end gap-1">
+                        <button
+                          onClick={() => { setHistoricoId(p.id); setHistoricoNome(p.nome); }}
+                          title="Ver histórico de versões"
+                          className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-primary"
+                        >
+                          <History className="h-3.5 w-3.5" />
+                        </button>
                         <button onClick={() => editar(p)} className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"><Pencil className="h-3.5 w-3.5" /></button>
                         <button onClick={() => excluir(p.id)} className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>
                       </div>
@@ -141,7 +165,7 @@ function ProcedimentosCatalogoPage() {
                   </tr>
                 ))}
                 {filtered.length === 0 && (
-                  <tr><td colSpan={9} className="px-3 py-12 text-center text-muted-foreground">Nenhum procedimento cadastrado</td></tr>
+                  <tr><td colSpan={10} className="px-3 py-12 text-center text-muted-foreground">Nenhum procedimento cadastrado</td></tr>
                 )}
               </tbody>
             </table>
@@ -214,6 +238,24 @@ function ProcedimentosCatalogoPage() {
                 <Textarea rows={2} className="text-xs" value={editing.descricao || ""}
                   onChange={e => setEditing({ ...editing, descricao: e.target.value })} />
               </div>
+              {editing.id && (
+                <div className="col-span-2 space-y-1.5 border-t border-border pt-3">
+                  <Label className="text-xs flex items-center gap-1.5">
+                    <History className="h-3 w-3 text-primary" />
+                    Motivo da alteração <span className="text-muted-foreground font-normal">(opcional — descreve esta versão)</span>
+                  </Label>
+                  <Input
+                    className="h-9 text-xs"
+                    placeholder="ex: reajuste anual, correção de requisitos, mudança de categoria…"
+                    value={motivoVersao}
+                    onChange={e => setMotivoVersao(e.target.value)}
+                  />
+                  <p className="text-[10px] text-muted-foreground">
+                    Alterações em preço, nome, categoria, requisitos ou duração geram uma nova versão automaticamente.
+                    Orçamentos antigos continuam usando a versão original.
+                  </p>
+                </div>
+              )}
             </div>
             <DialogFooter>
               <Button variant="ghost" size="sm" onClick={() => setOpen(false)} className="h-9 text-xs">Cancelar</Button>
@@ -222,6 +264,13 @@ function ProcedimentosCatalogoPage() {
           </DialogContent>
         </Dialog>
       )}
+
+      <HistoricoVersoesModal
+        open={!!historicoId}
+        onOpenChange={(v) => { if (!v) { setHistoricoId(null); setHistoricoNome(""); } }}
+        procedimentoId={historicoId}
+        procedimentoNome={historicoNome}
+      />
     </div>
   );
 }
