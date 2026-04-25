@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { adminCreateUser } from "@/lib/vpsApi";
+import { adminCreateUser, dentistasApi } from "@/lib/vpsApi";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
