@@ -9911,6 +9911,29 @@ app.listen(PORT, async () => {
       `CREATE INDEX IF NOT EXISTS idx_agendamentos_serie ON agendamentos(serie_id)`,
       `CREATE INDEX IF NOT EXISTS idx_agendamentos_data ON agendamentos(data)`,
       `CREATE INDEX IF NOT EXISTS idx_agendamentos_dentista_data ON agendamentos(dentista_id, data)`,
+
+      // Fase B — Catálogo de Procedimentos + Orçamentos com odontograma
+      `CREATE TABLE IF NOT EXISTS procedimentos_catalogo (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        codigo TEXT,
+        nome TEXT NOT NULL,
+        categoria TEXT,
+        valor_particular NUMERIC(10,2) DEFAULT 0,
+        valor_convenio NUMERIC(10,2) DEFAULT 0,
+        duracao_minutos INTEGER DEFAULT 30,
+        cor TEXT DEFAULT '#0d9488',
+        requer_dente BOOLEAN DEFAULT true,
+        requer_face BOOLEAN DEFAULT false,
+        ativo BOOLEAN DEFAULT true,
+        descricao TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_procedimentos_catalogo_ativo ON procedimentos_catalogo(ativo)`,
+      // Itens estruturados do orçamento (cada linha = procedimento aplicado a 1 dente/região)
+      `ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS titulo TEXT`,
+      `ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS print_config JSONB DEFAULT '{"logo":true,"valores":true,"odontograma":true,"assinatura":true,"desconto":true,"observacoes":true}'::jsonb`,
+      `ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS odontograma_snapshot JSONB`,
     ];
 
     for (const sql of migrations) {
