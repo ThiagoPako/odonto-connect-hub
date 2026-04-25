@@ -1129,10 +1129,11 @@ function NovoAgendamentoDialog({
               className="h-9 px-4 rounded-lg text-xs font-medium text-muted-foreground hover:bg-muted transition-colors">
               Cancelar
             </button>
-            <button onClick={handleSubmit} disabled={saving}
-              className="h-9 px-5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-2">
-              {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              Criar Agendamento
+            <button onClick={handleSubmit} disabled={saving || loadingDentistas}
+              title={loadingDentistas ? "Aguarde o carregamento dos profissionais..." : undefined}
+              className="h-9 px-5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
+              {(saving || loadingDentistas) && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              {loadingDentistas ? "Carregando..." : saving ? "Salvando..." : "Criar Agendamento"}
             </button>
           </div>
         </div>
