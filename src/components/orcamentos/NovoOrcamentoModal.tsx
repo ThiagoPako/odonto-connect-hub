@@ -305,9 +305,11 @@ export function NovoOrcamentoModal({
         print_config: printConfig,
         odontograma_snapshot: selections,
       };
-      const res = await orcamentosApi.create(body);
+      const res = orcamentoEditar
+        ? await orcamentosApi.update(orcamentoEditar.id, body)
+        : await orcamentosApi.create(body);
       if ((res as any).error) throw new Error((res as any).error);
-      toast.success("Orçamento criado com sucesso");
+      toast.success(orcamentoEditar ? "Orçamento atualizado" : "Orçamento criado com sucesso");
       onSaved?.();
       onOpenChange(false);
     } catch (err: any) {
@@ -322,7 +324,7 @@ export function NovoOrcamentoModal({
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="max-w-6xl max-h-[92vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="text-base">Novo Orçamento / Plano de Tratamento</DialogTitle>
+            <DialogTitle className="text-base">{orcamentoEditar ? "Editar Orçamento" : "Novo Orçamento / Plano de Tratamento"}</DialogTitle>
           </DialogHeader>
 
           <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
