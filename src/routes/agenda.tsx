@@ -290,8 +290,10 @@ function KanbanView({ filtered, selectedProfessional, professionals, onAtender, 
     e.preventDefault();
     setDragOverProf(null);
     const appointmentId = e.dataTransfer.getData("appointmentId");
+    const fromProfId = e.dataTransfer.getData("fromProfessionalId");
     const fromProf = e.dataTransfer.getData("fromProfessional");
-    if (!appointmentId || fromProf === prof.name) return;
+    if (!appointmentId) return;
+    if (fromProfId ? fromProfId === prof.id : fromProf === prof.name) return;
     setTransferringId(appointmentId);
     try {
       await onMoveToProfessional(appointmentId, prof.id, prof.name);
