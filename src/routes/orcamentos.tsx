@@ -234,7 +234,7 @@ function KpiMini({ icon: Icon, label, value }: { icon: React.ElementType; label:
   );
 }
 
-function BudgetDetail({ budget: b, onStatusChange }: { budget: OrcamentoRow; onStatusChange: (id: string, status: string) => void }) {
+function BudgetDetail({ budget: b, onStatusChange, onExecute }: { budget: OrcamentoRow; onStatusChange: (id: string, status: string) => void; onExecute: () => void }) {
   const cfg = statusConfig[b.status] || statusConfig.pendente;
   const [updating, setUpdating] = useState(false);
   const finalValue = b.valor_total - b.desconto;
