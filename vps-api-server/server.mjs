@@ -3637,13 +3637,20 @@ app.post('/api/execucoes', async (req, res) => {
 
     let assinaturaId = null;
     if (assinatura?.base64) {
+      // Bloqueio LGPD: assinatura sem consentimento explícito é rejeitada
+      if (!assinatura.consentimento_aceito) {
+        return res.status(400).json({
+          error: 'Consentimento LGPD obrigatório para registrar assinatura eletrônica.',
+        });
+      }
       const aId = crypto.randomUUID();
       await pool.query(
         `INSERT INTO assinaturas_eletronicas
           (id, paciente_id, dentista_id, contexto, assinatura_base64,
            latitude, longitude, accuracy_m, ip_address, user_agent,
-           verificacao_canal, verificacao_codigo, verificacao_em)
-         VALUES ($1,$2,$3,'execucao',$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+           verificacao_canal, verificacao_codigo, verificacao_em,
+           consentimento_aceito, consentimento_em, consentimento_versao, consentimento_texto)
+         VALUES ($1,$2,$3,'execucao',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
         [
           aId, paciente_id, dentista_id || null, assinatura.base64,
           assinatura.lat ?? null, assinatura.lng ?? null, assinatura.accuracy ?? null,
@@ -3652,6 +3659,10 @@ app.post('/api/execucoes', async (req, res) => {
           assinatura.canal || 'none',
           assinatura.codigo || null,
           assinatura.codigo ? new Date() : null,
+          true,
+          assinatura.consentimento_em ? new Date(assinatura.consentimento_em) : new Date(),
+          assinatura.consentimento_versao || '1.0',
+          assinatura.consentimento_texto || null,
         ]
       );
       assinaturaId = aId;
@@ -10201,8 +10212,17 @@ app.listen(PORT, async () => {
         verificacao_canal TEXT,    -- 'sms' | 'whatsapp' | 'none'
         verificacao_codigo TEXT,
         verificacao_em TIMESTAMPTZ,
+        consentimento_aceito BOOLEAN DEFAULT false,
+        consentimento_em TIMESTAMPTZ,
+        consentimento_versao TEXT,
+        consentimento_texto TEXT,
         created_at TIMESTAMPTZ DEFAULT NOW()
       )`,
+      // Migrações idempotentes para bases já existentes
+      `ALTER TABLE assinaturas_eletronicas ADD COLUMN IF NOT EXISTS consentimento_aceito BOOLEAN DEFAULT false`,
+      `ALTER TABLE assinaturas_eletronicas ADD COLUMN IF NOT EXISTS consentimento_em TIMESTAMPTZ`,
+      `ALTER TABLE assinaturas_eletronicas ADD COLUMN IF NOT EXISTS consentimento_versao TEXT`,
+      `ALTER TABLE assinaturas_eletronicas ADD COLUMN IF NOT EXISTS consentimento_texto TEXT`,
       `CREATE INDEX IF NOT EXISTS idx_assinaturas_paciente ON assinaturas_eletronicas(paciente_id)`,
       `CREATE INDEX IF NOT EXISTS idx_assinaturas_contexto ON assinaturas_eletronicas(contexto, contexto_id)`,
     ];

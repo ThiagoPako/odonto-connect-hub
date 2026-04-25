@@ -678,6 +678,11 @@ export interface AssinaturaPayload {
   accuracy?: number | null;
   canal?: 'sms' | 'whatsapp' | 'none';
   codigo?: string | null;
+  // Consentimento LGPD (Lei 13.709/2018)
+  consentimento_aceito?: boolean;
+  consentimento_em?: string | null;     // ISO timestamp
+  consentimento_versao?: string;
+  consentimento_texto?: string;
 }
 export interface ExecucaoPayload {
   orcamento_id?: string | null;
