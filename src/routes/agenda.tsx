@@ -78,7 +78,16 @@ function AgendaPage() {
     return { inicio: h.inicio, fim: h.fim };
   }, [config, currentDate]);
 
-  const intervalo = config?.intervalo_agenda || 30;
+  const [intervaloOverride, setIntervaloOverride] = useState<number | null>(() => {
+    if (typeof window === "undefined") return null;
+    const v = window.localStorage.getItem("agenda:intervalo");
+    return v ? Number(v) : null;
+  });
+  const intervalo = intervaloOverride ?? config?.intervalo_agenda ?? 30;
+  const setIntervalo = (v: number) => {
+    setIntervaloOverride(v);
+    try { window.localStorage.setItem("agenda:intervalo", String(v)); } catch {}
+  };
 
   const visibleProfs = profs.filter((p) => selectedProfs.includes(p.id));
   const visibleApts = appointments.filter((a) => !a.dentista_id || selectedProfs.includes(a.dentista_id));
