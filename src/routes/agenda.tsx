@@ -52,6 +52,7 @@ function vpsToAppointment(a: AgendamentoVPS): Appointment {
     patientName: name,
     patientInitials: initials,
     avatarColor: colors[colorIdx],
+    professionalId: a.dentista_id,
     professional: profName,
     professionalInitials: profInitials,
     room: a.sala || "Sala 1",
@@ -158,7 +159,13 @@ function AgendaPage() {
   }, [fetchAgenda]);
 
   const filtered = appointments
-    .filter((a) => selectedProfessional === "all" || a.professional.includes(selectedProfessional))
+    .filter((a) => {
+      if (selectedProfessional === "all") return true;
+      if (a.professionalId && a.professionalId === selectedProfessional) return true;
+      // Fallback for demo/legacy data without ID: match by name
+      const prof = professionals.find((p) => p.id === selectedProfessional);
+      return prof ? a.professional === prof.name : false;
+    })
     .filter((a) => !searchTerm || a.patientName.toLowerCase().includes(searchTerm.toLowerCase()));
 
   const countByStatus = (status: Appointment["status"]) => appointments.filter((a) => a.status === status).length;
@@ -233,7 +240,7 @@ function AgendaPage() {
             >
               <option value="all">Todos profissionais</option>
               {professionals.map((p) => (
-                <option key={p.id} value={p.name.split(" ")[1] || p.name}>{p.name}</option>
+                <option key={p.id} value={p.id}>{p.name}</option>
               ))}
             </select>
             <button onClick={() => setShowNovoDialog(true)} className="flex items-center gap-1.5 h-8 px-3 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors">
@@ -283,8 +290,10 @@ function KanbanView({ filtered, selectedProfessional, professionals, onAtender, 
     e.preventDefault();
     setDragOverProf(null);
     const appointmentId = e.dataTransfer.getData("appointmentId");
+    const fromProfId = e.dataTransfer.getData("fromProfessionalId");
     const fromProf = e.dataTransfer.getData("fromProfessional");
-    if (!appointmentId || fromProf === prof.name) return;
+    if (!appointmentId) return;
+    if (fromProfId ? fromProfId === prof.id : fromProf === prof.name) return;
     setTransferringId(appointmentId);
     try {
       await onMoveToProfessional(appointmentId, prof.id, prof.name);
@@ -298,9 +307,11 @@ function KanbanView({ filtered, selectedProfessional, professionals, onAtender, 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
       {professionals
-        .filter((p) => selectedProfessional === "all" || p.name.includes(selectedProfessional))
+        .filter((p) => selectedProfessional === "all" || p.id === selectedProfessional)
         .map((prof) => {
-          const profAppts = filtered.filter((a) => a.professional === prof.name).sort((a, b) => a.time.localeCompare(b.time));
+          const profAppts = filtered
+            .filter((a) => (a.professionalId ? a.professionalId === prof.id : a.professional === prof.name))
+            .sort((a, b) => a.time.localeCompare(b.time));
           const isDragOver = dragOverProf === prof.id;
           return (
             <div
@@ -484,11 +495,15 @@ function ListView({ filtered, onAtender, onUpdateStatus, onReschedule }: { filte
 /* ===================== CALENDAR VIEW ===================== */
 function CalendarView({ filtered, selectedProfessional, professionals: allProfessionals }: { filtered: Appointment[]; selectedProfessional: string; professionals: Professional[] }) {
   const professionals = allProfessionals.filter(
-    (p) => selectedProfessional === "all" || p.name.includes(selectedProfessional)
+    (p) => selectedProfessional === "all" || p.id === selectedProfessional
   );
 
-  const getApptForSlot = (profName: string, hour: string) => {
-    return filtered.filter((a) => a.professional === profName && a.time.startsWith(hour.split(":")[0]));
+  const getApptForSlot = (prof: Professional, hour: string) => {
+    return filtered.filter(
+      (a) =>
+        (a.professionalId ? a.professionalId === prof.id : a.professional === prof.name) &&
+        a.time.startsWith(hour.split(":")[0])
+    );
   };
 
   return (
@@ -519,7 +534,7 @@ function CalendarView({ filtered, selectedProfessional, professionals: allProfes
                   {hour}
                 </td>
                 {professionals.map((prof) => {
-                  const appts = getApptForSlot(prof.name, hour);
+                  const appts = getApptForSlot(prof, hour);
                   return (
                     <td key={prof.id} className="px-1.5 py-1 align-top min-w-[180px]">
                       {appts.length === 0 ? (
@@ -609,6 +624,7 @@ function AppointmentCard({ appointment: a, onAtender, onUpdateStatus, onReschedu
       onDragStart={(e) => {
         e.dataTransfer.setData("appointmentId", a.id);
         e.dataTransfer.setData("fromProfessional", a.professional);
+        if (a.professionalId) e.dataTransfer.setData("fromProfessionalId", a.professionalId);
         e.dataTransfer.effectAllowed = "move";
       }}
       className={`rounded-lg border border-border/50 p-2.5 space-y-2 hover-lift hover:shadow-glow-primary transition-all duration-300 ${

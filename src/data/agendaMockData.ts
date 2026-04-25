@@ -4,6 +4,7 @@ export interface Appointment {
   patientName: string;
   patientInitials: string;
   avatarColor: string;
+  professionalId?: string;
   professional: string;
   professionalInitials: string;
   room: string;
