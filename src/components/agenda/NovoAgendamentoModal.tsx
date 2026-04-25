@@ -159,6 +159,7 @@ export function NovoAgendamentoModal({
   };
 
   const handleSubmitConsulta = async () => {
+    console.log("[Agenda] Submit consulta", { pacienteId, dentistaId, data, hora, duracao });
     const err = validateConsulta();
     if (err) { toast.error(err); return; }
     setSaving(true);
@@ -213,6 +214,9 @@ export function NovoAgendamentoModal({
       }
       onCreated();
       onOpenChange(false);
+    } catch (e: any) {
+      console.error("[Agenda] Erro inesperado", e);
+      toast.error("Erro inesperado: " + (e?.message || String(e)));
     } finally {
       setSaving(false);
     }
