@@ -6,6 +6,7 @@ import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import { canAccessRoute } from "@/lib/routeAccess";
 import { captureUtmFromUrl } from "@/data/campanhasStore";
 import { Loader2, ShieldAlert } from "lucide-react";
+import { Toaster } from "@/components/ui/sonner";
 
 import appCss from "../styles.css?url";
 
@@ -93,6 +94,7 @@ function RootComponent() {
   return (
     <AuthProvider>
       <AuthGate />
+      <Toaster position="top-right" richColors />
     </AuthProvider>
   );
 }
