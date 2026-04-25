@@ -281,7 +281,11 @@ export function NovoAgendamentoModal({
           </TabsList>
 
           {/* ════ CONSULTA ════ */}
-          <TabsContent value="consulta" className="space-y-4 mt-4">
+          <TabsContent value="consulta" className="mt-4">
+          <form
+            onSubmit={(e) => { e.preventDefault(); e.stopPropagation(); void handleSubmitConsulta(); }}
+            className="space-y-4"
+          >
             {/* Paciente search */}
             <div className="relative">
               <Label className="mb-1 block">Paciente</Label>
@@ -300,6 +304,7 @@ export function NovoAgendamentoModal({
                   {filteredPacientes.map((p) => (
                     <button
                       key={p.id}
+                      type="button"
                       onClick={() => handleSelectPaciente(p)}
                       className="w-full text-left px-3 py-2 hover:bg-muted text-sm"
                     >
@@ -485,16 +490,21 @@ export function NovoAgendamentoModal({
             </div>
 
             <div className="flex justify-end gap-2 pt-2">
-              <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancelar</Button>
-              <Button onClick={handleSubmitConsulta} disabled={saving}>
+              <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancelar</Button>
+              <Button type="submit" disabled={saving}>
                 {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 {multiplo ? `Agendar ${qtdSessoes} sessões` : "Agendar"}
               </Button>
             </div>
+          </form>
           </TabsContent>
 
           {/* ════ COMPROMISSO ════ */}
-          <TabsContent value="compromisso" className="space-y-4 mt-4">
+          <TabsContent value="compromisso" className="mt-4">
+          <form
+            onSubmit={(e) => { e.preventDefault(); e.stopPropagation(); void handleSubmitCompromissoEvento(); }}
+            className="space-y-4"
+          >
             <CompromissoEventoForm
               titulo="Compromisso"
               eventoTitulo={eventoTitulo} setEventoTitulo={setEventoTitulo}
@@ -508,16 +518,21 @@ export function NovoAgendamentoModal({
               observacoes={observacoes} setObservacoes={setObservacoes}
             />
             <div className="flex justify-end gap-2 pt-2">
-              <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancelar</Button>
-              <Button onClick={handleSubmitCompromissoEvento} disabled={saving}>
+              <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancelar</Button>
+              <Button type="submit" disabled={saving}>
                 {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 Criar compromisso
               </Button>
             </div>
+          </form>
           </TabsContent>
 
           {/* ════ EVENTO ════ */}
-          <TabsContent value="evento" className="space-y-4 mt-4">
+          <TabsContent value="evento" className="mt-4">
+          <form
+            onSubmit={(e) => { e.preventDefault(); e.stopPropagation(); void handleSubmitCompromissoEvento(); }}
+            className="space-y-4"
+          >
             <CompromissoEventoForm
               titulo="Evento"
               eventoTitulo={eventoTitulo} setEventoTitulo={setEventoTitulo}
@@ -531,12 +546,13 @@ export function NovoAgendamentoModal({
               observacoes={observacoes} setObservacoes={setObservacoes}
             />
             <div className="flex justify-end gap-2 pt-2">
-              <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancelar</Button>
-              <Button onClick={handleSubmitCompromissoEvento} disabled={saving}>
+              <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancelar</Button>
+              <Button type="submit" disabled={saving}>
                 {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 Criar evento
               </Button>
             </div>
+          </form>
           </TabsContent>
         </Tabs>
       </DialogContent>
