@@ -364,7 +364,7 @@ export function NovoAgendamentoModal({
                 </div>
               )}
               {pacienteId && (
-                <div className="mt-2 flex items-center gap-2 flex-wrap">
+                <div ref={telefoneFieldRef} tabIndex={-1} className="mt-2 flex items-center gap-2 flex-wrap">
                   <Badge variant="secondary"><Phone className="h-3 w-3 mr-1" />{telefone || "—"}</Badge>
                   {email && <Badge variant="secondary"><Mail className="h-3 w-3 mr-1" />{email}</Badge>}
                   <label className="flex items-center gap-1.5 text-sm ml-auto">
