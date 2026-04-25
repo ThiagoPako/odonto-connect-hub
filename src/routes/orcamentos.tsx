@@ -7,6 +7,8 @@ import {
 import { useState, useEffect, useCallback } from "react";
 import { orcamentosApi } from "@/lib/vpsApi";
 import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { NovoOrcamentoModal } from "@/components/orcamentos/NovoOrcamentoModal";
 
 export const Route = createFileRoute("/orcamentos")({
   ssr: false,
@@ -67,6 +69,7 @@ function OrcamentosPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [searchTerm, setSearchTerm] = useState("");
+  const [novoOpen, setNovoOpen] = useState(false);
 
   const loadAll = useCallback(async () => {
     try {
