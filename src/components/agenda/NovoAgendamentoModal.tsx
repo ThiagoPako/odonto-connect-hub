@@ -36,7 +36,7 @@ const CATEGORIAS = [
 ];
 
 const QUANDO_OPCOES = [
-  { label: "Não enviar", value: "" },
+  { label: "Não enviar", value: "_none" },
   { label: "Enviar agora", value: "agora" },
   { label: "1 dia antes", value: "1d" },
   { label: "2 dias antes", value: "2d" },
@@ -431,7 +431,7 @@ export function NovoAgendamentoModal({
                 <div className="flex items-center gap-2 mb-2 text-sm font-medium">
                   <MessageSquare className="h-4 w-4 text-primary" /> Confirmação
                 </div>
-                <Select value={confirmacaoQuando} onValueChange={setConfirmacaoQuando}>
+                <Select value={confirmacaoQuando || "_none"} onValueChange={(v) => setConfirmacaoQuando(v === "_none" ? "" : v)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {QUANDO_OPCOES.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
@@ -445,7 +445,7 @@ export function NovoAgendamentoModal({
                 <div className="flex items-center gap-2 mb-2 text-sm font-medium">
                   <BellRing className="h-4 w-4 text-warning" /> Alerta de retorno
                 </div>
-                <Select value={retornoQuando} onValueChange={setRetornoQuando}>
+                <Select value={retornoQuando || "_none"} onValueChange={(v) => setRetornoQuando(v === "_none" ? "" : v)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {QUANDO_OPCOES.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
