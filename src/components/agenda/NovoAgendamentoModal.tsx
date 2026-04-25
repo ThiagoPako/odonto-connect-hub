@@ -316,7 +316,7 @@ export function NovoAgendamentoModal({
                 <Select value={dentistaId} onValueChange={setDentistaId}>
                   <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
                   <SelectContent>
-                    {dentistas.map((d) => (
+                    {dentistas.filter((d) => d?.id).map((d) => (
                       <SelectItem key={d.id} value={d.id}>{d.nome}</SelectItem>
                     ))}
                   </SelectContent>
