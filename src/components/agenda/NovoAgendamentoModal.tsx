@@ -146,7 +146,11 @@ export function NovoAgendamentoModal({
 
   // Validação básica
   const validateConsulta = (): string | null => {
-    if (!pacienteId || !UUID_RE.test(pacienteId)) return "Selecione um paciente da lista de sugestões.";
+    if (!pacienteId || !UUID_RE.test(pacienteId)) {
+      return search.trim().length > 0
+        ? "Paciente não selecionado. Clique no nome do paciente na lista de sugestões abaixo do campo de busca."
+        : "Busque e clique no nome do paciente na lista de sugestões para selecioná-lo.";
+    }
     if (!dentistaId || !UUID_RE.test(dentistaId)) return "Selecione um profissional.";
     if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return "Data inválida.";
     if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(hora)) return "Horário inválido (HH:MM).";
