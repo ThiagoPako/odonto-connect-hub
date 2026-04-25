@@ -9538,8 +9538,8 @@ app.listen(PORT, async () => {
   console.log(`   Webhook URL: ${WEBHOOK_URL}`);
 
   // ─── Auto-migration: ensure required columns/tables exist ───
+  let checkedStatements = 0;
   try {
-    let applied = 0;
     const migrations = [
       `ALTER TABLE profiles ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT true`,
       `ALTER TABLE profiles ADD COLUMN IF NOT EXISTS password_hash TEXT`,
@@ -9869,7 +9869,7 @@ app.listen(PORT, async () => {
     for (const sql of migrations) {
       try {
         await pool.query(sql);
-        applied++;
+        checkedStatements++;
       } catch (migErr) {
         // 42701 = column already exists, 42P07 = relation already exists — both are fine
         if (!['42701', '42P07'].includes(migErr?.code)) {
@@ -9877,9 +9877,10 @@ app.listen(PORT, async () => {
         }
       }
     }
-    console.log(`   ✅ Auto-migration: ${applied} statements checked`);
+    console.log(`   ✅ Auto-migration: ${checkedStatements}/${migrations.length} statements checked`);
   } catch (migErr) {
     console.error('❌ Auto-migration failed:', migErr.message);
+    console.error(`   ↪ Auto-migration progress before failure: ${checkedStatements} statement(s) executed`);
   }
 
   // Auto-register webhook for all connected instances on startup
