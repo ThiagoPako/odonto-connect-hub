@@ -7,6 +7,8 @@ import {
 import { useState, useEffect, useCallback } from "react";
 import { orcamentosApi } from "@/lib/vpsApi";
 import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { NovoOrcamentoModal } from "@/components/orcamentos/NovoOrcamentoModal";
 
 export const Route = createFileRoute("/orcamentos")({
   ssr: false,
@@ -67,6 +69,7 @@ function OrcamentosPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [searchTerm, setSearchTerm] = useState("");
+  const [novoOpen, setNovoOpen] = useState(false);
 
   const loadAll = useCallback(async () => {
     try {
@@ -141,6 +144,9 @@ function OrcamentosPage() {
               ))}
             </div>
           </div>
+          <Button size="sm" onClick={() => setNovoOpen(true)} className="h-8 text-xs gap-1.5">
+            <Plus className="h-3.5 w-3.5" /> Novo Orçamento
+          </Button>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
@@ -185,6 +191,12 @@ function OrcamentosPage() {
           </div>
         </div>
       </main>
+
+      <NovoOrcamentoModal
+        open={novoOpen}
+        onOpenChange={setNovoOpen}
+        onSaved={loadAll}
+      />
     </div>
   );
 }

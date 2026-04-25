@@ -3447,14 +3447,28 @@ app.delete('/api/prontuarios/:id', async (req, res) => {
 app.post('/api/orcamentos', async (req, res) => {
   try {
     await verifyUser(req);
-    const { paciente_id, dentista_id, itens, valor_total, desconto, status, validade, observacoes, forma_pagamento, parcelas } = req.body;
+    const {
+      paciente_id, dentista_id, itens, valor_total, desconto, status, validade,
+      observacoes, forma_pagamento, parcelas, titulo, print_config, odontograma_snapshot,
+    } = req.body;
     const id = crypto.randomUUID();
     await pool.query(
-      'INSERT INTO orcamentos (id, paciente_id, dentista_id, itens, valor_total, desconto, status, validade, observacoes, forma_pagamento, parcelas) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
-      [id, paciente_id, dentista_id, JSON.stringify(itens || []), valor_total, desconto || 0, status || 'pendente', validade, observacoes, forma_pagamento, parcelas || 1]
+      `INSERT INTO orcamentos (
+        id, paciente_id, dentista_id, itens, valor_total, desconto, status, validade,
+        observacoes, forma_pagamento, parcelas, titulo, print_config, odontograma_snapshot
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+      [
+        id, paciente_id, dentista_id, JSON.stringify(itens || []),
+        valor_total, desconto || 0, status || 'pendente', validade,
+        observacoes, forma_pagamento, parcelas || 1,
+        titulo || null,
+        print_config ? JSON.stringify(print_config) : null,
+        odontograma_snapshot ? JSON.stringify(odontograma_snapshot) : null,
+      ]
     );
     res.json({ id, success: true });
   } catch (error) {
+    console.error('❌ POST orcamento:', error.message);
     res.status(500).json({ error: error.message });
   }
 });
@@ -3462,7 +3476,10 @@ app.post('/api/orcamentos', async (req, res) => {
 app.put('/api/orcamentos/:id', async (req, res) => {
   try {
     await verifyUser(req);
-    const { itens, valor_total, desconto, status, validade, observacoes, forma_pagamento, parcelas } = req.body;
+    const {
+      itens, valor_total, desconto, status, validade, observacoes,
+      forma_pagamento, parcelas, titulo, print_config, odontograma_snapshot,
+    } = req.body;
     const sets = []; const params = [];
     if (itens !== undefined) { params.push(JSON.stringify(itens)); sets.push(`itens=$${params.length}`); }
     if (valor_total !== undefined) { params.push(valor_total); sets.push(`valor_total=$${params.length}`); }
@@ -3472,6 +3489,9 @@ app.put('/api/orcamentos/:id', async (req, res) => {
     if (observacoes !== undefined) { params.push(observacoes); sets.push(`observacoes=$${params.length}`); }
     if (forma_pagamento !== undefined) { params.push(forma_pagamento); sets.push(`forma_pagamento=$${params.length}`); }
     if (parcelas !== undefined) { params.push(parcelas); sets.push(`parcelas=$${params.length}`); }
+    if (titulo !== undefined) { params.push(titulo); sets.push(`titulo=$${params.length}`); }
+    if (print_config !== undefined) { params.push(JSON.stringify(print_config)); sets.push(`print_config=$${params.length}`); }
+    if (odontograma_snapshot !== undefined) { params.push(JSON.stringify(odontograma_snapshot)); sets.push(`odontograma_snapshot=$${params.length}`); }
     if (sets.length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
     params.push(req.params.id);
     await pool.query(`UPDATE orcamentos SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length}`, params);
@@ -3486,6 +3506,73 @@ app.delete('/api/orcamentos/:id', async (req, res) => {
   try {
     await verifyUser(req);
     await pool.query('DELETE FROM orcamentos WHERE id=$1', [req.params.id]);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// PROCEDIMENTOS — Catálogo (Fase B)
+// ═══════════════════════════════════════════════════════════════
+app.get('/api/procedimentos-catalogo', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { rows } = await pool.query(
+      `SELECT * FROM procedimentos_catalogo WHERE ativo = true ORDER BY categoria NULLS LAST, nome ASC`
+    );
+    res.json(rows);
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+app.post('/api/procedimentos-catalogo', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const {
+      codigo, nome, categoria, valor_particular, valor_convenio,
+      duracao_minutos, cor, requer_dente, requer_face, descricao,
+    } = req.body;
+    if (!nome) return res.status(400).json({ error: 'Nome é obrigatório' });
+    const id = crypto.randomUUID();
+    await pool.query(
+      `INSERT INTO procedimentos_catalogo
+        (id, codigo, nome, categoria, valor_particular, valor_convenio, duracao_minutos, cor, requer_dente, requer_face, descricao)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [id, codigo || null, nome, categoria || null,
+       valor_particular || 0, valor_convenio || 0, duracao_minutos || 30,
+       cor || '#0d9488', requer_dente !== false, !!requer_face, descricao || null]
+    );
+    const { rows } = await pool.query('SELECT * FROM procedimentos_catalogo WHERE id=$1', [id]);
+    res.json(rows[0]);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/api/procedimentos-catalogo/:id', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const fields = ['codigo','nome','categoria','valor_particular','valor_convenio','duracao_minutos','cor','requer_dente','requer_face','descricao','ativo'];
+    const sets = []; const params = [];
+    for (const f of fields) {
+      if (req.body[f] !== undefined) { params.push(req.body[f]); sets.push(`${f}=$${params.length}`); }
+    }
+    if (!sets.length) return res.status(400).json({ error: 'Nada para atualizar' });
+    params.push(req.params.id);
+    await pool.query(`UPDATE procedimentos_catalogo SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length}`, params);
+    const { rows } = await pool.query('SELECT * FROM procedimentos_catalogo WHERE id=$1', [req.params.id]);
+    res.json(rows[0]);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/procedimentos-catalogo/:id', async (req, res) => {
+  try {
+    await verifyUser(req);
+    await pool.query('UPDATE procedimentos_catalogo SET ativo=false, updated_at=NOW() WHERE id=$1', [req.params.id]);
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -9911,6 +9998,29 @@ app.listen(PORT, async () => {
       `CREATE INDEX IF NOT EXISTS idx_agendamentos_serie ON agendamentos(serie_id)`,
       `CREATE INDEX IF NOT EXISTS idx_agendamentos_data ON agendamentos(data)`,
       `CREATE INDEX IF NOT EXISTS idx_agendamentos_dentista_data ON agendamentos(dentista_id, data)`,
+
+      // Fase B — Catálogo de Procedimentos + Orçamentos com odontograma
+      `CREATE TABLE IF NOT EXISTS procedimentos_catalogo (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        codigo TEXT,
+        nome TEXT NOT NULL,
+        categoria TEXT,
+        valor_particular NUMERIC(10,2) DEFAULT 0,
+        valor_convenio NUMERIC(10,2) DEFAULT 0,
+        duracao_minutos INTEGER DEFAULT 30,
+        cor TEXT DEFAULT '#0d9488',
+        requer_dente BOOLEAN DEFAULT true,
+        requer_face BOOLEAN DEFAULT false,
+        ativo BOOLEAN DEFAULT true,
+        descricao TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_procedimentos_catalogo_ativo ON procedimentos_catalogo(ativo)`,
+      // Itens estruturados do orçamento (cada linha = procedimento aplicado a 1 dente/região)
+      `ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS titulo TEXT`,
+      `ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS print_config JSONB DEFAULT '{"logo":true,"valores":true,"odontograma":true,"assinatura":true,"desconto":true,"observacoes":true}'::jsonb`,
+      `ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS odontograma_snapshot JSONB`,
     ];
 
     for (const sql of migrations) {
