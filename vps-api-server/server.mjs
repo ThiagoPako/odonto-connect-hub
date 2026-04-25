@@ -2305,11 +2305,29 @@ app.get('/api/agenda', async (req, res) => {
 app.post('/api/agenda', async (req, res) => {
   try {
     await verifyUser(req);
-    const { paciente_id, dentista_id, data, hora, duracao, procedimento, status, observacoes, lead_id } = req.body;
+    const {
+      paciente_id, dentista_id, data, hora, duracao, procedimento, status, observacoes, lead_id,
+      tipo, primeira_consulta, dia_inteiro, escopo, categoria, categoria_cor,
+      confirmacao_canal, confirmacao_quando, alerta_retorno_canal, alerta_retorno_quando,
+      evento_titulo, sala, serie_id,
+    } = req.body;
     const id = crypto.randomUUID();
     await pool.query(
-      'INSERT INTO agendamentos (id, paciente_id, dentista_id, data, hora, duracao, procedimento, status, observacoes) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
-      [id, paciente_id, dentista_id, data, hora, duracao || 30, procedimento, status || 'agendado', observacoes]
+      `INSERT INTO agendamentos (
+        id, paciente_id, dentista_id, data, hora, duracao, procedimento, status, observacoes,
+        tipo, primeira_consulta, dia_inteiro, escopo, categoria, categoria_cor,
+        confirmacao_canal, confirmacao_quando, alerta_retorno_canal, alerta_retorno_quando,
+        evento_titulo, sala, serie_id
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
+      [
+        id, paciente_id || null, dentista_id || null, data, hora, duracao || 30,
+        procedimento || null, status || 'agendado', observacoes || null,
+        tipo || 'consulta', !!primeira_consulta, !!dia_inteiro, escopo || 'dentista',
+        categoria || null, categoria_cor || null,
+        confirmacao_canal || null, confirmacao_quando || null,
+        alerta_retorno_canal || null, alerta_retorno_quando || null,
+        evento_titulo || null, sala || null, serie_id || null,
+      ]
     );
 
     // Auto-move CRM lead to "paciente_agendado" if lead_id provided
@@ -2323,6 +2341,84 @@ app.post('/api/agenda', async (req, res) => {
 
     res.json({ id, success: true });
   } catch (error) {
+    console.error('❌ Error creating appointment:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/agenda/serie — múltiplo agendamento (recorrência)
+app.post('/api/agenda/serie', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const {
+      paciente_id, dentista_id, hora, duracao, procedimento, observacoes,
+      data_inicio, quantidade, intervalo_dias,
+      categoria, categoria_cor, primeira_consulta,
+      confirmacao_canal, confirmacao_quando, sala,
+    } = req.body;
+    const qtd = Math.max(1, Math.min(52, Number(quantidade) || 1));
+    const intDias = Math.max(1, Math.min(180, Number(intervalo_dias) || 7));
+    if (!data_inicio || !/^\d{4}-\d{2}-\d{2}$/.test(data_inicio)) {
+      return res.status(400).json({ error: 'data_inicio inválida (YYYY-MM-DD)' });
+    }
+    if (!hora || !/^([01]\d|2[0-3]):[0-5]\d$/.test(hora)) {
+      return res.status(400).json({ error: 'hora inválida (HH:MM)' });
+    }
+    if (!dentista_id || !paciente_id) {
+      return res.status(400).json({ error: 'paciente_id e dentista_id são obrigatórios' });
+    }
+    const serie_id = crypto.randomUUID();
+    const created = [];
+    const start = new Date(data_inicio + 'T12:00:00Z');
+    for (let i = 0; i < qtd; i++) {
+      const d = new Date(start.getTime());
+      d.setUTCDate(start.getUTCDate() + i * intDias);
+      const dataStr = d.toISOString().slice(0, 10);
+      const id = crypto.randomUUID();
+      await pool.query(
+        `INSERT INTO agendamentos (
+          id, paciente_id, dentista_id, data, hora, duracao, procedimento, status, observacoes,
+          tipo, primeira_consulta, escopo, categoria, categoria_cor,
+          confirmacao_canal, confirmacao_quando, sala, serie_id
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,'agendado',$8,'consulta',$9,'dentista',$10,$11,$12,$13,$14,$15)`,
+        [
+          id, paciente_id, dentista_id, dataStr, hora, duracao || 30,
+          procedimento || null, observacoes || null,
+          // primeira_consulta só na primeira data
+          i === 0 ? !!primeira_consulta : false,
+          categoria || null, categoria_cor || null,
+          confirmacao_canal || null, confirmacao_quando || null,
+          sala || null, serie_id,
+        ]
+      );
+      created.push({ id, data: dataStr });
+    }
+    res.json({ serie_id, total: created.length, agendamentos: created });
+  } catch (error) {
+    console.error('❌ Error creating series:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// DELETE /api/agenda/:id — excluir agendamento
+app.delete('/api/agenda/:id', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { serie } = req.query; // ?serie=true → exclui toda a série
+    if (serie === 'true') {
+      const { rows } = await pool.query('SELECT serie_id FROM agendamentos WHERE id=$1', [req.params.id]);
+      const sid = rows[0]?.serie_id;
+      if (!sid) {
+        await pool.query('DELETE FROM agendamentos WHERE id=$1', [req.params.id]);
+        return res.json({ success: true, deleted: 1 });
+      }
+      const { rowCount } = await pool.query('DELETE FROM agendamentos WHERE serie_id=$1', [sid]);
+      return res.json({ success: true, deleted: rowCount });
+    }
+    await pool.query('DELETE FROM agendamentos WHERE id=$1', [req.params.id]);
+    res.json({ success: true, deleted: 1 });
+  } catch (error) {
+    console.error('❌ Error deleting appointment:', error.message);
     res.status(500).json({ error: error.message });
   }
 });
