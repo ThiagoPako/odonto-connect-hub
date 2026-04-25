@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { AdminResetPanel } from "@/components/AdminResetPanel";
@@ -19,6 +19,8 @@ import {
   Bot,
   Headphones,
   ShieldAlert,
+  CalendarClock,
+  ChevronRight,
 } from "lucide-react";
 
 export const Route = createFileRoute("/configuracoes")({
