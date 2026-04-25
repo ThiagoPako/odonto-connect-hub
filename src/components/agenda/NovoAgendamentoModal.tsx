@@ -159,6 +159,7 @@ export function NovoAgendamentoModal({
   };
 
   const handleSubmitConsulta = async () => {
+    console.log("[Agenda] Submit consulta", { pacienteId, dentistaId, data, hora, duracao });
     const err = validateConsulta();
     if (err) { toast.error(err); return; }
     setSaving(true);
