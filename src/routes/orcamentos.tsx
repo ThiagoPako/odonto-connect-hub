@@ -97,6 +97,10 @@ function OrcamentosPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [novoOpen, setNovoOpen] = useState(false);
   const [execOpen, setExecOpen] = useState(false);
+  const [printOpen, setPrintOpen] = useState(false);
+  const [editing, setEditing] = useState<OrcamentoRow | null>(null);
+  const [pacienteCache, setPacienteCache] = useState<Record<string, any>>({});
+  const [dentistaCache, setDentistaCache] = useState<Record<string, any>>({});
 
   const loadAll = useCallback(async () => {
     try {
@@ -108,6 +112,37 @@ function OrcamentosPage() {
   }, []);
 
   useEffect(() => { loadAll(); }, [loadAll]);
+
+  // Pré-carrega pacientes/dentistas para enriquecer o print preview
+  useEffect(() => {
+    Promise.all([pacientesApi.list(), dentistasApi.list()]).then(([p, d]) => {
+      const pacs = ((p as any).data || p || []) as any[];
+      const dens = ((d as any).data || d || []) as any[];
+      const pMap: Record<string, any> = {}; pacs.forEach(x => { pMap[x.id] = x; });
+      const dMap: Record<string, any> = {}; dens.forEach(x => { dMap[x.id] = x; });
+      setPacienteCache(pMap);
+      setDentistaCache(dMap);
+    }).catch(() => {});
+  }, []);
+
+  const handleExcluir = async (id: string) => {
+    if (!confirm("Excluir este orçamento? Esta ação não pode ser desfeita.")) return;
+    const res = await orcamentosApi.delete(id);
+    if ((res as any).error) { toast.error("Erro: " + (res as any).error); return; }
+    toast.success("Orçamento excluído");
+    if (selectedId === id) setSelectedId(null);
+    loadAll();
+  };
+
+  const handleEditar = (o: OrcamentoRow) => {
+    setEditing(o);
+    setNovoOpen(true);
+  };
+
+  const handleImprimir = (o: OrcamentoRow) => {
+    setSelectedId(o.id);
+    setPrintOpen(true);
+  };
 
   const filtered = orcamentos
     .filter(b => filterStatus === "all" || b.status === filterStatus)
