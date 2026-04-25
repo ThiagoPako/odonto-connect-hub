@@ -62,9 +62,14 @@ export function ExecucaoModal({ open, onOpenChange, orcamento, onChanged }: Prop
 
   const confirmarExecucao = async () => {
     if (!executingItem) return;
+    const sig = sigRef.current?.() ?? null;
+    // Bloqueia: se houver assinatura, consentimento LGPD é obrigatório
+    if (sig && !consent.accepted) {
+      toast.error("É necessário aceitar o termo de consentimento LGPD antes de assinar.");
+      return;
+    }
     setSaving(true);
     try {
-      const sig = sigRef.current?.() ?? null;
       const res = await execucoesApi.create({
         orcamento_id: orcamento.id,
         orcamento_item_id: executingItem.id || null,
@@ -76,13 +81,24 @@ export function ExecucaoModal({ open, onOpenChange, orcamento, onChanged }: Prop
         faces: executingItem.faces || [],
         valor: Number(executingItem.valor || executingItem.valor_total || 0),
         assinatura: sig
-          ? { base64: sig.base64, lat: sig.lat, lng: sig.lng, accuracy: sig.accuracy, canal: 'none' }
+          ? {
+              base64: sig.base64,
+              lat: sig.lat,
+              lng: sig.lng,
+              accuracy: sig.accuracy,
+              canal: 'none',
+              consentimento_aceito: consent.accepted,
+              consentimento_em: consent.acceptedAt,
+              consentimento_versao: consent.version,
+              consentimento_texto: consent.text,
+            }
           : null,
       });
       if ((res as any).error) throw new Error((res as any).error);
       toast.success(sig ? "Procedimento executado e assinado ✍️" : "Procedimento executado");
       setExecutingItem(null);
       setHasSig(false);
+      setConsent(emptyLgpdConsent());
       load();
       onChanged?.();
     } catch (err: any) {
@@ -137,11 +153,26 @@ export function ExecucaoModal({ open, onOpenChange, orcamento, onChanged }: Prop
               <SignaturePad signatureRef={sigRef} onChange={setHasSig} />
             </div>
 
+            {/* Consentimento LGPD — obrigatório se houver assinatura */}
+            {hasSig && (
+              <LgpdConsent value={consent} onChange={setConsent} />
+            )}
+
             <div className="flex justify-end gap-2 pt-2 border-t border-border">
-              <Button variant="ghost" size="sm" onClick={() => { setExecutingItem(null); setHasSig(false); }} className="h-9 text-xs">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => { setExecutingItem(null); setHasSig(false); setConsent(emptyLgpdConsent()); }}
+                className="h-9 text-xs"
+              >
                 Cancelar
               </Button>
-              <Button size="sm" onClick={confirmarExecucao} disabled={saving} className="h-9 text-xs">
+              <Button
+                size="sm"
+                onClick={confirmarExecucao}
+                disabled={saving || (hasSig && !consent.accepted)}
+                className="h-9 text-xs"
+              >
                 {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" />}
                 Confirmar execução{hasSig ? " com assinatura" : " sem assinatura"}
               </Button>
