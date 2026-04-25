@@ -331,6 +331,7 @@ export function NovoAgendamentoModal({
                   }`}
                 />
                 <Input
+                  ref={pacienteInputRef}
                   placeholder="Buscar paciente por nome..."
                   value={search}
                   onChange={(e) => {
