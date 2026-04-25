@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { AgendamentoVPS } from "@/lib/vpsApi";
 import { CheckCircle2, Clock, AlertCircle, XCircle, PlayCircle, CircleDot, User2 } from "lucide-react";
 
