@@ -143,6 +143,7 @@ export function NovoAgendamentoModal({
     setEmail(p.email || "");
     setSearch(p.nome);
     setShowSugg(false);
+    setPacienteError(false);
   };
 
   // Validação básica
