@@ -9752,8 +9752,22 @@ app.listen(PORT, async () => {
       `ALTER TABLE dentistas ADD COLUMN IF NOT EXISTS horarios JSONB`,
 
       // ─── Agenda: serie_id para múltiplo agendamento (recorrência) ───
-      `ALTER TABLE agenda ADD COLUMN IF NOT EXISTS serie_id UUID`,
-      `CREATE INDEX IF NOT EXISTS idx_agenda_serie ON agenda(serie_id)`,
+      // ─── Agendamentos: campos do modal estilo Clinicorp ───
+      `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS serie_id UUID`,
+      `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS tipo TEXT DEFAULT 'consulta'`, // consulta | compromisso | evento
+      `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS primeira_consulta BOOLEAN DEFAULT false`,
+      `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS dia_inteiro BOOLEAN DEFAULT false`,
+      `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS escopo TEXT DEFAULT 'dentista'`, // dentista | clinica
+      `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS categoria TEXT`,
+      `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS categoria_cor TEXT`,
+      `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS confirmacao_canal TEXT`, // whatsapp | email | sms | none
+      `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS confirmacao_quando TEXT`, // agora | 1d | 2d | etc
+      `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS alerta_retorno_canal TEXT`,
+      `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS alerta_retorno_quando TEXT`,
+      `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS evento_titulo TEXT`,
+      `CREATE INDEX IF NOT EXISTS idx_agendamentos_serie ON agendamentos(serie_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_agendamentos_data ON agendamentos(data)`,
+      `CREATE INDEX IF NOT EXISTS idx_agendamentos_dentista_data ON agendamentos(dentista_id, data)`,
     ];
 
     for (const sql of migrations) {
