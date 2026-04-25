@@ -426,15 +426,15 @@ export function NovoAgendamentoModal({
             <div className="grid grid-cols-4 gap-3">
               <div>
                 <Label className="mb-1 block">Data</Label>
-                <Input type="date" value={data} onChange={(e) => setData(e.target.value)} />
+                <Input ref={dataInputRef} type="date" value={data} onChange={(e) => setData(e.target.value)} />
               </div>
-              <div>
+              <div ref={horaInputRef as unknown as React.RefObject<HTMLDivElement>} tabIndex={-1}>
                 <Label className="mb-1 block">Horário</Label>
                 <AnalogTimePicker value={hora} onChange={setHora} />
               </div>
               <div>
                 <Label className="mb-1 block">Duração (min)</Label>
-                <Input type="number" min={5} max={480} value={duracao} onChange={(e) => setDuracao(Number(e.target.value))} />
+                <Input ref={duracaoInputRef} type="number" min={5} max={480} value={duracao} onChange={(e) => setDuracao(Number(e.target.value))} />
               </div>
               <div>
                 <Label className="mb-1 block">Sala</Label>
