@@ -163,6 +163,7 @@ export function AdminCreateUserPanel() {
               telefone: "",
               cro: "",
               especialidade,
+              comissao: comissaoNum,
             });
             setCompleteOpen(true);
           }
