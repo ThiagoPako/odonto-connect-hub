@@ -54,6 +54,47 @@ function withAlpha(hex: string, a: number): string | null {
   if (!c) return null;
   return `rgba(${c.r}, ${c.g}, ${c.b}, ${a})`;
 }
+// Luminância relativa (WCAG) para escolher texto contrastante
+function relLuminance({ r, g, b }: { r: number; g: number; b: number }): number {
+  const srgb = [r, g, b].map((v) => {
+    const s = v / 255;
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * srgb[0] + 0.7152 * srgb[1] + 0.0722 * srgb[2];
+}
+/** Retorna cor de texto com contraste adequado para um fundo hex. */
+function readableText(hex: string): string {
+  const c = hexToRgb(hex);
+  if (!c) return "hsl(var(--foreground))";
+  // Texto escuro em fundos claros; texto claro em fundos escuros
+  return relLuminance(c) > 0.55 ? "#0b0f14" : "#ffffff";
+}
+/** Versão "ink" da cor: escurece se muito clara, mantém se já escura — boa para texto/bordas sobre fundo neutro. */
+function inkFromHex(hex: string, isDark: boolean): string {
+  const c = hexToRgb(hex);
+  if (!c) return "hsl(var(--foreground))";
+  const lum = relLuminance(c);
+  // No tema escuro, queremos cores mais claras; no claro, mais escuras
+  if (isDark) {
+    if (lum < 0.3) {
+      // clarear
+      const f = 0.55;
+      return `rgb(${Math.round(c.r + (255 - c.r) * f)}, ${Math.round(c.g + (255 - c.g) * f)}, ${Math.round(c.b + (255 - c.b) * f)})`;
+    }
+    return `rgb(${c.r}, ${c.g}, ${c.b})`;
+  } else {
+    if (lum > 0.6) {
+      // escurecer
+      const f = 0.55;
+      return `rgb(${Math.round(c.r * (1 - f))}, ${Math.round(c.g * (1 - f))}, ${Math.round(c.b * (1 - f))})`;
+    }
+    return `rgb(${c.r}, ${c.g}, ${c.b})`;
+  }
+}
+function useIsDark(): boolean {
+  if (typeof document === "undefined") return false;
+  return document.documentElement.classList.contains("dark");
+}
 
 function buildSlots(inicio: string, fim: string, intervalo: number): string[] {
   const [hi, mi] = inicio.split(":").map(Number);
