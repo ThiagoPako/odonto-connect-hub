@@ -168,6 +168,12 @@ export function AgendamentoPopover({ appointment, open, onOpenChange, onChanged 
           </AlertDialog>
         </div>
       </PopoverContent>
+      <EditarAgendamentoModal
+        appointment={appointment}
+        open={editOpen}
+        onOpenChange={setEditOpen}
+        onSaved={() => { onChanged(); onOpenChange(false); }}
+      />
     </Popover>
   );
 }
