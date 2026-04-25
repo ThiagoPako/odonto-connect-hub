@@ -30,6 +30,7 @@ export const Route = createFileRoute("/configuracoes")({
 
 type TabId =
   | "clinica"
+  | "agenda"
   | "atendimento"
   | "ia"
   | "tags"
@@ -46,6 +47,7 @@ interface TabDef {
 
 const TABS: TabDef[] = [
   { id: "clinica", label: "Clínica", description: "Endereço e dados da unidade", icon: Building2 },
+  { id: "agenda", label: "Agenda", description: "Horários de funcionamento e regras de agendamento", icon: CalendarClock },
   { id: "atendimento", label: "Atendimento", description: "Fila, regras e tempo de atendimento", icon: Headphones },
   { id: "ia", label: "Inteligência Artificial", description: "Provedor, chave e modelos da IA", icon: Bot },
   { id: "tags", label: "Tags", description: "Etiquetas usadas em leads e contatos", icon: Tag },
