@@ -135,7 +135,7 @@ export function AgendamentoPopover({ appointment, open, onOpenChange, onChanged 
         </div>
 
         <div className="p-3 border-t border-border/60 flex items-center gap-2">
-          <Button size="sm" variant="outline" className="flex-1 h-8" disabled>
+          <Button size="sm" variant="outline" className="flex-1 h-8" onClick={() => setEditOpen(true)}>
             <Edit3 className="h-3 w-3 mr-1" /> Editar
           </Button>
           <AlertDialog>
