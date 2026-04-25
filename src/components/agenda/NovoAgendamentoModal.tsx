@@ -293,16 +293,29 @@ export function NovoAgendamentoModal({
           >
             {/* Paciente search */}
             <div className="relative">
-              <Label className="mb-1 block">Paciente</Label>
+              <Label className={`mb-1 block ${pacienteError ? "text-destructive" : ""}`}>Paciente</Label>
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Search
+                  className={`absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 ${
+                    pacienteError ? "text-destructive" : "text-muted-foreground"
+                  }`}
+                />
                 <Input
                   placeholder="Buscar paciente por nome..."
                   value={search}
-                  onChange={(e) => { setSearch(e.target.value); setShowSugg(true); setPacienteId(""); }}
+                  onChange={(e) => {
+                    setSearch(e.target.value);
+                    setShowSugg(true);
+                    setPacienteId("");
+                    setPacienteError(false);
+                  }}
                   onFocus={() => setShowSugg(true)}
-                  className="pl-9"
+                  aria-invalid={pacienteError}
+                  className={`pl-9 ${pacienteError ? "pr-9 border-destructive ring-2 ring-destructive/30 focus-visible:ring-destructive" : ""}`}
                 />
+                {pacienteError && (
+                  <AlertCircle className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-destructive animate-pulse" />
+                )}
               </div>
               {showSugg && filteredPacientes.length > 0 && (
                 <div ref={sugRef} className="absolute z-50 mt-1 w-full bg-popover border border-border rounded-md shadow-lg max-h-60 overflow-y-auto">
