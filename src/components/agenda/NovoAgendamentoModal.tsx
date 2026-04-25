@@ -146,7 +146,11 @@ export function NovoAgendamentoModal({
 
   // Validação básica
   const validateConsulta = (): string | null => {
-    if (!pacienteId || !UUID_RE.test(pacienteId)) return "Selecione um paciente da lista de sugestões.";
+    if (!pacienteId || !UUID_RE.test(pacienteId)) {
+      return search.trim().length > 0
+        ? "Paciente não selecionado. Clique no nome do paciente na lista de sugestões abaixo do campo de busca."
+        : "Busque e clique no nome do paciente na lista de sugestões para selecioná-lo.";
+    }
     if (!dentistaId || !UUID_RE.test(dentistaId)) return "Selecione um profissional.";
     if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return "Data inválida.";
     if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(hora)) return "Horário inválido (HH:MM).";
@@ -161,7 +165,11 @@ export function NovoAgendamentoModal({
   const handleSubmitConsulta = async () => {
     console.log("[Agenda] Submit consulta", { pacienteId, dentistaId, data, hora, duracao });
     const err = validateConsulta();
-    if (err) { toast.error(err); return; }
+    if (err) {
+      toast.error(err, { duration: 5000 });
+      if (!pacienteId) setShowSugg(true);
+      return;
+    }
     setSaving(true);
     const profName = dentistas.find((d) => d.id === dentistaId)?.nome || "";
     const cat = CATEGORIAS.find((c) => c.value === categoria);
@@ -310,6 +318,16 @@ export function NovoAgendamentoModal({
                     Primeira consulta
                   </label>
                 </div>
+              )}
+              {!pacienteId && search.trim().length >= 2 && filteredPacientes.length === 0 && (
+                <p className="mt-1.5 text-xs text-warning">
+                  Nenhum paciente encontrado com esse nome. Cadastre o paciente antes de agendar.
+                </p>
+              )}
+              {!pacienteId && search.trim().length >= 2 && filteredPacientes.length > 0 && (
+                <p className="mt-1.5 text-xs text-muted-foreground">
+                  ⚠️ Clique em um paciente da lista acima para selecioná-lo.
+                </p>
               )}
             </div>
 
