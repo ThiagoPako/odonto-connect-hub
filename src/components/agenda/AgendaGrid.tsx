@@ -273,12 +273,6 @@ export function AgendaGrid({
                     </button>
                   );
                 })}
-                          </div>
-                        )}
-                      </div>
-                    </button>
-                  );
-                })}
               </div>
             );
           })}
