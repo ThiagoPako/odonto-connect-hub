@@ -349,10 +349,22 @@ function KpiMini({ icon: Icon, label, value }: { icon: React.ElementType; label:
   );
 }
 
-function BudgetDetail({ budget: b, onStatusChange, onExecute }: { budget: OrcamentoRow; onStatusChange: (id: string, status: string) => void; onExecute: () => void }) {
+interface BudgetDetailProps {
+  budget: OrcamentoRow;
+  onStatusChange: (id: string, status: string) => void;
+  onExecute: () => void;
+  onPrint: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}
+
+function BudgetDetail({ budget: b, onStatusChange, onExecute, onPrint, onEdit, onDelete }: BudgetDetailProps) {
   const cfg = statusConfig[b.status] || statusConfig.pendente;
   const [updating, setUpdating] = useState(false);
   const finalValue = b.valor_total - b.desconto;
+  // Edição/exclusão só permitidas em estágios iniciais
+  const podeEditar = b.status === "pendente";
+  const podeExcluir = b.status === "pendente" || b.status === "reprovado";
 
   const handleChange = async (newStatus: string) => {
     setUpdating(true);
@@ -363,12 +375,42 @@ function BudgetDetail({ budget: b, onStatusChange, onExecute }: { budget: Orcame
   return (
     <div className="space-y-4">
       <div className="bg-card rounded-xl border border-border p-5">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h3 className="text-base font-semibold text-foreground">{b.paciente_nome}</h3>
-            <p className="text-xs text-muted-foreground">{b.dentista_nome || 'Sem dentista'} · Criado em {b.created_at}</p>
+        <div className="flex items-start justify-between mb-4 gap-3">
+          <div className="min-w-0">
+            <h3 className="text-base font-semibold text-foreground truncate">{b.titulo || "Plano de tratamento"}</h3>
+            <p className="text-xs text-muted-foreground truncate">
+              <span className="font-medium text-foreground">{b.paciente_nome}</span> ·{" "}
+              {b.dentista_nome || "Sem dentista"} · Criado em {b.created_at}
+            </p>
           </div>
-          <span className={`px-3 py-1 rounded-full text-xs font-medium ${cfg.color}`}>{cfg.label}</span>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <span className={`px-3 py-1 rounded-full text-xs font-medium ${cfg.color}`}>{cfg.label}</span>
+            <button
+              onClick={onPrint}
+              title="Imprimir orçamento"
+              className="h-8 w-8 inline-flex items-center justify-center rounded-lg border border-border hover:bg-muted text-muted-foreground hover:text-foreground transition"
+            >
+              <Printer className="h-3.5 w-3.5" />
+            </button>
+            {podeEditar && (
+              <button
+                onClick={onEdit}
+                title="Editar orçamento"
+                className="h-8 w-8 inline-flex items-center justify-center rounded-lg border border-border hover:bg-muted text-muted-foreground hover:text-foreground transition"
+              >
+                <Pencil className="h-3.5 w-3.5" />
+              </button>
+            )}
+            {podeExcluir && (
+              <button
+                onClick={onDelete}
+                title="Excluir orçamento"
+                className="h-8 w-8 inline-flex items-center justify-center rounded-lg border border-border hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Items table */}
@@ -377,7 +419,7 @@ function BudgetDetail({ budget: b, onStatusChange, onExecute }: { budget: Orcame
             <thead>
               <tr className="border-b border-border text-left">
                 <th className="pb-2 text-[11px] font-semibold text-muted-foreground uppercase">Procedimento</th>
-                <th className="pb-2 text-[11px] font-semibold text-muted-foreground uppercase text-center">Dente</th>
+                <th className="pb-2 text-[11px] font-semibold text-muted-foreground uppercase text-center">Dente / Faces</th>
                 <th className="pb-2 text-[11px] font-semibold text-muted-foreground uppercase text-center">Qtd</th>
                 <th className="pb-2 text-[11px] font-semibold text-muted-foreground uppercase text-right">Valor</th>
               </tr>
@@ -385,10 +427,32 @@ function BudgetDetail({ budget: b, onStatusChange, onExecute }: { budget: Orcame
             <tbody>
               {b.itens.map((item: any, i: number) => (
                 <tr key={i} className="border-b border-border/30">
-                  <td className="py-2 text-xs text-foreground">{item.procedimento || item.procedure || item.descricao || '-'}</td>
-                  <td className="py-2 text-xs text-muted-foreground text-center">{item.dente || item.tooth || "—"}</td>
+                  <td className="py-2 text-xs text-foreground">
+                    <div className="flex items-center gap-1.5">
+                      {item.cor && <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: item.cor }} />}
+                      <span>{item.procedimento_nome || item.procedimento || item.descricao || '-'}</span>
+                      {item.procedimento_versao && (
+                        <span
+                          title="Versão do catálogo congelada neste orçamento"
+                          className="px-1 py-0.5 rounded bg-muted text-muted-foreground text-[9px] font-mono"
+                        >
+                          v{item.procedimento_versao}
+                        </span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="py-2 text-xs text-muted-foreground text-center">
+                    {item.dente ? (
+                      <span>
+                        {item.dente}
+                        {Array.isArray(item.faces) && item.faces.length > 0 && (
+                          <span className="ml-1 text-[10px] text-primary">{item.faces.join("")}</span>
+                        )}
+                      </span>
+                    ) : "—"}
+                  </td>
                   <td className="py-2 text-xs text-foreground text-center">{item.quantidade || item.quantity || 1}</td>
-                  <td className="py-2 text-xs font-medium text-foreground text-right">R$ {Number(item.valor || item.totalPrice || 0).toLocaleString("pt-BR")}</td>
+                  <td className="py-2 text-xs font-medium text-foreground text-right">R$ {Number(item.valor_total || item.valor || 0).toLocaleString("pt-BR")}</td>
                 </tr>
               ))}
             </tbody>
