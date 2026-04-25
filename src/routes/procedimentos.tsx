@@ -51,10 +51,11 @@ function ProcedimentosCatalogoPage() {
       cor: CORES[0], requer_dente: true, requer_face: false,
       ativo: true, descricao: null,
     });
+    setMotivoVersao("");
     setOpen(true);
   };
 
-  const editar = (p: ProcedimentoCatalogo) => { setEditing({ ...p }); setOpen(true); };
+  const editar = (p: ProcedimentoCatalogo) => { setEditing({ ...p }); setMotivoVersao(""); setOpen(true); };
 
   const salvar = async () => {
     if (!editing) return;
