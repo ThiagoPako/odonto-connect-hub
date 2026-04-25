@@ -214,6 +214,9 @@ export function NovoAgendamentoModal({
       }
       onCreated();
       onOpenChange(false);
+    } catch (e: any) {
+      console.error("[Agenda] Erro inesperado", e);
+      toast.error("Erro inesperado: " + (e?.message || String(e)));
     } finally {
       setSaving(false);
     }
