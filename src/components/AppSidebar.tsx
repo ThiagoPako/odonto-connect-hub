@@ -69,6 +69,7 @@ const navSections: NavSection[] = [
       { title: "Relatórios IA", url: "/relatorios-clinicos", icon: FileHeart },
       { title: "Orçamentos", url: "/orcamentos", icon: Receipt },
       { title: "Tratamentos", url: "/tratamentos", icon: ClipboardList },
+      { title: "Catálogo de Procedimentos", url: "/procedimentos", icon: ClipboardList },
     ],
   },
   {
