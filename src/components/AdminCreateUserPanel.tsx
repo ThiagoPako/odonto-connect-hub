@@ -17,9 +17,39 @@ export function AdminCreateUserPanel() {
   const [role, setRole] = useState("user");
   const [especialidade, setEspecialidade] = useState("Clínica Geral");
   const [comissao, setComissao] = useState<string>("35");
+  const [comissaoError, setComissaoError] = useState<string | null>(null);
   const [completeOpen, setCompleteOpen] = useState(false);
   const [completeTarget, setCompleteTarget] = useState<CompleteDentistaTarget | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // Aceita apenas dígitos com até 2 casas decimais e bloqueia >100. Vazio é permitido (mostra erro).
+  const handleComissaoChange = (raw: string) => {
+    // Normaliza vírgula para ponto
+    let v = raw.replace(",", ".").trim();
+    // Permite vazio ou string que casa com o padrão progressivo
+    if (v === "") {
+      setComissao("");
+      setComissaoError("Informe a comissão");
+      return;
+    }
+    // Bloqueia caracteres não numéricos / múltiplos pontos / mais de 2 decimais
+    if (!/^\d{0,3}(\.\d{0,2})?$/.test(v)) {
+      // Não atualiza estado — input rejeita silenciosamente
+      return;
+    }
+    const num = Number(v);
+    if (Number.isFinite(num) && num > 100) {
+      setComissao("100");
+      setComissaoError(null);
+      return;
+    }
+    setComissao(v);
+    if (!Number.isFinite(num) || num < 0 || num > 100) {
+      setComissaoError("Comissão deve estar entre 0 e 100");
+    } else {
+      setComissaoError(null);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -38,8 +68,13 @@ export function AdminCreateUserPanel() {
         toast.error("Selecione uma especialidade");
         return;
       }
-      if (!Number.isFinite(comissaoNum) || comissaoNum < 0 || comissaoNum > 100) {
-        toast.error("Comissão deve ser um número entre 0 e 100");
+      if (comissaoError || !Number.isFinite(comissaoNum) || comissaoNum < 0 || comissaoNum > 100) {
+        toast.error(comissaoError || "Comissão deve ser um número entre 0 e 100");
+        return;
+      }
+      // Reforça regra de no máximo 2 casas decimais (defesa em profundidade)
+      if (!/^\d{1,3}(\.\d{1,2})?$/.test(comissao)) {
+        toast.error("Comissão deve ter no máximo 2 casas decimais");
         return;
       }
     }
@@ -139,6 +174,7 @@ export function AdminCreateUserPanel() {
     setRole("user");
     setEspecialidade("Clínica Geral");
     setComissao("35");
+    setComissaoError(null);
     setLoading(false);
   };
 
@@ -224,19 +260,30 @@ export function AdminCreateUserPanel() {
                   <Label htmlFor="user-comissao">Comissão (%)</Label>
                   <Input
                     id="user-comissao"
-                    type="number"
-                    min={0}
-                    max={100}
-                    step={0.5}
+                    type="text"
+                    inputMode="decimal"
                     placeholder="35"
                     value={comissao}
-                    onChange={(e) => setComissao(e.target.value)}
+                    onChange={(e) => handleComissaoChange(e.target.value)}
+                    aria-invalid={!!comissaoError}
+                    aria-describedby="user-comissao-hint"
+                    className={comissaoError ? "border-destructive focus-visible:ring-destructive" : ""}
                   />
+                  <p
+                    id="user-comissao-hint"
+                    className={`text-xs ${comissaoError ? "text-destructive" : "text-muted-foreground"}`}
+                  >
+                    {comissaoError ?? "Valor entre 0 e 100, até 2 casas decimais."}
+                  </p>
                 </div>
               </>
             )}
           </div>
-          <Button type="submit" disabled={loading} className="w-full sm:w-auto">
+          <Button
+            type="submit"
+            disabled={loading || (role === "dentista" && !!comissaoError)}
+            className="w-full sm:w-auto"
+          >
             <UserPlus className="h-4 w-4 mr-2" />
             {loading ? "Criando..." : "Criar Usuário"}
           </Button>
