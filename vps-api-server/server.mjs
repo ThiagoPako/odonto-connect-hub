@@ -2302,6 +2302,40 @@ app.get('/api/agenda', async (req, res) => {
   }
 });
 
+// ─── Marcadores da agenda (tags coloridas) ─────────────────
+app.get('/api/agenda/marcadores', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { rows } = await pool.query('SELECT * FROM agenda_marcadores ORDER BY nome ASC');
+    res.json(rows);
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/api/agenda/marcadores', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { nome, cor } = req.body;
+    if (!nome || !nome.trim()) return res.status(400).json({ error: 'Nome obrigatório' });
+    const id = crypto.randomUUID();
+    const corFinal = (cor || '#06b6d4').slice(0, 9);
+    try {
+      await pool.query('INSERT INTO agenda_marcadores (id, nome, cor) VALUES ($1,$2,$3)', [id, nome.trim(), corFinal]);
+      res.json({ id, nome: nome.trim(), cor: corFinal });
+    } catch (err) {
+      if (err.code === '23505') return res.status(409).json({ error: 'Marcador com este nome já existe' });
+      throw err;
+    }
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.delete('/api/agenda/marcadores/:id', async (req, res) => {
+  try {
+    await verifyUser(req);
+    await pool.query('DELETE FROM agenda_marcadores WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
+  } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
 app.post('/api/agenda', async (req, res) => {
   try {
     await verifyUser(req);
@@ -2309,7 +2343,7 @@ app.post('/api/agenda', async (req, res) => {
       paciente_id, dentista_id, data, hora, duracao, procedimento, status, observacoes, lead_id,
       tipo, primeira_consulta, dia_inteiro, escopo, categoria, categoria_cor,
       confirmacao_canal, confirmacao_quando, alerta_retorno_canal, alerta_retorno_quando,
-      evento_titulo, sala, serie_id,
+      evento_titulo, sala, serie_id, marcadores, como_conheceu,
     } = req.body;
     const id = crypto.randomUUID();
     await pool.query(
@@ -2317,8 +2351,8 @@ app.post('/api/agenda', async (req, res) => {
         id, paciente_id, dentista_id, data, hora, duracao, procedimento, status, observacoes,
         tipo, primeira_consulta, dia_inteiro, escopo, categoria, categoria_cor,
         confirmacao_canal, confirmacao_quando, alerta_retorno_canal, alerta_retorno_quando,
-        evento_titulo, sala, serie_id
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
+        evento_titulo, sala, serie_id, marcadores, como_conheceu
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23::jsonb,$24)`,
       [
         id, paciente_id || null, dentista_id || null, data, hora, duracao || 30,
         procedimento || null, status || 'agendado', observacoes || null,
@@ -2327,6 +2361,8 @@ app.post('/api/agenda', async (req, res) => {
         confirmacao_canal || null, confirmacao_quando || null,
         alerta_retorno_canal || null, alerta_retorno_quando || null,
         evento_titulo || null, sala || null, serie_id || null,
+        JSON.stringify(Array.isArray(marcadores) ? marcadores : []),
+        como_conheceu || null,
       ]
     );
 
@@ -2428,7 +2464,7 @@ app.put('/api/agenda/:id', async (req, res) => {
   try {
     await verifyUser(req);
     const { id } = req.params;
-    const { status, hora, duracao, procedimento, observacoes, sala, data, dentista_id, dentista_nome } = req.body;
+    const { status, hora, duracao, procedimento, observacoes, sala, data, dentista_id, dentista_nome, marcadores, como_conheceu } = req.body;
     const sets = [];
     const params = [];
     if (status) { params.push(status); sets.push(`status = $${params.length}`); }
@@ -2440,6 +2476,8 @@ app.put('/api/agenda/:id', async (req, res) => {
     if (sala) { params.push(sala); sets.push(`sala = $${params.length}`); }
     if (dentista_id) { params.push(dentista_id); sets.push(`dentista_id = $${params.length}`); }
     if (dentista_nome) { params.push(dentista_nome); sets.push(`dentista_nome = $${params.length}`); }
+    if (Array.isArray(marcadores)) { params.push(JSON.stringify(marcadores)); sets.push(`marcadores = $${params.length}::jsonb`); }
+    if (como_conheceu !== undefined) { params.push(como_conheceu || null); sets.push(`como_conheceu = $${params.length}`); }
     if (sets.length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
     params.push(id);
     const query = `UPDATE agendamentos SET ${sets.join(', ')}, updated_at = NOW() WHERE id = $${params.length} RETURNING *`;
@@ -9861,6 +9899,15 @@ app.listen(PORT, async () => {
       `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS alerta_retorno_canal TEXT`,
       `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS alerta_retorno_quando TEXT`,
       `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS evento_titulo TEXT`,
+      // Fase A — refinamentos da agenda
+      `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS marcadores JSONB DEFAULT '[]'::jsonb`,
+      `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS como_conheceu TEXT`,
+      `CREATE TABLE IF NOT EXISTS agenda_marcadores (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        nome TEXT NOT NULL UNIQUE,
+        cor TEXT NOT NULL DEFAULT '#06b6d4',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )`,
       `CREATE INDEX IF NOT EXISTS idx_agendamentos_serie ON agendamentos(serie_id)`,
       `CREATE INDEX IF NOT EXISTS idx_agendamentos_data ON agendamentos(data)`,
       `CREATE INDEX IF NOT EXISTS idx_agendamentos_dentista_data ON agendamentos(dentista_id, data)`,

@@ -264,10 +264,21 @@ export const agendaApi = {
   }) => vpsApiFetch<{ serie_id: string; total: number; agendamentos: { id: string; data: string }[] }>(
     '/agenda/serie', { method: 'POST', body }
   ),
-  update: (id: string, body: { status?: string; hora?: string; data?: string; duracao?: number; procedimento?: string; observacoes?: string; sala?: string; dentista_id?: string; dentista_nome?: string }) =>
+  update: (id: string, body: { status?: string; hora?: string; data?: string; duracao?: number; procedimento?: string; observacoes?: string; sala?: string; dentista_id?: string; dentista_nome?: string; marcadores?: Array<{ id: string; nome: string; cor: string }>; como_conheceu?: string | null }) =>
     vpsApiFetch(`/agenda/${encodeURIComponent(id)}`, { method: 'PUT', body }),
   delete: (id: string, opts?: { serie?: boolean }) =>
     vpsApiFetch(`/agenda/${encodeURIComponent(id)}${opts?.serie ? '?serie=true' : ''}`, { method: 'DELETE' }),
+};
+
+// ─── Marcadores da agenda (tags coloridas) ─────────────────
+export interface MarcadorAgenda { id: string; nome: string; cor: string }
+
+export const marcadoresAgendaApi = {
+  list: () => vpsApiFetch<MarcadorAgenda[]>('/agenda/marcadores'),
+  create: (nome: string, cor: string) =>
+    vpsApiFetch<MarcadorAgenda>('/agenda/marcadores', { method: 'POST', body: { nome, cor } }),
+  delete: (id: string) =>
+    vpsApiFetch(`/agenda/marcadores/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 };
 
 // ─── Clínica config (horários + regras de agenda) ────────────
@@ -324,6 +335,8 @@ export interface AgendamentoVPS {
   evento_titulo?: string;
   serie_id?: string | null;
   telefone?: string;
+  marcadores?: Array<{ id: string; nome: string; cor: string }>;
+  como_conheceu?: string | null;
 }
 
 // ─── Financeiro ─────────────────────────────────────────────

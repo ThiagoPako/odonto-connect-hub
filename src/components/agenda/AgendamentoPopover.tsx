@@ -63,6 +63,25 @@ export function AgendamentoPopover({ appointment, open, onOpenChange, onChanged 
           {appointment.serie_id && (
             <Badge variant="outline" className="mt-2 text-[10px]">Parte de uma série</Badge>
           )}
+          {Array.isArray(appointment.marcadores) && appointment.marcadores.length > 0 && (
+            <div className="flex flex-wrap gap-1 mt-2">
+              {appointment.marcadores.map((m) => (
+                <span
+                  key={m.id}
+                  className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium border"
+                  style={{ backgroundColor: m.cor + "22", borderColor: m.cor + "55", color: m.cor }}
+                >
+                  <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: m.cor }} />
+                  {m.nome}
+                </span>
+              ))}
+            </div>
+          )}
+          {appointment.como_conheceu && (
+            <div className="mt-2 text-[10px] text-muted-foreground">
+              Origem: <span className="font-medium text-foreground capitalize">{appointment.como_conheceu}</span>
+            </div>
+          )}
         </div>
 
         <div className="p-3 space-y-2">

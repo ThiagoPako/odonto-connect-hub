@@ -8,9 +8,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Calendar, Stethoscope, MapPin, Phone, Mail, MessageSquare, BellRing, Repeat, Search } from "lucide-react";
+import { Loader2, Calendar, Stethoscope, MapPin, Phone, Mail, MessageSquare, BellRing, Repeat, Search, Sparkles } from "lucide-react";
 import { toast } from "sonner";
-import { agendaApi, pacientesApi, dentistasApi, type AgendamentoVPS } from "@/lib/vpsApi";
+import { agendaApi, pacientesApi, dentistasApi, type AgendamentoVPS, type MarcadorAgenda } from "@/lib/vpsApi";
+import { AnalogTimePicker } from "./AnalogTimePicker";
+import { MarcadoresSelector } from "./MarcadoresSelector";
 
 interface Props {
   open: boolean;
@@ -86,6 +88,10 @@ export function NovoAgendamentoModal({
   const [qtdSessoes, setQtdSessoes] = useState(4);
   const [intervaloDias, setIntervaloDias] = useState(7);
 
+  // Marcadores + Como conheceu (Fase A)
+  const [marcadores, setMarcadores] = useState<MarcadorAgenda[]>([]);
+  const [comoConheceu, setComoConheceu] = useState<string>("");
+
   // Compromisso/Evento
   const [escopo, setEscopo] = useState<"dentista" | "clinica">("dentista");
   const [diaInteiro, setDiaInteiro] = useState(false);
@@ -117,6 +123,7 @@ export function NovoAgendamentoModal({
         setProcedimento(""); setObservacoes(""); setSala("Sala 1");
         setPrimeiraConsulta(false); setMultiplo(false); setQtdSessoes(4); setIntervaloDias(7);
         setRetornoQuando(""); setSearch("");
+        setMarcadores([]); setComoConheceu("");
         setEventoTitulo(""); setDiaInteiro(false); setEscopo("dentista");
       }, 300);
     }
@@ -198,6 +205,8 @@ export function NovoAgendamentoModal({
           confirmacao_quando: confirmacaoQuando || null,
           alerta_retorno_canal: retornoQuando ? retornoCanal : null,
           alerta_retorno_quando: retornoQuando || null,
+          marcadores: marcadores.length ? marcadores : undefined,
+          como_conheceu: comoConheceu || null,
         } as Partial<AgendamentoVPS>);
         if (error) { toast.error("Erro ao criar agendamento: " + error); return; }
         toast.success("Agendamento criado");
@@ -344,7 +353,7 @@ export function NovoAgendamentoModal({
               </div>
               <div>
                 <Label className="mb-1 block">Horário</Label>
-                <Input type="time" value={hora} onChange={(e) => setHora(e.target.value)} />
+                <AnalogTimePicker value={hora} onChange={setHora} />
               </div>
               <div>
                 <Label className="mb-1 block">Duração (min)</Label>
@@ -359,6 +368,39 @@ export function NovoAgendamentoModal({
             <div>
               <Label className="mb-1 block">Procedimento</Label>
               <Input value={procedimento} onChange={(e) => setProcedimento(e.target.value)} placeholder={categoriaSel?.label || "Ex: Restauração dente 16"} />
+            </div>
+
+            {/* Marcadores + Como conheceu (Fase A) */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="rounded-lg border border-border/60 p-3 bg-gradient-to-br from-card to-muted/20">
+                <Label className="mb-2 block text-xs uppercase tracking-wide text-muted-foreground font-semibold">
+                  Marcadores
+                </Label>
+                <MarcadoresSelector value={marcadores} onChange={setMarcadores} />
+              </div>
+              <div className="rounded-lg border border-border/60 p-3 bg-gradient-to-br from-card to-muted/20">
+                <Label className="mb-2 block text-xs uppercase tracking-wide text-muted-foreground font-semibold flex items-center gap-1">
+                  <Sparkles className="h-3 w-3 text-primary" />
+                  Como conheceu?
+                </Label>
+                <Select value={comoConheceu || "_none"} onValueChange={(v) => setComoConheceu(v === "_none" ? "" : v)}>
+                  <SelectTrigger className="h-8">
+                    <SelectValue placeholder="Origem do paciente" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="_none">— Não informado</SelectItem>
+                    <SelectItem value="indicacao">👥 Indicação</SelectItem>
+                    <SelectItem value="instagram">📸 Instagram</SelectItem>
+                    <SelectItem value="facebook">👍 Facebook</SelectItem>
+                    <SelectItem value="google">🔍 Google</SelectItem>
+                    <SelectItem value="site">🌐 Site da clínica</SelectItem>
+                    <SelectItem value="whatsapp">💬 WhatsApp</SelectItem>
+                    <SelectItem value="passou">🚶 Passou em frente</SelectItem>
+                    <SelectItem value="convenio">🏥 Convênio</SelectItem>
+                    <SelectItem value="outro">✨ Outro</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
 
             {/* Múltiplo agendamento */}
@@ -546,11 +588,11 @@ function CompromissoEventoForm(props: {
           <>
             <div>
               <Label className="mb-1 block">Início</Label>
-              <Input type="time" value={props.hora} onChange={(e) => props.setHora(e.target.value)} />
+              <AnalogTimePicker value={props.hora} onChange={props.setHora} />
             </div>
             <div>
               <Label className="mb-1 block">Fim</Label>
-              <Input type="time" value={props.horaFim} onChange={(e) => props.setHoraFim(e.target.value)} />
+              <AnalogTimePicker value={props.horaFim} onChange={props.setHoraFim} />
             </div>
           </>
         )}
