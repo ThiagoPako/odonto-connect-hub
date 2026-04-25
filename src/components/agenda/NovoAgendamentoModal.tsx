@@ -205,6 +205,8 @@ export function NovoAgendamentoModal({
           confirmacao_quando: confirmacaoQuando || null,
           alerta_retorno_canal: retornoQuando ? retornoCanal : null,
           alerta_retorno_quando: retornoQuando || null,
+          marcadores: marcadores.length ? marcadores : undefined,
+          como_conheceu: comoConheceu || null,
         } as Partial<AgendamentoVPS>);
         if (error) { toast.error("Erro ao criar agendamento: " + error); return; }
         toast.success("Agendamento criado");
