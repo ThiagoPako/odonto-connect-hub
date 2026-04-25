@@ -1,11 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2 } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { AlertTriangle, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { agendaApi, dentistasApi, type AgendamentoVPS } from "@/lib/vpsApi";
 
@@ -27,6 +28,21 @@ const STATUS_OPTIONS = [
   { value: "cancelado", label: "Cancelado" },
 ];
 
+// Status que NÃO ocupam horário (não geram conflito)
+const FREE_STATUSES = new Set(["cancelado", "faltou"]);
+
+function timeToMin(t: string): number {
+  if (!t) return 0;
+  const [h, m] = t.split(":").map(Number);
+  return (h || 0) * 60 + (m || 0);
+}
+
+function minToHHMM(min: number): string {
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
 export function EditarAgendamentoModal({ appointment, open, onOpenChange, onSaved }: Props) {
   const [data, setData] = useState("");
   const [hora, setHora] = useState("");
@@ -38,6 +54,8 @@ export function EditarAgendamentoModal({ appointment, open, onOpenChange, onSave
   const [dentistaId, setDentistaId] = useState("");
   const [profs, setProfs] = useState<Prof[]>([]);
   const [saving, setSaving] = useState(false);
+  const [dayAppts, setDayAppts] = useState<AgendamentoVPS[]>([]);
+  const [loadingDay, setLoadingDay] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -58,9 +76,47 @@ export function EditarAgendamentoModal({ appointment, open, onOpenChange, onSave
     setDentistaId(appointment.dentista_id || "");
   }, [appointment]);
 
+  // Carrega agendamentos do dia/profissional para checar conflitos
+  useEffect(() => {
+    if (!open || !data || !dentistaId) {
+      setDayAppts([]);
+      return;
+    }
+    setLoadingDay(true);
+    agendaApi
+      .list({ data_inicio: data, data_fim: data, dentista_id: dentistaId })
+      .then(({ data: list }) => {
+        if (Array.isArray(list)) setDayAppts(list);
+      })
+      .catch(() => {})
+      .finally(() => setLoadingDay(false));
+  }, [open, data, dentistaId]);
+
+  // Detecta conflitos: mesmo profissional, mesma data, intervalos sobrepostos,
+  // ignorando o próprio agendamento e os de status livre.
+  const conflicts = useMemo(() => {
+    if (!appointment || !hora || !duracao || FREE_STATUSES.has(status)) return [];
+    const start = timeToMin(hora);
+    const end = start + duracao;
+    return dayAppts.filter((a) => {
+      if (a.id === appointment.id) return false;
+      if (FREE_STATUSES.has(a.status)) return false;
+      if (a.dentista_id !== dentistaId) return false;
+      const s = timeToMin(a.hora);
+      const e = s + (a.duracao || 30);
+      return start < e && s < end; // sobreposição
+    });
+  }, [appointment, dayAppts, hora, duracao, dentistaId, status]);
+
+  const hasConflict = conflicts.length > 0;
+
   if (!appointment) return null;
 
   const handleSave = async () => {
+    if (hasConflict) {
+      toast.error("Existe conflito de horário. Ajuste antes de salvar.");
+      return;
+    }
     setSaving(true);
     const dent = profs.find((p) => p.id === dentistaId);
     const { error } = await agendaApi.update(appointment.id, {
@@ -159,13 +215,41 @@ export function EditarAgendamentoModal({ appointment, open, onOpenChange, onSave
               placeholder="Opcional"
             />
           </div>
+
+          {hasConflict && (
+            <Alert variant="destructive">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>Conflito de horário</AlertTitle>
+              <AlertDescription>
+                Este profissional já tem {conflicts.length === 1 ? "um agendamento" : `${conflicts.length} agendamentos`} sobrepostos:
+                <ul className="mt-1.5 space-y-0.5 list-disc list-inside text-xs">
+                  {conflicts.slice(0, 4).map((c) => {
+                    const ini = c.hora;
+                    const fim = minToHHMM(timeToMin(c.hora) + (c.duracao || 30));
+                    return (
+                      <li key={c.id}>
+                        <span className="font-medium">{c.paciente_nome || "—"}</span>
+                        {" · "}
+                        {ini}–{fim}
+                        {c.procedimento ? ` · ${c.procedimento}` : ""}
+                      </li>
+                    );
+                  })}
+                  {conflicts.length > 4 && <li>e mais {conflicts.length - 4}…</li>}
+                </ul>
+              </AlertDescription>
+            </Alert>
+          )}
+          {loadingDay && (
+            <p className="text-[11px] text-muted-foreground">Verificando disponibilidade…</p>
+          )}
         </div>
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
             Cancelar
           </Button>
-          <Button onClick={handleSave} disabled={saving}>
+          <Button onClick={handleSave} disabled={saving || hasConflict}>
             {saving && <Loader2 className="mr-2 h-3 w-3 animate-spin" />}
             Salvar
           </Button>
