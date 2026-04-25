@@ -237,6 +237,24 @@ function ProcedimentosCatalogoPage() {
                 <Textarea rows={2} className="text-xs" value={editing.descricao || ""}
                   onChange={e => setEditing({ ...editing, descricao: e.target.value })} />
               </div>
+              {editing.id && (
+                <div className="col-span-2 space-y-1.5 border-t border-border pt-3">
+                  <Label className="text-xs flex items-center gap-1.5">
+                    <History className="h-3 w-3 text-primary" />
+                    Motivo da alteração <span className="text-muted-foreground font-normal">(opcional — descreve esta versão)</span>
+                  </Label>
+                  <Input
+                    className="h-9 text-xs"
+                    placeholder="ex: reajuste anual, correção de requisitos, mudança de categoria…"
+                    value={motivoVersao}
+                    onChange={e => setMotivoVersao(e.target.value)}
+                  />
+                  <p className="text-[10px] text-muted-foreground">
+                    Alterações em preço, nome, categoria, requisitos ou duração geram uma nova versão automaticamente.
+                    Orçamentos antigos continuam usando a versão original.
+                  </p>
+                </div>
+              )}
             </div>
             <DialogFooter>
               <Button variant="ghost" size="sm" onClick={() => setOpen(false)} className="h-9 text-xs">Cancelar</Button>
@@ -245,6 +263,13 @@ function ProcedimentosCatalogoPage() {
           </DialogContent>
         </Dialog>
       )}
+
+      <HistoricoVersoesModal
+        open={!!historicoId}
+        onOpenChange={(v) => { if (!v) { setHistoricoId(null); setHistoricoNome(""); } }}
+        procedimentoId={historicoId}
+        procedimentoNome={historicoNome}
+      />
     </div>
   );
 }
