@@ -192,6 +192,12 @@ export function AdminCreateUserPanel() {
           </Button>
         </form>
       </CardContent>
+
+      <CompleteDentistaDialog
+        open={completeOpen}
+        onOpenChange={setCompleteOpen}
+        dentista={completeTarget}
+      />
     </Card>
   );
 }
