@@ -3580,9 +3580,152 @@ app.delete('/api/procedimentos-catalogo/:id', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
-// DASHBOARD KPIs — agregação completa para a tela /dashboard
+// FASE C — EXECUÇÃO DE PROCEDIMENTOS + ASSINATURAS ELETRÔNICAS
 // ═══════════════════════════════════════════════════════════════
-app.get('/api/dashboard/kpis', async (req, res) => {
+
+// Lista execuções de um orçamento
+app.get('/api/orcamentos/:id/execucoes', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { rows } = await pool.query(
+      `SELECT e.*, d.nome as dentista_nome,
+              a.assinatura_base64, a.latitude, a.longitude, a.accuracy_m
+       FROM procedimento_execucoes e
+       LEFT JOIN dentistas d ON e.dentista_id = d.id
+       LEFT JOIN assinaturas_eletronicas a ON e.assinatura_id = a.id
+       WHERE e.orcamento_id = $1
+       ORDER BY e.executado_em DESC`,
+      [req.params.id]
+    );
+    res.json(rows);
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+// Lista execuções de um paciente (histórico clínico-financeiro)
+app.get('/api/pacientes/:id/execucoes', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { rows } = await pool.query(
+      `SELECT e.*, d.nome as dentista_nome
+       FROM procedimento_execucoes e
+       LEFT JOIN dentistas d ON e.dentista_id = d.id
+       WHERE e.paciente_id = $1
+       ORDER BY e.executado_em DESC`,
+      [req.params.id]
+    );
+    res.json(rows);
+  } catch (error) {
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+// Cria uma execução (com ou sem assinatura)
+app.post('/api/execucoes', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const {
+      orcamento_id, orcamento_item_id, paciente_id, dentista_id,
+      procedimento_id, procedimento_nome, dente, faces, valor, observacoes,
+      assinatura, // { base64, lat, lng, accuracy, canal, codigo }
+    } = req.body;
+
+    if (!paciente_id || !procedimento_nome) {
+      return res.status(400).json({ error: 'paciente_id e procedimento_nome são obrigatórios' });
+    }
+
+    let assinaturaId = null;
+    if (assinatura?.base64) {
+      const aId = crypto.randomUUID();
+      await pool.query(
+        `INSERT INTO assinaturas_eletronicas
+          (id, paciente_id, dentista_id, contexto, assinatura_base64,
+           latitude, longitude, accuracy_m, ip_address, user_agent,
+           verificacao_canal, verificacao_codigo, verificacao_em)
+         VALUES ($1,$2,$3,'execucao',$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+        [
+          aId, paciente_id, dentista_id || null, assinatura.base64,
+          assinatura.lat ?? null, assinatura.lng ?? null, assinatura.accuracy ?? null,
+          req.ip || req.headers['x-forwarded-for'] || null,
+          req.headers['user-agent'] || null,
+          assinatura.canal || 'none',
+          assinatura.codigo || null,
+          assinatura.codigo ? new Date() : null,
+        ]
+      );
+      assinaturaId = aId;
+    }
+
+    const id = crypto.randomUUID();
+    await pool.query(
+      `INSERT INTO procedimento_execucoes
+        (id, orcamento_id, orcamento_item_id, paciente_id, dentista_id,
+         procedimento_id, procedimento_nome, dente, faces, valor, observacoes, assinatura_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+      [
+        id, orcamento_id || null, orcamento_item_id || null,
+        paciente_id, dentista_id || null,
+        procedimento_id || null, procedimento_nome,
+        dente || null, JSON.stringify(faces || []),
+        valor || 0, observacoes || null, assinaturaId,
+      ]
+    );
+
+    // Se todos os itens do orçamento foram executados → marca como 'finalizado'
+    if (orcamento_id) {
+      const { rows: orc } = await pool.query('SELECT itens FROM orcamentos WHERE id=$1', [orcamento_id]);
+      if (orc[0]) {
+        let itens = orc[0].itens;
+        if (typeof itens === 'string') { try { itens = JSON.parse(itens); } catch { itens = []; } }
+        const totalItens = Array.isArray(itens) ? itens.length : 0;
+        const { rows: cnt } = await pool.query(
+          'SELECT COUNT(*)::int as c FROM procedimento_execucoes WHERE orcamento_id=$1', [orcamento_id]
+        );
+        if (totalItens > 0 && cnt[0].c >= totalItens) {
+          await pool.query(`UPDATE orcamentos SET status='finalizado', updated_at=NOW() WHERE id=$1 AND status NOT IN ('reprovado','finalizado')`, [orcamento_id]);
+        } else if (totalItens > 0) {
+          await pool.query(`UPDATE orcamentos SET status='em_tratamento', updated_at=NOW() WHERE id=$1 AND status='aprovado'`, [orcamento_id]);
+        }
+      }
+    }
+
+    const { rows } = await pool.query('SELECT * FROM procedimento_execucoes WHERE id=$1', [id]);
+    res.json({ ...rows[0], assinatura_id: assinaturaId });
+  } catch (error) {
+    console.error('❌ POST execucao:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Remove uma execução (apenas se não tiver assinatura — segurança LGPD/MP 2200-2)
+app.delete('/api/execucoes/:id', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { rows } = await pool.query('SELECT assinatura_id FROM procedimento_execucoes WHERE id=$1', [req.params.id]);
+    if (!rows[0]) return res.status(404).json({ error: 'Execução não encontrada' });
+    if (rows[0].assinatura_id) {
+      return res.status(403).json({ error: 'Execução assinada eletronicamente não pode ser removida (MP 2200-2/2001).' });
+    }
+    await pool.query('DELETE FROM procedimento_execucoes WHERE id=$1', [req.params.id]);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Detalhe de uma assinatura (para auditoria)
+app.get('/api/assinaturas/:id', async (req, res) => {
+  try {
+    await verifyUser(req);
+    const { rows } = await pool.query('SELECT * FROM assinaturas_eletronicas WHERE id=$1', [req.params.id]);
+    if (!rows[0]) return res.status(404).json({ error: 'Não encontrada' });
+    res.json(rows[0]);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
   try {
     await verifyUser(req);
     const today = new Date().toISOString().split('T')[0];
@@ -10021,6 +10164,47 @@ app.listen(PORT, async () => {
       `ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS titulo TEXT`,
       `ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS print_config JSONB DEFAULT '{"logo":true,"valores":true,"odontograma":true,"assinatura":true,"desconto":true,"observacoes":true}'::jsonb`,
       `ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS odontograma_snapshot JSONB`,
+
+      // Fase C — Execuções de procedimentos + Assinaturas eletrônicas
+      `CREATE TABLE IF NOT EXISTS procedimento_execucoes (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        orcamento_id UUID REFERENCES orcamentos(id) ON DELETE CASCADE,
+        orcamento_item_id TEXT,
+        paciente_id UUID,
+        dentista_id UUID,
+        procedimento_id UUID,
+        procedimento_nome TEXT,
+        dente INTEGER,
+        faces JSONB DEFAULT '[]'::jsonb,
+        valor NUMERIC(10,2) DEFAULT 0,
+        observacoes TEXT,
+        status TEXT DEFAULT 'executado',
+        executado_em TIMESTAMPTZ DEFAULT NOW(),
+        assinatura_id UUID,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_execucoes_orcamento ON procedimento_execucoes(orcamento_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_execucoes_paciente ON procedimento_execucoes(paciente_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_execucoes_dentista ON procedimento_execucoes(dentista_id)`,
+      `CREATE TABLE IF NOT EXISTS assinaturas_eletronicas (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        paciente_id UUID,
+        dentista_id UUID,
+        contexto TEXT,             -- 'orcamento' | 'execucao' | 'consentimento'
+        contexto_id UUID,           -- referência ao registro assinado
+        assinatura_base64 TEXT NOT NULL,  -- canvas → PNG base64
+        latitude DOUBLE PRECISION,
+        longitude DOUBLE PRECISION,
+        accuracy_m DOUBLE PRECISION,
+        ip_address TEXT,
+        user_agent TEXT,
+        verificacao_canal TEXT,    -- 'sms' | 'whatsapp' | 'none'
+        verificacao_codigo TEXT,
+        verificacao_em TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_assinaturas_paciente ON assinaturas_eletronicas(paciente_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_assinaturas_contexto ON assinaturas_eletronicas(contexto, contexto_id)`,
     ];
 
     for (const sql of migrations) {

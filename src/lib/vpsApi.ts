@@ -670,6 +670,57 @@ export const procedimentosCatalogoApi = {
   delete: (id: string) => vpsApiFetch(`/procedimentos-catalogo/${id}`, { method: 'DELETE' }),
 };
 
+// ─── Execuções e Assinaturas (Fase C) ───────────────────────
+export interface AssinaturaPayload {
+  base64: string;
+  lat?: number | null;
+  lng?: number | null;
+  accuracy?: number | null;
+  canal?: 'sms' | 'whatsapp' | 'none';
+  codigo?: string | null;
+}
+export interface ExecucaoPayload {
+  orcamento_id?: string | null;
+  orcamento_item_id?: string | null;
+  paciente_id: string;
+  dentista_id?: string | null;
+  procedimento_id?: string | null;
+  procedimento_nome: string;
+  dente?: number | null;
+  faces?: string[];
+  valor?: number;
+  observacoes?: string | null;
+  assinatura?: AssinaturaPayload | null;
+}
+export interface ExecucaoRow {
+  id: string;
+  orcamento_id: string | null;
+  orcamento_item_id: string | null;
+  paciente_id: string;
+  dentista_id: string | null;
+  dentista_nome?: string | null;
+  procedimento_id: string | null;
+  procedimento_nome: string;
+  dente: number | null;
+  faces: string[];
+  valor: number;
+  observacoes: string | null;
+  status: string;
+  executado_em: string;
+  assinatura_id: string | null;
+  assinatura_base64?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  accuracy_m?: number | null;
+}
+export const execucoesApi = {
+  listByOrcamento: (id: string) => vpsApiFetch<ExecucaoRow[]>(`/orcamentos/${id}/execucoes`),
+  listByPaciente: (id: string) => vpsApiFetch<ExecucaoRow[]>(`/pacientes/${id}/execucoes`),
+  create: (body: ExecucaoPayload) => vpsApiFetch<ExecucaoRow>('/execucoes', { method: 'POST', body }),
+  delete: (id: string) => vpsApiFetch(`/execucoes/${id}`, { method: 'DELETE' }),
+  getAssinatura: (id: string) => vpsApiFetch(`/assinaturas/${id}`),
+};
+
 // ─── WhatsApp (via proxy) ───────────────────────────────────
 
 export const whatsappApi = {
