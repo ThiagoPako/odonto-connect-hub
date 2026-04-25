@@ -796,6 +796,7 @@ function NovoAgendamentoDialog({
   const [pacientesFiltered, setPacientesFiltered] = useState<any[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [dentistasList, setDentistasList] = useState<Array<{ id: string; nome: string }>>([]);
+  const [loadingDentistas, setLoadingDentistas] = useState(false);
   const suggestionsRef = useRef<HTMLDivElement>(null);
 
   // Load patients + dentistas when opening
@@ -805,12 +806,17 @@ function NovoAgendamentoDialog({
       pacientesApi.list().then(({ data }) => {
         if (Array.isArray(data)) setPacientesList(data);
       });
-      dentistasApi.list().then(({ data }) => {
-        if (Array.isArray(data) && data.length > 0) {
-          setDentistasList(data);
-          setForm((f) => ({ ...f, dentista_id: f.dentista_id || data[0].id }));
-        }
-      });
+      setLoadingDentistas(true);
+      dentistasApi.list()
+        .then(({ data }) => {
+          if (Array.isArray(data) && data.length > 0) {
+            setDentistasList(data);
+            setForm((f) => ({ ...f, dentista_id: f.dentista_id || data[0].id }));
+          } else {
+            setDentistasList([]);
+          }
+        })
+        .finally(() => setLoadingDentistas(false));
     }
   }, [open, defaultDate]);
 
@@ -1050,9 +1056,23 @@ function NovoAgendamentoDialog({
           {/* Profissional + Duração */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className={labelCls}>Profissional *</label>
-              <select value={form.dentista_id} onChange={(e) => handleChange("dentista_id", e.target.value)} className={inputCls}>
-                {dentistasList.length > 0 ? (
+              <label className={labelCls}>
+                Profissional *
+                {loadingDentistas && (
+                  <span className="ml-2 inline-flex items-center gap-1 text-[10px] font-normal text-muted-foreground">
+                    <Loader2 className="h-3 w-3 animate-spin" /> carregando...
+                  </span>
+                )}
+              </label>
+              <select
+                value={form.dentista_id}
+                onChange={(e) => handleChange("dentista_id", e.target.value)}
+                disabled={loadingDentistas}
+                className={`${inputCls} ${loadingDentistas ? "opacity-60 cursor-wait" : ""}`}
+              >
+                {loadingDentistas ? (
+                  <option value="" disabled>Carregando profissionais...</option>
+                ) : dentistasList.length > 0 ? (
                   dentistasList.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)
                 ) : (
                   <option value="" disabled>Nenhum profissional cadastrado — vá em /dentistas</option>
@@ -1109,10 +1129,11 @@ function NovoAgendamentoDialog({
               className="h-9 px-4 rounded-lg text-xs font-medium text-muted-foreground hover:bg-muted transition-colors">
               Cancelar
             </button>
-            <button onClick={handleSubmit} disabled={saving}
-              className="h-9 px-5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-2">
-              {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              Criar Agendamento
+            <button onClick={handleSubmit} disabled={saving || loadingDentistas}
+              title={loadingDentistas ? "Aguarde o carregamento dos profissionais..." : undefined}
+              className="h-9 px-5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
+              {(saving || loadingDentistas) && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              {loadingDentistas ? "Carregando..." : saving ? "Salvando..." : "Criar Agendamento"}
             </button>
           </div>
         </div>
