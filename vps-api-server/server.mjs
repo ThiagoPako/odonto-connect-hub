@@ -3911,6 +3911,8 @@ app.get('/api/assinaturas/:id', async (req, res) => {
   }
 });
 
+// Dashboard agregado — KPIs gerais
+app.get('/api/dashboard', async (req, res) => {
   try {
     await verifyUser(req);
     const today = new Date().toISOString().split('T')[0];
