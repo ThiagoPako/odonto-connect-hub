@@ -39,26 +39,53 @@ export function AdminCreateUserPanel() {
 
     // Se for dentista, cria também o registro clínico em /dentistas e mostra resumo final
     if (role === "dentista") {
-      const { error: dErr } = await dentistasApi.create({
-        nome: userName,
-        email: email.trim(),
-        telefone: "",
-        cro: "",
-        especialidade: "Clínico Geral",
-        comissao_percentual: 35,
-        ativo: true,
+      const userEmail = email.trim().toLowerCase();
+
+      // Verifica duplicidade por email (e CRO quando preenchido) antes de criar
+      const { data: listData, error: listErr } = await dentistasApi.list();
+      const dentistas = Array.isArray((listData as any)?.data)
+        ? (listData as any).data
+        : Array.isArray(listData)
+          ? (listData as any[])
+          : [];
+
+      const existing = dentistas.find((d: any) => {
+        const dEmail = (d?.email || "").toString().trim().toLowerCase();
+        return dEmail && dEmail === userEmail;
       });
 
-      if (dErr) {
-        toast.error(`Resumo do cadastro de ${createdName}`, {
-          description: `✓ Usuário criado com sucesso\n✗ Falha ao criar em /dentistas: ${dErr}\n\nAcesse /dentistas e cadastre manualmente para aparecer na agenda.`,
+      if (listErr) {
+        toast.warning(`Resumo do cadastro de ${createdName}`, {
+          description: `✓ Usuário criado com sucesso\n⚠ Não foi possível verificar duplicidade em /dentistas: ${listErr}\n\nVerifique manualmente em /dentistas.`,
           duration: 10000,
         });
-      } else {
+      } else if (existing) {
         toast.success(`Resumo do cadastro de ${createdName}`, {
-          description: "✓ Usuário criado com sucesso\n✓ Registro em /dentistas criado\n✓ Disponível na Agenda",
-          duration: 6000,
+          description: `✓ Usuário criado com sucesso\nℹ Já existia em /dentistas (${existing.nome || existing.email}) — não duplicado\n✓ Disponível na Agenda`,
+          duration: 8000,
         });
+      } else {
+        const { error: dErr } = await dentistasApi.create({
+          nome: userName,
+          email: userEmail,
+          telefone: "",
+          cro: "",
+          especialidade: "Clínico Geral",
+          comissao_percentual: 35,
+          ativo: true,
+        });
+
+        if (dErr) {
+          toast.error(`Resumo do cadastro de ${createdName}`, {
+            description: `✓ Usuário criado com sucesso\n✗ Falha ao criar em /dentistas: ${dErr}\n\nAcesse /dentistas e cadastre manualmente para aparecer na agenda.`,
+            duration: 10000,
+          });
+        } else {
+          toast.success(`Resumo do cadastro de ${createdName}`, {
+            description: "✓ Usuário criado com sucesso\n✓ Registro em /dentistas criado\n✓ Disponível na Agenda",
+            duration: 6000,
+          });
+        }
       }
     } else {
       toast.success(`Usuário ${createdName} criado com sucesso!`);
