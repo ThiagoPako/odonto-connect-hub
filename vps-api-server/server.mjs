@@ -9322,6 +9322,7 @@ app.listen(PORT, async () => {
 
   // ─── Auto-migration: ensure required columns/tables exist ───
   try {
+    let applied = 0;
     const migrations = [
       `ALTER TABLE profiles ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT true`,
       `ALTER TABLE profiles ADD COLUMN IF NOT EXISTS password_hash TEXT`,
