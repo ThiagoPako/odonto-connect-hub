@@ -125,6 +125,13 @@ export const clinicorpApi = {
   listWebhookEvents: (limit = 50) => req<ClinicorpWebhookEvent[]>(`/webhook-events?limit=${limit}`),
   getWebhookEvent: (id: number) => req<ClinicorpWebhookEvent & { payload: unknown; headers: unknown; ip: string }>(`/webhook-events/${id}`),
   reproject: () => req<{ ok: true; patients: number; appointments: number }>('/reproject', { method: 'POST' }),
+  listOverrides: () => req<ClinicorpOverride[]>('/overrides'),
+  upsertOverride: (payload: Partial<Pick<ClinicorpOverride, 'scope_type' | 'scope_id' | 'keep_local' | 'conflict_strategy' | 'note'>>) =>
+    req<{ ok: true }>('/overrides', { method: 'PUT', body: JSON.stringify(payload) }),
+  deleteOverride: (id: number) => req<{ ok: true }>(`/overrides/${id}`, { method: 'DELETE' }),
+  listConflicts: (limit = 100) => req<ClinicorpConflict[]>(`/conflicts?limit=${limit}`),
+  setKeepLocal: (entity: 'appointment' | 'patient', id: string, keep_local: boolean) =>
+    req<{ ok: true }>('/keep-local', { method: 'PUT', body: JSON.stringify({ entity, id, keep_local }) }),
 };
 
 export function buildWebhookUrl(secret: string): string {
