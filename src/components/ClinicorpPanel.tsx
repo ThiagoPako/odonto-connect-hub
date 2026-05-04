@@ -29,6 +29,10 @@ export function ClinicorpPanel() {
   const [baseUrl, setBaseUrl] = useState("https://api.clinicorp.com/rest/v1");
   const [apiToken, setApiToken] = useState("");
   const [webhookSecret, setWebhookSecret] = useState("");
+  const [autoSync, setAutoSync] = useState(true);
+  const [intervalMin, setIntervalMin] = useState(30);
+  const [lookbackDays, setLookbackDays] = useState(30);
+  const [lookaheadDays, setLookaheadDays] = useState(60);
 
   async function load() {
     setLoading(true);
