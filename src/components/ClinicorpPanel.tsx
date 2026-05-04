@@ -35,6 +35,13 @@ export function ClinicorpPanel() {
   const [intervalMin, setIntervalMin] = useState(30);
   const [lookbackDays, setLookbackDays] = useState(30);
   const [lookaheadDays, setLookaheadDays] = useState(60);
+  const [conflictStrategy, setConflictStrategy] = useState<"clinicorp_wins" | "local_wins" | "newest_wins">("newest_wins");
+  const [overrides, setOverrides] = useState<ClinicorpOverride[]>([]);
+  const [conflicts, setConflicts] = useState<ClinicorpConflict[]>([]);
+  const [newOvScope, setNewOvScope] = useState<"clinic" | "professional">("professional");
+  const [newOvId, setNewOvId] = useState("");
+  const [newOvKeepLocal, setNewOvKeepLocal] = useState(true);
+  const [newOvStrategy, setNewOvStrategy] = useState<"" | "clinicorp_wins" | "local_wins" | "newest_wins">("");
 
   async function load() {
     setLoading(true);
