@@ -42,6 +42,10 @@ export function ClinicorpPanel() {
       setEnabled(s.enabled);
       setSubscriberId(s.subscriber_id || "");
       setBaseUrl(s.base_url || "https://api.clinicorp.com/rest/v1");
+      setAutoSync(s.auto_sync_enabled ?? true);
+      setIntervalMin(s.sync_interval_minutes ?? 30);
+      setLookbackDays(s.sync_lookback_days ?? 30);
+      setLookaheadDays(s.sync_lookahead_days ?? 60);
       const evs = await clinicorpApi.listWebhookEvents(50);
       setEvents(evs);
     } catch (e) {
