@@ -228,6 +228,8 @@ async function upsertPatient(pool, p) {
       JSON.stringify(p),
     ]
   );
+  try { await projectPatientToLocal(pool, p); }
+  catch (e) { console.error('[clinicorp] projectPatientToLocal:', e.message); }
 }
 
 async function upsertAppointment(pool, a) {
@@ -275,6 +277,184 @@ async function upsertAppointment(pool, a) {
       JSON.stringify(a),
     ]
   );
+  try { await projectAppointmentToLocal(pool, a, id); }
+  catch (e) { console.error('[clinicorp] projectAppointmentToLocal:', e.message); }
+}
+
+// ─── Projection layer (Clinicorp → schema local) ───
+function mapAppointmentStatus(raw) {
+  const s = String(raw ?? '').toLowerCase();
+  if (!s) return 'agendado';
+  if (s.includes('confirm')) return 'confirmado';
+  if (s.includes('cancel') || s.includes('desmarc')) return 'cancelado';
+  if (s.includes('falt') || s.includes('no_show') || s.includes('noshow')) return 'faltou';
+  if (s.includes('atend') || s.includes('progress')) return 'em_atendimento';
+  if (s.includes('final') || s.includes('conclu') || s.includes('done') || s.includes('complete')) return 'finalizado';
+  return 'agendado';
+}
+function onlyDigits(v) { return String(v ?? '').replace(/\D+/g, '') || null; }
+
+async function ensureLocalPatient(pool, cpId, fallback = {}) {
+  if (!cpId) return null;
+  const found = await pool.query(`SELECT id FROM pacientes WHERE clinicorp_patient_id = $1 LIMIT 1`, [cpId]);
+  const cp = await pool.query(`SELECT * FROM clinicorp_patients WHERE id = $1`, [cpId]);
+  const src = cp.rows[0] || {};
+  const nome = src.name || fallback.name || 'Paciente';
+  const telefone = src.mobile_phone || onlyDigits(fallback.phone) || null;
+  const email = src.email || fallback.email || null;
+  const nascimento = src.birth_date || null;
+  const sexo = src.sex || null;
+  const cpf = src.document_id || null;
+  if (found.rows[0]) {
+    await pool.query(
+      `UPDATE pacientes SET nome=COALESCE(NULLIF($2,''),nome), telefone=COALESCE($3,telefone),
+         email=COALESCE($4,email), data_nascimento=COALESCE($5,data_nascimento),
+         sexo=COALESCE($6,sexo), cpf=COALESCE(NULLIF(cpf,''),$7), updated_at=NOW() WHERE id=$1`,
+      [found.rows[0].id, nome, telefone, email, nascimento, sexo, cpf]
+    );
+    return found.rows[0].id;
+  }
+  let matchId = null;
+  if (telefone) {
+    const r = await pool.query(`SELECT id FROM pacientes WHERE telefone=$1 LIMIT 1`, [telefone]);
+    matchId = r.rows[0]?.id || null;
+  }
+  if (!matchId && cpf) {
+    const r = await pool.query(`SELECT id FROM pacientes WHERE cpf=$1 LIMIT 1`, [cpf]);
+    matchId = r.rows[0]?.id || null;
+  }
+  if (matchId) {
+    await pool.query(`UPDATE pacientes SET clinicorp_patient_id=$1, updated_at=NOW() WHERE id=$2`, [cpId, matchId]);
+    return matchId;
+  }
+  const ins = await pool.query(
+    `INSERT INTO pacientes (nome, telefone, email, data_nascimento, sexo, cpf, clinicorp_patient_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+    [nome, telefone, email, nascimento, sexo, cpf, cpId]
+  );
+  return ins.rows[0].id;
+}
+
+async function ensureLocalProfessional(pool, cpProfId, fallbackName = null) {
+  if (!cpProfId) return null;
+  const found = await pool.query(`SELECT id FROM dentistas WHERE clinicorp_professional_id=$1 LIMIT 1`, [cpProfId]);
+  if (found.rows[0]) return found.rows[0].id;
+  const cp = await pool.query(`SELECT * FROM clinicorp_professionals WHERE id=$1`, [cpProfId]);
+  const nome = cp.rows[0]?.full_name || fallbackName || `Profissional ${cpProfId}`;
+  const match = await pool.query(`SELECT id FROM dentistas WHERE LOWER(nome)=LOWER($1) LIMIT 1`, [nome]);
+  if (match.rows[0]) {
+    await pool.query(`UPDATE dentistas SET clinicorp_professional_id=$1, updated_at=NOW() WHERE id=$2`, [cpProfId, match.rows[0].id]);
+    return match.rows[0].id;
+  }
+  const ins = await pool.query(
+    `INSERT INTO dentistas (nome, ativo, clinicorp_professional_id) VALUES ($1, true, $2) RETURNING id`,
+    [nome, cpProfId]
+  );
+  return ins.rows[0].id;
+}
+
+async function ensureLeadForPatient(pool, pacienteId, cpPatientId, info = {}) {
+  if (!pacienteId) return null;
+  const existing = await pool.query(
+    `SELECT id, kanban_stage FROM crm_leads WHERE paciente_id=$1 OR clinicorp_patient_id=$2 LIMIT 1`,
+    [pacienteId, cpPatientId]
+  );
+  if (existing.rows[0]) {
+    const lead = existing.rows[0];
+    const ahead = ['em_atendimento','pos_consulta','orcamento','orcamento_enviado','orcamento_aprovado'];
+    const newStage = ahead.includes(lead.kanban_stage) ? lead.kanban_stage : 'paciente_agendado';
+    await pool.query(
+      `UPDATE crm_leads SET paciente_id=COALESCE(paciente_id,$2),
+         clinicorp_patient_id=COALESCE(clinicorp_patient_id,$3),
+         kanban_stage=$4, status=$4, updated_at=NOW() WHERE id=$1`,
+      [lead.id, pacienteId, cpPatientId, newStage]
+    );
+    return lead.id;
+  }
+  const ins = await pool.query(
+    `INSERT INTO crm_leads (nome, telefone, email, origem, status, kanban_stage, paciente_id, clinicorp_patient_id)
+     VALUES ($1,$2,$3,'clinicorp','paciente_agendado','paciente_agendado',$4,$5) RETURNING id`,
+    [info.nome || 'Paciente Clinicorp', info.telefone || null, info.email || null, pacienteId, cpPatientId]
+  );
+  return ins.rows[0].id;
+}
+
+async function projectAppointmentToLocal(pool, a, cpApptId) {
+  const cpPatientId = a.PatientId ?? a.Patient_PersonId ?? null;
+  const cpProfId = a.ProfessionalId ?? a.Dentist_PersonId ?? null;
+  const pacienteId = await ensureLocalPatient(pool, cpPatientId, {
+    name: a.PatientName, phone: a.PatientPhone || a.MobilePhone, email: a.PatientEmail,
+  });
+  const dentistaId = await ensureLocalProfessional(pool, cpProfId, a.ProfessionalName);
+  const status = mapAppointmentStatus(a.Status);
+  const data = a.Date || a.AppointmentDate || null;
+  const hora = (a.FromTime || a.StartTime || '00:00').toString().slice(0, 5);
+  const duracao = (() => {
+    const ft = (a.FromTime || a.StartTime || '').toString();
+    const tt = (a.ToTime || a.EndTime || '').toString();
+    if (!ft || !tt) return 30;
+    const toMin = (s) => { const [h,m] = s.split(':').map(Number); return (h||0)*60+(m||0); };
+    const d = toMin(tt) - toMin(ft);
+    return d > 0 ? d : 30;
+  })();
+  const procedimento = a.CategoryDescription || a.Category || null;
+  const categoriaCor = a.CategoryColor || a.Color || null;
+  const observacoes = a.Notes || null;
+
+  const exists = await pool.query(`SELECT id FROM agendamentos WHERE clinicorp_appointment_id=$1 LIMIT 1`, [cpApptId]);
+  let agendamentoId;
+  if (exists.rows[0]) {
+    agendamentoId = exists.rows[0].id;
+    await pool.query(
+      `UPDATE agendamentos SET paciente_id=COALESCE($2,paciente_id), dentista_id=COALESCE($3,dentista_id),
+         data=COALESCE($4,data), hora=COALESCE($5,hora), duracao=$6,
+         procedimento=COALESCE($7,procedimento), categoria=COALESCE($8,categoria),
+         categoria_cor=COALESCE($9,categoria_cor), status=$10,
+         observacoes=COALESCE($11,observacoes), updated_at=NOW() WHERE id=$1`,
+      [agendamentoId, pacienteId, dentistaId, data, hora, duracao, procedimento, procedimento, categoriaCor, status, observacoes]
+    );
+  } else if (data) {
+    const { randomUUID } = await import('crypto');
+    const id = randomUUID();
+    await pool.query(
+      `INSERT INTO agendamentos
+         (id, paciente_id, dentista_id, data, hora, duracao, procedimento, status, observacoes,
+          categoria, categoria_cor, clinicorp_appointment_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+      [id, pacienteId, dentistaId, data, hora, duracao, procedimento, status, observacoes, procedimento, categoriaCor, cpApptId]
+    );
+    agendamentoId = id;
+  }
+
+  if (pacienteId) {
+    const leadId = await ensureLeadForPatient(pool, pacienteId, cpPatientId, {
+      nome: a.PatientName, telefone: onlyDigits(a.PatientPhone || a.MobilePhone), email: a.PatientEmail,
+    });
+    if (leadId) {
+      if (status === 'cancelado' || status === 'faltou') {
+        await pool.query(
+          `UPDATE crm_leads SET kanban_stage='reativacao', status='reativacao', updated_at=NOW()
+           WHERE id=$1 AND kanban_stage IN ('paciente_agendado','novo','followup')`,
+          [leadId]
+        );
+      } else if (status === 'em_atendimento') {
+        await pool.query(`UPDATE crm_leads SET kanban_stage='em_atendimento', status='em_atendimento', updated_at=NOW() WHERE id=$1`, [leadId]);
+      } else if (status === 'finalizado') {
+        await pool.query(`UPDATE crm_leads SET kanban_stage='pos_consulta', status='pos_consulta', updated_at=NOW() WHERE id=$1`, [leadId]);
+      }
+    }
+  }
+  return { pacienteId, dentistaId, agendamentoId };
+}
+
+async function projectPatientToLocal(pool, p) {
+  const cpId = p.id ?? p.Patient_PersonId;
+  if (!cpId) return null;
+  const pacienteId = await ensureLocalPatient(pool, cpId, { name: p.Name, phone: p.MobilePhone, email: p.Email });
+  await ensureLeadForPatient(pool, pacienteId, cpId, {
+    nome: p.Name, telefone: onlyDigits(p.MobilePhone), email: p.Email,
+  });
+  return pacienteId;
 }
 
 async function upsertEstimate(pool, e) {
@@ -656,6 +836,18 @@ export function registerClinicorp(app, pool) {
       const data = await clinicorpApi.createAppointment(s, { subscriber_id: s.subscriber_id, ...(req.body || {}) });
       res.json(data);
     } catch (e) { res.status(500).json({ error: e.message, details: e.body }); }
+  });
+
+  // ── Re-projeta espelho atual nas tabelas locais (pacientes/dentistas/agendamentos/crm_leads) ──
+  app.post('/api/clinicorp/reproject', async (_req, res) => {
+    try {
+      const { rows: pats } = await pool.query('SELECT raw FROM clinicorp_patients');
+      let patients = 0, appts = 0;
+      for (const r of pats) { try { await projectPatientToLocal(pool, r.raw); patients++; } catch (e) { /* skip */ } }
+      const { rows: aps } = await pool.query('SELECT id, raw FROM clinicorp_appointments');
+      for (const r of aps) { try { await projectAppointmentToLocal(pool, r.raw, r.id); appts++; } catch (e) { /* skip */ } }
+      res.json({ ok: true, patients, appointments: appts });
+    } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
   console.log('🦷 Clinicorp routes registered');

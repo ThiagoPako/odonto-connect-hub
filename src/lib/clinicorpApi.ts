@@ -85,6 +85,7 @@ export const clinicorpApi = {
   listEstimates: () => req<Array<Record<string, unknown>>>('/estimates'),
   listWebhookEvents: (limit = 50) => req<ClinicorpWebhookEvent[]>(`/webhook-events?limit=${limit}`),
   getWebhookEvent: (id: number) => req<ClinicorpWebhookEvent & { payload: unknown; headers: unknown; ip: string }>(`/webhook-events/${id}`),
+  reproject: () => req<{ ok: true; patients: number; appointments: number }>('/reproject', { method: 'POST' }),
 };
 
 export function buildWebhookUrl(secret: string): string {

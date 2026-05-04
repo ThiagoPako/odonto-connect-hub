@@ -194,6 +194,21 @@ export function ClinicorpPanel() {
             {syncing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />}
             Sincronizar agora
           </Button>
+          <Button
+            variant="outline"
+            onClick={async () => {
+              try {
+                const r = await clinicorpApi.reproject();
+                toast.success(`Reprojetado: ${r.patients} pacientes, ${r.appointments} agendamentos no CRM/Agenda`);
+              } catch (e) {
+                toast.error(`Falha ao reprojetar: ${(e as Error).message}`);
+              }
+            }}
+            disabled={!settings?.enabled}
+          >
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Reprojetar no CRM/Agenda
+          </Button>
         </div>
 
         {lastSync && (
