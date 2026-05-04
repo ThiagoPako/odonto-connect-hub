@@ -10520,6 +10520,44 @@ app.listen(PORT, async () => {
       `ALTER TABLE clinicorp_settings ADD COLUMN IF NOT EXISTS sync_lookahead_days INT DEFAULT 60`,
       `ALTER TABLE clinicorp_settings ADD COLUMN IF NOT EXISTS next_sync_at TIMESTAMPTZ`,
       `ALTER TABLE clinicorp_settings ADD COLUMN IF NOT EXISTS sync_lock_until TIMESTAMPTZ`,
+      // ─── Resolução de conflitos Clinicorp ↔ Local ───
+      // estratégia padrão para a clínica inteira: clinicorp_wins | local_wins | newest_wins
+      `ALTER TABLE clinicorp_settings ADD COLUMN IF NOT EXISTS conflict_strategy TEXT DEFAULT 'newest_wins'`,
+      // marca quando o registro foi atualizado pelo último sync (para detectar edição local posterior)
+      `ALTER TABLE pacientes    ADD COLUMN IF NOT EXISTS last_clinicorp_sync_at TIMESTAMPTZ`,
+      `ALTER TABLE pacientes    ADD COLUMN IF NOT EXISTS keep_local BOOLEAN DEFAULT FALSE`,
+      `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS last_clinicorp_sync_at TIMESTAMPTZ`,
+      `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS keep_local BOOLEAN DEFAULT FALSE`,
+      // overrides por escopo (global / clínica / profissional)
+      `CREATE TABLE IF NOT EXISTS clinicorp_local_overrides (
+         id BIGSERIAL PRIMARY KEY,
+         scope_type TEXT NOT NULL CHECK (scope_type IN ('global','clinic','professional')),
+         scope_id   TEXT,
+         keep_local BOOLEAN NOT NULL DEFAULT FALSE,
+         conflict_strategy TEXT,
+         note TEXT,
+         created_at TIMESTAMPTZ DEFAULT NOW(),
+         updated_at TIMESTAMPTZ DEFAULT NOW()
+       )`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS uniq_cc_overrides_scope ON clinicorp_local_overrides(scope_type, COALESCE(scope_id,''))`,
+      // log de conflitos detectados
+      `CREATE TABLE IF NOT EXISTS clinicorp_conflicts (
+         id BIGSERIAL PRIMARY KEY,
+         entity TEXT NOT NULL,                  -- 'appointment' | 'patient'
+         clinicorp_id TEXT,
+         local_id TEXT,
+         decision TEXT NOT NULL,                -- 'kept_local' | 'overwritten_by_clinicorp' | 'kept_local_newer' | 'kept_clinicorp_newer'
+         strategy TEXT,
+         scope_type TEXT,
+         scope_id TEXT,
+         local_updated_at TIMESTAMPTZ,
+         clinicorp_updated_at TIMESTAMPTZ,
+         last_sync_at TIMESTAMPTZ,
+         diff JSONB,
+         created_at TIMESTAMPTZ DEFAULT NOW()
+       )`,
+      `CREATE INDEX IF NOT EXISTS idx_cc_conflicts_created ON clinicorp_conflicts(created_at DESC)`,
+      `CREATE INDEX IF NOT EXISTS idx_cc_conflicts_entity ON clinicorp_conflicts(entity, decision)`,
     ];
 
     for (const sql of migrations) {

@@ -46,6 +46,33 @@ export interface ClinicorpSettings {
   sync_lookahead_days: number;
   next_sync_at: string | null;
   sync_lock_until: string | null;
+  conflict_strategy: 'clinicorp_wins' | 'local_wins' | 'newest_wins';
+}
+
+export interface ClinicorpOverride {
+  id: number;
+  scope_type: 'global' | 'clinic' | 'professional';
+  scope_id: string | null;
+  keep_local: boolean;
+  conflict_strategy: 'clinicorp_wins' | 'local_wins' | 'newest_wins' | null;
+  note: string | null;
+  updated_at: string;
+}
+
+export interface ClinicorpConflict {
+  id: number;
+  entity: 'appointment' | 'patient';
+  clinicorp_id: string | null;
+  local_id: string | null;
+  decision: string;
+  strategy: string;
+  scope_type: string | null;
+  scope_id: string | null;
+  local_updated_at: string | null;
+  clinicorp_updated_at: string | null;
+  last_sync_at: string | null;
+  diff: Record<string, unknown> | null;
+  created_at: string;
 }
 
 export interface ClinicorpWebhookEvent {
@@ -78,6 +105,7 @@ export const clinicorpApi = {
     sync_interval_minutes: number;
     sync_lookback_days: number;
     sync_lookahead_days: number;
+    conflict_strategy: 'clinicorp_wins' | 'local_wins' | 'newest_wins';
   }>) => req<{ ok: true }>('/settings', { method: 'PUT', body: JSON.stringify(payload) }),
   testConnection: () => req<{ ok: boolean; clinics_count: number; sample: unknown; error?: string }>('/test', { method: 'POST' }),
   sync: (range?: { from?: string; to?: string }) =>
@@ -97,6 +125,13 @@ export const clinicorpApi = {
   listWebhookEvents: (limit = 50) => req<ClinicorpWebhookEvent[]>(`/webhook-events?limit=${limit}`),
   getWebhookEvent: (id: number) => req<ClinicorpWebhookEvent & { payload: unknown; headers: unknown; ip: string }>(`/webhook-events/${id}`),
   reproject: () => req<{ ok: true; patients: number; appointments: number }>('/reproject', { method: 'POST' }),
+  listOverrides: () => req<ClinicorpOverride[]>('/overrides'),
+  upsertOverride: (payload: Partial<Pick<ClinicorpOverride, 'scope_type' | 'scope_id' | 'keep_local' | 'conflict_strategy' | 'note'>>) =>
+    req<{ ok: true }>('/overrides', { method: 'PUT', body: JSON.stringify(payload) }),
+  deleteOverride: (id: number) => req<{ ok: true }>(`/overrides/${id}`, { method: 'DELETE' }),
+  listConflicts: (limit = 100) => req<ClinicorpConflict[]>(`/conflicts?limit=${limit}`),
+  setKeepLocal: (entity: 'appointment' | 'patient', id: string, keep_local: boolean) =>
+    req<{ ok: true }>('/keep-local', { method: 'PUT', body: JSON.stringify({ entity, id, keep_local }) }),
 };
 
 export function buildWebhookUrl(secret: string): string {
