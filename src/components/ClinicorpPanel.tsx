@@ -12,6 +12,8 @@ import {
   type ClinicorpSettings,
   type ClinicorpWebhookEvent,
   type ClinicorpSyncResult,
+  type ClinicorpOverride,
+  type ClinicorpConflict,
 } from "@/lib/clinicorpApi";
 
 export function ClinicorpPanel() {
