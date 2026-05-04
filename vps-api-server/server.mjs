@@ -9987,7 +9987,7 @@ app.get('/api/ai/meta-ads/insight', async (req, res) => {
 
 // ═══════════════════════════════════════════════════════════════
 // CLINICORP INTEGRATION
-import { registerClinicorp } from './clinicorp.mjs';
+import { registerClinicorp, reconciliationTick } from './clinicorp.mjs';
 registerClinicorp(app, pool);
 
 // ═══════════════════════════════════════════════════════════════
