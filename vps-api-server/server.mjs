@@ -9987,7 +9987,7 @@ app.get('/api/ai/meta-ads/insight', async (req, res) => {
 
 // ═══════════════════════════════════════════════════════════════
 // CLINICORP INTEGRATION
-import { registerClinicorp } from './clinicorp.mjs';
+import { registerClinicorp, reconciliationTick } from './clinicorp.mjs';
 registerClinicorp(app, pool);
 
 // ═══════════════════════════════════════════════════════════════
@@ -10513,6 +10513,13 @@ app.listen(PORT, async () => {
       `CREATE UNIQUE INDEX IF NOT EXISTS uniq_dentistas_clinicorp     ON dentistas(clinicorp_professional_id)   WHERE clinicorp_professional_id IS NOT NULL`,
       `CREATE UNIQUE INDEX IF NOT EXISTS uniq_agendamentos_clinicorp  ON agendamentos(clinicorp_appointment_id) WHERE clinicorp_appointment_id IS NOT NULL`,
       `CREATE INDEX        IF NOT EXISTS idx_crm_leads_clinicorp      ON crm_leads(clinicorp_patient_id)`,
+      // Auto-reconciliação Clinicorp
+      `ALTER TABLE clinicorp_settings ADD COLUMN IF NOT EXISTS auto_sync_enabled BOOLEAN DEFAULT TRUE`,
+      `ALTER TABLE clinicorp_settings ADD COLUMN IF NOT EXISTS sync_interval_minutes INT DEFAULT 30`,
+      `ALTER TABLE clinicorp_settings ADD COLUMN IF NOT EXISTS sync_lookback_days INT DEFAULT 30`,
+      `ALTER TABLE clinicorp_settings ADD COLUMN IF NOT EXISTS sync_lookahead_days INT DEFAULT 60`,
+      `ALTER TABLE clinicorp_settings ADD COLUMN IF NOT EXISTS next_sync_at TIMESTAMPTZ`,
+      `ALTER TABLE clinicorp_settings ADD COLUMN IF NOT EXISTS sync_lock_until TIMESTAMPTZ`,
     ];
 
     for (const sql of migrations) {
@@ -10577,4 +10584,11 @@ app.listen(PORT, async () => {
   processAppointmentReminders();
   appointmentReminderInterval = setInterval(processAppointmentReminders, 60 * 60 * 1000);
   console.log('   🔔 Lembrete de consulta 24h ativo (a cada 1h)');
+
+  // Clinicorp auto-reconciliation: tick a cada 60s, decide via DB se executa
+  // (lock + next_sync_at em clinicorp_settings garantem idempotência e catch-up
+  // automático após reinício/interrupção do servidor)
+  setTimeout(() => { reconciliationTick(pool).catch((e) => console.error('[clinicorp] tick startup', e.message)); }, 15_000);
+  setInterval(() => { reconciliationTick(pool).catch((e) => console.error('[clinicorp] tick', e.message)); }, 60 * 1000);
+  console.log('   🦷 Clinicorp auto-reconcile ativo (tick a cada 60s, intervalo configurável em clinicorp_settings)');
 });
