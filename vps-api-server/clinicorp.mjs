@@ -379,9 +379,75 @@ async function ensureLeadForPatient(pool, pacienteId, cpPatientId, info = {}) {
   return ins.rows[0].id;
 }
 
+// ─── Política de resolução de conflitos ────────────────────────
+// Resolve estratégia efetiva e flag keep_local para um registro vindo da Clinicorp.
+// Precedência: profissional > clínica > global > settings.conflict_strategy.
+async function resolveConflictPolicy(pool, { clinicId, professionalId } = {}) {
+  const settings = await loadSettings(pool);
+  const defaultStrategy = settings?.conflict_strategy || 'newest_wins';
+  const ovs = await pool.query(
+    `SELECT scope_type, scope_id, keep_local, conflict_strategy
+       FROM clinicorp_local_overrides
+       WHERE (scope_type='global')
+          OR (scope_type='clinic'       AND scope_id=$1)
+          OR (scope_type='professional' AND scope_id=$2)`,
+    [clinicId != null ? String(clinicId) : null, professionalId != null ? String(professionalId) : null]
+  );
+  const order = { global: 0, clinic: 1, professional: 2 };
+  const sorted = ovs.rows.sort((a, b) => order[a.scope_type] - order[b.scope_type]);
+  let strategy = defaultStrategy;
+  let keepLocal = false;
+  let scopeType = 'settings';
+  let scopeId = null;
+  for (const o of sorted) {
+    if (o.conflict_strategy) { strategy = o.conflict_strategy; scopeType = o.scope_type; scopeId = o.scope_id; }
+    if (o.keep_local) { keepLocal = true; scopeType = o.scope_type; scopeId = o.scope_id; }
+  }
+  return { strategy, keepLocal, scopeType, scopeId };
+}
+
+async function logConflict(pool, row) {
+  try {
+    await pool.query(
+      `INSERT INTO clinicorp_conflicts
+         (entity, clinicorp_id, local_id, decision, strategy, scope_type, scope_id,
+          local_updated_at, clinicorp_updated_at, last_sync_at, diff)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [row.entity, row.clinicorp_id != null ? String(row.clinicorp_id) : null,
+       row.local_id != null ? String(row.local_id) : null,
+       row.decision, row.strategy, row.scope_type, row.scope_id,
+       row.local_updated_at || null, row.clinicorp_updated_at || null,
+       row.last_sync_at || null, row.diff ? JSON.stringify(row.diff) : null]
+    );
+  } catch (e) { console.error('[clinicorp] logConflict', e.message); }
+}
+
+// Decide se devemos sobrescrever um registro local com dados do Clinicorp.
+// localRow: { updated_at, last_clinicorp_sync_at, keep_local }
+function decideOverwrite({ strategy, keepLocal, localRow, clinicorpUpdatedAt }) {
+  if (!localRow) return { write: true, decision: 'created' };
+  if (keepLocal || localRow.keep_local) return { write: false, decision: 'kept_local' };
+  const lastSync = localRow.last_clinicorp_sync_at ? new Date(localRow.last_clinicorp_sync_at).getTime() : 0;
+  const localUpd = localRow.updated_at ? new Date(localRow.updated_at).getTime() : 0;
+  const cpUpd    = clinicorpUpdatedAt ? new Date(clinicorpUpdatedAt).getTime() : Date.now();
+  const localChangedSinceSync = localUpd > lastSync + 1500; // tolerância 1.5s
+  if (strategy === 'clinicorp_wins') return { write: true, decision: 'overwritten_by_clinicorp' };
+  if (strategy === 'local_wins')     return localChangedSinceSync
+    ? { write: false, decision: 'kept_local' }
+    : { write: true, decision: 'overwritten_by_clinicorp' };
+  // newest_wins (padrão)
+  if (!localChangedSinceSync) return { write: true, decision: 'overwritten_by_clinicorp' };
+  if (cpUpd > localUpd)        return { write: true, decision: 'kept_clinicorp_newer' };
+  return { write: false, decision: 'kept_local_newer' };
+}
+
 async function projectAppointmentToLocal(pool, a, cpApptId) {
   const cpPatientId = a.PatientId ?? a.Patient_PersonId ?? null;
   const cpProfId = a.ProfessionalId ?? a.Dentist_PersonId ?? null;
+  const cpClinicId = a.BusinessId ?? a.ClinicId ?? null;
+  const cpUpdatedAt = a.UpdateDate || a.UpdatedAt || a.LastModified || a.ModifiedAt || null;
+  const policy = await resolveConflictPolicy(pool, { clinicId: cpClinicId, professionalId: cpProfId });
+
   const pacienteId = await ensureLocalPatient(pool, cpPatientId, {
     name: a.PatientName, phone: a.PatientPhone || a.MobilePhone, email: a.PatientEmail,
   });
@@ -401,26 +467,51 @@ async function projectAppointmentToLocal(pool, a, cpApptId) {
   const categoriaCor = a.CategoryColor || a.Color || null;
   const observacoes = a.Notes || null;
 
-  const exists = await pool.query(`SELECT id FROM agendamentos WHERE clinicorp_appointment_id=$1 LIMIT 1`, [cpApptId]);
+  const exists = await pool.query(
+    `SELECT id, updated_at, last_clinicorp_sync_at, keep_local
+       FROM agendamentos WHERE clinicorp_appointment_id=$1 LIMIT 1`,
+    [cpApptId]
+  );
   let agendamentoId;
   if (exists.rows[0]) {
-    agendamentoId = exists.rows[0].id;
-    await pool.query(
-      `UPDATE agendamentos SET paciente_id=COALESCE($2,paciente_id), dentista_id=COALESCE($3,dentista_id),
-         data=COALESCE($4,data), hora=COALESCE($5,hora), duracao=$6,
-         procedimento=COALESCE($7,procedimento), categoria=COALESCE($8,categoria),
-         categoria_cor=COALESCE($9,categoria_cor), status=$10,
-         observacoes=COALESCE($11,observacoes), updated_at=NOW() WHERE id=$1`,
-      [agendamentoId, pacienteId, dentistaId, data, hora, duracao, procedimento, procedimento, categoriaCor, status, observacoes]
-    );
+    const localRow = exists.rows[0];
+    agendamentoId = localRow.id;
+    const decision = decideOverwrite({
+      strategy: policy.strategy,
+      keepLocal: policy.keepLocal,
+      localRow,
+      clinicorpUpdatedAt: cpUpdatedAt,
+    });
+    if (decision.write) {
+      await pool.query(
+        `UPDATE agendamentos SET paciente_id=COALESCE($2,paciente_id), dentista_id=COALESCE($3,dentista_id),
+           data=COALESCE($4,data), hora=COALESCE($5,hora), duracao=$6,
+           procedimento=COALESCE($7,procedimento), categoria=COALESCE($8,categoria),
+           categoria_cor=COALESCE($9,categoria_cor), status=$10,
+           observacoes=COALESCE($11,observacoes),
+           last_clinicorp_sync_at=NOW(), updated_at=NOW() WHERE id=$1`,
+        [agendamentoId, pacienteId, dentistaId, data, hora, duracao, procedimento, procedimento, categoriaCor, status, observacoes]
+      );
+    }
+    if (decision.decision !== 'overwritten_by_clinicorp') {
+      await logConflict(pool, {
+        entity: 'appointment', clinicorp_id: cpApptId, local_id: agendamentoId,
+        decision: decision.decision, strategy: policy.strategy,
+        scope_type: policy.scopeType, scope_id: policy.scopeId,
+        local_updated_at: localRow.updated_at,
+        clinicorp_updated_at: cpUpdatedAt,
+        last_sync_at: localRow.last_clinicorp_sync_at,
+        diff: { data, hora, status, procedimento },
+      });
+    }
   } else if (data) {
     const { randomUUID } = await import('crypto');
     const id = randomUUID();
     await pool.query(
       `INSERT INTO agendamentos
          (id, paciente_id, dentista_id, data, hora, duracao, procedimento, status, observacoes,
-          categoria, categoria_cor, clinicorp_appointment_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+          categoria, categoria_cor, clinicorp_appointment_id, last_clinicorp_sync_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, NOW())`,
       [id, pacienteId, dentistaId, data, hora, duracao, procedimento, status, observacoes, procedimento, categoriaCor, cpApptId]
     );
     agendamentoId = id;
@@ -450,7 +541,37 @@ async function projectAppointmentToLocal(pool, a, cpApptId) {
 async function projectPatientToLocal(pool, p) {
   const cpId = p.id ?? p.Patient_PersonId;
   if (!cpId) return null;
+  const cpUpdatedAt = p.UpdateDate || p.UpdatedAt || p.LastModified || null;
+  const policy = await resolveConflictPolicy(pool, {});
+  const existing = await pool.query(
+    `SELECT id, updated_at, last_clinicorp_sync_at, keep_local
+       FROM pacientes WHERE clinicorp_patient_id=$1 LIMIT 1`,
+    [cpId]
+  );
+  if (existing.rows[0]) {
+    const decision = decideOverwrite({
+      strategy: policy.strategy,
+      keepLocal: policy.keepLocal,
+      localRow: existing.rows[0],
+      clinicorpUpdatedAt: cpUpdatedAt,
+    });
+    if (!decision.write) {
+      await logConflict(pool, {
+        entity: 'patient', clinicorp_id: cpId, local_id: existing.rows[0].id,
+        decision: decision.decision, strategy: policy.strategy,
+        scope_type: policy.scopeType, scope_id: policy.scopeId,
+        local_updated_at: existing.rows[0].updated_at,
+        clinicorp_updated_at: cpUpdatedAt,
+        last_sync_at: existing.rows[0].last_clinicorp_sync_at,
+        diff: { name: p.Name, email: p.Email, phone: p.MobilePhone },
+      });
+      return existing.rows[0].id;
+    }
+  }
   const pacienteId = await ensureLocalPatient(pool, cpId, { name: p.Name, phone: p.MobilePhone, email: p.Email });
+  if (pacienteId) {
+    await pool.query(`UPDATE pacientes SET last_clinicorp_sync_at=NOW() WHERE id=$1`, [pacienteId]);
+  }
   await ensureLeadForPatient(pool, pacienteId, cpId, {
     nome: p.Name, telefone: onlyDigits(p.MobilePhone), email: p.Email,
   });
