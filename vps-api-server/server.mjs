@@ -10504,6 +10504,15 @@ app.listen(PORT, async () => {
       )`,
       `CREATE INDEX IF NOT EXISTS idx_clinicorp_webhook_received ON clinicorp_webhook_events(received_at DESC)`,
       `CREATE INDEX IF NOT EXISTS idx_clinicorp_webhook_type ON clinicorp_webhook_events(event_type)`,
+      // ─── Clinicorp ↔ Local projection links ───
+      `ALTER TABLE pacientes      ADD COLUMN IF NOT EXISTS clinicorp_patient_id BIGINT`,
+      `ALTER TABLE dentistas      ADD COLUMN IF NOT EXISTS clinicorp_professional_id BIGINT`,
+      `ALTER TABLE agendamentos   ADD COLUMN IF NOT EXISTS clinicorp_appointment_id BIGINT`,
+      `ALTER TABLE crm_leads      ADD COLUMN IF NOT EXISTS clinicorp_patient_id BIGINT`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS uniq_pacientes_clinicorp     ON pacientes(clinicorp_patient_id)        WHERE clinicorp_patient_id IS NOT NULL`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS uniq_dentistas_clinicorp     ON dentistas(clinicorp_professional_id)   WHERE clinicorp_professional_id IS NOT NULL`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS uniq_agendamentos_clinicorp  ON agendamentos(clinicorp_appointment_id) WHERE clinicorp_appointment_id IS NOT NULL`,
+      `CREATE INDEX        IF NOT EXISTS idx_crm_leads_clinicorp      ON crm_leads(clinicorp_patient_id)`,
     ];
 
     for (const sql of migrations) {
