@@ -105,6 +105,7 @@ export const clinicorpApi = {
     sync_interval_minutes: number;
     sync_lookback_days: number;
     sync_lookahead_days: number;
+    conflict_strategy: 'clinicorp_wins' | 'local_wins' | 'newest_wins';
   }>) => req<{ ok: true }>('/settings', { method: 'PUT', body: JSON.stringify(payload) }),
   testConnection: () => req<{ ok: boolean; clinics_count: number; sample: unknown; error?: string }>('/test', { method: 'POST' }),
   sync: (range?: { from?: string; to?: string }) =>
