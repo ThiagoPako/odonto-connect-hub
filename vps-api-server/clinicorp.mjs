@@ -20,7 +20,9 @@ async function loadSettings(pool, force = false) {
   }
   const { rows } = await pool.query(
     `SELECT id, enabled, api_token, subscriber_id, webhook_secret, base_url,
-            last_sync_at, last_sync_status, last_sync_error
+            last_sync_at, last_sync_status, last_sync_error,
+            auto_sync_enabled, sync_interval_minutes, sync_lookback_days, sync_lookahead_days,
+            next_sync_at, sync_lock_until, conflict_strategy
        FROM clinicorp_settings WHERE id = 1`
   );
   _settingsCache = rows[0] || null;
