@@ -140,7 +140,7 @@ export function AgendaGrid({
   const isDark = useIsDark();
   const slots = useMemo(() => buildSlots(inicio, fim, intervalo), [inicio, fim, intervalo]);
   const startMin = timeToMin(inicio);
-  const SLOT_HEIGHT = 32; // px por slot
+  const SLOT_HEIGHT = 48; // px por slot (mais ar para design premium)
   const totalHeight = slots.length * SLOT_HEIGHT;
   const slotsPerHour = Math.max(1, Math.round(60 / intervalo));
 
@@ -241,7 +241,7 @@ export function AgendaGrid({
                       style={{ height: SLOT_HEIGHT }}
                     >
                       <div className="opacity-0 group-hover:opacity-100 transition-opacity h-full flex items-center justify-center">
-                        <span className="text-[10px] text-primary font-medium">+ {s}</span>
+                        <span className="text-[10px] text-primary font-bold uppercase tracking-widest opacity-0 group-hover:opacity-100 transition-all">+ {s}</span>
                       </div>
                     </div>
                   );
