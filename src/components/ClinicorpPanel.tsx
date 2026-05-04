@@ -221,6 +221,60 @@ export function ClinicorpPanel() {
             <RefreshCw className="h-4 w-4 mr-2" />
             Reprojetar no CRM/Agenda
           </Button>
+          <Button
+            variant="outline"
+            onClick={async () => {
+              try {
+                const r = await clinicorpApi.reconcileNow();
+                if (r.skipped) toast.info("Reconciliação não foi disparada (integração desabilitada ou bloqueada)");
+                else if (r.error) toast.error(`Reconciliação falhou: ${r.error}`);
+                else toast.success(`Reconciliação ${r.status} concluída`);
+                await load();
+              } catch (e) { toast.error(`Falha: ${(e as Error).message}`); }
+            }}
+            disabled={!settings?.enabled}
+          >
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Reconciliar agora
+          </Button>
+        </div>
+
+        {/* Auto-reconciliação */}
+        <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm font-semibold text-foreground">Reconciliação automática</div>
+              <div className="text-xs text-muted-foreground">
+                Job interno garante que o Postgres fique consistente com a Clinicorp mesmo após interrupções (catch-up automático).
+              </div>
+            </div>
+            <Switch checked={autoSync} onCheckedChange={setAutoSync} />
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Intervalo (min)</Label>
+              <Input type="number" min={5} max={1440} value={intervalMin}
+                onChange={(e) => setIntervalMin(Number(e.target.value) || 30)} />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Janela passada (dias)</Label>
+              <Input type="number" min={1} max={365} value={lookbackDays}
+                onChange={(e) => setLookbackDays(Number(e.target.value) || 30)} />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Janela futura (dias)</Label>
+              <Input type="number" min={1} max={365} value={lookaheadDays}
+                onChange={(e) => setLookaheadDays(Number(e.target.value) || 60)} />
+            </div>
+          </div>
+          {settings?.next_sync_at && (
+            <div className="text-xs text-muted-foreground">
+              Próxima execução: <span className="text-foreground">{new Date(settings.next_sync_at).toLocaleString("pt-BR")}</span>
+              {settings.sync_lock_until && new Date(settings.sync_lock_until) > new Date() && (
+                <span className="ml-2 text-warning">• Lock ativo até {new Date(settings.sync_lock_until).toLocaleTimeString("pt-BR")}</span>
+              )}
+            </div>
+          )}
         </div>
 
         {lastSync && (
