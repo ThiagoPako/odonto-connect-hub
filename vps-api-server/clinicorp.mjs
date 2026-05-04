@@ -746,6 +746,12 @@ export function registerClinicorp(app, pool) {
         last_sync_at: s?.last_sync_at,
         last_sync_status: s?.last_sync_status,
         last_sync_error: s?.last_sync_error,
+        auto_sync_enabled: s?.auto_sync_enabled ?? true,
+        sync_interval_minutes: s?.sync_interval_minutes ?? 30,
+        sync_lookback_days: s?.sync_lookback_days ?? 30,
+        sync_lookahead_days: s?.sync_lookahead_days ?? 60,
+        next_sync_at: s?.next_sync_at,
+        sync_lock_until: s?.sync_lock_until,
       });
     } catch (e) {
       res.status(500).json({ error: e.message });
@@ -754,7 +760,8 @@ export function registerClinicorp(app, pool) {
 
   app.put('/api/clinicorp/settings', async (req, res) => {
     try {
-      const { enabled, api_token, subscriber_id, webhook_secret, base_url } = req.body || {};
+      const { enabled, api_token, subscriber_id, webhook_secret, base_url,
+              auto_sync_enabled, sync_interval_minutes, sync_lookback_days, sync_lookahead_days } = req.body || {};
       await pool.query(
         `UPDATE clinicorp_settings SET
            enabled = COALESCE($1, enabled),
@@ -762,6 +769,10 @@ export function registerClinicorp(app, pool) {
            subscriber_id = COALESCE($3, subscriber_id),
            webhook_secret = COALESCE(NULLIF($4, ''), webhook_secret),
            base_url = COALESCE($5, base_url),
+           auto_sync_enabled = COALESCE($6, auto_sync_enabled),
+           sync_interval_minutes = COALESCE($7, sync_interval_minutes),
+           sync_lookback_days = COALESCE($8, sync_lookback_days),
+           sync_lookahead_days = COALESCE($9, sync_lookahead_days),
            updated_at = NOW()
          WHERE id = 1`,
         [
@@ -770,6 +781,10 @@ export function registerClinicorp(app, pool) {
           subscriber_id ?? null,
           webhook_secret ?? '',
           base_url ?? null,
+          typeof auto_sync_enabled === 'boolean' ? auto_sync_enabled : null,
+          Number.isFinite(sync_interval_minutes) ? sync_interval_minutes : null,
+          Number.isFinite(sync_lookback_days) ? sync_lookback_days : null,
+          Number.isFinite(sync_lookahead_days) ? sync_lookahead_days : null,
         ]
       );
       invalidateSettings();
@@ -799,6 +814,16 @@ export function registerClinicorp(app, pool) {
     } catch (e) {
       res.status(500).json({ error: e.message });
     }
+  });
+
+  // ── Forçar reconciliação agora (reseta next_sync_at) ─────────
+  app.post('/api/clinicorp/reconcile', async (_req, res) => {
+    try {
+      await pool.query(`UPDATE clinicorp_settings SET next_sync_at = NOW(), sync_lock_until = NULL WHERE id = 1`);
+      invalidateSettings();
+      const r = await reconciliationTick(pool);
+      res.json(r);
+    } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
   // ── Local read-only data (espelho) ───────────────────────────
