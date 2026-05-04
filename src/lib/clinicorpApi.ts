@@ -46,6 +46,33 @@ export interface ClinicorpSettings {
   sync_lookahead_days: number;
   next_sync_at: string | null;
   sync_lock_until: string | null;
+  conflict_strategy: 'clinicorp_wins' | 'local_wins' | 'newest_wins';
+}
+
+export interface ClinicorpOverride {
+  id: number;
+  scope_type: 'global' | 'clinic' | 'professional';
+  scope_id: string | null;
+  keep_local: boolean;
+  conflict_strategy: 'clinicorp_wins' | 'local_wins' | 'newest_wins' | null;
+  note: string | null;
+  updated_at: string;
+}
+
+export interface ClinicorpConflict {
+  id: number;
+  entity: 'appointment' | 'patient';
+  clinicorp_id: string | null;
+  local_id: string | null;
+  decision: string;
+  strategy: string;
+  scope_type: string | null;
+  scope_id: string | null;
+  local_updated_at: string | null;
+  clinicorp_updated_at: string | null;
+  last_sync_at: string | null;
+  diff: Record<string, unknown> | null;
+  created_at: string;
 }
 
 export interface ClinicorpWebhookEvent {
