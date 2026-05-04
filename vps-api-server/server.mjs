@@ -9986,12 +9986,18 @@ app.get('/api/ai/meta-ads/insight', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
+// CLINICORP INTEGRATION
+import { registerClinicorp } from './clinicorp.mjs';
+registerClinicorp(app, pool);
+
+// ═══════════════════════════════════════════════════════════════
 // START SERVER
 
 app.listen(PORT, async () => {
   console.log(`🦷 Odonto Connect API running on port ${PORT}`);
   console.log(`   Health: http://localhost:${PORT}/api/health`);
   console.log(`   Webhook URL: ${WEBHOOK_URL}`);
+  console.log(`   Clinicorp webhook: ${APP_URL}/api/webhook/clinicorp?user_api=<secret>`);
 
   // ─── Auto-migration: ensure required columns/tables exist ───
   let checkedStatements = 0;
