@@ -43,7 +43,7 @@ export function AgendaMiniCalendar({ currentDate, onChange }: Props) {
     d.getDate() === today.getDate();
 
   return (
-    <div className="bg-card rounded-lg border border-border/60 p-3">
+    <div className="glass-card rounded-2xl p-4 shadow-lg animate-in fade-in slide-in-from-left-4 duration-500">
       <div className="flex items-center justify-between mb-2">
         <button
           onClick={prev}
@@ -52,8 +52,8 @@ export function AgendaMiniCalendar({ currentDate, onChange }: Props) {
         >
           <ChevronLeft className="h-4 w-4" />
         </button>
-        <div className="text-sm font-semibold uppercase tracking-wide text-foreground">
-          {MONTHS[month]} <span className="text-muted-foreground font-normal">{year}</span>
+        <div className="text-[11px] font-bold uppercase tracking-[0.15em] text-foreground flex items-center gap-1.5">
+          {MONTHS[month]} <span className="text-muted-foreground/60 font-medium">{year}</span>
         </div>
         <button
           onClick={next}

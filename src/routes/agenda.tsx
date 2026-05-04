@@ -102,7 +102,7 @@ function AgendaPage() {
   const goToday = () => setCurrentDate(new Date());
 
   return (
-    <div className="flex-1 flex flex-col min-h-screen">
+    <div className="flex-1 flex flex-col min-h-screen bg-background/50 animate-fade-in">
       <DashboardHeader title="Agenda" />
       <main className="flex-1 p-4 overflow-hidden">
         <div className="flex items-center justify-between gap-3 mb-4">
@@ -112,7 +112,7 @@ function AgendaPage() {
             <Button size="sm" variant="outline" onClick={goNext}><ChevronRight className="h-4 w-4" /></Button>
             <div className="ml-3">
               <div className="text-base font-semibold text-foreground">
-                {DAYS_PT[currentDate.getDay()]}, {fmtDateBR(currentDate)}
+                <span className="font-heading tracking-tight">{DAYS_PT[currentDate.getDay()]}</span>, <span className="text-muted-foreground/80 font-normal">{fmtDateBR(currentDate)}</span>
               </div>
               <div className="text-xs text-muted-foreground">
                 {visibleApts.length} agendamento(s) · intervalo {intervalo}min
@@ -120,36 +120,36 @@ function AgendaPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1.5 px-2 py-1 rounded-md border bg-background">
-              <Clock className="h-3.5 w-3.5 text-muted-foreground" />
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border bg-card/50 glass-card">
+              <Clock className="h-3.5 w-3.5 text-primary" />
               <Select value={String(intervalo)} onValueChange={(v) => setIntervalo(Number(v))}>
-                <SelectTrigger className="h-7 w-[110px] border-0 shadow-none focus:ring-0 px-1 text-xs">
+                <SelectTrigger className="h-7 w-[100px] border-0 shadow-none focus:ring-0 px-1 text-[11px] font-bold uppercase tracking-wider">
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="5">5 minutos</SelectItem>
-                  <SelectItem value="10">10 minutos</SelectItem>
-                  <SelectItem value="15">15 minutos</SelectItem>
-                  <SelectItem value="20">20 minutos</SelectItem>
-                  <SelectItem value="30">30 minutos</SelectItem>
-                  <SelectItem value="45">45 minutos</SelectItem>
-                  <SelectItem value="60">1 hora</SelectItem>
+                <SelectContent className="rounded-xl border-border/40 glass-card">
+                  {[5, 10, 15, 20, 30, 45, 60].map(m => (
+                    <SelectItem key={m} value={String(m)} className="text-[11px] font-medium rounded-lg">
+                      {m < 60 ? `${m} MINUTOS` : "1 HORA"}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
-            <Button size="sm" variant="outline" onClick={loadAppointments} disabled={loading}>
-              <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+            <Button size="sm" variant="outline" className="rounded-xl glass-card hover:bg-primary/10 transition-colors" onClick={loadAppointments} disabled={loading}>
+              <RefreshCw className={`h-4 w-4 text-primary ${loading ? "animate-spin" : ""}`} />
             </Button>
             <Link to="/configuracoes/agenda">
-              <Button size="sm" variant="outline"><Settings className="h-4 w-4 mr-1" /> Config</Button>
+              <Button size="sm" variant="outline" className="rounded-xl glass-card text-[11px] font-bold uppercase tracking-wider">
+                <Settings className="h-4 w-4 mr-2 text-primary" /> Config
+              </Button>
             </Link>
-            <Button size="sm" onClick={() => { setNovoDefaults({}); setShowNovo(true); }}>
+            <Button size="sm" className="rounded-xl bg-primary shadow-glow-primary hover:scale-[1.02] active:scale-[0.98] transition-all text-[11px] font-bold uppercase tracking-wider" onClick={() => { setNovoDefaults({}); setShowNovo(true); }}>
               <Plus className="h-4 w-4 mr-1" /> Novo
             </Button>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-4 h-[calc(100vh-200px)]">
+        <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-6 h-[calc(100vh-220px)]">
           <aside className="space-y-3 overflow-y-auto">
             <AgendaMiniCalendar currentDate={currentDate} onChange={setCurrentDate} />
             <AgendaProfessionalsList
