@@ -40,6 +40,12 @@ export interface ClinicorpSettings {
   last_sync_at: string | null;
   last_sync_status: string | null;
   last_sync_error: string | null;
+  auto_sync_enabled: boolean;
+  sync_interval_minutes: number;
+  sync_lookback_days: number;
+  sync_lookahead_days: number;
+  next_sync_at: string | null;
+  sync_lock_until: string | null;
 }
 
 export interface ClinicorpWebhookEvent {
@@ -68,10 +74,15 @@ export const clinicorpApi = {
     subscriber_id: string;
     webhook_secret: string;
     base_url: string;
+    auto_sync_enabled: boolean;
+    sync_interval_minutes: number;
+    sync_lookback_days: number;
+    sync_lookahead_days: number;
   }>) => req<{ ok: true }>('/settings', { method: 'PUT', body: JSON.stringify(payload) }),
   testConnection: () => req<{ ok: boolean; clinics_count: number; sample: unknown; error?: string }>('/test', { method: 'POST' }),
   sync: (range?: { from?: string; to?: string }) =>
     req<ClinicorpSyncResult>('/sync', { method: 'POST', body: JSON.stringify(range || {}) }),
+  reconcileNow: () => req<{ ran?: boolean; skipped?: boolean; status?: string; summary?: Record<string, number>; error?: string }>('/reconcile', { method: 'POST' }),
   listClinics: () => req<Array<Record<string, unknown>>>('/clinics'),
   listProfessionals: () => req<Array<Record<string, unknown>>>('/professionals'),
   listCategories: () => req<Array<Record<string, unknown>>>('/categories'),
