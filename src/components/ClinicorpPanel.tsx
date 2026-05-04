@@ -309,6 +309,187 @@ export function ClinicorpPanel() {
         )}
       </div>
 
+      {/* Resolução de conflitos */}
+      <div className="rounded-2xl border border-border bg-card p-5 space-y-4">
+        <div className="flex items-center gap-2">
+          <Shield className="h-4 w-4 text-primary" />
+          <h4 className="text-sm font-semibold text-foreground">Resolução de conflitos</h4>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Define o que acontece quando o mesmo registro foi editado nos dois lados desde o último sync.
+          A precedência é: <strong>profissional &gt; clínica &gt; global &gt; padrão</strong>.
+          “Manter local” congela o registro contra qualquer sobrescrita vinda da Clinicorp.
+        </p>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+          {([
+            { v: "newest_wins",     t: "Mais recente vence", d: "Compara updated_at. Padrão recomendado." },
+            { v: "clinicorp_wins",  t: "Clinicorp sempre",   d: "Sobrescreve o local em todo sync." },
+            { v: "local_wins",      t: "Local sempre",       d: "Só atualiza se o local não foi tocado." },
+          ] as const).map((opt) => (
+            <button
+              key={opt.v}
+              type="button"
+              onClick={() => setConflictStrategy(opt.v)}
+              className={`text-left rounded-lg border p-3 transition ${
+                conflictStrategy === opt.v
+                  ? "border-primary bg-primary/5"
+                  : "border-border hover:bg-muted/30"
+              }`}
+            >
+              <div className="text-sm font-medium text-foreground">{opt.t}</div>
+              <div className="text-[11px] text-muted-foreground mt-0.5">{opt.d}</div>
+            </button>
+          ))}
+        </div>
+
+        {/* Overrides */}
+        <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="text-sm font-semibold text-foreground">Exceções por clínica / profissional</div>
+            <span className="text-[11px] text-muted-foreground">{overrides.length} regra(s)</span>
+          </div>
+
+          {overrides.length === 0 ? (
+            <p className="text-xs text-muted-foreground">Nenhuma exceção cadastrada — usando estratégia padrão acima.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-left text-muted-foreground border-b border-border">
+                    <th className="py-2 pr-3">Escopo</th>
+                    <th className="py-2 pr-3">ID</th>
+                    <th className="py-2 pr-3">Manter local</th>
+                    <th className="py-2 pr-3">Estratégia</th>
+                    <th className="py-2 pr-3"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {overrides.map((o) => (
+                    <tr key={o.id} className="border-b border-border/40">
+                      <td className="py-2 pr-3">{o.scope_type}</td>
+                      <td className="py-2 pr-3 font-mono">{o.scope_id || "—"}</td>
+                      <td className="py-2 pr-3">{o.keep_local ? "Sim" : "Não"}</td>
+                      <td className="py-2 pr-3">{o.conflict_strategy || "(herda)"}</td>
+                      <td className="py-2 pr-3 text-right">
+                        <Button size="sm" variant="ghost"
+                          onClick={async () => {
+                            try { await clinicorpApi.deleteOverride(o.id); toast.success("Removido"); await load(); }
+                            catch (e) { toast.error((e as Error).message); }
+                          }}>
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-2 items-end pt-2 border-t border-border">
+            <div className="space-y-1">
+              <Label className="text-xs">Escopo</Label>
+              <select
+                value={newOvScope}
+                onChange={(e) => setNewOvScope(e.target.value as "clinic" | "professional")}
+                className="w-full h-9 rounded-md border border-border bg-background px-2 text-sm"
+              >
+                <option value="professional">Profissional</option>
+                <option value="clinic">Clínica</option>
+              </select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">ID Clinicorp</Label>
+              <Input value={newOvId} onChange={(e) => setNewOvId(e.target.value)} placeholder="ex: 12345" />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Estratégia</Label>
+              <select
+                value={newOvStrategy}
+                onChange={(e) => setNewOvStrategy(e.target.value as typeof newOvStrategy)}
+                className="w-full h-9 rounded-md border border-border bg-background px-2 text-sm"
+              >
+                <option value="">(herdar padrão)</option>
+                <option value="newest_wins">Mais recente vence</option>
+                <option value="clinicorp_wins">Clinicorp sempre</option>
+                <option value="local_wins">Local sempre</option>
+              </select>
+            </div>
+            <div className="flex items-center gap-2">
+              <Switch checked={newOvKeepLocal} onCheckedChange={setNewOvKeepLocal} />
+              <span className="text-xs">Manter local</span>
+            </div>
+            <Button
+              onClick={async () => {
+                if (!newOvId.trim()) { toast.error("Informe o ID"); return; }
+                try {
+                  await clinicorpApi.upsertOverride({
+                    scope_type: newOvScope,
+                    scope_id: newOvId.trim(),
+                    keep_local: newOvKeepLocal,
+                    conflict_strategy: newOvStrategy || undefined,
+                  });
+                  setNewOvId("");
+                  toast.success("Exceção salva");
+                  await load();
+                } catch (e) { toast.error((e as Error).message); }
+              }}
+            >
+              <Plus className="h-4 w-4 mr-1" /> Adicionar
+            </Button>
+          </div>
+        </div>
+
+        {/* Histórico de conflitos */}
+        <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="text-sm font-semibold text-foreground">Conflitos detectados recentemente</div>
+            <Button size="sm" variant="ghost" onClick={async () => setConflicts(await clinicorpApi.listConflicts(100))}>
+              <RefreshCw className="h-3.5 w-3.5 mr-1" /> Atualizar
+            </Button>
+          </div>
+          {conflicts.length === 0 ? (
+            <p className="text-xs text-muted-foreground py-3 text-center">Nenhum conflito registrado.</p>
+          ) : (
+            <div className="overflow-x-auto max-h-72 overflow-y-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-left text-muted-foreground border-b border-border sticky top-0 bg-card">
+                    <th className="py-2 pr-3">Quando</th>
+                    <th className="py-2 pr-3">Entidade</th>
+                    <th className="py-2 pr-3">Decisão</th>
+                    <th className="py-2 pr-3">Estratégia</th>
+                    <th className="py-2 pr-3">Escopo</th>
+                    <th className="py-2 pr-3">Local</th>
+                    <th className="py-2 pr-3">Clinicorp</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {conflicts.map((c) => (
+                    <tr key={c.id} className="border-b border-border/40">
+                      <td className="py-1.5 pr-3 text-muted-foreground">{new Date(c.created_at).toLocaleString("pt-BR")}</td>
+                      <td className="py-1.5 pr-3">{c.entity}</td>
+                      <td className="py-1.5 pr-3">
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                          c.decision.startsWith("kept_local") ? "bg-warning/15 text-warning" :
+                          c.decision === "kept_clinicorp_newer" ? "bg-success/15 text-success" :
+                          "bg-muted text-muted-foreground"
+                        }`}>{c.decision}</span>
+                      </td>
+                      <td className="py-1.5 pr-3 font-mono text-[10px]">{c.strategy}</td>
+                      <td className="py-1.5 pr-3 text-muted-foreground">{c.scope_type}{c.scope_id ? `:${c.scope_id}` : ""}</td>
+                      <td className="py-1.5 pr-3 text-muted-foreground">{c.local_updated_at ? new Date(c.local_updated_at).toLocaleString("pt-BR") : "—"}</td>
+                      <td className="py-1.5 pr-3 text-muted-foreground">{c.clinicorp_updated_at ? new Date(c.clinicorp_updated_at).toLocaleString("pt-BR") : "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* Webhook */}
       <div className="rounded-2xl border border-border bg-card p-5 space-y-4">
         <div className="flex items-center gap-2">
