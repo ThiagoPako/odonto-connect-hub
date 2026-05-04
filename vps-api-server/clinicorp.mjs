@@ -885,7 +885,10 @@ export function registerClinicorp(app, pool) {
   app.put('/api/clinicorp/settings', async (req, res) => {
     try {
       const { enabled, api_token, subscriber_id, webhook_secret, base_url,
-              auto_sync_enabled, sync_interval_minutes, sync_lookback_days, sync_lookahead_days } = req.body || {};
+              auto_sync_enabled, sync_interval_minutes, sync_lookback_days, sync_lookahead_days,
+              conflict_strategy } = req.body || {};
+      const validStrategy = ['clinicorp_wins','local_wins','newest_wins'].includes(conflict_strategy)
+        ? conflict_strategy : null;
       await pool.query(
         `UPDATE clinicorp_settings SET
            enabled = COALESCE($1, enabled),
@@ -897,6 +900,7 @@ export function registerClinicorp(app, pool) {
            sync_interval_minutes = COALESCE($7, sync_interval_minutes),
            sync_lookback_days = COALESCE($8, sync_lookback_days),
            sync_lookahead_days = COALESCE($9, sync_lookahead_days),
+           conflict_strategy = COALESCE($10, conflict_strategy),
            updated_at = NOW()
          WHERE id = 1`,
         [
@@ -909,6 +913,7 @@ export function registerClinicorp(app, pool) {
           Number.isFinite(sync_interval_minutes) ? sync_interval_minutes : null,
           Number.isFinite(sync_lookback_days) ? sync_lookback_days : null,
           Number.isFinite(sync_lookahead_days) ? sync_lookahead_days : null,
+          validStrategy,
         ]
       );
       invalidateSettings();
