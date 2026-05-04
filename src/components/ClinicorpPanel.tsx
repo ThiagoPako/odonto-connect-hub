@@ -86,6 +86,7 @@ export function ClinicorpPanel() {
         sync_interval_minutes: intervalMin,
         sync_lookback_days: lookbackDays,
         sync_lookahead_days: lookaheadDays,
+        conflict_strategy: conflictStrategy,
       });
       setApiToken("");
       setWebhookSecret("");
