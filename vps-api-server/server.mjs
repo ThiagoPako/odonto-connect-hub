@@ -10584,4 +10584,11 @@ app.listen(PORT, async () => {
   processAppointmentReminders();
   appointmentReminderInterval = setInterval(processAppointmentReminders, 60 * 60 * 1000);
   console.log('   🔔 Lembrete de consulta 24h ativo (a cada 1h)');
+
+  // Clinicorp auto-reconciliation: tick a cada 60s, decide via DB se executa
+  // (lock + next_sync_at em clinicorp_settings garantem idempotência e catch-up
+  // automático após reinício/interrupção do servidor)
+  setTimeout(() => { reconciliationTick(pool).catch((e) => console.error('[clinicorp] tick startup', e.message)); }, 15_000);
+  setInterval(() => { reconciliationTick(pool).catch((e) => console.error('[clinicorp] tick', e.message)); }, 60 * 1000);
+  console.log('   🦷 Clinicorp auto-reconcile ativo (tick a cada 60s, intervalo configurável em clinicorp_settings)');
 });
