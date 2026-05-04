@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { AgendamentoVPS } from "@/lib/vpsApi";
 import { CheckCircle2, Clock, AlertCircle, XCircle, PlayCircle, CircleDot, User2 } from "lucide-react";
+import { CategoriaBadge } from "./CategoriaBadge";
 
 interface Prof {
   id: string;
@@ -313,27 +314,13 @@ export function AgendaGrid({
                           )}
                         </div>
                         {!compact && (
-                          <div className="flex items-center gap-1 min-w-0">
-                            {validHex ? (
-                              <span
-                                className="h-1.5 w-1.5 rounded-full shrink-0"
-                                style={{ background: catSide }}
-                              />
-                            ) : (
-                              <span
-                                className="h-1.5 w-1.5 rounded-full shrink-0 ring-1 ring-muted-foreground/40"
-                                aria-hidden
-                              />
-                            )}
-                            <span
-                              className={`text-[10px] font-medium truncate ${
-                                validHex ? "" : (a.categoria || a.procedimento) ? "text-foreground/80" : "text-muted-foreground italic"
-                              }`}
-                              style={ink ? { color: ink } : undefined}
-                            >
-                              {a.categoria || a.procedimento || "Sem categoria"}
-                            </span>
-                          </div>
+                          <CategoriaBadge
+                            categoria={a.categoria}
+                            procedimento={a.procedimento}
+                            cor={a.categoria_cor}
+                            variant="dot"
+                            size="xs"
+                          />
                         )}
                         {!compact && (
                           <div className="mt-auto flex items-center gap-1.5 text-[9px] text-muted-foreground">
