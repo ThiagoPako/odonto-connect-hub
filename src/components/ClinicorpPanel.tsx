@@ -55,8 +55,15 @@ export function ClinicorpPanel() {
       setIntervalMin(s.sync_interval_minutes ?? 30);
       setLookbackDays(s.sync_lookback_days ?? 30);
       setLookaheadDays(s.sync_lookahead_days ?? 60);
-      const evs = await clinicorpApi.listWebhookEvents(50);
+      setConflictStrategy(s.conflict_strategy ?? "newest_wins");
+      const [evs, ovs, cfs] = await Promise.all([
+        clinicorpApi.listWebhookEvents(50),
+        clinicorpApi.listOverrides(),
+        clinicorpApi.listConflicts(50),
+      ]);
       setEvents(evs);
+      setOverrides(ovs);
+      setConflicts(cfs);
     } catch (e) {
       toast.error(`Falha ao carregar configurações: ${(e as Error).message}`);
     } finally {
