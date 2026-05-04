@@ -228,6 +228,8 @@ async function upsertPatient(pool, p) {
       JSON.stringify(p),
     ]
   );
+  try { await projectPatientToLocal(pool, p); }
+  catch (e) { console.error('[clinicorp] projectPatientToLocal:', e.message); }
 }
 
 async function upsertAppointment(pool, a) {
