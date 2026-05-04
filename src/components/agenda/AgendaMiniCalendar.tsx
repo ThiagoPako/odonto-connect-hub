@@ -43,7 +43,7 @@ export function AgendaMiniCalendar({ currentDate, onChange }: Props) {
     d.getDate() === today.getDate();
 
   return (
-    <div className="bg-card rounded-lg border border-border/60 p-3">
+    <div className="glass-card rounded-2xl p-4 shadow-lg animate-in fade-in slide-in-from-left-4 duration-500">
       <div className="flex items-center justify-between mb-2">
         <button
           onClick={prev}

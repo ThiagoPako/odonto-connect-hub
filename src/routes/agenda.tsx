@@ -102,7 +102,7 @@ function AgendaPage() {
   const goToday = () => setCurrentDate(new Date());
 
   return (
-    <div className="flex-1 flex flex-col min-h-screen">
+    <div className="flex-1 flex flex-col min-h-screen bg-background/50 animate-fade-in">
       <DashboardHeader title="Agenda" />
       <main className="flex-1 p-4 overflow-hidden">
         <div className="flex items-center justify-between gap-3 mb-4">

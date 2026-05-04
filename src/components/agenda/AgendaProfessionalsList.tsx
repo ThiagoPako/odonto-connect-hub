@@ -24,7 +24,7 @@ export function AgendaProfessionalsList({
 }: Props) {
   return (
     <div className="space-y-3">
-      <div className="bg-card rounded-lg border border-border/60 p-3">
+      <div className="glass-card rounded-2xl p-4 shadow-lg animate-in fade-in slide-in-from-left-6 duration-700">
         <div className="flex items-center justify-between mb-2">
           <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             Profissionais
@@ -67,7 +67,7 @@ export function AgendaProfessionalsList({
         )}
       </div>
 
-      <div className="bg-card rounded-lg border border-border/60 p-3">
+      <div className="glass-card rounded-2xl p-4 shadow-lg animate-in fade-in slide-in-from-left-8 duration-1000">
         <div className="flex items-center gap-2 mb-2">
           <AlertCircle className="h-3.5 w-3.5 text-warning" />
           <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">

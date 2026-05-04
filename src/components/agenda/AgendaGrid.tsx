@@ -164,12 +164,12 @@ export function AgendaGrid({
   }
 
   return (
-    <div className="flex-1 overflow-auto bg-card rounded-xl border border-border/60 shadow-sm">
+    <div className="flex-1 overflow-auto glass-card rounded-2xl border-none shadow-xl animate-fade-in">
       <div className="min-w-fit">
         {/* Header com nomes dos profissionais */}
         <div
-          className="grid sticky top-0 z-20 bg-card/95 backdrop-blur border-b border-border"
-          style={{ gridTemplateColumns: `64px repeat(${professionals.length}, minmax(180px, 1fr))` }}
+          className="grid sticky top-0 z-20 bg-card/60 backdrop-blur-md border-b border-border/40"
+          style={{ gridTemplateColumns: `72px repeat(${professionals.length}, minmax(200px, 1fr))` }}
         >
           <div className="border-r border-border/60" />
           {professionals.map((p, i) => {
@@ -198,12 +198,12 @@ export function AgendaGrid({
         <div
           className="relative grid"
           style={{
-            gridTemplateColumns: `64px repeat(${professionals.length}, minmax(180px, 1fr))`,
+            gridTemplateColumns: `72px repeat(${professionals.length}, minmax(200px, 1fr))`,
             height: totalHeight,
           }}
         >
           {/* Coluna de horários */}
-          <div className="border-r border-border/60 relative bg-muted/20">
+          <div className="border-r border-border/40 relative bg-muted/5">
             {slots.map((s, i) => {
               const isHour = i % slotsPerHour === 0;
               return (
@@ -211,8 +211,8 @@ export function AgendaGrid({
                   key={s}
                   className={`text-[11px] pr-2 text-right ${
                     isHour
-                      ? "text-foreground font-semibold border-b border-border/60"
-                      : "text-muted-foreground/60 border-b border-border/20"
+                      ? "text-foreground/80 font-medium border-b border-border/30"
+                      : "text-muted-foreground/40 border-b border-border/10"
                   }`}
                   style={{ height: SLOT_HEIGHT, lineHeight: `${SLOT_HEIGHT}px` }}
                 >
@@ -276,10 +276,10 @@ export function AgendaGrid({
                         e.stopPropagation();
                         onAppointmentClick(a);
                       }}
-                      className={`absolute left-1 right-1 rounded-md border shadow-sm hover:shadow-md hover:-translate-y-px transition-all overflow-hidden text-left group/apt ${
+                      className={`absolute left-1 right-1 rounded-xl border shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] overflow-hidden text-left group/apt ${
                         validHex
-                          ? "hover:border-foreground/40"
-                          : "bg-muted/40 border-dashed border-border hover:border-primary/40 hover:bg-muted/60"
+                          ? "hover:border-foreground/30"
+                          : "bg-muted/30 border-dashed border-border/40 hover:border-primary/40 hover:bg-muted/50"
                       }`}
                       style={{
                         top,
