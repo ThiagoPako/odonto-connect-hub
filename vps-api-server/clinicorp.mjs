@@ -600,6 +600,54 @@ export async function runFullSync(pool, { from, to } = {}) {
   return { status, summary, errors, from: fromDate, to: toDate };
 }
 
+/**
+ * Tick de reconciliação agendada.
+ * - Usa lock no Postgres para evitar execução concorrente / múltiplas instâncias.
+ * - Catch-up automático após interrupções: se last_sync_at é antigo, alarga a janela.
+ */
+export async function reconciliationTick(pool) {
+  const claim = await pool.query(
+    `UPDATE clinicorp_settings SET sync_lock_until = NOW() + INTERVAL '15 minutes',
+       next_sync_at = NOW() + (COALESCE(sync_interval_minutes, 30) || ' minutes')::interval,
+       updated_at = NOW()
+     WHERE id = 1
+       AND COALESCE(enabled, false) = true
+       AND COALESCE(auto_sync_enabled, true) = true
+       AND api_token IS NOT NULL AND subscriber_id IS NOT NULL
+       AND (sync_lock_until IS NULL OR sync_lock_until < NOW())
+       AND (next_sync_at   IS NULL OR next_sync_at   <= NOW())
+     RETURNING id, last_sync_at, sync_lookback_days, sync_lookahead_days`
+  );
+  if (!claim.rows[0]) return { skipped: true };
+  const cfg = claim.rows[0];
+  const lookback = cfg.sync_lookback_days ?? 30;
+  const lookahead = cfg.sync_lookahead_days ?? 60;
+  const today = new Date();
+  let backDays = lookback;
+  if (cfg.last_sync_at) {
+    const diff = Math.ceil((today.getTime() - new Date(cfg.last_sync_at).getTime()) / 86400_000);
+    backDays = Math.max(lookback, diff + 2);
+  } else {
+    backDays = Math.max(lookback, 90);
+  }
+  const from = new Date(today.getTime() - backDays * 86400_000).toISOString().slice(0, 10);
+  const to   = new Date(today.getTime() + lookahead * 86400_000).toISOString().slice(0, 10);
+  console.log(`[clinicorp] auto-reconcile rodando ${from} → ${to}`);
+  try {
+    const r = await runFullSync(pool, { from, to });
+    await pool.query(`UPDATE clinicorp_settings SET sync_lock_until = NULL WHERE id = 1`);
+    return { ran: true, ...r };
+  } catch (e) {
+    console.error('[clinicorp] auto-reconcile falhou', e.message);
+    await pool.query(
+      `UPDATE clinicorp_settings SET sync_lock_until = NULL, last_sync_status='error',
+         last_sync_error=$1, updated_at=NOW() WHERE id = 1`,
+      [e.message]
+    );
+    return { ran: true, error: e.message };
+  }
+}
+
 // ─── Webhook event processor ──────────────────────────────────
 async function processWebhookEvent(pool, event) {
   // Clinicorp envia eventos heterogêneos. Tentamos inferir o tipo.
