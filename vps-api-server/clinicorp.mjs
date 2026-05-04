@@ -838,5 +838,17 @@ export function registerClinicorp(app, pool) {
     } catch (e) { res.status(500).json({ error: e.message, details: e.body }); }
   });
 
+  // ── Re-projeta espelho atual nas tabelas locais (pacientes/dentistas/agendamentos/crm_leads) ──
+  app.post('/api/clinicorp/reproject', async (_req, res) => {
+    try {
+      const { rows: pats } = await pool.query('SELECT raw FROM clinicorp_patients');
+      let patients = 0, appts = 0;
+      for (const r of pats) { try { await projectPatientToLocal(pool, r.raw); patients++; } catch (e) { /* skip */ } }
+      const { rows: aps } = await pool.query('SELECT id, raw FROM clinicorp_appointments');
+      for (const r of aps) { try { await projectAppointmentToLocal(pool, r.raw, r.id); appts++; } catch (e) { /* skip */ } }
+      res.json({ ok: true, patients, appointments: appts });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
   console.log('🦷 Clinicorp routes registered');
 }
