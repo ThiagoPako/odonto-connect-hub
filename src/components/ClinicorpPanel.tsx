@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Loader2, RefreshCw, Copy, CheckCircle2, AlertCircle, KeyRound, Webhook, PlayCircle, Plug, ListChecks } from "lucide-react";
+import { Loader2, RefreshCw, Copy, CheckCircle2, AlertCircle, KeyRound, Webhook, PlayCircle, Plug, ListChecks, Shield, Trash2, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
