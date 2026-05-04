@@ -12,6 +12,7 @@ import {
 } from "@/data/adsMockData";
 import { MetaAdsConnectPanel } from "@/components/meta-ads/MetaAdsConnectPanel";
 import { MetaAdsDashboard } from "@/components/MetaAdsDashboard";
+import { ClinicorpPanel } from "@/components/ClinicorpPanel";
 
 export const Route = createFileRoute("/integracoes")({
   ssr: false,
@@ -60,10 +61,17 @@ function IntegracoesPage() {
 
   return (
     <div className="flex-1 flex flex-col min-h-screen">
-      <DashboardHeader title="Integrações — Tráfego Pago" />
+      <DashboardHeader title="Integrações" />
       <main className="flex-1 p-6 space-y-6 overflow-auto">
-        {/* Meta Ads connect — token + ad account ID */}
-        <MetaAdsConnectPanel />
+        <Tabs defaultValue="trafego" className="space-y-6">
+          <TabsList>
+            <TabsTrigger value="trafego">Tráfego Pago</TabsTrigger>
+            <TabsTrigger value="clinicorp">Clinicorp</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="trafego" className="space-y-6">
+            {/* Meta Ads connect — token + ad account ID */}
+            <MetaAdsConnectPanel />
 
         {/* Meta Ads live dashboard (after connecting) */}
         <MetaAdsDashboard />
@@ -175,6 +183,12 @@ function IntegracoesPage() {
               <h3 className="text-sm font-semibold text-card-foreground mb-4">Funil Ads → CRM (Agregado)</h3>
               <FunnelViz data={filteredCross} />
             </div>
+          </TabsContent>
+        </Tabs>
+          </TabsContent>
+
+          <TabsContent value="clinicorp">
+            <ClinicorpPanel />
           </TabsContent>
         </Tabs>
       </main>
