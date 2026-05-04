@@ -875,6 +875,7 @@ export function registerClinicorp(app, pool) {
         sync_lookahead_days: s?.sync_lookahead_days ?? 60,
         next_sync_at: s?.next_sync_at,
         sync_lock_until: s?.sync_lock_until,
+        conflict_strategy: s?.conflict_strategy || 'newest_wins',
       });
     } catch (e) {
       res.status(500).json({ error: e.message });
