@@ -1052,5 +1052,70 @@ export function registerClinicorp(app, pool) {
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
+  // ── Conflict overrides (global / clinic / professional) ─────
+  app.get('/api/clinicorp/overrides', async (_req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT id, scope_type, scope_id, keep_local, conflict_strategy, note, updated_at
+           FROM clinicorp_local_overrides ORDER BY scope_type, scope_id`
+      );
+      res.json(rows);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.put('/api/clinicorp/overrides', async (req, res) => {
+    try {
+      const { scope_type, scope_id, keep_local, conflict_strategy, note } = req.body || {};
+      if (!['global','clinic','professional'].includes(scope_type))
+        return res.status(400).json({ error: 'scope_type inválido' });
+      if (conflict_strategy && !['clinicorp_wins','local_wins','newest_wins'].includes(conflict_strategy))
+        return res.status(400).json({ error: 'conflict_strategy inválido' });
+      const sid = scope_type === 'global' ? null : (scope_id != null ? String(scope_id) : null);
+      if (scope_type !== 'global' && !sid) return res.status(400).json({ error: 'scope_id obrigatório' });
+      await pool.query(
+        `INSERT INTO clinicorp_local_overrides (scope_type, scope_id, keep_local, conflict_strategy, note)
+         VALUES ($1,$2,COALESCE($3,FALSE),$4,$5)
+         ON CONFLICT (scope_type, COALESCE(scope_id,'')) DO UPDATE SET
+           keep_local = COALESCE(EXCLUDED.keep_local, clinicorp_local_overrides.keep_local),
+           conflict_strategy = COALESCE(EXCLUDED.conflict_strategy, clinicorp_local_overrides.conflict_strategy),
+           note = COALESCE(EXCLUDED.note, clinicorp_local_overrides.note),
+           updated_at = NOW()`,
+        [scope_type, sid, typeof keep_local === 'boolean' ? keep_local : null, conflict_strategy ?? null, note ?? null]
+      );
+      res.json({ ok: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.delete('/api/clinicorp/overrides/:id', async (req, res) => {
+    try {
+      await pool.query(`DELETE FROM clinicorp_local_overrides WHERE id=$1`, [req.params.id]);
+      res.json({ ok: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── Conflict log ────────────────────────────────────────────
+  app.get('/api/clinicorp/conflicts', async (req, res) => {
+    try {
+      const limit = Math.min(Number(req.query.limit) || 100, 500);
+      const { rows } = await pool.query(
+        `SELECT * FROM clinicorp_conflicts ORDER BY created_at DESC LIMIT $1`, [limit]
+      );
+      res.json(rows);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── Per-record keep_local lock ──────────────────────────────
+  app.put('/api/clinicorp/keep-local', async (req, res) => {
+    try {
+      const { entity, id, keep_local } = req.body || {};
+      const table = entity === 'appointment' ? 'agendamentos'
+                  : entity === 'patient'    ? 'pacientes' : null;
+      if (!table || !id) return res.status(400).json({ error: 'entity ou id inválido' });
+      await pool.query(`UPDATE ${table} SET keep_local=$1, updated_at=NOW() WHERE id=$2`,
+        [Boolean(keep_local), id]);
+      res.json({ ok: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
   console.log('🦷 Clinicorp routes registered');
 }
