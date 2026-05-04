@@ -10513,6 +10513,13 @@ app.listen(PORT, async () => {
       `CREATE UNIQUE INDEX IF NOT EXISTS uniq_dentistas_clinicorp     ON dentistas(clinicorp_professional_id)   WHERE clinicorp_professional_id IS NOT NULL`,
       `CREATE UNIQUE INDEX IF NOT EXISTS uniq_agendamentos_clinicorp  ON agendamentos(clinicorp_appointment_id) WHERE clinicorp_appointment_id IS NOT NULL`,
       `CREATE INDEX        IF NOT EXISTS idx_crm_leads_clinicorp      ON crm_leads(clinicorp_patient_id)`,
+      // Auto-reconciliação Clinicorp
+      `ALTER TABLE clinicorp_settings ADD COLUMN IF NOT EXISTS auto_sync_enabled BOOLEAN DEFAULT TRUE`,
+      `ALTER TABLE clinicorp_settings ADD COLUMN IF NOT EXISTS sync_interval_minutes INT DEFAULT 30`,
+      `ALTER TABLE clinicorp_settings ADD COLUMN IF NOT EXISTS sync_lookback_days INT DEFAULT 30`,
+      `ALTER TABLE clinicorp_settings ADD COLUMN IF NOT EXISTS sync_lookahead_days INT DEFAULT 60`,
+      `ALTER TABLE clinicorp_settings ADD COLUMN IF NOT EXISTS next_sync_at TIMESTAMPTZ`,
+      `ALTER TABLE clinicorp_settings ADD COLUMN IF NOT EXISTS sync_lock_until TIMESTAMPTZ`,
     ];
 
     for (const sql of migrations) {
