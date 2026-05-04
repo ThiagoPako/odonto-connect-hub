@@ -185,6 +185,12 @@ function IntegracoesPage() {
             </div>
           </TabsContent>
         </Tabs>
+          </TabsContent>
+
+          <TabsContent value="clinicorp">
+            <ClinicorpPanel />
+          </TabsContent>
+        </Tabs>
       </main>
     </div>
   );
