@@ -66,6 +66,10 @@ export function ClinicorpPanel() {
         base_url: baseUrl,
         api_token: apiToken || undefined,
         webhook_secret: webhookSecret || undefined,
+        auto_sync_enabled: autoSync,
+        sync_interval_minutes: intervalMin,
+        sync_lookback_days: lookbackDays,
+        sync_lookahead_days: lookaheadDays,
       });
       setApiToken("");
       setWebhookSecret("");
