@@ -149,7 +149,7 @@ function AgendaPage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-4 h-[calc(100vh-200px)]">
+        <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-6 h-[calc(100vh-220px)]">
           <aside className="space-y-3 overflow-y-auto">
             <AgendaMiniCalendar currentDate={currentDate} onChange={setCurrentDate} />
             <AgendaProfessionalsList

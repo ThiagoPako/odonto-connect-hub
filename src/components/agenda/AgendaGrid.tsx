@@ -179,13 +179,13 @@ export function AgendaGrid({
                 key={p.id}
                 className="px-3 py-2.5 border-r border-border/60 flex items-center gap-2.5"
               >
-                <div className={`h-8 w-8 rounded-full ${c.soft} ${c.text} flex items-center justify-center text-xs font-semibold ring-1 ring-border/40`}>
-                  {initials(p.nome) || <User2 className="h-4 w-4" />}
+                <div className={`h-10 w-10 rounded-xl ${c.soft} ${c.text} flex items-center justify-center text-[10px] font-bold ring-1 ring-border/20 shadow-inner overflow-hidden`}>
+                  {initials(p.nome) || <User2 className="h-5 w-5" />}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="text-sm font-semibold text-foreground truncate leading-tight">{p.nome}</div>
+                  <div className="text-[13px] font-bold text-foreground tracking-tight truncate leading-tight uppercase">{p.nome}</div>
                   {p.especialidade && (
-                    <div className="text-[10px] text-muted-foreground truncate leading-tight">{p.especialidade}</div>
+                    <div className="text-[9px] font-medium text-muted-foreground/60 uppercase tracking-wider truncate leading-tight">{p.especialidade}</div>
                   )}
                 </div>
                 <div className={`h-1.5 w-1.5 rounded-full ${c.bar}`} />
@@ -299,34 +299,42 @@ export function AgendaGrid({
                       {/* Faixa fina à direita = cor do profissional */}
                       <div className={`absolute right-0 top-0 bottom-0 w-0.5 ${profColor.bar} opacity-60`} />
 
-                      <div className={`pl-3 pr-2 ${compact ? "py-1" : "py-1.5"} h-full flex flex-col gap-0.5`}>
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          <span className="text-[11px] font-semibold text-foreground truncate flex-1">
+                      <div className={`pl-4 pr-2 ${compact ? "py-1" : "py-2"} h-full flex flex-col justify-center gap-1`}>
+                        <div className="flex items-center justify-between min-w-0">
+                          <span className="text-[12px] font-bold text-foreground tracking-tight truncate flex-1 uppercase">
                             {a.paciente_nome}
                           </span>
                           {!compact && (
                             <span
-                              className={`inline-flex items-center gap-0.5 text-[9px] px-1 py-px rounded-sm ${status.chip} font-medium shrink-0`}
+                              className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full ${status.chip} font-semibold shrink-0 shadow-sm border border-foreground/5`}
                               title={status.label}
                             >
-                              <StatusIcon className="h-2.5 w-2.5" />
+                              <StatusIcon className="h-3 w-3" />
+                              <span className="hidden sm:inline">{status.label}</span>
                             </span>
                           )}
                         </div>
                         {!compact && (
-                          <CategoriaBadge
-                            categoria={a.categoria}
-                            procedimento={a.procedimento}
-                            cor={a.categoria_cor}
-                            variant="dot"
-                            size="xs"
-                          />
-                        )}
-                        {!compact && (
-                          <div className="mt-auto flex items-center gap-1.5 text-[9px] text-muted-foreground">
-                            <Clock className="h-2.5 w-2.5" />
-                            <span className="font-medium">{a.hora}</span>
-                            {a.duracao ? <span>· {a.duracao}min</span> : null}
+                          <div className="flex flex-col gap-1.5 mt-1">
+                            <CategoriaBadge
+                              categoria={a.categoria}
+                              procedimento={a.procedimento}
+                              cor={a.categoria_cor}
+                              variant="dot"
+                              size="xs"
+                              className="opacity-90"
+                            />
+                            <div className="flex items-center gap-2 text-[10px] text-muted-foreground/80 font-medium">
+                              <div className="flex items-center gap-1">
+                                <Clock className="h-3 w-3" />
+                                <span>{a.hora}</span>
+                              </div>
+                              {a.duracao ? (
+                                <div className="flex items-center gap-1 before:content-['·'] before:mr-1">
+                                  <span>{a.duracao} min</span>
+                                </div>
+                              ) : null}
+                            </div>
                           </div>
                         )}
                       </div>

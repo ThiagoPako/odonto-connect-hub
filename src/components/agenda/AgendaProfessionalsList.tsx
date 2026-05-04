@@ -26,7 +26,7 @@ export function AgendaProfessionalsList({
     <div className="space-y-3">
       <div className="glass-card rounded-2xl p-4 shadow-lg animate-in fade-in slide-in-from-left-6 duration-700">
         <div className="flex items-center justify-between mb-2">
-          <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          <div className="text-[10px] font-bold uppercase tracking-[0.1em] text-muted-foreground/70">
             Profissionais
           </div>
           <button

@@ -73,9 +73,9 @@ export interface CategoriaBadgeProps {
 }
 
 const SIZE_MAP = {
-  xs: { dot: "h-1.5 w-1.5", text: "text-[10px]", pad: "px-1.5 py-0.5", gap: "gap-1" },
-  sm: { dot: "h-2 w-2",     text: "text-xs",     pad: "px-2 py-0.5",   gap: "gap-1.5" },
-  md: { dot: "h-2.5 w-2.5", text: "text-sm",     pad: "px-2.5 py-1",   gap: "gap-2" },
+  xs: { dot: "h-2 w-2",     text: "text-[10px]", pad: "px-2 py-0.5",   gap: "gap-1.5" },
+  sm: { dot: "h-2.5 w-2.5", text: "text-xs",     pad: "px-2.5 py-1",   gap: "gap-2" },
+  md: { dot: "h-3 w-3",     text: "text-sm",     pad: "px-3 py-1.5",   gap: "gap-2.5" },
 } as const;
 
 /**
