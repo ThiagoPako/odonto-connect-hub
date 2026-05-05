@@ -4604,7 +4604,7 @@ app.get('/api/comercial/painel', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════
 app.get('/api/dentista/painel/:id?', async (req, res) => {
   try {
-    const user = await verifyUser(req);
+    const { user } = await verifyUser(req);
     const today = new Date().toISOString().split('T')[0];
 
     const safe = async (sql, params = []) => {
