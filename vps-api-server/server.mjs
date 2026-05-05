@@ -1024,12 +1024,20 @@ app.get('/api/auth/me', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     const { rows } = await pool.query(
-      'SELECT p.id, p.name, p.email, p.avatar_url, p.role, ur.role as user_role FROM profiles p LEFT JOIN user_roles ur ON ur.user_id = p.id WHERE p.id = $1 LIMIT 1',
+      `SELECT p.id, p.name, p.email, p.avatar_url, p.role, ur.role as user_role,
+              p.tenant_id, COALESCE(p.is_super_admin, false) as is_super_admin
+         FROM profiles p LEFT JOIN user_roles ur ON ur.user_id = p.id
+        WHERE p.id = $1 LIMIT 1`,
       [user.id]
     );
     if (rows.length === 0) return res.status(404).json({ error: 'Perfil não encontrado' });
     const profile = rows[0];
-    res.json({ id: profile.id, email: profile.email, name: profile.name, role: profile.user_role || profile.role, avatar_url: profile.avatar_url });
+    res.json({
+      id: profile.id, email: profile.email, name: profile.name,
+      role: profile.user_role || profile.role, avatar_url: profile.avatar_url,
+      tenant_id: profile.tenant_id || null,
+      is_super_admin: !!profile.is_super_admin,
+    });
   } catch (error) {
     res.status(401).json({ error: 'Não autenticado' });
   }
