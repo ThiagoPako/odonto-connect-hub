@@ -60,10 +60,18 @@ export function ClinicorpPanel() {
       return next;
     });
   }
-  const [newOvScope, setNewOvScope] = useState<"clinic" | "professional">("professional");
+  const [newOvScope, setNewOvScope] = useState<"global" | "clinic" | "professional">("professional");
   const [newOvId, setNewOvId] = useState("");
+  const [newOvLabel, setNewOvLabel] = useState("");
   const [newOvKeepLocal, setNewOvKeepLocal] = useState(true);
   const [newOvStrategy, setNewOvStrategy] = useState<"" | "clinicorp_wins" | "local_wins" | "newest_wins">("");
+  const [newOvNote, setNewOvNote] = useState("");
+  const [newOvErrors, setNewOvErrors] = useState<Record<string, string>>({});
+  const [editingOvId, setEditingOvId] = useState<number | null>(null);
+  const [clinicsList, setClinicsList] = useState<Array<{ id: string; name: string }>>([]);
+  const [profsList, setProfsList] = useState<Array<{ id: string; name: string }>>([]);
+  const [history, setHistory] = useState<ClinicorpOverrideHistory[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
 
   async function load() {
     setLoading(true);
