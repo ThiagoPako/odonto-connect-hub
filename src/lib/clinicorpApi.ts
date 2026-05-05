@@ -59,6 +59,21 @@ export interface ClinicorpOverride {
   updated_at: string;
 }
 
+export interface ClinicorpOverrideHistory {
+  id: number;
+  override_id: number | null;
+  action: 'create' | 'update' | 'delete';
+  scope_type: 'global' | 'clinic' | 'professional';
+  scope_id: string | null;
+  scope_label: string | null;
+  before_data: Record<string, unknown> | null;
+  after_data: Record<string, unknown> | null;
+  changed_fields: string[] | null;
+  changed_by: string | null;
+  note: string | null;
+  created_at: string;
+}
+
 export interface ClinicorpConflict {
   id: number;
   entity: 'appointment' | 'patient';
