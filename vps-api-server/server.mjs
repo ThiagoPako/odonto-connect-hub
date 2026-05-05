@@ -267,7 +267,10 @@ async function getProfileByEmail(email) {
 
   try {
     const { rows } = await pool.query(
-      'SELECT id, name, email, role, avatar_url, password_hash, COALESCE(active, true) as active FROM profiles WHERE email = $1 LIMIT 1',
+      `SELECT id, name, email, role, avatar_url, password_hash,
+              COALESCE(active, true) as active,
+              tenant_id, COALESCE(is_super_admin, false) as is_super_admin
+       FROM profiles WHERE email = $1 LIMIT 1`,
       [normalizedEmail]
     );
     return rows[0] || null;
@@ -275,7 +278,7 @@ async function getProfileByEmail(email) {
     if (error?.code !== '42703') throw error;
 
     const { rows } = await pool.query(
-      'SELECT id, name, email, role, avatar_url, password_hash, true as active FROM profiles WHERE email = $1 LIMIT 1',
+      'SELECT id, name, email, role, avatar_url, password_hash, true as active, NULL::uuid as tenant_id, false as is_super_admin FROM profiles WHERE email = $1 LIMIT 1',
       [normalizedEmail]
     );
     return rows[0] || null;
