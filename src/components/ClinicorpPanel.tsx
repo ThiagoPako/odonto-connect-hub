@@ -86,14 +86,31 @@ export function ClinicorpPanel() {
       setLookbackDays(s.sync_lookback_days ?? 30);
       setLookaheadDays(s.sync_lookahead_days ?? 60);
       setConflictStrategy(s.conflict_strategy ?? "newest_wins");
-      const [evs, ovs, cfs] = await Promise.all([
+      const [evs, ovs, cfs, hist] = await Promise.all([
         clinicorpApi.listWebhookEvents(50),
         clinicorpApi.listOverrides(),
         clinicorpApi.listConflicts({ limit: 50 }),
+        clinicorpApi.listOverrideHistory({ limit: 100 }).catch(() => []),
       ]);
       setEvents(evs);
       setOverrides(ovs);
       setConflicts(cfs);
+      setHistory(hist);
+      // tenta carregar clínicas e profissionais para os selects (não bloqueia)
+      if (s.enabled) {
+        clinicorpApi.listClinics().then((rows) => {
+          setClinicsList(rows.map((r) => ({
+            id: String((r as Record<string, unknown>).id ?? (r as Record<string, unknown>).Id ?? ''),
+            name: String((r as Record<string, unknown>).name ?? (r as Record<string, unknown>).BusinessName ?? (r as Record<string, unknown>).Name ?? ''),
+          })).filter((c) => c.id));
+        }).catch(() => {});
+        clinicorpApi.listProfessionals().then((rows) => {
+          setProfsList(rows.map((r) => ({
+            id: String((r as Record<string, unknown>).id ?? (r as Record<string, unknown>).Id ?? (r as Record<string, unknown>).Dentist_PersonId ?? ''),
+            name: String((r as Record<string, unknown>).full_name ?? (r as Record<string, unknown>).FullName ?? (r as Record<string, unknown>).Name ?? ''),
+          })).filter((p) => p.id));
+        }).catch(() => {});
+      }
     } catch (e) {
       toast.error(`Falha ao carregar configurações: ${(e as Error).message}`);
     } finally {
