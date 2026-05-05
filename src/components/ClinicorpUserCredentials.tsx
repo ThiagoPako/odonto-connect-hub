@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { clinicorpApi, type ClinicorpUserSettings, generateWebhookSecret, buildWebhookUrl } from "@/lib/clinicorpApi";
+import { clinicorpApi, type ClinicorpUserSettings, type ClinicorpConnectionTest, generateWebhookSecret, buildWebhookUrl } from "@/lib/clinicorpApi";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import { Eye, EyeOff, KeyRound, Copy, RefreshCw, Trash2, Loader2, Lock } from "lucide-react";
+import { Eye, EyeOff, KeyRound, Copy, RefreshCw, Trash2, Loader2, Lock, PlugZap, CheckCircle2, XCircle, AlertCircle } from "lucide-react";
 
 const DEFAULT_BASE = "https://api.clinicorp.com/rest/v1";
 
