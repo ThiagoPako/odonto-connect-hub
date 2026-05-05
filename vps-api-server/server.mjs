@@ -9990,6 +9990,103 @@ app.get('/api/ai/meta-ads/insight', async (req, res) => {
 import { registerClinicorp, reconciliationTick } from './clinicorp.mjs';
 registerClinicorp(app, pool);
 
+// ── Per-user Clinicorp credentials (SaaS multi-tenant) ─────────
+// Each authenticated user has their own row in clinicorp_user_settings.
+// Access is enforced by JWT — users can only read/write their own row.
+app.get('/api/clinicorp/my-settings', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    const { rows } = await pool.query(
+      `SELECT enabled, subscriber_id, base_url,
+              api_token IS NOT NULL AND api_token <> '' AS has_api_token,
+              webhook_secret IS NOT NULL AND webhook_secret <> '' AS has_webhook_secret,
+              CASE WHEN webhook_secret IS NOT NULL AND length(webhook_secret) >= 8
+                   THEN substring(webhook_secret from 1 for 4) || '…' || substring(webhook_secret from length(webhook_secret) - 3)
+                   ELSE '' END AS webhook_secret_preview,
+              last_sync_at, last_sync_status, last_sync_error, updated_at
+         FROM clinicorp_user_settings WHERE user_id = $1`,
+      [user.id]
+    );
+    const s = rows[0] || {};
+    res.json({
+      enabled: s.enabled ?? false,
+      subscriber_id: s.subscriber_id || '',
+      base_url: s.base_url || 'https://api.clinicorp.com/rest/v1',
+      has_api_token: Boolean(s.has_api_token),
+      has_webhook_secret: Boolean(s.has_webhook_secret),
+      webhook_secret_preview: s.webhook_secret_preview || '',
+      last_sync_at: s.last_sync_at || null,
+      last_sync_status: s.last_sync_status || null,
+      last_sync_error: s.last_sync_error || null,
+      updated_at: s.updated_at || null,
+    });
+  } catch (e) {
+    res.status(401).json({ error: e.message });
+  }
+});
+
+app.put('/api/clinicorp/my-settings', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    const { enabled, api_token, subscriber_id, webhook_secret, base_url } = req.body || {};
+
+    // Validation
+    if (subscriber_id !== undefined && subscriber_id !== null && subscriber_id !== '') {
+      if (typeof subscriber_id !== 'string' || subscriber_id.length > 128) {
+        return res.status(400).json({ error: 'subscriber_id inválido (máx 128 chars)' });
+      }
+    }
+    if (base_url !== undefined && base_url !== null && base_url !== '') {
+      try { new URL(base_url); } catch { return res.status(400).json({ error: 'base_url inválida' }); }
+    }
+    if (api_token !== undefined && api_token !== '' && api_token !== null) {
+      if (typeof api_token !== 'string' || api_token.length < 8 || api_token.length > 2048) {
+        return res.status(400).json({ error: 'api_token inválido (8–2048 chars)' });
+      }
+    }
+    if (webhook_secret !== undefined && webhook_secret !== '' && webhook_secret !== null) {
+      if (typeof webhook_secret !== 'string' || webhook_secret.length < 8 || webhook_secret.length > 256) {
+        return res.status(400).json({ error: 'webhook_secret inválido (8–256 chars)' });
+      }
+    }
+
+    await pool.query(
+      `INSERT INTO clinicorp_user_settings (user_id, enabled, api_token, subscriber_id, webhook_secret, base_url, updated_at)
+       VALUES ($1, COALESCE($2, FALSE), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), COALESCE(NULLIF($6, ''), 'https://api.clinicorp.com/rest/v1'), NOW())
+       ON CONFLICT (user_id) DO UPDATE SET
+         enabled = COALESCE($2, clinicorp_user_settings.enabled),
+         api_token = COALESCE(NULLIF($3, ''), clinicorp_user_settings.api_token),
+         subscriber_id = COALESCE(NULLIF($4, ''), clinicorp_user_settings.subscriber_id),
+         webhook_secret = COALESCE(NULLIF($5, ''), clinicorp_user_settings.webhook_secret),
+         base_url = COALESCE(NULLIF($6, ''), clinicorp_user_settings.base_url),
+         updated_at = NOW()`,
+      [
+        user.id,
+        typeof enabled === 'boolean' ? enabled : null,
+        api_token ?? '',
+        subscriber_id ?? '',
+        webhook_secret ?? '',
+        base_url ?? '',
+      ]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(e.message === 'Unauthorized' ? 401 : 500).json({ error: e.message });
+  }
+});
+
+app.delete('/api/clinicorp/my-settings', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    await pool.query('DELETE FROM clinicorp_user_settings WHERE user_id = $1', [user.id]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(401).json({ error: e.message });
+  }
+});
+
+
+
 // ═══════════════════════════════════════════════════════════════
 // START SERVER
 
