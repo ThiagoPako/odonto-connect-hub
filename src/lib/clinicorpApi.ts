@@ -138,7 +138,13 @@ export const clinicorpApi = {
   upsertOverride: (payload: Partial<Pick<ClinicorpOverride, 'scope_type' | 'scope_id' | 'keep_local' | 'conflict_strategy' | 'note'>>) =>
     req<{ ok: true }>('/overrides', { method: 'PUT', body: JSON.stringify(payload) }),
   deleteOverride: (id: number) => req<{ ok: true }>(`/overrides/${id}`, { method: 'DELETE' }),
-  listConflicts: (limit = 100) => req<ClinicorpConflict[]>(`/conflicts?limit=${limit}`),
+  listConflicts: (params: { limit?: number; entity?: 'appointment' | 'patient'; decision?: string } = {}) => {
+    const qs = new URLSearchParams();
+    qs.set('limit', String(params.limit ?? 100));
+    if (params.entity) qs.set('entity', params.entity);
+    if (params.decision) qs.set('decision', params.decision);
+    return req<ClinicorpConflict[]>(`/conflicts?${qs.toString()}`);
+  },
   setKeepLocal: (entity: 'appointment' | 'patient', id: string, keep_local: boolean) =>
     req<{ ok: true }>('/keep-local', { method: 'PUT', body: JSON.stringify({ entity, id, keep_local }) }),
 };
