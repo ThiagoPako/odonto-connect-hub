@@ -10540,6 +10540,23 @@ app.listen(PORT, async () => {
          updated_at TIMESTAMPTZ DEFAULT NOW()
        )`,
       `CREATE UNIQUE INDEX IF NOT EXISTS uniq_cc_overrides_scope ON clinicorp_local_overrides(scope_type, COALESCE(scope_id,''))`,
+      // histórico de alterações dos overrides
+      `CREATE TABLE IF NOT EXISTS clinicorp_override_history (
+         id BIGSERIAL PRIMARY KEY,
+         override_id BIGINT,
+         action TEXT NOT NULL,                 -- 'create' | 'update' | 'delete'
+         scope_type TEXT NOT NULL,
+         scope_id TEXT,
+         scope_label TEXT,
+         before_data JSONB,
+         after_data JSONB,
+         changed_fields TEXT[],
+         changed_by TEXT,
+         note TEXT,
+         created_at TIMESTAMPTZ DEFAULT NOW()
+       )`,
+      `CREATE INDEX IF NOT EXISTS idx_cc_override_hist_created ON clinicorp_override_history(created_at DESC)`,
+      `CREATE INDEX IF NOT EXISTS idx_cc_override_hist_scope ON clinicorp_override_history(scope_type, scope_id)`,
       // log de conflitos detectados
       `CREATE TABLE IF NOT EXISTS clinicorp_conflicts (
          id BIGSERIAL PRIMARY KEY,

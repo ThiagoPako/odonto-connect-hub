@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { Loader2, RefreshCw, Copy, CheckCircle2, AlertCircle, KeyRound, Webhook, PlayCircle, Plug, ListChecks, Shield, Trash2, Plus, ChevronDown, ChevronRight, ExternalLink, User, CalendarDays } from "lucide-react";
+import { Loader2, RefreshCw, Copy, CheckCircle2, AlertCircle, KeyRound, Webhook, PlayCircle, Plug, ListChecks, Shield, Trash2, Plus, ChevronDown, ChevronRight, ExternalLink, User, CalendarDays, History, Pencil, X, Building2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,6 +15,7 @@ import {
   type ClinicorpSyncResult,
   type ClinicorpOverride,
   type ClinicorpConflict,
+  type ClinicorpOverrideHistory,
 } from "@/lib/clinicorpApi";
 
 export function ClinicorpPanel() {
@@ -59,10 +60,18 @@ export function ClinicorpPanel() {
       return next;
     });
   }
-  const [newOvScope, setNewOvScope] = useState<"clinic" | "professional">("professional");
+  const [newOvScope, setNewOvScope] = useState<"global" | "clinic" | "professional">("professional");
   const [newOvId, setNewOvId] = useState("");
+  const [newOvLabel, setNewOvLabel] = useState("");
   const [newOvKeepLocal, setNewOvKeepLocal] = useState(true);
   const [newOvStrategy, setNewOvStrategy] = useState<"" | "clinicorp_wins" | "local_wins" | "newest_wins">("");
+  const [newOvNote, setNewOvNote] = useState("");
+  const [newOvErrors, setNewOvErrors] = useState<Record<string, string>>({});
+  const [editingOvId, setEditingOvId] = useState<number | null>(null);
+  const [clinicsList, setClinicsList] = useState<Array<{ id: string; name: string }>>([]);
+  const [profsList, setProfsList] = useState<Array<{ id: string; name: string }>>([]);
+  const [history, setHistory] = useState<ClinicorpOverrideHistory[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -77,14 +86,31 @@ export function ClinicorpPanel() {
       setLookbackDays(s.sync_lookback_days ?? 30);
       setLookaheadDays(s.sync_lookahead_days ?? 60);
       setConflictStrategy(s.conflict_strategy ?? "newest_wins");
-      const [evs, ovs, cfs] = await Promise.all([
+      const [evs, ovs, cfs, hist] = await Promise.all([
         clinicorpApi.listWebhookEvents(50),
         clinicorpApi.listOverrides(),
         clinicorpApi.listConflicts({ limit: 50 }),
+        clinicorpApi.listOverrideHistory({ limit: 100 }).catch(() => []),
       ]);
       setEvents(evs);
       setOverrides(ovs);
       setConflicts(cfs);
+      setHistory(hist);
+      // tenta carregar clínicas e profissionais para os selects (não bloqueia)
+      if (s.enabled) {
+        clinicorpApi.listClinics().then((rows) => {
+          setClinicsList(rows.map((r) => ({
+            id: String((r as Record<string, unknown>).id ?? (r as Record<string, unknown>).Id ?? ''),
+            name: String((r as Record<string, unknown>).name ?? (r as Record<string, unknown>).BusinessName ?? (r as Record<string, unknown>).Name ?? ''),
+          })).filter((c) => c.id));
+        }).catch(() => {});
+        clinicorpApi.listProfessionals().then((rows) => {
+          setProfsList(rows.map((r) => ({
+            id: String((r as Record<string, unknown>).id ?? (r as Record<string, unknown>).Id ?? (r as Record<string, unknown>).Dentist_PersonId ?? ''),
+            name: String((r as Record<string, unknown>).full_name ?? (r as Record<string, unknown>).FullName ?? (r as Record<string, unknown>).Name ?? ''),
+          })).filter((p) => p.id));
+        }).catch(() => {});
+      }
     } catch (e) {
       toast.error(`Falha ao carregar configurações: ${(e as Error).message}`);
     } finally {
@@ -364,102 +390,323 @@ export function ClinicorpPanel() {
           ))}
         </div>
 
-        {/* Overrides */}
+        {/* Overrides — UI completa */}
         <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="text-sm font-semibold text-foreground">Exceções por clínica / profissional</div>
-            <span className="text-[11px] text-muted-foreground">{overrides.length} regra(s)</span>
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div>
+              <div className="text-sm font-semibold text-foreground">Exceções por clínica / profissional</div>
+              <p className="text-[11px] text-muted-foreground">
+                Precedência: <strong>profissional &gt; clínica &gt; global</strong>. Exceções mais específicas vencem.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-muted-foreground">{overrides.length} regra(s)</span>
+              <Button size="sm" variant="ghost" onClick={() => setShowHistory((v) => !v)}>
+                <History className="h-3.5 w-3.5 mr-1" />
+                {showHistory ? "Ocultar histórico" : "Ver histórico"}
+              </Button>
+            </div>
           </div>
 
+          {/* Lista atual de overrides */}
           {overrides.length === 0 ? (
-            <p className="text-xs text-muted-foreground">Nenhuma exceção cadastrada — usando estratégia padrão acima.</p>
+            <p className="text-xs text-muted-foreground py-2">Nenhuma exceção cadastrada — usando estratégia padrão acima.</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead>
                   <tr className="text-left text-muted-foreground border-b border-border">
                     <th className="py-2 pr-3">Escopo</th>
-                    <th className="py-2 pr-3">ID</th>
+                    <th className="py-2 pr-3">Identificador</th>
                     <th className="py-2 pr-3">Manter local</th>
                     <th className="py-2 pr-3">Estratégia</th>
-                    <th className="py-2 pr-3"></th>
+                    <th className="py-2 pr-3">Atualizado</th>
+                    <th className="py-2 pr-3 text-right">Ações</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {overrides.map((o) => (
-                    <tr key={o.id} className="border-b border-border/40">
-                      <td className="py-2 pr-3">{o.scope_type}</td>
-                      <td className="py-2 pr-3 font-mono">{o.scope_id || "—"}</td>
-                      <td className="py-2 pr-3">{o.keep_local ? "Sim" : "Não"}</td>
-                      <td className="py-2 pr-3">{o.conflict_strategy || "(herda)"}</td>
-                      <td className="py-2 pr-3 text-right">
-                        <Button size="sm" variant="ghost"
-                          onClick={async () => {
-                            try { await clinicorpApi.deleteOverride(o.id); toast.success("Removido"); await load(); }
-                            catch (e) { toast.error((e as Error).message); }
-                          }}>
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      </td>
-                    </tr>
-                  ))}
+                  {overrides
+                    .slice()
+                    .sort((a, b) => {
+                      const order = { professional: 0, clinic: 1, global: 2 } as const;
+                      return order[a.scope_type] - order[b.scope_type];
+                    })
+                    .map((o) => {
+                      const list = o.scope_type === "clinic" ? clinicsList : o.scope_type === "professional" ? profsList : [];
+                      const label = list.find((x) => x.id === o.scope_id)?.name;
+                      return (
+                        <tr key={o.id} className={`border-b border-border/40 ${editingOvId === o.id ? "bg-primary/5" : ""}`}>
+                          <td className="py-2 pr-3">
+                            <span className="inline-flex items-center gap-1">
+                              {o.scope_type === "professional" ? <User className="h-3 w-3" /> :
+                               o.scope_type === "clinic" ? <Building2 className="h-3 w-3" /> :
+                               <Shield className="h-3 w-3" />}
+                              {o.scope_type}
+                            </span>
+                          </td>
+                          <td className="py-2 pr-3">
+                            <div className="font-mono text-[11px]">{o.scope_id || "—"}</div>
+                            {label && <div className="text-[10px] text-muted-foreground">{label}</div>}
+                          </td>
+                          <td className="py-2 pr-3">
+                            {o.keep_local
+                              ? <span className="px-1.5 py-0.5 rounded bg-warning/15 text-warning text-[10px]">Sim</span>
+                              : <span className="text-muted-foreground">Não</span>}
+                          </td>
+                          <td className="py-2 pr-3 font-mono text-[10px]">{o.conflict_strategy || "(herda)"}</td>
+                          <td className="py-2 pr-3 text-muted-foreground text-[10px]">
+                            {new Date(o.updated_at).toLocaleString("pt-BR")}
+                          </td>
+                          <td className="py-2 pr-3 text-right">
+                            <Button size="sm" variant="ghost"
+                              onClick={() => {
+                                setEditingOvId(o.id);
+                                setNewOvScope(o.scope_type);
+                                setNewOvId(o.scope_id || "");
+                                setNewOvLabel(label || "");
+                                setNewOvKeepLocal(o.keep_local);
+                                setNewOvStrategy(o.conflict_strategy || "");
+                                setNewOvNote(o.note || "");
+                                setNewOvErrors({});
+                              }}>
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button size="sm" variant="ghost"
+                              onClick={async () => {
+                                if (!confirm("Remover esta exceção?")) return;
+                                try { await clinicorpApi.deleteOverride(o.id); toast.success("Removido"); await load(); }
+                                catch (e) { toast.error((e as Error).message); }
+                              }}>
+                              <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                            </Button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                 </tbody>
               </table>
             </div>
           )}
 
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-2 items-end pt-2 border-t border-border">
-            <div className="space-y-1">
-              <Label className="text-xs">Escopo</Label>
-              <select
-                value={newOvScope}
-                onChange={(e) => setNewOvScope(e.target.value as "clinic" | "professional")}
-                className="w-full h-9 rounded-md border border-border bg-background px-2 text-sm"
+          {/* Form: criar / editar override */}
+          <div className="rounded-md border border-border bg-card p-3 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="text-xs font-semibold text-foreground">
+                {editingOvId ? "Editar exceção" : "Adicionar nova exceção"}
+              </div>
+              {editingOvId && (
+                <Button size="sm" variant="ghost" onClick={() => {
+                  setEditingOvId(null);
+                  setNewOvScope("professional"); setNewOvId(""); setNewOvLabel("");
+                  setNewOvKeepLocal(true); setNewOvStrategy(""); setNewOvNote(""); setNewOvErrors({});
+                }}>
+                  <X className="h-3.5 w-3.5 mr-1" /> Cancelar
+                </Button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="space-y-1">
+                <Label className="text-xs">Escopo *</Label>
+                <select
+                  value={newOvScope}
+                  onChange={(e) => {
+                    const v = e.target.value as "global" | "clinic" | "professional";
+                    setNewOvScope(v);
+                    if (v === "global") { setNewOvId(""); setNewOvLabel(""); }
+                  }}
+                  className="w-full h-9 rounded-md border border-border bg-background px-2 text-sm"
+                >
+                  <option value="professional">Profissional</option>
+                  <option value="clinic">Clínica</option>
+                  <option value="global">Global (toda a clínica)</option>
+                </select>
+                <p className="text-[10px] text-muted-foreground">
+                  Específico vence o genérico. Use “global” como base.
+                </p>
+              </div>
+
+              {newOvScope !== "global" && (
+                <div className="space-y-1 md:col-span-2">
+                  <Label className="text-xs">{newOvScope === "clinic" ? "Clínica" : "Profissional"} *</Label>
+                  {(newOvScope === "clinic" ? clinicsList : profsList).length > 0 ? (
+                    <select
+                      value={newOvId}
+                      onChange={(e) => {
+                        const id = e.target.value;
+                        setNewOvId(id);
+                        const list = newOvScope === "clinic" ? clinicsList : profsList;
+                        setNewOvLabel(list.find((x) => x.id === id)?.name || "");
+                        setNewOvErrors((p) => ({ ...p, scope_id: "" }));
+                      }}
+                      className={`w-full h-9 rounded-md border bg-background px-2 text-sm ${newOvErrors.scope_id ? "border-destructive" : "border-border"}`}
+                    >
+                      <option value="">— selecione —</option>
+                      {(newOvScope === "clinic" ? clinicsList : profsList).map((x) => (
+                        <option key={x.id} value={x.id}>{x.name} (#{x.id})</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <Input
+                      value={newOvId}
+                      onChange={(e) => { setNewOvId(e.target.value); setNewOvErrors((p) => ({ ...p, scope_id: "" })); }}
+                      placeholder="ID Clinicorp (ex: 12345)"
+                      className={newOvErrors.scope_id ? "border-destructive" : ""}
+                    />
+                  )}
+                  {newOvErrors.scope_id && <p className="text-[10px] text-destructive">{newOvErrors.scope_id}</p>}
+                </div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-start">
+              <div className="space-y-1">
+                <Label className="text-xs">Estratégia de conflito</Label>
+                <select
+                  value={newOvStrategy}
+                  onChange={(e) => setNewOvStrategy(e.target.value as typeof newOvStrategy)}
+                  className="w-full h-9 rounded-md border border-border bg-background px-2 text-sm"
+                >
+                  <option value="">(herdar do escopo superior)</option>
+                  <option value="newest_wins">Mais recente vence</option>
+                  <option value="clinicorp_wins">Clinicorp sempre</option>
+                  <option value="local_wins">Local sempre</option>
+                </select>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Manter local (lock total)</Label>
+                <div className="h-9 flex items-center gap-2 px-3 rounded-md border border-border bg-background">
+                  <Switch checked={newOvKeepLocal} onCheckedChange={setNewOvKeepLocal} />
+                  <span className="text-xs text-muted-foreground">
+                    {newOvKeepLocal ? "Bloqueia sobrescritas" : "Segue a estratégia"}
+                  </span>
+                </div>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Nota (opcional)</Label>
+                <Input
+                  value={newOvNote}
+                  maxLength={500}
+                  onChange={(e) => { setNewOvNote(e.target.value); setNewOvErrors((p) => ({ ...p, note: "" })); }}
+                  placeholder="Motivo / contexto"
+                  className={newOvErrors.note ? "border-destructive" : ""}
+                />
+                <p className="text-[10px] text-muted-foreground text-right">{newOvNote.length}/500</p>
+              </div>
+            </div>
+
+            {newOvErrors.rule && (
+              <div className="text-[11px] text-destructive flex items-center gap-1">
+                <AlertCircle className="h-3 w-3" /> {newOvErrors.rule}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-1 border-t border-border">
+              <Button
+                onClick={async () => {
+                  // Validação
+                  const errs: Record<string, string> = {};
+                  if (newOvScope !== "global") {
+                    const id = newOvId.trim();
+                    if (!id) errs.scope_id = "Selecione ou informe o ID";
+                    else if (!/^[0-9A-Za-z_-]{1,64}$/.test(id)) errs.scope_id = "Use apenas letras, números, _ ou - (até 64)";
+                  }
+                  if (!newOvKeepLocal && !newOvStrategy) {
+                    errs.rule = "Defina ao menos uma regra: ative “manter local” ou escolha uma estratégia.";
+                  }
+                  if (newOvNote.length > 500) errs.note = "Máx 500 caracteres";
+                  setNewOvErrors(errs);
+                  if (Object.keys(errs).length) return;
+
+                  // Conflito de duplicidade no front
+                  const dup = overrides.find((o) =>
+                    o.scope_type === newOvScope &&
+                    (o.scope_id || "") === (newOvScope === "global" ? "" : newOvId.trim()) &&
+                    o.id !== editingOvId
+                  );
+                  if (dup) {
+                    if (!confirm("Já existe uma regra para este escopo. Deseja sobrescrevê-la?")) return;
+                  }
+
+                  try {
+                    await clinicorpApi.upsertOverride({
+                      scope_type: newOvScope,
+                      scope_id: newOvScope === "global" ? null : newOvId.trim(),
+                      keep_local: newOvKeepLocal,
+                      conflict_strategy: newOvStrategy || undefined,
+                      note: newOvNote || undefined,
+                      scope_label: newOvLabel || undefined,
+                    });
+                    toast.success(editingOvId ? "Exceção atualizada" : "Exceção criada");
+                    setEditingOvId(null);
+                    setNewOvId(""); setNewOvLabel(""); setNewOvNote("");
+                    setNewOvStrategy(""); setNewOvKeepLocal(true);
+                    await load();
+                  } catch (e) { toast.error((e as Error).message); }
+                }}
               >
-                <option value="professional">Profissional</option>
-                <option value="clinic">Clínica</option>
-              </select>
+                {editingOvId ? <><CheckCircle2 className="h-4 w-4 mr-1" /> Salvar alterações</> : <><Plus className="h-4 w-4 mr-1" /> Adicionar exceção</>}
+              </Button>
             </div>
-            <div className="space-y-1">
-              <Label className="text-xs">ID Clinicorp</Label>
-              <Input value={newOvId} onChange={(e) => setNewOvId(e.target.value)} placeholder="ex: 12345" />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Estratégia</Label>
-              <select
-                value={newOvStrategy}
-                onChange={(e) => setNewOvStrategy(e.target.value as typeof newOvStrategy)}
-                className="w-full h-9 rounded-md border border-border bg-background px-2 text-sm"
-              >
-                <option value="">(herdar padrão)</option>
-                <option value="newest_wins">Mais recente vence</option>
-                <option value="clinicorp_wins">Clinicorp sempre</option>
-                <option value="local_wins">Local sempre</option>
-              </select>
-            </div>
-            <div className="flex items-center gap-2">
-              <Switch checked={newOvKeepLocal} onCheckedChange={setNewOvKeepLocal} />
-              <span className="text-xs">Manter local</span>
-            </div>
-            <Button
-              onClick={async () => {
-                if (!newOvId.trim()) { toast.error("Informe o ID"); return; }
-                try {
-                  await clinicorpApi.upsertOverride({
-                    scope_type: newOvScope,
-                    scope_id: newOvId.trim(),
-                    keep_local: newOvKeepLocal,
-                    conflict_strategy: newOvStrategy || undefined,
-                  });
-                  setNewOvId("");
-                  toast.success("Exceção salva");
-                  await load();
-                } catch (e) { toast.error((e as Error).message); }
-              }}
-            >
-              <Plus className="h-4 w-4 mr-1" /> Adicionar
-            </Button>
           </div>
+
+          {/* Histórico de mudanças */}
+          {showHistory && (
+            <div className="rounded-md border border-border bg-card p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-semibold text-foreground flex items-center gap-1">
+                  <History className="h-3.5 w-3.5" /> Histórico de alterações
+                </div>
+                <Button size="sm" variant="ghost"
+                  onClick={async () => setHistory(await clinicorpApi.listOverrideHistory({ limit: 200 }))}>
+                  <RefreshCw className="h-3.5 w-3.5 mr-1" /> Atualizar
+                </Button>
+              </div>
+              {history.length === 0 ? (
+                <p className="text-xs text-muted-foreground py-2 text-center">Sem alterações registradas.</p>
+              ) : (
+                <div className="max-h-72 overflow-y-auto space-y-1">
+                  {history.map((h) => {
+                    const actionColor =
+                      h.action === "create" ? "bg-success/15 text-success" :
+                      h.action === "delete" ? "bg-destructive/15 text-destructive" :
+                      "bg-primary/15 text-primary";
+                    return (
+                      <div key={h.id} className="flex items-start gap-2 p-2 rounded border border-border/40 text-[11px]">
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${actionColor}`}>{h.action}</span>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-foreground">
+                            <span className="font-medium">{h.scope_type}</span>
+                            {h.scope_id && <span className="font-mono text-muted-foreground"> · {h.scope_id}</span>}
+                            {h.scope_label && <span className="text-muted-foreground"> ({h.scope_label})</span>}
+                          </div>
+                          {h.changed_fields && h.changed_fields.length > 0 && (
+                            <div className="text-muted-foreground mt-0.5">
+                              alterou: {h.changed_fields.map((f) => {
+                                const b = (h.before_data as Record<string, unknown> | null)?.[f];
+                                const a = (h.after_data as Record<string, unknown> | null)?.[f];
+                                const fmt = (v: unknown) => v === null || v === undefined || v === "" ? "—" : String(v);
+                                return (
+                                  <span key={f} className="mr-2">
+                                    <span className="font-medium">{f}</span>: <span className="text-warning">{fmt(b)}</span> → <span className="text-success">{fmt(a)}</span>
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          )}
+                          {h.note && <div className="text-muted-foreground italic mt-0.5">“{h.note}”</div>}
+                        </div>
+                        <div className="text-right text-muted-foreground shrink-0">
+                          <div>{new Date(h.created_at).toLocaleString("pt-BR")}</div>
+                          {h.changed_by && <div className="text-[10px]">por {h.changed_by}</div>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Auditoria de conflitos com antes/depois */}

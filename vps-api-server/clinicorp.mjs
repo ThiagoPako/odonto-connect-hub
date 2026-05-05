@@ -1133,31 +1133,100 @@ export function registerClinicorp(app, pool) {
 
   app.put('/api/clinicorp/overrides', async (req, res) => {
     try {
-      const { scope_type, scope_id, keep_local, conflict_strategy, note } = req.body || {};
+      const { scope_type, scope_id, keep_local, conflict_strategy, note, scope_label } = req.body || {};
       if (!['global','clinic','professional'].includes(scope_type))
         return res.status(400).json({ error: 'scope_type inválido' });
       if (conflict_strategy && !['clinicorp_wins','local_wins','newest_wins'].includes(conflict_strategy))
         return res.status(400).json({ error: 'conflict_strategy inválido' });
-      const sid = scope_type === 'global' ? null : (scope_id != null ? String(scope_id) : null);
-      if (scope_type !== 'global' && !sid) return res.status(400).json({ error: 'scope_id obrigatório' });
-      await pool.query(
+      const sid = scope_type === 'global' ? null : (scope_id != null ? String(scope_id).trim() : null);
+      if (scope_type !== 'global') {
+        if (!sid) return res.status(400).json({ error: 'scope_id obrigatório' });
+        if (!/^[0-9A-Za-z_-]{1,64}$/.test(sid)) return res.status(400).json({ error: 'scope_id deve ser alfanumérico (1-64)' });
+      }
+      if (note != null && String(note).length > 500)
+        return res.status(400).json({ error: 'note muito longo (máx 500)' });
+      if (keep_local == null && !conflict_strategy)
+        return res.status(400).json({ error: 'Defina ao menos uma regra (manter local ou estratégia)' });
+
+      // snapshot anterior
+      const prev = (await pool.query(
+        `SELECT * FROM clinicorp_local_overrides WHERE scope_type=$1 AND COALESCE(scope_id,'')=COALESCE($2,'')`,
+        [scope_type, sid]
+      )).rows[0] || null;
+
+      const result = await pool.query(
         `INSERT INTO clinicorp_local_overrides (scope_type, scope_id, keep_local, conflict_strategy, note)
          VALUES ($1,$2,COALESCE($3,FALSE),$4,$5)
          ON CONFLICT (scope_type, COALESCE(scope_id,'')) DO UPDATE SET
            keep_local = COALESCE(EXCLUDED.keep_local, clinicorp_local_overrides.keep_local),
            conflict_strategy = COALESCE(EXCLUDED.conflict_strategy, clinicorp_local_overrides.conflict_strategy),
            note = COALESCE(EXCLUDED.note, clinicorp_local_overrides.note),
-           updated_at = NOW()`,
+           updated_at = NOW()
+         RETURNING *`,
         [scope_type, sid, typeof keep_local === 'boolean' ? keep_local : null, conflict_strategy ?? null, note ?? null]
       );
-      res.json({ ok: true });
+      const next = result.rows[0];
+
+      const action = prev ? 'update' : 'create';
+      const fields = ['keep_local', 'conflict_strategy', 'note'];
+      const changed = [];
+      const beforeOut = {}; const afterOut = {};
+      for (const k of fields) {
+        const b = prev?.[k] ?? null; const a = next?.[k] ?? null;
+        if (JSON.stringify(b) !== JSON.stringify(a)) {
+          changed.push(k); beforeOut[k] = b; afterOut[k] = a;
+        }
+      }
+      if (action === 'create' || changed.length > 0) {
+        await pool.query(
+          `INSERT INTO clinicorp_override_history
+             (override_id, action, scope_type, scope_id, scope_label, before_data, after_data, changed_fields, changed_by, note)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+          [next.id, action, scope_type, sid, scope_label || null,
+           prev ? JSON.stringify(prev) : null, JSON.stringify(next),
+           changed.length ? changed : null, req.user?.email || req.user?.id || 'system', note || null]
+        );
+      }
+
+      res.json({ ok: true, override: next });
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
   app.delete('/api/clinicorp/overrides/:id', async (req, res) => {
     try {
-      await pool.query(`DELETE FROM clinicorp_local_overrides WHERE id=$1`, [req.params.id]);
+      const prev = (await pool.query(
+        `SELECT * FROM clinicorp_local_overrides WHERE id=$1`, [req.params.id]
+      )).rows[0];
+      if (prev) {
+        await pool.query(`DELETE FROM clinicorp_local_overrides WHERE id=$1`, [req.params.id]);
+        await pool.query(
+          `INSERT INTO clinicorp_override_history
+             (override_id, action, scope_type, scope_id, before_data, after_data, changed_by)
+           VALUES ($1,'delete',$2,$3,$4,NULL,$5)`,
+          [prev.id, prev.scope_type, prev.scope_id, JSON.stringify(prev), req.user?.email || req.user?.id || 'system']
+        );
+      }
       res.json({ ok: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Histórico de alterações dos overrides
+  app.get('/api/clinicorp/overrides/history', async (req, res) => {
+    try {
+      const limit = Math.min(Number(req.query.limit) || 100, 500);
+      const scope_type = req.query.scope_type ? String(req.query.scope_type) : null;
+      const scope_id = req.query.scope_id ? String(req.query.scope_id) : null;
+      const where = []; const params = [];
+      if (scope_type) { params.push(scope_type); where.push(`scope_type=$${params.length}`); }
+      if (scope_id)   { params.push(scope_id);   where.push(`scope_id=$${params.length}`); }
+      params.push(limit);
+      const { rows } = await pool.query(
+        `SELECT * FROM clinicorp_override_history
+          ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+          ORDER BY created_at DESC LIMIT $${params.length}`,
+        params
+      );
+      res.json(rows);
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
