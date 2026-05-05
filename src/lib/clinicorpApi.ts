@@ -72,6 +72,15 @@ export interface ClinicorpConflict {
   clinicorp_updated_at: string | null;
   last_sync_at: string | null;
   diff: Record<string, unknown> | null;
+  before_data: Record<string, unknown> | null;
+  after_data: Record<string, unknown> | null;
+  changed_fields: string[] | null;
+  paciente_id: string | null;
+  lead_id: string | null;
+  agendamento_id: string | null;
+  paciente_nome: string | null;
+  lead_id_resolved: string | null;
+  lead_stage: string | null;
   created_at: string;
 }
 
