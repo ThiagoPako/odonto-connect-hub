@@ -7,6 +7,8 @@ export interface AuthUser {
   email: string;
   role: string;
   avatar_url: string | null;
+  tenant_id: string | null;
+  is_super_admin: boolean;
 }
 
 interface AuthState {
