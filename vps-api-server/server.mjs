@@ -234,7 +234,21 @@ async function verifyUser(req) {
   if (!authHeader?.startsWith('Bearer ')) throw new Error('Unauthorized');
   const token = authHeader.replace('Bearer ', '');
   const decoded = verifyToken(token);
-  return { user: { id: decoded.sub, email: decoded.email, role: decoded.role } };
+  return {
+    user: {
+      id: decoded.sub,
+      email: decoded.email,
+      role: decoded.role,
+      tenant_id: decoded.tenant_id || null,
+      is_super_admin: !!decoded.is_super_admin,
+    },
+  };
+}
+
+async function verifySuperAdmin(req) {
+  const { user } = await verifyUser(req);
+  if (!user.is_super_admin) throw new Error('Super admin access required');
+  return { user };
 }
 
 async function verifyAdmin(req) {
