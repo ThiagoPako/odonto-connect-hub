@@ -98,6 +98,8 @@ jobs:
             cat /root/odonto-connect/vps-api-server/migration-user-preferences.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             cat /root/odonto-connect/vps-api-server/migration-ai-settings.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             cat /root/odonto-connect/vps-api-server/migration-reativacao.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
+            cat /root/odonto-connect/vps-api-server/migration-clinicorp.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
+            cat /root/odonto-connect/vps-api-server/migration-clinicorp-user.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             echo "=== Migrations applied ==="
 
             # ─── Pre-flight syntax check on server.mjs ─────────────────────
