@@ -114,7 +114,7 @@ function AuthGate() {
     );
   }
 
-  const isPublicPage = location.pathname === "/login" || location.pathname === "/";
+  const isPublicPage = location.pathname === "/login" || location.pathname === "/" || location.pathname === "/signup";
 
   // Public pages — no sidebar, no auth required
   if (isPublicPage) {
