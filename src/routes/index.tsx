@@ -68,7 +68,7 @@ function LandingPage() {
             <Link to="/login" className="text-sm font-medium text-foreground hover:text-primary transition-colors">
               Entrar
             </Link>
-            <Link to="/signup" className="inline-flex items-center gap-1.5 rounded-lg gradient-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-glow-primary hover:opacity-90 transition-opacity">
+            <Link to="/signup" search={{}} className="inline-flex items-center gap-1.5 rounded-lg gradient-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-glow-primary hover:opacity-90 transition-opacity">
               Começar Agora <ArrowRight className="h-4 w-4" />
             </Link>
           </div>
@@ -93,7 +93,7 @@ function LandingPage() {
                   Tudo que sua clínica precisa em uma única plataforma.
                 </p>
                 <div className="flex flex-col sm:flex-row gap-4">
-                  <Link to="/signup" className="inline-flex items-center justify-center gap-2 rounded-xl gradient-primary px-8 py-3.5 text-base font-bold text-primary-foreground shadow-glow-primary hover:opacity-90 transition-opacity">
+                  <Link to="/signup" search={{}} className="inline-flex items-center justify-center gap-2 rounded-xl gradient-primary px-8 py-3.5 text-base font-bold text-primary-foreground shadow-glow-primary hover:opacity-90 transition-opacity">
                     Iniciar teste grátis <ArrowRight className="h-5 w-5" />
                   </Link>
                   <a href="https://wa.me/5511999990001" target="_blank" rel="noopener noreferrer" className="inline-flex items-center justify-center gap-2 rounded-xl border border-border bg-card px-8 py-3.5 text-base font-semibold text-foreground hover:bg-accent transition-colors">

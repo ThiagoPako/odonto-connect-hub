@@ -201,7 +201,7 @@ function LoginPage() {
             </button>
             <p className="text-center text-sm text-muted-foreground">
               Não tem conta?{" "}
-              <Link to="/signup" className="text-primary hover:underline font-medium">
+              <Link to="/signup" search={{}} className="text-primary hover:underline font-medium">
                 Cadastre sua clínica
               </Link>
             </p>
