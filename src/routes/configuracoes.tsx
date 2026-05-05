@@ -148,6 +148,8 @@ function ConfiguracoesPage() {
 
               {activeTab === "ia" && <AISettingsPanel />}
 
+              {activeTab === "integracoes" && <ClinicorpPanel />}
+
               {activeTab === "tags" && <TagManagementPanel />}
 
               {activeTab === "notificacoes" && <NotificationSettingsPanel />}
