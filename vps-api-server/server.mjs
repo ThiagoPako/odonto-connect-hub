@@ -10558,6 +10558,15 @@ app.listen(PORT, async () => {
        )`,
       `CREATE INDEX IF NOT EXISTS idx_cc_conflicts_created ON clinicorp_conflicts(created_at DESC)`,
       `CREATE INDEX IF NOT EXISTS idx_cc_conflicts_entity ON clinicorp_conflicts(entity, decision)`,
+      // ─── Auditoria detalhada de conflitos: antes/depois + links cruzados ───
+      `ALTER TABLE clinicorp_conflicts ADD COLUMN IF NOT EXISTS before_data JSONB`,
+      `ALTER TABLE clinicorp_conflicts ADD COLUMN IF NOT EXISTS after_data  JSONB`,
+      `ALTER TABLE clinicorp_conflicts ADD COLUMN IF NOT EXISTS changed_fields TEXT[]`,
+      `ALTER TABLE clinicorp_conflicts ADD COLUMN IF NOT EXISTS paciente_id UUID`,
+      `ALTER TABLE clinicorp_conflicts ADD COLUMN IF NOT EXISTS lead_id UUID`,
+      `ALTER TABLE clinicorp_conflicts ADD COLUMN IF NOT EXISTS agendamento_id UUID`,
+      `CREATE INDEX IF NOT EXISTS idx_cc_conflicts_paciente ON clinicorp_conflicts(paciente_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_cc_conflicts_lead     ON clinicorp_conflicts(lead_id)`,
     ];
 
     for (const sql of migrations) {
