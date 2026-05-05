@@ -17,6 +17,7 @@ import {
   type ClinicorpConflict,
   type ClinicorpOverrideHistory,
 } from "@/lib/clinicorpApi";
+import { ClinicorpUserCredentials } from "@/components/ClinicorpUserCredentials";
 
 export function ClinicorpPanel() {
   const [settings, setSettings] = useState<ClinicorpSettings | null>(null);
@@ -196,6 +197,9 @@ export function ClinicorpPanel() {
 
   return (
     <div className="space-y-6">
+      {/* Per-user credentials (SaaS multi-tenant) */}
+      <ClinicorpUserCredentials />
+
       {/* Status header */}
       <div className="rounded-2xl border border-border bg-card p-5 flex items-start gap-4">
         <div className={`h-10 w-10 rounded-xl flex items-center justify-center ${settings?.enabled ? "bg-success/15 text-success" : "bg-muted text-muted-foreground"}`}>

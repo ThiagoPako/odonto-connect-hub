@@ -11,8 +11,8 @@ function authHeaders(): HeadersInit {
   return t ? { Authorization: `Bearer ${t}` } : {};
 }
 
-async function req<T = unknown>(path: string, init: RequestInit = {}): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+async function req<T = unknown>(path: string, init: RequestInit = {}, base: string = API_BASE): Promise<T> {
+  const res = await fetch(`${base}${path}`, {
     ...init,
     headers: {
       'Content-Type': 'application/json',
@@ -28,6 +28,19 @@ async function req<T = unknown>(path: string, init: RequestInit = {}): Promise<T
     throw new Error(msg);
   }
   return data as T;
+}
+
+export interface ClinicorpUserSettings {
+  enabled: boolean;
+  subscriber_id: string;
+  base_url: string;
+  has_api_token: boolean;
+  has_webhook_secret: boolean;
+  webhook_secret_preview: string;
+  last_sync_at: string | null;
+  last_sync_status: string | null;
+  last_sync_error: string | null;
+  updated_at: string | null;
 }
 
 export interface ClinicorpSettings {
@@ -169,6 +182,17 @@ export const clinicorpApi = {
   },
   setKeepLocal: (entity: 'appointment' | 'patient', id: string, keep_local: boolean) =>
     req<{ ok: true }>('/keep-local', { method: 'PUT', body: JSON.stringify({ entity, id, keep_local }) }),
+
+  // ── Per-user (SaaS) credentials ──
+  getMySettings: () => req<ClinicorpUserSettings>('/my-settings'),
+  saveMySettings: (payload: Partial<{
+    enabled: boolean;
+    api_token: string;
+    subscriber_id: string;
+    webhook_secret: string;
+    base_url: string;
+  }>) => req<{ ok: true }>('/my-settings', { method: 'PUT', body: JSON.stringify(payload) }),
+  deleteMySettings: () => req<{ ok: true }>('/my-settings', { method: 'DELETE' }),
 };
 
 export function buildWebhookUrl(secret: string): string {
