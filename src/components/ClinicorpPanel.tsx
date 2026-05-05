@@ -59,7 +59,7 @@ export function ClinicorpPanel() {
       const [evs, ovs, cfs] = await Promise.all([
         clinicorpApi.listWebhookEvents(50),
         clinicorpApi.listOverrides(),
-        clinicorpApi.listConflicts(50),
+        clinicorpApi.listConflicts({ limit: 50 }),
       ]);
       setEvents(evs);
       setOverrides(ovs);
