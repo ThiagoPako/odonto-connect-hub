@@ -10,13 +10,17 @@ import { Check, Loader2, Sparkles } from "lucide-react";
 
 export const Route = createFileRoute("/signup")({
   ssr: false,
+  validateSearch: (search: Record<string, unknown>) => ({
+    plan: typeof search.plan === "string" ? search.plan : undefined,
+  }),
   component: SignupPage,
 });
 
 function SignupPage() {
   const navigate = useNavigate();
+  const { plan: planFromUrl } = Route.useSearch();
   const [plans, setPlans] = useState<Plan[]>([]);
-  const [selected, setSelected] = useState<string>("starter");
+  const [selected, setSelected] = useState<string>(planFromUrl || "starter");
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({
     clinic_name: "",
