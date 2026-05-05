@@ -182,6 +182,17 @@ export const clinicorpApi = {
   },
   setKeepLocal: (entity: 'appointment' | 'patient', id: string, keep_local: boolean) =>
     req<{ ok: true }>('/keep-local', { method: 'PUT', body: JSON.stringify({ entity, id, keep_local }) }),
+
+  // ── Per-user (SaaS) credentials ──
+  getMySettings: () => req<ClinicorpUserSettings>('/my-settings'),
+  saveMySettings: (payload: Partial<{
+    enabled: boolean;
+    api_token: string;
+    subscriber_id: string;
+    webhook_secret: string;
+    base_url: string;
+  }>) => req<{ ok: true }>('/my-settings', { method: 'PUT', body: JSON.stringify(payload) }),
+  deleteMySettings: () => req<{ ok: true }>('/my-settings', { method: 'DELETE' }),
 };
 
 export function buildWebhookUrl(secret: string): string {
