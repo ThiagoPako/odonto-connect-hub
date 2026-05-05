@@ -83,6 +83,24 @@ export const saasApi = {
       "/my-tenant"
     ),
 
+  // Tenant user management
+  listTenantUsers: () =>
+    vpsApiFetch<{ data: Array<{ id: string; name: string; email: string; role: string; active: boolean; avatar_url: string | null; created_at: string }> }>(
+      "/my-tenant/users"
+    ),
+  createTenantUser: (body: { name: string; email: string; password: string; role: string }) =>
+    vpsApiFetch<{ success: boolean; user: { id: string; name: string; email: string; role: string; active: boolean } }>(
+      "/my-tenant/users",
+      { method: "POST", body }
+    ),
+  updateTenantUser: (id: string, body: { name?: string; email?: string; role?: string; active?: boolean }) =>
+    vpsApiFetch<{ success: boolean }>(`/my-tenant/users/${id}`, { method: "PATCH", body }),
+  resetTenantUserPassword: (id: string, password: string) =>
+    vpsApiFetch<{ success: boolean }>(`/my-tenant/users/${id}/reset-password`, {
+      method: "POST",
+      body: { password },
+    }),
+
   changePlan: (plan_slug: string) =>
     vpsApiFetch<{ ok: boolean; plan: Plan }>("/my-tenant/change-plan", {
       method: "POST",
