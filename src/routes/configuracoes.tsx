@@ -10,6 +10,7 @@ import { QueueManagementPanel } from "@/components/QueueManagementPanel";
 import { AttendanceSettingsPanel } from "@/components/AttendanceSettingsPanel";
 import { TagManagementPanel } from "@/components/TagManagementPanel";
 import { AISettingsPanel } from "@/components/AISettingsPanel";
+import { ClinicorpPanel } from "@/components/ClinicorpPanel";
 import {
   Settings,
   Building2,
@@ -21,6 +22,7 @@ import {
   ShieldAlert,
   CalendarClock,
   ChevronRight,
+  Plug,
 } from "lucide-react";
 
 export const Route = createFileRoute("/configuracoes")({
