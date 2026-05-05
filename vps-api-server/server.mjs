@@ -4049,7 +4049,7 @@ app.get('/api/procedimentos-catalogo', async (req, res) => {
 app.post('/api/procedimentos-catalogo', async (req, res) => {
   const client = await pool.connect();
   try {
-    const user = await verifyUser(req);
+    const { user } = await verifyUser(req);
     const {
       codigo, nome, categoria, valor_particular, valor_convenio,
       duracao_minutos, cor, requer_dente, requer_face, descricao,
@@ -4083,7 +4083,7 @@ app.post('/api/procedimentos-catalogo', async (req, res) => {
 app.put('/api/procedimentos-catalogo/:id', async (req, res) => {
   const client = await pool.connect();
   try {
-    const user = await verifyUser(req);
+    const { user } = await verifyUser(req);
     const procId = req.params.id;
     const fields = ['codigo','nome','categoria','valor_particular','valor_convenio','duracao_minutos','cor','requer_dente','requer_face','descricao','ativo'];
 
@@ -4476,7 +4476,7 @@ app.get(['/api/dashboard', '/api/dashboard/kpis'], async (req, res) => {
 // ═══════════════════════════════════════════════════════════════
 app.get('/api/comercial/painel', async (req, res) => {
   try {
-    const user = await verifyUser(req);
+    const { user } = await verifyUser(req);
     const today = new Date().toISOString().split('T')[0];
     const requested = (req.query.attendantId || '').toString();
 
@@ -4966,7 +4966,7 @@ app.get('/api/reativacao/rules', async (req, res) => {
 // Cria regra
 app.post('/api/reativacao/rules', async (req, res) => {
   try {
-    const user = await verifyUser(req);
+    const { user } = await verifyUser(req);
     const { name, inactiveDays, origin, messageTemplate, status } = req.body || {};
     if (!name || !messageTemplate) {
       return res.status(400).json({ error: 'name e messageTemplate são obrigatórios' });
@@ -7112,7 +7112,7 @@ app.get('/api/campaigns', async (req, res) => {
 // Create campaign
 app.post('/api/campaigns', async (req, res) => {
   try {
-    const user = await verifyUser(req);
+    const { user } = await verifyUser(req);
     const { nome, template, tipo, diasSemana, horarioInicio, horarioFim, dataInicio, dataFim,
       campanhaPerpetua, usarHorarioClinica, publico, filtroCustom, numeroEnvio,
       contatosAlcancaveis, capacidadeDiaria, intervaloSpam, ativo } = req.body;
@@ -9879,7 +9879,7 @@ app.get('/api/ai/reports/export.csv', async (req, res) => {
 // POST /api/consultations — save a finalized consultation
 app.post('/api/consultations', async (req, res) => {
   try {
-    const user = await verifyUser(req);
+    const { user } = await verifyUser(req);
     const {
       patient_id, patient_name, appointment_id,
       queixa_principal, procedimento, dente_regiao, observacoes,
