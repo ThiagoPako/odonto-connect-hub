@@ -417,14 +417,12 @@ function LandingPage() {
                 Comece seu teste gratuito de 7 dias agora.
               </p>
               <div className="flex flex-col sm:flex-row gap-4 justify-center">
-                <a
-                  href="https://wa.me/5511999990001"
-                  target="_blank"
-                  rel="noopener noreferrer"
+                <Link
+                  to="/signup"
                   className="inline-flex items-center justify-center gap-2 rounded-xl bg-card text-foreground px-8 py-3.5 text-base font-bold hover:bg-card/90 transition-colors"
                 >
                   Começar Agora Grátis <ArrowRight className="h-5 w-5" />
-                </a>
+                </Link>
               </div>
             </div>
           </div>
