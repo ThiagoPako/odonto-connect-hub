@@ -150,9 +150,16 @@ export const clinicorpApi = {
   getWebhookEvent: (id: number) => req<ClinicorpWebhookEvent & { payload: unknown; headers: unknown; ip: string }>(`/webhook-events/${id}`),
   reproject: () => req<{ ok: true; patients: number; appointments: number }>('/reproject', { method: 'POST' }),
   listOverrides: () => req<ClinicorpOverride[]>('/overrides'),
-  upsertOverride: (payload: Partial<Pick<ClinicorpOverride, 'scope_type' | 'scope_id' | 'keep_local' | 'conflict_strategy' | 'note'>>) =>
-    req<{ ok: true }>('/overrides', { method: 'PUT', body: JSON.stringify(payload) }),
+  upsertOverride: (payload: Partial<Pick<ClinicorpOverride, 'scope_type' | 'scope_id' | 'keep_local' | 'conflict_strategy' | 'note'>> & { scope_label?: string }) =>
+    req<{ ok: true; override: ClinicorpOverride }>('/overrides', { method: 'PUT', body: JSON.stringify(payload) }),
   deleteOverride: (id: number) => req<{ ok: true }>(`/overrides/${id}`, { method: 'DELETE' }),
+  listOverrideHistory: (params: { limit?: number; scope_type?: string; scope_id?: string } = {}) => {
+    const qs = new URLSearchParams();
+    qs.set('limit', String(params.limit ?? 100));
+    if (params.scope_type) qs.set('scope_type', params.scope_type);
+    if (params.scope_id) qs.set('scope_id', params.scope_id);
+    return req<ClinicorpOverrideHistory[]>(`/overrides/history?${qs.toString()}`);
+  },
   listConflicts: (params: { limit?: number; entity?: 'appointment' | 'patient'; decision?: string } = {}) => {
     const qs = new URLSearchParams();
     qs.set('limit', String(params.limit ?? 100));
