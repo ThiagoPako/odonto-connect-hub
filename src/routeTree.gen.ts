@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as TratamentosRouteImport } from './routes/tratamentos'
+import { Route as SignupRouteImport } from './routes/signup'
 import { Route as RelatoriosClinicosRouteImport } from './routes/relatorios-clinicos'
 import { Route as ReativacaoRouteImport } from './routes/reativacao'
 import { Route as ProntuarioRouteImport } from './routes/prontuario'
@@ -19,6 +20,7 @@ import { Route as PainelDentistaRouteImport } from './routes/painel-dentista'
 import { Route as PainelComercialRouteImport } from './routes/painel-comercial'
 import { Route as PacientesRouteImport } from './routes/pacientes'
 import { Route as OrcamentosRouteImport } from './routes/orcamentos'
+import { Route as MinhaAssinaturaRouteImport } from './routes/minha-assinatura'
 import { Route as MetricasRouteImport } from './routes/metricas'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as IntegracoesRouteImport } from './routes/integracoes'
@@ -45,6 +47,11 @@ import { Route as ConfiguracoesAgendaRouteImport } from './routes/configuracoes.
 const TratamentosRoute = TratamentosRouteImport.update({
   id: '/tratamentos',
   path: '/tratamentos',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SignupRoute = SignupRouteImport.update({
+  id: '/signup',
+  path: '/signup',
   getParentRoute: () => rootRouteImport,
 } as any)
 const RelatoriosClinicosRoute = RelatoriosClinicosRouteImport.update({
@@ -90,6 +97,11 @@ const PacientesRoute = PacientesRouteImport.update({
 const OrcamentosRoute = OrcamentosRouteImport.update({
   id: '/orcamentos',
   path: '/orcamentos',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MinhaAssinaturaRoute = MinhaAssinaturaRouteImport.update({
+  id: '/minha-assinatura',
+  path: '/minha-assinatura',
   getParentRoute: () => rootRouteImport,
 } as any)
 const MetricasRoute = MetricasRouteImport.update({
@@ -225,6 +237,7 @@ export interface FileRoutesByFullPath {
   '/integracoes': typeof IntegracoesRoute
   '/login': typeof LoginRoute
   '/metricas': typeof MetricasRoute
+  '/minha-assinatura': typeof MinhaAssinaturaRoute
   '/orcamentos': typeof OrcamentosRoute
   '/pacientes': typeof PacientesRoute
   '/painel-comercial': typeof PainelComercialRoute
@@ -234,6 +247,7 @@ export interface FileRoutesByFullPath {
   '/prontuario': typeof ProntuarioRoute
   '/reativacao': typeof ReativacaoRoute
   '/relatorios-clinicos': typeof RelatoriosClinicosRoute
+  '/signup': typeof SignupRoute
   '/tratamentos': typeof TratamentosRoute
   '/configuracoes/agenda': typeof ConfiguracoesAgendaRoute
 }
@@ -259,6 +273,7 @@ export interface FileRoutesByTo {
   '/integracoes': typeof IntegracoesRoute
   '/login': typeof LoginRoute
   '/metricas': typeof MetricasRoute
+  '/minha-assinatura': typeof MinhaAssinaturaRoute
   '/orcamentos': typeof OrcamentosRoute
   '/pacientes': typeof PacientesRoute
   '/painel-comercial': typeof PainelComercialRoute
@@ -268,6 +283,7 @@ export interface FileRoutesByTo {
   '/prontuario': typeof ProntuarioRoute
   '/reativacao': typeof ReativacaoRoute
   '/relatorios-clinicos': typeof RelatoriosClinicosRoute
+  '/signup': typeof SignupRoute
   '/tratamentos': typeof TratamentosRoute
   '/configuracoes/agenda': typeof ConfiguracoesAgendaRoute
 }
@@ -294,6 +310,7 @@ export interface FileRoutesById {
   '/integracoes': typeof IntegracoesRoute
   '/login': typeof LoginRoute
   '/metricas': typeof MetricasRoute
+  '/minha-assinatura': typeof MinhaAssinaturaRoute
   '/orcamentos': typeof OrcamentosRoute
   '/pacientes': typeof PacientesRoute
   '/painel-comercial': typeof PainelComercialRoute
@@ -303,6 +320,7 @@ export interface FileRoutesById {
   '/prontuario': typeof ProntuarioRoute
   '/reativacao': typeof ReativacaoRoute
   '/relatorios-clinicos': typeof RelatoriosClinicosRoute
+  '/signup': typeof SignupRoute
   '/tratamentos': typeof TratamentosRoute
   '/configuracoes/agenda': typeof ConfiguracoesAgendaRoute
 }
@@ -330,6 +348,7 @@ export interface FileRouteTypes {
     | '/integracoes'
     | '/login'
     | '/metricas'
+    | '/minha-assinatura'
     | '/orcamentos'
     | '/pacientes'
     | '/painel-comercial'
@@ -339,6 +358,7 @@ export interface FileRouteTypes {
     | '/prontuario'
     | '/reativacao'
     | '/relatorios-clinicos'
+    | '/signup'
     | '/tratamentos'
     | '/configuracoes/agenda'
   fileRoutesByTo: FileRoutesByTo
@@ -364,6 +384,7 @@ export interface FileRouteTypes {
     | '/integracoes'
     | '/login'
     | '/metricas'
+    | '/minha-assinatura'
     | '/orcamentos'
     | '/pacientes'
     | '/painel-comercial'
@@ -373,6 +394,7 @@ export interface FileRouteTypes {
     | '/prontuario'
     | '/reativacao'
     | '/relatorios-clinicos'
+    | '/signup'
     | '/tratamentos'
     | '/configuracoes/agenda'
   id:
@@ -398,6 +420,7 @@ export interface FileRouteTypes {
     | '/integracoes'
     | '/login'
     | '/metricas'
+    | '/minha-assinatura'
     | '/orcamentos'
     | '/pacientes'
     | '/painel-comercial'
@@ -407,6 +430,7 @@ export interface FileRouteTypes {
     | '/prontuario'
     | '/reativacao'
     | '/relatorios-clinicos'
+    | '/signup'
     | '/tratamentos'
     | '/configuracoes/agenda'
   fileRoutesById: FileRoutesById
@@ -433,6 +457,7 @@ export interface RootRouteChildren {
   IntegracoesRoute: typeof IntegracoesRoute
   LoginRoute: typeof LoginRoute
   MetricasRoute: typeof MetricasRoute
+  MinhaAssinaturaRoute: typeof MinhaAssinaturaRoute
   OrcamentosRoute: typeof OrcamentosRoute
   PacientesRoute: typeof PacientesRoute
   PainelComercialRoute: typeof PainelComercialRoute
@@ -442,6 +467,7 @@ export interface RootRouteChildren {
   ProntuarioRoute: typeof ProntuarioRoute
   ReativacaoRoute: typeof ReativacaoRoute
   RelatoriosClinicosRoute: typeof RelatoriosClinicosRoute
+  SignupRoute: typeof SignupRoute
   TratamentosRoute: typeof TratamentosRoute
 }
 
@@ -452,6 +478,13 @@ declare module '@tanstack/react-router' {
       path: '/tratamentos'
       fullPath: '/tratamentos'
       preLoaderRoute: typeof TratamentosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/signup': {
+      id: '/signup'
+      path: '/signup'
+      fullPath: '/signup'
+      preLoaderRoute: typeof SignupRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/relatorios-clinicos': {
@@ -515,6 +548,13 @@ declare module '@tanstack/react-router' {
       path: '/orcamentos'
       fullPath: '/orcamentos'
       preLoaderRoute: typeof OrcamentosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/minha-assinatura': {
+      id: '/minha-assinatura'
+      path: '/minha-assinatura'
+      fullPath: '/minha-assinatura'
+      preLoaderRoute: typeof MinhaAssinaturaRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/metricas': {
@@ -708,6 +748,7 @@ const rootRouteChildren: RootRouteChildren = {
   IntegracoesRoute: IntegracoesRoute,
   LoginRoute: LoginRoute,
   MetricasRoute: MetricasRoute,
+  MinhaAssinaturaRoute: MinhaAssinaturaRoute,
   OrcamentosRoute: OrcamentosRoute,
   PacientesRoute: PacientesRoute,
   PainelComercialRoute: PainelComercialRoute,
@@ -717,6 +758,7 @@ const rootRouteChildren: RootRouteChildren = {
   ProntuarioRoute: ProntuarioRoute,
   ReativacaoRoute: ReativacaoRoute,
   RelatoriosClinicosRoute: RelatoriosClinicosRoute,
+  SignupRoute: SignupRoute,
   TratamentosRoute: TratamentosRoute,
 }
 export const routeTree = rootRouteImport
