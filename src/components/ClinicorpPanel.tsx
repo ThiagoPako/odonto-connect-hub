@@ -15,6 +15,7 @@ import {
   type ClinicorpSyncResult,
   type ClinicorpOverride,
   type ClinicorpConflict,
+  type ClinicorpOverrideHistory,
 } from "@/lib/clinicorpApi";
 
 export function ClinicorpPanel() {
