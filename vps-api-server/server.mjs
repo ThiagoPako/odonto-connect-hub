@@ -10085,6 +10085,109 @@ app.delete('/api/clinicorp/my-settings', async (req, res) => {
   }
 });
 
+// ── Test connection (validates credentials BEFORE saving) ──────
+// Uses credentials from the request body if provided, otherwise falls back
+// to the saved per-user settings. Returns per-endpoint diagnostics.
+app.post('/api/clinicorp/my-settings/test', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    let { api_token, subscriber_id, base_url } = req.body || {};
+
+    if (!api_token || !subscriber_id) {
+      const { rows } = await pool.query(
+        'SELECT api_token, subscriber_id, base_url FROM clinicorp_user_settings WHERE user_id = $1',
+        [user.id]
+      );
+      const saved = rows[0] || {};
+      api_token = api_token || saved.api_token;
+      subscriber_id = subscriber_id || saved.subscriber_id;
+      base_url = base_url || saved.base_url;
+    }
+
+    if (!api_token) return res.status(400).json({ ok: false, error: 'Informe o API Token' });
+    if (!subscriber_id) return res.status(400).json({ ok: false, error: 'Informe o Subscriber ID' });
+    if (base_url) { try { new URL(base_url); } catch { return res.status(400).json({ ok: false, error: 'URL base inválida' }); } }
+
+    const settings = {
+      api_token,
+      subscriber_id,
+      base_url: base_url || 'https://api.clinicorp.com/rest/v1',
+    };
+
+    // Test multiple endpoints in parallel
+    const probes = [
+      { key: 'clinics',       label: 'Clínicas',      path: '/business/list' },
+      { key: 'users',         label: 'Usuários',      path: '/security/list_users' },
+      { key: 'professionals', label: 'Profissionais', path: '/dentist/list' },
+      { key: 'categories',    label: 'Categorias',    path: '/appointment/list_categories' },
+    ];
+
+    const startedAt = Date.now();
+    const results = await Promise.all(probes.map(async (p) => {
+      const t0 = Date.now();
+      try {
+        const data = await clinicorpFetchProbe(settings, p.path);
+        return {
+          ...p,
+          ok: true,
+          latency_ms: Date.now() - t0,
+          count: Array.isArray(data) ? data.length : (data ? 1 : 0),
+        };
+      } catch (e) {
+        return {
+          ...p,
+          ok: false,
+          latency_ms: Date.now() - t0,
+          status: e.status || null,
+          error: e.message,
+        };
+      }
+    }));
+
+    const ok = results.every((r) => r.ok);
+    const auth = results[0]?.status === 401 || results.some((r) => r.status === 401)
+      ? 'invalid_token'
+      : (ok ? 'valid' : 'partial');
+
+    res.json({
+      ok,
+      auth,
+      total_latency_ms: Date.now() - startedAt,
+      base_url: settings.base_url,
+      subscriber_id: settings.subscriber_id,
+      results,
+    });
+  } catch (e) {
+    res.status(e.message === 'Unauthorized' ? 401 : 500).json({ ok: false, error: e.message });
+  }
+});
+
+// Lightweight probe — same logic as clinicorp.mjs#clinicorpFetch but local
+async function clinicorpFetchProbe(settings, pathName) {
+  const base = (settings.base_url || 'https://api.clinicorp.com/rest/v1').replace(/\/$/, '');
+  const url = new URL(base + pathName);
+  if (settings.subscriber_id) url.searchParams.set('subscriber_id', settings.subscriber_id);
+  const ctrl = new AbortController();
+  const timeout = setTimeout(() => ctrl.abort(), 15_000);
+  try {
+    const r = await fetch(url.toString(), {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${settings.api_token}`, Accept: 'application/json' },
+      signal: ctrl.signal,
+    });
+    const text = await r.text();
+    let data; try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+    if (!r.ok) {
+      const err = new Error(`HTTP ${r.status}${typeof data === 'string' && data ? ': ' + data.slice(0, 200) : ''}`);
+      err.status = r.status;
+      throw err;
+    }
+    return data;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 
 
 // ═══════════════════════════════════════════════════════════════
