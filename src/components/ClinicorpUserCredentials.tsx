@@ -87,6 +87,32 @@ export function ClinicorpUserCredentials() {
     }
   }
 
+  async function testConnection() {
+    const err = validate();
+    if (err) { toast.error(err); return; }
+    if (!apiToken && !settings?.has_api_token) { toast.error("Informe o API Token para testar"); return; }
+    if (!subscriberId) { toast.error("Informe o Subscriber ID para testar"); return; }
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const result = await clinicorpApi.testMyConnection({
+        api_token: apiToken || undefined,
+        subscriber_id: subscriberId,
+        base_url: baseUrl,
+      });
+      setTestResult(result);
+      if (result.ok) toast.success(`Conexão OK em ${result.total_latency_ms}ms`);
+      else if (result.auth === "invalid_token") toast.error("Token inválido ou sem permissão");
+      else toast.warning("Alguns endpoints falharam — veja detalhes");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Erro ao testar";
+      setTestResult({ ok: false, auth: "invalid_token", total_latency_ms: 0, base_url: baseUrl, subscriber_id: subscriberId, error: msg, results: [] });
+      toast.error(msg);
+    } finally {
+      setTesting(false);
+    }
+  }
+
   function copy(text: string, label: string) {
     navigator.clipboard.writeText(text).then(() => toast.success(`${label} copiado`));
   }
