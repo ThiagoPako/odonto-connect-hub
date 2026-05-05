@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as UsuariosRouteImport } from './routes/usuarios'
 import { Route as TratamentosRouteImport } from './routes/tratamentos'
 import { Route as SuperAdminRouteImport } from './routes/super-admin'
 import { Route as SignupRouteImport } from './routes/signup'
@@ -45,6 +46,11 @@ import { Route as AgendaRouteImport } from './routes/agenda'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ConfiguracoesAgendaRouteImport } from './routes/configuracoes.agenda'
 
+const UsuariosRoute = UsuariosRouteImport.update({
+  id: '/usuarios',
+  path: '/usuarios',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const TratamentosRoute = TratamentosRouteImport.update({
   id: '/tratamentos',
   path: '/tratamentos',
@@ -256,6 +262,7 @@ export interface FileRoutesByFullPath {
   '/signup': typeof SignupRoute
   '/super-admin': typeof SuperAdminRoute
   '/tratamentos': typeof TratamentosRoute
+  '/usuarios': typeof UsuariosRoute
   '/configuracoes/agenda': typeof ConfiguracoesAgendaRoute
 }
 export interface FileRoutesByTo {
@@ -293,6 +300,7 @@ export interface FileRoutesByTo {
   '/signup': typeof SignupRoute
   '/super-admin': typeof SuperAdminRoute
   '/tratamentos': typeof TratamentosRoute
+  '/usuarios': typeof UsuariosRoute
   '/configuracoes/agenda': typeof ConfiguracoesAgendaRoute
 }
 export interface FileRoutesById {
@@ -331,6 +339,7 @@ export interface FileRoutesById {
   '/signup': typeof SignupRoute
   '/super-admin': typeof SuperAdminRoute
   '/tratamentos': typeof TratamentosRoute
+  '/usuarios': typeof UsuariosRoute
   '/configuracoes/agenda': typeof ConfiguracoesAgendaRoute
 }
 export interface FileRouteTypes {
@@ -370,6 +379,7 @@ export interface FileRouteTypes {
     | '/signup'
     | '/super-admin'
     | '/tratamentos'
+    | '/usuarios'
     | '/configuracoes/agenda'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -407,6 +417,7 @@ export interface FileRouteTypes {
     | '/signup'
     | '/super-admin'
     | '/tratamentos'
+    | '/usuarios'
     | '/configuracoes/agenda'
   id:
     | '__root__'
@@ -444,6 +455,7 @@ export interface FileRouteTypes {
     | '/signup'
     | '/super-admin'
     | '/tratamentos'
+    | '/usuarios'
     | '/configuracoes/agenda'
   fileRoutesById: FileRoutesById
 }
@@ -482,10 +494,18 @@ export interface RootRouteChildren {
   SignupRoute: typeof SignupRoute
   SuperAdminRoute: typeof SuperAdminRoute
   TratamentosRoute: typeof TratamentosRoute
+  UsuariosRoute: typeof UsuariosRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/usuarios': {
+      id: '/usuarios'
+      path: '/usuarios'
+      fullPath: '/usuarios'
+      preLoaderRoute: typeof UsuariosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/tratamentos': {
       id: '/tratamentos'
       path: '/tratamentos'
@@ -781,6 +801,7 @@ const rootRouteChildren: RootRouteChildren = {
   SignupRoute: SignupRoute,
   SuperAdminRoute: SuperAdminRoute,
   TratamentosRoute: TratamentosRoute,
+  UsuariosRoute: UsuariosRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

@@ -497,6 +497,138 @@ app.get('/api/my-tenant', async (req, res) => {
   }
 });
 
+// ─── Tenant: list users in my tenant ────────────────────────
+app.get('/api/my-tenant/users', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (user.role !== 'admin') return res.status(403).json({ error: 'Apenas admin do tenant' });
+    if (!user.tenant_id) return res.status(404).json({ error: 'Usuário sem tenant' });
+    const { rows } = await pool.query(
+      `SELECT p.id, p.name, p.email, p.avatar_url, p.created_at, p.updated_at,
+              COALESCE(p.active, true) as active,
+              COALESCE(ur.role::text, p.role::text, 'user') as role
+         FROM profiles p
+         LEFT JOIN user_roles ur ON ur.user_id = p.id
+        WHERE p.tenant_id = $1
+        ORDER BY p.created_at DESC`,
+      [user.tenant_id]
+    );
+    res.json({ data: rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/my-tenant/users', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (user.role !== 'admin') return res.status(403).json({ error: 'Apenas admin do tenant' });
+    if (!user.tenant_id) return res.status(404).json({ error: 'Usuário sem tenant' });
+    const { name, email, password, role } = req.body || {};
+    if (!name || !email || !password) return res.status(400).json({ error: 'Nome, email e senha obrigatórios' });
+    if (password.length < 6) return res.status(400).json({ error: 'Senha mínima de 6 caracteres' });
+
+    const allowed = ['admin', 'dentista', 'recepcionista', 'comercial', 'user'];
+    const userRole = allowed.includes(role) ? role : 'user';
+
+    const normalizedEmail = email.toLowerCase().trim();
+    const { rows: existing } = await pool.query('SELECT id FROM profiles WHERE email = $1', [normalizedEmail]);
+    if (existing.length > 0) return res.status(409).json({ error: 'Email já cadastrado' });
+
+    // Plan limit check
+    const { rows: planRows } = await pool.query(
+      `SELECT pl.max_usuarios FROM tenants t LEFT JOIN plans pl ON pl.id = t.plan_id WHERE t.id = $1`,
+      [user.tenant_id]
+    );
+    const maxUsers = planRows[0]?.max_usuarios;
+    if (maxUsers != null) {
+      const { rows: countRows } = await pool.query(
+        `SELECT COUNT(*)::int as c FROM profiles WHERE tenant_id = $1 AND COALESCE(active, true) = true`,
+        [user.tenant_id]
+      );
+      if (countRows[0].c >= maxUsers) {
+        return res.status(403).json({ error: `Limite de ${maxUsers} usuários do plano atingido` });
+      }
+    }
+
+    const id = crypto.randomUUID();
+    const hash = await bcrypt.hash(password, 12);
+    await pool.query(
+      `INSERT INTO profiles (id, name, email, role, password_hash, active, tenant_id, is_super_admin)
+       VALUES ($1,$2,$3,$4,$5,true,$6,false)`,
+      [id, name.trim(), normalizedEmail, userRole, hash, user.tenant_id]
+    );
+    await pool.query('INSERT INTO user_roles (user_id, role) VALUES ($1, $2) ON CONFLICT DO NOTHING', [id, userRole]);
+    res.json({ success: true, user: { id, name: name.trim(), email: normalizedEmail, role: userRole, active: true } });
+  } catch (e) {
+    console.error('Tenant create user error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.patch('/api/my-tenant/users/:id', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (user.role !== 'admin') return res.status(403).json({ error: 'Apenas admin do tenant' });
+    if (!user.tenant_id) return res.status(404).json({ error: 'Usuário sem tenant' });
+    const { id } = req.params;
+    const { name, email, role, active } = req.body || {};
+
+    // Ensure target belongs to same tenant
+    const { rows: target } = await pool.query('SELECT id, tenant_id FROM profiles WHERE id = $1', [id]);
+    if (!target[0] || target[0].tenant_id !== user.tenant_id) {
+      return res.status(404).json({ error: 'Usuário não encontrado neste tenant' });
+    }
+    if (id === user.id && active === false) {
+      return res.status(400).json({ error: 'Você não pode desativar o próprio usuário' });
+    }
+
+    const updates = [];
+    const values = [];
+    let idx = 1;
+    if (name !== undefined) { updates.push(`name = $${idx++}`); values.push(String(name).trim()); }
+    if (email !== undefined) { updates.push(`email = $${idx++}`); values.push(String(email).toLowerCase().trim()); }
+    if (active !== undefined) { updates.push(`active = $${idx++}`); values.push(!!active); }
+    if (updates.length) {
+      updates.push(`updated_at = NOW()`);
+      values.push(id);
+      await pool.query(`UPDATE profiles SET ${updates.join(', ')} WHERE id = $${idx}`, values);
+    }
+    if (role !== undefined) {
+      const allowed = ['admin', 'dentista', 'recepcionista', 'comercial', 'user'];
+      if (!allowed.includes(role)) return res.status(400).json({ error: 'Perfil inválido' });
+      await pool.query('DELETE FROM user_roles WHERE user_id = $1', [id]);
+      await pool.query('INSERT INTO user_roles (user_id, role) VALUES ($1, $2)', [id, role]);
+      await pool.query('UPDATE profiles SET role = $1, updated_at = NOW() WHERE id = $2', [role, id]);
+    }
+    res.json({ success: true });
+  } catch (e) {
+    console.error('Tenant update user error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/my-tenant/users/:id/reset-password', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (user.role !== 'admin') return res.status(403).json({ error: 'Apenas admin do tenant' });
+    if (!user.tenant_id) return res.status(404).json({ error: 'Usuário sem tenant' });
+    const { id } = req.params;
+    const { password } = req.body || {};
+    if (!password || password.length < 6) return res.status(400).json({ error: 'Senha mínima de 6 caracteres' });
+
+    const { rows: target } = await pool.query('SELECT id, tenant_id FROM profiles WHERE id = $1', [id]);
+    if (!target[0] || target[0].tenant_id !== user.tenant_id) {
+      return res.status(404).json({ error: 'Usuário não encontrado neste tenant' });
+    }
+    const hash = await bcrypt.hash(password, 12);
+    await pool.query('UPDATE profiles SET password_hash = $1, updated_at = NOW() WHERE id = $2', [hash, id]);
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/api/my-tenant/change-plan', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
