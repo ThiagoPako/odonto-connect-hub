@@ -10,6 +10,7 @@ import { QueueManagementPanel } from "@/components/QueueManagementPanel";
 import { AttendanceSettingsPanel } from "@/components/AttendanceSettingsPanel";
 import { TagManagementPanel } from "@/components/TagManagementPanel";
 import { AISettingsPanel } from "@/components/AISettingsPanel";
+import { ClinicorpPanel } from "@/components/ClinicorpPanel";
 import {
   Settings,
   Building2,
@@ -21,6 +22,7 @@ import {
   ShieldAlert,
   CalendarClock,
   ChevronRight,
+  Plug,
 } from "lucide-react";
 
 export const Route = createFileRoute("/configuracoes")({
@@ -33,6 +35,7 @@ type TabId =
   | "agenda"
   | "atendimento"
   | "ia"
+  | "integracoes"
   | "tags"
   | "notificacoes"
   | "usuarios"
@@ -50,6 +53,7 @@ const TABS: TabDef[] = [
   { id: "agenda", label: "Agenda", description: "Horários de funcionamento e regras de agendamento", icon: CalendarClock },
   { id: "atendimento", label: "Atendimento", description: "Fila, regras e tempo de atendimento", icon: Headphones },
   { id: "ia", label: "Inteligência Artificial", description: "Provedor, chave e modelos da IA", icon: Bot },
+  { id: "integracoes", label: "Integrações", description: "Clinicorp e outras integrações externas", icon: Plug },
   { id: "tags", label: "Tags", description: "Etiquetas usadas em leads e contatos", icon: Tag },
   { id: "notificacoes", label: "Notificações", description: "Som, push e alertas do sistema", icon: Bell },
   { id: "usuarios", label: "Usuários", description: "Equipe e permissões de acesso", icon: Users },
@@ -143,6 +147,8 @@ function ConfiguracoesPage() {
               )}
 
               {activeTab === "ia" && <AISettingsPanel />}
+
+              {activeTab === "integracoes" && <ClinicorpPanel />}
 
               {activeTab === "tags" && <TagManagementPanel />}
 
