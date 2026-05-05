@@ -495,7 +495,8 @@ async function projectAppointmentToLocal(pool, a, cpApptId) {
   const observacoes = a.Notes || null;
 
   const exists = await pool.query(
-    `SELECT id, updated_at, last_clinicorp_sync_at, keep_local
+    `SELECT id, paciente_id, dentista_id, data, hora, duracao, procedimento, categoria,
+            categoria_cor, status, observacoes, updated_at, last_clinicorp_sync_at, keep_local
        FROM agendamentos WHERE clinicorp_appointment_id=$1 LIMIT 1`,
     [cpApptId]
   );
@@ -509,6 +510,14 @@ async function projectAppointmentToLocal(pool, a, cpApptId) {
       localRow,
       clinicorpUpdatedAt: cpUpdatedAt,
     });
+    const beforeSnap = {
+      data: localRow.data, hora: localRow.hora, duracao: localRow.duracao,
+      procedimento: localRow.procedimento, categoria: localRow.categoria,
+      categoria_cor: localRow.categoria_cor, status: localRow.status,
+      observacoes: localRow.observacoes,
+    };
+    const afterSnap = { data, hora, duracao, procedimento, categoria: procedimento, categoria_cor: categoriaCor, status, observacoes };
+    const { changed, beforeOut, afterOut } = diffFields(beforeSnap, afterSnap);
     if (decision.write) {
       await pool.query(
         `UPDATE agendamentos SET paciente_id=COALESCE($2,paciente_id), dentista_id=COALESCE($3,dentista_id),
@@ -520,7 +529,11 @@ async function projectAppointmentToLocal(pool, a, cpApptId) {
         [agendamentoId, pacienteId, dentistaId, data, hora, duracao, procedimento, procedimento, categoriaCor, status, observacoes]
       );
     }
-    if (decision.decision !== 'overwritten_by_clinicorp') {
+    // Audit: registramos sempre que houver divergência real ou decisão não-trivial
+    if (changed.length > 0 || decision.decision !== 'overwritten_by_clinicorp') {
+      const leadRow = pacienteId
+        ? (await pool.query(`SELECT id FROM crm_leads WHERE paciente_id=$1 LIMIT 1`, [pacienteId])).rows[0]
+        : null;
       await logConflict(pool, {
         entity: 'appointment', clinicorp_id: cpApptId, local_id: agendamentoId,
         decision: decision.decision, strategy: policy.strategy,
@@ -528,7 +541,13 @@ async function projectAppointmentToLocal(pool, a, cpApptId) {
         local_updated_at: localRow.updated_at,
         clinicorp_updated_at: cpUpdatedAt,
         last_sync_at: localRow.last_clinicorp_sync_at,
-        diff: { data, hora, status, procedimento },
+        diff: { changed },
+        before_data: beforeOut,
+        after_data: afterOut,
+        changed_fields: changed,
+        paciente_id: pacienteId,
+        lead_id: leadRow?.id || null,
+        agendamento_id: agendamentoId,
       });
     }
   } else if (data) {
