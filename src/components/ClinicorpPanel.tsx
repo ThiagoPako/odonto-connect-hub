@@ -39,6 +39,26 @@ export function ClinicorpPanel() {
   const [conflictStrategy, setConflictStrategy] = useState<"clinicorp_wins" | "local_wins" | "newest_wins">("newest_wins");
   const [overrides, setOverrides] = useState<ClinicorpOverride[]>([]);
   const [conflicts, setConflicts] = useState<ClinicorpConflict[]>([]);
+  const [conflictFilterEntity, setConflictFilterEntity] = useState<"" | "appointment" | "patient">("");
+  const [conflictFilterDecision, setConflictFilterDecision] = useState<string>("");
+  const [expandedConflicts, setExpandedConflicts] = useState<Set<number>>(new Set());
+
+  async function reloadConflicts() {
+    const cfs = await clinicorpApi.listConflicts({
+      limit: 200,
+      entity: conflictFilterEntity || undefined,
+      decision: conflictFilterDecision || undefined,
+    });
+    setConflicts(cfs);
+  }
+
+  function toggleConflict(id: number) {
+    setExpandedConflicts((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
   const [newOvScope, setNewOvScope] = useState<"clinic" | "professional">("professional");
   const [newOvId, setNewOvId] = useState("");
   const [newOvKeepLocal, setNewOvKeepLocal] = useState(true);
