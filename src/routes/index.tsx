@@ -315,18 +315,17 @@ function LandingPage() {
                       </li>
                     ))}
                   </ul>
-                  <a
-                    href="https://wa.me/5511999990001"
-                    target="_blank"
-                    rel="noopener noreferrer"
+                  <Link
+                    to="/signup"
+                    search={{ plan: plan.slug }}
                     className={`mt-8 w-full inline-flex items-center justify-center gap-2 rounded-xl px-6 py-3 text-sm font-bold transition-all ${
                       plan.popular
                         ? "gradient-primary text-primary-foreground shadow-glow-primary hover:opacity-90"
                         : "border border-border bg-accent text-foreground hover:bg-primary hover:text-primary-foreground"
                     }`}
                   >
-                    Começar Agora <ArrowRight className="h-4 w-4" />
-                  </a>
+                    Iniciar teste grátis <ArrowRight className="h-4 w-4" />
+                  </Link>
                 </div>
               </ScrollReveal>
             ))}
