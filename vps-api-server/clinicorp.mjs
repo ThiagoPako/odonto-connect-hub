@@ -408,18 +408,43 @@ async function resolveConflictPolicy(pool, { clinicId, professionalId } = {}) {
   return { strategy, keepLocal, scopeType, scopeId };
 }
 
+// Calcula campos alterados entre o estado local atual e o que viria do Clinicorp.
+function diffFields(before = {}, after = {}) {
+  const keys = new Set([...Object.keys(before || {}), ...Object.keys(after || {})]);
+  const changed = [];
+  const beforeOut = {};
+  const afterOut = {};
+  for (const k of keys) {
+    const b = before?.[k] ?? null;
+    const a = after?.[k] ?? null;
+    const norm = (v) => (v instanceof Date ? v.toISOString() : v);
+    if (JSON.stringify(norm(b)) !== JSON.stringify(norm(a))) {
+      changed.push(k);
+      beforeOut[k] = b;
+      afterOut[k] = a;
+    }
+  }
+  return { changed, beforeOut, afterOut };
+}
+
 async function logConflict(pool, row) {
   try {
     await pool.query(
       `INSERT INTO clinicorp_conflicts
          (entity, clinicorp_id, local_id, decision, strategy, scope_type, scope_id,
-          local_updated_at, clinicorp_updated_at, last_sync_at, diff)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+          local_updated_at, clinicorp_updated_at, last_sync_at, diff,
+          before_data, after_data, changed_fields,
+          paciente_id, lead_id, agendamento_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
       [row.entity, row.clinicorp_id != null ? String(row.clinicorp_id) : null,
        row.local_id != null ? String(row.local_id) : null,
        row.decision, row.strategy, row.scope_type, row.scope_id,
        row.local_updated_at || null, row.clinicorp_updated_at || null,
-       row.last_sync_at || null, row.diff ? JSON.stringify(row.diff) : null]
+       row.last_sync_at || null, row.diff ? JSON.stringify(row.diff) : null,
+       row.before_data ? JSON.stringify(row.before_data) : null,
+       row.after_data  ? JSON.stringify(row.after_data)  : null,
+       row.changed_fields && row.changed_fields.length ? row.changed_fields : null,
+       row.paciente_id || null, row.lead_id || null, row.agendamento_id || null]
     );
   } catch (e) { console.error('[clinicorp] logConflict', e.message); }
 }
