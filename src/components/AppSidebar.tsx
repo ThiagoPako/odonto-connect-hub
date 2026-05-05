@@ -101,6 +101,8 @@ const navSections: NavSection[] = [
       { title: "Estoque", url: "/estoque", icon: Package },
       { title: "Canais", url: "/canais", icon: Radio },
       { title: "Equipe", url: "/equipe", icon: UserCog },
+      { title: "Minha Assinatura", url: "/minha-assinatura", icon: Settings },
+      { title: "Super Admin", url: "/super-admin", icon: Settings },
       { title: "Configurações", url: "/configuracoes", icon: Settings },
     ],
   },
