@@ -220,13 +220,54 @@ export function ClinicorpUserCredentials() {
           )}
         </div>
 
-        <div className="flex items-center justify-between pt-2 border-t border-border/60">
+        {/* Test result panel */}
+        {testResult && (
+          <div className={`rounded-lg border p-3 space-y-2 ${
+            testResult.ok ? "border-emerald-500/30 bg-emerald-500/5"
+            : testResult.auth === "invalid_token" ? "border-destructive/30 bg-destructive/5"
+            : "border-amber-500/30 bg-amber-500/5"
+          }`}>
+            <div className="flex items-center gap-2 text-sm font-medium">
+              {testResult.ok
+                ? <><CheckCircle2 className="h-4 w-4 text-emerald-600" /> Conexão validada</>
+                : testResult.auth === "invalid_token"
+                  ? <><XCircle className="h-4 w-4 text-destructive" /> Falha de autenticação</>
+                  : <><AlertCircle className="h-4 w-4 text-amber-600" /> Conexão parcial</>}
+              <span className="ml-auto text-xs text-muted-foreground">{testResult.total_latency_ms}ms</span>
+            </div>
+            {testResult.error && <p className="text-xs text-destructive">{testResult.error}</p>}
+            {testResult.results.length > 0 && (
+              <ul className="text-xs space-y-1">
+                {testResult.results.map((r) => (
+                  <li key={r.key} className="flex items-center gap-2">
+                    {r.ok
+                      ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+                      : <XCircle className="h-3.5 w-3.5 text-destructive shrink-0" />}
+                    <span className="font-medium">{r.label}</span>
+                    <span className="text-muted-foreground">{r.latency_ms}ms</span>
+                    {r.ok
+                      ? <span className="text-muted-foreground">· {r.count ?? 0} reg.</span>
+                      : <span className="text-destructive truncate">· {r.error}</span>}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-border/60">
           <Button variant="ghost" size="sm" onClick={remove} className="text-destructive hover:text-destructive" disabled={!settings?.has_api_token && !settings?.enabled}>
             <Trash2 className="h-4 w-4 mr-1" /> Remover credenciais
           </Button>
-          <Button onClick={save} disabled={saving}>
-            {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Salvar credenciais
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={testConnection} disabled={testing || saving}>
+              {testing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <PlugZap className="h-4 w-4 mr-2" />}
+              Testar conexão
+            </Button>
+            <Button onClick={save} disabled={saving || testing}>
+              {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Salvar credenciais
+            </Button>
+          </div>
         </div>
       </CardContent>
     </Card>
