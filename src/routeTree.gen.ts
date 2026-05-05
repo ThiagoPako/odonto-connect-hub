@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as TratamentosRouteImport } from './routes/tratamentos'
+import { Route as SuperAdminRouteImport } from './routes/super-admin'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as RelatoriosClinicosRouteImport } from './routes/relatorios-clinicos'
 import { Route as ReativacaoRouteImport } from './routes/reativacao'
@@ -47,6 +48,11 @@ import { Route as ConfiguracoesAgendaRouteImport } from './routes/configuracoes.
 const TratamentosRoute = TratamentosRouteImport.update({
   id: '/tratamentos',
   path: '/tratamentos',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SuperAdminRoute = SuperAdminRouteImport.update({
+  id: '/super-admin',
+  path: '/super-admin',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SignupRoute = SignupRouteImport.update({
@@ -248,6 +254,7 @@ export interface FileRoutesByFullPath {
   '/reativacao': typeof ReativacaoRoute
   '/relatorios-clinicos': typeof RelatoriosClinicosRoute
   '/signup': typeof SignupRoute
+  '/super-admin': typeof SuperAdminRoute
   '/tratamentos': typeof TratamentosRoute
   '/configuracoes/agenda': typeof ConfiguracoesAgendaRoute
 }
@@ -284,6 +291,7 @@ export interface FileRoutesByTo {
   '/reativacao': typeof ReativacaoRoute
   '/relatorios-clinicos': typeof RelatoriosClinicosRoute
   '/signup': typeof SignupRoute
+  '/super-admin': typeof SuperAdminRoute
   '/tratamentos': typeof TratamentosRoute
   '/configuracoes/agenda': typeof ConfiguracoesAgendaRoute
 }
@@ -321,6 +329,7 @@ export interface FileRoutesById {
   '/reativacao': typeof ReativacaoRoute
   '/relatorios-clinicos': typeof RelatoriosClinicosRoute
   '/signup': typeof SignupRoute
+  '/super-admin': typeof SuperAdminRoute
   '/tratamentos': typeof TratamentosRoute
   '/configuracoes/agenda': typeof ConfiguracoesAgendaRoute
 }
@@ -359,6 +368,7 @@ export interface FileRouteTypes {
     | '/reativacao'
     | '/relatorios-clinicos'
     | '/signup'
+    | '/super-admin'
     | '/tratamentos'
     | '/configuracoes/agenda'
   fileRoutesByTo: FileRoutesByTo
@@ -395,6 +405,7 @@ export interface FileRouteTypes {
     | '/reativacao'
     | '/relatorios-clinicos'
     | '/signup'
+    | '/super-admin'
     | '/tratamentos'
     | '/configuracoes/agenda'
   id:
@@ -431,6 +442,7 @@ export interface FileRouteTypes {
     | '/reativacao'
     | '/relatorios-clinicos'
     | '/signup'
+    | '/super-admin'
     | '/tratamentos'
     | '/configuracoes/agenda'
   fileRoutesById: FileRoutesById
@@ -468,6 +480,7 @@ export interface RootRouteChildren {
   ReativacaoRoute: typeof ReativacaoRoute
   RelatoriosClinicosRoute: typeof RelatoriosClinicosRoute
   SignupRoute: typeof SignupRoute
+  SuperAdminRoute: typeof SuperAdminRoute
   TratamentosRoute: typeof TratamentosRoute
 }
 
@@ -478,6 +491,13 @@ declare module '@tanstack/react-router' {
       path: '/tratamentos'
       fullPath: '/tratamentos'
       preLoaderRoute: typeof TratamentosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/super-admin': {
+      id: '/super-admin'
+      path: '/super-admin'
+      fullPath: '/super-admin'
+      preLoaderRoute: typeof SuperAdminRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/signup': {
@@ -759,6 +779,7 @@ const rootRouteChildren: RootRouteChildren = {
   ReativacaoRoute: ReativacaoRoute,
   RelatoriosClinicosRoute: RelatoriosClinicosRoute,
   SignupRoute: SignupRoute,
+  SuperAdminRoute: SuperAdminRoute,
   TratamentosRoute: TratamentosRoute,
 }
 export const routeTree = rootRouteImport
