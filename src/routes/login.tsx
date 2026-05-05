@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useState, useEffect, type FormEvent } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { forgotPassword } from "@/lib/vpsApi";
@@ -199,6 +199,12 @@ function LoginPage() {
             >
               Esqueci minha senha
             </button>
+            <p className="text-center text-sm text-muted-foreground">
+              Não tem conta?{" "}
+              <Link to="/signup" className="text-primary hover:underline font-medium">
+                Cadastre sua clínica
+              </Link>
+            </p>
           </form>
         </CardContent>
       </Card>

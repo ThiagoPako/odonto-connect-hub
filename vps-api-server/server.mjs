@@ -234,7 +234,21 @@ async function verifyUser(req) {
   if (!authHeader?.startsWith('Bearer ')) throw new Error('Unauthorized');
   const token = authHeader.replace('Bearer ', '');
   const decoded = verifyToken(token);
-  return { user: { id: decoded.sub, email: decoded.email, role: decoded.role } };
+  return {
+    user: {
+      id: decoded.sub,
+      email: decoded.email,
+      role: decoded.role,
+      tenant_id: decoded.tenant_id || null,
+      is_super_admin: !!decoded.is_super_admin,
+    },
+  };
+}
+
+async function verifySuperAdmin(req) {
+  const { user } = await verifyUser(req);
+  if (!user.is_super_admin) throw new Error('Super admin access required');
+  return { user };
 }
 
 async function verifyAdmin(req) {
@@ -253,7 +267,10 @@ async function getProfileByEmail(email) {
 
   try {
     const { rows } = await pool.query(
-      'SELECT id, name, email, role, avatar_url, password_hash, COALESCE(active, true) as active FROM profiles WHERE email = $1 LIMIT 1',
+      `SELECT id, name, email, role, avatar_url, password_hash,
+              COALESCE(active, true) as active,
+              tenant_id, COALESCE(is_super_admin, false) as is_super_admin
+       FROM profiles WHERE email = $1 LIMIT 1`,
       [normalizedEmail]
     );
     return rows[0] || null;
@@ -261,7 +278,7 @@ async function getProfileByEmail(email) {
     if (error?.code !== '42703') throw error;
 
     const { rows } = await pool.query(
-      'SELECT id, name, email, role, avatar_url, password_hash, true as active FROM profiles WHERE email = $1 LIMIT 1',
+      'SELECT id, name, email, role, avatar_url, password_hash, true as active, NULL::uuid as tenant_id, false as is_super_admin FROM profiles WHERE email = $1 LIMIT 1',
       [normalizedEmail]
     );
     return rows[0] || null;
@@ -319,15 +336,275 @@ app.post('/api/auth/login', async (req, res) => {
     );
     const role = roles[0]?.role || profile.role || 'user';
 
-    const token = signToken({ sub: profile.id, email: profile.email, role });
+    const token = signToken({
+      sub: profile.id,
+      email: profile.email,
+      role,
+      tenant_id: profile.tenant_id || null,
+      is_super_admin: !!profile.is_super_admin,
+    });
 
     res.json({
       token,
-      user: { id: profile.id, email: profile.email, name: profile.name, role, avatar_url: profile.avatar_url },
+      user: {
+        id: profile.id,
+        email: profile.email,
+        name: profile.name,
+        role,
+        avatar_url: profile.avatar_url,
+        tenant_id: profile.tenant_id || null,
+        is_super_admin: !!profile.is_super_admin,
+      },
     });
   } catch (error) {
     console.error('Login error:', error);
     res.status(500).json({ error: 'Erro interno no servidor' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// SAAS — TENANTS / PLANS / SUBSCRIPTIONS
+// ═══════════════════════════════════════════════════════════════
+
+function slugify(s) {
+  return String(s || '')
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60);
+}
+
+app.get('/api/plans', async (_req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, slug, nome, descricao, preco_mensal, preco_anual, trial_days,
+              max_usuarios, max_dentistas, max_pacientes, max_whatsapp_instances,
+              features, display_order
+         FROM plans WHERE ativo = true ORDER BY display_order, preco_mensal`
+    );
+    res.json({ data: rows });
+  } catch (error) {
+    console.error('GET /api/plans error:', error);
+    res.status(500).json({ error: 'Erro ao listar planos' });
+  }
+});
+
+app.post('/api/auth/signup-clinic', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { clinic_name, admin_name, email, password, plan_slug, telefone, cnpj } = req.body || {};
+    if (!clinic_name || !admin_name || !email || !password) {
+      return res.status(400).json({ error: 'Campos obrigatórios: clinic_name, admin_name, email, password' });
+    }
+    if (String(password).length < 6) {
+      return res.status(400).json({ error: 'Senha deve ter no mínimo 6 caracteres' });
+    }
+    const normalizedEmail = String(email).toLowerCase().trim();
+
+    const existing = await getProfileByEmail(normalizedEmail);
+    if (existing) return res.status(409).json({ error: 'Email já cadastrado' });
+
+    const planSlug = plan_slug || 'starter';
+    const { rows: planRows } = await client.query('SELECT * FROM plans WHERE slug = $1 AND ativo = true', [planSlug]);
+    const plan = planRows[0];
+    if (!plan) return res.status(400).json({ error: 'Plano inválido' });
+
+    await client.query('BEGIN');
+
+    const baseSlug = slugify(clinic_name) || 'clinica';
+    let slug = baseSlug;
+    let i = 1;
+    while ((await client.query('SELECT 1 FROM tenants WHERE slug = $1', [slug])).rowCount) {
+      slug = `${baseSlug}-${i++}`;
+    }
+
+    const trialDays = plan.trial_days || 14;
+    const { rows: tRows } = await client.query(
+      `INSERT INTO tenants (nome, slug, cnpj, telefone, email_contato, status, trial_ends_at, plan_id)
+       VALUES ($1,$2,$3,$4,$5,'trial', NOW() + ($6 || ' days')::interval, $7) RETURNING *`,
+      [clinic_name, slug, cnpj || null, telefone || null, normalizedEmail, String(trialDays), plan.id]
+    );
+    const tenant = tRows[0];
+
+    const password_hash = await bcrypt.hash(password, 10);
+    const { rows: pRows } = await client.query(
+      `INSERT INTO profiles (name, email, role, password_hash, active, tenant_id, is_super_admin)
+       VALUES ($1,$2,'admin',$3,true,$4,false)
+       RETURNING id, name, email, role, avatar_url, tenant_id`,
+      [admin_name, normalizedEmail, password_hash, tenant.id]
+    );
+    const profile = pRows[0];
+
+    await client.query(
+      `INSERT INTO user_roles (user_id, role) VALUES ($1,'admin') ON CONFLICT DO NOTHING`,
+      [profile.id]
+    );
+
+    await client.query(
+      `INSERT INTO subscriptions (tenant_id, plan_id, status, current_period_end, gateway)
+       VALUES ($1,$2,'active', NOW() + ($3 || ' days')::interval, 'manual')`,
+      [tenant.id, plan.id, String(trialDays)]
+    );
+
+    await client.query('COMMIT');
+
+    const token = signToken({
+      sub: profile.id, email: profile.email, role: 'admin',
+      tenant_id: tenant.id, is_super_admin: false,
+    });
+
+    res.json({
+      token,
+      user: { ...profile, is_super_admin: false },
+      tenant,
+      plan,
+    });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Signup error:', error);
+    res.status(500).json({ error: error.message || 'Erro ao criar conta' });
+  } finally {
+    client.release();
+  }
+});
+
+app.get('/api/my-tenant', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(404).json({ error: 'Usuário sem tenant' });
+    const { rows } = await pool.query(
+      `SELECT t.*, p.nome as plan_nome, p.slug as plan_slug, p.preco_mensal, p.features,
+              p.max_usuarios, p.max_dentistas, p.max_pacientes
+         FROM tenants t LEFT JOIN plans p ON p.id = t.plan_id
+        WHERE t.id = $1`,
+      [user.tenant_id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Tenant não encontrado' });
+
+    const { rows: subs } = await pool.query(
+      `SELECT * FROM subscriptions WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT 1`,
+      [user.tenant_id]
+    );
+    const { rows: invs } = await pool.query(
+      `SELECT * FROM invoices WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT 12`,
+      [user.tenant_id]
+    );
+
+    res.json({ tenant: rows[0], subscription: subs[0] || null, invoices: invs });
+  } catch (e) {
+    res.status(401).json({ error: e.message });
+  }
+});
+
+app.post('/api/my-tenant/change-plan', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (user.role !== 'admin') return res.status(403).json({ error: 'Apenas admin do tenant' });
+    const { plan_slug } = req.body || {};
+    const { rows } = await pool.query('SELECT * FROM plans WHERE slug = $1 AND ativo = true', [plan_slug]);
+    if (!rows[0]) return res.status(400).json({ error: 'Plano inválido' });
+    await pool.query('UPDATE tenants SET plan_id = $1, updated_at = NOW() WHERE id = $2', [rows[0].id, user.tenant_id]);
+    res.json({ ok: true, plan: rows[0] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/super-admin/tenants', async (req, res) => {
+  try {
+    await verifySuperAdmin(req);
+    const { rows } = await pool.query(`
+      SELECT t.*, p.nome as plan_nome, p.slug as plan_slug,
+             (SELECT COUNT(*) FROM profiles WHERE tenant_id = t.id) as users_count
+      FROM tenants t LEFT JOIN plans p ON p.id = t.plan_id
+      ORDER BY t.created_at DESC
+    `);
+    res.json({ data: rows });
+  } catch (e) {
+    res.status(403).json({ error: e.message });
+  }
+});
+
+app.patch('/api/super-admin/tenants/:id', async (req, res) => {
+  try {
+    await verifySuperAdmin(req);
+    const { id } = req.params;
+    const { status, plan_slug, trial_ends_at, current_period_end } = req.body || {};
+    const sets = [], vals = [];
+    let i = 1;
+    if (status) { sets.push(`status = $${i++}`); vals.push(status); }
+    if (trial_ends_at !== undefined) { sets.push(`trial_ends_at = $${i++}`); vals.push(trial_ends_at); }
+    if (current_period_end !== undefined) { sets.push(`current_period_end = $${i++}`); vals.push(current_period_end); }
+    if (plan_slug) {
+      const { rows: pr } = await pool.query('SELECT id FROM plans WHERE slug = $1', [plan_slug]);
+      if (!pr[0]) return res.status(400).json({ error: 'Plano inválido' });
+      sets.push(`plan_id = $${i++}`); vals.push(pr[0].id);
+    }
+    if (!sets.length) return res.status(400).json({ error: 'Nada para atualizar' });
+    sets.push(`updated_at = NOW()`);
+    vals.push(id);
+    const { rows } = await pool.query(
+      `UPDATE tenants SET ${sets.join(', ')} WHERE id = $${i} RETURNING *`,
+      vals
+    );
+    res.json({ data: rows[0] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/super-admin/plans', async (req, res) => {
+  try {
+    await verifySuperAdmin(req);
+    const { rows } = await pool.query('SELECT * FROM plans ORDER BY display_order, preco_mensal');
+    res.json({ data: rows });
+  } catch (e) {
+    res.status(403).json({ error: e.message });
+  }
+});
+
+app.post('/api/super-admin/plans', async (req, res) => {
+  try {
+    await verifySuperAdmin(req);
+    const b = req.body || {};
+    if (!b.nome || !b.slug) return res.status(400).json({ error: 'nome e slug obrigatórios' });
+    const { rows } = await pool.query(
+      `INSERT INTO plans (slug, nome, descricao, preco_mensal, preco_anual, trial_days,
+        max_usuarios, max_dentistas, max_pacientes, max_whatsapp_instances, features, ativo, display_order)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
+      [b.slug, b.nome, b.descricao || null, b.preco_mensal || 0, b.preco_anual || null, b.trial_days || 14,
+       b.max_usuarios || null, b.max_dentistas || null, b.max_pacientes || null, b.max_whatsapp_instances || null,
+       b.features || {}, b.ativo !== false, b.display_order || 0]
+    );
+    res.json({ data: rows[0] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.patch('/api/super-admin/plans/:id', async (req, res) => {
+  try {
+    await verifySuperAdmin(req);
+    const { id } = req.params;
+    const b = req.body || {};
+    const fields = ['nome','descricao','preco_mensal','preco_anual','trial_days',
+      'max_usuarios','max_dentistas','max_pacientes','max_whatsapp_instances','features','ativo','display_order'];
+    const sets = [], vals = [];
+    let i = 1;
+    for (const f of fields) {
+      if (b[f] !== undefined) { sets.push(`${f} = $${i++}`); vals.push(b[f]); }
+    }
+    if (!sets.length) return res.status(400).json({ error: 'Nada para atualizar' });
+    sets.push('updated_at = NOW()');
+    vals.push(id);
+    const { rows } = await pool.query(
+      `UPDATE plans SET ${sets.join(', ')} WHERE id = $${i} RETURNING *`,
+      vals
+    );
+    res.json({ data: rows[0] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -747,12 +1024,20 @@ app.get('/api/auth/me', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     const { rows } = await pool.query(
-      'SELECT p.id, p.name, p.email, p.avatar_url, p.role, ur.role as user_role FROM profiles p LEFT JOIN user_roles ur ON ur.user_id = p.id WHERE p.id = $1 LIMIT 1',
+      `SELECT p.id, p.name, p.email, p.avatar_url, p.role, ur.role as user_role,
+              p.tenant_id, COALESCE(p.is_super_admin, false) as is_super_admin
+         FROM profiles p LEFT JOIN user_roles ur ON ur.user_id = p.id
+        WHERE p.id = $1 LIMIT 1`,
       [user.id]
     );
     if (rows.length === 0) return res.status(404).json({ error: 'Perfil não encontrado' });
     const profile = rows[0];
-    res.json({ id: profile.id, email: profile.email, name: profile.name, role: profile.user_role || profile.role, avatar_url: profile.avatar_url });
+    res.json({
+      id: profile.id, email: profile.email, name: profile.name,
+      role: profile.user_role || profile.role, avatar_url: profile.avatar_url,
+      tenant_id: profile.tenant_id || null,
+      is_super_admin: !!profile.is_super_admin,
+    });
   } catch (error) {
     res.status(401).json({ error: 'Não autenticado' });
   }
