@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useState, useEffect, type FormEvent } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { forgotPassword } from "@/lib/vpsApi";
