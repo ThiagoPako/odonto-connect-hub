@@ -23,6 +23,8 @@ export function ClinicorpUserCredentials() {
   const [webhookSecret, setWebhookSecret] = useState("");
   const [showToken, setShowToken] = useState(false);
   const [showSecret, setShowSecret] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<ClinicorpConnectionTest | null>(null);
 
   async function load() {
     setLoading(true);
