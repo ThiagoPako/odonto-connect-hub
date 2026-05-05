@@ -93,9 +93,9 @@ function LandingPage() {
                   Tudo que sua clínica precisa em uma única plataforma.
                 </p>
                 <div className="flex flex-col sm:flex-row gap-4">
-                  <a href="#planos" className="inline-flex items-center justify-center gap-2 rounded-xl gradient-primary px-8 py-3.5 text-base font-bold text-primary-foreground shadow-glow-primary hover:opacity-90 transition-opacity">
-                    Quero Conhecer <ArrowRight className="h-5 w-5" />
-                  </a>
+                  <Link to="/signup" className="inline-flex items-center justify-center gap-2 rounded-xl gradient-primary px-8 py-3.5 text-base font-bold text-primary-foreground shadow-glow-primary hover:opacity-90 transition-opacity">
+                    Iniciar teste grátis <ArrowRight className="h-5 w-5" />
+                  </Link>
                   <a href="https://wa.me/5511999990001" target="_blank" rel="noopener noreferrer" className="inline-flex items-center justify-center gap-2 rounded-xl border border-border bg-card px-8 py-3.5 text-base font-semibold text-foreground hover:bg-accent transition-colors">
                     <Phone className="h-5 w-5 text-primary" /> Falar com Consultor
                   </a>
