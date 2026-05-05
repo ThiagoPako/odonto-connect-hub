@@ -590,29 +590,53 @@ async function projectPatientToLocal(pool, p) {
   const cpUpdatedAt = p.UpdateDate || p.UpdatedAt || p.LastModified || null;
   const policy = await resolveConflictPolicy(pool, {});
   const existing = await pool.query(
-    `SELECT id, updated_at, last_clinicorp_sync_at, keep_local
+    `SELECT id, nome, telefone, email, data_nascimento, sexo, cpf,
+            updated_at, last_clinicorp_sync_at, keep_local
        FROM pacientes WHERE clinicorp_patient_id=$1 LIMIT 1`,
     [cpId]
   );
+  const incoming = {
+    nome: p.Name || null,
+    telefone: p.MobilePhone || null,
+    email: p.Email || null,
+    data_nascimento: p.BirthDate || null,
+    sexo: p.Sex || null,
+    cpf: p.DocumentId || null,
+  };
   if (existing.rows[0]) {
+    const localRow = existing.rows[0];
     const decision = decideOverwrite({
       strategy: policy.strategy,
       keepLocal: policy.keepLocal,
-      localRow: existing.rows[0],
+      localRow,
       clinicorpUpdatedAt: cpUpdatedAt,
     });
-    if (!decision.write) {
+    const beforeSnap = {
+      nome: localRow.nome, telefone: localRow.telefone, email: localRow.email,
+      data_nascimento: localRow.data_nascimento, sexo: localRow.sexo, cpf: localRow.cpf,
+    };
+    const { changed, beforeOut, afterOut } = diffFields(beforeSnap, incoming);
+    if (changed.length > 0 || decision.decision !== 'overwritten_by_clinicorp') {
+      const leadRow = (await pool.query(
+        `SELECT id FROM crm_leads WHERE paciente_id=$1 OR clinicorp_patient_id=$2 LIMIT 1`,
+        [localRow.id, cpId]
+      )).rows[0];
       await logConflict(pool, {
-        entity: 'patient', clinicorp_id: cpId, local_id: existing.rows[0].id,
+        entity: 'patient', clinicorp_id: cpId, local_id: localRow.id,
         decision: decision.decision, strategy: policy.strategy,
         scope_type: policy.scopeType, scope_id: policy.scopeId,
-        local_updated_at: existing.rows[0].updated_at,
+        local_updated_at: localRow.updated_at,
         clinicorp_updated_at: cpUpdatedAt,
-        last_sync_at: existing.rows[0].last_clinicorp_sync_at,
-        diff: { name: p.Name, email: p.Email, phone: p.MobilePhone },
+        last_sync_at: localRow.last_clinicorp_sync_at,
+        diff: { changed },
+        before_data: beforeOut,
+        after_data: afterOut,
+        changed_fields: changed,
+        paciente_id: localRow.id,
+        lead_id: leadRow?.id || null,
       });
-      return existing.rows[0].id;
     }
+    if (!decision.write) return localRow.id;
   }
   const pacienteId = await ensureLocalPatient(pool, cpId, { name: p.Name, phone: p.MobilePhone, email: p.Email });
   if (pacienteId) {
