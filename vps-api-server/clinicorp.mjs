@@ -408,18 +408,43 @@ async function resolveConflictPolicy(pool, { clinicId, professionalId } = {}) {
   return { strategy, keepLocal, scopeType, scopeId };
 }
 
+// Calcula campos alterados entre o estado local atual e o que viria do Clinicorp.
+function diffFields(before = {}, after = {}) {
+  const keys = new Set([...Object.keys(before || {}), ...Object.keys(after || {})]);
+  const changed = [];
+  const beforeOut = {};
+  const afterOut = {};
+  for (const k of keys) {
+    const b = before?.[k] ?? null;
+    const a = after?.[k] ?? null;
+    const norm = (v) => (v instanceof Date ? v.toISOString() : v);
+    if (JSON.stringify(norm(b)) !== JSON.stringify(norm(a))) {
+      changed.push(k);
+      beforeOut[k] = b;
+      afterOut[k] = a;
+    }
+  }
+  return { changed, beforeOut, afterOut };
+}
+
 async function logConflict(pool, row) {
   try {
     await pool.query(
       `INSERT INTO clinicorp_conflicts
          (entity, clinicorp_id, local_id, decision, strategy, scope_type, scope_id,
-          local_updated_at, clinicorp_updated_at, last_sync_at, diff)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+          local_updated_at, clinicorp_updated_at, last_sync_at, diff,
+          before_data, after_data, changed_fields,
+          paciente_id, lead_id, agendamento_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
       [row.entity, row.clinicorp_id != null ? String(row.clinicorp_id) : null,
        row.local_id != null ? String(row.local_id) : null,
        row.decision, row.strategy, row.scope_type, row.scope_id,
        row.local_updated_at || null, row.clinicorp_updated_at || null,
-       row.last_sync_at || null, row.diff ? JSON.stringify(row.diff) : null]
+       row.last_sync_at || null, row.diff ? JSON.stringify(row.diff) : null,
+       row.before_data ? JSON.stringify(row.before_data) : null,
+       row.after_data  ? JSON.stringify(row.after_data)  : null,
+       row.changed_fields && row.changed_fields.length ? row.changed_fields : null,
+       row.paciente_id || null, row.lead_id || null, row.agendamento_id || null]
     );
   } catch (e) { console.error('[clinicorp] logConflict', e.message); }
 }
@@ -470,7 +495,8 @@ async function projectAppointmentToLocal(pool, a, cpApptId) {
   const observacoes = a.Notes || null;
 
   const exists = await pool.query(
-    `SELECT id, updated_at, last_clinicorp_sync_at, keep_local
+    `SELECT id, paciente_id, dentista_id, data, hora, duracao, procedimento, categoria,
+            categoria_cor, status, observacoes, updated_at, last_clinicorp_sync_at, keep_local
        FROM agendamentos WHERE clinicorp_appointment_id=$1 LIMIT 1`,
     [cpApptId]
   );
@@ -484,6 +510,14 @@ async function projectAppointmentToLocal(pool, a, cpApptId) {
       localRow,
       clinicorpUpdatedAt: cpUpdatedAt,
     });
+    const beforeSnap = {
+      data: localRow.data, hora: localRow.hora, duracao: localRow.duracao,
+      procedimento: localRow.procedimento, categoria: localRow.categoria,
+      categoria_cor: localRow.categoria_cor, status: localRow.status,
+      observacoes: localRow.observacoes,
+    };
+    const afterSnap = { data, hora, duracao, procedimento, categoria: procedimento, categoria_cor: categoriaCor, status, observacoes };
+    const { changed, beforeOut, afterOut } = diffFields(beforeSnap, afterSnap);
     if (decision.write) {
       await pool.query(
         `UPDATE agendamentos SET paciente_id=COALESCE($2,paciente_id), dentista_id=COALESCE($3,dentista_id),
@@ -495,7 +529,11 @@ async function projectAppointmentToLocal(pool, a, cpApptId) {
         [agendamentoId, pacienteId, dentistaId, data, hora, duracao, procedimento, procedimento, categoriaCor, status, observacoes]
       );
     }
-    if (decision.decision !== 'overwritten_by_clinicorp') {
+    // Audit: registramos sempre que houver divergência real ou decisão não-trivial
+    if (changed.length > 0 || decision.decision !== 'overwritten_by_clinicorp') {
+      const leadRow = pacienteId
+        ? (await pool.query(`SELECT id FROM crm_leads WHERE paciente_id=$1 LIMIT 1`, [pacienteId])).rows[0]
+        : null;
       await logConflict(pool, {
         entity: 'appointment', clinicorp_id: cpApptId, local_id: agendamentoId,
         decision: decision.decision, strategy: policy.strategy,
@@ -503,7 +541,13 @@ async function projectAppointmentToLocal(pool, a, cpApptId) {
         local_updated_at: localRow.updated_at,
         clinicorp_updated_at: cpUpdatedAt,
         last_sync_at: localRow.last_clinicorp_sync_at,
-        diff: { data, hora, status, procedimento },
+        diff: { changed },
+        before_data: beforeOut,
+        after_data: afterOut,
+        changed_fields: changed,
+        paciente_id: pacienteId,
+        lead_id: leadRow?.id || null,
+        agendamento_id: agendamentoId,
       });
     }
   } else if (data) {
@@ -546,29 +590,53 @@ async function projectPatientToLocal(pool, p) {
   const cpUpdatedAt = p.UpdateDate || p.UpdatedAt || p.LastModified || null;
   const policy = await resolveConflictPolicy(pool, {});
   const existing = await pool.query(
-    `SELECT id, updated_at, last_clinicorp_sync_at, keep_local
+    `SELECT id, nome, telefone, email, data_nascimento, sexo, cpf,
+            updated_at, last_clinicorp_sync_at, keep_local
        FROM pacientes WHERE clinicorp_patient_id=$1 LIMIT 1`,
     [cpId]
   );
+  const incoming = {
+    nome: p.Name || null,
+    telefone: p.MobilePhone || null,
+    email: p.Email || null,
+    data_nascimento: p.BirthDate || null,
+    sexo: p.Sex || null,
+    cpf: p.DocumentId || null,
+  };
   if (existing.rows[0]) {
+    const localRow = existing.rows[0];
     const decision = decideOverwrite({
       strategy: policy.strategy,
       keepLocal: policy.keepLocal,
-      localRow: existing.rows[0],
+      localRow,
       clinicorpUpdatedAt: cpUpdatedAt,
     });
-    if (!decision.write) {
+    const beforeSnap = {
+      nome: localRow.nome, telefone: localRow.telefone, email: localRow.email,
+      data_nascimento: localRow.data_nascimento, sexo: localRow.sexo, cpf: localRow.cpf,
+    };
+    const { changed, beforeOut, afterOut } = diffFields(beforeSnap, incoming);
+    if (changed.length > 0 || decision.decision !== 'overwritten_by_clinicorp') {
+      const leadRow = (await pool.query(
+        `SELECT id FROM crm_leads WHERE paciente_id=$1 OR clinicorp_patient_id=$2 LIMIT 1`,
+        [localRow.id, cpId]
+      )).rows[0];
       await logConflict(pool, {
-        entity: 'patient', clinicorp_id: cpId, local_id: existing.rows[0].id,
+        entity: 'patient', clinicorp_id: cpId, local_id: localRow.id,
         decision: decision.decision, strategy: policy.strategy,
         scope_type: policy.scopeType, scope_id: policy.scopeId,
-        local_updated_at: existing.rows[0].updated_at,
+        local_updated_at: localRow.updated_at,
         clinicorp_updated_at: cpUpdatedAt,
-        last_sync_at: existing.rows[0].last_clinicorp_sync_at,
-        diff: { name: p.Name, email: p.Email, phone: p.MobilePhone },
+        last_sync_at: localRow.last_clinicorp_sync_at,
+        diff: { changed },
+        before_data: beforeOut,
+        after_data: afterOut,
+        changed_fields: changed,
+        paciente_id: localRow.id,
+        lead_id: leadRow?.id || null,
       });
-      return existing.rows[0].id;
     }
+    if (!decision.write) return localRow.id;
   }
   const pacienteId = await ensureLocalPatient(pool, cpId, { name: p.Name, phone: p.MobilePhone, email: p.Email });
   if (pacienteId) {
@@ -1097,8 +1165,25 @@ export function registerClinicorp(app, pool) {
   app.get('/api/clinicorp/conflicts', async (req, res) => {
     try {
       const limit = Math.min(Number(req.query.limit) || 100, 500);
+      const entity = req.query.entity ? String(req.query.entity) : null;
+      const decision = req.query.decision ? String(req.query.decision) : null;
+      const where = []; const params = [];
+      if (entity)   { params.push(entity);   where.push(`c.entity=$${params.length}`); }
+      if (decision) { params.push(decision); where.push(`c.decision=$${params.length}`); }
+      params.push(limit);
       const { rows } = await pool.query(
-        `SELECT * FROM clinicorp_conflicts ORDER BY created_at DESC LIMIT $1`, [limit]
+        `SELECT c.*,
+                p.nome AS paciente_nome,
+                l.id   AS lead_id_resolved,
+                l.kanban_stage AS lead_stage
+           FROM clinicorp_conflicts c
+           LEFT JOIN pacientes p ON p.id = c.paciente_id
+           LEFT JOIN crm_leads  l ON l.id = c.lead_id
+                                  OR (c.lead_id IS NULL AND l.paciente_id = c.paciente_id)
+          ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+          ORDER BY c.created_at DESC
+          LIMIT $${params.length}`,
+        params
       );
       res.json(rows);
     } catch (e) { res.status(500).json({ error: e.message }); }

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Loader2, RefreshCw, Copy, CheckCircle2, AlertCircle, KeyRound, Webhook, PlayCircle, Plug, ListChecks, Shield, Trash2, Plus } from "lucide-react";
+import { Link } from "@tanstack/react-router";
+import { Loader2, RefreshCw, Copy, CheckCircle2, AlertCircle, KeyRound, Webhook, PlayCircle, Plug, ListChecks, Shield, Trash2, Plus, ChevronDown, ChevronRight, ExternalLink, User, CalendarDays } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -38,6 +39,26 @@ export function ClinicorpPanel() {
   const [conflictStrategy, setConflictStrategy] = useState<"clinicorp_wins" | "local_wins" | "newest_wins">("newest_wins");
   const [overrides, setOverrides] = useState<ClinicorpOverride[]>([]);
   const [conflicts, setConflicts] = useState<ClinicorpConflict[]>([]);
+  const [conflictFilterEntity, setConflictFilterEntity] = useState<"" | "appointment" | "patient">("");
+  const [conflictFilterDecision, setConflictFilterDecision] = useState<string>("");
+  const [expandedConflicts, setExpandedConflicts] = useState<Set<number>>(new Set());
+
+  async function reloadConflicts() {
+    const cfs = await clinicorpApi.listConflicts({
+      limit: 200,
+      entity: conflictFilterEntity || undefined,
+      decision: conflictFilterDecision || undefined,
+    });
+    setConflicts(cfs);
+  }
+
+  function toggleConflict(id: number) {
+    setExpandedConflicts((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
   const [newOvScope, setNewOvScope] = useState<"clinic" | "professional">("professional");
   const [newOvId, setNewOvId] = useState("");
   const [newOvKeepLocal, setNewOvKeepLocal] = useState(true);
@@ -59,7 +80,7 @@ export function ClinicorpPanel() {
       const [evs, ovs, cfs] = await Promise.all([
         clinicorpApi.listWebhookEvents(50),
         clinicorpApi.listOverrides(),
-        clinicorpApi.listConflicts(50),
+        clinicorpApi.listConflicts({ limit: 50 }),
       ]);
       setEvents(evs);
       setOverrides(ovs);
@@ -441,50 +462,167 @@ export function ClinicorpPanel() {
           </div>
         </div>
 
-        {/* Histórico de conflitos */}
-        <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-2">
-          <div className="flex items-center justify-between">
-            <div className="text-sm font-semibold text-foreground">Conflitos detectados recentemente</div>
-            <Button size="sm" variant="ghost" onClick={async () => setConflicts(await clinicorpApi.listConflicts(100))}>
-              <RefreshCw className="h-3.5 w-3.5 mr-1" /> Atualizar
-            </Button>
+        {/* Auditoria de conflitos com antes/depois */}
+        <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-3">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div>
+              <div className="text-sm font-semibold text-foreground">Auditoria de conflitos</div>
+              <p className="text-[11px] text-muted-foreground">Histórico completo com snapshot antes/depois e link para o paciente/lead.</p>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <select
+                value={conflictFilterEntity}
+                onChange={(e) => setConflictFilterEntity(e.target.value as "" | "appointment" | "patient")}
+                className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+              >
+                <option value="">Todas entidades</option>
+                <option value="appointment">Agendamento</option>
+                <option value="patient">Paciente</option>
+              </select>
+              <select
+                value={conflictFilterDecision}
+                onChange={(e) => setConflictFilterDecision(e.target.value)}
+                className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+              >
+                <option value="">Todas decisões</option>
+                <option value="created">Criado</option>
+                <option value="overwritten_by_clinicorp">Sobrescrito pela Clinicorp</option>
+                <option value="kept_clinicorp_newer">Clinicorp mais recente</option>
+                <option value="kept_local">Local preservado</option>
+                <option value="kept_local_newer">Local mais recente</option>
+              </select>
+              <Button size="sm" variant="ghost" onClick={reloadConflicts}>
+                <RefreshCw className="h-3.5 w-3.5 mr-1" /> Atualizar
+              </Button>
+            </div>
           </div>
+
           {conflicts.length === 0 ? (
             <p className="text-xs text-muted-foreground py-3 text-center">Nenhum conflito registrado.</p>
           ) : (
-            <div className="overflow-x-auto max-h-72 overflow-y-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="text-left text-muted-foreground border-b border-border sticky top-0 bg-card">
-                    <th className="py-2 pr-3">Quando</th>
-                    <th className="py-2 pr-3">Entidade</th>
-                    <th className="py-2 pr-3">Decisão</th>
-                    <th className="py-2 pr-3">Estratégia</th>
-                    <th className="py-2 pr-3">Escopo</th>
-                    <th className="py-2 pr-3">Local</th>
-                    <th className="py-2 pr-3">Clinicorp</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {conflicts.map((c) => (
-                    <tr key={c.id} className="border-b border-border/40">
-                      <td className="py-1.5 pr-3 text-muted-foreground">{new Date(c.created_at).toLocaleString("pt-BR")}</td>
-                      <td className="py-1.5 pr-3">{c.entity}</td>
-                      <td className="py-1.5 pr-3">
-                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                          c.decision.startsWith("kept_local") ? "bg-warning/15 text-warning" :
-                          c.decision === "kept_clinicorp_newer" ? "bg-success/15 text-success" :
-                          "bg-muted text-muted-foreground"
-                        }`}>{c.decision}</span>
-                      </td>
-                      <td className="py-1.5 pr-3 font-mono text-[10px]">{c.strategy}</td>
-                      <td className="py-1.5 pr-3 text-muted-foreground">{c.scope_type}{c.scope_id ? `:${c.scope_id}` : ""}</td>
-                      <td className="py-1.5 pr-3 text-muted-foreground">{c.local_updated_at ? new Date(c.local_updated_at).toLocaleString("pt-BR") : "—"}</td>
-                      <td className="py-1.5 pr-3 text-muted-foreground">{c.clinicorp_updated_at ? new Date(c.clinicorp_updated_at).toLocaleString("pt-BR") : "—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="max-h-96 overflow-y-auto space-y-2">
+              {conflicts.map((c) => {
+                const expanded = expandedConflicts.has(c.id);
+                const decisionColor =
+                  c.decision.startsWith("kept_local") ? "bg-warning/15 text-warning" :
+                  c.decision === "kept_clinicorp_newer" ? "bg-success/15 text-success" :
+                  c.decision === "created" ? "bg-primary/15 text-primary" :
+                  "bg-muted text-muted-foreground";
+                const fields = c.changed_fields || [];
+                return (
+                  <div key={c.id} className="rounded-md border border-border bg-card">
+                    <button
+                      type="button"
+                      onClick={() => toggleConflict(c.id)}
+                      className="w-full flex items-center gap-2 p-2.5 text-left hover:bg-muted/40"
+                    >
+                      {expanded ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
+                      <span className="text-[11px] text-muted-foreground tabular-nums">{new Date(c.created_at).toLocaleString("pt-BR")}</span>
+                      <span className="text-xs font-medium flex items-center gap-1">
+                        {c.entity === "appointment" ? <CalendarDays className="h-3 w-3" /> : <User className="h-3 w-3" />}
+                        {c.entity === "appointment" ? "Agendamento" : "Paciente"}
+                      </span>
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${decisionColor}`}>{c.decision}</span>
+                      <span className="text-[10px] font-mono text-muted-foreground">{c.strategy}</span>
+                      {c.paciente_nome && (
+                        <span className="text-xs text-foreground truncate max-w-[200px]">· {c.paciente_nome}</span>
+                      )}
+                      {fields.length > 0 && (
+                        <span className="text-[10px] text-muted-foreground ml-auto">
+                          {fields.length} campo{fields.length > 1 ? "s" : ""} alterado{fields.length > 1 ? "s" : ""}
+                        </span>
+                      )}
+                    </button>
+
+                    {expanded && (
+                      <div className="border-t border-border p-3 space-y-3 bg-muted/10">
+                        {/* Links cruzados */}
+                        <div className="flex items-center gap-2 flex-wrap text-xs">
+                          {c.paciente_id && (
+                            <Link
+                              to="/pacientes"
+                              search={{ pacienteId: c.paciente_id }}
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-primary/10 text-primary hover:bg-primary/20"
+                            >
+                              <User className="h-3 w-3" /> Ver paciente
+                              <ExternalLink className="h-3 w-3" />
+                            </Link>
+                          )}
+                          {(c.lead_id || c.lead_id_resolved) && (
+                            <Link
+                              to="/crm"
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-accent/40 text-foreground hover:bg-accent/60"
+                            >
+                              <ListChecks className="h-3 w-3" /> Ver no CRM
+                              {c.lead_stage && <span className="text-[10px] text-muted-foreground">({c.lead_stage})</span>}
+                              <ExternalLink className="h-3 w-3" />
+                            </Link>
+                          )}
+                          {c.agendamento_id && (
+                            <Link
+                              to="/agenda"
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-secondary/40 text-foreground hover:bg-secondary/60"
+                            >
+                              <CalendarDays className="h-3 w-3" /> Abrir agenda
+                              <ExternalLink className="h-3 w-3" />
+                            </Link>
+                          )}
+                          <span className="ml-auto text-[10px] text-muted-foreground">
+                            Escopo: {c.scope_type}{c.scope_id ? `:${c.scope_id}` : ""} · Clinicorp ID: {c.clinicorp_id || "—"}
+                          </span>
+                        </div>
+
+                        {/* Timestamps */}
+                        <div className="grid grid-cols-3 gap-2 text-[11px]">
+                          <div className="rounded border border-border/60 p-2">
+                            <div className="text-muted-foreground">Última sync</div>
+                            <div className="font-mono">{c.last_sync_at ? new Date(c.last_sync_at).toLocaleString("pt-BR") : "—"}</div>
+                          </div>
+                          <div className="rounded border border-border/60 p-2">
+                            <div className="text-muted-foreground">Local atualizado</div>
+                            <div className="font-mono">{c.local_updated_at ? new Date(c.local_updated_at).toLocaleString("pt-BR") : "—"}</div>
+                          </div>
+                          <div className="rounded border border-border/60 p-2">
+                            <div className="text-muted-foreground">Clinicorp atualizado</div>
+                            <div className="font-mono">{c.clinicorp_updated_at ? new Date(c.clinicorp_updated_at).toLocaleString("pt-BR") : "—"}</div>
+                          </div>
+                        </div>
+
+                        {/* Diff antes/depois */}
+                        {fields.length > 0 ? (
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-[11px]">
+                              <thead>
+                                <tr className="text-left text-muted-foreground border-b border-border">
+                                  <th className="py-1.5 pr-3">Campo</th>
+                                  <th className="py-1.5 pr-3">Antes (local)</th>
+                                  <th className="py-1.5 pr-3">Depois (Clinicorp)</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {fields.map((f) => {
+                                  const before = (c.before_data as Record<string, unknown> | null)?.[f];
+                                  const after = (c.after_data as Record<string, unknown> | null)?.[f];
+                                  const fmt = (v: unknown) => v === null || v === undefined || v === "" ? "—" : typeof v === "object" ? JSON.stringify(v) : String(v);
+                                  return (
+                                    <tr key={f} className="border-b border-border/30">
+                                      <td className="py-1 pr-3 font-medium">{f}</td>
+                                      <td className="py-1 pr-3 font-mono text-warning whitespace-pre-wrap break-all">{fmt(before)}</td>
+                                      <td className="py-1 pr-3 font-mono text-success whitespace-pre-wrap break-all">{fmt(after)}</td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        ) : (
+                          <p className="text-[11px] text-muted-foreground">Sem campos alterados — registro de auditoria de decisão.</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
