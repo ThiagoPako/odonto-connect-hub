@@ -39,9 +39,9 @@ const features = [
 ];
 
 const plans = [
-  { name: "Starter", price: "297", desc: "Para clínicas iniciando a transformação digital", features: ["1 instância WhatsApp", "Até 500 pacientes", "CRM básico", "Agenda clínica", "Financeiro básico", "Suporte por e-mail"], popular: false },
-  { name: "Professional", price: "597", desc: "Para clínicas que querem crescer com inteligência", features: ["3 instâncias WhatsApp", "Pacientes ilimitados", "CRM completo + Reativação", "IA Agente Autônomo", "Sistema Fênix", "Financeiro completo", "Disparos em massa", "Dashboard analytics", "Suporte prioritário"], popular: true },
-  { name: "Enterprise", price: "997", desc: "Para redes e clínicas de alto volume", features: ["Instâncias ilimitadas", "Multi-unidade", "Tudo do Professional", "Meta Ads + IA Insights", "API personalizada", "Onboarding dedicado", "Gerente de conta", "SLA garantido"], popular: false },
+  { slug: "starter", name: "Starter", price: "297", desc: "Para clínicas iniciando a transformação digital", features: ["1 instância WhatsApp", "Até 500 pacientes", "CRM básico", "Agenda clínica", "Financeiro básico", "Suporte por e-mail"], popular: false },
+  { slug: "professional", name: "Professional", price: "597", desc: "Para clínicas que querem crescer com inteligência", features: ["3 instâncias WhatsApp", "Pacientes ilimitados", "CRM completo + Reativação", "IA Agente Autônomo", "Sistema Fênix", "Financeiro completo", "Disparos em massa", "Dashboard analytics", "Suporte prioritário"], popular: true },
+  { slug: "enterprise", name: "Enterprise", price: "997", desc: "Para redes e clínicas de alto volume", features: ["Instâncias ilimitadas", "Multi-unidade", "Tudo do Professional", "Meta Ads + IA Insights", "API personalizada", "Onboarding dedicado", "Gerente de conta", "SLA garantido"], popular: false },
 ];
 
 const testimonials = [
@@ -68,9 +68,9 @@ function LandingPage() {
             <Link to="/login" className="text-sm font-medium text-foreground hover:text-primary transition-colors">
               Entrar
             </Link>
-            <a href="#planos" className="inline-flex items-center gap-1.5 rounded-lg gradient-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-glow-primary hover:opacity-90 transition-opacity">
+            <Link to="/signup" search={{}} className="inline-flex items-center gap-1.5 rounded-lg gradient-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-glow-primary hover:opacity-90 transition-opacity">
               Começar Agora <ArrowRight className="h-4 w-4" />
-            </a>
+            </Link>
           </div>
         </div>
       </nav>
@@ -93,9 +93,9 @@ function LandingPage() {
                   Tudo que sua clínica precisa em uma única plataforma.
                 </p>
                 <div className="flex flex-col sm:flex-row gap-4">
-                  <a href="#planos" className="inline-flex items-center justify-center gap-2 rounded-xl gradient-primary px-8 py-3.5 text-base font-bold text-primary-foreground shadow-glow-primary hover:opacity-90 transition-opacity">
-                    Quero Conhecer <ArrowRight className="h-5 w-5" />
-                  </a>
+                  <Link to="/signup" search={{}} className="inline-flex items-center justify-center gap-2 rounded-xl gradient-primary px-8 py-3.5 text-base font-bold text-primary-foreground shadow-glow-primary hover:opacity-90 transition-opacity">
+                    Iniciar teste grátis <ArrowRight className="h-5 w-5" />
+                  </Link>
                   <a href="https://wa.me/5511999990001" target="_blank" rel="noopener noreferrer" className="inline-flex items-center justify-center gap-2 rounded-xl border border-border bg-card px-8 py-3.5 text-base font-semibold text-foreground hover:bg-accent transition-colors">
                     <Phone className="h-5 w-5 text-primary" /> Falar com Consultor
                   </a>
@@ -315,18 +315,17 @@ function LandingPage() {
                       </li>
                     ))}
                   </ul>
-                  <a
-                    href="https://wa.me/5511999990001"
-                    target="_blank"
-                    rel="noopener noreferrer"
+                  <Link
+                    to="/signup"
+                    search={{ plan: plan.slug }}
                     className={`mt-8 w-full inline-flex items-center justify-center gap-2 rounded-xl px-6 py-3 text-sm font-bold transition-all ${
                       plan.popular
                         ? "gradient-primary text-primary-foreground shadow-glow-primary hover:opacity-90"
                         : "border border-border bg-accent text-foreground hover:bg-primary hover:text-primary-foreground"
                     }`}
                   >
-                    Começar Agora <ArrowRight className="h-4 w-4" />
-                  </a>
+                    Iniciar teste grátis <ArrowRight className="h-4 w-4" />
+                  </Link>
                 </div>
               </ScrollReveal>
             ))}
@@ -418,14 +417,12 @@ function LandingPage() {
                 Comece seu teste gratuito de 7 dias agora.
               </p>
               <div className="flex flex-col sm:flex-row gap-4 justify-center">
-                <a
-                  href="https://wa.me/5511999990001"
-                  target="_blank"
-                  rel="noopener noreferrer"
+                <Link
+                  to="/signup"
                   className="inline-flex items-center justify-center gap-2 rounded-xl bg-card text-foreground px-8 py-3.5 text-base font-bold hover:bg-card/90 transition-colors"
                 >
                   Começar Agora Grátis <ArrowRight className="h-5 w-5" />
-                </a>
+                </Link>
               </div>
             </div>
           </div>
