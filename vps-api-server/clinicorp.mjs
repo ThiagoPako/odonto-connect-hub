@@ -1165,8 +1165,25 @@ export function registerClinicorp(app, pool) {
   app.get('/api/clinicorp/conflicts', async (req, res) => {
     try {
       const limit = Math.min(Number(req.query.limit) || 100, 500);
+      const entity = req.query.entity ? String(req.query.entity) : null;
+      const decision = req.query.decision ? String(req.query.decision) : null;
+      const where = []; const params = [];
+      if (entity)   { params.push(entity);   where.push(`c.entity=$${params.length}`); }
+      if (decision) { params.push(decision); where.push(`c.decision=$${params.length}`); }
+      params.push(limit);
       const { rows } = await pool.query(
-        `SELECT * FROM clinicorp_conflicts ORDER BY created_at DESC LIMIT $1`, [limit]
+        `SELECT c.*,
+                p.nome AS paciente_nome,
+                l.id   AS lead_id_resolved,
+                l.kanban_stage AS lead_stage
+           FROM clinicorp_conflicts c
+           LEFT JOIN pacientes p ON p.id = c.paciente_id
+           LEFT JOIN crm_leads  l ON l.id = c.lead_id
+                                  OR (c.lead_id IS NULL AND l.paciente_id = c.paciente_id)
+          ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+          ORDER BY c.created_at DESC
+          LIMIT $${params.length}`,
+        params
       );
       res.json(rows);
     } catch (e) { res.status(500).json({ error: e.message }); }
