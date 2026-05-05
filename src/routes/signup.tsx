@@ -10,7 +10,7 @@ import { Check, Loader2, Sparkles } from "lucide-react";
 
 export const Route = createFileRoute("/signup")({
   ssr: false,
-  validateSearch: (search: Record<string, unknown>) => ({
+  validateSearch: (search: Record<string, unknown>): { plan?: string } => ({
     plan: typeof search.plan === "string" ? search.plan : undefined,
   }),
   component: SignupPage,
