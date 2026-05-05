@@ -199,6 +199,12 @@ function LoginPage() {
             >
               Esqueci minha senha
             </button>
+            <p className="text-center text-sm text-muted-foreground">
+              Não tem conta?{" "}
+              <Link to="/signup" className="text-primary hover:underline font-medium">
+                Cadastre sua clínica
+              </Link>
+            </p>
           </form>
         </CardContent>
       </Card>
