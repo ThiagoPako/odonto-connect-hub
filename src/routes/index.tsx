@@ -68,9 +68,9 @@ function LandingPage() {
             <Link to="/login" className="text-sm font-medium text-foreground hover:text-primary transition-colors">
               Entrar
             </Link>
-            <a href="#planos" className="inline-flex items-center gap-1.5 rounded-lg gradient-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-glow-primary hover:opacity-90 transition-opacity">
+            <Link to="/signup" className="inline-flex items-center gap-1.5 rounded-lg gradient-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-glow-primary hover:opacity-90 transition-opacity">
               Começar Agora <ArrowRight className="h-4 w-4" />
-            </a>
+            </Link>
           </div>
         </div>
       </nav>
