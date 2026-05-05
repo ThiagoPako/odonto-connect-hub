@@ -193,7 +193,28 @@ export const clinicorpApi = {
     base_url: string;
   }>) => req<{ ok: true }>('/my-settings', { method: 'PUT', body: JSON.stringify(payload) }),
   deleteMySettings: () => req<{ ok: true }>('/my-settings', { method: 'DELETE' }),
+  testMyConnection: (payload: Partial<{ api_token: string; subscriber_id: string; base_url: string }> = {}) =>
+    req<ClinicorpConnectionTest>('/my-settings/test', { method: 'POST', body: JSON.stringify(payload) }),
 };
+
+export interface ClinicorpConnectionTest {
+  ok: boolean;
+  auth: 'valid' | 'invalid_token' | 'partial';
+  total_latency_ms: number;
+  base_url: string;
+  subscriber_id: string;
+  error?: string;
+  results: Array<{
+    key: string;
+    label: string;
+    path: string;
+    ok: boolean;
+    latency_ms: number;
+    count?: number;
+    status?: number | null;
+    error?: string;
+  }>;
+}
 
 export function buildWebhookUrl(secret: string): string {
   return `${WEBHOOK_BASE}?user_api=${encodeURIComponent(secret || '<seu-secret>')}`;
