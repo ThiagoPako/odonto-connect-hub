@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import type { AgendamentoVPS } from "@/lib/vpsApi";
-import { CheckCircle2, Clock, AlertCircle, XCircle, PlayCircle, CircleDot, User2 } from "lucide-react";
+import { CheckCircle2, Clock, AlertCircle, XCircle, PlayCircle, CircleDot, User2, Users } from "lucide-react";
 import { CategoriaBadge } from "./CategoriaBadge";
+import { cn } from "@/lib/utils";
 
 interface Prof {
   id: string;
@@ -256,6 +257,15 @@ export function AgendaGrid({
                   const status = STATUS_STYLE[a.status] || STATUS_STYLE.agendado;
                   const StatusIcon = status.icon;
                   const compact = height < 50;
+                  
+                  // Verifica se é um evento compartilhado (mesmo título, data e hora)
+                  const others = a.evento_titulo ? appointments.filter(apt => 
+                    apt.id !== a.id && 
+                    apt.data === a.data && 
+                    apt.hora === a.hora && 
+                    apt.evento_titulo === a.evento_titulo
+                  ) : [];
+                  const isShared = others.length > 0;
 
                   // Cor da CATEGORIA/PROCEDIMENTO (identidade visual principal)
                   // Validamos o hex: vazio OU formato inválido => fallback neutro (sem cor),
@@ -276,11 +286,13 @@ export function AgendaGrid({
                         e.stopPropagation();
                         onAppointmentClick(a);
                       }}
-                      className={`absolute left-1 right-1 rounded-xl border shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] overflow-hidden text-left group/apt ${
+                      className={cn(
+                        "absolute left-1 right-1 rounded-xl border shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] overflow-hidden text-left group/apt",
                         validHex
                           ? "hover:border-foreground/30"
-                          : "bg-muted/30 border-dashed border-border/40 hover:border-primary/40 hover:bg-muted/50"
-                      }`}
+                          : "bg-muted/30 border-dashed border-border/40 hover:border-primary/40 hover:bg-muted/50",
+                        isShared && "border-solid border-primary/40 ring-1 ring-primary/10 shadow-md"
+                      )}
                       style={{
                         top,
                         height: height - 2,
@@ -302,7 +314,7 @@ export function AgendaGrid({
                       <div className={`pl-4 pr-2 ${compact ? "py-1" : "py-2"} h-full flex flex-col justify-center gap-1`}>
                         <div className="flex items-center justify-between min-w-0">
                           <span className="text-[12px] font-bold text-foreground tracking-tight truncate flex-1 uppercase">
-                            {a.paciente_nome}
+                            {a.evento_titulo || a.procedimento || a.paciente_nome}
                           </span>
                           {!compact && (
                             <span
@@ -334,6 +346,12 @@ export function AgendaGrid({
                                   <span>{a.duracao} min</span>
                                 </div>
                               ) : null}
+                              {isShared && (
+                                <div className="flex items-center gap-1 before:content-['·'] before:mr-1 text-primary animate-pulse">
+                                  <Users className="h-3 w-3" />
+                                  <span>+{others.length + 1} prof.</span>
+                                </div>
+                              )}
                             </div>
                           </div>
                         )}

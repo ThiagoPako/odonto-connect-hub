@@ -8,11 +8,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Calendar, Stethoscope, MapPin, Phone, Mail, MessageSquare, BellRing, Repeat, Search, Sparkles } from "lucide-react";
+import { Loader2, Calendar, Stethoscope, MapPin, Phone, Mail, MessageSquare, BellRing, Repeat, Search, Sparkles, Check, User } from "lucide-react";
 import { toast } from "sonner";
 import { agendaApi, pacientesApi, dentistasApi, type AgendamentoVPS, type MarcadorAgenda } from "@/lib/vpsApi";
 import { AnalogTimePicker } from "./AnalogTimePicker";
 import { MarcadoresSelector } from "./MarcadoresSelector";
+import { cn } from "@/lib/utils";
 
 interface Props {
   open: boolean;
@@ -66,6 +67,7 @@ export function NovoAgendamentoModal({
   const [telefone, setTelefone] = useState("");
   const [email, setEmail] = useState("");
   const [dentistaId, setDentistaId] = useState(defaultDentistaId || "");
+  const [selectedDentistasIds, setSelectedDentistasIds] = useState<string[]>(defaultDentistaId ? [defaultDentistaId] : []);
   const [data, setData] = useState(defaultDate);
   const [hora, setHora] = useState(defaultHora || "09:00");
   const [duracao, setDuracao] = useState(30);
@@ -104,7 +106,10 @@ export function NovoAgendamentoModal({
     if (!open) return;
     setData(defaultDate);
     if (defaultHora) setHora(defaultHora);
-    if (defaultDentistaId) setDentistaId(defaultDentistaId);
+    if (defaultDentistaId) {
+      setDentistaId(defaultDentistaId);
+      setSelectedDentistasIds([defaultDentistaId]);
+    }
     pacientesApi.list().then(({ data }) => Array.isArray(data) && setPacientes(data as Paciente[]));
     dentistasApi.list().then(({ data }) => {
       if (Array.isArray(data) && data.length > 0) {
@@ -125,6 +130,7 @@ export function NovoAgendamentoModal({
         setRetornoQuando(""); setSearch("");
         setMarcadores([]); setComoConheceu("");
         setEventoTitulo(""); setDiaInteiro(false); setEscopo("dentista");
+        setSelectedDentistasIds(defaultDentistaId ? [defaultDentistaId] : []);
       }, 300);
     }
   }, [open]);
@@ -239,30 +245,50 @@ export function NovoAgendamentoModal({
     e?.preventDefault();
     if (!data) { toast.error("Informe a data."); return; }
     if (!diaInteiro && !/^([01]\d|2[0-3]):[0-5]\d$/.test(hora)) { toast.error("Horário inválido."); return; }
-    if (escopo === "dentista" && !dentistaId) { toast.error("Selecione um profissional ou marque 'Clínica'."); return; }
+    
+    const isClinica = escopo === "clinica";
+    if (!isClinica && selectedDentistasIds.length === 0) {
+      toast.error("Selecione ao menos um profissional ou marque 'Clínica'.");
+      return;
+    }
     if (!eventoTitulo.trim()) { toast.error("Informe um título."); return; }
+
     setSaving(true);
     try {
-      const profName = dentistas.find((d) => d.id === dentistaId)?.nome || "Clínica";
       const dur = diaInteiro ? 1440 : Math.max(15, computeDur(hora, horaFim));
-      const { error } = await agendaApi.create({
-        dentista_id: escopo === "dentista" ? dentistaId : null,
-        dentista_nome: escopo === "dentista" ? profName : "Clínica",
-        data,
-        hora: diaInteiro ? "00:00" : hora,
-        duracao: dur,
-        procedimento: eventoTitulo,
-        evento_titulo: eventoTitulo,
-        status: "agendado",
-        observacoes,
-        tipo: tab,
-        escopo,
-        dia_inteiro: diaInteiro,
-        categoria_cor: tab === "evento" ? "bg-chart-4/20" : "bg-muted",
-      } as Partial<AgendamentoVPS>);
-      if (error) { toast.error("Erro: " + error); return; }
-      toast.success(`${tab === "compromisso" ? "Compromisso" : "Evento"} criado`);
-      await handleCreatedSuccess();
+      
+      // Se for clínica, cria apenas um. Se for dentista, cria um para cada selecionado.
+      const idsToCreate = isClinica ? [null] : selectedDentistasIds;
+      
+      let successCount = 0;
+      for (const profId of idsToCreate) {
+        const profName = profId ? dentistas.find((d) => d.id === profId)?.nome || "Profissional" : "Clínica";
+        
+        const { error } = await agendaApi.create({
+          dentista_id: profId,
+          dentista_nome: profName,
+          data,
+          hora: diaInteiro ? "00:00" : hora,
+          duracao: dur,
+          procedimento: eventoTitulo,
+          evento_titulo: eventoTitulo,
+          status: "agendado",
+          observacoes,
+          tipo: tab,
+          escopo,
+          dia_inteiro: diaInteiro,
+          categoria_cor: tab === "evento" ? "bg-chart-4/20" : "bg-muted",
+        } as Partial<AgendamentoVPS>);
+        
+        if (!error) successCount++;
+      }
+
+      if (successCount > 0) {
+        toast.success(`${tab === "compromisso" ? "Compromisso" : "Evento"} criado (${successCount} profissional/ais)`);
+        await handleCreatedSuccess();
+      } else {
+        toast.error("Erro ao criar agendamento(s)");
+      }
     } finally {
       setSaving(false);
     }
@@ -508,7 +534,7 @@ export function NovoAgendamentoModal({
               titulo="Compromisso"
               eventoTitulo={eventoTitulo} setEventoTitulo={setEventoTitulo}
               escopo={escopo} setEscopo={setEscopo}
-              dentistaId={dentistaId} setDentistaId={setDentistaId}
+              selectedDentistasIds={selectedDentistasIds} setSelectedDentistasIds={setSelectedDentistasIds}
               dentistas={dentistas}
               data={data} setData={setData}
               hora={hora} setHora={setHora}
@@ -533,7 +559,7 @@ export function NovoAgendamentoModal({
               titulo="Evento"
               eventoTitulo={eventoTitulo} setEventoTitulo={setEventoTitulo}
               escopo={escopo} setEscopo={setEscopo}
-              dentistaId={dentistaId} setDentistaId={setDentistaId}
+              selectedDentistasIds={selectedDentistasIds} setSelectedDentistasIds={setSelectedDentistasIds}
               dentistas={dentistas}
               data={data} setData={setData}
               hora={hora} setHora={setHora}
@@ -560,7 +586,7 @@ function CompromissoEventoForm(props: {
   titulo: string;
   eventoTitulo: string; setEventoTitulo: (v: string) => void;
   escopo: "dentista" | "clinica"; setEscopo: (v: "dentista" | "clinica") => void;
-  dentistaId: string; setDentistaId: (v: string) => void;
+  selectedDentistasIds: string[]; setSelectedDentistasIds: (v: string[]) => void;
   dentistas: Dentista[];
   data: string; setData: (v: string) => void;
   hora: string; setHora: (v: string) => void;
@@ -600,16 +626,45 @@ function CompromissoEventoForm(props: {
       </div>
 
       {props.escopo === "dentista" && (
-        <div>
-          <Label className="mb-1 block">Profissional</Label>
-          <Select value={props.dentistaId} onValueChange={props.setDentistaId}>
-            <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
-            <SelectContent>
-              {props.dentistas.filter((d) => d?.id).map((d) => (
-                <SelectItem key={d.id} value={d.id}>{d.nome}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Profissionais Participantes</Label>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            {props.dentistas.filter(d => d.id).map((d) => {
+              const selected = props.selectedDentistasIds.includes(d.id);
+              return (
+                <button
+                  key={d.id}
+                  type="button"
+                  onClick={() => {
+                    if (selected) {
+                      props.setSelectedDentistasIds(props.selectedDentistasIds.filter(id => id !== d.id));
+                    } else {
+                      props.setSelectedDentistasIds([...props.selectedDentistasIds, d.id]);
+                    }
+                  }}
+                  className={cn(
+                    "flex items-center gap-2 px-3 py-2 rounded-lg border text-sm transition-all",
+                    selected 
+                      ? "bg-primary/10 border-primary text-primary font-medium shadow-sm" 
+                      : "bg-card border-border hover:border-primary/40 text-muted-foreground hover:bg-muted/50"
+                  )}
+                >
+                  <div className={cn(
+                    "h-4 w-4 rounded border flex items-center justify-center transition-colors",
+                    selected ? "bg-primary border-primary" : "border-muted-foreground/30"
+                  )}>
+                    {selected && <Check className="h-3 w-3 text-white" strokeWidth={3} />}
+                  </div>
+                  <span className="truncate">{d.nome}</span>
+                </button>
+              );
+            })}
+          </div>
+          {props.selectedDentistasIds.length === 0 && (
+            <p className="text-[10px] text-destructive flex items-center gap-1 mt-1">
+              ⚠️ Selecione ao menos um profissional.
+            </p>
+          )}
         </div>
       )}
 
