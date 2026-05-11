@@ -256,6 +256,15 @@ export function AgendaGrid({
                   const status = STATUS_STYLE[a.status] || STATUS_STYLE.agendado;
                   const StatusIcon = status.icon;
                   const compact = height < 50;
+                  
+                  // Verifica se é um evento compartilhado (mesmo título, data e hora)
+                  const others = a.evento_titulo ? appointments.filter(apt => 
+                    apt.id !== a.id && 
+                    apt.data === a.data && 
+                    apt.hora === a.hora && 
+                    apt.evento_titulo === a.evento_titulo
+                  ) : [];
+                  const isShared = others.length > 0;
 
                   // Cor da CATEGORIA/PROCEDIMENTO (identidade visual principal)
                   // Validamos o hex: vazio OU formato inválido => fallback neutro (sem cor),
