@@ -129,6 +129,7 @@ export function NovoAgendamentoModal({
         setRetornoQuando(""); setSearch("");
         setMarcadores([]); setComoConheceu("");
         setEventoTitulo(""); setDiaInteiro(false); setEscopo("dentista");
+        setSelectedDentistasIds(defaultDentistaId ? [defaultDentistaId] : []);
       }, 300);
     }
   }, [open]);
