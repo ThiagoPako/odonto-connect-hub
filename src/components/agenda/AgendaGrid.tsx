@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { AgendamentoVPS } from "@/lib/vpsApi";
-import { CheckCircle2, Clock, AlertCircle, XCircle, PlayCircle, CircleDot, User2 } from "lucide-react";
+import { CheckCircle2, Clock, AlertCircle, XCircle, PlayCircle, CircleDot, User2, Users } from "lucide-react";
 import { CategoriaBadge } from "./CategoriaBadge";
 
 interface Prof {
