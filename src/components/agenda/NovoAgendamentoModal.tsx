@@ -585,7 +585,7 @@ function CompromissoEventoForm(props: {
   titulo: string;
   eventoTitulo: string; setEventoTitulo: (v: string) => void;
   escopo: "dentista" | "clinica"; setEscopo: (v: "dentista" | "clinica") => void;
-  dentistaId: string; setDentistaId: (v: string) => void;
+  selectedDentistasIds: string[]; setSelectedDentistasIds: (v: string[]) => void;
   dentistas: Dentista[];
   data: string; setData: (v: string) => void;
   hora: string; setHora: (v: string) => void;
