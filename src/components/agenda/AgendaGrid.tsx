@@ -343,6 +343,12 @@ export function AgendaGrid({
                                   <span>{a.duracao} min</span>
                                 </div>
                               ) : null}
+                              {isShared && (
+                                <div className="flex items-center gap-1 before:content-['·'] before:mr-1 text-primary animate-pulse">
+                                  <Users className="h-3 w-3" />
+                                  <span>+{others.length + 1} prof.</span>
+                                </div>
+                              )}
                             </div>
                           </div>
                         )}
