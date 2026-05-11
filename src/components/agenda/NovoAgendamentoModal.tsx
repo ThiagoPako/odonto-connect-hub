@@ -558,7 +558,7 @@ export function NovoAgendamentoModal({
               titulo="Evento"
               eventoTitulo={eventoTitulo} setEventoTitulo={setEventoTitulo}
               escopo={escopo} setEscopo={setEscopo}
-              dentistaId={dentistaId} setDentistaId={setDentistaId}
+              selectedDentistasIds={selectedDentistasIds} setSelectedDentistasIds={setSelectedDentistasIds}
               dentistas={dentistas}
               data={data} setData={setData}
               hora={hora} setHora={setHora}
