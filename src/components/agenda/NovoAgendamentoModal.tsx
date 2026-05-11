@@ -105,7 +105,10 @@ export function NovoAgendamentoModal({
     if (!open) return;
     setData(defaultDate);
     if (defaultHora) setHora(defaultHora);
-    if (defaultDentistaId) setDentistaId(defaultDentistaId);
+    if (defaultDentistaId) {
+      setDentistaId(defaultDentistaId);
+      setSelectedDentistasIds([defaultDentistaId]);
+    }
     pacientesApi.list().then(({ data }) => Array.isArray(data) && setPacientes(data as Paciente[]));
     dentistasApi.list().then(({ data }) => {
       if (Array.isArray(data) && data.length > 0) {
