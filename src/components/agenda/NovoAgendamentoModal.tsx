@@ -244,30 +244,50 @@ export function NovoAgendamentoModal({
     e?.preventDefault();
     if (!data) { toast.error("Informe a data."); return; }
     if (!diaInteiro && !/^([01]\d|2[0-3]):[0-5]\d$/.test(hora)) { toast.error("Horário inválido."); return; }
-    if (escopo === "dentista" && !dentistaId) { toast.error("Selecione um profissional ou marque 'Clínica'."); return; }
+    
+    const isClinica = escopo === "clinica";
+    if (!isClinica && selectedDentistasIds.length === 0) {
+      toast.error("Selecione ao menos um profissional ou marque 'Clínica'.");
+      return;
+    }
     if (!eventoTitulo.trim()) { toast.error("Informe um título."); return; }
+
     setSaving(true);
     try {
-      const profName = dentistas.find((d) => d.id === dentistaId)?.nome || "Clínica";
       const dur = diaInteiro ? 1440 : Math.max(15, computeDur(hora, horaFim));
-      const { error } = await agendaApi.create({
-        dentista_id: escopo === "dentista" ? dentistaId : null,
-        dentista_nome: escopo === "dentista" ? profName : "Clínica",
-        data,
-        hora: diaInteiro ? "00:00" : hora,
-        duracao: dur,
-        procedimento: eventoTitulo,
-        evento_titulo: eventoTitulo,
-        status: "agendado",
-        observacoes,
-        tipo: tab,
-        escopo,
-        dia_inteiro: diaInteiro,
-        categoria_cor: tab === "evento" ? "bg-chart-4/20" : "bg-muted",
-      } as Partial<AgendamentoVPS>);
-      if (error) { toast.error("Erro: " + error); return; }
-      toast.success(`${tab === "compromisso" ? "Compromisso" : "Evento"} criado`);
-      await handleCreatedSuccess();
+      
+      // Se for clínica, cria apenas um. Se for dentista, cria um para cada selecionado.
+      const idsToCreate = isClinica ? [null] : selectedDentistasIds;
+      
+      let successCount = 0;
+      for (const profId of idsToCreate) {
+        const profName = profId ? dentistas.find((d) => d.id === profId)?.nome || "Profissional" : "Clínica";
+        
+        const { error } = await agendaApi.create({
+          dentista_id: profId,
+          dentista_nome: profName,
+          data,
+          hora: diaInteiro ? "00:00" : hora,
+          duracao: dur,
+          procedimento: eventoTitulo,
+          evento_titulo: eventoTitulo,
+          status: "agendado",
+          observacoes,
+          tipo: tab,
+          escopo,
+          dia_inteiro: diaInteiro,
+          categoria_cor: tab === "evento" ? "bg-chart-4/20" : "bg-muted",
+        } as Partial<AgendamentoVPS>);
+        
+        if (!error) successCount++;
+      }
+
+      if (successCount > 0) {
+        toast.success(`${tab === "compromisso" ? "Compromisso" : "Evento"} criado (${successCount} profissional/ais)`);
+        await handleCreatedSuccess();
+      } else {
+        toast.error("Erro ao criar agendamento(s)");
+      }
     } finally {
       setSaving(false);
     }
