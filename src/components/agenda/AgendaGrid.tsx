@@ -311,7 +311,7 @@ export function AgendaGrid({
                       <div className={`pl-4 pr-2 ${compact ? "py-1" : "py-2"} h-full flex flex-col justify-center gap-1`}>
                         <div className="flex items-center justify-between min-w-0">
                           <span className="text-[12px] font-bold text-foreground tracking-tight truncate flex-1 uppercase">
-                            {a.paciente_nome}
+                            {a.evento_titulo || a.procedimento || a.paciente_nome}
                           </span>
                           {!compact && (
                             <span
