@@ -286,11 +286,13 @@ export function AgendaGrid({
                         e.stopPropagation();
                         onAppointmentClick(a);
                       }}
-                      className={`absolute left-1 right-1 rounded-xl border shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] overflow-hidden text-left group/apt ${
+                      className={cn(
+                        "absolute left-1 right-1 rounded-xl border shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] overflow-hidden text-left group/apt",
                         validHex
                           ? "hover:border-foreground/30"
-                          : "bg-muted/30 border-dashed border-border/40 hover:border-primary/40 hover:bg-muted/50"
-                      }`}
+                          : "bg-muted/30 border-dashed border-border/40 hover:border-primary/40 hover:bg-muted/50",
+                        isShared && "border-solid border-primary/40 ring-1 ring-primary/10 shadow-md"
+                      )}
                       style={{
                         top,
                         height: height - 2,
