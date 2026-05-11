@@ -625,16 +625,45 @@ function CompromissoEventoForm(props: {
       </div>
 
       {props.escopo === "dentista" && (
-        <div>
-          <Label className="mb-1 block">Profissional</Label>
-          <Select value={props.dentistaId} onValueChange={props.setDentistaId}>
-            <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
-            <SelectContent>
-              {props.dentistas.filter((d) => d?.id).map((d) => (
-                <SelectItem key={d.id} value={d.id}>{d.nome}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Profissionais Participantes</Label>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            {props.dentistas.filter(d => d.id).map((d) => {
+              const selected = props.selectedDentistasIds.includes(d.id);
+              return (
+                <button
+                  key={d.id}
+                  type="button"
+                  onClick={() => {
+                    if (selected) {
+                      props.setSelectedDentistasIds(props.selectedDentistasIds.filter(id => id !== d.id));
+                    } else {
+                      props.setSelectedDentistasIds([...props.selectedDentistasIds, d.id]);
+                    }
+                  }}
+                  className={cn(
+                    "flex items-center gap-2 px-3 py-2 rounded-lg border text-sm transition-all",
+                    selected 
+                      ? "bg-primary/10 border-primary text-primary font-medium shadow-sm" 
+                      : "bg-card border-border hover:border-primary/40 text-muted-foreground hover:bg-muted/50"
+                  )}
+                >
+                  <div className={cn(
+                    "h-4 w-4 rounded border flex items-center justify-center transition-colors",
+                    selected ? "bg-primary border-primary" : "border-muted-foreground/30"
+                  )}>
+                    {selected && <Check className="h-3 w-3 text-white" strokeWidth={3} />}
+                  </div>
+                  <span className="truncate">{d.nome}</span>
+                </button>
+              );
+            })}
+          </div>
+          {props.selectedDentistasIds.length === 0 && (
+            <p className="text-[10px] text-destructive flex items-center gap-1 mt-1">
+              ⚠️ Selecione ao menos um profissional.
+            </p>
+          )}
         </div>
       )}
 
