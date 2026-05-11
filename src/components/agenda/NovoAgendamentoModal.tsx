@@ -13,6 +13,7 @@ import { toast } from "sonner";
 import { agendaApi, pacientesApi, dentistasApi, type AgendamentoVPS, type MarcadorAgenda } from "@/lib/vpsApi";
 import { AnalogTimePicker } from "./AnalogTimePicker";
 import { MarcadoresSelector } from "./MarcadoresSelector";
+import { cn } from "@/lib/utils";
 
 interface Props {
   open: boolean;
