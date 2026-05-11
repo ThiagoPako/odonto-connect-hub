@@ -66,6 +66,7 @@ export function NovoAgendamentoModal({
   const [telefone, setTelefone] = useState("");
   const [email, setEmail] = useState("");
   const [dentistaId, setDentistaId] = useState(defaultDentistaId || "");
+  const [selectedDentistasIds, setSelectedDentistasIds] = useState<string[]>(defaultDentistaId ? [defaultDentistaId] : []);
   const [data, setData] = useState(defaultDate);
   const [hora, setHora] = useState(defaultHora || "09:00");
   const [duracao, setDuracao] = useState(30);
