@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import type { AgendamentoVPS } from "@/lib/vpsApi";
-import { CheckCircle2, Clock, AlertCircle, XCircle, PlayCircle, CircleDot, User2, Users } from "lucide-react";
+import { CheckCircle2, Clock, AlertCircle, XCircle, PlayCircle, CircleDot, User2, Users, Info } from "lucide-react";
 import { CategoriaBadge } from "./CategoriaBadge";
 import { cn } from "@/lib/utils";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface Prof {
   id: string;
@@ -165,6 +166,7 @@ export function AgendaGrid({
   }
 
   return (
+    <TooltipProvider>
     <div className="flex-1 overflow-auto glass-card rounded-2xl border-none shadow-xl animate-fade-in">
       <div className="min-w-fit">
         {/* Header com nomes dos profissionais */}
@@ -279,28 +281,37 @@ export function AgendaGrid({
                   const catBorder = ink || undefined;
                   const catSide = ink || undefined;
 
+                  const othersList = others.map(o => o.dentista_nome).join(", ");
+
                   return (
-                    <button
-                      key={a.id}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onAppointmentClick(a);
-                      }}
-                      className={cn(
-                        "absolute left-1 right-1 rounded-xl border shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] overflow-hidden text-left group/apt",
-                        validHex
-                          ? "hover:border-foreground/30"
-                          : "bg-muted/30 border-dashed border-border/40 hover:border-primary/40 hover:bg-muted/50",
-                        isShared && "border-solid border-primary/40 ring-1 ring-primary/10 shadow-md"
-                      )}
-                      style={{
-                        top,
-                        height: height - 2,
-                        background: catBg,
-                        borderColor: catBorder,
-                      }}
-                      title={`${a.paciente_nome} — ${a.categoria || a.procedimento || "Sem categoria"} (${status.label})`}
-                    >
+                    <Tooltip key={a.id}>
+                      <TooltipTrigger asChild>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onAppointmentClick(a);
+                          }}
+                          className={cn(
+                            "absolute left-1 right-1 rounded-xl border shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] overflow-hidden text-left group/apt",
+                            validHex
+                              ? "hover:border-foreground/30"
+                              : "bg-muted/30 border-dashed border-border/40 hover:border-primary/40 hover:bg-muted/50",
+                            isShared && "border-solid border-primary/40 ring-2 ring-primary/10 shadow-md bg-primary/5"
+                          )}
+                          style={{
+                            top,
+                            height: height - 2,
+                            background: isShared ? undefined : catBg,
+                            borderColor: isShared ? undefined : catBorder,
+                          }}
+                        >
+                          {isShared && (
+                            <div className="absolute top-1 right-1 z-10">
+                              <div className="bg-primary text-primary-foreground rounded-full p-0.5 shadow-sm animate-pulse">
+                                <Users className="h-2.5 w-2.5" />
+                              </div>
+                            </div>
+                          )}
                       {/* Barra lateral: cor da categoria OU listrada neutra (fallback) */}
                       <div
                         className={`absolute left-0 top-0 bottom-0 w-1.5 ${
@@ -355,8 +366,25 @@ export function AgendaGrid({
                             </div>
                           </div>
                         )}
-                      </div>
-                    </button>
+                        </div>
+                      </button>
+                    </TooltipTrigger>
+                    {isShared && (
+                      <TooltipContent side="top" className="bg-popover/95 backdrop-blur-sm border-primary/20 p-2 shadow-xl">
+                        <div className="flex flex-col gap-1.5">
+                          <div className="flex items-center gap-2 text-primary font-bold text-xs uppercase tracking-wider">
+                            <Users className="h-3.5 w-3.5" />
+                            Evento Compartilhado
+                          </div>
+                          <div className="h-px bg-border/50 w-full" />
+                          <div className="text-[11px] text-muted-foreground leading-relaxed">
+                            <span className="font-semibold text-foreground">Equipe envolvida:</span><br/>
+                            {a.dentista_nome}, {othersList}
+                          </div>
+                        </div>
+                      </TooltipContent>
+                    )}
+                  </Tooltip>
                   );
                 })}
               </div>
@@ -365,5 +393,6 @@ export function AgendaGrid({
         </div>
       </div>
     </div>
+    </TooltipProvider>
   );
 }
