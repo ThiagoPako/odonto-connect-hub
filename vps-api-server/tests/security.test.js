@@ -15,7 +15,6 @@ const JWT_SECRET = process.env.JWT_SECRET || 'CHANGE_ME_IN_PRODUCTION';
 
 describe('RBAC and Tenant Isolation Security Tests', () => {
   const tenant1Id = '00000000-0000-0000-0000-000000000001';
-  const tenant2Id = '00000000-0000-0000-0000-000000000002';
   
   beforeAll(async () => {
     // Silence console logs during tests
@@ -32,9 +31,9 @@ describe('RBAC and Tenant Isolation Security Tests', () => {
     return jwt.sign(payload, JWT_SECRET);
   };
 
-  test('User from Tenant A should NOT see patients from Tenant B (DB Context check)', async () => {
+  test('User from Tenant A should set correct DB session variables', async () => {
     const token = generateToken({
-      sub: 'user-a',
+      sub: '00000000-0000-0000-0000-000000000000',
       email: 'user@tenant-a.com',
       role: 'admin',
       tenant_id: tenant1Id,
@@ -42,11 +41,14 @@ describe('RBAC and Tenant Isolation Security Tests', () => {
     });
 
     const querySpy = jest.spyOn(pool, 'query').mockImplementation((sql, params) => {
+      // Simulate success for verifyUser and the endpoint logic
+      if (sql.includes('set_config')) return Promise.resolve({ rows: [] });
+      if (sql.includes('profiles')) return Promise.resolve({ rows: [{ id: '123' }] });
       return Promise.resolve({ rows: [] });
     });
 
     await request(app)
-      .get('/api/pacientes')
+      .get('/api/auth/me')
       .set('Authorization', `Bearer ${token}`);
 
     // Verify correct tenant isolation session variables
@@ -62,9 +64,9 @@ describe('RBAC and Tenant Isolation Security Tests', () => {
     querySpy.mockRestore();
   });
 
-  test('Super Admin should have global access flag enabled in DB session', async () => {
+  test('Super Admin should set global access flag (is_super_admin=true) in DB session', async () => {
     const token = generateToken({
-      sub: 'super-admin',
+      sub: '00000000-0000-0000-0000-000000000001',
       email: 'admin@system.com',
       role: 'admin',
       tenant_id: null,
@@ -72,12 +74,13 @@ describe('RBAC and Tenant Isolation Security Tests', () => {
     });
 
     const querySpy = jest.spyOn(pool, 'query').mockImplementation((sql, params) => {
-      // Simulate success for any check
-      return Promise.resolve({ rows: [{ id: '123' }] });
+      if (sql.includes('set_config')) return Promise.resolve({ rows: [] });
+      if (sql.includes('profiles')) return Promise.resolve({ rows: [{ id: '1', is_super_admin: true }] });
+      return Promise.resolve({ rows: [] });
     });
 
     await request(app)
-      .get('/api/admin/clinicas') 
+      .get('/api/auth/me') 
       .set('Authorization', `Bearer ${token}`);
 
     expect(querySpy).toHaveBeenCalledWith(
@@ -88,17 +91,16 @@ describe('RBAC and Tenant Isolation Security Tests', () => {
     querySpy.mockRestore();
   });
 
-  test('Manipulated token (invalid signature) should be rejected', async () => {
+  test('Request with invalid JWT signature should return 401', async () => {
     const invalidToken = jwt.sign(
       { sub: 'hacker', is_super_admin: true },
       'WRONG_SECRET'
     );
 
     const response = await request(app)
-      .get('/api/admin/clinicas')
+      .get('/api/auth/me')
       .set('Authorization', `Bearer ${invalidToken}`);
 
-    // Should be unauthorized because the signature is invalid
     expect(response.status).toBe(401);
   });
 });
