@@ -1,9 +1,9 @@
-import { Bell, Search, CalendarDays } from "lucide-react";
+import { Bell, Search, CalendarDays, LucideIcon } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { GlobalSearchDialog } from "@/components/GlobalSearchDialog";
 
-export function DashboardHeader({ title }: { title: string }) {
+export function DashboardHeader({ title, icon: Icon }: { title: string; icon?: LucideIcon }) {
   const { user } = useAuth();
   const [today, setToday] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
@@ -25,14 +25,21 @@ export function DashboardHeader({ title }: { title: string }) {
   return (
     <>
       <header className="h-[72px] flex items-center justify-between px-8 border-b border-border bg-card/80 backdrop-blur-md sticky top-0 z-20">
-        <div>
-          <h1 className="text-lg font-bold text-foreground tracking-tight">{title}</h1>
-          {today && (
-            <p className="text-[11px] text-muted-foreground flex items-center gap-1.5 mt-0.5">
-              <CalendarDays className="h-3 w-3" />
-              <span className="capitalize">{today}</span>
-            </p>
+        <div className="flex items-center gap-3">
+          {Icon && (
+            <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center">
+              <Icon className="h-5 w-5 text-primary" />
+            </div>
           )}
+          <div>
+            <h1 className="text-lg font-bold text-foreground tracking-tight">{title}</h1>
+            {today && (
+              <p className="text-[11px] text-muted-foreground flex items-center gap-1.5 mt-0.5">
+                <CalendarDays className="h-3 w-3" />
+                <span className="capitalize">{today}</span>
+              </p>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-3">
           <button

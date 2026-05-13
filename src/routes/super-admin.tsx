@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { saasApi, type Tenant, type Plan } from "@/lib/saasApi";
 import { useAuth } from "@/hooks/useAuth";
 import { DashboardHeader } from "@/components/DashboardHeader";
@@ -10,8 +10,10 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
-import { ShieldAlert, Loader2, Users, Building2, CreditCard, Search, ExternalLink, Calendar, Plus, Save, TrendingUp, DollarSign, UserMinus, Edit } from "lucide-react";
+import { ShieldAlert, Loader2, Users, Building2, CreditCard, Search, ExternalLink, Calendar, Plus, Save, TrendingUp, DollarSign, UserMinus, Edit, Crown } from "lucide-react";
 import { PlanEditorDialog } from "@/components/PlanEditorDialog";
+import SaasFilters, { SaasFilterState } from "@/components/admin-saas/SaasFilters";
+import SaasKpiCards from "@/components/admin-saas/SaasKpiCards";
 
 export const Route = createFileRoute("/super-admin")({
   ssr: false,
@@ -27,8 +29,9 @@ function SuperAdminPage() {
   const [activeTab, setActiveTab] = useState("clinicas");
   const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null);
   const [isPlanDialogOpen, setIsPlanDialogOpen] = useState(false);
+  const [filters, setFilters] = useState<SaasFilterState>({ periodo: "mes_atual", plano: "todos", statusAssinatura: "todos" });
 
-  const reload = async () => {
+  const reload = useCallback(async () => {
     setLoading(true);
     try {
       const [t, p] = await Promise.all([saasApi.listTenants(), saasApi.listAllPlans()]);
@@ -39,7 +42,7 @@ function SuperAdminPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     if (user?.is_super_admin) reload();
@@ -82,79 +85,28 @@ function SuperAdminPage() {
 
   return (
     <div className="flex-1 flex flex-col min-h-screen bg-muted/30">
-      <DashboardHeader title="Painel do Super Administrador" />
+      <DashboardHeader title="Painel do Super Administrador" icon={Crown} />
       
       <main className="flex-1 p-6 overflow-auto space-y-6 max-w-7xl mx-auto w-full">
-        {/* Resumo de Métricas */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <Card className="border-none shadow-sm bg-gradient-to-br from-primary/5 to-primary/10">
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div className="h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center text-primary">
-                  <DollarSign size={20} />
-                </div>
-                <Badge variant="outline" className="bg-background/50">MRR</Badge>
-              </div>
-              <div className="mt-4">
-                <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Receita Mensal</h3>
-                <p className="text-3xl font-bold text-foreground">
-                  R$ {tenants.filter(t => t.status === "active").reduce((acc, curr) => acc + (curr.preco_mensal || 0), 0).toLocaleString('pt-BR')}
-                </p>
-              </div>
-            </CardContent>
-          </Card>
+        {/* Filtros CareFlow Style */}
+        <SaasFilters 
+          filters={filters} 
+          onChange={setFilters} 
+          planos={plans.map(p => ({ id: p.id, nome: p.nome }))} 
+          onRefresh={reload}
+          loading={loading}
+        />
 
-          <Card className="border-none shadow-sm bg-gradient-to-br from-green-500/5 to-green-500/10">
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div className="h-10 w-10 rounded-full bg-green-500/20 flex items-center justify-center text-green-600">
-                  <Building2 size={20} />
-                </div>
-                <Badge variant="outline" className="bg-background/50">Total</Badge>
-              </div>
-              <div className="mt-4">
-                <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Clínicas Ativas</h3>
-                <p className="text-3xl font-bold text-foreground">
-                  {tenants.filter(t => t.status === "active").length}
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="border-none shadow-sm bg-gradient-to-br from-destructive/5 to-destructive/10">
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div className="h-10 w-10 rounded-full bg-destructive/20 flex items-center justify-center text-destructive">
-                  <UserMinus size={20} />
-                </div>
-                <Badge variant="outline" className="bg-background/50">Churn</Badge>
-              </div>
-              <div className="mt-4">
-                <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Cancelamentos</h3>
-                <p className="text-3xl font-bold text-foreground">
-                  {tenants.filter(t => t.status === "canceled").length}
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="border-none shadow-sm bg-gradient-to-br from-blue-500/5 to-blue-500/10">
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div className="h-10 w-10 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-600">
-                  <Users size={20} />
-                </div>
-                <Badge variant="outline" className="bg-background/50">Global</Badge>
-              </div>
-              <div className="mt-4">
-                <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Total Usuários</h3>
-                <p className="text-3xl font-bold text-foreground">
-                  {tenants.reduce((acc, curr) => acc + (curr.users_count || 0), 0)}
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+        {/* Resumo de Métricas CareFlow Style */}
+        <SaasKpiCards 
+          mrr={tenants.filter(t => t.status === "active").reduce((acc, curr) => acc + (curr.preco_mensal || 0), 0)}
+          arr={tenants.filter(t => t.status === "active").reduce((acc, curr) => acc + (curr.preco_mensal || 0), 0) * 12}
+          receitaMes={tenants.filter(t => t.status === "active").reduce((acc, curr) => acc + (curr.preco_mensal || 0), 0)} // Exemplo simplificado
+          receitaMesAnterior={0} // Mock
+          totalPix={0} // Mock
+          totalPendente={tenants.filter(t => t.status === "past_due").length * 297} // Mock baseado no plano starter
+          receitaRecorrente={tenants.filter(t => t.status === "active").reduce((acc, curr) => acc + (curr.preco_mensal || 0), 0)}
+        />
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
