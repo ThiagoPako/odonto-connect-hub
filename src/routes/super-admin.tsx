@@ -30,13 +30,29 @@ function SuperAdminPage() {
   const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null);
   const [isPlanDialogOpen, setIsPlanDialogOpen] = useState(false);
   const [filters, setFilters] = useState<SaasFilterState>({ periodo: "mes_atual", plano: "todos", statusAssinatura: "todos" });
+  const [stats, setStats] = useState({
+    mrr: 0,
+    arr: 0,
+    receita_mes: 0,
+    receita_mes_anterior: 0,
+    total_pendente: 0,
+    total_pix: 0,
+    receita_recorrente: 0
+  });
 
   const reload = useCallback(async () => {
     setLoading(true);
     try {
-      const [t, p] = await Promise.all([saasApi.listTenants(), saasApi.listAllPlans()]);
+      const [t, p, s] = await Promise.all([
+        saasApi.listTenants(), 
+        saasApi.listAllPlans(),
+        saasApi.getStats()
+      ]);
       setTenants(t.data?.data ?? []);
       setPlans(p.data?.data ?? []);
+      if (s.data?.data) {
+        setStats(s.data.data);
+      }
     } catch (err) {
       toast.error("Erro ao carregar dados do sistema");
     } finally {
@@ -99,13 +115,13 @@ function SuperAdminPage() {
 
         {/* Resumo de Métricas CareFlow Style */}
         <SaasKpiCards 
-          mrr={tenants.filter(t => t.status === "active").reduce((acc, curr) => acc + (curr.preco_mensal || 0), 0)}
-          arr={tenants.filter(t => t.status === "active").reduce((acc, curr) => acc + (curr.preco_mensal || 0), 0) * 12}
-          receitaMes={tenants.filter(t => t.status === "active").reduce((acc, curr) => acc + (curr.preco_mensal || 0), 0)} // Exemplo simplificado
-          receitaMesAnterior={0} // Mock
-          totalPix={0} // Mock
-          totalPendente={tenants.filter(t => t.status === "past_due").length * 297} // Mock baseado no plano starter
-          receitaRecorrente={tenants.filter(t => t.status === "active").reduce((acc, curr) => acc + (curr.preco_mensal || 0), 0)}
+          mrr={stats.mrr}
+          arr={stats.arr}
+          receitaMes={stats.receita_mes}
+          receitaMesAnterior={stats.receita_mes_anterior}
+          totalPix={stats.total_pix}
+          totalPendente={stats.total_pendente}
+          receitaRecorrente={stats.receita_recorrente}
         />
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">

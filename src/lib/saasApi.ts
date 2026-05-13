@@ -117,4 +117,15 @@ export const saasApi = {
     vpsApiFetch<{ data: Plan }>("/super-admin/plans", { method: "POST", body }),
   updatePlan: (id: string, body: Partial<Plan>) =>
     vpsApiFetch<{ data: Plan }>(`/super-admin/plans/${id}`, { method: "PATCH", body }),
+
+  getStats: () =>
+    vpsApiFetch<{ data: { 
+      mrr: number; 
+      arr: number; 
+      receita_mes: number; 
+      receita_mes_anterior: number; 
+      total_pendente: number; 
+      total_pix: number; 
+      receita_recorrente: number; 
+    } }>("/super-admin/stats"),
 };
