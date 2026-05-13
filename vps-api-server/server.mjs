@@ -260,18 +260,28 @@ async function verifyUser(req) {
 
 async function verifySuperAdmin(req) {
   const { user } = await verifyUser(req);
-  if (!user.is_super_admin) throw new Error('Super admin access required');
+  if (!user.is_super_admin) {
+    console.warn(`[SECURITY] Unprivileged super-admin access attempt: ${user.email}`);
+    throw new Error('Super admin access required');
+  }
   return { user };
 }
 
 async function verifyAdmin(req) {
   const { user } = await verifyUser(req);
+  // Super Admins bypass normal admin checks for maintenance
+  if (user.is_super_admin) return { user };
+  
   if (user.role === 'admin') return { user };
+  
   const { rows } = await pool.query(
     'SELECT role FROM user_roles WHERE user_id = $1 AND role = $2',
     [user.id, 'admin']
   );
-  if (rows.length === 0) throw new Error('Admin access required');
+  if (rows.length === 0) {
+    console.warn(`[SECURITY] Access denied: User ${user.email} is not an admin`);
+    throw new Error('Admin access required');
+  }
   return { user };
 }
 
