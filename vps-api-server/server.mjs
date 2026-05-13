@@ -10637,7 +10637,8 @@ async function clinicorpFetchProbe(settings, pathName) {
 // ═══════════════════════════════════════════════════════════════
 // START SERVER
 
-app.listen(PORT, async () => {
+if (process.env.NODE_ENV !== 'test') {
+  app.listen(PORT, async () => {
   console.log(`🦷 Odonto Connect API running on port ${PORT}`);
   console.log(`   Health: http://localhost:${PORT}/api/health`);
   console.log(`   Webhook URL: ${WEBHOOK_URL}`);
