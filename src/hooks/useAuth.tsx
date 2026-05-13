@@ -9,6 +9,7 @@ export interface AuthUser {
   avatar_url: string | null;
   tenant_id: string | null;
   is_super_admin: boolean;
+  tenant_features?: Record<string, boolean>;
 }
 
 interface AuthState {
