@@ -246,10 +246,13 @@ async function verifyUser(req) {
   // Set tenant in DB session if available
   if (user.tenant_id) {
     try {
-      await pool.query('SELECT set_tenant($1)', [user.tenant_id]);
+      await pool.query('SET app.tenant_id = $1', [user.tenant_id]);
     } catch (err) {
       console.error('Failed to set tenant in DB session:', err.message);
     }
+  } else {
+    // Clear tenant for super admins or unauthenticated requests to avoid leaks
+    await pool.query('RESET app.tenant_id');
   }
 
   return { user };
