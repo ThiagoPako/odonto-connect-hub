@@ -1283,7 +1283,6 @@ app.get('/api/auth/me', async (req, res) => {
       is_super_admin: !!profile.is_super_admin,
       tenant_features: profile.tenant_features || {},
     });
-    });
   } catch (error) {
     res.status(401).json({ error: 'Não autenticado' });
   }
