@@ -246,10 +246,12 @@ async function verifyUser(req) {
   // Set context in DB session for RLS
   try {
     await pool.query('SELECT set_config($1, $2, true)', ['app.jwt_payload', JSON.stringify(decoded)]);
+    await pool.query('SELECT set_config($1, $2, true)', ['app.is_super_admin', user.is_super_admin ? 'true' : 'false']);
+    
     if (user.tenant_id) {
-      await pool.query('SELECT set_config($1, $2, true)', ['app.tenant_id', user.tenant_id]);
+      await pool.query('SELECT set_config($1, $2, true)', ['app.current_tenant_id', user.tenant_id]);
     } else {
-      await pool.query('SELECT set_config($1, $2, true)', ['app.tenant_id', '']);
+      await pool.query('SELECT set_config($1, $2, true)', ['app.current_tenant_id', '']);
     }
   } catch (err) {
     console.error('Failed to set DB session context:', err.message);
@@ -10635,7 +10637,8 @@ async function clinicorpFetchProbe(settings, pathName) {
 // ═══════════════════════════════════════════════════════════════
 // START SERVER
 
-app.listen(PORT, async () => {
+if (process.env.NODE_ENV !== 'test') {
+  app.listen(PORT, async () => {
   console.log(`🦷 Odonto Connect API running on port ${PORT}`);
   console.log(`   Health: http://localhost:${PORT}/api/health`);
   console.log(`   Webhook URL: ${WEBHOOK_URL}`);
@@ -10806,7 +10809,10 @@ app.listen(PORT, async () => {
        BEGIN
          EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', table_name);
          EXECUTE format('DROP POLICY IF EXISTS tenant_isolation_policy ON %I', table_name);
-         EXECUTE format('CREATE POLICY tenant_isolation_policy ON %I USING (tenant_id = current_setting(''app.current_tenant_id'', true)::uuid)', table_name);
+         EXECUTE format('CREATE POLICY tenant_isolation_policy ON %I USING (
+           (current_setting(''app.is_super_admin'', true) = ''true'') OR 
+           (tenant_id = current_setting(''app.current_tenant_id'', true)::uuid)
+         )', table_name);
        END;
        $$ LANGUAGE plpgsql;`,
 
@@ -10886,4 +10892,9 @@ app.listen(PORT, async () => {
   setTimeout(() => { reconciliationTick(pool).catch((e) => console.error('[clinicorp] tick startup', e.message)); }, 15_000);
   setInterval(() => { reconciliationTick(pool).catch((e) => console.error('[clinicorp] tick', e.message)); }, 60 * 1000);
   console.log('   🦷 Clinicorp auto-reconcile ativo (tick a cada 60s, intervalo configurável em clinicorp_settings)');
-});
+  });
+}
+
+
+export { app, pool };
+
