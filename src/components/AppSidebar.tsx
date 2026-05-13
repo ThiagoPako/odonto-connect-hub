@@ -119,7 +119,12 @@ const superAdminSections: NavSection[] = [
   },
 ];
 
-function filterByRole(sections: NavSection[], role: string, isSuperAdmin?: boolean): NavSection[] {
+function filterByRole(
+  sections: NavSection[], 
+  role: string, 
+  isSuperAdmin?: boolean, 
+  tenantFeatures?: Record<string, boolean>
+): NavSection[] {
   if (isSuperAdmin) {
     return superAdminSections;
   }
@@ -127,7 +132,7 @@ function filterByRole(sections: NavSection[], role: string, isSuperAdmin?: boole
   return sections
     .map((section) => ({
       ...section,
-      items: section.items.filter((item) => canAccessRoute(item.url, role, isSuperAdmin)),
+      items: section.items.filter((item) => canAccessRoute(item.url, role, isSuperAdmin, tenantFeatures)),
     }))
     .filter((section) => section.items.length > 0);
 }
