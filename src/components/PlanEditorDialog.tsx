@@ -83,12 +83,12 @@ export function PlanEditorDialog({ plan, open, onOpenChange, onSuccess }: PlanEd
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-[700px] max-h-[95vh] overflow-y-auto">
         <form onSubmit={handleSubmit}>
           <DialogHeader>
             <DialogTitle>{plan ? "Editar Plano" : "Novo Plano"}</DialogTitle>
             <DialogDescription>
-              Configure os detalhes e limites do plano SaaS.
+              Configure os módulos, detalhes e limites do plano SaaS.
             </DialogDescription>
           </DialogHeader>
 
