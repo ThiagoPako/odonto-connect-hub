@@ -3,7 +3,7 @@ import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { GlobalSearchDialog } from "@/components/GlobalSearchDialog";
 
-export function DashboardHeader({ title }: { title: string }) {
+export function DashboardHeader({ title, icon: Icon }: { title: string; icon?: LucideIcon }) {
   const { user } = useAuth();
   const [today, setToday] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
