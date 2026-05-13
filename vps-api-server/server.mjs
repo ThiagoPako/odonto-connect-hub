@@ -743,6 +743,7 @@ app.post('/api/super-admin/plans', async (req, res) => {
 });
 
 app.patch('/api/super-admin/plans/:id', async (req, res) => {
+  const client = await pool.connect();
   try {
     await verifySuperAdmin(req);
     const { id } = req.params;
@@ -755,15 +756,40 @@ app.patch('/api/super-admin/plans/:id', async (req, res) => {
       if (b[f] !== undefined) { sets.push(`${f} = $${i++}`); vals.push(b[f]); }
     }
     if (!sets.length) return res.status(400).json({ error: 'Nada para atualizar' });
+    
+    await client.query('BEGIN');
+    
     sets.push('updated_at = NOW()');
     vals.push(id);
-    const { rows } = await pool.query(
+    const { rows } = await client.query(
       `UPDATE plans SET ${sets.join(', ')} WHERE id = $${i} RETURNING *`,
       vals
     );
-    res.json({ data: rows[0] });
+    const updatedPlan = rows[0];
+
+    // Synchronization logic: Notify or log the change for affected tenants
+    // In this architecture, limits are checked against the current plan in real-time.
+    // However, if we had cached limits or specific quotas in the tenants table, 
+    // we would update them here.
+    
+    // For now, we'll log the sync operation to ensure visibility in the VPS
+    const { rowCount: affectedTenants } = await client.query(
+      'SELECT 1 FROM tenants WHERE plan_id = $1',
+      [id]
+    );
+    
+    console.log(`[SYNC] Plan "${updatedPlan.nome}" updated. ${affectedTenants} tenants now reflect new limits: 
+      Users: ${updatedPlan.max_usuarios || 'Unlimited'}, 
+      WhatsApp: ${updatedPlan.max_whatsapp_instances || 'Unlimited'}`);
+
+    await client.query('COMMIT');
+    res.json({ data: updatedPlan, synced_tenants: affectedTenants });
   } catch (e) {
+    await client.query('ROLLBACK');
+    console.error('Plan update sync error:', e.message);
     res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
   }
 });
 
