@@ -109,7 +109,21 @@ const navSections: NavSection[] = [
   },
 ];
 
+const superAdminSections: NavSection[] = [
+  {
+    label: "SaaS Management",
+    items: [
+      { title: "Painel Global", url: "/super-admin", icon: LayoutDashboard },
+      { title: "Configurações SaaS", url: "/super-admin", icon: Settings },
+    ],
+  },
+];
+
 function filterByRole(sections: NavSection[], role: string, isSuperAdmin?: boolean): NavSection[] {
+  if (isSuperAdmin) {
+    return superAdminSections;
+  }
+  
   return sections
     .map((section) => ({
       ...section,

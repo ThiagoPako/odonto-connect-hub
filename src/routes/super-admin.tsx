@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
-import { ShieldAlert, Loader2, Users, Building2, CreditCard, Search, ExternalLink, Calendar, Plus, Save } from "lucide-react";
+import { ShieldAlert, Loader2, Users, Building2, CreditCard, Search, ExternalLink, Calendar, Plus, Save, TrendingUp, DollarSign, UserMinus } from "lucide-react";
 
 export const Route = createFileRoute("/super-admin")({
   ssr: false,
@@ -88,31 +88,31 @@ function SuperAdminPage() {
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div className="h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center text-primary">
-                  <Building2 size={20} />
+                  <DollarSign size={20} />
                 </div>
-                <Badge variant="outline" className="bg-background/50">{tenants.length} Total</Badge>
+                <Badge variant="outline" className="bg-background/50">MRR</Badge>
               </div>
               <div className="mt-4">
-                <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Ativos</h3>
+                <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Receita Mensal</h3>
                 <p className="text-3xl font-bold text-foreground">
-                  {tenants.filter(t => t.status === "active").length}
+                  R$ {tenants.filter(t => t.status === "active").reduce((acc, curr) => acc + (curr.preco_mensal || 0), 0).toLocaleString('pt-BR')}
                 </p>
               </div>
             </CardContent>
           </Card>
 
-          <Card className="border-none shadow-sm bg-gradient-to-br from-amber-500/5 to-amber-500/10">
+          <Card className="border-none shadow-sm bg-gradient-to-br from-green-500/5 to-green-500/10">
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
-                <div className="h-10 w-10 rounded-full bg-amber-500/20 flex items-center justify-center text-amber-600">
-                  <Calendar size={20} />
+                <div className="h-10 w-10 rounded-full bg-green-500/20 flex items-center justify-center text-green-600">
+                  <Building2 size={20} />
                 </div>
-                <Badge variant="outline" className="bg-background/50">Trials</Badge>
+                <Badge variant="outline" className="bg-background/50">Total</Badge>
               </div>
               <div className="mt-4">
-                <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Em Teste</h3>
+                <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Clínicas Ativas</h3>
                 <p className="text-3xl font-bold text-foreground">
-                  {tenants.filter(t => t.status === "trial").length}
+                  {tenants.filter(t => t.status === "active").length}
                 </p>
               </div>
             </CardContent>
@@ -122,14 +122,14 @@ function SuperAdminPage() {
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div className="h-10 w-10 rounded-full bg-destructive/20 flex items-center justify-center text-destructive">
-                  <ShieldAlert size={20} />
+                  <UserMinus size={20} />
                 </div>
-                <Badge variant="outline" className="bg-background/50">Atenção</Badge>
+                <Badge variant="outline" className="bg-background/50">Churn</Badge>
               </div>
               <div className="mt-4">
-                <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Inadimplentes</h3>
+                <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Cancelamentos</h3>
                 <p className="text-3xl font-bold text-foreground">
-                  {tenants.filter(t => t.status === "past_due").length}
+                  {tenants.filter(t => t.status === "canceled").length}
                 </p>
               </div>
             </CardContent>
@@ -141,10 +141,10 @@ function SuperAdminPage() {
                 <div className="h-10 w-10 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-600">
                   <Users size={20} />
                 </div>
-                <Badge variant="outline" className="bg-background/50">Usuários</Badge>
+                <Badge variant="outline" className="bg-background/50">Global</Badge>
               </div>
               <div className="mt-4">
-                <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Total de Contas</h3>
+                <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Total Usuários</h3>
                 <p className="text-3xl font-bold text-foreground">
                   {tenants.reduce((acc, curr) => acc + (curr.users_count || 0), 0)}
                 </p>
