@@ -394,6 +394,13 @@ function SuperAdminPage() {
             </Card>
           </TabsContent>
         </Tabs>
+
+        <PlanEditorDialog 
+          open={isPlanDialogOpen} 
+          onOpenChange={setIsPlanDialogOpen} 
+          plan={selectedPlan} 
+          onSuccess={reload} 
+        />
       </main>
     </div>
   );
