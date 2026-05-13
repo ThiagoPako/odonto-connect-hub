@@ -128,7 +128,7 @@ function AuthGate() {
 
   // Role-based route protection
   const userRole = user?.role ?? "user";
-  const hasAccess = canAccessRoute(location.pathname, userRole);
+  const hasAccess = canAccessRoute(location.pathname, userRole, !!user?.is_super_admin);
 
   // Authenticated — show sidebar + content (or unauthorized)
   return (
