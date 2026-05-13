@@ -234,15 +234,25 @@ async function verifyUser(req) {
   if (!authHeader?.startsWith('Bearer ')) throw new Error('Unauthorized');
   const token = authHeader.replace('Bearer ', '');
   const decoded = verifyToken(token);
-  return {
-    user: {
-      id: decoded.sub,
-      email: decoded.email,
-      role: decoded.role,
-      tenant_id: decoded.tenant_id || null,
-      is_super_admin: !!decoded.is_super_admin,
-    },
+  
+  const user = {
+    id: decoded.sub,
+    email: decoded.email,
+    role: decoded.role,
+    tenant_id: decoded.tenant_id || null,
+    is_super_admin: !!decoded.is_super_admin,
   };
+
+  // Set tenant in DB session if available
+  if (user.tenant_id) {
+    try {
+      await pool.query('SELECT set_tenant($1)', [user.tenant_id]);
+    } catch (err) {
+      console.error('Failed to set tenant in DB session:', err.message);
+    }
+  }
+
+  return { user };
 }
 
 async function verifySuperAdmin(req) {
