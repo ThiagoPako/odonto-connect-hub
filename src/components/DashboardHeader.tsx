@@ -1,4 +1,4 @@
-import { Bell, Search, CalendarDays } from "lucide-react";
+import { Bell, Search, CalendarDays, LucideIcon } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { GlobalSearchDialog } from "@/components/GlobalSearchDialog";
