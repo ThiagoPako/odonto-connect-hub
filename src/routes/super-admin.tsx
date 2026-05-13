@@ -273,7 +273,7 @@ function SuperAdminPage() {
                     <CreditCard size={18} className="text-primary" />
                     Catálogo de Planos
                   </CardTitle>
-                  <Button size="sm" className="h-8 gap-2">
+                  <Button size="sm" className="h-8 gap-2" onClick={() => { setSelectedPlan(null); setIsPlanDialogOpen(true); }}>
                     <Plus size={16} /> Novo Plano
                   </Button>
                 </CardHeader>
