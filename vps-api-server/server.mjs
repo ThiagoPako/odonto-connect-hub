@@ -359,13 +359,15 @@ app.post('/api/auth/login', async (req, res) => {
     );
     const role = roles[0]?.role || profile.role || 'user';
 
-    const token = signToken({
+    const tokenPayload = {
       sub: profile.id,
       email: profile.email,
       role,
       tenant_id: profile.tenant_id || null,
       is_super_admin: !!profile.is_super_admin,
-    });
+    };
+
+    const token = signToken(tokenPayload);
 
     res.json({
       token,
