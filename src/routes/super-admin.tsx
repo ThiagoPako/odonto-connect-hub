@@ -10,7 +10,8 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
-import { ShieldAlert, Loader2, Users, Building2, CreditCard, Search, ExternalLink, Calendar, Plus, Save, TrendingUp, DollarSign, UserMinus } from "lucide-react";
+import { ShieldAlert, Loader2, Users, Building2, CreditCard, Search, ExternalLink, Calendar, Plus, Save, TrendingUp, DollarSign, UserMinus, Edit } from "lucide-react";
+import { PlanEditorDialog } from "@/components/PlanEditorDialog";
 
 export const Route = createFileRoute("/super-admin")({
   ssr: false,
@@ -24,6 +25,8 @@ function SuperAdminPage() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [activeTab, setActiveTab] = useState("clinicas");
+  const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null);
+  const [isPlanDialogOpen, setIsPlanDialogOpen] = useState(false);
 
   const reload = async () => {
     setLoading(true);
@@ -270,7 +273,7 @@ function SuperAdminPage() {
                     <CreditCard size={18} className="text-primary" />
                     Catálogo de Planos
                   </CardTitle>
-                  <Button size="sm" className="h-8 gap-2">
+                  <Button size="sm" className="h-8 gap-2" onClick={() => { setSelectedPlan(null); setIsPlanDialogOpen(true); }}>
                     <Plus size={16} /> Novo Plano
                   </Button>
                 </CardHeader>
@@ -313,8 +316,9 @@ function SuperAdminPage() {
                         </div>
 
                         <div className="flex gap-2 pt-2">
-                          <Button variant="outline" size="sm" className="flex-1">Configurar Recursos</Button>
-                          <Button variant="outline" size="sm" className="h-8 w-8 p-0"><Save size={14} /></Button>
+                          <Button variant="outline" size="sm" className="flex-1" onClick={() => { setSelectedPlan(p); setIsPlanDialogOpen(true); }}>
+                            <Edit className="h-4 w-4 mr-1.5" /> Editar Plano
+                          </Button>
                         </div>
                       </div>
                     ))}
@@ -390,6 +394,13 @@ function SuperAdminPage() {
             </Card>
           </TabsContent>
         </Tabs>
+
+        <PlanEditorDialog 
+          open={isPlanDialogOpen} 
+          onOpenChange={setIsPlanDialogOpen} 
+          plan={selectedPlan} 
+          onSuccess={reload} 
+        />
       </main>
     </div>
   );
