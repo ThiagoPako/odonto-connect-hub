@@ -48,13 +48,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const d = res.data as { token: string; user: AuthUser };
       saveToken(d.token);
       setUser(d.user);
-      
-      // Redirect based on role
-      if (d.user.is_super_admin) {
-        window.location.href = "/super-admin";
-      } else {
-        window.location.href = "/dashboard";
-      }
+      // Redirect handled by LoginPage useEffect via SPA navigation
     }
   }, []);
 
