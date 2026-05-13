@@ -1266,8 +1266,11 @@ app.get('/api/auth/me', async (req, res) => {
     const { user } = await verifyUser(req);
     const { rows } = await pool.query(
       `SELECT p.id, p.name, p.email, p.avatar_url, p.role, ur.role as user_role,
-              p.tenant_id, COALESCE(p.is_super_admin, false) as is_super_admin
-         FROM profiles p LEFT JOIN user_roles ur ON ur.user_id = p.id
+              p.tenant_id, COALESCE(p.is_super_admin, false) as is_super_admin,
+              t.features as tenant_features
+         FROM profiles p 
+         LEFT JOIN user_roles ur ON ur.user_id = p.id
+         LEFT JOIN tenants t ON t.id = p.tenant_id
         WHERE p.id = $1 LIMIT 1`,
       [user.id]
     );
@@ -1278,6 +1281,8 @@ app.get('/api/auth/me', async (req, res) => {
       role: profile.user_role || profile.role, avatar_url: profile.avatar_url,
       tenant_id: profile.tenant_id || null,
       is_super_admin: !!profile.is_super_admin,
+      tenant_features: profile.tenant_features || {},
+    });
     });
   } catch (error) {
     res.status(401).json({ error: 'Não autenticado' });
