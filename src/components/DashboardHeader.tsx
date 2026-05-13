@@ -33,12 +33,13 @@ export function DashboardHeader({ title, icon: Icon }: { title: string; icon?: L
           )}
           <div>
             <h1 className="text-lg font-bold text-foreground tracking-tight">{title}</h1>
-          {today && (
-            <p className="text-[11px] text-muted-foreground flex items-center gap-1.5 mt-0.5">
-              <CalendarDays className="h-3 w-3" />
-              <span className="capitalize">{today}</span>
-            </p>
-          )}
+            {today && (
+              <p className="text-[11px] text-muted-foreground flex items-center gap-1.5 mt-0.5">
+                <CalendarDays className="h-3 w-3" />
+                <span className="capitalize">{today}</span>
+              </p>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-3">
           <button
