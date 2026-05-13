@@ -34,7 +34,12 @@ export const routeRoleMap: Record<string, AppRole[]> = {
   "/agenda": ["admin", "dentista", "recepcionista", "comercial"],
 };
 
-export function canAccessRoute(path: string, role: string, isSuperAdmin?: boolean): boolean {
+export function canAccessRoute(
+  path: string, 
+  role: string, 
+  isSuperAdmin?: boolean, 
+  tenantFeatures?: Record<string, boolean>
+): boolean {
   // Super Admin can access everything
   if (isSuperAdmin) return true;
 
@@ -42,6 +47,21 @@ export function canAccessRoute(path: string, role: string, isSuperAdmin?: boolea
   
   // Specific check for /super-admin: MUST be isSuperAdmin (handled above)
   if (path === "/super-admin") return false;
+
+  // Feature-based access control
+  if (tenantFeatures) {
+    if (path === "/financeiro" && tenantFeatures.mod_financeiro === false) return false;
+    if (path === "/comissoes" && tenantFeatures.mod_financeiro === false) return false;
+    if (path === "/automacoes" && tenantFeatures.mod_marketing === false) return false;
+    if (path === "/campanhas" && tenantFeatures.mod_marketing === false) return false;
+    if (path === "/whatsapp" && tenantFeatures.mod_whatsapp === false) return false;
+    if (path === "/disparos" && tenantFeatures.mod_whatsapp === false) return false;
+    if (path === "/estoque" && tenantFeatures.mod_estoque === false) return false;
+    if (path === "/crm" && tenantFeatures.mod_crm === false) return false;
+    if (path === "/equipe" && tenantFeatures.mod_equipe === false) return false;
+    if (path === "/prontuario" && tenantFeatures.mod_odontograma === false) return false;
+    if (path === "/atendimento" && tenantFeatures.mod_agenda === false) return false;
+  }
 
   if (!allowedRoles) return true; // no restriction
   return allowedRoles.includes(role as AppRole);
