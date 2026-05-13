@@ -30,13 +30,29 @@ function SuperAdminPage() {
   const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null);
   const [isPlanDialogOpen, setIsPlanDialogOpen] = useState(false);
   const [filters, setFilters] = useState<SaasFilterState>({ periodo: "mes_atual", plano: "todos", statusAssinatura: "todos" });
+  const [stats, setStats] = useState({
+    mrr: 0,
+    arr: 0,
+    receita_mes: 0,
+    receita_mes_anterior: 0,
+    total_pendente: 0,
+    total_pix: 0,
+    receita_recorrente: 0
+  });
 
   const reload = useCallback(async () => {
     setLoading(true);
     try {
-      const [t, p] = await Promise.all([saasApi.listTenants(), saasApi.listAllPlans()]);
+      const [t, p, s] = await Promise.all([
+        saasApi.listTenants(), 
+        saasApi.listAllPlans(),
+        saasApi.getStats()
+      ]);
       setTenants(t.data?.data ?? []);
       setPlans(p.data?.data ?? []);
+      if (s.data?.data) {
+        setStats(s.data.data);
+      }
     } catch (err) {
       toast.error("Erro ao carregar dados do sistema");
     } finally {
