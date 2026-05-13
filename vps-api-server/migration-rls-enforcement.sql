@@ -6,9 +6,26 @@
 -- ─── 1. Função Auxiliar para Tenant ID ────────────────────
 -- Captura o tenant_id da sessão ou do JWT (via middleware VPS)
 CREATE OR REPLACE FUNCTION get_current_tenant_id() RETURNS UUID AS $$
-  -- Tenta pegar da variável de sessão 'app.tenant_id' configurada pelo server.mjs
-  SELECT current_setting('app.tenant_id', true)::UUID;
-$$ LANGUAGE sql STABLE;
+  BEGIN
+    RETURN current_setting('app.tenant_id', true)::UUID;
+  EXCEPTION WHEN OTHERS THEN
+    RETURN NULL;
+  END;
+$$ LANGUAGE plpgsql STABLE;
+
+CREATE OR REPLACE FUNCTION is_super_admin() RETURNS BOOLEAN AS $$
+  DECLARE
+    payload TEXT;
+  BEGIN
+    payload := current_setting('app.jwt_payload', true);
+    IF payload IS NULL OR payload = '' THEN
+      RETURN FALSE;
+    END IF;
+    RETURN (payload::jsonb->>'is_super_admin')::boolean;
+  EXCEPTION WHEN OTHERS THEN
+    RETURN FALSE;
+  END;
+$$ LANGUAGE plpgsql STABLE;
 
 -- ─── 2. Habilitar RLS e Criar Políticas ───────────────────
 DO $$
