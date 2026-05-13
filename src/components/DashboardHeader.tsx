@@ -25,8 +25,14 @@ export function DashboardHeader({ title, icon: Icon }: { title: string; icon?: L
   return (
     <>
       <header className="h-[72px] flex items-center justify-between px-8 border-b border-border bg-card/80 backdrop-blur-md sticky top-0 z-20">
-        <div>
-          <h1 className="text-lg font-bold text-foreground tracking-tight">{title}</h1>
+        <div className="flex items-center gap-3">
+          {Icon && (
+            <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center">
+              <Icon className="h-5 w-5 text-primary" />
+            </div>
+          )}
+          <div>
+            <h1 className="text-lg font-bold text-foreground tracking-tight">{title}</h1>
           {today && (
             <p className="text-[11px] text-muted-foreground flex items-center gap-1.5 mt-0.5">
               <CalendarDays className="h-3 w-3" />
