@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { saasApi, type Tenant, type Plan } from "@/lib/saasApi";
 import { useAuth } from "@/hooks/useAuth";
 import { DashboardHeader } from "@/components/DashboardHeader";
@@ -10,8 +10,10 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
-import { ShieldAlert, Loader2, Users, Building2, CreditCard, Search, ExternalLink, Calendar, Plus, Save, TrendingUp, DollarSign, UserMinus, Edit } from "lucide-react";
+import { ShieldAlert, Loader2, Users, Building2, CreditCard, Search, ExternalLink, Calendar, Plus, Save, TrendingUp, DollarSign, UserMinus, Edit, Crown } from "lucide-react";
 import { PlanEditorDialog } from "@/components/PlanEditorDialog";
+import SaasFilters, { SaasFilterState } from "@/components/admin-saas/SaasFilters";
+import SaasKpiCards from "@/components/admin-saas/SaasKpiCards";
 
 export const Route = createFileRoute("/super-admin")({
   ssr: false,
