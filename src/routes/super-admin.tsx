@@ -379,12 +379,12 @@ function SuperAdminPage() {
                   </Select>
                 </div>
                 
-                <div className="flex items-center justify-between p-4 rounded-lg border border-amber-500/20 bg-amber-500/5">
+                <div className="flex items-center justify-between p-4 rounded-lg border border-red-500/20 bg-red-500/5">
                   <div className="space-y-0.5">
-                    <p className="text-sm font-bold text-amber-600">Manutenção de Banco de Dados</p>
-                    <p className="text-xs text-muted-foreground">Otimiza tabelas e limpa logs antigos.</p>
+                    <p className="text-sm font-bold text-red-600 italic">Área de Risco: Reset de Sistema</p>
+                    <p className="text-xs text-muted-foreground">Limpa dados globais de manutenção (use com cuidado).</p>
                   </div>
-                  <Button variant="outline" size="sm" className="bg-background">Executar Agora</Button>
+                  <Button variant="destructive" size="sm">Limpar Cache Global</Button>
                 </div>
               </CardContent>
             </Card>
