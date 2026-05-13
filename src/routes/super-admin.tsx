@@ -22,13 +22,20 @@ function SuperAdminPage() {
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [activeTab, setActiveTab] = useState("clinicas");
 
   const reload = async () => {
     setLoading(true);
-    const [t, p] = await Promise.all([saasApi.listTenants(), saasApi.listAllPlans()]);
-    setTenants(t.data?.data ?? []);
-    setPlans(p.data?.data ?? []);
-    setLoading(false);
+    try {
+      const [t, p] = await Promise.all([saasApi.listTenants(), saasApi.listAllPlans()]);
+      setTenants(t.data?.data ?? []);
+      setPlans(p.data?.data ?? []);
+    } catch (err) {
+      toast.error("Erro ao carregar dados do sistema");
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
