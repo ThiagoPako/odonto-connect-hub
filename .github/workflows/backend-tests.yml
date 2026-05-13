@@ -1,0 +1,47 @@
+name: Backend Tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'vps-api-server/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'vps-api-server/**'
+
+jobs:
+  test:
+    name: Run Jest Security Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: |
+          cd vps-api-server
+          bun install
+
+      - name: Run Tests
+        run: |
+          cd vps-api-server
+          npm test
+        env:
+          JWT_SECRET: test_secret_key_12345
+          PG_HOST: localhost
+          PG_PORT: 5432
+          PG_DATABASE: postgres
+          PG_USER: postgres
+          PG_PASSWORD: password
