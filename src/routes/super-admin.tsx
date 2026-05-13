@@ -25,6 +25,8 @@ function SuperAdminPage() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [activeTab, setActiveTab] = useState("clinicas");
+  const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null);
+  const [isPlanDialogOpen, setIsPlanDialogOpen] = useState(false);
 
   const reload = async () => {
     setLoading(true);
