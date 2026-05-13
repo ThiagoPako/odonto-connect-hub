@@ -316,8 +316,9 @@ function SuperAdminPage() {
                         </div>
 
                         <div className="flex gap-2 pt-2">
-                          <Button variant="outline" size="sm" className="flex-1">Configurar Recursos</Button>
-                          <Button variant="outline" size="sm" className="h-8 w-8 p-0"><Save size={14} /></Button>
+                          <Button variant="outline" size="sm" className="flex-1" onClick={() => { setSelectedPlan(p); setIsPlanDialogOpen(true); }}>
+                            <Edit className="h-4 w-4 mr-1.5" /> Editar Plano
+                          </Button>
                         </div>
                       </div>
                     ))}
