@@ -127,7 +127,7 @@ export function AppSidebar() {
 
   // Inject dynamic chat badge
   const visibleSections = useMemo(() => {
-    const sections = filterByRole(navSections, user?.role ?? "user");
+    const sections = filterByRole(navSections, user?.role ?? "user", !!user?.is_super_admin);
     if (chatUnread > 0) {
       return sections.map((s) => ({
         ...s,
