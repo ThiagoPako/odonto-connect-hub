@@ -34,8 +34,15 @@ export const routeRoleMap: Record<string, AppRole[]> = {
   "/agenda": ["admin", "dentista", "recepcionista", "comercial"],
 };
 
-export function canAccessRoute(path: string, role: string): boolean {
+export function canAccessRoute(path: string, role: string, isSuperAdmin?: boolean): boolean {
+  // Super Admin can access everything
+  if (isSuperAdmin) return true;
+
   const allowedRoles = routeRoleMap[path];
+  
+  // Specific check for /super-admin: MUST be isSuperAdmin (handled above)
+  if (path === "/super-admin") return false;
+
   if (!allowedRoles) return true; // no restriction
   return allowedRoles.includes(role as AppRole);
 }
