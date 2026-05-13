@@ -793,6 +793,62 @@ app.patch('/api/super-admin/plans/:id', async (req, res) => {
   }
 });
 
+app.get('/api/super-admin/stats', async (req, res) => {
+  try {
+    await verifySuperAdmin(req);
+    
+    // Aggregate metrics for MRR, ARR, and revenue
+    // Using current date for monthly comparison
+    const now = new Date();
+    const firstDayCurrentMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+    const firstDayPreviousMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString();
+    
+    const { rows: stats } = await pool.query(`
+      WITH active_tenants AS (
+        SELECT t.id, t.plan_id, p.preco_mensal 
+        FROM tenants t
+        JOIN plans p ON p.id = t.plan_id
+        WHERE t.status = 'active'
+      ),
+      mrr_calc AS (
+        SELECT SUM(preco_mensal) as mrr FROM active_tenants
+      ),
+      revenue_current_month AS (
+        SELECT COALESCE(SUM(amount), 0) as total
+        FROM invoices
+        WHERE status = 'paid' AND paid_at >= $1
+      ),
+      revenue_previous_month AS (
+        SELECT COALESCE(SUM(amount), 0) as total
+        FROM invoices
+        WHERE status = 'paid' AND paid_at >= $2 AND paid_at < $1
+      ),
+      pending_revenue AS (
+        SELECT COALESCE(SUM(amount), 0) as total
+        FROM invoices
+        WHERE status = 'pending'
+      ),
+      pix_total AS (
+        SELECT COALESCE(SUM(amount), 0) as total
+        FROM invoices
+        WHERE status = 'paid' AND (payment_url LIKE '%pix%' OR id IN (SELECT id FROM invoices WHERE status = 'paid'))
+      )
+      SELECT 
+        (SELECT COALESCE(mrr, 0) FROM mrr_calc) as mrr,
+        (SELECT COALESCE(mrr * 12, 0) FROM mrr_calc) as arr,
+        (SELECT total FROM revenue_current_month) as receita_mes,
+        (SELECT total FROM revenue_previous_month) as receita_mes_anterior,
+        (SELECT total FROM pending_revenue) as total_pendente,
+        (SELECT total FROM pix_total) as total_pix,
+        (SELECT COALESCE(mrr, 0) FROM mrr_calc) as receita_recorrente
+    `, [firstDayCurrentMonth, firstDayPreviousMonth]);
+
+    res.json({ data: stats[0] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ─── Health check (used by deploy validation + monitoring) ──────────────
 //
 // Standardized error codes (stable contract — do not rename):
