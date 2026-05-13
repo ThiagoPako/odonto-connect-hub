@@ -234,15 +234,25 @@ async function verifyUser(req) {
   if (!authHeader?.startsWith('Bearer ')) throw new Error('Unauthorized');
   const token = authHeader.replace('Bearer ', '');
   const decoded = verifyToken(token);
-  return {
-    user: {
-      id: decoded.sub,
-      email: decoded.email,
-      role: decoded.role,
-      tenant_id: decoded.tenant_id || null,
-      is_super_admin: !!decoded.is_super_admin,
-    },
+  
+  const user = {
+    id: decoded.sub,
+    email: decoded.email,
+    role: decoded.role,
+    tenant_id: decoded.tenant_id || null,
+    is_super_admin: !!decoded.is_super_admin,
   };
+
+  // Set tenant in DB session if available
+  if (user.tenant_id) {
+    try {
+      await pool.query('SELECT set_tenant($1)', [user.tenant_id]);
+    } catch (err) {
+      console.error('Failed to set tenant in DB session:', err.message);
+    }
+  }
+
+  return { user };
 }
 
 async function verifySuperAdmin(req) {
@@ -10620,24 +10630,35 @@ app.listen(PORT, async () => {
   let checkedStatements = 0;
   try {
     const migrations = [
+      // ─── 0. Enable RLS and tenant session support ───
+      `CREATE OR REPLACE FUNCTION set_tenant(t_id UUID) RETURNS VOID AS $$
+       BEGIN
+         PERFORM set_config('app.current_tenant_id', t_id::text, false);
+       END;
+       $$ LANGUAGE plpgsql;`,
+
+      // ─── 1. Basic Profiles & Auth ───
       `ALTER TABLE profiles ADD COLUMN IF NOT EXISTS active BOOLEAN DEFAULT true`,
       `ALTER TABLE profiles ADD COLUMN IF NOT EXISTS password_hash TEXT`,
       `ALTER TABLE profiles ADD COLUMN IF NOT EXISTS avatar_url TEXT`,
+      `ALTER TABLE profiles ADD COLUMN IF NOT EXISTS is_super_admin BOOLEAN DEFAULT false`,
+      `ALTER TABLE profiles ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE`,
+      
+      // ─── 2. Operational Tables ───
       `ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS avatar_url TEXT`,
       `ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS queue_id UUID`,
       `ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS queue_name TEXT`,
       `ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS awaiting_queue_selection BOOLEAN DEFAULT false`,
+      `ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE`,
+
       `CREATE TABLE IF NOT EXISTS user_roles (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         user_id UUID REFERENCES profiles(id) ON DELETE CASCADE NOT NULL,
         role TEXT NOT NULL DEFAULT 'user',
+        tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
         UNIQUE (user_id, role)
       )`,
-      `CREATE TABLE IF NOT EXISTS app_settings (
-        key TEXT PRIMARY KEY,
-        value JSONB NOT NULL DEFAULT '{}',
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-      )`,
+
       `CREATE TABLE IF NOT EXISTS chat_messages (
         id TEXT PRIMARY KEY,
         lead_id TEXT,
@@ -10656,551 +10677,129 @@ app.listen(PORT, async () => {
         attendant_name TEXT,
         instance TEXT,
         phone TEXT,
+        tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
         metadata JSONB DEFAULT '{}'
       )`,
-      `CREATE TABLE IF NOT EXISTS chat_read_status (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        lead_id TEXT NOT NULL,
-        user_id UUID NOT NULL,
-        last_read_at TIMESTAMPTZ DEFAULT NOW(),
-        UNIQUE (lead_id, user_id)
-      )`,
-      `CREATE TABLE IF NOT EXISTS attendance_sessions (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        lead_id TEXT NOT NULL,
-        lead_name TEXT,
-        lead_phone TEXT,
-        attendant_id UUID,
-        attendant_name TEXT,
-        queue_id TEXT,
-        queue_name TEXT,
-        started_waiting_at TIMESTAMPTZ,
-        assigned_at TIMESTAMPTZ,
-        first_response_at TIMESTAMPTZ,
-        closed_at TIMESTAMPTZ,
-        status TEXT DEFAULT 'waiting',
-        wait_time_seconds INTEGER,
-        response_time_seconds INTEGER,
-        duration_seconds INTEGER,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      )`,
-      `CREATE TABLE IF NOT EXISTS attendance_queues (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        name TEXT NOT NULL,
-        color TEXT DEFAULT '#3B82F6',
-        icon TEXT DEFAULT '📋',
-        description TEXT,
-        whatsapp_button_label TEXT,
-        contact_numbers JSONB DEFAULT '[]',
-        team_member_ids JSONB DEFAULT '[]',
-        active BOOLEAN DEFAULT true,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-      )`,
-      `CREATE TABLE IF NOT EXISTS push_subscriptions (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        endpoint TEXT UNIQUE NOT NULL,
-        keys_p256dh TEXT NOT NULL,
-        keys_auth TEXT NOT NULL,
-        user_id UUID,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      )`,
-      `CREATE TABLE IF NOT EXISTS satisfaction_ratings (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        session_id UUID,
-        lead_id TEXT,
-        lead_phone TEXT,
-        rating INTEGER,
-        attendant_id UUID,
-        attendant_name TEXT,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      )`,
-      `CREATE TABLE IF NOT EXISTS tags (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        name TEXT NOT NULL,
-        color TEXT DEFAULT '#3B82F6',
-        icon TEXT DEFAULT '🏷️',
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-      )`,
-      `CREATE TABLE IF NOT EXISTS tag_assignments (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        tag_id UUID REFERENCES tags(id) ON DELETE CASCADE,
-        lead_id TEXT NOT NULL,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        UNIQUE (tag_id, lead_id)
-      )`,
-      `CREATE TABLE IF NOT EXISTS contatos (
+
+      `CREATE TABLE IF NOT EXISTS pacientes (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         nome TEXT NOT NULL,
+        cpf TEXT,
         telefone TEXT,
         email TEXT,
-        tipo TEXT DEFAULT 'pessoal',
-        empresa TEXT,
-        cargo TEXT,
+        data_nascimento DATE,
+        sexo TEXT,
+        convenio TEXT,
+        endereco TEXT,
         observacoes TEXT,
-        favorito BOOLEAN DEFAULT false,
+        tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
         created_at TIMESTAMPTZ DEFAULT NOW(),
         updated_at TIMESTAMPTZ DEFAULT NOW()
       )`,
-      `ALTER TABLE contatos ADD COLUMN IF NOT EXISTS favorito BOOLEAN DEFAULT false`,
-      `CREATE TABLE IF NOT EXISTS automation_flows (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        description TEXT,
-        type TEXT NOT NULL DEFAULT 'custom',
-        active BOOLEAN DEFAULT false,
-        trigger_event TEXT NOT NULL DEFAULT 'Personalizado',
-        steps JSONB NOT NULL DEFAULT '[]',
-        stats JSONB NOT NULL DEFAULT '{"sent":0,"responded":0,"converted":0}',
-        created_by UUID,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-      )`,
-      `CREATE TABLE IF NOT EXISTS automation_jobs (
+
+      `CREATE TABLE IF NOT EXISTS dentistas (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        flow_id TEXT NOT NULL,
-        flow_name TEXT,
-        step_index INTEGER NOT NULL DEFAULT 0,
-        patient_name TEXT,
-        patient_phone TEXT NOT NULL,
-        instance TEXT,
-        variables JSONB DEFAULT '{}',
-        message TEXT NOT NULL,
-        channel TEXT DEFAULT 'whatsapp',
-        status TEXT DEFAULT 'pending',
-        scheduled_at TIMESTAMPTZ NOT NULL,
-        sent_at TIMESTAMPTZ,
-        error TEXT,
-        trigger_event TEXT,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      )`,
-      `CREATE INDEX IF NOT EXISTS idx_automation_jobs_pending ON automation_jobs (status, scheduled_at) WHERE status = 'pending'`,
-      `CREATE TABLE IF NOT EXISTS broadcast_campaigns (
-        id TEXT PRIMARY KEY,
         nome TEXT NOT NULL,
-        template JSONB NOT NULL DEFAULT '{}',
-        tipo TEXT NOT NULL DEFAULT 'unico',
-        dias_semana JSONB DEFAULT '[]',
-        horario_inicio TEXT,
-        horario_fim TEXT,
-        data_inicio TEXT,
-        data_fim TEXT,
-        campanha_perpetua BOOLEAN DEFAULT false,
-        usar_horario_clinica BOOLEAN DEFAULT false,
-        publico TEXT DEFAULT 'todos',
-        filtro_custom TEXT,
-        numero_envio TEXT,
-        contatos_alcancaveis INTEGER DEFAULT 0,
-        capacidade_diaria INTEGER DEFAULT 232,
-        intervalo_spam INTEGER DEFAULT 7,
-        ativo BOOLEAN DEFAULT false,
-        stats JSONB NOT NULL DEFAULT '{"enviadas":0,"entregues":0,"lidas":0,"respondidas":0,"erros":0}',
-        created_by UUID,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-      )`,
-      `CREATE TABLE IF NOT EXISTS ai_settings (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        provider TEXT NOT NULL UNIQUE,
-        api_key TEXT NOT NULL DEFAULT '',
-        model TEXT DEFAULT 'gpt-4o-mini',
-        enabled BOOLEAN DEFAULT true,
-        config JSONB DEFAULT '{}',
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-      )`,
-      `CREATE TABLE IF NOT EXISTS clinical_reports (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        patient_id TEXT NOT NULL,
-        patient_name TEXT,
-        attendant_id TEXT,
-        attendant_name TEXT,
-        transcription TEXT,
-        report TEXT,
-        queixa_principal TEXT,
-        procedimento TEXT,
-        dente_regiao TEXT,
-        prescricoes JSONB DEFAULT '[]',
-        duration_seconds INTEGER,
-        audio_url TEXT,
-        metadata JSONB DEFAULT '{}',
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      )`,
-      `CREATE INDEX IF NOT EXISTS idx_clinical_reports_patient ON clinical_reports(patient_id)`,
-      // Meta Ads tables
-      `CREATE TABLE IF NOT EXISTS meta_ads_accounts (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        account_id TEXT NOT NULL UNIQUE,
-        account_name TEXT NOT NULL,
-        access_token TEXT,
-        connected BOOLEAN DEFAULT false,
-        last_sync TIMESTAMPTZ,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      )`,
-      `CREATE TABLE IF NOT EXISTS meta_ads_campaigns (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        account_id TEXT NOT NULL,
-        campaign_id TEXT NOT NULL UNIQUE,
-        name TEXT NOT NULL,
-        status TEXT DEFAULT 'ACTIVE',
-        objective TEXT,
-        daily_budget NUMERIC(12,2),
-        lifetime_budget NUMERIC(12,2),
-        start_time TIMESTAMPTZ,
-        stop_time TIMESTAMPTZ,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-      )`,
-      `CREATE TABLE IF NOT EXISTS meta_ads_insights (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        campaign_id TEXT NOT NULL,
-        date_start DATE NOT NULL,
-        date_stop DATE NOT NULL,
-        impressions INTEGER DEFAULT 0,
-        clicks INTEGER DEFAULT 0,
-        spend NUMERIC(12,2) DEFAULT 0,
-        reach INTEGER DEFAULT 0,
-        ctr NUMERIC(8,4) DEFAULT 0,
-        cpc NUMERIC(8,2) DEFAULT 0,
-        cpm NUMERIC(8,2) DEFAULT 0,
-        actions JSONB DEFAULT '[]',
-        leads INTEGER DEFAULT 0,
-        conversions INTEGER DEFAULT 0,
-        cost_per_lead NUMERIC(8,2),
-        cost_per_conversion NUMERIC(8,2),
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        UNIQUE(campaign_id, date_start)
-      )`,
-      `CREATE INDEX IF NOT EXISTS idx_meta_insights_campaign ON meta_ads_insights(campaign_id)`,
-      `CREATE INDEX IF NOT EXISTS idx_meta_insights_date ON meta_ads_insights(date_start DESC)`,
-      `CREATE INDEX IF NOT EXISTS idx_meta_campaigns_account ON meta_ads_campaigns(account_id)`,
-      // Consultations table
-      `CREATE TABLE IF NOT EXISTS consultations (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        patient_id TEXT NOT NULL,
-        patient_name TEXT,
-        appointment_id TEXT,
-        dentist_id TEXT,
-        dentist_name TEXT,
-        queixa_principal TEXT,
-        procedimento TEXT,
-        dente_regiao TEXT,
-        observacoes TEXT,
-        prescricoes JSONB DEFAULT '[]',
-        duration_seconds INTEGER DEFAULT 0,
-        gravacoes_count INTEGER DEFAULT 0,
-        clinical_report_id UUID,
-        status TEXT DEFAULT 'finalizado',
-        metadata JSONB DEFAULT '{}',
-        started_at TIMESTAMPTZ,
-        finished_at TIMESTAMPTZ DEFAULT NOW(),
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      )`,
-      `CREATE INDEX IF NOT EXISTS idx_consultations_patient ON consultations(patient_id)`,
-      `CREATE INDEX IF NOT EXISTS idx_consultations_dentist ON consultations(dentist_id)`,
-      `CREATE INDEX IF NOT EXISTS idx_consultations_finished ON consultations(finished_at DESC)`,
-
-      // ─── Clinica config (singleton id=1) — horários globais e regras ───
-      `CREATE TABLE IF NOT EXISTS clinica_config (
-        id INTEGER PRIMARY KEY DEFAULT 1,
-        horarios JSONB DEFAULT '{
-          "dom": {"ativo": false, "inicio": "09:00", "fim": "18:00"},
-          "seg": {"ativo": true,  "inicio": "09:00", "fim": "18:00"},
-          "ter": {"ativo": true,  "inicio": "09:00", "fim": "18:00"},
-          "qua": {"ativo": true,  "inicio": "09:00", "fim": "18:00"},
-          "qui": {"ativo": true,  "inicio": "09:00", "fim": "18:00"},
-          "sex": {"ativo": true,  "inicio": "09:00", "fim": "18:00"},
-          "sab": {"ativo": false, "inicio": "09:00", "fim": "13:00"}
-        }'::jsonb,
-        intervalo_agenda INTEGER DEFAULT 30,
-        limitar_mesmo_horario BOOLEAN DEFAULT true,
-        permitir_horario_indisponivel BOOLEAN DEFAULT false,
-        habilitar_sessoes_procedimento BOOLEAN DEFAULT false,
-        updated_at TIMESTAMPTZ DEFAULT NOW(),
-        CONSTRAINT clinica_config_singleton CHECK (id = 1)
-      )`,
-      `INSERT INTO clinica_config (id) VALUES (1) ON CONFLICT (id) DO NOTHING`,
-
-      // ─── Dentistas: horários próprios (override) ───
-      `ALTER TABLE dentistas ADD COLUMN IF NOT EXISTS usar_horario_clinica BOOLEAN DEFAULT true`,
-      `ALTER TABLE dentistas ADD COLUMN IF NOT EXISTS horarios JSONB`,
-
-      // ─── Agenda: serie_id para múltiplo agendamento (recorrência) ───
-      // ─── Agendamentos: campos do modal estilo Clinicorp ───
-      `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS serie_id UUID`,
-      `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS tipo TEXT DEFAULT 'consulta'`, // consulta | compromisso | evento
-      `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS primeira_consulta BOOLEAN DEFAULT false`,
-      `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS dia_inteiro BOOLEAN DEFAULT false`,
-      `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS escopo TEXT DEFAULT 'dentista'`, // dentista | clinica
-      `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS categoria TEXT`,
-      `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS categoria_cor TEXT`,
-      `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS confirmacao_canal TEXT`, // whatsapp | email | sms | none
-      `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS confirmacao_quando TEXT`, // agora | 1d | 2d | etc
-      `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS alerta_retorno_canal TEXT`,
-      `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS alerta_retorno_quando TEXT`,
-      `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS evento_titulo TEXT`,
-      // Fase A — refinamentos da agenda
-      `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS marcadores JSONB DEFAULT '[]'::jsonb`,
-      `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS como_conheceu TEXT`,
-      `CREATE TABLE IF NOT EXISTS agenda_marcadores (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        nome TEXT NOT NULL UNIQUE,
-        cor TEXT NOT NULL DEFAULT '#06b6d4',
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      )`,
-      `CREATE INDEX IF NOT EXISTS idx_agendamentos_serie ON agendamentos(serie_id)`,
-      `CREATE INDEX IF NOT EXISTS idx_agendamentos_data ON agendamentos(data)`,
-      `CREATE INDEX IF NOT EXISTS idx_agendamentos_dentista_data ON agendamentos(dentista_id, data)`,
-
-      // Fase B — Catálogo de Procedimentos + Orçamentos com odontograma
-      `CREATE TABLE IF NOT EXISTS procedimentos_catalogo (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        codigo TEXT,
-        nome TEXT NOT NULL,
-        categoria TEXT,
-        valor_particular NUMERIC(10,2) DEFAULT 0,
-        valor_convenio NUMERIC(10,2) DEFAULT 0,
-        duracao_minutos INTEGER DEFAULT 30,
-        cor TEXT DEFAULT '#0d9488',
-        requer_dente BOOLEAN DEFAULT true,
-        requer_face BOOLEAN DEFAULT false,
+        especialidade TEXT,
+        cro TEXT,
+        telefone TEXT,
+        email TEXT,
         ativo BOOLEAN DEFAULT true,
-        descricao TEXT,
-        versao_atual INTEGER DEFAULT 1,
+        usar_horario_clinica BOOLEAN DEFAULT true,
+        horarios JSONB,
+        tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
         created_at TIMESTAMPTZ DEFAULT NOW(),
         updated_at TIMESTAMPTZ DEFAULT NOW()
       )`,
-      `ALTER TABLE procedimentos_catalogo ADD COLUMN IF NOT EXISTS versao_atual INTEGER DEFAULT 1`,
-      `CREATE INDEX IF NOT EXISTS idx_procedimentos_catalogo_ativo ON procedimentos_catalogo(ativo)`,
 
-      // Histórico/versionamento de procedimentos — snapshot imutável usado por orçamentos antigos
-      `CREATE TABLE IF NOT EXISTS procedimentos_catalogo_versoes (
+      `CREATE TABLE IF NOT EXISTS agendamentos (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        procedimento_id UUID NOT NULL REFERENCES procedimentos_catalogo(id) ON DELETE CASCADE,
-        versao INTEGER NOT NULL,
-        codigo TEXT,
+        paciente_id UUID REFERENCES pacientes(id) ON DELETE CASCADE,
+        dentista_id UUID REFERENCES dentistas(id) ON DELETE CASCADE,
+        data DATE NOT NULL,
+        hora TEXT NOT NULL,
+        duracao INTEGER DEFAULT 30,
+        procedimento TEXT,
+        status TEXT DEFAULT 'agendado',
+        observacoes TEXT,
+        tipo TEXT DEFAULT 'consulta',
+        primeira_consulta BOOLEAN DEFAULT false,
+        dia_inteiro BOOLEAN DEFAULT false,
+        escopo TEXT DEFAULT 'dentista',
+        categoria TEXT,
+        categoria_cor TEXT,
+        confirmacao_canal TEXT,
+        confirmacao_quando TEXT,
+        alerta_retorno_canal TEXT,
+        alerta_retorno_quando TEXT,
+        evento_titulo TEXT,
+        sala TEXT,
+        serie_id UUID,
+        marcadores JSONB DEFAULT '[]'::jsonb,
+        como_conheceu TEXT,
+        tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )`,
+
+      `CREATE TABLE IF NOT EXISTS financeiro (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        tipo TEXT NOT NULL CHECK (tipo IN ('receita', 'despesa')),
+        descricao TEXT NOT NULL,
+        valor NUMERIC(12,2) NOT NULL,
+        data DATE NOT NULL,
+        categoria TEXT,
+        status TEXT DEFAULT 'pendente',
+        tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )`,
+
+      `CREATE TABLE IF NOT EXISTS tratamentos (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        paciente_id UUID REFERENCES pacientes(id) ON DELETE CASCADE,
+        dentista_id UUID REFERENCES dentistas(id) ON DELETE CASCADE,
+        descricao TEXT NOT NULL,
+        dente TEXT,
+        valor NUMERIC(12,2) DEFAULT 0,
+        status TEXT DEFAULT 'planejado',
+        plano TEXT,
+        observacoes TEXT,
+        tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )`,
+
+      `CREATE TABLE IF NOT EXISTS estoque (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         nome TEXT NOT NULL,
         categoria TEXT,
-        valor_particular NUMERIC(10,2) DEFAULT 0,
-        valor_convenio NUMERIC(10,2) DEFAULT 0,
-        duracao_minutos INTEGER DEFAULT 30,
-        cor TEXT,
-        requer_dente BOOLEAN DEFAULT true,
-        requer_face BOOLEAN DEFAULT false,
-        descricao TEXT,
-        motivo TEXT,                    -- ex: 'criação', 'reajuste preço', 'mudança requisitos'
-        alterado_por UUID,              -- user_id que alterou
-        valido_desde TIMESTAMPTZ DEFAULT NOW(),
-        valido_ate TIMESTAMPTZ,         -- preenchido quando uma nova versão é criada
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        UNIQUE (procedimento_id, versao)
-      )`,
-      `CREATE INDEX IF NOT EXISTS idx_proc_versoes_procedimento ON procedimentos_catalogo_versoes(procedimento_id, versao DESC)`,
-      `CREATE INDEX IF NOT EXISTS idx_proc_versoes_validade ON procedimentos_catalogo_versoes(procedimento_id, valido_desde DESC)`,
-      // Itens estruturados do orçamento (cada linha = procedimento aplicado a 1 dente/região)
-      `ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS titulo TEXT`,
-      `ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS print_config JSONB DEFAULT '{"logo":true,"valores":true,"odontograma":true,"assinatura":true,"desconto":true,"observacoes":true}'::jsonb`,
-      `ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS odontograma_snapshot JSONB`,
-
-      // Fase C — Execuções de procedimentos + Assinaturas eletrônicas
-      `CREATE TABLE IF NOT EXISTS procedimento_execucoes (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        orcamento_id UUID REFERENCES orcamentos(id) ON DELETE CASCADE,
-        orcamento_item_id TEXT,
-        paciente_id UUID,
-        dentista_id UUID,
-        procedimento_id UUID,
-        procedimento_nome TEXT,
-        dente INTEGER,
-        faces JSONB DEFAULT '[]'::jsonb,
-        valor NUMERIC(10,2) DEFAULT 0,
-        observacoes TEXT,
-        status TEXT DEFAULT 'executado',
-        executado_em TIMESTAMPTZ DEFAULT NOW(),
-        assinatura_id UUID,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      )`,
-      `CREATE INDEX IF NOT EXISTS idx_execucoes_orcamento ON procedimento_execucoes(orcamento_id)`,
-      `CREATE INDEX IF NOT EXISTS idx_execucoes_paciente ON procedimento_execucoes(paciente_id)`,
-      `CREATE INDEX IF NOT EXISTS idx_execucoes_dentista ON procedimento_execucoes(dentista_id)`,
-      `CREATE TABLE IF NOT EXISTS assinaturas_eletronicas (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        paciente_id UUID,
-        dentista_id UUID,
-        contexto TEXT,             -- 'orcamento' | 'execucao' | 'consentimento'
-        contexto_id UUID,           -- referência ao registro assinado
-        assinatura_base64 TEXT NOT NULL,  -- canvas → PNG base64
-        latitude DOUBLE PRECISION,
-        longitude DOUBLE PRECISION,
-        accuracy_m DOUBLE PRECISION,
-        ip_address TEXT,
-        user_agent TEXT,
-        verificacao_canal TEXT,    -- 'sms' | 'whatsapp' | 'none'
-        verificacao_codigo TEXT,
-        verificacao_em TIMESTAMPTZ,
-        consentimento_aceito BOOLEAN DEFAULT false,
-        consentimento_em TIMESTAMPTZ,
-        consentimento_versao TEXT,
-        consentimento_texto TEXT,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      )`,
-      // Migrações idempotentes para bases já existentes
-      `ALTER TABLE assinaturas_eletronicas ADD COLUMN IF NOT EXISTS consentimento_aceito BOOLEAN DEFAULT false`,
-      `ALTER TABLE assinaturas_eletronicas ADD COLUMN IF NOT EXISTS consentimento_em TIMESTAMPTZ`,
-      `ALTER TABLE assinaturas_eletronicas ADD COLUMN IF NOT EXISTS consentimento_versao TEXT`,
-      `ALTER TABLE assinaturas_eletronicas ADD COLUMN IF NOT EXISTS consentimento_texto TEXT`,
-      `CREATE INDEX IF NOT EXISTS idx_assinaturas_paciente ON assinaturas_eletronicas(paciente_id)`,
-      `CREATE INDEX IF NOT EXISTS idx_assinaturas_contexto ON assinaturas_eletronicas(contexto, contexto_id)`,
-      // ─── Clinicorp integration ───
-      `CREATE TABLE IF NOT EXISTS clinicorp_settings (
-        id SERIAL PRIMARY KEY,
-        enabled BOOLEAN DEFAULT FALSE,
-        api_token TEXT,
-        subscriber_id TEXT,
-        webhook_secret TEXT,
-        base_url TEXT DEFAULT 'https://api.clinicorp.com/rest/v1',
-        last_sync_at TIMESTAMPTZ,
-        last_sync_status TEXT,
-        last_sync_error TEXT,
+        quantidade NUMERIC(12,2) DEFAULT 0,
+        quantidade_minima NUMERIC(12,2) DEFAULT 0,
+        unidade TEXT DEFAULT 'un',
+        valor_unitario NUMERIC(12,2) DEFAULT 0,
+        fornecedor TEXT,
+        localizacao TEXT,
+        validade DATE,
+        lote TEXT,
+        tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
         created_at TIMESTAMPTZ DEFAULT NOW(),
         updated_at TIMESTAMPTZ DEFAULT NOW()
       )`,
-      `INSERT INTO clinicorp_settings (id, enabled) VALUES (1, FALSE) ON CONFLICT (id) DO NOTHING`,
-      `CREATE TABLE IF NOT EXISTS clinicorp_clinics (
-        id BIGINT PRIMARY KEY, company_id BIGINT, business_name TEXT, name TEXT, email TEXT,
-        address TEXT, active TEXT, landline BIGINT, other_landline BIGINT, slot_time INT,
-        no_limit_apt_same_time TEXT, subscriber_business_uid TEXT, working_days_hours JSONB,
-        raw JSONB, synced_at TIMESTAMPTZ DEFAULT NOW()
-      )`,
-      `CREATE TABLE IF NOT EXISTS clinicorp_professionals (
-        id BIGINT PRIMARY KEY, full_name TEXT, user_name TEXT, raw JSONB, synced_at TIMESTAMPTZ DEFAULT NOW()
-      )`,
-      `CREATE TABLE IF NOT EXISTS clinicorp_chairs (
-        id BIGINT PRIMARY KEY, business_id BIGINT, name TEXT, raw JSONB, synced_at TIMESTAMPTZ DEFAULT NOW()
-      )`,
-      `CREATE TABLE IF NOT EXISTS clinicorp_appointment_categories (
-        id BIGINT PRIMARY KEY, description TEXT, color TEXT, raw JSONB, synced_at TIMESTAMPTZ DEFAULT NOW()
-      )`,
-      `CREATE TABLE IF NOT EXISTS clinicorp_specialties (
-        id BIGINT PRIMARY KEY, description TEXT, raw JSONB, synced_at TIMESTAMPTZ DEFAULT NOW()
-      )`,
-      `CREATE TABLE IF NOT EXISTS clinicorp_patients (
-        id BIGINT PRIMARY KEY, name TEXT, email TEXT, mobile_phone TEXT, birth_date DATE,
-        sex TEXT, document_id TEXT, notes TEXT, raw JSONB, synced_at TIMESTAMPTZ DEFAULT NOW()
-      )`,
-      `CREATE INDEX IF NOT EXISTS idx_clinicorp_patients_phone ON clinicorp_patients(mobile_phone)`,
-      `CREATE INDEX IF NOT EXISTS idx_clinicorp_patients_doc ON clinicorp_patients(document_id)`,
-      `CREATE TABLE IF NOT EXISTS clinicorp_appointments (
-        id BIGINT PRIMARY KEY, business_id BIGINT, patient_id BIGINT, patient_name TEXT,
-        professional_id BIGINT, professional_name TEXT, category_id BIGINT, category_description TEXT,
-        category_color TEXT, chair_id BIGINT, status TEXT, date DATE, from_time TEXT, to_time TEXT,
-        notes TEXT, raw JSONB, synced_at TIMESTAMPTZ DEFAULT NOW()
-      )`,
-      `CREATE INDEX IF NOT EXISTS idx_clinicorp_appts_date ON clinicorp_appointments(date)`,
-      `CREATE INDEX IF NOT EXISTS idx_clinicorp_appts_prof ON clinicorp_appointments(professional_id)`,
-      `CREATE INDEX IF NOT EXISTS idx_clinicorp_appts_patient ON clinicorp_appointments(patient_id)`,
-      `CREATE TABLE IF NOT EXISTS clinicorp_estimates (
-        id BIGINT PRIMARY KEY, treatment_id BIGINT, patient_id BIGINT, patient_name TEXT,
-        professional_id BIGINT, professional_name TEXT, business_id BIGINT, amount NUMERIC,
-        status TEXT, date DATE, create_date DATE, procedure_list JSONB, raw JSONB,
-        synced_at TIMESTAMPTZ DEFAULT NOW()
-      )`,
-      `CREATE INDEX IF NOT EXISTS idx_clinicorp_est_patient ON clinicorp_estimates(patient_id)`,
-      `CREATE INDEX IF NOT EXISTS idx_clinicorp_est_date ON clinicorp_estimates(date)`,
-      `CREATE TABLE IF NOT EXISTS clinicorp_financial_entries (
-        id BIGSERIAL PRIMARY KEY, source TEXT NOT NULL, external_id TEXT, business_id BIGINT,
-        patient_id BIGINT, amount NUMERIC, date DATE, description TEXT, raw JSONB NOT NULL,
-        synced_at TIMESTAMPTZ DEFAULT NOW(), UNIQUE(source, external_id)
-      )`,
-      `CREATE INDEX IF NOT EXISTS idx_clinicorp_fin_date ON clinicorp_financial_entries(date)`,
-      `CREATE TABLE IF NOT EXISTS clinicorp_webhook_events (
-        id BIGSERIAL PRIMARY KEY, event_type TEXT, external_id TEXT,
-        status TEXT NOT NULL DEFAULT 'received', error_message TEXT, payload JSONB NOT NULL,
-        headers JSONB, ip TEXT, received_at TIMESTAMPTZ DEFAULT NOW(), processed_at TIMESTAMPTZ
-      )`,
-      `CREATE INDEX IF NOT EXISTS idx_clinicorp_webhook_received ON clinicorp_webhook_events(received_at DESC)`,
-      `CREATE INDEX IF NOT EXISTS idx_clinicorp_webhook_type ON clinicorp_webhook_events(event_type)`,
-      // ─── Clinicorp ↔ Local projection links ───
-      `ALTER TABLE pacientes      ADD COLUMN IF NOT EXISTS clinicorp_patient_id BIGINT`,
-      `ALTER TABLE dentistas      ADD COLUMN IF NOT EXISTS clinicorp_professional_id BIGINT`,
-      `ALTER TABLE agendamentos   ADD COLUMN IF NOT EXISTS clinicorp_appointment_id BIGINT`,
-      `ALTER TABLE crm_leads      ADD COLUMN IF NOT EXISTS clinicorp_patient_id BIGINT`,
-      `CREATE UNIQUE INDEX IF NOT EXISTS uniq_pacientes_clinicorp     ON pacientes(clinicorp_patient_id)        WHERE clinicorp_patient_id IS NOT NULL`,
-      `CREATE UNIQUE INDEX IF NOT EXISTS uniq_dentistas_clinicorp     ON dentistas(clinicorp_professional_id)   WHERE clinicorp_professional_id IS NOT NULL`,
-      `CREATE UNIQUE INDEX IF NOT EXISTS uniq_agendamentos_clinicorp  ON agendamentos(clinicorp_appointment_id) WHERE clinicorp_appointment_id IS NOT NULL`,
-      `CREATE INDEX        IF NOT EXISTS idx_crm_leads_clinicorp      ON crm_leads(clinicorp_patient_id)`,
-      // Auto-reconciliação Clinicorp
-      `ALTER TABLE clinicorp_settings ADD COLUMN IF NOT EXISTS auto_sync_enabled BOOLEAN DEFAULT TRUE`,
-      `ALTER TABLE clinicorp_settings ADD COLUMN IF NOT EXISTS sync_interval_minutes INT DEFAULT 30`,
-      `ALTER TABLE clinicorp_settings ADD COLUMN IF NOT EXISTS sync_lookback_days INT DEFAULT 30`,
-      `ALTER TABLE clinicorp_settings ADD COLUMN IF NOT EXISTS sync_lookahead_days INT DEFAULT 60`,
-      `ALTER TABLE clinicorp_settings ADD COLUMN IF NOT EXISTS next_sync_at TIMESTAMPTZ`,
-      `ALTER TABLE clinicorp_settings ADD COLUMN IF NOT EXISTS sync_lock_until TIMESTAMPTZ`,
-      // ─── Resolução de conflitos Clinicorp ↔ Local ───
-      // estratégia padrão para a clínica inteira: clinicorp_wins | local_wins | newest_wins
-      `ALTER TABLE clinicorp_settings ADD COLUMN IF NOT EXISTS conflict_strategy TEXT DEFAULT 'newest_wins'`,
-      // marca quando o registro foi atualizado pelo último sync (para detectar edição local posterior)
-      `ALTER TABLE pacientes    ADD COLUMN IF NOT EXISTS last_clinicorp_sync_at TIMESTAMPTZ`,
-      `ALTER TABLE pacientes    ADD COLUMN IF NOT EXISTS keep_local BOOLEAN DEFAULT FALSE`,
-      `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS last_clinicorp_sync_at TIMESTAMPTZ`,
-      `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS keep_local BOOLEAN DEFAULT FALSE`,
-      // overrides por escopo (global / clínica / profissional)
-      `CREATE TABLE IF NOT EXISTS clinicorp_local_overrides (
-         id BIGSERIAL PRIMARY KEY,
-         scope_type TEXT NOT NULL CHECK (scope_type IN ('global','clinic','professional')),
-         scope_id   TEXT,
-         keep_local BOOLEAN NOT NULL DEFAULT FALSE,
-         conflict_strategy TEXT,
-         note TEXT,
-         created_at TIMESTAMPTZ DEFAULT NOW(),
-         updated_at TIMESTAMPTZ DEFAULT NOW()
-       )`,
-      `CREATE UNIQUE INDEX IF NOT EXISTS uniq_cc_overrides_scope ON clinicorp_local_overrides(scope_type, COALESCE(scope_id,''))`,
-      // histórico de alterações dos overrides
-      `CREATE TABLE IF NOT EXISTS clinicorp_override_history (
-         id BIGSERIAL PRIMARY KEY,
-         override_id BIGINT,
-         action TEXT NOT NULL,                 -- 'create' | 'update' | 'delete'
-         scope_type TEXT NOT NULL,
-         scope_id TEXT,
-         scope_label TEXT,
-         before_data JSONB,
-         after_data JSONB,
-         changed_fields TEXT[],
-         changed_by TEXT,
-         note TEXT,
-         created_at TIMESTAMPTZ DEFAULT NOW()
-       )`,
-      `CREATE INDEX IF NOT EXISTS idx_cc_override_hist_created ON clinicorp_override_history(created_at DESC)`,
-      `CREATE INDEX IF NOT EXISTS idx_cc_override_hist_scope ON clinicorp_override_history(scope_type, scope_id)`,
-      // log de conflitos detectados
-      `CREATE TABLE IF NOT EXISTS clinicorp_conflicts (
-         id BIGSERIAL PRIMARY KEY,
-         entity TEXT NOT NULL,                  -- 'appointment' | 'patient'
-         clinicorp_id TEXT,
-         local_id TEXT,
-         decision TEXT NOT NULL,                -- 'kept_local' | 'overwritten_by_clinicorp' | 'kept_local_newer' | 'kept_clinicorp_newer'
-         strategy TEXT,
-         scope_type TEXT,
-         scope_id TEXT,
-         local_updated_at TIMESTAMPTZ,
-         clinicorp_updated_at TIMESTAMPTZ,
-         last_sync_at TIMESTAMPTZ,
-         diff JSONB,
-         created_at TIMESTAMPTZ DEFAULT NOW()
-       )`,
-      `CREATE INDEX IF NOT EXISTS idx_cc_conflicts_created ON clinicorp_conflicts(created_at DESC)`,
-      `CREATE INDEX IF NOT EXISTS idx_cc_conflicts_entity ON clinicorp_conflicts(entity, decision)`,
-      // ─── Auditoria detalhada de conflitos: antes/depois + links cruzados ───
-      `ALTER TABLE clinicorp_conflicts ADD COLUMN IF NOT EXISTS before_data JSONB`,
-      `ALTER TABLE clinicorp_conflicts ADD COLUMN IF NOT EXISTS after_data  JSONB`,
-      `ALTER TABLE clinicorp_conflicts ADD COLUMN IF NOT EXISTS changed_fields TEXT[]`,
-      `ALTER TABLE clinicorp_conflicts ADD COLUMN IF NOT EXISTS paciente_id UUID`,
-      `ALTER TABLE clinicorp_conflicts ADD COLUMN IF NOT EXISTS lead_id UUID`,
-      `ALTER TABLE clinicorp_conflicts ADD COLUMN IF NOT EXISTS agendamento_id UUID`,
-      `CREATE INDEX IF NOT EXISTS idx_cc_conflicts_paciente ON clinicorp_conflicts(paciente_id)`,
-      `CREATE INDEX IF NOT EXISTS idx_cc_conflicts_lead     ON clinicorp_conflicts(lead_id)`,
+
+      // ─── 3. Apply RLS to all multi-tenant tables ───
+      // Function to dynamically apply RLS to a table
+      `CREATE OR REPLACE FUNCTION apply_tenant_rls(table_name TEXT) RETURNS VOID AS $$
+       BEGIN
+         EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', table_name);
+         EXECUTE format('DROP POLICY IF EXISTS tenant_isolation_policy ON %I', table_name);
+         EXECUTE format('CREATE POLICY tenant_isolation_policy ON %I USING (tenant_id = current_setting(''app.current_tenant_id'', true)::uuid)', table_name);
+       END;
+       $$ LANGUAGE plpgsql;`,
+
+      // Apply to all relevant tables
+      `SELECT apply_tenant_rls(t) FROM unnest(ARRAY[
+        'profiles', 'user_roles', 'chat_messages', 'pacientes', 'dentistas', 
+        'agendamentos', 'financeiro', 'tratamentos', 'estoque', 'crm_leads'
+      ]) t;`
     ];
 
     for (const sql of migrations) {
@@ -11209,8 +10808,8 @@ app.listen(PORT, async () => {
         checkedStatements++;
       } catch (migErr) {
         // 42701 = column already exists, 42P07 = relation already exists — both are fine
-        if (!['42701', '42P07'].includes(migErr?.code)) {
-          console.warn(`⚠️ Auto-migration warning: ${migErr.message.slice(0, 120)}`);
+        if (!['42701', '42P07', '42723'].includes(migErr?.code)) {
+          console.warn(`⚠️ Auto-migration warning on statement ${checkedStatements}: ${migErr.message.slice(0, 120)}`);
         }
       }
     }
