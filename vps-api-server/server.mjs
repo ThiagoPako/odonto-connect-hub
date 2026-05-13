@@ -674,7 +674,7 @@ app.get('/api/super-admin/tenants', async (req, res) => {
   try {
     await verifySuperAdmin(req);
     const { rows } = await pool.query(`
-      SELECT t.*, p.nome as plan_nome, p.slug as plan_slug,
+      SELECT t.*, p.nome as plan_nome, p.slug as plan_slug, p.preco_mensal,
              (SELECT COUNT(*) FROM profiles WHERE tenant_id = t.id) as users_count
       FROM tenants t LEFT JOIN plans p ON p.id = t.plan_id
       ORDER BY t.created_at DESC

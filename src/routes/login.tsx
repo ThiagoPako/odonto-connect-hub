@@ -13,7 +13,7 @@ export const Route = createFileRoute("/login")({
 });
 
 function LoginPage() {
-  const { login, isAuthenticated } = useAuth();
+  const { login, isAuthenticated, user } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -26,12 +26,16 @@ function LoginPage() {
   const [forgotSent, setForgotSent] = useState(false);
   const [forgotError, setForgotError] = useState("");
 
-  // Redirect if already authenticated (useEffect instead of conditional return before hooks)
+  // Redirect if already authenticated
   useEffect(() => {
-    if (isAuthenticated) {
-      navigate({ to: "/dashboard" });
+    if (isAuthenticated && user) {
+      if (user.is_super_admin) {
+        navigate({ to: "/super-admin" });
+      } else {
+        navigate({ to: "/dashboard" });
+      }
     }
-  }, [isAuthenticated, navigate]);
+  }, [isAuthenticated, user, navigate]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -39,7 +43,7 @@ function LoginPage() {
     setLoading(true);
     try {
       await login(email, password);
-      navigate({ to: "/dashboard" });
+      // Redirect is handled by useAuth or the useEffect above
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao fazer login");
     } finally {
