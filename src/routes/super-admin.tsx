@@ -29,8 +29,9 @@ function SuperAdminPage() {
   const [activeTab, setActiveTab] = useState("clinicas");
   const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null);
   const [isPlanDialogOpen, setIsPlanDialogOpen] = useState(false);
+  const [filters, setFilters] = useState<SaasFilterState>({ periodo: "mes_atual", plano: "todos", statusAssinatura: "todos" });
 
-  const reload = async () => {
+  const reload = useCallback(async () => {
     setLoading(true);
     try {
       const [t, p] = await Promise.all([saasApi.listTenants(), saasApi.listAllPlans()]);
@@ -41,7 +42,7 @@ function SuperAdminPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     if (user?.is_super_admin) reload();
