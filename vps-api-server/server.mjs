@@ -243,16 +243,16 @@ async function verifyUser(req) {
     is_super_admin: !!decoded.is_super_admin,
   };
 
-  // Set tenant in DB session if available
-  if (user.tenant_id) {
-    try {
-      await pool.query('SET app.tenant_id = $1', [user.tenant_id]);
-    } catch (err) {
-      console.error('Failed to set tenant in DB session:', err.message);
+  // Set context in DB session for RLS
+  try {
+    await pool.query('SELECT set_config($1, $2, true)', ['app.jwt_payload', JSON.stringify(decoded)]);
+    if (user.tenant_id) {
+      await pool.query('SELECT set_config($1, $2, true)', ['app.tenant_id', user.tenant_id]);
+    } else {
+      await pool.query('SELECT set_config($1, $2, true)', ['app.tenant_id', '']);
     }
-  } else {
-    // Clear tenant for super admins or unauthenticated requests to avoid leaks
-    await pool.query('RESET app.tenant_id');
+  } catch (err) {
+    console.error('Failed to set DB session context:', err.message);
   }
 
   return { user };
