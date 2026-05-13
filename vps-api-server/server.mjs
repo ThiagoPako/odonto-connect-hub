@@ -10806,7 +10806,10 @@ app.listen(PORT, async () => {
        BEGIN
          EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', table_name);
          EXECUTE format('DROP POLICY IF EXISTS tenant_isolation_policy ON %I', table_name);
-         EXECUTE format('CREATE POLICY tenant_isolation_policy ON %I USING (tenant_id = current_setting(''app.current_tenant_id'', true)::uuid)', table_name);
+         EXECUTE format('CREATE POLICY tenant_isolation_policy ON %I USING (
+           (current_setting(''app.is_super_admin'', true) = ''true'') OR 
+           (tenant_id = current_setting(''app.current_tenant_id'', true)::uuid)
+         )', table_name);
        END;
        $$ LANGUAGE plpgsql;`,
 
