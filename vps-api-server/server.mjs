@@ -246,10 +246,12 @@ async function verifyUser(req) {
   // Set context in DB session for RLS
   try {
     await pool.query('SELECT set_config($1, $2, true)', ['app.jwt_payload', JSON.stringify(decoded)]);
+    await pool.query('SELECT set_config($1, $2, true)', ['app.is_super_admin', user.is_super_admin ? 'true' : 'false']);
+    
     if (user.tenant_id) {
-      await pool.query('SELECT set_config($1, $2, true)', ['app.tenant_id', user.tenant_id]);
+      await pool.query('SELECT set_config($1, $2, true)', ['app.current_tenant_id', user.tenant_id]);
     } else {
-      await pool.query('SELECT set_config($1, $2, true)', ['app.tenant_id', '']);
+      await pool.query('SELECT set_config($1, $2, true)', ['app.current_tenant_id', '']);
     }
   } catch (err) {
     console.error('Failed to set DB session context:', err.message);
