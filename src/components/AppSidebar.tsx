@@ -109,11 +109,11 @@ const navSections: NavSection[] = [
   },
 ];
 
-function filterByRole(sections: NavSection[], role: string): NavSection[] {
+function filterByRole(sections: NavSection[], role: string, isSuperAdmin?: boolean): NavSection[] {
   return sections
     .map((section) => ({
       ...section,
-      items: section.items.filter((item) => canAccessRoute(item.url, role)),
+      items: section.items.filter((item) => canAccessRoute(item.url, role, isSuperAdmin)),
     }))
     .filter((section) => section.items.length > 0);
 }
