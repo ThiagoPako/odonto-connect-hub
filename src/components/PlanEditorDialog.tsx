@@ -159,6 +159,35 @@ export function PlanEditorDialog({ plan, open, onOpenChange, onSuccess }: PlanEd
             </div>
 
             <div className="border-t pt-4">
+              <h4 className="text-sm font-bold mb-3 uppercase tracking-wider text-muted-foreground">Módulos do Plano</h4>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 bg-muted/30 p-4 rounded-lg">
+                {[
+                  { id: 'agenda', label: 'Agenda & Pacientes' },
+                  { id: 'financeiro', label: 'Financeiro Completo' },
+                  { id: 'marketing', label: 'Automações & Marketing' },
+                  { id: 'whatsapp', label: 'Integração WhatsApp' },
+                  { id: 'odontograma', label: 'Prontuário & Odontograma' },
+                  { id: 'estoque', label: 'Gestão de Estoque' },
+                  { id: 'equipe', label: 'Gestão de Equipe' },
+                  { id: 'relatorios', label: 'Relatórios & BI' },
+                  { id: 'crm', label: 'CRM de Vendas' },
+                ].map((mod) => (
+                  <div key={mod.id} className="flex items-center space-x-2">
+                    <Switch
+                      id={`mod-${mod.id}`}
+                      checked={!!(formData.features as any)?.[`mod_${mod.id}`]}
+                      onCheckedChange={(checked) => setFormData({
+                        ...formData,
+                        features: { ...(formData.features || {}), [`mod_${mod.id}`]: checked }
+                      })}
+                    />
+                    <Label htmlFor={`mod-${mod.id}`} className="text-xs font-medium cursor-pointer">{mod.label}</Label>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="border-t pt-4">
               <h4 className="text-sm font-bold mb-3 uppercase tracking-wider text-muted-foreground">Limites de Recursos</h4>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
