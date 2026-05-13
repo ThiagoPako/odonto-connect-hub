@@ -109,7 +109,11 @@ ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS profiles_tenant_isolation ON profiles;
 CREATE POLICY profiles_tenant_isolation ON profiles
     FOR ALL
-    USING (tenant_id = get_current_tenant_id() OR is_super_admin = true);
+    USING (
+        tenant_id = get_current_tenant_id() 
+        OR is_super_admin = true 
+        OR (SELECT is_super_admin FROM profiles WHERE id = (SELECT sub FROM (SELECT (current_setting('app.jwt_payload', true)::jsonb)->>'sub' as sub) s)::uuid) = true
+    );
 
 -- 'system_settings' e 'ai_settings': Geralmente são globais do sistema (SaaS-wide) ou por tenant?
 -- Se forem globais, apenas Super Admins editam. Aqui vamos assumir globais para o funcionamento do SaaS.
