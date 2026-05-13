@@ -85,7 +85,7 @@ function SuperAdminPage() {
 
   return (
     <div className="flex-1 flex flex-col min-h-screen bg-muted/30">
-      <DashboardHeader title="Painel do Super Administrador" />
+      <DashboardHeader title="Painel do Super Administrador" icon={Crown} />
       
       <main className="flex-1 p-6 overflow-auto space-y-6 max-w-7xl mx-auto w-full">
         {/* Filtros CareFlow Style */}
