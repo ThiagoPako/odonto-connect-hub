@@ -109,11 +109,11 @@ const navSections: NavSection[] = [
   },
 ];
 
-function filterByRole(sections: NavSection[], role: string): NavSection[] {
+function filterByRole(sections: NavSection[], role: string, isSuperAdmin?: boolean): NavSection[] {
   return sections
     .map((section) => ({
       ...section,
-      items: section.items.filter((item) => canAccessRoute(item.url, role)),
+      items: section.items.filter((item) => canAccessRoute(item.url, role, isSuperAdmin)),
     }))
     .filter((section) => section.items.length > 0);
 }
@@ -127,7 +127,7 @@ export function AppSidebar() {
 
   // Inject dynamic chat badge
   const visibleSections = useMemo(() => {
-    const sections = filterByRole(navSections, user?.role ?? "user");
+    const sections = filterByRole(navSections, user?.role ?? "user", !!user?.is_super_admin);
     if (chatUnread > 0) {
       return sections.map((s) => ({
         ...s,
