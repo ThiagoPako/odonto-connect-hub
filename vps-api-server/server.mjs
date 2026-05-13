@@ -10892,3 +10892,6 @@ app.listen(PORT, async () => {
   setInterval(() => { reconciliationTick(pool).catch((e) => console.error('[clinicorp] tick', e.message)); }, 60 * 1000);
   console.log('   🦷 Clinicorp auto-reconcile ativo (tick a cada 60s, intervalo configurável em clinicorp_settings)');
 });
+
+export { app, pool };
+
