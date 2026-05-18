@@ -2636,8 +2636,8 @@ app.post('/api/whatsapp/call', async (req, res) => {
 
 app.get('/api/pacientes', async (req, res) => {
   try {
-    await verifyUser(req);
-    const { rows } = await pool.query('SELECT * FROM pacientes ORDER BY nome ASC');
+    const { user } = await verifyUser(req);
+    const { rows } = await pool.query('SELECT * FROM pacientes WHERE tenant_id = $1 ORDER BY nome ASC', [user.tenant_id]);
     res.json(rows);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -2646,12 +2646,12 @@ app.get('/api/pacientes', async (req, res) => {
 
 app.post('/api/pacientes', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
     const { nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes } = req.body;
     const id = crypto.randomUUID();
     await pool.query(
-      'INSERT INTO pacientes (id, nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
-      [id, nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes]
+      'INSERT INTO pacientes (id, nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
+      [id, nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes, user.tenant_id]
     );
     res.json({ id, nome, cpf, telefone, email, sexo, convenio });
   } catch (error) {
@@ -3111,8 +3111,8 @@ app.post('/api/financeiro', async (req, res) => {
 
 app.get('/api/dentistas', async (req, res) => {
   try {
-    await verifyUser(req);
-    const { rows } = await pool.query('SELECT * FROM dentistas ORDER BY nome ASC');
+    const { user } = await verifyUser(req);
+    const { rows } = await pool.query('SELECT * FROM dentistas WHERE tenant_id = $1 ORDER BY nome ASC', [user.tenant_id]);
     res.json(rows);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -3121,12 +3121,12 @@ app.get('/api/dentistas', async (req, res) => {
 
 app.post('/api/dentistas', async (req, res) => {
   try {
-    await verifyAdmin(req);
+    const { user } = await verifyAdmin(req);
     const { nome, cro, especialidade, telefone, email, comissao_percentual } = req.body;
     const id = crypto.randomUUID();
     await pool.query(
-      'INSERT INTO dentistas (id, nome, cro, especialidade, telefone, email, comissao_percentual) VALUES ($1,$2,$3,$4,$5,$6,$7)',
-      [id, nome, cro, especialidade, telefone, email, comissao_percentual || 0]
+      'INSERT INTO dentistas (id, nome, cro, especialidade, telefone, email, comissao_percentual, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+      [id, nome, cro, especialidade, telefone, email, comissao_percentual || 0, user.tenant_id]
     );
     res.json({ id, success: true });
   } catch (error) {
@@ -3342,20 +3342,20 @@ app.delete('/api/financeiro/:id', async (req, res) => {
 
 app.get('/api/fin/banks', async (req, res) => {
   try {
-    await verifyUser(req);
-    const { rows } = await pool.query('SELECT * FROM fin_bank_accounts WHERE active=true ORDER BY created_at');
+    const { user } = await verifyUser(req);
+    const { rows } = await pool.query('SELECT * FROM fin_bank_accounts WHERE active=true AND tenant_id = $1 ORDER BY created_at', [user.tenant_id]);
     res.json(rows);
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 app.post('/api/fin/banks', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
     const { name, bank, agency, account, type, balance, color } = req.body;
     const id = randomUUID();
     await pool.query(
-      'INSERT INTO fin_bank_accounts (id,name,bank,agency,account,type,balance,color) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
-      [id, name, bank, agency || '', account || '', type || 'corrente', balance || 0, color || 'hsl(217,91%,60%)']
+      'INSERT INTO fin_bank_accounts (id,name,bank,agency,account,type,balance,color,tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+      [id, name, bank, agency || '', account || '', type || 'corrente', balance || 0, color || 'hsl(217,91%,60%)', user.tenant_id]
     );
     const { rows } = await pool.query('SELECT * FROM fin_bank_accounts WHERE id=$1', [id]);
     res.status(201).json(rows[0]);
@@ -3424,10 +3424,11 @@ app.delete('/api/fin/employees/:id', async (req, res) => {
 
 app.get('/api/fin/payrolls', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
     const { month } = req.query;
-    let q = 'SELECT * FROM fin_payrolls'; const params = [];
-    if (month) { params.push(month); q += ` WHERE month=$${params.length}`; }
+    let q = 'SELECT * FROM fin_payrolls WHERE tenant_id = $1'; 
+    const params = [user.tenant_id];
+    if (month) { params.push(month); q += ` AND month=$${params.length}`; }
     q += ' ORDER BY created_at DESC';
     const { rows } = await pool.query(q, params);
     res.json(rows);
@@ -4459,6 +4460,7 @@ app.get(['/api/dashboard', '/api/dashboard/kpis'], async (req, res) => {
       }
     };
 
+    const { user } = await verifyUser(req);
     const [
       pacientesTotal,
       agendaHojeRows,
@@ -4470,18 +4472,18 @@ app.get(['/api/dashboard', '/api/dashboard/kpis'], async (req, res) => {
       pacientesInativos,
       estoqueRows,
     ] = await Promise.all([
-      safe('SELECT COUNT(*)::int AS total FROM pacientes'),
-      safe('SELECT status, COUNT(*)::int AS qtd FROM agendamentos WHERE data = $1 GROUP BY status', [today]),
-      safe('SELECT COALESCE(SUM(valor), 0)::numeric AS total FROM financeiro WHERE tipo = $1 AND data >= $2', ['receita', firstDayOfMonth]),
-      safe('SELECT COALESCE(SUM(valor), 0)::numeric AS total FROM financeiro WHERE tipo = $1 AND data >= $2', ['despesa', firstDayOfMonth]),
+      safe('SELECT COUNT(*)::int AS total FROM pacientes WHERE tenant_id = $1', [user.tenant_id]),
+      safe('SELECT status, COUNT(*)::int AS qtd FROM agendamentos WHERE data = $1 AND tenant_id = $2 GROUP BY status', [today, user.tenant_id]),
+      safe('SELECT COALESCE(SUM(valor), 0)::numeric AS total FROM financeiro WHERE tipo = $1 AND data >= $2 AND tenant_id = $3', ['receita', firstDayOfMonth, user.tenant_id]),
+      safe('SELECT COALESCE(SUM(valor), 0)::numeric AS total FROM financeiro WHERE tipo = $1 AND data >= $2 AND tenant_id = $3', ['despesa', firstDayOfMonth, user.tenant_id]),
       safe(`SELECT status, COUNT(*)::int AS qtd, COALESCE(SUM(valor_final), 0)::numeric AS soma
-            FROM orcamentos GROUP BY status`),
-      safe(`SELECT stage, COUNT(*)::int AS qtd FROM crm_leads GROUP BY stage`),
-      safe("SELECT COUNT(*)::int AS total FROM pacientes WHERE status = 'ativo' OR status IS NULL"),
-      safe("SELECT COUNT(*)::int AS total FROM pacientes WHERE status = 'inativo'"),
+            FROM orcamentos WHERE tenant_id = $1 GROUP BY status`, [user.tenant_id]),
+      safe(`SELECT stage, COUNT(*)::int AS qtd FROM crm_leads WHERE tenant_id = $1 GROUP BY stage`, [user.tenant_id]),
+      safe("SELECT COUNT(*)::int AS total FROM pacientes WHERE (status = 'ativo' OR status IS NULL) AND tenant_id = $1", [user.tenant_id]),
+      safe("SELECT COUNT(*)::int AS total FROM pacientes WHERE status = 'inativo' AND tenant_id = $1", [user.tenant_id]),
       safe(`SELECT id, nome AS name, quantidade_atual AS current_stock,
                    quantidade_minima AS min_stock, custo_unitario AS unit_cost
-            FROM estoque`),
+            FROM estoque WHERE tenant_id = $1`, [user.tenant_id]),
     ]);
 
     // ── AGENDA ──────────────────────────────────────────────────
@@ -8141,7 +8143,7 @@ app.get('/api/crm/leads/:id/movements', async (req, res) => {
 // List all CRM leads (with optional kanban grouping + server-side pagination)
 app.get('/api/crm/leads', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
     const { search, status, grouped, origin, sort_by, sort_dir } = req.query;
     const limit = Math.min(Math.max(parseInt(req.query.limit) || 25, 1), 100);
     const offset = Math.max(parseInt(req.query.offset) || 0, 0);
@@ -8152,8 +8154,8 @@ app.get('/api/crm/leads', async (req, res) => {
     const sortDirection = sort_dir === 'asc' ? 'ASC' : 'DESC';
     const orderClause = `ORDER BY ${sortColumn} ${sortDirection} NULLS LAST, l.created_at DESC`;
 
-    let whereClause = ' WHERE 1=1';
-    const params = [];
+    let whereClause = ' WHERE l.tenant_id = $1';
+    const params = [user.tenant_id];
     if (search) {
       params.push(`%${search}%`);
       whereClause += ` AND (l.nome ILIKE $${params.length} OR l.telefone ILIKE $${params.length} OR l.email ILIKE $${params.length})`;
