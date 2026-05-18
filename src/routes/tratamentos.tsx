@@ -4,10 +4,11 @@ import {
   Search, CheckCircle2, Clock, Pause, PlayCircle, CalendarDays,
   FileText, Plus, Loader2, X, Trash2, Download,
 } from "lucide-react";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { tratamentosApi, dentistasApi, pacientesApi } from "@/lib/vpsApi";
 import { toast } from "sonner";
 import { exportarTratamentosPdf } from "@/lib/tratamentosPdfExport";
+import { useTratamentoRealtime } from "@/hooks/useTratamentoRealtime";
 
 export const Route = createFileRoute("/tratamentos")({
   ssr: false,
@@ -98,6 +99,13 @@ function TratamentosPage() {
   }, []);
 
   useEffect(() => { loadAll(); }, [loadAll]);
+
+  // Real-time updates for treatments
+  useTratamentoRealtime(() => {
+    loadAll();
+    if (selectedId) loadEtapas(selectedId);
+  });
+
 
   const loadEtapas = useCallback(async (tratId: string) => {
     try {
