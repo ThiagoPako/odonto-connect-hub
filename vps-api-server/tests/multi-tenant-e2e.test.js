@@ -72,6 +72,23 @@ describe('SaaS Multi-tenant End-to-End Isolation Tests', () => {
         });
       }
 
+      // 3. Simula o retorno do perfil do usuário para /api/auth/me
+      if (sql.toLowerCase().includes('from profiles')) {
+        return Promise.resolve({
+          rows: [{
+            id: `user-${tenant.id}`,
+            name: `Admin ${tenant.name}`,
+            email: tenant.email,
+            avatar_url: null,
+            role: 'admin',
+            user_role: 'admin',
+            tenant_id: tenant.id,
+            is_super_admin: false,
+            tenant_features: {},
+          }]
+        });
+      }
+
       return Promise.resolve({ rows: [] });
     });
 
