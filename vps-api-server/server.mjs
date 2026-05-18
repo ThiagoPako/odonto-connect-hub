@@ -4654,10 +4654,6 @@ app.get('/api/comercial/painel', async (req, res) => {
           GROUP BY origem`,
         [attendantId, user.tenant_id]
       ),
-          ORDER BY leads DESC
-          LIMIT 8`,
-        [attendantId]
-      ),
       // Follow-ups: leads com follow_up_at <= now() OU em sem_resposta
       safe(
         `SELECT id, nome AS lead_name, kanban_stage, follow_up_at, last_message, updated_at
