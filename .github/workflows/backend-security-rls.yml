@@ -9,6 +9,7 @@ on:
 jobs:
   rls-security-check:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     services:
       postgres:
@@ -23,7 +24,7 @@ jobs:
           --health-cmd pg_isready
           --health-interval 10s
           --health-timeout 5s
-          --health-retries 5
+          --health-retries 10
 
     steps:
       - name: Checkout code
@@ -41,13 +42,25 @@ jobs:
           cd vps-api-server
           npm install
 
+      - name: Wait for Postgres
+        run: |
+          until pg_isready -h localhost -p 5432; do
+            echo "Waiting for postgres..."
+            sleep 2
+          done
+        timeout-minutes: 2
+
       - name: Run RLS Security Verification
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 2
+          max_attempts: 3
+          command: |
+            cd vps-api-server
+            node verify-rls-security.mjs
         env:
           PG_HOST: localhost
           PG_PORT: 5432
           PG_DATABASE: odonto_db
           PG_USER: odonto_user
           PG_PASSWORD: postgres_password
-        run: |
-          cd vps-api-server
-          node verify-rls-security.mjs
