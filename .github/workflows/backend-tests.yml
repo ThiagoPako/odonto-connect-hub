@@ -37,7 +37,7 @@ jobs:
       - name: Run Tests
         run: |
           cd vps-api-server
-          npm test
+          npm test -- --reporters=default --reporters=jest-junit
         env:
           JWT_SECRET: test_secret_key_12345
           PG_HOST: localhost
@@ -45,3 +45,12 @@ jobs:
           PG_DATABASE: postgres
           PG_USER: postgres
           PG_PASSWORD: password
+          JEST_JUNIT_OUTPUT_DIR: "./reports"
+          JEST_JUNIT_OUTPUT_NAME: "junit.xml"
+
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: vps-api-server/reports/junit.xml
