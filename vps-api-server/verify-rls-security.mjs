@@ -26,8 +26,23 @@ async function verifyRLS() {
 
     console.log(`Preparando cenário: Tenant A (${tenantA}) e Tenant B (${tenantB})`);
 
-    // 1. Criar tabela de teste com RLS
+    // 1. Verificar se o usuário atual é owner (ou superuser)
+    const { rows: ownerCheck } = await client.query(`
+      SELECT current_user, 
+             is_superuser,
+             (SELECT rolsuper FROM pg_roles WHERE rolname = current_user) as is_super
+      FROM pg_user 
+      WHERE usename = current_user
+    `);
+    const currentUser = ownerCheck[0].current_user;
+    console.log(`Usuário do banco de dados: ${currentUser}`);
+
+    // 2. Criar tabela de teste com RLS
     await client.query('CREATE TABLE IF NOT EXISTS test_rls_security (id UUID PRIMARY KEY, name TEXT, tenant_id UUID)');
+    
+    // Garantir que o usuário atual é o dono (necessário para testar FORCE RLS)
+    await client.query(`ALTER TABLE test_rls_security OWNER TO ${currentUser}`);
+    
     await client.query('ALTER TABLE test_rls_security ENABLE ROW LEVEL SECURITY');
     await client.query('ALTER TABLE test_rls_security FORCE ROW LEVEL SECURITY');
     await client.query('DROP POLICY IF EXISTS tenant_isolation_policy ON test_rls_security');
@@ -58,16 +73,16 @@ async function verifyRLS() {
     await client.query("SELECT set_config('app.is_super_admin', 'false', true)");
     await client.query("SELECT set_config('app.current_tenant_id', $1, true)", [tenantA]);
 
-    console.log('\n--- Testando Tenant A tentando acessar dados do Tenant B ---');
+    console.log('\n--- Testando Isolamento (Simulando Usuário Owner com FORCE RLS) ---');
 
     let hasFailure = false;
 
     // TESTE 1: SELECT cruzado
     const selectRes = await client.query('SELECT * FROM test_rls_security WHERE id = $1', [idB]);
     if (selectRes.rowCount === 0) {
-      console.log('✅ SUCESSO: SELECT cruzado bloqueado (registro não encontrado).');
+      console.log('✅ SUCESSO: SELECT cruzado bloqueado (FORCE RLS está protegendo mesmo sendo owner).');
     } else {
-      console.log('❌ FALHA: Tenant A conseguiu ver dados do Tenant B!');
+      console.log('❌ FALHA: Owner conseguiu bypassar RLS e ver dados do Tenant B!');
       hasFailure = true;
     }
 
@@ -76,7 +91,7 @@ async function verifyRLS() {
     if (updateRes.rowCount === 0) {
       console.log('✅ SUCESSO: UPDATE cruzado bloqueado (0 linhas afetadas).');
     } else {
-      console.log('❌ FALHA: Tenant A conseguiu alterar dados do Tenant B!');
+      console.log('❌ FALHA: Owner conseguiu bypassar RLS e alterar dados do Tenant B!');
       hasFailure = true;
     }
 
@@ -85,7 +100,7 @@ async function verifyRLS() {
     if (deleteRes.rowCount === 0) {
       console.log('✅ SUCESSO: DELETE cruzado bloqueado (0 linhas afetadas).');
     } else {
-      console.log('❌ FALHA: Tenant A conseguiu deletar dados do Tenant B!');
+      console.log('❌ FALHA: Owner conseguiu bypassar RLS e deletar dados do Tenant B!');
       hasFailure = true;
     }
 
@@ -99,13 +114,14 @@ async function verifyRLS() {
     }
 
     if (hasFailure) {
+      console.log('\n🚨 FALHA DE SEGURANÇA DETECTADA!');
       process.exit(1);
     }
 
     // Limpeza
     await client.query("SELECT set_config('app.is_super_admin', 'true', true)");
     await client.query('DROP TABLE test_rls_security');
-    console.log('\n--- Verificação Finalizada ---');
+    console.log('\n--- Verificação Finalizada com Sucesso ---');
 
   } catch (err) {
     console.error('❌ Erro crítico no script de segurança:', err.message);
