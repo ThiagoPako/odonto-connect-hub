@@ -60,12 +60,15 @@ async function verifyRLS() {
 
     console.log('\n--- Testando Tenant A tentando acessar dados do Tenant B ---');
 
+    let hasFailure = false;
+
     // TESTE 1: SELECT cruzado
     const selectRes = await client.query('SELECT * FROM test_rls_security WHERE id = $1', [idB]);
     if (selectRes.rowCount === 0) {
       console.log('✅ SUCESSO: SELECT cruzado bloqueado (registro não encontrado).');
     } else {
       console.log('❌ FALHA: Tenant A conseguiu ver dados do Tenant B!');
+      hasFailure = true;
     }
 
     // TESTE 2: UPDATE cruzado
@@ -74,6 +77,7 @@ async function verifyRLS() {
       console.log('✅ SUCESSO: UPDATE cruzado bloqueado (0 linhas afetadas).');
     } else {
       console.log('❌ FALHA: Tenant A conseguiu alterar dados do Tenant B!');
+      hasFailure = true;
     }
 
     // TESTE 3: DELETE cruzado
@@ -82,6 +86,7 @@ async function verifyRLS() {
       console.log('✅ SUCESSO: DELETE cruzado bloqueado (0 linhas afetadas).');
     } else {
       console.log('❌ FALHA: Tenant A conseguiu deletar dados do Tenant B!');
+      hasFailure = true;
     }
 
     // Verificação de consistência: Tenant A ainda vê seus próprios dados?
@@ -90,6 +95,11 @@ async function verifyRLS() {
       console.log('✅ CONSISTÊNCIA: Tenant A continua acessando seus próprios dados normalmente.');
     } else {
       console.log('❌ ERRO: Tenant A perdeu acesso aos seus próprios dados!');
+      hasFailure = true;
+    }
+
+    if (hasFailure) {
+      process.exit(1);
     }
 
     // Limpeza
@@ -98,7 +108,8 @@ async function verifyRLS() {
     console.log('\n--- Verificação Finalizada ---');
 
   } catch (err) {
-    console.error('Erro crítico no script de segurança:', err.message);
+    console.error('❌ Erro crítico no script de segurança:', err.message);
+    process.exit(1);
   } finally {
     client.release();
     await pool.end();

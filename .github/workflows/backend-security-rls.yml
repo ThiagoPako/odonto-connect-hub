@@ -1,0 +1,53 @@
+name: Backend Security RLS
+
+on:
+  pull_request:
+    branches: [ main, master ]
+  push:
+    branches: [ main, master ]
+
+jobs:
+  rls-security-check:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: odonto_db
+          POSTGRES_USER: odonto_user
+          POSTGRES_PASSWORD: postgres_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: vps-api-server/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          cd vps-api-server
+          npm install
+
+      - name: Run RLS Security Verification
+        env:
+          PG_HOST: localhost
+          PG_PORT: 5432
+          PG_DATABASE: odonto_db
+          PG_USER: odonto_user
+          PG_PASSWORD: postgres_password
+        run: |
+          cd vps-api-server
+          node verify-rls-security.mjs
