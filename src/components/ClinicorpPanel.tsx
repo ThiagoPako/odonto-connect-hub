@@ -18,6 +18,7 @@ import {
   type ClinicorpOverrideHistory,
 } from "@/lib/clinicorpApi";
 import { ClinicorpUserCredentials } from "@/components/ClinicorpUserCredentials";
+import { ClinicorpIntegrationGuide } from "@/components/ClinicorpIntegrationGuide";
 
 export function ClinicorpPanel() {
   const [settings, setSettings] = useState<ClinicorpSettings | null>(null);
