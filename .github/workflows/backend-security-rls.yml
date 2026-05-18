@@ -32,10 +32,19 @@ jobs:
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
+        id: setup-node
         with:
           node-version: '20'
           cache: 'npm'
           cache-dependency-path: vps-api-server/package-lock.json
+
+      - name: Verify npm cache
+        run: |
+          if [ "${{ steps.setup-node.outputs.cache-hit }}" = "true" ]; then
+            echo "✅ npm cache restored successfully!"
+          else
+            echo "⚠️ npm cache not found, dependencies will be installed from scratch."
+          fi
 
       - name: Install dependencies
         run: |
