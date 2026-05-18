@@ -73,3 +73,8 @@ jobs:
           PG_DATABASE: odonto_db
           PG_USER: odonto_user
           PG_PASSWORD: postgres_password
+
+      - name: Log cache save confirmation
+        if: always()
+        run: |
+          echo "Finalizing workflow. The actions/setup-node post-job step will automatically handle saving the cache if needed based on the package-lock.json key."
