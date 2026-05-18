@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, ChevronLeft, ChevronRight, Settings, RefreshCw, Clock } from "lucide-react";
 import { toast } from "sonner";
-import { agendaApi, dentistasApi, clinicaApi, type AgendamentoVPS, type ClinicaConfig } from "@/lib/vpsApi";
+import { agendaApi, dentistasApi, clinicaApi, type AgendamentoVPS, type ClinicaConfig, VPS_API_BASE, getToken } from "@/lib/vpsApi";
 import { AgendaMiniCalendar } from "@/components/agenda/AgendaMiniCalendar";
 import { AgendaProfessionalsList } from "@/components/agenda/AgendaProfessionalsList";
 import { AgendaGrid } from "@/components/agenda/AgendaGrid";
@@ -68,6 +68,38 @@ function AgendaPage() {
       .finally(() => setLoading(false));
   };
   useEffect(loadAppointments, [dateStr]);
+  
+  // Real-time synchronization
+  useEffect(() => {
+    let es: EventSource | null = null;
+    let retryTimeout: ReturnType<typeof setTimeout>;
+
+    function connect() {
+      const token = getToken();
+      if (!token) return;
+      
+      const url = new URL(`${VPS_API_BASE}/events`);
+      url.searchParams.set("token", token);
+      
+      es = new EventSource(url.toString());
+      
+      es.addEventListener("agendamento_changed", () => {
+        loadAppointments();
+      });
+
+      es.onerror = () => {
+        es?.close();
+        retryTimeout = setTimeout(connect, 5000);
+      };
+    }
+
+    connect();
+    return () => {
+      es?.close();
+      clearTimeout(retryTimeout);
+    };
+  }, [dateStr]); // Re-connect if needed, or just stay connected
+
 
   // Horário do dia atual com base na config
   const { inicio, fim } = useMemo(() => {

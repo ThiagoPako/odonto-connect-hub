@@ -32,7 +32,11 @@ export function useTratamentoRealtime(onChange: Handler, dentistaId?: string) {
     let retries = 0;
 
     function connect() {
-      es = new EventSource(`${VPS_API_BASE}/events`);
+      const token = localStorage.getItem("odonto_jwt");
+      const url = new URL(`${VPS_API_BASE}/events`);
+      if (token) url.searchParams.set("token", token);
+
+      es = new EventSource(url.toString());
 
       es.addEventListener("connected", () => {
         retries = 0;
