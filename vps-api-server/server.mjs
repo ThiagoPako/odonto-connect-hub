@@ -4620,8 +4620,9 @@ app.get('/api/comercial/painel', async (req, res) => {
         `SELECT COUNT(*)::int AS total
            FROM attendance_sessions
           WHERE attendant_id = $1
-            AND assigned_at::date = $2`,
-        [attendantId, today]
+            AND assigned_at::date = $2
+            AND tenant_id = $3`,
+        [attendantId, today, user.tenant_id]
       ),
       // Agendamentos criados hoje vinculados a leads atribuídos a este atendente
       safe(
@@ -4629,16 +4630,18 @@ app.get('/api/comercial/painel', async (req, res) => {
            FROM agendamentos a
            LEFT JOIN crm_leads l ON l.id::text = a.paciente_id::text
           WHERE a.created_at::date = $1
-            AND (l.assigned_to = $2 OR a.created_by = $2)`,
-        [today, attendantId]
+            AND (l.assigned_to = $2 OR a.created_by = $2)
+            AND a.tenant_id = $3`,
+        [today, attendantId, user.tenant_id]
       ),
       // Leads pendentes do atendente: sem_resposta ou aguardando ação
       safe(
         `SELECT COUNT(*)::int AS total
            FROM crm_leads
           WHERE assigned_to = $1
-            AND kanban_stage IN ('sem_resposta','primeiro_contato','em_negociacao')`,
-        [attendantId]
+            AND kanban_stage IN ('sem_resposta','primeiro_contato','em_negociacao')
+            AND tenant_id = $2`,
+        [attendantId, user.tenant_id]
       ),
       // Conversão por origem (todos leads do atendente)
       safe(
@@ -4646,8 +4649,11 @@ app.get('/api/comercial/painel', async (req, res) => {
                 COUNT(*)::int AS leads,
                 COUNT(*) FILTER (WHERE kanban_stage IN ('paciente_agendado','em_atendimento','pos_consulta','finalizado'))::int AS convertidos
            FROM crm_leads
-          WHERE assigned_to = $1 OR $1 IS NULL
-          GROUP BY origem
+          WHERE (assigned_to = $1 OR $1 IS NULL)
+            AND tenant_id = $2
+          GROUP BY origem`,
+        [attendantId, user.tenant_id]
+      ),
           ORDER BY leads DESC
           LIMIT 8`,
         [attendantId]
@@ -4733,16 +4739,16 @@ app.get('/api/dentista/painel/:id?', async (req, res) => {
     // Resolve dentista alvo
     let dentista = null;
     if (req.params.id) {
-      const r = await safe('SELECT * FROM dentistas WHERE id = $1 LIMIT 1', [req.params.id]);
+      const r = await safe('SELECT * FROM dentistas WHERE id = $1 AND tenant_id = $2 LIMIT 1', [req.params.id, user.tenant_id]);
       dentista = r.rows[0] || null;
     } else if (user.email) {
-      const r = await safe('SELECT * FROM dentistas WHERE LOWER(email) = LOWER($1) LIMIT 1', [user.email]);
+      const r = await safe('SELECT * FROM dentistas WHERE LOWER(email) = LOWER($1) AND tenant_id = $2 LIMIT 1', [user.email, user.tenant_id]);
       dentista = r.rows[0] || null;
     }
 
-    // Fallback: se admin e nada resolvido, pega o primeiro
+    // Fallback: se admin e nada resolvido, pega o primeiro deste tenant
     if (!dentista && user.role === 'admin') {
-      const r = await safe('SELECT * FROM dentistas ORDER BY nome ASC LIMIT 1');
+      const r = await safe('SELECT * FROM dentistas WHERE tenant_id = $1 ORDER BY nome ASC LIMIT 1', [user.tenant_id]);
       dentista = r.rows[0] || null;
     }
 
