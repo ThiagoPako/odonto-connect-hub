@@ -29,9 +29,13 @@ async function verifyRLS() {
     // 1. Criar tabela de teste com RLS
     await client.query('CREATE TABLE IF NOT EXISTS test_rls_security (id UUID PRIMARY KEY, name TEXT, tenant_id UUID)');
     await client.query('ALTER TABLE test_rls_security ENABLE ROW LEVEL SECURITY');
+    await client.query('ALTER TABLE test_rls_security FORCE ROW LEVEL SECURITY');
     await client.query('DROP POLICY IF EXISTS tenant_isolation_policy ON test_rls_security');
     await client.query(`
       CREATE POLICY tenant_isolation_policy ON test_rls_security USING (
+        (current_setting('app.is_super_admin', true) = 'true') OR 
+        (tenant_id = current_setting('app.current_tenant_id', true)::uuid)
+      ) WITH CHECK (
         (current_setting('app.is_super_admin', true) = 'true') OR 
         (tenant_id = current_setting('app.current_tenant_id', true)::uuid)
       )
