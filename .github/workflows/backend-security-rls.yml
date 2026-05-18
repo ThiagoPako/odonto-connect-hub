@@ -40,10 +40,11 @@ jobs:
 
       - name: Verify npm cache
         run: |
+          echo "Cache hit status: ${{ steps.setup-node.outputs.cache-hit }}"
           if [ "${{ steps.setup-node.outputs.cache-hit }}" = "true" ]; then
             echo "✅ npm cache restored successfully!"
           else
-            echo "⚠️ npm cache not found, dependencies will be installed from scratch."
+            echo "⚠️ npm cache not found (new cache will be created), dependencies will be installed from scratch."
           fi
 
       - name: Install dependencies
