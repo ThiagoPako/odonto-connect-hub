@@ -72,17 +72,45 @@ else
     exit 1
 fi
 
-# 7. Health Check
-echo "--> Performing health check on API (Port $API_PORT)..."
+# 7. Critical Route Validation (Post-deploy check)
+echo "--> Validating critical routes..."
 sleep 5
-HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:"$API_PORT"/api/health 2>/dev/null || echo "000")
 
-if [ "$HTTP_STATUS" = "200" ]; then
-    echo "✅ Success: API is healthy (HTTP 200)"
-else
-    echo "⚠️ Warning: API returned HTTP $HTTP_STATUS. Checking logs..."
-    pm2 logs odonto-api --lines 20 --nostream
-fi
+# Function to check route and fail script if error
+check_route() {
+    local name=$1
+    local url=$2
+    local expected=$3
+    local headers=$4
+    
+    echo -n "  Testing $name ($url)... "
+    local status
+    if [ -n "$headers" ]; then
+        status=$(curl -s -o /dev/null -w "%{http_code}" -H "$headers" "$url" 2>/dev/null || echo "000")
+    else
+        status=$(curl -s -o /dev/null -w "%{http_code}" "$url" 2>/dev/null || echo "000")
+    fi
 
-echo "=== Operation Completed: $(date) ==="
+    if [ "$status" = "$expected" ] || ([ "$expected" = "200" ] && [ "$status" = "401" ]); then
+        # 401 is acceptable for protected routes as it means the API is responsive but needs token
+        echo "✅ OK (HTTP $status)"
+    else
+        echo "❌ FAILED (HTTP $status, expected $expected)"
+        echo "!!! CRITICAL FAILURE: API is not behaving as expected after deploy !!!"
+        pm2 logs odonto-api --lines 50 --nostream
+        exit 1
+    fi
+}
+
+# Check Health
+check_route "Health Check" "http://127.0.0.1:$API_PORT/api/health" "200"
+
+# Check Auth/Me (should return 401/200 if up)
+check_route "Auth Profile" "http://127.0.0.1:$API_PORT/api/auth/me" "200"
+
+# Check a multi-tenant query route (e.g. consultations or patients)
+check_route "Multi-tenant Data" "http://127.0.0.1:$API_PORT/api/consultations" "200"
+
+echo "=== Operation Completed Successfully: $(date) ==="
 pm2 status
+
