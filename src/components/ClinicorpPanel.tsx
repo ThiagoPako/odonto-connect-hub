@@ -18,6 +18,7 @@ import {
   type ClinicorpOverrideHistory,
 } from "@/lib/clinicorpApi";
 import { ClinicorpUserCredentials } from "@/components/ClinicorpUserCredentials";
+import { ClinicorpIntegrationGuide } from "@/components/ClinicorpIntegrationGuide";
 
 export function ClinicorpPanel() {
   const [settings, setSettings] = useState<ClinicorpSettings | null>(null);
@@ -197,8 +198,12 @@ export function ClinicorpPanel() {
 
   return (
     <div className="space-y-6">
+      {/* Integration guide matching Clinicorp's UI flow */}
+      <ClinicorpIntegrationGuide />
+
       {/* Per-user credentials (SaaS multi-tenant) */}
       <ClinicorpUserCredentials />
+
 
       {/* Status header */}
       <div className="rounded-2xl border border-border bg-card p-5 flex items-start gap-4">
