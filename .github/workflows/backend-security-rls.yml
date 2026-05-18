@@ -1,4 +1,4 @@
-name: Backend Security RLS
+name: Backend Security & Multi-tenant
 
 on:
   pull_request:
@@ -7,9 +7,9 @@ on:
     branches: [ main, master ]
 
 jobs:
-  rls-security-check:
+  security-and-tenant-check:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     services:
       postgres:
@@ -75,7 +75,35 @@ jobs:
           PG_USER: odonto_user
           PG_PASSWORD: postgres_password
 
+      - name: Run Multi-tenant E2E Tests
+        id: tenant-tests
+        run: |
+          cd vps-api-server
+          npm test tests/multi-tenant-e2e.test.js -- --verbose
+        env:
+          JWT_SECRET: test-secret-for-ci-multi-tenant
+          PG_HOST: localhost
+          PG_PORT: 5432
+          PG_DATABASE: odonto_db
+          PG_USER: odonto_user
+          PG_PASSWORD: postgres_password
+
+      - name: Generate Multi-tenant Report
+        if: always()
+        run: |
+          echo "### 🏥 SaaS Multi-tenant Test Report" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.tenant-tests.outcome }}" == "success" ]; then
+            echo "✅ **Status:** All tenants isolated correctly." >> $GITHUB_STEP_SUMMARY
+            echo "1. **Tenant A (Clinic A):** Success (Data isolated)" >> $GITHUB_STEP_SUMMARY
+            echo "2. **Tenant B (Clinic B):** Success (Data isolated)" >> $GITHUB_STEP_SUMMARY
+            echo "3. **Cross-tenant Protection:** Active" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **Status:** Failed isolation or access error." >> $GITHUB_STEP_SUMMARY
+            echo "Please check the 'Run Multi-tenant E2E Tests' step logs for details." >> $GITHUB_STEP_SUMMARY
+          fi
+
       - name: Log cache save confirmation
         if: always()
         run: |
-          echo "Finalizing workflow. The actions/setup-node post-job step will automatically handle saving the cache if needed based on the package-lock.json key."
+          echo "Finalizing workflow. The actions/setup-node post-job step will automatically handle saving the cache if needed."
+
