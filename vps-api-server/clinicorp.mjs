@@ -169,8 +169,6 @@ async function clinicorpFetch(settings, pathName, { method = 'GET', query = {}, 
 // ─── High-level API helpers ───────────────────────────────────
 export const clinicorpApi = {
   listUsers: async (s) => {
-    // A API Clinicorp pode retornar lista direta, ou envelope {Results|Users|Items|data}.
-    // Tentamos múltiplos endpoints porque alguns subscribers expõem rotas distintas.
     const endpoints = ['/security/list_users', '/security/user/list', '/user/list'];
     for (const ep of endpoints) {
       try {
@@ -198,6 +196,8 @@ export const clinicorpApi = {
   confirmAppointment: (s, body) => clinicorpFetch(s, '/appointment/confirm_appointment', { method: 'POST', body }),
   cancelAppointment: (s, body) => clinicorpFetch(s, '/appointment/cancel_appointment', { method: 'POST', body }),
   createAppointment: (s, body) => clinicorpFetch(s, '/appointment/create_appointment_by_api', { method: 'POST', body }),
+  updateAppointment: (s, id, body) => clinicorpFetch(s, `/appointment/update/${id}`, { method: 'PUT', body }),
+  deleteAppointment: (s, id) => clinicorpFetch(s, `/appointment/delete/${id}`, { method: 'DELETE' }),
   createOnlineScheduling: (s, body) => clinicorpFetch(s, '/appointment/create_online_scheduling', { method: 'POST', body }),
   getAvailableDays: (s, query) => clinicorpFetch(s, '/appointment/get_avaliable_days', { query }),
   getAvailableTimesCalendar: (s, query) => clinicorpFetch(s, '/appointment/get_avaliable_times_calendar', { query }),
@@ -205,6 +205,7 @@ export const clinicorpApi = {
   listPatients: (s) => clinicorpFetch(s, '/patient/list'),
   patientBirthdays: (s, query) => clinicorpFetch(s, '/patient/birthdays', { query }),
   createPatient: (s, body) => clinicorpFetch(s, '/patient/create', { method: 'POST', body }),
+  updatePatient: (s, id, body) => clinicorpFetch(s, `/patient/update/${id}`, { method: 'PUT', body }),
   patientAppointments: (s, patientId) => clinicorpFetch(s, '/patient/list_appointments', { query: { patient_id: patientId } }),
   patientEstimates: (s, patientId) => clinicorpFetch(s, '/patient/list_estimates', { query: { patient_id: patientId } }),
   listEstimates: (s, from, to, clinicId) => clinicorpFetch(s, '/estimates/list', { query: { from, to, clinic_id: clinicId } }),
