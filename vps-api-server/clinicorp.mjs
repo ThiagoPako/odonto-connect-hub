@@ -344,7 +344,7 @@ async function upsertAppointment(pool, a, tenantId = null) {
       JSON.stringify(a),
     ]
   );
-  try { await projectAppointmentToLocal(pool, a, id); }
+  try { await projectAppointmentToLocal(pool, a, id, tenantId); }
   catch (e) { console.error('[clinicorp] projectAppointmentToLocal:', e.message); }
 }
 
