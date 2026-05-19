@@ -1367,8 +1367,12 @@ export async function reconciliationTick(pool) {
   console.log(`[clinicorp] auto-reconcile rodando ${from} → ${to}`);
   try {
     const r = await runFullSync(pool, { from, to });
+    
+    // Rotina de reconciliação financeira (Alertas de divergência)
+    const reconciliation = await runFinancialReconciliation(pool);
+    
     await pool.query(`UPDATE clinicorp_settings SET sync_lock_until = NULL WHERE id = 1`);
-    return { ran: true, ...r };
+    return { ran: true, ...r, reconciliation };
   } catch (e) {
     console.error('[clinicorp] auto-reconcile falhou', e.message);
     await pool.query(
@@ -1377,6 +1381,50 @@ export async function reconciliationTick(pool) {
       [e.message]
     );
     return { ran: true, error: e.message };
+  }
+}
+
+async function runFinancialReconciliation(pool) {
+  try {
+    const { rows: alerts } = await pool.query(`
+      WITH monthly_data AS (
+        SELECT 
+          period_month,
+          SUM(CASE WHEN source = 'payment' THEN total_amount ELSE 0 END) as total_payments,
+          SUM(CASE WHEN source = 'cashflow' THEN total_in ELSE 0 END) as total_cash_in
+        FROM clinicorp_monthly_summary
+        WHERE period_month >= NOW() - INTERVAL '3 months'
+        GROUP BY period_month
+      )
+      SELECT 
+        period_month,
+        total_payments,
+        total_cash_in,
+        ABS(total_payments - total_cash_in) as divergence,
+        CASE 
+          WHEN ABS(total_payments - total_cash_in) > 0.01 THEN true 
+          ELSE false 
+        END as has_divergence
+      FROM monthly_data
+      WHERE ABS(total_payments - total_cash_in) > 0.01
+      ORDER BY period_month DESC
+    `);
+
+    for (const alert of alerts) {
+      console.warn(`[clinicorp alert] Divergência financeira detectada em ${alert.period_month.toISOString().slice(0,7)}: Payments R$ ${alert.total_payments.toFixed(2)} vs Cashflow R$ ${alert.total_cash_in.toFixed(2)} (Diff: R$ ${alert.divergence.toFixed(2)})`);
+      
+      // Aqui poderíamos enviar push notification ou email, mas por enquanto logamos e deixamos disponível para a UI
+      await pool.query(
+        `INSERT INTO clinicorp_webhook_events (event_type, status, payload, received_at)
+         VALUES ($1, $2, $3, NOW())`,
+        ['financial_divergence_alert', 'processed', JSON.stringify(alert)]
+      );
+    }
+
+    return { alerts_count: alerts.length, alerts };
+  } catch (e) {
+    console.error('[clinicorp] falha na reconciliação financeira:', e.message);
+    return { error: e.message };
   }
 }
 
