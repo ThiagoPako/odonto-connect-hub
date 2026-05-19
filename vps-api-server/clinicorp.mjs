@@ -365,7 +365,8 @@ function onlyDigits(v) { return String(v ?? '').replace(/\D+/g, '') || null; }
 
 async function ensureLocalPatient(pool, cpId, fallback = {}, tenantId = null) {
   if (!cpId) return null;
-  const found = await pool.query(`SELECT id FROM pacientes WHERE clinicorp_patient_id = $1 LIMIT 1`, [cpId]);
+  const tId = await resolveTenantId(pool, tenantId);
+  const found = await pool.query(`SELECT id FROM pacientes WHERE clinicorp_patient_id = $1 AND tenant_id = $2 LIMIT 1`, [cpId, tId]);
   const cp = await pool.query(`SELECT * FROM clinicorp_patients WHERE id = $1`, [cpId]);
   const src = cp.rows[0] || {};
   const nome = src.name || fallback.name || 'Paciente';
@@ -385,11 +386,11 @@ async function ensureLocalPatient(pool, cpId, fallback = {}, tenantId = null) {
   }
   let matchId = null;
   if (telefone) {
-    const r = await pool.query(`SELECT id FROM pacientes WHERE telefone=$1 LIMIT 1`, [telefone]);
+    const r = await pool.query(`SELECT id FROM pacientes WHERE telefone=$1 AND tenant_id=$2 LIMIT 1`, [telefone, tId]);
     matchId = r.rows[0]?.id || null;
   }
   if (!matchId && cpf) {
-    const r = await pool.query(`SELECT id FROM pacientes WHERE cpf=$1 LIMIT 1`, [cpf]);
+    const r = await pool.query(`SELECT id FROM pacientes WHERE cpf=$1 AND tenant_id=$2 LIMIT 1`, [cpf, tId]);
     matchId = r.rows[0]?.id || null;
   }
   if (matchId) {
