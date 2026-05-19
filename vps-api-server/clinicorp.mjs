@@ -407,11 +407,12 @@ async function ensureLocalPatient(pool, cpId, fallback = {}, tenantId = null) {
 
 async function ensureLocalProfessional(pool, cpProfId, fallbackName = null, tenantId = null) {
   if (!cpProfId) return null;
-  const found = await pool.query(`SELECT id FROM dentistas WHERE clinicorp_professional_id=$1 LIMIT 1`, [cpProfId]);
+  const tId = await resolveTenantId(pool, tenantId);
+  const found = await pool.query(`SELECT id FROM dentistas WHERE clinicorp_professional_id=$1 AND tenant_id=$2 LIMIT 1`, [cpProfId, tId]);
   if (found.rows[0]) return found.rows[0].id;
   const cp = await pool.query(`SELECT * FROM clinicorp_professionals WHERE id=$1`, [cpProfId]);
   const nome = cp.rows[0]?.full_name || fallbackName || `Profissional ${cpProfId}`;
-  const match = await pool.query(`SELECT id FROM dentistas WHERE LOWER(nome)=LOWER($1) LIMIT 1`, [nome]);
+  const match = await pool.query(`SELECT id FROM dentistas WHERE LOWER(nome)=LOWER($1) AND tenant_id=$2 LIMIT 1`, [nome, tId]);
   if (match.rows[0]) {
     await pool.query(`UPDATE dentistas SET clinicorp_professional_id=$1, updated_at=NOW() WHERE id=$2`, [cpProfId, match.rows[0].id]);
     return match.rows[0].id;
