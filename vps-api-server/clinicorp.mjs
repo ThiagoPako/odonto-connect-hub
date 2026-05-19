@@ -220,6 +220,10 @@ async function upsertClinic(pool, c) {
 }
 
 async function upsertProfessional(pool, p) {
+  const id = p.id ?? p.Id ?? p.UserId ?? p.PersonId ?? null;
+  if (!id) return;
+  const fullName = p.FullName ?? p.Name ?? p.UserName ?? p.full_name ?? `Profissional ${id}`;
+  const userName = p.UserName ?? p.Username ?? p.Email ?? null;
   await pool.query(
     `INSERT INTO clinicorp_professionals (id, full_name, user_name, raw, synced_at)
      VALUES ($1,$2,$3,$4, NOW())
@@ -228,7 +232,7 @@ async function upsertProfessional(pool, p) {
        user_name = EXCLUDED.user_name,
        raw = EXCLUDED.raw,
        synced_at = NOW()`,
-    [p.id, p.FullName ?? null, p.UserName ?? null, JSON.stringify(p)]
+    [String(id), fullName, userName, JSON.stringify(p)]
   );
 }
 
