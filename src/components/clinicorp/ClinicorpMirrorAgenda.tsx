@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { clinicorpApi } from "@/lib/clinicorpApi";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ChevronLeft, ChevronRight, Clock, User2, CalendarDays } from "lucide-react";
+import { ChevronLeft, ChevronRight, Clock, User2, CalendarDays, RefreshCw, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export function ClinicorpMirrorAgenda({ refreshTrigger = 0 }: { refreshTrigger?: number }) {
@@ -13,6 +13,7 @@ export function ClinicorpMirrorAgenda({ refreshTrigger = 0 }: { refreshTrigger?:
   const [selectedProfId, setSelectedProfId] = useState<string>("all");
   const [selectedChairId, setSelectedChairId] = useState<string>("all");
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const [autoJumped, setAutoJumped] = useState(false);
   const dateStr = currentDate.toISOString().slice(0, 10);
@@ -24,6 +25,7 @@ export function ClinicorpMirrorAgenda({ refreshTrigger = 0 }: { refreshTrigger?:
 
   useEffect(() => {
     setLoading(true);
+    setError(null);
     clinicorpApi.listAppointments({ from: dateStr, to: dateStr })
       .then(async (rows) => {
         setAppointments(rows);
@@ -48,6 +50,10 @@ export function ClinicorpMirrorAgenda({ refreshTrigger = 0 }: { refreshTrigger?:
           } catch (e) { console.error(e); }
         }
       })
+      .catch((err) => {
+        console.error(err);
+        setError(err.message || "Erro ao carregar agendamentos");
+      })
       .finally(() => setLoading(false));
   }, [dateStr, refreshTrigger]);
 
@@ -70,8 +76,15 @@ export function ClinicorpMirrorAgenda({ refreshTrigger = 0 }: { refreshTrigger?:
           <Button size="sm" variant="outline" onClick={goPrev}><ChevronLeft className="h-4 w-4" /></Button>
           <Button size="sm" variant="outline" onClick={goToday}>Hoje</Button>
           <Button size="sm" variant="outline" onClick={goNext}><ChevronRight className="h-4 w-4" /></Button>
-          <div className="ml-2 font-semibold">
-            {currentDate.toLocaleDateString("pt-BR", { day: "2-digit", month: "long", year: "numeric" })}
+          <div className="ml-2 flex flex-col">
+            <span className="font-semibold text-sm">
+              {currentDate.toLocaleDateString("pt-BR", { day: "2-digit", month: "long", year: "numeric" })}
+            </span>
+            {!loading && !error && (
+              <span className="text-[10px] text-muted-foreground">
+                {filteredAppointments.length} registro(s) encontrado(s)
+              </span>
+            )}
           </div>
         </div>
 
@@ -104,7 +117,25 @@ export function ClinicorpMirrorAgenda({ refreshTrigger = 0 }: { refreshTrigger?:
 
       <div className="bg-card rounded-2xl border border-border shadow-sm overflow-hidden">
         {loading ? (
-          <div className="p-20 text-center text-muted-foreground animate-pulse">Carregando agenda...</div>
+          <div className="p-20 text-center text-muted-foreground animate-pulse flex flex-col items-center gap-2">
+            <RefreshCw className="h-8 w-8 animate-spin text-primary/40" />
+            Carregando agenda...
+          </div>
+        ) : error ? (
+          <div className="p-20 text-center space-y-4">
+            <div className="bg-red-50 w-16 h-16 rounded-full flex items-center justify-center mx-auto">
+              <AlertCircle className="h-8 w-8 text-red-500" />
+            </div>
+            <div className="space-y-1">
+              <div className="text-red-600 font-semibold">Erro na Sincronização</div>
+              <p className="text-xs text-muted-foreground max-w-xs mx-auto">
+                {error}
+              </p>
+            </div>
+            <Button size="sm" variant="outline" onClick={() => window.location.reload()} className="rounded-xl">
+              Tentar Novamente
+            </Button>
+          </div>
         ) : filteredAppointments.length === 0 ? (
           <div className="p-20 text-center space-y-3">
             <div className="bg-muted/30 w-16 h-16 rounded-full flex items-center justify-center mx-auto">
