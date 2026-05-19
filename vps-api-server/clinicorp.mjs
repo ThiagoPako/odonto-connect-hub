@@ -203,26 +203,68 @@ export const clinicorpApi = {
   listAppointmentCategories: (s) => clinicorpFetch(s, '/appointment/list_categories'),
   listSpecialties: (s) => clinicorpFetch(s, '/procedures/list_specialties'),
   listAppointments: async (s, from, to, businessId) => {
-    // Clinicorp /appointment/list accepts different param naming conventions in production vs sandbox.
-    // We try the most likely variants in order until one returns data, so the sync survives API drift.
-    const baseBiz = businessId ? { business_id: businessId, BusinessId: businessId } : {};
+    // Clinicorp's canonical endpoint for listing appointments in a date range is
+    // /appointment/list_by_date_and_clinic, which requires Clinic_BusinessId and
+    // SK_DateFirstTime (YYYYMMDD integer). We iterate day-by-day on that endpoint
+    // first, then fall back to /appointment/list with multiple param variants to
+    // survive API drift between sandbox and production environments.
+    const toAtomic = (d) => String(d).replaceAll('-', '').slice(0, 8);
+    const aggregate = [];
+    const seen = new Set();
+    const push = (arr) => {
+      for (const a of (Array.isArray(arr) ? arr : [])) {
+        const id = a.id ?? a.AppointmentId ?? a.Id;
+        if (!id || seen.has(String(id))) continue;
+        seen.add(String(id));
+        aggregate.push(a);
+      }
+    };
+    const extract = (data) => Array.isArray(data) ? data
+      : (data?.Results || data?.Result || data?.appointments || data?.Appointments || data?.data || data?.items || data?.Items || []);
+
+    // 1) Preferred path: list_by_date_and_clinic per day, per clinic
+    if (businessId) {
+      try {
+        const start = new Date(from + 'T00:00:00Z');
+        const end = new Date(to + 'T00:00:00Z');
+        for (let d = new Date(start); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
+          const sk = toAtomic(d.toISOString().slice(0, 10));
+          try {
+            const data = await clinicorpFetch(s, '/appointment/list_by_date_and_clinic', {
+              query: { Clinic_BusinessId: businessId, SK_DateFirstTime: sk },
+            });
+            push(extract(data));
+          } catch (e) {
+            // If this endpoint doesn't exist on the account, abort the per-day loop and fall back
+            if (e?.status === 404 || e?.status === 400) break;
+            // For 5xx we keep trying other days
+          }
+        }
+        if (aggregate.length > 0) return aggregate;
+      } catch (_) { /* fall through to /appointment/list */ }
+    }
+
+    // 2) Fallback: /appointment/list with multiple param naming variants
+    const baseBiz = businessId
+      ? { Clinic_BusinessId: businessId, business_id: businessId, BusinessId: businessId }
+      : {};
     const variants = [
       { fromDate: from, toDate: to, ...baseBiz },
       { from, to, ...baseBiz },
       { date_from: from, date_to: to, ...baseBiz },
       { startDate: from, endDate: to, ...baseBiz },
       { initialDate: from, finalDate: to, ...baseBiz },
+      { SK_DateFirstTime: toAtomic(from), ...baseBiz },
     ];
     let lastErr = null;
     for (const q of variants) {
       try {
         const data = await clinicorpFetch(s, '/appointment/list', { query: q });
-        const arr = Array.isArray(data) ? data : (data?.appointments || data?.data || data?.result || data?.items || []);
+        const arr = extract(data);
         if (Array.isArray(arr) && arr.length > 0) return arr;
-        // keep the first non-empty result; otherwise continue trying
-        if (Array.isArray(arr)) lastErr = null;
       } catch (e) { lastErr = e; }
     }
+    if (aggregate.length > 0) return aggregate;
     if (lastErr) throw lastErr;
     return [];
   },
