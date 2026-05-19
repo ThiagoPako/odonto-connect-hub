@@ -1188,7 +1188,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
 
     if (clinics.length === 0) {
       for (const r of ranges) {
-        const list = await clinicorpApi.listAppointments(settings, r.from, r.to);
+        const list = await clinicorpApi.listAppointments(settings, r.from, r.to, settings.subscriber_id);
         await processAppts(list);
       }
     } else {
