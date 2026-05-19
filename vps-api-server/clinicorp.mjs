@@ -1151,20 +1151,6 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     const { rows: appts } = await pool.query(`SELECT raw FROM clinicorp_appointments WHERE raw IS NOT NULL`);
     const seen = new Set();
     let backfilled = 0;
-    for (const { raw: a } of appts) {
-      const pid = a?.PatientId ?? a?.Patient_PersonId ?? a?.patient_id ?? null;
-      if (!pid || seen.has(String(pid))) continue;
-      seen.add(String(pid));
-      const stub = {
-        id: pid,
-        Name: a.PatientName ?? a.Patient_FullName ?? a.Patient_Name ?? null,
-        MobilePhone: a.PatientPhone ?? a.MobilePhone ?? null,
-        Email: a.PatientEmail ?? null,
-      };
-      try { await upsertPatient(pool, stub, tenant_id); backfilled++; }
-      catch (e) { console.error('[clinicorp sync] backfill patient:', pid, e.message); }
-    }
-    console.log(`[clinicorp sync] patients backfill via appointments: ${backfilled}`);
     summary.patients = pulled + backfilled;
   });
 
