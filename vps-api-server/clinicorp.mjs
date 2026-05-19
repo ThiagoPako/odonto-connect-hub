@@ -789,7 +789,32 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
 
   await safe('appointments', async () => {
     const list = await clinicorpApi.listAppointments(settings, fromDate, toDate);
-    for (const a of (Array.isArray(list) ? list : [])) { await upsertAppointment(pool, a); summary.appointments++; }
+    const apiIds = new Set();
+    for (const a of (Array.isArray(list) ? list : [])) { 
+      const id = a.id ?? a.AppointmentId ?? a.Id;
+      if (id) {
+        apiIds.add(String(id));
+        await upsertAppointment(pool, a); 
+        summary.appointments++; 
+      }
+    }
+    
+    // Deletion detection (faithfull mirror): 
+    // If an appointment exists locally in this range but NOT in the API response, mark it as cancelled/removed.
+    try {
+      const { rows: localRows } = await pool.query(
+        `SELECT id FROM clinicorp_appointments WHERE date >= $1 AND date <= $2`,
+        [fromDate, toDate]
+      );
+      for (const local of localRows) {
+        if (!apiIds.has(String(local.id))) {
+          // If not in API but in range, it was likely deleted in Clinicorp
+          await pool.query(`UPDATE clinicorp_appointments SET status = 'DELETED_IN_CLINICORP', synced_at = NOW() WHERE id = $1`, [local.id]);
+          // Also update the projected local appointment
+          await pool.query(`UPDATE agendamentos SET status = 'cancelado', updated_at = NOW() WHERE clinicorp_appointment_id = $1`, [local.id]);
+        }
+      }
+    } catch (e) { console.error('[clinicorp sync] pruning appointments', e.message); }
   });
 
   await safe('estimates', async () => {
