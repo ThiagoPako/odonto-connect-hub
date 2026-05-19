@@ -348,13 +348,14 @@ async function upsertPatient(pool, p, tenantId = null) {
 async function upsertAppointment(pool, a, tenantId = null) {
   const id = a.id ?? a.AppointmentId ?? a.Id;
   if (!id) return;
+  const tId = await resolveTenantId(pool, tenantId);
   await pool.query(
     `INSERT INTO clinicorp_appointments
-       (id, business_id, patient_id, patient_name, professional_id, professional_name,
+       (id, tenant_id, business_id, patient_id, patient_name, professional_id, professional_name,
         category_id, category_description, category_color, chair_id,
         status, date, from_time, to_time, notes, raw, synced_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16, NOW())
-     ON CONFLICT (id) DO UPDATE SET
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17, NOW())
+     ON CONFLICT (id, tenant_id) DO UPDATE SET
        business_id = EXCLUDED.business_id,
        patient_id = EXCLUDED.patient_id,
        patient_name = EXCLUDED.patient_name,
@@ -372,7 +373,7 @@ async function upsertAppointment(pool, a, tenantId = null) {
        raw = EXCLUDED.raw,
        synced_at = NOW()`,
     [
-      id,
+      id, tId,
       a.BusinessId ?? a.Clinic_BusinessId ?? null,
       a.PatientId ?? a.Patient_PersonId ?? null,
       a.PatientName ?? a.Patient_FullName ?? a.Patient_Name ?? null,
@@ -396,14 +397,14 @@ async function upsertAppointment(pool, a, tenantId = null) {
     const pname = a.PatientName ?? a.Patient_FullName ?? a.Patient_Name ?? null;
     if (pid) {
       await pool.query(
-        `INSERT INTO clinicorp_patients (id, name, mobile_phone, raw, synced_at)
-         VALUES ($1, $2, $3, $4, NOW())
-         ON CONFLICT (id) DO UPDATE SET
+        `INSERT INTO clinicorp_patients (id, tenant_id, name, mobile_phone, raw, synced_at)
+         VALUES ($1, $2, $3, $4, $5, NOW())
+         ON CONFLICT (id, tenant_id) DO UPDATE SET
            name = COALESCE(NULLIF(EXCLUDED.name,''), clinicorp_patients.name),
            mobile_phone = COALESCE(NULLIF(EXCLUDED.mobile_phone,''), clinicorp_patients.mobile_phone),
            synced_at = NOW()`,
         [
-          pid,
+          pid, tId,
           pname,
           String(a.PatientPhone ?? a.MobilePhone ?? '') || null,
           JSON.stringify({ derived_from: 'appointment', appointment_id: id, id: pid, name: pname }),
@@ -412,7 +413,7 @@ async function upsertAppointment(pool, a, tenantId = null) {
     }
   } catch (e) { console.error('[clinicorp] patient stub from appt:', e.message); }
 
-  try { await projectAppointmentToLocal(pool, a, id, tenantId); }
+  try { await projectAppointmentToLocal(pool, a, id, tId); }
   catch (e) { console.error('[clinicorp] projectAppointmentToLocal:', e.message); }
 }
 
