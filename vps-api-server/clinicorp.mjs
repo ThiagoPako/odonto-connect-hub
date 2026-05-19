@@ -861,13 +861,14 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     try { await fn(); } catch (e) { errors.push(`${label}: ${e.message}`); console.error(`[clinicorp sync] ${label}`, e.message); }
   };
 
-  // Helper para fatiar períodos em janelas de 30 dias para evitar erro 400 da Clinicorp
+  // Helper para fatiar períodos em janelas menores para evitar erro 400 ou timeouts da Clinicorp
   const sliceRange = (startStr, endStr) => {
     const dates = [];
     let current = new Date(startStr);
     const end = new Date(endStr);
-    while (current < end) {
-      const next = new Date(current.getTime() + 30 * 86400_000);
+    // Janelas de 15 dias são mais seguras para grandes volumes
+    while (current <= end) {
+      const next = new Date(current.getTime() + 15 * 86400_000);
       const to = next < end ? next : end;
       dates.push({
         from: current.toISOString().slice(0, 10),
@@ -877,6 +878,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     }
     return dates;
   };
+
 
   await safe('clinics', async () => {
     const list = await clinicorpApi.listClinics(settings);
