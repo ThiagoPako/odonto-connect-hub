@@ -1051,12 +1051,19 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     await pool.query(`UPDATE crm_leads SET tenant_id=$1 WHERE tenant_id IS NULL AND (clinicorp_patient_id IS NOT NULL OR origem='clinicorp')`, [tId]);
   } catch (e) { console.error('[clinicorp sync] tenant backfill', e.message); }
 
-  // Garante que o cron rodou e povoou as tabelas locais (espelhamento forçado)
+  // Garante que os registros recentes sejam projetados (espelhamento forçado)
   try {
     const tId = await resolveTenantId(pool, tenant_id);
-    const { rows: appts } = await pool.query('SELECT raw FROM clinicorp_appointments WHERE synced_at > NOW() - INTERVAL \'1 hour\'');
-    for (const r of appts) { await projectAppointmentToLocal(pool, r.raw, r.raw.id ?? r.raw.AppointmentId, tId); }
+    const { rows: appts } = await pool.query(
+      `SELECT raw FROM clinicorp_appointments WHERE date >= $1 AND date <= $2`,
+      [fromDate, toDate]
+    );
+    for (const r of appts) { 
+      const rawData = typeof r.raw === 'string' ? JSON.parse(r.raw) : r.raw;
+      await projectAppointmentToLocal(pool, rawData, rawData.id ?? rawData.AppointmentId ?? rawData.Id, tId); 
+    }
   } catch (e) { console.error('[clinicorp sync] forced projection', e.message); }
+
 
 
 
