@@ -148,6 +148,7 @@ export const clinicorpApi = {
   sync: (range?: { from?: string; to?: string; force_metadata?: boolean }) =>
     req<ClinicorpSyncResult>('/sync', { method: 'POST', body: JSON.stringify(range || {}) }),
   reconcileNow: () => req<{ ran?: boolean; skipped?: boolean; status?: string; summary?: Record<string, number>; error?: string }>('/reconcile', { method: 'POST' }),
+  syncAuto: () => req<{ ran?: boolean; skipped?: boolean; status?: string; summary?: Record<string, number>; error?: string }>('/sync/auto', { method: 'POST' }),
   listClinics: () => req<Array<Record<string, unknown>>>('/clinics'),
   listProfessionals: () => req<Array<Record<string, unknown>>>('/professionals'),
   listCategories: () => req<Array<Record<string, unknown>>>('/categories'),
