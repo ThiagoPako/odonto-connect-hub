@@ -1200,7 +1200,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
       
       // Forçar re-projeção dos agendamentos agora que temos os profissionais
       console.log('[clinicorp sync] Re-projetando agendamentos para vincular dentistas...');
-      const { rows: apptsToReproject } = await pool.query('SELECT id, raw FROM clinicorp_appointments');
+      const { rows: apptsToReproject } = await pool.query('SELECT id, raw FROM clinicorp_appointments ORDER BY date DESC LIMIT 1000');
       for (const r of apptsToReproject) {
         try { await projectAppointmentToLocal(pool, r.raw, r.id, tenant_id); } catch (e) { /* skip */ }
       }
@@ -1627,7 +1627,12 @@ export function registerClinicorp(app, pool) {
     res.json(rows);
   });
   app.get('/api/clinicorp/professionals', async (_req, res) => {
-    const { rows } = await pool.query('SELECT * FROM clinicorp_professionals ORDER BY full_name');
+    const { rows } = await pool.query(`
+      SELECT cp.*, d.id as local_id, d.ativo as local_ativo, d.cor_agenda as local_cor
+      FROM clinicorp_professionals cp
+      LEFT JOIN dentistas d ON d.clinicorp_professional_id = cp.id::text
+      ORDER BY cp.full_name
+    `);
     res.json(rows);
   });
   app.get('/api/clinicorp/categories', async (_req, res) => {
