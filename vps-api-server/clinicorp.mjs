@@ -60,13 +60,17 @@ async function clinicorpFetch(settings, pathName, { method = 'GET', query = {}, 
   }
   const base = (settings.base_url || DEFAULT_BASE_URL).replace(/\/$/, '');
   const url = new URL(base + pathName);
-  // subscriber_id sempre que não vier explícito
+  
+  // Limpar query parameters vazios ou nulos para evitar erros na API do Clinicorp
   const allQuery = { ...query };
   if (settings.subscriber_id && allQuery.subscriber_id === undefined) {
     allQuery.subscriber_id = settings.subscriber_id;
   }
+  
   for (const [k, v] of Object.entries(allQuery)) {
-    if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));
+    if (v !== undefined && v !== null && v !== '') {
+      url.searchParams.set(k, String(v));
+    }
   }
 
   const ctrl = new AbortController();
