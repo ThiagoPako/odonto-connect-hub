@@ -251,7 +251,8 @@ async function upsertClinic(pool, c) {
 async function upsertProfessional(pool, p, tenantId = null) {
   const id = p.id ?? p.Id ?? p.UserId ?? p.PersonId ?? null;
   if (!id) return;
-  const fullName = p.FullName ?? p.Name ?? p.UserName ?? p.full_name ?? `Profissional ${id}`;
+  // A API Clinicorp retorna o nome em diversos campos dependendo da versão/endpoint
+  const fullName = p.FullName ?? p.Full_Name ?? p.Name ?? p.PersonName ?? p.UserName ?? p.full_name ?? `Profissional ${id}`;
   const userName = p.UserName ?? p.Username ?? p.Email ?? null;
   await pool.query(
     `INSERT INTO clinicorp_professionals (id, full_name, user_name, raw, synced_at)
