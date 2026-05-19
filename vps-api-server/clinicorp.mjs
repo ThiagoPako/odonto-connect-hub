@@ -1374,17 +1374,16 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
       await upsertFinancial(pool, 'cashflow', item, tenant_id);
       summary.cashflow++;
     };
+    if (clinics.length === 0) {
+      console.warn('[clinicorp sync] cashflow: nenhuma clínica espelhada para este tenant — pulando');
+      return;
+    }
     for (const r of ranges) {
-      if (clinics.length > 0) {
-        for (const { id: clinicId } of clinics) {
-          try {
-            const list = await clinicorpApi.listCashFlow(settings, { from: r.from, to: r.to, clinic_id: clinicId });
-            for (const c of (Array.isArray(list) ? list : [])) { await processCashflow(c, clinicId); }
-          } catch (e) { console.error('[clinicorp sync] financial:', e.message); }
-        }
-      } else {
-        const list = await clinicorpApi.listCashFlow(settings, { from: r.from, to: r.to });
-        for (const c of (Array.isArray(list) ? list : [])) { await processCashflow(c); }
+      for (const { id: clinicId } of clinics) {
+        try {
+          const list = await clinicorpApi.listCashFlow(settings, { from: r.from, to: r.to, clinic_id: clinicId });
+          for (const c of (Array.isArray(list) ? list : [])) { await processCashflow(c, clinicId); }
+        } catch (e) { console.error('[clinicorp sync] financial:', e.message); }
       }
     }
   });
