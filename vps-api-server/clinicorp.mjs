@@ -1878,10 +1878,22 @@ export function registerClinicorp(app, pool) {
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
-  // ── Auto-sync manual trigger ──
+  // ── Auto-sync manual trigger (force:true reseta lock/next_sync_at) ──
   app.post('/api/clinicorp/sync/auto', async (req, res) => {
     try {
+      if (req.body?.force === true) {
+        await pool.query(`UPDATE clinicorp_settings SET next_sync_at = NOW(), sync_lock_until = NULL WHERE id = 1`);
+        invalidateSettings();
+      }
       const result = await reconciliationTick(pool);
+      res.json(result);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── Rodar SÓ a reconciliação financeira (sem refazer sync) ──
+  app.post('/api/clinicorp/reconcile-financial', async (_req, res) => {
+    try {
+      const result = await runFinancialReconciliation(pool);
       res.json(result);
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
