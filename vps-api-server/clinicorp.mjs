@@ -382,6 +382,27 @@ async function upsertAppointment(pool, a, tenantId = null) {
       JSON.stringify(a),
     ]
   );
+  // Backfill stub no clinicorp_patients a partir do agendamento (a Clinicorp não expõe /patient/list)
+  try {
+    const pid = a.PatientId ?? a.Patient_PersonId ?? null;
+    const pname = a.PatientName ?? a.Patient_FullName ?? a.Patient_Name ?? null;
+    if (pid) {
+      await pool.query(
+        `INSERT INTO clinicorp_patients (id, name, mobile_phone, raw, synced_at)
+         VALUES ($1, $2, $3, $4, NOW())
+         ON CONFLICT (id) DO UPDATE SET
+           name = COALESCE(NULLIF(EXCLUDED.name,''), clinicorp_patients.name),
+           mobile_phone = COALESCE(NULLIF(EXCLUDED.mobile_phone,''), clinicorp_patients.mobile_phone),
+           synced_at = NOW()`,
+        [
+          pid,
+          pname,
+          String(a.PatientPhone ?? a.MobilePhone ?? '') || null,
+          JSON.stringify({ derived_from: 'appointment', appointment_id: id, id: pid, name: pname }),
+        ]
+      );
+    }
+  } catch (e) { console.error('[clinicorp] patient stub from appt:', e.message); }
   try { await projectAppointmentToLocal(pool, a, id, tenantId); }
   catch (e) { console.error('[clinicorp] projectAppointmentToLocal:', e.message); }
 }
