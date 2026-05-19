@@ -1585,20 +1585,8 @@ export async function reconciliationTick(pool) {
   return results.length > 0 ? { ran: true, results } : { skipped: true };
 }
 
-export async function runFinancialReconciliation(pool) {
-
-  } catch (e) {
-    console.error('[clinicorp] auto-reconcile falhou', e.message);
-    await pool.query(
-      `UPDATE clinicorp_settings SET sync_lock_until = NULL, last_sync_status='error',
-         last_sync_error=$1, updated_at=NOW() WHERE id = 1`,
-      [e.message]
-    );
-    return { ran: true, error: e.message };
-  }
-}
-
 async function runFinancialReconciliation(pool) {
+
   try {
     const { rows: alerts } = await pool.query(`
       WITH monthly_data AS (
