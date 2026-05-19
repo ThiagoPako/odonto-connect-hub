@@ -878,7 +878,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     const processAppts = async (list) => {
       for (const a of (Array.isArray(list) ? list : [])) { 
         const id = a.id ?? a.AppointmentId ?? a.Id;
-        if (id) { apiIds.add(String(id)); await upsertAppointment(pool, a); summary.appointments++; }
+        if (id) { apiIds.add(String(id)); await upsertAppointment(pool, a, tenant_id); summary.appointments++; }
       }
     };
 
