@@ -10794,6 +10794,8 @@ async function clinicorpFetchProbe(settings, pathName) {
 }
 
 
+const clinicorpProbeSleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
 // ═══════════════════════════════════════════════════════════════
 // MÓDULO EXAMES (Cfaz) — Pedidos de exames de imagem odontológica
 // ═══════════════════════════════════════════════════════════════
