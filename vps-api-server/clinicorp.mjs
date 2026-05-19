@@ -75,6 +75,15 @@ function invalidateSettings() {
   _settingsCacheAt = 0;
 }
 
+// Converte valores que devem ir para colunas BIGINT: trata "", undefined, null,
+// e strings com whitespace como NULL. Evita "invalid input syntax for bigint: \"\"".
+function toBigIntOrNull(v) {
+  if (v === null || v === undefined) return null;
+  const s = String(v).trim();
+  if (s === '' || !/^-?\d+$/.test(s)) return null;
+  return s;
+}
+
 // ─── HTTP client ──────────────────────────────────────────────
 // Throttle global para evitar 429: limite de 5 chamadas por segundo (200ms entre inícios)
 let _lastCallAt = 0;
