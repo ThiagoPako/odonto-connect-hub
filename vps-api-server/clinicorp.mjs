@@ -361,7 +361,7 @@ function mapAppointmentStatus(raw) {
 }
 function onlyDigits(v) { return String(v ?? '').replace(/\D+/g, '') || null; }
 
-async function ensureLocalPatient(pool, cpId, fallback = {}) {
+async function ensureLocalPatient(pool, cpId, fallback = {}, tenantId = null) {
   if (!cpId) return null;
   const found = await pool.query(`SELECT id FROM pacientes WHERE clinicorp_patient_id = $1 LIMIT 1`, [cpId]);
   const cp = await pool.query(`SELECT * FROM clinicorp_patients WHERE id = $1`, [cpId]);
