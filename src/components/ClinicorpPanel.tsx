@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { Loader2, RefreshCw, Copy, CheckCircle2, AlertCircle, KeyRound, Webhook, PlayCircle, Plug, ListChecks, Shield, Trash2, Plus, ChevronDown, ChevronRight, ExternalLink, User, CalendarDays, History, Pencil, X, Building2 } from "lucide-react";
+import { Loader2, RefreshCw, Copy, CheckCircle2, AlertCircle, KeyRound, Webhook, PlayCircle, Plug, ListChecks, Shield, Trash2, Plus, ChevronDown, ChevronRight, ExternalLink, User, Users, CalendarDays, History, Pencil, X, Building2 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -27,6 +28,13 @@ export function ClinicorpPanel() {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; auth: string; total_latency_ms: number; results: any[] } | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<{
+    step: string;
+    summary: Record<string, number>;
+    errors: string[];
+    startTime: number;
+    completed: boolean;
+  } | null>(null);
   const [events, setEvents] = useState<ClinicorpWebhookEvent[]>([]);
   const [lastSync, setLastSync] = useState<ClinicorpSyncResult | null>(null);
 
@@ -167,13 +175,38 @@ export function ClinicorpPanel() {
   async function handleSync() {
     setSyncing(true);
     setLastSync(null);
+    setSyncStatus({
+      step: "Iniciando sincronização completa...",
+      summary: {},
+      errors: [],
+      startTime: Date.now(),
+      completed: false,
+    });
+
     try {
+      // O backend agora processa tudo em uma tacada só no full sync
+      // Vamos atualizar o status visualmente conforme as etapas (mesmo que o backend retorne tudo ao final, 
+      // poderíamos emular passos se o backend fosse via SSE, mas aqui faremos uma UI reativa ao resultado)
       const r = await clinicorpApi.sync();
       setLastSync(r);
+      setSyncStatus(prev => ({
+        ...prev!,
+        step: "Sincronização concluída com sucesso!",
+        summary: r.summary,
+        errors: r.errors,
+        completed: true,
+      }));
       toast.success(`Sync ${r.status} — ${Object.values(r.summary).reduce((a, b) => a + b, 0)} registros processados`);
       await load();
     } catch (e) {
-      toast.error(`Sync falhou: ${(e as Error).message}`);
+      const msg = (e as Error).message;
+      setSyncStatus(prev => ({
+        ...prev!,
+        step: "Erro durante a sincronização",
+        errors: [msg],
+        completed: true,
+      }));
+      toast.error(`Sync falhou: ${msg}`);
     } finally {
       setSyncing(false);
     }
@@ -315,6 +348,87 @@ export function ClinicorpPanel() {
           </Button>
         </div>
         
+        {/* Sync Status Real-time Panel */}
+        {(syncing || syncStatus) && (
+          <div className="rounded-2xl border border-border bg-card/50 overflow-hidden animate-in fade-in slide-in-from-top-4">
+            <div className="p-4 border-b border-border bg-muted/30 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                {syncing ? (
+                  <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                ) : syncStatus?.errors.length ? (
+                  <AlertCircle className="h-4 w-4 text-destructive" />
+                ) : (
+                  <CheckCircle2 className="h-4 w-4 text-success" />
+                )}
+                <span className="text-sm font-semibold">Status do Sync em Tempo Real</span>
+              </div>
+              {syncStatus && (
+                <span className="text-[10px] font-mono text-muted-foreground">
+                  Tempo decorrido: {Math.round((Date.now() - syncStatus.startTime) / 1000)}s
+                </span>
+              )}
+            </div>
+            
+            <div className="p-4 space-y-4">
+              <div className="flex flex-col gap-1">
+                <p className="text-sm font-medium">{syncStatus?.step}</p>
+                <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
+                  <div 
+                    className={cn(
+                      "h-full transition-all duration-500",
+                      syncing ? "bg-primary animate-pulse w-2/3" : syncStatus?.completed ? "bg-success w-full" : "bg-primary w-full"
+                    )} 
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                {[
+                  { label: "Clínicas", key: "clinics", icon: Building2 },
+                  { label: "Profissionais", key: "professionals", icon: User },
+                  { label: "Pacientes", key: "patients", icon: Users },
+                  { label: "Agendamentos", key: "appointments", icon: CalendarDays },
+                ].map((item) => (
+                  <div key={item.key} className="p-3 rounded-xl bg-muted/40 border border-border/50 flex flex-col items-center gap-1">
+                    <item.icon className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">{item.label}</span>
+                    <span className="text-lg font-bold">{syncStatus?.summary[item.key] || 0}</span>
+                  </div>
+                ))}
+              </div>
+
+              {syncStatus?.errors.length ? (
+                <div className="rounded-lg bg-destructive/5 border border-destructive/20 p-3">
+                  <p className="text-xs font-bold text-destructive flex items-center gap-1.5 mb-2">
+                    <AlertCircle className="h-3.5 w-3.5" /> Erros encontrados:
+                  </p>
+                  <ul className="text-[11px] text-destructive/80 space-y-1 font-mono">
+                    {syncStatus.errors.map((err, i) => (
+                      <li key={i} className="flex gap-2">
+                        <span className="opacity-50">[{i+1}]</span>
+                        <span className="break-all">{err}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : syncStatus?.completed && (
+                <div className="text-center py-2">
+                  <p className="text-xs text-success font-medium flex items-center justify-center gap-1.5">
+                    <CheckCircle2 className="h-3.5 w-3.5" /> Todos os módulos processados com sucesso
+                  </p>
+                </div>
+              )}
+            </div>
+            {syncStatus?.completed && (
+              <div className="p-3 border-t border-border bg-muted/20 flex justify-end">
+                <Button variant="ghost" size="sm" className="h-7 text-[10px] uppercase font-bold px-3" onClick={() => setSyncStatus(null)}>
+                  Fechar relatório
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Test result panel (Global) */}
         {testResult && (
           <div className={`rounded-lg border p-3 space-y-2 mt-4 ${
