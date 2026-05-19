@@ -221,14 +221,15 @@ export const clinicorpApi = {
 };
 
 // ─── Upserts ──────────────────────────────────────────────────
-async function upsertClinic(pool, c) {
+async function upsertClinic(pool, c, tenantId = null) {
+  const tId = await resolveTenantId(pool, tenantId);
   await pool.query(
     `INSERT INTO clinicorp_clinics
-       (id, company_id, business_name, name, email, address, active,
+       (id, tenant_id, company_id, business_name, name, email, address, active,
         landline, other_landline, slot_time, no_limit_apt_same_time,
         subscriber_business_uid, working_days_hours, raw, synced_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14, NOW())
-     ON CONFLICT (id) DO UPDATE SET
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15, NOW())
+     ON CONFLICT (id, tenant_id) DO UPDATE SET
        company_id = EXCLUDED.company_id,
        business_name = EXCLUDED.business_name,
        name = EXCLUDED.name,
@@ -244,7 +245,7 @@ async function upsertClinic(pool, c) {
        raw = EXCLUDED.raw,
        synced_at = NOW()`,
     [
-      c.id ?? c.CompanyId, c.CompanyId ?? null, c.BusinessName ?? null,
+      c.id ?? c.CompanyId, tId, c.CompanyId ?? null, c.BusinessName ?? null,
       c.Name ?? null, c.Email ?? null, c.Address ?? null, c.Active ?? null,
       c.Landline ?? null, c.OtherLandline ?? null, c.SlotTime ?? null,
       c.NoLimitAptSameTime ?? null, c.SubscriberBussinessUID ?? null,
@@ -257,67 +258,72 @@ async function upsertClinic(pool, c) {
 async function upsertProfessional(pool, p, tenantId = null) {
   const id = p.id ?? p.Id ?? p.UserId ?? p.PersonId ?? null;
   if (!id) return;
+  const tId = await resolveTenantId(pool, tenantId);
   // A API Clinicorp retorna o nome em diversos campos dependendo da versão/endpoint
-  const fullName = p.FullName ?? p.Full_Name ?? p.Name ?? p.PersonName ?? p.UserName ?? p.full_name ?? `Profissional ${id}`;
+  const fullName = (p.FullName ?? p.Full_Name ?? p.Name ?? p.PersonName ?? p.UserName ?? p.full_name ?? `Profissional ${id}`).toString().trim();
   const userName = p.UserName ?? p.Username ?? p.Email ?? null;
   await pool.query(
-    `INSERT INTO clinicorp_professionals (id, full_name, user_name, raw, synced_at)
-     VALUES ($1,$2,$3,$4, NOW())
-     ON CONFLICT (id) DO UPDATE SET
+    `INSERT INTO clinicorp_professionals (id, tenant_id, full_name, user_name, raw, synced_at)
+     VALUES ($1,$2,$3,$4,$5, NOW())
+     ON CONFLICT (id, tenant_id) DO UPDATE SET
        full_name = EXCLUDED.full_name,
        user_name = EXCLUDED.user_name,
        raw = EXCLUDED.raw,
        synced_at = NOW()`,
-    [String(id), fullName, userName, JSON.stringify(p)]
+    [String(id), tId, fullName, userName, JSON.stringify(p)]
   );
-  try { await ensureLocalProfessional(pool, String(id), fullName, tenantId); }
+  try { await ensureLocalProfessional(pool, String(id), fullName, tId); }
   catch (e) { console.error('[clinicorp] ensureLocalProfessional:', e.message); }
 }
 
-async function upsertChair(pool, c) {
+async function upsertChair(pool, c, tenantId = null) {
+  const tId = await resolveTenantId(pool, tenantId);
   await pool.query(
-    `INSERT INTO clinicorp_chairs (id, business_id, name, raw, synced_at)
-     VALUES ($1,$2,$3,$4, NOW())
-     ON CONFLICT (id) DO UPDATE SET
+    `INSERT INTO clinicorp_chairs (id, tenant_id, business_id, name, raw, synced_at)
+     VALUES ($1,$2,$3,$4,$5, NOW())
+     ON CONFLICT (id, tenant_id) DO UPDATE SET
        business_id = EXCLUDED.business_id,
        name = EXCLUDED.name,
        raw = EXCLUDED.raw,
        synced_at = NOW()`,
-    [c.id, c.BusinessId ?? null, c.Name ?? null, JSON.stringify(c)]
+    [c.id, tId, c.BusinessId ?? null, c.Name ?? null, JSON.stringify(c)]
   );
 }
 
-async function upsertCategory(pool, c) {
+async function upsertCategory(pool, c, tenantId = null) {
+  const tId = await resolveTenantId(pool, tenantId);
   await pool.query(
-    `INSERT INTO clinicorp_appointment_categories (id, description, color, raw, synced_at)
-     VALUES ($1,$2,$3,$4, NOW())
-     ON CONFLICT (id) DO UPDATE SET
+    `INSERT INTO clinicorp_appointment_categories (id, tenant_id, description, color, raw, synced_at)
+     VALUES ($1,$2,$3,$4,$5, NOW())
+     ON CONFLICT (id, tenant_id) DO UPDATE SET
        description = EXCLUDED.description,
        color = EXCLUDED.color,
        raw = EXCLUDED.raw,
        synced_at = NOW()`,
-    [c.id, c.Description ?? null, c.Color ?? null, JSON.stringify(c)]
+    [c.id, tId, c.Description ?? null, c.Color ?? null, JSON.stringify(c)]
   );
 }
 
-async function upsertSpecialty(pool, s) {
+async function upsertSpecialty(pool, s, tenantId = null) {
+  const tId = await resolveTenantId(pool, tenantId);
   await pool.query(
-    `INSERT INTO clinicorp_specialties (id, description, raw, synced_at)
-     VALUES ($1,$2,$3, NOW())
-     ON CONFLICT (id) DO UPDATE SET
+    `INSERT INTO clinicorp_specialties (id, tenant_id, description, raw, synced_at)
+     VALUES ($1,$2,$3,$4, NOW())
+     ON CONFLICT (id, tenant_id) DO UPDATE SET
        description = EXCLUDED.description,
        raw = EXCLUDED.raw,
        synced_at = NOW()`,
-    [s.id, s.Description ?? s.Name ?? null, JSON.stringify(s)]
+    [s.id, tId, s.Description ?? s.Name ?? null, JSON.stringify(s)]
   );
 }
 
 async function upsertPatient(pool, p, tenantId = null) {
+  const tId = await resolveTenantId(pool, tenantId);
   await pool.query(
     `INSERT INTO clinicorp_patients
-       (id, name, email, mobile_phone, birth_date, sex, document_id, notes, raw, synced_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, NOW())
-     ON CONFLICT (id) DO UPDATE SET
+       (id, tenant_id, name, email, mobile_phone, birth_date, sex, document_id, notes, raw, synced_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, NOW())
+     ON CONFLICT (id, tenant_id) DO UPDATE SET
        name = EXCLUDED.name,
        email = EXCLUDED.email,
        mobile_phone = EXCLUDED.mobile_phone,
@@ -328,27 +334,28 @@ async function upsertPatient(pool, p, tenantId = null) {
        raw = EXCLUDED.raw,
        synced_at = NOW()`,
     [
-      p.id ?? p.Patient_PersonId, p.Name ?? null, p.Email ?? null,
+      p.id ?? p.Patient_PersonId, tId, p.Name ?? null, p.Email ?? null,
       String(p.MobilePhone ?? '') || null,
       p.BirthDate || null, p.Sex ?? null,
       String(p.DocumentId ?? '') || null, p.Notes ?? null,
       JSON.stringify(p),
     ]
   );
-  try { await projectPatientToLocal(pool, p, tenantId); }
+  try { await projectPatientToLocal(pool, p, tId); }
   catch (e) { console.error('[clinicorp] projectPatientToLocal:', e.message); }
 }
 
 async function upsertAppointment(pool, a, tenantId = null) {
   const id = a.id ?? a.AppointmentId ?? a.Id;
   if (!id) return;
+  const tId = await resolveTenantId(pool, tenantId);
   await pool.query(
     `INSERT INTO clinicorp_appointments
-       (id, business_id, patient_id, patient_name, professional_id, professional_name,
+       (id, tenant_id, business_id, patient_id, patient_name, professional_id, professional_name,
         category_id, category_description, category_color, chair_id,
         status, date, from_time, to_time, notes, raw, synced_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16, NOW())
-     ON CONFLICT (id) DO UPDATE SET
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17, NOW())
+     ON CONFLICT (id, tenant_id) DO UPDATE SET
        business_id = EXCLUDED.business_id,
        patient_id = EXCLUDED.patient_id,
        patient_name = EXCLUDED.patient_name,
@@ -366,7 +373,7 @@ async function upsertAppointment(pool, a, tenantId = null) {
        raw = EXCLUDED.raw,
        synced_at = NOW()`,
     [
-      id,
+      id, tId,
       a.BusinessId ?? a.Clinic_BusinessId ?? null,
       a.PatientId ?? a.Patient_PersonId ?? null,
       a.PatientName ?? a.Patient_FullName ?? a.Patient_Name ?? null,
@@ -390,14 +397,14 @@ async function upsertAppointment(pool, a, tenantId = null) {
     const pname = a.PatientName ?? a.Patient_FullName ?? a.Patient_Name ?? null;
     if (pid) {
       await pool.query(
-        `INSERT INTO clinicorp_patients (id, name, mobile_phone, raw, synced_at)
-         VALUES ($1, $2, $3, $4, NOW())
-         ON CONFLICT (id) DO UPDATE SET
+        `INSERT INTO clinicorp_patients (id, tenant_id, name, mobile_phone, raw, synced_at)
+         VALUES ($1, $2, $3, $4, $5, NOW())
+         ON CONFLICT (id, tenant_id) DO UPDATE SET
            name = COALESCE(NULLIF(EXCLUDED.name,''), clinicorp_patients.name),
            mobile_phone = COALESCE(NULLIF(EXCLUDED.mobile_phone,''), clinicorp_patients.mobile_phone),
            synced_at = NOW()`,
         [
-          pid,
+          pid, tId,
           pname,
           String(a.PatientPhone ?? a.MobilePhone ?? '') || null,
           JSON.stringify({ derived_from: 'appointment', appointment_id: id, id: pid, name: pname }),
@@ -406,7 +413,7 @@ async function upsertAppointment(pool, a, tenantId = null) {
     }
   } catch (e) { console.error('[clinicorp] patient stub from appt:', e.message); }
 
-  try { await projectAppointmentToLocal(pool, a, id, tenantId); }
+  try { await projectAppointmentToLocal(pool, a, id, tId); }
   catch (e) { console.error('[clinicorp] projectAppointmentToLocal:', e.message); }
 }
 
@@ -463,7 +470,7 @@ async function ensureLocalPatient(pool, cpId, fallback = {}, tenantId = null) {
   if (!cpId) return null;
   const tId = await resolveTenantId(pool, tenantId);
   const found = await pool.query(`SELECT id FROM pacientes WHERE clinicorp_patient_id = $1 AND tenant_id = $2 LIMIT 1`, [cpId, tId]);
-  const cp = await pool.query(`SELECT * FROM clinicorp_patients WHERE id = $1`, [cpId]);
+  const cp = await pool.query(`SELECT * FROM clinicorp_patients WHERE id = $1 AND tenant_id = $2`, [cpId, tId]);
   const src = cp.rows[0] || {};
   const nome = src.name || fallback.name || 'Paciente';
   const telefone = src.mobile_phone || onlyDigits(fallback.phone) || null;
@@ -504,19 +511,24 @@ async function ensureLocalPatient(pool, cpId, fallback = {}, tenantId = null) {
 async function ensureLocalProfessional(pool, cpProfId, fallbackName = null, tenantId = null) {
   if (!cpProfId) return null;
   const tId = await resolveTenantId(pool, tenantId);
+  const cleanFallback = (fallbackName || '').toString().trim() || null;
   const found = await pool.query(`SELECT id, nome FROM dentistas WHERE clinicorp_professional_id=$1 AND tenant_id=$2 LIMIT 1`, [cpProfId, tId]);
   if (found.rows[0]) {
     // Atualiza nome se estava como placeholder "Profissional XXX" e agora temos um real
-    const currentName = found.rows[0].nome || '';
-    const newName = fallbackName && !/^Profissional\s+\d+$/i.test(fallbackName) ? fallbackName : null;
+    const currentName = (found.rows[0].nome || '').trim();
+    const newName = cleanFallback && !/^Profissional\s+\d+$/i.test(cleanFallback) ? cleanFallback : null;
     if (newName && /^Profissional\s+\d+$/i.test(currentName)) {
       await pool.query(`UPDATE dentistas SET nome=$1, updated_at=NOW() WHERE id=$2`, [newName, found.rows[0].id]);
     }
     return found.rows[0].id;
   }
-  const cp = await pool.query(`SELECT * FROM clinicorp_professionals WHERE id=$1`, [cpProfId]);
-  const nome = cp.rows[0]?.full_name || fallbackName || `Profissional ${cpProfId}`;
-  const match = await pool.query(`SELECT id FROM dentistas WHERE LOWER(nome)=LOWER($1) AND tenant_id=$2 LIMIT 1`, [nome, tId]);
+  const cp = await pool.query(`SELECT * FROM clinicorp_professionals WHERE id=$1 AND tenant_id=$2`, [cpProfId, tId]);
+  const nome = (cp.rows[0]?.full_name || cleanFallback || `Profissional ${cpProfId}`).toString().trim();
+  // Dedupe por LOWER(TRIM(nome)) dentro do mesmo tenant — evita "Dra Napoliane" duplicado
+  const match = await pool.query(
+    `SELECT id FROM dentistas WHERE tenant_id=$2 AND LOWER(TRIM(nome))=LOWER($1) LIMIT 1`,
+    [nome, tId]
+  );
   if (match.rows[0]) {
     await pool.query(`UPDATE dentistas SET clinicorp_professional_id=$1, updated_at=NOW() WHERE id=$2`, [cpProfId, match.rows[0].id]);
     return match.rows[0].id;
@@ -828,12 +840,13 @@ async function projectPatientToLocal(pool, p, tenantId = null) {
 }
 
 async function upsertEstimate(pool, e, tenantId = null) {
+  const tId = await resolveTenantId(pool, tenantId);
   await pool.query(
     `INSERT INTO clinicorp_estimates
-       (id, treatment_id, patient_id, patient_name, professional_id, professional_name,
+       (id, tenant_id, treatment_id, patient_id, patient_name, professional_id, professional_name,
         business_id, amount, status, date, create_date, procedure_list, raw, synced_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, NOW())
-     ON CONFLICT (id) DO UPDATE SET
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14, NOW())
+     ON CONFLICT (id, tenant_id) DO UPDATE SET
        treatment_id = EXCLUDED.treatment_id,
        patient_id = EXCLUDED.patient_id,
        patient_name = EXCLUDED.patient_name,
@@ -848,7 +861,7 @@ async function upsertEstimate(pool, e, tenantId = null) {
        raw = EXCLUDED.raw,
        synced_at = NOW()`,
     [
-      e.id, e.TreatmentId ?? null, e.PatientId ?? e.Patient_PersonId ?? null,
+      e.id, tId, e.TreatmentId ?? null, e.PatientId ?? e.Patient_PersonId ?? null,
       e.PatientName ?? e.Patient_FullName ?? e.Patient?.Name ?? null, e.ProfessionalId ?? e.Dentist_PersonId ?? e.ScheduleToId ?? null,
       e.ProfessionalName ?? e.Dentist_FullName ?? e.Dentist_Name ?? e.DentistName ?? e.ScheduleToName ?? e.Dentist?.Name ?? e.Dentist?.FullName ?? null, e.BusinessId ?? null,
       e.Amount ?? null, e.Status ?? null,
@@ -857,7 +870,7 @@ async function upsertEstimate(pool, e, tenantId = null) {
       JSON.stringify(e),
     ]
   );
-  try { await projectEstimateToLocal(pool, e, tenantId); }
+  try { await projectEstimateToLocal(pool, e, tId); }
   catch (err) { console.error('[clinicorp] projectEstimateToLocal:', err.message); }
 }
 
@@ -1065,8 +1078,8 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
   try {
     const tId = await resolveTenantId(pool, tenant_id);
     const { rows: appts } = await pool.query(
-      `SELECT raw FROM clinicorp_appointments WHERE date >= $1 AND date <= $2`,
-      [fromDate, toDate]
+      `SELECT raw FROM clinicorp_appointments WHERE tenant_id=$3 AND date >= $1 AND date <= $2`,
+      [fromDate, toDate, tId]
     );
     for (const r of appts) { 
       const rawData = typeof r.raw === 'string' ? JSON.parse(r.raw) : r.raw;
@@ -1102,17 +1115,17 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
 
   await safe('clinics', async () => {
     const list = await clinicorpApi.listClinics(settings);
-    for (const c of (Array.isArray(list) ? list : [])) { await upsertClinic(pool, c); summary.clinics++; }
+    for (const c of (Array.isArray(list) ? list : [])) { await upsertClinic(pool, c, tenant_id); summary.clinics++; }
   });
 
   await safe('professionals', async () => {
     const list = await clinicorpApi.listUsers(settings);
     for (const u of (Array.isArray(list) ? list : [])) { await upsertProfessional(pool, u, tenant_id); summary.professionals++; }
     
-    // BACKFILL: Sincroniza dentistas locais com base nos profissionais Clinicorp
+    // BACKFILL: Sincroniza dentistas locais com base nos profissionais Clinicorp DESTE tenant
     try {
       const tId = await resolveTenantId(pool, tenant_id);
-      const { rows } = await pool.query('SELECT id, full_name FROM clinicorp_professionals');
+      const { rows } = await pool.query('SELECT id, full_name FROM clinicorp_professionals WHERE tenant_id=$1', [tId]);
       for (const p of rows) {
         await ensureLocalProfessional(pool, String(p.id), p.full_name, tId);
       }
@@ -1129,24 +1142,25 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
 
   // Chairs por clínica
   await safe('chairs', async () => {
-    const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics');
+    const tId = await resolveTenantId(pool, tenant_id);
+    const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics WHERE tenant_id=$1', [tId]);
     for (const { id } of clinics) {
       if (!id) continue;
       try {
         const list = await clinicorpApi.listChairs(settings, id);
-        for (const ch of (Array.isArray(list) ? list : [])) { await upsertChair(pool, ch); summary.chairs++; }
+        for (const ch of (Array.isArray(list) ? list : [])) { await upsertChair(pool, ch, tenant_id); summary.chairs++; }
       } catch (e) { /* silencia 400 sem chairs */ }
     }
   });
 
   await safe('categories', async () => {
     const list = await clinicorpApi.listAppointmentCategories(settings);
-    for (const c of (Array.isArray(list) ? list : [])) { await upsertCategory(pool, c); summary.categories++; }
+    for (const c of (Array.isArray(list) ? list : [])) { await upsertCategory(pool, c, tenant_id); summary.categories++; }
   });
 
   await safe('specialties', async () => {
     const list = await clinicorpApi.listSpecialties(settings);
-    for (const s of (Array.isArray(list) ? list : [])) { await upsertSpecialty(pool, s); summary.specialties++; }
+    for (const s of (Array.isArray(list) ? list : [])) { await upsertSpecialty(pool, s, tenant_id); summary.specialties++; }
   });
 
   // PATIENTS: tenta /patient/list; se indisponível, backfill via raw dos appointments
@@ -1164,14 +1178,12 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     } catch (e) {
       console.warn(`[clinicorp sync] /patient/list indisponível (${e.message}); usando backfill via appointments`);
     }
-    const { rows: appts } = await pool.query(`SELECT raw FROM clinicorp_appointments WHERE raw IS NOT NULL`);
-    const seen = new Set();
-    let backfilled = 0;
-    summary.patients = pulled + backfilled;
+    summary.patients = pulled;
   });
 
   await safe('appointments', async () => {
-    const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics');
+    const tId = await resolveTenantId(pool, tenant_id);
+    const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics WHERE tenant_id=$1', [tId]);
     const apiIds = new Set();
     const ranges = sliceRange(fromDate, toDate);
     
@@ -1205,23 +1217,21 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
       }
     }
     
-    // Deletion detection (faithfull mirror)
+    // Deletion detection (faithfull mirror) — escopo por tenant
     try {
       const { rows: localRows } = await pool.query(
-        `SELECT id FROM clinicorp_appointments WHERE date >= $1 AND date <= $2`,
-        [fromDate, toDate]
+        `SELECT id FROM clinicorp_appointments WHERE tenant_id=$3 AND date >= $1 AND date <= $2`,
+        [fromDate, toDate, tId]
       );
       for (const local of localRows) {
         if (!apiIds.has(String(local.id))) {
-          await pool.query(`UPDATE clinicorp_appointments SET status = 'DELETED_IN_CLINICORP', synced_at = NOW() WHERE id = $1`, [local.id]);
-          await pool.query(`UPDATE agendamentos SET status = 'cancelado', updated_at = NOW() WHERE clinicorp_appointment_id = $1`, [local.id]);
+          await pool.query(`UPDATE clinicorp_appointments SET status = 'DELETED_IN_CLINICORP', synced_at = NOW() WHERE id = $1 AND tenant_id=$2`, [local.id, tId]);
+          await pool.query(`UPDATE agendamentos SET status = 'cancelado', updated_at = NOW() WHERE clinicorp_appointment_id = $1 AND tenant_id=$2`, [local.id, tId]);
         }
       }
     } catch (e) { console.error('[clinicorp sync] pruning appointments', e.message); }
     
-    // Backfill de profissionais a partir dos agendamentos:
-    // a Clinicorp não expõe /security/list_users de forma confiável,
-    // então derivamos os dentistas dos Dentist_PersonId distintos vistos nos agendamentos.
+    // Backfill de profissionais a partir dos agendamentos DESTE tenant
     try {
       const { rows: distinctProfs } = await pool.query(
         `SELECT DISTINCT professional_id::text AS id,
@@ -1234,55 +1244,52 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
                 MAX(raw->>'ProfessionalName') AS name_d,
                 MAX(professional_name) AS name_e
            FROM clinicorp_appointments
-          WHERE professional_id IS NOT NULL
-          GROUP BY 1`
+          WHERE tenant_id=$1 AND professional_id IS NOT NULL
+          GROUP BY 1`,
+        [tId]
       );
       for (const p of distinctProfs) {
         const { rows: apptRows } = await pool.query(
-          `SELECT raw FROM clinicorp_appointments WHERE professional_id = $1 LIMIT 1`,
-          [p.id]
+          `SELECT raw FROM clinicorp_appointments WHERE tenant_id=$2 AND professional_id = $1 LIMIT 1`,
+          [p.id, tId]
         );
         const rawAppt = apptRows[0]?.raw || {};
-        const name = p.name_df || p.name_dn || p.name_a || p.name_b || p.name_bf || p.name_c || p.name_d || p.name_e ||
+        const rawName = p.name_df || p.name_dn || p.name_a || p.name_b || p.name_bf || p.name_c || p.name_d || p.name_e ||
                      rawAppt.Dentist_FullName || rawAppt.Dentist_Name || rawAppt.ScheduleToName || rawAppt.DentistName ||
                      (rawAppt.Dentist && (rawAppt.Dentist.FullName || rawAppt.Dentist.Name)) ||
                      `Profissional ${p.id}`;
+        const name = String(rawName).trim();
 
         await pool.query(
-          `INSERT INTO clinicorp_professionals (id, full_name, user_name, raw, synced_at)
-           VALUES ($1,$2,NULL,$3,NOW())
-           ON CONFLICT (id) DO UPDATE SET
+          `INSERT INTO clinicorp_professionals (id, tenant_id, full_name, user_name, raw, synced_at)
+           VALUES ($1,$2,$3,NULL,$4,NOW())
+           ON CONFLICT (id, tenant_id) DO UPDATE SET
              full_name = EXCLUDED.full_name,
              synced_at = NOW()`,
-          [p.id, name, JSON.stringify({ derived_from: 'appointments', id: p.id, name })]
+          [p.id, tId, name, JSON.stringify({ derived_from: 'appointments', id: p.id, name })]
         );
-        await ensureLocalProfessional(pool, p.id, name, tenant_id);
-        // Atualiza professional_name nos agendamentos onde está nulo
+        await ensureLocalProfessional(pool, p.id, name, tId);
         await pool.query(
-          `UPDATE clinicorp_appointments SET professional_name = $2 WHERE professional_id = $1 AND (professional_name IS NULL OR professional_name = '')`,
-          [p.id, name]
+          `UPDATE clinicorp_appointments SET professional_name = $2 WHERE tenant_id=$3 AND professional_id = $1 AND (professional_name IS NULL OR professional_name = '')`,
+          [p.id, name, tId]
         );
       }
-      
-      // Forçar re-projeção dos agendamentos agora que temos os profissionais
-      // Desativado re-projeção em massa durante o sync para evitar timeouts e 502
-      // a projeção agora ocorre individualmente dentro do loop de appointments.
 
-
-      const { rows: pcount } = await pool.query(`SELECT COUNT(*)::int AS c FROM clinicorp_professionals`);
+      const { rows: pcount } = await pool.query(`SELECT COUNT(*)::int AS c FROM clinicorp_professionals WHERE tenant_id=$1`, [tId]);
       summary.professionals = pcount[0]?.c || summary.professionals;
     } catch (e) { console.error('[clinicorp sync] backfill professionals', e.message); }
     
-    // Conta pacientes únicos sincronizados (criados via ensureLocalPatient pelos agendamentos)
+    // Conta pacientes únicos sincronizados DESTE tenant
     try {
-      const { rows } = await pool.query(`SELECT COUNT(*)::int AS c FROM clinicorp_patients`);
+      const { rows } = await pool.query(`SELECT COUNT(*)::int AS c FROM clinicorp_patients WHERE tenant_id=$1`, [tId]);
       summary.patients = rows[0]?.c || 0;
     } catch { /* ignore */ }
   });
 
   await safe('estimates', async () => {
+    const tId = await resolveTenantId(pool, tenant_id);
     const ranges = sliceRange(fromDate, toDate);
-    const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics');
+    const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics WHERE tenant_id=$1', [tId]);
     
     for (const r of ranges) {
       if (clinics.length > 0) {
@@ -1301,7 +1308,8 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
 
   await safe('invoices', async () => {
     const ranges = sliceRange(fromDate, toDate);
-    const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics');
+    const tId_loc = await resolveTenantId(pool, tenant_id);
+    const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics WHERE tenant_id=$1', [tId_loc]);
     for (const r of ranges) {
       if (clinics.length > 0) {
         for (const { id: clinicId } of clinics) {
@@ -1319,7 +1327,8 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
 
   await safe('payments', async () => {
     const ranges = sliceRange(fromDate, toDate);
-    const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics');
+    const tId_loc = await resolveTenantId(pool, tenant_id);
+    const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics WHERE tenant_id=$1', [tId_loc]);
     const processPayment = async (item, clinicId = null) => {
       if (isMonthlyFinancialSummary(item)) {
         if (await upsertMonthlySummary(pool, 'payment', item, clinicId)) summary.payments++;
@@ -1345,7 +1354,8 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
 
   await safe('cashflow', async () => {
     const ranges = sliceRange(fromDate, toDate);
-    const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics');
+    const tId_loc = await resolveTenantId(pool, tenant_id);
+    const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics WHERE tenant_id=$1', [tId_loc]);
     const processCashflow = async (item, clinicId = null) => {
       if (isMonthlyFinancialSummary(item)) {
         if (await upsertMonthlySummary(pool, 'cashflow', item, clinicId)) summary.cashflow++;
@@ -1845,55 +1855,76 @@ export function registerClinicorp(app, pool) {
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
-  // ── Local read-only data (espelho) ───────────────────────────
-  app.get('/api/clinicorp/clinics', async (_req, res) => {
-    const { rows } = await pool.query('SELECT * FROM clinicorp_clinics ORDER BY name');
+  // Helper: extrai tenant_id do JWT do request (sem dep externa)
+  const tenantOf = async (req) => {
+    try {
+      const auth = req.headers.authorization || '';
+      if (!auth.startsWith('Bearer ')) return await resolveTenantId(pool, null);
+      const token = auth.slice(7);
+      const part = token.split('.')[1];
+      if (!part) return await resolveTenantId(pool, null);
+      const payload = JSON.parse(Buffer.from(part, 'base64').toString('utf8'));
+      return payload.tenant_id || await resolveTenantId(pool, null);
+    } catch { return await resolveTenantId(pool, null); }
+  };
+
+  // ── Local read-only data (espelho) — escopo por tenant ───────
+  app.get('/api/clinicorp/clinics', async (req, res) => {
+    const tId = await tenantOf(req);
+    const { rows } = await pool.query('SELECT * FROM clinicorp_clinics WHERE tenant_id=$1 ORDER BY name', [tId]);
     res.json(rows);
   });
-  app.get('/api/clinicorp/professionals', async (_req, res) => {
+  app.get('/api/clinicorp/professionals', async (req, res) => {
+    const tId = await tenantOf(req);
     const { rows } = await pool.query(`
       SELECT cp.*, d.id as local_id, d.ativo as local_ativo, d.cor_agenda as local_cor
       FROM clinicorp_professionals cp
-      LEFT JOIN dentistas d ON d.clinicorp_professional_id = cp.id::text
+      LEFT JOIN dentistas d ON d.clinicorp_professional_id = cp.id::text AND d.tenant_id = cp.tenant_id
+      WHERE cp.tenant_id = $1
       ORDER BY cp.full_name
-    `);
+    `, [tId]);
     res.json(rows);
   });
-  app.get('/api/clinicorp/categories', async (_req, res) => {
-    const { rows } = await pool.query('SELECT * FROM clinicorp_appointment_categories ORDER BY description');
+  app.get('/api/clinicorp/categories', async (req, res) => {
+    const tId = await tenantOf(req);
+    const { rows } = await pool.query('SELECT * FROM clinicorp_appointment_categories WHERE tenant_id=$1 ORDER BY description', [tId]);
     res.json(rows);
   });
-  app.get('/api/clinicorp/specialties', async (_req, res) => {
-    const { rows } = await pool.query('SELECT * FROM clinicorp_specialties ORDER BY description');
+  app.get('/api/clinicorp/specialties', async (req, res) => {
+    const tId = await tenantOf(req);
+    const { rows } = await pool.query('SELECT * FROM clinicorp_specialties WHERE tenant_id=$1 ORDER BY description', [tId]);
     res.json(rows);
   });
   app.get('/api/clinicorp/patients', async (req, res) => {
+    const tId = await tenantOf(req);
     const limit = Math.min(Number(req.query.limit) || 100, 500);
     const search = req.query.search ? `%${req.query.search}%` : null;
     const { rows } = search
       ? await pool.query(
           `SELECT * FROM clinicorp_patients
-           WHERE name ILIKE $1 OR mobile_phone ILIKE $1 OR document_id ILIKE $1
+           WHERE tenant_id=$3 AND (name ILIKE $1 OR mobile_phone ILIKE $1 OR document_id ILIKE $1)
            ORDER BY name LIMIT $2`,
-          [search, limit]
+          [search, limit, tId]
         )
-      : await pool.query('SELECT * FROM clinicorp_patients ORDER BY synced_at DESC LIMIT $1', [limit]);
+      : await pool.query('SELECT * FROM clinicorp_patients WHERE tenant_id=$2 ORDER BY synced_at DESC LIMIT $1', [limit, tId]);
     res.json(rows);
   });
   app.get('/api/clinicorp/appointments', async (req, res) => {
+    const tId = await tenantOf(req);
     const { from, to, professional_id, business_id } = req.query;
-    const where = [];
-    const params = [];
+    const where = ['tenant_id = $1'];
+    const params = [tId];
     if (from) { params.push(from); where.push(`date >= $${params.length}`); }
     if (to)   { params.push(to);   where.push(`date <= $${params.length}`); }
     if (professional_id) { params.push(professional_id); where.push(`professional_id = $${params.length}`); }
     if (business_id) { params.push(business_id); where.push(`business_id = $${params.length}`); }
-    const sql = `SELECT * FROM clinicorp_appointments ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY date, from_time LIMIT 2000`;
+    const sql = `SELECT * FROM clinicorp_appointments WHERE ${where.join(' AND ')} ORDER BY date, from_time LIMIT 2000`;
     const { rows } = await pool.query(sql, params);
     res.json(rows);
   });
-  app.get('/api/clinicorp/estimates', async (_req, res) => {
-    const { rows } = await pool.query('SELECT * FROM clinicorp_estimates ORDER BY date DESC LIMIT 500');
+  app.get('/api/clinicorp/estimates', async (req, res) => {
+    const tId = await tenantOf(req);
+    const { rows } = await pool.query('SELECT * FROM clinicorp_estimates WHERE tenant_id=$1 ORDER BY date DESC LIMIT 500', [tId]);
     res.json(rows);
   });
   app.get('/api/clinicorp/financial', async (req, res) => {
@@ -1907,7 +1938,8 @@ export function registerClinicorp(app, pool) {
     res.json(rows);
   });
   app.get('/api/clinicorp/chairs', async (req, res) => {
-    const { rows } = await pool.query('SELECT * FROM clinicorp_chairs ORDER BY name');
+    const tId = await tenantOf(req);
+    const { rows } = await pool.query('SELECT * FROM clinicorp_chairs WHERE tenant_id=$1 ORDER BY name', [tId]);
     res.json(rows);
   });
 
