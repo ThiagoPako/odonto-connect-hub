@@ -839,7 +839,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
 
   await safe('professionals', async () => {
     const list = await clinicorpApi.listUsers(settings);
-    for (const u of (Array.isArray(list) ? list : [])) { await upsertProfessional(pool, u); summary.professionals++; }
+    for (const u of (Array.isArray(list) ? list : [])) { await upsertProfessional(pool, u, tenant_id); summary.professionals++; }
   });
 
   // Pacientes são sincronizados via agendamentos (ensureLocalPatient projeta cada paciente referenciado).
