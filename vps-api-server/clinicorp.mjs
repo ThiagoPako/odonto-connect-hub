@@ -51,7 +51,7 @@ async function loadSettings(pool, force = false) {
 // ─── Tenant resolver ──────────────────────────────────────────
 // A integração Clinicorp grava em tabelas multi-tenant (dentistas, pacientes,
 // agendamentos, crm_leads). Sem tenant_id os GETs filtrados não enxergam nada.
-const DEFAULT_TENANT_ID = '00000000-0000-0000-0000-000000000001';
+const DEFAULT_TENANT_ID = '3806a6cc-6058-477d-b35f-14f7b6059d4c';
 let _tenantCache = null;
 let _tenantCacheAt = 0;
 async function resolveTenantId(pool, manualId = null) {
