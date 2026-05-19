@@ -276,6 +276,10 @@ export function ClinicorpUserCredentials() {
             <Trash2 className="h-4 w-4 mr-1" /> Remover credenciais
           </Button>
           <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={syncNow} disabled={syncing || !settings?.has_api_token || !settings?.enabled}>
+              {syncing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCcw className="h-4 w-4 mr-2" />}
+              Sincronizar dados agora
+            </Button>
             <Button variant="outline" onClick={testConnection} disabled={testing || saving}>
               {testing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <PlugZap className="h-4 w-4 mr-2" />}
               Testar conexão
