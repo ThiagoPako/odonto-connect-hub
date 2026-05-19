@@ -821,13 +821,13 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
   await safe('professionals', async () => {
     const list = await clinicorpApi.listUsers(settings);
     for (const u of (Array.isArray(list) ? list : [])) { await upsertProfessional(pool, u); summary.professionals++; }
-    
-    // Sincroniza também pacientes junto com profissionais (conforme solicitado pelo usuário)
-    try {
-      const pList = await clinicorpApi.listPatients(settings);
-      for (const p of (Array.isArray(pList) ? pList : [])) { await upsertPatient(pool, p); summary.patients++; }
-    } catch (e) { errors.push(`patients: ${e.message}`); }
   });
+
+  // Pacientes são sincronizados via agendamentos (ensureLocalPatient projeta cada paciente referenciado).
+  // A Clinicorp não expõe um endpoint público de listagem completa de pacientes (/patient/list retorna 404),
+  // então não tentamos buscar a lista — o backfill acontece naturalmente conforme os agendamentos chegam.
+
+
 
   // Chairs por clínica
   await safe('chairs', async () => {
