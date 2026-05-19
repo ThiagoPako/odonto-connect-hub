@@ -778,6 +778,8 @@ async function projectPatientToLocal(pool, p, tenantId = null) {
     }
     if (!decision.write) return localRow.id;
   }
+    if (!decision.write) return localRow.id;
+  }
   const pacienteId = await ensureLocalPatient(pool, cpId, { name: p.Name, phone: p.MobilePhone, email: p.Email }, tenantId);
   if (pacienteId) {
     await pool.query(`UPDATE pacientes SET last_clinicorp_sync_at=NOW() WHERE id=$1`, [pacienteId]);
@@ -788,7 +790,7 @@ async function projectPatientToLocal(pool, p, tenantId = null) {
   return pacienteId;
 }
 
-async function upsertEstimate(pool, e) {
+async function upsertEstimate(pool, e, tenantId = null) {
   await pool.query(
     `INSERT INTO clinicorp_estimates
        (id, treatment_id, patient_id, patient_name, professional_id, professional_name,
@@ -818,10 +820,42 @@ async function upsertEstimate(pool, e) {
       JSON.stringify(e),
     ]
   );
+  try { await projectEstimateToLocal(pool, e, tenantId); }
+  catch (err) { console.error('[clinicorp] projectEstimateToLocal:', err.message); }
 }
 
-async function upsertFinancial(pool, source, item) {
+async function projectEstimateToLocal(pool, e, tenantId = null) {
+  const tId = await resolveTenantId(pool, tenantId);
+  const pacienteId = await ensureLocalPatient(pool, e.PatientId || e.Patient_PersonId, { name: e.PatientName }, tId);
+  const dentistaId = await ensureLocalProfessional(pool, e.ProfessionalId || e.Dentist_PersonId, e.ProfessionalName, tId);
+  
+  const valor = Number(e.Amount || 0);
+  const data = e.Date || e.CreateDate || null;
+  const status = String(e.Status || '').toLowerCase().includes('aprov') ? 'aprovado' : 'em_aberto';
+
+  const exists = await pool.query(
+    `SELECT id FROM orcamentos WHERE clinicorp_estimate_id = $1 AND tenant_id = $2`,
+    [String(e.id), tId]
+  );
+
+  if (exists.rows[0]) {
+    await pool.query(
+      `UPDATE orcamentos SET valor=$1, status=$2, updated_at=NOW() WHERE id=$3`,
+      [valor, status, exists.rows[0].id]
+    );
+  } else {
+    await pool.query(
+      `INSERT INTO orcamentos (id, tenant_id, paciente_id, dentista_id, valor, status, data, clinicorp_estimate_id)
+       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7)`,
+      [tId, pacienteId, dentistaId, valor, status, data, String(e.id)]
+    );
+  }
+}
+
+async function upsertFinancial(pool, source, item, tenantId = null) {
   const externalId = String(item.id ?? item.Id ?? item.InvoiceId ?? item.PaymentId ?? '') || null;
+  if (!externalId) return;
+
   await pool.query(
     `INSERT INTO clinicorp_financial_entries
        (source, external_id, business_id, patient_id, amount, date, description, raw, synced_at)
@@ -844,6 +878,45 @@ async function upsertFinancial(pool, source, item) {
       JSON.stringify(item),
     ]
   );
+  try { await projectFinanceToLocal(pool, source, item, tenantId); }
+  catch (e) { console.error('[clinicorp] projectFinanceToLocal:', e.message); }
+}
+
+async function projectFinanceToLocal(pool, source, item, tenantId = null) {
+  const tId = await resolveTenantId(pool, tenantId);
+  const amount = Number(item.Amount ?? item.Value ?? 0);
+  const date = item.Date || item.PaymentDate || item.DueDate || null;
+  const description = item.Description || item.Memo || `Lançamento Clinicorp (${source})`;
+  const patientId = await ensureLocalPatient(pool, item.PatientId, {}, tId);
+
+  if (source === 'payment' || source === 'cashflow' && amount > 0) {
+    // Projeta como receita
+    const exists = await pool.query(
+      `SELECT id FROM financeiro_receitas WHERE clinicorp_external_id = $1 AND tenant_id = $2`,
+      [String(item.id || item.Id), tId]
+    );
+    if (!exists.rows[0]) {
+      await pool.query(
+        `INSERT INTO financeiro_receitas (id, tenant_id, valor, data, descricao, status, paciente_id, clinicorp_external_id)
+         VALUES (gen_random_uuid(), $1, $2, $3, $4, 'pago', $5, $6)`,
+        [tId, amount, date, description, patientId, String(item.id || item.Id)]
+      );
+    }
+  } else if (amount < 0) {
+    // Projeta como despesa
+    const absAmount = Math.abs(amount);
+    const exists = await pool.query(
+      `SELECT id FROM financeiro_despesas WHERE clinicorp_external_id = $1 AND tenant_id = $2`,
+      [String(item.id || item.Id), tId]
+    );
+    if (!exists.rows[0]) {
+      await pool.query(
+        `INSERT INTO financeiro_despesas (id, tenant_id, valor, data, descricao, status, clinicorp_external_id)
+         VALUES (gen_random_uuid(), $1, $2, $3, $4, 'pago', $5)`,
+        [tId, absAmount, date, description, String(item.id || item.Id)]
+      );
+    }
+  }
 }
 
 // ─── Sync orchestration ───────────────────────────────────────
@@ -1055,12 +1128,12 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
         for (const { id: clinicId } of clinics) {
           try {
             const list = await clinicorpApi.listEstimates(settings, r.from, r.to, clinicId);
-            for (const e of (Array.isArray(list) ? list : [])) { await upsertEstimate(pool, e); summary.estimates++; }
+            for (const e of (Array.isArray(list) ? list : [])) { await upsertEstimate(pool, e, tenant_id); summary.estimates++; }
           } catch (e) { /* silent fail for clinic range */ }
         }
       } else {
         const list = await clinicorpApi.listEstimates(settings, r.from, r.to);
-        for (const e of (Array.isArray(list) ? list : [])) { await upsertEstimate(pool, e); summary.estimates++; }
+        for (const e of (Array.isArray(list) ? list : [])) { await upsertEstimate(pool, e, tenant_id); summary.estimates++; }
       }
     }
   });
@@ -1073,12 +1146,12 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
         for (const { id: clinicId } of clinics) {
           try {
             const list = await clinicorpApi.listInvoices(settings, { from: r.from, to: r.to, clinic_id: clinicId });
-            for (const i of (Array.isArray(list) ? list : [])) { await upsertFinancial(pool, 'invoice', i); summary.invoices++; }
+            for (const i of (Array.isArray(list) ? list : [])) { await upsertFinancial(pool, 'invoice', i, tenant_id); summary.invoices++; }
           } catch (e) { /* silent */ }
         }
       } else {
         const list = await clinicorpApi.listInvoices(settings, { from: r.from, to: r.to });
-        for (const i of (Array.isArray(list) ? list : [])) { await upsertFinancial(pool, 'invoice', i); summary.invoices++; }
+        for (const i of (Array.isArray(list) ? list : [])) { await upsertFinancial(pool, 'invoice', i, tenant_id); summary.invoices++; }
       }
     }
   });
@@ -1091,12 +1164,12 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
         for (const { id: clinicId } of clinics) {
           try {
             const list = await clinicorpApi.listPayments(settings, { from: r.from, to: r.to, clinic_id: clinicId });
-            for (const p of (Array.isArray(list) ? list : [])) { await upsertFinancial(pool, 'payment', p); summary.payments++; }
+            for (const p of (Array.isArray(list) ? list : [])) { await upsertFinancial(pool, 'payment', p, tenant_id); summary.payments++; }
           } catch (e) { /* silent */ }
         }
       } else {
         const list = await clinicorpApi.listPayments(settings, { from: r.from, to: r.to });
-        for (const p of (Array.isArray(list) ? list : [])) { await upsertFinancial(pool, 'payment', p); summary.payments++; }
+        for (const p of (Array.isArray(list) ? list : [])) { await upsertFinancial(pool, 'payment', p, tenant_id); summary.payments++; }
       }
     }
   });
@@ -1109,12 +1182,12 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
         for (const { id: clinicId } of clinics) {
           try {
             const list = await clinicorpApi.listCashFlow(settings, { from: r.from, to: r.to, clinic_id: clinicId });
-            for (const c of (Array.isArray(list) ? list : [])) { await upsertFinancial(pool, 'cashflow', c); summary.cashflow++; }
+            for (const c of (Array.isArray(list) ? list : [])) { await upsertFinancial(pool, 'cashflow', c, tenant_id); summary.cashflow++; }
           } catch (e) { /* silent */ }
         }
       } else {
         const list = await clinicorpApi.listCashFlow(settings, { from: r.from, to: r.to });
-        for (const c of (Array.isArray(list) ? list : [])) { await upsertFinancial(pool, 'cashflow', c); summary.cashflow++; }
+        for (const c of (Array.isArray(list) ? list : [])) { await upsertFinancial(pool, 'cashflow', c, tenant_id); summary.cashflow++; }
       }
     }
   });
@@ -1636,6 +1709,14 @@ export function registerClinicorp(app, pool) {
       await pool.query(`UPDATE ${table} SET keep_local=$1, updated_at=NOW() WHERE id=$2`,
         [Boolean(keep_local), id]);
       res.json({ ok: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── Auto-sync manual trigger ──
+  app.post('/api/clinicorp/sync/auto', async (req, res) => {
+    try {
+      const result = await reconciliationTick(pool);
+      res.json(result);
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
