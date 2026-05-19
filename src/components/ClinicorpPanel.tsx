@@ -27,6 +27,13 @@ export function ClinicorpPanel() {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; auth: string; total_latency_ms: number; results: any[] } | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<{
+    step: string;
+    summary: Record<string, number>;
+    errors: string[];
+    startTime: number;
+    completed: boolean;
+  } | null>(null);
   const [events, setEvents] = useState<ClinicorpWebhookEvent[]>([]);
   const [lastSync, setLastSync] = useState<ClinicorpSyncResult | null>(null);
 
