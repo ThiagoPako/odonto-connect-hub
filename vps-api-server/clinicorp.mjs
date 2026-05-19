@@ -439,8 +439,16 @@ async function ensureLocalPatient(pool, cpId, fallback = {}, tenantId = null) {
 async function ensureLocalProfessional(pool, cpProfId, fallbackName = null, tenantId = null) {
   if (!cpProfId) return null;
   const tId = await resolveTenantId(pool, tenantId);
-  const found = await pool.query(`SELECT id FROM dentistas WHERE clinicorp_professional_id=$1 AND tenant_id=$2 LIMIT 1`, [cpProfId, tId]);
-  if (found.rows[0]) return found.rows[0].id;
+  const found = await pool.query(`SELECT id, nome FROM dentistas WHERE clinicorp_professional_id=$1 AND tenant_id=$2 LIMIT 1`, [cpProfId, tId]);
+  if (found.rows[0]) {
+    // Atualiza nome se estava como placeholder "Profissional XXX" e agora temos um real
+    const currentName = found.rows[0].nome || '';
+    const newName = fallbackName && !/^Profissional\s+\d+$/i.test(fallbackName) ? fallbackName : null;
+    if (newName && /^Profissional\s+\d+$/i.test(currentName)) {
+      await pool.query(`UPDATE dentistas SET nome=$1, updated_at=NOW() WHERE id=$2`, [newName, found.rows[0].id]);
+    }
+    return found.rows[0].id;
+  }
   const cp = await pool.query(`SELECT * FROM clinicorp_professionals WHERE id=$1`, [cpProfId]);
   const nome = cp.rows[0]?.full_name || fallbackName || `Profissional ${cpProfId}`;
   const match = await pool.query(`SELECT id FROM dentistas WHERE LOWER(nome)=LOWER($1) AND tenant_id=$2 LIMIT 1`, [nome, tId]);
