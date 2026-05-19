@@ -928,7 +928,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
           GROUP BY 1`
       );
       for (const p of distinctProfs) {
-        const name = p.name_a || p.name_b || p.name_c || `Profissional ${p.id}`;
+        const name = p.name_a || p.name_b || p.name_c || p.name_d || `Profissional ${p.id}`;
         await pool.query(
           `INSERT INTO clinicorp_professionals (id, full_name, user_name, raw, synced_at)
            VALUES ($1,$2,NULL,$3,NOW())
