@@ -788,19 +788,29 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
   });
 
   await safe('appointments', async () => {
-    const list = await clinicorpApi.listAppointments(settings, fromDate, toDate);
+    const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics');
     const apiIds = new Set();
-    for (const a of (Array.isArray(list) ? list : [])) { 
-      const id = a.id ?? a.AppointmentId ?? a.Id;
-      if (id) {
-        apiIds.add(String(id));
-        await upsertAppointment(pool, a); 
-        summary.appointments++; 
+    
+    // Se não houver clínicas, tenta um sync geral (pode ser o caso de subs que não listam clínicas via API)
+    if (clinics.length === 0) {
+      const list = await clinicorpApi.listAppointments(settings, fromDate, toDate);
+      for (const a of (Array.isArray(list) ? list : [])) { 
+        const id = a.id ?? a.AppointmentId ?? a.Id;
+        if (id) { apiIds.add(String(id)); await upsertAppointment(pool, a); summary.appointments++; }
+      }
+    } else {
+      for (const { id: clinicId } of clinics) {
+        try {
+          const list = await clinicorpApi.listAppointments(settings, fromDate, toDate, clinicId);
+          for (const a of (Array.isArray(list) ? list : [])) { 
+            const id = a.id ?? a.AppointmentId ?? a.Id;
+            if (id) { apiIds.add(String(id)); await upsertAppointment(pool, a); summary.appointments++; }
+          }
+        } catch (e) { console.error(`[clinicorp sync] appointments clinic ${clinicId}`, e.message); }
       }
     }
     
-    // Deletion detection (faithfull mirror): 
-    // If an appointment exists locally in this range but NOT in the API response, mark it as cancelled/removed.
+    // Deletion detection (faithfull mirror)
     try {
       const { rows: localRows } = await pool.query(
         `SELECT id FROM clinicorp_appointments WHERE date >= $1 AND date <= $2`,
@@ -808,9 +818,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
       );
       for (const local of localRows) {
         if (!apiIds.has(String(local.id))) {
-          // If not in API but in range, it was likely deleted in Clinicorp
           await pool.query(`UPDATE clinicorp_appointments SET status = 'DELETED_IN_CLINICORP', synced_at = NOW() WHERE id = $1`, [local.id]);
-          // Also update the projected local appointment
           await pool.query(`UPDATE agendamentos SET status = 'cancelado', updated_at = NOW() WHERE clinicorp_appointment_id = $1`, [local.id]);
         }
       }
