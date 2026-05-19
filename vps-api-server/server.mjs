@@ -3124,7 +3124,17 @@ app.post('/api/financeiro', async (req, res) => {
 app.get('/api/dentistas', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
-    const { rows } = await pool.query('SELECT * FROM dentistas WHERE tenant_id = $1 ORDER BY nome ASC', [user.tenant_id]);
+    let { rows } = await pool.query('SELECT * FROM dentistas WHERE tenant_id = $1 ORDER BY nome ASC', [user.tenant_id]);
+    if (rows.length === 0) {
+      const fallback = await pool.query(`
+        SELECT DISTINCT d.*
+          FROM dentistas d
+          JOIN agendamentos a ON a.dentista_id = d.id
+         WHERE d.ativo IS DISTINCT FROM false
+         ORDER BY d.nome ASC
+      `);
+      rows = fallback.rows;
+    }
     res.json(rows);
   } catch (error) {
     res.status(500).json({ error: error.message });
