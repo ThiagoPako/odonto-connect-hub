@@ -156,6 +156,7 @@ export const clinicorpApi = {
   getAvailableDays: (s, query) => clinicorpFetch(s, '/appointment/get_avaliable_days', { query }),
   getAvailableTimesCalendar: (s, query) => clinicorpFetch(s, '/appointment/get_avaliable_times_calendar', { query }),
   getPatient: (s, id) => clinicorpFetch(s, '/patient/get', { query: { id } }),
+  listPatients: (s) => clinicorpFetch(s, '/patient/list'),
   patientBirthdays: (s, query) => clinicorpFetch(s, '/patient/birthdays', { query }),
   createPatient: (s, body) => clinicorpFetch(s, '/patient/create', { method: 'POST', body }),
   patientAppointments: (s, patientId) => clinicorpFetch(s, '/patient/list_appointments', { query: { patient_id: patientId } }),
@@ -778,7 +779,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
   const fromDate = from || new Date(today.getTime() - 30 * 86400_000).toISOString().slice(0, 10);
   const toDate = to || new Date(today.getTime() + 60 * 86400_000).toISOString().slice(0, 10);
 
-  const summary = { clinics: 0, professionals: 0, chairs: 0, categories: 0, specialties: 0, appointments: 0, estimates: 0, invoices: 0, payments: 0, cashflow: 0 };
+  const summary = { clinics: 0, professionals: 0, patients: 0, chairs: 0, categories: 0, specialties: 0, appointments: 0, estimates: 0, invoices: 0, payments: 0, cashflow: 0 };
   const errors = [];
 
   // Backfill tenant_id em registros antigos vindos do Clinicorp (criados antes do fix)
@@ -820,6 +821,12 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
   await safe('professionals', async () => {
     const list = await clinicorpApi.listUsers(settings);
     for (const u of (Array.isArray(list) ? list : [])) { await upsertProfessional(pool, u); summary.professionals++; }
+    
+    // Sincroniza também pacientes junto com profissionais (conforme solicitado pelo usuário)
+    try {
+      const pList = await clinicorpApi.listPatients(settings);
+      for (const p of (Array.isArray(pList) ? pList : [])) { await upsertPatient(pool, p); summary.patients++; }
+    } catch (e) { errors.push(`patients: ${e.message}`); }
   });
 
   // Chairs por clínica
