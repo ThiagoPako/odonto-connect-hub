@@ -10758,7 +10758,7 @@ async function clinicorpFetchProbe(settings, pathName) {
   const url = new URL(base + pathName);
   if (settings.subscriber_id) url.searchParams.set('subscriber_id', settings.subscriber_id);
   const ctrl = new AbortController();
-  const timeout = setTimeout(() => ctrl.abort(), 15_000);
+  const timeout = setTimeout(() => ctrl.abort(), 45_000);
   try {
     const apiToken = String(settings.api_token || '').trim().replace(/^Bearer\s+/i, '');
     const apiUser = String(settings.subscriber_id || '').trim();
@@ -10773,6 +10773,12 @@ async function clinicorpFetchProbe(settings, pathName) {
       });
       const text = await r.text();
       let data; try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+      if ((r.status === 429 || r.status === 502 || r.status === 503 || r.status === 504) && !requestOnce._retried) {
+        requestOnce._retried = true;
+        const retryAfter = Number(r.headers.get('retry-after'));
+        await clinicorpProbeSleep(Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 7000);
+        return requestOnce(authMode);
+      }
       if (!r.ok) {
         const err = new Error(`HTTP ${r.status}${typeof data === 'string' && data ? ': ' + data.slice(0, 200) : ''}`);
         err.status = r.status;
