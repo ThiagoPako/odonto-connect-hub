@@ -761,9 +761,9 @@ function decideOverwrite({ strategy, keepLocal, localRow, clinicorpUpdatedAt }) 
 }
 
 async function projectAppointmentToLocal(pool, a, cpApptId, tenantId = null) {
-  const cpPatientId = a.PatientId ?? a.Patient_PersonId ?? null;
-  const cpProfId = a.ProfessionalId ?? a.Dentist_PersonId ?? a.ScheduleToId ?? null;
-  const cpClinicId = a.BusinessId ?? a.Clinic_BusinessId ?? a.ClinicId ?? null;
+  const cpPatientId = a.PatientId ?? a.Patient_PersonId ?? a.PatientPersonId ?? a.Patient?.Id ?? a.Patient?.PersonId ?? null;
+  const cpProfId = a.ProfessionalId ?? a.Dentist_PersonId ?? a.DentistPersonId ?? a.ScheduleToId ?? a.ScheduleTo_PersonId ?? a.Dentist?.Id ?? a.Professional?.Id ?? null;
+  const cpClinicId = a.BusinessId ?? a.Clinic_BusinessId ?? a.ClinicBusinessId ?? a.ClinicId ?? a.Business?.Id ?? null;
   const cpUpdatedAt = a.UpdateDate || a.UpdatedAt || a.LastModified || a.ModifiedAt || a.z_LastChange_Date || a.ModifiedDate || null;
   const policy = await resolveConflictPolicy(pool, { clinicId: cpClinicId, professionalId: cpProfId });
 
@@ -775,12 +775,10 @@ async function projectAppointmentToLocal(pool, a, cpApptId, tenantId = null) {
   }, tenantId);
   
   const status = mapAppointmentStatus(a.Status ?? a.StatusId);
-  const rawDate = a.Date || a.AppointmentDate || a.date || null;
-  // Normaliza para YYYY-MM-DD (a API retorna ISO 8601 com timezone)
-  const data = rawDate ? String(rawDate).slice(0, 10) : null;
-  const fromT = (a.FromTime || a.StartTime || a.fromTime || '').toString();
-  const toT = (a.ToTime || a.EndTime || a.toTime || '').toString();
-  const hora = (fromT || '00:00').slice(0, 5);
+  const data = normalizeClinicorpDate(a.Date, a.AppointmentDate, a.SK_DateFirstTime, a.DateFirstTime, a.StartDate, a.StartDateTime, a.StartTime, a.fromTime, a.FromTime);
+  const fromT = normalizeClinicorpTime(a.FromTime, a.Time, a.StartTime, a.StartDateTime, a.ScheduleTime, a.Hour, a.fromTime) || '00:00';
+  const toT = normalizeClinicorpTime(a.ToTime, a.FinalTime, a.EndTime, a.EndDateTime, a.toTime) || '';
+  const hora = fromT;
   const duracao = (() => {
     if (!fromT || !toT) return 30;
     const toMin = (s) => { const [h,m] = s.split(':').map(Number); return (h||0)*60+(m||0); };
