@@ -403,7 +403,7 @@ async function ensureLocalPatient(pool, cpId, fallback = {}, tenantId = null) {
   return ins.rows[0].id;
 }
 
-async function ensureLocalProfessional(pool, cpProfId, fallbackName = null) {
+async function ensureLocalProfessional(pool, cpProfId, fallbackName = null, tenantId = null) {
   if (!cpProfId) return null;
   const found = await pool.query(`SELECT id FROM dentistas WHERE clinicorp_professional_id=$1 LIMIT 1`, [cpProfId]);
   if (found.rows[0]) return found.rows[0].id;
