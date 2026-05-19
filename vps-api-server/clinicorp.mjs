@@ -87,7 +87,8 @@ function toBigIntOrNull(v) {
 // ─── HTTP client ──────────────────────────────────────────────
 // Throttle global para evitar 429: limite de 5 chamadas por segundo (200ms entre inícios)
 let _lastCallAt = 0;
-const THROTTLE_MS = 250; // 250ms (4 req/sec) para segurança
+const THROTTLE_MS = 900; // Clinicorp é sensível a rajadas; ~1 req/s evita agenda vazia por HTTP 429
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 async function clinicorpFetch(settings, pathName, { method = 'GET', query = {}, body } = {}) {
   // Aplicar throttle
@@ -95,7 +96,7 @@ async function clinicorpFetch(settings, pathName, { method = 'GET', query = {}, 
   const timeSinceLast = now - _lastCallAt;
   if (timeSinceLast < THROTTLE_MS) {
     const delay = THROTTLE_MS - timeSinceLast;
-    await new Promise(r => setTimeout(r, delay));
+    await sleep(delay);
   }
   _lastCallAt = Date.now();
 
@@ -125,9 +126,6 @@ async function clinicorpFetch(settings, pathName, { method = 'GET', query = {}, 
     const ctrl = new AbortController();
     const timeout = setTimeout(() => ctrl.abort(), 45_000); // 45s timeout
     
-    // Throttle automático: espaça chamadas para reduzir HTTP 429
-    await new Promise(r => setTimeout(r, 250));
-
     try {
       const headers = clinicorpAuthHeaders(settings, authMode);
       if (body !== undefined) headers['Content-Type'] = 'application/json';
@@ -148,10 +146,12 @@ async function clinicorpFetch(settings, pathName, { method = 'GET', query = {}, 
       
       if (shouldRetry) {
         retryCount++;
-        // Aggressive exponential backoff: 5s, 10s, 20s...
-        const delay = Math.pow(2, retryCount) * 2500;
+        const retryAfter = Number(res.headers.get('retry-after'));
+        const delay = Number.isFinite(retryAfter) && retryAfter > 0
+          ? retryAfter * 1000
+          : (res.status === 429 ? Math.pow(2, retryCount) * 5000 : Math.pow(2, retryCount) * 2500);
         console.warn(`[clinicorp] HTTP ${res.status} detectado em ${pathName}. Retentando em ${delay}ms (tentativa ${retryCount})...`);
-        await new Promise(r => setTimeout(r, delay));
+        await sleep(delay);
         return requestOnceWithRetry(authMode);
       }
 
