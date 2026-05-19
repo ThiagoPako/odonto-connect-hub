@@ -202,8 +202,30 @@ export const clinicorpApi = {
     }),
   listAppointmentCategories: (s) => clinicorpFetch(s, '/appointment/list_categories'),
   listSpecialties: (s) => clinicorpFetch(s, '/procedures/list_specialties'),
-  listAppointments: (s, from, to, businessId) =>
-    clinicorpFetch(s, '/appointment/list', { query: { from, to, ...(businessId ? { business_id: businessId } : {}) } }),
+  listAppointments: async (s, from, to, businessId) => {
+    // Clinicorp /appointment/list accepts different param naming conventions in production vs sandbox.
+    // We try the most likely variants in order until one returns data, so the sync survives API drift.
+    const baseBiz = businessId ? { business_id: businessId, BusinessId: businessId } : {};
+    const variants = [
+      { fromDate: from, toDate: to, ...baseBiz },
+      { from, to, ...baseBiz },
+      { date_from: from, date_to: to, ...baseBiz },
+      { startDate: from, endDate: to, ...baseBiz },
+      { initialDate: from, finalDate: to, ...baseBiz },
+    ];
+    let lastErr = null;
+    for (const q of variants) {
+      try {
+        const data = await clinicorpFetch(s, '/appointment/list', { query: q });
+        const arr = Array.isArray(data) ? data : (data?.appointments || data?.data || data?.result || data?.items || []);
+        if (Array.isArray(arr) && arr.length > 0) return arr;
+        // keep the first non-empty result; otherwise continue trying
+        if (Array.isArray(arr)) lastErr = null;
+      } catch (e) { lastErr = e; }
+    }
+    if (lastErr) throw lastErr;
+    return [];
+  },
   appointmentStatusList: (s) => clinicorpFetch(s, '/appointment/status_list'),
   changeAppointmentStatus: (s, query) => clinicorpFetch(s, '/appointment/change_status', { query }),
   confirmAppointment: (s, body) => clinicorpFetch(s, '/appointment/confirm_appointment', { method: 'POST', body }),
