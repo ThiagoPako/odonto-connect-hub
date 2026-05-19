@@ -565,12 +565,12 @@ async function projectAppointmentToLocal(pool, a, cpApptId, tenantId = null) {
   const procedimento = a.CategoryDescription || a.Category || null;
   const categoriaCor = a.CategoryColor || a.Color || null;
   const observacoes = a.Notes || a.notes || null;
-
+  const tId = await resolveTenantId(pool, tenantId);
   const exists = await pool.query(
     `SELECT id, paciente_id, dentista_id, data, hora, duracao, procedimento, categoria,
             categoria_cor, status, observacoes, updated_at, last_clinicorp_sync_at, keep_local
-       FROM agendamentos WHERE clinicorp_appointment_id=$1 LIMIT 1`,
-    [cpApptId]
+       FROM agendamentos WHERE clinicorp_appointment_id=$1 AND tenant_id=$2 LIMIT 1`,
+    [cpApptId, tId]
   );
   let agendamentoId;
   if (exists.rows[0]) {
