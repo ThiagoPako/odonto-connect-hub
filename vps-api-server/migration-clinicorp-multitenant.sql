@@ -118,6 +118,20 @@ DO $$ BEGIN
   ALTER TABLE clinicorp_estimates ADD CONSTRAINT clinicorp_estimates_pkey PRIMARY KEY (id, tenant_id);
 EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'PK clinicorp_estimates: %', SQLERRM; END $$;
 
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname='clinicorp_evolutions_pkey') THEN
+    ALTER TABLE clinicorp_evolutions DROP CONSTRAINT clinicorp_evolutions_pkey;
+  END IF;
+  ALTER TABLE clinicorp_evolutions ADD CONSTRAINT clinicorp_evolutions_pkey PRIMARY KEY (id, tenant_id);
+EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'PK clinicorp_evolutions: %', SQLERRM; END $$;
+
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname='clinicorp_documents_pkey') THEN
+    ALTER TABLE clinicorp_documents DROP CONSTRAINT clinicorp_documents_pkey;
+  END IF;
+  ALTER TABLE clinicorp_documents ADD CONSTRAINT clinicorp_documents_pkey PRIMARY KEY (id, tenant_id);
+EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'PK clinicorp_documents: %', SQLERRM; END $$;
+
 -- 4) Índices auxiliares por tenant
 CREATE INDEX IF NOT EXISTS idx_clinicorp_appts_tenant ON clinicorp_appointments(tenant_id, date);
 CREATE INDEX IF NOT EXISTS idx_clinicorp_pats_tenant ON clinicorp_patients(tenant_id);
