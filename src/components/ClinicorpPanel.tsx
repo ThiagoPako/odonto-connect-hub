@@ -174,13 +174,38 @@ export function ClinicorpPanel() {
   async function handleSync() {
     setSyncing(true);
     setLastSync(null);
+    setSyncStatus({
+      step: "Iniciando sincronização completa...",
+      summary: {},
+      errors: [],
+      startTime: Date.now(),
+      completed: false,
+    });
+
     try {
+      // O backend agora processa tudo em uma tacada só no full sync
+      // Vamos atualizar o status visualmente conforme as etapas (mesmo que o backend retorne tudo ao final, 
+      // poderíamos emular passos se o backend fosse via SSE, mas aqui faremos uma UI reativa ao resultado)
       const r = await clinicorpApi.sync();
       setLastSync(r);
+      setSyncStatus(prev => ({
+        ...prev!,
+        step: "Sincronização concluída com sucesso!",
+        summary: r.summary,
+        errors: r.errors,
+        completed: true,
+      }));
       toast.success(`Sync ${r.status} — ${Object.values(r.summary).reduce((a, b) => a + b, 0)} registros processados`);
       await load();
     } catch (e) {
-      toast.error(`Sync falhou: ${(e as Error).message}`);
+      const msg = (e as Error).message;
+      setSyncStatus(prev => ({
+        ...prev!,
+        step: "Erro durante a sincronização",
+        errors: [msg],
+        completed: true,
+      }));
+      toast.error(`Sync falhou: ${msg}`);
     } finally {
       setSyncing(false);
     }
