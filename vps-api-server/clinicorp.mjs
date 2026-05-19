@@ -750,14 +750,28 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
   const fromDate = from || new Date(today.getTime() - 30 * 86400_000).toISOString().slice(0, 10);
   const toDate = to || new Date(today.getTime() + 60 * 86400_000).toISOString().slice(0, 10);
 
-  // Se force_metadata for true, limpamos o cache de sincronização para forçar a atualização de tudo.
-  // Note: O sync manual já faz isso para algumas tabelas, mas podemos garantir se necessário.
-
   const summary = { clinics: 0, professionals: 0, chairs: 0, categories: 0, specialties: 0, appointments: 0, estimates: 0, invoices: 0, payments: 0, cashflow: 0 };
   const errors = [];
 
   const safe = async (label, fn) => {
     try { await fn(); } catch (e) { errors.push(`${label}: ${e.message}`); console.error(`[clinicorp sync] ${label}`, e.message); }
+  };
+
+  // Helper para fatiar períodos em janelas de 30 dias para evitar erro 400 da Clinicorp
+  const sliceRange = (startStr, endStr) => {
+    const dates = [];
+    let current = new Date(startStr);
+    const end = new Date(endStr);
+    while (current < end) {
+      const next = new Date(current.getTime() + 30 * 86400_000);
+      const to = next < end ? next : end;
+      dates.push({
+        from: current.toISOString().slice(0, 10),
+        to: to.toISOString().slice(0, 10)
+      });
+      current = new Date(to.getTime() + 86400_000);
+    }
+    return dates;
   };
 
   await safe('clinics', async () => {
@@ -774,6 +788,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
   await safe('chairs', async () => {
     const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics');
     for (const { id } of clinics) {
+      if (!id) continue;
       try {
         const list = await clinicorpApi.listChairs(settings, id);
         for (const ch of (Array.isArray(list) ? list : [])) { await upsertChair(pool, ch); summary.chairs++; }
@@ -794,23 +809,29 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
   await safe('appointments', async () => {
     const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics');
     const apiIds = new Set();
+    const ranges = sliceRange(fromDate, toDate);
     
-    // Se não houver clínicas, tenta um sync geral (pode ser o caso de subs que não listam clínicas via API)
-    if (clinics.length === 0) {
-      const list = await clinicorpApi.listAppointments(settings, fromDate, toDate);
+    const processAppts = async (list) => {
       for (const a of (Array.isArray(list) ? list : [])) { 
         const id = a.id ?? a.AppointmentId ?? a.Id;
         if (id) { apiIds.add(String(id)); await upsertAppointment(pool, a); summary.appointments++; }
       }
+    };
+
+    if (clinics.length === 0) {
+      for (const r of ranges) {
+        const list = await clinicorpApi.listAppointments(settings, r.from, r.to);
+        await processAppts(list);
+      }
     } else {
       for (const { id: clinicId } of clinics) {
-        try {
-          const list = await clinicorpApi.listAppointments(settings, fromDate, toDate, clinicId);
-          for (const a of (Array.isArray(list) ? list : [])) { 
-            const id = a.id ?? a.AppointmentId ?? a.Id;
-            if (id) { apiIds.add(String(id)); await upsertAppointment(pool, a); summary.appointments++; }
-          }
-        } catch (e) { console.error(`[clinicorp sync] appointments clinic ${clinicId}`, e.message); }
+        if (!clinicId) continue;
+        for (const r of ranges) {
+          try {
+            const list = await clinicorpApi.listAppointments(settings, r.from, r.to, clinicId);
+            await processAppts(list);
+          } catch (e) { console.error(`[clinicorp sync] appointments clinic ${clinicId}`, e.message); }
+        }
       }
     }
     
@@ -830,23 +851,76 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
   });
 
   await safe('estimates', async () => {
-    const list = await clinicorpApi.listEstimates(settings, fromDate, toDate);
-    for (const e of (Array.isArray(list) ? list : [])) { await upsertEstimate(pool, e); summary.estimates++; }
+    const ranges = sliceRange(fromDate, toDate);
+    const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics');
+    
+    for (const r of ranges) {
+      if (clinics.length > 0) {
+        for (const { id: clinicId } of clinics) {
+          try {
+            const list = await clinicorpApi.listEstimates(settings, r.from, r.to, clinicId);
+            for (const e of (Array.isArray(list) ? list : [])) { await upsertEstimate(pool, e); summary.estimates++; }
+          } catch (e) { /* silent fail for clinic range */ }
+        }
+      } else {
+        const list = await clinicorpApi.listEstimates(settings, r.from, r.to);
+        for (const e of (Array.isArray(list) ? list : [])) { await upsertEstimate(pool, e); summary.estimates++; }
+      }
+    }
   });
 
   await safe('invoices', async () => {
-    const list = await clinicorpApi.listInvoices(settings, { from: fromDate, to: toDate });
-    for (const i of (Array.isArray(list) ? list : [])) { await upsertFinancial(pool, 'invoice', i); summary.invoices++; }
+    const ranges = sliceRange(fromDate, toDate);
+    const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics');
+    for (const r of ranges) {
+      if (clinics.length > 0) {
+        for (const { id: clinicId } of clinics) {
+          try {
+            const list = await clinicorpApi.listInvoices(settings, { from: r.from, to: r.to, clinic_id: clinicId });
+            for (const i of (Array.isArray(list) ? list : [])) { await upsertFinancial(pool, 'invoice', i); summary.invoices++; }
+          } catch (e) { /* silent */ }
+        }
+      } else {
+        const list = await clinicorpApi.listInvoices(settings, { from: r.from, to: r.to });
+        for (const i of (Array.isArray(list) ? list : [])) { await upsertFinancial(pool, 'invoice', i); summary.invoices++; }
+      }
+    }
   });
 
   await safe('payments', async () => {
-    const list = await clinicorpApi.listPayments(settings, { from: fromDate, to: toDate });
-    for (const p of (Array.isArray(list) ? list : [])) { await upsertFinancial(pool, 'payment', p); summary.payments++; }
+    const ranges = sliceRange(fromDate, toDate);
+    const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics');
+    for (const r of ranges) {
+      if (clinics.length > 0) {
+        for (const { id: clinicId } of clinics) {
+          try {
+            const list = await clinicorpApi.listPayments(settings, { from: r.from, to: r.to, clinic_id: clinicId });
+            for (const p of (Array.isArray(list) ? list : [])) { await upsertFinancial(pool, 'payment', p); summary.payments++; }
+          } catch (e) { /* silent */ }
+        }
+      } else {
+        const list = await clinicorpApi.listPayments(settings, { from: r.from, to: r.to });
+        for (const p of (Array.isArray(list) ? list : [])) { await upsertFinancial(pool, 'payment', p); summary.payments++; }
+      }
+    }
   });
 
   await safe('cashflow', async () => {
-    const list = await clinicorpApi.listCashFlow(settings, { from: fromDate, to: toDate });
-    for (const c of (Array.isArray(list) ? list : [])) { await upsertFinancial(pool, 'cashflow', c); summary.cashflow++; }
+    const ranges = sliceRange(fromDate, toDate);
+    const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics');
+    for (const r of ranges) {
+      if (clinics.length > 0) {
+        for (const { id: clinicId } of clinics) {
+          try {
+            const list = await clinicorpApi.listCashFlow(settings, { from: r.from, to: r.to, clinic_id: clinicId });
+            for (const c of (Array.isArray(list) ? list : [])) { await upsertFinancial(pool, 'cashflow', c); summary.cashflow++; }
+          } catch (e) { /* silent */ }
+        }
+      } else {
+        const list = await clinicorpApi.listCashFlow(settings, { from: r.from, to: r.to });
+        for (const c of (Array.isArray(list) ? list : [])) { await upsertFinancial(pool, 'cashflow', c); summary.cashflow++; }
+      }
+    }
   });
 
   const status = errors.length === 0 ? 'success' : (Object.values(summary).some(Boolean) ? 'partial' : 'error');
