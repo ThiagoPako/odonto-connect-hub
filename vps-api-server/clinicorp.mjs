@@ -928,7 +928,15 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
           GROUP BY 1`
       );
       for (const p of distinctProfs) {
-        const name = p.name_a || p.name_b || p.name_c || p.name_d || p.name_e || (p.raw && (p.raw.ScheduleToName || p.raw.DentistName || (p.raw.Dentist && p.raw.Dentist.Name))) || `Profissional ${p.id}`;
+        // Busca o objeto original para garantir que temos os metadados
+        const { rows: apptRows } = await pool.query(
+          `SELECT raw FROM clinicorp_appointments WHERE professional_id = $1 LIMIT 1`,
+          [p.id]
+        );
+        const rawAppt = apptRows[0]?.raw || {};
+        const name = p.name_a || p.name_b || p.name_c || p.name_d || p.name_e || 
+                     rawAppt.ScheduleToName || rawAppt.DentistName || (rawAppt.Dentist && rawAppt.Dentist.Name) || 
+                     `Profissional ${p.id}`;
         await pool.query(
           `INSERT INTO clinicorp_professionals (id, full_name, user_name, raw, synced_at)
            VALUES ($1,$2,NULL,$3,NOW())
