@@ -29,9 +29,12 @@ export function ClinicorpMirrorAgenda({ refreshTrigger = 0 }: { refreshTrigger?:
   }, [dateStr, refreshTrigger]);
 
   const filteredAppointments = useMemo(() => {
-    if (selectedProfId === "all") return appointments;
-    return appointments.filter(a => String(a.professional_id) === selectedProfId);
-  }, [appointments, selectedProfId]);
+    return appointments.filter(a => {
+      const matchProf = selectedProfId === "all" || String(a.professional_id) === selectedProfId;
+      const matchChair = selectedChairId === "all" || String(a.chair_id) === selectedChairId;
+      return matchProf && matchChair;
+    });
+  }, [appointments, selectedProfId, selectedChairId]);
 
   const goPrev = () => { const d = new Date(currentDate); d.setDate(d.getDate() - 1); setCurrentDate(d); };
   const goNext = () => { const d = new Date(currentDate); d.setDate(d.getDate() + 1); setCurrentDate(d); };
