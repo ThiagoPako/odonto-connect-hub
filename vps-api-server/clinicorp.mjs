@@ -333,7 +333,7 @@ async function upsertAppointment(pool, a) {
       a.PatientId ?? a.Patient_PersonId ?? null,
       a.PatientName ?? null,
       a.ProfessionalId ?? a.Dentist_PersonId ?? a.ScheduleToId ?? null,
-      a.ProfessionalName ?? a.DentistName ?? null,
+      a.ProfessionalName ?? a.DentistName ?? a.ScheduleToName ?? a.Dentist?.Name ?? null,
       a.CategoryId ?? a.Category_id ?? null,
       a.CategoryDescription ?? a.Category ?? null,
       a.CategoryColor ?? a.Color ?? null,
