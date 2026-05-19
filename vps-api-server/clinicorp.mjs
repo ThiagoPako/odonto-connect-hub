@@ -425,6 +425,12 @@ async function upsertAppointment(pool, a, tenantId = null) {
   const id = a.id ?? a.AppointmentId ?? a.Id;
   if (!id) return;
   const tId = await resolveTenantId(pool, tenantId);
+  const businessId = a.BusinessId ?? a.Clinic_BusinessId ?? a.ClinicBusinessId ?? a.ClinicId ?? a.Business?.Id ?? null;
+  const patientId = a.PatientId ?? a.Patient_PersonId ?? a.PatientPersonId ?? a.Patient?.Id ?? a.Patient?.PersonId ?? null;
+  const professionalId = a.ProfessionalId ?? a.Dentist_PersonId ?? a.DentistPersonId ?? a.ScheduleToId ?? a.ScheduleTo_PersonId ?? a.Dentist?.Id ?? a.Professional?.Id ?? null;
+  const appointmentDate = normalizeClinicorpDate(a.Date, a.AppointmentDate, a.SK_DateFirstTime, a.DateFirstTime, a.StartDate, a.StartDateTime, a.StartTime, a.fromTime, a.FromTime);
+  const fromTime = normalizeClinicorpTime(a.FromTime, a.Time, a.StartTime, a.StartDateTime, a.ScheduleTime, a.Hour, a.fromTime);
+  const toTime = normalizeClinicorpTime(a.ToTime, a.FinalTime, a.EndTime, a.EndDateTime, a.toTime);
   await pool.query(
     `INSERT INTO clinicorp_appointments
        (id, tenant_id, business_id, patient_id, patient_name, professional_id, professional_name,
@@ -450,19 +456,19 @@ async function upsertAppointment(pool, a, tenantId = null) {
        synced_at = NOW()`,
     [
       String(id), tId,
-      toBigIntOrNull(a.BusinessId ?? a.Clinic_BusinessId),
-      toBigIntOrNull(a.PatientId ?? a.Patient_PersonId),
+      toBigIntOrNull(businessId),
+      toBigIntOrNull(patientId),
       a.PatientName ?? a.Patient_FullName ?? a.Patient_Name ?? null,
-      toBigIntOrNull(a.ProfessionalId ?? a.Dentist_PersonId ?? a.ScheduleToId),
+      toBigIntOrNull(professionalId),
       a.ProfessionalName ?? a.Dentist_FullName ?? a.Dentist_Name ?? a.DentistName ?? a.ScheduleToName ?? a.Professional_Name ?? a.Dentist?.Name ?? a.Dentist?.FullName ?? a.Professional?.Name ?? a.Professional?.FullName ?? null,
       toBigIntOrNull(a.CategoryId ?? a.Category_id ?? a.Category_Id),
       a.CategoryDescription ?? a.Category_Description ?? a.Category ?? null,
       a.CategoryColor ?? a.Category_Color ?? a.Color ?? null,
       toBigIntOrNull(a.ChairId ?? a.Chair_Id),
       a.Status ?? a.StatusId ?? null,
-      a.Date || a.AppointmentDate || a.date || null,
-      a.FromTime ?? a.Time ?? a.StartTime ?? a.fromTime ?? null,
-      a.ToTime ?? a.FinalTime ?? a.EndTime ?? a.toTime ?? null,
+      appointmentDate,
+      fromTime,
+      toTime,
       a.Notes ?? a.Observation ?? a.notes ?? null,
       JSON.stringify(a),
     ]
