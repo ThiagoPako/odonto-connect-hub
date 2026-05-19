@@ -1413,6 +1413,49 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
 
   // Se forem as globais (carregadas via id=1), atualiza o status na tabela.
   if (settings.id === 1 || (!api_token && settings.id === undefined)) {
+    // Verificação de integridade multi-tenant após o sync
+    try {
+      // Verifica quais tabelas possuem PK simples (id) em vez de composta (id, tenant_id)
+      const { rows: pkStatus } = await pool.query(`
+        SELECT 
+          relname as table_name,
+          (SELECT count(*) FROM pg_constraint c 
+           WHERE c.conrelid = cl.oid AND c.contype = 'p' 
+           AND (SELECT count(*) FROM unnest(c.conkey)) = 1
+          ) as has_simple_pk
+        FROM pg_class cl
+        WHERE relname IN (
+          'clinicorp_clinics', 'clinicorp_professionals', 'clinicorp_chairs',
+          'clinicorp_appointment_categories', 'clinicorp_specialties', 'clinicorp_patients',
+          'clinicorp_appointments', 'clinicorp_estimates', 'clinicorp_evolutions', 'clinicorp_documents'
+        )
+      `);
+
+      const tablesWithSimplePk = pkStatus.filter(r => r.has_simple_pk > 0).map(r => r.table_name);
+      
+      if (tablesWithSimplePk.length > 0) {
+        errors.push(`PK Integrity: ${tablesWithSimplePk.join(', ')} still using single-column PK`);
+        console.error(`[clinicorp sync] Tables still using single-column PK: ${tablesWithSimplePk.join(', ')}`);
+      }
+
+      // Verifica se há tenant_id NULL em qualquer uma das tabelas
+      const tableList = [
+        'clinicorp_clinics', 'clinicorp_professionals', 'clinicorp_chairs',
+        'clinicorp_appointment_categories', 'clinicorp_specialties', 'clinicorp_patients',
+        'clinicorp_appointments', 'clinicorp_estimates', 'clinicorp_evolutions', 'clinicorp_documents'
+      ];
+      
+      for (const table of tableList) {
+        const { rows: nullCount } = await pool.query(`SELECT count(*) as count FROM ${table} WHERE tenant_id IS NULL`);
+        if (parseInt(nullCount[0].count) > 0) {
+          errors.push(`Data Integrity: ${table} has ${nullCount[0].count} NULL tenant_ids`);
+          console.error(`[clinicorp sync] Table ${table} has ${nullCount[0].count} records with NULL tenant_id`);
+        }
+      }
+    } catch (e) {
+      console.error('[clinicorp sync] Integrity check failed:', e.message);
+    }
+
     await pool.query(
       `UPDATE clinicorp_settings SET last_sync_at = NOW(), last_sync_status = $1, last_sync_error = $2, updated_at = NOW() WHERE id = 1`,
       [status, errors.length ? errors.join(' | ') : null]
