@@ -414,10 +414,10 @@ async function ensureLocalProfessional(pool, cpProfId, fallbackName = null, tena
     await pool.query(`UPDATE dentistas SET clinicorp_professional_id=$1, updated_at=NOW() WHERE id=$2`, [cpProfId, match.rows[0].id]);
     return match.rows[0].id;
   }
-  const tenantId = await resolveTenantId(pool);
+  const tId = await resolveTenantId(pool, tenantId);
   const ins = await pool.query(
     `INSERT INTO dentistas (nome, ativo, clinicorp_professional_id, tenant_id) VALUES ($1, true, $2, $3) RETURNING id`,
-    [nome, cpProfId, tenantId]
+    [nome, cpProfId, tId]
   );
   return ins.rows[0].id;
 }
