@@ -470,7 +470,7 @@ async function ensureLocalPatient(pool, cpId, fallback = {}, tenantId = null) {
   if (!cpId) return null;
   const tId = await resolveTenantId(pool, tenantId);
   const found = await pool.query(`SELECT id FROM pacientes WHERE clinicorp_patient_id = $1 AND tenant_id = $2 LIMIT 1`, [cpId, tId]);
-  const cp = await pool.query(`SELECT * FROM clinicorp_patients WHERE id = $1`, [cpId]);
+  const cp = await pool.query(`SELECT * FROM clinicorp_patients WHERE id = $1 AND tenant_id = $2`, [cpId, tId]);
   const src = cp.rows[0] || {};
   const nome = src.name || fallback.name || 'Paciente';
   const telefone = src.mobile_phone || onlyDigits(fallback.phone) || null;
