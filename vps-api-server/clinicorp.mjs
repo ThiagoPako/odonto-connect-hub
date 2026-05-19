@@ -397,7 +397,6 @@ async function ensureLocalPatient(pool, cpId, fallback = {}, tenantId = null) {
     await pool.query(`UPDATE pacientes SET clinicorp_patient_id=$1, updated_at=NOW() WHERE id=$2`, [cpId, matchId]);
     return matchId;
   }
-  const tId = await resolveTenantId(pool, tenantId);
   const ins = await pool.query(
     `INSERT INTO pacientes (nome, telefone, email, data_nascimento, sexo, cpf, clinicorp_patient_id, tenant_id)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
