@@ -115,6 +115,9 @@ async function clinicorpFetch(settings, pathName, { method = 'GET', query = {}, 
     const ctrl = new AbortController();
     const timeout = setTimeout(() => ctrl.abort(), 45_000); // 45s timeout
     
+    // Throttle automático: espaça chamadas para reduzir HTTP 429
+    await new Promise(r => setTimeout(r, 250));
+
     try {
       const headers = clinicorpAuthHeaders(settings, authMode);
       if (body !== undefined) headers['Content-Type'] = 'application/json';
@@ -132,12 +135,13 @@ async function clinicorpFetch(settings, pathName, { method = 'GET', query = {}, 
 
       if (res.status === 429 && retryCount < maxRetries) {
         retryCount++;
-        // Backoff exponencial: 2s, 4s, 8s...
-        const delay = Math.pow(2, retryCount) * 1000;
+        // Backoff exponencial agressivo para 429: 5s, 10s, 20s...
+        const delay = Math.pow(2, retryCount) * 2500;
         console.warn(`[clinicorp] HTTP 429 detectado em ${pathName}. Retentando em ${delay}ms (tentativa ${retryCount})...`);
         await new Promise(r => setTimeout(r, delay));
         return requestOnceWithRetry(authMode);
       }
+
 
       if (!res.ok) {
         const err = new Error(`Clinicorp ${method} ${pathName} → HTTP ${res.status}: ${typeof data === 'string' ? data : JSON.stringify(data)}`);
