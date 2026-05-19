@@ -22,42 +22,45 @@ ALTER TABLE clinicorp_documents              ADD COLUMN IF NOT EXISTS tenant_id 
 --    primeiro tenant ativo do sistema (apps single-tenant existentes).
 DO $$
 DECLARE
-  v_tenant_id UUID;
+  v_tenant_id UUID := '3806a6cc-6058-477d-b35f-14f7b6059d4c'::UUID;
+  v_found UUID;
 BEGIN
+  -- Tenta resolver tenant real; senão usa o DEFAULT_TENANT_ID embutido no código.
   BEGIN
-    SELECT tenant_id INTO v_tenant_id
-    FROM clinicorp_user_credentials
-    WHERE tenant_id IS NOT NULL
-    ORDER BY created_at NULLS LAST
-    LIMIT 1;
-  EXCEPTION WHEN undefined_table OR undefined_column THEN
-    v_tenant_id := NULL;
-  END;
+    SELECT tenant_id INTO v_found FROM profiles WHERE role = 'admin' AND tenant_id IS NOT NULL ORDER BY created_at ASC LIMIT 1;
+    IF v_found IS NOT NULL THEN v_tenant_id := v_found; END IF;
+  EXCEPTION WHEN undefined_table OR undefined_column THEN NULL; END;
 
-  IF v_tenant_id IS NULL THEN
+  IF v_found IS NULL THEN
     BEGIN
-      SELECT id INTO v_tenant_id FROM tenants WHERE ativo = TRUE ORDER BY created_at LIMIT 1;
-    EXCEPTION WHEN undefined_table OR undefined_column THEN
-      BEGIN
-        SELECT id INTO v_tenant_id FROM tenants ORDER BY created_at LIMIT 1;
-      EXCEPTION WHEN undefined_table THEN
-        v_tenant_id := NULL;
-      END;
-    END;
+      SELECT tenant_id INTO v_found FROM clinicorp_user_credentials WHERE tenant_id IS NOT NULL ORDER BY created_at NULLS LAST LIMIT 1;
+      IF v_found IS NOT NULL THEN v_tenant_id := v_found; END IF;
+    EXCEPTION WHEN undefined_table OR undefined_column THEN NULL; END;
   END IF;
 
-  IF v_tenant_id IS NOT NULL THEN
-    UPDATE clinicorp_clinics                SET tenant_id = v_tenant_id WHERE tenant_id IS NULL;
-    UPDATE clinicorp_professionals          SET tenant_id = v_tenant_id WHERE tenant_id IS NULL;
-    BEGIN UPDATE clinicorp_chairs                 SET tenant_id = v_tenant_id WHERE tenant_id IS NULL; EXCEPTION WHEN undefined_table THEN NULL; END;
-    BEGIN UPDATE clinicorp_appointment_categories SET tenant_id = v_tenant_id WHERE tenant_id IS NULL; EXCEPTION WHEN undefined_table THEN NULL; END;
-    BEGIN UPDATE clinicorp_specialties            SET tenant_id = v_tenant_id WHERE tenant_id IS NULL; EXCEPTION WHEN undefined_table THEN NULL; END;
-    UPDATE clinicorp_patients               SET tenant_id = v_tenant_id WHERE tenant_id IS NULL;
-    UPDATE clinicorp_appointments           SET tenant_id = v_tenant_id WHERE tenant_id IS NULL;
-    BEGIN UPDATE clinicorp_estimates              SET tenant_id = v_tenant_id WHERE tenant_id IS NULL; EXCEPTION WHEN undefined_table THEN NULL; END;
-    BEGIN UPDATE clinicorp_evolutions             SET tenant_id = v_tenant_id WHERE tenant_id IS NULL; EXCEPTION WHEN undefined_table THEN NULL; END;
-    BEGIN UPDATE clinicorp_documents              SET tenant_id = v_tenant_id WHERE tenant_id IS NULL; EXCEPTION WHEN undefined_table THEN NULL; END;
-  END IF;
+  -- Backfill garantido (v_tenant_id nunca é NULL graças ao default).
+  BEGIN UPDATE clinicorp_clinics                SET tenant_id = v_tenant_id WHERE tenant_id IS NULL; EXCEPTION WHEN undefined_table THEN NULL; END;
+  BEGIN UPDATE clinicorp_professionals          SET tenant_id = v_tenant_id WHERE tenant_id IS NULL; EXCEPTION WHEN undefined_table THEN NULL; END;
+  BEGIN UPDATE clinicorp_chairs                 SET tenant_id = v_tenant_id WHERE tenant_id IS NULL; EXCEPTION WHEN undefined_table THEN NULL; END;
+  BEGIN UPDATE clinicorp_appointment_categories SET tenant_id = v_tenant_id WHERE tenant_id IS NULL; EXCEPTION WHEN undefined_table THEN NULL; END;
+  BEGIN UPDATE clinicorp_specialties            SET tenant_id = v_tenant_id WHERE tenant_id IS NULL; EXCEPTION WHEN undefined_table THEN NULL; END;
+  BEGIN UPDATE clinicorp_patients               SET tenant_id = v_tenant_id WHERE tenant_id IS NULL; EXCEPTION WHEN undefined_table THEN NULL; END;
+  BEGIN UPDATE clinicorp_appointments           SET tenant_id = v_tenant_id WHERE tenant_id IS NULL; EXCEPTION WHEN undefined_table THEN NULL; END;
+  BEGIN UPDATE clinicorp_estimates              SET tenant_id = v_tenant_id WHERE tenant_id IS NULL; EXCEPTION WHEN undefined_table THEN NULL; END;
+  BEGIN UPDATE clinicorp_evolutions             SET tenant_id = v_tenant_id WHERE tenant_id IS NULL; EXCEPTION WHEN undefined_table THEN NULL; END;
+  BEGIN UPDATE clinicorp_documents              SET tenant_id = v_tenant_id WHERE tenant_id IS NULL; EXCEPTION WHEN undefined_table THEN NULL; END;
+
+  -- NOT NULL para permitir PK composta
+  BEGIN ALTER TABLE clinicorp_clinics                ALTER COLUMN tenant_id SET NOT NULL; EXCEPTION WHEN OTHERS THEN NULL; END;
+  BEGIN ALTER TABLE clinicorp_professionals          ALTER COLUMN tenant_id SET NOT NULL; EXCEPTION WHEN OTHERS THEN NULL; END;
+  BEGIN ALTER TABLE clinicorp_chairs                 ALTER COLUMN tenant_id SET NOT NULL; EXCEPTION WHEN OTHERS THEN NULL; END;
+  BEGIN ALTER TABLE clinicorp_appointment_categories ALTER COLUMN tenant_id SET NOT NULL; EXCEPTION WHEN OTHERS THEN NULL; END;
+  BEGIN ALTER TABLE clinicorp_specialties            ALTER COLUMN tenant_id SET NOT NULL; EXCEPTION WHEN OTHERS THEN NULL; END;
+  BEGIN ALTER TABLE clinicorp_patients               ALTER COLUMN tenant_id SET NOT NULL; EXCEPTION WHEN OTHERS THEN NULL; END;
+  BEGIN ALTER TABLE clinicorp_appointments           ALTER COLUMN tenant_id SET NOT NULL; EXCEPTION WHEN OTHERS THEN NULL; END;
+  BEGIN ALTER TABLE clinicorp_estimates              ALTER COLUMN tenant_id SET NOT NULL; EXCEPTION WHEN OTHERS THEN NULL; END;
+  BEGIN ALTER TABLE clinicorp_evolutions             ALTER COLUMN tenant_id SET NOT NULL; EXCEPTION WHEN OTHERS THEN NULL; END;
+  BEGIN ALTER TABLE clinicorp_documents              ALTER COLUMN tenant_id SET NOT NULL; EXCEPTION WHEN OTHERS THEN NULL; END;
 END $$;
 
 -- 3) Recria PKs como compostas (id, tenant_id). Cada tabela em bloco isolado
