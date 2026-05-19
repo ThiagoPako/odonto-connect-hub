@@ -75,6 +75,15 @@ function invalidateSettings() {
   _settingsCacheAt = 0;
 }
 
+// Converte valores que devem ir para colunas BIGINT: trata "", undefined, null,
+// e strings com whitespace como NULL. Evita "invalid input syntax for bigint: \"\"".
+function toBigIntOrNull(v) {
+  if (v === null || v === undefined) return null;
+  const s = String(v).trim();
+  if (s === '' || !/^-?\d+$/.test(s)) return null;
+  return s;
+}
+
 // ─── HTTP client ──────────────────────────────────────────────
 // Throttle global para evitar 429: limite de 5 chamadas por segundo (200ms entre inícios)
 let _lastCallAt = 0;
@@ -374,15 +383,15 @@ async function upsertAppointment(pool, a, tenantId = null) {
        synced_at = NOW()`,
     [
       String(id), tId,
-      a.BusinessId ?? a.Clinic_BusinessId ?? null,
-      a.PatientId ?? a.Patient_PersonId ?? null,
+      toBigIntOrNull(a.BusinessId ?? a.Clinic_BusinessId),
+      toBigIntOrNull(a.PatientId ?? a.Patient_PersonId),
       a.PatientName ?? a.Patient_FullName ?? a.Patient_Name ?? null,
-      a.ProfessionalId ?? a.Dentist_PersonId ?? a.ScheduleToId ?? null,
+      toBigIntOrNull(a.ProfessionalId ?? a.Dentist_PersonId ?? a.ScheduleToId),
       a.ProfessionalName ?? a.Dentist_FullName ?? a.Dentist_Name ?? a.DentistName ?? a.ScheduleToName ?? a.Professional_Name ?? a.Dentist?.Name ?? a.Dentist?.FullName ?? a.Professional?.Name ?? a.Professional?.FullName ?? null,
-      a.CategoryId ?? a.Category_id ?? a.Category_Id ?? null,
+      toBigIntOrNull(a.CategoryId ?? a.Category_id ?? a.Category_Id),
       a.CategoryDescription ?? a.Category_Description ?? a.Category ?? null,
       a.CategoryColor ?? a.Category_Color ?? a.Color ?? null,
-      a.ChairId ?? a.Chair_Id ?? null,
+      toBigIntOrNull(a.ChairId ?? a.Chair_Id),
       a.Status ?? a.StatusId ?? null,
       a.Date || a.AppointmentDate || a.date || null,
       a.FromTime ?? a.Time ?? a.StartTime ?? a.fromTime ?? null,
@@ -1339,17 +1348,16 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
       await upsertFinancial(pool, 'payment', item, tenant_id);
       summary.payments++;
     };
+    if (clinics.length === 0) {
+      console.warn('[clinicorp sync] payments: nenhuma clínica espelhada para este tenant — pulando');
+      return;
+    }
     for (const r of ranges) {
-      if (clinics.length > 0) {
-        for (const { id: clinicId } of clinics) {
-          try {
-            const list = await clinicorpApi.listPayments(settings, { from: r.from, to: r.to, clinic_id: clinicId });
-            for (const p of (Array.isArray(list) ? list : [])) { await processPayment(p, clinicId); }
-          } catch (e) { console.error('[clinicorp sync] financial:', e.message); }
-        }
-      } else {
-        const list = await clinicorpApi.listPayments(settings, { from: r.from, to: r.to });
-        for (const p of (Array.isArray(list) ? list : [])) { await processPayment(p); }
+      for (const { id: clinicId } of clinics) {
+        try {
+          const list = await clinicorpApi.listPayments(settings, { from: r.from, to: r.to, clinic_id: clinicId });
+          for (const p of (Array.isArray(list) ? list : [])) { await processPayment(p, clinicId); }
+        } catch (e) { console.error('[clinicorp sync] financial:', e.message); }
       }
     }
   });
@@ -1366,17 +1374,16 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
       await upsertFinancial(pool, 'cashflow', item, tenant_id);
       summary.cashflow++;
     };
+    if (clinics.length === 0) {
+      console.warn('[clinicorp sync] cashflow: nenhuma clínica espelhada para este tenant — pulando');
+      return;
+    }
     for (const r of ranges) {
-      if (clinics.length > 0) {
-        for (const { id: clinicId } of clinics) {
-          try {
-            const list = await clinicorpApi.listCashFlow(settings, { from: r.from, to: r.to, clinic_id: clinicId });
-            for (const c of (Array.isArray(list) ? list : [])) { await processCashflow(c, clinicId); }
-          } catch (e) { console.error('[clinicorp sync] financial:', e.message); }
-        }
-      } else {
-        const list = await clinicorpApi.listCashFlow(settings, { from: r.from, to: r.to });
-        for (const c of (Array.isArray(list) ? list : [])) { await processCashflow(c); }
+      for (const { id: clinicId } of clinics) {
+        try {
+          const list = await clinicorpApi.listCashFlow(settings, { from: r.from, to: r.to, clinic_id: clinicId });
+          for (const c of (Array.isArray(list) ? list : [])) { await processCashflow(c, clinicId); }
+        } catch (e) { console.error('[clinicorp sync] financial:', e.message); }
       }
     }
   });
