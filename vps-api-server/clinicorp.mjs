@@ -655,7 +655,7 @@ async function projectAppointmentToLocal(pool, a, cpApptId, tenantId = null) {
   return { pacienteId, dentistaId, agendamentoId };
 }
 
-async function projectPatientToLocal(pool, p) {
+async function projectPatientToLocal(pool, p, tenantId = null) {
   const cpId = p.id ?? p.Patient_PersonId;
   if (!cpId) return null;
   const cpUpdatedAt = p.UpdateDate || p.UpdatedAt || p.LastModified || null;
