@@ -1776,8 +1776,10 @@ export function registerClinicorp(app, pool) {
            base_url = COALESCE($5, base_url),
            auto_sync_enabled = COALESCE($6, auto_sync_enabled),
            sync_interval_minutes = COALESCE($7, sync_interval_minutes),
-           sync_lookback_days = COALESCE($8, sync_lookback_days),
-           sync_lookahead_days = COALESCE($9, sync_lookahead_days),
+          sync_lookback_days = COALESCE($8, sync_lookback_days),
+          sync_lookahead_days = COALESCE($9, sync_lookahead_days),
+          next_sync_at = NOW(), -- Força sincronização imediata após salvar
+          sync_lock_until = NULL,
            conflict_strategy = COALESCE($10, conflict_strategy),
            updated_at = NOW()
          WHERE id = 1`,
