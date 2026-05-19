@@ -1712,5 +1712,13 @@ export function registerClinicorp(app, pool) {
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
+  // ── Auto-sync manual trigger ──
+  app.post('/api/clinicorp/sync/auto', async (req, res) => {
+    try {
+      const result = await reconciliationTick(pool);
+      res.json(result);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
   console.log('🦷 Clinicorp routes registered');
 }
