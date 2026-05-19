@@ -952,8 +952,11 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     try {
       const { rows: distinctProfs } = await pool.query(
         `SELECT DISTINCT professional_id::text AS id,
+                MAX(raw->>'Dentist_FullName') AS name_df,
+                MAX(raw->>'Dentist_Name') AS name_dn,
                 MAX(raw->>'ScheduleToName') AS name_a,
                 MAX(raw->'Dentist'->>'Name') AS name_b,
+                MAX(raw->'Dentist'->>'FullName') AS name_bf,
                 MAX(raw->>'DentistName') AS name_c,
                 MAX(raw->>'ProfessionalName') AS name_d,
                 MAX(professional_name) AS name_e
@@ -962,14 +965,14 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
           GROUP BY 1`
       );
       for (const p of distinctProfs) {
-        // Busca o objeto original para garantir que temos os metadados
         const { rows: apptRows } = await pool.query(
           `SELECT raw FROM clinicorp_appointments WHERE professional_id = $1 LIMIT 1`,
           [p.id]
         );
         const rawAppt = apptRows[0]?.raw || {};
-        const name = p.name_a || p.name_b || p.name_c || p.name_d || p.name_e || 
-                     rawAppt.ScheduleToName || rawAppt.DentistName || (rawAppt.Dentist && rawAppt.Dentist.Name) || 
+        const name = p.name_df || p.name_dn || p.name_a || p.name_b || p.name_bf || p.name_c || p.name_d || p.name_e ||
+                     rawAppt.Dentist_FullName || rawAppt.Dentist_Name || rawAppt.ScheduleToName || rawAppt.DentistName ||
+                     (rawAppt.Dentist && (rawAppt.Dentist.FullName || rawAppt.Dentist.Name)) ||
                      `Profissional ${p.id}`;
 
         await pool.query(
@@ -980,8 +983,12 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
              synced_at = NOW()`,
           [p.id, name, JSON.stringify({ derived_from: 'appointments', id: p.id, name })]
         );
-        // Garante existência no schema local (dentistas) com o tenant atual.
         await ensureLocalProfessional(pool, p.id, name, tenant_id);
+        // Atualiza professional_name nos agendamentos onde está nulo
+        await pool.query(
+          `UPDATE clinicorp_appointments SET professional_name = $2 WHERE professional_id = $1 AND (professional_name IS NULL OR professional_name = '')`,
+          [p.id, name]
+        );
       }
       
       // Forçar re-projeção dos agendamentos agora que temos os profissionais
