@@ -54,12 +54,11 @@ async function loadSettings(pool, force = false) {
 const DEFAULT_TENANT_ID = '00000000-0000-0000-0000-000000000001';
 let _tenantCache = null;
 let _tenantCacheAt = 0;
-async function resolveTenantId(pool) {
+async function resolveTenantId(pool, manualId = null) {
+  if (manualId) return manualId;
   const now = Date.now();
   if (_tenantCache && now - _tenantCacheAt < 10_000) return _tenantCache;
   try {
-    // 1. Tenta pegar o tenant do primeiro admin do sistema (fallback global)
-    // 2. Tenta pegar o tenant do usuário que configurou a integração por último
     const { rows } = await pool.query(
       `SELECT tenant_id FROM profiles WHERE role = 'admin' ORDER BY created_at ASC LIMIT 1`
     );
