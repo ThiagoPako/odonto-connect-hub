@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useState, useEffect } from "react";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { CalendarDays, Users, UserRound, Building2, RefreshCw } from "lucide-react";
+import { CalendarDays, Users, UserRound, Building2, RefreshCw, FileText, Landmark, Activity } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { clinicorpApi } from "@/lib/clinicorpApi";
