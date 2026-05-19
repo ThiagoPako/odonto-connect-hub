@@ -623,13 +623,13 @@ async function projectAppointmentToLocal(pool, a, cpApptId, tenantId = null) {
   } else if (data) {
     const { randomUUID } = await import('crypto');
     const id = randomUUID();
-    const tenantId = await resolveTenantId(pool);
+    const tId = await resolveTenantId(pool, tenantId);
     await pool.query(
       `INSERT INTO agendamentos
          (id, paciente_id, dentista_id, data, hora, duracao, procedimento, status, observacoes,
           categoria, categoria_cor, clinicorp_appointment_id, last_clinicorp_sync_at, tenant_id)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, NOW(), $13)`,
-      [id, pacienteId, dentistaId, data, hora, duracao, procedimento, status, observacoes, procedimento, categoriaCor, cpApptId, tenantId]
+      [id, pacienteId, dentistaId, data, hora, duracao, procedimento, status, observacoes, procedimento, categoriaCor, cpApptId, tId]
     );
     agendamentoId = id;
   }
