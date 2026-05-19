@@ -46,27 +46,36 @@ export interface ExameStats {
   total: number;
 }
 
+async function unwrap<T>(p: Promise<{ data: T | null; error: string | null }>, fallback: T): Promise<T> {
+  const r = await p;
+  if (r.error) throw new Error(r.error);
+  return (r.data ?? fallback) as T;
+}
+
 export const examesApi = {
   list: (params: Partial<{ status: ExameStatus; q: string; paciente_id: string; from: string; to: string; terceirizado: boolean }> = {}) => {
-    const qs = new URLSearchParams();
-    Object.entries(params).forEach(([k, v]) => { if (v != null && v !== "") qs.set(k, String(v)); });
-    return vpsApiFetch<Exame[]>(`/exames${qs.toString() ? `?${qs}` : ""}`);
+    const qs: Record<string, string> = {};
+    Object.entries(params).forEach(([k, v]) => { if (v != null && v !== "") qs[k] = String(v); });
+    return unwrap<Exame[]>(vpsApiFetch<Exame[]>("/exames", { params: qs }), []);
   },
-  stats: () => vpsApiFetch<ExameStats>("/exames/stats"),
+  stats: () => unwrap<ExameStats>(
+    vpsApiFetch<ExameStats>("/exames/stats"),
+    { novo:0, em_andamento:0, aguardando_laudo:0, concluido:0, entregue:0, cancelado:0, total:0 }
+  ),
   create: (data: Partial<Exame>) =>
-    vpsApiFetch<Exame>("/exames", { method: "POST", body: JSON.stringify(data) }),
+    unwrap<Exame>(vpsApiFetch<Exame>("/exames", { method: "POST", body: data }), {} as Exame),
   update: (id: string, data: Partial<Exame>) =>
-    vpsApiFetch<Exame>(`/exames/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+    unwrap<Exame>(vpsApiFetch<Exame>(`/exames/${id}`, { method: "PATCH", body: data }), {} as Exame),
   remove: (id: string) =>
-    vpsApiFetch<{ success: boolean }>(`/exames/${id}`, { method: "DELETE" }),
+    unwrap<{ success: boolean }>(vpsApiFetch<{ success: boolean }>(`/exames/${id}`, { method: "DELETE" }), { success: false }),
 };
 
 export const exameTiposApi = {
-  list: () => vpsApiFetch<ExameTipo[]>("/exame-tipos"),
+  list: () => unwrap<ExameTipo[]>(vpsApiFetch<ExameTipo[]>("/exame-tipos"), []),
   upsert: (data: Partial<ExameTipo>) =>
-    vpsApiFetch<ExameTipo>("/exame-tipos", { method: "POST", body: JSON.stringify(data) }),
+    unwrap<ExameTipo>(vpsApiFetch<ExameTipo>("/exame-tipos", { method: "POST", body: data }), {} as ExameTipo),
   remove: (id: string) =>
-    vpsApiFetch<{ success: boolean }>(`/exame-tipos/${id}`, { method: "DELETE" }),
+    unwrap<{ success: boolean }>(vpsApiFetch<{ success: boolean }>(`/exame-tipos/${id}`, { method: "DELETE" }), { success: false }),
 };
 
 export const STATUS_LABELS: Record<ExameStatus, string> = {
