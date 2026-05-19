@@ -95,21 +95,37 @@ async function clinicorpFetch(settings, pathName, { method = 'GET', query = {}, 
     }
   }
 
-  const ctrl = new AbortController();
-  const timeout = setTimeout(() => ctrl.abort(), 30_000);
-  try {
-    const requestOnce = async (authMode) => {
+  const maxRetries = 3;
+  let retryCount = 0;
+
+  const requestOnceWithRetry = async (authMode) => {
+    const ctrl = new AbortController();
+    const timeout = setTimeout(() => ctrl.abort(), 45_000); // 45s timeout
+    
+    try {
       const headers = clinicorpAuthHeaders(settings, authMode);
       if (body !== undefined) headers['Content-Type'] = 'application/json';
+      
       const res = await fetch(url.toString(), {
         method,
         headers,
         body: body !== undefined ? JSON.stringify(body) : undefined,
         signal: ctrl.signal,
       });
+
       const text = await res.text();
       let data;
       try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+
+      if (res.status === 429 && retryCount < maxRetries) {
+        retryCount++;
+        // Backoff exponencial: 2s, 4s, 8s...
+        const delay = Math.pow(2, retryCount) * 1000;
+        console.warn(`[clinicorp] HTTP 429 detectado em ${pathName}. Retentando em ${delay}ms (tentativa ${retryCount})...`);
+        await new Promise(r => setTimeout(r, delay));
+        return requestOnceWithRetry(authMode);
+      }
+
       if (!res.ok) {
         const err = new Error(`Clinicorp ${method} ${pathName} → HTTP ${res.status}: ${typeof data === 'string' ? data : JSON.stringify(data)}`);
         err.status = res.status;
@@ -118,18 +134,20 @@ async function clinicorpFetch(settings, pathName, { method = 'GET', query = {}, 
         throw err;
       }
       return data;
-    };
-
-    try {
-      return await requestOnce('basic');
-    } catch (err) {
-      if (err?.status === 401) return await requestOnce('bearer');
-      throw err;
+    } finally {
+      clearTimeout(timeout);
     }
-  } finally {
-    clearTimeout(timeout);
+  };
+
+  try {
+    return await requestOnceWithRetry('basic');
+  } catch (err) {
+    // Se falhar 401 no basic, tenta bearer
+    if (err?.status === 401) return await requestOnceWithRetry('bearer');
+    throw err;
   }
 }
+
 
 // ─── High-level API helpers ───────────────────────────────────
 export const clinicorpApi = {
