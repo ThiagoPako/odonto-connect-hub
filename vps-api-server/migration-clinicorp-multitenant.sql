@@ -15,77 +15,104 @@ ALTER TABLE clinicorp_patients               ADD COLUMN IF NOT EXISTS tenant_id 
 ALTER TABLE clinicorp_appointments           ADD COLUMN IF NOT EXISTS tenant_id UUID;
 ALTER TABLE clinicorp_estimates              ADD COLUMN IF NOT EXISTS tenant_id UUID;
 
--- 2) Backfill: associa registros existentes ao tenant atual (se houver apenas 1 tenant ativo
---    com credenciais Clinicorp, atribui tudo a ele). Caso multi-tenant já exista, ignora.
+-- 2) Backfill: associa registros existentes a um tenant.
+--    Estratégia: usa tenant das credenciais Clinicorp; se não houver, usa o
+--    primeiro tenant ativo do sistema (apps single-tenant existentes).
 DO $$
 DECLARE
   v_tenant_id UUID;
-  v_count INT;
 BEGIN
-  SELECT COUNT(DISTINCT tenant_id) INTO v_count FROM clinicorp_user_credentials WHERE tenant_id IS NOT NULL;
-  IF v_count = 1 THEN
-    SELECT tenant_id INTO v_tenant_id FROM clinicorp_user_credentials WHERE tenant_id IS NOT NULL LIMIT 1;
+  BEGIN
+    SELECT tenant_id INTO v_tenant_id
+    FROM clinicorp_user_credentials
+    WHERE tenant_id IS NOT NULL
+    ORDER BY created_at NULLS LAST
+    LIMIT 1;
+  EXCEPTION WHEN undefined_table OR undefined_column THEN
+    v_tenant_id := NULL;
+  END;
+
+  IF v_tenant_id IS NULL THEN
+    BEGIN
+      SELECT id INTO v_tenant_id FROM tenants WHERE ativo = TRUE ORDER BY created_at LIMIT 1;
+    EXCEPTION WHEN undefined_table OR undefined_column THEN
+      BEGIN
+        SELECT id INTO v_tenant_id FROM tenants ORDER BY created_at LIMIT 1;
+      EXCEPTION WHEN undefined_table THEN
+        v_tenant_id := NULL;
+      END;
+    END;
+  END IF;
+
+  IF v_tenant_id IS NOT NULL THEN
     UPDATE clinicorp_clinics                SET tenant_id = v_tenant_id WHERE tenant_id IS NULL;
     UPDATE clinicorp_professionals          SET tenant_id = v_tenant_id WHERE tenant_id IS NULL;
-    UPDATE clinicorp_chairs                 SET tenant_id = v_tenant_id WHERE tenant_id IS NULL;
-    UPDATE clinicorp_appointment_categories SET tenant_id = v_tenant_id WHERE tenant_id IS NULL;
-    UPDATE clinicorp_specialties            SET tenant_id = v_tenant_id WHERE tenant_id IS NULL;
+    BEGIN UPDATE clinicorp_chairs                 SET tenant_id = v_tenant_id WHERE tenant_id IS NULL; EXCEPTION WHEN undefined_table THEN NULL; END;
+    BEGIN UPDATE clinicorp_appointment_categories SET tenant_id = v_tenant_id WHERE tenant_id IS NULL; EXCEPTION WHEN undefined_table THEN NULL; END;
+    BEGIN UPDATE clinicorp_specialties            SET tenant_id = v_tenant_id WHERE tenant_id IS NULL; EXCEPTION WHEN undefined_table THEN NULL; END;
     UPDATE clinicorp_patients               SET tenant_id = v_tenant_id WHERE tenant_id IS NULL;
     UPDATE clinicorp_appointments           SET tenant_id = v_tenant_id WHERE tenant_id IS NULL;
-    UPDATE clinicorp_estimates              SET tenant_id = v_tenant_id WHERE tenant_id IS NULL;
+    BEGIN UPDATE clinicorp_estimates              SET tenant_id = v_tenant_id WHERE tenant_id IS NULL; EXCEPTION WHEN undefined_table THEN NULL; END;
   END IF;
-EXCEPTION WHEN undefined_table THEN
-  -- clinicorp_user_credentials ainda não existe; ignora backfill
-  NULL;
 END $$;
 
--- 3) Recria PKs como compostas (id, tenant_id) para permitir múltiplos tenants
-DO $$
-BEGIN
-  -- clinicorp_clinics
+-- 3) Recria PKs como compostas (id, tenant_id). Cada tabela em bloco isolado
+--    para que falha em uma não bloqueie as outras.
+DO $$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname='clinicorp_clinics_pkey') THEN
     ALTER TABLE clinicorp_clinics DROP CONSTRAINT clinicorp_clinics_pkey;
   END IF;
   ALTER TABLE clinicorp_clinics ADD CONSTRAINT clinicorp_clinics_pkey PRIMARY KEY (id, tenant_id);
+EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'PK clinicorp_clinics: %', SQLERRM; END $$;
 
+DO $$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname='clinicorp_professionals_pkey') THEN
     ALTER TABLE clinicorp_professionals DROP CONSTRAINT clinicorp_professionals_pkey;
   END IF;
   ALTER TABLE clinicorp_professionals ADD CONSTRAINT clinicorp_professionals_pkey PRIMARY KEY (id, tenant_id);
+EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'PK clinicorp_professionals: %', SQLERRM; END $$;
 
+DO $$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname='clinicorp_chairs_pkey') THEN
     ALTER TABLE clinicorp_chairs DROP CONSTRAINT clinicorp_chairs_pkey;
   END IF;
   ALTER TABLE clinicorp_chairs ADD CONSTRAINT clinicorp_chairs_pkey PRIMARY KEY (id, tenant_id);
+EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'PK clinicorp_chairs: %', SQLERRM; END $$;
 
+DO $$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname='clinicorp_appointment_categories_pkey') THEN
     ALTER TABLE clinicorp_appointment_categories DROP CONSTRAINT clinicorp_appointment_categories_pkey;
   END IF;
   ALTER TABLE clinicorp_appointment_categories ADD CONSTRAINT clinicorp_appointment_categories_pkey PRIMARY KEY (id, tenant_id);
+EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'PK clinicorp_appointment_categories: %', SQLERRM; END $$;
 
+DO $$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname='clinicorp_specialties_pkey') THEN
     ALTER TABLE clinicorp_specialties DROP CONSTRAINT clinicorp_specialties_pkey;
   END IF;
   ALTER TABLE clinicorp_specialties ADD CONSTRAINT clinicorp_specialties_pkey PRIMARY KEY (id, tenant_id);
+EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'PK clinicorp_specialties: %', SQLERRM; END $$;
 
+DO $$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname='clinicorp_patients_pkey') THEN
     ALTER TABLE clinicorp_patients DROP CONSTRAINT clinicorp_patients_pkey;
   END IF;
   ALTER TABLE clinicorp_patients ADD CONSTRAINT clinicorp_patients_pkey PRIMARY KEY (id, tenant_id);
+EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'PK clinicorp_patients: %', SQLERRM; END $$;
 
+DO $$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname='clinicorp_appointments_pkey') THEN
     ALTER TABLE clinicorp_appointments DROP CONSTRAINT clinicorp_appointments_pkey;
   END IF;
   ALTER TABLE clinicorp_appointments ADD CONSTRAINT clinicorp_appointments_pkey PRIMARY KEY (id, tenant_id);
+EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'PK clinicorp_appointments: %', SQLERRM; END $$;
 
+DO $$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname='clinicorp_estimates_pkey') THEN
     ALTER TABLE clinicorp_estimates DROP CONSTRAINT clinicorp_estimates_pkey;
   END IF;
   ALTER TABLE clinicorp_estimates ADD CONSTRAINT clinicorp_estimates_pkey PRIMARY KEY (id, tenant_id);
-EXCEPTION WHEN OTHERS THEN
-  -- Alguma tabela pode ter tenant_id NULL ainda; nesse caso pula a recriação de PK
-  RAISE NOTICE 'Skipping PK conversion: %', SQLERRM;
-END $$;
+EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'PK clinicorp_estimates: %', SQLERRM; END $$;
 
 -- 4) Índices auxiliares por tenant
 CREATE INDEX IF NOT EXISTS idx_clinicorp_appts_tenant ON clinicorp_appointments(tenant_id, date);
