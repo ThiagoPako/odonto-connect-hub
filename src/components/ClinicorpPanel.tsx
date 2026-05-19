@@ -347,6 +347,87 @@ export function ClinicorpPanel() {
           </Button>
         </div>
         
+        {/* Sync Status Real-time Panel */}
+        {(syncing || syncStatus) && (
+          <div className="rounded-2xl border border-border bg-card/50 overflow-hidden animate-in fade-in slide-in-from-top-4">
+            <div className="p-4 border-b border-border bg-muted/30 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                {syncing ? (
+                  <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                ) : syncStatus?.errors.length ? (
+                  <AlertCircle className="h-4 w-4 text-destructive" />
+                ) : (
+                  <CheckCircle2 className="h-4 w-4 text-success" />
+                )}
+                <span className="text-sm font-semibold">Status do Sync em Tempo Real</span>
+              </div>
+              {syncStatus && (
+                <span className="text-[10px] font-mono text-muted-foreground">
+                  Tempo decorrido: {Math.round((Date.now() - syncStatus.startTime) / 1000)}s
+                </span>
+              )}
+            </div>
+            
+            <div className="p-4 space-y-4">
+              <div className="flex flex-col gap-1">
+                <p className="text-sm font-medium">{syncStatus?.step}</p>
+                <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
+                  <div 
+                    className={cn(
+                      "h-full transition-all duration-500",
+                      syncing ? "bg-primary animate-pulse w-2/3" : syncStatus?.completed ? "bg-success w-full" : "bg-primary w-full"
+                    )} 
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                {[
+                  { label: "Clínicas", key: "clinics", icon: Building2 },
+                  { label: "Profissionais", key: "professionals", icon: User },
+                  { label: "Pacientes", key: "patients", icon: Users },
+                  { label: "Agendamentos", key: "appointments", icon: CalendarDays },
+                ].map((item) => (
+                  <div key={item.key} className="p-3 rounded-xl bg-muted/40 border border-border/50 flex flex-col items-center gap-1">
+                    <item.icon className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">{item.label}</span>
+                    <span className="text-lg font-bold">{syncStatus?.summary[item.key] || 0}</span>
+                  </div>
+                ))}
+              </div>
+
+              {syncStatus?.errors.length ? (
+                <div className="rounded-lg bg-destructive/5 border border-destructive/20 p-3">
+                  <p className="text-xs font-bold text-destructive flex items-center gap-1.5 mb-2">
+                    <AlertCircle className="h-3.5 w-3.5" /> Erros encontrados:
+                  </p>
+                  <ul className="text-[11px] text-destructive/80 space-y-1 font-mono">
+                    {syncStatus.errors.map((err, i) => (
+                      <li key={i} className="flex gap-2">
+                        <span className="opacity-50">[{i+1}]</span>
+                        <span className="break-all">{err}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : syncStatus?.completed && (
+                <div className="text-center py-2">
+                  <p className="text-xs text-success font-medium flex items-center justify-center gap-1.5">
+                    <CheckCircle2 className="h-3.5 w-3.5" /> Todos os módulos processados com sucesso
+                  </p>
+                </div>
+              )}
+            </div>
+            {syncStatus?.completed && (
+              <div className="p-3 border-t border-border bg-muted/20 flex justify-end">
+                <Button variant="ghost" size="xs" className="h-7 text-[10px] uppercase font-bold" onClick={() => setSyncStatus(null)}>
+                  Fechar relatório
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Test result panel (Global) */}
         {testResult && (
           <div className={`rounded-lg border p-3 space-y-2 mt-4 ${
