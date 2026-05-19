@@ -1039,7 +1039,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
   const fromDate = from || new Date(today.getTime() - 30 * 86400_000).toISOString().slice(0, 10);
   const toDate = to || new Date(today.getTime() + 60 * 86400_000).toISOString().slice(0, 10);
 
-  const summary = { clinics: 0, professionals: 0, patients: 0, chairs: 0, categories: 0, specialties: 0, appointments: 0, estimates: 0, invoices: 0, payments: 0, cashflow: 0 };
+  const summary = { clinics: 0, professionals: 0, patients: 0, chairs: 0, categories: 0, specialties: 0, appointments: 0, estimates: 0, invoices: 0, payments: 0, cashflow: 0, evolutions: 0, documents: 0 };
   const errors = [];
 
   // Backfill tenant_id em registros antigos vindos do Clinicorp (criados antes do fix)
