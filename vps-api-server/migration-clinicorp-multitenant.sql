@@ -14,6 +14,8 @@ ALTER TABLE clinicorp_specialties            ADD COLUMN IF NOT EXISTS tenant_id 
 ALTER TABLE clinicorp_patients               ADD COLUMN IF NOT EXISTS tenant_id UUID;
 ALTER TABLE clinicorp_appointments           ADD COLUMN IF NOT EXISTS tenant_id UUID;
 ALTER TABLE clinicorp_estimates              ADD COLUMN IF NOT EXISTS tenant_id UUID;
+ALTER TABLE clinicorp_evolutions             ADD COLUMN IF NOT EXISTS tenant_id UUID;
+ALTER TABLE clinicorp_documents              ADD COLUMN IF NOT EXISTS tenant_id UUID;
 
 -- 2) Backfill: associa registros existentes a um tenant.
 --    Estratégia: usa tenant das credenciais Clinicorp; se não houver, usa o
@@ -53,6 +55,8 @@ BEGIN
     UPDATE clinicorp_patients               SET tenant_id = v_tenant_id WHERE tenant_id IS NULL;
     UPDATE clinicorp_appointments           SET tenant_id = v_tenant_id WHERE tenant_id IS NULL;
     BEGIN UPDATE clinicorp_estimates              SET tenant_id = v_tenant_id WHERE tenant_id IS NULL; EXCEPTION WHEN undefined_table THEN NULL; END;
+    BEGIN UPDATE clinicorp_evolutions             SET tenant_id = v_tenant_id WHERE tenant_id IS NULL; EXCEPTION WHEN undefined_table THEN NULL; END;
+    BEGIN UPDATE clinicorp_documents              SET tenant_id = v_tenant_id WHERE tenant_id IS NULL; EXCEPTION WHEN undefined_table THEN NULL; END;
   END IF;
 END $$;
 
@@ -114,6 +118,20 @@ DO $$ BEGIN
   ALTER TABLE clinicorp_estimates ADD CONSTRAINT clinicorp_estimates_pkey PRIMARY KEY (id, tenant_id);
 EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'PK clinicorp_estimates: %', SQLERRM; END $$;
 
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname='clinicorp_evolutions_pkey') THEN
+    ALTER TABLE clinicorp_evolutions DROP CONSTRAINT clinicorp_evolutions_pkey;
+  END IF;
+  ALTER TABLE clinicorp_evolutions ADD CONSTRAINT clinicorp_evolutions_pkey PRIMARY KEY (id, tenant_id);
+EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'PK clinicorp_evolutions: %', SQLERRM; END $$;
+
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname='clinicorp_documents_pkey') THEN
+    ALTER TABLE clinicorp_documents DROP CONSTRAINT clinicorp_documents_pkey;
+  END IF;
+  ALTER TABLE clinicorp_documents ADD CONSTRAINT clinicorp_documents_pkey PRIMARY KEY (id, tenant_id);
+EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'PK clinicorp_documents: %', SQLERRM; END $$;
+
 -- 4) Índices auxiliares por tenant
 CREATE INDEX IF NOT EXISTS idx_clinicorp_appts_tenant ON clinicorp_appointments(tenant_id, date);
 CREATE INDEX IF NOT EXISTS idx_clinicorp_pats_tenant ON clinicorp_patients(tenant_id);
@@ -157,3 +175,10 @@ WHERE d.clinicorp_professional_id::text = cp.id::text
 CREATE UNIQUE INDEX IF NOT EXISTS uq_dentistas_tenant_nome
   ON dentistas (tenant_id, LOWER(TRIM(nome)))
   WHERE nome IS NOT NULL AND TRIM(nome) <> '';
+
+-- 8) Índices únicos para espelhos multi-tenant (garante integridade do ON CONFLICT)
+CREATE UNIQUE INDEX IF NOT EXISTS uq_clinicorp_categories_tenant ON clinicorp_appointment_categories(id, tenant_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_clinicorp_specialties_tenant ON clinicorp_specialties(id, tenant_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_clinicorp_estimates_tenant ON clinicorp_estimates(id, tenant_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_clinicorp_evolutions_tenant ON clinicorp_evolutions(id, tenant_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_clinicorp_documents_tenant ON clinicorp_documents(id, tenant_id);
