@@ -1100,8 +1100,19 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
 
   const status = errors.length === 0 ? 'success' : (Object.values(summary).some(Boolean) ? 'partial' : 'error');
   
+  // Backfill final de profissionais: garante que agendamentos vinculados a dentistas novos sejam processados
+  try {
+    const { rows: pcount } = await pool.query(`SELECT COUNT(*)::int AS c FROM clinicorp_professionals`);
+    if ((pcount[0]?.c || 0) > 0) {
+      console.log('[clinicorp sync] Re-projetando agendamentos final para consistência...');
+      const { rows: apptsToReproject } = await pool.query('SELECT id, raw FROM clinicorp_appointments ORDER BY date DESC LIMIT 500');
+      for (const r of apptsToReproject) {
+        try { await projectAppointmentToLocal(pool, r.raw, r.id, tenant_id); } catch (e) { /* skip */ }
+      }
+    }
+  } catch (e) { console.error('[clinicorp sync] final backfill', e.message); }
+
   // Se forem as globais (carregadas via id=1), atualiza o status na tabela.
-  // Se forem per-user settings passadas explicitamente, pulamos a escrita no id=1.
   if (settings.id === 1 || (!api_token && settings.id === undefined)) {
     await pool.query(
       `UPDATE clinicorp_settings SET last_sync_at = NOW(), last_sync_status = $1, last_sync_error = $2, updated_at = NOW() WHERE id = 1`,
@@ -1110,8 +1121,8 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     invalidateSettings();
   }
 
-
   return { status, summary, errors, from: fromDate, to: toDate };
+
 }
 
 /**
