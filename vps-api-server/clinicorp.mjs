@@ -373,7 +373,7 @@ async function upsertAppointment(pool, a, tenantId = null) {
        raw = EXCLUDED.raw,
        synced_at = NOW()`,
     [
-      id, tId,
+      String(id), tId,
       a.BusinessId ?? a.Clinic_BusinessId ?? null,
       a.PatientId ?? a.Patient_PersonId ?? null,
       a.PatientName ?? a.Patient_FullName ?? a.Patient_Name ?? null,
@@ -404,7 +404,7 @@ async function upsertAppointment(pool, a, tenantId = null) {
            mobile_phone = COALESCE(NULLIF(EXCLUDED.mobile_phone,''), clinicorp_patients.mobile_phone),
            synced_at = NOW()`,
         [
-          pid, tId,
+          String(pid), tId,
           pname,
           String(a.PatientPhone ?? a.MobilePhone ?? '') || null,
           JSON.stringify({ derived_from: 'appointment', appointment_id: id, id: pid, name: pname }),
@@ -413,17 +413,18 @@ async function upsertAppointment(pool, a, tenantId = null) {
     }
   } catch (e) { console.error('[clinicorp] patient stub from appt:', e.message); }
 
-  try { await projectAppointmentToLocal(pool, a, id, tId); }
+  try { await projectAppointmentToLocal(pool, a, String(id), tId); }
   catch (e) { console.error('[clinicorp] projectAppointmentToLocal:', e.message); }
 }
 
-async function upsertEvolution(pool, e) {
+async function upsertEvolution(pool, e, tenantId = null) {
   const id = e.id ?? e.EvolutionId;
   if (!id) return;
+  const tId = await resolveTenantId(pool, tenantId);
   await pool.query(
-    `INSERT INTO clinicorp_evolutions (id, patient_id, professional_id, treatment_id, description, date, raw, synced_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7, NOW())
-     ON CONFLICT (id) DO UPDATE SET
+    `INSERT INTO clinicorp_evolutions (id, tenant_id, patient_id, professional_id, treatment_id, description, date, raw, synced_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8, NOW())
+     ON CONFLICT (id, tenant_id) DO UPDATE SET
        patient_id = EXCLUDED.patient_id,
        professional_id = EXCLUDED.professional_id,
        treatment_id = EXCLUDED.treatment_id,
@@ -431,17 +432,18 @@ async function upsertEvolution(pool, e) {
        date = EXCLUDED.date,
        raw = EXCLUDED.raw,
        synced_at = NOW()`,
-    [id, e.PatientId, e.ProfessionalId, e.TreatmentId, e.Description, e.Date, JSON.stringify(e)]
+    [String(id), tId, e.PatientId, e.ProfessionalId, e.TreatmentId, e.Description, e.Date, JSON.stringify(e)]
   );
 }
 
-async function upsertDocument(pool, d) {
+async function upsertDocument(pool, d, tenantId = null) {
   const id = d.id ?? d.DocumentId;
   if (!id) return;
+  const tId = await resolveTenantId(pool, tenantId);
   await pool.query(
-    `INSERT INTO clinicorp_documents (id, patient_id, title, file_url, category, date, raw, synced_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7, NOW())
-     ON CONFLICT (id) DO UPDATE SET
+    `INSERT INTO clinicorp_documents (id, tenant_id, patient_id, title, file_url, category, date, raw, synced_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8, NOW())
+     ON CONFLICT (id, tenant_id) DO UPDATE SET
        patient_id = EXCLUDED.patient_id,
        title = EXCLUDED.title,
        file_url = EXCLUDED.file_url,
@@ -449,7 +451,7 @@ async function upsertDocument(pool, d) {
        date = EXCLUDED.date,
        raw = EXCLUDED.raw,
        synced_at = NOW()`,
-    [id, d.PatientId, d.Title, d.FileUrl, d.Category, d.Date, JSON.stringify(d)]
+    [String(id), tId, d.PatientId, d.Title, d.FileUrl, d.Category, d.Date, JSON.stringify(d)]
   );
 }
 
