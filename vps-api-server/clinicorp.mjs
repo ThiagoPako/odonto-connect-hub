@@ -1627,7 +1627,12 @@ export function registerClinicorp(app, pool) {
     res.json(rows);
   });
   app.get('/api/clinicorp/professionals', async (_req, res) => {
-    const { rows } = await pool.query('SELECT * FROM clinicorp_professionals ORDER BY full_name');
+    const { rows } = await pool.query(`
+      SELECT cp.*, d.id as local_id, d.ativo as local_ativo, d.cor_agenda as local_cor
+      FROM clinicorp_professionals cp
+      LEFT JOIN dentistas d ON d.clinicorp_professional_id = cp.id::text
+      ORDER BY cp.full_name
+    `);
     res.json(rows);
   });
   app.get('/api/clinicorp/categories', async (_req, res) => {
