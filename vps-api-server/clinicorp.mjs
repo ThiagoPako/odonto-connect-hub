@@ -536,7 +536,7 @@ function decideOverwrite({ strategy, keepLocal, localRow, clinicorpUpdatedAt }) 
   return { write: false, decision: 'kept_local_newer' };
 }
 
-async function projectAppointmentToLocal(pool, a, cpApptId) {
+async function projectAppointmentToLocal(pool, a, cpApptId, tenantId = null) {
   const cpPatientId = a.PatientId ?? a.Patient_PersonId ?? null;
   const cpProfId = a.ProfessionalId ?? a.Dentist_PersonId ?? a.ScheduleToId ?? null;
   const cpClinicId = a.BusinessId ?? a.Clinic_BusinessId ?? a.ClinicId ?? null;
