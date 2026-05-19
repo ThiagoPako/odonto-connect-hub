@@ -156,6 +156,7 @@ export const clinicorpApi = {
   getAvailableDays: (s, query) => clinicorpFetch(s, '/appointment/get_avaliable_days', { query }),
   getAvailableTimesCalendar: (s, query) => clinicorpFetch(s, '/appointment/get_avaliable_times_calendar', { query }),
   getPatient: (s, id) => clinicorpFetch(s, '/patient/get', { query: { id } }),
+  listPatients: (s) => clinicorpFetch(s, '/patient/list'),
   patientBirthdays: (s, query) => clinicorpFetch(s, '/patient/birthdays', { query }),
   createPatient: (s, body) => clinicorpFetch(s, '/patient/create', { method: 'POST', body }),
   patientAppointments: (s, patientId) => clinicorpFetch(s, '/patient/list_appointments', { query: { patient_id: patientId } }),
