@@ -9,7 +9,9 @@ export function ClinicorpMirrorAgenda({ refreshTrigger = 0 }: { refreshTrigger?:
   const [currentDate, setCurrentDate] = useState(new Date());
   const [appointments, setAppointments] = useState<any[]>([]);
   const [professionals, setProfessionals] = useState<any[]>([]);
+  const [chairs, setChairs] = useState<any[]>([]);
   const [selectedProfId, setSelectedProfId] = useState<string>("all");
+  const [selectedChairId, setSelectedChairId] = useState<string>("all");
   const [loading, setLoading] = useState(false);
 
   const dateStr = currentDate.toISOString().slice(0, 10);
