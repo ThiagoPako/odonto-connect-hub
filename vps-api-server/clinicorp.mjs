@@ -1334,6 +1334,114 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
 }
 
 /**
+ * Bidirectional Mirroring (Push to Clinicorp)
+ */
+export const clinicorpPush = {
+  log: async (pool, data) => {
+    try {
+      await pool.query(
+        `INSERT INTO clinicorp_push_log (entity_type, local_id, clinicorp_id, action, status, payload, response, error_message)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [data.entity, data.local_id, data.clinicorp_id, data.action, data.status,
+         data.payload ? JSON.stringify(data.payload) : null,
+         data.response ? JSON.stringify(data.response) : null,
+         data.error]
+      );
+    } catch (e) { console.error('[clinicorp push log]', e.message); }
+  },
+
+  pushPatient: async (pool, patientId, tenantId = null) => {
+    try {
+      const s = await loadSettings(pool);
+      if (!s?.enabled) return;
+      const { rows } = await pool.query('SELECT * FROM pacientes WHERE id = $1', [patientId]);
+      const p = rows[0];
+      if (!p) return;
+
+      const body = {
+        Name: p.nome,
+        MobilePhone: p.telefone,
+        Email: p.email,
+        BirthDate: p.data_nascimento,
+        Sex: p.sexo,
+        DocumentId: p.cpf,
+      };
+
+      if (p.clinicorp_patient_id) {
+        const res = await clinicorpApi.updatePatient(s, p.clinicorp_patient_id, body);
+        await clinicorpPush.log(pool, { entity: 'patient', local_id: patientId, clinicorp_id: p.clinicorp_patient_id, action: 'update', status: 'success', payload: body, response: res });
+      } else {
+        const res = await clinicorpApi.createPatient(s, body);
+        const cpId = res.id ?? res.Patient_PersonId;
+        if (cpId) {
+          await pool.query('UPDATE pacientes SET clinicorp_patient_id = $1 WHERE id = $2', [cpId, patientId]);
+          await clinicorpPush.log(pool, { entity: 'patient', local_id: patientId, clinicorp_id: cpId, action: 'create', status: 'success', payload: body, response: res });
+        }
+      }
+    } catch (e) {
+      await clinicorpPush.log(pool, { entity: 'patient', local_id: patientId, action: 'error', error: e.message });
+      console.error('[clinicorp push patient]', e.message);
+    }
+  },
+
+  pushAppointment: async (pool, appointmentId, tenantId = null) => {
+    try {
+      const s = await loadSettings(pool);
+      if (!s?.enabled) return;
+      const { rows } = await pool.query(`
+        SELECT a.*, p.clinicorp_patient_id, d.clinicorp_professional_id
+        FROM agendamentos a
+        LEFT JOIN pacientes p ON a.paciente_id = p.id
+        LEFT JOIN dentistas d ON a.dentista_id = d.id
+        WHERE a.id = $1
+      `, [appointmentId]);
+      const a = rows[0];
+      if (!a) return;
+
+      const body = {
+        PatientId: a.clinicorp_patient_id,
+        ProfessionalId: a.clinicorp_professional_id,
+        Date: a.data,
+        FromTime: a.hora,
+        Notes: a.observacoes,
+        Status: a.status,
+      };
+
+      if (a.clinicorp_appointment_id) {
+        const res = await clinicorpApi.updateAppointment(s, a.clinicorp_appointment_id, body);
+        await clinicorpPush.log(pool, { entity: 'appointment', local_id: appointmentId, clinicorp_id: a.clinicorp_appointment_id, action: 'update', status: 'success', payload: body, response: res });
+      } else {
+        const res = await clinicorpApi.createAppointment(s, body);
+        const cpId = res.id ?? res.AppointmentId;
+        if (cpId) {
+          await pool.query('UPDATE agendamentos SET clinicorp_appointment_id = $1 WHERE id = $2', [cpId, appointmentId]);
+          await clinicorpPush.log(pool, { entity: 'appointment', local_id: appointmentId, clinicorp_id: cpId, action: 'create', status: 'success', payload: body, response: res });
+        }
+      }
+    } catch (e) {
+      await clinicorpPush.log(pool, { entity: 'appointment', local_id: appointmentId, action: 'error', error: e.message });
+      console.error('[clinicorp push appointment]', e.message);
+    }
+  },
+
+  deleteAppointment: async (pool, appointmentId) => {
+    try {
+      const s = await loadSettings(pool);
+      if (!s?.enabled) return;
+      const { rows } = await pool.query('SELECT clinicorp_appointment_id FROM agendamentos WHERE id = $1', [appointmentId]);
+      const cpId = rows[0]?.clinicorp_appointment_id;
+      if (cpId) {
+        await clinicorpApi.deleteAppointment(s, cpId);
+        await clinicorpPush.log(pool, { entity: 'appointment', local_id: appointmentId, clinicorp_id: cpId, action: 'delete', status: 'success' });
+      }
+    } catch (e) {
+      console.error('[clinicorp delete appointment]', e.message);
+    }
+  }
+};
+
+/**
+
  * Tick de reconciliação agendada.
  * - Usa lock no Postgres para evitar execução concorrente / múltiplas instâncias.
  * - Catch-up automático após interrupções: se last_sync_at é antigo, alarga a janela.
