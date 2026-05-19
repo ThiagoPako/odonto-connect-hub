@@ -715,7 +715,7 @@ async function projectPatientToLocal(pool, p, tenantId = null) {
   }
   await ensureLeadForPatient(pool, pacienteId, cpId, {
     nome: p.Name, telefone: onlyDigits(p.MobilePhone), email: p.Email,
-  });
+  }, tenantId);
   return pacienteId;
 }
 
