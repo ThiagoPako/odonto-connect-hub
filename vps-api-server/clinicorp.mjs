@@ -135,7 +135,20 @@ async function clinicorpFetch(settings, pathName, { method = 'GET', query = {}, 
 
 // ─── High-level API helpers ───────────────────────────────────
 export const clinicorpApi = {
-  listUsers: (s) => clinicorpFetch(s, '/security/list_users'),
+  listUsers: async (s) => {
+    // A API Clinicorp pode retornar lista direta, ou envelope {Results|Users|Items|data}.
+    // Tentamos múltiplos endpoints porque alguns subscribers expõem rotas distintas.
+    const endpoints = ['/security/list_users', '/security/user/list', '/user/list'];
+    for (const ep of endpoints) {
+      try {
+        const r = await clinicorpFetch(s, ep);
+        const list = Array.isArray(r) ? r
+          : (r?.Results || r?.Users || r?.Items || r?.data || r?.users || []);
+        if (Array.isArray(list) && list.length > 0) return list;
+      } catch (e) { /* tenta o próximo */ }
+    }
+    return [];
+  },
   listClinics: (s) => clinicorpFetch(s, '/business/list'),
   listSubscribersClinics: (s) => clinicorpFetch(s, '/group/list_subscribers_clinics'),
   listChairs: (s, businessId) => clinicorpFetch(s, '/business/list_chairs', { query: { Clinic_BusinessId: businessId } }),
@@ -207,6 +220,10 @@ async function upsertClinic(pool, c) {
 }
 
 async function upsertProfessional(pool, p) {
+  const id = p.id ?? p.Id ?? p.UserId ?? p.PersonId ?? null;
+  if (!id) return;
+  const fullName = p.FullName ?? p.Name ?? p.UserName ?? p.full_name ?? `Profissional ${id}`;
+  const userName = p.UserName ?? p.Username ?? p.Email ?? null;
   await pool.query(
     `INSERT INTO clinicorp_professionals (id, full_name, user_name, raw, synced_at)
      VALUES ($1,$2,$3,$4, NOW())
@@ -215,7 +232,7 @@ async function upsertProfessional(pool, p) {
        user_name = EXCLUDED.user_name,
        raw = EXCLUDED.raw,
        synced_at = NOW()`,
-    [p.id, p.FullName ?? null, p.UserName ?? null, JSON.stringify(p)]
+    [String(id), fullName, userName, JSON.stringify(p)]
   );
 }
 
@@ -312,20 +329,20 @@ async function upsertAppointment(pool, a) {
        synced_at = NOW()`,
     [
       id,
-      a.BusinessId ?? null,
+      a.BusinessId ?? a.Clinic_BusinessId ?? null,
       a.PatientId ?? a.Patient_PersonId ?? null,
       a.PatientName ?? null,
-      a.ProfessionalId ?? a.Dentist_PersonId ?? null,
-      a.ProfessionalName ?? null,
+      a.ProfessionalId ?? a.Dentist_PersonId ?? a.ScheduleToId ?? null,
+      a.ProfessionalName ?? a.DentistName ?? null,
       a.CategoryId ?? a.Category_id ?? null,
       a.CategoryDescription ?? a.Category ?? null,
       a.CategoryColor ?? a.Color ?? null,
       a.ChairId ?? null,
-      a.Status ?? null,
-      a.Date || a.AppointmentDate || null,
-      a.FromTime ?? a.StartTime ?? null,
-      a.ToTime ?? a.EndTime ?? null,
-      a.Notes ?? null,
+      a.Status ?? a.StatusId ?? null,
+      a.Date || a.AppointmentDate || a.date || null,
+      a.FromTime ?? a.StartTime ?? a.fromTime ?? null,
+      a.ToTime ?? a.EndTime ?? a.toTime ?? null,
+      a.Notes ?? a.notes ?? null,
       JSON.stringify(a),
     ]
   );
@@ -523,29 +540,31 @@ function decideOverwrite({ strategy, keepLocal, localRow, clinicorpUpdatedAt }) 
 
 async function projectAppointmentToLocal(pool, a, cpApptId) {
   const cpPatientId = a.PatientId ?? a.Patient_PersonId ?? null;
-  const cpProfId = a.ProfessionalId ?? a.Dentist_PersonId ?? null;
-  const cpClinicId = a.BusinessId ?? a.ClinicId ?? null;
-  const cpUpdatedAt = a.UpdateDate || a.UpdatedAt || a.LastModified || a.ModifiedAt || null;
+  const cpProfId = a.ProfessionalId ?? a.Dentist_PersonId ?? a.ScheduleToId ?? null;
+  const cpClinicId = a.BusinessId ?? a.Clinic_BusinessId ?? a.ClinicId ?? null;
+  const cpUpdatedAt = a.UpdateDate || a.UpdatedAt || a.LastModified || a.ModifiedAt || a.z_LastChange_Date || a.ModifiedDate || null;
   const policy = await resolveConflictPolicy(pool, { clinicId: cpClinicId, professionalId: cpProfId });
 
   const pacienteId = await ensureLocalPatient(pool, cpPatientId, {
     name: a.PatientName, phone: a.PatientPhone || a.MobilePhone, email: a.PatientEmail,
   });
-  const dentistaId = await ensureLocalProfessional(pool, cpProfId, a.ProfessionalName);
-  const status = mapAppointmentStatus(a.Status);
-  const data = a.Date || a.AppointmentDate || null;
-  const hora = (a.FromTime || a.StartTime || '00:00').toString().slice(0, 5);
+  const dentistaId = await ensureLocalProfessional(pool, cpProfId, a.ProfessionalName || a.DentistName);
+  const status = mapAppointmentStatus(a.Status ?? a.StatusId);
+  const rawDate = a.Date || a.AppointmentDate || a.date || null;
+  // Normaliza para YYYY-MM-DD (a API retorna ISO 8601 com timezone)
+  const data = rawDate ? String(rawDate).slice(0, 10) : null;
+  const fromT = (a.FromTime || a.StartTime || a.fromTime || '').toString();
+  const toT = (a.ToTime || a.EndTime || a.toTime || '').toString();
+  const hora = (fromT || '00:00').slice(0, 5);
   const duracao = (() => {
-    const ft = (a.FromTime || a.StartTime || '').toString();
-    const tt = (a.ToTime || a.EndTime || '').toString();
-    if (!ft || !tt) return 30;
+    if (!fromT || !toT) return 30;
     const toMin = (s) => { const [h,m] = s.split(':').map(Number); return (h||0)*60+(m||0); };
-    const d = toMin(tt) - toMin(ft);
+    const d = toMin(toT) - toMin(fromT);
     return d > 0 ? d : 30;
   })();
   const procedimento = a.CategoryDescription || a.Category || null;
   const categoriaCor = a.CategoryColor || a.Color || null;
-  const observacoes = a.Notes || null;
+  const observacoes = a.Notes || a.notes || null;
 
   const exists = await pool.query(
     `SELECT id, paciente_id, dentista_id, data, hora, duracao, procedimento, categoria,
@@ -893,6 +912,35 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
         }
       }
     } catch (e) { console.error('[clinicorp sync] pruning appointments', e.message); }
+    
+    // Backfill de profissionais a partir dos agendamentos:
+    // a Clinicorp não expõe /security/list_users de forma confiável,
+    // então derivamos os dentistas dos Dentist_PersonId distintos vistos nos agendamentos.
+    try {
+      const { rows: distinctProfs } = await pool.query(
+        `SELECT DISTINCT professional_id::text AS id,
+                MAX(raw->>'ScheduleToName') AS name_a,
+                MAX(raw->'Dentist'->>'Name') AS name_b,
+                MAX(raw->>'DentistName') AS name_c
+           FROM clinicorp_appointments
+          WHERE professional_id IS NOT NULL`
+      );
+      for (const p of distinctProfs) {
+        const name = p.name_a || p.name_b || p.name_c || `Profissional ${p.id}`;
+        await pool.query(
+          `INSERT INTO clinicorp_professionals (id, full_name, user_name, raw, synced_at)
+           VALUES ($1,$2,NULL,$3,NOW())
+           ON CONFLICT (id) DO UPDATE SET
+             full_name = COALESCE(NULLIF(EXCLUDED.full_name,''), clinicorp_professionals.full_name),
+             synced_at = NOW()`,
+          [p.id, name, JSON.stringify({ derived_from: 'appointments', id: p.id, name })]
+        );
+        // Garante existência no schema local (dentistas) com o tenant atual.
+        await ensureLocalProfessional(pool, p.id, name);
+      }
+      const { rows: pcount } = await pool.query(`SELECT COUNT(*)::int AS c FROM clinicorp_professionals`);
+      summary.professionals = pcount[0]?.c || summary.professionals;
+    } catch (e) { console.error('[clinicorp sync] backfill professionals', e.message); }
     
     // Conta pacientes únicos sincronizados (criados via ensureLocalPatient pelos agendamentos)
     try {
