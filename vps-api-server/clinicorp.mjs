@@ -426,9 +426,10 @@ async function ensureLocalProfessional(pool, cpProfId, fallbackName = null, tena
 
 async function ensureLeadForPatient(pool, pacienteId, cpPatientId, info = {}, tenantId = null) {
   if (!pacienteId) return null;
+  const tId = await resolveTenantId(pool, tenantId);
   const existing = await pool.query(
-    `SELECT id, kanban_stage FROM crm_leads WHERE paciente_id=$1 OR clinicorp_patient_id=$2 LIMIT 1`,
-    [pacienteId, cpPatientId]
+    `SELECT id, kanban_stage FROM crm_leads WHERE (paciente_id=$1 OR clinicorp_patient_id=$2) AND tenant_id=$3 LIMIT 1`,
+    [pacienteId, cpPatientId, tId]
   );
   if (existing.rows[0]) {
     const lead = existing.rows[0];
