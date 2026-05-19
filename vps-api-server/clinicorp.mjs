@@ -1021,13 +1021,23 @@ async function projectFinanceToLocal(pool, source, item, tenantId = null) {
 }
 
 // ─── Sync orchestration ───────────────────────────────────────
-export async function runFullSync(pool, { from, to, api_token, subscriber_id, base_url, tenant_id, force_metadata = false } = {}) {
+export async function runFullSync(pool, { from, to, api_token, subscriber_id, base_url, tenant_id, force_metadata = false, user_id = null } = {}) {
   // Se passarmos credenciais explícitas (ex: manual sync com per-user settings), as usamos.
-  // Caso contrário, carrega as globais.
+  // Caso contrário, tenta carregar as do usuário específico ou as globais.
   let settings;
   if (api_token && subscriber_id) {
     settings = { api_token, subscriber_id, base_url, enabled: true };
-  } else {
+  } else if (user_id) {
+    const { rows: userRows } = await pool.query(
+      `SELECT enabled, api_token, subscriber_id, base_url FROM clinicorp_user_settings WHERE user_id = $1`,
+      [user_id]
+    );
+    if (userRows[0]?.enabled && userRows[0]?.api_token && userRows[0]?.subscriber_id) {
+      settings = userRows[0];
+    }
+  }
+
+  if (!settings) {
     settings = await loadSettings(pool, true);
     if (!settings?.enabled) throw new Error('Clinicorp desabilitado');
     if (!settings.api_token || !settings.subscriber_id) {
