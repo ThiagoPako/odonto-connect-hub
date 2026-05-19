@@ -780,7 +780,7 @@ async function upsertFinancial(pool, source, item) {
 }
 
 // ─── Sync orchestration ───────────────────────────────────────
-export async function runFullSync(pool, { from, to, api_token, subscriber_id, base_url, force_metadata = false } = {}) {
+export async function runFullSync(pool, { from, to, api_token, subscriber_id, base_url, tenant_id, force_metadata = false } = {}) {
   // Se passarmos credenciais explícitas (ex: manual sync com per-user settings), as usamos.
   // Caso contrário, carrega as globais.
   let settings;
