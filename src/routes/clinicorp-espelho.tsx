@@ -15,6 +15,7 @@ export const Route = createFileRoute("/clinicorp-espelho")({
 function ClinicorpEspelhoPage() {
   const [syncing, setSyncing] = useState(false);
   const [lastSync, setLastSync] = useState<string | null>(null);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
 
   useEffect(() => {
     clinicorpApi.getSettings().then(s => {
@@ -27,6 +28,7 @@ function ClinicorpEspelhoPage() {
     try {
       const res = await clinicorpApi.sync();
       setLastSync(new Date().toLocaleString("pt-BR"));
+      setRefreshTrigger(prev => prev + 1);
       toast.success("Sincronização concluída com sucesso!");
     } catch (error) {
       toast.error("Falha ao sincronizar: " + (error as Error).message);
@@ -73,7 +75,7 @@ function ClinicorpEspelhoPage() {
           </TabsList>
 
           <TabsContent value="agenda" className="mt-0">
-            <ClinicorpMirrorAgenda />
+            <ClinicorpMirrorAgenda refreshTrigger={refreshTrigger} />
           </TabsContent>
 
           <TabsContent value="profissionais">

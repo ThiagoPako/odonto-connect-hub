@@ -5,7 +5,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ChevronLeft, ChevronRight, Clock, User2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-export function ClinicorpMirrorAgenda() {
+export function ClinicorpMirrorAgenda({ refreshTrigger = 0 }: { refreshTrigger?: number }) {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [appointments, setAppointments] = useState<any[]>([]);
   const [professionals, setProfessionals] = useState<any[]>([]);
@@ -23,7 +23,7 @@ export function ClinicorpMirrorAgenda() {
     clinicorpApi.listAppointments({ from: dateStr, to: dateStr })
       .then(setAppointments)
       .finally(() => setLoading(false));
-  }, [dateStr]);
+  }, [dateStr, refreshTrigger]);
 
   const filteredAppointments = useMemo(() => {
     if (selectedProfId === "all") return appointments;
