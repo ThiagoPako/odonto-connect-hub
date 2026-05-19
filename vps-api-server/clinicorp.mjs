@@ -922,7 +922,8 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
                 MAX(raw->>'ScheduleToName') AS name_a,
                 MAX(raw->'Dentist'->>'Name') AS name_b,
                 MAX(raw->>'DentistName') AS name_c,
-                MAX(professional_name) AS name_d
+                MAX(raw->>'ProfessionalName') AS name_d,
+                MAX(professional_name) AS name_e
            FROM clinicorp_appointments
           WHERE professional_id IS NOT NULL
           GROUP BY 1`
