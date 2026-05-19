@@ -443,7 +443,6 @@ async function ensureLeadForPatient(pool, pacienteId, cpPatientId, info = {}, te
     );
     return lead.id;
   }
-  const tId = await resolveTenantId(pool, tenantId);
   const ins = await pool.query(
     `INSERT INTO crm_leads (nome, telefone, email, origem, status, kanban_stage, paciente_id, clinicorp_patient_id, tenant_id)
      VALUES ($1,$2,$3,'clinicorp','paciente_agendado','paciente_agendado',$4,$5,$6) RETURNING id`,
