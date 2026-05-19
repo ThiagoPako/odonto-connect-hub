@@ -334,7 +334,7 @@ async function upsertPatient(pool, p, tenantId = null) {
        raw = EXCLUDED.raw,
        synced_at = NOW()`,
     [
-      p.id ?? p.Patient_PersonId, tId, p.Name ?? null, p.Email ?? null,
+      String(p.id ?? p.Patient_PersonId), tId, p.Name ?? null, p.Email ?? null,
       String(p.MobilePhone ?? '') || null,
       p.BirthDate || null, p.Sex ?? null,
       String(p.DocumentId ?? '') || null, p.Notes ?? null,
