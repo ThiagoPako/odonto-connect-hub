@@ -1115,17 +1115,17 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
 
   await safe('clinics', async () => {
     const list = await clinicorpApi.listClinics(settings);
-    for (const c of (Array.isArray(list) ? list : [])) { await upsertClinic(pool, c); summary.clinics++; }
+    for (const c of (Array.isArray(list) ? list : [])) { await upsertClinic(pool, c, tenant_id); summary.clinics++; }
   });
 
   await safe('professionals', async () => {
     const list = await clinicorpApi.listUsers(settings);
     for (const u of (Array.isArray(list) ? list : [])) { await upsertProfessional(pool, u, tenant_id); summary.professionals++; }
     
-    // BACKFILL: Sincroniza dentistas locais com base nos profissionais Clinicorp
+    // BACKFILL: Sincroniza dentistas locais com base nos profissionais Clinicorp DESTE tenant
     try {
       const tId = await resolveTenantId(pool, tenant_id);
-      const { rows } = await pool.query('SELECT id, full_name FROM clinicorp_professionals');
+      const { rows } = await pool.query('SELECT id, full_name FROM clinicorp_professionals WHERE tenant_id=$1', [tId]);
       for (const p of rows) {
         await ensureLocalProfessional(pool, String(p.id), p.full_name, tId);
       }
@@ -1142,24 +1142,25 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
 
   // Chairs por clínica
   await safe('chairs', async () => {
-    const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics');
+    const tId = await resolveTenantId(pool, tenant_id);
+    const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics WHERE tenant_id=$1', [tId]);
     for (const { id } of clinics) {
       if (!id) continue;
       try {
         const list = await clinicorpApi.listChairs(settings, id);
-        for (const ch of (Array.isArray(list) ? list : [])) { await upsertChair(pool, ch); summary.chairs++; }
+        for (const ch of (Array.isArray(list) ? list : [])) { await upsertChair(pool, ch, tenant_id); summary.chairs++; }
       } catch (e) { /* silencia 400 sem chairs */ }
     }
   });
 
   await safe('categories', async () => {
     const list = await clinicorpApi.listAppointmentCategories(settings);
-    for (const c of (Array.isArray(list) ? list : [])) { await upsertCategory(pool, c); summary.categories++; }
+    for (const c of (Array.isArray(list) ? list : [])) { await upsertCategory(pool, c, tenant_id); summary.categories++; }
   });
 
   await safe('specialties', async () => {
     const list = await clinicorpApi.listSpecialties(settings);
-    for (const s of (Array.isArray(list) ? list : [])) { await upsertSpecialty(pool, s); summary.specialties++; }
+    for (const s of (Array.isArray(list) ? list : [])) { await upsertSpecialty(pool, s, tenant_id); summary.specialties++; }
   });
 
   // PATIENTS: tenta /patient/list; se indisponível, backfill via raw dos appointments
@@ -1177,10 +1178,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     } catch (e) {
       console.warn(`[clinicorp sync] /patient/list indisponível (${e.message}); usando backfill via appointments`);
     }
-    const { rows: appts } = await pool.query(`SELECT raw FROM clinicorp_appointments WHERE raw IS NOT NULL`);
-    const seen = new Set();
-    let backfilled = 0;
-    summary.patients = pulled + backfilled;
+    summary.patients = pulled;
   });
 
   await safe('appointments', async () => {
