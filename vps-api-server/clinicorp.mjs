@@ -217,7 +217,7 @@ async function upsertClinic(pool, c) {
   );
 }
 
-async function upsertProfessional(pool, p) {
+async function upsertProfessional(pool, p, tenantId = null) {
   const id = p.id ?? p.Id ?? p.UserId ?? p.PersonId ?? null;
   if (!id) return;
   const fullName = p.FullName ?? p.Name ?? p.UserName ?? p.full_name ?? `Profissional ${id}`;
