@@ -1373,14 +1373,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
   
   // Backfill final de profissionais: garante que agendamentos vinculados a dentistas novos sejam processados
   try {
-    const { rows: pcount } = await pool.query(`SELECT COUNT(*)::int AS c FROM clinicorp_professionals`);
-    if ((pcount[0]?.c || 0) > 0) {
-      console.log('[clinicorp sync] Re-projetando agendamentos final para consistência...');
-      const { rows: apptsToReproject } = await pool.query('SELECT id, raw FROM clinicorp_appointments ORDER BY date DESC LIMIT 500');
-      for (const r of apptsToReproject) {
-        try { await projectAppointmentToLocal(pool, r.raw, r.id, tenant_id); } catch (e) { /* skip */ }
-      }
-    }
+    // Desativado re-projeção final em massa durante o sync
   } catch (e) { console.error('[clinicorp sync] final backfill', e.message); }
 
   // Se forem as globais (carregadas via id=1), atualiza o status na tabela.
