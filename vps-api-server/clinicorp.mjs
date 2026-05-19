@@ -1385,12 +1385,8 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     invalidateSettings();
   }
 
-  // FORCE GLOBAL PROJECTION AT THE END
   try {
-    const tId = await resolveTenantId(pool, tenant_id);
-    const { rows: appts } = await pool.query('SELECT raw FROM clinicorp_appointments WHERE synced_at > NOW() - INTERVAL \'2 hours\'');
-    console.log(`[clinicorp sync] Forcing local projection for ${appts.length} recently synced appointments`);
-    for (const r of appts) { await projectAppointmentToLocal(pool, r.raw, r.raw.id ?? r.raw.AppointmentId, tId); }
+    // Desativado re-projeção final forçada em massa
   } catch (e) { console.error('[clinicorp sync] final forced projection', e.message); }
 
   return { status, summary, errors, from: fromDate, to: toDate };
