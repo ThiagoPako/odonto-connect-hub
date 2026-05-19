@@ -10696,6 +10696,33 @@ app.post('/api/clinicorp/my-settings/test', async (req, res) => {
   }
 });
 
+// Trigger a manual full sync for the current user
+app.post('/api/clinicorp/sync/now', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    const { rows } = await pool.query(
+      'SELECT api_token, subscriber_id, base_url FROM clinicorp_user_settings WHERE user_id = $1',
+      [user.id]
+    );
+    const settings = rows[0];
+    if (!settings || !settings.api_token || !settings.subscriber_id) {
+      return res.status(400).json({ error: 'Configure as credenciais primeiro' });
+    }
+
+    const { runFullSync } = await import('./clinicorp.mjs');
+    const result = await runFullSync(pool, { 
+      api_token: settings.api_token, 
+      subscriber_id: settings.subscriber_id, 
+      base_url: settings.base_url 
+    });
+
+    res.json(result);
+  } catch (e) {
+    console.error('[clinicorp manual sync error]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Lightweight probe — same logic as clinicorp.mjs#clinicorpFetch but local
 async function clinicorpFetchProbe(settings, pathName) {
   const base = (settings.base_url || 'https://api.clinicorp.com/rest/v1').replace(/\/$/, '');
