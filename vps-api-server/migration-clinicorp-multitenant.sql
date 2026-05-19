@@ -55,6 +55,8 @@ BEGIN
     UPDATE clinicorp_patients               SET tenant_id = v_tenant_id WHERE tenant_id IS NULL;
     UPDATE clinicorp_appointments           SET tenant_id = v_tenant_id WHERE tenant_id IS NULL;
     BEGIN UPDATE clinicorp_estimates              SET tenant_id = v_tenant_id WHERE tenant_id IS NULL; EXCEPTION WHEN undefined_table THEN NULL; END;
+    BEGIN UPDATE clinicorp_evolutions             SET tenant_id = v_tenant_id WHERE tenant_id IS NULL; EXCEPTION WHEN undefined_table THEN NULL; END;
+    BEGIN UPDATE clinicorp_documents              SET tenant_id = v_tenant_id WHERE tenant_id IS NULL; EXCEPTION WHEN undefined_table THEN NULL; END;
   END IF;
 END $$;
 
