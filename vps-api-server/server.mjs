@@ -10788,6 +10788,200 @@ async function clinicorpFetchProbe(settings, pathName) {
 }
 
 
+// ═══════════════════════════════════════════════════════════════
+// MÓDULO EXAMES (Cfaz) — Pedidos de exames de imagem odontológica
+// ═══════════════════════════════════════════════════════════════
+
+// Listar tipos de exame do tenant
+app.get('/api/exame-tipos', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.json([]);
+    const { rows } = await pool.query(
+      `SELECT id, nome, categoria, codigo_tiss, preco, ativo
+         FROM exame_tipos
+        WHERE tenant_id = $1
+        ORDER BY categoria NULLS LAST, nome`,
+      [user.tenant_id]
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(401).json({ error: err.message });
+  }
+});
+
+app.post('/api/exame-tipos', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
+    const { nome, categoria, codigo_tiss, preco, ativo } = req.body || {};
+    if (!nome?.trim()) return res.status(400).json({ error: 'Nome obrigatório' });
+    const { rows } = await pool.query(
+      `INSERT INTO exame_tipos (tenant_id, nome, categoria, codigo_tiss, preco, ativo)
+       VALUES ($1,$2,$3,$4,$5,COALESCE($6,true))
+       ON CONFLICT (tenant_id, nome) DO UPDATE
+         SET categoria=EXCLUDED.categoria,
+             codigo_tiss=EXCLUDED.codigo_tiss,
+             preco=EXCLUDED.preco,
+             ativo=EXCLUDED.ativo
+       RETURNING *`,
+      [user.tenant_id, nome.trim(), categoria || null, codigo_tiss || null, preco ?? 0, ativo]
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    console.error('[exame-tipos:post]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/exame-tipos/:id', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
+    await pool.query(
+      `DELETE FROM exame_tipos WHERE id=$1 AND tenant_id=$2`,
+      [req.params.id, user.tenant_id]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Listar exames com filtros
+app.get('/api/exames', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.json([]);
+    const { status, paciente_id, q, from, to, terceirizado } = req.query;
+    const params = [user.tenant_id];
+    const where = ['e.tenant_id = $1'];
+    if (status)       { params.push(status);       where.push(`e.status = $${params.length}`); }
+    if (paciente_id)  { params.push(paciente_id);  where.push(`e.paciente_id = $${params.length}`); }
+    if (terceirizado != null) { params.push(terceirizado === 'true'); where.push(`e.terceirizado = $${params.length}`); }
+    if (from) { params.push(from); where.push(`e.data_solicitacao >= $${params.length}`); }
+    if (to)   { params.push(to);   where.push(`e.data_solicitacao <= $${params.length}`); }
+    if (q)    {
+      params.push(`%${q}%`);
+      where.push(`(e.codigo ILIKE $${params.length} OR e.tipo_nome ILIKE $${params.length} OR p.nome ILIKE $${params.length})`);
+    }
+    const { rows } = await pool.query(
+      `SELECT e.*,
+              p.nome AS paciente_nome,
+              d.nome AS dentista_nome
+         FROM exames e
+         LEFT JOIN pacientes p ON p.id = e.paciente_id
+         LEFT JOIN dentistas d ON d.id = e.dentista_solicitante_id
+        WHERE ${where.join(' AND ')}
+        ORDER BY e.data_solicitacao DESC
+        LIMIT 500`,
+      params
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('[exames:list]', err.message);
+    res.status(401).json({ error: err.message });
+  }
+});
+
+app.get('/api/exames/stats', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.json({});
+    const { rows } = await pool.query(
+      `SELECT status, COUNT(*)::int AS total
+         FROM exames WHERE tenant_id=$1 GROUP BY status`,
+      [user.tenant_id]
+    );
+    const stats = { novo:0, em_andamento:0, aguardando_laudo:0, concluido:0, entregue:0, cancelado:0, total:0 };
+    for (const r of rows) { stats[r.status] = r.total; stats.total += r.total; }
+    res.json(stats);
+  } catch (err) {
+    res.status(401).json({ error: err.message });
+  }
+});
+
+app.post('/api/exames', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
+    const {
+      paciente_id, dentista_solicitante_id, clinica_origem,
+      tipo_exame_id, tipo_nome, prioridade, valor, modo_entrega,
+      observacoes, terceirizado, fornecedor_terc, status
+    } = req.body || {};
+    if (!tipo_nome?.trim()) return res.status(400).json({ error: 'tipo_nome obrigatório' });
+
+    // Gera código sequencial simples por tenant
+    const { rows: [{ next_code }] } = await pool.query(
+      `SELECT 'EX-' || LPAD((COALESCE(MAX(SUBSTRING(codigo FROM '[0-9]+')::int),0)+1)::text, 6, '0') AS next_code
+         FROM exames WHERE tenant_id=$1 AND codigo ~ '^EX-[0-9]+$'`,
+      [user.tenant_id]
+    );
+
+    const { rows } = await pool.query(
+      `INSERT INTO exames
+         (tenant_id, codigo, paciente_id, dentista_solicitante_id, clinica_origem,
+          tipo_exame_id, tipo_nome, status, prioridade, valor, modo_entrega,
+          observacoes, terceirizado, fornecedor_terc, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,COALESCE($8,'novo'),COALESCE($9,'normal'),
+               COALESCE($10,0),$11,$12,COALESCE($13,false),$14,$15)
+       RETURNING *`,
+      [
+        user.tenant_id, next_code,
+        paciente_id || null, dentista_solicitante_id || null, clinica_origem || null,
+        tipo_exame_id || null, tipo_nome.trim(),
+        status, prioridade, valor, modo_entrega || null,
+        observacoes || null, terceirizado, fornecedor_terc || null, user.id
+      ]
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    console.error('[exames:create]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch('/api/exames/:id', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
+    const allowed = ['status','prioridade','valor','modo_entrega','laudo_texto','arquivo_url',
+                     'observacoes','terceirizado','fornecedor_terc','data_realizacao','data_entrega',
+                     'paciente_id','dentista_solicitante_id','clinica_origem','tipo_exame_id','tipo_nome'];
+    const sets = []; const params = [];
+    for (const k of allowed) {
+      if (req.body[k] !== undefined) { params.push(req.body[k]); sets.push(`${k}=$${params.length}`); }
+    }
+    if (!sets.length) return res.status(400).json({ error: 'Nada a atualizar' });
+    params.push(req.params.id, user.tenant_id);
+    const { rows } = await pool.query(
+      `UPDATE exames SET ${sets.join(', ')}
+        WHERE id=$${params.length-1} AND tenant_id=$${params.length}
+        RETURNING *`,
+      params
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Exame não encontrado' });
+    res.json(rows[0]);
+  } catch (err) {
+    console.error('[exames:patch]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/exames/:id', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
+    await pool.query(
+      `DELETE FROM exames WHERE id=$1 AND tenant_id=$2`,
+      [req.params.id, user.tenant_id]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // ═══════════════════════════════════════════════════════════════
 // START SERVER
