@@ -893,6 +893,12 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
         }
       }
     } catch (e) { console.error('[clinicorp sync] pruning appointments', e.message); }
+    
+    // Conta pacientes únicos sincronizados (criados via ensureLocalPatient pelos agendamentos)
+    try {
+      const { rows } = await pool.query(`SELECT COUNT(*)::int AS c FROM clinicorp_patients`);
+      summary.patients = rows[0]?.c || 0;
+    } catch { /* ignore */ }
   });
 
   await safe('estimates', async () => {
