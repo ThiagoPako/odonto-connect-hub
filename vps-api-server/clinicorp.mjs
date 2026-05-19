@@ -181,8 +181,8 @@ export const clinicorpApi = {
     }
     return [];
   },
-  listClinics: (s) => clinicorpFetch(s, '/business/list'),
-  listSubscribersClinics: (s) => clinicorpFetch(s, '/group/list_subscribers_clinics'),
+  listClinics: (s) => clinicorpFetch(s, '/business/list', { query: { subscriber_id: s.subscriber_id } }),
+  listSubscribersClinics: (s) => clinicorpFetch(s, '/group/list_subscribers_clinics', { query: { subscriber_id: s.subscriber_id } }),
   listChairs: (s, businessId) => clinicorpFetch(s, '/business/list_chairs', { query: { Clinic_BusinessId: businessId } }),
   listAvailableTimes: (s, professionalId, clinicId, fromDate, toDate) =>
     clinicorpFetch(s, '/business/list_available_times', {
