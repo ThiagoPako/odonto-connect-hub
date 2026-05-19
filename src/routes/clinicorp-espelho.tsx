@@ -71,9 +71,15 @@ function ClinicorpEspelhoPage() {
         </div>
 
         <Tabs defaultValue="agenda" className="w-full">
-          <TabsList className="grid w-full grid-cols-4 lg:w-[600px] mb-6">
+          <TabsList className="flex flex-wrap h-auto p-1 bg-muted/50 mb-6 gap-1 w-fit">
             <TabsTrigger value="agenda" className="gap-2">
               <CalendarDays className="h-4 w-4" /> Agenda
+            </TabsTrigger>
+            <TabsTrigger value="orcamentos" className="gap-2">
+              <FileText className="h-4 w-4" /> Orçamentos
+            </TabsTrigger>
+            <TabsTrigger value="financeiro" className="gap-2">
+              <Landmark className="h-4 w-4" /> Financeiro
             </TabsTrigger>
             <TabsTrigger value="profissionais" className="gap-2">
               <Users className="h-4 w-4" /> Profissionais
@@ -83,6 +89,9 @@ function ClinicorpEspelhoPage() {
             </TabsTrigger>
             <TabsTrigger value="clinicas" className="gap-2">
               <Building2 className="h-4 w-4" /> Clínicas
+            </TabsTrigger>
+            <TabsTrigger value="webhook" className="gap-2">
+              <Activity className="h-4 w-4" /> Webhook
             </TabsTrigger>
           </TabsList>
 
