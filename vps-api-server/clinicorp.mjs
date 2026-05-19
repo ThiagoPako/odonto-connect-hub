@@ -820,8 +820,10 @@ async function upsertEstimate(pool, e) {
   );
 }
 
-async function upsertFinancial(pool, source, item) {
+async function upsertFinancial(pool, source, item, tenantId = null) {
   const externalId = String(item.id ?? item.Id ?? item.InvoiceId ?? item.PaymentId ?? '') || null;
+  if (!externalId) return;
+
   await pool.query(
     `INSERT INTO clinicorp_financial_entries
        (source, external_id, business_id, patient_id, amount, date, description, raw, synced_at)
@@ -844,6 +846,45 @@ async function upsertFinancial(pool, source, item) {
       JSON.stringify(item),
     ]
   );
+  try { await projectFinanceToLocal(pool, source, item, tenantId); }
+  catch (e) { console.error('[clinicorp] projectFinanceToLocal:', e.message); }
+}
+
+async function projectFinanceToLocal(pool, source, item, tenantId = null) {
+  const tId = await resolveTenantId(pool, tenantId);
+  const amount = Number(item.Amount ?? item.Value ?? 0);
+  const date = item.Date || item.PaymentDate || item.DueDate || null;
+  const description = item.Description || item.Memo || `Lançamento Clinicorp (${source})`;
+  const patientId = await ensureLocalPatient(pool, item.PatientId, {}, tId);
+
+  if (source === 'payment' || source === 'cashflow' && amount > 0) {
+    // Projeta como receita
+    const exists = await pool.query(
+      `SELECT id FROM financeiro_receitas WHERE clinicorp_external_id = $1 AND tenant_id = $2`,
+      [String(item.id || item.Id), tId]
+    );
+    if (!exists.rows[0]) {
+      await pool.query(
+        `INSERT INTO financeiro_receitas (id, tenant_id, valor, data, descricao, status, paciente_id, clinicorp_external_id)
+         VALUES (gen_random_uuid(), $1, $2, $3, $4, 'pago', $5, $6)`,
+        [tId, amount, date, description, patientId, String(item.id || item.Id)]
+      );
+    }
+  } else if (amount < 0) {
+    // Projeta como despesa
+    const absAmount = Math.abs(amount);
+    const exists = await pool.query(
+      `SELECT id FROM financeiro_despesas WHERE clinicorp_external_id = $1 AND tenant_id = $2`,
+      [String(item.id || item.Id), tId]
+    );
+    if (!exists.rows[0]) {
+      await pool.query(
+        `INSERT INTO financeiro_despesas (id, tenant_id, valor, data, descricao, status, clinicorp_external_id)
+         VALUES (gen_random_uuid(), $1, $2, $3, $4, 'pago', $5)`,
+        [tId, absAmount, date, description, String(item.id || item.Id)]
+      );
+    }
+  }
 }
 
 // ─── Sync orchestration ───────────────────────────────────────
