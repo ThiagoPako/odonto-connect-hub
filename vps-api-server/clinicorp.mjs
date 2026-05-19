@@ -1590,6 +1590,14 @@ async function processWebhookEvent(pool, event) {
 
   // Agendamento
   if (type.includes('appointment') || data.AppointmentId || data.Patient_PersonId && (data.FromTime || data.Date)) {
+    if (type.includes('deleted') || type.includes('cancel')) {
+      const id = data.id ?? data.AppointmentId;
+      if (id) {
+        await pool.query(`UPDATE clinicorp_appointments SET status = 'DELETED_IN_CLINICORP', synced_at = NOW() WHERE id = $1`, [id]);
+        await pool.query(`UPDATE agendamentos SET status = 'cancelado', updated_at = NOW() WHERE clinicorp_appointment_id = $1`, [String(id)]);
+        return { handled: true, target: 'appointment_deleted' };
+      }
+    }
     await upsertAppointment(pool, data);
     return { handled: true, target: 'appointment' };
   }
@@ -1598,6 +1606,18 @@ async function processWebhookEvent(pool, event) {
   if (type.includes('patient') || (data.Patient_PersonId && data.Name && !data.FromTime)) {
     await upsertPatient(pool, data);
     return { handled: true, target: 'patient' };
+  }
+
+  // Evolução / Prontuário
+  if (type.includes('evolution') || data.EvolutionId) {
+    await upsertEvolution(pool, data);
+    return { handled: true, target: 'evolution' };
+  }
+
+  // Documento / Anexo
+  if (type.includes('document') || data.DocumentId || data.FileUrl) {
+    await upsertDocument(pool, data);
+    return { handled: true, target: 'document' };
   }
 
   // Orçamento / tratamento
