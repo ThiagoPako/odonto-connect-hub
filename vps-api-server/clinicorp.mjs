@@ -1135,6 +1135,15 @@ export function registerClinicorp(app, pool) {
     const { rows } = await pool.query('SELECT * FROM clinicorp_estimates ORDER BY date DESC LIMIT 500');
     res.json(rows);
   });
+  app.get('/api/clinicorp/financial', async (req, res) => {
+    const limit = Math.min(Number(req.query.limit) || 200, 1000);
+    const { rows } = await pool.query('SELECT * FROM clinicorp_financial_entries ORDER BY date DESC LIMIT $1', [limit]);
+    res.json(rows);
+  });
+  app.get('/api/clinicorp/chairs', async (req, res) => {
+    const { rows } = await pool.query('SELECT * FROM clinicorp_chairs ORDER BY name');
+    res.json(rows);
+  });
 
   // ── Webhook events log ───────────────────────────────────────
   app.get('/api/clinicorp/webhook-events', async (req, res) => {
