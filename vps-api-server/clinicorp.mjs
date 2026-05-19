@@ -1523,41 +1523,70 @@ export const clinicorpPush = {
  * - Catch-up automático após interrupções: se last_sync_at é antigo, alarga a janela.
  */
 export async function reconciliationTick(pool) {
-  const claim = await pool.query(
+  // 1. GLOBAL SYNC (Legacy/Admin)
+  const claimGlobal = await pool.query(
     `UPDATE clinicorp_settings SET sync_lock_until = NOW() + INTERVAL '15 minutes',
        next_sync_at = NOW() + (COALESCE(sync_interval_minutes, 30) || ' minutes')::interval,
        updated_at = NOW()
      WHERE id = 1
        AND COALESCE(enabled, false) = true
-       AND COALESCE(auto_sync_enabled, true) = true
        AND api_token IS NOT NULL AND subscriber_id IS NOT NULL
        AND (sync_lock_until IS NULL OR sync_lock_until < NOW())
        AND (next_sync_at   IS NULL OR next_sync_at   <= NOW())
      RETURNING id, last_sync_at, sync_lookback_days, sync_lookahead_days`
   );
-  if (!claim.rows[0]) return { skipped: true };
-  const cfg = claim.rows[0];
-  const lookback = cfg.sync_lookback_days ?? 30;
-  const lookahead = cfg.sync_lookahead_days ?? 60;
-  const today = new Date();
-  let backDays = lookback;
-  if (cfg.last_sync_at) {
-    const diff = Math.ceil((today.getTime() - new Date(cfg.last_sync_at).getTime()) / 86400_000);
-    backDays = Math.max(lookback, diff + 2);
-  } else {
-    backDays = Math.max(lookback, 90);
+
+  const results = [];
+
+  if (claimGlobal.rows[0]) {
+    const cfg = claimGlobal.rows[0];
+    const today = new Date();
+    const from = new Date(today.getTime() - (cfg.sync_lookback_days ?? 30) * 86400_000).toISOString().slice(0, 10);
+    const to   = new Date(today.getTime() + (cfg.sync_lookahead_days ?? 60) * 86400_000).toISOString().slice(0, 10);
+    console.log(`[clinicorp] auto-reconcile global rodando ${from} → ${to}`);
+    try {
+      const r = await runFullSync(pool, { from, to });
+      await runFinancialReconciliation(pool);
+      await pool.query(`UPDATE clinicorp_settings SET sync_lock_until = NULL, last_sync_at = NOW() WHERE id = 1`);
+      results.push({ type: 'global', ...r });
+    } catch (e) {
+      console.error('[clinicorp] global tick error:', e.message);
+      await pool.query(`UPDATE clinicorp_settings SET sync_lock_until = NULL WHERE id = 1`);
+    }
   }
-  const from = new Date(today.getTime() - backDays * 86400_000).toISOString().slice(0, 10);
-  const to   = new Date(today.getTime() + lookahead * 86400_000).toISOString().slice(0, 10);
-  console.log(`[clinicorp] auto-reconcile rodando ${from} → ${to}`);
-  try {
-    const r = await runFullSync(pool, { from, to });
-    
-    // Rotina de reconciliação financeira (Alertas de divergência)
-    const reconciliation = await runFinancialReconciliation(pool);
-    
-    await pool.query(`UPDATE clinicorp_settings SET sync_lock_until = NULL WHERE id = 1`);
-    return { ran: true, ...r, reconciliation };
+
+  // 2. PER-USER SYNC (SaaS SaaS)
+  const usersToSync = await pool.query(
+    `SELECT s.user_id, p.tenant_id
+     FROM clinicorp_user_settings s
+     JOIN profiles p ON p.id = s.user_id
+     WHERE s.enabled = true 
+       AND s.api_token IS NOT NULL 
+       AND s.subscriber_id IS NOT NULL
+       AND (s.last_sync_at IS NULL OR s.last_sync_at < NOW() - INTERVAL '30 minutes')
+     LIMIT 5` // Sincroniza até 5 usuários por tick para evitar sobrecarga
+  );
+
+  for (const u of usersToSync.rows) {
+    const today = new Date();
+    const from = new Date(today.getTime() - 7 * 86400_000).toISOString().slice(0, 10); // SaaS: janela menor (7 dias) por performance
+    const to   = new Date(today.getTime() + 14 * 86400_000).toISOString().slice(0, 10);
+    console.log(`[clinicorp] auto-reconcile user ${u.user_id} rodando ${from} → ${to}`);
+    try {
+      const r = await runFullSync(pool, { from, to, user_id: u.user_id, tenant_id: u.tenant_id });
+      await pool.query(`UPDATE clinicorp_user_settings SET last_sync_at = NOW(), last_sync_status = 'success' WHERE user_id = $1`, [u.user_id]);
+      results.push({ type: 'user', user_id: u.user_id, ...r });
+    } catch (e) {
+      console.error(`[clinicorp] user ${u.user_id} tick error:`, e.message);
+      await pool.query(`UPDATE clinicorp_user_settings SET last_sync_at = NOW(), last_sync_status = 'error', last_sync_error = $2 WHERE user_id = $1`, [u.user_id, e.message]);
+    }
+  }
+
+  return results.length > 0 ? { ran: true, results } : { skipped: true };
+}
+
+export async function runFinancialReconciliation(pool) {
+
   } catch (e) {
     console.error('[clinicorp] auto-reconcile falhou', e.message);
     await pool.query(
