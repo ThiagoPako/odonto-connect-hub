@@ -60,7 +60,8 @@ function ExamesPage() {
       try {
         const [t, p] = await Promise.all([exameTiposApi.list(), pacientesApi.list()]);
         setTipos(t);
-        setPacientes((p as Array<{ id: string; nome: string }>) || []);
+        const pData = (p as { data: unknown }).data;
+        setPacientes(Array.isArray(pData) ? (pData as Array<{ id: string; nome: string }>) : []);
       } catch {}
     })();
   }, []);
