@@ -76,7 +76,20 @@ function invalidateSettings() {
 }
 
 // ─── HTTP client ──────────────────────────────────────────────
+// Throttle global para evitar 429: limite de 5 chamadas por segundo (200ms entre inícios)
+let _lastCallAt = 0;
+const THROTTLE_MS = 250; // 250ms (4 req/sec) para segurança
+
 async function clinicorpFetch(settings, pathName, { method = 'GET', query = {}, body } = {}) {
+  // Aplicar throttle
+  const now = Date.now();
+  const timeSinceLast = now - _lastCallAt;
+  if (timeSinceLast < THROTTLE_MS) {
+    const delay = THROTTLE_MS - timeSinceLast;
+    await new Promise(r => setTimeout(r, delay));
+  }
+  _lastCallAt = Date.now();
+
   if (!settings?.api_token) {
     throw new Error('Clinicorp: api_token não configurado');
   }
