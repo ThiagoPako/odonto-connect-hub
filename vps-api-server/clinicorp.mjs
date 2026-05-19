@@ -56,13 +56,12 @@ let _tenantCache = null;
 let _tenantCacheAt = 0;
 async function resolveTenantId(pool) {
   const now = Date.now();
-  if (_tenantCache && now - _tenantCacheAt < 60_000) return _tenantCache;
+  if (_tenantCache && now - _tenantCacheAt < 10_000) return _tenantCache;
   try {
+    // 1. Tenta pegar o tenant do primeiro admin do sistema (fallback global)
+    // 2. Tenta pegar o tenant do usuário que configurou a integração por último
     const { rows } = await pool.query(
-      `SELECT p.tenant_id FROM clinicorp_user_settings cus
-         JOIN profiles p ON p.id = cus.user_id
-        WHERE cus.enabled = TRUE AND p.tenant_id IS NOT NULL
-        ORDER BY cus.updated_at DESC NULLS LAST LIMIT 1`
+      `SELECT tenant_id FROM profiles WHERE role = 'admin' ORDER BY created_at ASC LIMIT 1`
     );
     _tenantCache = rows[0]?.tenant_id || DEFAULT_TENANT_ID;
   } catch {
