@@ -9,6 +9,24 @@
 
 const DEFAULT_BASE_URL = 'https://api.clinicorp.com/rest/v1';
 
+function normalizeApiToken(token) {
+  return String(token || '').trim().replace(/^Bearer\s+/i, '');
+}
+
+function clinicorpAuthHeaders(settings, authMode = 'basic') {
+  const apiToken = normalizeApiToken(settings?.api_token);
+  const apiUser = String(settings?.subscriber_id || '').trim();
+  const headers = { Accept: 'application/json' };
+
+  if (authMode === 'basic' && apiUser) {
+    headers.Authorization = `Basic ${Buffer.from(`${apiUser}:${apiToken}`).toString('base64')}`;
+  } else {
+    headers.Authorization = `Bearer ${apiToken}`;
+  }
+
+  return headers;
+}
+
 // ─── Settings cache ───────────────────────────────────────────
 let _settingsCache = null;
 let _settingsCacheAt = 0;
@@ -51,37 +69,40 @@ async function clinicorpFetch(settings, pathName, { method = 'GET', query = {}, 
     if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));
   }
 
-  const headers = {
-    Authorization: `Bearer ${settings.api_token}`,
-    Accept: 'application/json',
-  };
-  if (body !== undefined) headers['Content-Type'] = 'application/json';
-
   const ctrl = new AbortController();
   const timeout = setTimeout(() => ctrl.abort(), 30_000);
-  let res;
   try {
-    res = await fetch(url.toString(), {
-      method,
-      headers,
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-      signal: ctrl.signal,
-    });
+    const requestOnce = async (authMode) => {
+      const headers = clinicorpAuthHeaders(settings, authMode);
+      if (body !== undefined) headers['Content-Type'] = 'application/json';
+      const res = await fetch(url.toString(), {
+        method,
+        headers,
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+        signal: ctrl.signal,
+      });
+      const text = await res.text();
+      let data;
+      try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+      if (!res.ok) {
+        const err = new Error(`Clinicorp ${method} ${pathName} → HTTP ${res.status}: ${typeof data === 'string' ? data : JSON.stringify(data)}`);
+        err.status = res.status;
+        err.body = data;
+        err.authMode = authMode;
+        throw err;
+      }
+      return data;
+    };
+
+    try {
+      return await requestOnce('basic');
+    } catch (err) {
+      if (err?.status === 401) return await requestOnce('bearer');
+      throw err;
+    }
   } finally {
     clearTimeout(timeout);
   }
-
-  const text = await res.text();
-  let data;
-  try { data = text ? JSON.parse(text) : null; } catch { data = text; }
-
-  if (!res.ok) {
-    const err = new Error(`Clinicorp ${method} ${pathName} → HTTP ${res.status}: ${typeof data === 'string' ? data : JSON.stringify(data)}`);
-    err.status = res.status;
-    err.body = data;
-    throw err;
-  }
-  return data;
 }
 
 // ─── High-level API helpers ───────────────────────────────────
