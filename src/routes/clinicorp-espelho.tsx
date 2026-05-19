@@ -19,11 +19,22 @@ function ClinicorpEspelhoPage() {
   const [lastSync, setLastSync] = useState<string | null>(null);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
+  const [summary, setSummary] = useState<any>(null);
+
   useEffect(() => {
     clinicorpApi.getSettings().then(s => {
       if (s.last_sync_at) setLastSync(new Date(s.last_sync_at).toLocaleString("pt-BR"));
     }).catch(console.error);
-  }, []);
+    
+    // Buscar um resumo rápido dos dados locais
+    Promise.all([
+      clinicorpApi.listPatients().then(d => d.length),
+      clinicorpApi.listAppointments({ from: '2020-01-01', to: '2030-12-31' }).then(d => d.length),
+      clinicorpApi.listEstimates().then(d => d.length)
+    ]).then(([p, a, e]) => {
+      setSummary({ patients: p, appointments: a, estimates: e });
+    }).catch(console.error);
+  }, [refreshTrigger]);
 
   const handleManualSync = async () => {
     setSyncing(true);
@@ -44,29 +55,63 @@ function ClinicorpEspelhoPage() {
       <DashboardHeader title="Espelho Clinicorp" />
       
       <main className="p-4 space-y-4">
-        <div className="flex items-center justify-between gap-4 bg-card p-4 rounded-2xl border border-border shadow-sm">
-          <div>
-            <h2 className="text-lg font-semibold flex items-center gap-2">
-              <RefreshCw className={`h-5 w-5 text-primary ${syncing ? 'animate-spin' : ''}`} />
-              Status da Integração
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="bg-card p-4 rounded-2xl border border-border shadow-sm">
+            <h2 className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+              <RefreshCw className={`h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />
+              Sincronização
             </h2>
-            <p className="text-sm text-muted-foreground">
-              {lastSync ? `Última sincronização: ${lastSync}` : 'Sincronização nunca realizada'}
+            <p className="text-xl font-bold mt-1">{lastSync ? 'Ativa' : 'Pendente'}</p>
+            <p className="text-[10px] text-muted-foreground mt-1 truncate">
+              {lastSync ? `Última: ${lastSync}` : 'Nunca sincronizado'}
             </p>
           </div>
+          <div className="bg-card p-4 rounded-2xl border border-border shadow-sm">
+            <h2 className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+              <UserRound className="h-4 w-4" /> Pacientes
+            </h2>
+            <p className="text-xl font-bold mt-1">{summary?.patients ?? '...'}</p>
+            <p className="text-[10px] text-muted-foreground mt-1">Total importado</p>
+          </div>
+          <div className="bg-card p-4 rounded-2xl border border-border shadow-sm">
+            <h2 className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+              <CalendarDays className="h-4 w-4" /> Agendamentos
+            </h2>
+            <p className="text-xl font-bold mt-1">{summary?.appointments ?? '...'}</p>
+            <p className="text-[10px] text-muted-foreground mt-1">Total no espelho</p>
+          </div>
+          <div className="bg-card p-4 rounded-2xl border border-border shadow-sm">
+            <h2 className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+              <FileText className="h-4 w-4" /> Orçamentos
+            </h2>
+            <p className="text-xl font-bold mt-1">{summary?.estimates ?? '...'}</p>
+            <p className="text-[10px] text-muted-foreground mt-1">Importados</p>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between gap-4 bg-primary/5 p-4 rounded-2xl border border-primary/20 shadow-sm">
           <div className="flex items-center gap-3">
-            <label className="flex items-center gap-2 text-sm cursor-pointer hover:bg-muted/50 p-2 rounded-lg transition-colors">
+            <div className="bg-primary/10 p-2 rounded-full">
+              <Activity className="h-5 w-5 text-primary" />
+            </div>
+            <div>
+              <h3 className="font-semibold text-sm">Controle de Sincronização</h3>
+              <p className="text-xs text-muted-foreground">Gerencie a importação de dados da Clinicorp</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <label className="flex items-center gap-2 text-xs cursor-pointer hover:bg-muted/50 p-2 rounded-lg transition-colors">
               <input 
                 type="checkbox" 
                 checked={forceMetadata} 
                 onChange={(e) => setForceMetadata(e.target.checked)}
                 className="w-4 h-4 accent-primary"
               />
-              <span>Forçar atualização de cadastros</span>
+              <span>Atualizar Cadastros (Lento)</span>
             </label>
-            <Button onClick={handleManualSync} disabled={syncing} className="gap-2">
+            <Button onClick={handleManualSync} disabled={syncing} size="sm" className="gap-2 rounded-xl">
               <RefreshCw className={`h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />
-              Sincronizar Agora
+              {syncing ? 'Sincronizando...' : 'Sincronizar Agora'}
             </Button>
           </div>
         </div>

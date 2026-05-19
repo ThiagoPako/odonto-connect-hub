@@ -83,7 +83,15 @@ export function ClinicorpMirrorAgenda({ refreshTrigger = 0 }: { refreshTrigger?:
         {loading ? (
           <div className="p-20 text-center text-muted-foreground animate-pulse">Carregando agenda...</div>
         ) : filteredAppointments.length === 0 ? (
-          <div className="p-20 text-center text-muted-foreground">Nenhum agendamento para este dia.</div>
+          <div className="p-20 text-center space-y-3">
+            <div className="bg-muted/30 w-16 h-16 rounded-full flex items-center justify-center mx-auto">
+              <CalendarDays className="h-8 w-8 text-muted-foreground/50" />
+            </div>
+            <div className="text-muted-foreground font-medium">Nenhum agendamento para este dia.</div>
+            <p className="text-xs text-muted-foreground max-w-xs mx-auto">
+              Tente selecionar outro profissional ou clique em "Sincronizar Agora" no topo da página para buscar dados recentes.
+            </p>
+          </div>
         ) : (
           <div className="divide-y divide-border">
             {filteredAppointments.sort((a,b) => (a.from_time || "").localeCompare(b.from_time || "")).map((a) => (
