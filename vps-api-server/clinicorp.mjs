@@ -1144,12 +1144,12 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
         for (const { id: clinicId } of clinics) {
           try {
             const list = await clinicorpApi.listInvoices(settings, { from: r.from, to: r.to, clinic_id: clinicId });
-            for (const i of (Array.isArray(list) ? list : [])) { await upsertFinancial(pool, 'invoice', i); summary.invoices++; }
+            for (const i of (Array.isArray(list) ? list : [])) { await upsertFinancial(pool, 'invoice', i, tenant_id); summary.invoices++; }
           } catch (e) { /* silent */ }
         }
       } else {
         const list = await clinicorpApi.listInvoices(settings, { from: r.from, to: r.to });
-        for (const i of (Array.isArray(list) ? list : [])) { await upsertFinancial(pool, 'invoice', i); summary.invoices++; }
+        for (const i of (Array.isArray(list) ? list : [])) { await upsertFinancial(pool, 'invoice', i, tenant_id); summary.invoices++; }
       }
     }
   });
