@@ -14,6 +14,7 @@ export const Route = createFileRoute("/clinicorp-espelho")({
 
 function ClinicorpEspelhoPage() {
   const [syncing, setSyncing] = useState(false);
+  const [forceMetadata, setForceMetadata] = useState(false);
   const [lastSync, setLastSync] = useState<string | null>(null);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
@@ -26,7 +27,7 @@ function ClinicorpEspelhoPage() {
   const handleManualSync = async () => {
     setSyncing(true);
     try {
-      const res = await clinicorpApi.sync();
+      const res = await clinicorpApi.sync({ force_metadata: forceMetadata });
       setLastSync(new Date().toLocaleString("pt-BR"));
       setRefreshTrigger(prev => prev + 1);
       toast.success("Sincronização concluída com sucesso!");
@@ -52,10 +53,21 @@ function ClinicorpEspelhoPage() {
               {lastSync ? `Última sincronização: ${lastSync}` : 'Sincronização nunca realizada'}
             </p>
           </div>
-          <Button onClick={handleManualSync} disabled={syncing} className="gap-2">
-            <RefreshCw className={`h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />
-            Sincronizar Agora
-          </Button>
+          <div className="flex items-center gap-3">
+            <label className="flex items-center gap-2 text-sm cursor-pointer hover:bg-muted/50 p-2 rounded-lg transition-colors">
+              <input 
+                type="checkbox" 
+                checked={forceMetadata} 
+                onChange={(e) => setForceMetadata(e.target.checked)}
+                className="w-4 h-4 accent-primary"
+              />
+              <span>Forçar atualização de cadastros</span>
+            </label>
+            <Button onClick={handleManualSync} disabled={syncing} className="gap-2">
+              <RefreshCw className={`h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />
+              Sincronizar Agora
+            </Button>
+          </div>
         </div>
 
         <Tabs defaultValue="agenda" className="w-full">

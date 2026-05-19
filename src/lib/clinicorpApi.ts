@@ -145,7 +145,7 @@ export const clinicorpApi = {
     conflict_strategy: 'clinicorp_wins' | 'local_wins' | 'newest_wins';
   }>) => req<{ ok: true }>('/settings', { method: 'PUT', body: JSON.stringify(payload) }),
   testConnection: () => req<{ ok: boolean; clinics_count: number; sample: unknown; error?: string }>('/test', { method: 'POST' }),
-  sync: (range?: { from?: string; to?: string }) =>
+  sync: (range?: { from?: string; to?: string; force_metadata?: boolean }) =>
     req<ClinicorpSyncResult>('/sync', { method: 'POST', body: JSON.stringify(range || {}) }),
   reconcileNow: () => req<{ ran?: boolean; skipped?: boolean; status?: string; summary?: Record<string, number>; error?: string }>('/reconcile', { method: 'POST' }),
   listClinics: () => req<Array<Record<string, unknown>>>('/clinics'),
