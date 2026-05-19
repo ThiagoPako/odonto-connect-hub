@@ -333,7 +333,7 @@ async function upsertAppointment(pool, a) {
       a.PatientId ?? a.Patient_PersonId ?? null,
       a.PatientName ?? null,
       a.ProfessionalId ?? a.Dentist_PersonId ?? a.ScheduleToId ?? null,
-      a.ProfessionalName ?? a.DentistName ?? null,
+      a.ProfessionalName ?? a.DentistName ?? a.ScheduleToName ?? a.Dentist?.Name ?? null,
       a.CategoryId ?? a.Category_id ?? null,
       a.CategoryDescription ?? a.Category ?? null,
       a.CategoryColor ?? a.Color ?? null,
@@ -548,7 +548,7 @@ async function projectAppointmentToLocal(pool, a, cpApptId) {
   const pacienteId = await ensureLocalPatient(pool, cpPatientId, {
     name: a.PatientName, phone: a.PatientPhone || a.MobilePhone, email: a.PatientEmail,
   });
-  const dentistaId = await ensureLocalProfessional(pool, cpProfId, a.ProfessionalName || a.DentistName);
+  const dentistaId = await ensureLocalProfessional(pool, cpProfId, a.ProfessionalName || a.DentistName || a.ScheduleToName || a.Dentist?.Name);
   const status = mapAppointmentStatus(a.Status ?? a.StatusId);
   const rawDate = a.Date || a.AppointmentDate || a.date || null;
   // Normaliza para YYYY-MM-DD (a API retorna ISO 8601 com timezone)
@@ -922,13 +922,14 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
                 MAX(raw->>'ScheduleToName') AS name_a,
                 MAX(raw->'Dentist'->>'Name') AS name_b,
                 MAX(raw->>'DentistName') AS name_c,
-                MAX(professional_name) AS name_d
+                MAX(raw->>'ProfessionalName') AS name_d,
+                MAX(professional_name) AS name_e
            FROM clinicorp_appointments
           WHERE professional_id IS NOT NULL
           GROUP BY 1`
       );
       for (const p of distinctProfs) {
-        const name = p.name_a || p.name_b || p.name_c || p.name_d || `Profissional ${p.id}`;
+        const name = p.name_a || p.name_b || p.name_c || p.name_d || p.name_e || `Profissional ${p.id}`;
         await pool.query(
           `INSERT INTO clinicorp_professionals (id, full_name, user_name, raw, synced_at)
            VALUES ($1,$2,NULL,$3,NOW())
