@@ -18,6 +18,7 @@ export function ClinicorpMirrorAgenda({ refreshTrigger = 0 }: { refreshTrigger?:
 
   useEffect(() => {
     clinicorpApi.listProfessionals().then(setProfessionals).catch(console.error);
+    clinicorpApi.listChairs().then(setChairs).catch(console.error);
   }, []);
 
   useEffect(() => {
