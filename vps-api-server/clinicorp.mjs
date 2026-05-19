@@ -778,8 +778,6 @@ async function projectPatientToLocal(pool, p, tenantId = null) {
     }
     if (!decision.write) return localRow.id;
   }
-    if (!decision.write) return localRow.id;
-  }
   const pacienteId = await ensureLocalPatient(pool, cpId, { name: p.Name, phone: p.MobilePhone, email: p.Email }, tenantId);
   if (pacienteId) {
     await pool.query(`UPDATE pacientes SET last_clinicorp_sync_at=NOW() WHERE id=$1`, [pacienteId]);
@@ -1013,6 +1011,41 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     for (const s of (Array.isArray(list) ? list : [])) { await upsertSpecialty(pool, s); summary.specialties++; }
   });
 
+  // PATIENTS: tenta /patient/list; se indisponível, backfill via raw dos appointments
+  await safe('patients', async () => {
+    let pulled = 0;
+    try {
+      const list = await clinicorpApi.listPatients(settings);
+      for (const p of (Array.isArray(list) ? list : [])) {
+        const id = p.id ?? p.Patient_PersonId ?? p.PersonId;
+        if (!id) continue;
+        await upsertPatient(pool, { ...p, id }, tenant_id);
+        pulled++;
+      }
+      console.log(`[clinicorp sync] patients via /patient/list: ${pulled}`);
+    } catch (e) {
+      console.warn(`[clinicorp sync] /patient/list indisponível (${e.message}); usando backfill via appointments`);
+    }
+    const { rows: appts } = await pool.query(`SELECT raw FROM clinicorp_appointments WHERE raw IS NOT NULL`);
+    const seen = new Set();
+    let backfilled = 0;
+    for (const { raw: a } of appts) {
+      const pid = a?.PatientId ?? a?.Patient_PersonId ?? a?.patient_id ?? null;
+      if (!pid || seen.has(String(pid))) continue;
+      seen.add(String(pid));
+      const stub = {
+        id: pid,
+        Name: a.PatientName ?? a.Patient_FullName ?? a.Patient_Name ?? null,
+        MobilePhone: a.PatientPhone ?? a.MobilePhone ?? null,
+        Email: a.PatientEmail ?? null,
+      };
+      try { await upsertPatient(pool, stub, tenant_id); backfilled++; }
+      catch (e) { console.error('[clinicorp sync] backfill patient:', pid, e.message); }
+    }
+    console.log(`[clinicorp sync] patients backfill via appointments: ${backfilled}`);
+    summary.patients = pulled + backfilled;
+  });
+
   await safe('appointments', async () => {
     const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics');
     const apiIds = new Set();
@@ -1129,7 +1162,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
           try {
             const list = await clinicorpApi.listEstimates(settings, r.from, r.to, clinicId);
             for (const e of (Array.isArray(list) ? list : [])) { await upsertEstimate(pool, e, tenant_id); summary.estimates++; }
-          } catch (e) { /* silent fail for clinic range */ }
+          } catch (e) { console.error('[clinicorp sync] estimates clinic range:', e.message); }
         }
       } else {
         const list = await clinicorpApi.listEstimates(settings, r.from, r.to);
@@ -1147,7 +1180,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
           try {
             const list = await clinicorpApi.listInvoices(settings, { from: r.from, to: r.to, clinic_id: clinicId });
             for (const i of (Array.isArray(list) ? list : [])) { await upsertFinancial(pool, 'invoice', i, tenant_id); summary.invoices++; }
-          } catch (e) { /* silent */ }
+          } catch (e) { console.error('[clinicorp sync] financial:', e.message); }
         }
       } else {
         const list = await clinicorpApi.listInvoices(settings, { from: r.from, to: r.to });
@@ -1165,7 +1198,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
           try {
             const list = await clinicorpApi.listPayments(settings, { from: r.from, to: r.to, clinic_id: clinicId });
             for (const p of (Array.isArray(list) ? list : [])) { await upsertFinancial(pool, 'payment', p, tenant_id); summary.payments++; }
-          } catch (e) { /* silent */ }
+          } catch (e) { console.error('[clinicorp sync] financial:', e.message); }
         }
       } else {
         const list = await clinicorpApi.listPayments(settings, { from: r.from, to: r.to });
@@ -1183,7 +1216,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
           try {
             const list = await clinicorpApi.listCashFlow(settings, { from: r.from, to: r.to, clinic_id: clinicId });
             for (const c of (Array.isArray(list) ? list : [])) { await upsertFinancial(pool, 'cashflow', c, tenant_id); summary.cashflow++; }
-          } catch (e) { /* silent */ }
+          } catch (e) { console.error('[clinicorp sync] financial:', e.message); }
         }
       } else {
         const list = await clinicorpApi.listCashFlow(settings, { from: r.from, to: r.to });
