@@ -48,6 +48,30 @@ async function loadSettings(pool, force = false) {
   return _settingsCache;
 }
 
+// ─── Tenant resolver ──────────────────────────────────────────
+// A integração Clinicorp grava em tabelas multi-tenant (dentistas, pacientes,
+// agendamentos, crm_leads). Sem tenant_id os GETs filtrados não enxergam nada.
+const DEFAULT_TENANT_ID = '00000000-0000-0000-0000-000000000001';
+let _tenantCache = null;
+let _tenantCacheAt = 0;
+async function resolveTenantId(pool) {
+  const now = Date.now();
+  if (_tenantCache && now - _tenantCacheAt < 60_000) return _tenantCache;
+  try {
+    const { rows } = await pool.query(
+      `SELECT p.tenant_id FROM clinicorp_user_settings cus
+         JOIN profiles p ON p.id = cus.user_id
+        WHERE cus.enabled = TRUE AND p.tenant_id IS NOT NULL
+        ORDER BY cus.updated_at DESC NULLS LAST LIMIT 1`
+    );
+    _tenantCache = rows[0]?.tenant_id || DEFAULT_TENANT_ID;
+  } catch {
+    _tenantCache = DEFAULT_TENANT_ID;
+  }
+  _tenantCacheAt = now;
+  return _tenantCache;
+}
+
 function invalidateSettings() {
   _settingsCache = null;
   _settingsCacheAt = 0;
@@ -354,10 +378,11 @@ async function ensureLocalPatient(pool, cpId, fallback = {}) {
     await pool.query(`UPDATE pacientes SET clinicorp_patient_id=$1, updated_at=NOW() WHERE id=$2`, [cpId, matchId]);
     return matchId;
   }
+  const tenantId = await resolveTenantId(pool);
   const ins = await pool.query(
-    `INSERT INTO pacientes (nome, telefone, email, data_nascimento, sexo, cpf, clinicorp_patient_id)
-     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
-    [nome, telefone, email, nascimento, sexo, cpf, cpId]
+    `INSERT INTO pacientes (nome, telefone, email, data_nascimento, sexo, cpf, clinicorp_patient_id, tenant_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+    [nome, telefone, email, nascimento, sexo, cpf, cpId, tenantId]
   );
   return ins.rows[0].id;
 }
@@ -373,9 +398,10 @@ async function ensureLocalProfessional(pool, cpProfId, fallbackName = null) {
     await pool.query(`UPDATE dentistas SET clinicorp_professional_id=$1, updated_at=NOW() WHERE id=$2`, [cpProfId, match.rows[0].id]);
     return match.rows[0].id;
   }
+  const tenantId = await resolveTenantId(pool);
   const ins = await pool.query(
-    `INSERT INTO dentistas (nome, ativo, clinicorp_professional_id) VALUES ($1, true, $2) RETURNING id`,
-    [nome, cpProfId]
+    `INSERT INTO dentistas (nome, ativo, clinicorp_professional_id, tenant_id) VALUES ($1, true, $2, $3) RETURNING id`,
+    [nome, cpProfId, tenantId]
   );
   return ins.rows[0].id;
 }
@@ -398,10 +424,11 @@ async function ensureLeadForPatient(pool, pacienteId, cpPatientId, info = {}) {
     );
     return lead.id;
   }
+  const tenantId = await resolveTenantId(pool);
   const ins = await pool.query(
-    `INSERT INTO crm_leads (nome, telefone, email, origem, status, kanban_stage, paciente_id, clinicorp_patient_id)
-     VALUES ($1,$2,$3,'clinicorp','paciente_agendado','paciente_agendado',$4,$5) RETURNING id`,
-    [info.nome || 'Paciente Clinicorp', info.telefone || null, info.email || null, pacienteId, cpPatientId]
+    `INSERT INTO crm_leads (nome, telefone, email, origem, status, kanban_stage, paciente_id, clinicorp_patient_id, tenant_id)
+     VALUES ($1,$2,$3,'clinicorp','paciente_agendado','paciente_agendado',$4,$5,$6) RETURNING id`,
+    [info.nome || 'Paciente Clinicorp', info.telefone || null, info.email || null, pacienteId, cpPatientId, tenantId]
   );
   return ins.rows[0].id;
 }
@@ -578,12 +605,13 @@ async function projectAppointmentToLocal(pool, a, cpApptId) {
   } else if (data) {
     const { randomUUID } = await import('crypto');
     const id = randomUUID();
+    const tenantId = await resolveTenantId(pool);
     await pool.query(
       `INSERT INTO agendamentos
          (id, paciente_id, dentista_id, data, hora, duracao, procedimento, status, observacoes,
-          categoria, categoria_cor, clinicorp_appointment_id, last_clinicorp_sync_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, NOW())`,
-      [id, pacienteId, dentistaId, data, hora, duracao, procedimento, status, observacoes, procedimento, categoriaCor, cpApptId]
+          categoria, categoria_cor, clinicorp_appointment_id, last_clinicorp_sync_at, tenant_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, NOW(), $13)`,
+      [id, pacienteId, dentistaId, data, hora, duracao, procedimento, status, observacoes, procedimento, categoriaCor, cpApptId, tenantId]
     );
     agendamentoId = id;
   }
@@ -752,6 +780,16 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
 
   const summary = { clinics: 0, professionals: 0, chairs: 0, categories: 0, specialties: 0, appointments: 0, estimates: 0, invoices: 0, payments: 0, cashflow: 0 };
   const errors = [];
+
+  // Backfill tenant_id em registros antigos vindos do Clinicorp (criados antes do fix)
+  try {
+    const tenantId = await resolveTenantId(pool);
+    await pool.query(`UPDATE dentistas SET tenant_id=$1 WHERE tenant_id IS NULL AND clinicorp_professional_id IS NOT NULL`, [tenantId]);
+    await pool.query(`UPDATE pacientes SET tenant_id=$1 WHERE tenant_id IS NULL AND clinicorp_patient_id IS NOT NULL`, [tenantId]);
+    await pool.query(`UPDATE agendamentos SET tenant_id=$1 WHERE tenant_id IS NULL AND clinicorp_appointment_id IS NOT NULL`, [tenantId]);
+    await pool.query(`UPDATE crm_leads SET tenant_id=$1 WHERE tenant_id IS NULL AND (clinicorp_patient_id IS NOT NULL OR origem='clinicorp')`, [tenantId]);
+  } catch (e) { console.error('[clinicorp sync] tenant backfill', e.message); }
+
 
   const safe = async (label, fn) => {
     try { await fn(); } catch (e) { errors.push(`${label}: ${e.message}`); console.error(`[clinicorp sync] ${label}`, e.message); }
