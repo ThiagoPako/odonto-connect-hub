@@ -781,6 +781,16 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
   const summary = { clinics: 0, professionals: 0, chairs: 0, categories: 0, specialties: 0, appointments: 0, estimates: 0, invoices: 0, payments: 0, cashflow: 0 };
   const errors = [];
 
+  // Backfill tenant_id em registros antigos vindos do Clinicorp (criados antes do fix)
+  try {
+    const tenantId = await resolveTenantId(pool);
+    await pool.query(`UPDATE dentistas SET tenant_id=$1 WHERE tenant_id IS NULL AND clinicorp_professional_id IS NOT NULL`, [tenantId]);
+    await pool.query(`UPDATE pacientes SET tenant_id=$1 WHERE tenant_id IS NULL AND clinicorp_patient_id IS NOT NULL`, [tenantId]);
+    await pool.query(`UPDATE agendamentos SET tenant_id=$1 WHERE tenant_id IS NULL AND clinicorp_appointment_id IS NOT NULL`, [tenantId]);
+    await pool.query(`UPDATE crm_leads SET tenant_id=$1 WHERE tenant_id IS NULL AND (clinicorp_patient_id IS NOT NULL OR origem='clinicorp')`, [tenantId]);
+  } catch (e) { console.error('[clinicorp sync] tenant backfill', e.message); }
+
+
   const safe = async (label, fn) => {
     try { await fn(); } catch (e) { errors.push(`${label}: ${e.message}`); console.error(`[clinicorp sync] ${label}`, e.message); }
   };
