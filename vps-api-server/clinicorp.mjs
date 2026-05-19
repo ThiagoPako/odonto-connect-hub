@@ -884,6 +884,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     for (const u of (Array.isArray(list) ? list : [])) { await upsertProfessional(pool, u, tenant_id); summary.professionals++; }
   });
 
+
   // Pacientes são sincronizados via agendamentos (ensureLocalPatient projeta cada paciente referenciado).
   // A Clinicorp não expõe um endpoint público de listagem completa de pacientes (/patient/list retorna 404),
   // então não tentamos buscar a lista — o backfill acontece naturalmente conforme os agendamentos chegam.
