@@ -576,10 +576,13 @@ async function projectAppointmentToLocal(pool, a, cpApptId, tenantId = null) {
   const cpUpdatedAt = a.UpdateDate || a.UpdatedAt || a.LastModified || a.ModifiedAt || a.z_LastChange_Date || a.ModifiedDate || null;
   const policy = await resolveConflictPolicy(pool, { clinicId: cpClinicId, professionalId: cpProfId });
 
+  // Busca ou cria o dentista no schema local ANTES do agendamento
+  const dentistaId = await ensureLocalProfessional(pool, cpProfId, a.ProfessionalName || a.DentistName || a.ScheduleToName || a.Dentist?.Name, tenantId);
+
   const pacienteId = await ensureLocalPatient(pool, cpPatientId, {
     name: a.PatientName, phone: a.PatientPhone || a.MobilePhone, email: a.PatientEmail,
   }, tenantId);
-  const dentistaId = await ensureLocalProfessional(pool, cpProfId, a.ProfessionalName || a.DentistName || a.ScheduleToName || a.Dentist?.Name, tenantId);
+  
   const status = mapAppointmentStatus(a.Status ?? a.StatusId);
   const rawDate = a.Date || a.AppointmentDate || a.date || null;
   // Normaliza para YYYY-MM-DD (a API retorna ISO 8601 com timezone)
@@ -980,6 +983,14 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
         // Garante existência no schema local (dentistas) com o tenant atual.
         await ensureLocalProfessional(pool, p.id, name, tenant_id);
       }
+      
+      // Forçar re-projeção dos agendamentos agora que temos os profissionais
+      console.log('[clinicorp sync] Re-projetando agendamentos para vincular dentistas...');
+      const { rows: apptsToReproject } = await pool.query('SELECT id, raw FROM clinicorp_appointments');
+      for (const r of apptsToReproject) {
+        try { await projectAppointmentToLocal(pool, r.raw, r.id, tenant_id); } catch (e) { /* skip */ }
+      }
+
       const { rows: pcount } = await pool.query(`SELECT COUNT(*)::int AS c FROM clinicorp_professionals`);
       summary.professionals = pcount[0]?.c || summary.professionals;
     } catch (e) { console.error('[clinicorp sync] backfill professionals', e.message); }
