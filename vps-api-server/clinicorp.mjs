@@ -1162,12 +1162,12 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
         for (const { id: clinicId } of clinics) {
           try {
             const list = await clinicorpApi.listPayments(settings, { from: r.from, to: r.to, clinic_id: clinicId });
-            for (const p of (Array.isArray(list) ? list : [])) { await upsertFinancial(pool, 'payment', p); summary.payments++; }
+            for (const p of (Array.isArray(list) ? list : [])) { await upsertFinancial(pool, 'payment', p, tenant_id); summary.payments++; }
           } catch (e) { /* silent */ }
         }
       } else {
         const list = await clinicorpApi.listPayments(settings, { from: r.from, to: r.to });
-        for (const p of (Array.isArray(list) ? list : [])) { await upsertFinancial(pool, 'payment', p); summary.payments++; }
+        for (const p of (Array.isArray(list) ? list : [])) { await upsertFinancial(pool, 'payment', p, tenant_id); summary.payments++; }
       }
     }
   });
