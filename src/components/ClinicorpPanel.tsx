@@ -421,7 +421,7 @@ export function ClinicorpPanel() {
             </div>
             {syncStatus?.completed && (
               <div className="p-3 border-t border-border bg-muted/20 flex justify-end">
-                <Button variant="ghost" size="xs" className="h-7 text-[10px] uppercase font-bold" onClick={() => setSyncStatus(null)}>
+                <Button variant="ghost" size="sm" className="h-7 text-[10px] uppercase font-bold px-3" onClick={() => setSyncStatus(null)}>
                   Fechar relatório
                 </Button>
               </div>
