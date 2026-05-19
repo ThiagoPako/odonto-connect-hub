@@ -937,11 +937,12 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
         const name = p.name_a || p.name_b || p.name_c || p.name_d || p.name_e || 
                      rawAppt.ScheduleToName || rawAppt.DentistName || (rawAppt.Dentist && rawAppt.Dentist.Name) || 
                      `Profissional ${p.id}`;
+
         await pool.query(
           `INSERT INTO clinicorp_professionals (id, full_name, user_name, raw, synced_at)
            VALUES ($1,$2,NULL,$3,NOW())
            ON CONFLICT (id) DO UPDATE SET
-             full_name = COALESCE(NULLIF(EXCLUDED.full_name,''), clinicorp_professionals.full_name),
+             full_name = EXCLUDED.full_name,
              synced_at = NOW()`,
           [p.id, name, JSON.stringify({ derived_from: 'appointments', id: p.id, name })]
         );
