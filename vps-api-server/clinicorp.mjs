@@ -232,6 +232,8 @@ async function upsertProfessional(pool, p, tenantId = null) {
        synced_at = NOW()`,
     [String(id), fullName, userName, JSON.stringify(p)]
   );
+  try { await ensureLocalProfessional(pool, String(id), fullName, tenantId); }
+  catch (e) { console.error('[clinicorp] ensureLocalProfessional:', e.message); }
 }
 
 async function upsertChair(pool, c) {
