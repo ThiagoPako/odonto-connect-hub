@@ -1013,6 +1013,41 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     for (const s of (Array.isArray(list) ? list : [])) { await upsertSpecialty(pool, s); summary.specialties++; }
   });
 
+  // PATIENTS: tenta /patient/list; se indisponível, backfill via raw dos appointments
+  await safe('patients', async () => {
+    let pulled = 0;
+    try {
+      const list = await clinicorpApi.listPatients(settings);
+      for (const p of (Array.isArray(list) ? list : [])) {
+        const id = p.id ?? p.Patient_PersonId ?? p.PersonId;
+        if (!id) continue;
+        await upsertPatient(pool, { ...p, id }, tenant_id);
+        pulled++;
+      }
+      console.log(`[clinicorp sync] patients via /patient/list: ${pulled}`);
+    } catch (e) {
+      console.warn(`[clinicorp sync] /patient/list indisponível (${e.message}); usando backfill via appointments`);
+    }
+    const { rows: appts } = await pool.query(`SELECT raw FROM clinicorp_appointments WHERE raw IS NOT NULL`);
+    const seen = new Set();
+    let backfilled = 0;
+    for (const { raw: a } of appts) {
+      const pid = a?.PatientId ?? a?.Patient_PersonId ?? a?.patient_id ?? null;
+      if (!pid || seen.has(String(pid))) continue;
+      seen.add(String(pid));
+      const stub = {
+        id: pid,
+        Name: a.PatientName ?? a.Patient_FullName ?? a.Patient_Name ?? null,
+        MobilePhone: a.PatientPhone ?? a.MobilePhone ?? null,
+        Email: a.PatientEmail ?? null,
+      };
+      try { await upsertPatient(pool, stub, tenant_id); backfilled++; }
+      catch (e) { console.error('[clinicorp sync] backfill patient:', pid, e.message); }
+    }
+    console.log(`[clinicorp sync] patients backfill via appointments: ${backfilled}`);
+    summary.patients = pulled + backfilled;
+  });
+
   await safe('appointments', async () => {
     const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics');
     const apiIds = new Set();
