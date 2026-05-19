@@ -820,10 +820,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     );
     invalidateSettings();
   }
-    `UPDATE clinicorp_settings SET last_sync_at = NOW(), last_sync_status = $1, last_sync_error = $2, updated_at = NOW() WHERE id = 1`,
-    [status, errors.length ? errors.join(' | ') : null]
-  );
-  invalidateSettings();
+
 
   return { status, summary, errors, from: fromDate, to: toDate };
 }
