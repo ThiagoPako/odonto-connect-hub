@@ -276,50 +276,54 @@ async function upsertProfessional(pool, p, tenantId = null) {
   catch (e) { console.error('[clinicorp] ensureLocalProfessional:', e.message); }
 }
 
-async function upsertChair(pool, c) {
+async function upsertChair(pool, c, tenantId = null) {
+  const tId = await resolveTenantId(pool, tenantId);
   await pool.query(
-    `INSERT INTO clinicorp_chairs (id, business_id, name, raw, synced_at)
-     VALUES ($1,$2,$3,$4, NOW())
-     ON CONFLICT (id) DO UPDATE SET
+    `INSERT INTO clinicorp_chairs (id, tenant_id, business_id, name, raw, synced_at)
+     VALUES ($1,$2,$3,$4,$5, NOW())
+     ON CONFLICT (id, tenant_id) DO UPDATE SET
        business_id = EXCLUDED.business_id,
        name = EXCLUDED.name,
        raw = EXCLUDED.raw,
        synced_at = NOW()`,
-    [c.id, c.BusinessId ?? null, c.Name ?? null, JSON.stringify(c)]
+    [c.id, tId, c.BusinessId ?? null, c.Name ?? null, JSON.stringify(c)]
   );
 }
 
-async function upsertCategory(pool, c) {
+async function upsertCategory(pool, c, tenantId = null) {
+  const tId = await resolveTenantId(pool, tenantId);
   await pool.query(
-    `INSERT INTO clinicorp_appointment_categories (id, description, color, raw, synced_at)
-     VALUES ($1,$2,$3,$4, NOW())
-     ON CONFLICT (id) DO UPDATE SET
+    `INSERT INTO clinicorp_appointment_categories (id, tenant_id, description, color, raw, synced_at)
+     VALUES ($1,$2,$3,$4,$5, NOW())
+     ON CONFLICT (id, tenant_id) DO UPDATE SET
        description = EXCLUDED.description,
        color = EXCLUDED.color,
        raw = EXCLUDED.raw,
        synced_at = NOW()`,
-    [c.id, c.Description ?? null, c.Color ?? null, JSON.stringify(c)]
+    [c.id, tId, c.Description ?? null, c.Color ?? null, JSON.stringify(c)]
   );
 }
 
-async function upsertSpecialty(pool, s) {
+async function upsertSpecialty(pool, s, tenantId = null) {
+  const tId = await resolveTenantId(pool, tenantId);
   await pool.query(
-    `INSERT INTO clinicorp_specialties (id, description, raw, synced_at)
-     VALUES ($1,$2,$3, NOW())
-     ON CONFLICT (id) DO UPDATE SET
+    `INSERT INTO clinicorp_specialties (id, tenant_id, description, raw, synced_at)
+     VALUES ($1,$2,$3,$4, NOW())
+     ON CONFLICT (id, tenant_id) DO UPDATE SET
        description = EXCLUDED.description,
        raw = EXCLUDED.raw,
        synced_at = NOW()`,
-    [s.id, s.Description ?? s.Name ?? null, JSON.stringify(s)]
+    [s.id, tId, s.Description ?? s.Name ?? null, JSON.stringify(s)]
   );
 }
 
 async function upsertPatient(pool, p, tenantId = null) {
+  const tId = await resolveTenantId(pool, tenantId);
   await pool.query(
     `INSERT INTO clinicorp_patients
-       (id, name, email, mobile_phone, birth_date, sex, document_id, notes, raw, synced_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, NOW())
-     ON CONFLICT (id) DO UPDATE SET
+       (id, tenant_id, name, email, mobile_phone, birth_date, sex, document_id, notes, raw, synced_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, NOW())
+     ON CONFLICT (id, tenant_id) DO UPDATE SET
        name = EXCLUDED.name,
        email = EXCLUDED.email,
        mobile_phone = EXCLUDED.mobile_phone,
@@ -330,14 +334,14 @@ async function upsertPatient(pool, p, tenantId = null) {
        raw = EXCLUDED.raw,
        synced_at = NOW()`,
     [
-      p.id ?? p.Patient_PersonId, p.Name ?? null, p.Email ?? null,
+      p.id ?? p.Patient_PersonId, tId, p.Name ?? null, p.Email ?? null,
       String(p.MobilePhone ?? '') || null,
       p.BirthDate || null, p.Sex ?? null,
       String(p.DocumentId ?? '') || null, p.Notes ?? null,
       JSON.stringify(p),
     ]
   );
-  try { await projectPatientToLocal(pool, p, tenantId); }
+  try { await projectPatientToLocal(pool, p, tId); }
   catch (e) { console.error('[clinicorp] projectPatientToLocal:', e.message); }
 }
 
