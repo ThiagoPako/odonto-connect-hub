@@ -1180,7 +1180,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
         for (const { id: clinicId } of clinics) {
           try {
             const list = await clinicorpApi.listCashFlow(settings, { from: r.from, to: r.to, clinic_id: clinicId });
-            for (const c of (Array.isArray(list) ? list : [])) { await upsertFinancial(pool, 'cashflow', c); summary.cashflow++; }
+            for (const c of (Array.isArray(list) ? list : [])) { await upsertFinancial(pool, 'cashflow', c, tenant_id); summary.cashflow++; }
           } catch (e) { /* silent */ }
         }
       } else {
