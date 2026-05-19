@@ -143,11 +143,14 @@ async function clinicorpFetch(settings, pathName, { method = 'GET', query = {}, 
       let data;
       try { data = text ? JSON.parse(text) : null; } catch { data = text; }
 
-      if (res.status === 429 && retryCount < maxRetries) {
+      // Retry logic for 429 (Rate Limit) and 502/503/504 (Server Overload/Gateway errors)
+      const shouldRetry = (res.status === 429 || res.status === 502 || res.status === 503 || res.status === 504) && retryCount < maxRetries;
+      
+      if (shouldRetry) {
         retryCount++;
-        // Backoff exponencial agressivo para 429: 5s, 10s, 20s...
+        // Aggressive exponential backoff: 5s, 10s, 20s...
         const delay = Math.pow(2, retryCount) * 2500;
-        console.warn(`[clinicorp] HTTP 429 detectado em ${pathName}. Retentando em ${delay}ms (tentativa ${retryCount})...`);
+        console.warn(`[clinicorp] HTTP ${res.status} detectado em ${pathName}. Retentando em ${delay}ms (tentativa ${retryCount})...`);
         await new Promise(r => setTimeout(r, delay));
         return requestOnceWithRetry(authMode);
       }
