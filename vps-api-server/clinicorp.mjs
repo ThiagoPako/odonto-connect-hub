@@ -1126,12 +1126,12 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
         for (const { id: clinicId } of clinics) {
           try {
             const list = await clinicorpApi.listEstimates(settings, r.from, r.to, clinicId);
-            for (const e of (Array.isArray(list) ? list : [])) { await upsertEstimate(pool, e); summary.estimates++; }
+            for (const e of (Array.isArray(list) ? list : [])) { await upsertEstimate(pool, e, tenant_id); summary.estimates++; }
           } catch (e) { /* silent fail for clinic range */ }
         }
       } else {
         const list = await clinicorpApi.listEstimates(settings, r.from, r.to);
-        for (const e of (Array.isArray(list) ? list : [])) { await upsertEstimate(pool, e); summary.estimates++; }
+        for (const e of (Array.isArray(list) ? list : [])) { await upsertEstimate(pool, e, tenant_id); summary.estimates++; }
       }
     }
   });
