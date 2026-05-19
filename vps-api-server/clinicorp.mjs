@@ -362,18 +362,18 @@ async function upsertAppointment(pool, a, tenantId = null) {
       id,
       a.BusinessId ?? a.Clinic_BusinessId ?? null,
       a.PatientId ?? a.Patient_PersonId ?? null,
-      a.PatientName ?? null,
+      a.PatientName ?? a.Patient_FullName ?? a.Patient_Name ?? null,
       a.ProfessionalId ?? a.Dentist_PersonId ?? a.ScheduleToId ?? null,
-      a.ProfessionalName ?? a.DentistName ?? a.ScheduleToName ?? a.Dentist?.Name ?? null,
-      a.CategoryId ?? a.Category_id ?? null,
-      a.CategoryDescription ?? a.Category ?? null,
-      a.CategoryColor ?? a.Color ?? null,
-      a.ChairId ?? null,
+      a.ProfessionalName ?? a.Dentist_FullName ?? a.Dentist_Name ?? a.DentistName ?? a.ScheduleToName ?? a.Dentist?.Name ?? a.Dentist?.FullName ?? null,
+      a.CategoryId ?? a.Category_id ?? a.Category_Id ?? null,
+      a.CategoryDescription ?? a.Category_Description ?? a.Category ?? null,
+      a.CategoryColor ?? a.Category_Color ?? a.Color ?? null,
+      a.ChairId ?? a.Chair_Id ?? null,
       a.Status ?? a.StatusId ?? null,
       a.Date || a.AppointmentDate || a.date || null,
-      a.FromTime ?? a.StartTime ?? a.fromTime ?? null,
-      a.ToTime ?? a.EndTime ?? a.toTime ?? null,
-      a.Notes ?? a.notes ?? null,
+      a.FromTime ?? a.Time ?? a.StartTime ?? a.fromTime ?? null,
+      a.ToTime ?? a.FinalTime ?? a.EndTime ?? a.toTime ?? null,
+      a.Notes ?? a.Observation ?? a.notes ?? null,
       JSON.stringify(a),
     ]
   );
@@ -439,8 +439,16 @@ async function ensureLocalPatient(pool, cpId, fallback = {}, tenantId = null) {
 async function ensureLocalProfessional(pool, cpProfId, fallbackName = null, tenantId = null) {
   if (!cpProfId) return null;
   const tId = await resolveTenantId(pool, tenantId);
-  const found = await pool.query(`SELECT id FROM dentistas WHERE clinicorp_professional_id=$1 AND tenant_id=$2 LIMIT 1`, [cpProfId, tId]);
-  if (found.rows[0]) return found.rows[0].id;
+  const found = await pool.query(`SELECT id, nome FROM dentistas WHERE clinicorp_professional_id=$1 AND tenant_id=$2 LIMIT 1`, [cpProfId, tId]);
+  if (found.rows[0]) {
+    // Atualiza nome se estava como placeholder "Profissional XXX" e agora temos um real
+    const currentName = found.rows[0].nome || '';
+    const newName = fallbackName && !/^Profissional\s+\d+$/i.test(fallbackName) ? fallbackName : null;
+    if (newName && /^Profissional\s+\d+$/i.test(currentName)) {
+      await pool.query(`UPDATE dentistas SET nome=$1, updated_at=NOW() WHERE id=$2`, [newName, found.rows[0].id]);
+    }
+    return found.rows[0].id;
+  }
   const cp = await pool.query(`SELECT * FROM clinicorp_professionals WHERE id=$1`, [cpProfId]);
   const nome = cp.rows[0]?.full_name || fallbackName || `Profissional ${cpProfId}`;
   const match = await pool.query(`SELECT id FROM dentistas WHERE LOWER(nome)=LOWER($1) AND tenant_id=$2 LIMIT 1`, [nome, tId]);
@@ -952,8 +960,11 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     try {
       const { rows: distinctProfs } = await pool.query(
         `SELECT DISTINCT professional_id::text AS id,
+                MAX(raw->>'Dentist_FullName') AS name_df,
+                MAX(raw->>'Dentist_Name') AS name_dn,
                 MAX(raw->>'ScheduleToName') AS name_a,
                 MAX(raw->'Dentist'->>'Name') AS name_b,
+                MAX(raw->'Dentist'->>'FullName') AS name_bf,
                 MAX(raw->>'DentistName') AS name_c,
                 MAX(raw->>'ProfessionalName') AS name_d,
                 MAX(professional_name) AS name_e
@@ -962,14 +973,14 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
           GROUP BY 1`
       );
       for (const p of distinctProfs) {
-        // Busca o objeto original para garantir que temos os metadados
         const { rows: apptRows } = await pool.query(
           `SELECT raw FROM clinicorp_appointments WHERE professional_id = $1 LIMIT 1`,
           [p.id]
         );
         const rawAppt = apptRows[0]?.raw || {};
-        const name = p.name_a || p.name_b || p.name_c || p.name_d || p.name_e || 
-                     rawAppt.ScheduleToName || rawAppt.DentistName || (rawAppt.Dentist && rawAppt.Dentist.Name) || 
+        const name = p.name_df || p.name_dn || p.name_a || p.name_b || p.name_bf || p.name_c || p.name_d || p.name_e ||
+                     rawAppt.Dentist_FullName || rawAppt.Dentist_Name || rawAppt.ScheduleToName || rawAppt.DentistName ||
+                     (rawAppt.Dentist && (rawAppt.Dentist.FullName || rawAppt.Dentist.Name)) ||
                      `Profissional ${p.id}`;
 
         await pool.query(
@@ -980,8 +991,12 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
              synced_at = NOW()`,
           [p.id, name, JSON.stringify({ derived_from: 'appointments', id: p.id, name })]
         );
-        // Garante existência no schema local (dentistas) com o tenant atual.
         await ensureLocalProfessional(pool, p.id, name, tenant_id);
+        // Atualiza professional_name nos agendamentos onde está nulo
+        await pool.query(
+          `UPDATE clinicorp_appointments SET professional_name = $2 WHERE professional_id = $1 AND (professional_name IS NULL OR professional_name = '')`,
+          [p.id, name]
+        );
       }
       
       // Forçar re-projeção dos agendamentos agora que temos os profissionais
