@@ -27,6 +27,7 @@ import { Route as MetricasRouteImport } from './routes/metricas'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as IntegracoesRouteImport } from './routes/integracoes'
 import { Route as FinanceiroRouteImport } from './routes/financeiro'
+import { Route as ExamesRouteImport } from './routes/exames'
 import { Route as EstoqueRouteImport } from './routes/estoque'
 import { Route as EquipeRouteImport } from './routes/equipe'
 import { Route as DisparosRouteImport } from './routes/disparos'
@@ -135,6 +136,11 @@ const IntegracoesRoute = IntegracoesRouteImport.update({
 const FinanceiroRoute = FinanceiroRouteImport.update({
   id: '/financeiro',
   path: '/financeiro',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ExamesRoute = ExamesRouteImport.update({
+  id: '/exames',
+  path: '/exames',
   getParentRoute: () => rootRouteImport,
 } as any)
 const EstoqueRoute = EstoqueRouteImport.update({
@@ -252,6 +258,7 @@ export interface FileRoutesByFullPath {
   '/disparos': typeof DisparosRoute
   '/equipe': typeof EquipeRoute
   '/estoque': typeof EstoqueRoute
+  '/exames': typeof ExamesRoute
   '/financeiro': typeof FinanceiroRoute
   '/integracoes': typeof IntegracoesRoute
   '/login': typeof LoginRoute
@@ -291,6 +298,7 @@ export interface FileRoutesByTo {
   '/disparos': typeof DisparosRoute
   '/equipe': typeof EquipeRoute
   '/estoque': typeof EstoqueRoute
+  '/exames': typeof ExamesRoute
   '/financeiro': typeof FinanceiroRoute
   '/integracoes': typeof IntegracoesRoute
   '/login': typeof LoginRoute
@@ -331,6 +339,7 @@ export interface FileRoutesById {
   '/disparos': typeof DisparosRoute
   '/equipe': typeof EquipeRoute
   '/estoque': typeof EstoqueRoute
+  '/exames': typeof ExamesRoute
   '/financeiro': typeof FinanceiroRoute
   '/integracoes': typeof IntegracoesRoute
   '/login': typeof LoginRoute
@@ -372,6 +381,7 @@ export interface FileRouteTypes {
     | '/disparos'
     | '/equipe'
     | '/estoque'
+    | '/exames'
     | '/financeiro'
     | '/integracoes'
     | '/login'
@@ -411,6 +421,7 @@ export interface FileRouteTypes {
     | '/disparos'
     | '/equipe'
     | '/estoque'
+    | '/exames'
     | '/financeiro'
     | '/integracoes'
     | '/login'
@@ -450,6 +461,7 @@ export interface FileRouteTypes {
     | '/disparos'
     | '/equipe'
     | '/estoque'
+    | '/exames'
     | '/financeiro'
     | '/integracoes'
     | '/login'
@@ -490,6 +502,7 @@ export interface RootRouteChildren {
   DisparosRoute: typeof DisparosRoute
   EquipeRoute: typeof EquipeRoute
   EstoqueRoute: typeof EstoqueRoute
+  ExamesRoute: typeof ExamesRoute
   FinanceiroRoute: typeof FinanceiroRoute
   IntegracoesRoute: typeof IntegracoesRoute
   LoginRoute: typeof LoginRoute
@@ -636,6 +649,13 @@ declare module '@tanstack/react-router' {
       path: '/financeiro'
       fullPath: '/financeiro'
       preLoaderRoute: typeof FinanceiroRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/exames': {
+      id: '/exames'
+      path: '/exames'
+      fullPath: '/exames'
+      preLoaderRoute: typeof ExamesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/estoque': {
@@ -805,6 +825,7 @@ const rootRouteChildren: RootRouteChildren = {
   DisparosRoute: DisparosRoute,
   EquipeRoute: EquipeRoute,
   EstoqueRoute: EstoqueRoute,
+  ExamesRoute: ExamesRoute,
   FinanceiroRoute: FinanceiroRoute,
   IntegracoesRoute: IntegracoesRoute,
   LoginRoute: LoginRoute,
