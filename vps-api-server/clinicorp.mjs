@@ -1091,7 +1091,17 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
   await safe('professionals', async () => {
     const list = await clinicorpApi.listUsers(settings);
     for (const u of (Array.isArray(list) ? list : [])) { await upsertProfessional(pool, u, tenant_id); summary.professionals++; }
+    
+    // BACKFILL: Sincroniza dentistas locais com base nos profissionais Clinicorp
+    try {
+      const tId = await resolveTenantId(pool, tenant_id);
+      const { rows } = await pool.query('SELECT id, full_name FROM clinicorp_professionals');
+      for (const p of rows) {
+        await ensureLocalProfessional(pool, String(p.id), p.full_name, tId);
+      }
+    } catch (e) { console.error('[clinicorp sync] dentists backfill', e.message); }
   });
+
 
 
   // Pacientes são sincronizados via agendamentos (ensureLocalPatient projeta cada paciente referenciado).
