@@ -156,7 +156,7 @@ CREATE TABLE IF NOT EXISTS clinicorp_monthly_summary (
   id BIGSERIAL PRIMARY KEY,
   source TEXT NOT NULL,                  -- 'payment' | 'cashflow'
   period_month DATE NOT NULL,
-  business_id BIGINT,
+  business_id BIGINT NOT NULL DEFAULT 0,
   total_in NUMERIC,
   total_out NUMERIC,
   total_amount NUMERIC,
