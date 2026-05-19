@@ -54,12 +54,11 @@ async function loadSettings(pool, force = false) {
 const DEFAULT_TENANT_ID = '00000000-0000-0000-0000-000000000001';
 let _tenantCache = null;
 let _tenantCacheAt = 0;
-async function resolveTenantId(pool) {
+async function resolveTenantId(pool, manualId = null) {
+  if (manualId) return manualId;
   const now = Date.now();
   if (_tenantCache && now - _tenantCacheAt < 10_000) return _tenantCache;
   try {
-    // 1. Tenta pegar o tenant do primeiro admin do sistema (fallback global)
-    // 2. Tenta pegar o tenant do usuário que configurou a integração por último
     const { rows } = await pool.query(
       `SELECT tenant_id FROM profiles WHERE role = 'admin' ORDER BY created_at ASC LIMIT 1`
     );
@@ -218,7 +217,7 @@ async function upsertClinic(pool, c) {
   );
 }
 
-async function upsertProfessional(pool, p) {
+async function upsertProfessional(pool, p, tenantId = null) {
   const id = p.id ?? p.Id ?? p.UserId ?? p.PersonId ?? null;
   if (!id) return;
   const fullName = p.FullName ?? p.Name ?? p.UserName ?? p.full_name ?? `Profissional ${id}`;
@@ -233,6 +232,8 @@ async function upsertProfessional(pool, p) {
        synced_at = NOW()`,
     [String(id), fullName, userName, JSON.stringify(p)]
   );
+  try { await ensureLocalProfessional(pool, String(id), fullName, tenantId); }
+  catch (e) { console.error('[clinicorp] ensureLocalProfessional:', e.message); }
 }
 
 async function upsertChair(pool, c) {
@@ -273,7 +274,7 @@ async function upsertSpecialty(pool, s) {
   );
 }
 
-async function upsertPatient(pool, p) {
+async function upsertPatient(pool, p, tenantId = null) {
   await pool.query(
     `INSERT INTO clinicorp_patients
        (id, name, email, mobile_phone, birth_date, sex, document_id, notes, raw, synced_at)
@@ -296,11 +297,11 @@ async function upsertPatient(pool, p) {
       JSON.stringify(p),
     ]
   );
-  try { await projectPatientToLocal(pool, p); }
+  try { await projectPatientToLocal(pool, p, tenantId); }
   catch (e) { console.error('[clinicorp] projectPatientToLocal:', e.message); }
 }
 
-async function upsertAppointment(pool, a) {
+async function upsertAppointment(pool, a, tenantId = null) {
   const id = a.id ?? a.AppointmentId ?? a.Id;
   if (!id) return;
   await pool.query(
@@ -345,7 +346,7 @@ async function upsertAppointment(pool, a) {
       JSON.stringify(a),
     ]
   );
-  try { await projectAppointmentToLocal(pool, a, id); }
+  try { await projectAppointmentToLocal(pool, a, id, tenantId); }
   catch (e) { console.error('[clinicorp] projectAppointmentToLocal:', e.message); }
 }
 
@@ -362,9 +363,10 @@ function mapAppointmentStatus(raw) {
 }
 function onlyDigits(v) { return String(v ?? '').replace(/\D+/g, '') || null; }
 
-async function ensureLocalPatient(pool, cpId, fallback = {}) {
+async function ensureLocalPatient(pool, cpId, fallback = {}, tenantId = null) {
   if (!cpId) return null;
-  const found = await pool.query(`SELECT id FROM pacientes WHERE clinicorp_patient_id = $1 LIMIT 1`, [cpId]);
+  const tId = await resolveTenantId(pool, tenantId);
+  const found = await pool.query(`SELECT id FROM pacientes WHERE clinicorp_patient_id = $1 AND tenant_id = $2 LIMIT 1`, [cpId, tId]);
   const cp = await pool.query(`SELECT * FROM clinicorp_patients WHERE id = $1`, [cpId]);
   const src = cp.rows[0] || {};
   const nome = src.name || fallback.name || 'Paciente';
@@ -384,50 +386,50 @@ async function ensureLocalPatient(pool, cpId, fallback = {}) {
   }
   let matchId = null;
   if (telefone) {
-    const r = await pool.query(`SELECT id FROM pacientes WHERE telefone=$1 LIMIT 1`, [telefone]);
+    const r = await pool.query(`SELECT id FROM pacientes WHERE telefone=$1 AND tenant_id=$2 LIMIT 1`, [telefone, tId]);
     matchId = r.rows[0]?.id || null;
   }
   if (!matchId && cpf) {
-    const r = await pool.query(`SELECT id FROM pacientes WHERE cpf=$1 LIMIT 1`, [cpf]);
+    const r = await pool.query(`SELECT id FROM pacientes WHERE cpf=$1 AND tenant_id=$2 LIMIT 1`, [cpf, tId]);
     matchId = r.rows[0]?.id || null;
   }
   if (matchId) {
     await pool.query(`UPDATE pacientes SET clinicorp_patient_id=$1, updated_at=NOW() WHERE id=$2`, [cpId, matchId]);
     return matchId;
   }
-  const tenantId = await resolveTenantId(pool);
   const ins = await pool.query(
     `INSERT INTO pacientes (nome, telefone, email, data_nascimento, sexo, cpf, clinicorp_patient_id, tenant_id)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-    [nome, telefone, email, nascimento, sexo, cpf, cpId, tenantId]
+    [nome, telefone, email, nascimento, sexo, cpf, cpId, tId]
   );
   return ins.rows[0].id;
 }
 
-async function ensureLocalProfessional(pool, cpProfId, fallbackName = null) {
+async function ensureLocalProfessional(pool, cpProfId, fallbackName = null, tenantId = null) {
   if (!cpProfId) return null;
-  const found = await pool.query(`SELECT id FROM dentistas WHERE clinicorp_professional_id=$1 LIMIT 1`, [cpProfId]);
+  const tId = await resolveTenantId(pool, tenantId);
+  const found = await pool.query(`SELECT id FROM dentistas WHERE clinicorp_professional_id=$1 AND tenant_id=$2 LIMIT 1`, [cpProfId, tId]);
   if (found.rows[0]) return found.rows[0].id;
   const cp = await pool.query(`SELECT * FROM clinicorp_professionals WHERE id=$1`, [cpProfId]);
   const nome = cp.rows[0]?.full_name || fallbackName || `Profissional ${cpProfId}`;
-  const match = await pool.query(`SELECT id FROM dentistas WHERE LOWER(nome)=LOWER($1) LIMIT 1`, [nome]);
+  const match = await pool.query(`SELECT id FROM dentistas WHERE LOWER(nome)=LOWER($1) AND tenant_id=$2 LIMIT 1`, [nome, tId]);
   if (match.rows[0]) {
     await pool.query(`UPDATE dentistas SET clinicorp_professional_id=$1, updated_at=NOW() WHERE id=$2`, [cpProfId, match.rows[0].id]);
     return match.rows[0].id;
   }
-  const tenantId = await resolveTenantId(pool);
   const ins = await pool.query(
     `INSERT INTO dentistas (nome, ativo, clinicorp_professional_id, tenant_id) VALUES ($1, true, $2, $3) RETURNING id`,
-    [nome, cpProfId, tenantId]
+    [nome, cpProfId, tId]
   );
   return ins.rows[0].id;
 }
 
-async function ensureLeadForPatient(pool, pacienteId, cpPatientId, info = {}) {
+async function ensureLeadForPatient(pool, pacienteId, cpPatientId, info = {}, tenantId = null) {
   if (!pacienteId) return null;
+  const tId = await resolveTenantId(pool, tenantId);
   const existing = await pool.query(
-    `SELECT id, kanban_stage FROM crm_leads WHERE paciente_id=$1 OR clinicorp_patient_id=$2 LIMIT 1`,
-    [pacienteId, cpPatientId]
+    `SELECT id, kanban_stage FROM crm_leads WHERE (paciente_id=$1 OR clinicorp_patient_id=$2) AND tenant_id=$3 LIMIT 1`,
+    [pacienteId, cpPatientId, tId]
   );
   if (existing.rows[0]) {
     const lead = existing.rows[0];
@@ -441,11 +443,10 @@ async function ensureLeadForPatient(pool, pacienteId, cpPatientId, info = {}) {
     );
     return lead.id;
   }
-  const tenantId = await resolveTenantId(pool);
   const ins = await pool.query(
     `INSERT INTO crm_leads (nome, telefone, email, origem, status, kanban_stage, paciente_id, clinicorp_patient_id, tenant_id)
      VALUES ($1,$2,$3,'clinicorp','paciente_agendado','paciente_agendado',$4,$5,$6) RETURNING id`,
-    [info.nome || 'Paciente Clinicorp', info.telefone || null, info.email || null, pacienteId, cpPatientId, tenantId]
+    [info.nome || 'Paciente Clinicorp', info.telefone || null, info.email || null, pacienteId, cpPatientId, tId]
   );
   return ins.rows[0].id;
 }
@@ -537,7 +538,7 @@ function decideOverwrite({ strategy, keepLocal, localRow, clinicorpUpdatedAt }) 
   return { write: false, decision: 'kept_local_newer' };
 }
 
-async function projectAppointmentToLocal(pool, a, cpApptId) {
+async function projectAppointmentToLocal(pool, a, cpApptId, tenantId = null) {
   const cpPatientId = a.PatientId ?? a.Patient_PersonId ?? null;
   const cpProfId = a.ProfessionalId ?? a.Dentist_PersonId ?? a.ScheduleToId ?? null;
   const cpClinicId = a.BusinessId ?? a.Clinic_BusinessId ?? a.ClinicId ?? null;
@@ -546,8 +547,8 @@ async function projectAppointmentToLocal(pool, a, cpApptId) {
 
   const pacienteId = await ensureLocalPatient(pool, cpPatientId, {
     name: a.PatientName, phone: a.PatientPhone || a.MobilePhone, email: a.PatientEmail,
-  });
-  const dentistaId = await ensureLocalProfessional(pool, cpProfId, a.ProfessionalName || a.DentistName || a.ScheduleToName || a.Dentist?.Name);
+  }, tenantId);
+  const dentistaId = await ensureLocalProfessional(pool, cpProfId, a.ProfessionalName || a.DentistName || a.ScheduleToName || a.Dentist?.Name, tenantId);
   const status = mapAppointmentStatus(a.Status ?? a.StatusId);
   const rawDate = a.Date || a.AppointmentDate || a.date || null;
   // Normaliza para YYYY-MM-DD (a API retorna ISO 8601 com timezone)
@@ -564,12 +565,12 @@ async function projectAppointmentToLocal(pool, a, cpApptId) {
   const procedimento = a.CategoryDescription || a.Category || null;
   const categoriaCor = a.CategoryColor || a.Color || null;
   const observacoes = a.Notes || a.notes || null;
-
+  const tId = await resolveTenantId(pool, tenantId);
   const exists = await pool.query(
     `SELECT id, paciente_id, dentista_id, data, hora, duracao, procedimento, categoria,
             categoria_cor, status, observacoes, updated_at, last_clinicorp_sync_at, keep_local
-       FROM agendamentos WHERE clinicorp_appointment_id=$1 LIMIT 1`,
-    [cpApptId]
+       FROM agendamentos WHERE clinicorp_appointment_id=$1 AND tenant_id=$2 LIMIT 1`,
+    [cpApptId, tId]
   );
   let agendamentoId;
   if (exists.rows[0]) {
@@ -624,13 +625,12 @@ async function projectAppointmentToLocal(pool, a, cpApptId) {
   } else if (data) {
     const { randomUUID } = await import('crypto');
     const id = randomUUID();
-    const tenantId = await resolveTenantId(pool);
     await pool.query(
       `INSERT INTO agendamentos
          (id, paciente_id, dentista_id, data, hora, duracao, procedimento, status, observacoes,
           categoria, categoria_cor, clinicorp_appointment_id, last_clinicorp_sync_at, tenant_id)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, NOW(), $13)`,
-      [id, pacienteId, dentistaId, data, hora, duracao, procedimento, status, observacoes, procedimento, categoriaCor, cpApptId, tenantId]
+      [id, pacienteId, dentistaId, data, hora, duracao, procedimento, status, observacoes, procedimento, categoriaCor, cpApptId, tId]
     );
     agendamentoId = id;
   }
@@ -638,7 +638,7 @@ async function projectAppointmentToLocal(pool, a, cpApptId) {
   if (pacienteId) {
     const leadId = await ensureLeadForPatient(pool, pacienteId, cpPatientId, {
       nome: a.PatientName, telefone: onlyDigits(a.PatientPhone || a.MobilePhone), email: a.PatientEmail,
-    });
+    }, tenantId);
     if (leadId) {
       if (status === 'cancelado' || status === 'faltou') {
         await pool.query(
@@ -656,7 +656,7 @@ async function projectAppointmentToLocal(pool, a, cpApptId) {
   return { pacienteId, dentistaId, agendamentoId };
 }
 
-async function projectPatientToLocal(pool, p) {
+async function projectPatientToLocal(pool, p, tenantId = null) {
   const cpId = p.id ?? p.Patient_PersonId;
   if (!cpId) return null;
   const cpUpdatedAt = p.UpdateDate || p.UpdatedAt || p.LastModified || null;
@@ -710,13 +710,13 @@ async function projectPatientToLocal(pool, p) {
     }
     if (!decision.write) return localRow.id;
   }
-  const pacienteId = await ensureLocalPatient(pool, cpId, { name: p.Name, phone: p.MobilePhone, email: p.Email });
+  const pacienteId = await ensureLocalPatient(pool, cpId, { name: p.Name, phone: p.MobilePhone, email: p.Email }, tenantId);
   if (pacienteId) {
     await pool.query(`UPDATE pacientes SET last_clinicorp_sync_at=NOW() WHERE id=$1`, [pacienteId]);
   }
   await ensureLeadForPatient(pool, pacienteId, cpId, {
     nome: p.Name, telefone: onlyDigits(p.MobilePhone), email: p.Email,
-  });
+  }, tenantId);
   return pacienteId;
 }
 
@@ -779,7 +779,7 @@ async function upsertFinancial(pool, source, item) {
 }
 
 // ─── Sync orchestration ───────────────────────────────────────
-export async function runFullSync(pool, { from, to, api_token, subscriber_id, base_url, force_metadata = false } = {}) {
+export async function runFullSync(pool, { from, to, api_token, subscriber_id, base_url, tenant_id, force_metadata = false } = {}) {
   // Se passarmos credenciais explícitas (ex: manual sync com per-user settings), as usamos.
   // Caso contrário, carrega as globais.
   let settings;
@@ -802,11 +802,11 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
 
   // Backfill tenant_id em registros antigos vindos do Clinicorp (criados antes do fix)
   try {
-    const tenantId = await resolveTenantId(pool);
-    await pool.query(`UPDATE dentistas SET tenant_id=$1 WHERE tenant_id IS NULL AND clinicorp_professional_id IS NOT NULL`, [tenantId]);
-    await pool.query(`UPDATE pacientes SET tenant_id=$1 WHERE tenant_id IS NULL AND clinicorp_patient_id IS NOT NULL`, [tenantId]);
-    await pool.query(`UPDATE agendamentos SET tenant_id=$1 WHERE tenant_id IS NULL AND clinicorp_appointment_id IS NOT NULL`, [tenantId]);
-    await pool.query(`UPDATE crm_leads SET tenant_id=$1 WHERE tenant_id IS NULL AND (clinicorp_patient_id IS NOT NULL OR origem='clinicorp')`, [tenantId]);
+    const tId = await resolveTenantId(pool, tenant_id);
+    await pool.query(`UPDATE dentistas SET tenant_id=$1 WHERE tenant_id IS NULL AND clinicorp_professional_id IS NOT NULL`, [tId]);
+    await pool.query(`UPDATE pacientes SET tenant_id=$1 WHERE tenant_id IS NULL AND clinicorp_patient_id IS NOT NULL`, [tId]);
+    await pool.query(`UPDATE agendamentos SET tenant_id=$1 WHERE tenant_id IS NULL AND clinicorp_appointment_id IS NOT NULL`, [tId]);
+    await pool.query(`UPDATE crm_leads SET tenant_id=$1 WHERE tenant_id IS NULL AND (clinicorp_patient_id IS NOT NULL OR origem='clinicorp')`, [tId]);
   } catch (e) { console.error('[clinicorp sync] tenant backfill', e.message); }
 
 
@@ -838,7 +838,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
 
   await safe('professionals', async () => {
     const list = await clinicorpApi.listUsers(settings);
-    for (const u of (Array.isArray(list) ? list : [])) { await upsertProfessional(pool, u); summary.professionals++; }
+    for (const u of (Array.isArray(list) ? list : [])) { await upsertProfessional(pool, u, tenant_id); summary.professionals++; }
   });
 
   // Pacientes são sincronizados via agendamentos (ensureLocalPatient projeta cada paciente referenciado).
@@ -877,7 +877,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     const processAppts = async (list) => {
       for (const a of (Array.isArray(list) ? list : [])) { 
         const id = a.id ?? a.AppointmentId ?? a.Id;
-        if (id) { apiIds.add(String(id)); await upsertAppointment(pool, a); summary.appointments++; }
+        if (id) { apiIds.add(String(id)); await upsertAppointment(pool, a, tenant_id); summary.appointments++; }
       }
     };
 
@@ -947,7 +947,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
           [p.id, name, JSON.stringify({ derived_from: 'appointments', id: p.id, name })]
         );
         // Garante existência no schema local (dentistas) com o tenant atual.
-        await ensureLocalProfessional(pool, p.id, name);
+        await ensureLocalProfessional(pool, p.id, name, tenant_id);
       }
       const { rows: pcount } = await pool.query(`SELECT COUNT(*)::int AS c FROM clinicorp_professionals`);
       summary.professionals = pcount[0]?.c || summary.professionals;
