@@ -272,7 +272,7 @@ async function upsertSpecialty(pool, s) {
   );
 }
 
-async function upsertPatient(pool, p) {
+async function upsertPatient(pool, p, tenantId = null) {
   await pool.query(
     `INSERT INTO clinicorp_patients
        (id, name, email, mobile_phone, birth_date, sex, document_id, notes, raw, synced_at)
