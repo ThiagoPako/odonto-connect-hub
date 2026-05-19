@@ -1247,17 +1247,25 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
   await safe('payments', async () => {
     const ranges = sliceRange(fromDate, toDate);
     const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics');
+    const processPayment = async (item, clinicId = null) => {
+      if (isMonthlyFinancialSummary(item)) {
+        if (await upsertMonthlySummary(pool, 'payment', item, clinicId)) summary.payments++;
+        return;
+      }
+      await upsertFinancial(pool, 'payment', item, tenant_id);
+      summary.payments++;
+    };
     for (const r of ranges) {
       if (clinics.length > 0) {
         for (const { id: clinicId } of clinics) {
           try {
             const list = await clinicorpApi.listPayments(settings, { from: r.from, to: r.to, clinic_id: clinicId });
-            for (const p of (Array.isArray(list) ? list : [])) { await upsertFinancial(pool, 'payment', p, tenant_id); summary.payments++; }
+            for (const p of (Array.isArray(list) ? list : [])) { await processPayment(p, clinicId); }
           } catch (e) { console.error('[clinicorp sync] financial:', e.message); }
         }
       } else {
         const list = await clinicorpApi.listPayments(settings, { from: r.from, to: r.to });
-        for (const p of (Array.isArray(list) ? list : [])) { await upsertFinancial(pool, 'payment', p, tenant_id); summary.payments++; }
+        for (const p of (Array.isArray(list) ? list : [])) { await processPayment(p); }
       }
     }
   });
@@ -1265,17 +1273,25 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
   await safe('cashflow', async () => {
     const ranges = sliceRange(fromDate, toDate);
     const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics');
+    const processCashflow = async (item, clinicId = null) => {
+      if (isMonthlyFinancialSummary(item)) {
+        if (await upsertMonthlySummary(pool, 'cashflow', item, clinicId)) summary.cashflow++;
+        return;
+      }
+      await upsertFinancial(pool, 'cashflow', item, tenant_id);
+      summary.cashflow++;
+    };
     for (const r of ranges) {
       if (clinics.length > 0) {
         for (const { id: clinicId } of clinics) {
           try {
             const list = await clinicorpApi.listCashFlow(settings, { from: r.from, to: r.to, clinic_id: clinicId });
-            for (const c of (Array.isArray(list) ? list : [])) { await upsertFinancial(pool, 'cashflow', c, tenant_id); summary.cashflow++; }
+            for (const c of (Array.isArray(list) ? list : [])) { await processCashflow(c, clinicId); }
           } catch (e) { console.error('[clinicorp sync] financial:', e.message); }
         }
       } else {
         const list = await clinicorpApi.listCashFlow(settings, { from: r.from, to: r.to });
-        for (const c of (Array.isArray(list) ? list : [])) { await upsertFinancial(pool, 'cashflow', c, tenant_id); summary.cashflow++; }
+        for (const c of (Array.isArray(list) ? list : [])) { await processCashflow(c); }
       }
     }
   });
@@ -1592,6 +1608,11 @@ export function registerClinicorp(app, pool) {
   app.get('/api/clinicorp/financial', async (req, res) => {
     const limit = Math.min(Number(req.query.limit) || 200, 1000);
     const { rows } = await pool.query('SELECT * FROM clinicorp_financial_entries ORDER BY date DESC LIMIT $1', [limit]);
+    res.json(rows);
+  });
+  app.get('/api/clinicorp/financial/monthly-summary', async (req, res) => {
+    const limit = Math.min(Number(req.query.limit) || 200, 1000);
+    const { rows } = await pool.query('SELECT * FROM clinicorp_monthly_summary ORDER BY period_month DESC, source LIMIT $1', [limit]);
     res.json(rows);
   });
   app.get('/api/clinicorp/chairs', async (req, res) => {
