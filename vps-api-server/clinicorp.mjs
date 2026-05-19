@@ -405,6 +405,9 @@ async function upsertAppointment(pool, a, tenantId = null) {
       );
     }
   } catch (e) { console.error('[clinicorp] patient stub from appt:', e.message); }
+
+  try { await projectAppointmentToLocal(pool, a, id, tenantId); }
+  catch (e) { console.error('[clinicorp] projectAppointmentToLocal:', e.message); }
 }
 
 async function upsertEvolution(pool, e) {
@@ -441,10 +444,6 @@ async function upsertDocument(pool, d) {
        synced_at = NOW()`,
     [id, d.PatientId, d.Title, d.FileUrl, d.Category, d.Date, JSON.stringify(d)]
   );
-}
-
-  try { await projectAppointmentToLocal(pool, a, id, tenantId); }
-  catch (e) { console.error('[clinicorp] projectAppointmentToLocal:', e.message); }
 }
 
 // ─── Projection layer (Clinicorp → schema local) ───
