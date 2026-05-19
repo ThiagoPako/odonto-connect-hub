@@ -548,7 +548,7 @@ async function projectAppointmentToLocal(pool, a, cpApptId) {
   const pacienteId = await ensureLocalPatient(pool, cpPatientId, {
     name: a.PatientName, phone: a.PatientPhone || a.MobilePhone, email: a.PatientEmail,
   });
-  const dentistaId = await ensureLocalProfessional(pool, cpProfId, a.ProfessionalName || a.DentistName);
+  const dentistaId = await ensureLocalProfessional(pool, cpProfId, a.ProfessionalName || a.DentistName || a.ScheduleToName || a.Dentist?.Name);
   const status = mapAppointmentStatus(a.Status ?? a.StatusId);
   const rawDate = a.Date || a.AppointmentDate || a.date || null;
   // Normaliza para YYYY-MM-DD (a API retorna ISO 8601 com timezone)
