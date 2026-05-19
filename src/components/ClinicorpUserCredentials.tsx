@@ -25,6 +25,7 @@ export function ClinicorpUserCredentials() {
   const [showSecret, setShowSecret] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<ClinicorpConnectionTest | null>(null);
+  const [syncing, setSyncing] = useState(false);
 
   async function load() {
     setLoading(true);
