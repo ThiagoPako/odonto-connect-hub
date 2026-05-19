@@ -14,6 +14,7 @@ export function ClinicorpMirrorAgenda({ refreshTrigger = 0 }: { refreshTrigger?:
   const [selectedChairId, setSelectedChairId] = useState<string>("all");
   const [loading, setLoading] = useState(false);
 
+  const [autoJumped, setAutoJumped] = useState(false);
   const dateStr = currentDate.toISOString().slice(0, 10);
 
   useEffect(() => {
@@ -24,7 +25,29 @@ export function ClinicorpMirrorAgenda({ refreshTrigger = 0 }: { refreshTrigger?:
   useEffect(() => {
     setLoading(true);
     clinicorpApi.listAppointments({ from: dateStr, to: dateStr })
-      .then(setAppointments)
+      .then(async (rows) => {
+        setAppointments(rows);
+        // Auto-jump: na primeira carga, se não houver nada hoje, ir para o dia mais próximo com dados.
+        if (!autoJumped && rows.length === 0) {
+          setAutoJumped(true);
+          try {
+            const all = await clinicorpApi.listAppointments({ from: '2020-01-01', to: '2030-12-31' });
+            if (all.length > 0) {
+              const today = new Date(dateStr).getTime();
+              const sorted = [...all].sort((a: any, b: any) => {
+                const da = Math.abs(new Date(String(a.date).slice(0, 10)).getTime() - today);
+                const db = Math.abs(new Date(String(b.date).slice(0, 10)).getTime() - today);
+                return da - db;
+              });
+              const nearest = String((sorted[0] as any).date).slice(0, 10);
+              if (nearest !== dateStr) {
+                setCurrentDate(new Date(nearest + 'T12:00:00'));
+                return;
+              }
+            }
+          } catch (e) { console.error(e); }
+        }
+      })
       .finally(() => setLoading(false));
   }, [dateStr, refreshTrigger]);
 
