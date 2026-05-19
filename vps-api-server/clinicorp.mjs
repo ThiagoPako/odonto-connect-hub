@@ -190,7 +190,7 @@ export const clinicorpApi = {
   listAppointmentCategories: (s) => clinicorpFetch(s, '/appointment/list_categories'),
   listSpecialties: (s) => clinicorpFetch(s, '/procedures/list_specialties'),
   listAppointments: (s, from, to, businessId) =>
-    clinicorpFetch(s, '/appointment/list', { query: { from, to, ...(businessId ? { business_id: businessId } : {}) } }),
+    clinicorpFetch(s, '/appointment/list', { query: { from, to, business_id: businessId } }),
   appointmentStatusList: (s) => clinicorpFetch(s, '/appointment/status_list'),
   changeAppointmentStatus: (s, query) => clinicorpFetch(s, '/appointment/change_status', { query }),
   confirmAppointment: (s, body) => clinicorpFetch(s, '/appointment/confirm_appointment', { method: 'POST', body }),
