@@ -540,29 +540,31 @@ function decideOverwrite({ strategy, keepLocal, localRow, clinicorpUpdatedAt }) 
 
 async function projectAppointmentToLocal(pool, a, cpApptId) {
   const cpPatientId = a.PatientId ?? a.Patient_PersonId ?? null;
-  const cpProfId = a.ProfessionalId ?? a.Dentist_PersonId ?? null;
-  const cpClinicId = a.BusinessId ?? a.ClinicId ?? null;
-  const cpUpdatedAt = a.UpdateDate || a.UpdatedAt || a.LastModified || a.ModifiedAt || null;
+  const cpProfId = a.ProfessionalId ?? a.Dentist_PersonId ?? a.ScheduleToId ?? null;
+  const cpClinicId = a.BusinessId ?? a.Clinic_BusinessId ?? a.ClinicId ?? null;
+  const cpUpdatedAt = a.UpdateDate || a.UpdatedAt || a.LastModified || a.ModifiedAt || a.z_LastChange_Date || a.ModifiedDate || null;
   const policy = await resolveConflictPolicy(pool, { clinicId: cpClinicId, professionalId: cpProfId });
 
   const pacienteId = await ensureLocalPatient(pool, cpPatientId, {
     name: a.PatientName, phone: a.PatientPhone || a.MobilePhone, email: a.PatientEmail,
   });
-  const dentistaId = await ensureLocalProfessional(pool, cpProfId, a.ProfessionalName);
-  const status = mapAppointmentStatus(a.Status);
-  const data = a.Date || a.AppointmentDate || null;
-  const hora = (a.FromTime || a.StartTime || '00:00').toString().slice(0, 5);
+  const dentistaId = await ensureLocalProfessional(pool, cpProfId, a.ProfessionalName || a.DentistName);
+  const status = mapAppointmentStatus(a.Status ?? a.StatusId);
+  const rawDate = a.Date || a.AppointmentDate || a.date || null;
+  // Normaliza para YYYY-MM-DD (a API retorna ISO 8601 com timezone)
+  const data = rawDate ? String(rawDate).slice(0, 10) : null;
+  const fromT = (a.FromTime || a.StartTime || a.fromTime || '').toString();
+  const toT = (a.ToTime || a.EndTime || a.toTime || '').toString();
+  const hora = (fromT || '00:00').slice(0, 5);
   const duracao = (() => {
-    const ft = (a.FromTime || a.StartTime || '').toString();
-    const tt = (a.ToTime || a.EndTime || '').toString();
-    if (!ft || !tt) return 30;
+    if (!fromT || !toT) return 30;
     const toMin = (s) => { const [h,m] = s.split(':').map(Number); return (h||0)*60+(m||0); };
-    const d = toMin(tt) - toMin(ft);
+    const d = toMin(toT) - toMin(fromT);
     return d > 0 ? d : 30;
   })();
   const procedimento = a.CategoryDescription || a.Category || null;
   const categoriaCor = a.CategoryColor || a.Color || null;
-  const observacoes = a.Notes || null;
+  const observacoes = a.Notes || a.notes || null;
 
   const exists = await pool.query(
     `SELECT id, paciente_id, dentista_id, data, hora, duracao, procedimento, categoria,
