@@ -14,6 +14,8 @@ ALTER TABLE clinicorp_specialties            ADD COLUMN IF NOT EXISTS tenant_id 
 ALTER TABLE clinicorp_patients               ADD COLUMN IF NOT EXISTS tenant_id UUID;
 ALTER TABLE clinicorp_appointments           ADD COLUMN IF NOT EXISTS tenant_id UUID;
 ALTER TABLE clinicorp_estimates              ADD COLUMN IF NOT EXISTS tenant_id UUID;
+ALTER TABLE clinicorp_evolutions             ADD COLUMN IF NOT EXISTS tenant_id UUID;
+ALTER TABLE clinicorp_documents              ADD COLUMN IF NOT EXISTS tenant_id UUID;
 
 -- 2) Backfill: associa registros existentes a um tenant.
 --    Estratégia: usa tenant das credenciais Clinicorp; se não houver, usa o
