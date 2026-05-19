@@ -10704,19 +10704,34 @@ async function clinicorpFetchProbe(settings, pathName) {
   const ctrl = new AbortController();
   const timeout = setTimeout(() => ctrl.abort(), 15_000);
   try {
-    const r = await fetch(url.toString(), {
-      method: 'GET',
-      headers: { Authorization: `Bearer ${settings.api_token}`, Accept: 'application/json' },
-      signal: ctrl.signal,
-    });
-    const text = await r.text();
-    let data; try { data = text ? JSON.parse(text) : null; } catch { data = text; }
-    if (!r.ok) {
-      const err = new Error(`HTTP ${r.status}${typeof data === 'string' && data ? ': ' + data.slice(0, 200) : ''}`);
-      err.status = r.status;
+    const apiToken = String(settings.api_token || '').trim().replace(/^Bearer\s+/i, '');
+    const apiUser = String(settings.subscriber_id || '').trim();
+    const requestOnce = async (authMode) => {
+      const auth = authMode === 'basic' && apiUser
+        ? `Basic ${Buffer.from(`${apiUser}:${apiToken}`).toString('base64')}`
+        : `Bearer ${apiToken}`;
+      const r = await fetch(url.toString(), {
+        method: 'GET',
+        headers: { Authorization: auth, Accept: 'application/json' },
+        signal: ctrl.signal,
+      });
+      const text = await r.text();
+      let data; try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+      if (!r.ok) {
+        const err = new Error(`HTTP ${r.status}${typeof data === 'string' && data ? ': ' + data.slice(0, 200) : ''}`);
+        err.status = r.status;
+        err.authMode = authMode;
+        throw err;
+      }
+      return data;
+    };
+
+    try {
+      return await requestOnce('basic');
+    } catch (err) {
+      if (err?.status === 401) return await requestOnce('bearer');
       throw err;
     }
-    return data;
   } finally {
     clearTimeout(timeout);
   }
