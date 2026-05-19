@@ -210,9 +210,9 @@ export const clinicorpApi = {
   listEstimates: (s, from, to, clinicId) => clinicorpFetch(s, '/estimates/list', { query: { from, to, clinic_id: clinicId } }),
   getEstimate: (s, treatmentId) => clinicorpFetch(s, '/estimates/get', { query: { treatment_id: treatmentId } }),
   analytics: (s, from, to) => clinicorpFetch(s, '/analytics/list_results', { query: { from, to } }),
-  listInvoices: (s, { from, to, clinic_id } = {}) => clinicorpFetch(s, '/financial/list_invoices', { query: { from, to, Clinic_BusinessId: clinic_id, clinic_id, business_id: clinic_id } }),
-  listCashFlow: (s, { from, to, clinic_id } = {}) => clinicorpFetch(s, '/financial/list_cash_flow', { query: { from, to, Clinic_BusinessId: clinic_id, clinic_id, business_id: clinic_id } }),
-  listPayments: (s, { from, to, clinic_id } = {}) => clinicorpFetch(s, '/financial/list_payments', { query: { from, to, Clinic_BusinessId: clinic_id, clinic_id, business_id: clinic_id } }),
+  listInvoices: (s, { from, to, clinic_id } = {}) => clinicorpFetch(s, '/financial/list_invoices', { query: { from, to, business_id: clinic_id } }),
+  listCashFlow: (s, { from, to, clinic_id } = {}) => clinicorpFetch(s, '/financial/list_cash_flow', { query: { from, to, business_id: clinic_id } }),
+  listPayments: (s, { from, to, clinic_id } = {}) => clinicorpFetch(s, '/financial/list_payments', { query: { from, to, business_id: clinic_id } }),
   salesEstimatesAndConversion: (s, query) => clinicorpFetch(s, '/sales/estimates_and_conversion', { query }),
   salesExpertiseRevenue: (s, query) => clinicorpFetch(s, '/sales/expertise_revenue', { query }),
   addLead: (s, body) => clinicorpFetch(s, '/crm/add_leads', { method: 'POST', body }),
@@ -887,8 +887,17 @@ function parseClinicorpMonth(value) {
   if (iso) return `${iso[1]}-${iso[2].padStart(2, '0')}-01`;
   const br = text.match(/^(\d{1,2})\/(\d{4})$/);
   if (br) return `${br[2]}-${br[1].padStart(2, '0')}-01`;
-  const named = new Date(text);
-  return Number.isNaN(named.getTime()) ? null : named.toISOString().slice(0, 7) + '-01';
+  const named = new Date(text + " 1, 2026"); // Tenta interpretar nome do mês fixando o ano atual
+  if (!Number.isNaN(named.getTime())) return named.toISOString().slice(0, 7) + '-01';
+  const monthMap = {
+    'janeiro': '01', 'fevereiro': '02', 'março': '03', 'abril': '04', 'maio': '05', 'junho': '06',
+    'julho': '07', 'agosto': '08', 'setembro': '09', 'outubro': '10', 'novembro': '11', 'dezembro': '12',
+    'january': '01', 'february': '02', 'march': '03', 'april': '04', 'may': '05', 'june': '06',
+    'july': '07', 'august': '08', 'september': '09', 'october': '10', 'november': '11', 'december': '12'
+  };
+  const m = monthMap[text.toLowerCase()];
+  if (m) return `${new Date().getFullYear()}-${m}-01`;
+  return null;
 }
 
 async function upsertMonthlySummary(pool, source, item, businessId = null) {
