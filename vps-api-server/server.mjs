@@ -10713,7 +10713,8 @@ app.post('/api/clinicorp/sync/now', async (req, res) => {
     const result = await runFullSync(pool, { 
       api_token: settings.api_token, 
       subscriber_id: settings.subscriber_id, 
-      base_url: settings.base_url 
+      base_url: settings.base_url,
+      tenant_id: user.tenant_id // Pass the user's tenant ID
     });
 
     res.json(result);
