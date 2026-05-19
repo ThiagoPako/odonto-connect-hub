@@ -52,15 +52,27 @@ export function ClinicorpMirrorAgenda({ refreshTrigger = 0 }: { refreshTrigger?:
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Select value={selectedProfId} onValueChange={setSelectedProfId}>
-            <SelectTrigger className="w-[200px]">
+            <SelectTrigger className="w-[180px]">
               <SelectValue placeholder="Profissional" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">Todos os Profissionais</SelectItem>
               {professionals.map(p => (
                 <SelectItem key={p.id} value={String(p.id)}>{p.full_name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select value={selectedChairId} onValueChange={setSelectedChairId}>
+            <SelectTrigger className="w-[160px]">
+              <SelectValue placeholder="Cadeira/Sala" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todas as Cadeiras</SelectItem>
+              {chairs.map(c => (
+                <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>
               ))}
             </SelectContent>
           </Select>
