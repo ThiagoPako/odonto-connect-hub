@@ -175,3 +175,10 @@ WHERE d.clinicorp_professional_id::text = cp.id::text
 CREATE UNIQUE INDEX IF NOT EXISTS uq_dentistas_tenant_nome
   ON dentistas (tenant_id, LOWER(TRIM(nome)))
   WHERE nome IS NOT NULL AND TRIM(nome) <> '';
+
+-- 8) Índices únicos para espelhos multi-tenant (garante integridade do ON CONFLICT)
+CREATE UNIQUE INDEX IF NOT EXISTS uq_clinicorp_categories_tenant ON clinicorp_appointment_categories(id, tenant_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_clinicorp_specialties_tenant ON clinicorp_specialties(id, tenant_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_clinicorp_estimates_tenant ON clinicorp_estimates(id, tenant_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_clinicorp_evolutions_tenant ON clinicorp_evolutions(id, tenant_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_clinicorp_documents_tenant ON clinicorp_documents(id, tenant_id);
