@@ -120,7 +120,7 @@ END $$;
 UPDATE dentistas d
 SET nome = cp.full_name, updated_at = NOW()
 FROM clinicorp_professionals cp
-WHERE d.clinicorp_professional_id = cp.id::text
+WHERE d.clinicorp_professional_id::text = cp.id::text
   AND d.nome ~ '^Profissional\s+\d+'
   AND cp.full_name IS NOT NULL
   AND cp.full_name <> ''
