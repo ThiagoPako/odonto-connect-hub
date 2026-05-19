@@ -295,7 +295,7 @@ async function upsertPatient(pool, p, tenantId = null) {
       JSON.stringify(p),
     ]
   );
-  try { await projectPatientToLocal(pool, p); }
+  try { await projectPatientToLocal(pool, p, tenantId); }
   catch (e) { console.error('[clinicorp] projectPatientToLocal:', e.message); }
 }
 
