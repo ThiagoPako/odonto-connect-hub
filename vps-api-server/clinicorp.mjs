@@ -115,6 +115,9 @@ async function clinicorpFetch(settings, pathName, { method = 'GET', query = {}, 
     const ctrl = new AbortController();
     const timeout = setTimeout(() => ctrl.abort(), 45_000); // 45s timeout
     
+    // Throttle automático: espaça chamadas para reduzir HTTP 429
+    await new Promise(r => setTimeout(r, 250));
+
     try {
       const headers = clinicorpAuthHeaders(settings, authMode);
       if (body !== undefined) headers['Content-Type'] = 'application/json';
@@ -132,12 +135,13 @@ async function clinicorpFetch(settings, pathName, { method = 'GET', query = {}, 
 
       if (res.status === 429 && retryCount < maxRetries) {
         retryCount++;
-        // Backoff exponencial: 2s, 4s, 8s...
-        const delay = Math.pow(2, retryCount) * 1000;
+        // Backoff exponencial agressivo para 429: 5s, 10s, 20s...
+        const delay = Math.pow(2, retryCount) * 2500;
         console.warn(`[clinicorp] HTTP 429 detectado em ${pathName}. Retentando em ${delay}ms (tentativa ${retryCount})...`);
         await new Promise(r => setTimeout(r, delay));
         return requestOnceWithRetry(authMode);
       }
+
 
       if (!res.ok) {
         const err = new Error(`Clinicorp ${method} ${pathName} → HTTP ${res.status}: ${typeof data === 'string' ? data : JSON.stringify(data)}`);
@@ -251,7 +255,8 @@ async function upsertClinic(pool, c) {
 async function upsertProfessional(pool, p, tenantId = null) {
   const id = p.id ?? p.Id ?? p.UserId ?? p.PersonId ?? null;
   if (!id) return;
-  const fullName = p.FullName ?? p.Name ?? p.UserName ?? p.full_name ?? `Profissional ${id}`;
+  // A API Clinicorp retorna o nome em diversos campos dependendo da versão/endpoint
+  const fullName = p.FullName ?? p.Full_Name ?? p.Name ?? p.PersonName ?? p.UserName ?? p.full_name ?? `Profissional ${id}`;
   const userName = p.UserName ?? p.Username ?? p.Email ?? null;
   await pool.query(
     `INSERT INTO clinicorp_professionals (id, full_name, user_name, raw, synced_at)
@@ -856,13 +861,14 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     try { await fn(); } catch (e) { errors.push(`${label}: ${e.message}`); console.error(`[clinicorp sync] ${label}`, e.message); }
   };
 
-  // Helper para fatiar períodos em janelas de 30 dias para evitar erro 400 da Clinicorp
+  // Helper para fatiar períodos em janelas menores para evitar erro 400 ou timeouts da Clinicorp
   const sliceRange = (startStr, endStr) => {
     const dates = [];
     let current = new Date(startStr);
     const end = new Date(endStr);
-    while (current < end) {
-      const next = new Date(current.getTime() + 30 * 86400_000);
+    // Janelas de 15 dias são mais seguras para grandes volumes
+    while (current <= end) {
+      const next = new Date(current.getTime() + 15 * 86400_000);
       const to = next < end ? next : end;
       dates.push({
         from: current.toISOString().slice(0, 10),
@@ -873,6 +879,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     return dates;
   };
 
+
   await safe('clinics', async () => {
     const list = await clinicorpApi.listClinics(settings);
     for (const c of (Array.isArray(list) ? list : [])) { await upsertClinic(pool, c); summary.clinics++; }
@@ -882,6 +889,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     const list = await clinicorpApi.listUsers(settings);
     for (const u of (Array.isArray(list) ? list : [])) { await upsertProfessional(pool, u, tenant_id); summary.professionals++; }
   });
+
 
   // Pacientes são sincronizados via agendamentos (ensureLocalPatient projeta cada paciente referenciado).
   // A Clinicorp não expõe um endpoint público de listagem completa de pacientes (/patient/list retorna 404),
@@ -1092,8 +1100,19 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
 
   const status = errors.length === 0 ? 'success' : (Object.values(summary).some(Boolean) ? 'partial' : 'error');
   
+  // Backfill final de profissionais: garante que agendamentos vinculados a dentistas novos sejam processados
+  try {
+    const { rows: pcount } = await pool.query(`SELECT COUNT(*)::int AS c FROM clinicorp_professionals`);
+    if ((pcount[0]?.c || 0) > 0) {
+      console.log('[clinicorp sync] Re-projetando agendamentos final para consistência...');
+      const { rows: apptsToReproject } = await pool.query('SELECT id, raw FROM clinicorp_appointments ORDER BY date DESC LIMIT 500');
+      for (const r of apptsToReproject) {
+        try { await projectAppointmentToLocal(pool, r.raw, r.id, tenant_id); } catch (e) { /* skip */ }
+      }
+    }
+  } catch (e) { console.error('[clinicorp sync] final backfill', e.message); }
+
   // Se forem as globais (carregadas via id=1), atualiza o status na tabela.
-  // Se forem per-user settings passadas explicitamente, pulamos a escrita no id=1.
   if (settings.id === 1 || (!api_token && settings.id === undefined)) {
     await pool.query(
       `UPDATE clinicorp_settings SET last_sync_at = NOW(), last_sync_status = $1, last_sync_error = $2, updated_at = NOW() WHERE id = 1`,
@@ -1102,8 +1121,8 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     invalidateSettings();
   }
 
-
   return { status, summary, errors, from: fromDate, to: toDate };
+
 }
 
 /**
