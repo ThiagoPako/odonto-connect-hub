@@ -921,9 +921,11 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
         `SELECT DISTINCT professional_id::text AS id,
                 MAX(raw->>'ScheduleToName') AS name_a,
                 MAX(raw->'Dentist'->>'Name') AS name_b,
-                MAX(raw->>'DentistName') AS name_c
+                MAX(raw->>'DentistName') AS name_c,
+                MAX(professional_name) AS name_d
            FROM clinicorp_appointments
-          WHERE professional_id IS NOT NULL`
+          WHERE professional_id IS NOT NULL
+          GROUP BY 1`
       );
       for (const p of distinctProfs) {
         const name = p.name_a || p.name_b || p.name_c || `Profissional ${p.id}`;
