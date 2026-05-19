@@ -10989,6 +10989,17 @@ if (process.env.NODE_ENV !== 'test') {
       `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS clinicorp_appointment_id TEXT`,
       `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS last_clinicorp_sync_at TIMESTAMPTZ`,
       `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS keep_local BOOLEAN DEFAULT false`,
+      `CREATE TABLE IF NOT EXISTS orcamentos (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        tenant_id UUID,
+        paciente_id UUID,
+        dentista_id UUID,
+        valor NUMERIC(12,2) DEFAULT 0,
+        status TEXT DEFAULT 'pendente',
+        data TIMESTAMPTZ DEFAULT NOW(),
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )`,
       `ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS clinicorp_estimate_id TEXT`,
       `ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS clinicorp_patient_id TEXT`
     ];
