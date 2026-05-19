@@ -810,7 +810,16 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
   });
 
   const status = errors.length === 0 ? 'success' : (Object.values(summary).some(Boolean) ? 'partial' : 'error');
-  await pool.query(
+  
+  // Se forem as globais (carregadas via id=1), atualiza o status na tabela.
+  // Se forem per-user settings passadas explicitamente, pulamos a escrita no id=1.
+  if (settings.id === 1 || (!api_token && settings.id === undefined)) {
+    await pool.query(
+      `UPDATE clinicorp_settings SET last_sync_at = NOW(), last_sync_status = $1, last_sync_error = $2, updated_at = NOW() WHERE id = 1`,
+      [status, errors.length ? errors.join(' | ') : null]
+    );
+    invalidateSettings();
+  }
     `UPDATE clinicorp_settings SET last_sync_at = NOW(), last_sync_status = $1, last_sync_error = $2, updated_at = NOW() WHERE id = 1`,
     [status, errors.length ? errors.join(' | ') : null]
   );
