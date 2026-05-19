@@ -1164,7 +1164,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
           try {
             const list = await clinicorpApi.listEstimates(settings, r.from, r.to, clinicId);
             for (const e of (Array.isArray(list) ? list : [])) { await upsertEstimate(pool, e, tenant_id); summary.estimates++; }
-          } catch (e) { /* silent fail for clinic range */ }
+          } catch (e) { console.error('[clinicorp sync] estimates clinic range:', e.message); }
         }
       } else {
         const list = await clinicorpApi.listEstimates(settings, r.from, r.to);
@@ -1182,7 +1182,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
           try {
             const list = await clinicorpApi.listInvoices(settings, { from: r.from, to: r.to, clinic_id: clinicId });
             for (const i of (Array.isArray(list) ? list : [])) { await upsertFinancial(pool, 'invoice', i, tenant_id); summary.invoices++; }
-          } catch (e) { /* silent */ }
+          } catch (e) { console.error('[clinicorp sync] financial:', e.message); }
         }
       } else {
         const list = await clinicorpApi.listInvoices(settings, { from: r.from, to: r.to });
@@ -1200,7 +1200,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
           try {
             const list = await clinicorpApi.listPayments(settings, { from: r.from, to: r.to, clinic_id: clinicId });
             for (const p of (Array.isArray(list) ? list : [])) { await upsertFinancial(pool, 'payment', p, tenant_id); summary.payments++; }
-          } catch (e) { /* silent */ }
+          } catch (e) { console.error('[clinicorp sync] financial:', e.message); }
         }
       } else {
         const list = await clinicorpApi.listPayments(settings, { from: r.from, to: r.to });
@@ -1218,7 +1218,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
           try {
             const list = await clinicorpApi.listCashFlow(settings, { from: r.from, to: r.to, clinic_id: clinicId });
             for (const c of (Array.isArray(list) ? list : [])) { await upsertFinancial(pool, 'cashflow', c, tenant_id); summary.cashflow++; }
-          } catch (e) { /* silent */ }
+          } catch (e) { console.error('[clinicorp sync] financial:', e.message); }
         }
       } else {
         const list = await clinicorpApi.listCashFlow(settings, { from: r.from, to: r.to });
