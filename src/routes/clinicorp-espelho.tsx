@@ -99,6 +99,14 @@ function ClinicorpEspelhoPage() {
             <ClinicorpMirrorAgenda refreshTrigger={refreshTrigger} />
           </TabsContent>
 
+          <TabsContent value="orcamentos">
+            <EstimatesList />
+          </TabsContent>
+
+          <TabsContent value="financeiro">
+            <FinancialList />
+          </TabsContent>
+
           <TabsContent value="profissionais">
             <ProfessionalsList />
           </TabsContent>
@@ -109,6 +117,10 @@ function ClinicorpEspelhoPage() {
 
           <TabsContent value="clinicas">
             <ClinicsList />
+          </TabsContent>
+
+          <TabsContent value="webhook">
+            <WebhookList />
           </TabsContent>
         </Tabs>
       </main>
