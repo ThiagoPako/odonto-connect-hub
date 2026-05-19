@@ -10670,7 +10670,6 @@ app.post('/api/clinicorp/my-settings/test', async (req, res) => {
       base_url: base_url || 'https://api.clinicorp.com/rest/v1',
     };
 
-    // Test multiple endpoints in parallel
     const probes = [
       { key: 'clinics',       label: 'Clínicas',      path: '/business/list' },
       { key: 'users',         label: 'Usuários',      path: '/security/list_users' },
@@ -10679,26 +10678,28 @@ app.post('/api/clinicorp/my-settings/test', async (req, res) => {
     ];
 
     const startedAt = Date.now();
-    const results = await Promise.all(probes.map(async (p) => {
+    const results = [];
+    for (const p of probes) {
       const t0 = Date.now();
       try {
         const data = await clinicorpFetchProbe(settings, p.path);
-        return {
+        results.push({
           ...p,
           ok: true,
           latency_ms: Date.now() - t0,
           count: Array.isArray(data) ? data.length : (data ? 1 : 0),
-        };
+        });
       } catch (e) {
-        return {
+        results.push({
           ...p,
           ok: false,
           latency_ms: Date.now() - t0,
           status: e.status || null,
           error: e.message,
-        };
+        });
       }
-    }));
+      await clinicorpProbeSleep(900);
+    }
 
     const ok = results.every((r) => r.ok);
     const auth = results[0]?.status === 401 || results.some((r) => r.status === 401)
@@ -10732,11 +10733,16 @@ app.post('/api/clinicorp/sync/now', async (req, res) => {
     }
 
     const { runFullSync } = await import('./clinicorp.mjs');
+    const today = new Date();
+    const from = new Date(today.getTime() - 7 * 86400_000).toISOString().slice(0, 10);
+    const to = new Date(today.getTime() + 30 * 86400_000).toISOString().slice(0, 10);
     const result = await runFullSync(pool, { 
       api_token: settings.api_token, 
       subscriber_id: settings.subscriber_id, 
       base_url: settings.base_url,
-      tenant_id: user.tenant_id // Pass the user's tenant ID
+      tenant_id: user.tenant_id,
+      from,
+      to
     });
 
     res.json(result);
