@@ -10989,6 +10989,7 @@ if (process.env.NODE_ENV !== 'test') {
       `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS clinicorp_appointment_id TEXT`,
       `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS last_clinicorp_sync_at TIMESTAMPTZ`,
       `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS keep_local BOOLEAN DEFAULT false`,
+      `ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS clinicorp_estimate_id TEXT`,
       `ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS clinicorp_patient_id TEXT`
     ];
 
