@@ -25,6 +25,7 @@ export function ClinicorpPanel() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; auth: string; total_latency_ms: number; results: any[] } | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [events, setEvents] = useState<ClinicorpWebhookEvent[]>([]);
   const [lastSync, setLastSync] = useState<ClinicorpSyncResult | null>(null);
@@ -150,8 +151,10 @@ export function ClinicorpPanel() {
 
   async function handleTest() {
     setTesting(true);
+    setTestResult(null);
     try {
       const r = await clinicorpApi.testConnection();
+      setTestResult(r as any);
       if (r.ok) toast.success(`Conexão OK — ${r.clinics_count} clínica(s) encontradas`);
       else toast.error(r.error || "Falha na conexão");
     } catch (e) {
@@ -311,6 +314,40 @@ export function ClinicorpPanel() {
             Reconciliar agora
           </Button>
         </div>
+        
+        {/* Test result panel (Global) */}
+        {testResult && (
+          <div className={`rounded-lg border p-3 space-y-2 mt-4 ${
+            testResult.ok ? "border-emerald-500/30 bg-emerald-500/5"
+            : testResult.auth === "invalid_token" ? "border-destructive/30 bg-destructive/5"
+            : "border-amber-500/30 bg-amber-500/5"
+          }`}>
+            <div className="flex items-center gap-2 text-sm font-medium">
+              {testResult.ok
+                ? <><CheckCircle2 className="h-4 w-4 text-emerald-600" /> Conexão global validada</>
+                : testResult.auth === "invalid_token"
+                  ? <><AlertCircle className="h-4 w-4 text-destructive" /> Falha de autenticação global</>
+                  : <><AlertCircle className="h-4 w-4 text-amber-600" /> Conexão global parcial</>}
+              <span className="ml-auto text-xs text-muted-foreground">{testResult.total_latency_ms}ms</span>
+            </div>
+            {testResult.results?.length > 0 && (
+              <ul className="text-xs space-y-1">
+                {testResult.results.map((r: any) => (
+                  <li key={r.key} className="flex items-center gap-2">
+                    {r.ok
+                      ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+                      : <AlertCircle className="h-3.5 w-3.5 text-destructive shrink-0" />}
+                    <span className="font-medium">{r.label}</span>
+                    <span className="text-muted-foreground">{r.latency_ms}ms</span>
+                    {r.ok
+                      ? <span className="text-muted-foreground">· {r.count ?? 0} reg.</span>
+                      : <span className="text-destructive truncate">· {r.error}</span>}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
 
         {/* Auto-reconciliação */}
         <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-3">
