@@ -1200,7 +1200,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
       
       // Forçar re-projeção dos agendamentos agora que temos os profissionais
       console.log('[clinicorp sync] Re-projetando agendamentos para vincular dentistas...');
-      const { rows: apptsToReproject } = await pool.query('SELECT id, raw FROM clinicorp_appointments');
+      const { rows: apptsToReproject } = await pool.query('SELECT id, raw FROM clinicorp_appointments ORDER BY date DESC LIMIT 1000');
       for (const r of apptsToReproject) {
         try { await projectAppointmentToLocal(pool, r.raw, r.id, tenant_id); } catch (e) { /* skip */ }
       }
