@@ -3,7 +3,9 @@
  * All API calls go through the VPS Express server
  */
 
-const VPS_API_BASE = 'https://odontoconnect.tech/api';
+const VPS_API_BASE = typeof window !== 'undefined' && (window.location.hostname.includes('lovableproject.com') || window.location.hostname.includes('localhost'))
+  ? '/api'
+  : 'https://odontoconnect.tech/api';
 const TOKEN_KEY = 'odonto_jwt';
 
 function isAuthError(status: number, _error: unknown): boolean {
