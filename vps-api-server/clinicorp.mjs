@@ -424,10 +424,11 @@ async function ensureLeadForPatient(pool, pacienteId, cpPatientId, info = {}) {
     );
     return lead.id;
   }
+  const tenantId = await resolveTenantId(pool);
   const ins = await pool.query(
-    `INSERT INTO crm_leads (nome, telefone, email, origem, status, kanban_stage, paciente_id, clinicorp_patient_id)
-     VALUES ($1,$2,$3,'clinicorp','paciente_agendado','paciente_agendado',$4,$5) RETURNING id`,
-    [info.nome || 'Paciente Clinicorp', info.telefone || null, info.email || null, pacienteId, cpPatientId]
+    `INSERT INTO crm_leads (nome, telefone, email, origem, status, kanban_stage, paciente_id, clinicorp_patient_id, tenant_id)
+     VALUES ($1,$2,$3,'clinicorp','paciente_agendado','paciente_agendado',$4,$5,$6) RETURNING id`,
+    [info.nome || 'Paciente Clinicorp', info.telefone || null, info.email || null, pacienteId, cpPatientId, tenantId]
   );
   return ins.rows[0].id;
 }
