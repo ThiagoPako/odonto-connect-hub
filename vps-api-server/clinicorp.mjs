@@ -135,7 +135,20 @@ async function clinicorpFetch(settings, pathName, { method = 'GET', query = {}, 
 
 // ─── High-level API helpers ───────────────────────────────────
 export const clinicorpApi = {
-  listUsers: (s) => clinicorpFetch(s, '/security/list_users'),
+  listUsers: async (s) => {
+    // A API Clinicorp pode retornar lista direta, ou envelope {Results|Users|Items|data}.
+    // Tentamos múltiplos endpoints porque alguns subscribers expõem rotas distintas.
+    const endpoints = ['/security/list_users', '/security/user/list', '/user/list'];
+    for (const ep of endpoints) {
+      try {
+        const r = await clinicorpFetch(s, ep);
+        const list = Array.isArray(r) ? r
+          : (r?.Results || r?.Users || r?.Items || r?.data || r?.users || []);
+        if (Array.isArray(list) && list.length > 0) return list;
+      } catch (e) { /* tenta o próximo */ }
+    }
+    return [];
+  },
   listClinics: (s) => clinicorpFetch(s, '/business/list'),
   listSubscribersClinics: (s) => clinicorpFetch(s, '/group/list_subscribers_clinics'),
   listChairs: (s, businessId) => clinicorpFetch(s, '/business/list_chairs', { query: { Clinic_BusinessId: businessId } }),
