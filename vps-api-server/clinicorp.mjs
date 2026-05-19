@@ -221,14 +221,15 @@ export const clinicorpApi = {
 };
 
 // ─── Upserts ──────────────────────────────────────────────────
-async function upsertClinic(pool, c) {
+async function upsertClinic(pool, c, tenantId = null) {
+  const tId = await resolveTenantId(pool, tenantId);
   await pool.query(
     `INSERT INTO clinicorp_clinics
-       (id, company_id, business_name, name, email, address, active,
+       (id, tenant_id, company_id, business_name, name, email, address, active,
         landline, other_landline, slot_time, no_limit_apt_same_time,
         subscriber_business_uid, working_days_hours, raw, synced_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14, NOW())
-     ON CONFLICT (id) DO UPDATE SET
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15, NOW())
+     ON CONFLICT (id, tenant_id) DO UPDATE SET
        company_id = EXCLUDED.company_id,
        business_name = EXCLUDED.business_name,
        name = EXCLUDED.name,
@@ -244,7 +245,7 @@ async function upsertClinic(pool, c) {
        raw = EXCLUDED.raw,
        synced_at = NOW()`,
     [
-      c.id ?? c.CompanyId, c.CompanyId ?? null, c.BusinessName ?? null,
+      c.id ?? c.CompanyId, tId, c.CompanyId ?? null, c.BusinessName ?? null,
       c.Name ?? null, c.Email ?? null, c.Address ?? null, c.Active ?? null,
       c.Landline ?? null, c.OtherLandline ?? null, c.SlotTime ?? null,
       c.NoLimitAptSameTime ?? null, c.SubscriberBussinessUID ?? null,
@@ -257,20 +258,21 @@ async function upsertClinic(pool, c) {
 async function upsertProfessional(pool, p, tenantId = null) {
   const id = p.id ?? p.Id ?? p.UserId ?? p.PersonId ?? null;
   if (!id) return;
+  const tId = await resolveTenantId(pool, tenantId);
   // A API Clinicorp retorna o nome em diversos campos dependendo da versão/endpoint
-  const fullName = p.FullName ?? p.Full_Name ?? p.Name ?? p.PersonName ?? p.UserName ?? p.full_name ?? `Profissional ${id}`;
+  const fullName = (p.FullName ?? p.Full_Name ?? p.Name ?? p.PersonName ?? p.UserName ?? p.full_name ?? `Profissional ${id}`).toString().trim();
   const userName = p.UserName ?? p.Username ?? p.Email ?? null;
   await pool.query(
-    `INSERT INTO clinicorp_professionals (id, full_name, user_name, raw, synced_at)
-     VALUES ($1,$2,$3,$4, NOW())
-     ON CONFLICT (id) DO UPDATE SET
+    `INSERT INTO clinicorp_professionals (id, tenant_id, full_name, user_name, raw, synced_at)
+     VALUES ($1,$2,$3,$4,$5, NOW())
+     ON CONFLICT (id, tenant_id) DO UPDATE SET
        full_name = EXCLUDED.full_name,
        user_name = EXCLUDED.user_name,
        raw = EXCLUDED.raw,
        synced_at = NOW()`,
-    [String(id), fullName, userName, JSON.stringify(p)]
+    [String(id), tId, fullName, userName, JSON.stringify(p)]
   );
-  try { await ensureLocalProfessional(pool, String(id), fullName, tenantId); }
+  try { await ensureLocalProfessional(pool, String(id), fullName, tId); }
   catch (e) { console.error('[clinicorp] ensureLocalProfessional:', e.message); }
 }
 
