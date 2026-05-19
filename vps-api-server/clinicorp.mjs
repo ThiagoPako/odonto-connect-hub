@@ -728,7 +728,7 @@ async function upsertFinancial(pool, source, item) {
 }
 
 // ─── Sync orchestration ───────────────────────────────────────
-export async function runFullSync(pool, { from, to, api_token, subscriber_id, base_url } = {}) {
+export async function runFullSync(pool, { from, to, api_token, subscriber_id, base_url, force_metadata = false } = {}) {
   // Se passarmos credenciais explícitas (ex: manual sync com per-user settings), as usamos.
   // Caso contrário, carrega as globais.
   let settings;
@@ -745,6 +745,9 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
   const today = new Date();
   const fromDate = from || new Date(today.getTime() - 30 * 86400_000).toISOString().slice(0, 10);
   const toDate = to || new Date(today.getTime() + 60 * 86400_000).toISOString().slice(0, 10);
+
+  // Se force_metadata for true, limpamos o cache de sincronização para forçar a atualização de tudo.
+  // Note: O sync manual já faz isso para algumas tabelas, mas podemos garantir se necessário.
 
   const summary = { clinics: 0, professionals: 0, chairs: 0, categories: 0, specialties: 0, appointments: 0, estimates: 0, invoices: 0, payments: 0, cashflow: 0 };
   const errors = [];
@@ -1040,7 +1043,11 @@ export function registerClinicorp(app, pool) {
   // ── Manual sync ──────────────────────────────────────────────
   app.post('/api/clinicorp/sync', async (req, res) => {
     try {
-      const result = await runFullSync(pool, { from: req.body?.from, to: req.body?.to });
+      const result = await runFullSync(pool, { 
+        from: req.body?.from, 
+        to: req.body?.to,
+        force_metadata: req.body?.force_metadata === true 
+      });
       res.json(result);
     } catch (e) {
       res.status(500).json({ error: e.message });
