@@ -1411,13 +1411,18 @@ async function runFinancialReconciliation(pool) {
     `);
 
     for (const alert of alerts) {
-      console.warn(`[clinicorp alert] Divergência financeira detectada em ${alert.period_month.toISOString().slice(0,7)}: Payments R$ ${alert.total_payments.toFixed(2)} vs Cashflow R$ ${alert.total_cash_in.toFixed(2)} (Diff: R$ ${alert.divergence.toFixed(2)})`);
-      
-      // Aqui poderíamos enviar push notification ou email, mas por enquanto logamos e deixamos disponível para a UI
+      const tp = Number(alert.total_payments) || 0;
+      const tc = Number(alert.total_cash_in) || 0;
+      const dv = Number(alert.divergence) || 0;
+      const period = alert.period_month instanceof Date
+        ? alert.period_month.toISOString().slice(0, 7)
+        : String(alert.period_month).slice(0, 7);
+      console.warn(`[clinicorp alert] Divergência financeira detectada em ${period}: Payments R$ ${tp.toFixed(2)} vs Cashflow R$ ${tc.toFixed(2)} (Diff: R$ ${dv.toFixed(2)})`);
+
       await pool.query(
         `INSERT INTO clinicorp_webhook_events (event_type, status, payload, received_at)
          VALUES ($1, $2, $3, NOW())`,
-        ['financial_divergence_alert', 'processed', JSON.stringify(alert)]
+        ['financial_divergence_alert', 'processed', JSON.stringify({ ...alert, period_month: period, total_payments: tp, total_cash_in: tc, divergence: dv })]
       );
     }
 
