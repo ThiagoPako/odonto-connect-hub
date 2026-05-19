@@ -299,7 +299,7 @@ async function upsertPatient(pool, p) {
   catch (e) { console.error('[clinicorp] projectPatientToLocal:', e.message); }
 }
 
-async function upsertAppointment(pool, a) {
+async function upsertAppointment(pool, a, tenantId = null) {
   const id = a.id ?? a.AppointmentId ?? a.Id;
   if (!id) return;
   await pool.query(
