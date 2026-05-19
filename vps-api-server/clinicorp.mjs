@@ -1070,9 +1070,9 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     const dates = [];
     let current = new Date(startStr);
     const end = new Date(endStr);
-    // Janelas de 15 dias são mais seguras para grandes volumes
+    // Janelas de 7 dias são mais seguras para evitar 502/timeouts no VPS
     while (current <= end) {
-      const next = new Date(current.getTime() + 15 * 86400_000);
+      const next = new Date(current.getTime() + 7 * 86400_000);
       const to = next < end ? next : end;
       dates.push({
         from: current.toISOString().slice(0, 10),
@@ -1151,20 +1151,6 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     const { rows: appts } = await pool.query(`SELECT raw FROM clinicorp_appointments WHERE raw IS NOT NULL`);
     const seen = new Set();
     let backfilled = 0;
-    for (const { raw: a } of appts) {
-      const pid = a?.PatientId ?? a?.Patient_PersonId ?? a?.patient_id ?? null;
-      if (!pid || seen.has(String(pid))) continue;
-      seen.add(String(pid));
-      const stub = {
-        id: pid,
-        Name: a.PatientName ?? a.Patient_FullName ?? a.Patient_Name ?? null,
-        MobilePhone: a.PatientPhone ?? a.MobilePhone ?? null,
-        Email: a.PatientEmail ?? null,
-      };
-      try { await upsertPatient(pool, stub, tenant_id); backfilled++; }
-      catch (e) { console.error('[clinicorp sync] backfill patient:', pid, e.message); }
-    }
-    console.log(`[clinicorp sync] patients backfill via appointments: ${backfilled}`);
     summary.patients = pulled + backfilled;
   });
 
@@ -1263,11 +1249,9 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
       }
       
       // Forçar re-projeção dos agendamentos agora que temos os profissionais
-      console.log('[clinicorp sync] Re-projetando agendamentos para vincular dentistas...');
-      const { rows: apptsToReproject } = await pool.query('SELECT id, raw FROM clinicorp_appointments ORDER BY date DESC LIMIT 1000');
-      for (const r of apptsToReproject) {
-        try { await projectAppointmentToLocal(pool, r.raw, r.id, tenant_id); } catch (e) { /* skip */ }
-      }
+      // Desativado re-projeção em massa durante o sync para evitar timeouts e 502
+      // a projeção agora ocorre individualmente dentro do loop de appointments.
+
 
       const { rows: pcount } = await pool.query(`SELECT COUNT(*)::int AS c FROM clinicorp_professionals`);
       summary.professionals = pcount[0]?.c || summary.professionals;
@@ -1389,14 +1373,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
   
   // Backfill final de profissionais: garante que agendamentos vinculados a dentistas novos sejam processados
   try {
-    const { rows: pcount } = await pool.query(`SELECT COUNT(*)::int AS c FROM clinicorp_professionals`);
-    if ((pcount[0]?.c || 0) > 0) {
-      console.log('[clinicorp sync] Re-projetando agendamentos final para consistência...');
-      const { rows: apptsToReproject } = await pool.query('SELECT id, raw FROM clinicorp_appointments ORDER BY date DESC LIMIT 500');
-      for (const r of apptsToReproject) {
-        try { await projectAppointmentToLocal(pool, r.raw, r.id, tenant_id); } catch (e) { /* skip */ }
-      }
-    }
+    // Desativado re-projeção final em massa durante o sync
   } catch (e) { console.error('[clinicorp sync] final backfill', e.message); }
 
   // Se forem as globais (carregadas via id=1), atualiza o status na tabela.
@@ -1408,12 +1385,8 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     invalidateSettings();
   }
 
-  // FORCE GLOBAL PROJECTION AT THE END
   try {
-    const tId = await resolveTenantId(pool, tenant_id);
-    const { rows: appts } = await pool.query('SELECT raw FROM clinicorp_appointments WHERE synced_at > NOW() - INTERVAL \'2 hours\'');
-    console.log(`[clinicorp sync] Forcing local projection for ${appts.length} recently synced appointments`);
-    for (const r of appts) { await projectAppointmentToLocal(pool, r.raw, r.raw.id ?? r.raw.AppointmentId, tId); }
+    // Desativado re-projeção final forçada em massa
   } catch (e) { console.error('[clinicorp sync] final forced projection', e.message); }
 
   return { status, summary, errors, from: fromDate, to: toDate };
@@ -1776,8 +1749,10 @@ export function registerClinicorp(app, pool) {
            base_url = COALESCE($5, base_url),
            auto_sync_enabled = COALESCE($6, auto_sync_enabled),
            sync_interval_minutes = COALESCE($7, sync_interval_minutes),
-           sync_lookback_days = COALESCE($8, sync_lookback_days),
-           sync_lookahead_days = COALESCE($9, sync_lookahead_days),
+          sync_lookback_days = COALESCE($8, sync_lookback_days),
+          sync_lookahead_days = COALESCE($9, sync_lookahead_days),
+          next_sync_at = NOW(), -- Força sincronização imediata após salvar
+          sync_lock_until = NULL,
            conflict_strategy = COALESCE($10, conflict_strategy),
            updated_at = NOW()
          WHERE id = 1`,
