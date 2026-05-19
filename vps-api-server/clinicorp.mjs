@@ -98,7 +98,8 @@ async function clinicorpFetch(settings, pathName, { method = 'GET', query = {}, 
   
   // Limpar query parameters vazios ou nulos para evitar erros na API do Clinicorp
   const allQuery = { ...query };
-  if (settings.subscriber_id && allQuery.subscriber_id === undefined) {
+  // subscriber_id is only needed if not already present in query
+  if (settings.subscriber_id && allQuery.subscriber_id === undefined && allQuery.business_id === undefined) {
     allQuery.subscriber_id = settings.subscriber_id;
   }
   
