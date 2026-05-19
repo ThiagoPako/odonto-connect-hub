@@ -788,7 +788,7 @@ async function projectPatientToLocal(pool, p, tenantId = null) {
   return pacienteId;
 }
 
-async function upsertEstimate(pool, e) {
+async function upsertEstimate(pool, e, tenantId = null) {
   await pool.query(
     `INSERT INTO clinicorp_estimates
        (id, treatment_id, patient_id, patient_name, professional_id, professional_name,
@@ -818,6 +818,36 @@ async function upsertEstimate(pool, e) {
       JSON.stringify(e),
     ]
   );
+  try { await projectEstimateToLocal(pool, e, tenantId); }
+  catch (err) { console.error('[clinicorp] projectEstimateToLocal:', err.message); }
+}
+
+async function projectEstimateToLocal(pool, e, tenantId = null) {
+  const tId = await resolveTenantId(pool, tenantId);
+  const pacienteId = await ensureLocalPatient(pool, e.PatientId || e.Patient_PersonId, { name: e.PatientName }, tId);
+  const dentistaId = await ensureLocalProfessional(pool, e.ProfessionalId || e.Dentist_PersonId, e.ProfessionalName, tId);
+  
+  const valor = Number(e.Amount || 0);
+  const data = e.Date || e.CreateDate || null;
+  const status = String(e.Status || '').toLowerCase().includes('aprov') ? 'aprovado' : 'em_aberto';
+
+  const exists = await pool.query(
+    `SELECT id FROM orcamentos WHERE clinicorp_estimate_id = $1 AND tenant_id = $2`,
+    [String(e.id), tId]
+  );
+
+  if (exists.rows[0]) {
+    await pool.query(
+      `UPDATE orcamentos SET valor=$1, status=$2, updated_at=NOW() WHERE id=$3`,
+      [valor, status, exists.rows[0].id]
+    );
+  } else {
+    await pool.query(
+      `INSERT INTO orcamentos (id, tenant_id, paciente_id, dentista_id, valor, status, data, clinicorp_estimate_id)
+       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7)`,
+      [tId, pacienteId, dentistaId, valor, status, data, String(e.id)]
+    );
+  }
 }
 
 async function upsertFinancial(pool, source, item, tenantId = null) {
