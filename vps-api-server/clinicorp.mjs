@@ -789,8 +789,8 @@ async function upsertEstimate(pool, e) {
        synced_at = NOW()`,
     [
       e.id, e.TreatmentId ?? null, e.PatientId ?? e.Patient_PersonId ?? null,
-      e.PatientName ?? null, e.ProfessionalId ?? e.Dentist_PersonId ?? null,
-      e.ProfessionalName ?? null, e.BusinessId ?? null,
+      e.PatientName ?? e.Patient_FullName ?? e.Patient?.Name ?? null, e.ProfessionalId ?? e.Dentist_PersonId ?? e.ScheduleToId ?? null,
+      e.ProfessionalName ?? e.Dentist_FullName ?? e.Dentist_Name ?? e.DentistName ?? e.ScheduleToName ?? e.Dentist?.Name ?? e.Dentist?.FullName ?? null, e.BusinessId ?? null,
       e.Amount ?? null, e.Status ?? null,
       e.Date || null, e.CreateDate || null,
       e.ProcedureList ? JSON.stringify(e.ProcedureList) : null,
