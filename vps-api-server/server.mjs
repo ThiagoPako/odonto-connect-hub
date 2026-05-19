@@ -10956,7 +10956,17 @@ if (process.env.NODE_ENV !== 'test') {
       `SELECT apply_tenant_rls(t) FROM unnest(ARRAY[
         'profiles', 'user_roles', 'chat_messages', 'pacientes', 'dentistas', 
         'agendamentos', 'financeiro', 'tratamentos', 'estoque', 'crm_leads'
-      ]) t;`
+      ]) t;`,
+
+      // ─── 4. Clinicorp Integration columns for local projection ───
+      `ALTER TABLE dentistas ADD COLUMN IF NOT EXISTS clinicorp_professional_id TEXT`,
+      `ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS clinicorp_patient_id TEXT`,
+      `ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS last_clinicorp_sync_at TIMESTAMPTZ`,
+      `ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS keep_local BOOLEAN DEFAULT false`,
+      `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS clinicorp_appointment_id TEXT`,
+      `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS last_clinicorp_sync_at TIMESTAMPTZ`,
+      `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS keep_local BOOLEAN DEFAULT false`,
+      `ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS clinicorp_patient_id TEXT`
     ];
 
     for (const sql of migrations) {
