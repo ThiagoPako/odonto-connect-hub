@@ -299,6 +299,8 @@ export const clinicorpApi = {
 // ─── Upserts ──────────────────────────────────────────────────
 async function upsertClinic(pool, c, tenantId = null) {
   const tId = await resolveTenantId(pool, tenantId);
+  const clinicId = c.id ?? c.Id ?? c.BusinessId ?? c.Clinic_BusinessId ?? c.ClinicBusinessId ?? c.CompanyId ?? c.Business?.Id;
+  if (!clinicId) return;
   await pool.query(
     `INSERT INTO clinicorp_clinics
        (id, tenant_id, company_id, business_name, name, email, address, active,
@@ -321,7 +323,7 @@ async function upsertClinic(pool, c, tenantId = null) {
        raw = EXCLUDED.raw,
        synced_at = NOW()`,
     [
-      c.id ?? c.CompanyId, tId, c.CompanyId ?? null, c.BusinessName ?? null,
+      clinicId, tId, c.CompanyId ?? c.BusinessId ?? null, c.BusinessName ?? c.Name ?? null,
       c.Name ?? null, c.Email ?? null, c.Address ?? null, c.Active ?? null,
       c.Landline ?? null, c.OtherLandline ?? null, c.SlotTime ?? null,
       c.NoLimitAptSameTime ?? null, c.SubscriberBussinessUID ?? null,
