@@ -1413,6 +1413,56 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
 
   // Se forem as globais (carregadas via id=1), atualiza o status na tabela.
   if (settings.id === 1 || (!api_token && settings.id === undefined)) {
+    // Verificação de integridade multi-tenant após o sync
+    try {
+      const { rows: integrity } = await pool.query(`
+        WITH tables AS (
+          SELECT unnest(ARRAY[
+            'clinicorp_clinics', 'clinicorp_professionals', 'clinicorp_chairs',
+            'clinicorp_appointment_categories', 'clinicorp_specialties', 'clinicorp_patients',
+            'clinicorp_appointments', 'clinicorp_estimates', 'clinicorp_evolutions', 'clinicorp_documents'
+          ]) as table_name
+        )
+        SELECT 
+          t.table_name,
+          (SELECT count(*) FROM pg_constraint c 
+           JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+           WHERE c.conrelid = t.table_name::regclass AND c.contype = 'p' 
+           AND (SELECT count(*) FROM unnest(c.conkey)) = 2
+          ) as has_composite_pk,
+          (SELECT count(*) FROM pg_attribute a 
+           WHERE a.attrelid = t.table_name::regclass AND a.attname = 'tenant_id' AND a.attnotnull = true
+          ) as is_tenant_not_null,
+          (EXECUTE 'SELECT count(*) FROM ' || t.table_name || ' WHERE tenant_id IS NULL') as null_tenants
+        FROM tables t
+      `).catch(async () => {
+        // Fallback simplificado se a query acima (com EXECUTE dinâmico) falhar no pool.query direto
+        return await pool.query(`
+          SELECT table_name, 
+                 EXISTS (
+                   SELECT 1 FROM information_schema.table_constraints tc 
+                   JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name 
+                   WHERE tc.table_name = t.table_name AND tc.constraint_type = 'PRIMARY KEY' 
+                   GROUP BY tc.constraint_name HAVING COUNT(*) = 2
+                 ) as has_composite_pk
+          FROM (VALUES 
+            ('clinicorp_clinics'), ('clinicorp_professionals'), ('clinicorp_chairs'),
+            ('clinicorp_appointment_categories'), ('clinicorp_specialties'), ('clinicorp_patients'),
+            ('clinicorp_appointments'), ('clinicorp_estimates'), ('clinicorp_evolutions'), ('clinicorp_documents')
+          ) as t(table_name)
+        `);
+      });
+
+      const integrityIssues = (integrity.rows || integrity || []).filter(r => !r.has_composite_pk || r.null_tenants > 0);
+      if (integrityIssues.length > 0) {
+        const msg = integrityIssues.map(r => `${r.table_name}${!r.has_composite_pk ? '(NO_PK)' : ''}${r.null_tenants > 0 ? '(NULL_TENANTS)' : ''}`).join(', ');
+        errors.push(`Integrity Warning: ${msg}`);
+        console.error(`[clinicorp sync] Integrity issues detected: ${msg}`);
+      }
+    } catch (e) {
+      console.error('[clinicorp sync] Integrity check failed:', e.message);
+    }
+
     await pool.query(
       `UPDATE clinicorp_settings SET last_sync_at = NOW(), last_sync_status = $1, last_sync_error = $2, updated_at = NOW() WHERE id = 1`,
       [status, errors.length ? errors.join(' | ') : null]
