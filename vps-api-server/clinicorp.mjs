@@ -728,11 +728,18 @@ async function upsertFinancial(pool, source, item) {
 }
 
 // ─── Sync orchestration ───────────────────────────────────────
-export async function runFullSync(pool, { from, to } = {}) {
-  const settings = await loadSettings(pool, true);
-  if (!settings?.enabled) throw new Error('Clinicorp desabilitado');
-  if (!settings.api_token || !settings.subscriber_id) {
-    throw new Error('Clinicorp: api_token e subscriber_id são obrigatórios');
+export async function runFullSync(pool, { from, to, api_token, subscriber_id, base_url } = {}) {
+  // Se passarmos credenciais explícitas (ex: manual sync com per-user settings), as usamos.
+  // Caso contrário, carrega as globais.
+  let settings;
+  if (api_token && subscriber_id) {
+    settings = { api_token, subscriber_id, base_url, enabled: true };
+  } else {
+    settings = await loadSettings(pool, true);
+    if (!settings?.enabled) throw new Error('Clinicorp desabilitado');
+    if (!settings.api_token || !settings.subscriber_id) {
+      throw new Error('Clinicorp: api_token e subscriber_id são obrigatórios');
+    }
   }
 
   const today = new Date();
@@ -803,7 +810,16 @@ export async function runFullSync(pool, { from, to } = {}) {
   });
 
   const status = errors.length === 0 ? 'success' : (Object.values(summary).some(Boolean) ? 'partial' : 'error');
-  await pool.query(
+  
+  // Se forem as globais (carregadas via id=1), atualiza o status na tabela.
+  // Se forem per-user settings passadas explicitamente, pulamos a escrita no id=1.
+  if (settings.id === 1 || (!api_token && settings.id === undefined)) {
+    await pool.query(
+      `UPDATE clinicorp_settings SET last_sync_at = NOW(), last_sync_status = $1, last_sync_error = $2, updated_at = NOW() WHERE id = 1`,
+      [status, errors.length ? errors.join(' | ') : null]
+    );
+    invalidateSettings();
+  }
     `UPDATE clinicorp_settings SET last_sync_at = NOW(), last_sync_status = $1, last_sync_error = $2, updated_at = NOW() WHERE id = 1`,
     [status, errors.length ? errors.join(' | ') : null]
   );

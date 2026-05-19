@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import { Eye, EyeOff, KeyRound, Copy, RefreshCw, Trash2, Loader2, Lock, PlugZap, CheckCircle2, XCircle, AlertCircle } from "lucide-react";
+import { Eye, EyeOff, KeyRound, Copy, RefreshCw, Trash2, Loader2, Lock, PlugZap, CheckCircle2, XCircle, AlertCircle, RefreshCcw } from "lucide-react";
 
 const DEFAULT_BASE = "https://api.clinicorp.com/rest/v1";
 
@@ -25,6 +25,7 @@ export function ClinicorpUserCredentials() {
   const [showSecret, setShowSecret] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<ClinicorpConnectionTest | null>(null);
+  const [syncing, setSyncing] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -110,6 +111,18 @@ export function ClinicorpUserCredentials() {
       toast.error(msg);
     } finally {
       setTesting(false);
+    }
+  }
+
+  async function syncNow() {
+    setSyncing(true);
+    try {
+      const result = await clinicorpApi.syncMyNow();
+      toast.success(`Sincronização ${result.status}: ${Object.values(result.summary).reduce((a, b) => a + b, 0)} itens processados`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro ao sincronizar");
+    } finally {
+      setSyncing(false);
     }
   }
 
@@ -263,6 +276,10 @@ export function ClinicorpUserCredentials() {
             <Trash2 className="h-4 w-4 mr-1" /> Remover credenciais
           </Button>
           <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={syncNow} disabled={syncing || !settings?.has_api_token || !settings?.enabled}>
+              {syncing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCcw className="h-4 w-4 mr-2" />}
+              Sincronizar dados agora
+            </Button>
             <Button variant="outline" onClick={testConnection} disabled={testing || saving}>
               {testing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <PlugZap className="h-4 w-4 mr-2" />}
               Testar conexão
