@@ -10652,7 +10652,7 @@ app.post('/api/clinicorp/my-settings/test', async (req, res) => {
     const probes = [
       { key: 'clinics',       label: 'Clínicas',      path: '/business/list' },
       { key: 'users',         label: 'Usuários',      path: '/security/list_users' },
-      { key: 'professionals', label: 'Profissionais', path: '/dentist/list' },
+      { key: 'specialties',   label: 'Especialidades',path: '/procedures/list_specialties' },
       { key: 'categories',    label: 'Categorias',    path: '/appointment/list_categories' },
     ];
 
