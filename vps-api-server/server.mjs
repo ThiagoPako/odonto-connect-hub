@@ -2654,6 +2654,8 @@ app.post('/api/pacientes', async (req, res) => {
       [id, nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes, user.tenant_id]
     );
     res.json({ id, nome, cpf, telefone, email, sexo, convenio });
+    // Push to Clinicorp
+    import('./clinicorp.mjs').then(m => m.clinicorpPush.pushPatient(pool, id)).catch(e => console.error('Clinicorp push failed:', e.message));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -2668,6 +2670,8 @@ app.put('/api/pacientes/:id', async (req, res) => {
       [nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes, req.params.id]
     );
     res.json({ success: true });
+    // Push to Clinicorp
+    import('./clinicorp.mjs').then(m => m.clinicorpPush.pushPatient(pool, req.params.id)).catch(e => console.error('Clinicorp push failed:', e.message));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -2895,6 +2899,8 @@ app.post('/api/agenda', async (req, res) => {
         como_conheceu || null,
       ]
     );
+    // Push to Clinicorp
+    import('./clinicorp.mjs').then(m => m.clinicorpPush.pushAppointment(pool, id)).catch(e => console.error('Clinicorp push failed:', e.message));
 
     // Auto-move CRM lead to "paciente_agendado" if lead_id provided
     const resolvedLeadId = lead_id || paciente_id;
@@ -2981,6 +2987,9 @@ app.delete('/api/agenda/:id', async (req, res) => {
       const { rowCount } = await pool.query('DELETE FROM agendamentos WHERE serie_id=$1', [sid]);
       return res.json({ success: true, deleted: rowCount });
     }
+    // Push to Clinicorp before deleting locally if it exists
+    const aptId = req.params.id;
+    import('./clinicorp.mjs').then(m => m.clinicorpPush.deleteAppointment(pool, aptId)).catch(e => console.error('Clinicorp push failed:', e.message));
     await pool.query('DELETE FROM agendamentos WHERE id=$1', [req.params.id]);
     res.json({ success: true, deleted: 1 });
   } catch (error) {
@@ -3013,6 +3022,9 @@ app.put('/api/agenda/:id', async (req, res) => {
     const query = `UPDATE agendamentos SET ${sets.join(', ')}, updated_at = NOW() WHERE id = $${params.length} RETURNING *`;
     const { rows } = await pool.query(query, params);
     if (rows.length === 0) return res.status(404).json({ error: 'Agendamento não encontrado' });
+
+    // Push to Clinicorp
+    import('./clinicorp.mjs').then(m => m.clinicorpPush.pushAppointment(pool, id)).catch(e => console.error('Clinicorp push failed:', e.message));
 
     // If status changed to 'em_atendimento', update CRM lead
     if (status === 'em_atendimento' && rows[0].paciente_id) {
