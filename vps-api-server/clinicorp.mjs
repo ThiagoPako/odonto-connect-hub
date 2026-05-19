@@ -404,6 +404,44 @@ async function upsertAppointment(pool, a, tenantId = null) {
       );
     }
   } catch (e) { console.error('[clinicorp] patient stub from appt:', e.message); }
+}
+
+async function upsertEvolution(pool, e) {
+  const id = e.id ?? e.EvolutionId;
+  if (!id) return;
+  await pool.query(
+    `INSERT INTO clinicorp_evolutions (id, patient_id, professional_id, treatment_id, description, date, raw, synced_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7, NOW())
+     ON CONFLICT (id) DO UPDATE SET
+       patient_id = EXCLUDED.patient_id,
+       professional_id = EXCLUDED.professional_id,
+       treatment_id = EXCLUDED.treatment_id,
+       description = EXCLUDED.description,
+       date = EXCLUDED.date,
+       raw = EXCLUDED.raw,
+       synced_at = NOW()`,
+    [id, e.PatientId, e.ProfessionalId, e.TreatmentId, e.Description, e.Date, JSON.stringify(e)]
+  );
+}
+
+async function upsertDocument(pool, d) {
+  const id = d.id ?? d.DocumentId;
+  if (!id) return;
+  await pool.query(
+    `INSERT INTO clinicorp_documents (id, patient_id, title, file_url, category, date, raw, synced_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7, NOW())
+     ON CONFLICT (id) DO UPDATE SET
+       patient_id = EXCLUDED.patient_id,
+       title = EXCLUDED.title,
+       file_url = EXCLUDED.file_url,
+       category = EXCLUDED.category,
+       date = EXCLUDED.date,
+       raw = EXCLUDED.raw,
+       synced_at = NOW()`,
+    [id, d.PatientId, d.Title, d.FileUrl, d.Category, d.Date, JSON.stringify(d)]
+  );
+}
+
   try { await projectAppointmentToLocal(pool, a, id, tenantId); }
   catch (e) { console.error('[clinicorp] projectAppointmentToLocal:', e.message); }
 }
