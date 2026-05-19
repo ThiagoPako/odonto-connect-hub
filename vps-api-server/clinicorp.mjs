@@ -910,14 +910,14 @@ async function upsertMonthlySummary(pool, source, item, businessId = null) {
         cash, credit_card, debit_card, pix, bank_slip, raw, synced_at)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())
      ON CONFLICT (source, period_month, business_id) DO UPDATE SET
-       total_in = EXCLUDED.total_in,
-       total_out = EXCLUDED.total_out,
-       total_amount = EXCLUDED.total_amount,
-       cash = EXCLUDED.cash,
-       credit_card = EXCLUDED.credit_card,
-       debit_card = EXCLUDED.debit_card,
-       pix = EXCLUDED.pix,
-       bank_slip = EXCLUDED.bank_slip,
+       total_in = COALESCE(clinicorp_monthly_summary.total_in, 0) + COALESCE(EXCLUDED.total_in, 0),
+       total_out = COALESCE(clinicorp_monthly_summary.total_out, 0) + COALESCE(EXCLUDED.total_out, 0),
+       total_amount = COALESCE(clinicorp_monthly_summary.total_amount, 0) + COALESCE(EXCLUDED.total_amount, 0),
+       cash = COALESCE(clinicorp_monthly_summary.cash, 0) + COALESCE(EXCLUDED.cash, 0),
+       credit_card = COALESCE(clinicorp_monthly_summary.credit_card, 0) + COALESCE(EXCLUDED.credit_card, 0),
+       debit_card = COALESCE(clinicorp_monthly_summary.debit_card, 0) + COALESCE(EXCLUDED.debit_card, 0),
+       pix = COALESCE(clinicorp_monthly_summary.pix, 0) + COALESCE(EXCLUDED.pix, 0),
+       bank_slip = COALESCE(clinicorp_monthly_summary.bank_slip, 0) + COALESCE(EXCLUDED.bank_slip, 0),
        raw = EXCLUDED.raw,
        synced_at = NOW()`,
     [
