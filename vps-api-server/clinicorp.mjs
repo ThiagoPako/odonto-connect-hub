@@ -1716,6 +1716,40 @@ export function registerClinicorp(app, pool) {
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
+  // ── Debug: probe /appointment/list with arbitrary params ──
+  app.get('/api/clinicorp/debug/probe-appointments', async (req, res) => {
+    try {
+      const s = await loadSettings(pool);
+      if (!s?.enabled) return res.status(400).json({ error: 'Clinicorp desabilitado' });
+      const { from = '2026-05-19', to = '2026-05-19' } = req.query;
+      const variants = [
+        { label: 'no_params', q: {} },
+        { label: 'fromDate_toDate', q: { fromDate: from, toDate: to } },
+        { label: 'from_to', q: { from, to } },
+        { label: 'date_from_date_to', q: { date_from: from, date_to: to } },
+        { label: 'startDate_endDate', q: { startDate: from, endDate: to } },
+        { label: 'start_date_end_date', q: { start_date: from, end_date: to } },
+        { label: 'initialDate_finalDate', q: { initialDate: from, finalDate: to } },
+        { label: 'dateStart_dateEnd', q: { dateStart: from, dateEnd: to } },
+        { label: 'date_eq', q: { date: from } },
+        { label: 'AtomicDate', q: { AtomicDate: from.replace(/-/g,'') } },
+        { label: 'SK_DateFirstTime', q: { SK_DateFirstTime: from.replace(/-/g,'') } },
+      ];
+      const results = [];
+      for (const v of variants) {
+        try {
+          const data = await clinicorpFetch(s, '/appointment/list', { query: v.q });
+          const arr = Array.isArray(data) ? data : (data?.appointments || data?.data || data?.result || data?.items || []);
+          const dates = [...new Set(arr.map(a => a.date || a.Date).filter(Boolean))].sort();
+          results.push({ label: v.label, q: v.q, count: arr.length, dates: dates.slice(0, 10), hasTarget: dates.includes(from) });
+        } catch (e) {
+          results.push({ label: v.label, q: v.q, error: e.message });
+        }
+      }
+      res.json({ from, to, results });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
   app.post('/api/clinicorp/live/create-appointment', async (req, res) => {
     try {
       const s = await loadSettings(pool);
