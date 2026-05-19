@@ -948,7 +948,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
           [p.id, name, JSON.stringify({ derived_from: 'appointments', id: p.id, name })]
         );
         // Garante existência no schema local (dentistas) com o tenant atual.
-        await ensureLocalProfessional(pool, p.id, name);
+        await ensureLocalProfessional(pool, p.id, name, tenant_id);
       }
       const { rows: pcount } = await pool.query(`SELECT COUNT(*)::int AS c FROM clinicorp_professionals`);
       summary.professionals = pcount[0]?.c || summary.professionals;
