@@ -151,6 +151,26 @@ CREATE TABLE IF NOT EXISTS clinicorp_financial_entries (
 );
 CREATE INDEX IF NOT EXISTS idx_clinicorp_fin_date ON clinicorp_financial_entries(date);
 
+-- Financeiro: resumos mensais retornados pela Clinicorp em endpoints agregados
+CREATE TABLE IF NOT EXISTS clinicorp_monthly_summary (
+  id BIGSERIAL PRIMARY KEY,
+  source TEXT NOT NULL,                  -- 'payment' | 'cashflow'
+  period_month DATE NOT NULL,
+  business_id BIGINT,
+  total_in NUMERIC,
+  total_out NUMERIC,
+  total_amount NUMERIC,
+  cash NUMERIC,
+  credit_card NUMERIC,
+  debit_card NUMERIC,
+  pix NUMERIC,
+  bank_slip NUMERIC,
+  raw JSONB NOT NULL,
+  synced_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(source, period_month, business_id)
+);
+CREATE INDEX IF NOT EXISTS idx_clinicorp_monthly_summary_month ON clinicorp_monthly_summary(period_month DESC);
+
 -- Log de eventos de webhook (idempotência + auditoria)
 CREATE TABLE IF NOT EXISTS clinicorp_webhook_events (
   id BIGSERIAL PRIMARY KEY,
