@@ -625,7 +625,6 @@ async function projectAppointmentToLocal(pool, a, cpApptId, tenantId = null) {
   } else if (data) {
     const { randomUUID } = await import('crypto');
     const id = randomUUID();
-    const tId = await resolveTenantId(pool, tenantId);
     await pool.query(
       `INSERT INTO agendamentos
          (id, paciente_id, dentista_id, data, hora, duracao, procedimento, status, observacoes,
