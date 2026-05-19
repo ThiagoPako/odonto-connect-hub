@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { clinicorpApi } from "@/lib/clinicorpApi";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ChevronLeft, ChevronRight, Clock, User2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Clock, User2, CalendarDays } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export function ClinicorpMirrorAgenda({ refreshTrigger = 0 }: { refreshTrigger?: number }) {
