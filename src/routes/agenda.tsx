@@ -63,7 +63,24 @@ function AgendaPage() {
     agendaApi.list({ data_inicio: dateStr, data_fim: dateStr })
       .then(({ data, error }) => {
         if (error) toast.error("Erro ao carregar agenda: " + error);
-        else if (Array.isArray(data)) setAppointments(data);
+        else if (Array.isArray(data)) {
+          setAppointments(data);
+          setProfs((current) => {
+            if (current.length > 0) return current;
+            const derived = new Map<string, Prof>();
+            for (const apt of data) {
+              if (apt.dentista_id) {
+                derived.set(apt.dentista_id, {
+                  id: apt.dentista_id,
+                  nome: apt.dentista_nome || "Profissional Clinicorp",
+                });
+              }
+            }
+            const list = Array.from(derived.values());
+            if (list.length) setSelectedProfs(list.map((p) => p.id));
+            return list;
+          });
+        }
       })
       .finally(() => setLoading(false));
   };
