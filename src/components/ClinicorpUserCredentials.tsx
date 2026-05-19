@@ -114,6 +114,18 @@ export function ClinicorpUserCredentials() {
     }
   }
 
+  async function syncNow() {
+    setSyncing(true);
+    try {
+      const result = await clinicorpApi.syncMyNow();
+      toast.success(`Sincronização ${result.status}: ${Object.values(result.summary).reduce((a, b) => a + b, 0)} itens processados`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro ao sincronizar");
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   function copy(text: string, label: string) {
     navigator.clipboard.writeText(text).then(() => toast.success(`${label} copiado`));
   }
