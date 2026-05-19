@@ -637,7 +637,7 @@ async function projectAppointmentToLocal(pool, a, cpApptId, tenantId = null) {
   if (pacienteId) {
     const leadId = await ensureLeadForPatient(pool, pacienteId, cpPatientId, {
       nome: a.PatientName, telefone: onlyDigits(a.PatientPhone || a.MobilePhone), email: a.PatientEmail,
-    });
+    }, tenantId);
     if (leadId) {
       if (status === 'cancelado' || status === 'faltou') {
         await pool.query(
