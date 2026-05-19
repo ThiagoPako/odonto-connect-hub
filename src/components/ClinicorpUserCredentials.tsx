@@ -158,9 +158,9 @@ export function ClinicorpUserCredentials() {
 
         <div className="grid gap-4 md:grid-cols-2">
           <div className="space-y-1.5">
-            <Label htmlFor="cc-sub">Subscriber ID</Label>
+            <Label htmlFor="cc-sub">ID Central (Subscriber ID)</Label>
             <Input id="cc-sub" placeholder="Ex.: 12345" value={subscriberId} onChange={(e) => setSubscriberId(e.target.value)} maxLength={128} />
-            <p className="text-xs text-muted-foreground">ID do assinante na Clinicorp.</p>
+            <p className="text-xs text-muted-foreground">O ID Central que aparece no topo da tela de integração da Clinicorp.</p>
           </div>
 
           <div className="space-y-1.5">
@@ -171,7 +171,7 @@ export function ClinicorpUserCredentials() {
         </div>
 
         <div className="space-y-1.5">
-          <Label htmlFor="cc-token">API Token</Label>
+          <Label htmlFor="cc-token">Token API</Label>
           <div className="flex gap-2">
             <div className="relative flex-1">
               <Input
@@ -179,7 +179,7 @@ export function ClinicorpUserCredentials() {
                 type={showToken ? "text" : "password"}
                 value={apiToken}
                 onChange={(e) => setApiToken(e.target.value)}
-                placeholder={settings?.has_api_token ? "•••••••• (já configurado — preencha para substituir)" : "Cole o Bearer token do Swagger Clinicorp"}
+                placeholder={settings?.has_api_token ? "•••••••• (já configurado — preencha para substituir)" : "Cole o Token API gerado na Clinicorp"}
                 autoComplete="off"
               />
               <button type="button" onClick={() => setShowToken((v) => !v)} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" aria-label="Mostrar token">
@@ -191,7 +191,7 @@ export function ClinicorpUserCredentials() {
         </div>
 
         <div className="space-y-1.5">
-          <Label htmlFor="cc-secret">Webhook Secret</Label>
+          <Label htmlFor="cc-secret">Chave de Segurança do Webhook (Secret)</Label>
           <div className="flex gap-2">
             <div className="relative flex-1">
               <Input
@@ -212,7 +212,10 @@ export function ClinicorpUserCredentials() {
           </div>
           {webhookSecret && (
             <div className="mt-2 p-2 rounded border border-border/60 bg-muted/30 flex items-center justify-between gap-2">
-              <code className="text-xs truncate">{buildWebhookUrl(webhookSecret)}</code>
+              <div className="flex-1 overflow-hidden">
+                <p className="text-[10px] text-muted-foreground font-medium uppercase mb-1">Cole este Endpoint na Clinicorp:</p>
+                <code className="text-xs truncate block">{buildWebhookUrl(webhookSecret)}</code>
+              </div>
               <Button type="button" variant="ghost" size="sm" onClick={() => copy(buildWebhookUrl(webhookSecret), "URL")}>
                 <Copy className="h-3.5 w-3.5" />
               </Button>
