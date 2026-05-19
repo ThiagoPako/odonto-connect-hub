@@ -48,6 +48,30 @@ async function loadSettings(pool, force = false) {
   return _settingsCache;
 }
 
+// ─── Tenant resolver ──────────────────────────────────────────
+// A integração Clinicorp grava em tabelas multi-tenant (dentistas, pacientes,
+// agendamentos, crm_leads). Sem tenant_id os GETs filtrados não enxergam nada.
+const DEFAULT_TENANT_ID = '00000000-0000-0000-0000-000000000001';
+let _tenantCache = null;
+let _tenantCacheAt = 0;
+async function resolveTenantId(pool) {
+  const now = Date.now();
+  if (_tenantCache && now - _tenantCacheAt < 60_000) return _tenantCache;
+  try {
+    const { rows } = await pool.query(
+      `SELECT p.tenant_id FROM clinicorp_user_settings cus
+         JOIN profiles p ON p.id = cus.user_id
+        WHERE cus.enabled = TRUE AND p.tenant_id IS NOT NULL
+        ORDER BY cus.updated_at DESC NULLS LAST LIMIT 1`
+    );
+    _tenantCache = rows[0]?.tenant_id || DEFAULT_TENANT_ID;
+  } catch {
+    _tenantCache = DEFAULT_TENANT_ID;
+  }
+  _tenantCacheAt = now;
+  return _tenantCache;
+}
+
 function invalidateSettings() {
   _settingsCache = null;
   _settingsCacheAt = 0;
