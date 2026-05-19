@@ -1386,14 +1386,14 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     // Como estamos espelhando tudo, tentamos buscar por período
     try {
       const list = await clinicorpFetch(settings, '/treatment/evolution/list', { query: { from: fromDate, to: toDate } });
-      for (const e of (Array.isArray(list) ? list : [])) { await upsertEvolution(pool, e); summary.evolutions++; }
+      for (const e of (Array.isArray(list) ? list : [])) { await upsertEvolution(pool, e, tenant_id); summary.evolutions++; }
     } catch (e) { /* skip se endpoint não existir */ }
   });
 
   await safe('documents', async () => {
     try {
       const list = await clinicorpFetch(settings, '/patient/document/list', { query: { from: fromDate, to: toDate } });
-      for (const d of (Array.isArray(list) ? list : [])) { await upsertDocument(pool, d); summary.documents++; }
+      for (const d of (Array.isArray(list) ? list : [])) { await upsertDocument(pool, d, tenant_id); summary.documents++; }
     } catch (e) { /* skip */ }
   });
 
