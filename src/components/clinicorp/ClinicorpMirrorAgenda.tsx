@@ -9,13 +9,16 @@ export function ClinicorpMirrorAgenda({ refreshTrigger = 0 }: { refreshTrigger?:
   const [currentDate, setCurrentDate] = useState(new Date());
   const [appointments, setAppointments] = useState<any[]>([]);
   const [professionals, setProfessionals] = useState<any[]>([]);
+  const [chairs, setChairs] = useState<any[]>([]);
   const [selectedProfId, setSelectedProfId] = useState<string>("all");
+  const [selectedChairId, setSelectedChairId] = useState<string>("all");
   const [loading, setLoading] = useState(false);
 
   const dateStr = currentDate.toISOString().slice(0, 10);
 
   useEffect(() => {
     clinicorpApi.listProfessionals().then(setProfessionals).catch(console.error);
+    clinicorpApi.listChairs().then(setChairs).catch(console.error);
   }, []);
 
   useEffect(() => {
@@ -26,9 +29,12 @@ export function ClinicorpMirrorAgenda({ refreshTrigger = 0 }: { refreshTrigger?:
   }, [dateStr, refreshTrigger]);
 
   const filteredAppointments = useMemo(() => {
-    if (selectedProfId === "all") return appointments;
-    return appointments.filter(a => String(a.professional_id) === selectedProfId);
-  }, [appointments, selectedProfId]);
+    return appointments.filter(a => {
+      const matchProf = selectedProfId === "all" || String(a.professional_id) === selectedProfId;
+      const matchChair = selectedChairId === "all" || String(a.chair_id) === selectedChairId;
+      return matchProf && matchChair;
+    });
+  }, [appointments, selectedProfId, selectedChairId]);
 
   const goPrev = () => { const d = new Date(currentDate); d.setDate(d.getDate() - 1); setCurrentDate(d); };
   const goNext = () => { const d = new Date(currentDate); d.setDate(d.getDate() + 1); setCurrentDate(d); };
@@ -46,15 +52,27 @@ export function ClinicorpMirrorAgenda({ refreshTrigger = 0 }: { refreshTrigger?:
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Select value={selectedProfId} onValueChange={setSelectedProfId}>
-            <SelectTrigger className="w-[200px]">
+            <SelectTrigger className="w-[180px]">
               <SelectValue placeholder="Profissional" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">Todos os Profissionais</SelectItem>
               {professionals.map(p => (
                 <SelectItem key={p.id} value={String(p.id)}>{p.full_name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select value={selectedChairId} onValueChange={setSelectedChairId}>
+            <SelectTrigger className="w-[160px]">
+              <SelectValue placeholder="Cadeira/Sala" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todas as Cadeiras</SelectItem>
+              {chairs.map(c => (
+                <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>
               ))}
             </SelectContent>
           </Select>

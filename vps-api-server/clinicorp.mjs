@@ -788,8 +788,41 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
   });
 
   await safe('appointments', async () => {
-    const list = await clinicorpApi.listAppointments(settings, fromDate, toDate);
-    for (const a of (Array.isArray(list) ? list : [])) { await upsertAppointment(pool, a); summary.appointments++; }
+    const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics');
+    const apiIds = new Set();
+    
+    // Se não houver clínicas, tenta um sync geral (pode ser o caso de subs que não listam clínicas via API)
+    if (clinics.length === 0) {
+      const list = await clinicorpApi.listAppointments(settings, fromDate, toDate);
+      for (const a of (Array.isArray(list) ? list : [])) { 
+        const id = a.id ?? a.AppointmentId ?? a.Id;
+        if (id) { apiIds.add(String(id)); await upsertAppointment(pool, a); summary.appointments++; }
+      }
+    } else {
+      for (const { id: clinicId } of clinics) {
+        try {
+          const list = await clinicorpApi.listAppointments(settings, fromDate, toDate, clinicId);
+          for (const a of (Array.isArray(list) ? list : [])) { 
+            const id = a.id ?? a.AppointmentId ?? a.Id;
+            if (id) { apiIds.add(String(id)); await upsertAppointment(pool, a); summary.appointments++; }
+          }
+        } catch (e) { console.error(`[clinicorp sync] appointments clinic ${clinicId}`, e.message); }
+      }
+    }
+    
+    // Deletion detection (faithfull mirror)
+    try {
+      const { rows: localRows } = await pool.query(
+        `SELECT id FROM clinicorp_appointments WHERE date >= $1 AND date <= $2`,
+        [fromDate, toDate]
+      );
+      for (const local of localRows) {
+        if (!apiIds.has(String(local.id))) {
+          await pool.query(`UPDATE clinicorp_appointments SET status = 'DELETED_IN_CLINICORP', synced_at = NOW() WHERE id = $1`, [local.id]);
+          await pool.query(`UPDATE agendamentos SET status = 'cancelado', updated_at = NOW() WHERE clinicorp_appointment_id = $1`, [local.id]);
+        }
+      }
+    } catch (e) { console.error('[clinicorp sync] pruning appointments', e.message); }
   });
 
   await safe('estimates', async () => {
@@ -1108,6 +1141,15 @@ export function registerClinicorp(app, pool) {
   });
   app.get('/api/clinicorp/estimates', async (_req, res) => {
     const { rows } = await pool.query('SELECT * FROM clinicorp_estimates ORDER BY date DESC LIMIT 500');
+    res.json(rows);
+  });
+  app.get('/api/clinicorp/financial', async (req, res) => {
+    const limit = Math.min(Number(req.query.limit) || 200, 1000);
+    const { rows } = await pool.query('SELECT * FROM clinicorp_financial_entries ORDER BY date DESC LIMIT $1', [limit]);
+    res.json(rows);
+  });
+  app.get('/api/clinicorp/chairs', async (req, res) => {
+    const { rows } = await pool.query('SELECT * FROM clinicorp_chairs ORDER BY name');
     res.json(rows);
   });
 
