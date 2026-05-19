@@ -87,7 +87,8 @@ function toBigIntOrNull(v) {
 // ─── HTTP client ──────────────────────────────────────────────
 // Throttle global para evitar 429: limite de 5 chamadas por segundo (200ms entre inícios)
 let _lastCallAt = 0;
-const THROTTLE_MS = 250; // 250ms (4 req/sec) para segurança
+const THROTTLE_MS = 900; // Clinicorp é sensível a rajadas; ~1 req/s evita agenda vazia por HTTP 429
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 async function clinicorpFetch(settings, pathName, { method = 'GET', query = {}, body } = {}) {
   // Aplicar throttle
@@ -95,7 +96,7 @@ async function clinicorpFetch(settings, pathName, { method = 'GET', query = {}, 
   const timeSinceLast = now - _lastCallAt;
   if (timeSinceLast < THROTTLE_MS) {
     const delay = THROTTLE_MS - timeSinceLast;
-    await new Promise(r => setTimeout(r, delay));
+    await sleep(delay);
   }
   _lastCallAt = Date.now();
 
@@ -125,9 +126,6 @@ async function clinicorpFetch(settings, pathName, { method = 'GET', query = {}, 
     const ctrl = new AbortController();
     const timeout = setTimeout(() => ctrl.abort(), 45_000); // 45s timeout
     
-    // Throttle automático: espaça chamadas para reduzir HTTP 429
-    await new Promise(r => setTimeout(r, 250));
-
     try {
       const headers = clinicorpAuthHeaders(settings, authMode);
       if (body !== undefined) headers['Content-Type'] = 'application/json';
@@ -148,10 +146,12 @@ async function clinicorpFetch(settings, pathName, { method = 'GET', query = {}, 
       
       if (shouldRetry) {
         retryCount++;
-        // Aggressive exponential backoff: 5s, 10s, 20s...
-        const delay = Math.pow(2, retryCount) * 2500;
+        const retryAfter = Number(res.headers.get('retry-after'));
+        const delay = Number.isFinite(retryAfter) && retryAfter > 0
+          ? retryAfter * 1000
+          : (res.status === 429 ? Math.pow(2, retryCount) * 5000 : Math.pow(2, retryCount) * 2500);
         console.warn(`[clinicorp] HTTP ${res.status} detectado em ${pathName}. Retentando em ${delay}ms (tentativa ${retryCount})...`);
-        await new Promise(r => setTimeout(r, delay));
+        await sleep(delay);
         return requestOnceWithRetry(authMode);
       }
 
@@ -299,6 +299,8 @@ export const clinicorpApi = {
 // ─── Upserts ──────────────────────────────────────────────────
 async function upsertClinic(pool, c, tenantId = null) {
   const tId = await resolveTenantId(pool, tenantId);
+  const clinicId = c.id ?? c.Id ?? c.BusinessId ?? c.Clinic_BusinessId ?? c.ClinicBusinessId ?? c.CompanyId ?? c.Business?.Id;
+  if (!clinicId) return;
   await pool.query(
     `INSERT INTO clinicorp_clinics
        (id, tenant_id, company_id, business_name, name, email, address, active,
@@ -321,7 +323,7 @@ async function upsertClinic(pool, c, tenantId = null) {
        raw = EXCLUDED.raw,
        synced_at = NOW()`,
     [
-      c.id ?? c.CompanyId, tId, c.CompanyId ?? null, c.BusinessName ?? null,
+      clinicId, tId, c.CompanyId ?? c.BusinessId ?? null, c.BusinessName ?? c.Name ?? null,
       c.Name ?? null, c.Email ?? null, c.Address ?? null, c.Active ?? null,
       c.Landline ?? null, c.OtherLandline ?? null, c.SlotTime ?? null,
       c.NoLimitAptSameTime ?? null, c.SubscriberBussinessUID ?? null,
@@ -425,6 +427,12 @@ async function upsertAppointment(pool, a, tenantId = null) {
   const id = a.id ?? a.AppointmentId ?? a.Id;
   if (!id) return;
   const tId = await resolveTenantId(pool, tenantId);
+  const businessId = a.BusinessId ?? a.Clinic_BusinessId ?? a.ClinicBusinessId ?? a.ClinicId ?? a.Business?.Id ?? null;
+  const patientId = a.PatientId ?? a.Patient_PersonId ?? a.PatientPersonId ?? a.Patient?.Id ?? a.Patient?.PersonId ?? null;
+  const professionalId = a.ProfessionalId ?? a.Dentist_PersonId ?? a.DentistPersonId ?? a.ScheduleToId ?? a.ScheduleTo_PersonId ?? a.Dentist?.Id ?? a.Professional?.Id ?? null;
+  const appointmentDate = normalizeClinicorpDate(a.Date, a.AppointmentDate, a.SK_DateFirstTime, a.DateFirstTime, a.StartDate, a.StartDateTime, a.StartTime, a.fromTime, a.FromTime);
+  const fromTime = normalizeClinicorpTime(a.FromTime, a.Time, a.StartTime, a.StartDateTime, a.ScheduleTime, a.Hour, a.fromTime);
+  const toTime = normalizeClinicorpTime(a.ToTime, a.FinalTime, a.EndTime, a.EndDateTime, a.toTime);
   await pool.query(
     `INSERT INTO clinicorp_appointments
        (id, tenant_id, business_id, patient_id, patient_name, professional_id, professional_name,
@@ -450,19 +458,19 @@ async function upsertAppointment(pool, a, tenantId = null) {
        synced_at = NOW()`,
     [
       String(id), tId,
-      toBigIntOrNull(a.BusinessId ?? a.Clinic_BusinessId),
-      toBigIntOrNull(a.PatientId ?? a.Patient_PersonId),
+      toBigIntOrNull(businessId),
+      toBigIntOrNull(patientId),
       a.PatientName ?? a.Patient_FullName ?? a.Patient_Name ?? null,
-      toBigIntOrNull(a.ProfessionalId ?? a.Dentist_PersonId ?? a.ScheduleToId),
+      toBigIntOrNull(professionalId),
       a.ProfessionalName ?? a.Dentist_FullName ?? a.Dentist_Name ?? a.DentistName ?? a.ScheduleToName ?? a.Professional_Name ?? a.Dentist?.Name ?? a.Dentist?.FullName ?? a.Professional?.Name ?? a.Professional?.FullName ?? null,
       toBigIntOrNull(a.CategoryId ?? a.Category_id ?? a.Category_Id),
       a.CategoryDescription ?? a.Category_Description ?? a.Category ?? null,
       a.CategoryColor ?? a.Category_Color ?? a.Color ?? null,
       toBigIntOrNull(a.ChairId ?? a.Chair_Id),
       a.Status ?? a.StatusId ?? null,
-      a.Date || a.AppointmentDate || a.date || null,
-      a.FromTime ?? a.Time ?? a.StartTime ?? a.fromTime ?? null,
-      a.ToTime ?? a.FinalTime ?? a.EndTime ?? a.toTime ?? null,
+      appointmentDate,
+      fromTime,
+      toTime,
       a.Notes ?? a.Observation ?? a.notes ?? null,
       JSON.stringify(a),
     ]
@@ -543,6 +551,28 @@ function mapAppointmentStatus(raw) {
   return 'agendado';
 }
 function onlyDigits(v) { return String(v ?? '').replace(/\D+/g, '') || null; }
+function normalizeClinicorpDate(...values) {
+  for (const value of values) {
+    if (value === null || value === undefined || value === '') continue;
+    const raw = value instanceof Date ? value.toISOString() : String(value).trim();
+    if (/^\d{8}$/.test(raw)) return `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
+    if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+    const br = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+    if (br) return `${br[3]}-${br[2]}-${br[1]}`;
+  }
+  return null;
+}
+function normalizeClinicorpTime(...values) {
+  for (const value of values) {
+    if (value === null || value === undefined || value === '') continue;
+    const raw = String(value).trim();
+    if (/^\d{1,2}:\d{2}/.test(raw)) return raw.slice(0, 5).padStart(5, '0');
+    if (/^\d{3,4}$/.test(raw)) return `${raw.slice(0, -2).padStart(2, '0')}:${raw.slice(-2)}`;
+    const isoTime = raw.match(/T(\d{2}:\d{2})/);
+    if (isoTime) return isoTime[1];
+  }
+  return null;
+}
 
 async function ensureLocalPatient(pool, cpId, fallback = {}, tenantId = null) {
   if (!cpId) return null;
@@ -733,9 +763,9 @@ function decideOverwrite({ strategy, keepLocal, localRow, clinicorpUpdatedAt }) 
 }
 
 async function projectAppointmentToLocal(pool, a, cpApptId, tenantId = null) {
-  const cpPatientId = a.PatientId ?? a.Patient_PersonId ?? null;
-  const cpProfId = a.ProfessionalId ?? a.Dentist_PersonId ?? a.ScheduleToId ?? null;
-  const cpClinicId = a.BusinessId ?? a.Clinic_BusinessId ?? a.ClinicId ?? null;
+  const cpPatientId = a.PatientId ?? a.Patient_PersonId ?? a.PatientPersonId ?? a.Patient?.Id ?? a.Patient?.PersonId ?? null;
+  const cpProfId = a.ProfessionalId ?? a.Dentist_PersonId ?? a.DentistPersonId ?? a.ScheduleToId ?? a.ScheduleTo_PersonId ?? a.Dentist?.Id ?? a.Professional?.Id ?? null;
+  const cpClinicId = a.BusinessId ?? a.Clinic_BusinessId ?? a.ClinicBusinessId ?? a.ClinicId ?? a.Business?.Id ?? null;
   const cpUpdatedAt = a.UpdateDate || a.UpdatedAt || a.LastModified || a.ModifiedAt || a.z_LastChange_Date || a.ModifiedDate || null;
   const policy = await resolveConflictPolicy(pool, { clinicId: cpClinicId, professionalId: cpProfId });
 
@@ -747,12 +777,10 @@ async function projectAppointmentToLocal(pool, a, cpApptId, tenantId = null) {
   }, tenantId);
   
   const status = mapAppointmentStatus(a.Status ?? a.StatusId);
-  const rawDate = a.Date || a.AppointmentDate || a.date || null;
-  // Normaliza para YYYY-MM-DD (a API retorna ISO 8601 com timezone)
-  const data = rawDate ? String(rawDate).slice(0, 10) : null;
-  const fromT = (a.FromTime || a.StartTime || a.fromTime || '').toString();
-  const toT = (a.ToTime || a.EndTime || a.toTime || '').toString();
-  const hora = (fromT || '00:00').slice(0, 5);
+  const data = normalizeClinicorpDate(a.Date, a.AppointmentDate, a.SK_DateFirstTime, a.DateFirstTime, a.StartDate, a.StartDateTime, a.StartTime, a.fromTime, a.FromTime);
+  const fromT = normalizeClinicorpTime(a.FromTime, a.Time, a.StartTime, a.StartDateTime, a.ScheduleTime, a.Hour, a.fromTime) || '00:00';
+  const toT = normalizeClinicorpTime(a.ToTime, a.FinalTime, a.EndTime, a.EndDateTime, a.toTime) || '';
+  const hora = fromT;
   const duracao = (() => {
     if (!fromT || !toT) return 30;
     const toMin = (s) => { const [h,m] = s.split(':').map(Number); return (h||0)*60+(m||0); };
