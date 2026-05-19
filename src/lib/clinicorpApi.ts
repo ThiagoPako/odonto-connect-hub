@@ -195,6 +195,7 @@ export const clinicorpApi = {
   deleteMySettings: () => req<{ ok: true }>('/my-settings', { method: 'DELETE' }),
   testMyConnection: (payload: Partial<{ api_token: string; subscriber_id: string; base_url: string }> = {}) =>
     req<ClinicorpConnectionTest>('/my-settings/test', { method: 'POST', body: JSON.stringify(payload) }),
+  syncMyNow: () => req<ClinicorpSyncResult>('/sync/now', { method: 'POST' }),
 };
 
 export interface ClinicorpConnectionTest {
