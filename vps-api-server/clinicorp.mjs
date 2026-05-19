@@ -840,12 +840,13 @@ async function projectPatientToLocal(pool, p, tenantId = null) {
 }
 
 async function upsertEstimate(pool, e, tenantId = null) {
+  const tId = await resolveTenantId(pool, tenantId);
   await pool.query(
     `INSERT INTO clinicorp_estimates
-       (id, treatment_id, patient_id, patient_name, professional_id, professional_name,
+       (id, tenant_id, treatment_id, patient_id, patient_name, professional_id, professional_name,
         business_id, amount, status, date, create_date, procedure_list, raw, synced_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, NOW())
-     ON CONFLICT (id) DO UPDATE SET
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14, NOW())
+     ON CONFLICT (id, tenant_id) DO UPDATE SET
        treatment_id = EXCLUDED.treatment_id,
        patient_id = EXCLUDED.patient_id,
        patient_name = EXCLUDED.patient_name,
@@ -860,7 +861,7 @@ async function upsertEstimate(pool, e, tenantId = null) {
        raw = EXCLUDED.raw,
        synced_at = NOW()`,
     [
-      e.id, e.TreatmentId ?? null, e.PatientId ?? e.Patient_PersonId ?? null,
+      e.id, tId, e.TreatmentId ?? null, e.PatientId ?? e.Patient_PersonId ?? null,
       e.PatientName ?? e.Patient_FullName ?? e.Patient?.Name ?? null, e.ProfessionalId ?? e.Dentist_PersonId ?? e.ScheduleToId ?? null,
       e.ProfessionalName ?? e.Dentist_FullName ?? e.Dentist_Name ?? e.DentistName ?? e.ScheduleToName ?? e.Dentist?.Name ?? e.Dentist?.FullName ?? null, e.BusinessId ?? null,
       e.Amount ?? null, e.Status ?? null,
@@ -869,7 +870,7 @@ async function upsertEstimate(pool, e, tenantId = null) {
       JSON.stringify(e),
     ]
   );
-  try { await projectEstimateToLocal(pool, e, tenantId); }
+  try { await projectEstimateToLocal(pool, e, tId); }
   catch (err) { console.error('[clinicorp] projectEstimateToLocal:', err.message); }
 }
 
