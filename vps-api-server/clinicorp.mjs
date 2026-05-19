@@ -1308,7 +1308,8 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
 
   await safe('invoices', async () => {
     const ranges = sliceRange(fromDate, toDate);
-    const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics');
+    const tId_loc = await resolveTenantId(pool, tenant_id);
+    const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics WHERE tenant_id=$1', [tId_loc]);
     for (const r of ranges) {
       if (clinics.length > 0) {
         for (const { id: clinicId } of clinics) {
@@ -1326,7 +1327,8 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
 
   await safe('payments', async () => {
     const ranges = sliceRange(fromDate, toDate);
-    const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics');
+    const tId_loc = await resolveTenantId(pool, tenant_id);
+    const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics WHERE tenant_id=$1', [tId_loc]);
     const processPayment = async (item, clinicId = null) => {
       if (isMonthlyFinancialSummary(item)) {
         if (await upsertMonthlySummary(pool, 'payment', item, clinicId)) summary.payments++;
@@ -1352,7 +1354,8 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
 
   await safe('cashflow', async () => {
     const ranges = sliceRange(fromDate, toDate);
-    const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics');
+    const tId_loc = await resolveTenantId(pool, tenant_id);
+    const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics WHERE tenant_id=$1', [tId_loc]);
     const processCashflow = async (item, clinicId = null) => {
       if (isMonthlyFinancialSummary(item)) {
         if (await upsertMonthlySummary(pool, 'cashflow', item, clinicId)) summary.cashflow++;
