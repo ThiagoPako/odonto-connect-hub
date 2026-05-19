@@ -709,7 +709,7 @@ async function projectPatientToLocal(pool, p, tenantId = null) {
     }
     if (!decision.write) return localRow.id;
   }
-  const pacienteId = await ensureLocalPatient(pool, cpId, { name: p.Name, phone: p.MobilePhone, email: p.Email });
+  const pacienteId = await ensureLocalPatient(pool, cpId, { name: p.Name, phone: p.MobilePhone, email: p.Email }, tenantId);
   if (pacienteId) {
     await pool.query(`UPDATE pacientes SET last_clinicorp_sync_at=NOW() WHERE id=$1`, [pacienteId]);
   }
