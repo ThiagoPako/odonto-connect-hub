@@ -774,8 +774,16 @@ async function projectPatientToLocal(pool, p, tenantId = null) {
         changed_fields: changed,
         paciente_id: localRow.id,
         lead_id: leadRow?.id || null,
-      });
-    }
+  // ── Auto-sync manual trigger ──
+  app.post('/api/clinicorp/sync/auto', async (req, res) => {
+    try {
+      const result = await reconciliationTick(pool);
+      res.json(result);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  console.log('🦷 Clinicorp routes registered');
+}
     if (!decision.write) return localRow.id;
   }
   const pacienteId = await ensureLocalPatient(pool, cpId, { name: p.Name, phone: p.MobilePhone, email: p.Email }, tenantId);
