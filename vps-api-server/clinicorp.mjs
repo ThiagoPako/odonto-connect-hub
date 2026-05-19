@@ -56,13 +56,12 @@ let _tenantCache = null;
 let _tenantCacheAt = 0;
 async function resolveTenantId(pool) {
   const now = Date.now();
-  if (_tenantCache && now - _tenantCacheAt < 60_000) return _tenantCache;
+  if (_tenantCache && now - _tenantCacheAt < 10_000) return _tenantCache;
   try {
+    // 1. Tenta pegar o tenant do primeiro admin do sistema (fallback global)
+    // 2. Tenta pegar o tenant do usuário que configurou a integração por último
     const { rows } = await pool.query(
-      `SELECT p.tenant_id FROM clinicorp_user_settings cus
-         JOIN profiles p ON p.id = cus.user_id
-        WHERE cus.enabled = TRUE AND p.tenant_id IS NOT NULL
-        ORDER BY cus.updated_at DESC NULLS LAST LIMIT 1`
+      `SELECT tenant_id FROM profiles WHERE role = 'admin' ORDER BY created_at ASC LIMIT 1`
     );
     _tenantCache = rows[0]?.tenant_id || DEFAULT_TENANT_ID;
   } catch {
@@ -929,12 +928,21 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
           GROUP BY 1`
       );
       for (const p of distinctProfs) {
-        const name = p.name_a || p.name_b || p.name_c || p.name_d || p.name_e || `Profissional ${p.id}`;
+        // Busca o objeto original para garantir que temos os metadados
+        const { rows: apptRows } = await pool.query(
+          `SELECT raw FROM clinicorp_appointments WHERE professional_id = $1 LIMIT 1`,
+          [p.id]
+        );
+        const rawAppt = apptRows[0]?.raw || {};
+        const name = p.name_a || p.name_b || p.name_c || p.name_d || p.name_e || 
+                     rawAppt.ScheduleToName || rawAppt.DentistName || (rawAppt.Dentist && rawAppt.Dentist.Name) || 
+                     `Profissional ${p.id}`;
+
         await pool.query(
           `INSERT INTO clinicorp_professionals (id, full_name, user_name, raw, synced_at)
            VALUES ($1,$2,NULL,$3,NOW())
            ON CONFLICT (id) DO UPDATE SET
-             full_name = COALESCE(NULLIF(EXCLUDED.full_name,''), clinicorp_professionals.full_name),
+             full_name = EXCLUDED.full_name,
              synced_at = NOW()`,
           [p.id, name, JSON.stringify({ derived_from: 'appointments', id: p.id, name })]
         );
