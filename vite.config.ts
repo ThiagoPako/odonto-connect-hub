@@ -175,6 +175,12 @@ export default defineConfig(({ command, mode }) => {
       host: "::",
       port: 8080,
       allowedHosts: ["odontoconnect.tech"],
+      proxy: {
+        '/api': {
+          target: 'https://odontoconnect.tech',
+          changeOrigin: true,
+        }
+      }
     },
     preview: {
       host: "0.0.0.0",
