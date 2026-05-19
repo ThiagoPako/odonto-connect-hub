@@ -1855,55 +1855,76 @@ export function registerClinicorp(app, pool) {
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
-  // ── Local read-only data (espelho) ───────────────────────────
-  app.get('/api/clinicorp/clinics', async (_req, res) => {
-    const { rows } = await pool.query('SELECT * FROM clinicorp_clinics ORDER BY name');
+  // Helper: extrai tenant_id do JWT do request (sem dep externa)
+  const tenantOf = async (req) => {
+    try {
+      const auth = req.headers.authorization || '';
+      if (!auth.startsWith('Bearer ')) return await resolveTenantId(pool, null);
+      const token = auth.slice(7);
+      const part = token.split('.')[1];
+      if (!part) return await resolveTenantId(pool, null);
+      const payload = JSON.parse(Buffer.from(part, 'base64').toString('utf8'));
+      return payload.tenant_id || await resolveTenantId(pool, null);
+    } catch { return await resolveTenantId(pool, null); }
+  };
+
+  // ── Local read-only data (espelho) — escopo por tenant ───────
+  app.get('/api/clinicorp/clinics', async (req, res) => {
+    const tId = await tenantOf(req);
+    const { rows } = await pool.query('SELECT * FROM clinicorp_clinics WHERE tenant_id=$1 ORDER BY name', [tId]);
     res.json(rows);
   });
-  app.get('/api/clinicorp/professionals', async (_req, res) => {
+  app.get('/api/clinicorp/professionals', async (req, res) => {
+    const tId = await tenantOf(req);
     const { rows } = await pool.query(`
       SELECT cp.*, d.id as local_id, d.ativo as local_ativo, d.cor_agenda as local_cor
       FROM clinicorp_professionals cp
-      LEFT JOIN dentistas d ON d.clinicorp_professional_id = cp.id::text
+      LEFT JOIN dentistas d ON d.clinicorp_professional_id = cp.id::text AND d.tenant_id = cp.tenant_id
+      WHERE cp.tenant_id = $1
       ORDER BY cp.full_name
-    `);
+    `, [tId]);
     res.json(rows);
   });
-  app.get('/api/clinicorp/categories', async (_req, res) => {
-    const { rows } = await pool.query('SELECT * FROM clinicorp_appointment_categories ORDER BY description');
+  app.get('/api/clinicorp/categories', async (req, res) => {
+    const tId = await tenantOf(req);
+    const { rows } = await pool.query('SELECT * FROM clinicorp_appointment_categories WHERE tenant_id=$1 ORDER BY description', [tId]);
     res.json(rows);
   });
-  app.get('/api/clinicorp/specialties', async (_req, res) => {
-    const { rows } = await pool.query('SELECT * FROM clinicorp_specialties ORDER BY description');
+  app.get('/api/clinicorp/specialties', async (req, res) => {
+    const tId = await tenantOf(req);
+    const { rows } = await pool.query('SELECT * FROM clinicorp_specialties WHERE tenant_id=$1 ORDER BY description', [tId]);
     res.json(rows);
   });
   app.get('/api/clinicorp/patients', async (req, res) => {
+    const tId = await tenantOf(req);
     const limit = Math.min(Number(req.query.limit) || 100, 500);
     const search = req.query.search ? `%${req.query.search}%` : null;
     const { rows } = search
       ? await pool.query(
           `SELECT * FROM clinicorp_patients
-           WHERE name ILIKE $1 OR mobile_phone ILIKE $1 OR document_id ILIKE $1
+           WHERE tenant_id=$3 AND (name ILIKE $1 OR mobile_phone ILIKE $1 OR document_id ILIKE $1)
            ORDER BY name LIMIT $2`,
-          [search, limit]
+          [search, limit, tId]
         )
-      : await pool.query('SELECT * FROM clinicorp_patients ORDER BY synced_at DESC LIMIT $1', [limit]);
+      : await pool.query('SELECT * FROM clinicorp_patients WHERE tenant_id=$2 ORDER BY synced_at DESC LIMIT $1', [limit, tId]);
     res.json(rows);
   });
   app.get('/api/clinicorp/appointments', async (req, res) => {
+    const tId = await tenantOf(req);
     const { from, to, professional_id, business_id } = req.query;
-    const where = [];
-    const params = [];
+    const where = ['tenant_id = $1'];
+    const params = [tId];
     if (from) { params.push(from); where.push(`date >= $${params.length}`); }
     if (to)   { params.push(to);   where.push(`date <= $${params.length}`); }
     if (professional_id) { params.push(professional_id); where.push(`professional_id = $${params.length}`); }
     if (business_id) { params.push(business_id); where.push(`business_id = $${params.length}`); }
-    const sql = `SELECT * FROM clinicorp_appointments ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY date, from_time LIMIT 2000`;
+    const sql = `SELECT * FROM clinicorp_appointments WHERE ${where.join(' AND ')} ORDER BY date, from_time LIMIT 2000`;
     const { rows } = await pool.query(sql, params);
     res.json(rows);
   });
-  app.get('/api/clinicorp/estimates', async (_req, res) => {
-    const { rows } = await pool.query('SELECT * FROM clinicorp_estimates ORDER BY date DESC LIMIT 500');
+  app.get('/api/clinicorp/estimates', async (req, res) => {
+    const tId = await tenantOf(req);
+    const { rows } = await pool.query('SELECT * FROM clinicorp_estimates WHERE tenant_id=$1 ORDER BY date DESC LIMIT 500', [tId]);
     res.json(rows);
   });
   app.get('/api/clinicorp/financial', async (req, res) => {
@@ -1917,7 +1938,8 @@ export function registerClinicorp(app, pool) {
     res.json(rows);
   });
   app.get('/api/clinicorp/chairs', async (req, res) => {
-    const { rows } = await pool.query('SELECT * FROM clinicorp_chairs ORDER BY name');
+    const tId = await tenantOf(req);
+    const { rows } = await pool.query('SELECT * FROM clinicorp_chairs WHERE tenant_id=$1 ORDER BY name', [tId]);
     res.json(rows);
   });
 
