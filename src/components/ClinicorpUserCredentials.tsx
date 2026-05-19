@@ -158,9 +158,9 @@ export function ClinicorpUserCredentials() {
 
         <div className="grid gap-4 md:grid-cols-2">
           <div className="space-y-1.5">
-            <Label htmlFor="cc-sub">ID Central (Subscriber ID)</Label>
-            <Input id="cc-sub" placeholder="Ex.: 12345" value={subscriberId} onChange={(e) => setSubscriberId(e.target.value)} maxLength={128} />
-            <p className="text-xs text-muted-foreground">O ID Central que aparece no topo da tela de integração da Clinicorp.</p>
+            <Label htmlFor="cc-sub">ID Central / Usuário API</Label>
+            <Input id="cc-sub" placeholder="Ex.: sua-clinica" value={subscriberId} onChange={(e) => setSubscriberId(e.target.value)} maxLength={128} />
+            <p className="text-xs text-muted-foreground">O campo "Usuário API" exibido no painel da Clinicorp.</p>
           </div>
 
           <div className="space-y-1.5">

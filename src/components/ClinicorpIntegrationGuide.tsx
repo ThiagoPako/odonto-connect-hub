@@ -6,12 +6,12 @@ const STEPS = [
   {
     icon: Building2,
     title: "1. Acesso Externo na Clinicorp",
-    body: 'No painel da Clinicorp, abra "Gerenciar Contas → Acesso Externo e Integrações" e clique em "Adicionar novo". Informe o ID Central da sua clínica (use o mesmo se for franquia/multiclínica).',
+    body: 'No painel da Clinicorp, abra "Acesso Externo e Integrações". Você verá o campo "Usuário API" (ex: sorrisominacu). Copie esse valor.',
   },
   {
     icon: KeyRound,
     title: "2. Gere o Token API",
-    body: 'Na mesma tela, copie o "Token API" gerado pela Clinicorp e cole no campo "API Token" abaixo. Esse token é Bearer e é usado para sincronizar agenda, pacientes, profissionais e orçamentos.',
+    body: 'Na mesma tela, clique no ícone de cópia ao lado do "Token API". Cole esse token e o Usuário API nos campos correspondentes aqui no Odonto Connect.',
   },
   {
     icon: Webhook,
