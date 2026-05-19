@@ -913,6 +913,35 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
       }
     } catch (e) { console.error('[clinicorp sync] pruning appointments', e.message); }
     
+    // Backfill de profissionais a partir dos agendamentos:
+    // a Clinicorp não expõe /security/list_users de forma confiável,
+    // então derivamos os dentistas dos Dentist_PersonId distintos vistos nos agendamentos.
+    try {
+      const { rows: distinctProfs } = await pool.query(
+        `SELECT DISTINCT professional_id::text AS id,
+                MAX(raw->>'ScheduleToName') AS name_a,
+                MAX(raw->'Dentist'->>'Name') AS name_b,
+                MAX(raw->>'DentistName') AS name_c
+           FROM clinicorp_appointments
+          WHERE professional_id IS NOT NULL`
+      );
+      for (const p of distinctProfs) {
+        const name = p.name_a || p.name_b || p.name_c || `Profissional ${p.id}`;
+        await pool.query(
+          `INSERT INTO clinicorp_professionals (id, full_name, user_name, raw, synced_at)
+           VALUES ($1,$2,NULL,$3,NOW())
+           ON CONFLICT (id) DO UPDATE SET
+             full_name = COALESCE(NULLIF(EXCLUDED.full_name,''), clinicorp_professionals.full_name),
+             synced_at = NOW()`,
+          [p.id, name, JSON.stringify({ derived_from: 'appointments', id: p.id, name })]
+        );
+        // Garante existência no schema local (dentistas) com o tenant atual.
+        await ensureLocalProfessional(pool, p.id, name);
+      }
+      const { rows: pcount } = await pool.query(`SELECT COUNT(*)::int AS c FROM clinicorp_professionals`);
+      summary.professionals = pcount[0]?.c || summary.professionals;
+    } catch (e) { console.error('[clinicorp sync] backfill professionals', e.message); }
+    
     // Conta pacientes únicos sincronizados (criados via ensureLocalPatient pelos agendamentos)
     try {
       const { rows } = await pool.query(`SELECT COUNT(*)::int AS c FROM clinicorp_patients`);
