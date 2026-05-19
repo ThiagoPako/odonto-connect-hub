@@ -51,7 +51,7 @@ async function loadSettings(pool, force = false) {
 // ─── Tenant resolver ──────────────────────────────────────────
 // A integração Clinicorp grava em tabelas multi-tenant (dentistas, pacientes,
 // agendamentos, crm_leads). Sem tenant_id os GETs filtrados não enxergam nada.
-const DEFAULT_TENANT_ID = '00000000-0000-0000-0000-000000000001';
+const DEFAULT_TENANT_ID = '3806a6cc-6058-477d-b35f-14f7b6059d4c';
 let _tenantCache = null;
 let _tenantCacheAt = 0;
 async function resolveTenantId(pool, manualId = null) {
@@ -98,7 +98,8 @@ async function clinicorpFetch(settings, pathName, { method = 'GET', query = {}, 
   
   // Limpar query parameters vazios ou nulos para evitar erros na API do Clinicorp
   const allQuery = { ...query };
-  if (settings.subscriber_id && allQuery.subscriber_id === undefined) {
+  // subscriber_id is only needed if not already present in query
+  if (settings.subscriber_id && allQuery.subscriber_id === undefined && allQuery.business_id === undefined) {
     allQuery.subscriber_id = settings.subscriber_id;
   }
   
@@ -1051,6 +1052,14 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     await pool.query(`UPDATE crm_leads SET tenant_id=$1 WHERE tenant_id IS NULL AND (clinicorp_patient_id IS NOT NULL OR origem='clinicorp')`, [tId]);
   } catch (e) { console.error('[clinicorp sync] tenant backfill', e.message); }
 
+  // Garante que o cron rodou e povoou as tabelas locais (espelhamento forçado)
+  try {
+    const tId = await resolveTenantId(pool, tenant_id);
+    const { rows: appts } = await pool.query('SELECT raw FROM clinicorp_appointments WHERE synced_at > NOW() - INTERVAL \'1 hour\'');
+    for (const r of appts) { await projectAppointmentToLocal(pool, r.raw, r.raw.id ?? r.raw.AppointmentId, tId); }
+  } catch (e) { console.error('[clinicorp sync] forced projection', e.message); }
+
+
 
   const safe = async (label, fn) => {
     try { await fn(); } catch (e) { errors.push(`${label}: ${e.message}`); console.error(`[clinicorp sync] ${label}`, e.message); }
@@ -1083,7 +1092,17 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
   await safe('professionals', async () => {
     const list = await clinicorpApi.listUsers(settings);
     for (const u of (Array.isArray(list) ? list : [])) { await upsertProfessional(pool, u, tenant_id); summary.professionals++; }
+    
+    // BACKFILL: Sincroniza dentistas locais com base nos profissionais Clinicorp
+    try {
+      const tId = await resolveTenantId(pool, tenant_id);
+      const { rows } = await pool.query('SELECT id, full_name FROM clinicorp_professionals');
+      for (const p of rows) {
+        await ensureLocalProfessional(pool, String(p.id), p.full_name, tId);
+      }
+    } catch (e) { console.error('[clinicorp sync] dentists backfill', e.message); }
   });
+
 
 
   // Pacientes são sincronizados via agendamentos (ensureLocalPatient projeta cada paciente referenciado).
@@ -1157,7 +1176,13 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     const processAppts = async (list) => {
       for (const a of (Array.isArray(list) ? list : [])) { 
         const id = a.id ?? a.AppointmentId ?? a.Id;
-        if (id) { apiIds.add(String(id)); await upsertAppointment(pool, a, tenant_id); summary.appointments++; }
+        if (id) { 
+          apiIds.add(String(id)); 
+          await upsertAppointment(pool, a, tenant_id); 
+          // Força projeção imediata para garantir que apareça na agenda local
+          await projectAppointmentToLocal(pool, a, id, tenant_id);
+          summary.appointments++; 
+        }
       }
     };
 
@@ -1383,9 +1408,17 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     invalidateSettings();
   }
 
-  return { status, summary, errors, from: fromDate, to: toDate };
+  // FORCE GLOBAL PROJECTION AT THE END
+  try {
+    const tId = await resolveTenantId(pool, tenant_id);
+    const { rows: appts } = await pool.query('SELECT raw FROM clinicorp_appointments WHERE synced_at > NOW() - INTERVAL \'2 hours\'');
+    console.log(`[clinicorp sync] Forcing local projection for ${appts.length} recently synced appointments`);
+    for (const r of appts) { await projectAppointmentToLocal(pool, r.raw, r.raw.id ?? r.raw.AppointmentId, tId); }
+  } catch (e) { console.error('[clinicorp sync] final forced projection', e.message); }
 
+  return { status, summary, errors, from: fromDate, to: toDate };
 }
+
 
 /**
  * Bidirectional Mirroring (Push to Clinicorp)
