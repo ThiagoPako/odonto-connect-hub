@@ -880,6 +880,61 @@ async function upsertFinancial(pool, source, item, tenantId = null) {
   catch (e) { console.error('[clinicorp] projectFinanceToLocal:', e.message); }
 }
 
+function parseClinicorpMonth(value) {
+  if (!value) return null;
+  const text = String(value).trim();
+  const iso = text.match(/^(\d{4})-(\d{1,2})(?:-\d{1,2})?$/);
+  if (iso) return `${iso[1]}-${iso[2].padStart(2, '0')}-01`;
+  const br = text.match(/^(\d{1,2})\/(\d{4})$/);
+  if (br) return `${br[2]}-${br[1].padStart(2, '0')}-01`;
+  const named = new Date(text);
+  return Number.isNaN(named.getTime()) ? null : named.toISOString().slice(0, 7) + '-01';
+}
+
+async function upsertMonthlySummary(pool, source, item, businessId = null) {
+  const periodMonth = parseClinicorpMonth(item.month ?? item.Month ?? item.period ?? item.Period ?? item.date ?? item.Date);
+  if (!periodMonth) return false;
+
+  await pool.query(
+    `INSERT INTO clinicorp_monthly_summary
+       (source, period_month, business_id, total_in, total_out, total_amount,
+        cash, credit_card, debit_card, pix, bank_slip, raw, synced_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())
+     ON CONFLICT (source, period_month, business_id) DO UPDATE SET
+       total_in = EXCLUDED.total_in,
+       total_out = EXCLUDED.total_out,
+       total_amount = EXCLUDED.total_amount,
+       cash = EXCLUDED.cash,
+       credit_card = EXCLUDED.credit_card,
+       debit_card = EXCLUDED.debit_card,
+       pix = EXCLUDED.pix,
+       bank_slip = EXCLUDED.bank_slip,
+       raw = EXCLUDED.raw,
+       synced_at = NOW()`,
+    [
+      source,
+      periodMonth,
+      item.BusinessId ?? item.business_id ?? item.Clinic_BusinessId ?? businessId,
+      item.in ?? item.totalIn ?? item.total_in ?? null,
+      item.out ?? item.totalOut ?? item.total_out ?? null,
+      item.totalPaymentsAmount ?? item.totalAmount ?? item.total_amount ?? item.amount ?? item.Amount ?? null,
+      item.cash ?? null,
+      item.credit_card ?? item.creditCard ?? null,
+      item.debit_card ?? item.debitCard ?? null,
+      item.pix ?? null,
+      item.bank_slip ?? item.bankSlip ?? item.boleto ?? null,
+      JSON.stringify(item),
+    ]
+  );
+  return true;
+}
+
+function isMonthlyFinancialSummary(item) {
+  if (!item || typeof item !== 'object') return false;
+  if (item.id || item.Id || item.InvoiceId || item.PaymentId) return false;
+  return Boolean(item.month || item.Month || item.period || item.Period || item.totalPaymentsAmount !== undefined || item.in !== undefined || item.out !== undefined);
+}
+
 async function projectFinanceToLocal(pool, source, item, tenantId = null) {
   const tId = await resolveTenantId(pool, tenantId);
   const amount = Number(item.Amount ?? item.Value ?? 0);
