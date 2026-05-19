@@ -1182,7 +1182,8 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
   });
 
   await safe('appointments', async () => {
-    const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics');
+    const tId = await resolveTenantId(pool, tenant_id);
+    const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics WHERE tenant_id=$1', [tId]);
     const apiIds = new Set();
     const ranges = sliceRange(fromDate, toDate);
     
@@ -1216,23 +1217,21 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
       }
     }
     
-    // Deletion detection (faithfull mirror)
+    // Deletion detection (faithfull mirror) — escopo por tenant
     try {
       const { rows: localRows } = await pool.query(
-        `SELECT id FROM clinicorp_appointments WHERE date >= $1 AND date <= $2`,
-        [fromDate, toDate]
+        `SELECT id FROM clinicorp_appointments WHERE tenant_id=$3 AND date >= $1 AND date <= $2`,
+        [fromDate, toDate, tId]
       );
       for (const local of localRows) {
         if (!apiIds.has(String(local.id))) {
-          await pool.query(`UPDATE clinicorp_appointments SET status = 'DELETED_IN_CLINICORP', synced_at = NOW() WHERE id = $1`, [local.id]);
-          await pool.query(`UPDATE agendamentos SET status = 'cancelado', updated_at = NOW() WHERE clinicorp_appointment_id = $1`, [local.id]);
+          await pool.query(`UPDATE clinicorp_appointments SET status = 'DELETED_IN_CLINICORP', synced_at = NOW() WHERE id = $1 AND tenant_id=$2`, [local.id, tId]);
+          await pool.query(`UPDATE agendamentos SET status = 'cancelado', updated_at = NOW() WHERE clinicorp_appointment_id = $1 AND tenant_id=$2`, [local.id, tId]);
         }
       }
     } catch (e) { console.error('[clinicorp sync] pruning appointments', e.message); }
     
-    // Backfill de profissionais a partir dos agendamentos:
-    // a Clinicorp não expõe /security/list_users de forma confiável,
-    // então derivamos os dentistas dos Dentist_PersonId distintos vistos nos agendamentos.
+    // Backfill de profissionais a partir dos agendamentos DESTE tenant
     try {
       const { rows: distinctProfs } = await pool.query(
         `SELECT DISTINCT professional_id::text AS id,
@@ -1245,55 +1244,52 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
                 MAX(raw->>'ProfessionalName') AS name_d,
                 MAX(professional_name) AS name_e
            FROM clinicorp_appointments
-          WHERE professional_id IS NOT NULL
-          GROUP BY 1`
+          WHERE tenant_id=$1 AND professional_id IS NOT NULL
+          GROUP BY 1`,
+        [tId]
       );
       for (const p of distinctProfs) {
         const { rows: apptRows } = await pool.query(
-          `SELECT raw FROM clinicorp_appointments WHERE professional_id = $1 LIMIT 1`,
-          [p.id]
+          `SELECT raw FROM clinicorp_appointments WHERE tenant_id=$2 AND professional_id = $1 LIMIT 1`,
+          [p.id, tId]
         );
         const rawAppt = apptRows[0]?.raw || {};
-        const name = p.name_df || p.name_dn || p.name_a || p.name_b || p.name_bf || p.name_c || p.name_d || p.name_e ||
+        const rawName = p.name_df || p.name_dn || p.name_a || p.name_b || p.name_bf || p.name_c || p.name_d || p.name_e ||
                      rawAppt.Dentist_FullName || rawAppt.Dentist_Name || rawAppt.ScheduleToName || rawAppt.DentistName ||
                      (rawAppt.Dentist && (rawAppt.Dentist.FullName || rawAppt.Dentist.Name)) ||
                      `Profissional ${p.id}`;
+        const name = String(rawName).trim();
 
         await pool.query(
-          `INSERT INTO clinicorp_professionals (id, full_name, user_name, raw, synced_at)
-           VALUES ($1,$2,NULL,$3,NOW())
-           ON CONFLICT (id) DO UPDATE SET
+          `INSERT INTO clinicorp_professionals (id, tenant_id, full_name, user_name, raw, synced_at)
+           VALUES ($1,$2,$3,NULL,$4,NOW())
+           ON CONFLICT (id, tenant_id) DO UPDATE SET
              full_name = EXCLUDED.full_name,
              synced_at = NOW()`,
-          [p.id, name, JSON.stringify({ derived_from: 'appointments', id: p.id, name })]
+          [p.id, tId, name, JSON.stringify({ derived_from: 'appointments', id: p.id, name })]
         );
-        await ensureLocalProfessional(pool, p.id, name, tenant_id);
-        // Atualiza professional_name nos agendamentos onde está nulo
+        await ensureLocalProfessional(pool, p.id, name, tId);
         await pool.query(
-          `UPDATE clinicorp_appointments SET professional_name = $2 WHERE professional_id = $1 AND (professional_name IS NULL OR professional_name = '')`,
-          [p.id, name]
+          `UPDATE clinicorp_appointments SET professional_name = $2 WHERE tenant_id=$3 AND professional_id = $1 AND (professional_name IS NULL OR professional_name = '')`,
+          [p.id, name, tId]
         );
       }
-      
-      // Forçar re-projeção dos agendamentos agora que temos os profissionais
-      // Desativado re-projeção em massa durante o sync para evitar timeouts e 502
-      // a projeção agora ocorre individualmente dentro do loop de appointments.
 
-
-      const { rows: pcount } = await pool.query(`SELECT COUNT(*)::int AS c FROM clinicorp_professionals`);
+      const { rows: pcount } = await pool.query(`SELECT COUNT(*)::int AS c FROM clinicorp_professionals WHERE tenant_id=$1`, [tId]);
       summary.professionals = pcount[0]?.c || summary.professionals;
     } catch (e) { console.error('[clinicorp sync] backfill professionals', e.message); }
     
-    // Conta pacientes únicos sincronizados (criados via ensureLocalPatient pelos agendamentos)
+    // Conta pacientes únicos sincronizados DESTE tenant
     try {
-      const { rows } = await pool.query(`SELECT COUNT(*)::int AS c FROM clinicorp_patients`);
+      const { rows } = await pool.query(`SELECT COUNT(*)::int AS c FROM clinicorp_patients WHERE tenant_id=$1`, [tId]);
       summary.patients = rows[0]?.c || 0;
     } catch { /* ignore */ }
   });
 
   await safe('estimates', async () => {
+    const tId = await resolveTenantId(pool, tenant_id);
     const ranges = sliceRange(fromDate, toDate);
-    const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics');
+    const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics WHERE tenant_id=$1', [tId]);
     
     for (const r of ranges) {
       if (clinics.length > 0) {
