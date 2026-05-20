@@ -3,9 +3,17 @@
  * All API calls go through the VPS Express server
  */
 
-const VPS_API_BASE = typeof window !== 'undefined' && (window.location.hostname.includes('lovableproject.com') || window.location.hostname.includes('localhost'))
-  ? '/api'
-  : 'https://odontoconnect.tech/api';
+// Lovable preview (lovableproject.com / lovable.app) doesn't proxy /api to the VPS,
+// so we must hit the absolute VPS URL there. Only localhost uses the local proxy.
+const VPS_API_BASE = (() => {
+  if (typeof window === 'undefined') return 'https://odontoconnect.tech/api';
+  const host = window.location.hostname;
+  if (host === 'localhost' || host === '127.0.0.1') return '/api';
+  if (host.includes('lovableproject.com') || host.includes('lovable.app') || host.includes('lovable.dev')) {
+    return 'https://odontoconnect.tech/api';
+  }
+  return '/api';
+})();
 const TOKEN_KEY = 'odonto_jwt';
 
 function isAuthError(status: number, _error: unknown): boolean {
