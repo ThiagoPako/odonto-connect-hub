@@ -127,20 +127,40 @@ function getAppointmentId(a) {
 }
 
 // ─── HTTP client ──────────────────────────────────────────────
-// Throttle global para evitar 429: limite de 5 chamadas por segundo (200ms entre inícios)
-let _lastCallAt = 0;
-const THROTTLE_MS = 350; // Reduzido de 900ms para 350ms para acelerar o sync; Clinicorp suporta rajadas curtas se não exceder média global.
+// Throttle SERIALIZADO por subscriber_id para evitar 429: as chamadas são enfileiradas
+// e disparadas com espaçamento mínimo. O modelo anterior (apenas _lastCallAt + await)
+// permitia que N callers concorrentes lessem o mesmo timestamp e disparassem em rajada.
+const THROTTLE_MS = 700; // ~1.4 req/s por subscriber — Clinicorp aplica limites agressivos por hora.
+const GLOBAL_PAUSE_AFTER_429_MS = 60_000; // se levarmos 429, pausa toda a fila por 60s
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+// Fila por subscriber + pausa global compartilhada
+const _queues = new Map(); // subscriber_id -> Promise chain
+let _globalPauseUntil = 0;
+
+function _enqueue(subscriberKey, task) {
+  const prev = _queues.get(subscriberKey) || Promise.resolve();
+  const next = prev.then(async () => {
+    // Respeita pausa global após 429
+    const wait = _globalPauseUntil - Date.now();
+    if (wait > 0) await sleep(wait);
+    const result = await task();
+    await sleep(THROTTLE_MS);
+    return result;
+  }).catch(async (err) => {
+    await sleep(THROTTLE_MS);
+    throw err;
+  });
+  _queues.set(subscriberKey, next.catch(() => {}));
+  return next;
+}
+
 async function clinicorpFetch(settings, pathName, { method = 'GET', query = {}, body } = {}) {
-  // Aplicar throttle
-  const now = Date.now();
-  const timeSinceLast = now - _lastCallAt;
-  if (timeSinceLast < THROTTLE_MS) {
-    const delay = THROTTLE_MS - timeSinceLast;
-    await sleep(delay);
-  }
-  _lastCallAt = Date.now();
+  const subscriberKey = settings?.subscriber_id || 'default';
+  return _enqueue(subscriberKey, () => _clinicorpFetchRaw(settings, pathName, { method, query, body }));
+}
+
+async function _clinicorpFetchRaw(settings, pathName, { method = 'GET', query = {}, body } = {}) {
 
   if (!settings?.api_token) {
     throw new Error('Clinicorp: api_token não configurado');
