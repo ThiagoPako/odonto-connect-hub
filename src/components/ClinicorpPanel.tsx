@@ -194,7 +194,7 @@ export function ClinicorpPanel() {
 
     try {
       // Usa endpoint per-user (multi-tenant SaaS) — sincroniza com as credenciais do usuário logado
-      const r = await clinicorpApi.syncMyNow();
+      const r = await clinicorpApi.syncMyNow({ force_metadata: true });
       polling = false;
       setLastSync(r);
       setSyncStatus(prev => ({

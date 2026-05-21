@@ -439,7 +439,12 @@ async function upsertProfessional(pool, p, tenantId = null) {
        synced_at = NOW()`,
     [String(id), tId, fullName, userName, JSON.stringify(p)]
   );
-  try { await ensureLocalProfessional(pool, String(id), fullName, tId); }
+  try { 
+    await ensureLocalProfessional(pool, String(id), fullName, tId); 
+    // Atualiza status ativo/inativo local baseado no Clinicorp
+    const isActive = p.Active === true || p.active === true || p.status === 'active';
+    await pool.query(`UPDATE dentistas SET ativo = $1, updated_at = NOW() WHERE clinicorp_professional_id = $2 AND tenant_id = $3`, [isActive, String(id), tId]);
+  }
   catch (e) { console.error('[clinicorp] ensureLocalProfessional:', e.message); }
 }
 
@@ -858,6 +863,8 @@ function decideOverwrite({ strategy, keepLocal, localRow, clinicorpUpdatedAt }) 
 }
 
 async function projectAppointmentToLocal(pool, a, cpApptId, tenantId = null) {
+  if (!cpApptId) return null;
+  const tId = await resolveTenantId(pool, tenantId);
   const cpPatientId = pickFirst(a, 'PatientId', 'Patient_PersonId', 'PatientPersonId', 'Patient_Id', 'patient_id', 'patientId') ?? a.Patient?.Id ?? a.Patient?.PersonId ?? null;
   const cpProfId = pickFirst(a, 'ProfessionalId', 'Dentist_PersonId', 'DentistPersonId', 'Professional_PersonId', 'ScheduleToId', 'ScheduleTo_PersonId', 'DentistId', 'Dentist_Id', 'professional_id', 'dentist_id') ?? a.Dentist?.Id ?? a.Professional?.Id ?? null;
   const cpClinicId = pickFirst(a, 'BusinessId', 'Clinic_BusinessId', 'ClinicBusinessId', 'ClinicId', 'clinic_id', 'business_id') ?? a.Business?.Id ?? null;
@@ -893,7 +900,7 @@ async function projectAppointmentToLocal(pool, a, cpApptId, tenantId = null) {
     `SELECT id, paciente_id, dentista_id, data, hora, duracao, procedimento, categoria,
             categoria_cor, status, observacoes, updated_at, last_clinicorp_sync_at, keep_local
        FROM agendamentos WHERE clinicorp_appointment_id=$1 AND tenant_id=$2 LIMIT 1`,
-    [cpApptId, tId]
+    [String(cpApptId), tId]
   );
   let agendamentoId;
   if (exists.rows[0]) {
@@ -953,7 +960,7 @@ async function projectAppointmentToLocal(pool, a, cpApptId, tenantId = null) {
          (id, paciente_id, dentista_id, data, hora, duracao, procedimento, status, observacoes,
           categoria, categoria_cor, clinicorp_appointment_id, last_clinicorp_sync_at, tenant_id)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, NOW(), $13)`,
-      [id, pacienteId, dentistaId, data, hora, duracao, procedimento, status, observacoes, procedimento, categoriaCor, cpApptId, tId]
+      [id, pacienteId, dentistaId, data, hora, duracao, procedimento, status, observacoes, procedimento, categoriaCor, String(cpApptId), tId]
     );
     agendamentoId = id;
   }
@@ -984,13 +991,14 @@ async function projectAppointmentToLocal(pool, a, cpApptId, tenantId = null) {
 async function projectPatientToLocal(pool, p, tenantId = null) {
   const cpId = p.id ?? p.Patient_PersonId;
   if (!cpId) return null;
+  const tId = await resolveTenantId(pool, tenantId);
   const cpUpdatedAt = p.UpdateDate || p.UpdatedAt || p.LastModified || null;
   const policy = await resolveConflictPolicy(pool, {});
   const existing = await pool.query(
     `SELECT id, nome, telefone, email, data_nascimento, sexo, cpf,
             updated_at, last_clinicorp_sync_at, keep_local
-       FROM pacientes WHERE clinicorp_patient_id=$1 LIMIT 1`,
-    [cpId]
+       FROM pacientes WHERE clinicorp_patient_id=$1 AND tenant_id=$2 LIMIT 1`,
+    [String(cpId), tId]
   );
   const incoming = {
     nome: p.Name || null,
@@ -1081,6 +1089,7 @@ async function upsertEstimate(pool, e, tenantId = null) {
 }
 
 async function projectEstimateToLocal(pool, e, tenantId = null) {
+  if (!e?.id) return;
   const tId = await resolveTenantId(pool, tenantId);
   const pacienteId = await ensureLocalPatient(pool, e.PatientId || e.Patient_PersonId, { name: e.PatientName }, tId);
   const dentistaId = await ensureLocalProfessional(pool, e.ProfessionalId || e.Dentist_PersonId, e.ProfessionalName, tId);
@@ -1090,18 +1099,18 @@ async function projectEstimateToLocal(pool, e, tenantId = null) {
   const status = String(e.Status || '').toLowerCase().includes('aprov') ? 'aprovado' : 'em_aberto';
 
   const exists = await pool.query(
-    `SELECT id FROM orcamentos WHERE clinicorp_estimate_id = $1 AND tenant_id = $2`,
+    `SELECT id FROM orcamentos WHERE clinicorp_estimate_id = $1 AND tenant_id = $2 LIMIT 1`,
     [String(e.id), tId]
   );
 
   if (exists.rows[0]) {
     await pool.query(
-      `UPDATE orcamentos SET valor=$1, status=$2, updated_at=NOW() WHERE id=$3`,
+      `UPDATE orcamentos SET valor_total=$1, status=$2, updated_at=NOW() WHERE id=$3`,
       [valor, status, exists.rows[0].id]
     );
   } else {
     await pool.query(
-      `INSERT INTO orcamentos (id, tenant_id, paciente_id, dentista_id, valor, status, data, clinicorp_estimate_id)
+      `INSERT INTO orcamentos (id, tenant_id, paciente_id, dentista_id, valor_total, status, validade, clinicorp_estimate_id)
        VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7)`,
       [tId, pacienteId, dentistaId, valor, status, data, String(e.id)]
     );
@@ -1278,18 +1287,19 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     await pool.query(`UPDATE pacientes SET tenant_id=$1 WHERE tenant_id IS NULL AND clinicorp_patient_id IS NOT NULL`, [tId]);
     await pool.query(`UPDATE agendamentos SET tenant_id=$1 WHERE tenant_id IS NULL AND clinicorp_appointment_id IS NOT NULL`, [tId]);
     await pool.query(`UPDATE crm_leads SET tenant_id=$1 WHERE tenant_id IS NULL AND (clinicorp_patient_id IS NOT NULL OR origem='clinicorp')`, [tId]);
+    await pool.query(`UPDATE orcamentos SET tenant_id=$1 WHERE tenant_id IS NULL AND clinicorp_estimate_id IS NOT NULL`, [tId]);
   } catch (e) { console.error('[clinicorp sync] tenant backfill', e.message); }
 
   // Garante que os registros recentes sejam projetados (espelhamento forçado)
   try {
     const tId = await resolveTenantId(pool, tenant_id);
     const { rows: appts } = await pool.query(
-      `SELECT raw FROM clinicorp_appointments WHERE tenant_id=$3 AND date >= $1 AND date <= $2`,
+      `SELECT raw, id FROM clinicorp_appointments WHERE tenant_id=$3 AND date >= $1 AND date <= $2`,
       [fromDate, toDate, tId]
     );
     for (const r of appts) { 
       const rawData = typeof r.raw === 'string' ? JSON.parse(r.raw) : r.raw;
-      await projectAppointmentToLocal(pool, rawData, rawData.id ?? rawData.AppointmentId ?? rawData.Id, tId); 
+      await projectAppointmentToLocal(pool, rawData, r.id, tId); 
     }
   } catch (e) { console.error('[clinicorp sync] forced projection', e.message); }
 
@@ -1611,13 +1621,31 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     } catch (e) { /* skip */ }
   });
 
+  // Força re-projeção final de orçamentos e agendamentos para garantir espelhamento
+  try {
+    const tId = await resolveTenantId(pool, tenant_id);
+    // Agendamentos
+    const { rows: appts } = await pool.query(
+      `SELECT raw, id FROM clinicorp_appointments WHERE tenant_id=$3 AND date >= $1 AND date <= $2`,
+      [fromDate, toDate, tId]
+    );
+    for (const r of appts) { 
+      const raw = typeof r.raw === 'string' ? JSON.parse(r.raw) : r.raw;
+      await projectAppointmentToLocal(pool, raw, r.id, tId).catch(() => {}); 
+    }
+    // Orçamentos
+    const { rows: ests } = await pool.query(
+      `SELECT raw FROM clinicorp_estimates WHERE tenant_id=$3 AND date >= $1 AND date <= $2`,
+      [fromDate, toDate, tId]
+    );
+    for (const r of ests) {
+      const raw = typeof r.raw === 'string' ? JSON.parse(r.raw) : r.raw;
+      await projectEstimateToLocal(pool, raw, tId).catch(() => {});
+    }
+  } catch (e) { console.error('[clinicorp sync] final mirroring projection', e.message); }
+
   const status = errors.length === 0 ? 'success' : (Object.values(summary).some(Boolean) ? 'partial' : 'error');
   
-  // Backfill final de profissionais: garante que agendamentos vinculados a dentistas novos sejam processados
-  try {
-    // Desativado re-projeção final em massa durante o sync
-  } catch (e) { console.error('[clinicorp sync] final backfill', e.message); }
-
   // Se forem as globais (carregadas via id=1), atualiza o status na tabela.
   if (settings.id === 1 || (!api_token && settings.id === undefined)) {
     // Verificação de integridade multi-tenant após o sync
