@@ -185,14 +185,19 @@ async function clinicorpFetch(settings, pathName, { method = 'GET', query = {}, 
 
       // Retry logic for 429 (Rate Limit) and 502/503/504 (Server Overload/Gateway errors)
       const shouldRetry = (res.status === 429 || res.status === 502 || res.status === 503 || res.status === 504) && retryCount < maxRetries;
-      
+
       if (shouldRetry) {
         retryCount++;
         const retryAfter = Number(res.headers.get('retry-after'));
-        const delay = Number.isFinite(retryAfter) && retryAfter > 0
-          ? retryAfter * 1000
+        // CAP retry-after to 30s — Clinicorp sometimes returns 2000+ seconds which would hang the request
+        // for over 30 minutes and trigger nginx 502 timeouts. Better to fail fast and let the caller
+        // back off properly (circuit breaker in reconciliationTick).
+        const MAX_RETRY_DELAY_MS = 30_000;
+        let delay = Number.isFinite(retryAfter) && retryAfter > 0
+          ? Math.min(retryAfter * 1000, MAX_RETRY_DELAY_MS)
           : (res.status === 429 ? Math.pow(2, retryCount) * 5000 : Math.pow(2, retryCount) * 2500);
-        console.warn(`[clinicorp] HTTP ${res.status} detectado em ${pathName}. Retentando em ${delay}ms (tentativa ${retryCount})...`);
+        delay = Math.min(delay, MAX_RETRY_DELAY_MS);
+        console.warn(`[clinicorp] HTTP ${res.status} em ${pathName}. Retry-After raw=${retryAfter}s, aplicando ${delay}ms (tentativa ${retryCount}/${maxRetries})`);
         await sleep(delay);
         return requestOnceWithRetry(authMode);
       }
@@ -1820,7 +1825,21 @@ export async function reconciliationTick(pool) {
       results.push({ type: 'user', user_id: u.user_id, ...r });
     } catch (e) {
       console.error(`[clinicorp] user ${u.user_id} tick error:`, e.message);
-      await pool.query(`UPDATE clinicorp_user_settings SET last_sync_at = NOW(), last_sync_status = 'error', last_sync_error = $2 WHERE user_id = $1`, [u.user_id, e.message]);
+      // Circuit breaker: se rate-limited (429), empurra last_sync_at para o futuro
+      // para que o próximo tick (60s) NÃO tente de novo. Espera ~30 min antes de retomar.
+      if (e.status === 429 || /HTTP 429/.test(e.message)) {
+        await pool.query(
+          `UPDATE clinicorp_user_settings
+             SET last_sync_at = NOW() + INTERVAL '30 minutes',
+                 last_sync_status = 'rate_limited',
+                 last_sync_error = $2
+           WHERE user_id = $1`,
+          [u.user_id, 'Rate limit Clinicorp — aguardando 30 min']
+        );
+        console.warn(`[clinicorp] user ${u.user_id} rate-limited, pausando auto-sync por 30min`);
+      } else {
+        await pool.query(`UPDATE clinicorp_user_settings SET last_sync_at = NOW(), last_sync_status = 'error', last_sync_error = $2 WHERE user_id = $1`, [u.user_id, e.message]);
+      }
     }
   }
 

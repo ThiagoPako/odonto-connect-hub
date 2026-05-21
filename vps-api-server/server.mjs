@@ -10813,10 +10813,18 @@ async function clinicorpFetchProbe(settings, pathName, opts = {}) {
       });
       const text = await r.text();
       let data; try { data = text ? JSON.parse(text) : null; } catch { data = text; }
-      if ((r.status === 401 || r.status === 429 || r.status === 502 || r.status === 503 || r.status === 504) && !requestOnce._retried) {
-        requestOnce._retried = true;
+      // 429 from Clinicorp can have Retry-After of 30+ minutes. Don't honor that for probes/tests —
+      // surface the error immediately so the caller can decide. Auto jobs handle 429 separately.
+      if (r.status === 429) {
         const retryAfter = Number(r.headers.get('retry-after'));
-        await clinicorpProbeSleep(Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 7000);
+        const err = new Error(`HTTP 429 (rate limited by Clinicorp${Number.isFinite(retryAfter) ? `, retry-after ${retryAfter}s` : ''})`);
+        err.status = 429;
+        err.retryAfter = Number.isFinite(retryAfter) ? retryAfter : null;
+        throw err;
+      }
+      if ((r.status === 401 || r.status === 502 || r.status === 503 || r.status === 504) && !requestOnce._retried) {
+        requestOnce._retried = true;
+        await clinicorpProbeSleep(opts.retryDelayMs || 2000);
         return requestOnce(authMode);
       }
       if (!r.ok) {
