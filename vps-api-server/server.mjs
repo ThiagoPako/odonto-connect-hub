@@ -10691,21 +10691,44 @@ app.post('/api/clinicorp/my-settings/test', async (req, res) => {
     const results = [];
     for (const p of probes) {
       const t0 = Date.now();
-      try {
-        const data = await clinicorpFetchProbe(settings, p.path);
+      let attempt = 0;
+      let lastError = null;
+      let success = false;
+      let data = null;
+
+      // Retry up to 2 times on 401 (transient auth failures from Clinicorp rate limiting)
+      while (attempt < 3 && !success) {
+        try {
+          data = await clinicorpFetchProbe(settings, p.path);
+          success = true;
+        } catch (e) {
+          lastError = e;
+          // Only retry on 401 (transient auth issue) or 5xx (server errors)
+          if (e.status === 401 || (e.status >= 500 && e.status < 600)) {
+            attempt++;
+            await clinicorpProbeSleep(1500 * attempt); // Backoff
+          } else {
+            break; // Non-retryable error
+          }
+        }
+      }
+
+      if (success) {
         results.push({
           ...p,
           ok: true,
           latency_ms: Date.now() - t0,
           count: Array.isArray(data) ? data.length : (data ? 1 : 0),
+          retries: attempt,
         });
-      } catch (e) {
+      } else {
         results.push({
           ...p,
           ok: false,
           latency_ms: Date.now() - t0,
-          status: e.status || null,
-          error: e.message,
+          status: lastError?.status || null,
+          error: lastError?.message,
+          retries: attempt,
         });
       }
       await clinicorpProbeSleep(900);
