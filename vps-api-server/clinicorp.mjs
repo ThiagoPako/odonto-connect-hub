@@ -2317,13 +2317,26 @@ export function registerClinicorp(app, pool) {
   });
 
   // ── Re-projeta espelho atual nas tabelas locais (pacientes/dentistas/agendamentos/crm_leads) ──
-  app.post('/api/clinicorp/reproject', async (_req, res) => {
+  app.post('/api/clinicorp/reproject', async (req, res) => {
     try {
-      const { rows: pats } = await pool.query('SELECT raw FROM clinicorp_patients');
+      const tId = await tenantOf(req);
+      const { rows: pats } = await pool.query('SELECT raw FROM clinicorp_patients WHERE tenant_id = $1', [tId]);
       let patients = 0, appts = 0;
-      for (const r of pats) { try { await projectPatientToLocal(pool, r.raw); patients++; } catch (e) { /* skip */ } }
-      const { rows: aps } = await pool.query('SELECT id, raw FROM clinicorp_appointments');
-      for (const r of aps) { try { await projectAppointmentToLocal(pool, r.raw, r.id); appts++; } catch (e) { /* skip */ } }
+      for (const r of pats) { 
+        try { 
+          const raw = typeof r.raw === 'string' ? JSON.parse(r.raw) : r.raw;
+          await projectPatientToLocal(pool, raw, tId); 
+          patients++; 
+        } catch (e) { console.error('[reproject] patient', e.message); } 
+      }
+      const { rows: aps } = await pool.query('SELECT id, raw FROM clinicorp_appointments WHERE tenant_id = $1', [tId]);
+      for (const r of aps) { 
+        try { 
+          const raw = typeof r.raw === 'string' ? JSON.parse(r.raw) : r.raw;
+          await projectAppointmentToLocal(pool, raw, r.id, tId); 
+          appts++; 
+        } catch (e) { console.error('[reproject] appt', e.message); } 
+      }
       res.json({ ok: true, patients, appointments: appts });
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
