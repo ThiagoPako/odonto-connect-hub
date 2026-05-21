@@ -259,110 +259,55 @@ export function ClinicorpPanel() {
 
 
 
-      {/* Status header */}
-      <div className="rounded-2xl border border-border bg-card p-5 flex items-start gap-4">
-        <div className={`h-10 w-10 rounded-xl flex items-center justify-center ${settings?.enabled ? "bg-success/15 text-success" : "bg-muted text-muted-foreground"}`}>
-          <Plug className="h-5 w-5" />
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <h3 className="text-base font-semibold text-foreground">Clinicorp</h3>
-            <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${settings?.enabled ? "bg-success/15 text-success" : "bg-muted text-muted-foreground"}`}>
-              {settings?.enabled ? "Ativo" : "Desativado"}
-            </span>
-          </div>
-          <p className="text-xs text-muted-foreground mt-1">
-            Integração com a API REST da Clinicorp + recebimento de webhooks em tempo real.
-          </p>
-          {settings?.last_sync_at && (
-            <p className="text-[11px] text-muted-foreground mt-2">
-              Última sincronização: {new Date(settings.last_sync_at).toLocaleString("pt-BR")} —{" "}
-              <span className={settings.last_sync_status === "success" ? "text-success" : settings.last_sync_status === "partial" ? "text-warning" : "text-destructive"}>
-                {settings.last_sync_status}
-              </span>
-              {settings.last_sync_error && <span className="block text-destructive mt-1">{settings.last_sync_error}</span>}
-            </p>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          <Switch checked={enabled} onCheckedChange={setEnabled} />
-        </div>
-      </div>
-
-      {/* Credenciais */}
+      {/* Global Config Section - only for high-level admins if needed, otherwise hidden by SaaS logic */}
       <div className="rounded-2xl border border-border bg-card p-5 space-y-4">
-        <div className="flex items-center gap-2">
-          <KeyRound className="h-4 w-4 text-primary" />
-          <h4 className="text-sm font-semibold text-foreground">Credenciais da API</h4>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Shield className="h-4 w-4 text-primary" />
+            <h4 className="text-sm font-semibold text-foreground">Configurações Avançadas de Sistema</h4>
+          </div>
+          <Badge variant="outline" className="text-[10px]">Administrador</Badge>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-1.5">
-            <Label htmlFor="cc-sub">Subscriber ID</Label>
-            <Input id="cc-sub" value={subscriberId} onChange={(e) => setSubscriberId(e.target.value)} placeholder="ex: 123456" />
+            <Label htmlFor="cc-sub-global">Subscriber ID Global</Label>
+            <Input id="cc-sub-global" value={subscriberId} onChange={(e) => setSubscriberId(e.target.value)} placeholder="ex: 123456" className="bg-muted/30" />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="cc-base">Base URL</Label>
-            <Input id="cc-base" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
-          </div>
-          <div className="space-y-1.5 md:col-span-2">
-            <Label htmlFor="cc-token">
-              API Token (Bearer){" "}
-              {settings?.has_api_token && <span className="text-success text-[11px]">• já configurado</span>}
-            </Label>
-            <Input
-              id="cc-token"
-              type="password"
-              autoComplete="new-password"
-              value={apiToken}
-              onChange={(e) => setApiToken(e.target.value)}
-              placeholder={settings?.has_api_token ? "deixe em branco para manter o atual" : "cole o token gerado no Clinicorp"}
-            />
+            <Label htmlFor="cc-base-global">Base URL Global</Label>
+            <Input id="cc-base-global" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} className="bg-muted/30" />
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-2 pt-2">
-          <Button onClick={handleSave} disabled={saving}>
-            {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}Salvar
+        <div className="flex flex-wrap gap-2 pt-2 border-t border-border/40">
+          <Button variant="outline" size="sm" onClick={handleSave} disabled={saving} className="h-8">
+            {saving && <Loader2 className="h-3 w-3 mr-2 animate-spin" />}Salvar Global
           </Button>
-          <Button variant="outline" onClick={handleTest} disabled={testing || !settings?.has_api_token}>
-            {testing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
-            Testar conexão
-          </Button>
-          <Button variant="outline" onClick={handleSync} disabled={syncing || !settings?.enabled}>
-            {syncing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />}
-            Sincronizar agora
+          <Button variant="ghost" size="sm" onClick={handleSync} disabled={syncing || !settings?.enabled} className="h-8">
+            {syncing ? <Loader2 className="h-3 w-3 mr-2 animate-spin" /> : <RefreshCw className="h-3 w-3 mr-2" />}
+            Sync Global
           </Button>
           <Button
-            variant="outline"
+            variant="ghost"
+            size="sm"
+            className="h-8"
             onClick={async () => {
               try {
                 const r = await clinicorpApi.reproject();
-                toast.success(`Reprojetado: ${r.patients} pacientes, ${r.appointments} agendamentos no CRM/Agenda`);
+                toast.success(`Reprojetado: ${r.patients} pacientes, ${r.appointments} agendamentos`);
               } catch (e) {
-                toast.error(`Falha ao reprojetar: ${(e as Error).message}`);
+                toast.error(`Falha: ${(e as Error).message}`);
               }
             }}
             disabled={!settings?.enabled}
           >
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Reprojetar no CRM/Agenda
+            <RefreshCw className="h-3 w-3 mr-2" />
+            Reprojetar CRM
           </Button>
-          <Button
-            variant="outline"
-            onClick={async () => {
-              try {
-                const r = await clinicorpApi.reconcileNow();
-                if (r.skipped) toast.info("Reconciliação não foi disparada (integração desabilitada ou bloqueada)");
-                else if (r.error) toast.error(`Reconciliação falhou: ${r.error}`);
-                else toast.success(`Reconciliação ${r.status} concluída`);
-                await load();
-              } catch (e) { toast.error(`Falha: ${(e as Error).message}`); }
-            }}
-            disabled={!settings?.enabled}
-          >
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Reconciliar agora
+        </div>
+      </div>
+
           </Button>
         </div>
         
