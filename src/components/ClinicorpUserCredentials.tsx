@@ -54,6 +54,11 @@ export function ClinicorpUserCredentials() {
     return null;
   }
 
+  function formatRetryAfter(seconds?: number | null) {
+    if (!seconds || seconds < 60) return "alguns instantes";
+    return `${Math.ceil(seconds / 60)} min`;
+  }
+
   async function save() {
     const err = validate();
     if (err) { toast.error(err); return; }
@@ -103,6 +108,7 @@ export function ClinicorpUserCredentials() {
       });
       setTestResult(result);
       if (result.ok) toast.success(`Conexão OK em ${result.total_latency_ms}ms`);
+      else if (result.auth === "rate_limited") toast.warning(`Clinicorp em limite de chamadas — aguarde ${formatRetryAfter(result.retry_after_seconds)}`);
       else if (result.auth === "invalid_token") toast.error("Token inválido ou sem permissão");
       else toast.warning("Alguns endpoints falharam — veja detalhes");
     } catch (e) {
@@ -246,7 +252,9 @@ export function ClinicorpUserCredentials() {
             <div className="flex items-center gap-2 text-sm font-medium">
               {testResult.ok
                 ? <><CheckCircle2 className="h-4 w-4 text-emerald-600" /> Conexão validada</>
-                : testResult.auth === "invalid_token"
+                : testResult.auth === "rate_limited"
+                  ? <><AlertCircle className="h-4 w-4 text-amber-600" /> Limite temporário da Clinicorp</>
+                  : testResult.auth === "invalid_token"
                   ? <><XCircle className="h-4 w-4 text-destructive" /> Falha de autenticação</>
                   : <><AlertCircle className="h-4 w-4 text-amber-600" /> Conexão parcial</>}
               <span className="ml-auto text-xs text-muted-foreground">{testResult.total_latency_ms}ms</span>

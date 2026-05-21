@@ -228,7 +228,9 @@ export const clinicorpApi = {
 
 export interface ClinicorpConnectionTest {
   ok: boolean;
-  auth: 'valid' | 'invalid_token' | 'partial';
+  auth: 'valid' | 'invalid_token' | 'partial' | 'rate_limited';
+  rate_limited?: boolean;
+  retry_after_seconds?: number | null;
   total_latency_ms: number;
   base_url: string;
   subscriber_id: string;
@@ -242,6 +244,7 @@ export interface ClinicorpConnectionTest {
     count?: number;
     status?: number | null;
     error?: string;
+    retry_after_seconds?: number | null;
   }>;
 }
 
