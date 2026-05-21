@@ -236,11 +236,23 @@ export function ClinicorpPanel() {
 
   return (
     <div className="space-y-6">
-      {/* Integration guide matching Clinicorp's UI flow */}
-      <ClinicorpIntegrationGuide />
+      <Tabs defaultValue="integracao" className="w-full">
+        <TabsList className="mb-4">
+          <TabsTrigger value="integracao" className="gap-2">
+            <Plug className="h-4 w-4" /> Configuração
+          </TabsTrigger>
+          <TabsTrigger value="auditoria" className="gap-2">
+            <History className="h-4 w-4" /> Auditoria e Espelho
+          </TabsTrigger>
+        </TabsList>
 
-      {/* Per-user credentials (SaaS multi-tenant) */}
-      <ClinicorpUserCredentials />
+        <TabsContent value="integracao" className="space-y-6">
+          {/* Integration guide matching Clinicorp's UI flow */}
+          <ClinicorpIntegrationGuide />
+
+          {/* Per-user credentials (SaaS multi-tenant) */}
+          <ClinicorpUserCredentials />
+
 
 
       {/* Status header */}
@@ -1126,7 +1138,12 @@ export function ClinicorpPanel() {
             </table>
           </div>
         )}
-      </div>
+        </TabsContent>
+
+        <TabsContent value="auditoria">
+          <ClinicorpAuditLog />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
