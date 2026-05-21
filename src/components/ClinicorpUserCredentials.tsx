@@ -7,7 +7,8 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import { Eye, EyeOff, KeyRound, Copy, RefreshCw, Trash2, Loader2, Lock, PlugZap, CheckCircle2, XCircle, AlertCircle, RefreshCcw } from "lucide-react";
+import { Eye, EyeOff, KeyRound, Copy, RefreshCw, Trash2, Loader2, Lock, PlugZap, CheckCircle2, XCircle, AlertCircle, RefreshCcw, Webhook } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 const DEFAULT_BASE = "https://api.clinicorp.com/rest/v1";
 
