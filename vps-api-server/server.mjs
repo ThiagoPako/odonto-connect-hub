@@ -10709,6 +10709,7 @@ app.post('/api/clinicorp/my-settings/test', async (req, res) => {
             attempt++;
             if (attempt < 2) await clinicorpProbeSleep(800 * attempt);
           } else {
+            console.error(`[ClinicorpTest] Probe ${p.key} failed with non-retryable error: ${e.status} ${e.message}`);
             break;
           }
         }
