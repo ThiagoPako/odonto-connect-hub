@@ -40,12 +40,7 @@ export function ClinicorpPanel() {
   const [events, setEvents] = useState<ClinicorpWebhookEvent[]>([]);
   const [lastSync, setLastSync] = useState<ClinicorpSyncResult | null>(null);
 
-  // form state
-  const [enabled, setEnabled] = useState(false);
-  const [subscriberId, setSubscriberId] = useState("");
-  const [baseUrl, setBaseUrl] = useState("https://api.clinicorp.com/rest/v1");
-  const [apiToken, setApiToken] = useState("");
-  const [webhookSecret, setWebhookSecret] = useState("");
+  // form state (apenas configurações de comportamento — credenciais ficam no ClinicorpUserCredentials)
   const [autoSync, setAutoSync] = useState(true);
   const [intervalMin, setIntervalMin] = useState(30);
   const [lookbackDays, setLookbackDays] = useState(30);
