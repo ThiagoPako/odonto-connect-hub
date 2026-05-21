@@ -1138,12 +1138,13 @@ export function ClinicorpPanel() {
             </table>
           </div>
         )}
-        </TabsContent>
+      </div>
+    </TabsContent>
 
-        <TabsContent value="auditoria">
-          <ClinicorpAuditLog />
-        </TabsContent>
-      </Tabs>
-    </div>
-  );
+    <TabsContent value="auditoria">
+      <ClinicorpAuditLog />
+    </TabsContent>
+  </Tabs>
+</div>
+);
 }
