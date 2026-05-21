@@ -10,6 +10,13 @@ function DefaultErrorComponent({
 }) {
   const router = useRouter();
 
+  // Log to console so we can capture it remotely
+  if (typeof window !== "undefined") {
+    console.error("[RouteError]", error?.message, error?.stack);
+  }
+
+
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <div className="max-w-md text-center">
