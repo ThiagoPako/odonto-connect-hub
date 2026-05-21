@@ -10731,8 +10731,7 @@ app.post('/api/clinicorp/my-settings/test', async (req, res) => {
     const rateLimit = results.find((r) => r.status === 429);
     const auth = results[0]?.status === 401 || results.some((r) => r.status === 401)
       ? 'invalid_token'
-      : (rateLimit ? 'rate_limited'
-      : (ok ? 'valid' : 'partial');
+      : (rateLimit ? 'rate_limited' : (ok ? 'valid' : 'partial'));
     const retryAfterSeconds = rateLimit?.retry_after_seconds ?? null;
 
     res.json({
