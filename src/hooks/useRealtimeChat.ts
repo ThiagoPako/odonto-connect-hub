@@ -90,7 +90,10 @@ export function useRealtimeChat(options: RealtimeChatOptions) {
 
     function connect() {
       const token = localStorage.getItem("odonto_jwt");
-      const url = new URL(`${VPS_API_BASE}/events`);
+      const base = VPS_API_BASE.startsWith("http")
+        ? VPS_API_BASE
+        : `${window.location.origin}${VPS_API_BASE}`;
+      const url = new URL(`${base}/events`);
       if (token) url.searchParams.set("token", token);
       
       es = new EventSource(url.toString());
