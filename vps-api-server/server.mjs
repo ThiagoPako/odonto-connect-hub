@@ -11032,7 +11032,7 @@ app.delete('/api/exames/:id', async (req, res) => {
 // START SERVER
 
 if (process.env.NODE_ENV !== 'test') {
-  app.listen(PORT, async () => {
+  const server = app.listen(PORT, async () => {
   console.log(`🦷 Odonto Connect API running on port ${PORT}`);
   console.log(`   Health: http://localhost:${PORT}/api/health`);
   console.log(`   Webhook URL: ${WEBHOOK_URL}`);
@@ -11313,6 +11313,7 @@ if (process.env.NODE_ENV !== 'test') {
   setInterval(() => { reconciliationTick(pool).catch((e) => console.error('[clinicorp] tick', e.message)); }, 60 * 1000);
   console.log('   🦷 Clinicorp auto-reconcile ativo (tick a cada 60s, intervalo configurável em clinicorp_settings)');
   });
+  server.timeout = 15 * 60 * 1000; // 15 minutes timeout for long-running sync operations
 }
 
 
