@@ -158,6 +158,7 @@ export function ClinicorpPanel() {
   }
 
   async function handleSync() {
+    if (syncing) return;
     setSyncing(true);
     setLastSync(null);
     setSyncStatus({
@@ -168,9 +169,31 @@ export function ClinicorpPanel() {
       completed: false,
     });
 
+    let polling = true;
+    const poll = async () => {
+      while (polling) {
+        try {
+          const s = await clinicorpApi.getMySettings();
+          if (s.last_sync_status === 'syncing') {
+            setSyncStatus(prev => ({
+              ...prev!,
+              step: s.last_sync_error || "Sincronizando dados...",
+            }));
+          } else if (s.last_sync_at && new Date(s.last_sync_at).getTime() > Date.now() - 5000) {
+             // Sync finished according to settings
+             polling = false;
+          }
+        } catch (e) { console.error("Poll error", e); }
+        await new Promise(r => setTimeout(r, 2000));
+      }
+    };
+
+    poll();
+
     try {
       // Usa endpoint per-user (multi-tenant SaaS) — sincroniza com as credenciais do usuário logado
       const r = await clinicorpApi.syncMyNow();
+      polling = false;
       setLastSync(r);
       setSyncStatus(prev => ({
         ...prev!,
@@ -182,6 +205,7 @@ export function ClinicorpPanel() {
       toast.success(`Sync ${r.status} — ${Object.values(r.summary).reduce((a, b) => a + b, 0)} registros processados`);
       await load();
     } catch (e) {
+      polling = false;
       const msg = (e as Error).message;
       setSyncStatus(prev => ({
         ...prev!,
