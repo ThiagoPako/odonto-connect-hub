@@ -522,8 +522,8 @@ async function upsertAppointment(pool, a, tenantId = null) {
   );
   // Backfill stub no clinicorp_patients a partir do agendamento (a Clinicorp não expõe /patient/list)
   try {
-    const pid = a.PatientId ?? a.Patient_PersonId ?? null;
-    const pname = a.PatientName ?? a.Patient_FullName ?? a.Patient_Name ?? null;
+    const pid = pickFirst(a, 'PatientId', 'Patient_PersonId', 'PatientPersonId', 'Patient_Id', 'patient_id', 'patientId') ?? a.Patient?.Id ?? a.Patient?.PersonId ?? null;
+    const pname = pickFirst(a, 'PatientName', 'Patient_FullName', 'Patient_Name', 'PatientFullName', 'patient_name', 'patientName', 'Name') ?? a.Patient?.Name ?? a.Patient?.FullName ?? null;
     if (pid) {
       await pool.query(
         `INSERT INTO clinicorp_patients (id, tenant_id, name, mobile_phone, raw, synced_at)
@@ -535,7 +535,7 @@ async function upsertAppointment(pool, a, tenantId = null) {
         [
           String(pid), tId,
           pname,
-          String(a.PatientPhone ?? a.MobilePhone ?? '') || null,
+          String(pickFirst(a, 'PatientPhone', 'MobilePhone', 'PatientMobilePhone', 'Phone', 'phone') ?? '') || null,
           JSON.stringify({ derived_from: 'appointment', appointment_id: id, id: pid, name: pname }),
         ]
       );
