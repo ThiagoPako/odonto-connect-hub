@@ -934,7 +934,7 @@ async function projectAppointmentToLocal(pool, a, cpApptId, tenantId = null) {
     // Audit: registramos sempre que houver divergência real ou decisão não-trivial
     if (changed.length > 0 || decision.decision !== 'overwritten_by_clinicorp') {
       const leadRow = pacienteId
-        ? (await pool.query(`SELECT id FROM crm_leads WHERE paciente_id=$1 LIMIT 1`, [pacienteId])).rows[0]
+        ? (await pool.query(`SELECT id FROM crm_leads WHERE (paciente_id=$1 OR clinicorp_patient_id=$2) AND tenant_id=$3 LIMIT 1`, [pacienteId, cpPatientId, tId])).rows[0]
         : null;
       await logConflict(pool, {
         entity: 'appointment', clinicorp_id: cpApptId, local_id: agendamentoId,
@@ -944,8 +944,8 @@ async function projectAppointmentToLocal(pool, a, cpApptId, tenantId = null) {
         clinicorp_updated_at: cpUpdatedAt,
         last_sync_at: localRow.last_clinicorp_sync_at,
         diff: { changed },
-        before_data: beforeOut,
-        after_data: afterOut,
+        before_data: beforeSnap,
+        after_data: afterSnap,
         changed_fields: changed,
         paciente_id: pacienteId,
         lead_id: leadRow?.id || null,
@@ -1023,8 +1023,8 @@ async function projectPatientToLocal(pool, p, tenantId = null) {
     const { changed, beforeOut, afterOut } = diffFields(beforeSnap, incoming);
     if (changed.length > 0 || decision.decision !== 'overwritten_by_clinicorp') {
       const leadRow = (await pool.query(
-        `SELECT id FROM crm_leads WHERE paciente_id=$1 OR clinicorp_patient_id=$2 LIMIT 1`,
-        [localRow.id, cpId]
+        `SELECT id FROM crm_leads WHERE (paciente_id=$1 OR clinicorp_patient_id=$2) AND tenant_id=$3 LIMIT 1`,
+        [localRow.id, String(cpId), tId]
       )).rows[0];
       await logConflict(pool, {
         entity: 'patient', clinicorp_id: cpId, local_id: localRow.id,
@@ -1034,8 +1034,8 @@ async function projectPatientToLocal(pool, p, tenantId = null) {
         clinicorp_updated_at: cpUpdatedAt,
         last_sync_at: localRow.last_clinicorp_sync_at,
         diff: { changed },
-        before_data: beforeOut,
-        after_data: afterOut,
+        before_data: beforeSnap,
+        after_data: incoming,
         changed_fields: changed,
         paciente_id: localRow.id,
         lead_id: leadRow?.id || null,
@@ -1045,7 +1045,7 @@ async function projectPatientToLocal(pool, p, tenantId = null) {
   }
   const pacienteId = await ensureLocalPatient(pool, cpId, { name: p.Name, phone: p.MobilePhone, email: p.Email }, tenantId);
   if (pacienteId) {
-    await pool.query(`UPDATE pacientes SET last_clinicorp_sync_at=NOW() WHERE id=$1`, [pacienteId]);
+    await pool.query(`UPDATE pacientes SET last_clinicorp_sync_at=NOW(), updated_at=NOW() WHERE id=$1`, [pacienteId]);
   }
   await ensureLeadForPatient(pool, pacienteId, cpId, {
     nome: p.Name, telefone: onlyDigits(p.MobilePhone), email: p.Email,
@@ -2317,13 +2317,26 @@ export function registerClinicorp(app, pool) {
   });
 
   // ── Re-projeta espelho atual nas tabelas locais (pacientes/dentistas/agendamentos/crm_leads) ──
-  app.post('/api/clinicorp/reproject', async (_req, res) => {
+  app.post('/api/clinicorp/reproject', async (req, res) => {
     try {
-      const { rows: pats } = await pool.query('SELECT raw FROM clinicorp_patients');
+      const tId = await tenantOf(req);
+      const { rows: pats } = await pool.query('SELECT raw FROM clinicorp_patients WHERE tenant_id = $1', [tId]);
       let patients = 0, appts = 0;
-      for (const r of pats) { try { await projectPatientToLocal(pool, r.raw); patients++; } catch (e) { /* skip */ } }
-      const { rows: aps } = await pool.query('SELECT id, raw FROM clinicorp_appointments');
-      for (const r of aps) { try { await projectAppointmentToLocal(pool, r.raw, r.id); appts++; } catch (e) { /* skip */ } }
+      for (const r of pats) { 
+        try { 
+          const raw = typeof r.raw === 'string' ? JSON.parse(r.raw) : r.raw;
+          await projectPatientToLocal(pool, raw, tId); 
+          patients++; 
+        } catch (e) { console.error('[reproject] patient', e.message); } 
+      }
+      const { rows: aps } = await pool.query('SELECT id, raw FROM clinicorp_appointments WHERE tenant_id = $1', [tId]);
+      for (const r of aps) { 
+        try { 
+          const raw = typeof r.raw === 'string' ? JSON.parse(r.raw) : r.raw;
+          await projectAppointmentToLocal(pool, raw, r.id, tId); 
+          appts++; 
+        } catch (e) { console.error('[reproject] appt', e.message); } 
+      }
       res.json({ ok: true, patients, appointments: appts });
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
