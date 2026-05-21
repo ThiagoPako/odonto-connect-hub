@@ -8,7 +8,15 @@ import {
   AlertCircle,
   Clock,
   Search,
-  Filter
+  Filter,
+  CalendarDays,
+  FileText,
+  Landmark,
+  Users,
+  UserRound,
+  Building2,
+  Activity,
+  RefreshCw
 } from "lucide-react";
 import { clinicorpApi, type ClinicorpAuditEntry } from "@/lib/clinicorpApi";
 import { format } from "date-fns";
@@ -23,6 +31,11 @@ import {
   SelectValue 
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ClinicorpMirrorAgenda } from "./ClinicorpMirrorAgenda";
+import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
+
 
 export function ClinicorpAuditLog() {
   const [logs, setLogs] = useState<ClinicorpAuditEntry[]>([]);
