@@ -997,47 +997,8 @@ export function ClinicorpPanel() {
         </div>
       </div>
 
-      {/* Webhook */}
-      <div className="rounded-2xl border border-border bg-card p-5 space-y-4">
-        <div className="flex items-center gap-2">
-          <Webhook className="h-4 w-4 text-primary" />
-          <h4 className="text-sm font-semibold text-foreground">Webhook (receber eventos da Clinicorp)</h4>
-        </div>
+      {/* Webhook info — secret é gerenciado em "Minhas credenciais Clinicorp" acima */}
 
-        <div className="space-y-1.5">
-          <Label htmlFor="cc-secret">
-            Webhook Secret (validação por <code className="text-[11px]">?user_api=</code>){" "}
-            {settings?.has_webhook_secret && (
-              <span className="text-success text-[11px]">• atual: {settings.webhook_secret_preview}</span>
-            )}
-          </Label>
-          <div className="flex gap-2">
-            <Input
-              id="cc-secret"
-              value={webhookSecret}
-              onChange={(e) => setWebhookSecret(e.target.value)}
-              placeholder={settings?.has_webhook_secret ? "deixe em branco para manter o atual" : "gere ou cole um secret forte"}
-              className="font-mono text-xs"
-            />
-            <Button variant="outline" onClick={generateSecret}>Gerar</Button>
-          </div>
-        </div>
-
-        <div className="rounded-lg bg-muted/40 border border-border p-3 text-xs">
-          <div className="font-medium text-foreground mb-1">URL do endpoint para cadastrar no painel da Clinicorp:</div>
-          <div className="flex items-center gap-2">
-            <code className="flex-1 truncate text-[11px] text-muted-foreground">
-              {buildWebhookUrl(webhookSecret || (settings?.has_webhook_secret ? "•••••••••••" : ""))}
-            </code>
-            <Button size="sm" variant="ghost" onClick={copyWebhookUrl}>
-              <Copy className="h-3.5 w-3.5" />
-            </Button>
-          </div>
-          <p className="mt-2 text-muted-foreground">
-            No painel da Clinicorp: Acesso Externo e integrações → Adicionar webhook → cole essa URL com o seu secret.
-          </p>
-        </div>
-      </div>
 
       {/* Eventos */}
       <div className="rounded-2xl border border-border bg-card p-5 space-y-3">
