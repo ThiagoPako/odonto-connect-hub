@@ -1105,12 +1105,12 @@ async function projectEstimateToLocal(pool, e, tenantId = null) {
 
   if (exists.rows[0]) {
     await pool.query(
-      `UPDATE orcamentos SET valor=$1, status=$2, updated_at=NOW() WHERE id=$3`,
+      `UPDATE orcamentos SET valor_total=$1, status=$2, updated_at=NOW() WHERE id=$3`,
       [valor, status, exists.rows[0].id]
     );
   } else {
     await pool.query(
-      `INSERT INTO orcamentos (id, tenant_id, paciente_id, dentista_id, valor, status, data, clinicorp_estimate_id)
+      `INSERT INTO orcamentos (id, tenant_id, paciente_id, dentista_id, valor_total, status, validade, clinicorp_estimate_id)
        VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7)`,
       [tId, pacienteId, dentistaId, valor, status, data, String(e.id)]
     );
