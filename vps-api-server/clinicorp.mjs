@@ -1089,6 +1089,7 @@ async function upsertEstimate(pool, e, tenantId = null) {
 }
 
 async function projectEstimateToLocal(pool, e, tenantId = null) {
+  if (!e?.id) return;
   const tId = await resolveTenantId(pool, tenantId);
   const pacienteId = await ensureLocalPatient(pool, e.PatientId || e.Patient_PersonId, { name: e.PatientName }, tId);
   const dentistaId = await ensureLocalProfessional(pool, e.ProfessionalId || e.Dentist_PersonId, e.ProfessionalName, tId);
