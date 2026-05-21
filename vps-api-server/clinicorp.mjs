@@ -863,6 +863,8 @@ function decideOverwrite({ strategy, keepLocal, localRow, clinicorpUpdatedAt }) 
 }
 
 async function projectAppointmentToLocal(pool, a, cpApptId, tenantId = null) {
+  if (!cpApptId) return null;
+  const tId = await resolveTenantId(pool, tenantId);
   const cpPatientId = pickFirst(a, 'PatientId', 'Patient_PersonId', 'PatientPersonId', 'Patient_Id', 'patient_id', 'patientId') ?? a.Patient?.Id ?? a.Patient?.PersonId ?? null;
   const cpProfId = pickFirst(a, 'ProfessionalId', 'Dentist_PersonId', 'DentistPersonId', 'Professional_PersonId', 'ScheduleToId', 'ScheduleTo_PersonId', 'DentistId', 'Dentist_Id', 'professional_id', 'dentist_id') ?? a.Dentist?.Id ?? a.Professional?.Id ?? null;
   const cpClinicId = pickFirst(a, 'BusinessId', 'Clinic_BusinessId', 'ClinicBusinessId', 'ClinicId', 'clinic_id', 'business_id') ?? a.Business?.Id ?? null;
