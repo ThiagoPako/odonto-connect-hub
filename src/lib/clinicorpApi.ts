@@ -222,7 +222,8 @@ export const clinicorpApi = {
   deleteMySettings: () => req<{ ok: true }>('/my-settings', { method: 'DELETE' }),
   testMyConnection: (payload: Partial<{ api_token: string; subscriber_id: string; base_url: string }> = {}) =>
     req<ClinicorpConnectionTest>('/my-settings/test', { method: 'POST', body: JSON.stringify(payload) }),
-  syncMyNow: () => req<ClinicorpSyncResult>('/sync/now', { method: 'POST' }),
+  syncMyNow: (range?: { from?: string; to?: string; force_metadata?: boolean }) =>
+    req<ClinicorpSyncResult>('/sync/now', { method: 'POST', body: JSON.stringify(range || {}) }),
   listAuditLogs: (limit = 100) => req<ClinicorpAuditEntry[]>(`/audit-log?limit=${limit}`),
 };
 
