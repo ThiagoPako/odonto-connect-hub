@@ -1345,7 +1345,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     
     const processAppts = async (list) => {
       for (const a of (Array.isArray(list) ? list : [])) { 
-        const id = a.id ?? a.AppointmentId ?? a.Id;
+        const id = getAppointmentId(a);
         if (id) { 
           apiIds.add(String(id)); 
           await upsertAppointment(pool, a, tenant_id); 
@@ -1362,6 +1362,12 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
         await processAppts(list);
       }
     } else {
+      for (const r of ranges) {
+        try {
+          const list = await clinicorpApi.listAppointments(settings, r.from, r.to);
+          await processAppts(list);
+        } catch (e) { console.error(`[clinicorp sync] appointments global ${r.from}..${r.to}`, e.message); }
+      }
       for (const { id: clinicId } of clinics) {
         if (!clinicId) continue;
         for (const r of ranges) {
