@@ -808,23 +808,26 @@ function decideOverwrite({ strategy, keepLocal, localRow, clinicorpUpdatedAt }) 
 }
 
 async function projectAppointmentToLocal(pool, a, cpApptId, tenantId = null) {
-  const cpPatientId = a.PatientId ?? a.Patient_PersonId ?? a.PatientPersonId ?? a.Patient?.Id ?? a.Patient?.PersonId ?? null;
-  const cpProfId = a.ProfessionalId ?? a.Dentist_PersonId ?? a.DentistPersonId ?? a.ScheduleToId ?? a.ScheduleTo_PersonId ?? a.Dentist?.Id ?? a.Professional?.Id ?? null;
-  const cpClinicId = a.BusinessId ?? a.Clinic_BusinessId ?? a.ClinicBusinessId ?? a.ClinicId ?? a.Business?.Id ?? null;
+  const cpPatientId = pickFirst(a, 'PatientId', 'Patient_PersonId', 'PatientPersonId', 'Patient_Id', 'patient_id', 'patientId') ?? a.Patient?.Id ?? a.Patient?.PersonId ?? null;
+  const cpProfId = pickFirst(a, 'ProfessionalId', 'Dentist_PersonId', 'DentistPersonId', 'Professional_PersonId', 'ScheduleToId', 'ScheduleTo_PersonId', 'DentistId', 'Dentist_Id', 'professional_id', 'dentist_id') ?? a.Dentist?.Id ?? a.Professional?.Id ?? null;
+  const cpClinicId = pickFirst(a, 'BusinessId', 'Clinic_BusinessId', 'ClinicBusinessId', 'ClinicId', 'clinic_id', 'business_id') ?? a.Business?.Id ?? null;
   const cpUpdatedAt = a.UpdateDate || a.UpdatedAt || a.LastModified || a.ModifiedAt || a.z_LastChange_Date || a.ModifiedDate || null;
   const policy = await resolveConflictPolicy(pool, { clinicId: cpClinicId, professionalId: cpProfId });
 
   // Busca ou cria o dentista no schema local ANTES do agendamento
-  const dentistaId = await ensureLocalProfessional(pool, cpProfId, a.ProfessionalName || a.DentistName || a.ScheduleToName || a.Dentist?.Name, tenantId);
+  const professionalName = pickFirst(a, 'ProfessionalName', 'Dentist_FullName', 'Dentist_Name', 'DentistName', 'ScheduleToName', 'Professional_Name', 'professional_name', 'dentist_name') ?? a.Dentist?.Name ?? a.Dentist?.FullName ?? a.Professional?.Name ?? a.Professional?.FullName ?? null;
+  const dentistaId = await ensureLocalProfessional(pool, cpProfId, professionalName, tenantId);
 
   const pacienteId = await ensureLocalPatient(pool, cpPatientId, {
-    name: a.PatientName, phone: a.PatientPhone || a.MobilePhone, email: a.PatientEmail,
+    name: pickFirst(a, 'PatientName', 'Patient_FullName', 'Patient_Name', 'PatientFullName', 'patient_name', 'patientName', 'Name') ?? a.Patient?.Name ?? a.Patient?.FullName,
+    phone: pickFirst(a, 'PatientPhone', 'MobilePhone', 'PatientMobilePhone', 'Phone', 'phone'),
+    email: pickFirst(a, 'PatientEmail', 'Email', 'email') ?? a.Patient?.Email,
   }, tenantId);
   
-  const status = mapAppointmentStatus(a.Status ?? a.StatusId);
-  const data = normalizeClinicorpDate(a.Date, a.AppointmentDate, a.SK_DateFirstTime, a.DateFirstTime, a.StartDate, a.StartDateTime, a.StartTime, a.fromTime, a.FromTime);
-  const fromT = normalizeClinicorpTime(a.FromTime, a.Time, a.StartTime, a.StartDateTime, a.ScheduleTime, a.Hour, a.fromTime) || '00:00';
-  const toT = normalizeClinicorpTime(a.ToTime, a.FinalTime, a.EndTime, a.EndDateTime, a.toTime) || '';
+  const status = mapAppointmentStatus(pickFirst(a, 'Status', 'StatusId', 'status'));
+  const data = normalizeClinicorpDate(pickFirst(a, 'Date', 'AppointmentDate', 'SK_DateFirstTime', 'DateFirstTime', 'StartDate', 'StartDateTime', 'StartTime', 'fromTime', 'FromTime', 'date', 'appointment_date'));
+  const fromT = normalizeClinicorpTime(pickFirst(a, 'FromTime', 'Time', 'StartTime', 'StartDateTime', 'ScheduleTime', 'Hour', 'fromTime', 'from_time', 'hora')) || '00:00';
+  const toT = normalizeClinicorpTime(pickFirst(a, 'ToTime', 'FinalTime', 'EndTime', 'EndDateTime', 'toTime', 'to_time')) || '';
   const hora = fromT;
   const duracao = (() => {
     if (!fromT || !toT) return 30;
@@ -832,9 +835,9 @@ async function projectAppointmentToLocal(pool, a, cpApptId, tenantId = null) {
     const d = toMin(toT) - toMin(fromT);
     return d > 0 ? d : 30;
   })();
-  const procedimento = a.CategoryDescription || a.Category || null;
-  const categoriaCor = a.CategoryColor || a.Color || null;
-  const observacoes = a.Notes || a.notes || null;
+  const procedimento = pickFirst(a, 'CategoryDescription', 'Category_Description', 'Category', 'category_description', 'ProcedureName', 'Procedure') ?? null;
+  const categoriaCor = pickFirst(a, 'CategoryColor', 'Category_Color', 'Color', 'category_color') ?? null;
+  const observacoes = pickFirst(a, 'Notes', 'Observation', 'Observations', 'notes', 'observacoes') ?? null;
   const tId = await resolveTenantId(pool, tenantId);
   const exists = await pool.query(
     `SELECT id, paciente_id, dentista_id, data, hora, duracao, procedimento, categoria,
