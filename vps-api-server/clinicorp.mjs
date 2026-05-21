@@ -934,7 +934,7 @@ async function projectAppointmentToLocal(pool, a, cpApptId, tenantId = null) {
     // Audit: registramos sempre que houver divergência real ou decisão não-trivial
     if (changed.length > 0 || decision.decision !== 'overwritten_by_clinicorp') {
       const leadRow = pacienteId
-        ? (await pool.query(`SELECT id FROM crm_leads WHERE paciente_id=$1 LIMIT 1`, [pacienteId])).rows[0]
+        ? (await pool.query(`SELECT id FROM crm_leads WHERE (paciente_id=$1 OR clinicorp_patient_id=$2) AND tenant_id=$3 LIMIT 1`, [pacienteId, cpPatientId, tId])).rows[0]
         : null;
       await logConflict(pool, {
         entity: 'appointment', clinicorp_id: cpApptId, local_id: agendamentoId,
@@ -944,8 +944,8 @@ async function projectAppointmentToLocal(pool, a, cpApptId, tenantId = null) {
         clinicorp_updated_at: cpUpdatedAt,
         last_sync_at: localRow.last_clinicorp_sync_at,
         diff: { changed },
-        before_data: beforeOut,
-        after_data: afterOut,
+        before_data: beforeSnap,
+        after_data: afterSnap,
         changed_fields: changed,
         paciente_id: pacienteId,
         lead_id: leadRow?.id || null,
