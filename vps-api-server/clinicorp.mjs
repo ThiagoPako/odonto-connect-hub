@@ -129,7 +129,7 @@ function getAppointmentId(a) {
 // ─── HTTP client ──────────────────────────────────────────────
 // Throttle global para evitar 429: limite de 5 chamadas por segundo (200ms entre inícios)
 let _lastCallAt = 0;
-const THROTTLE_MS = 900; // Clinicorp é sensível a rajadas; ~1 req/s evita agenda vazia por HTTP 429
+const THROTTLE_MS = 350; // Reduzido de 900ms para 350ms para acelerar o sync; Clinicorp suporta rajadas curtas se não exceder média global.
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 async function clinicorpFetch(settings, pathName, { method = 'GET', query = {}, body } = {}) {
@@ -263,7 +263,26 @@ export const clinicorpApi = {
     };
     const extract = extractClinicorpList;
 
-    // 1) Preferred path: list_by_date_and_clinic per day, per clinic
+    // 1) Preferred path: try /appointment/list with the whole range FIRST (efficient)
+    const baseBiz = businessId
+      ? { Clinic_BusinessId: businessId, business_id: businessId, BusinessId: businessId }
+      : {};
+
+    try {
+      const data = await clinicorpFetch(s, '/appointment/list', { 
+        query: { fromDate: from, toDate: to, ...baseBiz } 
+      });
+      const arr = extract(data);
+      if (Array.isArray(arr) && arr.length > 0) {
+        push(arr);
+        // If we got results from the range call, we can skip the expensive per-day loop
+        return aggregate;
+      }
+    } catch (e) {
+      // If 404 or specific error, continue to per-day loop for precision
+    }
+
+    // 2) Granular path: list_by_date_and_clinic per day, per clinic (only if businessId is present and first call failed)
     if (businessId) {
       try {
         const start = new Date(from + 'T00:00:00Z');
@@ -282,13 +301,10 @@ export const clinicorpApi = {
           }
         }
         if (aggregate.length > 0) return aggregate;
-      } catch (_) { /* fall through to /appointment/list */ }
+      } catch (_) { /* fall through to variants */ }
     }
 
-    // 2) Fallback: /appointment/list with multiple param naming variants
-    const baseBiz = businessId
-      ? { Clinic_BusinessId: businessId, business_id: businessId, BusinessId: businessId }
-      : {};
+    // 3) Fallback: /appointment/list with multiple param naming variants
     const variants = [
       { fromDate: from, toDate: to, ...baseBiz },
       { from, to, ...baseBiz },
@@ -1250,7 +1266,18 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
 
 
   const safe = async (label, fn) => {
-    try { await fn(); } catch (e) { errors.push(`${label}: ${e.message}`); console.error(`[clinicorp sync] ${label}`, e.message); }
+    try { 
+      if (user_id) {
+        await pool.query(
+          `UPDATE clinicorp_user_settings SET last_sync_status = 'syncing', last_sync_error = $2, updated_at = NOW() WHERE user_id = $1`,
+          [user_id, `Processando: ${label}...`]
+        ).catch(() => {});
+      }
+      await fn(); 
+    } catch (e) { 
+      errors.push(`${label}: ${e.message}`); 
+      console.error(`[clinicorp sync] ${label}`, e.message); 
+    }
   };
 
   // Helper para fatiar períodos em janelas menores para evitar erro 400 ou timeouts da Clinicorp
