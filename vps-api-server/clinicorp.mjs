@@ -209,14 +209,15 @@ async function _clinicorpFetchRaw(settings, pathName, { method = 'GET', query = 
       if (shouldRetry) {
         retryCount++;
         const retryAfter = Number(res.headers.get('retry-after'));
-        // CAP retry-after to 30s — Clinicorp sometimes returns 2000+ seconds which would hang the request
-        // for over 30 minutes and trigger nginx 502 timeouts. Better to fail fast and let the caller
-        // back off properly (circuit breaker in reconciliationTick).
         const MAX_RETRY_DELAY_MS = 30_000;
         let delay = Number.isFinite(retryAfter) && retryAfter > 0
           ? Math.min(retryAfter * 1000, MAX_RETRY_DELAY_MS)
           : (res.status === 429 ? Math.pow(2, retryCount) * 5000 : Math.pow(2, retryCount) * 2500);
         delay = Math.min(delay, MAX_RETRY_DELAY_MS);
+        // Em 429, pausa TODA a fila global por GLOBAL_PAUSE_AFTER_429_MS para parar de bater na API
+        if (res.status === 429) {
+          _globalPauseUntil = Math.max(_globalPauseUntil, Date.now() + GLOBAL_PAUSE_AFTER_429_MS);
+        }
         console.warn(`[clinicorp] HTTP ${res.status} em ${pathName}. Retry-After raw=${retryAfter}s, aplicando ${delay}ms (tentativa ${retryCount}/${maxRetries})`);
         await sleep(delay);
         return requestOnceWithRetry(authMode);
