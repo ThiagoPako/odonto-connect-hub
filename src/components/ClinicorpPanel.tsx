@@ -425,11 +425,14 @@ export function ClinicorpPanel() {
             <div className="flex items-center gap-2 text-sm font-medium">
               {testResult.ok
                 ? <><CheckCircle2 className="h-4 w-4 text-emerald-600" /> Conexão global validada</>
-                : testResult.auth === "invalid_token"
-                  ? <><AlertCircle className="h-4 w-4 text-destructive" /> Falha de autenticação global</>
-                  : <><AlertCircle className="h-4 w-4 text-amber-600" /> Conexão global parcial</>}
+                : testResult.auth === "rate_limited"
+                  ? <><AlertCircle className="h-4 w-4 text-amber-600" /> Limite temporário da Clinicorp</>
+                  : testResult.auth === "invalid_token"
+                    ? <><AlertCircle className="h-4 w-4 text-destructive" /> Falha de autenticação global</>
+                    : <><AlertCircle className="h-4 w-4 text-amber-600" /> Conexão global parcial</>}
               <span className="ml-auto text-xs text-muted-foreground">{testResult.total_latency_ms}ms</span>
             </div>
+            {testResult.error && <p className="text-xs text-destructive">{testResult.error}</p>}
             {testResult.results?.length > 0 && (
               <ul className="text-xs space-y-1">
                 {testResult.results.map((r: any) => (
