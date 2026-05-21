@@ -10687,6 +10687,7 @@ app.post('/api/clinicorp/my-settings/test', async (req, res) => {
       { key: 'categories',    label: 'Categorias',    path: '/appointment/list_categories' },
     ];
 
+    console.log(`[ClinicorpTest] Testing connection for user ${user.id} (${user.email}) - Subscriber: ${subscriber_id}`);
     const startedAt = Date.now();
     const results = [];
     for (const p of probes) {
@@ -10696,19 +10697,20 @@ app.post('/api/clinicorp/my-settings/test', async (req, res) => {
       let success = false;
       let data = null;
 
-      // Retry up to 2 times on 401 (transient auth failures from Clinicorp rate limiting)
-      while (attempt < 3 && !success) {
+      // Connection test: try only twice on 401/5xx to keep it fast
+      while (attempt < 2 && !success) {
         try {
           data = await clinicorpFetchProbe(settings, p.path);
           success = true;
         } catch (e) {
           lastError = e;
-          // Only retry on 401 (transient auth issue) or 5xx (server errors)
+          // Retry on 401 or 5xx
           if (e.status === 401 || (e.status >= 500 && e.status < 600)) {
             attempt++;
-            await clinicorpProbeSleep(1500 * attempt); // Backoff
+            if (attempt < 2) await clinicorpProbeSleep(800 * attempt);
           } else {
-            break; // Non-retryable error
+            console.error(`[ClinicorpTest] Probe ${p.key} failed with non-retryable error: ${e.status} ${e.message}`);
+            break;
           }
         }
       }
@@ -10731,7 +10733,7 @@ app.post('/api/clinicorp/my-settings/test', async (req, res) => {
           retries: attempt,
         });
       }
-      await clinicorpProbeSleep(900);
+      await clinicorpProbeSleep(350);
     }
 
     const ok = results.every((r) => r.ok);
@@ -10827,7 +10829,7 @@ async function clinicorpFetchProbe(settings, pathName) {
       });
       const text = await r.text();
       let data; try { data = text ? JSON.parse(text) : null; } catch { data = text; }
-      if ((r.status === 429 || r.status === 502 || r.status === 503 || r.status === 504) && !requestOnce._retried) {
+      if ((r.status === 401 || r.status === 429 || r.status === 502 || r.status === 503 || r.status === 504) && !requestOnce._retried) {
         requestOnce._retried = true;
         const retryAfter = Number(r.headers.get('retry-after'));
         await clinicorpProbeSleep(Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 7000);
