@@ -600,7 +600,9 @@ function normalizeClinicorpDate(...values) {
   for (const value of values) {
     if (value === null || value === undefined || value === '') continue;
     const raw = value instanceof Date ? value.toISOString() : String(value).trim();
-    if (/^\d{8}$/.test(raw)) return `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
+    if (/^\d{8}(\d{4,6})?$/.test(raw)) return `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
+    const msDate = raw.match(/\/Date\((\d+)/);
+    if (msDate) return new Date(Number(msDate[1])).toISOString().slice(0, 10);
     if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
     const br = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
     if (br) return `${br[3]}-${br[2]}-${br[1]}`;
@@ -612,6 +614,7 @@ function normalizeClinicorpTime(...values) {
     if (value === null || value === undefined || value === '') continue;
     const raw = String(value).trim();
     if (/^\d{1,2}:\d{2}/.test(raw)) return raw.slice(0, 5).padStart(5, '0');
+    if (/^\d{12,14}$/.test(raw)) return `${raw.slice(8, 10)}:${raw.slice(10, 12)}`;
     if (/^\d{3,4}$/.test(raw)) return `${raw.slice(0, -2).padStart(2, '0')}:${raw.slice(-2)}`;
     const isoTime = raw.match(/T(\d{2}:\d{2})/);
     if (isoTime) return isoTime[1];
