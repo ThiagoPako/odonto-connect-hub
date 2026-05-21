@@ -10681,10 +10681,9 @@ app.post('/api/clinicorp/my-settings/test', async (req, res) => {
 
 
     const probes = [
-      { key: 'clinics',       label: 'Clínicas',      path: '/business/list' },
-      { key: 'users',         label: 'Usuários',      path: '/security/list_users' },
-      { key: 'specialties',   label: 'Especialidades',path: '/procedures/list_specialties' },
-      { key: 'categories',    label: 'Categorias',    path: '/appointment/list_categories' },
+      // Keep the connection test lightweight: one authenticated request is enough to validate
+      // the credentials and avoids multiplying Clinicorp 429 rate-limit blocks.
+      { key: 'clinics', label: 'Clínicas', path: '/business/list' },
     ];
 
     console.log(`[ClinicorpTest] Testing connection for user ${user.id} (${user.email}) - Subscriber: ${subscriber_id}`);
@@ -10716,18 +10715,34 @@ app.post('/api/clinicorp/my-settings/test', async (req, res) => {
       if (success) {
         return { ...p, ok: true, latency_ms: Date.now() - t0, count: Array.isArray(data) ? data.length : (data ? 1 : 0), retries: attempt };
       }
-      return { ...p, ok: false, latency_ms: Date.now() - t0, status: lastError?.status || null, error: lastError?.message || 'timeout', retries: attempt };
+      return {
+        ...p,
+        ok: false,
+        latency_ms: Date.now() - t0,
+        status: lastError?.status || null,
+        error: lastError?.message || 'timeout',
+        retry_after_seconds: lastError?.retryAfter ?? null,
+        retries: attempt,
+      };
     }));
 
 
     const ok = results.every((r) => r.ok);
+    const rateLimit = results.find((r) => r.status === 429);
     const auth = results[0]?.status === 401 || results.some((r) => r.status === 401)
       ? 'invalid_token'
+      : (rateLimit ? 'rate_limited'
       : (ok ? 'valid' : 'partial');
+    const retryAfterSeconds = rateLimit?.retry_after_seconds ?? null;
 
     res.json({
       ok,
       auth,
+      rate_limited: Boolean(rateLimit),
+      retry_after_seconds: retryAfterSeconds,
+      error: rateLimit
+        ? `A Clinicorp limitou temporariamente as chamadas desta integração. Aguarde ${Math.ceil((retryAfterSeconds || 60) / 60)} min antes de testar de novo.`
+        : undefined,
       total_latency_ms: Date.now() - startedAt,
       base_url: settings.base_url,
       subscriber_id: settings.subscriber_id,
