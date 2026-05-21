@@ -10793,12 +10793,12 @@ app.post('/api/clinicorp/sync/now', async (req, res) => {
 });
 
 // Lightweight probe — same logic as clinicorp.mjs#clinicorpFetch but local
-async function clinicorpFetchProbe(settings, pathName) {
+async function clinicorpFetchProbe(settings, pathName, opts = {}) {
   const base = (settings.base_url || 'https://api.clinicorp.com/rest/v1').replace(/\/$/, '');
   const url = new URL(base + pathName);
   if (settings.subscriber_id) url.searchParams.set('subscriber_id', settings.subscriber_id);
   const ctrl = new AbortController();
-  const timeout = setTimeout(() => ctrl.abort(), 45_000);
+  const timeout = setTimeout(() => ctrl.abort(), opts.timeoutMs || 45_000);
   try {
     const apiToken = String(settings.api_token || '').trim().replace(/^Bearer\s+/i, '');
     const apiUser = String(settings.subscriber_id || '').trim();
