@@ -10731,7 +10731,7 @@ app.post('/api/clinicorp/my-settings/test', async (req, res) => {
           retries: attempt,
         });
       }
-      await clinicorpProbeSleep(900);
+      await clinicorpProbeSleep(350);
     }
 
     const ok = results.every((r) => r.ok);
