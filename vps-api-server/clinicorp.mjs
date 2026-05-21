@@ -900,7 +900,7 @@ async function projectAppointmentToLocal(pool, a, cpApptId, tenantId = null) {
     `SELECT id, paciente_id, dentista_id, data, hora, duracao, procedimento, categoria,
             categoria_cor, status, observacoes, updated_at, last_clinicorp_sync_at, keep_local
        FROM agendamentos WHERE clinicorp_appointment_id=$1 AND tenant_id=$2 LIMIT 1`,
-    [cpApptId, tId]
+    [String(cpApptId), tId]
   );
   let agendamentoId;
   if (exists.rows[0]) {
@@ -960,7 +960,7 @@ async function projectAppointmentToLocal(pool, a, cpApptId, tenantId = null) {
          (id, paciente_id, dentista_id, data, hora, duracao, procedimento, status, observacoes,
           categoria, categoria_cor, clinicorp_appointment_id, last_clinicorp_sync_at, tenant_id)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, NOW(), $13)`,
-      [id, pacienteId, dentistaId, data, hora, duracao, procedimento, status, observacoes, procedimento, categoriaCor, cpApptId, tId]
+      [id, pacienteId, dentistaId, data, hora, duracao, procedimento, status, observacoes, procedimento, categoriaCor, String(cpApptId), tId]
     );
     agendamentoId = id;
   }
