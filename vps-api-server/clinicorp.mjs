@@ -705,12 +705,21 @@ async function ensureLocalPatient(pool, cpId, fallback = {}, tenantId = null) {
     await pool.query(`UPDATE pacientes SET clinicorp_patient_id=$1, updated_at=NOW() WHERE id=$2`, [cpId, matchId]);
     return matchId;
   }
-  const ins = await pool.query(
-    `INSERT INTO pacientes (nome, telefone, email, data_nascimento, sexo, cpf, clinicorp_patient_id, tenant_id)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-    [nome, telefone, email, nascimento, sexo, cpf, cpId, tId]
-  );
-  return ins.rows[0].id;
+  try {
+    const ins = await pool.query(
+      `INSERT INTO pacientes (nome, telefone, email, data_nascimento, sexo, cpf, clinicorp_patient_id, tenant_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+      [nome, telefone, email, nascimento, sexo, cpf, cpId, tId]
+    );
+    return ins.rows[0].id;
+  } catch (e) {
+    // Race condition: outro processo inseriu o mesmo paciente — busca e retorna
+    if (e.code === '23505') {
+      const r = await pool.query(`SELECT id FROM pacientes WHERE clinicorp_patient_id=$1 AND tenant_id=$2 LIMIT 1`, [cpId, tId]);
+      if (r.rows[0]) return r.rows[0].id;
+    }
+    throw e;
+  }
 }
 
 async function ensureLocalProfessional(pool, cpProfId, fallbackName = null, tenantId = null) {
@@ -895,7 +904,6 @@ async function projectAppointmentToLocal(pool, a, cpApptId, tenantId = null) {
   const procedimento = pickFirst(a, 'CategoryDescription', 'Category_Description', 'Category', 'category_description', 'ProcedureName', 'Procedure') ?? null;
   const categoriaCor = pickFirst(a, 'CategoryColor', 'Category_Color', 'Color', 'category_color') ?? null;
   const observacoes = pickFirst(a, 'Notes', 'Observation', 'Observations', 'notes', 'observacoes') ?? null;
-  const tId = await resolveTenantId(pool, tenantId);
   const exists = await pool.query(
     `SELECT id, paciente_id, dentista_id, data, hora, duracao, procedimento, categoria,
             categoria_cor, status, observacoes, updated_at, last_clinicorp_sync_at, keep_local
