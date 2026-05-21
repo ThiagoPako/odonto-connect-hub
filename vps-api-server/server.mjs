@@ -10696,19 +10696,19 @@ app.post('/api/clinicorp/my-settings/test', async (req, res) => {
       let success = false;
       let data = null;
 
-      // Retry up to 2 times on 401 (transient auth failures from Clinicorp rate limiting)
-      while (attempt < 3 && !success) {
+      // Connection test: try only twice on 401/5xx to keep it fast
+      while (attempt < 2 && !success) {
         try {
           data = await clinicorpFetchProbe(settings, p.path);
           success = true;
         } catch (e) {
           lastError = e;
-          // Only retry on 401 (transient auth issue) or 5xx (server errors)
+          // Retry on 401 or 5xx
           if (e.status === 401 || (e.status >= 500 && e.status < 600)) {
             attempt++;
-            await clinicorpProbeSleep(1500 * attempt); // Backoff
+            if (attempt < 2) await clinicorpProbeSleep(800 * attempt);
           } else {
-            break; // Non-retryable error
+            break;
           }
         }
       }
