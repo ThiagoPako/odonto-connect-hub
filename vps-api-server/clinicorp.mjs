@@ -910,7 +910,9 @@ async function projectAppointmentToLocal(pool, a, cpApptId, tenantId = null) {
 
   if (pacienteId) {
     const leadId = await ensureLeadForPatient(pool, pacienteId, cpPatientId, {
-      nome: a.PatientName, telefone: onlyDigits(a.PatientPhone || a.MobilePhone), email: a.PatientEmail,
+      nome: pickFirst(a, 'PatientName', 'Patient_FullName', 'Patient_Name', 'PatientFullName', 'patient_name', 'patientName', 'Name') ?? a.Patient?.Name ?? a.Patient?.FullName,
+      telefone: onlyDigits(pickFirst(a, 'PatientPhone', 'MobilePhone', 'PatientMobilePhone', 'Phone', 'phone')),
+      email: pickFirst(a, 'PatientEmail', 'Email', 'email') ?? a.Patient?.Email,
     }, tenantId);
     if (leadId) {
       if (status === 'cancelado' || status === 'faltou') {
