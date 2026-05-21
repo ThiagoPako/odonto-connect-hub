@@ -469,15 +469,15 @@ async function upsertPatient(pool, p, tenantId = null) {
 }
 
 async function upsertAppointment(pool, a, tenantId = null) {
-  const id = a.id ?? a.AppointmentId ?? a.Id;
+  const id = getAppointmentId(a);
   if (!id) return;
   const tId = await resolveTenantId(pool, tenantId);
-  const businessId = a.BusinessId ?? a.Clinic_BusinessId ?? a.ClinicBusinessId ?? a.ClinicId ?? a.Business?.Id ?? null;
-  const patientId = a.PatientId ?? a.Patient_PersonId ?? a.PatientPersonId ?? a.Patient?.Id ?? a.Patient?.PersonId ?? null;
-  const professionalId = a.ProfessionalId ?? a.Dentist_PersonId ?? a.DentistPersonId ?? a.ScheduleToId ?? a.ScheduleTo_PersonId ?? a.Dentist?.Id ?? a.Professional?.Id ?? null;
-  const appointmentDate = normalizeClinicorpDate(a.Date, a.AppointmentDate, a.SK_DateFirstTime, a.DateFirstTime, a.StartDate, a.StartDateTime, a.StartTime, a.fromTime, a.FromTime);
-  const fromTime = normalizeClinicorpTime(a.FromTime, a.Time, a.StartTime, a.StartDateTime, a.ScheduleTime, a.Hour, a.fromTime);
-  const toTime = normalizeClinicorpTime(a.ToTime, a.FinalTime, a.EndTime, a.EndDateTime, a.toTime);
+  const businessId = pickFirst(a, 'BusinessId', 'Clinic_BusinessId', 'ClinicBusinessId', 'ClinicId', 'clinic_id', 'business_id') ?? a.Business?.Id ?? null;
+  const patientId = pickFirst(a, 'PatientId', 'Patient_PersonId', 'PatientPersonId', 'Patient_Id', 'patient_id', 'patientId') ?? a.Patient?.Id ?? a.Patient?.PersonId ?? null;
+  const professionalId = pickFirst(a, 'ProfessionalId', 'Dentist_PersonId', 'DentistPersonId', 'Professional_PersonId', 'ScheduleToId', 'ScheduleTo_PersonId', 'DentistId', 'Dentist_Id', 'professional_id', 'dentist_id') ?? a.Dentist?.Id ?? a.Professional?.Id ?? null;
+  const appointmentDate = normalizeClinicorpDate(pickFirst(a, 'Date', 'AppointmentDate', 'SK_DateFirstTime', 'DateFirstTime', 'StartDate', 'StartDateTime', 'StartTime', 'fromTime', 'FromTime', 'date', 'appointment_date'));
+  const fromTime = normalizeClinicorpTime(pickFirst(a, 'FromTime', 'Time', 'StartTime', 'StartDateTime', 'ScheduleTime', 'Hour', 'fromTime', 'from_time', 'hora'));
+  const toTime = normalizeClinicorpTime(pickFirst(a, 'ToTime', 'FinalTime', 'EndTime', 'EndDateTime', 'toTime', 'to_time'));
   await pool.query(
     `INSERT INTO clinicorp_appointments
        (id, tenant_id, business_id, patient_id, patient_name, professional_id, professional_name,
@@ -505,14 +505,14 @@ async function upsertAppointment(pool, a, tenantId = null) {
       String(id), tId,
       toBigIntOrNull(businessId),
       toBigIntOrNull(patientId),
-      a.PatientName ?? a.Patient_FullName ?? a.Patient_Name ?? null,
+      pickFirst(a, 'PatientName', 'Patient_FullName', 'Patient_Name', 'PatientFullName', 'patient_name', 'patientName', 'Name') ?? a.Patient?.Name ?? a.Patient?.FullName ?? null,
       toBigIntOrNull(professionalId),
-      a.ProfessionalName ?? a.Dentist_FullName ?? a.Dentist_Name ?? a.DentistName ?? a.ScheduleToName ?? a.Professional_Name ?? a.Dentist?.Name ?? a.Dentist?.FullName ?? a.Professional?.Name ?? a.Professional?.FullName ?? null,
-      toBigIntOrNull(a.CategoryId ?? a.Category_id ?? a.Category_Id),
-      a.CategoryDescription ?? a.Category_Description ?? a.Category ?? null,
-      a.CategoryColor ?? a.Category_Color ?? a.Color ?? null,
-      toBigIntOrNull(a.ChairId ?? a.Chair_Id),
-      a.Status ?? a.StatusId ?? null,
+      pickFirst(a, 'ProfessionalName', 'Dentist_FullName', 'Dentist_Name', 'DentistName', 'ScheduleToName', 'Professional_Name', 'professional_name', 'dentist_name') ?? a.Dentist?.Name ?? a.Dentist?.FullName ?? a.Professional?.Name ?? a.Professional?.FullName ?? null,
+      toBigIntOrNull(pickFirst(a, 'CategoryId', 'Category_id', 'Category_Id', 'AppointmentCategoryId', 'appointment_category_id')),
+      pickFirst(a, 'CategoryDescription', 'Category_Description', 'Category', 'category_description', 'ProcedureName', 'Procedure') ?? null,
+      pickFirst(a, 'CategoryColor', 'Category_Color', 'Color', 'category_color') ?? null,
+      toBigIntOrNull(pickFirst(a, 'ChairId', 'Chair_Id', 'chair_id')),
+      pickFirst(a, 'Status', 'StatusId', 'status') ?? null,
       appointmentDate,
       fromTime,
       toTime,
