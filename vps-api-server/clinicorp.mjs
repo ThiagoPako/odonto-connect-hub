@@ -1045,7 +1045,7 @@ async function projectPatientToLocal(pool, p, tenantId = null) {
   }
   const pacienteId = await ensureLocalPatient(pool, cpId, { name: p.Name, phone: p.MobilePhone, email: p.Email }, tenantId);
   if (pacienteId) {
-    await pool.query(`UPDATE pacientes SET last_clinicorp_sync_at=NOW() WHERE id=$1`, [pacienteId]);
+    await pool.query(`UPDATE pacientes SET last_clinicorp_sync_at=NOW(), updated_at=NOW() WHERE id=$1`, [pacienteId]);
   }
   await ensureLeadForPatient(pool, pacienteId, cpId, {
     nome: p.Name, telefone: onlyDigits(p.MobilePhone), email: p.Email,
