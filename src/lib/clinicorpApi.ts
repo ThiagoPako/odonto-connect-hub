@@ -34,6 +34,9 @@ async function req<T = unknown>(path: string, init: RequestInit = {}, base: stri
   let data: unknown = null;
   try { data = text ? JSON.parse(text) : null; } catch { data = text; }
   if (!res.ok) {
+    if (typeof data === 'string' && data.includes('<!DOCTYPE html>')) {
+      throw new Error(`Servidor API indisponível (HTTP ${res.status}). Verifique o status do serviço no VPS.`);
+    }
     const msg = (data && typeof data === 'object' && 'error' in data) ? String((data as { error: unknown }).error) : `HTTP ${res.status}`;
     throw new Error(msg);
   }
