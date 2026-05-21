@@ -461,6 +461,12 @@ export function ClinicorpPanel() {
               )}
             </div>
           )}
+          <div className="flex justify-end pt-2">
+            <Button size="sm" onClick={handleSave} disabled={saving}>
+              {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Salvar configurações
+            </Button>
+          </div>
         </div>
 
         {lastSync && (
