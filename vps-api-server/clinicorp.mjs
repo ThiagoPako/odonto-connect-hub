@@ -991,13 +991,14 @@ async function projectAppointmentToLocal(pool, a, cpApptId, tenantId = null) {
 async function projectPatientToLocal(pool, p, tenantId = null) {
   const cpId = p.id ?? p.Patient_PersonId;
   if (!cpId) return null;
+  const tId = await resolveTenantId(pool, tenantId);
   const cpUpdatedAt = p.UpdateDate || p.UpdatedAt || p.LastModified || null;
   const policy = await resolveConflictPolicy(pool, {});
   const existing = await pool.query(
     `SELECT id, nome, telefone, email, data_nascimento, sexo, cpf,
             updated_at, last_clinicorp_sync_at, keep_local
-       FROM pacientes WHERE clinicorp_patient_id=$1 LIMIT 1`,
-    [cpId]
+       FROM pacientes WHERE clinicorp_patient_id=$1 AND tenant_id=$2 LIMIT 1`,
+    [String(cpId), tId]
   );
   const incoming = {
     nome: p.Name || null,
