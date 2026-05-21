@@ -42,10 +42,47 @@ export function ClinicorpAuditLog() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<"all" | "clinicorp" | "odonto_connect">("all");
   const [searchTerm, setSearchTerm] = useState("");
+  
+  // Mirror states
+  const [syncing, setSyncing] = useState(false);
+  const [forceMetadata, setForceMetadata] = useState(false);
+  const [lastSync, setLastSync] = useState<string | null>(null);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [summary, setSummary] = useState<any>(null);
 
   useEffect(() => {
     loadLogs();
   }, []);
+
+  useEffect(() => {
+    clinicorpApi.getSettings().then(s => {
+      if (s.last_sync_at) setLastSync(new Date(s.last_sync_at).toLocaleString("pt-BR"));
+    }).catch(console.error);
+    
+    // Buscar um resumo rápido dos dados locais
+    Promise.all([
+      clinicorpApi.listPatients().then(d => d.length),
+      clinicorpApi.listAppointments({ from: '2020-01-01', to: '2030-12-31' }).then(d => d.length),
+      clinicorpApi.listEstimates().then(d => d.length)
+    ]).then(([p, a, e]) => {
+      setSummary({ patients: p, appointments: a, estimates: e });
+    }).catch(console.error);
+  }, [refreshTrigger]);
+
+  const handleManualSync = async () => {
+    setSyncing(true);
+    try {
+      const res = await clinicorpApi.sync({ force_metadata: forceMetadata });
+      setLastSync(new Date().toLocaleString("pt-BR"));
+      setRefreshTrigger(prev => prev + 1);
+      loadLogs();
+      toast.success("Sincronização concluída com sucesso!");
+    } catch (error) {
+      toast.error("Falha ao sincronizar: " + (error as Error).message);
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   async function loadLogs() {
     try {
@@ -67,6 +104,7 @@ export function ClinicorpAuditLog() {
       (log.error_message && log.error_message.toLowerCase().includes(searchTerm.toLowerCase()));
     return sourceMatch && searchMatch;
   });
+
 
   return (
     <div className="space-y-4">
