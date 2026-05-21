@@ -255,14 +255,13 @@ export const clinicorpApi = {
     const seen = new Set();
     const push = (arr) => {
       for (const a of (Array.isArray(arr) ? arr : [])) {
-        const id = a.id ?? a.AppointmentId ?? a.Id;
+        const id = getAppointmentId(a);
         if (!id || seen.has(String(id))) continue;
         seen.add(String(id));
         aggregate.push(a);
       }
     };
-    const extract = (data) => Array.isArray(data) ? data
-      : (data?.Results || data?.Result || data?.appointments || data?.Appointments || data?.data || data?.items || data?.Items || []);
+    const extract = extractClinicorpList;
 
     // 1) Preferred path: list_by_date_and_clinic per day, per clinic
     if (businessId) {
@@ -296,6 +295,10 @@ export const clinicorpApi = {
       { date_from: from, date_to: to, ...baseBiz },
       { startDate: from, endDate: to, ...baseBiz },
       { initialDate: from, finalDate: to, ...baseBiz },
+      { DateFrom: from, DateTo: to, ...baseBiz },
+      { BeginDate: from, EndDate: to, ...baseBiz },
+      { StartDate: from, EndDate: to, ...baseBiz },
+      { DataInicial: from, DataFinal: to, ...baseBiz },
       { SK_DateFirstTime: toAtomic(from), ...baseBiz },
     ];
     let lastErr = null;
@@ -303,7 +306,7 @@ export const clinicorpApi = {
       try {
         const data = await clinicorpFetch(s, '/appointment/list', { query: q });
         const arr = extract(data);
-        if (Array.isArray(arr) && arr.length > 0) return arr;
+        if (Array.isArray(arr) && arr.length > 0) push(arr);
       } catch (e) { lastErr = e; }
     }
     if (aggregate.length > 0) return aggregate;
