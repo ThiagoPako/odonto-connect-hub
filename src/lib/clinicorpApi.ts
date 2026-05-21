@@ -112,6 +112,17 @@ export interface ClinicorpConflict {
   created_at: string;
 }
 
+export interface ClinicorpAuditEntry {
+  id: number;
+  source: 'clinicorp' | 'odonto_connect';
+  event: string;
+  status: string;
+  target_id: string | null;
+  timestamp: string;
+  payload: any;
+  error_message: string | null;
+}
+
 export interface ClinicorpWebhookEvent {
   id: number;
   event_type: string | null;
@@ -199,6 +210,7 @@ export const clinicorpApi = {
   testMyConnection: (payload: Partial<{ api_token: string; subscriber_id: string; base_url: string }> = {}) =>
     req<ClinicorpConnectionTest>('/my-settings/test', { method: 'POST', body: JSON.stringify(payload) }),
   syncMyNow: () => req<ClinicorpSyncResult>('/sync/now', { method: 'POST' }),
+  listAuditLogs: (limit = 100) => req<ClinicorpAuditEntry[]>(`/audit-log?limit=${limit}`),
 };
 
 export interface ClinicorpConnectionTest {

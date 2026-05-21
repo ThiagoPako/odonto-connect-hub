@@ -10670,6 +10670,16 @@ app.post('/api/clinicorp/my-settings/test', async (req, res) => {
       base_url: base_url || 'https://api.clinicorp.com/rest/v1',
     };
 
+    const auditData = {
+      entity: 'connection_test',
+      local_id: user.id,
+      clinicorp_id: subscriber_id,
+      action: 'test',
+      status: 'success',
+      payload: { base_url: settings.base_url },
+    };
+
+
     const probes = [
       { key: 'clinics',       label: 'Clínicas',      path: '/business/list' },
       { key: 'users',         label: 'Usuários',      path: '/security/list_users' },
@@ -10714,6 +10724,17 @@ app.post('/api/clinicorp/my-settings/test', async (req, res) => {
       subscriber_id: settings.subscriber_id,
       results,
     });
+    
+    // Log to audit (using the imported clinicorpPush if available, or manual insert)
+    try {
+      await pool.query(
+        `INSERT INTO clinicorp_push_log (entity_type, local_id, clinicorp_id, action, status, payload, response)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        ['connection_test', user.id, subscriber_id, 'test', ok ? 'success' : 'error', 
+         JSON.stringify({ base_url: settings.base_url }), JSON.stringify({ ok, auth, results })]
+      );
+    } catch (auditErr) { console.error('Audit log failed:', auditErr.message); }
+
   } catch (e) {
     res.status(e.message === 'Unauthorized' ? 401 : 500).json({ ok: false, error: e.message });
   }

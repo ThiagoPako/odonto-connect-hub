@@ -37,7 +37,6 @@ import { Route as CrmRouteImport } from './routes/crm'
 import { Route as ContatosRouteImport } from './routes/contatos'
 import { Route as ConfiguracoesRouteImport } from './routes/configuracoes'
 import { Route as ComissoesRouteImport } from './routes/comissoes'
-import { Route as ClinicorpEspelhoRouteImport } from './routes/clinicorp-espelho'
 import { Route as ChatRouteImport } from './routes/chat'
 import { Route as CanaisRouteImport } from './routes/canais'
 import { Route as CampanhasRouteImport } from './routes/campanhas'
@@ -188,11 +187,6 @@ const ComissoesRoute = ComissoesRouteImport.update({
   path: '/comissoes',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ClinicorpEspelhoRoute = ClinicorpEspelhoRouteImport.update({
-  id: '/clinicorp-espelho',
-  path: '/clinicorp-espelho',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const ChatRoute = ChatRouteImport.update({
   id: '/chat',
   path: '/chat',
@@ -248,7 +242,6 @@ export interface FileRoutesByFullPath {
   '/campanhas': typeof CampanhasRoute
   '/canais': typeof CanaisRoute
   '/chat': typeof ChatRoute
-  '/clinicorp-espelho': typeof ClinicorpEspelhoRoute
   '/comissoes': typeof ComissoesRoute
   '/configuracoes': typeof ConfiguracoesRouteWithChildren
   '/contatos': typeof ContatosRoute
@@ -288,7 +281,6 @@ export interface FileRoutesByTo {
   '/campanhas': typeof CampanhasRoute
   '/canais': typeof CanaisRoute
   '/chat': typeof ChatRoute
-  '/clinicorp-espelho': typeof ClinicorpEspelhoRoute
   '/comissoes': typeof ComissoesRoute
   '/configuracoes': typeof ConfiguracoesRouteWithChildren
   '/contatos': typeof ContatosRoute
@@ -329,7 +321,6 @@ export interface FileRoutesById {
   '/campanhas': typeof CampanhasRoute
   '/canais': typeof CanaisRoute
   '/chat': typeof ChatRoute
-  '/clinicorp-espelho': typeof ClinicorpEspelhoRoute
   '/comissoes': typeof ComissoesRoute
   '/configuracoes': typeof ConfiguracoesRouteWithChildren
   '/contatos': typeof ContatosRoute
@@ -371,7 +362,6 @@ export interface FileRouteTypes {
     | '/campanhas'
     | '/canais'
     | '/chat'
-    | '/clinicorp-espelho'
     | '/comissoes'
     | '/configuracoes'
     | '/contatos'
@@ -411,7 +401,6 @@ export interface FileRouteTypes {
     | '/campanhas'
     | '/canais'
     | '/chat'
-    | '/clinicorp-espelho'
     | '/comissoes'
     | '/configuracoes'
     | '/contatos'
@@ -451,7 +440,6 @@ export interface FileRouteTypes {
     | '/campanhas'
     | '/canais'
     | '/chat'
-    | '/clinicorp-espelho'
     | '/comissoes'
     | '/configuracoes'
     | '/contatos'
@@ -492,7 +480,6 @@ export interface RootRouteChildren {
   CampanhasRoute: typeof CampanhasRoute
   CanaisRoute: typeof CanaisRoute
   ChatRoute: typeof ChatRoute
-  ClinicorpEspelhoRoute: typeof ClinicorpEspelhoRoute
   ComissoesRoute: typeof ComissoesRoute
   ConfiguracoesRoute: typeof ConfiguracoesRouteWithChildren
   ContatosRoute: typeof ContatosRoute
@@ -721,13 +708,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ComissoesRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/clinicorp-espelho': {
-      id: '/clinicorp-espelho'
-      path: '/clinicorp-espelho'
-      fullPath: '/clinicorp-espelho'
-      preLoaderRoute: typeof ClinicorpEspelhoRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/chat': {
       id: '/chat'
       path: '/chat'
@@ -815,7 +795,6 @@ const rootRouteChildren: RootRouteChildren = {
   CampanhasRoute: CampanhasRoute,
   CanaisRoute: CanaisRoute,
   ChatRoute: ChatRoute,
-  ClinicorpEspelhoRoute: ClinicorpEspelhoRoute,
   ComissoesRoute: ComissoesRoute,
   ConfiguracoesRoute: ConfiguracoesRouteWithChildren,
   ContatosRoute: ContatosRoute,

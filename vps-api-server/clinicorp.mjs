@@ -2337,6 +2337,35 @@ export function registerClinicorp(app, pool) {
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
+  // ── Unified Audit Log (Webhook + Push) ──
+  app.get('/api/clinicorp/audit-log', async (req, res) => {
+    try {
+      const limit = parseInt(req.query.limit) || 100;
+      const { rows } = await pool.query(`
+        (
+          SELECT 
+            id, 'clinicorp' as source, event_type as event, status, 
+            external_id as target_id, received_at as timestamp, payload, error_message
+          FROM clinicorp_webhook_events
+          ORDER BY received_at DESC
+          LIMIT $1
+        )
+        UNION ALL
+        (
+          SELECT 
+            id, 'odonto_connect' as source, action as event, status, 
+            clinicorp_id as target_id, created_at as timestamp, payload, error_message
+          FROM clinicorp_push_log
+          ORDER BY created_at DESC
+          LIMIT $1
+        )
+        ORDER BY timestamp DESC
+        LIMIT $1
+      `, [limit]);
+      res.json(rows);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
   // ── Rodar SÓ a reconciliação financeira (sem refazer sync) ──
   app.post('/api/clinicorp/reconcile-financial', async (_req, res) => {
     try {
