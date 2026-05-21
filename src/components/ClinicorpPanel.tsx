@@ -251,7 +251,11 @@ export function ClinicorpPanel() {
           <ClinicorpIntegrationGuide />
 
           {/* Per-user credentials (SaaS multi-tenant) */}
-          <ClinicorpUserCredentials />
+          <ClinicorpUserCredentials onNextStep={() => {
+            const auditTab = document.querySelector('[value="auditoria"]') as HTMLElement;
+            auditTab?.click();
+          }} />
+
 
 
 
