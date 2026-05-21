@@ -94,11 +94,20 @@ function AgendaPage() {
     function connect() {
       const token = getToken();
       if (!token) return;
-      
-      const url = new URL(`${VPS_API_BASE}/events`);
-      url.searchParams.set("token", token);
-      
-      es = new EventSource(url.toString());
+
+      try {
+        const base = VPS_API_BASE.startsWith("http")
+          ? VPS_API_BASE
+          : `${window.location.origin}${VPS_API_BASE}`;
+        const url = new URL(`${base}/events`);
+        url.searchParams.set("token", token);
+
+        es = new EventSource(url.toString());
+      } catch (err) {
+        console.error("[agenda] SSE connect failed:", err);
+        return;
+      }
+
       
       es.addEventListener("agendamento_changed", () => {
         loadAppointments();
