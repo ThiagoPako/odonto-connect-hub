@@ -123,6 +123,16 @@ export interface ClinicorpAuditEntry {
   error_message: string | null;
 }
 
+export interface ClinicorpWebhookEvent {
+  id: number;
+  event_type: string | null;
+  external_id: string | null;
+  status: 'received' | 'processed' | 'error' | 'ignored';
+  error_message: string | null;
+  received_at: string;
+  processed_at: string | null;
+}
+
 export interface ClinicorpSyncResult {
   status: 'success' | 'partial' | 'error';
   summary: Record<string, number>;
