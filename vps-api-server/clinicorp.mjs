@@ -1825,7 +1825,21 @@ export async function reconciliationTick(pool) {
       results.push({ type: 'user', user_id: u.user_id, ...r });
     } catch (e) {
       console.error(`[clinicorp] user ${u.user_id} tick error:`, e.message);
-      await pool.query(`UPDATE clinicorp_user_settings SET last_sync_at = NOW(), last_sync_status = 'error', last_sync_error = $2 WHERE user_id = $1`, [u.user_id, e.message]);
+      // Circuit breaker: se rate-limited (429), empurra last_sync_at para o futuro
+      // para que o próximo tick (60s) NÃO tente de novo. Espera ~30 min antes de retomar.
+      if (e.status === 429 || /HTTP 429/.test(e.message)) {
+        await pool.query(
+          `UPDATE clinicorp_user_settings
+             SET last_sync_at = NOW() + INTERVAL '30 minutes',
+                 last_sync_status = 'rate_limited',
+                 last_sync_error = $2
+           WHERE user_id = $1`,
+          [u.user_id, 'Rate limit Clinicorp — aguardando 30 min']
+        );
+        console.warn(`[clinicorp] user ${u.user_id} rate-limited, pausando auto-sync por 30min`);
+      } else {
+        await pool.query(`UPDATE clinicorp_user_settings SET last_sync_at = NOW(), last_sync_status = 'error', last_sync_error = $2 WHERE user_id = $1`, [u.user_id, e.message]);
+      }
     }
   }
 
