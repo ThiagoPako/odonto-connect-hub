@@ -10644,6 +10644,8 @@ app.delete('/api/clinicorp/my-settings', async (req, res) => {
 // ── Test connection (validates credentials BEFORE saving) ──────
 // Uses credentials from the request body if provided, otherwise falls back
 // to the saved per-user settings. Returns per-endpoint diagnostics.
+const clinicorpTestCooldowns = new Map();
+
 app.post('/api/clinicorp/my-settings/test', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
@@ -10669,6 +10671,23 @@ app.post('/api/clinicorp/my-settings/test', async (req, res) => {
       subscriber_id,
       base_url: base_url || 'https://api.clinicorp.com/rest/v1',
     };
+
+    const cooldownKey = `${settings.base_url}|${settings.subscriber_id}`;
+    const cooldownUntil = clinicorpTestCooldowns.get(cooldownKey) || 0;
+    if (cooldownUntil > Date.now()) {
+      const retryAfterSeconds = Math.ceil((cooldownUntil - Date.now()) / 1000);
+      return res.json({
+        ok: false,
+        auth: 'rate_limited',
+        rate_limited: true,
+        retry_after_seconds: retryAfterSeconds,
+        error: `A Clinicorp limitou temporariamente as chamadas desta integração. Aguarde ${Math.ceil(retryAfterSeconds / 60)} min antes de testar de novo.`,
+        total_latency_ms: 0,
+        base_url: settings.base_url,
+        subscriber_id: settings.subscriber_id,
+        results: [],
+      });
+    }
 
     const auditData = {
       entity: 'connection_test',
@@ -10733,6 +10752,11 @@ app.post('/api/clinicorp/my-settings/test', async (req, res) => {
       ? 'invalid_token'
       : (rateLimit ? 'rate_limited' : (ok ? 'valid' : 'partial'));
     const retryAfterSeconds = rateLimit?.retry_after_seconds ?? null;
+    if (rateLimit) {
+      clinicorpTestCooldowns.set(cooldownKey, Date.now() + Math.min((retryAfterSeconds || 60) * 1000, 30 * 60 * 1000));
+    } else if (ok) {
+      clinicorpTestCooldowns.delete(cooldownKey);
+    }
 
     res.json({
       ok,
