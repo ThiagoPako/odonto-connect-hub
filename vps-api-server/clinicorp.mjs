@@ -1392,64 +1392,48 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     console.log('[clinicorp sync] metadata recente (<24h) — pulando clinics/professionals/chairs/categories/specialties');
   }
 
-  // PATIENTS: tenta /patient/list; se indisponível, backfill via raw dos appointments
-  await safe('patients', async () => {
-    let pulled = 0;
-    try {
-      const list = await clinicorpApi.listPatients(settings);
-      for (const p of (Array.isArray(list) ? list : [])) {
-        const id = p.id ?? p.Patient_PersonId ?? p.PersonId;
-        if (!id) continue;
-        await upsertPatient(pool, { ...p, id }, tenant_id);
-        pulled++;
-      }
-      console.log(`[clinicorp sync] patients via /patient/list: ${pulled}`);
-    } catch (e) {
-      console.warn(`[clinicorp sync] /patient/list indisponível (${e.message}); usando backfill via appointments`);
-    }
-    summary.patients = pulled;
-  });
+  // PATIENTS: /patient/list não é exposto pela Clinicorp (404). Não chamamos esse endpoint
+  // para evitar gastar requisições — o backfill acontece via projeção dos agendamentos.
 
   await safe('appointments', async () => {
     const tId = await resolveTenantId(pool, tenant_id);
     const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics WHERE tenant_id=$1', [tId]);
     const apiIds = new Set();
     const ranges = sliceRange(fromDate, toDate);
-    
+
     const processAppts = async (list) => {
-      for (const a of (Array.isArray(list) ? list : [])) { 
+      for (const a of (Array.isArray(list) ? list : [])) {
         const id = getAppointmentId(a);
         if (!id || apiIds.has(String(id))) continue;
-        apiIds.add(String(id)); 
-        await upsertAppointment(pool, a, tenant_id); 
-        // Força projeção imediata para garantir que apareça na agenda local
+        apiIds.add(String(id));
+        await upsertAppointment(pool, a, tenant_id);
         await projectAppointmentToLocal(pool, a, id, tenant_id);
-        summary.appointments++; 
+        summary.appointments++;
       }
     };
 
+    // Quando temos clínicas, iteramos apenas por clínica para evitar
+    // duplicar todas as chamadas com a versão "global" (que ANTES rodava
+    // antes do loop por clínica e dobrava o consumo da API).
     if (clinics.length === 0) {
-      for (const r of ranges) {
-        const list = await clinicorpApi.listAppointments(settings, r.from, r.to);
-        await processAppts(list);
-      }
-    } else {
       for (const r of ranges) {
         try {
           const list = await clinicorpApi.listAppointments(settings, r.from, r.to);
           await processAppts(list);
-        } catch (e) { console.error(`[clinicorp sync] appointments global ${r.from}..${r.to}`, e.message); }
+        } catch (e) { console.error(`[clinicorp sync] appointments ${r.from}..${r.to}`, e.message); }
       }
+    } else {
       for (const { id: clinicId } of clinics) {
         if (!clinicId) continue;
         for (const r of ranges) {
           try {
             const list = await clinicorpApi.listAppointments(settings, r.from, r.to, clinicId);
             await processAppts(list);
-          } catch (e) { console.error(`[clinicorp sync] appointments clinic ${clinicId}`, e.message); }
+          } catch (e) { console.error(`[clinicorp sync] appointments clinic ${clinicId} ${r.from}..${r.to}`, e.message); }
         }
       }
     }
+
     
     // Deletion detection (faithfull mirror) — escopo por tenant
     try {
