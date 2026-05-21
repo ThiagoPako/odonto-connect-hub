@@ -2,8 +2,18 @@
  * Clinicorp integration API client (frontend → VPS).
  */
 
-const API_BASE = 'https://odontoconnect.tech/api/clinicorp';
-const WEBHOOK_BASE = 'https://odontoconnect.tech/api/webhook/clinicorp';
+const VPS_API_BASE = (() => {
+  if (typeof window === 'undefined') return 'https://odontoconnect.tech/api';
+  const host = window.location.hostname;
+  if (host === 'localhost' || host === '127.0.0.1') return '/api';
+  if (host.includes('lovableproject.com') || host.includes('lovable.app') || host.includes('lovable.dev')) {
+    return 'https://odontoconnect.tech/api';
+  }
+  return '/api';
+})();
+
+const API_BASE = `${VPS_API_BASE}/clinicorp`;
+const WEBHOOK_BASE = `${VPS_API_BASE}/webhook/clinicorp`;
 const TOKEN_KEY = 'odonto_jwt';
 
 function authHeaders(): HeadersInit {
