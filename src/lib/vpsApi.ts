@@ -22,12 +22,34 @@ function isAuthError(status: number, _error: unknown): boolean {
 }
 
 let _isRedirecting = false;
+let _isVerifying = false;
 
-function handleAuthFailure(background = false) {
-  // Background calls should never force logout or redirect.
-  // They can fail silently and let explicit user actions handle session expiry.
+async function handleAuthFailure(background = false) {
+  // Background calls never force logout/redirect
   if (background) return;
-  if (_isRedirecting) return;
+  if (_isRedirecting || _isVerifying) return;
+
+  // Verify the session is actually invalid before nuking it.
+  // A single misbehaving endpoint returning 401 shouldn't log the user out.
+  const token = typeof window !== 'undefined' ? localStorage.getItem(TOKEN_KEY) : null;
+  if (!token) return;
+
+  _isVerifying = true;
+  try {
+    const base = typeof window !== 'undefined' && window.location.hostname !== 'localhost' && !window.location.hostname.startsWith('127.')
+      ? (window.location.hostname.includes('lovable') ? 'https://odontoconnect.tech/api' : '/api')
+      : '/api';
+    const res = await fetch(`${base}/auth/me`, { headers: { Authorization: `Bearer ${token}` } });
+    if (res.ok) {
+      // Token still valid — the 401 was a server-side route bug, don't log out.
+      return;
+    }
+  } catch {
+    // Network error — don't log out preemptively
+    return;
+  } finally {
+    _isVerifying = false;
+  }
 
   _isRedirecting = true;
   clearToken();
