@@ -10687,6 +10687,7 @@ app.post('/api/clinicorp/my-settings/test', async (req, res) => {
       { key: 'categories',    label: 'Categorias',    path: '/appointment/list_categories' },
     ];
 
+    console.log(`[ClinicorpTest] Testing connection for user ${user.id} (${user.email}) - Subscriber: ${subscriber_id}`);
     const startedAt = Date.now();
     const results = [];
     for (const p of probes) {
