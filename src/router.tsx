@@ -42,11 +42,13 @@ function DefaultErrorComponent({
         <p className="mt-2 text-sm text-muted-foreground">
           Ocorreu um erro inesperado. Por favor, tente novamente.
         </p>
-        {import.meta.env.DEV && error.message && (
-          <pre className="mt-4 max-h-40 overflow-auto rounded-md bg-muted p-3 text-left font-mono text-xs text-destructive">
+        {error?.message && (
+          <pre className="mt-4 max-h-40 overflow-auto rounded-md bg-muted p-3 text-left font-mono text-xs text-destructive whitespace-pre-wrap break-words">
             {error.message}
+            {error.stack && import.meta.env.DEV ? `\n\n${error.stack}` : ""}
           </pre>
         )}
+
         <div className="mt-6 flex items-center justify-center gap-3">
           <button
             onClick={() => {
