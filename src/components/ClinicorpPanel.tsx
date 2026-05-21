@@ -20,6 +20,8 @@ import {
 } from "@/lib/clinicorpApi";
 import { ClinicorpUserCredentials } from "@/components/ClinicorpUserCredentials";
 import { ClinicorpIntegrationGuide } from "@/components/ClinicorpIntegrationGuide";
+import { ClinicorpAuditLog } from "@/components/clinicorp/ClinicorpAuditLog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export function ClinicorpPanel() {
   const [settings, setSettings] = useState<ClinicorpSettings | null>(null);
