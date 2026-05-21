@@ -439,7 +439,12 @@ async function upsertProfessional(pool, p, tenantId = null) {
        synced_at = NOW()`,
     [String(id), tId, fullName, userName, JSON.stringify(p)]
   );
-  try { await ensureLocalProfessional(pool, String(id), fullName, tId); }
+  try { 
+    await ensureLocalProfessional(pool, String(id), fullName, tId); 
+    // Atualiza status ativo/inativo local baseado no Clinicorp
+    const isActive = p.Active === true || p.active === true || p.status === 'active';
+    await pool.query(`UPDATE dentistas SET ativo = $1, updated_at = NOW() WHERE clinicorp_professional_id = $2 AND tenant_id = $3`, [isActive, String(id), tId]);
+  }
   catch (e) { console.error('[clinicorp] ensureLocalProfessional:', e.message); }
 }
 
@@ -1278,6 +1283,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     await pool.query(`UPDATE pacientes SET tenant_id=$1 WHERE tenant_id IS NULL AND clinicorp_patient_id IS NOT NULL`, [tId]);
     await pool.query(`UPDATE agendamentos SET tenant_id=$1 WHERE tenant_id IS NULL AND clinicorp_appointment_id IS NOT NULL`, [tId]);
     await pool.query(`UPDATE crm_leads SET tenant_id=$1 WHERE tenant_id IS NULL AND (clinicorp_patient_id IS NOT NULL OR origem='clinicorp')`, [tId]);
+    await pool.query(`UPDATE orcamentos SET tenant_id=$1 WHERE tenant_id IS NULL AND clinicorp_estimate_id IS NOT NULL`, [tId]);
   } catch (e) { console.error('[clinicorp sync] tenant backfill', e.message); }
 
   // Garante que os registros recentes sejam projetados (espelhamento forçado)
@@ -1611,12 +1617,28 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     } catch (e) { /* skip */ }
   });
 
-  const status = errors.length === 0 ? 'success' : (Object.values(summary).some(Boolean) ? 'partial' : 'error');
-  
-  // Backfill final de profissionais: garante que agendamentos vinculados a dentistas novos sejam processados
+  // Força re-projeção final de orçamentos e agendamentos para garantir espelhamento
   try {
-    // Desativado re-projeção final em massa durante o sync
-  } catch (e) { console.error('[clinicorp sync] final backfill', e.message); }
+    const tId = await resolveTenantId(pool, tenant_id);
+    // Agendamentos
+    const { rows: appts } = await pool.query(
+      `SELECT raw, id FROM clinicorp_appointments WHERE tenant_id=$3 AND date >= $1 AND date <= $2`,
+      [fromDate, toDate, tId]
+    );
+    for (const r of appts) { 
+      const raw = typeof r.raw === 'string' ? JSON.parse(r.raw) : r.raw;
+      await projectAppointmentToLocal(pool, raw, r.id, tId).catch(() => {}); 
+    }
+    // Orçamentos
+    const { rows: ests } = await pool.query(
+      `SELECT raw FROM clinicorp_estimates WHERE tenant_id=$3 AND date >= $1 AND date <= $2`,
+      [fromDate, toDate, tId]
+    );
+    for (const r of ests) {
+      const raw = typeof r.raw === 'string' ? JSON.parse(r.raw) : r.raw;
+      await projectEstimateToLocal(pool, raw, tId).catch(() => {});
+    }
+  } catch (e) { console.error('[clinicorp sync] final mirroring projection', e.message); }
 
   // Se forem as globais (carregadas via id=1), atualiza o status na tabela.
   if (settings.id === 1 || (!api_token && settings.id === undefined)) {
