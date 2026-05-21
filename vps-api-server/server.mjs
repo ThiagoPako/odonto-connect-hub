@@ -10689,52 +10689,36 @@ app.post('/api/clinicorp/my-settings/test', async (req, res) => {
 
     console.log(`[ClinicorpTest] Testing connection for user ${user.id} (${user.email}) - Subscriber: ${subscriber_id}`);
     const startedAt = Date.now();
-    const results = [];
-    for (const p of probes) {
+    // Run all probes in parallel to keep total response time under nginx's gateway timeout.
+    const results = await Promise.all(probes.map(async (p) => {
       const t0 = Date.now();
       let attempt = 0;
       let lastError = null;
       let success = false;
       let data = null;
 
-      // Connection test: try only twice on 401/5xx to keep it fast
       while (attempt < 2 && !success) {
         try {
-          data = await clinicorpFetchProbe(settings, p.path);
+          data = await clinicorpFetchProbe(settings, p.path, { timeoutMs: 12_000 });
           success = true;
         } catch (e) {
           lastError = e;
-          // Retry on 401 or 5xx
           if (e.status === 401 || (e.status >= 500 && e.status < 600)) {
             attempt++;
-            if (attempt < 2) await clinicorpProbeSleep(800 * attempt);
+            if (attempt < 2) await clinicorpProbeSleep(600);
           } else {
-            console.error(`[ClinicorpTest] Probe ${p.key} failed with non-retryable error: ${e.status} ${e.message}`);
+            console.error(`[ClinicorpTest] Probe ${p.key} failed (non-retryable): ${e.status} ${e.message}`);
             break;
           }
         }
       }
 
       if (success) {
-        results.push({
-          ...p,
-          ok: true,
-          latency_ms: Date.now() - t0,
-          count: Array.isArray(data) ? data.length : (data ? 1 : 0),
-          retries: attempt,
-        });
-      } else {
-        results.push({
-          ...p,
-          ok: false,
-          latency_ms: Date.now() - t0,
-          status: lastError?.status || null,
-          error: lastError?.message,
-          retries: attempt,
-        });
+        return { ...p, ok: true, latency_ms: Date.now() - t0, count: Array.isArray(data) ? data.length : (data ? 1 : 0), retries: attempt };
       }
-      await clinicorpProbeSleep(350);
-    }
+      return { ...p, ok: false, latency_ms: Date.now() - t0, status: lastError?.status || null, error: lastError?.message || 'timeout', retries: attempt };
+    }));
+
 
     const ok = results.every((r) => r.ok);
     const auth = results[0]?.status === 401 || results.some((r) => r.status === 401)
@@ -10809,12 +10793,12 @@ app.post('/api/clinicorp/sync/now', async (req, res) => {
 });
 
 // Lightweight probe — same logic as clinicorp.mjs#clinicorpFetch but local
-async function clinicorpFetchProbe(settings, pathName) {
+async function clinicorpFetchProbe(settings, pathName, opts = {}) {
   const base = (settings.base_url || 'https://api.clinicorp.com/rest/v1').replace(/\/$/, '');
   const url = new URL(base + pathName);
   if (settings.subscriber_id) url.searchParams.set('subscriber_id', settings.subscriber_id);
   const ctrl = new AbortController();
-  const timeout = setTimeout(() => ctrl.abort(), 45_000);
+  const timeout = setTimeout(() => ctrl.abort(), opts.timeoutMs || 45_000);
   try {
     const apiToken = String(settings.api_token || '').trim().replace(/^Bearer\s+/i, '');
     const apiUser = String(settings.subscriber_id || '').trim();
