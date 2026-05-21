@@ -10670,6 +10670,16 @@ app.post('/api/clinicorp/my-settings/test', async (req, res) => {
       base_url: base_url || 'https://api.clinicorp.com/rest/v1',
     };
 
+    const auditData = {
+      entity: 'connection_test',
+      local_id: user.id,
+      clinicorp_id: subscriber_id,
+      action: 'test',
+      status: 'success',
+      payload: { base_url: settings.base_url },
+    };
+
+
     const probes = [
       { key: 'clinics',       label: 'Clínicas',      path: '/business/list' },
       { key: 'users',         label: 'Usuários',      path: '/security/list_users' },
