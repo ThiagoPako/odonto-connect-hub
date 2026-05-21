@@ -84,6 +84,48 @@ function toBigIntOrNull(v) {
   return s;
 }
 
+function pickFirst(obj, ...keys) {
+  if (!obj || typeof obj !== 'object') return null;
+  for (const key of keys) {
+    const value = obj[key];
+    if (value !== undefined && value !== null && value !== '') return value;
+  }
+  const entries = Object.entries(obj);
+  for (const key of keys) {
+    const wanted = String(key).toLowerCase();
+    const hit = entries.find(([k, v]) => k.toLowerCase() === wanted && v !== undefined && v !== null && v !== '');
+    if (hit) return hit[1];
+  }
+  return null;
+}
+
+function extractClinicorpList(data) {
+  if (Array.isArray(data)) return data;
+  if (!data || typeof data !== 'object') return [];
+  const direct = pickFirst(
+    data,
+    'Results', 'Result', 'Data', 'data', 'Items', 'items', 'Rows', 'rows', 'Records', 'records',
+    'Appointments', 'appointments', 'AppointmentList', 'appointmentList', 'List', 'list'
+  );
+  if (Array.isArray(direct)) return direct;
+  if (direct && typeof direct === 'object') {
+    const nested = extractClinicorpList(direct);
+    if (nested.length) return nested;
+  }
+  for (const value of Object.values(data)) {
+    if (Array.isArray(value)) return value;
+    if (value && typeof value === 'object') {
+      const nested = extractClinicorpList(value);
+      if (nested.length) return nested;
+    }
+  }
+  return [];
+}
+
+function getAppointmentId(a) {
+  return pickFirst(a, 'id', 'Id', 'ID', 'AppointmentId', 'AppointmentID', 'Appointment_Id', 'appointment_id', 'appointmentId', 'ScheduleId', 'Schedule_ID');
+}
+
 // ─── HTTP client ──────────────────────────────────────────────
 // Throttle global para evitar 429: limite de 5 chamadas por segundo (200ms entre inícios)
 let _lastCallAt = 0;
