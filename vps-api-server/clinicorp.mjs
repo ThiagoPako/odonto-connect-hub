@@ -1330,55 +1330,67 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
   };
 
 
-  await safe('clinics', async () => {
-    const list = await clinicorpApi.listClinics(settings);
-    for (const c of (Array.isArray(list) ? list : [])) { await upsertClinic(pool, c, tenant_id); summary.clinics++; }
-  });
-
-  await safe('professionals', async () => {
-    const list = await clinicorpApi.listUsers(settings);
-    for (const u of (Array.isArray(list) ? list : [])) { await upsertProfessional(pool, u, tenant_id); summary.professionals++; }
-    
-    // BACKFILL: Sincroniza dentistas locais com base nos profissionais Clinicorp DESTE tenant
+  // Metadata (clínicas, profissionais, cadeiras, categorias, especialidades) raramente muda.
+  // Para reduzir drasticamente o número de chamadas (Clinicorp aplica limites por hora),
+  // só atualizamos esses endpoints se a última sincronização foi há mais de 24h
+  // (ou se force_metadata=true via /sync com flag explícita).
+  let metadataFresh = false;
+  if (!force_metadata) {
     try {
-      const tId = await resolveTenantId(pool, tenant_id);
-      const { rows } = await pool.query('SELECT id, full_name FROM clinicorp_professionals WHERE tenant_id=$1', [tId]);
-      for (const p of rows) {
-        await ensureLocalProfessional(pool, String(p.id), p.full_name, tId);
-      }
-    } catch (e) { console.error('[clinicorp sync] dentists backfill', e.message); }
-  });
+      const tIdMeta = await resolveTenantId(pool, tenant_id);
+      const { rows } = await pool.query(
+        `SELECT MAX(synced_at) AS last FROM clinicorp_clinics WHERE tenant_id=$1`,
+        [tIdMeta]
+      );
+      const last = rows[0]?.last ? new Date(rows[0].last).getTime() : 0;
+      if (last && (Date.now() - last) < 24 * 3600_000) metadataFresh = true;
+    } catch { /* ignore */ }
+  }
 
+  if (!metadataFresh) {
+    await safe('clinics', async () => {
+      const list = await clinicorpApi.listClinics(settings);
+      for (const c of (Array.isArray(list) ? list : [])) { await upsertClinic(pool, c, tenant_id); summary.clinics++; }
+    });
 
+    await safe('professionals', async () => {
+      const list = await clinicorpApi.listUsers(settings);
+      for (const u of (Array.isArray(list) ? list : [])) { await upsertProfessional(pool, u, tenant_id); summary.professionals++; }
 
-  // Pacientes são sincronizados via agendamentos (ensureLocalPatient projeta cada paciente referenciado).
-  // A Clinicorp não expõe um endpoint público de listagem completa de pacientes (/patient/list retorna 404),
-  // então não tentamos buscar a lista — o backfill acontece naturalmente conforme os agendamentos chegam.
-
-
-
-  // Chairs por clínica
-  await safe('chairs', async () => {
-    const tId = await resolveTenantId(pool, tenant_id);
-    const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics WHERE tenant_id=$1', [tId]);
-    for (const { id } of clinics) {
-      if (!id) continue;
       try {
-        const list = await clinicorpApi.listChairs(settings, id);
-        for (const ch of (Array.isArray(list) ? list : [])) { await upsertChair(pool, ch, tenant_id); summary.chairs++; }
-      } catch (e) { /* silencia 400 sem chairs */ }
-    }
-  });
+        const tId = await resolveTenantId(pool, tenant_id);
+        const { rows } = await pool.query('SELECT id, full_name FROM clinicorp_professionals WHERE tenant_id=$1', [tId]);
+        for (const p of rows) {
+          await ensureLocalProfessional(pool, String(p.id), p.full_name, tId);
+        }
+      } catch (e) { console.error('[clinicorp sync] dentists backfill', e.message); }
+    });
 
-  await safe('categories', async () => {
-    const list = await clinicorpApi.listAppointmentCategories(settings);
-    for (const c of (Array.isArray(list) ? list : [])) { await upsertCategory(pool, c, tenant_id); summary.categories++; }
-  });
+    // Chairs por clínica
+    await safe('chairs', async () => {
+      const tId = await resolveTenantId(pool, tenant_id);
+      const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics WHERE tenant_id=$1', [tId]);
+      for (const { id } of clinics) {
+        if (!id) continue;
+        try {
+          const list = await clinicorpApi.listChairs(settings, id);
+          for (const ch of (Array.isArray(list) ? list : [])) { await upsertChair(pool, ch, tenant_id); summary.chairs++; }
+        } catch (e) { /* silencia 400 sem chairs */ }
+      }
+    });
 
-  await safe('specialties', async () => {
-    const list = await clinicorpApi.listSpecialties(settings);
-    for (const s of (Array.isArray(list) ? list : [])) { await upsertSpecialty(pool, s, tenant_id); summary.specialties++; }
-  });
+    await safe('categories', async () => {
+      const list = await clinicorpApi.listAppointmentCategories(settings);
+      for (const c of (Array.isArray(list) ? list : [])) { await upsertCategory(pool, c, tenant_id); summary.categories++; }
+    });
+
+    await safe('specialties', async () => {
+      const list = await clinicorpApi.listSpecialties(settings);
+      for (const s of (Array.isArray(list) ? list : [])) { await upsertSpecialty(pool, s, tenant_id); summary.specialties++; }
+    });
+  } else {
+    console.log('[clinicorp sync] metadata recente (<24h) — pulando clinics/professionals/chairs/categories/specialties');
+  }
 
   // PATIENTS: tenta /patient/list; se indisponível, backfill via raw dos appointments
   await safe('patients', async () => {
