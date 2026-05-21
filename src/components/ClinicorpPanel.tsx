@@ -86,9 +86,6 @@ export function ClinicorpPanel() {
     try {
       const s = await clinicorpApi.getSettings();
       setSettings(s);
-      setEnabled(s.enabled);
-      setSubscriberId(s.subscriber_id || "");
-      setBaseUrl(s.base_url || "https://api.clinicorp.com/rest/v1");
       setAutoSync(s.auto_sync_enabled ?? true);
       setIntervalMin(s.sync_interval_minutes ?? 30);
       setLookbackDays(s.sync_lookback_days ?? 30);
@@ -132,19 +129,12 @@ export function ClinicorpPanel() {
     setSaving(true);
     try {
       await clinicorpApi.saveSettings({
-        enabled,
-        subscriber_id: subscriberId,
-        base_url: baseUrl,
-        api_token: apiToken || undefined,
-        webhook_secret: webhookSecret || undefined,
         auto_sync_enabled: autoSync,
         sync_interval_minutes: intervalMin,
         sync_lookback_days: lookbackDays,
         sync_lookahead_days: lookaheadDays,
         conflict_strategy: conflictStrategy,
       });
-      setApiToken("");
-      setWebhookSecret("");
       toast.success("Configurações salvas");
       await load();
     } catch (e) {
@@ -158,9 +148,9 @@ export function ClinicorpPanel() {
     setTesting(true);
     setTestResult(null);
     try {
-      const r = await clinicorpApi.testConnection();
+      const r = await clinicorpApi.testMyConnection({});
       setTestResult(r as any);
-      if (r.ok) toast.success(`Conexão OK — ${r.clinics_count} clínica(s) encontradas`);
+      if (r.ok) toast.success(`Conexão OK em ${r.total_latency_ms}ms`);
       else toast.error(r.error || "Falha na conexão");
     } catch (e) {
       toast.error(`Erro: ${(e as Error).message}`);
@@ -181,10 +171,8 @@ export function ClinicorpPanel() {
     });
 
     try {
-      // O backend agora processa tudo em uma tacada só no full sync
-      // Vamos atualizar o status visualmente conforme as etapas (mesmo que o backend retorne tudo ao final, 
-      // poderíamos emular passos se o backend fosse via SSE, mas aqui faremos uma UI reativa ao resultado)
-      const r = await clinicorpApi.sync();
+      // Usa endpoint per-user (multi-tenant SaaS) — sincroniza com as credenciais do usuário logado
+      const r = await clinicorpApi.syncMyNow();
       setLastSync(r);
       setSyncStatus(prev => ({
         ...prev!,
@@ -209,17 +197,8 @@ export function ClinicorpPanel() {
     }
   }
 
-  function copyWebhookUrl() {
-    const url = buildWebhookUrl(webhookSecret || (settings?.has_webhook_secret ? "<seu-secret-salvo>" : ""));
-    navigator.clipboard.writeText(url);
-    toast.success("URL do webhook copiada");
-  }
+  // (credenciais e webhook ficam agora 100% no ClinicorpUserCredentials acima)
 
-  function generateSecret() {
-    const s = generateWebhookSecret(40);
-    setWebhookSecret(s);
-    toast.info("Novo secret gerado — clique em Salvar");
-  }
 
   if (loading) {
     return (
@@ -250,20 +229,20 @@ export function ClinicorpPanel() {
 
 
 
-      {/* Status header */}
+      {/* Status header — somente leitura, controles ficam em ClinicorpUserCredentials acima */}
       <div className="rounded-2xl border border-border bg-card p-5 flex items-start gap-4">
         <div className={`h-10 w-10 rounded-xl flex items-center justify-center ${settings?.enabled ? "bg-success/15 text-success" : "bg-muted text-muted-foreground"}`}>
           <Plug className="h-5 w-5" />
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <h3 className="text-base font-semibold text-foreground">Clinicorp</h3>
+            <h3 className="text-base font-semibold text-foreground">Status da integração</h3>
             <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${settings?.enabled ? "bg-success/15 text-success" : "bg-muted text-muted-foreground"}`}>
               {settings?.enabled ? "Ativo" : "Desativado"}
             </span>
           </div>
           <p className="text-xs text-muted-foreground mt-1">
-            Integração com a API REST da Clinicorp + recebimento de webhooks em tempo real.
+            Espelhamento em tempo real via webhook + sync periódico de agenda, profissionais, pacientes e financeiro.
           </p>
           {settings?.last_sync_at && (
             <p className="text-[11px] text-muted-foreground mt-2">
@@ -275,55 +254,29 @@ export function ClinicorpPanel() {
             </p>
           )}
         </div>
-        <div className="flex items-center gap-2">
-          <Switch checked={enabled} onCheckedChange={setEnabled} />
-        </div>
       </div>
 
-      {/* Credenciais */}
+      {/* Ações de sincronização e manutenção */}
       <div className="rounded-2xl border border-border bg-card p-5 space-y-4">
         <div className="flex items-center gap-2">
-          <KeyRound className="h-4 w-4 text-primary" />
-          <h4 className="text-sm font-semibold text-foreground">Credenciais da API</h4>
+          <RefreshCw className="h-4 w-4 text-primary" />
+          <h4 className="text-sm font-semibold text-foreground">Ações de sincronização</h4>
         </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="cc-sub">Subscriber ID</Label>
-            <Input id="cc-sub" value={subscriberId} onChange={(e) => setSubscriberId(e.target.value)} placeholder="ex: 123456" />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="cc-base">Base URL</Label>
-            <Input id="cc-base" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
-          </div>
-          <div className="space-y-1.5 md:col-span-2">
-            <Label htmlFor="cc-token">
-              API Token (Bearer){" "}
-              {settings?.has_api_token && <span className="text-success text-[11px]">• já configurado</span>}
-            </Label>
-            <Input
-              id="cc-token"
-              type="password"
-              autoComplete="new-password"
-              value={apiToken}
-              onChange={(e) => setApiToken(e.target.value)}
-              placeholder={settings?.has_api_token ? "deixe em branco para manter o atual" : "cole o token gerado no Clinicorp"}
-            />
-          </div>
-        </div>
+        <p className="text-xs text-muted-foreground">
+          Use estas ações para forçar uma sincronização manual ou reconciliar dados. O espelhamento normal é automático
+          (webhook em tempo real + job periódico configurado abaixo).
+        </p>
 
         <div className="flex flex-wrap gap-2 pt-2">
-          <Button onClick={handleSave} disabled={saving}>
-            {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}Salvar
-          </Button>
-          <Button variant="outline" onClick={handleTest} disabled={testing || !settings?.has_api_token}>
+          <Button variant="outline" onClick={handleTest} disabled={testing}>
             {testing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
-            Testar conexão
+            Verificar conexão
           </Button>
-          <Button variant="outline" onClick={handleSync} disabled={syncing || !settings?.enabled}>
+          <Button onClick={handleSync} disabled={syncing}>
             {syncing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />}
             Sincronizar agora
           </Button>
+
           <Button
             variant="outline"
             onClick={async () => {
