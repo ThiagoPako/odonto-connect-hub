@@ -1099,7 +1099,7 @@ async function projectEstimateToLocal(pool, e, tenantId = null) {
   const status = String(e.Status || '').toLowerCase().includes('aprov') ? 'aprovado' : 'em_aberto';
 
   const exists = await pool.query(
-    `SELECT id FROM orcamentos WHERE clinicorp_estimate_id = $1 AND tenant_id = $2`,
+    `SELECT id FROM orcamentos WHERE clinicorp_estimate_id = $1 AND tenant_id = $2 LIMIT 1`,
     [String(e.id), tId]
   );
 
