@@ -185,14 +185,19 @@ async function clinicorpFetch(settings, pathName, { method = 'GET', query = {}, 
 
       // Retry logic for 429 (Rate Limit) and 502/503/504 (Server Overload/Gateway errors)
       const shouldRetry = (res.status === 429 || res.status === 502 || res.status === 503 || res.status === 504) && retryCount < maxRetries;
-      
+
       if (shouldRetry) {
         retryCount++;
         const retryAfter = Number(res.headers.get('retry-after'));
-        const delay = Number.isFinite(retryAfter) && retryAfter > 0
-          ? retryAfter * 1000
+        // CAP retry-after to 30s — Clinicorp sometimes returns 2000+ seconds which would hang the request
+        // for over 30 minutes and trigger nginx 502 timeouts. Better to fail fast and let the caller
+        // back off properly (circuit breaker in reconciliationTick).
+        const MAX_RETRY_DELAY_MS = 30_000;
+        let delay = Number.isFinite(retryAfter) && retryAfter > 0
+          ? Math.min(retryAfter * 1000, MAX_RETRY_DELAY_MS)
           : (res.status === 429 ? Math.pow(2, retryCount) * 5000 : Math.pow(2, retryCount) * 2500);
-        console.warn(`[clinicorp] HTTP ${res.status} detectado em ${pathName}. Retentando em ${delay}ms (tentativa ${retryCount})...`);
+        delay = Math.min(delay, MAX_RETRY_DELAY_MS);
+        console.warn(`[clinicorp] HTTP ${res.status} em ${pathName}. Retry-After raw=${retryAfter}s, aplicando ${delay}ms (tentativa ${retryCount}/${maxRetries})`);
         await sleep(delay);
         return requestOnceWithRetry(authMode);
       }
