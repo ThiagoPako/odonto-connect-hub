@@ -10829,7 +10829,7 @@ async function clinicorpFetchProbe(settings, pathName) {
       });
       const text = await r.text();
       let data; try { data = text ? JSON.parse(text) : null; } catch { data = text; }
-      if ((r.status === 429 || r.status === 502 || r.status === 503 || r.status === 504) && !requestOnce._retried) {
+      if ((r.status === 401 || r.status === 429 || r.status === 502 || r.status === 503 || r.status === 504) && !requestOnce._retried) {
         requestOnce._retried = true;
         const retryAfter = Number(r.headers.get('retry-after'));
         await clinicorpProbeSleep(Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 7000);
