@@ -84,6 +84,48 @@ function toBigIntOrNull(v) {
   return s;
 }
 
+function pickFirst(obj, ...keys) {
+  if (!obj || typeof obj !== 'object') return null;
+  for (const key of keys) {
+    const value = obj[key];
+    if (value !== undefined && value !== null && value !== '') return value;
+  }
+  const entries = Object.entries(obj);
+  for (const key of keys) {
+    const wanted = String(key).toLowerCase();
+    const hit = entries.find(([k, v]) => k.toLowerCase() === wanted && v !== undefined && v !== null && v !== '');
+    if (hit) return hit[1];
+  }
+  return null;
+}
+
+function extractClinicorpList(data) {
+  if (Array.isArray(data)) return data;
+  if (!data || typeof data !== 'object') return [];
+  const direct = pickFirst(
+    data,
+    'Results', 'Result', 'Data', 'data', 'Items', 'items', 'Rows', 'rows', 'Records', 'records',
+    'Appointments', 'appointments', 'AppointmentList', 'appointmentList', 'List', 'list'
+  );
+  if (Array.isArray(direct)) return direct;
+  if (direct && typeof direct === 'object') {
+    const nested = extractClinicorpList(direct);
+    if (nested.length) return nested;
+  }
+  for (const value of Object.values(data)) {
+    if (Array.isArray(value)) return value;
+    if (value && typeof value === 'object') {
+      const nested = extractClinicorpList(value);
+      if (nested.length) return nested;
+    }
+  }
+  return [];
+}
+
+function getAppointmentId(a) {
+  return pickFirst(a, 'id', 'Id', 'ID', 'AppointmentId', 'AppointmentID', 'Appointment_Id', 'appointment_id', 'appointmentId', 'ScheduleId', 'Schedule_ID');
+}
+
 // ─── HTTP client ──────────────────────────────────────────────
 // Throttle global para evitar 429: limite de 5 chamadas por segundo (200ms entre inícios)
 let _lastCallAt = 0;
@@ -213,14 +255,13 @@ export const clinicorpApi = {
     const seen = new Set();
     const push = (arr) => {
       for (const a of (Array.isArray(arr) ? arr : [])) {
-        const id = a.id ?? a.AppointmentId ?? a.Id;
+        const id = getAppointmentId(a);
         if (!id || seen.has(String(id))) continue;
         seen.add(String(id));
         aggregate.push(a);
       }
     };
-    const extract = (data) => Array.isArray(data) ? data
-      : (data?.Results || data?.Result || data?.appointments || data?.Appointments || data?.data || data?.items || data?.Items || []);
+    const extract = extractClinicorpList;
 
     // 1) Preferred path: list_by_date_and_clinic per day, per clinic
     if (businessId) {
@@ -254,6 +295,10 @@ export const clinicorpApi = {
       { date_from: from, date_to: to, ...baseBiz },
       { startDate: from, endDate: to, ...baseBiz },
       { initialDate: from, finalDate: to, ...baseBiz },
+      { DateFrom: from, DateTo: to, ...baseBiz },
+      { BeginDate: from, EndDate: to, ...baseBiz },
+      { StartDate: from, EndDate: to, ...baseBiz },
+      { DataInicial: from, DataFinal: to, ...baseBiz },
       { SK_DateFirstTime: toAtomic(from), ...baseBiz },
     ];
     let lastErr = null;
@@ -261,7 +306,7 @@ export const clinicorpApi = {
       try {
         const data = await clinicorpFetch(s, '/appointment/list', { query: q });
         const arr = extract(data);
-        if (Array.isArray(arr) && arr.length > 0) return arr;
+        if (Array.isArray(arr) && arr.length > 0) push(arr);
       } catch (e) { lastErr = e; }
     }
     if (aggregate.length > 0) return aggregate;
@@ -424,15 +469,15 @@ async function upsertPatient(pool, p, tenantId = null) {
 }
 
 async function upsertAppointment(pool, a, tenantId = null) {
-  const id = a.id ?? a.AppointmentId ?? a.Id;
+  const id = getAppointmentId(a);
   if (!id) return;
   const tId = await resolveTenantId(pool, tenantId);
-  const businessId = a.BusinessId ?? a.Clinic_BusinessId ?? a.ClinicBusinessId ?? a.ClinicId ?? a.Business?.Id ?? null;
-  const patientId = a.PatientId ?? a.Patient_PersonId ?? a.PatientPersonId ?? a.Patient?.Id ?? a.Patient?.PersonId ?? null;
-  const professionalId = a.ProfessionalId ?? a.Dentist_PersonId ?? a.DentistPersonId ?? a.ScheduleToId ?? a.ScheduleTo_PersonId ?? a.Dentist?.Id ?? a.Professional?.Id ?? null;
-  const appointmentDate = normalizeClinicorpDate(a.Date, a.AppointmentDate, a.SK_DateFirstTime, a.DateFirstTime, a.StartDate, a.StartDateTime, a.StartTime, a.fromTime, a.FromTime);
-  const fromTime = normalizeClinicorpTime(a.FromTime, a.Time, a.StartTime, a.StartDateTime, a.ScheduleTime, a.Hour, a.fromTime);
-  const toTime = normalizeClinicorpTime(a.ToTime, a.FinalTime, a.EndTime, a.EndDateTime, a.toTime);
+  const businessId = pickFirst(a, 'BusinessId', 'Clinic_BusinessId', 'ClinicBusinessId', 'ClinicId', 'clinic_id', 'business_id') ?? a.Business?.Id ?? null;
+  const patientId = pickFirst(a, 'PatientId', 'Patient_PersonId', 'PatientPersonId', 'Patient_Id', 'patient_id', 'patientId') ?? a.Patient?.Id ?? a.Patient?.PersonId ?? null;
+  const professionalId = pickFirst(a, 'ProfessionalId', 'Dentist_PersonId', 'DentistPersonId', 'Professional_PersonId', 'ScheduleToId', 'ScheduleTo_PersonId', 'DentistId', 'Dentist_Id', 'professional_id', 'dentist_id') ?? a.Dentist?.Id ?? a.Professional?.Id ?? null;
+  const appointmentDate = normalizeClinicorpDate(pickFirst(a, 'Date', 'AppointmentDate', 'SK_DateFirstTime', 'DateFirstTime', 'StartDate', 'StartDateTime', 'StartTime', 'fromTime', 'FromTime', 'date', 'appointment_date'));
+  const fromTime = normalizeClinicorpTime(pickFirst(a, 'FromTime', 'Time', 'StartTime', 'StartDateTime', 'ScheduleTime', 'Hour', 'fromTime', 'from_time', 'hora'));
+  const toTime = normalizeClinicorpTime(pickFirst(a, 'ToTime', 'FinalTime', 'EndTime', 'EndDateTime', 'toTime', 'to_time'));
   await pool.query(
     `INSERT INTO clinicorp_appointments
        (id, tenant_id, business_id, patient_id, patient_name, professional_id, professional_name,
@@ -460,14 +505,14 @@ async function upsertAppointment(pool, a, tenantId = null) {
       String(id), tId,
       toBigIntOrNull(businessId),
       toBigIntOrNull(patientId),
-      a.PatientName ?? a.Patient_FullName ?? a.Patient_Name ?? null,
+      pickFirst(a, 'PatientName', 'Patient_FullName', 'Patient_Name', 'PatientFullName', 'patient_name', 'patientName', 'Name') ?? a.Patient?.Name ?? a.Patient?.FullName ?? null,
       toBigIntOrNull(professionalId),
-      a.ProfessionalName ?? a.Dentist_FullName ?? a.Dentist_Name ?? a.DentistName ?? a.ScheduleToName ?? a.Professional_Name ?? a.Dentist?.Name ?? a.Dentist?.FullName ?? a.Professional?.Name ?? a.Professional?.FullName ?? null,
-      toBigIntOrNull(a.CategoryId ?? a.Category_id ?? a.Category_Id),
-      a.CategoryDescription ?? a.Category_Description ?? a.Category ?? null,
-      a.CategoryColor ?? a.Category_Color ?? a.Color ?? null,
-      toBigIntOrNull(a.ChairId ?? a.Chair_Id),
-      a.Status ?? a.StatusId ?? null,
+      pickFirst(a, 'ProfessionalName', 'Dentist_FullName', 'Dentist_Name', 'DentistName', 'ScheduleToName', 'Professional_Name', 'professional_name', 'dentist_name') ?? a.Dentist?.Name ?? a.Dentist?.FullName ?? a.Professional?.Name ?? a.Professional?.FullName ?? null,
+      toBigIntOrNull(pickFirst(a, 'CategoryId', 'Category_id', 'Category_Id', 'AppointmentCategoryId', 'appointment_category_id')),
+      pickFirst(a, 'CategoryDescription', 'Category_Description', 'Category', 'category_description', 'ProcedureName', 'Procedure') ?? null,
+      pickFirst(a, 'CategoryColor', 'Category_Color', 'Color', 'category_color') ?? null,
+      toBigIntOrNull(pickFirst(a, 'ChairId', 'Chair_Id', 'chair_id')),
+      pickFirst(a, 'Status', 'StatusId', 'status') ?? null,
       appointmentDate,
       fromTime,
       toTime,
@@ -477,8 +522,8 @@ async function upsertAppointment(pool, a, tenantId = null) {
   );
   // Backfill stub no clinicorp_patients a partir do agendamento (a Clinicorp não expõe /patient/list)
   try {
-    const pid = a.PatientId ?? a.Patient_PersonId ?? null;
-    const pname = a.PatientName ?? a.Patient_FullName ?? a.Patient_Name ?? null;
+    const pid = pickFirst(a, 'PatientId', 'Patient_PersonId', 'PatientPersonId', 'Patient_Id', 'patient_id', 'patientId') ?? a.Patient?.Id ?? a.Patient?.PersonId ?? null;
+    const pname = pickFirst(a, 'PatientName', 'Patient_FullName', 'Patient_Name', 'PatientFullName', 'patient_name', 'patientName', 'Name') ?? a.Patient?.Name ?? a.Patient?.FullName ?? null;
     if (pid) {
       await pool.query(
         `INSERT INTO clinicorp_patients (id, tenant_id, name, mobile_phone, raw, synced_at)
@@ -490,7 +535,7 @@ async function upsertAppointment(pool, a, tenantId = null) {
         [
           String(pid), tId,
           pname,
-          String(a.PatientPhone ?? a.MobilePhone ?? '') || null,
+          String(pickFirst(a, 'PatientPhone', 'MobilePhone', 'PatientMobilePhone', 'Phone', 'phone') ?? '') || null,
           JSON.stringify({ derived_from: 'appointment', appointment_id: id, id: pid, name: pname }),
         ]
       );
@@ -555,7 +600,9 @@ function normalizeClinicorpDate(...values) {
   for (const value of values) {
     if (value === null || value === undefined || value === '') continue;
     const raw = value instanceof Date ? value.toISOString() : String(value).trim();
-    if (/^\d{8}$/.test(raw)) return `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
+    if (/^\d{8}(\d{4,6})?$/.test(raw)) return `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
+    const msDate = raw.match(/\/Date\((\d+)/);
+    if (msDate) return new Date(Number(msDate[1])).toISOString().slice(0, 10);
     if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
     const br = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
     if (br) return `${br[3]}-${br[2]}-${br[1]}`;
@@ -567,6 +614,7 @@ function normalizeClinicorpTime(...values) {
     if (value === null || value === undefined || value === '') continue;
     const raw = String(value).trim();
     if (/^\d{1,2}:\d{2}/.test(raw)) return raw.slice(0, 5).padStart(5, '0');
+    if (/^\d{12,14}$/.test(raw)) return `${raw.slice(8, 10)}:${raw.slice(10, 12)}`;
     if (/^\d{3,4}$/.test(raw)) return `${raw.slice(0, -2).padStart(2, '0')}:${raw.slice(-2)}`;
     const isoTime = raw.match(/T(\d{2}:\d{2})/);
     if (isoTime) return isoTime[1];
@@ -763,23 +811,26 @@ function decideOverwrite({ strategy, keepLocal, localRow, clinicorpUpdatedAt }) 
 }
 
 async function projectAppointmentToLocal(pool, a, cpApptId, tenantId = null) {
-  const cpPatientId = a.PatientId ?? a.Patient_PersonId ?? a.PatientPersonId ?? a.Patient?.Id ?? a.Patient?.PersonId ?? null;
-  const cpProfId = a.ProfessionalId ?? a.Dentist_PersonId ?? a.DentistPersonId ?? a.ScheduleToId ?? a.ScheduleTo_PersonId ?? a.Dentist?.Id ?? a.Professional?.Id ?? null;
-  const cpClinicId = a.BusinessId ?? a.Clinic_BusinessId ?? a.ClinicBusinessId ?? a.ClinicId ?? a.Business?.Id ?? null;
+  const cpPatientId = pickFirst(a, 'PatientId', 'Patient_PersonId', 'PatientPersonId', 'Patient_Id', 'patient_id', 'patientId') ?? a.Patient?.Id ?? a.Patient?.PersonId ?? null;
+  const cpProfId = pickFirst(a, 'ProfessionalId', 'Dentist_PersonId', 'DentistPersonId', 'Professional_PersonId', 'ScheduleToId', 'ScheduleTo_PersonId', 'DentistId', 'Dentist_Id', 'professional_id', 'dentist_id') ?? a.Dentist?.Id ?? a.Professional?.Id ?? null;
+  const cpClinicId = pickFirst(a, 'BusinessId', 'Clinic_BusinessId', 'ClinicBusinessId', 'ClinicId', 'clinic_id', 'business_id') ?? a.Business?.Id ?? null;
   const cpUpdatedAt = a.UpdateDate || a.UpdatedAt || a.LastModified || a.ModifiedAt || a.z_LastChange_Date || a.ModifiedDate || null;
   const policy = await resolveConflictPolicy(pool, { clinicId: cpClinicId, professionalId: cpProfId });
 
   // Busca ou cria o dentista no schema local ANTES do agendamento
-  const dentistaId = await ensureLocalProfessional(pool, cpProfId, a.ProfessionalName || a.DentistName || a.ScheduleToName || a.Dentist?.Name, tenantId);
+  const professionalName = pickFirst(a, 'ProfessionalName', 'Dentist_FullName', 'Dentist_Name', 'DentistName', 'ScheduleToName', 'Professional_Name', 'professional_name', 'dentist_name') ?? a.Dentist?.Name ?? a.Dentist?.FullName ?? a.Professional?.Name ?? a.Professional?.FullName ?? null;
+  const dentistaId = await ensureLocalProfessional(pool, cpProfId, professionalName, tenantId);
 
   const pacienteId = await ensureLocalPatient(pool, cpPatientId, {
-    name: a.PatientName, phone: a.PatientPhone || a.MobilePhone, email: a.PatientEmail,
+    name: pickFirst(a, 'PatientName', 'Patient_FullName', 'Patient_Name', 'PatientFullName', 'patient_name', 'patientName', 'Name') ?? a.Patient?.Name ?? a.Patient?.FullName,
+    phone: pickFirst(a, 'PatientPhone', 'MobilePhone', 'PatientMobilePhone', 'Phone', 'phone'),
+    email: pickFirst(a, 'PatientEmail', 'Email', 'email') ?? a.Patient?.Email,
   }, tenantId);
   
-  const status = mapAppointmentStatus(a.Status ?? a.StatusId);
-  const data = normalizeClinicorpDate(a.Date, a.AppointmentDate, a.SK_DateFirstTime, a.DateFirstTime, a.StartDate, a.StartDateTime, a.StartTime, a.fromTime, a.FromTime);
-  const fromT = normalizeClinicorpTime(a.FromTime, a.Time, a.StartTime, a.StartDateTime, a.ScheduleTime, a.Hour, a.fromTime) || '00:00';
-  const toT = normalizeClinicorpTime(a.ToTime, a.FinalTime, a.EndTime, a.EndDateTime, a.toTime) || '';
+  const status = mapAppointmentStatus(pickFirst(a, 'Status', 'StatusId', 'status'));
+  const data = normalizeClinicorpDate(pickFirst(a, 'Date', 'AppointmentDate', 'SK_DateFirstTime', 'DateFirstTime', 'StartDate', 'StartDateTime', 'StartTime', 'fromTime', 'FromTime', 'date', 'appointment_date'));
+  const fromT = normalizeClinicorpTime(pickFirst(a, 'FromTime', 'Time', 'StartTime', 'StartDateTime', 'ScheduleTime', 'Hour', 'fromTime', 'from_time', 'hora')) || '00:00';
+  const toT = normalizeClinicorpTime(pickFirst(a, 'ToTime', 'FinalTime', 'EndTime', 'EndDateTime', 'toTime', 'to_time')) || '';
   const hora = fromT;
   const duracao = (() => {
     if (!fromT || !toT) return 30;
@@ -787,9 +838,9 @@ async function projectAppointmentToLocal(pool, a, cpApptId, tenantId = null) {
     const d = toMin(toT) - toMin(fromT);
     return d > 0 ? d : 30;
   })();
-  const procedimento = a.CategoryDescription || a.Category || null;
-  const categoriaCor = a.CategoryColor || a.Color || null;
-  const observacoes = a.Notes || a.notes || null;
+  const procedimento = pickFirst(a, 'CategoryDescription', 'Category_Description', 'Category', 'category_description', 'ProcedureName', 'Procedure') ?? null;
+  const categoriaCor = pickFirst(a, 'CategoryColor', 'Category_Color', 'Color', 'category_color') ?? null;
+  const observacoes = pickFirst(a, 'Notes', 'Observation', 'Observations', 'notes', 'observacoes') ?? null;
   const tId = await resolveTenantId(pool, tenantId);
   const exists = await pool.query(
     `SELECT id, paciente_id, dentista_id, data, hora, duracao, procedimento, categoria,
@@ -862,7 +913,9 @@ async function projectAppointmentToLocal(pool, a, cpApptId, tenantId = null) {
 
   if (pacienteId) {
     const leadId = await ensureLeadForPatient(pool, pacienteId, cpPatientId, {
-      nome: a.PatientName, telefone: onlyDigits(a.PatientPhone || a.MobilePhone), email: a.PatientEmail,
+      nome: pickFirst(a, 'PatientName', 'Patient_FullName', 'Patient_Name', 'PatientFullName', 'patient_name', 'patientName', 'Name') ?? a.Patient?.Name ?? a.Patient?.FullName,
+      telefone: onlyDigits(pickFirst(a, 'PatientPhone', 'MobilePhone', 'PatientMobilePhone', 'Phone', 'phone')),
+      email: pickFirst(a, 'PatientEmail', 'Email', 'email') ?? a.Patient?.Email,
     }, tenantId);
     if (leadId) {
       if (status === 'cancelado' || status === 'faltou') {
@@ -1295,14 +1348,13 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     
     const processAppts = async (list) => {
       for (const a of (Array.isArray(list) ? list : [])) { 
-        const id = a.id ?? a.AppointmentId ?? a.Id;
-        if (id) { 
-          apiIds.add(String(id)); 
-          await upsertAppointment(pool, a, tenant_id); 
-          // Força projeção imediata para garantir que apareça na agenda local
-          await projectAppointmentToLocal(pool, a, id, tenant_id);
-          summary.appointments++; 
-        }
+        const id = getAppointmentId(a);
+        if (!id || apiIds.has(String(id))) continue;
+        apiIds.add(String(id)); 
+        await upsertAppointment(pool, a, tenant_id); 
+        // Força projeção imediata para garantir que apareça na agenda local
+        await projectAppointmentToLocal(pool, a, id, tenant_id);
+        summary.appointments++; 
       }
     };
 
@@ -1312,6 +1364,12 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
         await processAppts(list);
       }
     } else {
+      for (const r of ranges) {
+        try {
+          const list = await clinicorpApi.listAppointments(settings, r.from, r.to);
+          await processAppts(list);
+        } catch (e) { console.error(`[clinicorp sync] appointments global ${r.from}..${r.to}`, e.message); }
+      }
       for (const { id: clinicId } of clinics) {
         if (!clinicId) continue;
         for (const r of ranges) {

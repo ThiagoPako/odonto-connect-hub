@@ -10745,18 +10745,21 @@ app.post('/api/clinicorp/sync/now', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     const { rows } = await pool.query(
-      'SELECT api_token, subscriber_id, base_url FROM clinicorp_user_settings WHERE user_id = $1',
+      'SELECT enabled, api_token, subscriber_id, base_url FROM clinicorp_user_settings WHERE user_id = $1',
       [user.id]
     );
     const settings = rows[0];
     if (!settings || !settings.api_token || !settings.subscriber_id) {
       return res.status(400).json({ error: 'Configure as credenciais primeiro' });
     }
+    if (settings.enabled === false) {
+      return res.status(400).json({ error: 'Ative a sincronização Clinicorp antes de sincronizar' });
+    }
 
     const { runFullSync } = await import('./clinicorp.mjs');
     const today = new Date();
-    const from = new Date(today.getTime() - 7 * 86400_000).toISOString().slice(0, 10);
-    const to = new Date(today.getTime() + 30 * 86400_000).toISOString().slice(0, 10);
+    const from = new Date(today.getTime() - 30 * 86400_000).toISOString().slice(0, 10);
+    const to = new Date(today.getTime() + 60 * 86400_000).toISOString().slice(0, 10);
     const result = await runFullSync(pool, { 
       api_token: settings.api_token, 
       subscriber_id: settings.subscriber_id, 
@@ -10765,6 +10768,13 @@ app.post('/api/clinicorp/sync/now', async (req, res) => {
       from,
       to
     });
+
+    await pool.query(
+      `UPDATE clinicorp_user_settings
+          SET last_sync_at = NOW(), last_sync_status = $2, last_sync_error = $3, updated_at = NOW()
+        WHERE user_id = $1`,
+      [user.id, result.status, result.errors?.length ? result.errors.join(' | ') : null]
+    );
 
     res.json(result);
   } catch (e) {
