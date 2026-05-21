@@ -204,21 +204,23 @@ async function _clinicorpFetchRaw(settings, pathName, { method = 'GET', query = 
       try { data = text ? JSON.parse(text) : null; } catch { data = text; }
 
       // Retry logic for 429 (Rate Limit) and 502/503/504 (Server Overload/Gateway errors)
-      const shouldRetry = (res.status === 429 || res.status === 502 || res.status === 503 || res.status === 504) && retryCount < maxRetries;
-
+      if (res.status === 429) {
+        const retryAfter = Number(res.headers.get('retry-after'));
+        const raSec = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : 60;
+        // Pausa GLOBAL pelo tempo REAL informado pela Clinicorp (cap em 1h para evitar travamento eterno).
+        const pauseMs = Math.min(raSec * 1000, 3600_000);
+        _globalPauseUntil = Math.max(_globalPauseUntil, Date.now() + pauseMs);
+        console.warn(`[clinicorp] HTTP 429 em ${pathName}. Retry-After=${raSec}s → pausando fila global por ${Math.round(pauseMs/1000)}s. SEM retry imediato.`);
+        const err = new Error(`Clinicorp ${method} ${pathName} → HTTP 429: rate limited (retry-after ${raSec}s)`);
+        err.status = 429;
+        err.retry_after_seconds = raSec;
+        throw err;
+      }
+      const shouldRetry = (res.status === 502 || res.status === 503 || res.status === 504) && retryCount < maxRetries;
       if (shouldRetry) {
         retryCount++;
-        const retryAfter = Number(res.headers.get('retry-after'));
-        const MAX_RETRY_DELAY_MS = 30_000;
-        let delay = Number.isFinite(retryAfter) && retryAfter > 0
-          ? Math.min(retryAfter * 1000, MAX_RETRY_DELAY_MS)
-          : (res.status === 429 ? Math.pow(2, retryCount) * 5000 : Math.pow(2, retryCount) * 2500);
-        delay = Math.min(delay, MAX_RETRY_DELAY_MS);
-        // Em 429, pausa TODA a fila global por GLOBAL_PAUSE_AFTER_429_MS para parar de bater na API
-        if (res.status === 429) {
-          _globalPauseUntil = Math.max(_globalPauseUntil, Date.now() + GLOBAL_PAUSE_AFTER_429_MS);
-        }
-        console.warn(`[clinicorp] HTTP ${res.status} em ${pathName}. Retry-After raw=${retryAfter}s, aplicando ${delay}ms (tentativa ${retryCount}/${maxRetries})`);
+        const delay = Math.min(Math.pow(2, retryCount) * 2500, 30_000);
+        console.warn(`[clinicorp] HTTP ${res.status} em ${pathName}. Backoff ${delay}ms (tentativa ${retryCount}/${maxRetries})`);
         await sleep(delay);
         return requestOnceWithRetry(authMode);
       }
@@ -732,7 +734,10 @@ async function ensureLocalProfessional(pool, cpProfId, fallbackName = null, tena
     return match.rows[0].id;
   }
   const ins = await pool.query(
-    `INSERT INTO dentistas (nome, ativo, clinicorp_professional_id, tenant_id) VALUES ($1, true, $2, $3) RETURNING id`,
+    `INSERT INTO dentistas (nome, ativo, clinicorp_professional_id, tenant_id)
+     VALUES ($1, true, $2, $3)
+     ON CONFLICT ON CONSTRAINT uniq_dentistas_clinicorp DO UPDATE SET updated_at = NOW()
+     RETURNING id`,
     [nome, cpProfId, tId]
   );
   return ins.rows[0].id;
