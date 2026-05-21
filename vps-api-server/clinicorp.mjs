@@ -1346,13 +1346,12 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     const processAppts = async (list) => {
       for (const a of (Array.isArray(list) ? list : [])) { 
         const id = getAppointmentId(a);
-        if (id) { 
-          apiIds.add(String(id)); 
-          await upsertAppointment(pool, a, tenant_id); 
-          // Força projeção imediata para garantir que apareça na agenda local
-          await projectAppointmentToLocal(pool, a, id, tenant_id);
-          summary.appointments++; 
-        }
+        if (!id || apiIds.has(String(id))) continue;
+        apiIds.add(String(id)); 
+        await upsertAppointment(pool, a, tenant_id); 
+        // Força projeção imediata para garantir que apareça na agenda local
+        await projectAppointmentToLocal(pool, a, id, tenant_id);
+        summary.appointments++; 
       }
     };
 
