@@ -1640,6 +1640,8 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     }
   } catch (e) { console.error('[clinicorp sync] final mirroring projection', e.message); }
 
+  const status = errors.length === 0 ? 'success' : (Object.values(summary).some(Boolean) ? 'partial' : 'error');
+  
   // Se forem as globais (carregadas via id=1), atualiza o status na tabela.
   if (settings.id === 1 || (!api_token && settings.id === undefined)) {
     // Verificação de integridade multi-tenant após o sync
