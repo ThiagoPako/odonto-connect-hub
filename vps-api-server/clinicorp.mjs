@@ -1023,8 +1023,8 @@ async function projectPatientToLocal(pool, p, tenantId = null) {
     const { changed, beforeOut, afterOut } = diffFields(beforeSnap, incoming);
     if (changed.length > 0 || decision.decision !== 'overwritten_by_clinicorp') {
       const leadRow = (await pool.query(
-        `SELECT id FROM crm_leads WHERE paciente_id=$1 OR clinicorp_patient_id=$2 LIMIT 1`,
-        [localRow.id, cpId]
+        `SELECT id FROM crm_leads WHERE (paciente_id=$1 OR clinicorp_patient_id=$2) AND tenant_id=$3 LIMIT 1`,
+        [localRow.id, String(cpId), tId]
       )).rows[0];
       await logConflict(pool, {
         entity: 'patient', clinicorp_id: cpId, local_id: localRow.id,
@@ -1034,8 +1034,8 @@ async function projectPatientToLocal(pool, p, tenantId = null) {
         clinicorp_updated_at: cpUpdatedAt,
         last_sync_at: localRow.last_clinicorp_sync_at,
         diff: { changed },
-        before_data: beforeOut,
-        after_data: afterOut,
+        before_data: beforeSnap,
+        after_data: incoming,
         changed_fields: changed,
         paciente_id: localRow.id,
         lead_id: leadRow?.id || null,
