@@ -105,7 +105,7 @@ const navSections: NavSection[] = [
       { title: "Usuários", url: "/usuarios", icon: UserCog },
       { title: "Minha Assinatura", url: "/minha-assinatura", icon: Settings },
       { title: "Super Admin", url: "/super-admin", icon: Settings },
-      { title: "Espelho Clinicorp", url: "/clinicorp-espelho", icon: RefreshCcw },
+      
       { title: "Configurações", url: "/configuracoes", icon: Settings },
     ],
   },
