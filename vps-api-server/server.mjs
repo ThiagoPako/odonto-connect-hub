@@ -10813,7 +10813,8 @@ app.post('/api/clinicorp/sync/now', async (req, res) => {
       base_url: settings.base_url,
       tenant_id: user.tenant_id,
       from,
-      to
+      to,
+      force_metadata: req.body?.force_metadata === true
     });
 
     await pool.query(
