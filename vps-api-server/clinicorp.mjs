@@ -2130,7 +2130,7 @@ export function registerClinicorp(app, pool) {
     const { rows } = await pool.query(`
       SELECT cp.*, d.id as local_id, d.ativo as local_ativo, d.cor_agenda as local_cor
       FROM clinicorp_professionals cp
-      LEFT JOIN dentistas d ON d.clinicorp_professional_id = cp.id::text AND d.tenant_id = cp.tenant_id
+      LEFT JOIN dentistas d ON d.clinicorp_professional_id::text = cp.id::text AND d.tenant_id = cp.tenant_id
       WHERE cp.tenant_id = $1
       ORDER BY cp.full_name
     `, [tId]);
