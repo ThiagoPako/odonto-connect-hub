@@ -12,6 +12,7 @@ import {
   type ClinicorpSettings,
   type ClinicorpWebhookEvent,
   type ClinicorpSyncResult,
+  type ClinicorpConnectionTest,
   type ClinicorpOverride,
   type ClinicorpConflict,
   type ClinicorpOverrideHistory,
@@ -26,7 +27,7 @@ export function ClinicorpPanel() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<{ ok: boolean; auth: string; total_latency_ms: number; results: any[] } | null>(null);
+  const [testResult, setTestResult] = useState<ClinicorpConnectionTest | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState<{
     step: string;
@@ -147,8 +148,9 @@ export function ClinicorpPanel() {
     setTestResult(null);
     try {
       const r = await clinicorpApi.testMyConnection({});
-      setTestResult(r as any);
+      setTestResult(r);
       if (r.ok) toast.success(`Conexão OK em ${r.total_latency_ms}ms`);
+      else if (r.auth === "rate_limited") toast.warning(r.error || "Clinicorp limitou temporariamente as chamadas");
       else toast.error(r.error || "Falha na conexão");
     } catch (e) {
       toast.error(`Erro: ${(e as Error).message}`);
