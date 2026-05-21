@@ -1294,12 +1294,12 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
   try {
     const tId = await resolveTenantId(pool, tenant_id);
     const { rows: appts } = await pool.query(
-      `SELECT raw FROM clinicorp_appointments WHERE tenant_id=$3 AND date >= $1 AND date <= $2`,
+      `SELECT raw, id FROM clinicorp_appointments WHERE tenant_id=$3 AND date >= $1 AND date <= $2`,
       [fromDate, toDate, tId]
     );
     for (const r of appts) { 
       const rawData = typeof r.raw === 'string' ? JSON.parse(r.raw) : r.raw;
-      await projectAppointmentToLocal(pool, rawData, rawData.id ?? rawData.AppointmentId ?? rawData.Id, tId); 
+      await projectAppointmentToLocal(pool, rawData, r.id, tId); 
     }
   } catch (e) { console.error('[clinicorp sync] forced projection', e.message); }
 
