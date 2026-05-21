@@ -11,7 +11,7 @@ import { Eye, EyeOff, KeyRound, Copy, RefreshCw, Trash2, Loader2, Lock, PlugZap,
 
 const DEFAULT_BASE = "https://api.clinicorp.com/rest/v1";
 
-export function ClinicorpUserCredentials() {
+export function ClinicorpUserCredentials({ onNextStep }: { onNextStep?: () => void }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [settings, setSettings] = useState<ClinicorpUserSettings | null>(null);
@@ -26,6 +26,8 @@ export function ClinicorpUserCredentials() {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<ClinicorpConnectionTest | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [currentStep, setCurrentStep] = useState(1);
+
 
   async function load() {
     setLoading(true);
