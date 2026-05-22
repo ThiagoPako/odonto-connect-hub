@@ -799,20 +799,18 @@ async function ensureLocalProfessional(pool, cpProfId, fallbackName = null, tena
     );
     return ins.rows[0].id;
   } catch (e) {
-    // race condition: outro insert paralelo já criou o registro
+    // race condition ou conflito de constraint unique (nome + tenant)
     if (e.code === '23505') {
       const r = await pool.query(
-        `SELECT id FROM dentistas WHERE clinicorp_professional_id=$1 AND tenant_id=$2 LIMIT 1`,
-        [cpProfId, tId]
+        `SELECT id FROM dentistas WHERE clinicorp_professional_id=$1 OR (tenant_id=$2 AND LOWER(TRIM(nome))=LOWER($3)) LIMIT 1`,
+        [cpProfId, tId, nome]
       );
-      if (r.rows[0]) return r.rows[0].id;
-      const r2 = await pool.query(
-        `SELECT id FROM dentistas WHERE tenant_id=$2 AND LOWER(TRIM(nome))=LOWER($1) LIMIT 1`,
-        [nome, tId]
-      );
-      if (r2.rows[0]) {
-        await pool.query(`UPDATE dentistas SET clinicorp_professional_id=$1, updated_at=NOW() WHERE id=$2`, [cpProfId, r2.rows[0].id]);
-        return r2.rows[0].id;
+      if (r.rows[0]) {
+        await pool.query(
+          `UPDATE dentistas SET clinicorp_professional_id=$1, tenant_id=COALESCE(tenant_id, $2), updated_at=NOW() WHERE id=$3`,
+          [cpProfId, tId, r.rows[0].id]
+        );
+        return r.rows[0].id;
       }
     }
     throw e;
