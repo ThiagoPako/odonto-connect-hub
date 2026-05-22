@@ -1404,9 +1404,9 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     const dates = [];
     let current = new Date(startStr);
     const end = new Date(endStr);
-    // Janelas de 7 dias são mais seguras para evitar 502/timeouts no VPS
+    // Janelas de 30 dias para reduzir o número de chamadas e evitar 429 (Rate Limit)
     while (current <= end) {
-      const next = new Date(current.getTime() + 7 * 86400_000);
+      const next = new Date(current.getTime() + 30 * 86400_000);
       const to = next < end ? next : end;
       dates.push({
         from: current.toISOString().slice(0, 10),
