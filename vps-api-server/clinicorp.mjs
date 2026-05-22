@@ -1338,6 +1338,12 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
   const today = new Date();
   const fromDate = from || new Date(today.getTime() - 30 * 86400_000).toISOString().slice(0, 10);
   const toDate = to || new Date(today.getTime() + 60 * 86400_000).toISOString().slice(0, 10);
+  // AGENDA: apenas datas FUTURAS (a partir de amanhã) — não sincroniza agendamentos passados
+  const apptFromDate = from || new Date(today.getTime() + 1 * 86400_000).toISOString().slice(0, 10);
+  const apptToDate = to || new Date(today.getTime() + 365 * 86400_000).toISOString().slice(0, 10);
+  // ORÇAMENTOS: janela ampla para garantir que orçamentos antigos e futuros sejam capturados
+  const estFromDate = from || new Date(today.getTime() - 365 * 86400_000).toISOString().slice(0, 10);
+  const estToDate = to || new Date(today.getTime() + 365 * 86400_000).toISOString().slice(0, 10);
 
   const summary = { clinics: 0, professionals: 0, patients: 0, chairs: 0, categories: 0, specialties: 0, appointments: 0, estimates: 0, invoices: 0, payments: 0, cashflow: 0, evolutions: 0, documents: 0 };
   const errors = [];
