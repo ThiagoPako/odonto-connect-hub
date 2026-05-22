@@ -1313,7 +1313,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
   const toDate = to || new Date(today.getTime() + 60 * 86400_000).toISOString().slice(0, 10);
   
   // AGENDA: apenas datas FUTURAS (a partir de amanhã) conforme solicitado pelo usuário
-  const apptFromDate = apptFrom || new Date(today.getTime() + 1 * 86400_000).toISOString().slice(0, 10);
+  const apptFromDate = apptFrom || today.toISOString().slice(0, 10); // Sincroniza a partir de HOJE para garantir que os dados apareçam no sistema
   const apptToDate = apptTo || new Date(today.getTime() + 365 * 86400_000).toISOString().slice(0, 10);
   
   // ORÇAMENTOS: janela ampla para garantir que orçamentos antigos e futuros sejam capturados
