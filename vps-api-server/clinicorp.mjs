@@ -1200,16 +1200,17 @@ function parseClinicorpMonth(value) {
   return null;
 }
 
-async function upsertMonthlySummary(pool, source, item, businessId = null) {
+async function upsertMonthlySummary(pool, source, item, businessId = null, tenantId = null) {
   const periodMonth = parseClinicorpMonth(item.month ?? item.Month ?? item.period ?? item.Period ?? item.date ?? item.Date);
   if (!periodMonth) return false;
+  const tId = await resolveTenantId(pool, tenantId);
 
   await pool.query(
     `INSERT INTO clinicorp_monthly_summary
-       (source, period_month, business_id, total_in, total_out, total_amount,
+       (source, period_month, business_id, tenant_id, total_in, total_out, total_amount,
         cash, credit_card, debit_card, pix, bank_slip, raw, synced_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())
-     ON CONFLICT (source, period_month, business_id) DO UPDATE SET
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NOW())
+     ON CONFLICT (source, period_month, business_id, tenant_id) DO UPDATE SET
        total_in = COALESCE(clinicorp_monthly_summary.total_in, 0) + COALESCE(EXCLUDED.total_in, 0),
        total_out = COALESCE(clinicorp_monthly_summary.total_out, 0) + COALESCE(EXCLUDED.total_out, 0),
        total_amount = COALESCE(clinicorp_monthly_summary.total_amount, 0) + COALESCE(EXCLUDED.total_amount, 0),
@@ -1224,6 +1225,7 @@ async function upsertMonthlySummary(pool, source, item, businessId = null) {
       source,
       periodMonth,
       item.BusinessId ?? item.business_id ?? item.Clinic_BusinessId ?? businessId,
+      tId,
       item.in ?? item.totalIn ?? item.total_in ?? null,
       item.out ?? item.totalOut ?? item.total_out ?? null,
       item.totalPaymentsAmount ?? item.totalAmount ?? item.total_amount ?? item.amount ?? item.Amount ?? null,
