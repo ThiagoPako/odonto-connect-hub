@@ -1151,12 +1151,14 @@ async function projectEstimateToLocal(pool, e, tenantId = null) {
 async function upsertFinancial(pool, source, item, tenantId = null) {
   const externalId = String(item.id ?? item.Id ?? item.InvoiceId ?? item.PaymentId ?? '') || null;
   if (!externalId) return;
+  const tId = await resolveTenantId(pool, tenantId);
 
   await pool.query(
     `INSERT INTO clinicorp_financial_entries
-       (source, external_id, business_id, patient_id, amount, date, description, raw, synced_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8, NOW())
+       (source, external_id, tenant_id, business_id, patient_id, amount, date, description, raw, synced_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, NOW())
      ON CONFLICT (source, external_id) DO UPDATE SET
+       tenant_id = EXCLUDED.tenant_id,
        business_id = EXCLUDED.business_id,
        patient_id = EXCLUDED.patient_id,
        amount = EXCLUDED.amount,
@@ -1165,7 +1167,7 @@ async function upsertFinancial(pool, source, item, tenantId = null) {
        raw = EXCLUDED.raw,
        synced_at = NOW()`,
     [
-      source, externalId,
+      source, externalId, tId,
       item.BusinessId ?? null,
       item.PatientId ?? null,
       item.Amount ?? item.Value ?? null,
@@ -1198,16 +1200,17 @@ function parseClinicorpMonth(value) {
   return null;
 }
 
-async function upsertMonthlySummary(pool, source, item, businessId = null) {
+async function upsertMonthlySummary(pool, source, item, businessId = null, tenantId = null) {
   const periodMonth = parseClinicorpMonth(item.month ?? item.Month ?? item.period ?? item.Period ?? item.date ?? item.Date);
   if (!periodMonth) return false;
+  const tId = await resolveTenantId(pool, tenantId);
 
   await pool.query(
     `INSERT INTO clinicorp_monthly_summary
-       (source, period_month, business_id, total_in, total_out, total_amount,
+       (source, period_month, business_id, tenant_id, total_in, total_out, total_amount,
         cash, credit_card, debit_card, pix, bank_slip, raw, synced_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())
-     ON CONFLICT (source, period_month, business_id) DO UPDATE SET
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NOW())
+     ON CONFLICT (source, period_month, business_id, tenant_id) DO UPDATE SET
        total_in = COALESCE(clinicorp_monthly_summary.total_in, 0) + COALESCE(EXCLUDED.total_in, 0),
        total_out = COALESCE(clinicorp_monthly_summary.total_out, 0) + COALESCE(EXCLUDED.total_out, 0),
        total_amount = COALESCE(clinicorp_monthly_summary.total_amount, 0) + COALESCE(EXCLUDED.total_amount, 0),
@@ -1222,6 +1225,7 @@ async function upsertMonthlySummary(pool, source, item, businessId = null) {
       source,
       periodMonth,
       item.BusinessId ?? item.business_id ?? item.Clinic_BusinessId ?? businessId,
+      tId,
       item.in ?? item.totalIn ?? item.total_in ?? null,
       item.out ?? item.totalOut ?? item.total_out ?? null,
       item.totalPaymentsAmount ?? item.totalAmount ?? item.total_amount ?? item.amount ?? item.Amount ?? null,
@@ -1309,7 +1313,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
   const toDate = to || new Date(today.getTime() + 60 * 86400_000).toISOString().slice(0, 10);
   
   // AGENDA: apenas datas FUTURAS (a partir de amanhã) conforme solicitado pelo usuário
-  const apptFromDate = apptFrom || new Date(today.getTime() + 1 * 86400_000).toISOString().slice(0, 10);
+  const apptFromDate = apptFrom || today.toISOString().slice(0, 10); // Sincroniza a partir de HOJE para garantir que os dados apareçam no sistema
   const apptToDate = apptTo || new Date(today.getTime() + 365 * 86400_000).toISOString().slice(0, 10);
   
   // ORÇAMENTOS: janela ampla para garantir que orçamentos antigos e futuros sejam capturados
@@ -1620,7 +1624,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics WHERE tenant_id=$1', [tId_loc]);
     const processPayment = async (item, clinicId = null) => {
       if (isMonthlyFinancialSummary(item)) {
-        if (await upsertMonthlySummary(pool, 'payment', item, clinicId)) summary.payments++;
+        if (await upsertMonthlySummary(pool, 'payment', item, clinicId, tenant_id)) summary.payments++;
         return;
       }
       await upsertFinancial(pool, 'payment', item, tenant_id);
@@ -1646,7 +1650,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics WHERE tenant_id=$1', [tId_loc]);
     const processCashflow = async (item, clinicId = null) => {
       if (isMonthlyFinancialSummary(item)) {
-        if (await upsertMonthlySummary(pool, 'cashflow', item, clinicId)) summary.cashflow++;
+        if (await upsertMonthlySummary(pool, 'cashflow', item, clinicId, tenant_id)) summary.cashflow++;
         return;
       }
       await upsertFinancial(pool, 'cashflow', item, tenant_id);
@@ -2314,13 +2318,15 @@ export function registerClinicorp(app, pool) {
     res.json(rows);
   });
   app.get('/api/clinicorp/financial', async (req, res) => {
+    const tId = await tenantOf(req);
     const limit = Math.min(Number(req.query.limit) || 200, 1000);
-    const { rows } = await pool.query('SELECT * FROM clinicorp_financial_entries ORDER BY date DESC LIMIT $1', [limit]);
+    const { rows } = await pool.query('SELECT * FROM clinicorp_financial_entries WHERE tenant_id = $2 ORDER BY date DESC LIMIT $1', [limit, tId]);
     res.json(rows);
   });
   app.get('/api/clinicorp/financial/monthly-summary', async (req, res) => {
+    const tId = await tenantOf(req);
     const limit = Math.min(Number(req.query.limit) || 200, 1000);
-    const { rows } = await pool.query('SELECT * FROM clinicorp_monthly_summary ORDER BY period_month DESC, source LIMIT $1', [limit]);
+    const { rows } = await pool.query('SELECT * FROM clinicorp_monthly_summary WHERE tenant_id = $2 ORDER BY period_month DESC, source LIMIT $1', [limit, tId]);
     res.json(rows);
   });
   app.get('/api/clinicorp/chairs', async (req, res) => {
