@@ -170,8 +170,9 @@ async function _clinicorpFetchRaw(settings, pathName, { method = 'GET', query = 
   
   // Limpar query parameters vazios ou nulos para evitar erros na API do Clinicorp
   const allQuery = { ...query };
-  // subscriber_id is only needed if not already present in query
-  if (settings.subscriber_id && allQuery.subscriber_id === undefined && allQuery.business_id === undefined) {
+  // subscriber_id é OBRIGATÓRIO em TODAS as chamadas da Clinicorp (mesmo quando há business_id).
+  // A API retorna HTTP 400 "É necessário informar o id do assinante" se omitido.
+  if (settings.subscriber_id && (allQuery.subscriber_id === undefined || allQuery.subscriber_id === null || allQuery.subscriber_id === '')) {
     allQuery.subscriber_id = settings.subscriber_id;
   }
   
