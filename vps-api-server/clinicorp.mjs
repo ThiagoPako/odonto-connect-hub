@@ -2316,13 +2316,15 @@ export function registerClinicorp(app, pool) {
     res.json(rows);
   });
   app.get('/api/clinicorp/financial', async (req, res) => {
+    const tId = await tenantOf(req);
     const limit = Math.min(Number(req.query.limit) || 200, 1000);
-    const { rows } = await pool.query('SELECT * FROM clinicorp_financial_entries ORDER BY date DESC LIMIT $1', [limit]);
+    const { rows } = await pool.query('SELECT * FROM clinicorp_financial_entries WHERE tenant_id = $2 ORDER BY date DESC LIMIT $1', [limit, tId]);
     res.json(rows);
   });
   app.get('/api/clinicorp/financial/monthly-summary', async (req, res) => {
+    const tId = await tenantOf(req);
     const limit = Math.min(Number(req.query.limit) || 200, 1000);
-    const { rows } = await pool.query('SELECT * FROM clinicorp_monthly_summary ORDER BY period_month DESC, source LIMIT $1', [limit]);
+    const { rows } = await pool.query('SELECT * FROM clinicorp_monthly_summary WHERE tenant_id = $2 ORDER BY period_month DESC, source LIMIT $1', [limit, tId]);
     res.json(rows);
   });
   app.get('/api/clinicorp/chairs', async (req, res) => {
