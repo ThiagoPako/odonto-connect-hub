@@ -10831,6 +10831,19 @@ app.post('/api/clinicorp/sync/now', async (req, res) => {
       return res.status(400).json({ error: 'Ative a sincronização Clinicorp antes de sincronizar' });
     }
 
+    const normalizedSettings = {
+      ...settings,
+      base_url: settings.base_url || 'https://api.clinicorp.com/rest/v1',
+    };
+    const cooldownSeconds = getClinicorpTestCooldownSeconds(normalizedSettings);
+    if (cooldownSeconds > 0) {
+      return res.status(429).json({
+        error: `Clinicorp em limite de chamadas. Aguarde ${Math.ceil(cooldownSeconds / 60)} min antes de sincronizar de novo.`,
+        rate_limited: true,
+        retry_after_seconds: cooldownSeconds,
+      });
+    }
+
     const { runFullSync } = await import('./clinicorp.mjs');
     const today = new Date();
     const from = new Date(today.getTime() - 30 * 86400_000).toISOString().slice(0, 10);
@@ -10855,6 +10868,14 @@ app.post('/api/clinicorp/sync/now', async (req, res) => {
     res.json(result);
   } catch (e) {
     console.error('[clinicorp manual sync error]', e);
+    const retryAfterSeconds = Number(e.retry_after_seconds ?? e.retryAfter);
+    if (e.status === 429 || /HTTP 429|rate limited/i.test(String(e.message || ''))) {
+      return res.status(429).json({
+        error: e.message,
+        rate_limited: true,
+        retry_after_seconds: Number.isFinite(retryAfterSeconds) ? retryAfterSeconds : null,
+      });
+    }
     res.status(500).json({ error: e.message });
   }
 });
