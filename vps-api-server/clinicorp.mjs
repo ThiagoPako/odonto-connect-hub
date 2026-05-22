@@ -1363,7 +1363,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     const tId = await resolveTenantId(pool, tenant_id);
     const { rows: appts } = await pool.query(
       `SELECT raw, id FROM clinicorp_appointments WHERE tenant_id=$3 AND date >= $1 AND date <= $2`,
-      [fromDate, toDate, tId]
+      [apptFromDate, apptToDate, tId]
     );
     for (const r of appts) { 
       const rawData = typeof r.raw === 'string' ? JSON.parse(r.raw) : r.raw;
