@@ -10646,6 +10646,19 @@ app.delete('/api/clinicorp/my-settings', async (req, res) => {
 // to the saved per-user settings. Returns per-endpoint diagnostics.
 const clinicorpTestCooldowns = new Map();
 
+function getClinicorpTestCooldownSeconds(settings) {
+  const cooldownKey = `${settings.base_url}|${settings.subscriber_id}`;
+  const cooldownUntil = clinicorpTestCooldowns.get(cooldownKey) || 0;
+  return Math.max(0, Math.ceil((cooldownUntil - Date.now()) / 1000));
+}
+
+function setClinicorpTestCooldown(settings, retryAfterSeconds) {
+  const cooldownKey = `${settings.base_url}|${settings.subscriber_id}`;
+  const waitSeconds = Math.min(Math.max(Number(retryAfterSeconds) || 60, 60), 60 * 60);
+  clinicorpTestCooldowns.set(cooldownKey, Date.now() + waitSeconds * 1000);
+  return waitSeconds;
+}
+
 app.post('/api/clinicorp/my-settings/test', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
@@ -10672,10 +10685,9 @@ app.post('/api/clinicorp/my-settings/test', async (req, res) => {
       base_url: base_url || 'https://api.clinicorp.com/rest/v1',
     };
 
-    const cooldownKey = `${settings.base_url}|${settings.subscriber_id}`;
-    const cooldownUntil = clinicorpTestCooldowns.get(cooldownKey) || 0;
-    if (cooldownUntil > Date.now()) {
-      const retryAfterSeconds = Math.ceil((cooldownUntil - Date.now()) / 1000);
+    const cooldownSeconds = getClinicorpTestCooldownSeconds(settings);
+    if (cooldownSeconds > 0) {
+      const retryAfterSeconds = cooldownSeconds;
       return res.json({
         ok: false,
         auth: 'rate_limited',
@@ -10769,9 +10781,9 @@ app.post('/api/clinicorp/my-settings/test', async (req, res) => {
       : (rateLimit ? 'rate_limited' : (ok ? 'valid' : 'partial'));
     const retryAfterSeconds = rateLimit?.retry_after_seconds ?? null;
     if (rateLimit) {
-      clinicorpTestCooldowns.set(cooldownKey, Date.now() + Math.min((retryAfterSeconds || 60) * 1000, 30 * 60 * 1000));
+      setClinicorpTestCooldown(settings, retryAfterSeconds);
     } else if (ok) {
-      clinicorpTestCooldowns.delete(cooldownKey);
+      clinicorpTestCooldowns.delete(`${settings.base_url}|${settings.subscriber_id}`);
     }
 
     res.json({
@@ -10819,6 +10831,19 @@ app.post('/api/clinicorp/sync/now', async (req, res) => {
       return res.status(400).json({ error: 'Ative a sincronização Clinicorp antes de sincronizar' });
     }
 
+    const normalizedSettings = {
+      ...settings,
+      base_url: settings.base_url || 'https://api.clinicorp.com/rest/v1',
+    };
+    const cooldownSeconds = getClinicorpTestCooldownSeconds(normalizedSettings);
+    if (cooldownSeconds > 0) {
+      return res.status(429).json({
+        error: `Clinicorp em limite de chamadas. Aguarde ${Math.ceil(cooldownSeconds / 60)} min antes de sincronizar de novo.`,
+        rate_limited: true,
+        retry_after_seconds: cooldownSeconds,
+      });
+    }
+
     const { runFullSync } = await import('./clinicorp.mjs');
     const today = new Date();
     const from = new Date(today.getTime() - 30 * 86400_000).toISOString().slice(0, 10);
@@ -10843,6 +10868,14 @@ app.post('/api/clinicorp/sync/now', async (req, res) => {
     res.json(result);
   } catch (e) {
     console.error('[clinicorp manual sync error]', e);
+    const retryAfterSeconds = Number(e.retry_after_seconds ?? e.retryAfter);
+    if (e.status === 429 || /HTTP 429|rate limited/i.test(String(e.message || ''))) {
+      return res.status(429).json({
+        error: e.message,
+        rate_limited: true,
+        retry_after_seconds: Number.isFinite(retryAfterSeconds) ? retryAfterSeconds : null,
+      });
+    }
     res.status(500).json({ error: e.message });
   }
 });

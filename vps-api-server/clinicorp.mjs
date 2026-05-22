@@ -138,6 +138,10 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const _queues = new Map(); // subscriber_id -> Promise chain
 let _globalPauseUntil = 0;
 
+function isClinicorpRateLimitError(err) {
+  return err?.status === 429 || /HTTP 429|rate limited/i.test(String(err?.message || ''));
+}
+
 function _enqueue(subscriberKey, task) {
   const prev = _queues.get(subscriberKey) || Promise.resolve();
   const next = prev.then(async () => {
@@ -215,6 +219,7 @@ async function _clinicorpFetchRaw(settings, pathName, { method = 'GET', query = 
         const err = new Error(`Clinicorp ${method} ${pathName} → HTTP 429: rate limited (retry-after ${raSec}s)`);
         err.status = 429;
         err.retry_after_seconds = raSec;
+        err.retryAfter = raSec;
         throw err;
       }
       const shouldRetry = (res.status === 502 || res.status === 503 || res.status === 504) && retryCount < maxRetries;
@@ -1352,6 +1357,13 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
 
   const safe = async (label, fn) => {
     try { 
+      if (_globalPauseUntil > Date.now()) {
+        const retryAfter = Math.ceil((_globalPauseUntil - Date.now()) / 1000);
+        const err = new Error(`Clinicorp em rate limit — aguardando ${retryAfter}s antes de novas chamadas`);
+        err.status = 429;
+        err.retry_after_seconds = retryAfter;
+        throw err;
+      }
       if (user_id) {
         await pool.query(
           `UPDATE clinicorp_user_settings SET last_sync_status = 'syncing', last_sync_error = $2, updated_at = NOW() WHERE user_id = $1`,
@@ -1362,6 +1374,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     } catch (e) { 
       errors.push(`${label}: ${e.message}`); 
       console.error(`[clinicorp sync] ${label}`, e.message); 
+      if (isClinicorpRateLimitError(e)) throw e;
     }
   };
 
@@ -1920,17 +1933,19 @@ export async function reconciliationTick(pool) {
     } catch (e) {
       console.error(`[clinicorp] user ${u.user_id} tick error:`, e.message);
       // Circuit breaker: se rate-limited (429), empurra last_sync_at para o futuro
-      // para que o próximo tick (60s) NÃO tente de novo. Espera ~30 min antes de retomar.
-      if (e.status === 429 || /HTTP 429/.test(e.message)) {
+      // para que o próximo tick (60s) NÃO tente de novo. Respeita o retry-after da Clinicorp.
+      if (isClinicorpRateLimitError(e)) {
+        const retryAfter = Number(e.retry_after_seconds ?? e.retryAfter);
+        const waitSeconds = Math.min(Math.max(Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : 1800, 300), 3600);
         await pool.query(
           `UPDATE clinicorp_user_settings
-             SET last_sync_at = NOW() + INTERVAL '30 minutes',
+             SET last_sync_at = NOW() + ($2::int * INTERVAL '1 second'),
                  last_sync_status = 'rate_limited',
-                 last_sync_error = $2
+                  last_sync_error = $3
            WHERE user_id = $1`,
-          [u.user_id, 'Rate limit Clinicorp — aguardando 30 min']
+          [u.user_id, waitSeconds, `Rate limit Clinicorp — aguardando ${Math.ceil(waitSeconds / 60)} min`]
         );
-        console.warn(`[clinicorp] user ${u.user_id} rate-limited, pausando auto-sync por 30min`);
+        console.warn(`[clinicorp] user ${u.user_id} rate-limited, pausando auto-sync por ${waitSeconds}s`);
       } else {
         await pool.query(`UPDATE clinicorp_user_settings SET last_sync_at = NOW(), last_sync_status = 'error', last_sync_error = $2 WHERE user_id = $1`, [u.user_id, e.message]);
       }
