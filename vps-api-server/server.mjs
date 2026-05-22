@@ -10724,8 +10724,9 @@ app.post('/api/clinicorp/my-settings/test', async (req, res) => {
       { key: 'clinics',       label: 'Clínicas',      path: '/business/list' },
       { key: 'appointments',  label: 'Agenda',        path: '/appointment/list',           query: { from: dateStr, to: dateStr } },
       { key: 'professionals', label: 'Profissionais', path: '/procedures/list_specialties' },
-      { key: 'patients',      label: 'Pacientes',     path: '/appointment/list_categories' },
+      { key: 'patients',      label: 'Pacientes',     path: '/patient/list' }, // Alterado para /patient/list para maior clareza
       { key: 'estimates',     label: 'Orçamentos',    path: '/estimates/list',             query: { from: dateStr, to: dateStr } },
+      { key: 'financial',     label: 'Financeiro',    path: '/financial/list_invoices',    query: { from: dateStr, to: dateStr } },
     ];
 
     console.log(`[ClinicorpTest] Testing connection for user ${user.id} (${user.email}) - Subscriber: ${subscriber_id}`);
