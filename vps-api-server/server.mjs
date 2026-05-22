@@ -973,6 +973,7 @@ const REQUIRED_SCHEMA = [
   { migration: 'migration-ai-settings.sql',       table: 'clinical_reports' },
   { migration: 'migration-reativacao.sql',        table: 'reactivation_rules' },
   { migration: 'migration-reativacao.sql',        table: 'reactivation_sends' },
+  { migration: 'migration-finance-multitenant.sql', table: 'clinicorp_financial_entries', column: 'tenant_id' },
 ];
 
 app.get('/api/health', async (req, res) => {
