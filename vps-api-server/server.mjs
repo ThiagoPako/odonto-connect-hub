@@ -10646,6 +10646,19 @@ app.delete('/api/clinicorp/my-settings', async (req, res) => {
 // to the saved per-user settings. Returns per-endpoint diagnostics.
 const clinicorpTestCooldowns = new Map();
 
+function getClinicorpTestCooldownSeconds(settings) {
+  const cooldownKey = `${settings.base_url}|${settings.subscriber_id}`;
+  const cooldownUntil = clinicorpTestCooldowns.get(cooldownKey) || 0;
+  return Math.max(0, Math.ceil((cooldownUntil - Date.now()) / 1000));
+}
+
+function setClinicorpTestCooldown(settings, retryAfterSeconds) {
+  const cooldownKey = `${settings.base_url}|${settings.subscriber_id}`;
+  const waitSeconds = Math.min(Math.max(Number(retryAfterSeconds) || 60, 60), 60 * 60);
+  clinicorpTestCooldowns.set(cooldownKey, Date.now() + waitSeconds * 1000);
+  return waitSeconds;
+}
+
 app.post('/api/clinicorp/my-settings/test', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
@@ -10672,10 +10685,9 @@ app.post('/api/clinicorp/my-settings/test', async (req, res) => {
       base_url: base_url || 'https://api.clinicorp.com/rest/v1',
     };
 
-    const cooldownKey = `${settings.base_url}|${settings.subscriber_id}`;
-    const cooldownUntil = clinicorpTestCooldowns.get(cooldownKey) || 0;
-    if (cooldownUntil > Date.now()) {
-      const retryAfterSeconds = Math.ceil((cooldownUntil - Date.now()) / 1000);
+    const cooldownSeconds = getClinicorpTestCooldownSeconds(settings);
+    if (cooldownSeconds > 0) {
+      const retryAfterSeconds = cooldownSeconds;
       return res.json({
         ok: false,
         auth: 'rate_limited',
@@ -10769,9 +10781,9 @@ app.post('/api/clinicorp/my-settings/test', async (req, res) => {
       : (rateLimit ? 'rate_limited' : (ok ? 'valid' : 'partial'));
     const retryAfterSeconds = rateLimit?.retry_after_seconds ?? null;
     if (rateLimit) {
-      clinicorpTestCooldowns.set(cooldownKey, Date.now() + Math.min((retryAfterSeconds || 60) * 1000, 30 * 60 * 1000));
+      setClinicorpTestCooldown(settings, retryAfterSeconds);
     } else if (ok) {
-      clinicorpTestCooldowns.delete(cooldownKey);
+      clinicorpTestCooldowns.delete(`${settings.base_url}|${settings.subscriber_id}`);
     }
 
     res.json({
