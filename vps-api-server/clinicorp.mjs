@@ -1624,7 +1624,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics WHERE tenant_id=$1', [tId_loc]);
     const processPayment = async (item, clinicId = null) => {
       if (isMonthlyFinancialSummary(item)) {
-        if (await upsertMonthlySummary(pool, 'payment', item, clinicId)) summary.payments++;
+        if (await upsertMonthlySummary(pool, 'payment', item, clinicId, tenant_id)) summary.payments++;
         return;
       }
       await upsertFinancial(pool, 'payment', item, tenant_id);
