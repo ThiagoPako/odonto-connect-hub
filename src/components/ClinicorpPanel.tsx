@@ -284,22 +284,13 @@ export function ClinicorpPanel() {
       <div className="rounded-2xl border border-border bg-card p-5 space-y-4">
         <div className="flex items-center gap-2">
           <RefreshCw className="h-4 w-4 text-primary" />
-          <h4 className="text-sm font-semibold text-foreground">Ações de sincronização</h4>
+          <h4 className="text-sm font-semibold text-foreground">Ferramentas de Manutenção</h4>
         </div>
         <p className="text-xs text-muted-foreground">
-          Use estas ações para forçar uma sincronização manual ou reconciliar dados. O espelhamento normal é automático
-          (webhook em tempo real + job periódico configurado abaixo).
+          Ferramentas avançadas para reconciliação manual e correção de dados. Use a seção "Minhas credenciais" acima para o sincronismo principal.
         </p>
 
         <div className="flex flex-wrap gap-2 pt-2">
-          <Button variant="outline" onClick={handleTest} disabled={testing}>
-            {testing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
-            Verificar conexão
-          </Button>
-          <Button onClick={handleSync} disabled={syncing}>
-            {syncing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />}
-            Sincronizar agora
-          </Button>
 
           <Button
             variant="outline"
