@@ -727,8 +727,11 @@ async function ensureLocalProfessional(pool, cpProfId, fallbackName = null, tena
   if (!cpProfId) return null;
   const tId = await resolveTenantId(pool, tenantId);
   const cleanFallback = (fallbackName || '').toString().trim() || null;
-  const found = await pool.query(`SELECT id, nome FROM dentistas WHERE clinicorp_professional_id=$1 AND tenant_id=$2 LIMIT 1`, [cpProfId, tId]);
+  const found = await pool.query(`SELECT id, nome, tenant_id FROM dentistas WHERE clinicorp_professional_id=$1 LIMIT 1`, [cpProfId]);
   if (found.rows[0]) {
+    if (!found.rows[0].tenant_id) {
+      await pool.query(`UPDATE dentistas SET tenant_id=$1, updated_at=NOW() WHERE id=$2 AND tenant_id IS NULL`, [tId, found.rows[0].id]);
+    }
     // Atualiza nome se estava como placeholder "Profissional XXX" e agora temos um real
     const currentName = (found.rows[0].nome || '').trim();
     const newName = cleanFallback && !/^Profissional\s+\d+$/i.test(cleanFallback) ? cleanFallback : null;
@@ -745,8 +748,21 @@ async function ensureLocalProfessional(pool, cpProfId, fallbackName = null, tena
     [nome, tId]
   );
   if (match.rows[0]) {
-    await pool.query(`UPDATE dentistas SET clinicorp_professional_id=$1, updated_at=NOW() WHERE id=$2`, [cpProfId, match.rows[0].id]);
-    return match.rows[0].id;
+    try {
+      await pool.query(`UPDATE dentistas SET clinicorp_professional_id=$1, updated_at=NOW() WHERE id=$2`, [cpProfId, match.rows[0].id]);
+      return match.rows[0].id;
+    } catch (e) {
+      if (e.code === '23505') {
+        const existing = await pool.query(`SELECT id, tenant_id FROM dentistas WHERE clinicorp_professional_id=$1 LIMIT 1`, [cpProfId]);
+        if (existing.rows[0]) {
+          if (!existing.rows[0].tenant_id) {
+            await pool.query(`UPDATE dentistas SET tenant_id=$1, updated_at=NOW() WHERE id=$2 AND tenant_id IS NULL`, [tId, existing.rows[0].id]);
+          }
+          return existing.rows[0].id;
+        }
+      }
+      throw e;
+    }
   }
   try {
     const ins = await pool.query(
