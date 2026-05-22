@@ -680,7 +680,7 @@ function normalizeClinicorpTime(...values) {
 async function ensureLocalPatient(pool, cpId, fallback = {}, tenantId = null) {
   if (!cpId) return null;
   const tId = await resolveTenantId(pool, tenantId);
-  const found = await pool.query(`SELECT id FROM pacientes WHERE clinicorp_patient_id = $1 AND tenant_id = $2 LIMIT 1`, [cpId, tId]);
+  const found = await pool.query(`SELECT id, tenant_id FROM pacientes WHERE clinicorp_patient_id = $1 LIMIT 1`, [cpId]);
   const cp = await pool.query(`SELECT * FROM clinicorp_patients WHERE id = $1 AND tenant_id = $2`, [cpId, tId]);
   const src = cp.rows[0] || {};
   const nome = src.name || fallback.name || 'Paciente';
@@ -690,6 +690,9 @@ async function ensureLocalPatient(pool, cpId, fallback = {}, tenantId = null) {
   const sexo = src.sex || null;
   const cpf = src.document_id || null;
   if (found.rows[0]) {
+    if (String(found.rows[0].tenant_id || '') !== String(tId)) {
+      await pool.query(`UPDATE pacientes SET tenant_id=$1, updated_at=NOW() WHERE id=$2`, [tId, found.rows[0].id]);
+    }
     await pool.query(
       `UPDATE pacientes SET nome=COALESCE(NULLIF($2,''),nome), telefone=COALESCE($3,telefone),
          email=COALESCE($4,email), data_nascimento=COALESCE($5,data_nascimento),
@@ -708,7 +711,20 @@ async function ensureLocalPatient(pool, cpId, fallback = {}, tenantId = null) {
     matchId = r.rows[0]?.id || null;
   }
   if (matchId) {
-    await pool.query(`UPDATE pacientes SET clinicorp_patient_id=$1, updated_at=NOW() WHERE id=$2`, [cpId, matchId]);
+    try {
+      await pool.query(`UPDATE pacientes SET clinicorp_patient_id=$1, tenant_id=$2, updated_at=NOW() WHERE id=$3`, [cpId, tId, matchId]);
+    } catch (e) {
+      if (e.code === '23505') {
+        const r = await pool.query(`SELECT id, tenant_id FROM pacientes WHERE clinicorp_patient_id=$1 LIMIT 1`, [cpId]);
+        if (r.rows[0]) {
+          if (String(r.rows[0].tenant_id || '') !== String(tId)) {
+            await pool.query(`UPDATE pacientes SET tenant_id=$1, updated_at=NOW() WHERE id=$2`, [tId, r.rows[0].id]);
+          }
+          return r.rows[0].id;
+        }
+      }
+      throw e;
+    }
     return matchId;
   }
   try {
@@ -721,8 +737,13 @@ async function ensureLocalPatient(pool, cpId, fallback = {}, tenantId = null) {
   } catch (e) {
     // Race condition: outro processo inseriu o mesmo paciente — busca e retorna
     if (e.code === '23505') {
-      const r = await pool.query(`SELECT id FROM pacientes WHERE clinicorp_patient_id=$1 AND tenant_id=$2 LIMIT 1`, [cpId, tId]);
-      if (r.rows[0]) return r.rows[0].id;
+      const r = await pool.query(`SELECT id, tenant_id FROM pacientes WHERE clinicorp_patient_id=$1 LIMIT 1`, [cpId]);
+      if (r.rows[0]) {
+        if (String(r.rows[0].tenant_id || '') !== String(tId)) {
+          await pool.query(`UPDATE pacientes SET tenant_id=$1, updated_at=NOW() WHERE id=$2`, [tId, r.rows[0].id]);
+        }
+        return r.rows[0].id;
+      }
     }
     throw e;
   }
