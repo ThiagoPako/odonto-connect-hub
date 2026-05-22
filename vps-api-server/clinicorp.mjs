@@ -297,26 +297,28 @@ export const clinicorpApi = {
     };
     const extract = extractClinicorpList;
 
-    // 1) Preferred path: try /appointment/list with the whole range FIRST (efficient)
+    // 1) Preferred path: Clinicorp's /appointment/list espera start_date / end_date (snake_case)
+    //    no formato YYYY-MM-DD. A mensagem "É necessário informar a data inicial no formato JSON
+    //    (YYYY-MM-DD)" significa que os nomes dos parâmetros estavam errados — não que precise
+    //    enviar JSON.
     const baseBiz = businessId
       ? { Clinic_BusinessId: businessId, business_id: businessId, BusinessId: businessId }
       : {};
 
     try {
-      const data = await clinicorpFetch(s, '/appointment/list', { 
-        query: { fromDate: from, toDate: to, ...baseBiz } 
+      const data = await clinicorpFetch(s, '/appointment/list', {
+        query: { start_date: from, end_date: to, ...baseBiz },
       });
       const arr = extract(data);
       if (Array.isArray(arr) && arr.length > 0) {
         push(arr);
-        // If we got results from the range call, we can skip the expensive per-day loop
         return aggregate;
       }
     } catch (e) {
-      // If 404 or specific error, continue to per-day loop for precision
+      if (e?.status === 429) throw e;
     }
 
-    // 2) Granular path: list_by_date_and_clinic per day, per clinic (only if businessId is present and first call failed)
+    // 2) Granular path: list_by_date_and_clinic per day, per clinic (se businessId presente)
     if (businessId) {
       try {
         const start = new Date(from + 'T00:00:00Z');
@@ -329,27 +331,25 @@ export const clinicorpApi = {
             });
             push(extract(data));
           } catch (e) {
-            // If this endpoint doesn't exist on the account, abort the per-day loop and fall back
+            if (e?.status === 429) throw e;
             if (e?.status === 404 || e?.status === 400) break;
-            // For 5xx we keep trying other days
           }
         }
         if (aggregate.length > 0) return aggregate;
-      } catch (_) { /* fall through to variants */ }
+      } catch (e) {
+        if (e?.status === 429) throw e;
+      }
     }
 
-    // 3) Fallback: /appointment/list with multiple param naming variants
+    // 3) Fallback: outras variantes de nome conhecidas
     const variants = [
-      { fromDate: from, toDate: to, ...baseBiz },
-      { from, to, ...baseBiz },
-      { date_from: from, date_to: to, ...baseBiz },
       { startDate: from, endDate: to, ...baseBiz },
+      { fromDate: from, toDate: to, ...baseBiz },
+      { date_start: from, date_end: to, ...baseBiz },
+      { date_from: from, date_to: to, ...baseBiz },
       { initialDate: from, finalDate: to, ...baseBiz },
-      { DateFrom: from, DateTo: to, ...baseBiz },
-      { BeginDate: from, EndDate: to, ...baseBiz },
-      { StartDate: from, EndDate: to, ...baseBiz },
       { DataInicial: from, DataFinal: to, ...baseBiz },
-      { SK_DateFirstTime: toAtomic(from), ...baseBiz },
+      { SK_DateFirstTime: toAtomic(from), SK_DateLastTime: toAtomic(to), ...baseBiz },
     ];
     let lastErr = null;
     for (const q of variants) {
@@ -357,7 +357,11 @@ export const clinicorpApi = {
         const data = await clinicorpFetch(s, '/appointment/list', { query: q });
         const arr = extract(data);
         if (Array.isArray(arr) && arr.length > 0) push(arr);
-      } catch (e) { lastErr = e; }
+        if (aggregate.length > 0) return aggregate;
+      } catch (e) {
+        if (e?.status === 429) throw e;
+        lastErr = e;
+      }
     }
     if (aggregate.length > 0) return aggregate;
     if (lastErr) throw lastErr;
