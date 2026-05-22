@@ -915,20 +915,14 @@ async function logConflict(pool, row) {
 // Decide se devemos sobrescrever um registro local com dados do Clinicorp.
 // localRow: { updated_at, last_clinicorp_sync_at, keep_local }
 function decideOverwrite({ strategy, keepLocal, localRow, clinicorpUpdatedAt }) {
+  // O usuário solicitou que SEMPRE sobrescreva para evitar duplicidade e erro de sincronização
   if (!localRow) return { write: true, decision: 'created' };
+  
+  // Mantemos apenas a trava explícita de "keepLocal" se configurada manualmente no banco
   if (keepLocal || localRow.keep_local) return { write: false, decision: 'kept_local' };
-  const lastSync = localRow.last_clinicorp_sync_at ? new Date(localRow.last_clinicorp_sync_at).getTime() : 0;
-  const localUpd = localRow.updated_at ? new Date(localRow.updated_at).getTime() : 0;
-  const cpUpd    = clinicorpUpdatedAt ? new Date(clinicorpUpdatedAt).getTime() : Date.now();
-  const localChangedSinceSync = localUpd > lastSync + 1500; // tolerância 1.5s
-  if (strategy === 'clinicorp_wins') return { write: true, decision: 'overwritten_by_clinicorp' };
-  if (strategy === 'local_wins')     return localChangedSinceSync
-    ? { write: false, decision: 'kept_local' }
-    : { write: true, decision: 'overwritten_by_clinicorp' };
-  // newest_wins (padrão)
-  if (!localChangedSinceSync) return { write: true, decision: 'overwritten_by_clinicorp' };
-  if (cpUpd > localUpd)        return { write: true, decision: 'kept_clinicorp_newer' };
-  return { write: false, decision: 'kept_local_newer' };
+  
+  // Por padrão, agora forçamos a vitória da Clinicorp conforme pedido do usuário
+  return { write: true, decision: 'overwritten_by_clinicorp' };
 }
 
 async function projectAppointmentToLocal(pool, a, cpApptId, tenantId = null) {
