@@ -10699,16 +10699,27 @@ app.post('/api/clinicorp/my-settings/test', async (req, res) => {
     };
 
 
+    // Testamos um endpoint por módulo para validar que a integração cobre
+    // Clínicas, Agenda, Profissionais, Pacientes e Orçamentos.
+    // Chamadas sequenciais com pequeno delay para não acionar 429.
+    const today = new Date();
+    const yyyy = today.getFullYear();
+    const mm = String(today.getMonth() + 1).padStart(2, '0');
+    const dd = String(today.getDate()).padStart(2, '0');
+    const dateStr = `${yyyy}-${mm}-${dd}`;
+
     const probes = [
-      // Keep the connection test lightweight: one authenticated request is enough to validate
-      // the credentials and avoids multiplying Clinicorp 429 rate-limit blocks.
-      { key: 'clinics', label: 'Clínicas', path: '/business/list' },
+      { key: 'clinics',       label: 'Clínicas',      path: '/business/list' },
+      { key: 'appointments',  label: 'Agenda',        path: '/appointment/list',           query: { from: dateStr, to: dateStr } },
+      { key: 'professionals', label: 'Profissionais', path: '/procedures/list_specialties' },
+      { key: 'patients',      label: 'Pacientes',     path: '/appointment/list_categories' },
+      { key: 'estimates',     label: 'Orçamentos',    path: '/estimates/list',             query: { from: dateStr, to: dateStr } },
     ];
 
     console.log(`[ClinicorpTest] Testing connection for user ${user.id} (${user.email}) - Subscriber: ${subscriber_id}`);
     const startedAt = Date.now();
-    // Run all probes in parallel to keep total response time under nginx's gateway timeout.
-    const results = await Promise.all(probes.map(async (p) => {
+    const results = [];
+    for (const p of probes) {
       const t0 = Date.now();
       let attempt = 0;
       let lastError = null;
@@ -10717,7 +10728,7 @@ app.post('/api/clinicorp/my-settings/test', async (req, res) => {
 
       while (attempt < 2 && !success) {
         try {
-          data = await clinicorpFetchProbe(settings, p.path, { timeoutMs: 12_000 });
+          data = await clinicorpFetchProbe(settings, p.path, { timeoutMs: 12_000, query: p.query });
           success = true;
         } catch (e) {
           lastError = e;
@@ -10732,18 +10743,23 @@ app.post('/api/clinicorp/my-settings/test', async (req, res) => {
       }
 
       if (success) {
-        return { ...p, ok: true, latency_ms: Date.now() - t0, count: Array.isArray(data) ? data.length : (data ? 1 : 0), retries: attempt };
+        results.push({ ...p, ok: true, latency_ms: Date.now() - t0, count: Array.isArray(data) ? data.length : (data ? 1 : 0), retries: attempt });
+      } else {
+        results.push({
+          ...p,
+          ok: false,
+          latency_ms: Date.now() - t0,
+          status: lastError?.status || null,
+          error: lastError?.message || 'timeout',
+          retry_after_seconds: lastError?.retryAfter ?? null,
+          retries: attempt,
+        });
+        // Se 429, pare imediatamente para não piorar o rate limit.
+        if (lastError?.status === 429) break;
       }
-      return {
-        ...p,
-        ok: false,
-        latency_ms: Date.now() - t0,
-        status: lastError?.status || null,
-        error: lastError?.message || 'timeout',
-        retry_after_seconds: lastError?.retryAfter ?? null,
-        retries: attempt,
-      };
-    }));
+      // Pequena pausa entre probes para respeitar limites.
+      await clinicorpProbeSleep(350);
+    }
 
 
     const ok = results.every((r) => r.ok);
