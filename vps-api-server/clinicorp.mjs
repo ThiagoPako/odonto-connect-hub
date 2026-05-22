@@ -1485,7 +1485,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     const tId = await resolveTenantId(pool, tenant_id);
     const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics WHERE tenant_id=$1', [tId]);
     const apiIds = new Set();
-    const ranges = sliceRange(fromDate, toDate);
+    const ranges = sliceRange(apptFromDate, apptToDate);
 
     const processAppts = async (list) => {
       for (const a of (Array.isArray(list) ? list : [])) {
