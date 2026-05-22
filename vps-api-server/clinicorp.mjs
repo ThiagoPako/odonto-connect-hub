@@ -1592,7 +1592,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
 
   await safe('estimates', async () => {
     const tId = await resolveTenantId(pool, tenant_id);
-    const ranges = sliceRange(fromDate, toDate);
+    const ranges = sliceRange(estFromDate, estToDate);
     const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics WHERE tenant_id=$1', [tId]);
     
     for (const r of ranges) {
