@@ -10852,6 +10852,11 @@ async function clinicorpFetchProbe(settings, pathName, opts = {}) {
   const base = (settings.base_url || 'https://api.clinicorp.com/rest/v1').replace(/\/$/, '');
   const url = new URL(base + pathName);
   if (settings.subscriber_id) url.searchParams.set('subscriber_id', settings.subscriber_id);
+  if (opts.query && typeof opts.query === 'object') {
+    for (const [k, v] of Object.entries(opts.query)) {
+      if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));
+    }
+  }
   const ctrl = new AbortController();
   const timeout = setTimeout(() => ctrl.abort(), opts.timeoutMs || 45_000);
   try {
