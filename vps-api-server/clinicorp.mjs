@@ -1151,12 +1151,14 @@ async function projectEstimateToLocal(pool, e, tenantId = null) {
 async function upsertFinancial(pool, source, item, tenantId = null) {
   const externalId = String(item.id ?? item.Id ?? item.InvoiceId ?? item.PaymentId ?? '') || null;
   if (!externalId) return;
+  const tId = await resolveTenantId(pool, tenantId);
 
   await pool.query(
     `INSERT INTO clinicorp_financial_entries
-       (source, external_id, business_id, patient_id, amount, date, description, raw, synced_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8, NOW())
+       (source, external_id, tenant_id, business_id, patient_id, amount, date, description, raw, synced_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, NOW())
      ON CONFLICT (source, external_id) DO UPDATE SET
+       tenant_id = EXCLUDED.tenant_id,
        business_id = EXCLUDED.business_id,
        patient_id = EXCLUDED.patient_id,
        amount = EXCLUDED.amount,
@@ -1165,7 +1167,7 @@ async function upsertFinancial(pool, source, item, tenantId = null) {
        raw = EXCLUDED.raw,
        synced_at = NOW()`,
     [
-      source, externalId,
+      source, externalId, tId,
       item.BusinessId ?? null,
       item.PatientId ?? null,
       item.Amount ?? item.Value ?? null,
