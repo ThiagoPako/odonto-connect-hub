@@ -10845,16 +10845,13 @@ app.post('/api/clinicorp/sync/now', async (req, res) => {
     }
 
     const { runFullSync } = await import('./clinicorp.mjs');
-    const today = new Date();
-    const from = new Date(today.getTime() - 30 * 86400_000).toISOString().slice(0, 10);
-    const to = new Date(today.getTime() + 60 * 86400_000).toISOString().slice(0, 10);
     const result = await runFullSync(pool, { 
       api_token: settings.api_token, 
       subscriber_id: settings.subscriber_id, 
       base_url: settings.base_url,
       tenant_id: user.tenant_id,
-      from,
-      to,
+      from: req.body?.from,
+      to: req.body?.to,
       force_metadata: req.body?.force_metadata === true
     });
 
