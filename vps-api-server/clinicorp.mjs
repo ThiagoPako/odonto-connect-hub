@@ -279,12 +279,11 @@ export const clinicorpApi = {
   listAppointmentCategories: (s) => clinicorpFetch(s, '/appointment/list_categories'),
   listSpecialties: (s) => clinicorpFetch(s, '/procedures/list_specialties'),
   listAppointments: async (s, from, to, businessId) => {
-    // Clinicorp's canonical endpoint for listing appointments in a date range is
-    // /appointment/list_by_date_and_clinic, which requires Clinic_BusinessId and
-    // SK_DateFirstTime (YYYYMMDD integer). We iterate day-by-day on that endpoint
-    // first, then fall back to /appointment/list with multiple param variants to
-    // survive API drift between sandbox and production environments.
-    const toAtomic = (d) => String(d).replaceAll('-', '').slice(0, 8);
+    // Descoberta empírica: o endpoint /appointment/list da Clinicorp ACEITA os parâmetros
+    // `from` e `to` no formato YYYY-MM-DD, MAS só funciona quando `from === to` (um único dia).
+    // Para faixas maiores ele retorna HTTP 400 "É necessário informar a data inicial no formato
+    // JSON (YYYY-MM-DD)" — mensagem enganosa que na verdade significa "range não suportado".
+    // Solução: iterar dia-a-dia, exatamente como o probe de teste de conexão faz (e que funciona).
     const aggregate = [];
     const seen = new Set();
     const push = (arr) => {
@@ -297,76 +296,42 @@ export const clinicorpApi = {
     };
     const extract = extractClinicorpList;
 
-    // 1) Preferred path: Clinicorp's /appointment/list espera start_date / end_date (snake_case)
-    //    no formato YYYY-MM-DD. A mensagem "É necessário informar a data inicial no formato JSON
-    //    (YYYY-MM-DD)" significa que os nomes dos parâmetros estavam errados — não que precise
-    //    enviar JSON.
     const baseBiz = businessId
       ? { Clinic_BusinessId: businessId, business_id: businessId, BusinessId: businessId }
       : {};
 
-    try {
-      const data = await clinicorpFetch(s, '/appointment/list', {
-        query: { start_date: from, end_date: to, ...baseBiz },
-      });
-      const arr = extract(data);
-      if (Array.isArray(arr) && arr.length > 0) {
-        push(arr);
-        return aggregate;
-      }
-    } catch (e) {
-      if (e?.status === 429) throw e;
-    }
+    const start = new Date(from + 'T00:00:00Z');
+    const end = new Date(to + 'T00:00:00Z');
+    if (isNaN(start.getTime()) || isNaN(end.getTime()) || end < start) return [];
 
-    // 2) Granular path: list_by_date_and_clinic per day, per clinic (se businessId presente)
-    if (businessId) {
-      try {
-        const start = new Date(from + 'T00:00:00Z');
-        const end = new Date(to + 'T00:00:00Z');
-        for (let d = new Date(start); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
-          const sk = toAtomic(d.toISOString().slice(0, 10));
-          try {
-            const data = await clinicorpFetch(s, '/appointment/list_by_date_and_clinic', {
-              query: { Clinic_BusinessId: businessId, SK_DateFirstTime: sk },
-            });
-            push(extract(data));
-          } catch (e) {
-            if (e?.status === 429) throw e;
-            if (e?.status === 404 || e?.status === 400) break;
-          }
-        }
-        if (aggregate.length > 0) return aggregate;
-      } catch (e) {
-        if (e?.status === 429) throw e;
-      }
-    }
+    // Limite de segurança: no máximo 400 dias por chamada para evitar loops descontrolados.
+    const MAX_DAYS = 400;
+    let dayCount = 0;
+    let consecutiveErrors = 0;
 
-    // 3) Fallback: outras variantes de nome conhecidas
-    const variants = [
-      { startDate: from, endDate: to, ...baseBiz },
-      { fromDate: from, toDate: to, ...baseBiz },
-      { date_start: from, date_end: to, ...baseBiz },
-      { date_from: from, date_to: to, ...baseBiz },
-      { initialDate: from, finalDate: to, ...baseBiz },
-      { DataInicial: from, DataFinal: to, ...baseBiz },
-      { SK_DateFirstTime: toAtomic(from), SK_DateLastTime: toAtomic(to), ...baseBiz },
-    ];
-    let lastErr = null;
-    for (const q of variants) {
+    for (let d = new Date(start); d <= end && dayCount < MAX_DAYS; d.setUTCDate(d.getUTCDate() + 1)) {
+      dayCount++;
+      const day = d.toISOString().slice(0, 10);
       try {
-        const data = await clinicorpFetch(s, '/appointment/list', { query: q });
+        const data = await clinicorpFetch(s, '/appointment/list', {
+          query: { from: day, to: day, ...baseBiz },
+        });
         const arr = extract(data);
         if (Array.isArray(arr) && arr.length > 0) push(arr);
-        if (aggregate.length > 0) return aggregate;
+        consecutiveErrors = 0;
       } catch (e) {
-        if (e?.status === 429) throw e;
-        lastErr = e;
+        if (e?.status === 429) throw e; // respeita rate limit imediatamente
+        consecutiveErrors++;
+        if (consecutiveErrors >= 5) {
+          console.warn(`[clinicorp] listAppointments abortando após ${consecutiveErrors} erros consecutivos em ${day}: ${e?.message || e}`);
+          break;
+        }
       }
     }
-    if (aggregate.length > 0) return aggregate;
-    if (lastErr) throw lastErr;
-    return [];
+
+    return aggregate;
   },
+
   appointmentStatusList: (s) => clinicorpFetch(s, '/appointment/status_list'),
   changeAppointmentStatus: (s, query) => clinicorpFetch(s, '/appointment/change_status', { query }),
   confirmAppointment: (s, body) => clinicorpFetch(s, '/appointment/confirm_appointment', { method: 'POST', body }),
