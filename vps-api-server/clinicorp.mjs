@@ -170,8 +170,9 @@ async function _clinicorpFetchRaw(settings, pathName, { method = 'GET', query = 
   
   // Limpar query parameters vazios ou nulos para evitar erros na API do Clinicorp
   const allQuery = { ...query };
-  // subscriber_id is only needed if not already present in query
-  if (settings.subscriber_id && allQuery.subscriber_id === undefined && allQuery.business_id === undefined) {
+  // subscriber_id é OBRIGATÓRIO em TODAS as chamadas da Clinicorp (mesmo quando há business_id).
+  // A API retorna HTTP 400 "É necessário informar o id do assinante" se omitido.
+  if (settings.subscriber_id && (allQuery.subscriber_id === undefined || allQuery.subscriber_id === null || allQuery.subscriber_id === '')) {
     allQuery.subscriber_id = settings.subscriber_id;
   }
   
@@ -747,14 +748,33 @@ async function ensureLocalProfessional(pool, cpProfId, fallbackName = null, tena
     await pool.query(`UPDATE dentistas SET clinicorp_professional_id=$1, updated_at=NOW() WHERE id=$2`, [cpProfId, match.rows[0].id]);
     return match.rows[0].id;
   }
-  const ins = await pool.query(
-    `INSERT INTO dentistas (nome, ativo, clinicorp_professional_id, tenant_id)
-     VALUES ($1, true, $2, $3)
-     ON CONFLICT ON CONSTRAINT uniq_dentistas_clinicorp DO UPDATE SET updated_at = NOW()
-     RETURNING id`,
-    [nome, cpProfId, tId]
-  );
-  return ins.rows[0].id;
+  try {
+    const ins = await pool.query(
+      `INSERT INTO dentistas (nome, ativo, clinicorp_professional_id, tenant_id)
+       VALUES ($1, true, $2, $3)
+       RETURNING id`,
+      [nome, cpProfId, tId]
+    );
+    return ins.rows[0].id;
+  } catch (e) {
+    // race condition: outro insert paralelo já criou o registro
+    if (e.code === '23505') {
+      const r = await pool.query(
+        `SELECT id FROM dentistas WHERE clinicorp_professional_id=$1 AND tenant_id=$2 LIMIT 1`,
+        [cpProfId, tId]
+      );
+      if (r.rows[0]) return r.rows[0].id;
+      const r2 = await pool.query(
+        `SELECT id FROM dentistas WHERE tenant_id=$2 AND LOWER(TRIM(nome))=LOWER($1) LIMIT 1`,
+        [nome, tId]
+      );
+      if (r2.rows[0]) {
+        await pool.query(`UPDATE dentistas SET clinicorp_professional_id=$1, updated_at=NOW() WHERE id=$2`, [cpProfId, r2.rows[0].id]);
+        return r2.rows[0].id;
+      }
+    }
+    throw e;
+  }
 }
 
 async function ensureLeadForPatient(pool, pacienteId, cpPatientId, info = {}, tenantId = null) {
