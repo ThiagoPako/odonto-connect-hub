@@ -1338,6 +1338,12 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
   const today = new Date();
   const fromDate = from || new Date(today.getTime() - 30 * 86400_000).toISOString().slice(0, 10);
   const toDate = to || new Date(today.getTime() + 60 * 86400_000).toISOString().slice(0, 10);
+  // AGENDA: apenas datas FUTURAS (a partir de amanhã) — não sincroniza agendamentos passados
+  const apptFromDate = from || new Date(today.getTime() + 1 * 86400_000).toISOString().slice(0, 10);
+  const apptToDate = to || new Date(today.getTime() + 365 * 86400_000).toISOString().slice(0, 10);
+  // ORÇAMENTOS: janela ampla para garantir que orçamentos antigos e futuros sejam capturados
+  const estFromDate = from || new Date(today.getTime() - 365 * 86400_000).toISOString().slice(0, 10);
+  const estToDate = to || new Date(today.getTime() + 365 * 86400_000).toISOString().slice(0, 10);
 
   const summary = { clinics: 0, professionals: 0, patients: 0, chairs: 0, categories: 0, specialties: 0, appointments: 0, estimates: 0, invoices: 0, payments: 0, cashflow: 0, evolutions: 0, documents: 0 };
   const errors = [];
@@ -1357,7 +1363,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     const tId = await resolveTenantId(pool, tenant_id);
     const { rows: appts } = await pool.query(
       `SELECT raw, id FROM clinicorp_appointments WHERE tenant_id=$3 AND date >= $1 AND date <= $2`,
-      [fromDate, toDate, tId]
+      [apptFromDate, apptToDate, tId]
     );
     for (const r of appts) { 
       const rawData = typeof r.raw === 'string' ? JSON.parse(r.raw) : r.raw;
@@ -1479,7 +1485,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     const tId = await resolveTenantId(pool, tenant_id);
     const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics WHERE tenant_id=$1', [tId]);
     const apiIds = new Set();
-    const ranges = sliceRange(fromDate, toDate);
+    const ranges = sliceRange(apptFromDate, apptToDate);
 
     const processAppts = async (list) => {
       for (const a of (Array.isArray(list) ? list : [])) {
@@ -1519,7 +1525,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     try {
       const { rows: localRows } = await pool.query(
         `SELECT id FROM clinicorp_appointments WHERE tenant_id=$3 AND date >= $1 AND date <= $2`,
-        [fromDate, toDate, tId]
+        [apptFromDate, apptToDate, tId]
       );
       for (const local of localRows) {
         if (!apiIds.has(String(local.id))) {
@@ -1586,7 +1592,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
 
   await safe('estimates', async () => {
     const tId = await resolveTenantId(pool, tenant_id);
-    const ranges = sliceRange(fromDate, toDate);
+    const ranges = sliceRange(estFromDate, estToDate);
     const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics WHERE tenant_id=$1', [tId]);
     
     for (const r of ranges) {
@@ -1694,19 +1700,19 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
   // Força re-projeção final de orçamentos e agendamentos para garantir espelhamento
   try {
     const tId = await resolveTenantId(pool, tenant_id);
-    // Agendamentos
+    // Agendamentos (somente futuros)
     const { rows: appts } = await pool.query(
       `SELECT raw, id FROM clinicorp_appointments WHERE tenant_id=$3 AND date >= $1 AND date <= $2`,
-      [fromDate, toDate, tId]
+      [apptFromDate, apptToDate, tId]
     );
     for (const r of appts) { 
       const raw = typeof r.raw === 'string' ? JSON.parse(r.raw) : r.raw;
       await projectAppointmentToLocal(pool, raw, r.id, tId).catch(() => {}); 
     }
-    // Orçamentos
+    // Orçamentos (janela ampla)
     const { rows: ests } = await pool.query(
       `SELECT raw FROM clinicorp_estimates WHERE tenant_id=$3 AND date >= $1 AND date <= $2`,
-      [fromDate, toDate, tId]
+      [estFromDate, estToDate, tId]
     );
     for (const r of ests) {
       const raw = typeof r.raw === 'string' ? JSON.parse(r.raw) : r.raw;
