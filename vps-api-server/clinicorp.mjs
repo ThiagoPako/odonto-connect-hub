@@ -1357,6 +1357,13 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
 
   const safe = async (label, fn) => {
     try { 
+      if (_globalPauseUntil > Date.now()) {
+        const retryAfter = Math.ceil((_globalPauseUntil - Date.now()) / 1000);
+        const err = new Error(`Clinicorp em rate limit — aguardando ${retryAfter}s antes de novas chamadas`);
+        err.status = 429;
+        err.retry_after_seconds = retryAfter;
+        throw err;
+      }
       if (user_id) {
         await pool.query(
           `UPDATE clinicorp_user_settings SET last_sync_status = 'syncing', last_sync_error = $2, updated_at = NOW() WHERE user_id = $1`,
@@ -1367,6 +1374,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     } catch (e) { 
       errors.push(`${label}: ${e.message}`); 
       console.error(`[clinicorp sync] ${label}`, e.message); 
+      if (isClinicorpRateLimitError(e)) throw e;
     }
   };
 
