@@ -1700,19 +1700,19 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
   // Força re-projeção final de orçamentos e agendamentos para garantir espelhamento
   try {
     const tId = await resolveTenantId(pool, tenant_id);
-    // Agendamentos
+    // Agendamentos (somente futuros)
     const { rows: appts } = await pool.query(
       `SELECT raw, id FROM clinicorp_appointments WHERE tenant_id=$3 AND date >= $1 AND date <= $2`,
-      [fromDate, toDate, tId]
+      [apptFromDate, apptToDate, tId]
     );
     for (const r of appts) { 
       const raw = typeof r.raw === 'string' ? JSON.parse(r.raw) : r.raw;
       await projectAppointmentToLocal(pool, raw, r.id, tId).catch(() => {}); 
     }
-    // Orçamentos
+    // Orçamentos (janela ampla)
     const { rows: ests } = await pool.query(
       `SELECT raw FROM clinicorp_estimates WHERE tenant_id=$3 AND date >= $1 AND date <= $2`,
-      [fromDate, toDate, tId]
+      [estFromDate, estToDate, tId]
     );
     for (const r of ests) {
       const raw = typeof r.raw === 'string' ? JSON.parse(r.raw) : r.raw;
