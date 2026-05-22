@@ -1480,8 +1480,21 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     console.log('[clinicorp sync] metadata recente (<24h) — pulando clinics/professionals/chairs/categories/specialties');
   }
 
-  // PATIENTS: /patient/list não é exposto pela Clinicorp (404). Não chamamos esse endpoint
-  // para evitar gastar requisições — o backfill acontece via projeção dos agendamentos.
+  // PATIENTS: /patient/list não é exposto pela Clinicorp (404).
+  // Sincronizamos os pacientes individualmente se houverem agendamentos.
+  await safe('patients', async () => {
+    const tId = await resolveTenantId(pool, tenant_id);
+    try {
+      const list = await clinicorpApi.listPatients(settings);
+      for (const p of (Array.isArray(list) ? list : [])) {
+        await upsertPatient(pool, p, tenant_id);
+        summary.patients++;
+      }
+    } catch (e) {
+      console.warn('[clinicorp sync] /patient/list failed, will backfill via appointments');
+    }
+  });
+
 
   await safe('appointments', async () => {
     const tId = await resolveTenantId(pool, tenant_id);
@@ -1700,10 +1713,19 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     } catch (e) { /* skip */ }
   });
 
-  // Força re-projeção final de orçamentos e agendamentos para garantir espelhamento
+  // Força re-projeção final para garantir que dados espelhados apareçam nos módulos locais
   try {
     const tId = await resolveTenantId(pool, tenant_id);
-    // Agendamentos (somente futuros)
+    console.log(`[clinicorp sync] forçando projeção local para tenant ${tId}...`);
+
+    // 1. Pacientes (todos do tenant)
+    const { rows: pats } = await pool.query(`SELECT raw FROM clinicorp_patients WHERE tenant_id=$1`, [tId]);
+    for (const p of pats) {
+      const raw = typeof p.raw === 'string' ? JSON.parse(p.raw) : p.raw;
+      await projectPatientToLocal(pool, raw, tId).catch(() => {});
+    }
+
+    // 2. Agendamentos (somente futuros)
     const { rows: appts } = await pool.query(
       `SELECT raw, id FROM clinicorp_appointments WHERE tenant_id=$3 AND date >= $1 AND date <= $2`,
       [apptFromDate, apptToDate, tId]
@@ -1712,7 +1734,8 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
       const raw = typeof r.raw === 'string' ? JSON.parse(r.raw) : r.raw;
       await projectAppointmentToLocal(pool, raw, r.id, tId).catch(() => {}); 
     }
-    // Orçamentos (janela ampla)
+
+    // 3. Orçamentos (janela ampla)
     const { rows: ests } = await pool.query(
       `SELECT raw FROM clinicorp_estimates WHERE tenant_id=$3 AND date >= $1 AND date <= $2`,
       [estFromDate, estToDate, tId]
@@ -1721,7 +1744,19 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
       const raw = typeof r.raw === 'string' ? JSON.parse(r.raw) : r.raw;
       await projectEstimateToLocal(pool, raw, tId).catch(() => {});
     }
+
+    // 4. Financeiro (Receitas e Despesas)
+    const { rows: fin } = await pool.query(
+      `SELECT raw, source FROM clinicorp_financial_entries WHERE tenant_id=$3 AND date >= $1 AND date <= $2`,
+      [fromDate, toDate, tId]
+    );
+    for (const f of fin) {
+      const raw = typeof f.raw === 'string' ? JSON.parse(f.raw) : f.raw;
+      await projectFinanceToLocal(pool, f.source, raw, tId).catch(() => {});
+    }
+
   } catch (e) { console.error('[clinicorp sync] final mirroring projection', e.message); }
+
 
   const status = errors.length === 0 ? 'success' : (Object.values(summary).some(Boolean) ? 'partial' : 'error');
   
