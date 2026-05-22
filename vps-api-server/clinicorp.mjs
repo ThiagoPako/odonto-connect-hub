@@ -138,6 +138,10 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const _queues = new Map(); // subscriber_id -> Promise chain
 let _globalPauseUntil = 0;
 
+function isClinicorpRateLimitError(err) {
+  return err?.status === 429 || /HTTP 429|rate limited/i.test(String(err?.message || ''));
+}
+
 function _enqueue(subscriberKey, task) {
   const prev = _queues.get(subscriberKey) || Promise.resolve();
   const next = prev.then(async () => {
@@ -215,6 +219,7 @@ async function _clinicorpFetchRaw(settings, pathName, { method = 'GET', query = 
         const err = new Error(`Clinicorp ${method} ${pathName} → HTTP 429: rate limited (retry-after ${raSec}s)`);
         err.status = 429;
         err.retry_after_seconds = raSec;
+        err.retryAfter = raSec;
         throw err;
       }
       const shouldRetry = (res.status === 502 || res.status === 503 || res.status === 504) && retryCount < maxRetries;
