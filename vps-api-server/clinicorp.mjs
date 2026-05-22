@@ -1480,8 +1480,21 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     console.log('[clinicorp sync] metadata recente (<24h) — pulando clinics/professionals/chairs/categories/specialties');
   }
 
-  // PATIENTS: /patient/list não é exposto pela Clinicorp (404). Não chamamos esse endpoint
-  // para evitar gastar requisições — o backfill acontece via projeção dos agendamentos.
+  // PATIENTS: /patient/list não é exposto pela Clinicorp (404).
+  // Sincronizamos os pacientes individualmente se houverem agendamentos.
+  await safe('patients', async () => {
+    const tId = await resolveTenantId(pool, tenant_id);
+    try {
+      const list = await clinicorpApi.listPatients(settings);
+      for (const p of (Array.isArray(list) ? list : [])) {
+        await upsertPatient(pool, p, tenant_id);
+        summary.patients++;
+      }
+    } catch (e) {
+      console.warn('[clinicorp sync] /patient/list failed, will backfill via appointments');
+    }
+  });
+
 
   await safe('appointments', async () => {
     const tId = await resolveTenantId(pool, tenant_id);
