@@ -1525,7 +1525,7 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     try {
       const { rows: localRows } = await pool.query(
         `SELECT id FROM clinicorp_appointments WHERE tenant_id=$3 AND date >= $1 AND date <= $2`,
-        [fromDate, toDate, tId]
+        [apptFromDate, apptToDate, tId]
       );
       for (const local of localRows) {
         if (!apiIds.has(String(local.id))) {
