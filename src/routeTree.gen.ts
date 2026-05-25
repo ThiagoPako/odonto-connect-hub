@@ -13,6 +13,9 @@ import { Route as UsuariosRouteImport } from './routes/usuarios'
 import { Route as TratamentosRouteImport } from './routes/tratamentos'
 import { Route as SuperAdminRouteImport } from './routes/super-admin'
 import { Route as SignupRouteImport } from './routes/signup'
+import { Route as SbSignupRouteImport } from './routes/sb-signup'
+import { Route as SbPacientesRouteImport } from './routes/sb-pacientes'
+import { Route as SbLoginRouteImport } from './routes/sb-login'
 import { Route as RelatoriosClinicosRouteImport } from './routes/relatorios-clinicos'
 import { Route as ReativacaoRouteImport } from './routes/reativacao'
 import { Route as ProntuarioRouteImport } from './routes/prontuario'
@@ -65,6 +68,21 @@ const SuperAdminRoute = SuperAdminRouteImport.update({
 const SignupRoute = SignupRouteImport.update({
   id: '/signup',
   path: '/signup',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SbSignupRoute = SbSignupRouteImport.update({
+  id: '/sb-signup',
+  path: '/sb-signup',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SbPacientesRoute = SbPacientesRouteImport.update({
+  id: '/sb-pacientes',
+  path: '/sb-pacientes',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SbLoginRoute = SbLoginRouteImport.update({
+  id: '/sb-login',
+  path: '/sb-login',
   getParentRoute: () => rootRouteImport,
 } as any)
 const RelatoriosClinicosRoute = RelatoriosClinicosRouteImport.update({
@@ -266,6 +284,9 @@ export interface FileRoutesByFullPath {
   '/prontuario': typeof ProntuarioRoute
   '/reativacao': typeof ReativacaoRoute
   '/relatorios-clinicos': typeof RelatoriosClinicosRoute
+  '/sb-login': typeof SbLoginRoute
+  '/sb-pacientes': typeof SbPacientesRoute
+  '/sb-signup': typeof SbSignupRoute
   '/signup': typeof SignupRoute
   '/super-admin': typeof SuperAdminRoute
   '/tratamentos': typeof TratamentosRoute
@@ -305,6 +326,9 @@ export interface FileRoutesByTo {
   '/prontuario': typeof ProntuarioRoute
   '/reativacao': typeof ReativacaoRoute
   '/relatorios-clinicos': typeof RelatoriosClinicosRoute
+  '/sb-login': typeof SbLoginRoute
+  '/sb-pacientes': typeof SbPacientesRoute
+  '/sb-signup': typeof SbSignupRoute
   '/signup': typeof SignupRoute
   '/super-admin': typeof SuperAdminRoute
   '/tratamentos': typeof TratamentosRoute
@@ -345,6 +369,9 @@ export interface FileRoutesById {
   '/prontuario': typeof ProntuarioRoute
   '/reativacao': typeof ReativacaoRoute
   '/relatorios-clinicos': typeof RelatoriosClinicosRoute
+  '/sb-login': typeof SbLoginRoute
+  '/sb-pacientes': typeof SbPacientesRoute
+  '/sb-signup': typeof SbSignupRoute
   '/signup': typeof SignupRoute
   '/super-admin': typeof SuperAdminRoute
   '/tratamentos': typeof TratamentosRoute
@@ -386,6 +413,9 @@ export interface FileRouteTypes {
     | '/prontuario'
     | '/reativacao'
     | '/relatorios-clinicos'
+    | '/sb-login'
+    | '/sb-pacientes'
+    | '/sb-signup'
     | '/signup'
     | '/super-admin'
     | '/tratamentos'
@@ -425,6 +455,9 @@ export interface FileRouteTypes {
     | '/prontuario'
     | '/reativacao'
     | '/relatorios-clinicos'
+    | '/sb-login'
+    | '/sb-pacientes'
+    | '/sb-signup'
     | '/signup'
     | '/super-admin'
     | '/tratamentos'
@@ -464,6 +497,9 @@ export interface FileRouteTypes {
     | '/prontuario'
     | '/reativacao'
     | '/relatorios-clinicos'
+    | '/sb-login'
+    | '/sb-pacientes'
+    | '/sb-signup'
     | '/signup'
     | '/super-admin'
     | '/tratamentos'
@@ -504,6 +540,9 @@ export interface RootRouteChildren {
   ProntuarioRoute: typeof ProntuarioRoute
   ReativacaoRoute: typeof ReativacaoRoute
   RelatoriosClinicosRoute: typeof RelatoriosClinicosRoute
+  SbLoginRoute: typeof SbLoginRoute
+  SbPacientesRoute: typeof SbPacientesRoute
+  SbSignupRoute: typeof SbSignupRoute
   SignupRoute: typeof SignupRoute
   SuperAdminRoute: typeof SuperAdminRoute
   TratamentosRoute: typeof TratamentosRoute
@@ -538,6 +577,27 @@ declare module '@tanstack/react-router' {
       path: '/signup'
       fullPath: '/signup'
       preLoaderRoute: typeof SignupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sb-signup': {
+      id: '/sb-signup'
+      path: '/sb-signup'
+      fullPath: '/sb-signup'
+      preLoaderRoute: typeof SbSignupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sb-pacientes': {
+      id: '/sb-pacientes'
+      path: '/sb-pacientes'
+      fullPath: '/sb-pacientes'
+      preLoaderRoute: typeof SbPacientesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sb-login': {
+      id: '/sb-login'
+      path: '/sb-login'
+      fullPath: '/sb-login'
+      preLoaderRoute: typeof SbLoginRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/relatorios-clinicos': {
@@ -819,6 +879,9 @@ const rootRouteChildren: RootRouteChildren = {
   ProntuarioRoute: ProntuarioRoute,
   ReativacaoRoute: ReativacaoRoute,
   RelatoriosClinicosRoute: RelatoriosClinicosRoute,
+  SbLoginRoute: SbLoginRoute,
+  SbPacientesRoute: SbPacientesRoute,
+  SbSignupRoute: SbSignupRoute,
   SignupRoute: SignupRoute,
   SuperAdminRoute: SuperAdminRoute,
   TratamentosRoute: TratamentosRoute,
