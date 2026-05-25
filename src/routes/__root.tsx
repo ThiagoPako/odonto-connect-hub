@@ -114,7 +114,11 @@ function AuthGate() {
     );
   }
 
-  const isPublicPage = location.pathname === "/login" || location.pathname === "/" || location.pathname === "/signup";
+  const isPublicPage =
+    location.pathname === "/login" ||
+    location.pathname === "/" ||
+    location.pathname === "/signup" ||
+    location.pathname.startsWith("/sb-");
 
   // Public pages — no sidebar, no auth required
   if (isPublicPage) {

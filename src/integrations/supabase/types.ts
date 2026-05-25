@@ -80,6 +80,87 @@ export type Database = {
           },
         ]
       }
+      pacientes: {
+        Row: {
+          bairro: string | null
+          celular: string | null
+          cep: string | null
+          cidade: string | null
+          complemento: string | null
+          convenio: string | null
+          cpf: string | null
+          created_at: string
+          created_by: string | null
+          data_nascimento: string | null
+          email: string | null
+          estado: string | null
+          id: string
+          logradouro: string | null
+          nome: string
+          numero: string | null
+          numero_carteira: string | null
+          observacoes: string | null
+          rg: string | null
+          sexo: string | null
+          status: string
+          telefone: string | null
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          bairro?: string | null
+          celular?: string | null
+          cep?: string | null
+          cidade?: string | null
+          complemento?: string | null
+          convenio?: string | null
+          cpf?: string | null
+          created_at?: string
+          created_by?: string | null
+          data_nascimento?: string | null
+          email?: string | null
+          estado?: string | null
+          id?: string
+          logradouro?: string | null
+          nome: string
+          numero?: string | null
+          numero_carteira?: string | null
+          observacoes?: string | null
+          rg?: string | null
+          sexo?: string | null
+          status?: string
+          telefone?: string | null
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          bairro?: string | null
+          celular?: string | null
+          cep?: string | null
+          cidade?: string | null
+          complemento?: string | null
+          convenio?: string | null
+          cpf?: string | null
+          created_at?: string
+          created_by?: string | null
+          data_nascimento?: string | null
+          email?: string | null
+          estado?: string | null
+          id?: string
+          logradouro?: string | null
+          nome?: string
+          numero?: string | null
+          numero_carteira?: string | null
+          observacoes?: string | null
+          rg?: string | null
+          sexo?: string | null
+          status?: string
+          telefone?: string | null
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       plans: {
         Row: {
           ativo: boolean | null
