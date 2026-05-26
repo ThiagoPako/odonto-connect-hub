@@ -947,7 +947,7 @@ export const sbQueuesApi = {
     return { data: { success: true, id: data!.id }, error: null };
   },
   update: async (id: string, body: Record<string, unknown>): Promise<Result<{ success: boolean }>> => {
-    const { error } = await supabase.from('attendance_queues').update(body).eq('id', id);
+    const { error } = await supabase.from('attendance_queues').update(body as any).eq('id', id);
     if (error) return { data: null, error: err(error) };
     return { data: { success: true }, error: null };
   },
