@@ -43,16 +43,17 @@ async function loadUserFromSession(session: Session): Promise<AuthUser | null> {
     .limit(1)
     .maybeSingle();
 
-  // Fetch tenant feature flags (optional)
+  // Fetch tenant feature flags from metadata jsonb (optional)
   let tenant_features: Record<string, boolean> = {};
   if (profile?.tenant_id) {
     const { data: tenant } = await supabase
       .from("tenants")
-      .select("features")
+      .select("metadata")
       .eq("id", profile.tenant_id)
       .maybeSingle();
-    if (tenant?.features && typeof tenant.features === "object") {
-      tenant_features = tenant.features as Record<string, boolean>;
+    const meta = tenant?.metadata as { features?: Record<string, boolean> } | null;
+    if (meta?.features && typeof meta.features === "object") {
+      tenant_features = meta.features;
     }
   }
 
