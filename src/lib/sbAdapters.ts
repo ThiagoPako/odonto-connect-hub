@@ -2049,6 +2049,23 @@ export const sbDashboardApi = {
       };
 
 
+      // Group by origin for conversion chart
+      const originsMap = new Map<string, { leads: number, convertidos: number }>();
+      ls.forEach((l: any) => {
+        const origin = l.origem || 'Outros';
+        const stats = originsMap.get(origin) || { leads: 0, convertidos: 0 };
+        stats.leads++;
+        if (l.status === 'convertido') stats.convertidos++;
+        originsMap.set(origin, stats);
+      });
+
+      const conversionByOrigin = Array.from(originsMap.entries()).map(([origin, stats]) => ({
+        origin,
+        leads: stats.leads,
+        convertidos: stats.convertidos,
+        rate: stats.leads > 0 ? (stats.convertidos / stats.leads) * 100 : 0
+      }));
+
       const data = {
         totalPacientes,
         agendaHoje: dashboardAgenda.total,
@@ -2058,7 +2075,8 @@ export const sbDashboardApi = {
         orcamentos: dashboardOrcamentos,
         crm: dashboardCrm,
         pacientes: { totalCadastrados: totalPacientes },
-        estoque: dashboardEstoque
+        estoque: dashboardEstoque,
+        conversionByOrigin
       };
 
       return { data, error: null };
