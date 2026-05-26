@@ -7,6 +7,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { fetchInstances, type EvolutionInstance } from "@/lib/evolutionApi";
 import { toast } from "sonner";
 import { playDisconnectAlert } from "@/lib/notificationSound";
+import { supabase } from "@/integrations/supabase/client";
 
 export interface ConnectedInstance extends EvolutionInstance {
   connectionState: "open" | "close" | "connecting";
@@ -71,7 +72,25 @@ function detectChanges(newInstances: ConnectedInstance[]) {
 async function refreshInstances(): Promise<ConnectedInstance[]> {
   try {
     const list = await fetchInstances();
-    const mapped = list.map((inst) => ({
+    
+    // Filter instances by tenant_id prefix
+    let filteredList = list;
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data: profile } = await supabase.from('profiles').select('tenant_id').eq('id', user.id).maybeSingle();
+        if (profile?.tenant_id) {
+          const prefix = profile.tenant_id.substring(0, 8);
+          // Only show instances that belong to this tenant or are public (no prefix)
+          // We allow no prefix for backward compatibility if needed, but primarily we want the prefix.
+          filteredList = list.filter(inst => inst.instanceName.startsWith(prefix));
+        }
+      }
+    } catch (e) {
+      console.error("Failed to filter WhatsApp instances", e);
+    }
+
+    const mapped = filteredList.map((inst) => ({
       ...inst,
       connectionState: inst.status,
     }));

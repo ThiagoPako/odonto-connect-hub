@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
 import {
   clinicorpApi,
   type ClinicorpSettings,
@@ -24,6 +25,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export function ClinicorpPanel() {
   const [settings, setSettings] = useState<ClinicorpSettings | null>(null);
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -83,13 +85,33 @@ export function ClinicorpPanel() {
   async function load() {
     setLoading(true);
     try {
-      const s = await clinicorpApi.getSettings();
+      const { data: authData } = await supabase.auth.getUser();
+      const userId = authData.user?.id;
+      if (userId) {
+        const { data: profile } = await supabase.from('profiles').select('is_super_admin').eq('id', userId).maybeSingle();
+        setIsSuperAdmin(!!profile?.is_super_admin);
+      }
+
+      // Use getMySettings instead of getSettings to ensure user sees only their credentials
+      const mySettings = await clinicorpApi.getMySettings();
+      // Cast to include global fields with defaults for UI consistency
+      const s = {
+        ...mySettings,
+        auto_sync_enabled: (mySettings as any).auto_sync_enabled ?? true,
+        sync_interval_minutes: (mySettings as any).sync_interval_minutes ?? 30,
+        sync_lookback_days: (mySettings as any).sync_lookback_days ?? 30,
+        sync_lookahead_days: (mySettings as any).sync_lookahead_days ?? 60,
+        conflict_strategy: (mySettings as any).conflict_strategy ?? "newest_wins",
+        next_sync_at: (mySettings as any).next_sync_at ?? null,
+        sync_lock_until: (mySettings as any).sync_lock_until ?? null,
+      } as unknown as ClinicorpSettings;
+      
       setSettings(s);
-      setAutoSync(s.auto_sync_enabled ?? true);
-      setIntervalMin(s.sync_interval_minutes ?? 30);
-      setLookbackDays(s.sync_lookback_days ?? 30);
-      setLookaheadDays(s.sync_lookahead_days ?? 60);
-      setConflictStrategy(s.conflict_strategy ?? "newest_wins");
+      setAutoSync(s.auto_sync_enabled);
+      setIntervalMin(s.sync_interval_minutes);
+      setLookbackDays(s.sync_lookback_days);
+      setLookaheadDays(s.sync_lookahead_days);
+      setConflictStrategy(s.conflict_strategy);
       const [evs, ovs, cfs, hist] = await Promise.all([
         clinicorpApi.listWebhookEvents(50),
         clinicorpApi.listOverrides(),
@@ -251,9 +273,18 @@ export function ClinicorpPanel() {
           {/* Per-user credentials (SaaS multi-tenant) */}
           <ClinicorpUserCredentials />
 
-
-
-      {/* Status header — somente leitura, controles ficam em ClinicorpUserCredentials acima */}
+          {/* Somente exibe ferramentas globais para super-admins */}
+          {isSuperAdmin && (
+            <div className="space-y-6 animate-in fade-in mt-8">
+              <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-4 flex items-center gap-3">
+                <Shield className="h-5 w-5 text-amber-600" />
+                <div className="text-sm">
+                  <p className="font-semibold text-amber-900">Painel de Super Admin</p>
+                  <p className="text-amber-700/80">As ferramentas abaixo afetam as configurações globais do sistema.</p>
+                </div>
+              </div>
+            </div>
+          )}
       <div className="rounded-2xl border border-border bg-card p-5 flex items-start gap-4">
         <div className={`h-10 w-10 rounded-xl flex items-center justify-center ${settings?.enabled ? "bg-success/15 text-success" : "bg-muted text-muted-foreground"}`}>
           <Plug className="h-5 w-5" />

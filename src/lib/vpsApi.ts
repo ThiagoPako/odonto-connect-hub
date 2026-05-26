@@ -68,6 +68,24 @@ export async function getAuthHeaders(): Promise<Record<string, string>> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   const token = await getAccessToken();
   if (token) headers['Authorization'] = `Bearer ${token}`;
+  
+  // Try to get tenant_id from local storage cache or fetch it
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('tenant_id')
+        .eq('id', user.id)
+        .maybeSingle();
+      if (profile?.tenant_id) {
+        headers['X-Tenant-Id'] = profile.tenant_id;
+      }
+    }
+  } catch (e) {
+    console.error("Failed to append tenant header", e);
+  }
+  
   return headers;
 }
 

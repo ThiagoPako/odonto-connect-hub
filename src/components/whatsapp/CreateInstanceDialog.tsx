@@ -5,6 +5,7 @@ import { Label } from "@/components/ui/label";
 import { Loader2 } from "lucide-react";
 import { useState } from "react";
 import { createInstance } from "@/lib/evolutionApi";
+import { supabase } from "@/integrations/supabase/client";
 
 interface CreateInstanceDialogProps {
   open: boolean;
@@ -21,11 +22,24 @@ export function CreateInstanceDialog({ open, onOpenChange, onCreated }: CreateIn
   const handleCreate = async () => {
     if (!name.trim()) return;
 
-    const sanitized = name.trim().toLowerCase().replace(/[^a-z0-9-_]/g, "-");
+    let sanitized = name.trim().toLowerCase().replace(/[^a-z0-9-_]/g, "-");
     setLoading(true);
     setError(null);
 
     try {
+      const { data: authData } = await supabase.auth.getUser();
+      const userId = authData.user?.id;
+      if (userId) {
+        const { data: profile } = await supabase.from('profiles').select('tenant_id').eq('id', userId).maybeSingle();
+        if (profile?.tenant_id) {
+          // Prefix instance name with first 8 chars of tenant_id for isolation
+          const tenantPrefix = profile.tenant_id.substring(0, 8);
+          if (!sanitized.startsWith(tenantPrefix)) {
+            sanitized = `${tenantPrefix}-${sanitized}`;
+          }
+        }
+      }
+      
       await createInstance({ instanceName: sanitized });
       onCreated?.(sanitized);
       onOpenChange(false);
