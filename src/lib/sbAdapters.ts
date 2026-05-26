@@ -1275,6 +1275,24 @@ export const sbSessionsApi = {
     if (error) return { data: null, error: err(error) };
     return { data: { success: true, sessionId: session.id, duration }, error: null };
   },
+  list: async (params?: { active?: boolean }): Promise<Result<any[]>> => {
+    try {
+      const tenant_id = await getTenantId();
+      if (!tenant_id) return { data: null, error: 'Sem tenant' };
+      let q = (supabase as any).from('attendance_sessions').select('*').eq('tenant_id', tenant_id);
+      if (params?.active) {
+        q = q.in('status', ['active', 'waiting']);
+      }
+      const { data, error } = await q.order('created_at', { ascending: false });
+      if (error) return { data: null, error: err(error) };
+      const mapped = (data || []).map((s: any) => ({
+        ...s,
+        lead_nome: s.lead_name || 'Sem nome',
+        started_at: s.assigned_at || s.started_waiting_at || s.created_at
+      }));
+      return { data: mapped, error: null };
+    } catch (e) { return { data: null, error: err(e) }; }
+  },
 };
 
 // ─── Media Upload (Supabase Storage: bucket chat-media) ─────
@@ -1946,4 +1964,126 @@ export const procedimentosCatalogoApi = {
     };
   },
 };
+
+// ─── Dashboard ──────────────────────────────────────────────
+export const sbDashboardApi = {
+  getKpis: async (): Promise<Result<any>> => {
+    try {
+      const tenant_id = await getTenantId();
+      if (!tenant_id) return { data: null, error: 'Sem tenant' };
+
+      const now = new Date();
+      const todayStr = now.toISOString().split('T')[0];
+      const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+
+      // Parallel queries for dashboard components
+      const [
+        pacientesCount,
+        agendaHoje,
+        movimentacoes,
+        orcamentos,
+        leads,
+        estoque
+      ] = await Promise.all([
+        (supabase as any).from('pacientes').select('*', { count: 'exact', head: true }).eq('tenant_id', tenant_id),
+        (supabase as any).from('agendamentos').select('*').eq('tenant_id', tenant_id).eq('data', todayStr),
+        (supabase as any).from('movimentacoes_financeiras').select('*').eq('tenant_id', tenant_id).gte('data', firstDayOfMonth),
+        (supabase as any).from('orcamentos').select('*').eq('tenant_id', tenant_id),
+        (supabase as any).from('leads').select('*').eq('tenant_id', tenant_id),
+        (supabase as any).from('estoque').select('*').eq('tenant_id', tenant_id)
+      ]);
+
+      const totalPacientes = pacientesCount.count || 0;
+      
+      const agendaData = (agendaHoje.data || []) as any[];
+      const dashboardAgenda = {
+        total: agendaData.length,
+        finalizados: agendaData.filter(a => a.status === 'concluido').length,
+        emAtendimento: agendaData.filter(a => a.status === 'em_atendimento').length,
+        aguardando: agendaData.filter(a => a.status === 'agendado').length,
+        faltas: agendaData.filter(a => a.status === 'cancelado').length,
+        encaixes: 0, // Not explicitly tracked in schema
+        taxaPresenca: agendaData.length > 0 
+          ? Math.round((agendaData.filter(a => a.status === 'concluido').length / agendaData.length) * 100)
+          : 0
+      };
+
+      const movs = (movimentacoes.data || []) as any[];
+      const receitaMensal = movs.filter(m => m.tipo === 'receita').reduce((acc, m) => acc + Number(m.valor || 0), 0);
+      const despesaMensal = movs.filter(m => m.tipo === 'despesa').reduce((acc, m) => acc + Number(m.valor || 0), 0);
+
+      const orcs = (orcamentos.data || []) as any[];
+      const aprovados = orcs.filter(o => o.status === 'aprovado' || o.status === 'finalizado');
+      const valorAprovado = aprovados.reduce((acc, o) => acc + Number(o.valor_total || 0), 0);
+      
+      const dashboardOrcamentos = {
+        total: orcs.length,
+        pendentes: orcs.filter(o => o.status === 'pendente').length,
+        aprovados: aprovados.length,
+        reprovados: orcs.filter(o => o.status === 'reprovado').length,
+        valorAprovado,
+        taxaConversao: orcs.length > 0 ? Math.round((aprovados.length / orcs.length) * 100) : 0,
+        ticketMedio: aprovados.length > 0 ? valorAprovado / aprovados.length : 0
+      };
+
+      const ls = (leads.data || []) as any[];
+      const dashboardCrm = {
+        totalLeadsKanban: ls.length,
+        semResposta: ls.filter(l => l.status === 'novo').length,
+        ativos: ls.filter(l => l.status !== 'perdido' && l.status !== 'convertido').length,
+        inativos: ls.filter(l => l.status === 'perdido').length,
+        receitaTotal: ls.filter(l => l.status === 'convertido').reduce((acc, l) => acc + Number(l.valor_estimado || 0), 0)
+      };
+
+      const est = (estoque.data || []) as any[];
+      const abaixoMinimo = est.filter(i => (i.quantidade || 0) <= (i.quantidade_minima || 0) && (i.quantidade || 0) > 0);
+      const semEstoque = est.filter(i => (i.quantidade || 0) <= 0);
+      
+      const dashboardEstoque = {
+        totalItens: est.length,
+        abaixoMinimo: abaixoMinimo.length,
+        itensAbaixoMinimo: abaixoMinimo.map(i => i.nome),
+        semEstoque: semEstoque.length,
+        itensSemEstoque: semEstoque.map(i => i.nome),
+        valorTotalEstoque: est.reduce((acc, i) => acc + (Number(i.valor_unitario || 0) * (i.quantidade || 0)), 0)
+      };
+
+
+      // Group by origin for conversion chart
+      const originsMap = new Map<string, { leads: number, convertidos: number }>();
+      ls.forEach((l: any) => {
+        const origin = l.origem || 'Outros';
+        const stats = originsMap.get(origin) || { leads: 0, convertidos: 0 };
+        stats.leads++;
+        if (l.status === 'convertido') stats.convertidos++;
+        originsMap.set(origin, stats);
+      });
+
+      const conversionByOrigin = Array.from(originsMap.entries()).map(([origin, stats]) => ({
+        origin,
+        leads: stats.leads,
+        convertidos: stats.convertidos,
+        rate: stats.leads > 0 ? (stats.convertidos / stats.leads) * 100 : 0
+      }));
+
+      const data = {
+        totalPacientes,
+        agendaHoje: dashboardAgenda.total,
+        receitaMensal,
+        despesaMensal,
+        agenda: dashboardAgenda,
+        orcamentos: dashboardOrcamentos,
+        crm: dashboardCrm,
+        pacientes: { totalCadastrados: totalPacientes },
+        estoque: dashboardEstoque,
+        conversionByOrigin
+      };
+
+      return { data, error: null };
+    } catch (e) {
+      return { data: null, error: err(e) };
+    }
+  }
+};
+
 

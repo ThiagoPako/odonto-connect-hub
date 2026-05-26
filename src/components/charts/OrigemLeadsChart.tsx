@@ -11,22 +11,26 @@ const COLORS = [
   "hsl(0, 72%, 51%)",    // chart-5
 ];
 
-export function OrigemLeadsChart() {
-  const originMap: Record<string, number> = {};
-  mockPatients.forEach((p) => {
-    originMap[p.origin] = (originMap[p.origin] || 0) + 1;
-  });
+export function OrigemLeadsChart({ data: propData }: { data?: any[] }) {
+  const data = propData ? propData.map(d => ({ origin: d.origin, count: d.leads })) : (() => {
+    const originMap: Record<string, number> = {};
+    mockPatients.forEach((p) => {
+      originMap[p.origin] = (originMap[p.origin] || 0) + 1;
+    });
 
-  const data = Object.entries(originMap)
-    .map(([origin, count]) => ({ origin, count }))
-    .sort((a, b) => b.count - a.count);
+    return Object.entries(originMap)
+      .map(([origin, count]) => ({ origin, count }))
+      .sort((a, b) => b.count - a.count);
+  })();
+
+  const total = data.reduce((acc, d) => acc + d.count, 0);
 
   return (
     <div className="bg-card rounded-2xl border border-border/60 p-6 shadow-card hover:shadow-card-hover transition-all">
       <div className="flex items-center justify-between mb-2">
         <h3 className="text-sm font-bold text-card-foreground">Origem dos Leads</h3>
         <span className="text-[10px] font-medium text-muted-foreground bg-muted px-2.5 py-1 rounded-full">
-          {mockPatients.length} total
+          {total} total
         </span>
       </div>
       <p className="text-[11px] text-muted-foreground mb-4">Pacientes por canal de aquisição</p>

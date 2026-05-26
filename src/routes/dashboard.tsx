@@ -4,7 +4,7 @@ import { DashboardHeader } from "@/components/DashboardHeader";
 import { KpiCard } from "@/components/KpiCard";
 import { ActiveAttendanceCard } from "@/components/ActiveAttendanceCard";
 import { GhostModePanel } from "@/components/GhostModePanel";
-import { vpsApiFetch } from "@/lib/vpsApi";
+import { dashboardApi, sessionsApi } from "@/lib/vpsApi";
 import { OrcamentoConversaoChart } from "@/components/charts/OrcamentoConversaoChart";
 import { OrigemLeadsChart } from "@/components/charts/OrigemLeadsChart";
 import { AgendaStatusChart } from "@/components/charts/AgendaStatusChart";
@@ -62,9 +62,8 @@ function DashboardPage() {
       setLoading(true);
       setError(null);
       const [{ data, error: kpiErr }, { data: sess }] = await Promise.all([
-        vpsApiFetch<any>("/dashboard/kpis"),
-
-        vpsApiFetch<ActiveSession[]>("/sessions/active", { background: true }),
+        dashboardApi.getKpis(),
+        sessionsApi.list({ active: true }),
       ]);
       if (cancelled) return;
       if (kpiErr) setError(kpiErr);
@@ -189,9 +188,9 @@ function DashboardPage() {
         <section className="animate-slide-up space-y-5" style={{ animationDelay: '240ms', animationFillMode: 'both' }}>
           <FaturamentoMensalChart />
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-            <OrcamentoConversaoChart />
-            <OrigemLeadsChart />
-            <AgendaStatusChart />
+            <OrcamentoConversaoChart kpis={orcamento} />
+            <OrigemLeadsChart data={kpis.conversionByOrigin} />
+            <AgendaStatusChart kpis={agenda} />
           </div>
         </section>
 
