@@ -402,14 +402,14 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
         
         const dentistUpserts = [];
         for (const d of list) {
-          const id = String(pickFirst(d, 'Id', 'id', 'PersonId', 'Dentist_PersonId', 'DentistId') ?? '');
-          const nome = String(pickFirst(d, 'FullName', 'Name', 'full_name', 'name') ?? '').trim();
+          const id = String(pickFirst(d, 'Id', 'id', 'PersonId', 'Dentist_PersonId', 'DentistId', 'professional_id', 'ProfessionalId', 'dentist_id') ?? '');
+          const nome = String(pickFirst(d, 'FullName', 'Name', 'full_name', 'name', 'professional_name', 'ProfessionalName') ?? '').trim();
           if (!id || !nome) continue;
           dentistUpserts.push({
             tenant_id, nome,
-            especialidade: pickFirst(d, 'Speciality', 'Specialty', 'specialty') ?? null,
+            especialidade: pickFirst(d, 'Speciality', 'Specialty', 'specialty', 'category_name', 'CategoryName') ?? null,
             email: pickFirst(d, 'Email', 'email') ?? null,
-            cro: pickFirst(d, 'Cro', 'CRO', 'cro') ?? null,
+            cro: pickFirst(d, 'Cro', 'CRO', 'cro', 'identity_number') ?? null,
             clinicorp_professional_id: id,
             ativo: true,
           });
