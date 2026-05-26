@@ -1807,3 +1807,143 @@ export const comercialApi = {
     }
   }
 };
+
+// ─── Catálogo de Procedimentos ──────────────────────────────
+
+export interface ProcedimentoCatalogo {
+  id: string;
+  codigo: string | null;
+  nome: string;
+  categoria: string | null;
+  valor_particular: number;
+  valor_convenio: number;
+  duracao_minutos: number;
+  cor: string;
+  requer_dente: boolean;
+  requer_face: boolean;
+  ativo: boolean;
+  descricao: string | null;
+  versao_atual?: number;
+}
+
+export interface ProcedimentoVersao {
+  id: string;
+  procedimento_id: string;
+  versao: number;
+  codigo: string | null;
+  nome: string;
+  categoria: string | null;
+  valor_particular: number;
+  valor_convenio: number;
+  duracao_minutos: number;
+  cor: string | null;
+  requer_dente: boolean;
+  requer_face: boolean;
+  descricao: string | null;
+  motivo: string | null;
+  alterado_por: string | null;
+  valido_desde: string;
+  valido_ate: string | null;
+  created_at: string;
+}
+
+export const procedimentosCatalogoApi = {
+  list: async (): Promise<Result<ProcedimentoCatalogo[]>> => {
+    const { data, error } = await supabase
+      .from('procedimentos_catalogo')
+      .select('*')
+      .order('nome', { ascending: true });
+    if (error) return { data: null, error: err(error) };
+    return { 
+      data: (data ?? []).map(r => ({
+        ...r,
+        valor_particular: Number(r.valor_particular ?? 0),
+        valor_convenio: Number(r.valor_convenio ?? 0),
+      })) as ProcedimentoCatalogo[], 
+      error: null 
+    };
+  },
+
+  create: async (body: Partial<ProcedimentoCatalogo>): Promise<Result<ProcedimentoCatalogo>> => {
+    const tenant_id = await getTenantId();
+    if (!tenant_id) return { data: null, error: 'Sem tenant ativo' };
+    const { data, error } = await supabase
+      .from('procedimentos_catalogo')
+      .insert({ tenant_id, ...stripEmpty(body) })
+      .select('*')
+      .single();
+    if (error) return { data: null, error: err(error) };
+    return { 
+      data: {
+        ...data,
+        valor_particular: Number(data.valor_particular ?? 0),
+        valor_convenio: Number(data.valor_convenio ?? 0),
+      } as ProcedimentoCatalogo, 
+      error: null 
+    };
+  },
+
+  update: async (id: string, body: Partial<ProcedimentoCatalogo> & { motivo_versao?: string }): Promise<Result<ProcedimentoCatalogo>> => {
+    const { data, error } = await supabase
+      .from('procedimentos_catalogo')
+      .update(stripEmpty(body))
+      .eq('id', id)
+      .select('*')
+      .single();
+    if (error) return { data: null, error: err(error) };
+    return { 
+      data: {
+        ...data,
+        valor_particular: Number(data.valor_particular ?? 0),
+        valor_convenio: Number(data.valor_convenio ?? 0),
+      } as ProcedimentoCatalogo, 
+      error: null 
+    };
+  },
+
+  delete: async (id: string): Promise<Result<{ success: boolean }>> => {
+    const { error } = await supabase.from('procedimentos_catalogo').delete().eq('id', id);
+    if (error) return { data: null, error: err(error) };
+    return { data: { success: true }, error: null };
+  },
+
+  versoes: async (id: string): Promise<Result<ProcedimentoVersao[]>> => {
+    const { data, error } = await supabase
+      .from('procedimentos_versoes')
+      .select('*')
+      .eq('procedimento_id', id)
+      .order('versao', { ascending: false });
+    if (error) return { data: null, error: err(error) };
+    return { 
+      data: (data ?? []).map(r => ({
+        ...r,
+        valor_particular: Number(r.valor_particular ?? 0),
+        valor_convenio: Number(r.valor_convenio ?? 0),
+      })) as ProcedimentoVersao[], 
+      error: null 
+    };
+  },
+
+  versaoEm: async (id: string, dataIso: string): Promise<Result<ProcedimentoVersao | null>> => {
+    const { data, error } = await supabase
+      .from('procedimentos_versoes')
+      .select('*')
+      .eq('procedimento_id', id)
+      .lte('valido_desde', dataIso)
+      .or(`valido_ate.is.null,valido_ate.gte.${dataIso}`)
+      .order('versao', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) return { data: null, error: err(error) };
+    if (!data) return { data: null, error: null };
+    return { 
+      data: {
+        ...data,
+        valor_particular: Number(data.valor_particular ?? 0),
+        valor_convenio: Number(data.valor_convenio ?? 0),
+      } as ProcedimentoVersao, 
+      error: null 
+    };
+  },
+};
+
