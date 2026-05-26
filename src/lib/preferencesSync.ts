@@ -23,7 +23,7 @@ export interface NotificationPreferences {
 export async function fetchPreferences(): Promise<NotificationPreferences> {
   try {
     const res = await fetch(`${VPS_API_BASE}/user/preferences`, {
-      headers: getAuthHeaders(),
+      headers: await getAuthHeaders(),
     });
     if (!res.ok) throw new Error("fetch failed");
     const data = await res.json();
