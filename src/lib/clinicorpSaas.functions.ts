@@ -511,14 +511,19 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
       }
 
       // Batch upsert appointments in chunks
-      summary.appointments = 0;
+      let apptsSaved = 0;
       for (let i = 0; i < appointmentUpserts.length; i += 200) {
         const chunk = appointmentUpserts.slice(i, i + 200);
         const { error: upErr } = await supabase.from('agendamentos').upsert(chunk, { onConflict: 'tenant_id,clinicorp_appointment_id' });
-        if (upErr) errors.push(`agendamentos chunk ${i}: ${upErr.message}`);
-        else summary.appointments += chunk.length;
-        await updateProgress(`Salvando agenda: ${summary.appointments}/${appointmentUpserts.length}`);
+        if (upErr) {
+          log(`AGENDAMENTOS UPSERT ERROR chunk ${i}`, upErr);
+          errors.push(`agendamentos chunk ${i}: ${upErr.message}`);
+        } else {
+          apptsSaved += chunk.length;
+        }
+        await updateProgress(`Salvando agenda: ${apptsSaved}/${appointmentUpserts.length}`);
       }
+      summary.appointments = apptsSaved;
 
       log('summary', summary);
       const finalStatus = errors.length > 5 ? 'partial' : 'success';
