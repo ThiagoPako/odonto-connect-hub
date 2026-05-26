@@ -305,7 +305,7 @@ function extractList(data: any): any[] {
   const direct = pickFirst(data,
     'Results', 'Result', 'Data', 'data', 'Items', 'items', 'Rows', 'rows', 'Records', 'records',
     'Appointments', 'appointments', 'Patients', 'patients', 'Dentists', 'dentists',
-    'Professionals', 'professionals', 'Businesses', 'businesses', 'Clinics', 'clinics',
+    'Professionals', 'professionals', 'Professional', 'professional', 'Businesses', 'businesses', 'Clinics', 'clinics', 'Business', 'business',
     'List', 'list',
   );
   if (Array.isArray(direct)) return direct;
