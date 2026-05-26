@@ -103,7 +103,6 @@ export function isAuthenticated(): boolean {
   return !!getToken();
 }
 
-export { VPS_API_BASE };
 
 // ─── Generic fetch ──────────────────────────────────────────
 
