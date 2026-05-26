@@ -1799,13 +1799,14 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
 export const clinicorpPush = {
   log: async (pool, data) => {
     try {
+      const tId = data.tenant_id || await resolveTenantId(pool, null);
       await pool.query(
-        `INSERT INTO clinicorp_push_log (entity_type, local_id, clinicorp_id, action, status, payload, response, error_message)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        `INSERT INTO clinicorp_push_log (entity_type, local_id, clinicorp_id, action, status, payload, response, error_message, tenant_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
         [data.entity, data.local_id, data.clinicorp_id, data.action, data.status,
          data.payload ? JSON.stringify(data.payload) : null,
          data.response ? JSON.stringify(data.response) : null,
-         data.error]
+         data.error, tId]
       );
     } catch (e) { console.error('[clinicorp push log]', e.message); }
   },
