@@ -1256,4 +1256,293 @@ export const sbContatosApi = {
   },
 };
 
+// ─── Transfer Logs ──────────────────────────────────────────
+export const sbTransferApi = {
+  async create(body: {
+    leadId: string;
+    leadName?: string;
+    leadPhone?: string;
+    toUserId: string;
+    toUserName?: string;
+    reason: string;
+    queueId?: string;
+    queueName?: string;
+  }): Promise<Result<{ success: boolean; id: string }>> {
+    try {
+      const tenant_id = await getTenantId();
+      if (!tenant_id) return { data: null, error: 'Sem tenant' };
+      const { data: userData } = await supabase.auth.getUser();
+      const from_user_id = userData.user?.id ?? null;
+      let from_user_name: string | null = null;
+      if (from_user_id) {
+        const { data: prof } = await supabase
+          .from('profiles').select('nome').eq('id', from_user_id).maybeSingle();
+        from_user_name = (prof?.nome as string | null) ?? null;
+      }
+      const { data, error } = await supabase
+        .from('transfer_logs')
+        .insert({
+          tenant_id,
+          lead_id: body.leadId,
+          lead_name: body.leadName ?? null,
+          lead_phone: body.leadPhone ?? null,
+          from_user_id,
+          from_user_name,
+          to_user_id: body.toUserId,
+          to_user_name: body.toUserName ?? null,
+          reason: body.reason,
+          queue_id: body.queueId ?? null,
+          queue_name: body.queueName ?? null,
+        } as any)
+        .select('id')
+        .single();
+      if (error) return { data: null, error: error.message };
+      return { data: { success: true, id: (data as any).id }, error: null };
+    } catch (e) { return { data: null, error: err(e) }; }
+  },
+  async list(params?: Record<string, string>): Promise<Result<any[]>> {
+    try {
+      let q = supabase.from('transfer_logs').select('*').order('created_at', { ascending: false });
+      if (params?.leadId) q = q.eq('lead_id', params.leadId);
+      if (params?.userId) q = q.or(`from_user_id.eq.${params.userId},to_user_id.eq.${params.userId}`);
+      if (params?.limit) q = q.limit(Number(params.limit));
+      const { data, error } = await q;
+      if (error) return { data: null, error: error.message };
+      return { data: data ?? [], error: null };
+    } catch (e) { return { data: null, error: err(e) }; }
+  },
+};
+
+// ─── User Preferences ──────────────────────────────────────
+export const sbUserPreferencesApi = {
+  async get(): Promise<Result<any>> {
+    try {
+      const { data: u } = await supabase.auth.getUser();
+      if (!u.user) return { data: null, error: 'Não autenticado' };
+      const { data, error } = await supabase
+        .from('user_preferences').select('*').eq('user_id', u.user.id).maybeSingle();
+      if (error) return { data: null, error: error.message };
+      return { data: data ?? null, error: null };
+    } catch (e) { return { data: null, error: err(e) }; }
+  },
+  async update(body: Record<string, any>): Promise<Result<any>> {
+    try {
+      const tenant_id = await getTenantId();
+      const { data: u } = await supabase.auth.getUser();
+      if (!u.user || !tenant_id) return { data: null, error: 'Não autenticado' };
+      const { data, error } = await supabase
+        .from('user_preferences')
+        .upsert({ user_id: u.user.id, tenant_id, ...body } as any, { onConflict: 'user_id' })
+        .select('*').single();
+      if (error) return { data: null, error: error.message };
+      return { data, error: null };
+    } catch (e) { return { data: null, error: err(e) }; }
+  },
+};
+
+// ─── Push Subscriptions ────────────────────────────────────
+export const sbPushSubscriptionsApi = {
+  async subscribe(sub: { endpoint: string; keys: { p256dh: string; auth: string } }): Promise<Result<any>> {
+    try {
+      const tenant_id = await getTenantId();
+      const { data: u } = await supabase.auth.getUser();
+      if (!tenant_id || !u.user) return { data: null, error: 'Não autenticado' };
+      const { data, error } = await supabase
+        .from('push_subscriptions')
+        .upsert({
+          tenant_id,
+          user_id: u.user.id,
+          endpoint: sub.endpoint,
+          keys_p256dh: sub.keys.p256dh,
+          keys_auth: sub.keys.auth,
+        } as any, { onConflict: 'endpoint' })
+        .select('*').single();
+      if (error) return { data: null, error: error.message };
+      return { data, error: null };
+    } catch (e) { return { data: null, error: err(e) }; }
+  },
+  async unsubscribe(endpoint: string): Promise<Result<{ success: boolean }>> {
+    try {
+      const { error } = await supabase.from('push_subscriptions').delete().eq('endpoint', endpoint);
+      if (error) return { data: null, error: error.message };
+      return { data: { success: true }, error: null };
+    } catch (e) { return { data: null, error: err(e) }; }
+  },
+};
+
+// ─── Reactivation ─────────────────────────────────────────
+export const sbReactivationApi = makeCrud({ table: 'reactivation_rules', orderBy: { column: 'created_at', ascending: false } });
+export const sbReactivationSendsApi = makeCrud({ table: 'reactivation_sends', orderBy: { column: 'sent_at', ascending: false } });
+
+// ─── Satisfaction Ratings ─────────────────────────────────
+export const sbSatisfactionApi = {
+  async create(body: {
+    sessionId?: string;
+    leadId: string;
+    leadPhone?: string;
+    rating: number;
+    attendantId?: string;
+    attendantName?: string;
+  }): Promise<Result<any>> {
+    try {
+      const tenant_id = await getTenantId();
+      if (!tenant_id) return { data: null, error: 'Sem tenant' };
+      const { data, error } = await supabase
+        .from('satisfaction_ratings')
+        .insert({
+          tenant_id,
+          session_id: body.sessionId ?? null,
+          lead_id: body.leadId,
+          lead_phone: body.leadPhone ?? null,
+          rating: body.rating,
+          attendant_id: body.attendantId ?? null,
+          attendant_name: body.attendantName ?? null,
+        } as any)
+        .select('*').single();
+      if (error) return { data: null, error: error.message };
+      return { data, error: null };
+    } catch (e) { return { data: null, error: err(e) }; }
+  },
+  async list(params?: { sessionId?: string; leadId?: string }): Promise<Result<any[]>> {
+    try {
+      let q = supabase.from('satisfaction_ratings').select('*').order('created_at', { ascending: false });
+      if (params?.sessionId) q = q.eq('session_id', params.sessionId);
+      if (params?.leadId) q = q.eq('lead_id', params.leadId);
+      const { data, error } = await q;
+      if (error) return { data: null, error: error.message };
+      return { data: data ?? [], error: null };
+    } catch (e) { return { data: null, error: err(e) }; }
+  },
+};
+
+// ─── System Settings ──────────────────────────────────────
+export const sbSystemSettingsApi = {
+  async get(key: string): Promise<Result<any>> {
+    try {
+      const { data, error } = await supabase
+        .from('system_settings').select('value').eq('key', key).maybeSingle();
+      if (error) return { data: null, error: error.message };
+      return { data: (data as any)?.value ?? null, error: null };
+    } catch (e) { return { data: null, error: err(e) }; }
+  },
+  async set(key: string, value: any): Promise<Result<any>> {
+    try {
+      const { data, error } = await supabase
+        .from('system_settings')
+        .upsert({ key, value } as any, { onConflict: 'key' })
+        .select('*').single();
+      if (error) return { data: null, error: error.message };
+      return { data, error: null };
+    } catch (e) { return { data: null, error: err(e) }; }
+  },
+};
+
+// ─── Attendance Settings (per-tenant via system_settings) ─
+const ATTENDANCE_KEY = 'attendance_settings';
+export const sbAttendanceSettingsApi = {
+  async get(): Promise<Result<any>> {
+    try {
+      const tenant_id = await getTenantId();
+      if (!tenant_id) return { data: null, error: 'Sem tenant' };
+      const key = `${ATTENDANCE_KEY}:${tenant_id}`;
+      const { data } = await supabase
+        .from('system_settings').select('value').eq('key', key).maybeSingle();
+      return { data: (data as any)?.value ?? {}, error: null };
+    } catch (e) { return { data: null, error: err(e) }; }
+  },
+  async update(body: any): Promise<Result<any>> {
+    try {
+      const tenant_id = await getTenantId();
+      if (!tenant_id) return { data: null, error: 'Sem tenant' };
+      const key = `${ATTENDANCE_KEY}:${tenant_id}`;
+      const { data, error } = await supabase
+        .from('system_settings')
+        .upsert({ key, value: body } as any, { onConflict: 'key' })
+        .select('value').single();
+      if (error) return { data: null, error: error.message };
+      return { data: (data as any).value, error: null };
+    } catch (e) { return { data: null, error: err(e) }; }
+  },
+};
+
+// ─── Attendance Metrics (computed) ────────────────────────
+export const sbMetricsApi = {
+  async attendance(days?: number): Promise<Result<any>> {
+    try {
+      const tenant_id = await getTenantId();
+      if (!tenant_id) return { data: null, error: 'Sem tenant' };
+      const since = days ? new Date(Date.now() - days * 86400000).toISOString() : null;
+
+      let sq = supabase.from('attendance_sessions').select('*').eq('tenant_id', tenant_id);
+      if (since) sq = sq.gte('created_at', since);
+      const { data: sessions, error: e1 } = await sq;
+      if (e1) return { data: null, error: e1.message };
+
+      let rq = supabase.from('satisfaction_ratings').select('*').eq('tenant_id', tenant_id);
+      if (since) rq = rq.gte('created_at', since);
+      const { data: ratings, error: e2 } = await rq;
+      if (e2) return { data: null, error: e2.message };
+
+      const ss = (sessions ?? []) as any[];
+      const closed = ss.filter((s) => s.status === 'closed');
+      const avg = (arr: number[]) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+      const nums = (key: string) => ss.map((s) => s[key]).filter((v) => v != null) as number[];
+      const waits = nums('wait_time_seconds');
+      const general = {
+        total_sessions: String(ss.length),
+        closed_sessions: String(closed.length),
+        avg_wait_time: avg(waits)?.toString() ?? null,
+        avg_response_time: avg(nums('response_time_seconds'))?.toString() ?? null,
+        avg_duration: avg(nums('duration_seconds'))?.toString() ?? null,
+        max_wait_time: waits.length ? Math.max(...waits) : null,
+        min_wait_time: waits.length ? Math.min(...waits) : null,
+      };
+
+      const byAtt = new Map<string, any[]>();
+      for (const s of ss) {
+        if (!s.attendant_id) continue;
+        const arr = byAtt.get(s.attendant_id) ?? [];
+        arr.push(s); byAtt.set(s.attendant_id, arr);
+      }
+      const perAttendant = Array.from(byAtt.entries()).map(([id, arr]) => ({
+        attendant_id: id,
+        attendant_name: arr[0]?.attendant_name ?? '',
+        total_sessions: String(arr.length),
+        closed_sessions: String(arr.filter((x) => x.status === 'closed').length),
+        avg_wait_time: avg(arr.map((x) => x.wait_time_seconds).filter((v) => v != null))?.toString() ?? null,
+        avg_response_time: avg(arr.map((x) => x.response_time_seconds).filter((v) => v != null))?.toString() ?? null,
+        avg_duration: avg(arr.map((x) => x.duration_seconds).filter((v) => v != null))?.toString() ?? null,
+      }));
+
+      const rr = (ratings ?? []) as any[];
+      const ratingNums = rr.map((r) => r.rating);
+      const satisfaction = {
+        avg_rating: avg(ratingNums)?.toString() ?? null,
+        total_ratings: String(rr.length),
+        five_star: String(ratingNums.filter((r) => r === 5).length),
+        four_star: String(ratingNums.filter((r) => r === 4).length),
+        three_star: String(ratingNums.filter((r) => r === 3).length),
+        two_star: String(ratingNums.filter((r) => r === 2).length),
+        one_star: String(ratingNums.filter((r) => r === 1).length),
+      };
+
+      const byAttR = new Map<string, any[]>();
+      for (const r of rr) {
+        if (!r.attendant_id) continue;
+        const arr = byAttR.get(r.attendant_id) ?? [];
+        arr.push(r); byAttR.set(r.attendant_id, arr);
+      }
+      const satisfactionPerAttendant = Array.from(byAttR.entries()).map(([id, arr]) => ({
+        attendant_id: id,
+        attendant_name: arr[0]?.attendant_name ?? '',
+        avg_rating: (avg(arr.map((x) => x.rating)) ?? 0).toString(),
+        total_ratings: String(arr.length),
+      }));
+
+      return { data: { general, perAttendant, satisfaction, satisfactionPerAttendant }, error: null };
+    } catch (e) { return { data: null, error: err(e) }; }
+  },
+};
+
+
 
