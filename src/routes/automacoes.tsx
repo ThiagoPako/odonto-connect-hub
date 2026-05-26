@@ -50,21 +50,17 @@ function AutomacoesPage() {
   const [loadingConfig, setLoadingConfig] = useState(true);
   const [solutionCounts, setSolutionCounts] = useState<Record<string, number>>({});
 
-  // Load flows from API, fallback to mock data
+  // Load flows from API
   useEffect(() => {
     automationsApi.listFlows()
       .then((res) => {
-        if (res.data && Array.isArray(res.data) && res.data.length > 0) {
+        if (res.data && Array.isArray(res.data)) {
           setFlows(res.data);
         } else {
-          // Seed mock data to DB on first load
-          setFlows(mockAutomationFlows);
-          mockAutomationFlows.forEach(flow => {
-            automationsApi.createFlow(flow).catch(() => {});
-          });
+          setFlows([]);
         }
       })
-      .catch(() => setFlows(mockAutomationFlows))
+      .catch(() => setFlows([]))
       .finally(() => setLoadingFlows(false));
 
     automationsApi.getFollowup()

@@ -110,12 +110,12 @@ function ConsultaPage() {
       if (data && data.length > 0) {
         setHistoricoConsultas(data);
       } else {
-        setHistoricoConsultas(getDemoConsultas(pacienteSelecionado.id));
+        setHistoricoConsultas([]);
       }
       setLoadingHistorico(false);
     }).catch(() => {
       if (cancelled) return;
-      setHistoricoConsultas(getDemoConsultas(pacienteSelecionado.id));
+      setHistoricoConsultas([]);
       setLoadingHistorico(false);
     });
     return () => { cancelled = true; };
@@ -167,7 +167,7 @@ function ConsultaPage() {
         const target = converted.find((a: Appointment) => a.id === appointmentId);
         if (target) {
           setAppointmentSelecionado(target);
-          const paciente = target.pacienteId ? getPacienteById(target.pacienteId) : mockPacientes.find(p => p.nome === target.patientName);
+          const paciente = target.pacienteId ? getPacienteById(target.pacienteId) : undefined;
           if (paciente) {
             setPacienteSelecionado(paciente);
           } else {
@@ -206,7 +206,7 @@ function ConsultaPage() {
     if (atendimentoAtivo) return;
     setAppointmentSelecionado(apt);
     // Try to find patient in registry
-    const paciente = apt.pacienteId ? getPacienteById(apt.pacienteId) : mockPacientes.find(p => p.nome === apt.patientName);
+    const paciente = apt.pacienteId ? getPacienteById(apt.pacienteId) : undefined;
     if (paciente) {
       setPacienteSelecionado(paciente);
     } else {

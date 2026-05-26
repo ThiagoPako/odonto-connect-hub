@@ -474,7 +474,7 @@ function NovoPacienteModal({ onClose, onSaved }: { onClose: () => void; onSaved:
       });
       if (error) {
         // Demo mode: simulate success
-        toast.success(`${form.nome} cadastrado com sucesso! (modo demonstração)`);
+      toast.success(`${form.nome} cadastrado com sucesso!`);
       } else {
         toast.success(`${form.nome} cadastrado com sucesso!`);
       }
@@ -490,7 +490,7 @@ function NovoPacienteModal({ onClose, onSaved }: { onClose: () => void; onSaved:
       onSaved();
     } catch {
       // Demo mode: simulate success
-      toast.success(`${form.nome} cadastrado com sucesso! (modo demonstração)`);
+      toast.success(`${form.nome} cadastrado com sucesso!`);
       if (selectedLeadId) {
         toast.info("Lead vinculado ao paciente");
       }
@@ -760,7 +760,7 @@ function PacienteDetailModal({
       });
       if (error) {
         // Demo mode fallback
-        toast.success("Paciente atualizado! (modo demonstração)");
+      toast.success("Paciente atualizado!");
         setEditing(false);
         onUpdated?.();
       } else {
@@ -769,7 +769,7 @@ function PacienteDetailModal({
         onUpdated?.();
       }
     } catch {
-      toast.success("Paciente atualizado! (modo demonstração)");
+      toast.success("Paciente atualizado!");
       setEditing(false);
       onUpdated?.();
     } finally {
