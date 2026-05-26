@@ -151,26 +151,40 @@ async function clinicorpProbe(
 ): Promise<{ status: number; data: unknown }> {
   const base = base_url.replace(/\/$/, '');
   const url = new URL(base + pathName);
-  url.searchParams.set('subscriber_id', subscriber_id);
-  url.searchParams.set('user_api', subscriber_id);
-  url.searchParams.set('api_key', api_token.replace(/^Bearer\s+/i, ''));
+  const cleanToken = api_token.replace(/^Bearer\s+/i, '').trim();
+  const cleanUser = subscriber_id.trim();
+  url.searchParams.set('subscriber_id', cleanUser);
+  url.searchParams.set('user_api', cleanUser);
+  url.searchParams.set('api_key', cleanToken);
   for (const [k, v] of Object.entries(query)) url.searchParams.set(k, v);
 
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    const r = await fetch(url.toString(), {
-      method: 'GET',
-      headers: { Accept: 'application/json', Authorization: `Bearer ${api_token}` },
-      signal: ctrl.signal,
-    });
-    const text = await r.text();
-    let data: unknown = null;
-    try { data = text ? JSON.parse(text) : null; } catch { data = text; }
-    return { status: r.status, data };
-  } finally {
-    clearTimeout(t);
+  const basicAuth = `Basic ${btoa(`${cleanUser}:${cleanToken}`)}`;
+  const bearerAuth = `Bearer ${cleanToken}`;
+
+  const attempt = async (authHeader: string) => {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const r = await fetch(url.toString(), {
+        method: 'GET',
+        headers: { Accept: 'application/json', Authorization: authHeader },
+        signal: ctrl.signal,
+      });
+      const text = await r.text();
+      let data: unknown = null;
+      try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+      return { status: r.status, data };
+    } finally {
+      clearTimeout(t);
+    }
+  };
+
+  // VPS testou: Basic auth (user:token base64) funciona; Bearer só como fallback.
+  let result = await attempt(basicAuth);
+  if (result.status === 401) {
+    result = await attempt(bearerAuth);
   }
+  return result;
 }
 
 export const testMyClinicorpConnection = createServerFn({ method: 'POST' })
