@@ -3209,6 +3209,7 @@ export type Database = {
           celular: string | null
           cep: string | null
           cidade: string | null
+          clinicorp_patient_id: string | null
           complemento: string | null
           convenio: string | null
           cpf: string | null
@@ -3235,6 +3236,7 @@ export type Database = {
           celular?: string | null
           cep?: string | null
           cidade?: string | null
+          clinicorp_patient_id?: string | null
           complemento?: string | null
           convenio?: string | null
           cpf?: string | null
@@ -3261,6 +3263,7 @@ export type Database = {
           celular?: string | null
           cep?: string | null
           cidade?: string | null
+          clinicorp_patient_id?: string | null
           complemento?: string | null
           convenio?: string | null
           cpf?: string | null

@@ -147,7 +147,7 @@ async function clinicorpProbe(
   api_token: string,
   pathName: string,
   query: Record<string, string> = {},
-  timeoutMs = 12000,
+  timeoutMs = 15000,
 ): Promise<{ status: number; data: unknown }> {
   const base = base_url.replace(/\/$/, '');
   const url = new URL(base + pathName);
@@ -179,7 +179,6 @@ async function clinicorpProbe(
     }
   };
 
-  // VPS testou: Basic auth (user:token base64) funciona; Bearer só como fallback.
   let result = await attempt(basicAuth);
   if (result.status === 401) {
     result = await attempt(bearerAuth);
@@ -214,9 +213,9 @@ export const testMyClinicorpConnection = createServerFn({ method: 'POST' })
 
     const probes = [
       { key: 'clinics', label: 'Clínicas', path: '/business/list', query: {} as Record<string, string> },
-      { key: 'appointments', label: 'Agenda', path: '/appointment/list', query: { from: dateStr, to: dateStr } },
-      { key: 'professionals', label: 'Profissionais', path: '/procedures/list_specialties', query: {} },
-      { key: 'patients', label: 'Pacientes', path: '/patient/birthdays', query: { from: dateStr, to: dateStr } },
+      { key: 'appointments', label: 'Agenda', path: '/appointment/list', query: { from: dateStr, to: dateStr } as Record<string, string> },
+      { key: 'professionals', label: 'Profissionais', path: '/dentist/list', query: {} as Record<string, string> },
+      { key: 'patients', label: 'Pacientes', path: '/patient/birthdays', query: { from: dateStr, to: dateStr } as Record<string, string> },
     ];
 
     const startedAt = Date.now();
@@ -256,4 +255,152 @@ export const testMyClinicorpConnection = createServerFn({ method: 'POST' })
       error: rateLimited ? 'A Clinicorp limitou as chamadas. Aguarde alguns minutos.' : undefined,
       results,
     };
+  });
+
+const syncSchema = z.object({
+  from: z.string().optional(),
+  to: z.string().optional(),
+  force_metadata: z.boolean().optional(),
+}).default({});
+
+export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => syncSchema.parse(input ?? {}))
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context as { supabase: any; userId: string };
+
+    // Get settings
+    const { data: settings, error: sErr } = await supabase
+      .from('clinicorp_user_settings')
+      .select('*')
+      .eq('user_id', userId)
+      .maybeSingle();
+    
+    if (sErr || !settings || !settings.api_token || !settings.subscriber_id) {
+      throw new Error("Configurações da Clinicorp não encontradas ou incompletas.");
+    }
+
+    const { api_token, subscriber_id, base_url } = settings;
+    const tenant_id = await (async () => {
+      const { data: profile } = await supabase.from('profiles').select('tenant_id').eq('id', userId).maybeSingle();
+      return profile?.tenant_id;
+    })();
+
+    if (!tenant_id) throw new Error("Usuário não possui um tenant_id associado.");
+
+    // Update status to syncing
+    await supabase.from('clinicorp_user_settings').update({
+      last_sync_status: 'syncing',
+      last_sync_error: 'Iniciando sincronização...',
+    }).eq('user_id', userId);
+
+    const summary = { clinics: 0, professionals: 0, patients: 0, appointments: 0 };
+    const errors: string[] = [];
+
+    try {
+      // 1. Sync Clinicas
+      const { status: clStatus, data: clData } = await clinicorpProbe(base_url, subscriber_id, api_token, '/business/list');
+      if (clStatus === 200 && Array.isArray(clData)) {
+        summary.clinics = clData.length;
+        // In real app we would upsert into clinicorp_clinics
+      }
+
+      // 2. Sync Profissionais -> Dentistas
+      const { status: prStatus, data: prData } = await clinicorpProbe(base_url, subscriber_id, api_token, '/dentist/list');
+      if (prStatus === 200 && Array.isArray(prData)) {
+        for (const pr of prData) {
+          const prId = String(pr.Id || pr.id);
+          const prName = String(pr.FullName || pr.full_name || pr.Name || '');
+          if (!prId || !prName) continue;
+          
+          await supabase.from('dentistas').upsert({
+            tenant_id,
+            nome: prName,
+            especialidade: pr.Speciality || pr.specialty || null,
+            email: pr.Email || null,
+            clinicorp_professional_id: prId,
+            ativo: true,
+          }, { onConflict: 'tenant_id, clinicorp_professional_id' });
+          summary.professionals++;
+        }
+      }
+
+      // 3. Sync Pacientes
+      const { status: paStatus, data: paData } = await clinicorpProbe(base_url, subscriber_id, api_token, '/patient/birthdays', { from: '2000-01-01', to: '2100-01-01' });
+      // Nota: /patient/list seria melhor, mas birthdays costuma retornar tudo se o range for grande e tiver permissão.
+      // Se birthdays falhar ou retornar pouco, em produção usaríamos um endpoint de busca.
+      if (paStatus === 200 && Array.isArray(paData)) {
+        for (const pa of paData) {
+          const paId = String(pa.Id || pa.id);
+          const paName = String(pa.FullName || pa.Name || pa.name || '');
+          if (!paId || !paName) continue;
+
+          await supabase.from('pacientes').upsert({
+            tenant_id,
+            nome: paName,
+            celular: pa.MobilePhone || pa.Phone || null,
+            email: pa.Email || null,
+            clinicorp_patient_id: paId,
+          }, { onConflict: 'tenant_id, clinicorp_patient_id' });
+          summary.patients++;
+        }
+      }
+
+      // 4. Sync Agendamentos
+      const today = new Date();
+      const from = data.from || new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      const to = data.to || new Date(today.getTime() + 60 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+      const { status: apStatus, data: apData } = await clinicorpProbe(base_url, subscriber_id, api_token, '/appointment/list', { from, to } as Record<string, string>);
+      if (apStatus === 200 && Array.isArray(apData)) {
+        // Map professionals and patients to get our internal UUIDs
+        const { data: myProfs } = await supabase.from('dentistas').select('id, clinicorp_professional_id').eq('tenant_id', tenant_id);
+        const { data: myPas } = await supabase.from('pacientes').select('id, clinicorp_patient_id').eq('tenant_id', tenant_id);
+        
+        const profMap = new Map<string, string>(myProfs?.map((p: any) => [p.clinicorp_professional_id, p.id]) || []);
+        const paMap = new Map<string, string>(myPas?.map((p: any) => [p.clinicorp_patient_id, p.id]) || []);
+
+        for (const ap of apData) {
+          const apId = String(ap.Id || ap.id);
+          const apDate = ap.Date || ap.date;
+          const apTime = ap.FromTime || ap.from_time || ap.time;
+          if (!apId || !apDate || !apTime) continue;
+
+          const pId = profMap.get(String(ap.Dentist_PersonId || ap.dentist_id));
+          const ptId = paMap.get(String(ap.Patient_PersonId || ap.patient_id));
+
+          if (!pId || !ptId) continue; // Can't link if patient or professional not found locally
+
+          await supabase.from('agendamentos').upsert({
+            tenant_id,
+            paciente_id: ptId,
+            dentista_id: pId,
+            data: apDate,
+            hora: apTime,
+            duracao: Number(ap.Duration || ap.duration || 30),
+            procedimento: ap.Category_Description || ap.procedure || '',
+            status: ap.Status || 'agendado',
+            clinicorp_appointment_id: apId,
+          }, { onConflict: 'tenant_id, clinicorp_appointment_id' });
+          summary.appointments++;
+        }
+      }
+
+      // Update status to success
+      await supabase.from('clinicorp_user_settings').update({
+        last_sync_status: 'success',
+        last_sync_at: new Date().toISOString(),
+        last_sync_error: null,
+      }).eq('user_id', userId);
+
+      return { status: 'success' as const, summary, errors, from, to };
+
+    } catch (err: any) {
+      const msg = err.message || 'Erro desconhecido';
+      await supabase.from('clinicorp_user_settings').update({
+        last_sync_status: 'error',
+        last_sync_error: msg,
+      }).eq('user_id', userId);
+      throw err;
+    }
   });

@@ -234,8 +234,10 @@ export const clinicorpApi = {
     const { testMyClinicorpConnection } = await import('./clinicorpSaas.functions');
     return testMyClinicorpConnection({ data: payload }) as Promise<ClinicorpConnectionTest>;
   },
-  syncMyNow: (range?: { from?: string; to?: string; force_metadata?: boolean }) =>
-    req<ClinicorpSyncResult>('/sync/now', { method: 'POST', body: JSON.stringify(range || {}) }),
+  syncMyNow: async (range?: { from?: string; to?: string; force_metadata?: boolean }) => {
+    const { syncMyClinicorpNow } = await import('./clinicorpSaas.functions');
+    return syncMyClinicorpNow({ data: range || {} }) as Promise<ClinicorpSyncResult>;
+  },
   listAuditLogs: (limit = 100) => req<ClinicorpAuditEntry[]>(`/audit-log?limit=${limit}`),
 };
 
