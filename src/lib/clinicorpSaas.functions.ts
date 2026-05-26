@@ -305,7 +305,7 @@ function extractList(data: any): any[] {
   const direct = pickFirst(data,
     'Results', 'Result', 'Data', 'data', 'Items', 'items', 'Rows', 'rows', 'Records', 'records',
     'Appointments', 'appointments', 'Patients', 'patients', 'Dentists', 'dentists',
-    'Professionals', 'professionals', 'Businesses', 'businesses', 'Clinics', 'clinics',
+    'Professionals', 'professionals', 'Professional', 'professional', 'Businesses', 'businesses', 'Clinics', 'clinics', 'Business', 'business',
     'List', 'list',
   );
   if (Array.isArray(direct)) return direct;
@@ -402,14 +402,14 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
         
         const dentistUpserts = [];
         for (const d of list) {
-          const id = String(pickFirst(d, 'Id', 'id', 'PersonId', 'Dentist_PersonId', 'DentistId') ?? '');
-          const nome = String(pickFirst(d, 'FullName', 'Name', 'full_name', 'name') ?? '').trim();
+          const id = String(pickFirst(d, 'Id', 'id', 'PersonId', 'Dentist_PersonId', 'DentistId', 'professional_id', 'ProfessionalId', 'dentist_id') ?? '');
+          const nome = String(pickFirst(d, 'FullName', 'Name', 'full_name', 'name', 'professional_name', 'ProfessionalName') ?? '').trim();
           if (!id || !nome) continue;
           dentistUpserts.push({
             tenant_id, nome,
-            especialidade: pickFirst(d, 'Speciality', 'Specialty', 'specialty') ?? null,
+            especialidade: pickFirst(d, 'Speciality', 'Specialty', 'specialty', 'category_name', 'CategoryName') ?? null,
             email: pickFirst(d, 'Email', 'email') ?? null,
-            cro: pickFirst(d, 'Cro', 'CRO', 'cro') ?? null,
+            cro: pickFirst(d, 'Cro', 'CRO', 'cro', 'identity_number') ?? null,
             clinicorp_professional_id: id,
             ativo: true,
           });
@@ -480,16 +480,16 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
       // 4. Pacientes — Backfill a partir dos agendamentos
       const patientSeeds = new Map<string, { name?: string; phone?: string; email?: string; cpf?: string; sex?: string; birthDate?: string }>();
       for (const a of allAppts) {
-        const pid = String(pickFirst(a, 'PatientId', 'Patient_PersonId', 'PatientPersonId', 'Patient_Id', 'patient_id') ?? a?.Patient?.Id ?? '');
+        const pid = String(pickFirst(a, 'PatientId', 'Patient_PersonId', 'PatientPersonId', 'Patient_Id', 'patient_id', 'id_paciente', 'Patient_Id') ?? a?.Patient?.Id ?? a?.Patient?.id ?? '');
         if (!pid) continue;
         if (!patientSeeds.has(pid)) {
           patientSeeds.set(pid, {
-            name: pickFirst(a, 'PatientName', 'Patient_FullName', 'Patient_Name', 'PatientFullName', 'patient_name') ?? a?.Patient?.Name ?? a?.Patient?.FullName,
-            phone: pickFirst(a, 'Patient_MobilePhone', 'PatientMobilePhone', 'Patient_Phone', 'PatientPhone') ?? a?.Patient?.MobilePhone,
-            email: pickFirst(a, 'Patient_Email', 'PatientEmail') ?? a?.Patient?.Email,
-            cpf: pickFirst(a, 'Patient_Cpf', 'PatientCpf', 'Patient_CPF', 'PatientCPF') ?? a?.Patient?.Cpf ?? a?.Patient?.CPF,
-            sex: pickFirst(a, 'Patient_Sex', 'PatientSex', 'Patient_Gender', 'PatientGender') ?? a?.Patient?.Sex ?? a?.Patient?.Gender,
-            birthDate: pickFirst(a, 'Patient_BirthDate', 'PatientBirthDate', 'Patient_BirthDay', 'PatientBirthday') ?? a?.Patient?.BirthDate ?? a?.Patient?.BirthDay,
+            name: pickFirst(a, 'PatientName', 'Patient_FullName', 'Patient_Name', 'PatientFullName', 'patient_name', 'nome_paciente') ?? a?.Patient?.Name ?? a?.Patient?.FullName ?? a?.Patient?.nome,
+            phone: pickFirst(a, 'Patient_MobilePhone', 'PatientMobilePhone', 'Patient_Phone', 'PatientPhone', 'celular_paciente') ?? a?.Patient?.MobilePhone ?? a?.Patient?.celular,
+            email: pickFirst(a, 'Patient_Email', 'PatientEmail', 'email_paciente') ?? a?.Patient?.Email ?? a?.Patient?.email,
+            cpf: pickFirst(a, 'Patient_Cpf', 'PatientCpf', 'Patient_CPF', 'PatientCPF', 'cpf_paciente') ?? a?.Patient?.Cpf ?? a?.Patient?.CPF ?? a?.Patient?.cpf,
+            sex: pickFirst(a, 'Patient_Sex', 'PatientSex', 'Patient_Gender', 'PatientGender', 'sexo_paciente') ?? a?.Patient?.Sex ?? a?.Patient?.Gender ?? a?.Patient?.sexo,
+            birthDate: pickFirst(a, 'Patient_BirthDate', 'PatientBirthDate', 'Patient_BirthDay', 'PatientBirthday', 'data_nascimento_paciente') ?? a?.Patient?.BirthDate ?? a?.Patient?.BirthDay ?? a?.Patient?.data_nascimento,
           });
         }
       }
@@ -537,13 +537,19 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
 
       const appointmentUpserts = [];
       for (const a of allAppts) {
-        const apId = String(pickFirst(a, 'Id', 'id', 'AppointmentId', 'AppointmentID', 'Appointment_Id') ?? '');
-        const apDate = pickFirst(a, 'Date', 'date', 'AppointmentDate');
-        const apTime = pickFirst(a, 'FromTime', 'from_time', 'StartTime', 'time', 'Time');
-        if (!apId || !apDate || !apTime) continue;
+        const apId = String(pickFirst(a, 'Id', 'id', 'AppointmentId', 'AppointmentID', 'Appointment_Id', 'appointment_id') ?? '');
+        const apDate = pickFirst(a, 'Date', 'date', 'AppointmentDate', 'Appointment_Date', 'start_date', 'data', 'Data');
+        const apTime = pickFirst(a, 'FromTime', 'from_time', 'StartTime', 'time', 'Time', 'start_time', 'inicio', 'Inicio', 'from', 'From');
+        
+        if (!apId || !apDate || !apTime) {
+          if (allAppts.indexOf(a) === 0) {
+             log('Appointment skip - missing fields:', { apId, apDate, apTime, keys: Object.keys(a) });
+          }
+          continue;
+        }
 
-        const pid = String(pickFirst(a, 'PatientId', 'Patient_PersonId', 'PatientPersonId', 'Patient_Id', 'patient_id') ?? a?.Patient?.Id ?? '');
-        const did = String(pickFirst(a, 'ProfessionalId', 'Dentist_PersonId', 'DentistPersonId', 'Professional_PersonId', 'ScheduleToId', 'DentistId', 'professional_id', 'dentist_id') ?? a?.Dentist?.Id ?? '');
+        const pid = String(pickFirst(a, 'PatientId', 'Patient_PersonId', 'PatientPersonId', 'Patient_Id', 'patient_id', 'id_paciente') ?? a?.Patient?.Id ?? a?.Patient?.id ?? '');
+        const did = String(pickFirst(a, 'ProfessionalId', 'Dentist_PersonId', 'DentistPersonId', 'Professional_PersonId', 'ScheduleToId', 'DentistId', 'professional_id', 'dentist_id', 'id_profissional') ?? a?.Dentist?.Id ?? a?.Dentist?.id ?? '');
         
         appointmentUpserts.push({
           tenant_id,
@@ -551,11 +557,17 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
           dentista_id: profMap.get(did) || null,
           data: String(apDate).slice(0, 10),
           hora: String(apTime).slice(0, 8),
-          duracao: Number(pickFirst(a, 'Duration', 'duration') ?? 30),
-          procedimento: pickFirst(a, 'Category_Description', 'CategoryDescription', 'procedure', 'Procedure') ?? '',
-          status: String(pickFirst(a, 'Status', 'status') ?? 'agendado'),
+          duracao: Number(pickFirst(a, 'Duration', 'duration', 'minutes', 'Minutes') ?? 30),
+          procedimento: pickFirst(a, 'Category_Description', 'CategoryDescription', 'procedure', 'Procedure', 'description', 'Description', 'category_name') ?? '',
+          status: String(pickFirst(a, 'Status', 'status', 'status_name', 'StatusName') ?? 'agendado'),
           clinicorp_appointment_id: apId,
         });
+      }
+
+      if (allAppts.length > 0 && appointmentUpserts.length === 0) {
+        const first = allAppts[0];
+        errors.push(`Aviso: ${allAppts.length} agendamentos recebidos, mas nenhum pôde ser processado. Verifique os campos: ${Object.keys(first).join(', ')}`);
+        log('DEBUG: First appt keys', Object.keys(first));
       }
 
       // Batch upsert appointments in chunks
