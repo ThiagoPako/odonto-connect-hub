@@ -1087,3 +1087,173 @@ export const sbSessionsApi = {
   },
 };
 
+// ─── Media Upload (Supabase Storage: bucket chat-media) ─────
+
+export const sbMediaApi = {
+  upload: async (file: File): Promise<{ url: string | null; error: string | null }> => {
+    try {
+      const { data: userData } = await supabase.auth.getUser();
+      const uid = userData.user?.id ?? 'anon';
+      const ext = file.name.includes('.') ? file.name.split('.').pop() : 'bin';
+      const safeBase = file.name.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 60);
+      const path = `${uid}/${Date.now()}-${safeBase}.${ext}`;
+      const { error: upErr } = await supabase.storage
+        .from('chat-media')
+        .upload(path, file, {
+          contentType: file.type || 'application/octet-stream',
+          upsert: false,
+        });
+      if (upErr) return { url: null, error: err(upErr) };
+      const { data } = supabase.storage.from('chat-media').getPublicUrl(path);
+      return { url: data.publicUrl, error: null };
+    } catch (e) {
+      return { url: null, error: err(e) };
+    }
+  },
+};
+
+// ─── Lead Tags ──────────────────────────────────────────────
+
+export const sbTagsApi = {
+  list: async (): Promise<Result<any[]>> => {
+    const { data, error } = await supabase
+      .from('lead_tags')
+      .select('*')
+      .order('name', { ascending: true });
+    if (error) return { data: null, error: err(error) };
+    return { data, error: null };
+  },
+  create: async (body: { name: string; color?: string; icon?: string }): Promise<Result<any>> => {
+    const tenant_id = await getTenantId();
+    if (!tenant_id) return { data: null, error: 'Sem tenant ativo' };
+    const { data, error } = await supabase
+      .from('lead_tags')
+      .insert({ tenant_id, name: body.name, color: body.color ?? '#3B82F6', icon: body.icon ?? '📌' })
+      .select('*')
+      .single();
+    if (error) return { data: null, error: err(error) };
+    return { data, error: null };
+  },
+  update: async (id: string, body: { name?: string; color?: string; icon?: string }): Promise<Result<{ success: boolean }>> => {
+    const { error } = await supabase.from('lead_tags').update(body).eq('id', id);
+    if (error) return { data: null, error: err(error) };
+    return { data: { success: true }, error: null };
+  },
+  delete: async (id: string): Promise<Result<{ success: boolean }>> => {
+    const { error } = await supabase.from('lead_tags').delete().eq('id', id);
+    if (error) return { data: null, error: err(error) };
+    return { data: { success: true }, error: null };
+  },
+  assignments: async (): Promise<Result<Record<string, string[]>>> => {
+    const { data, error } = await supabase
+      .from('lead_tag_assignments')
+      .select('lead_id, tag_id');
+    if (error) return { data: null, error: err(error) };
+    const map: Record<string, string[]> = {};
+    (data ?? []).forEach((r: any) => {
+      (map[r.lead_id] ||= []).push(r.tag_id);
+    });
+    return { data: map, error: null };
+  },
+  toggle: async (leadId: string, tagId: string): Promise<Result<{ action: 'added' | 'removed' }>> => {
+    const tenant_id = await getTenantId();
+    if (!tenant_id) return { data: null, error: 'Sem tenant ativo' };
+    const { data: existing } = await supabase
+      .from('lead_tag_assignments')
+      .select('id')
+      .eq('lead_id', leadId)
+      .eq('tag_id', tagId)
+      .maybeSingle();
+    if (existing) {
+      const { error } = await supabase.from('lead_tag_assignments').delete().eq('id', existing.id);
+      if (error) return { data: null, error: err(error) };
+      return { data: { action: 'removed' }, error: null };
+    }
+    const { error } = await supabase
+      .from('lead_tag_assignments')
+      .insert({ tenant_id, lead_id: leadId, tag_id: tagId });
+    if (error) return { data: null, error: err(error) };
+    return { data: { action: 'added' }, error: null };
+  },
+};
+
+// ─── Contatos ───────────────────────────────────────────────
+
+export const sbContatosApi = {
+  list: async (_params?: Record<string, string>): Promise<Result<any[]>> => {
+    const { data, error } = await supabase
+      .from('contatos')
+      .select('*')
+      .order('nome', { ascending: true });
+    if (error) return { data: null, error: err(error) };
+    return { data, error: null };
+  },
+  create: async (body: Record<string, any>): Promise<Result<any>> => {
+    const tenant_id = await getTenantId();
+    if (!tenant_id) return { data: null, error: 'Sem tenant ativo' };
+    const payload: Record<string, any> = { tenant_id, ...body };
+    for (const k of Object.keys(payload)) if (payload[k] === '') payload[k] = null;
+    const { data, error } = await supabase.from('contatos').insert(payload).select('*').single();
+    if (error) return { data: null, error: err(error) };
+    return { data, error: null };
+  },
+  update: async (id: string, body: Record<string, any>): Promise<Result<any>> => {
+    const payload: Record<string, any> = { ...body };
+    delete payload.id; delete payload.tenant_id; delete payload.created_at; delete payload.updated_at;
+    for (const k of Object.keys(payload)) if (payload[k] === '') payload[k] = null;
+    const { data, error } = await supabase.from('contatos').update(payload as any).eq('id', id).select('*').single();
+    if (error) return { data: null, error: err(error) };
+    return { data, error: null };
+  },
+  delete: async (id: string): Promise<Result<{ success: boolean }>> => {
+    const { error } = await supabase.from('contatos').delete().eq('id', id);
+    if (error) return { data: null, error: err(error) };
+    return { data: { success: true }, error: null };
+  },
+  toggleFavorito: async (id: string): Promise<Result<any>> => {
+    const { data: row } = await supabase.from('contatos').select('favorito').eq('id', id).maybeSingle();
+    const { data, error } = await supabase
+      .from('contatos')
+      .update({ favorito: !row?.favorito })
+      .eq('id', id)
+      .select('*')
+      .single();
+    if (error) return { data: null, error: err(error) };
+    return { data, error: null };
+  },
+  bulkImport: async (contatos: Array<{ telefone: string; nome: string }>): Promise<Result<{ imported: number; skipped: number; total: number }>> => {
+    const tenant_id = await getTenantId();
+    if (!tenant_id) return { data: null, error: 'Sem tenant ativo' };
+    if (!contatos.length) return { data: { imported: 0, skipped: 0, total: 0 }, error: null };
+    const phones = contatos.map(c => c.telefone).filter(Boolean);
+    const { data: existing } = await supabase
+      .from('contatos')
+      .select('telefone')
+      .in('telefone', phones);
+    const existSet = new Set((existing ?? []).map((r: any) => r.telefone));
+    const toInsert = contatos
+      .filter(c => c.telefone && !existSet.has(c.telefone))
+      .map(c => ({ tenant_id, nome: c.nome || c.telefone, telefone: c.telefone, tipo: 'whatsapp' }));
+    if (!toInsert.length) {
+      return { data: { imported: 0, skipped: contatos.length, total: contatos.length }, error: null };
+    }
+    const { error } = await supabase.from('contatos').insert(toInsert);
+    if (error) return { data: null, error: err(error) };
+    return {
+      data: { imported: toInsert.length, skipped: contatos.length - toInsert.length, total: contatos.length },
+      error: null,
+    };
+  },
+  syncNow: async () => ({ data: null, error: 'Sincronização WhatsApp disponível apenas via VPS' } as Result<any>),
+  syncStatus: async () => {
+    const { count } = await supabase
+      .from('contatos')
+      .select('id', { count: 'exact', head: true });
+    return {
+      data: { autoSync: false, intervalMinutes: 0, totalContatos: count ?? 0 },
+      error: null,
+    } as Result<any>;
+  },
+};
+
+

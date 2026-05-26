@@ -846,17 +846,8 @@ export interface LeadTagApi {
   created_at: string;
 }
 
-export const tagsApi = {
-  list: () => vpsApiFetch<LeadTagApi[]>('/tags'),
-  create: (body: { name: string; color?: string; icon?: string }) =>
-    vpsApiFetch<LeadTagApi>('/tags', { method: 'POST', body }),
-  update: (id: string, body: { name?: string; color?: string; icon?: string }) =>
-    vpsApiFetch<{ success: boolean }>(`/tags/${id}`, { method: 'PUT', body }),
-  delete: (id: string) => vpsApiFetch<{ success: boolean }>(`/tags/${id}`, { method: 'DELETE' }),
-  assignments: () => vpsApiFetch<Record<string, string[]>>('/tag-assignments'),
-  toggle: (leadId: string, tagId: string) =>
-    vpsApiFetch<{ action: 'added' | 'removed' }>('/tag-assignments/toggle', { method: 'POST', body: { leadId, tagId } }),
-};
+export { sbTagsApi as tagsApi } from './sbAdapters';
+
 
 // ─── Contatos ───────────────────────────────────────────────
 
@@ -875,24 +866,8 @@ export interface Contato {
   updated_at: string;
 }
 
-export const contatosApi = {
-  list: (params?: Record<string, string>) =>
-    vpsApiFetch<Contato[]>('/contatos', { params }),
-  create: (body: { nome: string; telefone?: string; email?: string; tipo?: string; empresa?: string; cargo?: string; observacoes?: string }) =>
-    vpsApiFetch<Contato>('/contatos', { method: 'POST', body }),
-  update: (id: string, body: Partial<Contato>) =>
-    vpsApiFetch<Contato>(`/contatos/${id}`, { method: 'PUT', body }),
-  delete: (id: string) =>
-    vpsApiFetch<{ success: boolean }>(`/contatos/${id}`, { method: 'DELETE' }),
-  toggleFavorito: (id: string) =>
-    vpsApiFetch<Contato>(`/contatos/${id}/favorito`, { method: 'PATCH' }),
-  bulkImport: (contatos: Array<{ telefone: string; nome: string }>) =>
-    vpsApiFetch<{ imported: number; skipped: number; total: number }>('/contatos/import', { method: 'POST', body: { contatos } }),
-  syncNow: () =>
-    vpsApiFetch<{ success: boolean; imported: number; totalContatos: number; instances: Array<{ name: string; imported: number; skipped: number; total: number; error: string | null }>; message?: string }>('/contatos/sync/now', { method: 'POST' }),
-  syncStatus: () =>
-    vpsApiFetch<{ autoSync: boolean; intervalMinutes: number; totalContatos: number }>('/contatos/sync/status'),
-};
+export { sbContatosApi as contatosApi } from './sbAdapters';
+
 
 // ─── Messages / Chat History ────────────────────────────────
 
@@ -918,37 +893,8 @@ export { sbMessagesApi as messagesApi } from './sbAdapters';
 
 // ─── Media Upload ───────────────────────────────────────────
 
-export const mediaApi = {
-  /** Upload a file to the VPS and get a persistent URL */
-  upload: async (file: File): Promise<{ url: string | null; error: string | null }> => {
-    try {
-      const token = getToken();
-      const params = new URLSearchParams({
-        fileName: file.name,
-        mimeType: file.type || 'application/octet-stream',
-      });
+export { sbMediaApi as mediaApi } from './sbAdapters';
 
-      const response = await fetch(`${VPS_API_BASE}/media/upload?${params.toString()}`, {
-        method: 'POST',
-        headers: {
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          'Content-Type': file.type || 'application/octet-stream',
-        },
-        body: file,
-      });
-
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        return { url: null, error: data.error || `HTTP ${response.status}` };
-      }
-
-      return { url: data.url, error: null };
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Erro de rede';
-      return { url: null, error: message };
-    }
-  },
-};
 
 // ─── Queue Leads ────────────────────────────────────────────
 
