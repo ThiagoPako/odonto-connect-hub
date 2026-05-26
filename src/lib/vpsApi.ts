@@ -246,19 +246,15 @@ export async function adminUploadUserAvatar(userId: string, file: File) {
   }
 }
 
-// ─── Pacientes ──────────────────────────────────────────────
+// ─── Pacientes / Agenda / Marcadores → migrados pra Supabase ─
+// (reexportados de sbAdapters para não quebrar imports existentes)
 
-export const pacientesApi = {
-  list: () => vpsApiFetch('/pacientes'),
-  create: (body: unknown) => vpsApiFetch('/pacientes', { method: 'POST', body }),
-  update: (id: string, body: unknown) => vpsApiFetch(`/pacientes/${id}`, { method: 'PUT', body }),
-  delete: (id: string) => vpsApiFetch(`/pacientes/${id}`, { method: 'DELETE' }),
-  getAnamnese: (id: string) => vpsApiFetch(`/pacientes/${id}/anamnese`),
-  saveAnamnese: (id: string, body: unknown) => vpsApiFetch(`/pacientes/${id}/anamnese`, { method: 'PUT', body }),
-  getOdontograma: (id: string) => vpsApiFetch(`/pacientes/${id}/odontograma`),
-  saveOdontograma: (id: string, body: unknown) => vpsApiFetch(`/pacientes/${id}/odontograma`, { method: 'PUT', body }),
-  getHistorico: (id: string) => vpsApiFetch<HistoricoConsulta[]>(`/pacientes/${id}/historico`),
-};
+export {
+  pacientesApi,
+  agendaApi,
+  marcadoresAgendaApi,
+} from './sbAdapters';
+export type { MarcadorAgenda } from './sbAdapters';
 
 export interface HistoricoConsulta {
   id: string;
@@ -271,47 +267,6 @@ export interface HistoricoConsulta {
   dentista_nome: string | null;
   dentista_especialidade: string | null;
 }
-
-// ─── Agenda ─────────────────────────────────────────────────
-
-export const agendaApi = {
-  list: (params?: Record<string, string>) => vpsApiFetch<AgendamentoVPS[]>('/agenda', { params }),
-  create: (body: unknown) => vpsApiFetch<{ id: string; success: boolean }>('/agenda', { method: 'POST', body }),
-  createSerie: (body: {
-    paciente_id: string;
-    dentista_id: string;
-    data_inicio: string;
-    hora: string;
-    duracao?: number;
-    procedimento?: string;
-    quantidade: number;
-    intervalo_dias: number;
-    categoria?: string;
-    categoria_cor?: string;
-    primeira_consulta?: boolean;
-    confirmacao_canal?: string;
-    confirmacao_quando?: string;
-    sala?: string;
-    observacoes?: string;
-  }) => vpsApiFetch<{ serie_id: string; total: number; agendamentos: { id: string; data: string }[] }>(
-    '/agenda/serie', { method: 'POST', body }
-  ),
-  update: (id: string, body: { status?: string; hora?: string; data?: string; duracao?: number; procedimento?: string; categoria?: string; categoria_cor?: string; observacoes?: string; sala?: string; dentista_id?: string; dentista_nome?: string; marcadores?: Array<{ id: string; nome: string; cor: string }>; como_conheceu?: string | null }) =>
-    vpsApiFetch(`/agenda/${encodeURIComponent(id)}`, { method: 'PUT', body }),
-  delete: (id: string, opts?: { serie?: boolean }) =>
-    vpsApiFetch(`/agenda/${encodeURIComponent(id)}${opts?.serie ? '?serie=true' : ''}`, { method: 'DELETE' }),
-};
-
-// ─── Marcadores da agenda (tags coloridas) ─────────────────
-export interface MarcadorAgenda { id: string; nome: string; cor: string }
-
-export const marcadoresAgendaApi = {
-  list: () => vpsApiFetch<MarcadorAgenda[]>('/agenda/marcadores'),
-  create: (nome: string, cor: string) =>
-    vpsApiFetch<MarcadorAgenda>('/agenda/marcadores', { method: 'POST', body: { nome, cor } }),
-  delete: (id: string) =>
-    vpsApiFetch(`/agenda/marcadores/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-};
 
 // ─── Clínica config (horários + regras de agenda) ────────────
 
