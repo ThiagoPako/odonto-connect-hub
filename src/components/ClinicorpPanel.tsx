@@ -102,7 +102,9 @@ export function ClinicorpPanel() {
         sync_lookback_days: (mySettings as any).sync_lookback_days ?? 30,
         sync_lookahead_days: (mySettings as any).sync_lookahead_days ?? 60,
         conflict_strategy: (mySettings as any).conflict_strategy ?? "newest_wins",
-      } as ClinicorpSettings;
+        next_sync_at: (mySettings as any).next_sync_at ?? null,
+        sync_lock_until: (mySettings as any).sync_lock_until ?? null,
+      } as unknown as ClinicorpSettings;
       
       setSettings(s);
       setAutoSync(s.auto_sync_enabled);
