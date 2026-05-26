@@ -362,6 +362,7 @@ export {
 } from './sbAdapters';
 
 // ─── Dashboard ──────────────────────────────────────────────
+export { sbDashboardApi as dashboardApi } from './sbAdapters';
 
 
 // ─── Painel Dentista ────────────────────────────────────────
