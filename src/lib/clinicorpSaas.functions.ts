@@ -357,8 +357,8 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
         const { data: myProfs } = await supabase.from('dentistas').select('id, clinicorp_professional_id').eq('tenant_id', tenant_id);
         const { data: myPas } = await supabase.from('pacientes').select('id, clinicorp_patient_id').eq('tenant_id', tenant_id);
         
-        const profMap = new Map(myProfs?.map(p => [p.clinicorp_professional_id, p.id]));
-        const paMap = new Map(myPas?.map(p => [p.clinicorp_patient_id, p.id]));
+        const profMap = new Map<string, string>(myProfs?.map((p: any) => [p.clinicorp_professional_id, p.id]) || []);
+        const paMap = new Map<string, string>(myPas?.map((p: any) => [p.clinicorp_patient_id, p.id]) || []);
 
         for (const ap of apData) {
           const apId = String(ap.Id || ap.id);
