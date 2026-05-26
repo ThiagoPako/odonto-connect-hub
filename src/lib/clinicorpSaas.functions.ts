@@ -466,6 +466,7 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
           }
         }
         if (rateLimitHit) break;
+        summary.appointments = allAppts.length;
         await updateProgress(`Agenda: ${Math.min(i + CONCURRENCY, days.length)}/${days.length} dias (${allAppts.length} encontrados)`);
         await new Promise(r => setTimeout(r, 400)); // Delay maior entre batches
       }
