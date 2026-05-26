@@ -211,18 +211,29 @@ export const clinicorpApi = {
   setKeepLocal: (entity: 'appointment' | 'patient', id: string, keep_local: boolean) =>
     req<{ ok: true }>('/keep-local', { method: 'PUT', body: JSON.stringify({ entity, id, keep_local }) }),
 
-  // ── Per-user (SaaS) credentials ──
-  getMySettings: () => req<ClinicorpUserSettings>('/my-settings'),
-  saveMySettings: (payload: Partial<{
+  // ── Per-user (SaaS) credentials — agora 100% no Lovable Cloud ──
+  getMySettings: async (): Promise<ClinicorpUserSettings> => {
+    const { getMyClinicorpSettings } = await import('./clinicorpSaas.functions');
+    return getMyClinicorpSettings() as Promise<ClinicorpUserSettings>;
+  },
+  saveMySettings: async (payload: Partial<{
     enabled: boolean;
     api_token: string;
     subscriber_id: string;
     webhook_secret: string;
     base_url: string;
-  }>) => req<{ ok: true }>('/my-settings', { method: 'PUT', body: JSON.stringify(payload) }),
-  deleteMySettings: () => req<{ ok: true }>('/my-settings', { method: 'DELETE' }),
-  testMyConnection: (payload: Partial<{ api_token: string; subscriber_id: string; base_url: string }> = {}) =>
-    req<ClinicorpConnectionTest>('/my-settings/test', { method: 'POST', body: JSON.stringify(payload) }),
+  }>) => {
+    const { saveMyClinicorpSettings } = await import('./clinicorpSaas.functions');
+    return saveMyClinicorpSettings({ data: payload });
+  },
+  deleteMySettings: async () => {
+    const { deleteMyClinicorpSettings } = await import('./clinicorpSaas.functions');
+    return deleteMyClinicorpSettings();
+  },
+  testMyConnection: async (payload: Partial<{ api_token: string; subscriber_id: string; base_url: string }> = {}) => {
+    const { testMyClinicorpConnection } = await import('./clinicorpSaas.functions');
+    return testMyClinicorpConnection({ data: payload }) as Promise<ClinicorpConnectionTest>;
+  },
   syncMyNow: (range?: { from?: string; to?: string; force_metadata?: boolean }) =>
     req<ClinicorpSyncResult>('/sync/now', { method: 'POST', body: JSON.stringify(range || {}) }),
   listAuditLogs: (limit = 100) => req<ClinicorpAuditEntry[]>(`/audit-log?limit=${limit}`),
