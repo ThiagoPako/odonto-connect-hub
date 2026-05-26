@@ -866,24 +866,8 @@ export interface Contato {
   updated_at: string;
 }
 
-export const contatosApi = {
-  list: (params?: Record<string, string>) =>
-    vpsApiFetch<Contato[]>('/contatos', { params }),
-  create: (body: { nome: string; telefone?: string; email?: string; tipo?: string; empresa?: string; cargo?: string; observacoes?: string }) =>
-    vpsApiFetch<Contato>('/contatos', { method: 'POST', body }),
-  update: (id: string, body: Partial<Contato>) =>
-    vpsApiFetch<Contato>(`/contatos/${id}`, { method: 'PUT', body }),
-  delete: (id: string) =>
-    vpsApiFetch<{ success: boolean }>(`/contatos/${id}`, { method: 'DELETE' }),
-  toggleFavorito: (id: string) =>
-    vpsApiFetch<Contato>(`/contatos/${id}/favorito`, { method: 'PATCH' }),
-  bulkImport: (contatos: Array<{ telefone: string; nome: string }>) =>
-    vpsApiFetch<{ imported: number; skipped: number; total: number }>('/contatos/import', { method: 'POST', body: { contatos } }),
-  syncNow: () =>
-    vpsApiFetch<{ success: boolean; imported: number; totalContatos: number; instances: Array<{ name: string; imported: number; skipped: number; total: number; error: string | null }>; message?: string }>('/contatos/sync/now', { method: 'POST' }),
-  syncStatus: () =>
-    vpsApiFetch<{ autoSync: boolean; intervalMinutes: number; totalContatos: number }>('/contatos/sync/status'),
-};
+export { sbContatosApi as contatosApi } from './sbAdapters';
+
 
 // ─── Messages / Chat History ────────────────────────────────
 
