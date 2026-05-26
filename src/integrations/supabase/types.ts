@@ -1250,6 +1250,7 @@ export type Database = {
           last_sync_error: string | null
           last_sync_status: string | null
           subscriber_id: string | null
+          sync_progress: Json | null
           updated_at: string
           user_id: string
           webhook_secret: string | null
@@ -1263,6 +1264,7 @@ export type Database = {
           last_sync_error?: string | null
           last_sync_status?: string | null
           subscriber_id?: string | null
+          sync_progress?: Json | null
           updated_at?: string
           user_id: string
           webhook_secret?: string | null
@@ -1276,6 +1278,7 @@ export type Database = {
           last_sync_error?: string | null
           last_sync_status?: string | null
           subscriber_id?: string | null
+          sync_progress?: Json | null
           updated_at?: string
           user_id?: string
           webhook_secret?: string | null

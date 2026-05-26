@@ -187,7 +187,7 @@ export function ClinicorpPanel() {
     setLastSync(null);
     setSyncStatus({
       step: "Iniciando sincronização completa...",
-      summary: {},
+      summary: { clinics: 0, professionals: 0, patients: 0, appointments: 0 },
       errors: [],
       startTime: Date.now(),
       completed: false,
@@ -198,13 +198,14 @@ export function ClinicorpPanel() {
       while (polling) {
         try {
           const s = await clinicorpApi.getMySettings();
-          if (s.last_sync_status === 'syncing') {
+          if (s.sync_progress) {
             setSyncStatus(prev => ({
               ...prev!,
-              step: s.last_sync_error || "Sincronizando dados...",
+              step: s.sync_progress.step || prev?.step || "Sincronizando...",
+              summary: s.sync_progress.summary || prev?.summary || { clinics: 0, professionals: 0, patients: 0, appointments: 0 },
             }));
-          } else if (s.last_sync_at && new Date(s.last_sync_at).getTime() > Date.now() - 5000) {
-             // Sync finished according to settings
+          }
+          if (s.last_sync_status !== 'syncing' && s.last_sync_at && new Date(s.last_sync_at).getTime() > Date.now() - 5000) {
              polling = false;
           }
         } catch (e) { console.error("Poll error", e); }
@@ -215,7 +216,6 @@ export function ClinicorpPanel() {
     poll();
 
     try {
-      // Usa endpoint per-user (multi-tenant SaaS) — sincroniza com as credenciais do usuário logado
       const r = await clinicorpApi.syncMyNow({ force_metadata: true });
       polling = false;
       setLastSync(r);
@@ -226,7 +226,7 @@ export function ClinicorpPanel() {
         errors: r.errors,
         completed: true,
       }));
-      toast.success(`Sync ${r.status} — ${Object.values(r.summary).reduce((a, b) => a + b, 0)} registros processados`);
+      toast.success(`Sincronização concluída: ${Object.values(r.summary).reduce((a, b) => a + b, 0)} registros.`);
       await load();
     } catch (e) {
       polling = false;
@@ -237,7 +237,7 @@ export function ClinicorpPanel() {
         errors: [msg],
         completed: true,
       }));
-      toast.error(`Sync falhou: ${msg}`);
+      toast.error(`Sincronização falhou: ${msg}`);
     } finally {
       setSyncing(false);
     }
