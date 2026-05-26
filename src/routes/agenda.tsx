@@ -91,8 +91,9 @@ function AgendaPage() {
     let es: EventSource | null = null;
     let retryTimeout: ReturnType<typeof setTimeout>;
 
-    function connect() {
-      const token = getToken();
+    async function connect() {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token ?? null;
       if (!token) return;
 
       try {
