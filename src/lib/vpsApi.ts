@@ -790,18 +790,8 @@ export const transferApi = {
 
 // ─── Attendance Sessions ────────────────────────────────────
 
-export const sessionsApi = {
-  start: (body: { leadId: string; leadName?: string; leadPhone?: string; queueId?: string; queueName?: string }) =>
-    vpsApiFetch<{ success: boolean; id: string }>('/sessions/start', { method: 'POST', body }),
-  assign: (body: { leadId: string }) =>
-    vpsApiFetch<{ success: boolean; id: string; waitTime: number }>('/sessions/assign', { method: 'POST', body }),
-  checkActive: (leadId: string) =>
-    vpsApiFetch<{ active: boolean; attendantId?: string; attendantName?: string; isCurrentUser?: boolean }>(`/sessions/active/${leadId}`),
-  firstResponse: (body: { leadId: string }) =>
-    vpsApiFetch('/sessions/first-response', { method: 'POST', body }),
-  close: (body: { leadId: string; leadPhone?: string; instance?: string }) =>
-    vpsApiFetch<{ success: boolean; sessionId?: string; duration?: number }>('/sessions/close', { method: 'POST', body }),
-};
+export { sbSessionsApi as sessionsApi } from './sbAdapters';
+
 
 // ─── Attendance Metrics ─────────────────────────────────────
 
