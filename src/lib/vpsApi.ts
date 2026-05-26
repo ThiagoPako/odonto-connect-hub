@@ -520,38 +520,8 @@ export const painelDentistaApi = {
 // ─── CRM Leads ──────────────────────────────────────────────
 
 
-export const crmApi = {
-  list: (params?: Record<string, string>) =>
-    vpsApiFetch<{ rows: any[]; total: number; limit: number; offset: number }>('/crm/leads', { params }),
-  kanban: () => vpsApiFetch('/crm/leads', { params: { grouped: 'kanban' } }),
-  updateStage: (id: string, stage: string, reason?: string) =>
-    vpsApiFetch(`/crm/leads/${id}/stage`, { method: 'PATCH', body: { stage, reason } }),
-  updateConsciousness: (id: string, level: string) =>
-    vpsApiFetch(`/crm/leads/${id}/consciousness`, { method: 'PATCH', body: { level } }),
-  assign: (id: string, assignedTo: string, assignedToName: string) =>
-    vpsApiFetch(`/crm/leads/${id}/assign`, { method: 'PATCH', body: { assignedTo, assignedToName } }),
-  movements: (id: string) =>
-    vpsApiFetch<Array<{ id: string; from_stage: string; to_stage: string; moved_by_name: string; reason: string; created_at: string }>>(`/crm/leads/${id}/movements`),
-  convertToPatient: (id: string) =>
-    vpsApiFetch<{ success: boolean; conflict?: boolean; paciente_id: string; nome?: string; paciente_nome?: string }>(`/crm/leads/${id}/convert-to-patient`, { method: 'POST' }),
-  linkToPatient: (id: string, pacienteId: string) =>
-    vpsApiFetch<{ success: boolean; paciente_id: string; paciente_nome: string }>(`/crm/leads/${id}/link-patient`, { method: 'POST', body: { paciente_id: pacienteId } }),
-  history: (id: string) =>
-    vpsApiFetch<Array<{ id: string; data: string; hora: string; procedimento: string; status: string; dentista_nome: string }>>(`/crm/leads/${id}/history`),
-  create: (body: { nome: string; telefone?: string; email?: string; origem?: string; stage?: string; value?: number }) =>
-    vpsApiFetch<any>('/crm/leads', { method: 'POST', body }),
-};
-
-// ─── Orçamentos ─────────────────────────────────────────────
-
-export const orcamentosApi = {
-  list: () => vpsApiFetch('/orcamentos'),
-  create: (body: unknown) => vpsApiFetch<{ id: string; success: boolean }>('/orcamentos', { method: 'POST', body }),
-  update: (id: string, body: unknown) => vpsApiFetch(`/orcamentos/${id}`, { method: 'PUT', body }),
-  delete: (id: string) => vpsApiFetch(`/orcamentos/${id}`, { method: 'DELETE' }),
-  updateStatus: (id: string, status: string) =>
-    vpsApiFetch<{ success: boolean; budget: any; leadMoved: boolean }>(`/orcamentos/${id}/status`, { method: 'PATCH', body: { status } }),
-};
+// crmApi e orcamentosApi migrados pra Supabase via sbAdapters
+export { crmApi, orcamentosApi } from './sbAdapters';
 
 // ─── Catálogo de Procedimentos (Fase B) ──────────────────────
 export interface ProcedimentoCatalogo {
