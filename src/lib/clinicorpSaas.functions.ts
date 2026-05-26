@@ -152,7 +152,8 @@ async function clinicorpProbe(
   pathName: string,
   query: Record<string, string> = {},
   timeoutMs = 25000,
-): Promise<{ status: number; data: unknown }> {
+  forcedAuthHeader?: string,
+): Promise<{ status: number; data: unknown; usedAuth?: string }> {
   const base = base_url.replace(/\/$/, '');
   const url = new URL(base + pathName);
   const cleanToken = api_token.replace(/^Bearer\s+/i, '').trim();
@@ -176,9 +177,9 @@ async function clinicorpProbe(
       });
       
       if (r.status === 429 && attemptCount < 2) {
-        // Simple backoff for 429
-        const wait = 2000 * (attemptCount + 1);
-        console.warn(`[clinicorp-probe] 429 encountered, waiting ${wait}ms...`);
+        // More aggressive backoff for 429
+        const wait = 5000 * (attemptCount + 1);
+        console.warn(`[clinicorp-probe] 429 encountered at ${pathName}, waiting ${wait}ms... (attempt ${attemptCount+1})`);
         await new Promise(res => setTimeout(res, wait));
         return attempt(authHeader, attemptCount + 1);
       }
@@ -189,7 +190,7 @@ async function clinicorpProbe(
       return { status: r.status, data };
     } catch (e: any) {
       if (e.name === 'AbortError' && attemptCount < 1) {
-        console.warn(`[clinicorp-probe] Timeout, retrying once...`);
+        console.warn(`[clinicorp-probe] Timeout at ${pathName}, retrying once...`);
         return attempt(authHeader, attemptCount + 1);
       }
       throw e;
@@ -198,11 +199,18 @@ async function clinicorpProbe(
     }
   };
 
+  if (forcedAuthHeader) {
+    const res = await attempt(forcedAuthHeader);
+    return { ...res, usedAuth: forcedAuthHeader };
+  }
+
   let result = await attempt(basicAuth);
+  let usedAuth = basicAuth;
   if (result.status === 401) {
     result = await attempt(bearerAuth);
+    usedAuth = bearerAuth;
   }
-  return result;
+  return { ...result, usedAuth };
 }
 
 export const testMyClinicorpConnection = createServerFn({ method: 'POST' })
@@ -358,19 +366,37 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
     await updateProgress('Iniciando sincronização...');
 
     try {
+      // 0. Determinar Auth Header uma vez
+      let activeAuthHeader: string | undefined = undefined;
+      try {
+        const { status, usedAuth } = await clinicorpProbe(base_url, subscriber_id, api_token, '/business/list');
+        if (status === 429) {
+          throw new Error('A Clinicorp bloqueou temporariamente o acesso (Rate Limit). Por favor, aguarde pelo menos 15-30 minutos sem tentar sincronizar.');
+        }
+        activeAuthHeader = usedAuth;
+        log(`Auth detectado: ${activeAuthHeader?.split(' ')[0]}`);
+      } catch (e: any) {
+        if (e.message.includes('Rate Limit')) throw e;
+        errors.push(`Erro ao validar autenticação: ${e.message}`);
+      }
+
       // 1. Clinicas (apenas contagem)
       try {
-        const { status, data: cl } = await clinicorpProbe(base_url, subscriber_id, api_token, '/business/list');
+        const { status, data: cl } = await clinicorpProbe(base_url, subscriber_id, api_token, '/business/list', {}, 25000, activeAuthHeader);
         const list = extractList(cl);
         summary.clinics = list.length;
         log(`clinics status=${status} count=${list.length}`);
-      } catch (e: any) { errors.push(`clinicas: ${e.message}`); }
+        if (status === 429) throw new Error('Rate Limit na listagem de clínicas.');
+      } catch (e: any) { 
+        if (e.message.includes('Rate Limit')) throw e;
+        errors.push(`clinicas: ${e.message}`); 
+      }
 
       await updateProgress('Buscando profissionais...');
 
       // 2. Profissionais
       try {
-        const { status, data: pr } = await clinicorpProbe(base_url, subscriber_id, api_token, '/dentist/list');
+        const { status, data: pr } = await clinicorpProbe(base_url, subscriber_id, api_token, '/dentist/list', {}, 25000, activeAuthHeader);
         const list = extractList(pr);
         log(`dentists status=${status} count=${list.length}`);
         
@@ -393,12 +419,15 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
           if (upErr) errors.push(`profissionais upsert: ${upErr.message}`);
           else summary.professionals = dentistUpserts.length;
         }
-      } catch (e: any) { errors.push(`profissionais: ${e.message}`); }
+        if (status === 429) throw new Error('Rate Limit na listagem de profissionais.');
+      } catch (e: any) { 
+        if (e.message.includes('Rate Limit')) throw e;
+        errors.push(`profissionais: ${e.message}`); 
+      }
 
       await updateProgress('Buscando agenda (paralelo)...');
 
-      // 3. Agendamentos — Clinicorp /appointment/list só aceita from === to.
-      // Range reduzido + concorrência para caber no tempo do Worker.
+      // 3. Agendamentos
       const today = new Date();
       const from = data.from || ymd(new Date(today.getTime() - 7 * 86400000));
       const to = data.to || ymd(new Date(today.getTime() + 21 * 86400000));
@@ -415,18 +444,18 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
 
       const allAppts: any[] = [];
       let rateLimitHit = false;
-      const CONCURRENCY = 4;
+      const CONCURRENCY = 2; // Reduzido para evitar 429
       for (let i = 0; i < days.length && !rateLimitHit; i += CONCURRENCY) {
         const batch = days.slice(i, i + CONCURRENCY);
         const results = await Promise.allSettled(batch.map(ds =>
-          clinicorpProbe(base_url, subscriber_id, api_token, '/appointment/list', { from: ds, to: ds })
+          clinicorpProbe(base_url, subscriber_id, api_token, '/appointment/list', { from: ds, to: ds }, 25000, activeAuthHeader)
             .then(res => ({ ds, ...res }))
         ));
         for (const r of results) {
           if (r.status === 'fulfilled') {
             const { ds, status, data: ap } = r.value;
             if (status === 429) {
-              errors.push(`Rate limit em ${ds}. Aguarde alguns minutos.`);
+              errors.push(`Rate limit em ${ds}. Parando sincronização para proteger a conta.`);
               rateLimitHit = true;
               break;
             }
@@ -436,10 +465,14 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
             errors.push(`appt: ${(r.reason as any)?.message || 'erro'}`);
           }
         }
+        if (rateLimitHit) break;
         await updateProgress(`Agenda: ${Math.min(i + CONCURRENCY, days.length)}/${days.length} dias (${allAppts.length} encontrados)`);
-        await new Promise(r => setTimeout(r, 150));
+        await new Promise(r => setTimeout(r, 400)); // Delay maior entre batches
       }
       log(`appointments total coletados=${allAppts.length}`);
+      if (rateLimitHit) {
+        throw new Error('A sincronização foi interrompida devido ao limite de chamadas da Clinicorp (Rate Limit). Aguarde 15-30 minutos.');
+      }
 
       await updateProgress('Sincronizando pacientes...');
 
@@ -540,16 +573,16 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
       summary.appointments = apptsSaved;
 
       log('summary', summary);
-      const finalStatus = errors.length > 5 ? 'partial' : 'success';
+      const finalStatus = errors.length > 3 ? 'partial' : 'success';
       
       await supabase.from('clinicorp_user_settings').update({
         last_sync_status: finalStatus,
         last_sync_at: new Date().toISOString(),
-        last_sync_error: errors.length ? errors.slice(0, 5).join(' | ') : null,
+        last_sync_error: errors.length ? errors.slice(0, 3).join(' | ') : null,
         sync_progress: { summary, step: 'Concluído', completed: true, timestamp: new Date().toISOString() }
       }).eq('user_id', userId);
 
-      return { status: finalStatus, summary, errors: errors.slice(0, 20), from, to };
+      return { ok: true, status: finalStatus, summary, errors: errors.slice(0, 20), from, to };
     } catch (err: any) {
       const msg = err.message || 'Erro desconhecido';
       log('FATAL', msg);
