@@ -45,13 +45,18 @@ function StatusBadge({ status }: { status: string }) {
 function IntegracoesPage() {
   const [platformFilter, setPlatformFilter] = useState<"all" | "google" | "meta">("all");
 
+  // Mock data removed — só exibe dados reais do tenant. Listas vazias até que campanhas reais sejam sincronizadas.
+  const realAdAccounts: typeof mockAdAccounts = [];
+  const realCampaigns: AdCampaign[] = [];
+  const realCross: CrmCrossData[] = [];
+
   const filteredCampaigns = platformFilter === "all"
-    ? mockAdCampaigns
-    : mockAdCampaigns.filter((c) => c.platform === platformFilter);
+    ? realCampaigns
+    : realCampaigns.filter((c) => c.platform === platformFilter);
 
   const filteredCross = platformFilter === "all"
-    ? mockCrmCrossData
-    : mockCrmCrossData.filter((c) => c.platform === platformFilter);
+    ? realCross
+    : realCross.filter((c) => c.platform === platformFilter);
 
   const totalInvestment = filteredCampaigns.reduce((a, c) => a + c.investment, 0);
   const totalLeads = filteredCampaigns.reduce((a, c) => a + c.leads, 0);
@@ -77,27 +82,33 @@ function IntegracoesPage() {
         <MetaAdsDashboard />
 
         {/* Connected accounts (mock — Google + outras) */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {mockAdAccounts.map((acc) => (
-            <div key={acc.accountId} className="bg-card rounded-xl border border-border p-4 flex items-center gap-4">
-              <PlatformIcon platform={acc.platform} />
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-foreground truncate">{acc.accountName}</p>
-                <p className="text-[11px] text-muted-foreground">ID: {acc.accountId} · Sync: {acc.lastSync}</p>
+        {realAdAccounts.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {realAdAccounts.map((acc) => (
+              <div key={acc.accountId} className="bg-card rounded-xl border border-border p-4 flex items-center gap-4">
+                <PlatformIcon platform={acc.platform} />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-foreground truncate">{acc.accountName}</p>
+                  <p className="text-[11px] text-muted-foreground">ID: {acc.accountId} · Sync: {acc.lastSync}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {acc.connected ? (
+                    <>
+                      <span className="flex items-center gap-1 text-[11px] text-success font-medium"><Link2 className="h-3 w-3" /> Conectado</span>
+                      <button className="p-1.5 rounded-lg hover:bg-muted transition-colors" title="Sincronizar"><RefreshCw className="h-3.5 w-3.5 text-muted-foreground" /></button>
+                    </>
+                  ) : (
+                    <span className="flex items-center gap-1 text-[11px] text-destructive font-medium"><Unlink className="h-3 w-3" /> Desconectado</span>
+                  )}
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                {acc.connected ? (
-                  <>
-                    <span className="flex items-center gap-1 text-[11px] text-success font-medium"><Link2 className="h-3 w-3" /> Conectado</span>
-                    <button className="p-1.5 rounded-lg hover:bg-muted transition-colors" title="Sincronizar"><RefreshCw className="h-3.5 w-3.5 text-muted-foreground" /></button>
-                  </>
-                ) : (
-                  <span className="flex items-center gap-1 text-[11px] text-destructive font-medium"><Unlink className="h-3 w-3" /> Desconectado</span>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        ) : (
+          <div className="bg-card rounded-xl border border-dashed border-border p-8 text-center">
+            <p className="text-sm text-muted-foreground">Nenhuma conta de anúncios conectada ainda. Conecte sua conta Meta Ads acima para começar.</p>
+          </div>
+        )}
 
         {/* KPIs */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
@@ -146,9 +157,13 @@ function IntegracoesPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredCampaigns.map((c) => (
-                    <CampaignRow key={c.id} campaign={c} />
-                  ))}
+                  {filteredCampaigns.length === 0 ? (
+                    <tr><td colSpan={8} className="px-4 py-8 text-center text-sm text-muted-foreground">Nenhuma campanha sincronizada ainda.</td></tr>
+                  ) : (
+                    filteredCampaigns.map((c) => (
+                      <CampaignRow key={c.id} campaign={c} />
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
@@ -171,18 +186,23 @@ function IntegracoesPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredCross.map((c) => (
-                    <CrmCrossRow key={c.campaignId} data={c} />
-                  ))}
+                  {filteredCross.length === 0 ? (
+                    <tr><td colSpan={8} className="px-4 py-8 text-center text-sm text-muted-foreground">Nenhum cruzamento disponível. Conecte uma conta de anúncios e capture leads para ver dados aqui.</td></tr>
+                  ) : (
+                    filteredCross.map((c) => (
+                      <CrmCrossRow key={c.campaignId} data={c} />
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
 
-            {/* Funnel visualization */}
-            <div className="mt-4 bg-card rounded-xl border border-border p-5">
-              <h3 className="text-sm font-semibold text-card-foreground mb-4">Funil Ads → CRM (Agregado)</h3>
-              <FunnelViz data={filteredCross} />
-            </div>
+            {filteredCross.length > 0 && (
+              <div className="mt-4 bg-card rounded-xl border border-border p-5">
+                <h3 className="text-sm font-semibold text-card-foreground mb-4">Funil Ads → CRM (Agregado)</h3>
+                <FunnelViz data={filteredCross} />
+              </div>
+            )}
           </TabsContent>
         </Tabs>
           </TabsContent>
