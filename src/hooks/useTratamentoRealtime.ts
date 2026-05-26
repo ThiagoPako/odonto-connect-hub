@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { VPS_API_BASE } from "@/lib/vpsApi";
+import { supabase } from "@/integrations/supabase/client";
 
 export interface TratamentoChangedEvent {
   action: "created" | "updated" | "deleted";
@@ -31,8 +32,9 @@ export function useTratamentoRealtime(onChange: Handler, dentistaId?: string) {
     let retryTimeout: ReturnType<typeof setTimeout>;
     let retries = 0;
 
-    function connect() {
-      const token = localStorage.getItem("odonto_jwt");
+    async function connect() {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token ?? null;
       const base = VPS_API_BASE.startsWith("http")
         ? VPS_API_BASE
         : `${window.location.origin}${VPS_API_BASE}`;

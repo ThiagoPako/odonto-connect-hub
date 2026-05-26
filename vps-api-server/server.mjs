@@ -143,6 +143,81 @@ console.log('🗄️ Postgres env loaded', {
 const JWT_SECRET = process.env.JWT_SECRET || 'CHANGE_ME_IN_PRODUCTION';
 const JWT_EXPIRES_IN = '7d';
 
+// ─── Supabase Auth Bridge ───────────────────────────────────
+// Aceita access_tokens emitidos pela Supabase. Quando o token não é o
+// legacy (HS256 com JWT_SECRET), validamos via REST /auth/v1/user e
+// resolvemos o profile/tenant na tabela `profiles` via service role.
+const SUPABASE_URL = (process.env.SUPABASE_URL || '').replace(/\/$/, '');
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const SUPABASE_BRIDGE_ENABLED = !!(SUPABASE_URL && SUPABASE_ANON_KEY && SUPABASE_SERVICE_ROLE_KEY);
+if (SUPABASE_BRIDGE_ENABLED) {
+  console.log('🔐 Supabase auth bridge enabled →', SUPABASE_URL);
+} else {
+  console.warn('⚠️ Supabase auth bridge disabled — set SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY no .env do VPS');
+}
+
+// Cache em memória: token → { user, exp }
+const _supabaseUserCache = new Map();
+const SUPABASE_CACHE_TTL_MS = 5 * 60 * 1000;
+
+async function resolveSupabaseUser(token) {
+  if (!SUPABASE_BRIDGE_ENABLED) throw new Error('Supabase bridge not configured');
+  const cached = _supabaseUserCache.get(token);
+  if (cached && cached.exp > Date.now()) return cached.user;
+
+  // 1) Valida o token e obtém o user
+  const userRes = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+    headers: { Authorization: `Bearer ${token}`, apikey: SUPABASE_ANON_KEY },
+  });
+  if (!userRes.ok) throw new Error('Invalid Supabase token');
+  const sbUser = await userRes.json();
+  if (!sbUser?.id) throw new Error('Invalid Supabase user');
+
+  // 2) Busca profile (tenant_id, role, is_super_admin) via service role
+  const profRes = await fetch(
+    `${SUPABASE_URL}/rest/v1/profiles?id=eq.${sbUser.id}&select=id,email,nome,tenant_id,is_super_admin`,
+    {
+      headers: {
+        apikey: SUPABASE_SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      },
+    }
+  );
+  const profiles = profRes.ok ? await profRes.json() : [];
+  const profile = profiles?.[0] || {};
+
+  // 3) Resolve role (admin/atendente/etc) a partir de user_roles
+  let role = 'user';
+  try {
+    const roleRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/user_roles?user_id=eq.${sbUser.id}&select=role&limit=1`,
+      {
+        headers: {
+          apikey: SUPABASE_SERVICE_ROLE_KEY,
+          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        },
+      }
+    );
+    if (roleRes.ok) {
+      const roles = await roleRes.json();
+      if (roles?.[0]?.role) role = roles[0].role;
+    }
+  } catch { /* default user */ }
+
+  const user = {
+    sub: sbUser.id,
+    id: sbUser.id,
+    email: profile.email || sbUser.email,
+    role,
+    tenant_id: profile.tenant_id || null,
+    is_super_admin: !!profile.is_super_admin,
+    _source: 'supabase',
+  };
+  _supabaseUserCache.set(token, { user, exp: Date.now() + SUPABASE_CACHE_TTL_MS });
+  return user;
+}
+
 // ─── Evolution API Config ───────────────────────────────────
 const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL || 'https://api.odontoconnect.tech';
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY;
@@ -233,21 +308,48 @@ async function verifyUser(req) {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) throw new Error('Unauthorized');
   const token = authHeader.replace('Bearer ', '');
-  const decoded = verifyToken(token);
-  
-  const user = {
-    id: decoded.sub,
-    email: decoded.email,
-    role: decoded.role,
-    tenant_id: decoded.tenant_id || null,
-    is_super_admin: !!decoded.is_super_admin,
-  };
+
+  // 1) Tenta token legacy (HS256 com JWT_SECRET)
+  let decoded = null;
+  try {
+    decoded = verifyToken(token);
+  } catch {
+    decoded = null;
+  }
+
+  let user;
+  if (decoded) {
+    user = {
+      id: decoded.sub,
+      email: decoded.email,
+      role: decoded.role,
+      tenant_id: decoded.tenant_id || null,
+      is_super_admin: !!decoded.is_super_admin,
+    };
+  } else if (SUPABASE_BRIDGE_ENABLED) {
+    // 2) Fallback: tenta validar como token Supabase
+    try {
+      const sbUser = await resolveSupabaseUser(token);
+      decoded = sbUser; // usa o shape para set_config
+      user = {
+        id: sbUser.id,
+        email: sbUser.email,
+        role: sbUser.role,
+        tenant_id: sbUser.tenant_id,
+        is_super_admin: sbUser.is_super_admin,
+      };
+    } catch (err) {
+      throw new Error('Unauthorized');
+    }
+  } else {
+    throw new Error('Unauthorized');
+  }
 
   // Set context in DB session for RLS
   try {
     await pool.query('SELECT set_config($1, $2, true)', ['app.jwt_payload', JSON.stringify(decoded)]);
     await pool.query('SELECT set_config($1, $2, true)', ['app.is_super_admin', user.is_super_admin ? 'true' : 'false']);
-    
+
     if (user.tenant_id) {
       await pool.query('SELECT set_config($1, $2, true)', ['app.current_tenant_id', user.tenant_id]);
     } else {

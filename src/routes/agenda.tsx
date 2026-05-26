@@ -5,7 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, ChevronLeft, ChevronRight, Settings, RefreshCw, Clock } from "lucide-react";
 import { toast } from "sonner";
-import { agendaApi, dentistasApi, clinicaApi, type AgendamentoVPS, type ClinicaConfig, VPS_API_BASE, getToken } from "@/lib/vpsApi";
+import { agendaApi, dentistasApi, clinicaApi, type AgendamentoVPS, type ClinicaConfig, VPS_API_BASE } from "@/lib/vpsApi";
+import { supabase } from "@/integrations/supabase/client";
 import { AgendaMiniCalendar } from "@/components/agenda/AgendaMiniCalendar";
 import { AgendaProfessionalsList } from "@/components/agenda/AgendaProfessionalsList";
 import { AgendaGrid } from "@/components/agenda/AgendaGrid";
@@ -91,8 +92,9 @@ function AgendaPage() {
     let es: EventSource | null = null;
     let retryTimeout: ReturnType<typeof setTimeout>;
 
-    function connect() {
-      const token = getToken();
+    async function connect() {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token ?? null;
       if (!token) return;
 
       try {

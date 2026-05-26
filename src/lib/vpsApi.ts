@@ -1,7 +1,13 @@
 /**
  * VPS API Service — Odonto Connect
- * All API calls go through the VPS Express server
+ * All API calls go through the VPS Express server.
+ *
+ * Auth bridge: o login agora é gerenciado pela Supabase. O VPS aceita
+ * o access_token Supabase como Bearer, então buscamos a sessão atual
+ * em vez do antigo `odonto_jwt` em localStorage.
  */
+
+import { supabase } from "@/integrations/supabase/client";
 
 // Lovable preview (lovableproject.com / lovable.app) doesn't proxy /api to the VPS,
 // so we must hit the absolute VPS URL there. Only localhost uses the local proxy.
@@ -14,46 +20,27 @@ const VPS_API_BASE = (() => {
   }
   return '/api';
 })();
-const TOKEN_KEY = 'odonto_jwt';
+const TOKEN_KEY = 'odonto_jwt'; // legacy — mantido só para cleanup
 
 function isAuthError(status: number, _error: unknown): boolean {
-  // Only treat HTTP 401 as auth failure — avoid false positives from error message content
   return status === 401;
 }
 
 let _isRedirecting = false;
-let _isVerifying = false;
 
 async function handleAuthFailure(background = false) {
-  // Background calls never force logout/redirect
   if (background) return;
-  if (_isRedirecting || _isVerifying) return;
+  if (_isRedirecting) return;
 
-  // Verify the session is actually invalid before nuking it.
-  // A single misbehaving endpoint returning 401 shouldn't log the user out.
-  const token = typeof window !== 'undefined' ? localStorage.getItem(TOKEN_KEY) : null;
-  if (!token) return;
-
-  _isVerifying = true;
+  // Confirma com a Supabase antes de derrubar a sessão.
   try {
-    const base = typeof window !== 'undefined' && window.location.hostname !== 'localhost' && !window.location.hostname.startsWith('127.')
-      ? (window.location.hostname.includes('lovable') ? 'https://odontoconnect.tech/api' : '/api')
-      : '/api';
-    const res = await fetch(`${base}/auth/me`, { headers: { Authorization: `Bearer ${token}` } });
-    if (res.ok) {
-      // Token still valid — the 401 was a server-side route bug, don't log out.
-      return;
-    }
+    const { data, error } = await supabase.auth.getUser();
+    if (!error && data.user) return; // sessão Supabase ok — 401 é da rota específica
   } catch {
-    // Network error — don't log out preemptively
     return;
-  } finally {
-    _isVerifying = false;
   }
 
   _isRedirecting = true;
-  clearToken();
-
   if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
     window.location.href = '/login';
   }
@@ -61,37 +48,61 @@ async function handleAuthFailure(background = false) {
 }
 
 function resetAuthFailureCount() {
-  // no-op: kept to avoid changing callers and preserve a stable API surface
+  // no-op
 }
 
 
 // ─── Auth helpers ───────────────────────────────────────────
 
-export function getAuthHeaders(): Record<string, string> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (typeof window !== 'undefined') {
-    const token = localStorage.getItem(TOKEN_KEY);
-    if (token) headers['Authorization'] = `Bearer ${token}`;
+/** Retorna o access_token Supabase da sessão atual (ou null). */
+export async function getAccessToken(): Promise<string | null> {
+  try {
+    const { data } = await supabase.auth.getSession();
+    return data.session?.access_token ?? null;
+  } catch {
+    return null;
   }
+}
+
+export async function getAuthHeaders(): Promise<Record<string, string>> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const token = await getAccessToken();
+  if (token) headers['Authorization'] = `Bearer ${token}`;
   return headers;
 }
 
+/**
+ * @deprecated Prefira `getAccessToken()` (async). Mantido sync para callers
+ * legados — lê do storage da Supabase.
+ */
 export function getToken(): string | null {
   if (typeof window === 'undefined') return null;
-  return localStorage.getItem(TOKEN_KEY);
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('sb-') && key.endsWith('-auth-token')) {
+        const raw = localStorage.getItem(key);
+        if (!raw) continue;
+        const parsed = JSON.parse(raw);
+        return parsed?.access_token ?? null;
+      }
+    }
+  } catch { /* ignore */ }
+  return null;
 }
 
-export function setToken(token: string): void {
-  localStorage.setItem(TOKEN_KEY, token);
+export function setToken(_token: string): void {
+  // no-op: sessão é gerenciada pela Supabase
 }
 
 export function clearToken(): void {
-  localStorage.removeItem(TOKEN_KEY);
+  if (typeof window !== 'undefined') localStorage.removeItem(TOKEN_KEY);
 }
 
 export function isAuthenticated(): boolean {
   return !!getToken();
 }
+
 
 // ─── Generic fetch ──────────────────────────────────────────
 
@@ -101,7 +112,7 @@ export async function vpsApiFetch<T = unknown>(
 ): Promise<{ data: T | null; error: string | null }> {
   try {
     const method = options?.method || 'GET';
-    const fetchOptions: RequestInit = { method, headers: getAuthHeaders() };
+    const fetchOptions: RequestInit = { method, headers: await getAuthHeaders() };
 
     let url = `${VPS_API_BASE}${path}`;
 
@@ -645,7 +656,7 @@ export const whatsappApi = {
     fileName?: string; caption?: string; mimeType?: string;
   }) => {
     try {
-      const token = getToken();
+      const token = await getAccessToken();
       const params = new URLSearchParams({
         instance,
         number,
@@ -981,7 +992,7 @@ export const aiApi = {
 
   transcribe: async (audioBlob: Blob): Promise<{ data: { transcription: string } | null; error: string | null }> => {
     try {
-      const token = getToken();
+      const token = await getAccessToken();
       const response = await fetch(`${VPS_API_BASE}/ai/transcribe`, {
         method: 'POST',
         headers: {

@@ -3,19 +3,18 @@
  * Registers SW, subscribes to push, and syncs with backend
  */
 
+import { supabase } from "@/integrations/supabase/client";
+
 const VPS_API_BASE = 'https://odontoconnect.tech/api';
-const TOKEN_KEY = 'odonto_jwt';
 
 // VAPID public key — must match the one generated on the server
-// Will be fetched from backend
 let vapidPublicKey: string | null = null;
 
-function getAuthHeaders(): Record<string, string> {
+async function getAuthHeaders(): Promise<Record<string, string>> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (typeof window !== 'undefined') {
-    const token = localStorage.getItem(TOKEN_KEY);
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-  }
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (token) headers['Authorization'] = `Bearer ${token}`;
   return headers;
 }
 
@@ -78,7 +77,7 @@ export async function registerPushSubscription(): Promise<boolean> {
     // Send subscription to backend
     const res = await fetch(`${VPS_API_BASE}/push/subscribe`, {
       method: 'POST',
-      headers: getAuthHeaders(),
+      headers: await getAuthHeaders(),
       body: JSON.stringify({ subscription: subscription.toJSON() }),
     });
 
@@ -100,7 +99,7 @@ export async function unregisterPushSubscription(): Promise<void> {
       // Remove from server
       await fetch(`${VPS_API_BASE}/push/unsubscribe`, {
         method: 'POST',
-        headers: getAuthHeaders(),
+        headers: await getAuthHeaders(),
         body: JSON.stringify({ endpoint: subscription.endpoint }),
       });
       await subscription.unsubscribe();
