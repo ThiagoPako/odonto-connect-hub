@@ -337,7 +337,7 @@ export interface AgendamentoVPS {
   como_conheceu?: string | null;
 }
 
-// ─── Financeiro / Estoque / Tratamentos / Comissões / Prontuários / Dentistas
+// ─── Financeiro / Estoque / Tratamentos / Comissões / Prontuários / Dentistas / Comercial / CRM
 // migrados pra Supabase via sbAdapters
 export {
   financeiroApi,
@@ -352,89 +352,17 @@ export {
   tratamentosApi,
   comissoesApi,
   prontuariosApi,
+  leadsApi,
+  funisApi,
+  etapasApi,
+  followUpsApi,
+  atendentesApi,
+  origensApi,
+  comercialApi,
 } from './sbAdapters';
 
 // ─── Dashboard ──────────────────────────────────────────────
 
-export interface DashboardKpis {
-  totalPacientes: number;
-  agendaHoje: number;
-  receitaMensal: number;
-  despesaMensal: number;
-  agenda: {
-    total: number;
-    finalizados: number;
-    emAtendimento: number;
-    aguardando: number;
-    faltas: number;
-    encaixes: number;
-    taxaPresenca: number;
-  };
-  orcamentos: {
-    total: number;
-    pendentes: number;
-    aprovados: number;
-    reprovados: number;
-    valorAprovado: number;
-    taxaConversao: number;
-    ticketMedio: number;
-  };
-  crm: {
-    totalLeadsKanban: number;
-    semResposta: number;
-    ativos: number;
-    inativos: number;
-    receitaTotal: number;
-  };
-  pacientes: { totalCadastrados: number };
-  estoque: {
-    totalItens: number;
-    abaixoMinimo: number;
-    itensAbaixoMinimo: string[];
-    semEstoque: number;
-    itensSemEstoque: string[];
-    valorTotalEstoque: number;
-  };
-}
-
-export const dashboardApi = {
-  kpis: () => vpsApiFetch<DashboardKpis>('/dashboard/kpis'),
-};
-
-// ─── Painel Comercial ───────────────────────────────────────
-
-export interface ComercialKpis {
-  atendimentosHoje: number;
-  agendamentosHoje: number;
-  taxaConversao: number;
-  leadsPendentes: number;
-}
-export interface ComercialFollowUp {
-  id: string;
-  leadName: string;
-  type: 'retorno' | 'confirmacao' | 'reativacao';
-  scheduledAt: string;
-  note: string;
-}
-export interface ComercialConversion {
-  origin: string;
-  leads: number;
-  convertidos: number;
-  rate: number;
-}
-export interface ComercialPainel {
-  attendantId: string;
-  kpis: ComercialKpis;
-  followUps: ComercialFollowUp[];
-  conversionByOrigin: ComercialConversion[];
-}
-
-export const comercialApi = {
-  painel: (attendantId?: string) =>
-    vpsApiFetch<ComercialPainel>('/comercial/painel', {
-      params: attendantId ? { attendantId } : undefined,
-    }),
-};
 
 // ─── Painel Dentista ────────────────────────────────────────
 

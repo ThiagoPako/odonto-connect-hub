@@ -861,8 +861,6 @@ export const painelDentistaApi = {
   },
 };
 
-
-
 // ─── Exames ────────────────────────────────────────────────
 // Direct Supabase implementations (consumed by src/lib/examesApi.ts wrappers)
 export const sbExamesApi = {
@@ -1657,7 +1655,7 @@ export const sbAttendanceSettingsApi = {
   },
 };
 
-// ─── Attendance Metrics (computed) ────────────────────────
+// ─── Metrics Api ──────────────────────────────────────────
 export const sbMetricsApi = {
   async attendance(days?: number): Promise<Result<any>> {
     try {
@@ -1736,5 +1734,76 @@ export const sbMetricsApi = {
   },
 };
 
+// ─── Comercial / CRM ───────────────────────────────────────
+export const leadsApi = makeCrud({ table: 'leads', orderBy: { column: 'created_at', ascending: false } });
+export const funisApi = makeCrud({ table: 'funis', orderBy: { column: 'ordem', ascending: true } });
+export const etapasApi = makeCrud({ table: 'etapas', orderBy: { column: 'ordem', ascending: true } });
+export const followUpsApi = makeCrud({ table: 'follow_ups', orderBy: { column: 'data_agendada', ascending: true } });
+export const atendentesApi = makeCrud({ table: 'atendentes', orderBy: { column: 'nome', ascending: true } });
+export const origensApi = makeCrud({ table: 'origens', orderBy: { column: 'nome', ascending: true } });
 
+export const comercialApi = {
+  painel: async (attendantId?: string): Promise<Result<any>> => {
+    try {
+      const tenant_id = await getTenantId();
+      if (!tenant_id) return { data: null, error: 'Sem tenant' };
 
+      // Parallel queries for dashboard components
+      const [leadsRes, agendamentosRes, followUpsRes] = await Promise.all([
+        supabase.from('leads').select('*').eq('tenant_id', tenant_id),
+        supabase.from('agendamentos').select('*').eq('tenant_id', tenant_id).gte('data', new Date().toISOString().split('T')[0]),
+        supabase.from('follow_ups').select('*, leads(nome)').eq('tenant_id', tenant_id).eq('status', 'pendente').order('data_agendada', { ascending: true })
+      ]);
+
+      const leads = leadsRes.data ?? [];
+      const agendamentos = agendamentosRes.data ?? [];
+      const followUpsRaw = followUpsRes.data ?? [];
+
+      const filteredLeads = attendantId ? leads.filter(l => l.atendente_id === attendantId) : leads;
+      
+      const leadsPendentes = filteredLeads.filter(l => l.status === 'novo').length;
+      const agendamentosHoje = agendamentos.length;
+      const convertidos = leads.filter(l => l.status === 'convertido').length;
+      const taxaConversao = leads.length > 0 ? (convertidos / leads.length) * 100 : 0;
+
+      // Group by origin for conversion chart
+      const originsMap = new Map<string, { leads: number, convertidos: number }>();
+      leads.forEach(l => {
+        const origin = l.origem || 'Outros';
+        const stats = originsMap.get(origin) || { leads: 0, convertidos: 0 };
+        stats.leads++;
+        if (l.status === 'convertido') stats.convertidos++;
+        originsMap.set(origin, stats);
+      });
+
+      const conversionByOrigin = Array.from(originsMap.entries()).map(([origin, stats]) => ({
+        origin,
+        leads: stats.leads,
+        convertidos: stats.convertidos,
+        rate: stats.leads > 0 ? (stats.convertidos / stats.leads) * 100 : 0
+      }));
+
+      const data = {
+        attendantId: attendantId || 'all',
+        kpis: {
+          atendimentosHoje: 0,
+          agendamentosHoje,
+          taxaConversao,
+          leadsPendentes
+        },
+        followUps: followUpsRaw.map((f: any) => ({
+          id: f.id,
+          leadName: f.leads?.nome || 'Lead s/ Nome',
+          type: f.tipo,
+          scheduledAt: f.data_agendada,
+          note: f.nota || ''
+        })),
+        conversionByOrigin
+      };
+
+      return { data, error: null };
+    } catch (e) {
+      return { data: null, error: err(e) };
+    }
+  }
+};

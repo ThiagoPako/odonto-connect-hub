@@ -10,7 +10,7 @@ import {
   Headset, MessageSquare, CalendarCheck, TrendingUp, Clock, AlertCircle,
   Users, BarChart3, Loader2,
 } from "lucide-react";
-import { comercialApi, type ComercialPainel } from "@/lib/vpsApi";
+import { comercialApi } from "@/lib/vpsApi";
 
 export const Route = createFileRoute("/painel-comercial")({
   ssr: false,
@@ -31,7 +31,7 @@ const chartColors = [
   "hsl(var(--chart-5))",
 ];
 
-const EMPTY: ComercialPainel = {
+const EMPTY: any = {
   attendantId: "",
   kpis: { atendimentosHoje: 0, agendamentosHoje: 0, taxaConversao: 0, leadsPendentes: 0 },
   followUps: [],
@@ -54,7 +54,7 @@ function formatScheduled(iso: string): string {
 
 function PainelComercialPage() {
   const { user } = useAuth();
-  const [data, setData] = useState<ComercialPainel>(EMPTY);
+  const [data, setData] = useState<any>(EMPTY);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -125,7 +125,7 @@ function PainelComercialPage() {
                 <p className="text-sm text-muted-foreground text-center py-6">
                   Sem follow-ups pendentes 🎉
                 </p>
-              ) : followUps.map((fu) => (
+              ) : followUps.map((fu: any) => (
                 <Link key={fu.id} to="/crm" className="block p-3 rounded-xl border bg-card hover:bg-muted/50 transition-colors">
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-sm font-medium">{fu.leadName}</span>
@@ -170,7 +170,7 @@ function PainelComercialPage() {
                       ]}
                     />
                     <Bar dataKey="rate" radius={[0, 6, 6, 0]} barSize={18}>
-                      {conversionByOrigin.map((_, i) => (
+                      {conversionByOrigin.map((_: any, i: number) => (
                         <Cell key={i} fill={chartColors[i % chartColors.length]} />
                       ))}
                     </Bar>
