@@ -161,8 +161,8 @@ function devServerFnErrorLogger() {
 }
 
 export default defineConfig(({ command, mode }) => {
-  // Cloudflare Workers plugin disabled — deploying to VPS with Node.js
-  const useCloudflare = false;
+  // Cloudflare Workers plugin needed for Lovable published deploys (SSR runs on Workers)
+  const useCloudflare = true;
 
   const env = loadEnv(mode, process.cwd(), "VITE_");
   const envDefine: Record<string, string> = {};
