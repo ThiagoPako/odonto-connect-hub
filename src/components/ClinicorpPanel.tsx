@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
 import {
   clinicorpApi,
   type ClinicorpSettings,
@@ -24,6 +25,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export function ClinicorpPanel() {
   const [settings, setSettings] = useState<ClinicorpSettings | null>(null);
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -83,6 +85,10 @@ export function ClinicorpPanel() {
   async function load() {
     setLoading(true);
     try {
+      const { data: { user } } = await supabase.auth.getUser();
+      const { data: profile } = await supabase.from('profiles').select('is_super_admin').eq('id', user?.id).maybeSingle();
+      setIsSuperAdmin(!!profile?.is_super_admin);
+
       // Use getMySettings instead of getSettings to ensure user sees only their credentials
       const s = await clinicorpApi.getMySettings() as unknown as ClinicorpSettings;
       setSettings(s);
