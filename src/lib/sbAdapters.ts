@@ -232,6 +232,7 @@ export const agendaApi = {
       .select('*, pacientes:paciente_id(nome, telefone, celular), dentistas:dentista_id(nome)')
       .order('data', { ascending: true })
       .order('hora', { ascending: true });
+    if (params?.data) q = q.eq('data', params.data);
     if (params?.data_inicio) q = q.gte('data', params.data_inicio);
     if (params?.data_fim) q = q.lte('data', params.data_fim);
     if (params?.dentista_id) q = q.eq('dentista_id', params.dentista_id);
