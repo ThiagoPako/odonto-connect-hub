@@ -3,15 +3,7 @@ import { AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts"
 import { ClientOnly } from "@/components/ClientOnly";
 import { chartTooltipStyle, chartTickFill, chartGridStroke } from "@/lib/chartTheme";
 
-const evolucaoData = [
-  { mes: "Out", receita: 72000, despesa: 48000, saldo: 24000 },
-  { mes: "Nov", receita: 85000, despesa: 52000, saldo: 33000 },
-  { mes: "Dez", receita: 98000, despesa: 61000, saldo: 37000 },
-  { mes: "Jan", receita: 78000, despesa: 55000, saldo: 23000 },
-  { mes: "Fev", receita: 105000, despesa: 63000, saldo: 42000 },
-  { mes: "Mar", receita: 125000, despesa: 72000, saldo: 53000 },
-  { mes: "Abr", receita: 142000, despesa: 78000, saldo: 64000 },
-];
+const evolucaoData: any[] = [];
 
 function ReceitaDespesaChartInner() {
   const ref = useRef<HTMLDivElement>(null);

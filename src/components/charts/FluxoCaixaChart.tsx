@@ -3,15 +3,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
 import { ClientOnly } from "@/components/ClientOnly";
 import { chartTooltipStyle, chartTickFill, chartGridStroke } from "@/lib/chartTheme";
 
-const fluxoData = [
-  { mes: "Out", entradas: 72000, saidas: 48000 },
-  { mes: "Nov", entradas: 85000, saidas: 52000 },
-  { mes: "Dez", entradas: 98000, saidas: 61000 },
-  { mes: "Jan", entradas: 78000, saidas: 55000 },
-  { mes: "Fev", entradas: 105000, saidas: 63000 },
-  { mes: "Mar", entradas: 125000, saidas: 72000 },
-  { mes: "Abr", entradas: 142000, saidas: 78000 },
-];
+const fluxoData: any[] = [];
 
 function FluxoCaixaChartInner() {
   const ref = useRef<HTMLDivElement>(null);
