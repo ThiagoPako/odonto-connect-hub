@@ -157,9 +157,13 @@ function IntegracoesPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredCampaigns.map((c) => (
-                    <CampaignRow key={c.id} campaign={c} />
-                  ))}
+                  {filteredCampaigns.length === 0 ? (
+                    <tr><td colSpan={8} className="px-4 py-8 text-center text-sm text-muted-foreground">Nenhuma campanha sincronizada ainda.</td></tr>
+                  ) : (
+                    filteredCampaigns.map((c) => (
+                      <CampaignRow key={c.id} campaign={c} />
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
@@ -182,18 +186,23 @@ function IntegracoesPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredCross.map((c) => (
-                    <CrmCrossRow key={c.campaignId} data={c} />
-                  ))}
+                  {filteredCross.length === 0 ? (
+                    <tr><td colSpan={8} className="px-4 py-8 text-center text-sm text-muted-foreground">Nenhum cruzamento disponível. Conecte uma conta de anúncios e capture leads para ver dados aqui.</td></tr>
+                  ) : (
+                    filteredCross.map((c) => (
+                      <CrmCrossRow key={c.campaignId} data={c} />
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
 
-            {/* Funnel visualization */}
-            <div className="mt-4 bg-card rounded-xl border border-border p-5">
-              <h3 className="text-sm font-semibold text-card-foreground mb-4">Funil Ads → CRM (Agregado)</h3>
-              <FunnelViz data={filteredCross} />
-            </div>
+            {filteredCross.length > 0 && (
+              <div className="mt-4 bg-card rounded-xl border border-border p-5">
+                <h3 className="text-sm font-semibold text-card-foreground mb-4">Funil Ads → CRM (Agregado)</h3>
+                <FunnelViz data={filteredCross} />
+              </div>
+            )}
           </TabsContent>
         </Tabs>
           </TabsContent>
