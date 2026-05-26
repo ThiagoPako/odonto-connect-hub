@@ -85,9 +85,12 @@ export function ClinicorpPanel() {
   async function load() {
     setLoading(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      const { data: profile } = await supabase.from('profiles').select('is_super_admin').eq('id', user?.id).maybeSingle();
-      setIsSuperAdmin(!!profile?.is_super_admin);
+      const { data: authData } = await supabase.auth.getUser();
+      const userId = authData.user?.id;
+      if (userId) {
+        const { data: profile } = await supabase.from('profiles').select('is_super_admin').eq('id', userId).maybeSingle();
+        setIsSuperAdmin(!!profile?.is_super_admin);
+      }
 
       // Use getMySettings instead of getSettings to ensure user sees only their credentials
       const s = await clinicorpApi.getMySettings() as unknown as ClinicorpSettings;
@@ -259,12 +262,8 @@ export function ClinicorpPanel() {
           <ClinicorpUserCredentials />
 
           {/* Somente exibe ferramentas globais para super-admins */}
-          {loading ? null : (async () => {
-            const { data } = await supabase.auth.getUser();
-            const { data: profile } = await supabase.from('profiles').select('is_super_admin').eq('id', data.user?.id).maybeSingle();
-            return profile?.is_super_admin;
-          })() && (
-            <div className="space-y-6 animate-in fade-in">
+          {isSuperAdmin && (
+            <div className="space-y-6 animate-in fade-in mt-8">
               <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-4 flex items-center gap-3">
                 <Shield className="h-5 w-5 text-amber-600" />
                 <div className="text-sm">
@@ -272,7 +271,6 @@ export function ClinicorpPanel() {
                   <p className="text-amber-700/80">As ferramentas abaixo afetam as configurações globais do sistema.</p>
                 </div>
               </div>
-              {/* ... original global content ... */}
             </div>
           )}
       <div className="rounded-2xl border border-border bg-card p-5 flex items-start gap-4">
