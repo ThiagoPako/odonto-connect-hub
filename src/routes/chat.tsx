@@ -19,6 +19,7 @@ import { useWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
 import { playNotificationSound, playRecoverySound } from "@/lib/notificationSound";
 import { showBrowserNotification, requestNotificationPermission } from "@/lib/browserNotification";
 import { setChatUnreadCount } from "@/lib/chatUnreadStore";
+import { supabase } from "@/integrations/supabase/client";
 import {
   type Lead,
   type ChatMessage,
@@ -104,24 +105,36 @@ function ChatPage() {
     });
 
     // Load leads from queue/active from backend
-    queueLeadsApi.list().then(({ data }) => {
+    queueLeadsApi.list().then(async ({ data }) => {
       if (!data) return;
-      const toLead = (r: any): Lead => ({
-        id: r.id,
-        name: r.name || r.phone,
-        initials: (r.name || r.phone || "?").split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase(),
-        phone: r.phone,
-        avatarUrl: r.avatarUrl,
-        lastMessage: r.lastMessage || "",
-        lastMessageTime: r.lastMessageTime ? new Date(r.lastMessageTime) : new Date(),
-        unreadCount: r.unreadCount || 0,
-        status: r.sessionStatus === "active" ? "active" : "waiting",
-        avatarColor: "bg-chart-1",
-        queueId: r.queueId,
-        queueName: r.queueName,
-        assignedTo: r.attendantId ? "current" : undefined,
-        priority: r.priority || false,
-      });
+      
+      // Load contacts for name resolution if name is missing/ID
+      const { data: contactsData } = await supabase.from('contatos').select('telefone, nome');
+      const contactMap = new Map((contactsData || []).map((c: any) => [c.telefone?.replace(/\D/g, ''), c.nome]));
+
+      const toLead = (r: any): Lead => {
+        const phone = r.phone?.replace(/\D/g, '') || "";
+        const resolvedName = r.name && !r.name.includes('@') && isNaN(Number(r.name)) 
+          ? r.name 
+          : contactMap.get(phone) || r.name || r.phone;
+
+        return {
+          id: r.id,
+          name: resolvedName,
+          initials: (resolvedName || "?").split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase(),
+          phone: r.phone,
+          avatarUrl: r.avatarUrl,
+          lastMessage: r.lastMessage || "",
+          lastMessageTime: r.lastMessageTime ? new Date(r.lastMessageTime) : new Date(),
+          unreadCount: r.unreadCount || 0,
+          status: r.sessionStatus === "active" ? "active" : "waiting",
+          avatarColor: "bg-chart-1",
+          queueId: r.queueId,
+          queueName: r.queueName,
+          assignedTo: r.attendantId ? "current" : undefined,
+          priority: r.priority || false,
+        };
+      };
       if (data.queue?.length) setQueue(data.queue.map(toLead));
       if (data.active?.length) setMyLeads(data.active.map(toLead));
     });
