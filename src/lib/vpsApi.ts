@@ -992,7 +992,7 @@ export const aiApi = {
 
   transcribe: async (audioBlob: Blob): Promise<{ data: { transcription: string } | null; error: string | null }> => {
     try {
-      const token = getToken();
+      const token = await getAccessToken();
       const response = await fetch(`${VPS_API_BASE}/ai/transcribe`, {
         method: 'POST',
         headers: {
