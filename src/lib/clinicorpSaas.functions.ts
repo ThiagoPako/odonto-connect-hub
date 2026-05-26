@@ -444,7 +444,7 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
       await updateProgress('Sincronizando pacientes...');
 
       // 4. Pacientes — Backfill a partir dos agendamentos
-      const patientSeeds = new Map<string, { name?: string; phone?: string; email?: string }>();
+      const patientSeeds = new Map<string, { name?: string; phone?: string; email?: string; cpf?: string; sex?: string; birthDate?: string }>();
       for (const a of allAppts) {
         const pid = String(pickFirst(a, 'PatientId', 'Patient_PersonId', 'PatientPersonId', 'Patient_Id', 'patient_id') ?? a?.Patient?.Id ?? '');
         if (!pid) continue;
@@ -453,6 +453,9 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
             name: pickFirst(a, 'PatientName', 'Patient_FullName', 'Patient_Name', 'PatientFullName', 'patient_name') ?? a?.Patient?.Name ?? a?.Patient?.FullName,
             phone: pickFirst(a, 'Patient_MobilePhone', 'PatientMobilePhone', 'Patient_Phone', 'PatientPhone') ?? a?.Patient?.MobilePhone,
             email: pickFirst(a, 'Patient_Email', 'PatientEmail') ?? a?.Patient?.Email,
+            cpf: pickFirst(a, 'Patient_Cpf', 'PatientCpf', 'Patient_CPF', 'PatientCPF') ?? a?.Patient?.Cpf ?? a?.Patient?.CPF,
+            sex: pickFirst(a, 'Patient_Sex', 'PatientSex', 'Patient_Gender', 'PatientGender') ?? a?.Patient?.Sex ?? a?.Patient?.Gender,
+            birthDate: pickFirst(a, 'Patient_BirthDate', 'PatientBirthDate', 'Patient_BirthDay', 'PatientBirthday') ?? a?.Patient?.BirthDate ?? a?.Patient?.BirthDay,
           });
         }
       }
@@ -461,10 +464,21 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
       for (const [pid, info] of patientSeeds) {
         const nome = (info.name || '').trim();
         if (!nome) continue;
+
+        // Map gender
+        let sexo: 'M' | 'F' | 'O' | null = null;
+        const s = String(info.sex || '').toUpperCase();
+        if (s.startsWith('M')) sexo = 'M';
+        else if (s.startsWith('F')) sexo = 'F';
+        else if (s) sexo = 'O';
+
         patientUpserts.push({
           tenant_id, nome,
           celular: info.phone || null,
           email: info.email || null,
+          cpf: info.cpf || null,
+          sexo,
+          data_nascimento: info.birthDate ? String(info.birthDate).slice(0, 10) : null,
           clinicorp_patient_id: pid,
         });
       }
