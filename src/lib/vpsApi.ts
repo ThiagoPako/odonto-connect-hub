@@ -1184,3 +1184,14 @@ export const reativacaoApi = {
 export const healthCheck = () => vpsApiFetch('/health');
 
 export { VPS_API_BASE };
+
+// ─── Supabase-backed extras ─────────────────────────────────
+export {
+  sbUserPreferencesApi as userPreferencesApi,
+  sbPushSubscriptionsApi as pushSubscriptionsApi,
+  sbSatisfactionApi as satisfactionApi,
+  sbReactivationApi as reactivationApi,
+  sbReactivationSendsApi as reactivationSendsApi,
+  sbSystemSettingsApi as systemSettingsApi,
+} from './sbAdapters';
+
