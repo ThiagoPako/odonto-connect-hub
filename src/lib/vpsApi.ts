@@ -935,51 +935,8 @@ export interface ChatMessageApi {
   metadata?: Record<string, unknown>;
 }
 
-export const messagesApi = {
-  /** Fetch paginated message history for a lead (oldest first) */
-  list: (leadId: string, params?: { before?: string; limit?: number }) =>
-    vpsApiFetch<{ messages: ChatMessageApi[]; hasMore: boolean }>(
-      `/messages/${encodeURIComponent(leadId)}`,
-      {
-        params: {
-          ...(params?.before ? { before: params.before } : {}),
-          ...(params?.limit ? { limit: String(params.limit) } : {}),
-        },
-        background: true,
-      }
-    ),
-  /** Save an outgoing message to the database */
-  save: (body: {
-    id: string; leadId: string; content: string; type: string;
-    status?: string; fileName?: string; fileUrl?: string; mimeType?: string;
-    replyTo?: { messageId: string; content: string; sender: string } | null;
-    instance?: string; phone?: string;
-  }) => vpsApiFetch<{ success: boolean; mediaUrl?: string }>('/messages', { method: 'POST', body }),
-  /** Save multiple messages in batch */
-  saveBatch: (messages: Array<{
-    id: string; lead_id: string; content: string; sender: string; type?: string;
-    status?: string; timestamp?: string; media_url?: string; file_name?: string; mime_type?: string;
-    reply_to_id?: string; reply_to_content?: string; reply_to_sender?: string;
-    attendant_id?: string; attendant_name?: string; instance?: string; phone?: string;
-  }>) => vpsApiFetch<{ success: boolean; count: number }>('/messages/batch', { method: 'POST', body: { messages } }),
-  /** Mark messages as read for a lead */
-  markRead: (leadId: string) =>
-    vpsApiFetch<{ success: boolean }>('/messages/mark-read', { method: 'POST', body: { leadId }, background: true }),
-  /** Update message status */
-  updateStatus: (id: string, status: string) =>
-    vpsApiFetch<{ success: boolean }>(`/messages/${id}/status`, { method: 'PUT', body: { status } }),
-  /** Delete a message (soft by default, hard with flag) */
-  delete: (id: string, hard = false) =>
-    vpsApiFetch<{ success: boolean }>(`/messages/${id}${hard ? '?hard=true' : ''}`, { method: 'DELETE' }),
-  /** Get unread counts per lead */
-  unreadCounts: () =>
-    vpsApiFetch<Record<string, number>>('/messages/unread', { background: true }),
-  /** Search messages */
-  search: (q: string, leadId?: string) =>
-    vpsApiFetch<ChatMessageApi[]>('/messages/search', {
-      params: { q, ...(leadId ? { lead_id: leadId } : {}) },
-    }),
-};
+// messagesApi migrado para Supabase (ver src/lib/sbAdapters.ts → sbMessagesApi)
+export { sbMessagesApi as messagesApi } from './sbAdapters';
 
 // ─── Media Upload ───────────────────────────────────────────
 

@@ -748,3 +748,168 @@ export const sbExameTiposApi = {
     return { data: { success: !error }, error: error ? err(error) : null };
   },
 };
+
+// ─── Chat / Mensagens ──────────────────────────────────────
+
+function rowToChatMessage(row: Record<string, any>): any {
+  return {
+    id: row.id,
+    lead_id: row.lead_id,
+    lead_name: row.metadata?.lead_name ?? row.metadata?.leadName ?? undefined,
+    content: row.content ?? '',
+    sender: row.sender === 'agent' || row.sender === 'me' || row.sender === 'attendant' ? 'attendant' : 'lead',
+    type: row.type ?? 'text',
+    timestamp: row.timestamp ?? row.created_at,
+    status: row.status ?? undefined,
+    media_url: row.media_url ?? undefined,
+    file_name: row.file_name ?? undefined,
+    mime_type: row.mime_type ?? undefined,
+    reply_to_id: row.reply_to_id ?? undefined,
+    metadata: row.metadata ?? {},
+  };
+}
+
+export const sbMessagesApi = {
+  list: async (
+    leadId: string,
+    params?: { before?: string; limit?: number },
+  ): Promise<Result<{ messages: any[]; hasMore: boolean }>> => {
+    const limit = params?.limit ?? 50;
+    let q = supabase
+      .from('chat_messages')
+      .select('*')
+      .eq('lead_id', leadId)
+      .order('timestamp', { ascending: false })
+      .limit(limit + 1);
+    if (params?.before) q = q.lt('timestamp', params.before);
+    const { data, error } = await q;
+    if (error) return { data: null, error: err(error) };
+    const rows = (data ?? []) as Record<string, any>[];
+    const hasMore = rows.length > limit;
+    const sliced = hasMore ? rows.slice(0, limit) : rows;
+    // Return oldest-first
+    const messages = sliced.map(rowToChatMessage).reverse();
+    return { data: { messages, hasMore }, error: null };
+  },
+
+  save: async (body: {
+    id: string;
+    leadId: string;
+    content: string;
+    type: string;
+    status?: string;
+    fileName?: string;
+    fileUrl?: string;
+    mimeType?: string;
+    replyTo?: { messageId: string; content: string; sender: string } | null;
+    instance?: string;
+    phone?: string;
+  }): Promise<Result<{ success: boolean; mediaUrl?: string }>> => {
+    const tenant_id = await getTenantId();
+    if (!tenant_id) return { data: null, error: 'Sem tenant ativo' };
+    const { data: userData } = await supabase.auth.getUser();
+    const row = stripEmpty({
+      id: body.id,
+      tenant_id,
+      lead_id: body.leadId,
+      content: body.content,
+      sender: 'attendant',
+      type: body.type,
+      status: body.status ?? 'sent',
+      media_url: body.fileUrl,
+      file_name: body.fileName,
+      mime_type: body.mimeType,
+      reply_to_id: body.replyTo?.messageId,
+      reply_to_content: body.replyTo?.content,
+      reply_to_sender: body.replyTo?.sender,
+      attendant_id: userData.user?.id,
+      attendant_name: userData.user?.user_metadata?.nome ?? userData.user?.email,
+      instance: body.instance,
+      phone: body.phone,
+      timestamp: new Date().toISOString(),
+    });
+    const { error } = await supabase.from('chat_messages').upsert(row as never, { onConflict: 'id' });
+    if (error) return { data: null, error: err(error) };
+    return { data: { success: true, mediaUrl: body.fileUrl }, error: null };
+  },
+
+  saveBatch: async (
+    messages: Array<Record<string, any>>,
+  ): Promise<Result<{ success: boolean; count: number }>> => {
+    const tenant_id = await getTenantId();
+    if (!tenant_id) return { data: null, error: 'Sem tenant ativo' };
+    const rows = messages.map((m) =>
+      stripEmpty({ ...m, tenant_id, timestamp: m.timestamp ?? new Date().toISOString() }),
+    );
+    const { error } = await supabase.from('chat_messages').upsert(rows as never, { onConflict: 'id' });
+    if (error) return { data: null, error: err(error) };
+    return { data: { success: true, count: rows.length }, error: null };
+  },
+
+  markRead: async (leadId: string): Promise<Result<{ success: boolean }>> => {
+    const tenant_id = await getTenantId();
+    const { data: userData } = await supabase.auth.getUser();
+    if (!tenant_id || !userData.user) return { data: null, error: 'Sem sessão' };
+    const { error } = await supabase
+      .from('chat_read_status')
+      .upsert(
+        { tenant_id, user_id: userData.user.id, lead_id: leadId, last_read_at: new Date().toISOString() } as never,
+        { onConflict: 'lead_id,user_id' },
+      );
+    return { data: { success: !error }, error: error ? err(error) : null };
+  },
+
+  updateStatus: async (id: string, status: string): Promise<Result<{ success: boolean }>> => {
+    const { error } = await supabase.from('chat_messages').update({ status } as never).eq('id', id);
+    return { data: { success: !error }, error: error ? err(error) : null };
+  },
+
+  delete: async (id: string, _hard = false): Promise<Result<{ success: boolean }>> => {
+    const { error } = await supabase.from('chat_messages').delete().eq('id', id);
+    return { data: { success: !error }, error: error ? err(error) : null };
+  },
+
+  unreadCounts: async (): Promise<Result<Record<string, number>>> => {
+    const tenant_id = await getTenantId();
+    const { data: userData } = await supabase.auth.getUser();
+    if (!tenant_id || !userData.user) return { data: {}, error: null };
+
+    const { data: reads } = await supabase
+      .from('chat_read_status')
+      .select('lead_id, last_read_at')
+      .eq('user_id', userData.user.id);
+    const readMap = new Map<string, string>();
+    (reads ?? []).forEach((r: any) => readMap.set(r.lead_id, r.last_read_at));
+
+    // Fetch recent incoming messages (last 1000) and tally unread per lead
+    const { data: msgs, error } = await supabase
+      .from('chat_messages')
+      .select('lead_id, timestamp, sender')
+      .neq('sender', 'attendant')
+      .order('timestamp', { ascending: false })
+      .limit(1000);
+    if (error) return { data: null, error: err(error) };
+
+    const counts: Record<string, number> = {};
+    (msgs ?? []).forEach((m: any) => {
+      const lastRead = readMap.get(m.lead_id);
+      if (!lastRead || new Date(m.timestamp) > new Date(lastRead)) {
+        counts[m.lead_id] = (counts[m.lead_id] ?? 0) + 1;
+      }
+    });
+    return { data: counts, error: null };
+  },
+
+  search: async (q: string, leadId?: string): Promise<Result<any[]>> => {
+    let query = supabase
+      .from('chat_messages')
+      .select('*')
+      .ilike('content', `%${q}%`)
+      .order('timestamp', { ascending: false })
+      .limit(50);
+    if (leadId) query = query.eq('lead_id', leadId);
+    const { data, error } = await query;
+    if (error) return { data: null, error: err(error) };
+    return { data: (data ?? []).map(rowToChatMessage), error: null };
+  },
+};
