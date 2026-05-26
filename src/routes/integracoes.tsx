@@ -7,7 +7,6 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import {
-  mockAdAccounts, mockAdCampaigns, mockCrmCrossData,
   type AdCampaign, type CrmCrossData,
 } from "@/data/adsMockData";
 import { MetaAdsConnectPanel } from "@/components/meta-ads/MetaAdsConnectPanel";

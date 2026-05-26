@@ -1,7 +1,7 @@
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, Cell } from "recharts";
 import { ClientOnly } from "@/components/ClientOnly";
 import { chartTooltipStyle, chartTickFill } from "@/lib/chartTheme";
-import { mockPatients } from "@/data/crmMockData";
+
 
 const COLORS = [
   "hsl(187, 85%, 43%)",  // primary

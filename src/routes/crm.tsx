@@ -7,7 +7,6 @@ import {
   type SalesStage, type RecoveryStage,
   salesStages, recoveryStages,
   consciousnessLevels, type ConsciousnessLevel,
-  mockSalesKanban, mockRecoveryKanban, mockPatients,
 } from "@/data/crmMockData";
 import { crmApi, sessionsApi, pacientesApi } from "@/lib/vpsApi";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";

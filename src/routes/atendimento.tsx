@@ -12,13 +12,12 @@ import { exportarPrescricaoPdf } from "@/lib/prescricaoPdfExport";
 import { ClinicalAudioRecorder } from "@/components/ClinicalAudioRecorder";
 import { OdontogramaEditor } from "@/components/OdontogramaChart";
 import {
-  mockPacientes, getPacienteById, getPacienteIniciais, getPacienteIdade,
+  getPacienteById, getPacienteIniciais, getPacienteIdade,
   getAlergias, getCondicoesCriticas, getAnamnese, getOdontograma, temAlertasMedicos,
   type Paciente
 } from "@/data/registroCentral";
 import { type Appointment } from "@/data/agendaMockData";
 import { aiApi, consultationsApi, agendaApi, type AgendamentoVPS, type ConsultationRecord } from "@/lib/vpsApi";
-import { getDemoConsultas } from "@/data/demoConsultas";
 import { toast } from "sonner";
 
 type SearchParams = { appointmentId?: string };
