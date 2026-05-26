@@ -2245,17 +2245,36 @@ export function registerClinicorp(app, pool) {
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
-  // Helper: extrai tenant_id do JWT do request (sem dep externa)
+  // Helper: extrai tenant_id REAL do usuário autenticado.
+  // O JWT do Supabase não inclui tenant_id nas claims, então decodificamos o
+  // `sub` (user_id) e buscamos o tenant_id correspondente em profiles.
+  // Se não houver usuário válido ou tenant, retornamos null — o caller deve
+  // responder com lista vazia (NUNCA cair em fallback global, que vaza dados
+  // do tenant do admin original para todos os usuários novos).
+  const _tenantByUserCache = new Map(); // user_id -> { tId, at }
   const tenantOf = async (req) => {
     try {
       const auth = req.headers.authorization || '';
-      if (!auth.startsWith('Bearer ')) return await resolveTenantId(pool, null);
+      if (!auth.startsWith('Bearer ')) return null;
       const token = auth.slice(7);
       const part = token.split('.')[1];
-      if (!part) return await resolveTenantId(pool, null);
+      if (!part) return null;
       const payload = JSON.parse(Buffer.from(part, 'base64').toString('utf8'));
-      return payload.tenant_id || await resolveTenantId(pool, null);
-    } catch { return await resolveTenantId(pool, null); }
+      // 1) Se o JWT já trouxer tenant_id (custom claim), usa direto.
+      if (payload.tenant_id) return payload.tenant_id;
+      // 2) Caso contrário, resolve via profiles a partir do sub (user_id).
+      const userId = payload.sub;
+      if (!userId) return null;
+      const cached = _tenantByUserCache.get(userId);
+      if (cached && (Date.now() - cached.at) < 30_000) return cached.tId;
+      const { rows } = await pool.query(
+        'SELECT tenant_id FROM profiles WHERE id = $1 LIMIT 1',
+        [userId]
+      );
+      const tId = rows[0]?.tenant_id || null;
+      _tenantByUserCache.set(userId, { tId, at: Date.now() });
+      return tId;
+    } catch { return null; }
   };
 
   // ── Local read-only data (espelho) — escopo por tenant ───────
