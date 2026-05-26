@@ -1869,7 +1869,7 @@ export const procedimentosCatalogoApi = {
     if (!tenant_id) return { data: null, error: 'Sem tenant ativo' };
     const { data, error } = await supabase
       .from('procedimentos_catalogo')
-      .insert({ tenant_id, ...stripEmpty(body) })
+      .insert({ tenant_id, ...stripEmpty(body) } as any)
       .select('*')
       .single();
     if (error) return { data: null, error: err(error) };
@@ -1886,7 +1886,7 @@ export const procedimentosCatalogoApi = {
   update: async (id: string, body: Partial<ProcedimentoCatalogo> & { motivo_versao?: string }): Promise<Result<ProcedimentoCatalogo>> => {
     const { data, error } = await supabase
       .from('procedimentos_catalogo')
-      .update(stripEmpty(body))
+      .update(stripEmpty(body) as any)
       .eq('id', id)
       .select('*')
       .single();
