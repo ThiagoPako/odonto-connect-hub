@@ -175,11 +175,16 @@ async function _clinicorpFetchRaw(settings, pathName, { method = 'GET', query = 
   // Limpar query parameters vazios ou nulos para evitar erros na API do Clinicorp
   const allQuery = { ...query };
   // subscriber_id é OBRIGATÓRIO em TODAS as chamadas da Clinicorp (mesmo quando há business_id).
-  // A API retorna HTTP 400 "É necessário informar o id do assinante" se omitido.
   if (settings.subscriber_id && (allQuery.subscriber_id === undefined || allQuery.subscriber_id === null || allQuery.subscriber_id === '')) {
     allQuery.subscriber_id = settings.subscriber_id;
   }
-  
+  // Clinicorp autentica via query params user_api + api_key (mesmo formato do webhook).
+  // Mantemos também Authorization Basic como fallback.
+  const _apiUserQ = String(settings.subscriber_id || '').trim();
+  const _apiTokenQ = normalizeApiToken(settings.api_token);
+  if (_apiUserQ && !allQuery.user_api) allQuery.user_api = _apiUserQ;
+  if (_apiTokenQ && !allQuery.api_key) allQuery.api_key = _apiTokenQ;
+
   for (const [k, v] of Object.entries(allQuery)) {
     if (v !== undefined && v !== null && v !== '') {
       url.searchParams.set(k, String(v));
