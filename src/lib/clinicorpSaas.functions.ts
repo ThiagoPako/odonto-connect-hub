@@ -537,13 +537,19 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
 
       const appointmentUpserts = [];
       for (const a of allAppts) {
-        const apId = String(pickFirst(a, 'Id', 'id', 'AppointmentId', 'AppointmentID', 'Appointment_Id') ?? '');
-        const apDate = pickFirst(a, 'Date', 'date', 'AppointmentDate');
-        const apTime = pickFirst(a, 'FromTime', 'from_time', 'StartTime', 'time', 'Time');
-        if (!apId || !apDate || !apTime) continue;
+        const apId = String(pickFirst(a, 'Id', 'id', 'AppointmentId', 'AppointmentID', 'Appointment_Id', 'appointment_id') ?? '');
+        const apDate = pickFirst(a, 'Date', 'date', 'AppointmentDate', 'Appointment_Date', 'start_date', 'data', 'Data');
+        const apTime = pickFirst(a, 'FromTime', 'from_time', 'StartTime', 'time', 'Time', 'start_time', 'inicio', 'Inicio', 'from', 'From');
+        
+        if (!apId || !apDate || !apTime) {
+          if (allAppts.indexOf(a) === 0) {
+             log('Appointment skip - missing fields:', { apId, apDate, apTime, keys: Object.keys(a) });
+          }
+          continue;
+        }
 
-        const pid = String(pickFirst(a, 'PatientId', 'Patient_PersonId', 'PatientPersonId', 'Patient_Id', 'patient_id') ?? a?.Patient?.Id ?? '');
-        const did = String(pickFirst(a, 'ProfessionalId', 'Dentist_PersonId', 'DentistPersonId', 'Professional_PersonId', 'ScheduleToId', 'DentistId', 'professional_id', 'dentist_id') ?? a?.Dentist?.Id ?? '');
+        const pid = String(pickFirst(a, 'PatientId', 'Patient_PersonId', 'PatientPersonId', 'Patient_Id', 'patient_id', 'id_paciente') ?? a?.Patient?.Id ?? a?.Patient?.id ?? '');
+        const did = String(pickFirst(a, 'ProfessionalId', 'Dentist_PersonId', 'DentistPersonId', 'Professional_PersonId', 'ScheduleToId', 'DentistId', 'professional_id', 'dentist_id', 'id_profissional') ?? a?.Dentist?.Id ?? a?.Dentist?.id ?? '');
         
         appointmentUpserts.push({
           tenant_id,
@@ -551,11 +557,17 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
           dentista_id: profMap.get(did) || null,
           data: String(apDate).slice(0, 10),
           hora: String(apTime).slice(0, 8),
-          duracao: Number(pickFirst(a, 'Duration', 'duration') ?? 30),
-          procedimento: pickFirst(a, 'Category_Description', 'CategoryDescription', 'procedure', 'Procedure') ?? '',
-          status: String(pickFirst(a, 'Status', 'status') ?? 'agendado'),
+          duracao: Number(pickFirst(a, 'Duration', 'duration', 'minutes', 'Minutes') ?? 30),
+          procedimento: pickFirst(a, 'Category_Description', 'CategoryDescription', 'procedure', 'Procedure', 'description', 'Description', 'category_name') ?? '',
+          status: String(pickFirst(a, 'Status', 'status', 'status_name', 'StatusName') ?? 'agendado'),
           clinicorp_appointment_id: apId,
         });
+      }
+
+      if (allAppts.length > 0 && appointmentUpserts.length === 0) {
+        const first = allAppts[0];
+        errors.push(`Aviso: ${allAppts.length} agendamentos recebidos, mas nenhum pôde ser processado. Verifique os campos: ${Object.keys(first).join(', ')}`);
+        log('DEBUG: First appt keys', Object.keys(first));
       }
 
       // Batch upsert appointments in chunks
