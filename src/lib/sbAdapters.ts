@@ -913,3 +913,177 @@ export const sbMessagesApi = {
     return { data: (data ?? []).map(rowToChatMessage), error: null };
   },
 };
+
+// ─── Attendance Queues ──────────────────────────────────────
+
+export const sbQueuesApi = {
+  list: async (): Promise<Result<any[]>> => {
+    const { data, error } = await supabase
+      .from('attendance_queues')
+      .select('*')
+      .order('created_at', { ascending: true });
+    return { data, error: error ? err(error) : null };
+  },
+  create: async (body: Record<string, any>): Promise<Result<{ success: boolean; id: string }>> => {
+    const tenant_id = await getTenantId();
+    if (!tenant_id) return { data: null, error: 'Sem tenant ativo' };
+    const payload = {
+      tenant_id,
+      name: body.name,
+      color: body.color ?? '#3B82F6',
+      icon: body.icon ?? '📋',
+      description: body.description ?? null,
+      whatsapp_button_label: body.whatsapp_button_label ?? null,
+      contact_numbers: body.contact_numbers ?? [],
+      team_member_ids: body.team_member_ids ?? [],
+      active: body.active ?? true,
+    };
+    const { data, error } = await supabase
+      .from('attendance_queues')
+      .insert(payload)
+      .select('id')
+      .single();
+    if (error) return { data: null, error: err(error) };
+    return { data: { success: true, id: data!.id }, error: null };
+  },
+  update: async (id: string, body: Record<string, unknown>): Promise<Result<{ success: boolean }>> => {
+    const { error } = await supabase.from('attendance_queues').update(body).eq('id', id);
+    if (error) return { data: null, error: err(error) };
+    return { data: { success: true }, error: null };
+  },
+  delete: async (id: string): Promise<Result<{ success: boolean }>> => {
+    const { error } = await supabase.from('attendance_queues').delete().eq('id', id);
+    if (error) return { data: null, error: err(error) };
+    return { data: { success: true }, error: null };
+  },
+};
+
+// ─── Attendance Sessions ────────────────────────────────────
+
+export const sbSessionsApi = {
+  start: async (body: { leadId: string; leadName?: string; leadPhone?: string; queueId?: string; queueName?: string }): Promise<Result<{ success: boolean; id: string }>> => {
+    const tenant_id = await getTenantId();
+    if (!tenant_id) return { data: null, error: 'Sem tenant ativo' };
+    const now = new Date().toISOString();
+    const payload = {
+      tenant_id,
+      lead_id: body.leadId,
+      lead_name: body.leadName ?? null,
+      lead_phone: body.leadPhone ?? null,
+      queue_id: body.queueId ?? null,
+      queue_name: body.queueName ?? null,
+      status: 'waiting',
+      started_waiting_at: now,
+    };
+    const { data, error } = await supabase
+      .from('attendance_sessions')
+      .insert(payload)
+      .select('id')
+      .single();
+    if (error) return { data: null, error: err(error) };
+    return { data: { success: true, id: data!.id }, error: null };
+  },
+  assign: async (body: { leadId: string }): Promise<Result<{ success: boolean; id: string; waitTime: number }>> => {
+    const { data: userData } = await supabase.auth.getUser();
+    if (!userData.user) return { data: null, error: 'Não autenticado' };
+    const { data: profile } = await supabase
+      .from('profiles').select('nome').eq('id', userData.user.id).maybeSingle();
+    // Find latest waiting session for this lead
+    const { data: session, error: findErr } = await supabase
+      .from('attendance_sessions')
+      .select('id, started_waiting_at')
+      .eq('lead_id', body.leadId)
+      .eq('status', 'waiting')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (findErr) return { data: null, error: err(findErr) };
+    if (!session) return { data: null, error: 'Sessão não encontrada' };
+    const now = new Date();
+    const waitTime = session.started_waiting_at
+      ? Math.floor((now.getTime() - new Date(session.started_waiting_at).getTime()) / 1000)
+      : 0;
+    const { error } = await supabase
+      .from('attendance_sessions')
+      .update({
+        attendant_id: userData.user.id,
+        attendant_name: profile?.nome ?? null,
+        assigned_at: now.toISOString(),
+        wait_time_seconds: waitTime,
+        status: 'active',
+      })
+      .eq('id', session.id);
+    if (error) return { data: null, error: err(error) };
+    return { data: { success: true, id: session.id, waitTime }, error: null };
+  },
+  checkActive: async (leadId: string): Promise<Result<{ active: boolean; attendantId?: string; attendantName?: string; isCurrentUser?: boolean }>> => {
+    const { data: userData } = await supabase.auth.getUser();
+    const { data, error } = await supabase
+      .from('attendance_sessions')
+      .select('attendant_id, attendant_name, status')
+      .eq('lead_id', leadId)
+      .in('status', ['active', 'waiting'])
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) return { data: null, error: err(error) };
+    if (!data || data.status !== 'active') {
+      return { data: { active: false }, error: null };
+    }
+    return {
+      data: {
+        active: true,
+        attendantId: data.attendant_id ?? undefined,
+        attendantName: data.attendant_name ?? undefined,
+        isCurrentUser: userData.user?.id === data.attendant_id,
+      },
+      error: null,
+    };
+  },
+  firstResponse: async (body: { leadId: string }): Promise<Result<any>> => {
+    const { data: session, error: findErr } = await supabase
+      .from('attendance_sessions')
+      .select('id, assigned_at, first_response_at')
+      .eq('lead_id', body.leadId)
+      .eq('status', 'active')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (findErr) return { data: null, error: err(findErr) };
+    if (!session || session.first_response_at) return { data: { success: true }, error: null };
+    const now = new Date();
+    const respTime = session.assigned_at
+      ? Math.floor((now.getTime() - new Date(session.assigned_at).getTime()) / 1000)
+      : 0;
+    const { error } = await supabase
+      .from('attendance_sessions')
+      .update({ first_response_at: now.toISOString(), response_time_seconds: respTime })
+      .eq('id', session.id);
+    if (error) return { data: null, error: err(error) };
+    return { data: { success: true }, error: null };
+  },
+  close: async (body: { leadId: string; leadPhone?: string; instance?: string }): Promise<Result<{ success: boolean; sessionId?: string; duration?: number }>> => {
+    const { data: session, error: findErr } = await supabase
+      .from('attendance_sessions')
+      .select('id, assigned_at, started_waiting_at')
+      .eq('lead_id', body.leadId)
+      .in('status', ['active', 'waiting'])
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (findErr) return { data: null, error: err(findErr) };
+    if (!session) return { data: { success: true }, error: null };
+    const now = new Date();
+    const startRef = session.assigned_at ?? session.started_waiting_at;
+    const duration = startRef
+      ? Math.floor((now.getTime() - new Date(startRef).getTime()) / 1000)
+      : 0;
+    const { error } = await supabase
+      .from('attendance_sessions')
+      .update({ status: 'closed', closed_at: now.toISOString(), duration_seconds: duration })
+      .eq('id', session.id);
+    if (error) return { data: null, error: err(error) };
+    return { data: { success: true, sessionId: session.id, duration }, error: null };
+  },
+};
+
