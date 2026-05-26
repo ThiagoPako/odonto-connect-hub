@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { VPS_API_BASE } from "@/lib/vpsApi";
+import { supabase } from "@/integrations/supabase/client";
 
 export interface TratamentoChangedEvent {
   action: "created" | "updated" | "deleted";
