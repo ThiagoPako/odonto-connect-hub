@@ -54,6 +54,7 @@ export interface ClinicorpUserSettings {
   last_sync_at: string | null;
   last_sync_status: string | null;
   last_sync_error: string | null;
+  sync_progress: any | null;
   updated_at: string | null;
 }
 
