@@ -313,7 +313,7 @@ export const agendaApi = {
     return { data, error: error ? err(error) : null };
   },
 
-  delete: async (id: string): Promise<Result<{ success: true }>> => {
+  delete: async (id: string, _opts?: { serie?: boolean }): Promise<Result<{ success: true }>> => {
     const { error } = await supabase.from('agendamentos').delete().eq('id', id);
     return { data: error ? null : { success: true }, error: error ? err(error) : null };
   },
