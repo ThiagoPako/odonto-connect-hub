@@ -1136,6 +1136,7 @@ export type Database = {
           payload: Json | null
           response: Json | null
           status: string
+          tenant_id: string | null
         }
         Insert: {
           action: string
@@ -1148,6 +1149,7 @@ export type Database = {
           payload?: Json | null
           response?: Json | null
           status: string
+          tenant_id?: string | null
         }
         Update: {
           action?: string
@@ -1160,6 +1162,7 @@ export type Database = {
           payload?: Json | null
           response?: Json | null
           status?: string
+          tenant_id?: string | null
         }
         Relationships: []
       }
@@ -1299,6 +1302,7 @@ export type Database = {
           processed_at: string | null
           received_at: string
           status: string
+          tenant_id: string | null
         }
         Insert: {
           error_message?: string | null
@@ -1311,6 +1315,7 @@ export type Database = {
           processed_at?: string | null
           received_at?: string
           status?: string
+          tenant_id?: string | null
         }
         Update: {
           error_message?: string | null
@@ -1323,6 +1328,7 @@ export type Database = {
           processed_at?: string | null
           received_at?: string
           status?: string
+          tenant_id?: string | null
         }
         Relationships: []
       }

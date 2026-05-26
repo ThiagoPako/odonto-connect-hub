@@ -1799,13 +1799,14 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
 export const clinicorpPush = {
   log: async (pool, data) => {
     try {
+      const tId = data.tenant_id || await resolveTenantId(pool, null);
       await pool.query(
-        `INSERT INTO clinicorp_push_log (entity_type, local_id, clinicorp_id, action, status, payload, response, error_message)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        `INSERT INTO clinicorp_push_log (entity_type, local_id, clinicorp_id, action, status, payload, response, error_message, tenant_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
         [data.entity, data.local_id, data.clinicorp_id, data.action, data.status,
          data.payload ? JSON.stringify(data.payload) : null,
          data.response ? JSON.stringify(data.response) : null,
-         data.error]
+         data.error, tId]
       );
     } catch (e) { console.error('[clinicorp push log]', e.message); }
   },
@@ -1991,22 +1992,20 @@ async function runFinancialReconciliation(pool) {
     const { rows: alerts } = await pool.query(`
       WITH monthly_data AS (
         SELECT 
+          tenant_id,
           period_month,
           SUM(CASE WHEN source = 'payment' THEN total_amount ELSE 0 END) as total_payments,
           SUM(CASE WHEN source = 'cashflow' THEN total_in ELSE 0 END) as total_cash_in
         FROM clinicorp_monthly_summary
         WHERE period_month >= NOW() - INTERVAL '3 months'
-        GROUP BY period_month
+        GROUP BY tenant_id, period_month
       )
       SELECT 
+        tenant_id,
         period_month,
         total_payments,
         total_cash_in,
-        ABS(total_payments - total_cash_in) as divergence,
-        CASE 
-          WHEN ABS(total_payments - total_cash_in) > 0.01 THEN true 
-          ELSE false 
-        END as has_divergence
+        ABS(total_payments - total_cash_in) as divergence
       FROM monthly_data
       WHERE ABS(total_payments - total_cash_in) > 0.01
       ORDER BY period_month DESC
@@ -2019,12 +2018,12 @@ async function runFinancialReconciliation(pool) {
       const period = alert.period_month instanceof Date
         ? alert.period_month.toISOString().slice(0, 7)
         : String(alert.period_month).slice(0, 7);
-      console.warn(`[clinicorp alert] Divergência financeira detectada em ${period}: Payments R$ ${tp.toFixed(2)} vs Cashflow R$ ${tc.toFixed(2)} (Diff: R$ ${dv.toFixed(2)})`);
+      console.warn(`[clinicorp alert] Divergência financeira em ${period} (tenant ${alert.tenant_id}): Payments R$ ${tp.toFixed(2)} vs Cashflow R$ ${tc.toFixed(2)} (Diff: R$ ${dv.toFixed(2)})`);
 
       await pool.query(
-        `INSERT INTO clinicorp_webhook_events (event_type, status, payload, received_at)
-         VALUES ($1, $2, $3, NOW())`,
-        ['financial_divergence_alert', 'processed', JSON.stringify({ ...alert, period_month: period, total_payments: tp, total_cash_in: tc, divergence: dv })]
+        `INSERT INTO clinicorp_webhook_events (event_type, status, payload, received_at, tenant_id)
+         VALUES ($1, $2, $3, NOW(), $4)`,
+        ['financial_divergence_alert', 'processed', JSON.stringify({ ...alert, period_month: period, total_payments: tp, total_cash_in: tc, divergence: dv }), alert.tenant_id]
       );
     }
 
@@ -2109,10 +2108,11 @@ export function registerClinicorp(app, pool) {
       const eventType = (event?.event || event?.Event || event?.type || event?.action || 'unknown').toString();
       const externalId = String(event?.id || event?.Id || event?.AppointmentId || event?.Patient_PersonId || event?.TreatmentId || '') || null;
 
+      const webhookTenantId = await resolveTenantId(pool, null);
       const ins = await pool.query(
-        `INSERT INTO clinicorp_webhook_events (event_type, external_id, status, payload, headers, ip)
-         VALUES ($1, $2, 'received', $3, $4, $5) RETURNING id`,
-        [eventType, externalId, JSON.stringify(payload), JSON.stringify(req.headers), req.ip]
+        `INSERT INTO clinicorp_webhook_events (event_type, external_id, status, payload, headers, ip, tenant_id)
+         VALUES ($1, $2, 'received', $3, $4, $5, $6) RETURNING id`,
+        [eventType, externalId, JSON.stringify(payload), JSON.stringify(req.headers), req.ip, webhookTenantId]
       );
       eventId = ins.rows[0].id;
 
@@ -2357,17 +2357,22 @@ export function registerClinicorp(app, pool) {
   // ── Webhook events log ───────────────────────────────────────
   app.get('/api/clinicorp/webhook-events', async (req, res) => {
     const limit = Math.min(Number(req.query.limit) || 50, 200);
+    const tId = await tenantOf(req);
+    if (!tId) return res.json([]);
     const { rows } = await pool.query(
       `SELECT id, event_type, external_id, status, error_message, received_at, processed_at
          FROM clinicorp_webhook_events
+         WHERE tenant_id = $2
          ORDER BY received_at DESC LIMIT $1`,
-      [limit]
+      [limit, tId]
     );
     res.json(rows);
   });
 
   app.get('/api/clinicorp/webhook-events/:id', async (req, res) => {
-    const { rows } = await pool.query('SELECT * FROM clinicorp_webhook_events WHERE id = $1', [req.params.id]);
+    const tId = await tenantOf(req);
+    if (!tId) return res.status(404).json({ error: 'not found' });
+    const { rows } = await pool.query('SELECT * FROM clinicorp_webhook_events WHERE id = $1 AND tenant_id = $2', [req.params.id, tId]);
     if (!rows[0]) return res.status(404).json({ error: 'not found' });
     res.json(rows[0]);
   });
@@ -2614,16 +2619,19 @@ export function registerClinicorp(app, pool) {
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
-  // ── Unified Audit Log (Webhook + Push) ──
+  // ── Unified Audit Log (Webhook + Push) — escopo por tenant ──
   app.get('/api/clinicorp/audit-log', async (req, res) => {
     try {
       const limit = parseInt(req.query.limit) || 100;
+      const tId = await tenantOf(req);
+      if (!tId) return res.json([]);
       const { rows } = await pool.query(`
         (
           SELECT 
             id, 'clinicorp' as source, event_type as event, status, 
             external_id as target_id, received_at as timestamp, payload, error_message
           FROM clinicorp_webhook_events
+          WHERE tenant_id = $2
           ORDER BY received_at DESC
           LIMIT $1
         )
@@ -2633,12 +2641,13 @@ export function registerClinicorp(app, pool) {
             id, 'odonto_connect' as source, action as event, status, 
             clinicorp_id as target_id, created_at as timestamp, payload, error_message
           FROM clinicorp_push_log
+          WHERE tenant_id = $2
           ORDER BY created_at DESC
           LIMIT $1
         )
         ORDER BY timestamp DESC
         LIMIT $1
-      `, [limit]);
+      `, [limit, tId]);
       res.json(rows);
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
