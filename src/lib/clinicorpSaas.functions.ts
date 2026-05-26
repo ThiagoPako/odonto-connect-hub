@@ -480,16 +480,16 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
       // 4. Pacientes — Backfill a partir dos agendamentos
       const patientSeeds = new Map<string, { name?: string; phone?: string; email?: string; cpf?: string; sex?: string; birthDate?: string }>();
       for (const a of allAppts) {
-        const pid = String(pickFirst(a, 'PatientId', 'Patient_PersonId', 'PatientPersonId', 'Patient_Id', 'patient_id') ?? a?.Patient?.Id ?? '');
+        const pid = String(pickFirst(a, 'PatientId', 'Patient_PersonId', 'PatientPersonId', 'Patient_Id', 'patient_id', 'id_paciente', 'Patient_Id') ?? a?.Patient?.Id ?? a?.Patient?.id ?? '');
         if (!pid) continue;
         if (!patientSeeds.has(pid)) {
           patientSeeds.set(pid, {
-            name: pickFirst(a, 'PatientName', 'Patient_FullName', 'Patient_Name', 'PatientFullName', 'patient_name') ?? a?.Patient?.Name ?? a?.Patient?.FullName,
-            phone: pickFirst(a, 'Patient_MobilePhone', 'PatientMobilePhone', 'Patient_Phone', 'PatientPhone') ?? a?.Patient?.MobilePhone,
-            email: pickFirst(a, 'Patient_Email', 'PatientEmail') ?? a?.Patient?.Email,
-            cpf: pickFirst(a, 'Patient_Cpf', 'PatientCpf', 'Patient_CPF', 'PatientCPF') ?? a?.Patient?.Cpf ?? a?.Patient?.CPF,
-            sex: pickFirst(a, 'Patient_Sex', 'PatientSex', 'Patient_Gender', 'PatientGender') ?? a?.Patient?.Sex ?? a?.Patient?.Gender,
-            birthDate: pickFirst(a, 'Patient_BirthDate', 'PatientBirthDate', 'Patient_BirthDay', 'PatientBirthday') ?? a?.Patient?.BirthDate ?? a?.Patient?.BirthDay,
+            name: pickFirst(a, 'PatientName', 'Patient_FullName', 'Patient_Name', 'PatientFullName', 'patient_name', 'nome_paciente') ?? a?.Patient?.Name ?? a?.Patient?.FullName ?? a?.Patient?.nome,
+            phone: pickFirst(a, 'Patient_MobilePhone', 'PatientMobilePhone', 'Patient_Phone', 'PatientPhone', 'celular_paciente') ?? a?.Patient?.MobilePhone ?? a?.Patient?.celular,
+            email: pickFirst(a, 'Patient_Email', 'PatientEmail', 'email_paciente') ?? a?.Patient?.Email ?? a?.Patient?.email,
+            cpf: pickFirst(a, 'Patient_Cpf', 'PatientCpf', 'Patient_CPF', 'PatientCPF', 'cpf_paciente') ?? a?.Patient?.Cpf ?? a?.Patient?.CPF ?? a?.Patient?.cpf,
+            sex: pickFirst(a, 'Patient_Sex', 'PatientSex', 'Patient_Gender', 'PatientGender', 'sexo_paciente') ?? a?.Patient?.Sex ?? a?.Patient?.Gender ?? a?.Patient?.sexo,
+            birthDate: pickFirst(a, 'Patient_BirthDate', 'PatientBirthDate', 'Patient_BirthDay', 'PatientBirthday', 'data_nascimento_paciente') ?? a?.Patient?.BirthDate ?? a?.Patient?.BirthDay ?? a?.Patient?.data_nascimento,
           });
         }
       }
