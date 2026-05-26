@@ -747,10 +747,8 @@ export const whatsappApi = {
 
 // ─── Attendance Settings ────────────────────────────────────
 
-export const attendanceSettingsApi = {
-  get: () => vpsApiFetch('/attendance-settings'),
-  update: (body: unknown) => vpsApiFetch('/attendance-settings', { method: 'PUT', body }),
-};
+export { sbAttendanceSettingsApi as attendanceSettingsApi } from './sbAdapters';
+
 
 // ─── Attendance Queues ──────────────────────────────────────
 
