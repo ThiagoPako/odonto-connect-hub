@@ -809,10 +809,8 @@ export interface AttendanceMetrics {
   }>;
 }
 
-export const metricsApi = {
-  attendance: (days?: number) =>
-    vpsApiFetch<AttendanceMetrics>('/metrics/attendance', { params: days ? { days: String(days) } : undefined }),
-};
+export { sbMetricsApi as metricsApi } from './sbAdapters';
+
 
 // ─── Lead Tags ──────────────────────────────────────────────
 
