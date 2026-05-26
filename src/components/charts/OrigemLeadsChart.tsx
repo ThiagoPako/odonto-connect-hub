@@ -11,15 +11,19 @@ const COLORS = [
   "hsl(0, 72%, 51%)",    // chart-5
 ];
 
-export function OrigemLeadsChart() {
-  const originMap: Record<string, number> = {};
-  mockPatients.forEach((p) => {
-    originMap[p.origin] = (originMap[p.origin] || 0) + 1;
-  });
+export function OrigemLeadsChart({ data: propData }: { data?: any[] }) {
+  const data = propData ? propData.map(d => ({ origin: d.origin, count: d.leads })) : (() => {
+    const originMap: Record<string, number> = {};
+    mockPatients.forEach((p) => {
+      originMap[p.origin] = (originMap[p.origin] || 0) + 1;
+    });
 
-  const data = Object.entries(originMap)
-    .map(([origin, count]) => ({ origin, count }))
-    .sort((a, b) => b.count - a.count);
+    return Object.entries(originMap)
+      .map(([origin, count]) => ({ origin, count }))
+      .sort((a, b) => b.count - a.count);
+  })();
+
+  const total = data.reduce((acc, d) => acc + d.count, 0);
 
   return (
     <div className="bg-card rounded-2xl border border-border/60 p-6 shadow-card hover:shadow-card-hover transition-all">
