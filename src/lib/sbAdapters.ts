@@ -265,6 +265,12 @@ export const agendaApi = {
     quantidade: number;
     intervalo_dias: number;
     observacoes?: string;
+    categoria?: string;
+    categoria_cor?: string;
+    primeira_consulta?: boolean;
+    confirmacao_canal?: string;
+    confirmacao_quando?: string;
+    sala?: string;
   }): Promise<Result<{ serie_id: string; total: number; agendamentos: { id: string; data: string }[] }>> => {
     const tenant_id = await getTenantId();
     if (!tenant_id) return { data: null, error: 'Sem tenant ativo' };
