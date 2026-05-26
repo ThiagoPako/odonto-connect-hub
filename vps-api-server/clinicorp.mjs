@@ -2614,16 +2614,19 @@ export function registerClinicorp(app, pool) {
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
-  // ── Unified Audit Log (Webhook + Push) ──
+  // ── Unified Audit Log (Webhook + Push) — escopo por tenant ──
   app.get('/api/clinicorp/audit-log', async (req, res) => {
     try {
       const limit = parseInt(req.query.limit) || 100;
+      const tId = await tenantOf(req);
+      if (!tId) return res.json([]);
       const { rows } = await pool.query(`
         (
           SELECT 
             id, 'clinicorp' as source, event_type as event, status, 
             external_id as target_id, received_at as timestamp, payload, error_message
           FROM clinicorp_webhook_events
+          WHERE tenant_id = $2
           ORDER BY received_at DESC
           LIMIT $1
         )
@@ -2633,12 +2636,13 @@ export function registerClinicorp(app, pool) {
             id, 'odonto_connect' as source, action as event, status, 
             clinicorp_id as target_id, created_at as timestamp, payload, error_message
           FROM clinicorp_push_log
+          WHERE tenant_id = $2
           ORDER BY created_at DESC
           LIMIT $1
         )
         ORDER BY timestamp DESC
         LIMIT $1
-      `, [limit]);
+      `, [limit, tId]);
       res.json(rows);
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
