@@ -62,9 +62,8 @@ function DashboardPage() {
       setLoading(true);
       setError(null);
       const [{ data, error: kpiErr }, { data: sess }] = await Promise.all([
-        vpsApiFetch<any>("/dashboard/kpis"),
-
-        vpsApiFetch<ActiveSession[]>("/sessions/active", { background: true }),
+        dashboardApi.getKpis(),
+        sessionsApi.list({ active: true }),
       ]);
       if (cancelled) return;
       if (kpiErr) setError(kpiErr);
