@@ -763,28 +763,8 @@ export const tableApi = {
 
 // ─── Transfer Logs ──────────────────────────────────────────
 
-export const transferApi = {
-  create: (body: {
-    leadId: string;
-    leadName?: string;
-    leadPhone?: string;
-    toUserId: string;
-    toUserName?: string;
-    reason: string;
-    queueId?: string;
-    queueName?: string;
-  }) => vpsApiFetch<{ success: boolean; id: string }>('/transfers', { method: 'POST', body }),
-  list: (params?: Record<string, string>) => vpsApiFetch<Array<{
-    id: string;
-    lead_id: string;
-    lead_name: string;
-    from_user_name: string;
-    to_user_name: string;
-    reason: string;
-    queue_name: string;
-    created_at: string;
-  }>>('/transfers', { params }),
-};
+export { sbTransferApi as transferApi } from './sbAdapters';
+
 
 // ─── Attendance Sessions ────────────────────────────────────
 
