@@ -523,10 +523,9 @@ export interface DentistaPainel {
   tratamentos: PainelTratamento[];
 }
 
-export const painelDentistaApi = {
-  get: (dentistaId?: string) =>
-    vpsApiFetch<DentistaPainel>(dentistaId ? `/dentista/painel/${dentistaId}` : '/dentista/painel'),
-};
+// painelDentistaApi migrado pra Supabase via sbAdapters
+export { painelDentistaApi } from './sbAdapters';
+
 
 // ─── CRM Leads ──────────────────────────────────────────────
 

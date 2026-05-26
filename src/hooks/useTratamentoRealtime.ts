@@ -1,5 +1,4 @@
 import { useEffect, useRef } from "react";
-import { VPS_API_BASE } from "@/lib/vpsApi";
 import { supabase } from "@/integrations/supabase/client";
 
 export interface TratamentoChangedEvent {
@@ -19,61 +18,46 @@ export interface TratamentoChangedEvent {
 type Handler = (evt: TratamentoChangedEvent) => void;
 
 /**
- * Escuta eventos SSE `tratamento_changed` emitidos pelo backend após
- * criar/editar/excluir tratamentos. Mantém uma única conexão por instância
- * do hook com reconexão automática.
+ * Escuta mudanças na tabela `tratamentos` via Supabase Realtime.
+ * Filtra por `dentista_id` quando informado.
  */
 export function useTratamentoRealtime(onChange: Handler, dentistaId?: string) {
   const handlerRef = useRef<Handler>(onChange);
   handlerRef.current = onChange;
 
   useEffect(() => {
-    let es: EventSource | null = null;
-    let retryTimeout: ReturnType<typeof setTimeout>;
-    let retries = 0;
+    const channel = supabase
+      .channel(`tratamentos-${dentistaId ?? "all"}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "tratamentos" },
+        (payload) => {
+          const row = (payload.new ?? payload.old) as Record<string, unknown>;
+          if (!row) return;
+          if (dentistaId && row.dentista_id && row.dentista_id !== dentistaId) return;
+          const action: TratamentoChangedEvent["action"] =
+            payload.eventType === "INSERT" ? "created"
+            : payload.eventType === "DELETE" ? "deleted"
+            : "updated";
+          handlerRef.current({
+            action,
+            id: row.id as string,
+            paciente_id: row.paciente_id as string | undefined,
+            dentista_id: row.dentista_id as string | undefined,
+            descricao: row.descricao as string | undefined,
+            dente: row.dente as string | undefined,
+            valor: row.valor as number | undefined,
+            status: row.status as string | undefined,
+            plano: row.plano as string | undefined,
+            observacoes: row.observacoes as string | undefined,
+            ts: Date.now(),
+          });
+        },
+      )
+      .subscribe();
 
-    async function connect() {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData.session?.access_token ?? null;
-      const base = VPS_API_BASE.startsWith("http")
-        ? VPS_API_BASE
-        : `${window.location.origin}${VPS_API_BASE}`;
-      const url = new URL(`${base}/events`);
-      if (token) url.searchParams.set("token", token);
-
-      es = new EventSource(url.toString());
-
-      es.addEventListener("connected", () => {
-        retries = 0;
-      });
-
-      es.addEventListener("tratamento_changed", (e) => {
-        try {
-          const data: TratamentoChangedEvent = JSON.parse(
-            (e as MessageEvent).data,
-          );
-          // Filtra por dentista quando informado
-          if (dentistaId && data.dentista_id && data.dentista_id !== dentistaId) {
-            return;
-          }
-          handlerRef.current(data);
-        } catch (err) {
-          console.error("SSE tratamento_changed parse error:", err);
-        }
-      });
-
-      es.onerror = () => {
-        es?.close();
-        retries++;
-        const delay = Math.min(1000 * retries, 10000);
-        retryTimeout = setTimeout(connect, delay);
-      };
-    }
-
-    connect();
     return () => {
-      es?.close();
-      clearTimeout(retryTimeout);
+      supabase.removeChannel(channel);
     };
   }, [dentistaId]);
 }
