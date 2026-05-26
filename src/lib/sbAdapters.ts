@@ -671,6 +671,198 @@ export const crmApi = {
   },
 };
 
+// ─── Painel Dentista ───────────────────────────────────────
+function iniciaisOf(nome: string): string {
+  return (nome || '')
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((p) => p[0]?.toUpperCase() ?? '')
+    .join('') || '??';
+}
+
+async function resolveDentistaId(maybeId?: string): Promise<string | null> {
+  if (maybeId) return maybeId;
+  const { data: u } = await supabase.auth.getUser();
+  const email = u.user?.email;
+  if (email) {
+    const { data } = await supabase
+      .from('dentistas')
+      .select('id')
+      .eq('email', email)
+      .eq('ativo', true)
+      .maybeSingle();
+    if ((data as any)?.id) return (data as any).id as string;
+  }
+  const { data: first } = await supabase
+    .from('dentistas')
+    .select('id')
+    .eq('ativo', true)
+    .order('nome', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  return ((first as any)?.id as string) ?? null;
+}
+
+export const painelDentistaApi = {
+  get: async (dentistaId?: string): Promise<Result<any>> => {
+    const id = await resolveDentistaId(dentistaId);
+    if (!id) return { data: null, error: 'Dentista não encontrado' };
+
+    const { data: dentistaRow, error: dErr } = await supabase
+      .from('dentistas')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+    if (dErr || !dentistaRow) return { data: null, error: dErr ? err(dErr) : 'Dentista não encontrado' };
+    const d = dentistaRow as any;
+
+    const hoje = new Date().toISOString().slice(0, 10);
+
+    const [agRes, orcRes, prntRes, comRes, tratRes] = await Promise.all([
+      supabase
+        .from('agendamentos')
+        .select('id, paciente_id, data, hora, duracao, procedimento, status, observacoes, pacientes:paciente_id(nome)')
+        .eq('dentista_id', id)
+        .gte('data', hoje)
+        .order('data', { ascending: true })
+        .order('hora', { ascending: true })
+        .limit(200),
+      supabase
+        .from('orcamentos')
+        .select('id, paciente_id, itens, valor_total, status, created_at, pacientes:paciente_id(nome)')
+        .eq('dentista_id', id)
+        .order('created_at', { ascending: false })
+        .limit(100),
+      supabase
+        .from('prontuarios')
+        .select('id, paciente_id, descricao, titulo, tipo, updated_at, pacientes:paciente_id(nome)')
+        .eq('dentista_id', id)
+        .order('updated_at', { ascending: false })
+        .limit(100),
+      supabase
+        .from('comissoes')
+        .select('id, procedimento, data, valor, percentual, status, pago, pacientes:paciente_id(nome)')
+        .eq('dentista_id', id)
+        .order('data', { ascending: false })
+        .limit(200),
+      supabase
+        .from('tratamentos')
+        .select('id, paciente_id, descricao, dente, valor, status, plano, observacoes, created_at, updated_at, pacientes:paciente_id(nome)')
+        .eq('dentista_id', id)
+        .order('updated_at', { ascending: false })
+        .limit(200),
+    ]);
+
+    const agendamentosRows: any[] = (agRes.data as any[]) ?? [];
+
+    const atendimentos = agendamentosRows
+      .filter((r) => r.data === hoje)
+      .map((r) => ({
+        id: r.id,
+        pacienteId: r.paciente_id ?? undefined,
+        pacienteNome: r.pacientes?.nome ?? 'Paciente',
+        pacienteIniciais: iniciaisOf(r.pacientes?.nome ?? ''),
+        horario: (r.hora as string)?.slice(0, 5) ?? '',
+        tipo: r.procedimento ?? 'Consulta',
+        status: r.status === 'em_atendimento' ? 'em_atendimento'
+          : r.status === 'concluido' || r.status === 'finalizado' ? 'concluido'
+          : r.status === 'cancelado' || r.status === 'falta' ? 'cancelado'
+          : 'agendado',
+        procedimento: r.procedimento ?? '',
+      }));
+
+    const agenda = agendamentosRows.map((r) => ({
+      id: r.id,
+      pacienteId: r.paciente_id ?? undefined,
+      pacienteNome: r.pacientes?.nome ?? 'Paciente',
+      data: r.data,
+      horario: (r.hora as string)?.slice(0, 5) ?? '',
+      duracao: r.duracao ?? 30,
+      tipo: r.procedimento ?? 'Consulta',
+      status: r.status === 'confirmado' ? 'confirmado'
+        : r.status === 'cancelado' || r.status === 'falta' ? 'cancelado'
+        : 'agendado',
+      observacao: r.observacoes ?? undefined,
+    }));
+
+    const orcamentos = ((orcRes.data as any[]) ?? []).map((r) => ({
+      id: r.id,
+      pacienteId: r.paciente_id ?? undefined,
+      pacienteNome: r.pacientes?.nome ?? 'Paciente',
+      itens: Array.isArray(r.itens) ? r.itens.map((it: any) => ({
+        procedimento: it.procedimento ?? it.nome ?? '',
+        valor: Number(it.valor ?? it.preco ?? 0),
+        quantidade: Number(it.quantidade ?? 1),
+      })) : [],
+      total: Number(r.valor_total ?? 0),
+      status: r.status ?? 'pendente',
+      criadoEm: r.created_at,
+    }));
+
+    const prontuarios = ((prntRes.data as any[]) ?? []).map((r) => ({
+      id: r.id,
+      pacienteId: r.paciente_id ?? undefined,
+      pacienteNome: r.pacientes?.nome ?? 'Paciente',
+      pacienteIniciais: iniciaisOf(r.pacientes?.nome ?? ''),
+      ultimaConsulta: r.updated_at,
+      diagnostico: r.titulo ?? '',
+      tratamento: r.tipo ?? '',
+      observacoes: r.descricao ?? '',
+      alergias: [] as string[],
+    }));
+
+    const comissoes = ((comRes.data as any[]) ?? []).map((r) => ({
+      id: r.id,
+      pacienteNome: r.pacientes?.nome ?? 'Paciente',
+      procedimento: r.procedimento ?? '',
+      data: r.data,
+      valorProcedimento: Number(r.valor ?? 0),
+      percentual: Number(r.percentual ?? 0),
+      valorComissao: Number(r.valor ?? 0) * (Number(r.percentual ?? 0) / 100),
+      status: r.pago ? 'paga' : (r.status ?? 'pendente'),
+    }));
+
+    const tratamentos = ((tratRes.data as any[]) ?? []).map((r) => ({
+      id: r.id,
+      pacienteId: r.paciente_id ?? undefined,
+      pacienteNome: r.pacientes?.nome ?? 'Paciente',
+      descricao: r.descricao ?? '',
+      dente: r.dente ?? '',
+      valor: Number(r.valor ?? 0),
+      status: r.status ?? 'planejado',
+      plano: r.plano ?? '',
+      observacoes: r.observacoes ?? '',
+      criadoEm: r.created_at,
+      atualizadoEm: r.updated_at,
+    }));
+
+    return {
+      data: {
+        dentista: {
+          id: d.id,
+          nome: d.nome,
+          email: d.email ?? '',
+          telefone: d.telefone ?? undefined,
+          cro: d.cro ?? undefined,
+          especialidade: d.especialidade ?? undefined,
+          comissao: Number(d.comissao_percentual ?? 0),
+          status: d.ativo ? 'ativo' : 'inativo',
+        },
+        atendimentos,
+        agenda,
+        orcamentos,
+        prontuarios,
+        comissoes,
+        tratamentos,
+      },
+      error: null,
+    };
+  },
+};
+
+
+
 // ─── Exames ────────────────────────────────────────────────
 // Direct Supabase implementations (consumed by src/lib/examesApi.ts wrappers)
 export const sbExamesApi = {
