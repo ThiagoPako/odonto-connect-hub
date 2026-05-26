@@ -3335,6 +3335,137 @@ export type Database = {
         }
         Relationships: []
       }
+      procedimentos_catalogo: {
+        Row: {
+          ativo: boolean | null
+          categoria: string | null
+          codigo: string | null
+          cor: string | null
+          created_at: string
+          descricao: string | null
+          duracao_minutos: number | null
+          id: string
+          nome: string
+          requer_dente: boolean | null
+          requer_face: boolean | null
+          tenant_id: string
+          updated_at: string
+          valor_convenio: number | null
+          valor_particular: number | null
+          versao_atual: number | null
+        }
+        Insert: {
+          ativo?: boolean | null
+          categoria?: string | null
+          codigo?: string | null
+          cor?: string | null
+          created_at?: string
+          descricao?: string | null
+          duracao_minutos?: number | null
+          id?: string
+          nome: string
+          requer_dente?: boolean | null
+          requer_face?: boolean | null
+          tenant_id: string
+          updated_at?: string
+          valor_convenio?: number | null
+          valor_particular?: number | null
+          versao_atual?: number | null
+        }
+        Update: {
+          ativo?: boolean | null
+          categoria?: string | null
+          codigo?: string | null
+          cor?: string | null
+          created_at?: string
+          descricao?: string | null
+          duracao_minutos?: number | null
+          id?: string
+          nome?: string
+          requer_dente?: boolean | null
+          requer_face?: boolean | null
+          tenant_id?: string
+          updated_at?: string
+          valor_convenio?: number | null
+          valor_particular?: number | null
+          versao_atual?: number | null
+        }
+        Relationships: []
+      }
+      procedimentos_versoes: {
+        Row: {
+          alterado_por: string | null
+          categoria: string | null
+          codigo: string | null
+          cor: string | null
+          created_at: string
+          descricao: string | null
+          duracao_minutos: number | null
+          id: string
+          motivo: string | null
+          nome: string
+          procedimento_id: string
+          requer_dente: boolean | null
+          requer_face: boolean | null
+          tenant_id: string
+          valido_ate: string | null
+          valido_desde: string
+          valor_convenio: number | null
+          valor_particular: number | null
+          versao: number
+        }
+        Insert: {
+          alterado_por?: string | null
+          categoria?: string | null
+          codigo?: string | null
+          cor?: string | null
+          created_at?: string
+          descricao?: string | null
+          duracao_minutos?: number | null
+          id?: string
+          motivo?: string | null
+          nome: string
+          procedimento_id: string
+          requer_dente?: boolean | null
+          requer_face?: boolean | null
+          tenant_id: string
+          valido_ate?: string | null
+          valido_desde?: string
+          valor_convenio?: number | null
+          valor_particular?: number | null
+          versao: number
+        }
+        Update: {
+          alterado_por?: string | null
+          categoria?: string | null
+          codigo?: string | null
+          cor?: string | null
+          created_at?: string
+          descricao?: string | null
+          duracao_minutos?: number | null
+          id?: string
+          motivo?: string | null
+          nome?: string
+          procedimento_id?: string
+          requer_dente?: boolean | null
+          requer_face?: boolean | null
+          tenant_id?: string
+          valido_ate?: string | null
+          valido_desde?: string
+          valor_convenio?: number | null
+          valor_particular?: number | null
+          versao?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "procedimentos_versoes_procedimento_id_fkey"
+            columns: ["procedimento_id"]
+            isOneToOne: false
+            referencedRelation: "procedimentos_catalogo"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           avatar_url: string | null

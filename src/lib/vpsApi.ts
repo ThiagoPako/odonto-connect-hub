@@ -462,51 +462,9 @@ export { painelDentistaApi } from './sbAdapters';
 export { crmApi, orcamentosApi } from './sbAdapters';
 
 // ─── Catálogo de Procedimentos (Fase B) ──────────────────────
-export interface ProcedimentoCatalogo {
-  id: string;
-  codigo: string | null;
-  nome: string;
-  categoria: string | null;
-  valor_particular: number;
-  valor_convenio: number;
-  duracao_minutos: number;
-  cor: string;
-  requer_dente: boolean;
-  requer_face: boolean;
-  ativo: boolean;
-  descricao: string | null;
-  versao_atual?: number;
-}
-export interface ProcedimentoVersao {
-  id: string;
-  procedimento_id: string;
-  versao: number;
-  codigo: string | null;
-  nome: string;
-  categoria: string | null;
-  valor_particular: number;
-  valor_convenio: number;
-  duracao_minutos: number;
-  cor: string | null;
-  requer_dente: boolean;
-  requer_face: boolean;
-  descricao: string | null;
-  motivo: string | null;
-  alterado_por: string | null;
-  valido_desde: string;
-  valido_ate: string | null;
-  created_at: string;
-}
-export const procedimentosCatalogoApi = {
-  list: () => vpsApiFetch<ProcedimentoCatalogo[]>('/procedimentos-catalogo'),
-  create: (body: Partial<ProcedimentoCatalogo>) => vpsApiFetch<ProcedimentoCatalogo>('/procedimentos-catalogo', { method: 'POST', body }),
-  update: (id: string, body: Partial<ProcedimentoCatalogo> & { motivo_versao?: string }) =>
-    vpsApiFetch<ProcedimentoCatalogo>(`/procedimentos-catalogo/${id}`, { method: 'PUT', body }),
-  delete: (id: string) => vpsApiFetch(`/procedimentos-catalogo/${id}`, { method: 'DELETE' }),
-  versoes: (id: string) => vpsApiFetch<ProcedimentoVersao[]>(`/procedimentos-catalogo/${id}/versoes`),
-  versaoEm: (id: string, dataIso: string) =>
-    vpsApiFetch<ProcedimentoVersao | null>(`/procedimentos-catalogo/${id}/versao-em?data=${encodeURIComponent(dataIso)}`),
-};
+export { procedimentosCatalogoApi } from './sbAdapters';
+export type { ProcedimentoCatalogo, ProcedimentoVersao } from './sbAdapters';
+
 
 // ─── Execuções e Assinaturas (Fase C) ───────────────────────
 export interface AssinaturaPayload {
