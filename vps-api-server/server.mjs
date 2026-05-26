@@ -148,13 +148,13 @@ const JWT_EXPIRES_IN = '7d';
 // legacy (HS256 com JWT_SECRET), validamos via REST /auth/v1/user e
 // resolvemos o profile/tenant na tabela `profiles` via service role.
 const SUPABASE_URL = (process.env.SUPABASE_URL || '').replace(/\/$/, '');
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || '';
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const SUPABASE_BRIDGE_ENABLED = !!(SUPABASE_URL && SUPABASE_ANON_KEY && SUPABASE_SERVICE_ROLE_KEY);
 if (SUPABASE_BRIDGE_ENABLED) {
   console.log('🔐 Supabase auth bridge enabled →', SUPABASE_URL);
 } else {
-  console.warn('⚠️ Supabase auth bridge disabled — set SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY no .env do VPS');
+  console.warn('⚠️ Supabase auth bridge disabled — set SUPABASE_URL, SUPABASE_ANON_KEY (ou SUPABASE_PUBLISHABLE_KEY) e SUPABASE_SERVICE_ROLE_KEY no .env do VPS');
 }
 
 // Cache em memória: token → { user, exp }
