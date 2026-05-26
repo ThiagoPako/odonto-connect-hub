@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react";
-import { getToken, setToken as saveToken, clearToken, getMe, login as apiLogin } from "@/lib/vpsApi";
+import { supabase } from "@/integrations/supabase/client";
+import type { Session } from "@supabase/supabase-js";
 
 export interface AuthUser {
   id: string;
@@ -17,43 +18,107 @@ interface AuthState {
   user: AuthUser | null;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
+
+async function loadUserFromSession(session: Session): Promise<AuthUser | null> {
+  const authUser = session.user;
+  if (!authUser) return null;
+
+  // Fetch profile (created by handle_new_user trigger)
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("id, nome, email, tenant_id, is_super_admin, avatar_url")
+    .eq("id", authUser.id)
+    .maybeSingle();
+
+  // Fetch role from user_roles (separate table, prevents privilege escalation)
+  const { data: roleRow } = await supabase
+    .from("user_roles")
+    .select("role")
+    .eq("user_id", authUser.id)
+    .order("role", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  // Fetch tenant feature flags (optional)
+  let tenant_features: Record<string, boolean> = {};
+  if (profile?.tenant_id) {
+    const { data: tenant } = await supabase
+      .from("tenants")
+      .select("features")
+      .eq("id", profile.tenant_id)
+      .maybeSingle();
+    if (tenant?.features && typeof tenant.features === "object") {
+      tenant_features = tenant.features as Record<string, boolean>;
+    }
+  }
+
+  return {
+    id: authUser.id,
+    email: profile?.email ?? authUser.email ?? "",
+    name: profile?.nome ?? (authUser.user_metadata?.nome as string) ?? authUser.email ?? "",
+    role: (roleRow?.role as string) ?? "user",
+    avatar_url: profile?.avatar_url ?? null,
+    tenant_id: profile?.tenant_id ?? null,
+    is_super_admin: !!profile?.is_super_admin,
+    tenant_features,
+  };
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const token = getToken();
-    if (!token) {
-      setIsLoading(false);
-      return;
-    }
-    getMe()
-      .then((res) => {
-        if (res.data) setUser(res.data as AuthUser);
-        else clearToken();
-      })
-      .catch(() => clearToken())
-      .finally(() => setIsLoading(false));
+    let mounted = true;
+
+    // Listener FIRST (must not call async supabase methods synchronously inside)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!mounted) return;
+      if (session) {
+        // defer DB calls to avoid deadlock inside the auth callback
+        setTimeout(() => {
+          loadUserFromSession(session).then((u) => {
+            if (mounted) setUser(u);
+          });
+        }, 0);
+      } else {
+        setUser(null);
+      }
+    });
+
+    // THEN check existing session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!mounted) return;
+      if (session) {
+        loadUserFromSession(session).then((u) => {
+          if (mounted) {
+            setUser(u);
+            setIsLoading(false);
+          }
+        });
+      } else {
+        setIsLoading(false);
+      }
+    });
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
-    const res = await apiLogin(email, password);
-    if (res.error) throw new Error(res.error);
-    if (res.data) {
-      const d = res.data as { token: string; user: AuthUser };
-      saveToken(d.token);
-      setUser(d.user);
-      // Redirect handled by LoginPage useEffect via SPA navigation
-    }
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) throw new Error(error.message);
+    // user state will be populated by onAuthStateChange
   }, []);
 
-  const logout = useCallback(() => {
-    clearToken();
+  const logout = useCallback(async () => {
+    await supabase.auth.signOut();
     setUser(null);
   }, []);
 
