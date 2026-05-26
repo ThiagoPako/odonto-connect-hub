@@ -77,7 +77,7 @@ export async function registerPushSubscription(): Promise<boolean> {
     // Send subscription to backend
     const res = await fetch(`${VPS_API_BASE}/push/subscribe`, {
       method: 'POST',
-      headers: getAuthHeaders(),
+      headers: await getAuthHeaders(),
       body: JSON.stringify({ subscription: subscription.toJSON() }),
     });
 
@@ -99,7 +99,7 @@ export async function unregisterPushSubscription(): Promise<void> {
       // Remove from server
       await fetch(`${VPS_API_BASE}/push/unsubscribe`, {
         method: 'POST',
-        headers: getAuthHeaders(),
+        headers: await getAuthHeaders(),
         body: JSON.stringify({ endpoint: subscription.endpoint }),
       });
       await subscription.unsubscribe();
