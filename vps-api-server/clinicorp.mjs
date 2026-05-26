@@ -2357,17 +2357,22 @@ export function registerClinicorp(app, pool) {
   // ── Webhook events log ───────────────────────────────────────
   app.get('/api/clinicorp/webhook-events', async (req, res) => {
     const limit = Math.min(Number(req.query.limit) || 50, 200);
+    const tId = await tenantOf(req);
+    if (!tId) return res.json([]);
     const { rows } = await pool.query(
       `SELECT id, event_type, external_id, status, error_message, received_at, processed_at
          FROM clinicorp_webhook_events
+         WHERE tenant_id = $2
          ORDER BY received_at DESC LIMIT $1`,
-      [limit]
+      [limit, tId]
     );
     res.json(rows);
   });
 
   app.get('/api/clinicorp/webhook-events/:id', async (req, res) => {
-    const { rows } = await pool.query('SELECT * FROM clinicorp_webhook_events WHERE id = $1', [req.params.id]);
+    const tId = await tenantOf(req);
+    if (!tId) return res.status(404).json({ error: 'not found' });
+    const { rows } = await pool.query('SELECT * FROM clinicorp_webhook_events WHERE id = $1 AND tenant_id = $2', [req.params.id, tId]);
     if (!rows[0]) return res.status(404).json({ error: 'not found' });
     res.json(rows[0]);
   });
