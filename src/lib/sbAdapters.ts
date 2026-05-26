@@ -1274,6 +1274,23 @@ export const sbSessionsApi = {
       .eq('id', session.id);
     if (error) return { data: null, error: err(error) };
     return { data: { success: true, sessionId: session.id, duration }, error: null };
+  list: async (params?: { active?: boolean }): Promise<Result<any[]>> => {
+    try {
+      const tenant_id = await getTenantId();
+      if (!tenant_id) return { data: null, error: 'Sem tenant' };
+      let q = (supabase as any).from('attendance_sessions').select('*').eq('tenant_id', tenant_id);
+      if (params?.active) {
+        q = q.in('status', ['active', 'waiting']);
+      }
+      const { data, error } = await q.order('created_at', { ascending: false });
+      if (error) return { data: null, error: err(error) };
+      const mapped = (data || []).map(s => ({
+        ...s,
+        lead_nome: s.lead_name || 'Sem nome',
+        started_at: s.assigned_at || s.started_waiting_at || s.created_at
+      }));
+      return { data: mapped, error: null };
+    } catch (e) { return { data: null, error: err(e) }; }
   },
 };
 
