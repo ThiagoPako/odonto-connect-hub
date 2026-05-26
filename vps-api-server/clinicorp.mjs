@@ -2108,10 +2108,11 @@ export function registerClinicorp(app, pool) {
       const eventType = (event?.event || event?.Event || event?.type || event?.action || 'unknown').toString();
       const externalId = String(event?.id || event?.Id || event?.AppointmentId || event?.Patient_PersonId || event?.TreatmentId || '') || null;
 
+      const webhookTenantId = await resolveTenantId(pool, null);
       const ins = await pool.query(
-        `INSERT INTO clinicorp_webhook_events (event_type, external_id, status, payload, headers, ip)
-         VALUES ($1, $2, 'received', $3, $4, $5) RETURNING id`,
-        [eventType, externalId, JSON.stringify(payload), JSON.stringify(req.headers), req.ip]
+        `INSERT INTO clinicorp_webhook_events (event_type, external_id, status, payload, headers, ip, tenant_id)
+         VALUES ($1, $2, 'received', $3, $4, $5, $6) RETURNING id`,
+        [eventType, externalId, JSON.stringify(payload), JSON.stringify(req.headers), req.ip, webhookTenantId]
       );
       eventId = ins.rows[0].id;
 
