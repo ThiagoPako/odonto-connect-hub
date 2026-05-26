@@ -1967,12 +1967,12 @@ export const sbDashboardApi = {
         leads,
         estoque
       ] = await Promise.all([
-        (supabase.from('pacientes') as any).select('*', { count: 'exact', head: true }).eq('tenant_id', tenant_id),
-        (supabase.from('agendamentos') as any).select('*').eq('tenant_id', tenant_id).eq('data', todayStr),
-        (supabase.from('movimentacoes_financeiras') as any).select('*').eq('tenant_id', tenant_id).gte('data', firstDayOfMonth),
-        (supabase.from('orcamentos') as any).select('*').eq('tenant_id', tenant_id),
-        (supabase.from('leads') as any).select('*').eq('tenant_id', tenant_id),
-        (supabase.from('estoque') as any).select('*').eq('tenant_id', tenant_id)
+        (supabase as any).from('pacientes').select('*', { count: 'exact', head: true }).eq('tenant_id', tenant_id),
+        (supabase as any).from('agendamentos').select('*').eq('tenant_id', tenant_id).eq('data', todayStr),
+        (supabase as any).from('movimentacoes_financeiras').select('*').eq('tenant_id', tenant_id).gte('data', firstDayOfMonth),
+        (supabase as any).from('orcamentos').select('*').eq('tenant_id', tenant_id),
+        (supabase as any).from('leads').select('*').eq('tenant_id', tenant_id),
+        (supabase as any).from('estoque').select('*').eq('tenant_id', tenant_id)
       ]);
 
       const totalPacientes = pacientesCount.count || 0;
