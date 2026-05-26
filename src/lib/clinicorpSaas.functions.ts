@@ -263,32 +263,67 @@ const syncSchema = z.object({
   force_metadata: z.boolean().optional(),
 }).default({});
 
+// ─── helpers ─────────────────────────────────────────────────
+function pickFirst(obj: any, ...keys: string[]): any {
+  if (!obj || typeof obj !== 'object') return undefined;
+  for (const k of keys) {
+    if (obj[k] !== undefined && obj[k] !== null && obj[k] !== '') return obj[k];
+  }
+  return undefined;
+}
+
+function extractList(data: any): any[] {
+  if (Array.isArray(data)) return data;
+  if (!data || typeof data !== 'object') return [];
+  const direct = pickFirst(data,
+    'Results', 'Result', 'Data', 'data', 'Items', 'items', 'Rows', 'rows', 'Records', 'records',
+    'Appointments', 'appointments', 'Patients', 'patients', 'Dentists', 'dentists',
+    'Professionals', 'professionals', 'Businesses', 'businesses', 'Clinics', 'clinics',
+    'List', 'list',
+  );
+  if (Array.isArray(direct)) return direct;
+  if (direct && typeof direct === 'object') {
+    const nested = extractList(direct);
+    if (nested.length) return nested;
+  }
+  for (const value of Object.values(data)) {
+    if (Array.isArray(value)) return value;
+    if (value && typeof value === 'object') {
+      const nested = extractList(value);
+      if (nested.length) return nested;
+    }
+  }
+  return [];
+}
+
+function ymd(d: Date): string {
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+}
+
 export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => syncSchema.parse(input ?? {}))
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context as { supabase: any; userId: string };
 
-    // Get settings
     const { data: settings, error: sErr } = await supabase
       .from('clinicorp_user_settings')
       .select('*')
       .eq('user_id', userId)
       .maybeSingle();
-    
+
     if (sErr || !settings || !settings.api_token || !settings.subscriber_id) {
-      throw new Error("Configurações da Clinicorp não encontradas ou incompletas.");
+      throw new Error('Configurações da Clinicorp não encontradas ou incompletas.');
     }
 
-    const { api_token, subscriber_id, base_url } = settings;
-    const tenant_id = await (async () => {
-      const { data: profile } = await supabase.from('profiles').select('tenant_id').eq('id', userId).maybeSingle();
-      return profile?.tenant_id;
-    })();
+    const { api_token, subscriber_id } = settings;
+    const base_url = settings.base_url || DEFAULT_BASE_URL;
 
-    if (!tenant_id) throw new Error("Usuário não possui um tenant_id associado.");
+    const { data: profile } = await supabase
+      .from('profiles').select('tenant_id').eq('id', userId).maybeSingle();
+    const tenant_id = profile?.tenant_id;
+    if (!tenant_id) throw new Error('Usuário não possui um tenant_id associado.');
 
-    // Update status to syncing
     await supabase.from('clinicorp_user_settings').update({
       last_sync_status: 'syncing',
       last_sync_error: 'Iniciando sincronização...',
@@ -296,107 +331,148 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
 
     const summary = { clinics: 0, professionals: 0, patients: 0, appointments: 0 };
     const errors: string[] = [];
+    const log = (msg: string, extra?: any) => console.log(`[clinicorp-sync] ${msg}`, extra ?? '');
 
     try {
-      // 1. Sync Clinicas
-      const { status: clStatus, data: clData } = await clinicorpProbe(base_url, subscriber_id, api_token, '/business/list');
-      if (clStatus === 200 && Array.isArray(clData)) {
-        summary.clinics = clData.length;
-        // In real app we would upsert into clinicorp_clinics
-      }
+      // 1. Clinicas (apenas contagem)
+      try {
+        const { status, data: cl } = await clinicorpProbe(base_url, subscriber_id, api_token, '/business/list');
+        const list = extractList(cl);
+        summary.clinics = list.length;
+        log(`clinics status=${status} count=${list.length}`);
+      } catch (e: any) { errors.push(`clinicas: ${e.message}`); }
 
-      // 2. Sync Profissionais -> Dentistas
-      const { status: prStatus, data: prData } = await clinicorpProbe(base_url, subscriber_id, api_token, '/dentist/list');
-      if (prStatus === 200 && Array.isArray(prData)) {
-        for (const pr of prData) {
-          const prId = String(pr.Id || pr.id);
-          const prName = String(pr.FullName || pr.full_name || pr.Name || '');
-          if (!prId || !prName) continue;
-          
-          await supabase.from('dentistas').upsert({
-            tenant_id,
-            nome: prName,
-            especialidade: pr.Speciality || pr.specialty || null,
-            email: pr.Email || null,
-            clinicorp_professional_id: prId,
+      // 2. Profissionais
+      try {
+        const { status, data: pr } = await clinicorpProbe(base_url, subscriber_id, api_token, '/dentist/list');
+        const list = extractList(pr);
+        log(`dentists status=${status} count=${list.length}`, list[0]);
+        for (const d of list) {
+          const id = String(pickFirst(d, 'Id', 'id', 'PersonId', 'Dentist_PersonId', 'DentistId') ?? '');
+          const nome = String(pickFirst(d, 'FullName', 'Name', 'full_name', 'name') ?? '').trim();
+          if (!id || !nome) continue;
+          const up = await supabase.from('dentistas').upsert({
+            tenant_id, nome,
+            especialidade: pickFirst(d, 'Speciality', 'Specialty', 'specialty') ?? null,
+            email: pickFirst(d, 'Email', 'email') ?? null,
+            cro: pickFirst(d, 'Cro', 'CRO', 'cro') ?? null,
+            clinicorp_professional_id: id,
             ativo: true,
-          }, { onConflict: 'tenant_id, clinicorp_professional_id' });
+          }, { onConflict: 'tenant_id,clinicorp_professional_id' });
+          if (up.error) { errors.push(`dentista ${nome}: ${up.error.message}`); continue; }
           summary.professionals++;
         }
-      }
+      } catch (e: any) { errors.push(`profissionais: ${e.message}`); }
 
-      // 3. Sync Pacientes
-      const { status: paStatus, data: paData } = await clinicorpProbe(base_url, subscriber_id, api_token, '/patient/birthdays', { from: '2000-01-01', to: '2100-01-01' });
-      // Nota: /patient/list seria melhor, mas birthdays costuma retornar tudo se o range for grande e tiver permissão.
-      // Se birthdays falhar ou retornar pouco, em produção usaríamos um endpoint de busca.
-      if (paStatus === 200 && Array.isArray(paData)) {
-        for (const pa of paData) {
-          const paId = String(pa.Id || pa.id);
-          const paName = String(pa.FullName || pa.Name || pa.name || '');
-          if (!paId || !paName) continue;
-
-          await supabase.from('pacientes').upsert({
-            tenant_id,
-            nome: paName,
-            celular: pa.MobilePhone || pa.Phone || null,
-            email: pa.Email || null,
-            clinicorp_patient_id: paId,
-          }, { onConflict: 'tenant_id, clinicorp_patient_id' });
-          summary.patients++;
-        }
-      }
-
-      // 4. Sync Agendamentos
+      // 3. Agendamentos — Clinicorp /appointment/list só aceita from === to. Iterar dia a dia.
       const today = new Date();
-      const from = data.from || new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-      const to = data.to || new Date(today.getTime() + 60 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      const from = data.from || ymd(new Date(today.getTime() - 30 * 86400000));
+      const to = data.to || ymd(new Date(today.getTime() + 60 * 86400000));
+      log(`appointments range ${from} → ${to}`);
 
-      const { status: apStatus, data: apData } = await clinicorpProbe(base_url, subscriber_id, api_token, '/appointment/list', { from, to } as Record<string, string>);
-      if (apStatus === 200 && Array.isArray(apData)) {
-        // Map professionals and patients to get our internal UUIDs
-        const { data: myProfs } = await supabase.from('dentistas').select('id, clinicorp_professional_id').eq('tenant_id', tenant_id);
-        const { data: myPas } = await supabase.from('pacientes').select('id, clinicorp_patient_id').eq('tenant_id', tenant_id);
-        
-        const profMap = new Map<string, string>(myProfs?.map((p: any) => [p.clinicorp_professional_id, p.id]) || []);
-        const paMap = new Map<string, string>(myPas?.map((p: any) => [p.clinicorp_patient_id, p.id]) || []);
+      const allAppts: any[] = [];
+      const start = new Date(from + 'T00:00:00Z');
+      const end = new Date(to + 'T00:00:00Z');
+      let day = new Date(start);
+      let dayCount = 0;
+      while (day <= end && dayCount < 120) {
+        const ds = ymd(day);
+        try {
+          const { status, data: ap } = await clinicorpProbe(base_url, subscriber_id, api_token, '/appointment/list', { from: ds, to: ds });
+          if (status === 429) { errors.push('rate limited em agendamentos'); break; }
+          const list = extractList(ap);
+          if (list.length) {
+            log(`appt ${ds}: ${list.length}`);
+            allAppts.push(...list);
+          }
+        } catch (e: any) {
+          errors.push(`appt ${ds}: ${e.message}`);
+        }
+        dayCount++;
+        day = new Date(day.getTime() + 86400000);
+        await new Promise(r => setTimeout(r, 300));
+      }
+      log(`appointments total coletados=${allAppts.length}`);
 
-        for (const ap of apData) {
-          const apId = String(ap.Id || ap.id);
-          const apDate = ap.Date || ap.date;
-          const apTime = ap.FromTime || ap.from_time || ap.time;
-          if (!apId || !apDate || !apTime) continue;
-
-          const pId = profMap.get(String(ap.Dentist_PersonId || ap.dentist_id));
-          const ptId = paMap.get(String(ap.Patient_PersonId || ap.patient_id));
-
-          if (!pId || !ptId) continue; // Can't link if patient or professional not found locally
-
-          await supabase.from('agendamentos').upsert({
-            tenant_id,
-            paciente_id: ptId,
-            dentista_id: pId,
-            data: apDate,
-            hora: apTime,
-            duracao: Number(ap.Duration || ap.duration || 30),
-            procedimento: ap.Category_Description || ap.procedure || '',
-            status: ap.Status || 'agendado',
-            clinicorp_appointment_id: apId,
-          }, { onConflict: 'tenant_id, clinicorp_appointment_id' });
-          summary.appointments++;
+      // 4. Pacientes — Clinicorp não expõe /patient/list. Backfill a partir dos agendamentos.
+      const patientSeeds = new Map<string, { name?: string; phone?: string; email?: string }>();
+      for (const a of allAppts) {
+        const pid = String(pickFirst(a, 'PatientId', 'Patient_PersonId', 'PatientPersonId', 'Patient_Id', 'patient_id') ?? a?.Patient?.Id ?? '');
+        if (!pid) continue;
+        if (!patientSeeds.has(pid)) {
+          patientSeeds.set(pid, {
+            name: pickFirst(a, 'PatientName', 'Patient_FullName', 'Patient_Name', 'PatientFullName', 'patient_name') ?? a?.Patient?.Name ?? a?.Patient?.FullName,
+            phone: pickFirst(a, 'Patient_MobilePhone', 'PatientMobilePhone', 'Patient_Phone', 'PatientPhone') ?? a?.Patient?.MobilePhone,
+            email: pickFirst(a, 'Patient_Email', 'PatientEmail') ?? a?.Patient?.Email,
+          });
         }
       }
+      log(`pacientes seeds=${patientSeeds.size}`);
 
-      // Update status to success
+      for (const [pid, info] of patientSeeds) {
+        const nome = (info.name || '').trim();
+        if (!nome) continue;
+        const up = await supabase.from('pacientes').upsert({
+          tenant_id, nome,
+          celular: info.phone || null,
+          email: info.email || null,
+          clinicorp_patient_id: pid,
+        }, { onConflict: 'tenant_id,clinicorp_patient_id' });
+        if (up.error) { errors.push(`paciente ${nome}: ${up.error.message}`); continue; }
+        summary.patients++;
+      }
+
+      // 5. Upsert agendamentos (após pacientes/dentistas existirem)
+      const { data: myProfs } = await supabase
+        .from('dentistas').select('id, clinicorp_professional_id').eq('tenant_id', tenant_id);
+      const { data: myPas } = await supabase
+        .from('pacientes').select('id, clinicorp_patient_id').eq('tenant_id', tenant_id);
+
+      const profMap = new Map<string, string>(
+        (myProfs || []).filter((p: any) => p.clinicorp_professional_id).map((p: any) => [p.clinicorp_professional_id, p.id])
+      );
+      const paMap = new Map<string, string>(
+        (myPas || []).filter((p: any) => p.clinicorp_patient_id).map((p: any) => [p.clinicorp_patient_id, p.id])
+      );
+
+      for (const a of allAppts) {
+        const apId = String(pickFirst(a, 'Id', 'id', 'AppointmentId', 'AppointmentID', 'Appointment_Id') ?? '');
+        const apDate = pickFirst(a, 'Date', 'date', 'AppointmentDate');
+        const apTime = pickFirst(a, 'FromTime', 'from_time', 'StartTime', 'time', 'Time');
+        if (!apId || !apDate || !apTime) continue;
+
+        const pid = String(pickFirst(a, 'PatientId', 'Patient_PersonId', 'PatientPersonId', 'Patient_Id', 'patient_id') ?? a?.Patient?.Id ?? '');
+        const did = String(pickFirst(a, 'ProfessionalId', 'Dentist_PersonId', 'DentistPersonId', 'Professional_PersonId', 'ScheduleToId', 'DentistId', 'professional_id', 'dentist_id') ?? a?.Dentist?.Id ?? '');
+        const paciente_id = paMap.get(pid) || null;
+        const dentista_id = profMap.get(did) || null;
+
+        const up = await supabase.from('agendamentos').upsert({
+          tenant_id,
+          paciente_id, dentista_id,
+          data: String(apDate).slice(0, 10),
+          hora: String(apTime).slice(0, 8),
+          duracao: Number(pickFirst(a, 'Duration', 'duration') ?? 30),
+          procedimento: pickFirst(a, 'Category_Description', 'CategoryDescription', 'procedure', 'Procedure') ?? '',
+          status: String(pickFirst(a, 'Status', 'status') ?? 'agendado'),
+          clinicorp_appointment_id: apId,
+        }, { onConflict: 'tenant_id,clinicorp_appointment_id' });
+        if (up.error) { errors.push(`appt ${apId}: ${up.error.message}`); continue; }
+        summary.appointments++;
+      }
+
+      log('summary', summary);
+      log('errors', errors.slice(0, 10));
+
       await supabase.from('clinicorp_user_settings').update({
-        last_sync_status: 'success',
+        last_sync_status: errors.length ? 'partial' : 'success',
         last_sync_at: new Date().toISOString(),
-        last_sync_error: null,
+        last_sync_error: errors.length ? errors.slice(0, 3).join(' | ') : null,
       }).eq('user_id', userId);
 
-      return { status: 'success' as const, summary, errors, from, to };
-
+      return { status: (errors.length ? 'partial' : 'success') as const, summary, errors: errors.slice(0, 20), from, to };
     } catch (err: any) {
       const msg = err.message || 'Erro desconhecido';
+      log('FATAL', msg);
       await supabase.from('clinicorp_user_settings').update({
         last_sync_status: 'error',
         last_sync_error: msg,
