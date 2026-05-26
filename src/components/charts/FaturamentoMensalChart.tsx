@@ -2,20 +2,14 @@ import { AreaChart, Area, XAxis, YAxis, ResponsiveContainer, Tooltip, CartesianG
 import { ClientOnly } from "@/components/ClientOnly";
 import { chartTooltipStyle, chartTickFill, chartGridStroke } from "@/lib/chartTheme";
 
-const monthlyData = [
-  { mes: "Out", faturamento: 98000, meta: 120000 },
-  { mes: "Nov", faturamento: 112000, meta: 120000 },
-  { mes: "Dez", faturamento: 135000, meta: 130000 },
-  { mes: "Jan", faturamento: 105000, meta: 130000 },
-  { mes: "Fev", faturamento: 142000, meta: 140000 },
-  { mes: "Mar", faturamento: 168000, meta: 150000 },
-  { mes: "Abr", faturamento: 187500, meta: 160000 },
-];
+const monthlyData: any[] = [];
 
 export function FaturamentoMensalChart() {
-  const atual = monthlyData[monthlyData.length - 1];
-  const anterior = monthlyData[monthlyData.length - 2];
-  const crescimento = Math.round(((atual.faturamento - anterior.faturamento) / anterior.faturamento) * 100);
+  const atual = monthlyData.length > 0 ? monthlyData[monthlyData.length - 1] : { faturamento: 0, meta: 0 };
+  const anterior = monthlyData.length > 1 ? monthlyData[monthlyData.length - 2] : { faturamento: 0, meta: 0 };
+  const crescimento = anterior.faturamento > 0 
+    ? Math.round(((atual.faturamento - anterior.faturamento) / anterior.faturamento) * 100)
+    : 0;
 
   return (
     <div className="bg-card rounded-2xl border border-border/60 p-6 shadow-card hover:shadow-card-hover transition-all">

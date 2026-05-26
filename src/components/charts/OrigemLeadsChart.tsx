@@ -1,7 +1,7 @@
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, Cell } from "recharts";
 import { ClientOnly } from "@/components/ClientOnly";
 import { chartTooltipStyle, chartTickFill } from "@/lib/chartTheme";
-import { mockPatients } from "@/data/crmMockData";
+
 
 const COLORS = [
   "hsl(187, 85%, 43%)",  // primary
@@ -12,16 +12,7 @@ const COLORS = [
 ];
 
 export function OrigemLeadsChart({ data: propData }: { data?: any[] }) {
-  const data = propData ? propData.map(d => ({ origin: d.origin, count: d.leads })) : (() => {
-    const originMap: Record<string, number> = {};
-    mockPatients.forEach((p) => {
-      originMap[p.origin] = (originMap[p.origin] || 0) + 1;
-    });
-
-    return Object.entries(originMap)
-      .map(([origin, count]) => ({ origin, count }))
-      .sort((a, b) => b.count - a.count);
-  })();
+  const data = propData ? propData.map(d => ({ origin: d.origin, count: d.leads })) : [];
 
   const total = data.reduce((acc, d) => acc + d.count, 0);
 

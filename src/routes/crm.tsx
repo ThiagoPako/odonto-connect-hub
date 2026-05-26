@@ -7,7 +7,6 @@ import {
   type SalesStage, type RecoveryStage,
   salesStages, recoveryStages,
   consciousnessLevels, type ConsciousnessLevel,
-  mockSalesKanban, mockRecoveryKanban, mockPatients,
 } from "@/data/crmMockData";
 import { crmApi, sessionsApi, pacientesApi } from "@/lib/vpsApi";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -272,25 +271,19 @@ function SalesKanbanView() {
     crmApi.kanban().then(({ data, error }) => {
       if (!error && data && typeof data === 'object') {
         const raw = data as Record<string, any[]>;
-        const hasData = Object.values(raw).some(arr => Array.isArray(arr) && arr.length > 0);
-        if (hasData) {
-          const result = { ...emptyStages };
-          for (const key of Object.keys(result) as SalesStage[]) {
-            if (Array.isArray(raw[key])) {
-              result[key] = raw[key].map(normalizeLead);
-            }
+        const result = { ...emptyStages };
+        for (const key of Object.keys(result) as SalesStage[]) {
+          if (Array.isArray(raw[key])) {
+            result[key] = raw[key].map(normalizeLead);
           }
-          setLeads(result);
-        } else {
-          setLeads(mockSalesKanban);
         }
+        setLeads(result);
       } else {
-        // Fallback to mock data for demo
-        setLeads(mockSalesKanban);
+        setLeads(emptyStages);
       }
       setLoading(false);
     }).catch(() => {
-      setLeads(mockSalesKanban);
+      setLeads(emptyStages);
       setLoading(false);
     });
   }, []);
@@ -315,24 +308,19 @@ function RecoveryKanbanView() {
     crmApi.kanban().then(({ data, error }) => {
       if (!error && data && typeof data === 'object') {
         const raw = data as Record<string, any[]>;
-        const hasData = Object.values(raw).some(arr => Array.isArray(arr) && arr.length > 0);
-        if (hasData) {
-          const result = { ...emptyStages };
-          for (const key of Object.keys(result) as RecoveryStage[]) {
-            if (Array.isArray(raw[key])) {
-              result[key] = raw[key].map(normalizeLead);
-            }
+        const result = { ...emptyStages };
+        for (const key of Object.keys(result) as RecoveryStage[]) {
+          if (Array.isArray(raw[key])) {
+            result[key] = raw[key].map(normalizeLead);
           }
-          setLeads(result);
-        } else {
-          setLeads(mockRecoveryKanban);
         }
+        setLeads(result);
       } else {
-        setLeads(mockRecoveryKanban);
+        setLeads(emptyStages);
       }
       setLoading(false);
     }).catch(() => {
-      setLeads(mockRecoveryKanban);
+      setLeads(emptyStages);
       setLoading(false);
     });
   }, []);
@@ -774,13 +762,12 @@ function PatientTableView() {
           avatarUrl: r.avatar_url,
         })));
       } else {
-        // Fallback to mock data
-        setPatients(mockPatients);
-        setTotal(mockPatients.length);
+        setPatients([]);
+        setTotal(0);
       }
     } catch {
-      setPatients(mockPatients);
-      setTotal(mockPatients.length);
+      setPatients([]);
+      setTotal(0);
     } finally {
       setLoading(false);
     }

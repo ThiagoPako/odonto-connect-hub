@@ -12,13 +12,12 @@ import { exportarPrescricaoPdf } from "@/lib/prescricaoPdfExport";
 import { ClinicalAudioRecorder } from "@/components/ClinicalAudioRecorder";
 import { OdontogramaEditor } from "@/components/OdontogramaChart";
 import {
-  mockPacientes, getPacienteById, getPacienteIniciais, getPacienteIdade,
+  getPacienteById, getPacienteIniciais, getPacienteIdade,
   getAlergias, getCondicoesCriticas, getAnamnese, getOdontograma, temAlertasMedicos,
   type Paciente
 } from "@/data/registroCentral";
 import { type Appointment } from "@/data/agendaMockData";
 import { aiApi, consultationsApi, agendaApi, type AgendamentoVPS, type ConsultationRecord } from "@/lib/vpsApi";
-import { getDemoConsultas } from "@/data/demoConsultas";
 import { toast } from "sonner";
 
 type SearchParams = { appointmentId?: string };
@@ -110,12 +109,12 @@ function ConsultaPage() {
       if (data && data.length > 0) {
         setHistoricoConsultas(data);
       } else {
-        setHistoricoConsultas(getDemoConsultas(pacienteSelecionado.id));
+        setHistoricoConsultas([]);
       }
       setLoadingHistorico(false);
     }).catch(() => {
       if (cancelled) return;
-      setHistoricoConsultas(getDemoConsultas(pacienteSelecionado.id));
+      setHistoricoConsultas([]);
       setLoadingHistorico(false);
     });
     return () => { cancelled = true; };
@@ -167,7 +166,7 @@ function ConsultaPage() {
         const target = converted.find((a: Appointment) => a.id === appointmentId);
         if (target) {
           setAppointmentSelecionado(target);
-          const paciente = target.pacienteId ? getPacienteById(target.pacienteId) : mockPacientes.find(p => p.nome === target.patientName);
+          const paciente = target.pacienteId ? getPacienteById(target.pacienteId) : undefined;
           if (paciente) {
             setPacienteSelecionado(paciente);
           } else {
@@ -206,7 +205,7 @@ function ConsultaPage() {
     if (atendimentoAtivo) return;
     setAppointmentSelecionado(apt);
     // Try to find patient in registry
-    const paciente = apt.pacienteId ? getPacienteById(apt.pacienteId) : mockPacientes.find(p => p.nome === apt.patientName);
+    const paciente = apt.pacienteId ? getPacienteById(apt.pacienteId) : undefined;
     if (paciente) {
       setPacienteSelecionado(paciente);
     } else {
@@ -459,8 +458,8 @@ function ConsultaPage() {
 
   // Reset odontograma when patient changes
   useEffect(() => {
-    if (odontogramaBase) {
-      setDentesOdontograma([...odontogramaBase.dentes]);
+    if (odontogramaBase && (odontogramaBase as any).dentes) {
+      setDentesOdontograma([...(odontogramaBase as any).dentes]);
     } else {
       // Generate default teeth (all healthy)
       const allTeeth = [

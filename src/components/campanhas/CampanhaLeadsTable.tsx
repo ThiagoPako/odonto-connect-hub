@@ -32,11 +32,7 @@ export function CampanhaLeadsTable({ campaign, onNavigate }: Props) {
   const [page, setPage] = useState(0);
 
   const phoneByLeadId = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const stage of Object.values(mockKanbanLeads)) {
-      for (const lead of stage) map.set(lead.id, lead.phone);
-    }
-    return map;
+    return new Map<string, string>();
   }, []);
 
   const rows = useMemo<LeadRow[]>(() => {

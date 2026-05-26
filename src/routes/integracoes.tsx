@@ -7,7 +7,6 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import {
-  mockAdAccounts, mockAdCampaigns, mockCrmCrossData,
   type AdCampaign, type CrmCrossData,
 } from "@/data/adsMockData";
 import { MetaAdsConnectPanel } from "@/components/meta-ads/MetaAdsConnectPanel";
@@ -46,7 +45,7 @@ function IntegracoesPage() {
   const [platformFilter, setPlatformFilter] = useState<"all" | "google" | "meta">("all");
 
   // Mock data removed — só exibe dados reais do tenant. Listas vazias até que campanhas reais sejam sincronizadas.
-  const realAdAccounts: typeof mockAdAccounts = [];
+  const realAdAccounts: any[] = [];
   const realCampaigns: AdCampaign[] = [];
   const realCross: CrmCrossData[] = [];
 
@@ -84,7 +83,7 @@ function IntegracoesPage() {
         {/* Connected accounts (mock — Google + outras) */}
         {realAdAccounts.length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {realAdAccounts.map((acc) => (
+            {realAdAccounts.map((acc: any) => (
               <div key={acc.accountId} className="bg-card rounded-xl border border-border p-4 flex items-center gap-4">
                 <PlatformIcon platform={acc.platform} />
                 <div className="flex-1 min-w-0">

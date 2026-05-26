@@ -80,10 +80,7 @@ export function getCampanhas(): Campaign[] {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) return JSON.parse(raw);
   } catch {}
-  // seed inicial: campanha demo
-  const demo = seedDemo();
-  saveCampanhas(demo);
-  return demo;
+  return [];
 }
 
 export function saveCampanhas(list: Campaign[]) {

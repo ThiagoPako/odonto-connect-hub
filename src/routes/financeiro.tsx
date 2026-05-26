@@ -17,7 +17,7 @@ import {
   finBanksApi, finEmployeesApi, finPayrollsApi, finBillsApi, finMovementsApi, finOverdueApi,
 } from "@/lib/vpsApi";
 import type { FinanceMovement, BankAccount, Employee, Payroll, Bill } from "@/data/financeiroMockData";
-import { demoBanks, demoEmployees, demoPayrolls, demoBills, demoMovements, demoOverdue } from "@/data/demoFinanceiro";
+
 
 export const Route = createFileRoute("/financeiro")({
   ssr: false,
@@ -87,7 +87,7 @@ function FinanceiroPage() {
       const od = ((overdueRes as any).data || overdueRes || []).map((r: any) => ({ patient: r.patient, value: Number(r.value) || 0, daysLate: r.days_late || 0, procedure: r.procedure || '' }));
 
       // Check if API returned real data
-      if (bk.length > 0 || mv.length > 0) {
+      if (bk.length > 0 || mv.length > 0 || em.length > 0 || py.length > 0 || bl.length > 0 || od.length > 0) {
         setBanks(bk);
         setEmployees(em);
         setPayrolls(py);
@@ -95,22 +95,23 @@ function FinanceiroPage() {
         setMovements(mv);
         setOverdue(od);
       } else {
-        // Fallback to demo data
-        setBanks(demoBanks);
-        setEmployees(demoEmployees);
-        setPayrolls(demoPayrolls);
-        setBills(demoBills);
-        setMovements(demoMovements);
-        setOverdue(demoOverdue);
+        // Empty state
+        setBanks([]);
+        setEmployees([]);
+        setPayrolls([]);
+        setBills([]);
+        setMovements([]);
+        setOverdue([]);
       }
-    } catch {
-      // API unreachable — use demo data
-      setBanks(demoBanks);
-      setEmployees(demoEmployees);
-      setPayrolls(demoPayrolls);
-      setBills(demoBills);
-      setMovements(demoMovements);
-      setOverdue(demoOverdue);
+    } catch (err) {
+      console.error("[financeiro] load error:", err);
+      // API error — show empty state
+      setBanks([]);
+      setEmployees([]);
+      setPayrolls([]);
+      setBills([]);
+      setMovements([]);
+      setOverdue([]);
     } finally {
       setLoading(false);
     }

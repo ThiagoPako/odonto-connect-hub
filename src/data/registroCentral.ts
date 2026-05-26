@@ -3,27 +3,22 @@
  * 
  * Este módulo é a fonte única de verdade (single source of truth) para
  * dados compartilhados entre todos os módulos do sistema.
- * 
- * REGRA: Todos os módulos DEVEM referenciar pacientes, dentistas e
- * profissionais pelo ID deste registro. Nenhum módulo deve duplicar
- * dados que existem aqui.
  */
 
-import { mockPacientes, mockAnamneses, mockOdontogramas, mockHistoricos, type Paciente, type Anamnese } from "./pacientesMockData";
-import { mockDentistas, type Dentista } from "./dentistasMockData";
-import { mockProfessionals, type Professional } from "./agendaMockData";
+import { type Paciente, type Anamnese } from "./pacientesMockData";
+import { type Dentista } from "./dentistasMockData";
+import { type Professional } from "./agendaMockData";
 
 // ==================== PACIENTES ====================
 
 /** Busca paciente por ID */
 export function getPacienteById(id: string): Paciente | undefined {
-  return mockPacientes.find((p) => p.id === id);
+  return undefined;
 }
 
 /** Busca paciente por nome (parcial, case-insensitive) */
 export function getPacienteByNome(nome: string): Paciente | undefined {
-  const lower = nome.toLowerCase();
-  return mockPacientes.find((p) => p.nome.toLowerCase().includes(lower));
+  return undefined;
 }
 
 /** Retorna iniciais do paciente */
@@ -47,90 +42,70 @@ export function getPacienteIdade(paciente: Paciente): number {
 
 /** Retorna anamnese do paciente */
 export function getAnamnese(pacienteId: string): Anamnese | undefined {
-  return mockAnamneses[pacienteId];
+  return undefined;
 }
 
 /** Retorna alergias do paciente */
 export function getAlergias(pacienteId: string): string[] {
-  return mockAnamneses[pacienteId]?.alergias ?? [];
+  return [];
 }
 
 /** Retorna condições médicas críticas do paciente */
 export function getCondicoesCriticas(pacienteId: string): string[] {
-  const a = mockAnamneses[pacienteId];
-  if (!a) return [];
-  const conds: string[] = [];
-  if (a.cardiopatia) conds.push("Cardiopatia");
-  if (a.diabetes) conds.push("Diabetes");
-  if (a.hemofilia) conds.push("Hemofilia");
-  if (a.epilepsia) conds.push("Epilepsia");
-  if (a.hepatite) conds.push("Hepatite");
-  if (a.hiv) conds.push("HIV");
-  return conds;
+  return [];
 }
 
 /** Retorna se paciente tem alertas médicos */
 export function temAlertasMedicos(pacienteId: string): boolean {
-  return getAlergias(pacienteId).length > 0 || getCondicoesCriticas(pacienteId).length > 0;
+  return false;
 }
 
 /** Retorna odontograma do paciente */
 export function getOdontograma(pacienteId: string) {
-  return mockOdontogramas[pacienteId];
+  return undefined;
 }
 
 /** Retorna histórico do paciente (ordenado por data desc) */
 export function getHistorico(pacienteId: string) {
-  return mockHistoricos
-    .filter((h) => h.pacienteId === pacienteId)
-    .sort((a, b) => b.data.getTime() - a.data.getTime());
+  return [];
 }
 
 // ==================== DENTISTAS ====================
 
 /** Busca dentista por ID */
 export function getDentistaById(id: string): Dentista | undefined {
-  return mockDentistas.find((d) => d.id === id);
+  return undefined;
 }
 
 /** Busca dentista por nome */
 export function getDentistaByNome(nome: string): Dentista | undefined {
-  const lower = nome.toLowerCase();
-  return mockDentistas.find((d) => d.nome.toLowerCase().includes(lower));
+  return undefined;
 }
 
 // ==================== PROFISSIONAIS (AGENDA) ====================
 
 /** Busca profissional da agenda por ID */
 export function getProfissionalById(id: string): Professional | undefined {
-  return mockProfessionals.find((p) => p.id === id);
+  return undefined;
 }
 
 // ==================== MAPEAMENTO NOME → ID ====================
 
-/**
- * Mapa de nomes de pacientes para IDs do registro central.
- * Usado para vincular dados de módulos que ainda usam nomes em vez de IDs.
- */
-export const pacienteNomeParaId: Record<string, string> = {
-  "Maria Silva": "pac1",
-  "João Santos": "pac2",
-  "Pedro Costa": "pac3",
-  "Ana Paula Ferreira": "pac4",
-  "Ana Paula": "pac4",
-  "Carlos Oliveira": "pac5",
-};
+export const pacienteNomeParaId: Record<string, string> = {};
 
 /** Resolve pacienteId a partir de um nome ou ID existente */
 export function resolverPacienteId(nomeOuId: string): string | undefined {
-  // Já é um ID?
   if (nomeOuId.startsWith("pac")) return nomeOuId;
-  return pacienteNomeParaId[nomeOuId];
+  return undefined;
 }
 
 // ==================== RE-EXPORTS ====================
 
-export { mockPacientes, mockAnamneses, mockOdontogramas, mockHistoricos };
-export { mockDentistas };
-export { mockProfessionals };
+export const mockPacientes: Paciente[] = [];
+export const mockAnamneses: Record<string, Anamnese> = {};
+export const mockOdontogramas: Record<string, any> = {};
+export const mockHistoricos: any[] = [];
+export const mockDentistas: Dentista[] = [];
+export const mockProfessionals: Professional[] = [];
+
 export type { Paciente, Anamnese, Dentista, Professional };
