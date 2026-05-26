@@ -56,11 +56,15 @@ export async function fetchPreferences(): Promise<NotificationPreferences> {
 
 /** Save prefs to server (fire-and-forget) */
 export function savePreferences(prefs: NotificationPreferences): void {
-  fetch(`${VPS_API_BASE}/user/preferences`, {
-    method: "PUT",
-    headers: getAuthHeaders(),
-    body: JSON.stringify(prefs),
-  }).catch(() => {
-    // Silently fail — localStorage already has the values
-  });
+  void (async () => {
+    try {
+      await fetch(`${VPS_API_BASE}/user/preferences`, {
+        method: "PUT",
+        headers: await getAuthHeaders(),
+        body: JSON.stringify(prefs),
+      });
+    } catch {
+      // Silently fail
+    }
+  })();
 }
