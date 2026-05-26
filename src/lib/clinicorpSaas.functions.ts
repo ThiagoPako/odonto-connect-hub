@@ -212,10 +212,10 @@ export const testMyClinicorpConnection = createServerFn({ method: 'POST' })
     const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 
     const probes = [
-      { key: 'clinics', label: 'Clínicas', path: '/business/list', query: {} },
-      { key: 'appointments', label: 'Agenda', path: '/appointment/list', query: { from: dateStr, to: dateStr } },
-      { key: 'professionals', label: 'Profissionais', path: '/dentist/list', query: {} },
-      { key: 'patients', label: 'Pacientes', path: '/patient/birthdays', query: { from: dateStr, to: dateStr } },
+      { key: 'clinics', label: 'Clínicas', path: '/business/list', query: {} as Record<string, string> },
+      { key: 'appointments', label: 'Agenda', path: '/appointment/list', query: { from: dateStr, to: dateStr } as Record<string, string> },
+      { key: 'professionals', label: 'Profissionais', path: '/dentist/list', query: {} as Record<string, string> },
+      { key: 'patients', label: 'Pacientes', path: '/patient/birthdays', query: { from: dateStr, to: dateStr } as Record<string, string> },
     ];
 
     const startedAt = Date.now();
