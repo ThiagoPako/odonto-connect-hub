@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { VPS_API_BASE } from "@/lib/vpsApi";
+import { supabase } from "@/integrations/supabase/client";
 
 export interface IncomingMessage {
   id: string;
@@ -66,124 +66,95 @@ interface RealtimeChatOptions {
   onLeadRecoveryReturn?: LeadRecoveryHandler;
 }
 
+/**
+ * Realtime chat hook — Supabase Realtime backed.
+ *
+ * Subscribes to INSERT/UPDATE on public.chat_messages (scoped to the user's tenant via RLS).
+ * - INSERT with sender !== 'agent' -> onMessage (incoming WhatsApp/chat message)
+ * - UPDATE on `status` column -> onMessageStatus (sent/delivered/read/failed)
+ *
+ * Presence / queue assignment / lead recovery events remain VPS-only for now
+ * (no Supabase equivalent yet). The callbacks are accepted for API compatibility
+ * but won't fire from this hook.
+ */
 export function useRealtimeChat(options: RealtimeChatOptions) {
   const messageRef = useRef<MessageHandler>(options.onMessage);
   messageRef.current = options.onMessage;
 
-  const presenceRef = useRef<PresenceHandler | undefined>(options.onPresence);
-  presenceRef.current = options.onPresence;
-
-  const queueAssignRef = useRef<QueueAssignHandler | undefined>(options.onQueueAssigned);
-  queueAssignRef.current = options.onQueueAssigned;
-
   const messageStatusRef = useRef<MessageStatusHandler | undefined>(options.onMessageStatus);
   messageStatusRef.current = options.onMessageStatus;
 
-  const leadRecoveryRef = useRef<LeadRecoveryHandler | undefined>(options.onLeadRecoveryReturn);
-  leadRecoveryRef.current = options.onLeadRecoveryReturn;
-
   useEffect(() => {
-    let es: EventSource | null = null;
-    let retryTimeout: ReturnType<typeof setTimeout>;
-    let retries = 0;
-    let keepaliveInterval: ReturnType<typeof setInterval>;
+    const channel = supabase
+      .channel("chat_messages_realtime")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "chat_messages" },
+        (payload) => {
+          const row = payload.new as Record<string, unknown>;
+          if (!row) return;
+          // Only forward incoming (non-agent) messages to onMessage to avoid echoing our own sends.
+          const sender = String(row.sender ?? "");
+          if (sender === "agent" || sender === "me") return;
 
-    function connect() {
-      const token = localStorage.getItem("odonto_jwt");
-      const base = VPS_API_BASE.startsWith("http")
-        ? VPS_API_BASE
-        : `${window.location.origin}${VPS_API_BASE}`;
-      const url = new URL(`${base}/events`);
-      if (token) url.searchParams.set("token", token);
-      
-      es = new EventSource(url.toString());
-
-      es.addEventListener("connected", () => {
-        retries = 0;
-        console.log("📡 SSE connected");
-      });
-
-      // Keepalive: if no event received in 45s, force reconnect
-      let lastEvent = Date.now();
-      const onAnyEvent = () => { lastEvent = Date.now(); };
-      es.addEventListener("connected", onAnyEvent);
-      es.addEventListener("new_message", onAnyEvent);
-      es.addEventListener("presence_update", onAnyEvent);
-      es.addEventListener("queue_assigned", onAnyEvent);
-      es.addEventListener("message_status_update", onAnyEvent);
-      es.addEventListener("lead_returned_from_recovery", onAnyEvent);
-      es.addEventListener("ping", onAnyEvent);
-
-      clearInterval(keepaliveInterval);
-      keepaliveInterval = setInterval(() => {
-        if (Date.now() - lastEvent > 45000 && es) {
-          console.log("📡 SSE stale — forcing reconnect");
-          es.close();
-          connect();
-        }
-      }, 15000);
-
-      es.addEventListener("new_message", (e) => {
-        try {
-          const data: IncomingMessage = JSON.parse(e.data);
-          messageRef.current(data);
-        } catch (err) {
-          console.error("SSE parse error:", err);
-        }
-      });
-
-      es.addEventListener("presence_update", (e) => {
-        try {
-          const data: PresenceUpdate = JSON.parse(e.data);
-          presenceRef.current?.(data);
-        } catch (err) {
-          console.error("SSE presence parse error:", err);
-        }
-      });
-
-      es.addEventListener("queue_assigned", (e) => {
-        try {
-          const data: QueueAssignment = JSON.parse(e.data);
-          queueAssignRef.current?.(data);
-        } catch (err) {
-          console.error("SSE queue_assigned parse error:", err);
-        }
-      });
-
-      es.addEventListener("message_status_update", (e) => {
-        try {
-          const data: MessageStatusUpdate = JSON.parse(e.data);
-          messageStatusRef.current?.(data);
-        } catch (err) {
-          console.error("SSE message_status_update parse error:", err);
+          const metadata = (row.metadata as Record<string, unknown> | null) ?? {};
+          const incoming: IncomingMessage = {
+            id: String(row.id ?? ""),
+            phone: String(row.phone ?? ""),
+            pushName: String(metadata.pushName ?? metadata.push_name ?? ""),
+            leadId: row.lead_id ? String(row.lead_id) : null,
+            leadName: String(metadata.leadName ?? metadata.lead_name ?? ""),
+            content: String(row.content ?? ""),
+            type: String(row.type ?? "text"),
+            timestamp: String(row.timestamp ?? row.created_at ?? new Date().toISOString()),
+            instance: String(row.instance ?? ""),
+            queueId: metadata.queueId ? String(metadata.queueId) : undefined,
+            queueName: metadata.queueName ? String(metadata.queueName) : undefined,
+            queueColor: metadata.queueColor ? String(metadata.queueColor) : undefined,
+            mediaUrl: row.media_url ? String(row.media_url) : null,
+            fileName: row.file_name ? String(row.file_name) : null,
+            mimeType: row.mime_type ? String(row.mime_type) : null,
+          };
+          try {
+            messageRef.current(incoming);
+          } catch (err) {
+            console.error("Realtime onMessage handler error:", err);
+          }
+        },
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "chat_messages" },
+        (payload) => {
+          const row = payload.new as Record<string, unknown>;
+          const prev = payload.old as Record<string, unknown> | undefined;
+          if (!row) return;
+          // Only emit when status actually changed
+          if (prev && prev.status === row.status) return;
+          const status = String(row.status ?? "");
+          if (!["sent", "delivered", "read", "failed"].includes(status)) return;
+          try {
+            messageStatusRef.current?.({
+              messageId: String(row.id ?? ""),
+              phone: String(row.phone ?? ""),
+              status: status as MessageStatusUpdate["status"],
+              instance: String(row.instance ?? ""),
+            });
+          } catch (err) {
+            console.error("Realtime onMessageStatus handler error:", err);
+          }
+        },
+      )
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          console.log("📡 Supabase chat realtime connected");
+        } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          console.warn("📡 Supabase chat realtime status:", status);
         }
       });
-
-      es.addEventListener("lead_returned_from_recovery", (e) => {
-        try {
-          const data: LeadRecoveryReturn = JSON.parse(e.data);
-          leadRecoveryRef.current?.(data);
-        } catch (err) {
-          console.error("SSE lead_returned_from_recovery parse error:", err);
-        }
-      });
-
-      es.onerror = () => {
-        es?.close();
-        clearInterval(keepaliveInterval);
-        retries++;
-        const delay = Math.min(1000 * retries, 10000);
-        console.log(`📡 SSE reconnecting in ${delay}ms...`);
-        retryTimeout = setTimeout(connect, delay);
-      };
-    }
-
-    connect();
 
     return () => {
-      es?.close();
-      clearTimeout(retryTimeout);
-      clearInterval(keepaliveInterval);
+      supabase.removeChannel(channel);
     };
   }, []);
 }
