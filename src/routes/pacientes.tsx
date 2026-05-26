@@ -5,6 +5,7 @@ import { pacientesApi, type HistoricoConsulta } from "@/lib/vpsApi";
 import { OdontogramaChart, OdontogramaEditor } from "@/components/OdontogramaChart";
 import { toast } from "sonner";
 import { type KanbanLead } from "@/data/crmMockData";
+import { crmApi } from "@/lib/vpsApi";
 import {
   Search,
   Users,
@@ -422,8 +423,6 @@ function NovoPacienteModal({ onClose, onSaved }: { onClose: () => void; onSaved:
         })
       );
     };
-    addLeads(mockSalesKanban);
-    addLeads(mockRecoveryKanban);
     return leads;
   }, []);
 

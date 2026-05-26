@@ -762,13 +762,12 @@ function PatientTableView() {
           avatarUrl: r.avatar_url,
         })));
       } else {
-        // Fallback to mock data
-        setPatients(mockPatients);
-        setTotal(mockPatients.length);
+        setPatients([]);
+        setTotal(0);
       }
     } catch {
-      setPatients(mockPatients);
-      setTotal(mockPatients.length);
+      setPatients([]);
+      setTotal(0);
     } finally {
       setLoading(false);
     }
