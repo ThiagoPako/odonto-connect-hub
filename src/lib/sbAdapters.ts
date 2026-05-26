@@ -854,7 +854,7 @@ export const sbMessagesApi = {
       .from('chat_read_status')
       .upsert(
         { tenant_id, user_id: userData.user.id, lead_id: leadId, last_read_at: new Date().toISOString() } as never,
-        { onConflict: 'tenant_id,user_id,lead_id' },
+        { onConflict: 'lead_id,user_id' },
       );
     return { data: { success: !error }, error: error ? err(error) : null };
   },
