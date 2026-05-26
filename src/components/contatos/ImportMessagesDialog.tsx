@@ -134,7 +134,7 @@ export function ImportMessagesDialog({
     abortRef.current = controller;
 
     try {
-      const token = getToken();
+      const token = await getAccessToken();
       const res = await fetch("https://odontoconnect.tech/api/messages/import-whatsapp", {
         method: "POST",
         headers: {
