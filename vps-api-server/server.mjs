@@ -308,21 +308,48 @@ async function verifyUser(req) {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) throw new Error('Unauthorized');
   const token = authHeader.replace('Bearer ', '');
-  const decoded = verifyToken(token);
-  
-  const user = {
-    id: decoded.sub,
-    email: decoded.email,
-    role: decoded.role,
-    tenant_id: decoded.tenant_id || null,
-    is_super_admin: !!decoded.is_super_admin,
-  };
+
+  // 1) Tenta token legacy (HS256 com JWT_SECRET)
+  let decoded = null;
+  try {
+    decoded = verifyToken(token);
+  } catch {
+    decoded = null;
+  }
+
+  let user;
+  if (decoded) {
+    user = {
+      id: decoded.sub,
+      email: decoded.email,
+      role: decoded.role,
+      tenant_id: decoded.tenant_id || null,
+      is_super_admin: !!decoded.is_super_admin,
+    };
+  } else if (SUPABASE_BRIDGE_ENABLED) {
+    // 2) Fallback: tenta validar como token Supabase
+    try {
+      const sbUser = await resolveSupabaseUser(token);
+      decoded = sbUser; // usa o shape para set_config
+      user = {
+        id: sbUser.id,
+        email: sbUser.email,
+        role: sbUser.role,
+        tenant_id: sbUser.tenant_id,
+        is_super_admin: sbUser.is_super_admin,
+      };
+    } catch (err) {
+      throw new Error('Unauthorized');
+    }
+  } else {
+    throw new Error('Unauthorized');
+  }
 
   // Set context in DB session for RLS
   try {
     await pool.query('SELECT set_config($1, $2, true)', ['app.jwt_payload', JSON.stringify(decoded)]);
     await pool.query('SELECT set_config($1, $2, true)', ['app.is_super_admin', user.is_super_admin ? 'true' : 'false']);
-    
+
     if (user.tenant_id) {
       await pool.query('SELECT set_config($1, $2, true)', ['app.current_tenant_id', user.tenant_id]);
     } else {
