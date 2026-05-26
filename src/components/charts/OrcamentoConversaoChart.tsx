@@ -9,13 +9,13 @@ const COLORS = [
   "hsl(0, 72%, 51%)",    // destructive - reprovados
 ];
 
-export function OrcamentoConversaoChart() {
-  const kpis = getOrcamentoKpis();
+export function OrcamentoConversaoChart({ kpis: propKpis }: { kpis?: any }) {
+  const kpis = propKpis || getOrcamentoKpis();
 
   const data = [
-    { name: "Aprovados", value: kpis.aprovados, amount: kpis.valorAprovado },
-    { name: "Pendentes", value: kpis.pendentes, amount: kpis.valorTotal - kpis.valorAprovado - (kpis.reprovados > 0 ? 13200 : 0) },
-    { name: "Reprovados", value: kpis.reprovados, amount: 13200 },
+    { name: "Aprovados", value: kpis.aprovados, amount: kpis.valorAprovado || 0 },
+    { name: "Pendentes", value: kpis.pendentes, amount: (kpis.valorTotal || 0) - (kpis.valorAprovado || 0) },
+    { name: "Reprovados", value: kpis.reprovados, amount: 0 },
   ].filter((d) => d.value > 0);
 
   return (
