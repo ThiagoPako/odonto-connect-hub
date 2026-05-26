@@ -1967,17 +1967,17 @@ export const sbDashboardApi = {
         leads,
         estoque
       ] = await Promise.all([
-        supabase.from('pacientes').select('*', { count: 'exact', head: true }).eq('tenant_id', tenant_id),
-        supabase.from('agendamentos').select('*').eq('tenant_id', tenant_id).eq('data', todayStr),
-        supabase.from('movimentacoes_financeiras').select('*').eq('tenant_id', tenant_id).gte('data', firstDayOfMonth),
-        supabase.from('orcamentos').select('*').eq('tenant_id', tenant_id),
-        supabase.from('leads').select('*').eq('tenant_id', tenant_id),
-        supabase.from('estoque').select('*').eq('tenant_id', tenant_id)
+        (supabase.from('pacientes') as any).select('*', { count: 'exact', head: true }).eq('tenant_id', tenant_id),
+        (supabase.from('agendamentos') as any).select('*').eq('tenant_id', tenant_id).eq('data', todayStr),
+        (supabase.from('movimentacoes_financeiras') as any).select('*').eq('tenant_id', tenant_id).gte('data', firstDayOfMonth),
+        (supabase.from('orcamentos') as any).select('*').eq('tenant_id', tenant_id),
+        (supabase.from('leads') as any).select('*').eq('tenant_id', tenant_id),
+        (supabase.from('estoque') as any).select('*').eq('tenant_id', tenant_id)
       ]);
 
       const totalPacientes = pacientesCount.count || 0;
       
-      const agendaData = agendaHoje.data || [];
+      const agendaData = (agendaHoje.data || []) as any[];
       const dashboardAgenda = {
         total: agendaData.length,
         finalizados: agendaData.filter(a => a.status === 'concluido').length,
@@ -1990,11 +1990,11 @@ export const sbDashboardApi = {
           : 0
       };
 
-      const movs = movimentacoes.data || [];
+      const movs = (movimentacoes.data || []) as any[];
       const receitaMensal = movs.filter(m => m.tipo === 'receita').reduce((acc, m) => acc + Number(m.valor || 0), 0);
       const despesaMensal = movs.filter(m => m.tipo === 'despesa').reduce((acc, m) => acc + Number(m.valor || 0), 0);
 
-      const orcs = orcamentos.data || [];
+      const orcs = (orcamentos.data || []) as any[];
       const aprovados = orcs.filter(o => o.status === 'aprovado' || o.status === 'finalizado');
       const valorAprovado = aprovados.reduce((acc, o) => acc + Number(o.valor_total || 0), 0);
       
@@ -2008,7 +2008,7 @@ export const sbDashboardApi = {
         ticketMedio: aprovados.length > 0 ? valorAprovado / aprovados.length : 0
       };
 
-      const ls = leads.data || [];
+      const ls = (leads.data || []) as any[];
       const dashboardCrm = {
         totalLeadsKanban: ls.length,
         semResposta: ls.filter(l => l.status === 'novo').length,
@@ -2017,9 +2017,9 @@ export const sbDashboardApi = {
         receitaTotal: ls.filter(l => l.status === 'convertido').reduce((acc, l) => acc + Number(l.valor_estimado || 0), 0)
       };
 
-      const est = estoque.data || [];
-      const abaixoMinimo = est.filter(i => i.quantidade <= (i.quantidade_minima || 0) && i.quantidade > 0);
-      const semEstoque = est.filter(i => i.quantidade <= 0);
+      const est = (estoque.data || []) as any[];
+      const abaixoMinimo = est.filter(i => (i.quantidade || 0) <= (i.quantidade_minima || 0) && (i.quantidade || 0) > 0);
+      const semEstoque = est.filter(i => (i.quantidade || 0) <= 0);
       
       const dashboardEstoque = {
         totalItens: est.length,
@@ -2029,6 +2029,7 @@ export const sbDashboardApi = {
         itensSemEstoque: semEstoque.map(i => i.nome),
         valorTotalEstoque: est.reduce((acc, i) => acc + (Number(i.valor_unitario || 0) * (i.quantidade || 0)), 0)
       };
+
 
       const data = {
         totalPacientes,
