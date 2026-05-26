@@ -188,9 +188,9 @@ function DashboardPage() {
         <section className="animate-slide-up space-y-5" style={{ animationDelay: '240ms', animationFillMode: 'both' }}>
           <FaturamentoMensalChart />
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-            <OrcamentoConversaoChart />
-            <OrigemLeadsChart />
-            <AgendaStatusChart />
+            <OrcamentoConversaoChart kpis={orcamento} />
+            <OrigemLeadsChart data={kpis.conversionByOrigin} />
+            <AgendaStatusChart kpis={agenda} />
           </div>
         </section>
 
