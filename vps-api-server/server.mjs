@@ -10986,6 +10986,11 @@ async function clinicorpFetchProbe(settings, pathName, opts = {}) {
   const base = (settings.base_url || 'https://api.clinicorp.com/rest/v1').replace(/\/$/, '');
   const url = new URL(base + pathName);
   if (settings.subscriber_id) url.searchParams.set('subscriber_id', settings.subscriber_id);
+  // Clinicorp autentica via query params user_api + api_key (mesmo formato do webhook).
+  const _apiUserQ = String(settings.subscriber_id || '').trim();
+  const _apiTokenQ = String(settings.api_token || '').trim().replace(/^Bearer\s+/i, '');
+  if (_apiUserQ) url.searchParams.set('user_api', _apiUserQ);
+  if (_apiTokenQ) url.searchParams.set('api_key', _apiTokenQ);
   if (opts.query && typeof opts.query === 'object') {
     for (const [k, v] of Object.entries(opts.query)) {
       if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));
