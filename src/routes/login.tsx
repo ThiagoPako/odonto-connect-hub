@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useState, useEffect, type FormEvent } from "react";
 import { useAuth } from "@/hooks/useAuth";
-import { forgotPassword } from "@/lib/vpsApi";
+import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -26,14 +26,10 @@ function LoginPage() {
   const [forgotSent, setForgotSent] = useState(false);
   const [forgotError, setForgotError] = useState("");
 
-  // Redirect if already authenticated
   useEffect(() => {
     if (isAuthenticated && user) {
-      if (user.is_super_admin) {
-        navigate({ to: "/super-admin" });
-      } else {
-        navigate({ to: "/dashboard" });
-      }
+      if (user.is_super_admin) navigate({ to: "/super-admin" });
+      else navigate({ to: "/dashboard" });
     }
   }, [isAuthenticated, user, navigate]);
 
@@ -43,7 +39,6 @@ function LoginPage() {
     setLoading(true);
     try {
       await login(email, password);
-      // Redirect is handled by useAuth or the useEffect above
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao fazer login");
     } finally {
@@ -56,12 +51,11 @@ function LoginPage() {
     setForgotError("");
     setForgotLoading(true);
     try {
-      const res = await forgotPassword(forgotEmail);
-      if (res.error) {
-        setForgotError(res.error);
-      } else {
-        setForgotSent(true);
-      }
+      const { error: err } = await supabase.auth.resetPasswordForEmail(forgotEmail, {
+        redirectTo: `${window.location.origin}/reset-password`,
+      });
+      if (err) setForgotError(err.message);
+      else setForgotSent(true);
     } catch {
       setForgotError("Erro ao enviar email");
     } finally {
