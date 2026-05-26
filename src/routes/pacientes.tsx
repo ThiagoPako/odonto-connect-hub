@@ -466,15 +466,17 @@ function NovoPacienteModal({ onClose, onSaved }: { onClose: () => void; onSaved:
         telefone: form.telefone.trim() || null,
         email: form.email.trim() || null,
         data_nascimento: form.data_nascimento || null,
-        endereco: form.endereco.trim() || null,
+        logradouro: form.endereco.trim() || null, // Mapeado para logradouro
         observacoes: form.observacoes.trim() || null,
       });
+
       if (error) {
-        // Demo mode: simulate success
-      toast.success(`${form.nome} cadastrado com sucesso!`);
-      } else {
-        toast.success(`${form.nome} cadastrado com sucesso!`);
+        toast.error("Erro ao cadastrar paciente: " + error);
+        setSaving(false);
+        return;
       }
+      
+      toast.success(`${form.nome} cadastrado com sucesso!`);
       // Move lead to "Orçamento Aprovado" in CRM
       if (selectedLeadId) {
         try {
@@ -485,12 +487,9 @@ function NovoPacienteModal({ onClose, onSaved }: { onClose: () => void; onSaved:
         }
       }
       onSaved();
-    } catch {
-      // Demo mode: simulate success
-      toast.success(`${form.nome} cadastrado com sucesso!`);
-      if (selectedLeadId) {
-        toast.info("Lead vinculado ao paciente");
-      }
+    } catch (err) {
+      console.error("[pacientes] create error:", err);
+      toast.error("Erro inesperado ao salvar. Verifique sua conexão.");
       onSaved();
     } finally {
       setSaving(false);
@@ -752,14 +751,11 @@ function PacienteDetailModal({
         data_nascimento: form.data_nascimento || null,
         sexo: form.sexo || null,
         convenio: form.convenio.trim() || null,
-        endereco: form.endereco.trim() || null,
+        logradouro: form.endereco.trim() || null, // Mapeado para logradouro
         observacoes: form.observacoes.trim() || null,
       });
       if (error) {
-        // Demo mode fallback
-      toast.success("Paciente atualizado!");
-        setEditing(false);
-        onUpdated?.();
+        toast.error("Erro ao atualizar: " + error);
       } else {
         toast.success("Paciente atualizado!");
         setEditing(false);
