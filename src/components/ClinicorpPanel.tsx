@@ -93,13 +93,23 @@ export function ClinicorpPanel() {
       }
 
       // Use getMySettings instead of getSettings to ensure user sees only their credentials
-      const s = await clinicorpApi.getMySettings() as unknown as ClinicorpSettings;
+      const mySettings = await clinicorpApi.getMySettings();
+      // Cast to include global fields with defaults for UI consistency
+      const s = {
+        ...mySettings,
+        auto_sync_enabled: (mySettings as any).auto_sync_enabled ?? true,
+        sync_interval_minutes: (mySettings as any).sync_interval_minutes ?? 30,
+        sync_lookback_days: (mySettings as any).sync_lookback_days ?? 30,
+        sync_lookahead_days: (mySettings as any).sync_lookahead_days ?? 60,
+        conflict_strategy: (mySettings as any).conflict_strategy ?? "newest_wins",
+      } as ClinicorpSettings;
+      
       setSettings(s);
-      setAutoSync(s.auto_sync_enabled ?? true);
-      setIntervalMin(s.sync_interval_minutes ?? 30);
-      setLookbackDays(s.sync_lookback_days ?? 30);
-      setLookaheadDays(s.sync_lookahead_days ?? 60);
-      setConflictStrategy(s.conflict_strategy ?? "newest_wins");
+      setAutoSync(s.auto_sync_enabled);
+      setIntervalMin(s.sync_interval_minutes);
+      setLookbackDays(s.sync_lookback_days);
+      setLookaheadDays(s.sync_lookahead_days);
+      setConflictStrategy(s.conflict_strategy);
       const [evs, ovs, cfs, hist] = await Promise.all([
         clinicorpApi.listWebhookEvents(50),
         clinicorpApi.listOverrides(),
