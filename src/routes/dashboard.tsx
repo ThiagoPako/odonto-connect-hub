@@ -4,7 +4,7 @@ import { DashboardHeader } from "@/components/DashboardHeader";
 import { KpiCard } from "@/components/KpiCard";
 import { ActiveAttendanceCard } from "@/components/ActiveAttendanceCard";
 import { GhostModePanel } from "@/components/GhostModePanel";
-import { dashboardApi, type DashboardKpis, vpsApiFetch } from "@/lib/vpsApi";
+import { vpsApiFetch } from "@/lib/vpsApi";
 import { OrcamentoConversaoChart } from "@/components/charts/OrcamentoConversaoChart";
 import { OrigemLeadsChart } from "@/components/charts/OrigemLeadsChart";
 import { AgendaStatusChart } from "@/components/charts/AgendaStatusChart";
@@ -30,7 +30,7 @@ interface ActiveSession {
   started_at: string;
 }
 
-const EMPTY_KPIS: DashboardKpis = {
+const EMPTY_KPIS: any = {
   totalPacientes: 0,
   agendaHoje: 0,
   receitaMensal: 0,
@@ -42,6 +42,7 @@ const EMPTY_KPIS: DashboardKpis = {
   estoque: { totalItens: 0, abaixoMinimo: 0, itensAbaixoMinimo: [], semEstoque: 0, itensSemEstoque: [], valorTotalEstoque: 0 },
 };
 
+
 function getInitials(name: string): string {
   const parts = name.trim().split(/\s+/);
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
@@ -49,7 +50,8 @@ function getInitials(name: string): string {
 }
 
 function DashboardPage() {
-  const [kpis, setKpis] = useState<DashboardKpis>(EMPTY_KPIS);
+  const [kpis, setKpis] = useState<any>(EMPTY_KPIS);
+
   const [sessions, setSessions] = useState<ActiveSession[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -60,14 +62,16 @@ function DashboardPage() {
       setLoading(true);
       setError(null);
       const [{ data, error: kpiErr }, { data: sess }] = await Promise.all([
-        dashboardApi.kpis(),
+        vpsApiFetch<any>("/dashboard/kpis"),
+
         vpsApiFetch<ActiveSession[]>("/sessions/active", { background: true }),
       ]);
       if (cancelled) return;
       if (kpiErr) setError(kpiErr);
       if (data) {
         // Merge with EMPTY_KPIS so legacy backend payloads (missing nested keys) don't crash the UI
-        const d = data as Partial<DashboardKpis>;
+        const d = data as any;
+
         setKpis({
           ...EMPTY_KPIS,
           ...d,
