@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { clinicorpApi, type ClinicorpUserSettings, type ClinicorpConnectionTest, generateWebhookSecret, buildWebhookUrl } from "@/lib/clinicorpApi";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -7,7 +7,8 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import { Eye, EyeOff, KeyRound, Copy, RefreshCw, Trash2, Loader2, Lock, PlugZap, CheckCircle2, XCircle, AlertCircle, RefreshCcw } from "lucide-react";
+import { Eye, EyeOff, KeyRound, Copy, RefreshCw, Trash2, Loader2, Lock, PlugZap, CheckCircle2, XCircle, AlertCircle, RefreshCcw, Building2, User, Users, CalendarDays } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 const DEFAULT_BASE = "https://api.clinicorp.com/rest/v1";
 
@@ -26,6 +27,14 @@ export function ClinicorpUserCredentials() {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<ClinicorpConnectionTest | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<{
+    step: string;
+    summary: Record<string, number>;
+    startTime: number;
+    completed: boolean;
+    errors: string[];
+  } | null>(null);
+  const pollingRef = useRef(false);
 
   async function load() {
     setLoading(true);
@@ -121,12 +130,63 @@ export function ClinicorpUserCredentials() {
   }
 
   async function syncNow() {
+    if (syncing) return;
     setSyncing(true);
+    const startTime = Date.now();
+    setSyncStatus({
+      step: "Iniciando sincronização...",
+      summary: { clinics: 0, professionals: 0, patients: 0, appointments: 0 },
+      startTime,
+      completed: false,
+      errors: [],
+    });
+
+    pollingRef.current = true;
+    const poll = async () => {
+      while (pollingRef.current) {
+        try {
+          const s = await clinicorpApi.getMySettings();
+          if (s.sync_progress) {
+            setSyncStatus(prev => ({
+              ...prev!,
+              step: s.sync_progress.step || prev?.step || "Sincronizando...",
+              summary: s.sync_progress.summary || prev?.summary || { clinics: 0, professionals: 0, patients: 0, appointments: 0 },
+            }));
+          }
+          if (s.last_sync_status !== 'syncing' && s.last_sync_at && new Date(s.last_sync_at).getTime() > startTime) {
+            pollingRef.current = false;
+          }
+        } catch (e) {
+          console.error("Poll error", e);
+        }
+        if (pollingRef.current) await new Promise(r => setTimeout(r, 2000));
+      }
+    };
+
+    poll();
+
     try {
       const result = await clinicorpApi.syncMyNow({ force_metadata: true });
-      toast.success(`Sincronização ${result.status}: ${Object.values(result.summary).reduce((a, b) => a + b, 0)} itens processados`);
+      pollingRef.current = false;
+      setSyncStatus(prev => ({
+        ...prev!,
+        step: "Sincronização concluída!",
+        summary: result.summary,
+        completed: true,
+        errors: result.errors || [],
+      }));
+      toast.success(`Sincronização concluída: ${Object.values(result.summary).reduce((a, b) => a + b, 0)} itens processados`);
+      await load();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Erro ao sincronizar");
+      pollingRef.current = false;
+      const msg = e instanceof Error ? e.message : "Erro ao sincronizar";
+      setSyncStatus(prev => ({
+        ...prev!,
+        step: "Erro na sincronização",
+        completed: true,
+        errors: [msg],
+      }));
+      toast.error(msg);
     } finally {
       setSyncing(false);
     }
@@ -276,6 +336,79 @@ export function ClinicorpUserCredentials() {
                 ))}
               </ul>
             )}
+          </div>
+        )}
+
+        {/* Sync Status Real-time Panel */}
+        {(syncing || syncStatus) && (
+          <div className="rounded-xl border border-border bg-card/50 overflow-hidden animate-in fade-in slide-in-from-top-4">
+            <div className="p-3 border-b border-border bg-muted/30 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                {syncing ? (
+                  <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                ) : syncStatus?.errors.length ? (
+                  <AlertCircle className="h-4 w-4 text-destructive" />
+                ) : (
+                  <CheckCircle2 className="h-4 w-4 text-success" />
+                )}
+                <span className="text-xs font-semibold uppercase tracking-wider">Status da Sincronização</span>
+              </div>
+              {syncStatus && (
+                <span className="text-[10px] font-mono text-muted-foreground">
+                  {Math.round((Date.now() - syncStatus.startTime) / 1000)}s decorridos
+                </span>
+              )}
+            </div>
+            
+            <div className="p-4 space-y-4">
+              <div className="flex flex-col gap-1.5">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="font-medium text-foreground">{syncStatus?.step}</span>
+                  {syncStatus?.completed && (
+                    <span className={cn(
+                      "font-bold px-1.5 py-0.5 rounded",
+                      syncStatus.errors.length ? "text-destructive" : "text-success"
+                    )}>
+                      {syncStatus.errors.length ? "CONCLUÍDO COM ALERTAS" : "CONCLUÍDO"}
+                    </span>
+                  )}
+                </div>
+                <div className="h-2 w-full bg-muted rounded-full overflow-hidden">
+                  <div 
+                    className={cn(
+                      "h-full transition-all duration-500",
+                      syncing ? "bg-primary animate-pulse w-2/3" : syncStatus?.completed ? "bg-success w-full" : "bg-primary w-full"
+                    )} 
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {[
+                  { label: "Clínicas", key: "clinics", icon: Building2 },
+                  { label: "Profissionais", key: "professionals", icon: User },
+                  { label: "Pacientes", key: "patients", icon: Users },
+                  { label: "Agenda", key: "appointments", icon: CalendarDays },
+                ].map((item) => (
+                  <div key={item.key} className="p-2.5 rounded-lg bg-muted/40 border border-border/50 flex flex-col items-center gap-1">
+                    <item.icon className="h-3.5 w-3.5 text-muted-foreground" />
+                    <span className="text-[9px] uppercase font-bold text-muted-foreground tracking-wider">{item.label}</span>
+                    <span className="text-base font-bold tabular-nums">{syncStatus?.summary[item.key] || 0}</span>
+                  </div>
+                ))}
+              </div>
+
+              {syncStatus?.errors.length ? (
+                <div className="p-2 rounded bg-destructive/10 border border-destructive/20">
+                  <p className="text-[10px] font-bold text-destructive uppercase mb-1">Alertas recentes:</p>
+                  <ul className="text-[10px] text-destructive/90 list-disc list-inside space-y-0.5 max-h-20 overflow-y-auto">
+                    {syncStatus.errors.slice(0, 3).map((err, i) => (
+                      <li key={i} className="truncate">{err}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+            </div>
           </div>
         )}
 
