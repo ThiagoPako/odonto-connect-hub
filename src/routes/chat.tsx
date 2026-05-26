@@ -19,6 +19,7 @@ import { useWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
 import { playNotificationSound, playRecoverySound } from "@/lib/notificationSound";
 import { showBrowserNotification, requestNotificationPermission } from "@/lib/browserNotification";
 import { setChatUnreadCount } from "@/lib/chatUnreadStore";
+import { supabase } from "@/integrations/supabase/client";
 import {
   type Lead,
   type ChatMessage,
@@ -109,7 +110,7 @@ function ChatPage() {
       
       // Load contacts for name resolution if name is missing/ID
       const { data: contactsData } = await supabase.from('contatos').select('telefone, nome');
-      const contactMap = new Map((contactsData || []).map(c => [c.telefone?.replace(/\D/g, ''), c.nome]));
+      const contactMap = new Map((contactsData || []).map((c: any) => [c.telefone?.replace(/\D/g, ''), c.nome]));
 
       const toLead = (r: any): Lead => {
         const phone = r.phone?.replace(/\D/g, '') || "";
