@@ -14,10 +14,11 @@ const VPS_API_BASE = (() => {
 
 const API_BASE = `${VPS_API_BASE}/clinicorp`;
 const WEBHOOK_BASE = `${VPS_API_BASE}/webhook/clinicorp`;
-const TOKEN_KEY = 'odonto_jwt';
+import { supabase } from "@/integrations/supabase/client";
 
-function authHeaders(): HeadersInit {
-  const t = typeof window !== 'undefined' ? localStorage.getItem(TOKEN_KEY) : null;
+async function authHeaders(): Promise<HeadersInit> {
+  const { data } = await supabase.auth.getSession();
+  const t = data.session?.access_token;
   return t ? { Authorization: `Bearer ${t}` } : {};
 }
 
@@ -26,7 +27,7 @@ async function req<T = unknown>(path: string, init: RequestInit = {}, base: stri
     ...init,
     headers: {
       'Content-Type': 'application/json',
-      ...authHeaders(),
+      ...(await authHeaders()),
       ...(init.headers || {}),
     },
   });
