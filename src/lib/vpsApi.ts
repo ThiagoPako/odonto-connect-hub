@@ -656,7 +656,7 @@ export const whatsappApi = {
     fileName?: string; caption?: string; mimeType?: string;
   }) => {
     try {
-      const token = getToken();
+      const token = await getAccessToken();
       const params = new URLSearchParams({
         instance,
         number,
