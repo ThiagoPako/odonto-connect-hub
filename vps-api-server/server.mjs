@@ -10985,35 +10985,55 @@ app.post('/api/clinicorp/sync/now', async (req, res) => {
 async function clinicorpFetchProbe(settings, pathName, opts = {}) {
   const base = (settings.base_url || 'https://api.clinicorp.com/rest/v1').replace(/\/$/, '');
   const url = new URL(base + pathName);
-  if (settings.subscriber_id) url.searchParams.set('subscriber_id', settings.subscriber_id);
+  
+  // Limpar e normalizar query parameters
+  const allQuery = { ...(opts.query || {}) };
+  
+  // subscriber_id é OBRIGATÓRIO em TODAS as chamadas da Clinicorp
+  if (settings.subscriber_id) {
+    url.searchParams.set('subscriber_id', settings.subscriber_id);
+    if (!allQuery.subscriber_id) allQuery.subscriber_id = settings.subscriber_id;
+  }
+  
   // Clinicorp autentica via query params user_api + api_key (mesmo formato do webhook).
   const _apiUserQ = String(settings.subscriber_id || '').trim();
   const _apiTokenQ = String(settings.api_token || '').trim().replace(/^Bearer\s+/i, '');
   if (_apiUserQ) url.searchParams.set('user_api', _apiUserQ);
   if (_apiTokenQ) url.searchParams.set('api_key', _apiTokenQ);
-  if (opts.query && typeof opts.query === 'object') {
-    for (const [k, v] of Object.entries(opts.query)) {
-      if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));
+
+  if (allQuery) {
+    for (const [k, v] of Object.entries(allQuery)) {
+      if (v !== undefined && v !== null && v !== '') {
+        url.searchParams.set(k, String(v));
+      }
     }
   }
+
   const ctrl = new AbortController();
   const timeout = setTimeout(() => ctrl.abort(), opts.timeoutMs || 45_000);
+  
   try {
     const apiToken = String(settings.api_token || '').trim().replace(/^Bearer\s+/i, '');
     const apiUser = String(settings.subscriber_id || '').trim();
+    
     const requestOnce = async (authMode) => {
-      const auth = authMode === 'basic' && apiUser
-        ? `Basic ${Buffer.from(`${apiUser}:${apiToken}`).toString('base64')}`
-        : `Bearer ${apiToken}`;
+      // Tenta ambos os formatos de autenticação simultaneamente para máxima compatibilidade
+      const headers = { Accept: 'application/json' };
+      if (authMode === 'basic' && apiUser) {
+        headers.Authorization = `Basic ${Buffer.from(`${apiUser}:${apiToken}`).toString('base64')}`;
+      } else {
+        headers.Authorization = `Bearer ${apiToken}`;
+      }
+      
       const r = await fetch(url.toString(), {
         method: 'GET',
-        headers: { Authorization: auth, Accept: 'application/json' },
+        headers,
         signal: ctrl.signal,
       });
+
       const text = await r.text();
       let data; try { data = text ? JSON.parse(text) : null; } catch { data = text; }
-      // 429 from Clinicorp can have Retry-After of 30+ minutes. Don't honor that for probes/tests —
-      // surface the error immediately so the caller can decide. Auto jobs handle 429 separately.
+
       if (r.status === 429) {
         const retryAfter = Number(r.headers.get('retry-after'));
         const err = new Error(`HTTP 429 (rate limited by Clinicorp${Number.isFinite(retryAfter) ? `, retry-after ${retryAfter}s` : ''})`);
@@ -11021,11 +11041,13 @@ async function clinicorpFetchProbe(settings, pathName, opts = {}) {
         err.retryAfter = Number.isFinite(retryAfter) ? retryAfter : null;
         throw err;
       }
+
       if ((r.status === 401 || r.status === 502 || r.status === 503 || r.status === 504) && !requestOnce._retried) {
         requestOnce._retried = true;
         await clinicorpProbeSleep(opts.retryDelayMs || 2000);
-        return requestOnce(authMode);
+        return requestOnce(authMode === 'basic' ? 'bearer' : 'basic'); // Alterna modo no retry
       }
+
       if (!r.ok) {
         const err = new Error(`HTTP ${r.status}${typeof data === 'string' && data ? ': ' + data.slice(0, 200) : ''}`);
         err.status = r.status;
@@ -11035,12 +11057,7 @@ async function clinicorpFetchProbe(settings, pathName, opts = {}) {
       return data;
     };
 
-    try {
-      return await requestOnce('basic');
-    } catch (err) {
-      if (err?.status === 401) return await requestOnce('bearer');
-      throw err;
-    }
+    return await requestOnce('basic');
   } finally {
     clearTimeout(timeout);
   }
