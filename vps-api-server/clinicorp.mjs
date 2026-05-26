@@ -1992,22 +1992,20 @@ async function runFinancialReconciliation(pool) {
     const { rows: alerts } = await pool.query(`
       WITH monthly_data AS (
         SELECT 
+          tenant_id,
           period_month,
           SUM(CASE WHEN source = 'payment' THEN total_amount ELSE 0 END) as total_payments,
           SUM(CASE WHEN source = 'cashflow' THEN total_in ELSE 0 END) as total_cash_in
         FROM clinicorp_monthly_summary
         WHERE period_month >= NOW() - INTERVAL '3 months'
-        GROUP BY period_month
+        GROUP BY tenant_id, period_month
       )
       SELECT 
+        tenant_id,
         period_month,
         total_payments,
         total_cash_in,
-        ABS(total_payments - total_cash_in) as divergence,
-        CASE 
-          WHEN ABS(total_payments - total_cash_in) > 0.01 THEN true 
-          ELSE false 
-        END as has_divergence
+        ABS(total_payments - total_cash_in) as divergence
       FROM monthly_data
       WHERE ABS(total_payments - total_cash_in) > 0.01
       ORDER BY period_month DESC
@@ -2020,12 +2018,12 @@ async function runFinancialReconciliation(pool) {
       const period = alert.period_month instanceof Date
         ? alert.period_month.toISOString().slice(0, 7)
         : String(alert.period_month).slice(0, 7);
-      console.warn(`[clinicorp alert] Divergência financeira detectada em ${period}: Payments R$ ${tp.toFixed(2)} vs Cashflow R$ ${tc.toFixed(2)} (Diff: R$ ${dv.toFixed(2)})`);
+      console.warn(`[clinicorp alert] Divergência financeira em ${period} (tenant ${alert.tenant_id}): Payments R$ ${tp.toFixed(2)} vs Cashflow R$ ${tc.toFixed(2)} (Diff: R$ ${dv.toFixed(2)})`);
 
       await pool.query(
-        `INSERT INTO clinicorp_webhook_events (event_type, status, payload, received_at)
-         VALUES ($1, $2, $3, NOW())`,
-        ['financial_divergence_alert', 'processed', JSON.stringify({ ...alert, period_month: period, total_payments: tp, total_cash_in: tc, divergence: dv })]
+        `INSERT INTO clinicorp_webhook_events (event_type, status, payload, received_at, tenant_id)
+         VALUES ($1, $2, $3, NOW(), $4)`,
+        ['financial_divergence_alert', 'processed', JSON.stringify({ ...alert, period_month: period, total_payments: tp, total_cash_in: tc, divergence: dv }), alert.tenant_id]
       );
     }
 
