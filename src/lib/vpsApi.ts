@@ -112,7 +112,7 @@ export async function vpsApiFetch<T = unknown>(
 ): Promise<{ data: T | null; error: string | null }> {
   try {
     const method = options?.method || 'GET';
-    const fetchOptions: RequestInit = { method, headers: getAuthHeaders() };
+    const fetchOptions: RequestInit = { method, headers: await getAuthHeaders() };
 
     let url = `${VPS_API_BASE}${path}`;
 
