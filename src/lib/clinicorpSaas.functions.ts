@@ -216,7 +216,7 @@ export const testMyClinicorpConnection = createServerFn({ method: 'POST' })
       { key: 'clinics', label: 'Clínicas', path: '/business/list', query: {} as Record<string, string> },
       { key: 'appointments', label: 'Agenda', path: '/appointment/list', query: { from: dateStr, to: dateStr } },
       { key: 'professionals', label: 'Profissionais', path: '/procedures/list_specialties', query: {} },
-      { key: 'patients', label: 'Pacientes', path: '/patient/list', query: {} },
+      { key: 'patients', label: 'Pacientes', path: '/patient/birthdays', query: { from: dateStr, to: dateStr } },
     ];
 
     const startedAt = Date.now();
