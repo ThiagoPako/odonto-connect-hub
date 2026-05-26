@@ -351,7 +351,7 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
       const from = data.from || new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
       const to = data.to || new Date(today.getTime() + 60 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
-      const { status: apStatus, data: apData } = await clinicorpProbe(base_url, subscriber_id, api_token, '/appointment/list', { from, to });
+      const { status: apStatus, data: apData } = await clinicorpProbe(base_url, subscriber_id, api_token, '/appointment/list', { from, to } as Record<string, string>);
       if (apStatus === 200 && Array.isArray(apData)) {
         // Map professionals and patients to get our internal UUIDs
         const { data: myProfs } = await supabase.from('dentistas').select('id, clinicorp_professional_id').eq('tenant_id', tenant_id);
