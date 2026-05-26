@@ -459,8 +459,8 @@ function ConsultaPage() {
 
   // Reset odontograma when patient changes
   useEffect(() => {
-    if (odontogramaBase) {
-      setDentesOdontograma([...odontogramaBase.dentes]);
+    if (odontogramaBase && (odontogramaBase as any).dentes) {
+      setDentesOdontograma([...(odontogramaBase as any).dentes]);
     } else {
       // Generate default teeth (all healthy)
       const allTeeth = [
