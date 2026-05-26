@@ -32,7 +32,7 @@ async function getTenantId(): Promise<string | null> {
 // ─── Pacientes ─────────────────────────────────────────────
 
 export const pacientesApi = {
-  list: async (): Promise<Result<unknown[]>> => {
+  list: async (): Promise<Result<any[]>> => {
     const { data, error } = await supabase
       .from('pacientes')
       .select('*')
@@ -40,7 +40,7 @@ export const pacientesApi = {
     return { data, error: error ? err(error) : null };
   },
 
-  create: async (body: Record<string, unknown>): Promise<Result<unknown>> => {
+  create: async (body: Record<string, unknown>): Promise<Result<any>> => {
     const tenant_id = await getTenantId();
     if (!tenant_id) return { data: null, error: 'Sem tenant ativo' };
     const payload: Record<string, unknown> = { ...body, tenant_id };
@@ -56,7 +56,7 @@ export const pacientesApi = {
     return { data, error: error ? err(error) : null };
   },
 
-  update: async (id: string, body: Record<string, unknown>): Promise<Result<unknown>> => {
+  update: async (id: string, body: Record<string, unknown>): Promise<Result<any>> => {
     const payload: Record<string, unknown> = { ...body };
     delete payload.id;
     delete payload.tenant_id;
@@ -77,7 +77,7 @@ export const pacientesApi = {
     return { data: error ? null : { success: true }, error: error ? err(error) : null };
   },
 
-  getAnamnese: async (pacienteId: string): Promise<Result<unknown>> => {
+  getAnamnese: async (pacienteId: string): Promise<Result<any>> => {
     const { data, error } = await supabase
       .from('anamneses')
       .select('*')
@@ -86,7 +86,7 @@ export const pacientesApi = {
     return { data, error: error ? err(error) : null };
   },
 
-  saveAnamnese: async (pacienteId: string, body: Record<string, unknown>): Promise<Result<unknown>> => {
+  saveAnamnese: async (pacienteId: string, body: Record<string, unknown>): Promise<Result<any>> => {
     const tenant_id = await getTenantId();
     if (!tenant_id) return { data: null, error: 'Sem tenant ativo' };
     const payload = { ...body, paciente_id: pacienteId, tenant_id, updated_at: new Date().toISOString() };
@@ -98,7 +98,7 @@ export const pacientesApi = {
     return { data, error: error ? err(error) : null };
   },
 
-  getOdontograma: async (pacienteId: string): Promise<Result<unknown>> => {
+  getOdontograma: async (pacienteId: string): Promise<Result<any>> => {
     const { data, error } = await supabase
       .from('odontogramas')
       .select('*')
@@ -107,7 +107,7 @@ export const pacientesApi = {
     return { data, error: error ? err(error) : null };
   },
 
-  saveOdontograma: async (pacienteId: string, body: Record<string, unknown>): Promise<Result<unknown>> => {
+  saveOdontograma: async (pacienteId: string, body: Record<string, unknown>): Promise<Result<any>> => {
     const tenant_id = await getTenantId();
     if (!tenant_id) return { data: null, error: 'Sem tenant ativo' };
     const payload = { ...body, paciente_id: pacienteId, tenant_id, updated_at: new Date().toISOString() };
@@ -119,7 +119,7 @@ export const pacientesApi = {
     return { data, error: error ? err(error) : null };
   },
 
-  getHistorico: async (pacienteId: string): Promise<Result<unknown[]>> => {
+  getHistorico: async (pacienteId: string): Promise<Result<any[]>> => {
     const { data, error } = await supabase
       .from('agendamentos')
       .select('id, data, hora, duracao, procedimento, status, observacoes, dentistas:dentista_id(nome, especialidade)')
@@ -148,7 +148,7 @@ export const pacientesApi = {
 // ─── Dentistas ─────────────────────────────────────────────
 
 export const dentistasApi = {
-  list: async (): Promise<Result<unknown[]>> => {
+  list: async (): Promise<Result<any[]>> => {
     const { data, error } = await supabase
       .from('dentistas')
       .select('*')
@@ -156,7 +156,7 @@ export const dentistasApi = {
     return { data, error: error ? err(error) : null };
   },
 
-  create: async (body: Record<string, unknown>): Promise<Result<unknown>> => {
+  create: async (body: Record<string, unknown>): Promise<Result<any>> => {
     const tenant_id = await getTenantId();
     if (!tenant_id) return { data: null, error: 'Sem tenant ativo' };
     const payload = { ...body, tenant_id };
@@ -168,7 +168,7 @@ export const dentistasApi = {
     return { data, error: error ? err(error) : null };
   },
 
-  update: async (id: string, body: Record<string, unknown>): Promise<Result<unknown>> => {
+  update: async (id: string, body: Record<string, unknown>): Promise<Result<any>> => {
     const payload = { ...body };
     delete payload.id;
     delete payload.tenant_id;
@@ -300,7 +300,7 @@ export const agendaApi = {
     };
   },
 
-  update: async (id: string, body: Record<string, unknown>): Promise<Result<unknown>> => {
+  update: async (id: string, body: Record<string, unknown>): Promise<Result<any>> => {
     const allowed = ['status', 'hora', 'data', 'duracao', 'procedimento', 'observacoes', 'dentista_id', 'paciente_id'];
     const payload: Record<string, unknown> = {};
     for (const k of allowed) if (body[k] !== undefined) payload[k] = body[k];
