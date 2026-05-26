@@ -1201,7 +1201,7 @@ export const sbContatosApi = {
     const payload: Record<string, any> = { ...body };
     delete payload.id; delete payload.tenant_id; delete payload.created_at; delete payload.updated_at;
     for (const k of Object.keys(payload)) if (payload[k] === '') payload[k] = null;
-    const { data, error } = await supabase.from('contatos').update(payload).eq('id', id).select('*').single();
+    const { data, error } = await supabase.from('contatos').update(payload as any).eq('id', id).select('*').single();
     if (error) return { data: null, error: err(error) };
     return { data, error: null };
   },
