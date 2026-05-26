@@ -1274,6 +1274,7 @@ export const sbSessionsApi = {
       .eq('id', session.id);
     if (error) return { data: null, error: err(error) };
     return { data: { success: true, sessionId: session.id, duration }, error: null };
+  },
   list: async (params?: { active?: boolean }): Promise<Result<any[]>> => {
     try {
       const tenant_id = await getTenantId();
