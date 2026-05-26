@@ -100,10 +100,9 @@ function PacientesPage() {
     try {
       const { data, error } = await pacientesApi.list();
       if (error) {
-        // Fallback to demo data
-        setPacientes(demoPacientes as PacienteAPI[]);
-        setUsingDemo(true);
-      } else if (Array.isArray(data) && data.length > 0) {
+        setPacientes([]);
+        setUsingDemo(false);
+      } else if (Array.isArray(data)) {
         setPacientes(data);
         setUsingDemo(false);
         if (pacienteId) {
@@ -111,14 +110,13 @@ function PacientesPage() {
           if (found) setSelectedPaciente(found);
         }
       } else {
-        // Empty API result — use demo data
-        setPacientes(demoPacientes as PacienteAPI[]);
-        setUsingDemo(true);
+        setPacientes([]);
+        setUsingDemo(false);
       }
-    } catch {
-      // API unreachable — use demo data
-      setPacientes(demoPacientes as PacienteAPI[]);
-      setUsingDemo(true);
+    } catch (err) {
+      console.error("[pacientes] load error:", err);
+      setPacientes([]);
+      setUsingDemo(false);
     } finally {
       setLoading(false);
     }
