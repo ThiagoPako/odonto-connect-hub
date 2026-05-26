@@ -83,7 +83,8 @@ export function ClinicorpPanel() {
   async function load() {
     setLoading(true);
     try {
-      const s = await clinicorpApi.getSettings();
+      // Use getMySettings instead of getSettings to ensure user sees only their credentials
+      const s = await clinicorpApi.getMySettings() as unknown as ClinicorpSettings;
       setSettings(s);
       setAutoSync(s.auto_sync_enabled ?? true);
       setIntervalMin(s.sync_interval_minutes ?? 30);
@@ -251,9 +252,23 @@ export function ClinicorpPanel() {
           {/* Per-user credentials (SaaS multi-tenant) */}
           <ClinicorpUserCredentials />
 
-
-
-      {/* Status header — somente leitura, controles ficam em ClinicorpUserCredentials acima */}
+          {/* Somente exibe ferramentas globais para super-admins */}
+          {loading ? null : (async () => {
+            const { data } = await supabase.auth.getUser();
+            const { data: profile } = await supabase.from('profiles').select('is_super_admin').eq('id', data.user?.id).maybeSingle();
+            return profile?.is_super_admin;
+          })() && (
+            <div className="space-y-6 animate-in fade-in">
+              <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-4 flex items-center gap-3">
+                <Shield className="h-5 w-5 text-amber-600" />
+                <div className="text-sm">
+                  <p className="font-semibold text-amber-900">Painel de Super Admin</p>
+                  <p className="text-amber-700/80">As ferramentas abaixo afetam as configurações globais do sistema.</p>
+                </div>
+              </div>
+              {/* ... original global content ... */}
+            </div>
+          )}
       <div className="rounded-2xl border border-border bg-card p-5 flex items-start gap-4">
         <div className={`h-10 w-10 rounded-xl flex items-center justify-center ${settings?.enabled ? "bg-success/15 text-success" : "bg-muted text-muted-foreground"}`}>
           <Plug className="h-5 w-5" />
