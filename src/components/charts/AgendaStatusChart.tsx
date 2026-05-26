@@ -12,11 +12,11 @@ const STATUS_CONFIG = [
   { key: "encaixes", label: "Encaixes", color: "hsl(190, 70%, 55%)" },
 ] as const;
 
-export function AgendaStatusChart() {
-  const kpis = getAgendaKpis();
+export function AgendaStatusChart({ kpis: propKpis }: { kpis?: any }) {
+  const kpis = propKpis || getAgendaKpis();
 
   const data = STATUS_CONFIG
-    .map((s) => ({ name: s.label, value: kpis[s.key], color: s.color }))
+    .map((s) => ({ name: s.label, value: (kpis as any)[s.key] || 0, color: s.color }))
     .filter((d) => d.value > 0);
 
   return (
