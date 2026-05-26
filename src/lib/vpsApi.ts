@@ -326,104 +326,22 @@ export interface AgendamentoVPS {
   como_conheceu?: string | null;
 }
 
-// ─── Financeiro ─────────────────────────────────────────────
-
-export const financeiroApi = {
-  list: (params?: Record<string, string>) => vpsApiFetch('/financeiro', { params }),
-  create: (body: unknown) => vpsApiFetch('/financeiro', { method: 'POST', body }),
-  update: (id: string, body: unknown) => vpsApiFetch(`/financeiro/${id}`, { method: 'PUT', body }),
-  delete: (id: string) => vpsApiFetch(`/financeiro/${id}`, { method: 'DELETE' }),
-};
-
-// ─── Financeiro — Sub-módulos ───────────────────────────────
-
-export const finBanksApi = {
-  list: () => vpsApiFetch('/fin/banks'),
-  create: (body: unknown) => vpsApiFetch('/fin/banks', { method: 'POST', body }),
-  update: (id: string, body: unknown) => vpsApiFetch(`/fin/banks/${id}`, { method: 'PUT', body }),
-  delete: (id: string) => vpsApiFetch(`/fin/banks/${id}`, { method: 'DELETE' }),
-};
-
-export const finEmployeesApi = {
-  list: () => vpsApiFetch('/fin/employees'),
-  create: (body: unknown) => vpsApiFetch('/fin/employees', { method: 'POST', body }),
-  delete: (id: string) => vpsApiFetch(`/fin/employees/${id}`, { method: 'DELETE' }),
-};
-
-export const finPayrollsApi = {
-  list: (params?: Record<string, string>) => vpsApiFetch('/fin/payrolls', { params }),
-  create: (body: unknown) => vpsApiFetch('/fin/payrolls', { method: 'POST', body }),
-  update: (id: string, body: unknown) => vpsApiFetch(`/fin/payrolls/${id}`, { method: 'PUT', body }),
-};
-
-export const finBillsApi = {
-  list: () => vpsApiFetch('/fin/bills'),
-  create: (body: unknown) => vpsApiFetch('/fin/bills', { method: 'POST', body }),
-  update: (id: string, body: unknown) => vpsApiFetch(`/fin/bills/${id}`, { method: 'PUT', body }),
-  delete: (id: string) => vpsApiFetch(`/fin/bills/${id}`, { method: 'DELETE' }),
-};
-
-export const finMovementsApi = {
-  list: () => vpsApiFetch('/fin/movements'),
-  create: (body: unknown) => vpsApiFetch('/fin/movements', { method: 'POST', body }),
-};
-
-export const finOverdueApi = {
-  list: () => vpsApiFetch('/fin/overdue'),
-  create: (body: unknown) => vpsApiFetch('/fin/overdue', { method: 'POST', body }),
-  delete: (id: string) => vpsApiFetch(`/fin/overdue/${id}`, { method: 'DELETE' }),
-};
-
-// ─── Dentistas ──────────────────────────────────────────────
-
-export const dentistasApi = {
-  list: () => vpsApiFetch('/dentistas'),
-  create: (body: unknown) => vpsApiFetch('/dentistas', { method: 'POST', body }),
-  update: (id: string, body: unknown) => vpsApiFetch(`/dentistas/${id}`, { method: 'PUT', body }),
-  delete: (id: string) => vpsApiFetch(`/dentistas/${id}`, { method: 'DELETE' }),
-};
-
-// ─── Estoque ────────────────────────────────────────────────
-
-export const estoqueApi = {
-  list: () => vpsApiFetch('/estoque'),
-  create: (body: unknown) => vpsApiFetch('/estoque', { method: 'POST', body }),
-  update: (id: string, body: unknown) => vpsApiFetch(`/estoque/${id}`, { method: 'PUT', body }),
-  delete: (id: string) => vpsApiFetch(`/estoque/${id}`, { method: 'DELETE' }),
-  getMovimentos: (id: string) => vpsApiFetch(`/estoque/${id}/movimentos`),
-  addMovimento: (id: string, body: unknown) => vpsApiFetch(`/estoque/${id}/movimentos`, { method: 'POST', body }),
-};
-
-// ─── Tratamentos ────────────────────────────────────────────
-
-export const tratamentosApi = {
-  list: (params?: Record<string, string>) => vpsApiFetch('/tratamentos', { params }),
-  create: (body: unknown) => vpsApiFetch('/tratamentos', { method: 'POST', body }),
-  update: (id: string, body: unknown) => vpsApiFetch(`/tratamentos/${id}`, { method: 'PUT', body }),
-  delete: (id: string) => vpsApiFetch(`/tratamentos/${id}`, { method: 'DELETE' }),
-  getEtapas: (id: string) => vpsApiFetch(`/tratamentos/${id}/etapas`),
-  addEtapa: (id: string, body: unknown) => vpsApiFetch(`/tratamentos/${id}/etapas`, { method: 'POST', body }),
-  updateEtapa: (id: string, body: unknown) => vpsApiFetch(`/tratamentos/etapas/${id}`, { method: 'PUT', body }),
-  deleteEtapa: (id: string) => vpsApiFetch(`/tratamentos/etapas/${id}`, { method: 'DELETE' }),
-};
-
-// ─── Comissões ──────────────────────────────────────────────
-
-export const comissoesApi = {
-  list: (params?: Record<string, string>) => vpsApiFetch('/comissoes', { params }),
-  create: (body: unknown) => vpsApiFetch('/comissoes', { method: 'POST', body }),
-  update: (id: string, body: unknown) => vpsApiFetch(`/comissoes/${id}`, { method: 'PUT', body }),
-  delete: (id: string) => vpsApiFetch(`/comissoes/${id}`, { method: 'DELETE' }),
-};
-
-// ─── Prontuários ────────────────────────────────────────────
-
-export const prontuariosApi = {
-  list: (params?: Record<string, string>) => vpsApiFetch('/prontuarios', { params }),
-  create: (body: unknown) => vpsApiFetch('/prontuarios', { method: 'POST', body }),
-  update: (id: string, body: unknown) => vpsApiFetch(`/prontuarios/${id}`, { method: 'PUT', body }),
-  delete: (id: string) => vpsApiFetch(`/prontuarios/${id}`, { method: 'DELETE' }),
-};
+// ─── Financeiro / Estoque / Tratamentos / Comissões / Prontuários / Dentistas
+// migrados pra Supabase via sbAdapters
+export {
+  financeiroApi,
+  finBanksApi,
+  finEmployeesApi,
+  finPayrollsApi,
+  finBillsApi,
+  finMovementsApi,
+  finOverdueApi,
+  dentistasApi,
+  estoqueApi,
+  tratamentosApi,
+  comissoesApi,
+  prontuariosApi,
+} from './sbAdapters';
 
 // ─── Dashboard ──────────────────────────────────────────────
 
@@ -602,38 +520,8 @@ export const painelDentistaApi = {
 // ─── CRM Leads ──────────────────────────────────────────────
 
 
-export const crmApi = {
-  list: (params?: Record<string, string>) =>
-    vpsApiFetch<{ rows: any[]; total: number; limit: number; offset: number }>('/crm/leads', { params }),
-  kanban: () => vpsApiFetch('/crm/leads', { params: { grouped: 'kanban' } }),
-  updateStage: (id: string, stage: string, reason?: string) =>
-    vpsApiFetch(`/crm/leads/${id}/stage`, { method: 'PATCH', body: { stage, reason } }),
-  updateConsciousness: (id: string, level: string) =>
-    vpsApiFetch(`/crm/leads/${id}/consciousness`, { method: 'PATCH', body: { level } }),
-  assign: (id: string, assignedTo: string, assignedToName: string) =>
-    vpsApiFetch(`/crm/leads/${id}/assign`, { method: 'PATCH', body: { assignedTo, assignedToName } }),
-  movements: (id: string) =>
-    vpsApiFetch<Array<{ id: string; from_stage: string; to_stage: string; moved_by_name: string; reason: string; created_at: string }>>(`/crm/leads/${id}/movements`),
-  convertToPatient: (id: string) =>
-    vpsApiFetch<{ success: boolean; conflict?: boolean; paciente_id: string; nome?: string; paciente_nome?: string }>(`/crm/leads/${id}/convert-to-patient`, { method: 'POST' }),
-  linkToPatient: (id: string, pacienteId: string) =>
-    vpsApiFetch<{ success: boolean; paciente_id: string; paciente_nome: string }>(`/crm/leads/${id}/link-patient`, { method: 'POST', body: { paciente_id: pacienteId } }),
-  history: (id: string) =>
-    vpsApiFetch<Array<{ id: string; data: string; hora: string; procedimento: string; status: string; dentista_nome: string }>>(`/crm/leads/${id}/history`),
-  create: (body: { nome: string; telefone?: string; email?: string; origem?: string; stage?: string; value?: number }) =>
-    vpsApiFetch<any>('/crm/leads', { method: 'POST', body }),
-};
-
-// ─── Orçamentos ─────────────────────────────────────────────
-
-export const orcamentosApi = {
-  list: () => vpsApiFetch('/orcamentos'),
-  create: (body: unknown) => vpsApiFetch<{ id: string; success: boolean }>('/orcamentos', { method: 'POST', body }),
-  update: (id: string, body: unknown) => vpsApiFetch(`/orcamentos/${id}`, { method: 'PUT', body }),
-  delete: (id: string) => vpsApiFetch(`/orcamentos/${id}`, { method: 'DELETE' }),
-  updateStatus: (id: string, status: string) =>
-    vpsApiFetch<{ success: boolean; budget: any; leadMoved: boolean }>(`/orcamentos/${id}/status`, { method: 'PATCH', body: { status } }),
-};
+// crmApi e orcamentosApi migrados pra Supabase via sbAdapters
+export { crmApi, orcamentosApi } from './sbAdapters';
 
 // ─── Catálogo de Procedimentos (Fase B) ──────────────────────
 export interface ProcedimentoCatalogo {
