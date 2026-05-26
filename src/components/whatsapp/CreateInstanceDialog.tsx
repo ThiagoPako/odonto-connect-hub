@@ -37,6 +37,17 @@ export function CreateInstanceDialog({ open, onOpenChange, onCreated }: CreateIn
           if (!sanitized.startsWith(tenantPrefix)) {
             sanitized = `${tenantPrefix}-${sanitized}`;
           }
+
+          // Register in whatsapp_instances table
+          const { error: regError } = await supabase.from('whatsapp_instances').insert({
+            tenant_id: profile.tenant_id,
+            instance_name: sanitized,
+            description: label || null
+          });
+          
+          if (regError) {
+            console.error("Failed to register instance in Supabase:", regError);
+          }
         }
       }
       
