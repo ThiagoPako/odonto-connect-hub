@@ -7,7 +7,8 @@
  */
 import { supabase } from '@/integrations/supabase/client';
 
-type Result<T> = { data: T | null; error: string | null };
+type Result<T = any> = { data: T | null; error: string | null };
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
 function err(e: unknown): string {
   if (!e) return 'Erro desconhecido';
