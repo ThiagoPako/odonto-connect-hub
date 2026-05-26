@@ -42,7 +42,7 @@ export type Database = {
           paciente_id?: string | null
           procedimento?: string | null
           status?: string | null
-          tenant_id: string
+          tenant_id?: string
           updated_at?: string
         }
         Update: {
@@ -424,7 +424,7 @@ export type Database = {
           reply_to_sender?: string | null
           sender: string
           status?: string | null
-          tenant_id: string
+          tenant_id?: string
           timestamp?: string
           type?: string
         }
@@ -1517,7 +1517,7 @@ export type Database = {
           nome: string
           observacoes?: string | null
           telefone?: string | null
-          tenant_id: string
+          tenant_id?: string
           tipo?: string | null
           updated_at?: string
         }
@@ -2273,7 +2273,7 @@ export type Database = {
           id?: string
           patient?: string | null
           payroll_id?: string | null
-          tenant_id: string
+          tenant_id?: string
           type: string
           value: number
         }
@@ -2469,7 +2469,7 @@ export type Database = {
           parcelas?: number | null
           recorrente?: boolean | null
           status?: string | null
-          tenant_id: string
+          tenant_id?: string
           tipo: string
           updated_at?: string
           valor: number
@@ -3247,7 +3247,7 @@ export type Database = {
           sexo?: string | null
           status?: string
           telefone?: string | null
-          tenant_id: string
+          tenant_id?: string
           updated_at?: string
         }
         Update: {
