@@ -469,7 +469,8 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
         last_sync_error: errors.length ? errors.slice(0, 3).join(' | ') : null,
       }).eq('user_id', userId);
 
-      return { status: (errors.length ? 'partial' : 'success') as const, summary, errors: errors.slice(0, 20), from, to };
+      const status: 'partial' | 'success' = errors.length ? 'partial' : 'success';
+      return { status, summary, errors: errors.slice(0, 20), from, to };
     } catch (err: any) {
       const msg = err.message || 'Erro desconhecido';
       log('FATAL', msg);
