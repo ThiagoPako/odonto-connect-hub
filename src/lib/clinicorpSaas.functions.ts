@@ -395,42 +395,49 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
         }
       } catch (e: any) { errors.push(`profissionais: ${e.message}`); }
 
-      await updateProgress('Buscando agenda (isso pode levar alguns minutos)...');
+      await updateProgress('Buscando agenda (paralelo)...');
 
-      // 3. Agendamentos — Clinicorp /appointment/list só aceita from === to. Iterar dia a dia.
+      // 3. Agendamentos — Clinicorp /appointment/list só aceita from === to.
+      // Range reduzido + concorrência para caber no tempo do Worker.
       const today = new Date();
-      // Reduced default range to avoid timeout, user can override via params
-      const from = data.from || ymd(new Date(today.getTime() - 15 * 86400000));
-      const to = data.to || ymd(new Date(today.getTime() + 30 * 86400000));
+      const from = data.from || ymd(new Date(today.getTime() - 7 * 86400000));
+      const to = data.to || ymd(new Date(today.getTime() + 21 * 86400000));
       log(`appointments range ${from} → ${to}`);
 
-      const allAppts: any[] = [];
-      const start = new Date(from + 'T00:00:00Z');
-      const end = new Date(to + 'T00:00:00Z');
-      let day = new Date(start);
-      let dayCount = 0;
-      
-      while (day <= end && dayCount < 60) {
-        const ds = ymd(day);
-        try {
-          const { status, data: ap } = await clinicorpProbe(base_url, subscriber_id, api_token, '/appointment/list', { from: ds, to: ds });
-          if (status === 429) { 
-            errors.push('Limite de requisições excedido na Clinicorp. Tente novamente em alguns minutos.'); 
-            break; 
-          }
-          const list = extractList(ap);
-          if (list.length) {
-            allAppts.push(...list);
-            summary.appointments += list.length;
-            if (dayCount % 5 === 0) await updateProgress(`Coletando agenda: ${ds} (${allAppts.length} agendamentos)`);
-          }
-        } catch (e: any) {
-          errors.push(`appt ${ds}: ${e.message}`);
-          if (e.name === 'AbortError') break; // Fatal for this loop
+      const days: string[] = [];
+      {
+        const start = new Date(from + 'T00:00:00Z');
+        const end = new Date(to + 'T00:00:00Z');
+        for (let d = new Date(start); d <= end; d = new Date(d.getTime() + 86400000)) {
+          days.push(ymd(d));
         }
-        dayCount++;
-        day = new Date(day.getTime() + 86400000);
-        await new Promise(r => setTimeout(r, 600)); // Slower delay to avoid 429
+      }
+
+      const allAppts: any[] = [];
+      let rateLimitHit = false;
+      const CONCURRENCY = 4;
+      for (let i = 0; i < days.length && !rateLimitHit; i += CONCURRENCY) {
+        const batch = days.slice(i, i + CONCURRENCY);
+        const results = await Promise.allSettled(batch.map(ds =>
+          clinicorpProbe(base_url, subscriber_id, api_token, '/appointment/list', { from: ds, to: ds })
+            .then(res => ({ ds, ...res }))
+        ));
+        for (const r of results) {
+          if (r.status === 'fulfilled') {
+            const { ds, status, data: ap } = r.value;
+            if (status === 429) {
+              errors.push(`Rate limit em ${ds}. Aguarde alguns minutos.`);
+              rateLimitHit = true;
+              break;
+            }
+            const list = extractList(ap);
+            if (list.length) allAppts.push(...list);
+          } else {
+            errors.push(`appt: ${(r.reason as any)?.message || 'erro'}`);
+          }
+        }
+        await updateProgress(`Agenda: ${Math.min(i + CONCURRENCY, days.length)}/${days.length} dias (${allAppts.length} encontrados)`);
+        await new Promise(r => setTimeout(r, 150));
       }
       log(`appointments total coletados=${allAppts.length}`);
 
