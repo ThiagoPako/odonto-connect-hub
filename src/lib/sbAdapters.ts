@@ -1285,7 +1285,7 @@ export const sbSessionsApi = {
       }
       const { data, error } = await q.order('created_at', { ascending: false });
       if (error) return { data: null, error: err(error) };
-      const mapped = (data || []).map(s => ({
+      const mapped = (data || []).map((s: any) => ({
         ...s,
         lead_nome: s.lead_name || 'Sem nome',
         started_at: s.assigned_at || s.started_waiting_at || s.created_at
