@@ -754,20 +754,8 @@ export const attendanceSettingsApi = {
 
 // ─── Attendance Queues ──────────────────────────────────────
 
-export const queuesApi = {
-  list: () => vpsApiFetch<Array<{
-    id: string; name: string; color: string; icon: string; description: string;
-    whatsapp_button_label: string; contact_numbers: string[]; team_member_ids: string[];
-    active: boolean; created_at: string;
-  }>>('/queues'),
-  create: (body: {
-    name: string; color?: string; icon?: string; description?: string;
-    whatsapp_button_label?: string; contact_numbers?: string[]; team_member_ids?: string[];
-  }) => vpsApiFetch<{ success: boolean; id: string }>('/queues', { method: 'POST', body }),
-  update: (id: string, body: Record<string, unknown>) =>
-    vpsApiFetch<{ success: boolean }>(`/queues/${id}`, { method: 'PUT', body }),
-  delete: (id: string) => vpsApiFetch<{ success: boolean }>(`/queues/${id}`, { method: 'DELETE' }),
-};
+export { sbQueuesApi as queuesApi } from './sbAdapters';
+
 
 // ─── Generic table ──────────────────────────────────────────
 
