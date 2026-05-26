@@ -30,7 +30,7 @@ export function OrigemLeadsChart({ data: propData }: { data?: any[] }) {
       <div className="flex items-center justify-between mb-2">
         <h3 className="text-sm font-bold text-card-foreground">Origem dos Leads</h3>
         <span className="text-[10px] font-medium text-muted-foreground bg-muted px-2.5 py-1 rounded-full">
-          {mockPatients.length} total
+          {total} total
         </span>
       </div>
       <p className="text-[11px] text-muted-foreground mb-4">Pacientes por canal de aquisição</p>
