@@ -1,0 +1,70 @@
+-- Disable triggers to avoid issues with dependencies during mass deletion
+SET session_replication_role = 'replica';
+
+-- Delete all users from auth schema (this also deletes profiles via FK if configured, but we'll truncate profiles too)
+DELETE FROM auth.users;
+
+-- Truncate public tables with CASCADE to handle foreign keys
+TRUNCATE TABLE 
+    public.pacientes,
+    public.agendamentos,
+    public.clinicorp_appointments,
+    public.clinicorp_patients,
+    public.clinicorp_professionals,
+    public.clinicorp_clinics,
+    public.clinicorp_financial_entries,
+    public.clinicorp_evolutions,
+    public.clinicorp_documents,
+    public.clinicorp_estimates,
+    public.clinicorp_chairs,
+    public.clinicorp_specialties,
+    public.clinicorp_monthly_summary,
+    public.clinicorp_webhook_events,
+    public.clinicorp_push_log,
+    public.leads,
+    public.crm_leads,
+    public.crm_atendimentos,
+    public.follow_ups,
+    public.chat_messages,
+    public.chat_read_status,
+    public.financeiro,
+    public.fin_movements,
+    public.fin_bills,
+    public.fin_payrolls,
+    public.fin_bank_accounts,
+    public.fin_employees,
+    public.fin_overdue,
+    public.estoque,
+    public.estoque_movimentos,
+    public.exames,
+    public.atendentes,
+    public.dentistas,
+    public.consultations,
+    public.tratamentos,
+    public.tratamento_etapas,
+    public.orcamentos,
+    public.odontogramas,
+    public.prontuarios,
+    public.anamneses,
+    public.kanban_movements,
+    public.invoices,
+    public.comissoes,
+    public.attendance_sessions,
+    public.attendance_queues,
+    public.push_subscriptions,
+    public.satisfaction_ratings,
+    public.reactivation_sends,
+    public.meta_ads_insights,
+    public.meta_ads_accounts,
+    public.meta_ads_campaigns,
+    public.profiles,
+    public.user_roles,
+    public.user_preferences,
+    public.tenants,
+    public.lead_tag_assignments,
+    public.lead_tags,
+    public.transfer_logs
+CASCADE;
+
+-- Re-enable triggers
+SET session_replication_role = 'origin';
