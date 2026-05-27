@@ -308,31 +308,62 @@ const syncSchema = z.object({
 }).default({});
 
 // ─── helpers ─────────────────────────────────────────────────
+function normalizeClinicorpDate(...values: any[]): string | null {
+  for (const value of values) {
+    if (value === null || value === undefined || value === "") continue;
+    const raw = value instanceof Date ? value.toISOString() : String(value).trim();
+    if (/^\d{8}(\d{4,6})?$/.test(raw)) return `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
+    const msDate = raw.match(/\/Date\((\d+)/);
+    if (msDate) return new Date(Number(msDate[1])).toISOString().slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+    const br = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+    if (br) return `${br[3]}-${br[2]}-${br[1]}`;
+    // Case where ISO string is passed directly
+    if (raw.includes("T")) return raw.split("T")[0];
+  }
+  return null;
+}
+
+function normalizeClinicorpTime(...values: any[]): string | null {
+  for (const value of values) {
+    if (value === null || value === undefined || value === "") continue;
+    const raw = String(value).trim();
+    if (/^\d{1,2}:\d{2}/.test(raw)) return raw.slice(0, 5).padStart(5, "0");
+    if (/^\d{12,14}$/.test(raw)) return `${raw.slice(8, 10)}:${raw.slice(10, 12)}`;
+    if (/^\d{3,4}$/.test(raw)) return `${raw.slice(0, -2).padStart(2, "0")}:${raw.slice(-2)}`;
+    const isoTime = raw.match(/T(\d{2}:\d{2})/);
+    if (isoTime) return isoTime[1];
+    // Handle "HH:mm:ss"
+    if (/^\d{2}:\d{2}:\d{2}$/.test(raw)) return raw.slice(0, 5);
+  }
+  return null;
+}
+
 function pickFirst(obj: any, ...keys: string[]): any {
-  if (!obj || typeof obj !== 'object') return undefined;
+  if (!obj || typeof obj !== "object") return undefined;
   for (const k of keys) {
-    if (obj[k] !== undefined && obj[k] !== null && obj[k] !== '') return obj[k];
+    if (obj[k] !== undefined && obj[k] !== null && obj[k] !== "") return obj[k];
   }
   return undefined;
 }
 
 function extractList(data: any): any[] {
   if (Array.isArray(data)) return data;
-  if (!data || typeof data !== 'object') return [];
+  if (!data || typeof data !== "object") return [];
   const direct = pickFirst(data,
-    'Results', 'Result', 'Data', 'data', 'Items', 'items', 'Rows', 'rows', 'Records', 'records',
-    'Appointments', 'appointments', 'Patients', 'patients', 'Dentists', 'dentists',
-    'Professionals', 'professionals', 'Professional', 'professional', 'Businesses', 'businesses', 'Clinics', 'clinics', 'Business', 'business',
-    'List', 'list',
+    "Results", "Result", "Data", "data", "Items", "items", "Rows", "rows", "Records", "records",
+    "Appointments", "appointments", "Patients", "patients", "Dentists", "dentists",
+    "Professionals", "professionals", "Professional", "professional", "Businesses", "businesses", "Clinics", "clinics", "Business", "business",
+    "List", "list",
   );
   if (Array.isArray(direct)) return direct;
-  if (direct && typeof direct === 'object') {
+  if (direct && typeof direct === "object") {
     const nested = extractList(direct);
     if (nested.length) return nested;
   }
   for (const value of Object.values(data)) {
     if (Array.isArray(value)) return value;
-    if (value && typeof value === 'object') {
+    if (value && typeof value === "object") {
       const nested = extractList(value);
       if (nested.length) return nested;
     }
@@ -341,7 +372,7 @@ function extractList(data: any): any[] {
 }
 
 function ymd(d: Date): string {
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
 }
 
 export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
