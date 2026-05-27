@@ -135,6 +135,8 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 // Fila por subscriber + pausa global compartilhada
 const _queues = new Map(); // subscriber_id -> Promise chain
 let _globalPauseUntil = 0;
+const _activeSyncs = new Set(); // subscriber_id:tenant_id -> timestamp
+
 
 function isClinicorpRateLimitError(err) {
   return err?.status === 429 || /HTTP 429|rate limited/i.test(String(err?.message || ''));
