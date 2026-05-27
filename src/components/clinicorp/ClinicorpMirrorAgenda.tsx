@@ -2,8 +2,10 @@ import { useState, useEffect, useMemo } from "react";
 import { clinicorpApi } from "@/lib/clinicorpApi";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ChevronLeft, ChevronRight, Clock, User2, CalendarDays, RefreshCw, AlertCircle } from "lucide-react";
+import { ChevronLeft, ChevronRight, Clock, User2, CalendarDays, RefreshCw, AlertCircle, PlayCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { format } from "date-fns";
+import { toast } from "sonner";
 
 export function ClinicorpMirrorAgenda({ refreshTrigger = 0 }: { refreshTrigger?: number }) {
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -14,9 +16,10 @@ export function ClinicorpMirrorAgenda({ refreshTrigger = 0 }: { refreshTrigger?:
   const [selectedChairId, setSelectedChairId] = useState<string>("all");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [syncingThisDay, setSyncingThisDay] = useState(false);
 
   const [autoJumped, setAutoJumped] = useState(false);
-  const dateStr = currentDate.toISOString().slice(0, 10);
+  const dateStr = format(currentDate, "yyyy-MM-dd");
 
   useEffect(() => {
     clinicorpApi.listProfessionals().then(setProfessionals).catch(console.error);
@@ -68,6 +71,20 @@ export function ClinicorpMirrorAgenda({ refreshTrigger = 0 }: { refreshTrigger?:
   const goPrev = () => { const d = new Date(currentDate); d.setDate(d.getDate() - 1); setCurrentDate(d); };
   const goNext = () => { const d = new Date(currentDate); d.setDate(d.getDate() + 1); setCurrentDate(d); };
   const goToday = () => setCurrentDate(new Date());
+
+  const handleSyncThisDay = async () => {
+    setSyncingThisDay(true);
+    try {
+      const result = await clinicorpApi.syncMyNow({ from: dateStr, to: dateStr });
+      toast.success(`Sincronizado: ${result.summary.appointments || 0} agendamentos encontrados para este dia.`);
+      // Recarregar os dados do mirror
+      clinicorpApi.listAppointments({ from: dateStr, to: dateStr }).then(setAppointments);
+    } catch (err: any) {
+      toast.error(err.message || "Erro ao sincronizar dia");
+    } finally {
+      setSyncingThisDay(false);
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -137,14 +154,25 @@ export function ClinicorpMirrorAgenda({ refreshTrigger = 0 }: { refreshTrigger?:
             </Button>
           </div>
         ) : filteredAppointments.length === 0 ? (
-          <div className="p-20 text-center space-y-3">
+          <div className="p-20 text-center space-y-4">
             <div className="bg-muted/30 w-16 h-16 rounded-full flex items-center justify-center mx-auto">
               <CalendarDays className="h-8 w-8 text-muted-foreground/50" />
             </div>
-            <div className="text-muted-foreground font-medium">Nenhum agendamento para este dia.</div>
-            <p className="text-xs text-muted-foreground max-w-xs mx-auto">
-              Tente selecionar outro profissional ou clique em "Sincronizar Agora" no topo da página para buscar dados recentes.
-            </p>
+            <div className="space-y-1">
+              <div className="text-muted-foreground font-medium">Nenhum agendamento para este dia.</div>
+              <p className="text-xs text-muted-foreground max-w-xs mx-auto">
+                Se você sabe que existem dados na Clinicorp para este dia, clique abaixo para forçar uma busca específica.
+              </p>
+            </div>
+            <Button 
+              size="sm" 
+              className="rounded-xl gap-2" 
+              onClick={handleSyncThisDay}
+              disabled={syncingThisDay}
+            >
+              {syncingThisDay ? <RefreshCw className="h-4 w-4 animate-spin" /> : <PlayCircle className="h-4 w-4" />}
+              {syncingThisDay ? "Sincronizando..." : "Sincronizar este dia agora"}
+            </Button>
           </div>
         ) : (
           <div className="divide-y divide-border">
