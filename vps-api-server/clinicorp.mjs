@@ -269,6 +269,7 @@ export const clinicorpApi = {
       { path: '/professional/list_all_professionals', query: { subscriber_id: s.subscriber_id } },
       { path: '/professional/list_all_professionals', query: {} },
       { path: '/professional/list', query: { subscriber_id: s.subscriber_id } },
+      { path: '/professional/list_users', query: { subscriber_id: s.subscriber_id } },
       { path: '/professionals/list', query: { subscriber_id: s.subscriber_id } },
       { path: '/security/list_users', query: {} },
       { path: '/user/list', query: {} },
