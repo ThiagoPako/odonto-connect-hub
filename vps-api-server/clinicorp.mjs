@@ -1583,6 +1583,9 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
         }
       }
     }
+    console.log(`[clinicorp sync] appointments processed: ${summary.appointments}, projection failed: ${projectionFailed}`);
+
+
 
     
     // Deletion detection (faithfull mirror) — escopo por tenant
