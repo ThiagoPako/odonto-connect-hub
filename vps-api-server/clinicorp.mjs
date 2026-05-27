@@ -1646,6 +1646,60 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
         );
       }
 
+      // Fallback: se professional_id ainda for nulo em alguma appt, varre raw JSONB
+      // procurando chaves de ID com case-insensitive em "Dentist*", "Professional*",
+      // "ScheduleTo*" e atualiza professional_id na appt + cria o professional.
+      const { rows: nullProfRows } = await pool.query(
+        `SELECT id, raw FROM clinicorp_appointments
+          WHERE tenant_id=$1 AND professional_id IS NULL LIMIT 2000`,
+        [tId]
+      );
+      if (nullProfRows.length) {
+        console.log(`[clinicorp sync] backfill scan: ${nullProfRows.length} appts sem professional_id`);
+        const found = new Map(); // id -> name
+        const extractId = (raw) => {
+          if (!raw || typeof raw !== 'object') return { id: null, name: null };
+          let id = null, name = null;
+          for (const [k, v] of Object.entries(raw)) {
+            const kl = k.toLowerCase();
+            if (!id && /^(dentist|professional|scheduleto|doctor)/i.test(k) && /(id|personid)$/i.test(k) && (typeof v === 'string' || typeof v === 'number')) {
+              const n = Number(String(v).replace(/\D/g, ''));
+              if (n) id = n;
+            }
+            if (!name && /^(dentist|professional|scheduleto|doctor)/i.test(k) && /(name|fullname)$/i.test(k) && typeof v === 'string') {
+              name = v;
+            }
+            if (!id && v && typeof v === 'object') {
+              const sub = extractId(v);
+              if (sub.id) id = sub.id;
+              if (!name && sub.name) name = sub.name;
+            }
+          }
+          return { id, name };
+        };
+        for (const row of nullProfRows) {
+          const { id, name } = extractId(row.raw);
+          if (!id) continue;
+          await pool.query(
+            `UPDATE clinicorp_appointments SET professional_id=$1, professional_name=COALESCE(NULLIF($2,''), professional_name) WHERE id=$3 AND tenant_id=$4`,
+            [String(id), name || null, row.id, tId]
+          );
+          if (!found.has(String(id))) found.set(String(id), name || `Profissional ${id}`);
+        }
+        for (const [pid, pname] of found) {
+          await pool.query(
+            `INSERT INTO clinicorp_professionals (id, tenant_id, full_name, user_name, raw, synced_at)
+             VALUES ($1,$2,$3,NULL,$4,NOW())
+             ON CONFLICT (id, tenant_id) DO UPDATE SET
+               full_name = COALESCE(NULLIF(EXCLUDED.full_name,''), clinicorp_professionals.full_name),
+               synced_at = NOW()`,
+            [pid, tId, pname, JSON.stringify({ derived_from: 'raw_scan', id: pid, name: pname })]
+          );
+          await ensureLocalProfessional(pool, pid, pname, tId);
+        }
+        console.log(`[clinicorp sync] backfill scan: criou ${found.size} profissionais via raw scan`);
+      }
+
       const { rows: pcount } = await pool.query(`SELECT COUNT(*)::int AS c FROM clinicorp_professionals WHERE tenant_id=$1`, [tId]);
       summary.professionals = pcount[0]?.c || summary.professionals;
     } catch (e) { console.error('[clinicorp sync] backfill professionals', e.message); }
