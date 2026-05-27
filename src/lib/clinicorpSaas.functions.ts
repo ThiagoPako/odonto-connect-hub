@@ -155,33 +155,26 @@ async function clinicorpProbe(
   forcedAuthHeader?: string,
 ): Promise<{ status: number; data: unknown; usedAuth?: string }> {
   const base = base_url.replace(/\/$/, '');
-  const url = new URL(base + pathName);
   const cleanToken = api_token.replace(/^Bearer\s+/i, '').trim();
   const cleanUser = subscriber_id.trim();
-  url.searchParams.set('subscriber_id', cleanUser);
-  url.searchParams.set('user_api', cleanUser);
-  url.searchParams.set('api_key', cleanToken);
-  for (const [k, v] of Object.entries(query)) url.searchParams.set(k, v);
-
-  const basicAuth = `Basic ${btoa(`${cleanUser}:${cleanToken}`)}`;
-  const bearerAuth = `Bearer ${cleanToken}`;
-
-  const attempt = async (authHeader: string, attemptCount = 0): Promise<{ status: number; data: unknown }> => {
+  
+  const attempt = async (url: string, authHeader?: string, attemptCount = 0): Promise<{ status: number; data: unknown }> => {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeoutMs);
     try {
-      const r = await fetch(url.toString(), {
+      const headers: Record<string, string> = { Accept: 'application/json' };
+      if (authHeader) headers.Authorization = authHeader;
+
+      const r = await fetch(url, {
         method: 'GET',
-        headers: { Accept: 'application/json', Authorization: authHeader },
+        headers,
         signal: ctrl.signal,
       });
       
       if (r.status === 429 && attemptCount < 2) {
-        // More aggressive backoff for 429
         const wait = 5000 * (attemptCount + 1);
-        console.warn(`[clinicorp-probe] 429 encountered at ${pathName}, waiting ${wait}ms... (attempt ${attemptCount+1})`);
         await new Promise(res => setTimeout(res, wait));
-        return attempt(authHeader, attemptCount + 1);
+        return attempt(url, authHeader, attemptCount + 1);
       }
 
       const text = await r.text();
@@ -190,8 +183,7 @@ async function clinicorpProbe(
       return { status: r.status, data };
     } catch (e: any) {
       if (e.name === 'AbortError' && attemptCount < 1) {
-        console.warn(`[clinicorp-probe] Timeout at ${pathName}, retrying once...`);
-        return attempt(authHeader, attemptCount + 1);
+        return attempt(url, authHeader, attemptCount + 1);
       }
       throw e;
     } finally {
@@ -199,18 +191,43 @@ async function clinicorpProbe(
     }
   };
 
+  const basicAuth = `Basic ${btoa(`${cleanUser}:${cleanToken}`)}`;
+  const bearerAuth = `Bearer ${cleanToken}`;
+  
+  // Create versions of the URL: one with query params, one without
+  const urlWithParams = new URL(base + pathName);
+  urlWithParams.searchParams.set('subscriber_id', cleanUser);
+  urlWithParams.searchParams.set('user_api', cleanUser);
+  urlWithParams.searchParams.set('api_key', cleanToken);
+  for (const [k, v] of Object.entries(query)) urlWithParams.searchParams.set(k, v);
+
+  const urlPlain = new URL(base + pathName);
+  for (const [k, v] of Object.entries(query)) urlPlain.searchParams.set(k, v);
+
   if (forcedAuthHeader) {
-    const res = await attempt(forcedAuthHeader);
-    return { ...res, usedAuth: forcedAuthHeader };
+    const res = await attempt(urlWithParams.toString(), forcedAuthHeader);
+    if (res.status >= 200 && res.status < 300) return { ...res, usedAuth: forcedAuthHeader };
+    const res2 = await attempt(urlPlain.toString(), forcedAuthHeader);
+    return { ...res2, usedAuth: forcedAuthHeader };
   }
 
-  let result = await attempt(basicAuth);
-  let usedAuth = basicAuth;
-  if (result.status === 401) {
-    result = await attempt(bearerAuth);
-    usedAuth = bearerAuth;
-  }
-  return { ...result, usedAuth };
+  // Strategy 1: URL params + Basic Auth
+  let res = await attempt(urlWithParams.toString(), basicAuth);
+  if (res.status >= 200 && res.status < 300) return { ...res, usedAuth: basicAuth };
+
+  // Strategy 2: URL params + Bearer Auth
+  res = await attempt(urlWithParams.toString(), bearerAuth);
+  if (res.status >= 200 && res.status < 300) return { ...res, usedAuth: bearerAuth };
+
+  // Strategy 3: Just URL params (no header)
+  res = await attempt(urlWithParams.toString());
+  if (res.status >= 200 && res.status < 300) return { ...res, usedAuth: 'QueryParam' };
+
+  // Strategy 4: Plain URL + Basic Auth
+  res = await attempt(urlPlain.toString(), basicAuth);
+  if (res.status >= 200 && res.status < 300) return { ...res, usedAuth: basicAuth };
+
+  return { ...res, usedAuth: bearerAuth }; // Return last attempt
 }
 
 export const testMyClinicorpConnection = createServerFn({ method: 'POST' })
@@ -538,12 +555,24 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
       const appointmentUpserts = [];
       for (const a of allAppts) {
         const apId = String(pickFirst(a, 'Id', 'id', 'AppointmentId', 'AppointmentID', 'Appointment_Id', 'appointment_id') ?? '');
-        const apDate = pickFirst(a, 'Date', 'date', 'AppointmentDate', 'Appointment_Date', 'start_date', 'data', 'Data', 'AtomicDate');
-        const apTime = pickFirst(a, 'FromTime', 'fromTime', 'from_time', 'StartTime', 'time', 'Time', 'start_time', 'inicio', 'Inicio', 'from', 'From');
+        let apDateRaw = pickFirst(a, 'Date', 'date', 'AppointmentDate', 'Appointment_Date', 'start_date', 'data', 'Data', 'AtomicDate');
+        let apTimeRaw = pickFirst(a, 'FromTime', 'fromTime', 'from_time', 'StartTime', 'time', 'Time', 'start_time', 'inicio', 'Inicio', 'from', 'From');
+
+        // Robust parsing for ISO strings or date strings containing time
+        if (typeof apDateRaw === 'string' && apDateRaw.includes('T')) {
+          const parts = apDateRaw.split('T');
+          if (!apTimeRaw || apTimeRaw === '00:00:00' || apTimeRaw === '00:00') {
+             apTimeRaw = parts[1].slice(0, 8);
+          }
+          apDateRaw = parts[0];
+        }
+        
+        const apDate = apDateRaw;
+        const apTime = apTimeRaw;
         
         if (!apId || !apDate || !apTime) {
-          if (allAppts.indexOf(a) === 0) {
-             log('Appointment skip - missing fields:', { apId, apDate, apTime, keys: Object.keys(a) });
+          if (allAppts.indexOf(a) === 0 || allAppts.length < 5) {
+             log('Appointment skip - missing fields:', { apId, apDate, apTime, keys: Object.keys(a).slice(0, 20) });
           }
           continue;
         }
@@ -559,7 +588,7 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
           hora: String(apTime).slice(0, 8),
           duracao: Number(pickFirst(a, 'Duration', 'duration', 'minutes', 'Minutes', 'ProceduresDuration') ?? 30),
           procedimento: pickFirst(a, 'Category_Description', 'CategoryDescription', 'procedure', 'Procedure', 'description', 'Description', 'category_name') ?? '',
-          status: String(pickFirst(a, 'Status', 'status', 'status_name', 'StatusName', 'StatusId') ?? 'agendado'),
+          status: String(pickFirst(a, 'Status', 'status', 'status_name', 'StatusName', 'StatusId', 'StatusDescription') ?? 'agendado'),
           clinicorp_appointment_id: apId,
         });
       }
