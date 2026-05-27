@@ -349,7 +349,10 @@ export const clinicorpApi = {
   getAvailableDays: (s, query) => clinicorpFetch(s, '/appointment/get_avaliable_days', { query }),
   getAvailableTimesCalendar: (s, query) => clinicorpFetch(s, '/appointment/get_avaliable_times_calendar', { query }),
   getPatient: (s, id) => clinicorpFetch(s, '/patient/get', { query: { id } }),
-  listPatients: (s) => clinicorpFetch(s, '/patient/list'),
+  // ATENÇÃO: A Clinicorp NÃO expõe endpoint de listagem em massa de pacientes.
+  // Apenas /patient/get (por id), /patient/birthdays, /patient/list_appointments, /patient/list_estimates.
+  // Pacientes são populados via backfill a partir de agendamentos.
+  listPatients: async () => { return []; },
   patientBirthdays: (s, query) => clinicorpFetch(s, '/patient/birthdays', { query }),
   createPatient: (s, body) => clinicorpFetch(s, '/patient/create', { method: 'POST', body }),
   updatePatient: (s, id, body) => clinicorpFetch(s, `/patient/update/${id}`, { method: 'PUT', body }),
@@ -361,6 +364,12 @@ export const clinicorpApi = {
   listInvoices: (s, { from, to, clinic_id } = {}) => clinicorpFetch(s, '/financial/list_invoices', { query: { from, to, business_id: clinic_id } }),
   listCashFlow: (s, { from, to, clinic_id } = {}) => clinicorpFetch(s, '/financial/list_cash_flow', { query: { from, to, business_id: clinic_id } }),
   listPayments: (s, { from, to, clinic_id } = {}) => clinicorpFetch(s, '/financial/list_payments', { query: { from, to, business_id: clinic_id } }),
+  listFinancialSummary: (s, { from, to, clinic_id } = {}) => clinicorpFetch(s, '/financial/list_summary', { query: { from, to, business_id: clinic_id } }),
+  listFinancialReceipts: (s, { from, to, clinic_id } = {}) => clinicorpFetch(s, '/financial/list_receipt', { query: { from, to, business_id: clinic_id } }),
+  averageInstallments: (s, { from, to, clinic_id } = {}) => clinicorpFetch(s, '/financial/average_installments', { query: { from, to, business_id: clinic_id } }),
+  scheduleOccupation: (s, query) => clinicorpFetch(s, '/appointment/schedule_occupation', { query }),
+  appointmentListInfo: (s, query) => clinicorpFetch(s, '/appointment/list_info', { query }),
+  getAppointment: (s, id) => clinicorpFetch(s, '/appointment/get_appointment', { query: { id } }),
   salesEstimatesAndConversion: (s, query) => clinicorpFetch(s, '/sales/estimates_and_conversion', { query }),
   salesExpertiseRevenue: (s, query) => clinicorpFetch(s, '/sales/expertise_revenue', { query }),
   addLead: (s, body) => clinicorpFetch(s, '/crm/add_leads', { method: 'POST', body }),
