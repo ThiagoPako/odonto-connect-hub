@@ -925,7 +925,7 @@ async function projectAppointmentToLocal(pool, a, cpApptId, tenantId = null) {
   }, tenantId);
   
   const status = mapAppointmentStatus(pickFirst(a, 'Status', 'StatusId', 'status'));
-  const data = normalizeClinicorpDate(pickFirst(a, 'Date', 'AppointmentDate', 'SK_DateFirstTime', 'DateFirstTime', 'StartDate', 'StartDateTime', 'StartTime', 'fromTime', 'FromTime', 'date', 'appointment_date'));
+  const data = normalizeClinicorpDate(pickFirst(a, 'Date', 'date', 'AppointmentDate', 'SK_DateFirstTime', 'DateFirstTime', 'StartDate', 'StartDateTime', 'StartTime', 'fromTime', 'FromTime', 'appointment_date', 'AtomicDate'));
   const fromT = normalizeClinicorpTime(pickFirst(a, 'FromTime', 'Time', 'StartTime', 'StartDateTime', 'ScheduleTime', 'Hour', 'fromTime', 'from_time', 'hora')) || '00:00';
   const toT = normalizeClinicorpTime(pickFirst(a, 'ToTime', 'FinalTime', 'EndTime', 'EndDateTime', 'toTime', 'to_time')) || '';
   const hora = fromT;

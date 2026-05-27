@@ -308,31 +308,62 @@ const syncSchema = z.object({
 }).default({});
 
 // ─── helpers ─────────────────────────────────────────────────
+function normalizeClinicorpDate(...values: any[]): string | null {
+  for (const value of values) {
+    if (value === null || value === undefined || value === "") continue;
+    const raw = value instanceof Date ? value.toISOString() : String(value).trim();
+    if (/^\d{8}(\d{4,6})?$/.test(raw)) return `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
+    const msDate = raw.match(/\/Date\((\d+)/);
+    if (msDate) return new Date(Number(msDate[1])).toISOString().slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+    const br = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+    if (br) return `${br[3]}-${br[2]}-${br[1]}`;
+    // Case where ISO string is passed directly
+    if (raw.includes("T")) return raw.split("T")[0];
+  }
+  return null;
+}
+
+function normalizeClinicorpTime(...values: any[]): string | null {
+  for (const value of values) {
+    if (value === null || value === undefined || value === "") continue;
+    const raw = String(value).trim();
+    if (/^\d{1,2}:\d{2}/.test(raw)) return raw.slice(0, 5).padStart(5, "0");
+    if (/^\d{12,14}$/.test(raw)) return `${raw.slice(8, 10)}:${raw.slice(10, 12)}`;
+    if (/^\d{3,4}$/.test(raw)) return `${raw.slice(0, -2).padStart(2, "0")}:${raw.slice(-2)}`;
+    const isoTime = raw.match(/T(\d{2}:\d{2})/);
+    if (isoTime) return isoTime[1];
+    // Handle "HH:mm:ss"
+    if (/^\d{2}:\d{2}:\d{2}$/.test(raw)) return raw.slice(0, 5);
+  }
+  return null;
+}
+
 function pickFirst(obj: any, ...keys: string[]): any {
-  if (!obj || typeof obj !== 'object') return undefined;
+  if (!obj || typeof obj !== "object") return undefined;
   for (const k of keys) {
-    if (obj[k] !== undefined && obj[k] !== null && obj[k] !== '') return obj[k];
+    if (obj[k] !== undefined && obj[k] !== null && obj[k] !== "") return obj[k];
   }
   return undefined;
 }
 
 function extractList(data: any): any[] {
   if (Array.isArray(data)) return data;
-  if (!data || typeof data !== 'object') return [];
+  if (!data || typeof data !== "object") return [];
   const direct = pickFirst(data,
-    'Results', 'Result', 'Data', 'data', 'Items', 'items', 'Rows', 'rows', 'Records', 'records',
-    'Appointments', 'appointments', 'Patients', 'patients', 'Dentists', 'dentists',
-    'Professionals', 'professionals', 'Professional', 'professional', 'Businesses', 'businesses', 'Clinics', 'clinics', 'Business', 'business',
-    'List', 'list',
+    "Results", "Result", "Data", "data", "Items", "items", "Rows", "rows", "Records", "records",
+    "Appointments", "appointments", "Patients", "patients", "Dentists", "dentists",
+    "Professionals", "professionals", "Professional", "professional", "Businesses", "businesses", "Clinics", "clinics", "Business", "business",
+    "List", "list",
   );
   if (Array.isArray(direct)) return direct;
-  if (direct && typeof direct === 'object') {
+  if (direct && typeof direct === "object") {
     const nested = extractList(direct);
     if (nested.length) return nested;
   }
   for (const value of Object.values(data)) {
     if (Array.isArray(value)) return value;
-    if (value && typeof value === 'object') {
+    if (value && typeof value === "object") {
       const nested = extractList(value);
       if (nested.length) return nested;
     }
@@ -341,7 +372,7 @@ function extractList(data: any): any[] {
 }
 
 function ymd(d: Date): string {
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
 }
 
 export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
@@ -554,49 +585,47 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
 
       const appointmentUpserts = [];
       for (const a of allAppts) {
-        const apId = String(pickFirst(a, 'Id', 'id', 'AppointmentId', 'AppointmentID', 'Appointment_Id', 'appointment_id') ?? '');
-        let apDateRaw = pickFirst(a, 'Date', 'date', 'AppointmentDate', 'Appointment_Date', 'start_date', 'data', 'Data', 'AtomicDate');
-        let apTimeRaw = pickFirst(a, 'FromTime', 'fromTime', 'from_time', 'StartTime', 'time', 'Time', 'start_time', 'inicio', 'Inicio', 'from', 'From');
+        const apId = String(pickFirst(a, "Id", "id", "ID", "AppointmentId", "AppointmentID", "Appointment_Id", "appointment_id", "appointmentId", "ScheduleId", "Schedule_ID") ?? "");
+        const apDate = normalizeClinicorpDate(pickFirst(a, "Date", "date", "AppointmentDate", "SK_DateFirstTime", "DateFirstTime", "StartDate", "StartDateTime", "StartTime", "fromTime", "FromTime", "appointment_date", "AtomicDate"));
+        const apTime = normalizeClinicorpTime(pickFirst(a, "FromTime", "Time", "StartTime", "StartDateTime", "ScheduleTime", "Hour", "fromTime", "from_time", "hora", "toTime"));
 
-        // Robust parsing for ISO strings or date strings containing time
-        if (typeof apDateRaw === 'string' && apDateRaw.includes('T')) {
-          const parts = apDateRaw.split('T');
-          if (!apTimeRaw || apTimeRaw === '00:00:00' || apTimeRaw === '00:00') {
-             apTimeRaw = parts[1].slice(0, 8);
-          }
-          apDateRaw = parts[0];
-        }
-        
-        const apDate = apDateRaw;
-        const apTime = apTimeRaw;
-        
         if (!apId || !apDate || !apTime) {
           if (allAppts.indexOf(a) === 0 || allAppts.length < 5) {
-             log('Appointment skip - missing fields:', { apId, apDate, apTime, keys: Object.keys(a).slice(0, 20) });
+            log("Appointment skip - missing fields:", { apId, apDate, apTime, keys: Object.keys(a).slice(0, 20) });
           }
           continue;
         }
 
-        const pid = String(pickFirst(a, 'PatientId', 'Patient_PersonId', 'PatientPersonId', 'Patient_Id', 'patient_id', 'id_paciente') ?? a?.Patient?.Id ?? a?.Patient?.id ?? '');
-        const did = String(pickFirst(a, 'ProfessionalId', 'Dentist_PersonId', 'DentistPersonId', 'Professional_PersonId', 'ScheduleToId', 'DentistId', 'professional_id', 'dentist_id', 'id_profissional') ?? a?.Dentist?.Id ?? a?.Dentist?.id ?? '');
+        const pid = String(pickFirst(a, "PatientId", "Patient_PersonId", "PatientPersonId", "Patient_Id", "patient_id", "id_paciente") ?? a?.Patient?.Id ?? a?.Patient?.id ?? "");
+        const did = String(pickFirst(a, "ProfessionalId", "Dentist_PersonId", "DentistPersonId", "Professional_PersonId", "ScheduleToId", "DentistId", "professional_id", "dentist_id", "id_profissional") ?? a?.Dentist?.Id ?? a?.Dentist?.id ?? "");
         
+        const procedimento = pickFirst(a, "Category_Description", "CategoryDescription", "procedure", "Procedure", "description", "Description", "category_name") ?? "";
+        const categoriaCor = pickFirst(a, "CategoryColor", "Category_Color", "Color", "category_color") ?? null;
+
         appointmentUpserts.push({
           tenant_id,
           paciente_id: paMap.get(pid) || null,
           dentista_id: profMap.get(did) || null,
-          data: String(apDate).slice(0, 10),
-          hora: String(apTime).slice(0, 8),
-          duracao: Number(pickFirst(a, 'Duration', 'duration', 'minutes', 'Minutes', 'ProceduresDuration') ?? 30),
-          procedimento: pickFirst(a, 'Category_Description', 'CategoryDescription', 'procedure', 'Procedure', 'description', 'Description', 'category_name') ?? '',
-          status: String(pickFirst(a, 'Status', 'status', 'status_name', 'StatusName', 'StatusId', 'StatusDescription') ?? 'agendado'),
+          data: apDate,
+          hora: apTime,
+          duracao: Number(pickFirst(a, "Duration", "duration", "minutes", "Minutes", "ProceduresDuration") ?? 30),
+          procedimento: procedimento,
+          categoria: procedimento,
+          categoria_cor: categoriaCor,
+          status: String(pickFirst(a, "Status", "status", "status_name", "StatusName", "StatusId", "StatusDescription") ?? "agendado"),
           clinicorp_appointment_id: apId,
         });
       }
 
       if (allAppts.length > 0 && appointmentUpserts.length === 0) {
         const first = allAppts[0];
-        errors.push(`Aviso: ${allAppts.length} agendamentos recebidos, mas nenhum pôde ser processado. Verifique os campos: ${Object.keys(first).join(', ')}`);
-        log('DEBUG: First appt keys', Object.keys(first));
+        errors.push(`Aviso: ${allAppts.length} agendamentos recebidos, mas nenhum pôde ser processado. Verifique os campos: ${Object.keys(first).join(", ")}`);
+        log("DEBUG: First appt keys", Object.keys(first));
+        log("DEBUG: First appt sample values", { 
+          id: pickFirst(first, "Id", "id", "AppointmentId"),
+          date: pickFirst(first, "Date", "date", "AtomicDate"),
+          time: pickFirst(first, "FromTime", "fromTime")
+        });
       }
 
       // Batch upsert appointments in chunks
