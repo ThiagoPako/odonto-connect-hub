@@ -1542,13 +1542,20 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     console.log(`[clinicorp sync] agenda range: ${apptFromDate} to ${apptToDate}`);
     const ranges = sliceRange(apptFromDate, apptToDate);
 
+    let projectionFailed = 0;
+    let sampleLogged = false;
     const processAppts = async (list) => {
       for (const a of (Array.isArray(list) ? list : [])) {
         const id = getAppointmentId(a);
         if (!id || apiIds.has(String(id))) continue;
         apiIds.add(String(id));
-        await upsertAppointment(pool, a, tenant_id);
-        await projectAppointmentToLocal(pool, a, id, tenant_id);
+        if (!sampleLogged) {
+          sampleLogged = true;
+          console.log('[clinicorp sync] sample appointment keys:', Object.keys(a || {}).slice(0, 50));
+        }
+        try { await upsertAppointment(pool, a, tenant_id); } catch (e) { console.error('[clinicorp sync] upsertAppointment fail', id, e.message); }
+        try { await projectAppointmentToLocal(pool, a, id, tenant_id); }
+        catch (e) { projectionFailed++; if (projectionFailed <= 3) console.error('[clinicorp sync] projectAppointmentToLocal fail', id, e.message); }
         summary.appointments++;
       }
     };
