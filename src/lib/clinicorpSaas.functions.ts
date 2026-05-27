@@ -450,8 +450,9 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
         
         const dentistUpserts = [];
         for (const d of list) {
-          const id = String(pickFirst(d, 'Id', 'id', 'PersonId', 'Dentist_PersonId', 'DentistId', 'professional_id', 'ProfessionalId', 'dentist_id') ?? '');
-          const nome = String(pickFirst(d, 'FullName', 'Name', 'full_name', 'name', 'professional_name', 'ProfessionalName') ?? '').trim();
+          const id = String(pickFirst(d, 'Id', 'id', 'PersonId', 'Person_Id', 'Dentist_PersonId', 'DentistPersonId', 'Professional_PersonId', 'DentistId', 'professional_id', 'ProfessionalId', 'dentist_id', 'ScheduleToId') ?? '');
+          const nome = String(pickFirst(d, 'FullName', 'Name', 'full_name', 'name', 'professional_name', 'ProfessionalName', 'Dentist_FullName', 'Dentist_Name', 'ScheduleToName') ?? '').trim();
+
           if (!id || !nome) continue;
           dentistUpserts.push({
             tenant_id, nome,
@@ -478,7 +479,8 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
       // 3. Agendamentos
       const today = new Date();
       const from = data.from || ymd(new Date(today.getTime() - 7 * 86400000));
-      const to = data.to || ymd(new Date(today.getTime() + 21 * 86400000));
+      const to = data.to || ymd(new Date(today.getTime() + 60 * 86400000)); // Reduzido para 60 dias para evitar 429
+
       log(`appointments range ${from} → ${to}`);
 
       const days: string[] = [];
@@ -492,8 +494,9 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
 
       const allAppts: any[] = [];
       let rateLimitHit = false;
-      const CONCURRENCY = 2; // Reduzido para evitar 429
+      const CONCURRENCY = 1; // Sincronização serial para ser o mais seguro possível contra 429
       for (let i = 0; i < days.length && !rateLimitHit; i += CONCURRENCY) {
+
         const batch = days.slice(i, i + CONCURRENCY);
         const results = await Promise.allSettled(batch.map(ds =>
           clinicorpProbe(base_url, subscriber_id, api_token, '/appointment/list', { from: ds, to: ds }, 25000, activeAuthHeader)
@@ -516,7 +519,7 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
         if (rateLimitHit) break;
         summary.appointments = allAppts.length;
         await updateProgress(`Agenda: ${Math.min(i + CONCURRENCY, days.length)}/${days.length} dias (${allAppts.length} encontrados)`);
-        await new Promise(r => setTimeout(r, 400)); // Delay maior entre batches
+        await new Promise(r => setTimeout(r, 1000)); // Delay de 1s entre dias para evitar rate limit
       }
       log(`appointments total coletados=${allAppts.length}`);
       if (rateLimitHit) {
@@ -528,7 +531,7 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
       // 4. Pacientes — Backfill a partir dos agendamentos
       const patientSeeds = new Map<string, { name?: string; phone?: string; email?: string; cpf?: string; sex?: string; birthDate?: string }>();
       for (const a of allAppts) {
-        const pid = String(pickFirst(a, 'PatientId', 'Patient_PersonId', 'PatientPersonId', 'Patient_Id', 'patient_id', 'id_paciente', 'Patient_Id') ?? a?.Patient?.Id ?? a?.Patient?.id ?? '');
+        const pid = String(pickFirst(a, 'PatientId', 'Patient_PersonId', 'PatientPersonId', 'PersonId', 'Person_Id', 'Patient_Id', 'patient_id', 'id_paciente') ?? a?.Patient?.Id ?? a?.Patient?.id ?? a?.Patient?.PersonId ?? '');
         if (!pid) continue;
         if (!patientSeeds.has(pid)) {
           patientSeeds.set(pid, {
@@ -585,9 +588,10 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
 
       const appointmentUpserts = [];
       for (const a of allAppts) {
-        const apId = String(pickFirst(a, "Id", "id", "ID", "AppointmentId", "AppointmentID", "Appointment_Id", "appointment_id", "appointmentId", "ScheduleId", "Schedule_ID") ?? "");
-        const apDate = normalizeClinicorpDate(pickFirst(a, "Date", "date", "AppointmentDate", "SK_DateFirstTime", "DateFirstTime", "StartDate", "StartDateTime", "StartTime", "fromTime", "FromTime", "appointment_date", "AtomicDate"));
-        const apTime = normalizeClinicorpTime(pickFirst(a, "FromTime", "Time", "StartTime", "StartDateTime", "ScheduleTime", "Hour", "fromTime", "from_time", "hora", "toTime"));
+        const apId = String(pickFirst(a, "Id", "id", "ID", "AppointmentId", "AppointmentID", "Appointment_Id", "appointment_id", "appointmentId", "ScheduleId", "Schedule_ID", "id_agendamento", "AtomicId") ?? "");
+        const apDate = normalizeClinicorpDate(pickFirst(a, "Date", "date", "AppointmentDate", "Appointment_Date", "SK_DateFirstTime", "DateFirstTime", "StartDate", "StartDateTime", "StartTime", "fromTime", "FromTime", "appointment_date", "AtomicDate", "data", "data_agendamento"));
+        const apTime = normalizeClinicorpTime(pickFirst(a, "FromTime", "Time", "StartTime", "StartDateTime", "ScheduleTime", "Hour", "fromTime", "from_time", "hora", "toTime", "hora_agendamento"));
+
 
         if (!apId || !apDate || !apTime) {
           if (allAppts.indexOf(a) === 0 || allAppts.length < 5) {

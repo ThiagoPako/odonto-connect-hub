@@ -128,13 +128,15 @@ function getAppointmentId(a) {
 // Throttle SERIALIZADO por subscriber_id para evitar 429: as chamadas são enfileiradas
 // e disparadas com espaçamento mínimo. O modelo anterior (apenas _lastCallAt + await)
 // permitia que N callers concorrentes lessem o mesmo timestamp e disparassem em rajada.
-const THROTTLE_MS = 700; // ~1.4 req/s por subscriber — Clinicorp aplica limites agressivos por hora.
-const GLOBAL_PAUSE_AFTER_429_MS = 60_000; // se levarmos 429, pausa toda a fila por 60s
+const THROTTLE_MS = 1000; // ~1 req/s por subscriber — Clinicorp aplica limites agressivos por hora.
+const GLOBAL_PAUSE_AFTER_429_MS = 120_000; // se levarmos 429, pausa toda a fila por 120s
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 // Fila por subscriber + pausa global compartilhada
 const _queues = new Map(); // subscriber_id -> Promise chain
 let _globalPauseUntil = 0;
+const _activeSyncs = new Set(); // subscriber_id:tenant_id -> timestamp
+
 
 function isClinicorpRateLimitError(err) {
   return err?.status === 429 || /HTTP 429|rate limited/i.test(String(err?.message || ''));
@@ -938,7 +940,13 @@ async function projectAppointmentToLocal(pool, a, cpApptId, tenantId = null) {
   const procedimento = pickFirst(a, 'CategoryDescription', 'Category_Description', 'Category', 'category_description', 'ProcedureName', 'Procedure') ?? null;
   const categoriaCor = pickFirst(a, 'CategoryColor', 'Category_Color', 'Color', 'category_color') ?? null;
   const observacoes = pickFirst(a, 'Notes', 'Observation', 'Observations', 'notes', 'observacoes') ?? null;
+  if (!data || !hora) {
+    console.warn(`[clinicorp] skipping projection for appointment ${cpApptId} due to invalid date/time`, { data, hora });
+    return null;
+  }
+
   // Busca em QUALQUER tenant — se achar em outro, migra para o tenant atual.
+
   // Isso evita que agendamentos fiquem "presos" no tenant do admin original e
   // não apareçam para o usuário que rodou a sincronização.
   const exists = await pool.query(
@@ -1304,42 +1312,57 @@ async function projectFinanceToLocal(pool, source, item, tenantId = null) {
 
 // ─── Sync orchestration ───────────────────────────────────────
 export async function runFullSync(pool, { from, to, api_token, subscriber_id, base_url, tenant_id, force_metadata = false, user_id = null, apptFrom = null, apptTo = null, estFrom = null, estTo = null } = {}) {
-  // Se passarmos credenciais explícitas (ex: manual sync com per-user settings), as usamos.
-  // Caso contrário, tenta carregar as do usuário específico ou as globais.
-  let settings;
-  if (api_token && subscriber_id) {
-    settings = { api_token, subscriber_id, base_url, enabled: true };
-  } else if (user_id) {
-    const { rows: userRows } = await pool.query(
-      `SELECT enabled, api_token, subscriber_id, base_url FROM clinicorp_user_settings WHERE user_id = $1`,
-      [user_id]
-    );
-    if (userRows[0]?.enabled && userRows[0]?.api_token && userRows[0]?.subscriber_id) {
-      settings = userRows[0];
+  const tId = await resolveTenantId(pool, tenant_id);
+  const syncKey = `${subscriber_id || 'global'}:${tId}`;
+
+  if (_activeSyncs.has(syncKey)) {
+    const startTime = _activeSyncs.get(syncKey);
+    // Se a sync está rodando há mais de 30 minutos, consideramos que travou e permitimos outra
+    if (Date.now() - startTime < 30 * 60_000) {
+      throw new Error('Já existe uma sincronização em andamento para esta conta. Por favor, aguarde alguns minutos.');
     }
   }
 
-  if (!settings) {
-    settings = await loadSettings(pool, true);
-    if (!settings?.enabled) throw new Error('Clinicorp desabilitado');
-    if (!settings.api_token || !settings.subscriber_id) {
-      throw new Error('Clinicorp: api_token e subscriber_id são obrigatórios');
+  _activeSyncs.set(syncKey, Date.now());
+
+  try {
+    // Se passarmos credenciais explícitas (ex: manual sync com per-user settings), as usamos.
+    // Caso contrário, tenta carregar as do usuário específico ou as globais.
+    let settings;
+    if (api_token && subscriber_id) {
+      settings = { api_token, subscriber_id, base_url, enabled: true };
+    } else if (user_id) {
+      const { rows: userRows } = await pool.query(
+        `SELECT enabled, api_token, subscriber_id, base_url FROM clinicorp_user_settings WHERE user_id = $1`,
+        [user_id]
+      );
+      if (userRows[0]?.enabled && userRows[0]?.api_token && userRows[0]?.subscriber_id) {
+        settings = userRows[0];
+      }
     }
-  }
 
-  const today = new Date();
-  const fromDate = from || new Date(today.getTime() - 30 * 86400_000).toISOString().slice(0, 10);
-  const toDate = to || new Date(today.getTime() + 60 * 86400_000).toISOString().slice(0, 10);
-  
-  // AGENDA: apenas datas FUTURAS (a partir de amanhã) conforme solicitado pelo usuário
-  const apptFromDate = apptFrom || today.toISOString().slice(0, 10); // Sincroniza a partir de HOJE para garantir que os dados apareçam no sistema
-  const apptToDate = apptTo || new Date(today.getTime() + 365 * 86400_000).toISOString().slice(0, 10);
-  
-  // ORÇAMENTOS: janela ampla para garantir que orçamentos antigos e futuros sejam capturados
-  const estFromDate = estFrom || from || new Date(today.getTime() - 365 * 86400_000).toISOString().slice(0, 10);
-  const estToDate = estTo || to || new Date(today.getTime() + 365 * 86400_000).toISOString().slice(0, 10);
+    if (!settings) {
+      settings = await loadSettings(pool, true);
+      if (!settings?.enabled) throw new Error('Clinicorp desabilitado');
+      if (!settings.api_token || !settings.subscriber_id) {
+        throw new Error('Clinicorp: api_token e subscriber_id são obrigatórios');
+      }
+    }
 
-  const summary = { clinics: 0, professionals: 0, patients: 0, chairs: 0, categories: 0, specialties: 0, appointments: 0, estimates: 0, invoices: 0, payments: 0, cashflow: 0, evolutions: 0, documents: 0 };
+    const today = new Date();
+    const fromDate = from || new Date(today.getTime() - 15 * 86400_000).toISOString().slice(0, 10);
+    const toDate = to || new Date(today.getTime() + 30 * 86400_000).toISOString().slice(0, 10);
+    
+    // AGENDA: Reduzido para 60 dias (estava 365) para evitar 429 e excesso de chamadas desnecessárias
+    const apptFromDate = apptFrom || today.toISOString().slice(0, 10);
+    const apptToDate = apptTo || new Date(today.getTime() + 60 * 86400_000).toISOString().slice(0, 10);
+    
+    // ORÇAMENTOS: janela de 90 dias por padrão
+    const estFromDate = estFrom || from || new Date(today.getTime() - 45 * 86400_000).toISOString().slice(0, 10);
+    const estToDate = estTo || to || new Date(today.getTime() + 45 * 86400_000).toISOString().slice(0, 10);
+
+    const summary = { clinics: 0, professionals: 0, patients: 0, chairs: 0, categories: 0, specialties: 0, appointments: 0, estimates: 0, invoices: 0, payments: 0, cashflow: 0, evolutions: 0, documents: 0 };
+
   const errors = [];
 
   // Backfill tenant_id em registros antigos vindos do Clinicorp (criados antes do fix)
@@ -1512,7 +1535,9 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     // duplicar todas as chamadas com a versão "global" (que ANTES rodava
     // antes do loop por clínica e dobrava o consumo da API).
     if (clinics.length === 0) {
+      console.warn('[clinicorp sync] nenhuma clínica encontrada localmente, tentando busca global de agendamentos');
       for (const r of ranges) {
+
         try {
           const list = await clinicorpApi.listAppointments(settings, r.from, r.to);
           await processAppts(list);
@@ -1810,8 +1835,12 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     // Desativado re-projeção final forçada em massa
   } catch (e) { console.error('[clinicorp sync] final forced projection', e.message); }
 
-  return { status, summary, errors, from: fromDate, to: toDate };
+    return { status, summary, errors, from: fromDate, to: toDate };
+  } finally {
+    _activeSyncs.delete(syncKey);
+  }
 }
+
 
 
 /**
