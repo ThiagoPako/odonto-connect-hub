@@ -36,6 +36,7 @@ export function ClinicorpUserCredentials() {
   } | null>(null);
   const pollingRef = useRef(false);
   const [cooldown, setCooldown] = useState(0);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   useEffect(() => {
     let timer: any;
