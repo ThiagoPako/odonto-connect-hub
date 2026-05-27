@@ -12,13 +12,13 @@ import { supabase } from "@/integrations/supabase/client";
 // Lovable preview (lovableproject.com / lovable.app) doesn't proxy /api to the VPS,
 // so we must hit the absolute VPS URL there. Only localhost uses the local proxy.
 const VPS_API_BASE = (() => {
-  if (typeof window === 'undefined') return 'https://odontoconnect.tech/api';
+  if (typeof window === 'undefined') return 'https://backend.odontoconnect.tech/api';
   const host = window.location.hostname;
   if (host === 'localhost' || host === '127.0.0.1') return '/api';
   if (host.includes('lovableproject.com') || host.includes('lovable.app') || host.includes('lovable.dev')) {
-    return 'https://odontoconnect.tech/api';
+    return 'https://backend.odontoconnect.tech/api';
   }
-  return '/api';
+  return 'https://backend.odontoconnect.tech/api';
 })();
 const TOKEN_KEY = 'odonto_jwt'; // legacy — mantido só para cleanup
 

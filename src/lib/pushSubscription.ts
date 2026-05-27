@@ -5,7 +5,7 @@
 
 import { supabase } from "@/integrations/supabase/client";
 
-const VPS_API_BASE = 'https://odontoconnect.tech/api';
+const VPS_API_BASE = 'https://backend.odontoconnect.tech/api';
 
 // VAPID public key — must match the one generated on the server
 let vapidPublicKey: string | null = null;
