@@ -3,13 +3,13 @@
  */
 
 const VPS_API_BASE = (() => {
-  if (typeof window === 'undefined') return 'https://odontoconnect.tech/api';
+  if (typeof window === 'undefined') return 'https://backend.odontoconnect.tech/api';
   const host = window.location.hostname;
   if (host === 'localhost' || host === '127.0.0.1') return '/api';
   if (host.includes('lovableproject.com') || host.includes('lovable.app') || host.includes('lovable.dev')) {
-    return 'https://odontoconnect.tech/api';
+    return 'https://backend.odontoconnect.tech/api';
   }
-  return '/api';
+  return 'https://backend.odontoconnect.tech/api';
 })();
 
 const API_BASE = `${VPS_API_BASE}/clinicorp`;
