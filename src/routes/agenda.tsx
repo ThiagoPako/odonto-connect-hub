@@ -237,6 +237,26 @@ function AgendaPage() {
                 </SelectContent>
               </Select>
             </div>
+            <Button 
+              size="sm" 
+              variant="outline" 
+              className="rounded-xl glass-card text-[11px] font-bold uppercase tracking-wider" 
+              onClick={handleSyncClinicorp} 
+              disabled={isSyncing}
+            >
+              <Database className={cn("h-4 w-4 mr-2 text-primary", isSyncing && "animate-spin")} />
+              Sincronizar
+            </Button>
+            <Button 
+              size="sm" 
+              variant="outline" 
+              className="rounded-xl glass-card text-[11px] font-bold uppercase tracking-wider" 
+              onClick={handleReproject} 
+              disabled={isReprojecting}
+            >
+              <Send className={cn("h-4 w-4 mr-2 text-primary", isReprojecting && "animate-pulse")} />
+              Enviar Dados
+            </Button>
             <Button size="sm" variant="outline" className="rounded-xl glass-card hover:bg-primary/10 transition-colors" onClick={loadAppointments} disabled={loading}>
               <RefreshCw className={`h-4 w-4 text-primary ${loading ? "animate-spin" : ""}`} />
             </Button>
