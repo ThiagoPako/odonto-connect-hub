@@ -322,22 +322,27 @@ export function ClinicorpPanel() {
         </p>
 
         <div className="flex flex-wrap gap-2 pt-2">
-
           <Button
-            variant="outline"
+            variant="default"
+            className="bg-primary hover:bg-primary/90 text-white font-bold shadow-md"
             onClick={async () => {
+              const loadingToast = toast.loading("Enviando dados para Pacientes e Agendas...");
               try {
                 const r = await clinicorpApi.reproject();
-                toast.success(`Reprojetado: ${r.patients} pacientes, ${r.appointments} agendamentos no CRM/Agenda`);
+                toast.dismiss(loadingToast);
+                toast.success(`Dados enviados com sucesso: ${r.patients} pacientes e ${r.appointments} agendamentos sincronizados.`);
+                await load();
               } catch (e) {
-                toast.error(`Falha ao reprojetar: ${(e as Error).message}`);
+                toast.dismiss(loadingToast);
+                toast.error(`Falha ao enviar dados: ${(e as Error).message}`);
               }
             }}
             disabled={!settings?.enabled}
           >
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Reprojetar no CRM/Agenda
+            <PlayCircle className="h-4 w-4 mr-2" />
+            Enviar dados
           </Button>
+
           <Button
             variant="outline"
             onClick={async () => {
@@ -404,6 +409,32 @@ export function ClinicorpPanel() {
                   </div>
                 ))}
               </div>
+
+              {syncStatus?.completed && (
+                <div className="pt-2 animate-in zoom-in-95 duration-300">
+                  <Button
+                    className="w-full bg-primary hover:bg-primary/90 text-white font-bold h-12 shadow-lg group"
+                    onClick={async () => {
+                      const loadingToast = toast.loading("Enviando registros para o sistema principal...");
+                      try {
+                        const r = await clinicorpApi.reproject();
+                        toast.dismiss(loadingToast);
+                        toast.success(`Dados enviados com sucesso: ${r.patients} pacientes e ${r.appointments} agendamentos sincronizados.`);
+                      } catch (e) {
+                        toast.dismiss(loadingToast);
+                        toast.error(`Erro ao enviar: ${(e as Error).message}`);
+                      }
+                    }}
+                  >
+                    <PlayCircle className="h-5 w-5 mr-2 group-hover:scale-110 transition-transform" />
+                    Enviar dados encontrados para Pacientes e Agendas
+                  </Button>
+                  <p className="text-[10px] text-center text-muted-foreground mt-2 px-4">
+                    Isso copiará os {syncStatus.summary.patients || 0} pacientes e {syncStatus.summary.appointments || 0} agendamentos encontrados no espelho para os módulos de Pacientes e Agenda do OdontoConnect.
+                  </p>
+                </div>
+              )}
+
 
               {syncStatus?.errors.length ? (
                 <div className="rounded-lg bg-destructive/5 border border-destructive/20 p-3">

@@ -129,6 +129,26 @@ export function ClinicorpMirrorAgenda({ refreshTrigger = 0 }: { refreshTrigger?:
               ))}
             </SelectContent>
           </Select>
+
+          <Button 
+            size="sm" 
+            variant="default" 
+            className="bg-primary hover:bg-primary/90 text-white font-bold gap-2"
+            onClick={async () => {
+              const loadingToast = toast.loading("Sincronizando espelho com a agenda principal...");
+              try {
+                const r = await clinicorpApi.reproject();
+                toast.dismiss(loadingToast);
+                toast.success(`Sucesso! ${r.appointments} agendamentos e ${r.patients} pacientes enviados.`);
+              } catch (e: any) {
+                toast.dismiss(loadingToast);
+                toast.error(e.message || "Erro ao enviar dados");
+              }
+            }}
+          >
+            <PlayCircle className="h-4 w-4" />
+            Enviar dados
+          </Button>
         </div>
       </div>
 
