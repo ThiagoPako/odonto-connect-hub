@@ -413,7 +413,7 @@ async function upsertClinic(pool, c, tenantId = null) {
 }
 
 async function upsertProfessional(pool, p, tenantId = null) {
-  const id = p.id ?? p.Id ?? p.UserId ?? p.PersonId ?? null;
+  const id = p.id ?? p.Id ?? p.UserId ?? p.PersonId ?? p.Professional_PersonId ?? p.ProfessionalPersonId ?? p.ProfessionalId ?? p.Dentist_PersonId ?? p.DentistId ?? null;
   if (!id) return;
   const tId = await resolveTenantId(pool, tenantId);
   // A API Clinicorp retorna o nome em diversos campos dependendo da versão/endpoint
