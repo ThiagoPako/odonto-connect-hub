@@ -190,7 +190,7 @@ export const clinicorpApi = {
   listChairs: () => req<Array<Record<string, unknown>>>('/chairs'),
   listWebhookEvents: (limit = 50) => req<ClinicorpWebhookEvent[]>(`/webhook-events?limit=${limit}`),
   getWebhookEvent: (id: number) => req<ClinicorpWebhookEvent & { payload: unknown; headers: unknown; ip: string }>(`/webhook-events/${id}`),
-  reproject: () => req<{ ok: true; patients: number; appointments: number }>('/reproject', { method: 'POST' }),
+  reproject: () => req<{ ok: true; patients: number; appointments: number; professionals: number }>('/reproject', { method: 'POST' }),
   listOverrides: () => req<ClinicorpOverride[]>('/overrides'),
   upsertOverride: (payload: Partial<Pick<ClinicorpOverride, 'scope_type' | 'scope_id' | 'keep_local' | 'conflict_strategy' | 'note'>> & { scope_label?: string }) =>
     req<{ ok: true; override: ClinicorpOverride }>('/overrides', { method: 'PUT', body: JSON.stringify(payload) }),

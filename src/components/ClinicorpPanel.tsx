@@ -330,7 +330,7 @@ export function ClinicorpPanel() {
               try {
                 const r = await clinicorpApi.reproject();
                 toast.dismiss(loadingToast);
-                toast.success(`Dados enviados com sucesso: ${r.patients} pacientes e ${r.appointments} agendamentos sincronizados.`);
+                toast.success(`Dados enviados com sucesso: ${r.patients} pacientes, ${r.appointments} agendamentos e ${r.professionals} profissionais sincronizados.`);
                 await load();
               } catch (e) {
                 toast.dismiss(loadingToast);

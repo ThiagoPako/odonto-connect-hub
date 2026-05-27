@@ -3,15 +3,17 @@ import { useEffect, useMemo, useState } from "react";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, ChevronLeft, ChevronRight, Settings, RefreshCw, Clock } from "lucide-react";
+import { Plus, ChevronLeft, ChevronRight, Settings, RefreshCw, Clock, Database, Send } from "lucide-react";
 import { toast } from "sonner";
 import { agendaApi, dentistasApi, clinicaApi, type AgendamentoVPS, type ClinicaConfig, VPS_API_BASE } from "@/lib/vpsApi";
+import { clinicorpApi } from "@/lib/clinicorpApi";
 import { supabase } from "@/integrations/supabase/client";
 import { AgendaMiniCalendar } from "@/components/agenda/AgendaMiniCalendar";
 import { AgendaProfessionalsList } from "@/components/agenda/AgendaProfessionalsList";
 import { AgendaGrid } from "@/components/agenda/AgendaGrid";
 import { NovoAgendamentoModal } from "@/components/agenda/NovoAgendamentoModal";
 import { AgendamentoPopover } from "@/components/agenda/AgendamentoPopover";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/agenda")({
   ssr: false,
@@ -40,6 +42,8 @@ function AgendaPage() {
   const [showNovo, setShowNovo] = useState(false);
   const [novoDefaults, setNovoDefaults] = useState<{ hora?: string; dentistaId?: string }>({});
   const [popoverApt, setPopoverApt] = useState<AgendamentoVPS | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [isReprojecting, setIsReprojecting] = useState(false);
 
   // Load profs + config
   useEffect(() => {
@@ -171,6 +175,35 @@ function AgendaPage() {
   const goNext = () => { const d = new Date(currentDate); d.setDate(d.getDate() + 1); setCurrentDate(d); };
   const goToday = () => setCurrentDate(new Date());
 
+  const handleSyncClinicorp = async () => {
+    setIsSyncing(true);
+    const toastId = toast.loading("Sincronizando com Clinicorp...");
+    try {
+      await clinicorpApi.syncMyNow({ force_metadata: true });
+      toast.success("Sincronização iniciada em segundo plano!", { id: toastId });
+    } catch (err: any) {
+      toast.error("Erro ao sincronizar: " + err.message, { id: toastId });
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const handleReproject = async () => {
+    setIsReprojecting(true);
+    const toastId = toast.loading("Enviando dados para Agenda e Pacientes...");
+    try {
+      const result = await clinicorpApi.reproject();
+      toast.success(`Dados enviados! ${result.appointments} agendamentos, ${result.patients} pacientes e ${result.professionals} profissionais sincronizados.`, { id: toastId });
+      loadAppointments();
+      const { data } = await dentistasApi.list();
+      if (Array.isArray(data)) setProfs(data.filter(p => p.id));
+    } catch (err: any) {
+      toast.error("Erro ao enviar dados: " + err.message, { id: toastId });
+    } finally {
+      setIsReprojecting(false);
+    }
+  };
+
   return (
     <div className="flex-1 flex flex-col min-h-screen bg-background/50 animate-fade-in">
       <DashboardHeader title="Agenda" />
@@ -205,6 +238,26 @@ function AgendaPage() {
                 </SelectContent>
               </Select>
             </div>
+            <Button 
+              size="sm" 
+              variant="outline" 
+              className="rounded-xl glass-card text-[11px] font-bold uppercase tracking-wider" 
+              onClick={handleSyncClinicorp} 
+              disabled={isSyncing}
+            >
+              <Database className={cn("h-4 w-4 mr-2 text-primary", isSyncing && "animate-spin")} />
+              Sincronizar
+            </Button>
+            <Button 
+              size="sm" 
+              variant="outline" 
+              className="rounded-xl glass-card text-[11px] font-bold uppercase tracking-wider" 
+              onClick={handleReproject} 
+              disabled={isReprojecting}
+            >
+              <Send className={cn("h-4 w-4 mr-2 text-primary", isReprojecting && "animate-pulse")} />
+              Enviar Dados
+            </Button>
             <Button size="sm" variant="outline" className="rounded-xl glass-card hover:bg-primary/10 transition-colors" onClick={loadAppointments} disabled={loading}>
               <RefreshCw className={`h-4 w-4 text-primary ${loading ? "animate-spin" : ""}`} />
             </Button>
