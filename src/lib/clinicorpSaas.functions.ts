@@ -538,8 +538,8 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
       const appointmentUpserts = [];
       for (const a of allAppts) {
         const apId = String(pickFirst(a, 'Id', 'id', 'AppointmentId', 'AppointmentID', 'Appointment_Id', 'appointment_id') ?? '');
-        const apDate = pickFirst(a, 'Date', 'date', 'AppointmentDate', 'Appointment_Date', 'start_date', 'data', 'Data');
-        const apTime = pickFirst(a, 'FromTime', 'from_time', 'StartTime', 'time', 'Time', 'start_time', 'inicio', 'Inicio', 'from', 'From');
+        const apDate = pickFirst(a, 'Date', 'date', 'AppointmentDate', 'Appointment_Date', 'start_date', 'data', 'Data', 'AtomicDate');
+        const apTime = pickFirst(a, 'FromTime', 'fromTime', 'from_time', 'StartTime', 'time', 'Time', 'start_time', 'inicio', 'Inicio', 'from', 'From');
         
         if (!apId || !apDate || !apTime) {
           if (allAppts.indexOf(a) === 0) {
