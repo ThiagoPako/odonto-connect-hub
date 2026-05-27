@@ -56,18 +56,16 @@ let _tenantCache = null;
 let _tenantCacheAt = 0;
 async function resolveTenantId(pool, manualId = null) {
   if (manualId) return manualId;
-  const now = Date.now();
-  if (_tenantCache && now - _tenantCacheAt < 10_000) return _tenantCache;
+  // REMOVIDO CACHE GLOBAL: Em um sistema multi-tenant, o fallback não deve ser estático
+  // se diferentes usuários chamam a API. O ideal é que o caller SEMPRE passe o tenant_id.
   try {
     const { rows } = await pool.query(
       `SELECT tenant_id FROM profiles WHERE role = 'admin' ORDER BY created_at ASC LIMIT 1`
     );
-    _tenantCache = rows[0]?.tenant_id || DEFAULT_TENANT_ID;
+    return rows[0]?.tenant_id || DEFAULT_TENANT_ID;
   } catch {
-    _tenantCache = DEFAULT_TENANT_ID;
+    return DEFAULT_TENANT_ID;
   }
-  _tenantCacheAt = now;
-  return _tenantCache;
 }
 
 function invalidateSettings() {
@@ -724,14 +722,19 @@ async function ensureLocalPatient(pool, cpId, fallback = {}, tenantId = null) {
 }
 
 async function ensureLocalProfessional(pool, cpProfId, fallbackName = null, tenantId = null) {
-  if (!cpProfId) return null;
+  if (!cpProfId) {
+    console.warn('[clinicorp] ensureLocalProfessional: cpProfId is missing');
+    return null;
+  }
   const tId = await resolveTenantId(pool, tenantId);
   const cleanFallback = (fallbackName || '').toString().trim() || null;
   const found = await pool.query(`SELECT id, nome, tenant_id FROM dentistas WHERE clinicorp_professional_id=$1 LIMIT 1`, [cpProfId]);
+  
   if (found.rows[0]) {
-    // Migra para o tenant atual se estiver NULL ou em outro tenant — garante visibilidade na agenda
+    // Migra para o tenant atual se estiver em outro tenant — garante visibilidade na agenda
     if (String(found.rows[0].tenant_id || '') !== String(tId)) {
       try {
+        console.log(`[clinicorp] migrating professional ${cpProfId} from tenant ${found.rows[0].tenant_id} to ${tId}`);
         await pool.query(`UPDATE dentistas SET tenant_id=$1, updated_at=NOW() WHERE id=$2`, [tId, found.rows[0].id]);
       } catch (e) { console.warn('[clinicorp] dentista tenant migrate fail', e.message); }
     }
@@ -1342,11 +1345,13 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
   // Backfill tenant_id em registros antigos vindos do Clinicorp (criados antes do fix)
   try {
     const tId = await resolveTenantId(pool, tenant_id);
-    await pool.query(`UPDATE dentistas SET tenant_id=$1 WHERE tenant_id IS NULL AND clinicorp_professional_id IS NOT NULL`, [tId]);
-    await pool.query(`UPDATE pacientes SET tenant_id=$1 WHERE tenant_id IS NULL AND clinicorp_patient_id IS NOT NULL`, [tId]);
-    await pool.query(`UPDATE agendamentos SET tenant_id=$1 WHERE tenant_id IS NULL AND clinicorp_appointment_id IS NOT NULL`, [tId]);
-    await pool.query(`UPDATE crm_leads SET tenant_id=$1 WHERE tenant_id IS NULL AND (clinicorp_patient_id IS NOT NULL OR origem='clinicorp')`, [tId]);
-    await pool.query(`UPDATE orcamentos SET tenant_id=$1 WHERE tenant_id IS NULL AND clinicorp_estimate_id IS NOT NULL`, [tId]);
+    if (tId) {
+      await pool.query(`UPDATE dentistas SET tenant_id=$1 WHERE tenant_id IS NULL AND clinicorp_professional_id IS NOT NULL`, [tId]);
+      await pool.query(`UPDATE pacientes SET tenant_id=$1 WHERE tenant_id IS NULL AND clinicorp_patient_id IS NOT NULL`, [tId]);
+      await pool.query(`UPDATE agendamentos SET tenant_id=$1 WHERE tenant_id IS NULL AND clinicorp_appointment_id IS NOT NULL`, [tId]);
+      await pool.query(`UPDATE crm_leads SET tenant_id=$1 WHERE tenant_id IS NULL AND (clinicorp_patient_id IS NOT NULL OR origem='clinicorp')`, [tId]);
+      await pool.query(`UPDATE orcamentos SET tenant_id=$1 WHERE tenant_id IS NULL AND clinicorp_estimate_id IS NOT NULL`, [tId]);
+    }
   } catch (e) { console.error('[clinicorp sync] tenant backfill', e.message); }
 
   // Garante que os registros recentes sejam projetados (espelhamento forçado)
@@ -2240,10 +2245,12 @@ export function registerClinicorp(app, pool) {
   // ── Manual sync ──────────────────────────────────────────────
   app.post('/api/clinicorp/sync', async (req, res) => {
     try {
+      const tId = await tenantOf(req);
       const result = await runFullSync(pool, { 
         from: req.body?.from, 
         to: req.body?.to,
-        force_metadata: req.body?.force_metadata === true 
+        force_metadata: req.body?.force_metadata === true,
+        tenant_id: tId
       });
       res.json(result);
     } catch (e) {
@@ -2252,10 +2259,12 @@ export function registerClinicorp(app, pool) {
   });
 
   // ── Forçar reconciliação agora (reseta next_sync_at) ─────────
-  app.post('/api/clinicorp/reconcile', async (_req, res) => {
+  app.post('/api/clinicorp/reconcile', async (req, res) => {
     try {
+      const tId = await tenantOf(req);
       await pool.query(`UPDATE clinicorp_settings SET next_sync_at = NOW(), sync_lock_until = NULL WHERE id = 1`);
       invalidateSettings();
+      // O reconciliationTick global ainda é global, mas o manual sync é preferível
       const r = await reconciliationTick(pool);
       res.json(r);
     } catch (e) { res.status(500).json({ error: e.message }); }
