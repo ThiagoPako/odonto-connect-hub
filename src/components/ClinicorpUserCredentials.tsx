@@ -441,16 +441,28 @@ export function ClinicorpUserCredentials() {
           <Button variant="ghost" size="sm" onClick={remove} className="text-destructive hover:text-destructive" disabled={!settings?.has_api_token && !settings?.enabled}>
             <Trash2 className="h-4 w-4 mr-1" /> Remover credenciais
           </Button>
-          <div className="flex items-center gap-2">
-            <Button variant="default" onClick={syncNow} disabled={syncing || !settings?.has_api_token || !settings?.enabled}>
-              {syncing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCcw className="h-4 w-4 mr-2" />}
-              Sincronizar dados agora
+          <div className="flex flex-wrap items-center gap-2">
+            <Button 
+              variant="outline" 
+              onClick={testConnection} 
+              disabled={testing || saving || cooldown > 0}
+            >
+              {testing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : cooldown > 0 ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : <PlugZap className="h-4 w-4 mr-2" />}
+              {cooldown > 0 ? `Aguarde ${cooldown}s` : "Testar conexão"}
             </Button>
-            <Button variant="outline" onClick={testConnection} disabled={testing || saving}>
-              {testing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <PlugZap className="h-4 w-4 mr-2" />}
-              Testar conexão
+            <Button 
+              variant="default" 
+              onClick={syncNow} 
+              disabled={syncing || !settings?.has_api_token || !settings?.enabled || cooldown > 0}
+              className="bg-primary hover:bg-primary/90 shadow-lg shadow-primary/20"
+            >
+              {syncing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : cooldown > 0 ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCcw className="h-4 w-4 mr-2" />}
+              {cooldown > 0 ? `Aguarde ${cooldown}s (Rate Limit)` : (syncing ? "Sincronizando..." : "Sincronizar dados agora")}
             </Button>
-            <Button onClick={save} disabled={saving || testing}>
+            <Button 
+              onClick={save} 
+              disabled={saving || testing || cooldown > 0}
+            >
               {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Salvar credenciais
             </Button>
           </div>
