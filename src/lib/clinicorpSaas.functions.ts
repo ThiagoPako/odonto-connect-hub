@@ -531,7 +531,7 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
       // 4. Pacientes — Backfill a partir dos agendamentos
       const patientSeeds = new Map<string, { name?: string; phone?: string; email?: string; cpf?: string; sex?: string; birthDate?: string }>();
       for (const a of allAppts) {
-        const pid = String(pickFirst(a, 'PatientId', 'Patient_PersonId', 'PatientPersonId', 'Patient_Id', 'patient_id', 'id_paciente', 'Patient_Id') ?? a?.Patient?.Id ?? a?.Patient?.id ?? '');
+        const pid = String(pickFirst(a, 'PatientId', 'Patient_PersonId', 'PatientPersonId', 'PersonId', 'Person_Id', 'Patient_Id', 'patient_id', 'id_paciente') ?? a?.Patient?.Id ?? a?.Patient?.id ?? a?.Patient?.PersonId ?? '');
         if (!pid) continue;
         if (!patientSeeds.has(pid)) {
           patientSeeds.set(pid, {
