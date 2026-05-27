@@ -56,18 +56,16 @@ let _tenantCache = null;
 let _tenantCacheAt = 0;
 async function resolveTenantId(pool, manualId = null) {
   if (manualId) return manualId;
-  const now = Date.now();
-  if (_tenantCache && now - _tenantCacheAt < 10_000) return _tenantCache;
+  // REMOVIDO CACHE GLOBAL: Em um sistema multi-tenant, o fallback não deve ser estático
+  // se diferentes usuários chamam a API. O ideal é que o caller SEMPRE passe o tenant_id.
   try {
     const { rows } = await pool.query(
       `SELECT tenant_id FROM profiles WHERE role = 'admin' ORDER BY created_at ASC LIMIT 1`
     );
-    _tenantCache = rows[0]?.tenant_id || DEFAULT_TENANT_ID;
+    return rows[0]?.tenant_id || DEFAULT_TENANT_ID;
   } catch {
-    _tenantCache = DEFAULT_TENANT_ID;
+    return DEFAULT_TENANT_ID;
   }
-  _tenantCacheAt = now;
-  return _tenantCache;
 }
 
 function invalidateSettings() {
