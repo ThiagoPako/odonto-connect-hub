@@ -2285,13 +2285,25 @@ export function registerClinicorp(app, pool) {
   app.post('/api/clinicorp/sync', async (req, res) => {
     try {
       const tId = await tenantOf(req);
-      const result = await runFullSync(pool, { 
-        from: req.body?.from, 
+      const params = {
+        from: req.body?.from,
         to: req.body?.to,
         force_metadata: req.body?.force_metadata === true,
-        tenant_id: tId
+        tenant_id: tId,
+      };
+      // Executa em background para evitar 504 do nginx em sincronizações longas.
+      // O frontend acompanha o progresso via GET /api/clinicorp/settings (last_sync_status / sync_progress).
+      setImmediate(() => {
+        runFullSync(pool, params).catch((err) => {
+          console.error('[clinicorp sync] background error:', err?.message || err);
+        });
       });
-      res.json(result);
+      res.status(202).json({
+        status: 'accepted',
+        message: 'Sincronização iniciada em segundo plano. Acompanhe o status nesta tela.',
+        from: params.from || null,
+        to: params.to || null,
+      });
     } catch (e) {
       res.status(500).json({ error: e.message });
     }
