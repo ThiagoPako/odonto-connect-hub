@@ -263,12 +263,13 @@ async function _clinicorpFetchRaw(settings, pathName, { method = 'GET', query = 
 // ─── High-level API helpers ───────────────────────────────────
 export const clinicorpApi = {
   listUsers: async (s) => {
-    const endpoints = ['/security/list_users', '/security/user/list', '/user/list'];
+    // Endpoint OFICIAL conforme documentação: /professional/list_all_professionals
+    const endpoints = ['/professional/list_all_professionals', '/security/list_users', '/user/list'];
     for (const ep of endpoints) {
       try {
         const r = await clinicorpFetch(s, ep);
         const list = Array.isArray(r) ? r
-          : (r?.Results || r?.Users || r?.Items || r?.data || r?.users || []);
+          : (r?.Results || r?.Professionals || r?.Users || r?.Items || r?.data || r?.users || []);
         if (Array.isArray(list) && list.length > 0) return list;
       } catch (e) { /* tenta o próximo */ }
     }
@@ -348,7 +349,10 @@ export const clinicorpApi = {
   getAvailableDays: (s, query) => clinicorpFetch(s, '/appointment/get_avaliable_days', { query }),
   getAvailableTimesCalendar: (s, query) => clinicorpFetch(s, '/appointment/get_avaliable_times_calendar', { query }),
   getPatient: (s, id) => clinicorpFetch(s, '/patient/get', { query: { id } }),
-  listPatients: (s) => clinicorpFetch(s, '/patient/list'),
+  // ATENÇÃO: A Clinicorp NÃO expõe endpoint de listagem em massa de pacientes.
+  // Apenas /patient/get (por id), /patient/birthdays, /patient/list_appointments, /patient/list_estimates.
+  // Pacientes são populados via backfill a partir de agendamentos.
+  listPatients: async () => { return []; },
   patientBirthdays: (s, query) => clinicorpFetch(s, '/patient/birthdays', { query }),
   createPatient: (s, body) => clinicorpFetch(s, '/patient/create', { method: 'POST', body }),
   updatePatient: (s, id, body) => clinicorpFetch(s, `/patient/update/${id}`, { method: 'PUT', body }),
@@ -360,6 +364,12 @@ export const clinicorpApi = {
   listInvoices: (s, { from, to, clinic_id } = {}) => clinicorpFetch(s, '/financial/list_invoices', { query: { from, to, business_id: clinic_id } }),
   listCashFlow: (s, { from, to, clinic_id } = {}) => clinicorpFetch(s, '/financial/list_cash_flow', { query: { from, to, business_id: clinic_id } }),
   listPayments: (s, { from, to, clinic_id } = {}) => clinicorpFetch(s, '/financial/list_payments', { query: { from, to, business_id: clinic_id } }),
+  listFinancialSummary: (s, { from, to, clinic_id } = {}) => clinicorpFetch(s, '/financial/list_summary', { query: { from, to, business_id: clinic_id } }),
+  listFinancialReceipts: (s, { from, to, clinic_id } = {}) => clinicorpFetch(s, '/financial/list_receipt', { query: { from, to, business_id: clinic_id } }),
+  averageInstallments: (s, { from, to, clinic_id } = {}) => clinicorpFetch(s, '/financial/average_installments', { query: { from, to, business_id: clinic_id } }),
+  scheduleOccupation: (s, query) => clinicorpFetch(s, '/appointment/schedule_occupation', { query }),
+  appointmentListInfo: (s, query) => clinicorpFetch(s, '/appointment/list_info', { query }),
+  getAppointment: (s, id) => clinicorpFetch(s, '/appointment/get_appointment', { query: { id } }),
   salesEstimatesAndConversion: (s, query) => clinicorpFetch(s, '/sales/estimates_and_conversion', { query }),
   salesExpertiseRevenue: (s, query) => clinicorpFetch(s, '/sales/expertise_revenue', { query }),
   addLead: (s, body) => clinicorpFetch(s, '/crm/add_leads', { method: 'POST', body }),
@@ -403,12 +413,12 @@ async function upsertClinic(pool, c, tenantId = null) {
 }
 
 async function upsertProfessional(pool, p, tenantId = null) {
-  const id = p.id ?? p.Id ?? p.UserId ?? p.PersonId ?? null;
+  const id = p.id ?? p.Id ?? p.UserId ?? p.PersonId ?? p.Professional_PersonId ?? p.ProfessionalPersonId ?? p.ProfessionalId ?? p.Dentist_PersonId ?? p.DentistId ?? null;
   if (!id) return;
   const tId = await resolveTenantId(pool, tenantId);
   // A API Clinicorp retorna o nome em diversos campos dependendo da versão/endpoint
-  const fullName = (p.FullName ?? p.Full_Name ?? p.Name ?? p.PersonName ?? p.UserName ?? p.full_name ?? `Profissional ${id}`).toString().trim();
-  const userName = p.UserName ?? p.Username ?? p.Email ?? null;
+  const fullName = (p.FullName ?? p.Full_Name ?? p.Name ?? p.PersonName ?? p.UserName ?? p.full_name ?? p.Professional_FullName ?? p.ProfessionalName ?? p.Dentist_FullName ?? p.DentistName ?? `Profissional ${id}`).toString().trim();
+  const userName = p.UserName ?? p.Username ?? p.Email ?? p.Login ?? null;
   await pool.query(
     `INSERT INTO clinicorp_professionals (id, tenant_id, full_name, user_name, raw, synced_at)
      VALUES ($1,$2,$3,$4,$5, NOW())
