@@ -1596,6 +1596,49 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     }
     console.log(`[clinicorp sync] appointments processed: ${summary.appointments}, projection failed: ${projectionFailed}`);
 
+    // ─── BACKFILL DIRETO em agendamentos a partir do cache em memória ───
+    // Garante que `dentista_id` seja preenchido mesmo se upsertAppointment falhar
+    // (caso em que clinicorp_appointments fica vazio e o backfill baseado nele não roda).
+    try {
+      const tId = await resolveTenantId(pool, tenant_id);
+      const { rows: orphans } = await pool.query(
+        `SELECT id, clinicorp_appointment_id FROM agendamentos
+          WHERE tenant_id=$1 AND dentista_id IS NULL AND clinicorp_appointment_id IS NOT NULL`,
+        [tId]
+      );
+      let fixed = 0;
+      for (const row of orphans) {
+        const raw = rawByApptId.get(String(row.clinicorp_appointment_id));
+        if (!raw) continue;
+        const cpProfId = pickFirst(raw, 'ProfessionalId', 'Dentist_PersonId', 'DentistPersonId', 'Professional_PersonId', 'ScheduleToId', 'ScheduleTo_PersonId', 'DentistId', 'Dentist_Id', 'professional_id', 'dentist_id') ?? raw.Dentist?.Id ?? raw.Professional?.Id ?? null;
+        if (!cpProfId) continue;
+        const profName = pickFirst(raw, 'ProfessionalName', 'Dentist_FullName', 'Dentist_Name', 'DentistName', 'ScheduleToName', 'Professional_Name', 'professional_name', 'dentist_name') ?? raw.Dentist?.Name ?? raw.Dentist?.FullName ?? null;
+        try {
+          // Garante registro em clinicorp_professionals (espelho)
+          await pool.query(
+            `INSERT INTO clinicorp_professionals (id, tenant_id, full_name, user_name, raw, synced_at)
+             VALUES ($1,$2,$3,NULL,$4,NOW())
+             ON CONFLICT (id, tenant_id) DO UPDATE SET
+               full_name = COALESCE(NULLIF(EXCLUDED.full_name,''), clinicorp_professionals.full_name),
+               synced_at = NOW()`,
+            [String(cpProfId), tId, String(profName || `Profissional ${cpProfId}`).trim(), JSON.stringify({ derived_from: 'agendamento_backfill', id: cpProfId, name: profName })]
+          );
+          const dId = await ensureLocalProfessional(pool, String(cpProfId), profName, tId);
+          if (dId) {
+            await pool.query(`UPDATE agendamentos SET dentista_id=$1, updated_at=NOW() WHERE id=$2`, [dId, row.id]);
+            fixed++;
+          }
+        } catch (e) {
+          console.error('[clinicorp sync] backfill dentista agendamento', row.id, e.message);
+        }
+      }
+      console.log(`[clinicorp sync] backfill dentista_id em agendamentos: ${fixed}/${orphans.length}`);
+      const { rows: pcount } = await pool.query(`SELECT COUNT(*)::int AS c FROM clinicorp_professionals WHERE tenant_id=$1`, [tId]);
+      summary.professionals = pcount[0]?.c || summary.professionals;
+    } catch (e) { console.error('[clinicorp sync] backfill agendamentos→dentista', e.message); }
+
+
+
 
 
     
