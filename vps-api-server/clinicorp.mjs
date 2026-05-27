@@ -1544,16 +1544,27 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
 
     let projectionFailed = 0;
     let sampleLogged = false;
+    // Cache em memória das appointments brutas para backfill posterior de dentista_id
+    const rawByApptId = new Map();
     const processAppts = async (list) => {
       for (const a of (Array.isArray(list) ? list : [])) {
         const id = getAppointmentId(a);
         if (!id || apiIds.has(String(id))) continue;
         apiIds.add(String(id));
+        rawByApptId.set(String(id), a);
         if (!sampleLogged) {
           sampleLogged = true;
-          console.log('[clinicorp sync] sample appointment keys:', Object.keys(a || {}).slice(0, 50));
+          console.log('[clinicorp sync] sample appointment keys:', Object.keys(a || {}).slice(0, 80));
+          console.log('[clinicorp sync] sample picked ids:', {
+            id,
+            Dentist_PersonId: a.Dentist_PersonId,
+            ScheduleToId: a.ScheduleToId,
+            Patient_PersonId: a.Patient_PersonId,
+            Clinic_BusinessId: a.Clinic_BusinessId,
+          });
         }
-        try { await upsertAppointment(pool, a, tenant_id); } catch (e) { console.error('[clinicorp sync] upsertAppointment fail', id, e.message); }
+        try { await upsertAppointment(pool, a, tenant_id); }
+        catch (e) { console.error('[clinicorp sync] upsertAppointment FAIL id=', id, '→', e.message, e.code || '', e.detail || ''); }
         try { await projectAppointmentToLocal(pool, a, id, tenant_id); }
         catch (e) { projectionFailed++; if (projectionFailed <= 3) console.error('[clinicorp sync] projectAppointmentToLocal fail', id, e.message); }
         summary.appointments++;
