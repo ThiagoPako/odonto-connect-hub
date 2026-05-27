@@ -410,6 +410,32 @@ export function ClinicorpPanel() {
                 ))}
               </div>
 
+              {syncStatus?.completed && (
+                <div className="pt-2 animate-in zoom-in-95 duration-300">
+                  <Button
+                    className="w-full bg-primary hover:bg-primary/90 text-white font-bold h-12 shadow-lg group"
+                    onClick={async () => {
+                      const loadingToast = toast.loading("Enviando registros para o sistema principal...");
+                      try {
+                        const r = await clinicorpApi.reproject();
+                        toast.dismiss(loadingToast);
+                        toast.success(`Dados enviados com sucesso: ${r.patients} pacientes e ${r.appointments} agendamentos sincronizados.`);
+                      } catch (e) {
+                        toast.dismiss(loadingToast);
+                        toast.error(`Erro ao enviar: ${(e as Error).message}`);
+                      }
+                    }}
+                  >
+                    <PlayCircle className="h-5 w-5 mr-2 group-hover:scale-110 transition-transform" />
+                    Enviar dados encontrados para Pacientes e Agendas
+                  </Button>
+                  <p className="text-[10px] text-center text-muted-foreground mt-2 px-4">
+                    Isso copiará os {syncStatus.summary.patients || 0} pacientes e {syncStatus.summary.appointments || 0} agendamentos encontrados no espelho para os módulos de Pacientes e Agenda do OdontoConnect.
+                  </p>
+                </div>
+              )}
+
+
               {syncStatus?.errors.length ? (
                 <div className="rounded-lg bg-destructive/5 border border-destructive/20 p-3">
                   <p className="text-xs font-bold text-destructive flex items-center gap-1.5 mb-2">
