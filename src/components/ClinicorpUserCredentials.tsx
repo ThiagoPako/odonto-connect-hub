@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import { Eye, EyeOff, KeyRound, Copy, RefreshCw, Trash2, Loader2, Lock, PlugZap, CheckCircle2, XCircle, AlertCircle, RefreshCcw, Building2, User, Users, CalendarDays } from "lucide-react";
+import { Eye, EyeOff, KeyRound, Copy, RefreshCw, Trash2, Loader2, Lock, PlugZap, CheckCircle2, XCircle, AlertCircle, RefreshCcw, Building2, User, Users, CalendarDays, Settings2, ChevronDown, ChevronUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const DEFAULT_BASE = "https://api.clinicorp.com/rest/v1";
@@ -36,6 +36,7 @@ export function ClinicorpUserCredentials() {
   } | null>(null);
   const pollingRef = useRef(false);
   const [cooldown, setCooldown] = useState(0);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   useEffect(() => {
     let timer: any;
@@ -251,81 +252,120 @@ export function ClinicorpUserCredentials() {
           <Switch id="cc-enabled" checked={enabled} onCheckedChange={setEnabled} />
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2">
-          <div className="space-y-1.5">
+        <div className="grid gap-4 md:grid-cols-12">
+          <div className="md:col-span-4 space-y-1.5">
             <Label htmlFor="cc-sub">ID Central / Usuário API</Label>
-            <Input id="cc-sub" placeholder="Ex.: sua-clinica" value={subscriberId} onChange={(e) => setSubscriberId(e.target.value)} maxLength={128} />
-            <p className="text-xs text-muted-foreground">O campo "Usuário API" exibido no painel da Clinicorp.</p>
+            <div className="relative">
+              <Building2 className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+              <Input 
+                id="cc-sub" 
+                placeholder="Ex.: sua-clinica" 
+                className="pl-9 h-11"
+                value={subscriberId} 
+                onChange={(e) => setSubscriberId(e.target.value)} 
+                maxLength={128} 
+              />
+            </div>
+            <p className="text-[10px] text-muted-foreground px-1">O "Usuário API" do painel Clinicorp.</p>
           </div>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="cc-url">URL base da API</Label>
-            <Input id="cc-url" type="url" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder={DEFAULT_BASE} />
-            <p className="text-xs text-muted-foreground">Padrão: {DEFAULT_BASE}</p>
-          </div>
-        </div>
-
-        <div className="space-y-1.5">
-          <Label htmlFor="cc-token">Token API</Label>
-          <div className="flex gap-2">
-            <div className="relative flex-1">
+          <div className="md:col-span-8 space-y-1.5">
+            <Label htmlFor="cc-token">Token API</Label>
+            <div className="relative">
+              <KeyRound className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
               <Input
                 id="cc-token"
                 type={showToken ? "text" : "password"}
+                className="pl-9 pr-10 h-11"
                 value={apiToken}
                 onChange={(e) => setApiToken(e.target.value)}
-                placeholder={settings?.has_api_token ? "•••••••• (já configurado — preencha para substituir)" : "Cole o Token API gerado na Clinicorp"}
+                placeholder={settings?.has_api_token ? "•••••••• (já configurado)" : "Cole o Token API gerado"}
                 autoComplete="off"
               />
-              {apiToken && (apiToken.startsWith('http://') || apiToken.startsWith('https://')) && (
-                <div className="mt-2 p-2 rounded-lg bg-destructive/10 border border-destructive/20 flex items-start gap-2 animate-in fade-in slide-in-from-top-1">
-                  <AlertCircle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
-                  <div className="text-[11px] text-destructive leading-tight font-medium">
-                    Parece que você colou um Link (URL) em vez do Token. 
-                    Remova o link e cole apenas a chave (UUID) gerada na Clinicorp.
-                  </div>
-                </div>
-              )}
-              <button type="button" onClick={() => setShowToken((v) => !v)} className="absolute right-2 top-3 text-muted-foreground hover:text-foreground" aria-label="Mostrar token">
+              <button 
+                type="button" 
+                onClick={() => setShowToken((v) => !v)} 
+                className="absolute right-3 top-3 text-muted-foreground hover:text-foreground" 
+                aria-label="Mostrar token"
+              >
                 {showToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>
             </div>
+            {apiToken && (apiToken.startsWith('http://') || apiToken.startsWith('https://')) && (
+              <div className="mt-2 p-2 rounded-lg bg-destructive/10 border border-destructive/20 flex items-start gap-2 animate-in fade-in slide-in-from-top-1">
+                <AlertCircle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
+                <div className="text-[11px] text-destructive leading-tight font-medium">
+                  Parece que você colou um Link em vez do Token.
+                </div>
+              </div>
+            )}
+            <p className="text-[10px] text-muted-foreground px-1">Criptografado e seguro.</p>
           </div>
-          <p className="text-xs text-muted-foreground">Armazenado criptografado no banco. Nunca aparece no frontend após salvar.</p>
         </div>
 
-        <div className="space-y-1.5">
-          <Label htmlFor="cc-secret">Chave de Segurança do Webhook (Secret)</Label>
-          <div className="flex gap-2">
-            <div className="relative flex-1">
-              <Input
-                id="cc-secret"
-                type={showSecret ? "text" : "password"}
-                value={webhookSecret}
-                onChange={(e) => setWebhookSecret(e.target.value)}
-                placeholder={settings?.has_webhook_secret ? `Atual: ${settings.webhook_secret_preview} (preencha para substituir)` : "Gere um secret e cole na Clinicorp"}
-                autoComplete="off"
-              />
-              <button type="button" onClick={() => setShowSecret((v) => !v)} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" aria-label="Mostrar secret">
-                {showSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-              </button>
-            </div>
-            <Button type="button" variant="outline" size="sm" onClick={() => setWebhookSecret(generateWebhookSecret(40))}>
-              <RefreshCw className="h-3.5 w-3.5 mr-1" /> Gerar
-            </Button>
-          </div>
-          {webhookSecret && (
-            <div className="mt-2 p-2 rounded border border-border/60 bg-muted/30 flex items-center justify-between gap-2">
-              <div className="flex-1 overflow-hidden">
-                <p className="text-[10px] text-muted-foreground font-medium uppercase mb-1">Cole este Endpoint na Clinicorp:</p>
-                <code className="text-xs truncate block">{buildWebhookUrl(webhookSecret)}</code>
+        <div className="pt-2">
+          <button
+            type="button"
+            onClick={() => setShowAdvanced(!showAdvanced)}
+            className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <Settings2 className="h-3.5 w-3.5" />
+            Configurações Avançadas
+            {showAdvanced ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          </button>
+
+          {showAdvanced && (
+            <div className="mt-3 p-4 rounded-lg border border-dashed border-border/60 bg-muted/20 space-y-4 animate-in fade-in slide-in-from-top-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="cc-url" className="text-xs">URL base da API</Label>
+                <Input 
+                  id="cc-url" 
+                  type="url" 
+                  className="h-8 text-xs"
+                  value={baseUrl} 
+                  onChange={(e) => setBaseUrl(e.target.value)} 
+                  placeholder={DEFAULT_BASE} 
+                />
+                <p className="text-[10px] text-muted-foreground">Padrão: {DEFAULT_BASE}. Altere apenas se instruído pelo suporte.</p>
               </div>
-              <Button type="button" variant="ghost" size="sm" onClick={() => copy(buildWebhookUrl(webhookSecret), "URL")}>
-                <Copy className="h-3.5 w-3.5" />
-              </Button>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="cc-secret" className="text-xs">Chave de Segurança do Webhook (Secret)</Label>
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <Input
+                      id="cc-secret"
+                      type={showSecret ? "text" : "password"}
+                      className="h-8 text-xs"
+                      value={webhookSecret}
+                      onChange={(e) => setWebhookSecret(e.target.value)}
+                      placeholder={settings?.has_webhook_secret ? `Atual: ${settings.webhook_secret_preview}` : "Gere um secret"}
+                      autoComplete="off"
+                    />
+                    <button type="button" onClick={() => setShowSecret((v) => !v)} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" aria-label="Mostrar secret">
+                      {showSecret ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                    </button>
+                  </div>
+                  <Button type="button" variant="outline" size="sm" className="h-8 px-2 text-[10px]" onClick={() => setWebhookSecret(generateWebhookSecret(40))}>
+                    <RefreshCw className="h-3 w-3 mr-1" /> Gerar
+                  </Button>
+                </div>
+                {webhookSecret && (
+                  <div className="mt-2 p-2 rounded border border-border/60 bg-background flex items-center justify-between gap-2">
+                    <div className="flex-1 overflow-hidden">
+                      <p className="text-[9px] text-muted-foreground font-medium uppercase mb-0.5">Link para Webhook na Clinicorp:</p>
+                      <code className="text-[10px] truncate block font-mono">{buildWebhookUrl(webhookSecret)}</code>
+                    </div>
+                    <Button type="button" variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => copy(buildWebhookUrl(webhookSecret), "URL")}>
+                      <Copy className="h-3 w-3" />
+                    </Button>
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>
+
 
         {/* Test result panel */}
         {testResult && (
