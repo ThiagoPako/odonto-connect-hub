@@ -450,8 +450,9 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
         
         const dentistUpserts = [];
         for (const d of list) {
-          const id = String(pickFirst(d, 'Id', 'id', 'PersonId', 'Dentist_PersonId', 'DentistId', 'professional_id', 'ProfessionalId', 'dentist_id') ?? '');
-          const nome = String(pickFirst(d, 'FullName', 'Name', 'full_name', 'name', 'professional_name', 'ProfessionalName') ?? '').trim();
+          const id = String(pickFirst(d, 'Id', 'id', 'PersonId', 'Person_Id', 'Dentist_PersonId', 'DentistPersonId', 'Professional_PersonId', 'DentistId', 'professional_id', 'ProfessionalId', 'dentist_id', 'ScheduleToId') ?? '');
+          const nome = String(pickFirst(d, 'FullName', 'Name', 'full_name', 'name', 'professional_name', 'ProfessionalName', 'Dentist_FullName', 'Dentist_Name', 'ScheduleToName') ?? '').trim();
+
           if (!id || !nome) continue;
           dentistUpserts.push({
             tenant_id, nome,
