@@ -366,38 +366,6 @@ export function ClinicorpUserCredentials() {
           )}
         </div>
 
-        <div className="space-y-1.5">
-          <Label htmlFor="cc-secret">Chave de Segurança do Webhook (Secret)</Label>
-          <div className="flex gap-2">
-            <div className="relative flex-1">
-              <Input
-                id="cc-secret"
-                type={showSecret ? "text" : "password"}
-                value={webhookSecret}
-                onChange={(e) => setWebhookSecret(e.target.value)}
-                placeholder={settings?.has_webhook_secret ? `Atual: ${settings.webhook_secret_preview} (preencha para substituir)` : "Gere um secret e cole na Clinicorp"}
-                autoComplete="off"
-              />
-              <button type="button" onClick={() => setShowSecret((v) => !v)} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" aria-label="Mostrar secret">
-                {showSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-              </button>
-            </div>
-            <Button type="button" variant="outline" size="sm" onClick={() => setWebhookSecret(generateWebhookSecret(40))}>
-              <RefreshCw className="h-3.5 w-3.5 mr-1" /> Gerar
-            </Button>
-          </div>
-          {webhookSecret && (
-            <div className="mt-2 p-2 rounded border border-border/60 bg-muted/30 flex items-center justify-between gap-2">
-              <div className="flex-1 overflow-hidden">
-                <p className="text-[10px] text-muted-foreground font-medium uppercase mb-1">Cole este Endpoint na Clinicorp:</p>
-                <code className="text-xs truncate block">{buildWebhookUrl(webhookSecret)}</code>
-              </div>
-              <Button type="button" variant="ghost" size="sm" onClick={() => copy(buildWebhookUrl(webhookSecret), "URL")}>
-                <Copy className="h-3.5 w-3.5" />
-              </Button>
-            </div>
-          )}
-        </div>
 
         {/* Test result panel */}
         {testResult && (
