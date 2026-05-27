@@ -41,6 +41,8 @@ function AgendaPage() {
   const [showNovo, setShowNovo] = useState(false);
   const [novoDefaults, setNovoDefaults] = useState<{ hora?: string; dentistaId?: string }>({});
   const [popoverApt, setPopoverApt] = useState<AgendamentoVPS | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [isReprojecting, setIsReprojecting] = useState(false);
 
   // Load profs + config
   useEffect(() => {
