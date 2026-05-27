@@ -346,7 +346,7 @@ export function ClinicorpUserCredentials() {
                       {showSecret ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
                     </button>
                   </div>
-                  <Button type="button" variant="outline" size="xs" className="h-8 px-2 text-[10px]" onClick={() => setWebhookSecret(generateWebhookSecret(40))}>
+                  <Button type="button" variant="outline" size="sm" className="h-8 px-2 text-[10px]" onClick={() => setWebhookSecret(generateWebhookSecret(40))}>
                     <RefreshCw className="h-3 w-3 mr-1" /> Gerar
                   </Button>
                 </div>
