@@ -485,11 +485,11 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
         if (!patientSeeds.has(pid)) {
           patientSeeds.set(pid, {
             name: pickFirst(a, 'PatientName', 'Patient_FullName', 'Patient_Name', 'PatientFullName', 'patient_name', 'nome_paciente') ?? a?.Patient?.Name ?? a?.Patient?.FullName ?? a?.Patient?.nome,
-            phone: pickFirst(a, 'Patient_MobilePhone', 'PatientMobilePhone', 'Patient_Phone', 'PatientPhone', 'celular_paciente') ?? a?.Patient?.MobilePhone ?? a?.Patient?.celular,
-            email: pickFirst(a, 'Patient_Email', 'PatientEmail', 'email_paciente') ?? a?.Patient?.Email ?? a?.Patient?.email,
-            cpf: pickFirst(a, 'Patient_Cpf', 'PatientCpf', 'Patient_CPF', 'PatientCPF', 'cpf_paciente') ?? a?.Patient?.Cpf ?? a?.Patient?.CPF ?? a?.Patient?.cpf,
-            sex: pickFirst(a, 'Patient_Sex', 'PatientSex', 'Patient_Gender', 'PatientGender', 'sexo_paciente') ?? a?.Patient?.Sex ?? a?.Patient?.Gender ?? a?.Patient?.sexo,
-            birthDate: pickFirst(a, 'Patient_BirthDate', 'PatientBirthDate', 'Patient_BirthDay', 'PatientBirthday', 'data_nascimento_paciente') ?? a?.Patient?.BirthDate ?? a?.Patient?.BirthDay ?? a?.Patient?.data_nascimento,
+            phone: pickFirst(a, 'Patient_MobilePhone', 'PatientMobilePhone', 'Patient_Phone', 'PatientPhone', 'MobilePhone', 'mobile_phone', 'celular_paciente') ?? a?.Patient?.MobilePhone ?? a?.Patient?.celular,
+            email: pickFirst(a, 'Patient_Email', 'PatientEmail', 'Email', 'email', 'email_paciente') ?? a?.Patient?.Email ?? a?.Patient?.email,
+            cpf: pickFirst(a, 'Patient_Cpf', 'PatientCpf', 'Patient_CPF', 'PatientCPF', 'Cpf', 'cpf', 'cpf_paciente') ?? a?.Patient?.Cpf ?? a?.Patient?.CPF ?? a?.Patient?.cpf,
+            sex: pickFirst(a, 'Patient_Sex', 'PatientSex', 'Patient_Gender', 'PatientGender', 'Sex', 'Gender', 'sexo_paciente') ?? a?.Patient?.Sex ?? a?.Patient?.Gender ?? a?.Patient?.sexo,
+            birthDate: pickFirst(a, 'Patient_BirthDate', 'PatientBirthDate', 'Patient_BirthDay', 'PatientBirthday', 'BirthDate', 'BirthDay', 'data_nascimento_paciente') ?? a?.Patient?.BirthDate ?? a?.Patient?.BirthDay ?? a?.Patient?.data_nascimento,
           });
         }
       }
