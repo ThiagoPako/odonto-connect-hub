@@ -2249,10 +2249,24 @@ export function registerClinicorp(app, pool) {
     const startedAt = Date.now();
     let eventId = null;
     try {
-      const settings = await loadSettings(pool);
       const userApi = (req.query.user_api || req.headers['x-user-api'] || '').toString();
-      if (!settings?.webhook_secret || userApi !== settings.webhook_secret) {
-        return res.status(401).json({ error: 'unauthorized' });
+      if (!userApi || userApi.length < 8) {
+        return res.status(401).json({ error: 'unauthorized: missing or invalid user_api' });
+      }
+
+      // Resolvido: busca as configurações do usuário SaaS pelo webhook_secret (user_api)
+      const { rows } = await pool.query(
+        `SELECT s.user_id, s.api_token, s.subscriber_id, s.base_url, p.tenant_id
+         FROM clinicorp_user_settings s
+         JOIN profiles p ON p.id = s.user_id
+         WHERE s.webhook_secret = $1 AND s.enabled = true
+         LIMIT 1`,
+        [userApi]
+      );
+      const settings = rows[0];
+
+      if (!settings) {
+        return res.status(401).json({ error: 'unauthorized: valid subscriber not found for this secret' });
       }
 
       const payload = req.body || {};
@@ -2260,7 +2274,8 @@ export function registerClinicorp(app, pool) {
       const eventType = (event?.event || event?.Event || event?.type || event?.action || 'unknown').toString();
       const externalId = String(event?.id || event?.Id || event?.AppointmentId || event?.Patient_PersonId || event?.TreatmentId || '') || null;
 
-      const webhookTenantId = await resolveTenantId(pool, null);
+      const webhookTenantId = settings.tenant_id;
+
       const ins = await pool.query(
         `INSERT INTO clinicorp_webhook_events (event_type, external_id, status, payload, headers, ip, tenant_id)
          VALUES ($1, $2, 'received', $3, $4, $5, $6) RETURNING id`,
