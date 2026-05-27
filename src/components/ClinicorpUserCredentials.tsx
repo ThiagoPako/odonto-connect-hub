@@ -252,47 +252,85 @@ export function ClinicorpUserCredentials() {
           <Switch id="cc-enabled" checked={enabled} onCheckedChange={setEnabled} />
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="cc-sub">ID Central / Usuário API</Label>
-            <Input id="cc-sub" placeholder="Ex.: sua-clinica" value={subscriberId} onChange={(e) => setSubscriberId(e.target.value)} maxLength={128} />
-            <p className="text-xs text-muted-foreground">O campo "Usuário API" exibido no painel da Clinicorp.</p>
+            <div className="relative">
+              <Building2 className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+              <Input 
+                id="cc-sub" 
+                placeholder="Ex.: sua-clinica" 
+                className="pl-9"
+                value={subscriberId} 
+                onChange={(e) => setSubscriberId(e.target.value)} 
+                maxLength={128} 
+              />
+            </div>
+            <p className="text-[11px] text-muted-foreground">O campo "Usuário API" exibido no painel da Clinicorp.</p>
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="cc-url">URL base da API</Label>
-            <Input id="cc-url" type="url" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder={DEFAULT_BASE} />
-            <p className="text-xs text-muted-foreground">Padrão: {DEFAULT_BASE}</p>
-          </div>
-        </div>
-
-        <div className="space-y-1.5">
-          <Label htmlFor="cc-token">Token API</Label>
-          <div className="flex gap-2">
-            <div className="relative flex-1">
+            <Label htmlFor="cc-token">Token API</Label>
+            <div className="relative">
+              <KeyRound className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
               <Input
                 id="cc-token"
                 type={showToken ? "text" : "password"}
+                className="pl-9 pr-10"
                 value={apiToken}
                 onChange={(e) => setApiToken(e.target.value)}
                 placeholder={settings?.has_api_token ? "•••••••• (já configurado — preencha para substituir)" : "Cole o Token API gerado na Clinicorp"}
                 autoComplete="off"
               />
-              {apiToken && (apiToken.startsWith('http://') || apiToken.startsWith('https://')) && (
-                <div className="mt-2 p-2 rounded-lg bg-destructive/10 border border-destructive/20 flex items-start gap-2 animate-in fade-in slide-in-from-top-1">
-                  <AlertCircle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
-                  <div className="text-[11px] text-destructive leading-tight font-medium">
-                    Parece que você colou um Link (URL) em vez do Token. 
-                    Remova o link e cole apenas a chave (UUID) gerada na Clinicorp.
-                  </div>
-                </div>
-              )}
-              <button type="button" onClick={() => setShowToken((v) => !v)} className="absolute right-2 top-3 text-muted-foreground hover:text-foreground" aria-label="Mostrar token">
+              <button 
+                type="button" 
+                onClick={() => setShowToken((v) => !v)} 
+                className="absolute right-3 top-3 text-muted-foreground hover:text-foreground" 
+                aria-label="Mostrar token"
+              >
                 {showToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>
             </div>
+            {apiToken && (apiToken.startsWith('http://') || apiToken.startsWith('https://')) && (
+              <div className="mt-2 p-2 rounded-lg bg-destructive/10 border border-destructive/20 flex items-start gap-2 animate-in fade-in slide-in-from-top-1">
+                <AlertCircle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
+                <div className="text-[11px] text-destructive leading-tight font-medium">
+                  Parece que você colou um Link (URL) em vez do Token. 
+                  Remova o link e cole apenas a chave (UUID) gerada na Clinicorp.
+                </div>
+              </div>
+            )}
+            <p className="text-[11px] text-muted-foreground">Armazenado criptografado no banco. Nunca aparece no frontend após salvar.</p>
           </div>
-          <p className="text-xs text-muted-foreground">Armazenado criptografado no banco. Nunca aparece no frontend após salvar.</p>
+        </div>
+
+        <div className="pt-2">
+          <button
+            type="button"
+            onClick={() => setShowAdvanced(!showAdvanced)}
+            className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <Settings2 className="h-3.5 w-3.5" />
+            Configurações Avançadas
+            {showAdvanced ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          </button>
+
+          {showAdvanced && (
+            <div className="mt-3 p-4 rounded-lg border border-dashed border-border/60 bg-muted/20 space-y-3 animate-in fade-in slide-in-from-top-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="cc-url" className="text-xs">URL base da API</Label>
+                <Input 
+                  id="cc-url" 
+                  type="url" 
+                  className="h-8 text-xs"
+                  value={baseUrl} 
+                  onChange={(e) => setBaseUrl(e.target.value)} 
+                  placeholder={DEFAULT_BASE} 
+                />
+                <p className="text-[10px] text-muted-foreground">Padrão: {DEFAULT_BASE}. Altere apenas se instruído pelo suporte.</p>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="space-y-1.5">
