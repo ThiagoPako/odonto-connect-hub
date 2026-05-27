@@ -35,6 +35,17 @@ export function ClinicorpUserCredentials() {
     errors: string[];
   } | null>(null);
   const pollingRef = useRef(false);
+  const [cooldown, setCooldown] = useState(0);
+
+  useEffect(() => {
+    let timer: any;
+    if (cooldown > 0) {
+      timer = setInterval(() => {
+        setCooldown(prev => Math.max(0, prev - 1));
+      }, 1000);
+    }
+    return () => clearInterval(timer);
+  }, [cooldown]);
 
   async function load() {
     setLoading(true);
@@ -119,7 +130,10 @@ export function ClinicorpUserCredentials() {
       });
       setTestResult(result);
       if (result.ok) toast.success(`Conexão OK em ${result.total_latency_ms}ms`);
-      else if (result.auth === "rate_limited") toast.warning(`Clinicorp em limite de chamadas — aguarde ${formatRetryAfter(result.retry_after_seconds)}`);
+      else if (result.auth === "rate_limited") {
+        setCooldown(result.retry_after_seconds || 60);
+        toast.warning(`Clinicorp em limite de chamadas — aguarde ${formatRetryAfter(result.retry_after_seconds)}`);
+      }
       else if (result.auth === "invalid_token") toast.error("Token inválido ou sem permissão");
       else toast.warning("Alguns endpoints falharam — veja detalhes");
     } catch (e) {
@@ -263,7 +277,16 @@ export function ClinicorpUserCredentials() {
                 placeholder={settings?.has_api_token ? "•••••••• (já configurado — preencha para substituir)" : "Cole o Token API gerado na Clinicorp"}
                 autoComplete="off"
               />
-              <button type="button" onClick={() => setShowToken((v) => !v)} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" aria-label="Mostrar token">
+              {apiToken && (apiToken.startsWith('http://') || apiToken.startsWith('https://')) && (
+                <div className="mt-2 p-2 rounded-lg bg-destructive/10 border border-destructive/20 flex items-start gap-2 animate-in fade-in slide-in-from-top-1">
+                  <AlertCircle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
+                  <div className="text-[11px] text-destructive leading-tight font-medium">
+                    Parece que você colou um Link (URL) em vez do Token. 
+                    Remova o link e cole apenas a chave (UUID) gerada na Clinicorp.
+                  </div>
+                </div>
+              )}
+              <button type="button" onClick={() => setShowToken((v) => !v)} className="absolute right-2 top-3 text-muted-foreground hover:text-foreground" aria-label="Mostrar token">
                 {showToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>
             </div>
@@ -418,16 +441,28 @@ export function ClinicorpUserCredentials() {
           <Button variant="ghost" size="sm" onClick={remove} className="text-destructive hover:text-destructive" disabled={!settings?.has_api_token && !settings?.enabled}>
             <Trash2 className="h-4 w-4 mr-1" /> Remover credenciais
           </Button>
-          <div className="flex items-center gap-2">
-            <Button variant="default" onClick={syncNow} disabled={syncing || !settings?.has_api_token || !settings?.enabled}>
-              {syncing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCcw className="h-4 w-4 mr-2" />}
-              Sincronizar dados agora
+          <div className="flex flex-wrap items-center gap-2">
+            <Button 
+              variant="outline" 
+              onClick={testConnection} 
+              disabled={testing || saving || cooldown > 0}
+            >
+              {testing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : cooldown > 0 ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : <PlugZap className="h-4 w-4 mr-2" />}
+              {cooldown > 0 ? `Aguarde ${cooldown}s` : "Testar conexão"}
             </Button>
-            <Button variant="outline" onClick={testConnection} disabled={testing || saving}>
-              {testing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <PlugZap className="h-4 w-4 mr-2" />}
-              Testar conexão
+            <Button 
+              variant="default" 
+              onClick={syncNow} 
+              disabled={syncing || !settings?.has_api_token || !settings?.enabled || cooldown > 0}
+              className="bg-primary hover:bg-primary/90 shadow-lg shadow-primary/20"
+            >
+              {syncing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : cooldown > 0 ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCcw className="h-4 w-4 mr-2" />}
+              {cooldown > 0 ? `Aguarde ${cooldown}s (Rate Limit)` : (syncing ? "Sincronizando..." : "Sincronizar dados agora")}
             </Button>
-            <Button onClick={save} disabled={saving || testing}>
+            <Button 
+              onClick={save} 
+              disabled={saving || testing || cooldown > 0}
+            >
               {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Salvar credenciais
             </Button>
           </div>
