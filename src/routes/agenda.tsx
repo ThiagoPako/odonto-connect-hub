@@ -67,20 +67,30 @@ function AgendaPage() {
         else if (Array.isArray(data)) {
           setAppointments(data);
           setProfs((current) => {
-            if (current.length > 0) return current;
-            const derived = new Map<string, Prof>();
+            const merged = new Map<string, Prof>();
+            for (const p of current) merged.set(p.id, p);
+            let hasUnassigned = false;
             for (const apt of data) {
               if (apt.dentista_id) {
-                derived.set(apt.dentista_id, {
-                  id: apt.dentista_id,
-                  nome: apt.dentista_nome || "Profissional Clinicorp",
-                });
+                if (!merged.has(apt.dentista_id)) {
+                  merged.set(apt.dentista_id, {
+                    id: apt.dentista_id,
+                    nome: apt.dentista_nome || "Profissional Clinicorp",
+                  });
+                }
+              } else {
+                hasUnassigned = true;
               }
             }
-            const list = Array.from(derived.values());
-            if (list.length) setSelectedProfs(list.map((p) => p.id));
+            if (hasUnassigned && !merged.has("__sem_dentista__")) {
+              merged.set("__sem_dentista__", { id: "__sem_dentista__", nome: "Sem profissional" });
+            }
+            const list = Array.from(merged.values());
+            setSelectedProfs((prev) => (prev.length ? prev : list.map((p) => p.id)));
             return list;
           });
+          // Normaliza appointments sem dentista_id para a coluna "Sem profissional"
+          setAppointments(data.map((a) => a.dentista_id ? a : { ...a, dentista_id: "__sem_dentista__" }));
         }
       })
       .finally(() => setLoading(false));
