@@ -606,7 +606,9 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
           data: apDate,
           hora: apTime,
           duracao: Number(pickFirst(a, "Duration", "duration", "minutes", "Minutes", "ProceduresDuration") ?? 30),
-          procedimento: pickFirst(a, "Category_Description", "CategoryDescription", "procedure", "Procedure", "description", "Description", "category_name") ?? "",
+          procedimento: procedimento,
+          categoria: procedimento,
+          categoria_cor: categoriaCor,
           status: String(pickFirst(a, "Status", "status", "status_name", "StatusName", "StatusId", "StatusDescription") ?? "agendado"),
           clinicorp_appointment_id: apId,
         });
