@@ -16,6 +16,8 @@ export type Database = {
     Tables: {
       agendamentos: {
         Row: {
+          categoria: string | null
+          categoria_cor: string | null
           clinicorp_appointment_id: string | null
           created_at: string
           data: string
@@ -31,6 +33,8 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          categoria?: string | null
+          categoria_cor?: string | null
           clinicorp_appointment_id?: string | null
           created_at?: string
           data: string
@@ -46,6 +50,8 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          categoria?: string | null
+          categoria_cor?: string | null
           clinicorp_appointment_id?: string | null
           created_at?: string
           data?: string
