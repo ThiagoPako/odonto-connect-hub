@@ -2641,8 +2641,20 @@ export function registerClinicorp(app, pool) {
   app.post('/api/clinicorp/reproject', async (req, res) => {
     try {
       const tId = await tenantOf(req);
+      let patients = 0, appts = 0, professionals = 0;
+
+      // 1. Profissionais
+      const { rows: profs } = await pool.query('SELECT raw FROM clinicorp_professionals WHERE tenant_id = $1', [tId]);
+      for (const r of profs) { 
+        try { 
+          const raw = typeof r.raw === 'string' ? JSON.parse(r.raw) : r.raw;
+          await upsertProfessional(pool, raw, tId); 
+          professionals++; 
+        } catch (e) { console.error('[reproject] professional', e.message); } 
+      }
+
+      // 2. Pacientes
       const { rows: pats } = await pool.query('SELECT raw FROM clinicorp_patients WHERE tenant_id = $1', [tId]);
-      let patients = 0, appts = 0;
       for (const r of pats) { 
         try { 
           const raw = typeof r.raw === 'string' ? JSON.parse(r.raw) : r.raw;
@@ -2650,6 +2662,8 @@ export function registerClinicorp(app, pool) {
           patients++; 
         } catch (e) { console.error('[reproject] patient', e.message); } 
       }
+
+      // 3. Agendamentos
       const { rows: aps } = await pool.query('SELECT id, raw FROM clinicorp_appointments WHERE tenant_id = $1', [tId]);
       for (const r of aps) { 
         try { 
@@ -2658,7 +2672,8 @@ export function registerClinicorp(app, pool) {
           appts++; 
         } catch (e) { console.error('[reproject] appt', e.message); } 
       }
-      res.json({ ok: true, patients, appointments: appts });
+
+      res.json({ ok: true, patients, appointments: appts, professionals });
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
