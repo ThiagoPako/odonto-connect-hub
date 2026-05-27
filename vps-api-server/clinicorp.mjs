@@ -264,14 +264,26 @@ async function _clinicorpFetchRaw(settings, pathName, { method = 'GET', query = 
 export const clinicorpApi = {
   listUsers: async (s) => {
     // Endpoint OFICIAL conforme documentação: /professional/list_all_professionals
-    const endpoints = ['/professional/list_all_professionals', '/security/list_users', '/user/list'];
+    // Tentamos com e sem subscriber_id (alguns ambientes exigem).
+    const endpoints = [
+      { path: '/professional/list_all_professionals', query: { subscriber_id: s.subscriber_id } },
+      { path: '/professional/list_all_professionals', query: {} },
+      { path: '/professional/list', query: { subscriber_id: s.subscriber_id } },
+      { path: '/professionals/list', query: { subscriber_id: s.subscriber_id } },
+      { path: '/security/list_users', query: {} },
+      { path: '/user/list', query: {} },
+    ];
     for (const ep of endpoints) {
       try {
-        const r = await clinicorpFetch(s, ep);
+        const r = await clinicorpFetch(s, ep.path, { query: ep.query });
         const list = Array.isArray(r) ? r
-          : (r?.Results || r?.Professionals || r?.Users || r?.Items || r?.data || r?.users || []);
-        if (Array.isArray(list) && list.length > 0) return list;
-      } catch (e) { /* tenta o próximo */ }
+          : (r?.Results || r?.Professionals || r?.Users || r?.Items || r?.data || r?.users || r?.professionals || []);
+        console.log(`[clinicorp] listUsers ${ep.path} -> ${Array.isArray(list) ? list.length : 'non-array'} (shape: ${JSON.stringify(Object.keys(r || {})).slice(0, 200)})`);
+        if (Array.isArray(list) && list.length > 0) {
+          console.log(`[clinicorp] listUsers sample keys:`, Object.keys(list[0] || {}).slice(0, 30));
+          return list;
+        }
+      } catch (e) { console.warn(`[clinicorp] listUsers ${ep.path} failed:`, e.message); }
     }
     return [];
   },
