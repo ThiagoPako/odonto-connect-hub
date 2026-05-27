@@ -587,9 +587,10 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
 
       const appointmentUpserts = [];
       for (const a of allAppts) {
-        const apId = String(pickFirst(a, "Id", "id", "ID", "AppointmentId", "AppointmentID", "Appointment_Id", "appointment_id", "appointmentId", "ScheduleId", "Schedule_ID") ?? "");
-        const apDate = normalizeClinicorpDate(pickFirst(a, "Date", "date", "AppointmentDate", "SK_DateFirstTime", "DateFirstTime", "StartDate", "StartDateTime", "StartTime", "fromTime", "FromTime", "appointment_date", "AtomicDate"));
-        const apTime = normalizeClinicorpTime(pickFirst(a, "FromTime", "Time", "StartTime", "StartDateTime", "ScheduleTime", "Hour", "fromTime", "from_time", "hora", "toTime"));
+        const apId = String(pickFirst(a, "Id", "id", "ID", "AppointmentId", "AppointmentID", "Appointment_Id", "appointment_id", "appointmentId", "ScheduleId", "Schedule_ID", "id_agendamento", "AtomicId") ?? "");
+        const apDate = normalizeClinicorpDate(pickFirst(a, "Date", "date", "AppointmentDate", "Appointment_Date", "SK_DateFirstTime", "DateFirstTime", "StartDate", "StartDateTime", "StartTime", "fromTime", "FromTime", "appointment_date", "AtomicDate", "data", "data_agendamento"));
+        const apTime = normalizeClinicorpTime(pickFirst(a, "FromTime", "Time", "StartTime", "StartDateTime", "ScheduleTime", "Hour", "fromTime", "from_time", "hora", "toTime", "hora_agendamento"));
+
 
         if (!apId || !apDate || !apTime) {
           if (allAppts.indexOf(a) === 0 || allAppts.length < 5) {
