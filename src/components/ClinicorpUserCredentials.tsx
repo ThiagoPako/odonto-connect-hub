@@ -58,8 +58,10 @@ export function ClinicorpUserCredentials() {
     if (baseUrl) {
       try { new URL(baseUrl); } catch { return "URL base inválida"; }
     }
+    if (apiToken && (apiToken.startsWith('http://') || apiToken.startsWith('https://'))) return "O campo API Token deve conter apenas o Token (chave), não o link completo do Webhook.";
     if (apiToken && (apiToken.length < 8 || apiToken.length > 2048)) return "API token deve ter entre 8 e 2048 caracteres";
     if (webhookSecret && (webhookSecret.length < 8 || webhookSecret.length > 256)) return "Webhook secret deve ter entre 8 e 256 caracteres";
+
     return null;
   }
 
