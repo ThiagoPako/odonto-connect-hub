@@ -322,22 +322,27 @@ export function ClinicorpPanel() {
         </p>
 
         <div className="flex flex-wrap gap-2 pt-2">
-
           <Button
-            variant="outline"
+            variant="default"
+            className="bg-primary hover:bg-primary/90 text-white font-bold shadow-md"
             onClick={async () => {
+              const loadingToast = toast.loading("Enviando dados para Pacientes e Agendas...");
               try {
                 const r = await clinicorpApi.reproject();
-                toast.success(`Reprojetado: ${r.patients} pacientes, ${r.appointments} agendamentos no CRM/Agenda`);
+                toast.dismiss(loadingToast);
+                toast.success(`Dados enviados com sucesso: ${r.patients} pacientes e ${r.appointments} agendamentos sincronizados.`);
+                await load();
               } catch (e) {
-                toast.error(`Falha ao reprojetar: ${(e as Error).message}`);
+                toast.dismiss(loadingToast);
+                toast.error(`Falha ao enviar dados: ${(e as Error).message}`);
               }
             }}
             disabled={!settings?.enabled}
           >
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Reprojetar no CRM/Agenda
+            <PlayCircle className="h-4 w-4 mr-2" />
+            Enviar dados
           </Button>
+
           <Button
             variant="outline"
             onClick={async () => {
