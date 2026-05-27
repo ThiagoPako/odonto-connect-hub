@@ -1827,8 +1827,12 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     // Desativado re-projeção final forçada em massa
   } catch (e) { console.error('[clinicorp sync] final forced projection', e.message); }
 
-  return { status, summary, errors, from: fromDate, to: toDate };
+    return { status, summary, errors, from: fromDate, to: toDate };
+  } finally {
+    _activeSyncs.delete(syncKey);
+  }
 }
+
 
 
 /**
