@@ -11548,8 +11548,8 @@ if (process.env.NODE_ENV !== 'test') {
   // Clinicorp auto-reconciliation: tick a cada 60s, decide via DB se executa
   // (lock + next_sync_at em clinicorp_settings garantem idempotência e catch-up
   // automático após reinício/interrupção do servidor)
-  setTimeout(() => { reconciliationTick(pool).catch((e) => console.error('[clinicorp] tick startup', e.message)); }, 15_000);
-  setInterval(() => { reconciliationTick(pool).catch((e) => console.error('[clinicorp] tick', e.message)); }, 60 * 1000);
+  // Clinicorp sync loop removed as requested by user. 
+  // Automation should be triggered via individual user integration panel.
   console.log('   🦷 Clinicorp auto-reconcile ativo (tick a cada 60s, intervalo configurável em clinicorp_settings)');
   });
   server.timeout = 15 * 60 * 1000; // 15 minutes timeout for long-running sync operations

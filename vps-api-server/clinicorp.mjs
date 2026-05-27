@@ -31,40 +31,24 @@ function clinicorpAuthHeaders(settings, authMode = 'basic') {
 let _settingsCache = null;
 let _settingsCacheAt = 0;
 
+// REMOVIDO: loadSettings global removido para suportar apenas multi-tenant.
 async function loadSettings(pool, force = false) {
-  const now = Date.now();
-  if (!force && _settingsCache && now - _settingsCacheAt < 30_000) {
-    return _settingsCache;
-  }
-  const { rows } = await pool.query(
-    `SELECT id, enabled, api_token, subscriber_id, webhook_secret, base_url,
-            last_sync_at, last_sync_status, last_sync_error,
-            auto_sync_enabled, sync_interval_minutes, sync_lookback_days, sync_lookahead_days,
-            next_sync_at, sync_lock_until, conflict_strategy
-       FROM clinicorp_settings WHERE id = 1`
-  );
-  _settingsCache = rows[0] || null;
-  _settingsCacheAt = now;
-  return _settingsCache;
+  return null;
 }
 
 // ─── Tenant resolver ──────────────────────────────────────────
 // A integração Clinicorp grava em tabelas multi-tenant (dentistas, pacientes,
 // agendamentos, crm_leads). Sem tenant_id os GETs filtrados não enxergam nada.
-const DEFAULT_TENANT_ID = '3806a6cc-6058-477d-b35f-14f7b6059d4c';
-let _tenantCache = null;
-let _tenantCacheAt = 0;
+// REMOVIDO DEFAULT_TENANT_ID fixo. 
 async function resolveTenantId(pool, manualId = null) {
   if (manualId) return manualId;
-  // REMOVIDO CACHE GLOBAL: Em um sistema multi-tenant, o fallback não deve ser estático
-  // se diferentes usuários chamam a API. O ideal é que o caller SEMPRE passe o tenant_id.
   try {
     const { rows } = await pool.query(
       `SELECT tenant_id FROM profiles WHERE role = 'admin' ORDER BY created_at ASC LIMIT 1`
     );
-    return rows[0]?.tenant_id || DEFAULT_TENANT_ID;
+    return rows[0]?.tenant_id || null;
   } catch {
-    return DEFAULT_TENANT_ID;
+    return null;
   }
 }
 
@@ -1965,11 +1949,13 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
       console.error('[clinicorp sync] Integrity check failed:', e.message);
     }
 
-    await pool.query(
-      `UPDATE clinicorp_settings SET last_sync_at = NOW(), last_sync_status = $1, last_sync_error = $2, updated_at = NOW() WHERE id = 1`,
-      [status, errors.length ? errors.join(' | ') : null]
-    );
-    invalidateSettings();
+    if (user_id) {
+      await pool.query(
+        `UPDATE clinicorp_user_settings SET last_sync_at = NOW(), last_sync_status = $1, last_sync_error = $2, updated_at = NOW() WHERE user_id = $3`,
+        [status, errors.length ? errors.join(' | ') : null, user_id]
+      );
+    }
+
   }
 
   try {
@@ -2099,37 +2085,12 @@ export const clinicorpPush = {
  * - Catch-up automático após interrupções: se last_sync_at é antigo, alarga a janela.
  */
 export async function reconciliationTick(pool) {
-  // 1. GLOBAL SYNC (Legacy/Admin)
-  const claimGlobal = await pool.query(
-    `UPDATE clinicorp_settings SET sync_lock_until = NOW() + INTERVAL '15 minutes',
-       next_sync_at = NOW() + (COALESCE(sync_interval_minutes, 30) || ' minutes')::interval,
-       updated_at = NOW()
-     WHERE id = 1
-       AND COALESCE(enabled, false) = true
-       AND api_token IS NOT NULL AND subscriber_id IS NOT NULL
-       AND (sync_lock_until IS NULL OR sync_lock_until < NOW())
-       AND (next_sync_at   IS NULL OR next_sync_at   <= NOW())
-     RETURNING id, last_sync_at, sync_lookback_days, sync_lookahead_days`
-  );
-
+  // Sincronização automática global removida.
+  // Apenas a sincronização por usuário (SaaS) é mantida para ser chamada manualmente
+  // ou através de gatilhos específicos do painel de integração.
+  
   const results = [];
 
-  if (claimGlobal.rows[0]) {
-    const cfg = claimGlobal.rows[0];
-    const today = new Date();
-    const from = new Date(today.getTime() - (cfg.sync_lookback_days ?? 30) * 86400_000).toISOString().slice(0, 10);
-    const to   = new Date(today.getTime() + (cfg.sync_lookahead_days ?? 60) * 86400_000).toISOString().slice(0, 10);
-    console.log(`[clinicorp] auto-reconcile global rodando ${from} → ${to}`);
-    try {
-      const r = await runFullSync(pool, { from, to });
-      await runFinancialReconciliation(pool);
-      await pool.query(`UPDATE clinicorp_settings SET sync_lock_until = NULL, last_sync_at = NOW() WHERE id = 1`);
-      results.push({ type: 'global', ...r });
-    } catch (e) {
-      console.error('[clinicorp] global tick error:', e.message);
-      await pool.query(`UPDATE clinicorp_settings SET sync_lock_until = NULL WHERE id = 1`);
-    }
-  }
 
   // 2. PER-USER SYNC (SaaS SaaS)
   const usersToSync = await pool.query(
@@ -2288,10 +2249,24 @@ export function registerClinicorp(app, pool) {
     const startedAt = Date.now();
     let eventId = null;
     try {
-      const settings = await loadSettings(pool);
       const userApi = (req.query.user_api || req.headers['x-user-api'] || '').toString();
-      if (!settings?.webhook_secret || userApi !== settings.webhook_secret) {
-        return res.status(401).json({ error: 'unauthorized' });
+      if (!userApi || userApi.length < 8) {
+        return res.status(401).json({ error: 'unauthorized: missing or invalid user_api' });
+      }
+
+      // Resolvido: busca as configurações do usuário SaaS pelo webhook_secret (user_api)
+      const { rows } = await pool.query(
+        `SELECT s.user_id, s.api_token, s.subscriber_id, s.base_url, p.tenant_id
+         FROM clinicorp_user_settings s
+         JOIN profiles p ON p.id = s.user_id
+         WHERE s.webhook_secret = $1 AND s.enabled = true
+         LIMIT 1`,
+        [userApi]
+      );
+      const settings = rows[0];
+
+      if (!settings) {
+        return res.status(401).json({ error: 'unauthorized: valid subscriber not found for this secret' });
       }
 
       const payload = req.body || {};
@@ -2299,7 +2274,8 @@ export function registerClinicorp(app, pool) {
       const eventType = (event?.event || event?.Event || event?.type || event?.action || 'unknown').toString();
       const externalId = String(event?.id || event?.Id || event?.AppointmentId || event?.Patient_PersonId || event?.TreatmentId || '') || null;
 
-      const webhookTenantId = await resolveTenantId(pool, null);
+      const webhookTenantId = settings.tenant_id;
+
       const ins = await pool.query(
         `INSERT INTO clinicorp_webhook_events (event_type, external_id, status, payload, headers, ip, tenant_id)
          VALUES ($1, $2, 'received', $3, $4, $5, $6) RETURNING id`,
@@ -2330,127 +2306,8 @@ export function registerClinicorp(app, pool) {
     }
   });
 
-  // ── Settings (admin) ─────────────────────────────────────────
-  app.get('/api/clinicorp/settings', async (_req, res) => {
-    try {
-      const s = await loadSettings(pool, true);
-      res.json({
-        enabled: s?.enabled ?? false,
-        subscriber_id: s?.subscriber_id || '',
-        base_url: s?.base_url || DEFAULT_BASE_URL,
-        has_api_token: Boolean(s?.api_token),
-        has_webhook_secret: Boolean(s?.webhook_secret),
-        webhook_secret_preview: s?.webhook_secret ? `${s.webhook_secret.slice(0, 4)}…${s.webhook_secret.slice(-4)}` : '',
-        last_sync_at: s?.last_sync_at,
-        last_sync_status: s?.last_sync_status,
-        last_sync_error: s?.last_sync_error,
-        auto_sync_enabled: s?.auto_sync_enabled ?? true,
-        sync_interval_minutes: s?.sync_interval_minutes ?? 30,
-        sync_lookback_days: s?.sync_lookback_days ?? 30,
-        sync_lookahead_days: s?.sync_lookahead_days ?? 60,
-        next_sync_at: s?.next_sync_at,
-        sync_lock_until: s?.sync_lock_until,
-        conflict_strategy: s?.conflict_strategy || 'newest_wins',
-      });
-    } catch (e) {
-      res.status(500).json({ error: e.message });
-    }
-  });
+  // ROTAS GLOBAIS REMOVIDAS (SaaS Multi-tenant deve usar /api/clinicorp/my-settings)
 
-  app.put('/api/clinicorp/settings', async (req, res) => {
-    try {
-      const { enabled, api_token, subscriber_id, webhook_secret, base_url,
-              auto_sync_enabled, sync_interval_minutes, sync_lookback_days, sync_lookahead_days,
-              conflict_strategy } = req.body || {};
-      const validStrategy = ['clinicorp_wins','local_wins','newest_wins'].includes(conflict_strategy)
-        ? conflict_strategy : null;
-      await pool.query(
-        `UPDATE clinicorp_settings SET
-           enabled = COALESCE($1, enabled),
-           api_token = COALESCE(NULLIF($2, ''), api_token),
-           subscriber_id = COALESCE($3, subscriber_id),
-           webhook_secret = COALESCE(NULLIF($4, ''), webhook_secret),
-           base_url = COALESCE($5, base_url),
-           auto_sync_enabled = COALESCE($6, auto_sync_enabled),
-           sync_interval_minutes = COALESCE($7, sync_interval_minutes),
-          sync_lookback_days = COALESCE($8, sync_lookback_days),
-          sync_lookahead_days = COALESCE($9, sync_lookahead_days),
-          next_sync_at = NOW(), -- Força sincronização imediata após salvar
-          sync_lock_until = NULL,
-           conflict_strategy = COALESCE($10, conflict_strategy),
-           updated_at = NOW()
-         WHERE id = 1`,
-        [
-          typeof enabled === 'boolean' ? enabled : null,
-          api_token ?? '',
-          subscriber_id ?? null,
-          webhook_secret ?? '',
-          base_url ?? null,
-          typeof auto_sync_enabled === 'boolean' ? auto_sync_enabled : null,
-          Number.isFinite(sync_interval_minutes) ? sync_interval_minutes : null,
-          Number.isFinite(sync_lookback_days) ? sync_lookback_days : null,
-          Number.isFinite(sync_lookahead_days) ? sync_lookahead_days : null,
-          validStrategy,
-        ]
-      );
-      invalidateSettings();
-      res.json({ ok: true });
-    } catch (e) {
-      res.status(500).json({ error: e.message });
-    }
-  });
-
-  // ── Test connection ──────────────────────────────────────────
-  app.post('/api/clinicorp/test', async (_req, res) => {
-    try {
-      const s = await loadSettings(pool, true);
-      if (!s?.api_token || !s?.subscriber_id) return res.status(400).json({ ok: false, error: 'Configure api_token e subscriber_id' });
-      const clinics = await clinicorpApi.listClinics(s);
-      res.json({ ok: true, clinics_count: Array.isArray(clinics) ? clinics.length : 0, sample: Array.isArray(clinics) ? clinics.slice(0, 3) : clinics });
-    } catch (e) {
-      res.status(400).json({ ok: false, error: e.message, details: e.body });
-    }
-  });
-
-  // ── Manual sync ──────────────────────────────────────────────
-  app.post('/api/clinicorp/sync', async (req, res) => {
-    try {
-      const tId = await tenantOf(req);
-      const params = {
-        from: req.body?.from,
-        to: req.body?.to,
-        force_metadata: req.body?.force_metadata === true,
-        tenant_id: tId,
-      };
-      // Executa em background para evitar 504 do nginx em sincronizações longas.
-      // O frontend acompanha o progresso via GET /api/clinicorp/settings (last_sync_status / sync_progress).
-      setImmediate(() => {
-        runFullSync(pool, params).catch((err) => {
-          console.error('[clinicorp sync] background error:', err?.message || err);
-        });
-      });
-      res.status(202).json({
-        status: 'accepted',
-        message: 'Sincronização iniciada em segundo plano. Acompanhe o status nesta tela.',
-        from: params.from || null,
-        to: params.to || null,
-      });
-    } catch (e) {
-      res.status(500).json({ error: e.message });
-    }
-  });
-
-  // ── Forçar reconciliação agora (reseta next_sync_at) ─────────
-  app.post('/api/clinicorp/reconcile', async (req, res) => {
-    try {
-      const tId = await tenantOf(req);
-      await pool.query(`UPDATE clinicorp_settings SET next_sync_at = NOW(), sync_lock_until = NULL WHERE id = 1`);
-      invalidateSettings();
-      // O reconciliationTick global ainda é global, mas o manual sync é preferível
-      const r = await reconciliationTick(pool);
-      res.json(r);
-    } catch (e) { res.status(500).json({ error: e.message }); }
-  });
 
   // Helper: extrai tenant_id REAL do usuário autenticado.
   // O JWT do Supabase não inclui tenant_id nas claims, então decodificamos o
@@ -2829,17 +2686,8 @@ export function registerClinicorp(app, pool) {
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
-  // ── Auto-sync manual trigger (force:true reseta lock/next_sync_at) ──
-  app.post('/api/clinicorp/sync/auto', async (req, res) => {
-    try {
-      if (req.body?.force === true) {
-        await pool.query(`UPDATE clinicorp_settings SET next_sync_at = NOW(), sync_lock_until = NULL WHERE id = 1`);
-        invalidateSettings();
-      }
-      const result = await reconciliationTick(pool);
-      res.json(result);
-    } catch (e) { res.status(500).json({ error: e.message }); }
-  });
+  // Rota de sync automático removida.
+
 
   // ── Unified Audit Log (Webhook + Push) — escopo por tenant ──
   app.get('/api/clinicorp/audit-log', async (req, res) => {
