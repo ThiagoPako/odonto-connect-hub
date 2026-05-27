@@ -31,40 +31,24 @@ function clinicorpAuthHeaders(settings, authMode = 'basic') {
 let _settingsCache = null;
 let _settingsCacheAt = 0;
 
+// REMOVIDO: loadSettings global removido para suportar apenas multi-tenant.
 async function loadSettings(pool, force = false) {
-  const now = Date.now();
-  if (!force && _settingsCache && now - _settingsCacheAt < 30_000) {
-    return _settingsCache;
-  }
-  const { rows } = await pool.query(
-    `SELECT id, enabled, api_token, subscriber_id, webhook_secret, base_url,
-            last_sync_at, last_sync_status, last_sync_error,
-            auto_sync_enabled, sync_interval_minutes, sync_lookback_days, sync_lookahead_days,
-            next_sync_at, sync_lock_until, conflict_strategy
-       FROM clinicorp_settings WHERE id = 1`
-  );
-  _settingsCache = rows[0] || null;
-  _settingsCacheAt = now;
-  return _settingsCache;
+  return null;
 }
 
 // ─── Tenant resolver ──────────────────────────────────────────
 // A integração Clinicorp grava em tabelas multi-tenant (dentistas, pacientes,
 // agendamentos, crm_leads). Sem tenant_id os GETs filtrados não enxergam nada.
-const DEFAULT_TENANT_ID = '3806a6cc-6058-477d-b35f-14f7b6059d4c';
-let _tenantCache = null;
-let _tenantCacheAt = 0;
+// REMOVIDO DEFAULT_TENANT_ID fixo. 
 async function resolveTenantId(pool, manualId = null) {
   if (manualId) return manualId;
-  // REMOVIDO CACHE GLOBAL: Em um sistema multi-tenant, o fallback não deve ser estático
-  // se diferentes usuários chamam a API. O ideal é que o caller SEMPRE passe o tenant_id.
   try {
     const { rows } = await pool.query(
       `SELECT tenant_id FROM profiles WHERE role = 'admin' ORDER BY created_at ASC LIMIT 1`
     );
-    return rows[0]?.tenant_id || DEFAULT_TENANT_ID;
+    return rows[0]?.tenant_id || null;
   } catch {
-    return DEFAULT_TENANT_ID;
+    return null;
   }
 }
 
@@ -2099,37 +2083,12 @@ export const clinicorpPush = {
  * - Catch-up automático após interrupções: se last_sync_at é antigo, alarga a janela.
  */
 export async function reconciliationTick(pool) {
-  // 1. GLOBAL SYNC (Legacy/Admin)
-  const claimGlobal = await pool.query(
-    `UPDATE clinicorp_settings SET sync_lock_until = NOW() + INTERVAL '15 minutes',
-       next_sync_at = NOW() + (COALESCE(sync_interval_minutes, 30) || ' minutes')::interval,
-       updated_at = NOW()
-     WHERE id = 1
-       AND COALESCE(enabled, false) = true
-       AND api_token IS NOT NULL AND subscriber_id IS NOT NULL
-       AND (sync_lock_until IS NULL OR sync_lock_until < NOW())
-       AND (next_sync_at   IS NULL OR next_sync_at   <= NOW())
-     RETURNING id, last_sync_at, sync_lookback_days, sync_lookahead_days`
-  );
-
+  // Sincronização automática global removida.
+  // Apenas a sincronização por usuário (SaaS) é mantida para ser chamada manualmente
+  // ou através de gatilhos específicos do painel de integração.
+  
   const results = [];
 
-  if (claimGlobal.rows[0]) {
-    const cfg = claimGlobal.rows[0];
-    const today = new Date();
-    const from = new Date(today.getTime() - (cfg.sync_lookback_days ?? 30) * 86400_000).toISOString().slice(0, 10);
-    const to   = new Date(today.getTime() + (cfg.sync_lookahead_days ?? 60) * 86400_000).toISOString().slice(0, 10);
-    console.log(`[clinicorp] auto-reconcile global rodando ${from} → ${to}`);
-    try {
-      const r = await runFullSync(pool, { from, to });
-      await runFinancialReconciliation(pool);
-      await pool.query(`UPDATE clinicorp_settings SET sync_lock_until = NULL, last_sync_at = NOW() WHERE id = 1`);
-      results.push({ type: 'global', ...r });
-    } catch (e) {
-      console.error('[clinicorp] global tick error:', e.message);
-      await pool.query(`UPDATE clinicorp_settings SET sync_lock_until = NULL WHERE id = 1`);
-    }
-  }
 
   // 2. PER-USER SYNC (SaaS SaaS)
   const usersToSync = await pool.query(
