@@ -599,6 +599,9 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
         const pid = String(pickFirst(a, "PatientId", "Patient_PersonId", "PatientPersonId", "Patient_Id", "patient_id", "id_paciente") ?? a?.Patient?.Id ?? a?.Patient?.id ?? "");
         const did = String(pickFirst(a, "ProfessionalId", "Dentist_PersonId", "DentistPersonId", "Professional_PersonId", "ScheduleToId", "DentistId", "professional_id", "dentist_id", "id_profissional") ?? a?.Dentist?.Id ?? a?.Dentist?.id ?? "");
         
+        const procedimento = pickFirst(a, "Category_Description", "CategoryDescription", "procedure", "Procedure", "description", "Description", "category_name") ?? "";
+        const categoriaCor = pickFirst(a, "CategoryColor", "Category_Color", "Color", "category_color") ?? null;
+
         appointmentUpserts.push({
           tenant_id,
           paciente_id: paMap.get(pid) || null,
