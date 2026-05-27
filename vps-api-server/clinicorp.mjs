@@ -935,12 +935,20 @@ async function projectAppointmentToLocal(pool, a, cpApptId, tenantId = null) {
   const procedimento = pickFirst(a, 'CategoryDescription', 'Category_Description', 'Category', 'category_description', 'ProcedureName', 'Procedure') ?? null;
   const categoriaCor = pickFirst(a, 'CategoryColor', 'Category_Color', 'Color', 'category_color') ?? null;
   const observacoes = pickFirst(a, 'Notes', 'Observation', 'Observations', 'notes', 'observacoes') ?? null;
+  // Busca em QUALQUER tenant — se achar em outro, migra para o tenant atual.
+  // Isso evita que agendamentos fiquem "presos" no tenant do admin original e
+  // não apareçam para o usuário que rodou a sincronização.
   const exists = await pool.query(
     `SELECT id, paciente_id, dentista_id, data, hora, duracao, procedimento, categoria,
-            categoria_cor, status, observacoes, updated_at, last_clinicorp_sync_at, keep_local
-       FROM agendamentos WHERE clinicorp_appointment_id=$1 AND tenant_id=$2 LIMIT 1`,
-    [String(cpApptId), tId]
+            categoria_cor, status, observacoes, updated_at, last_clinicorp_sync_at, keep_local, tenant_id
+       FROM agendamentos WHERE clinicorp_appointment_id=$1 LIMIT 1`,
+    [String(cpApptId)]
   );
+  if (exists.rows[0] && String(exists.rows[0].tenant_id || '') !== String(tId)) {
+    try {
+      await pool.query(`UPDATE agendamentos SET tenant_id=$1, updated_at=NOW() WHERE id=$2`, [tId, exists.rows[0].id]);
+    } catch (e) { console.warn('[clinicorp] agendamento tenant migrate fail', e.message); }
+  }
   let agendamentoId;
   if (exists.rows[0]) {
     const localRow = exists.rows[0];
