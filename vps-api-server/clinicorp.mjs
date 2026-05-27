@@ -263,12 +263,13 @@ async function _clinicorpFetchRaw(settings, pathName, { method = 'GET', query = 
 // ─── High-level API helpers ───────────────────────────────────
 export const clinicorpApi = {
   listUsers: async (s) => {
-    const endpoints = ['/security/list_users', '/security/user/list', '/user/list'];
+    // Endpoint OFICIAL conforme documentação: /professional/list_all_professionals
+    const endpoints = ['/professional/list_all_professionals', '/security/list_users', '/user/list'];
     for (const ep of endpoints) {
       try {
         const r = await clinicorpFetch(s, ep);
         const list = Array.isArray(r) ? r
-          : (r?.Results || r?.Users || r?.Items || r?.data || r?.users || []);
+          : (r?.Results || r?.Professionals || r?.Users || r?.Items || r?.data || r?.users || []);
         if (Array.isArray(list) && list.length > 0) return list;
       } catch (e) { /* tenta o próximo */ }
     }
