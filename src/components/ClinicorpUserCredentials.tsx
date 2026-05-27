@@ -252,34 +252,34 @@ export function ClinicorpUserCredentials() {
           <Switch id="cc-enabled" checked={enabled} onCheckedChange={setEnabled} />
         </div>
 
-        <div className="space-y-4">
-          <div className="space-y-1.5">
+        <div className="grid gap-4 md:grid-cols-12">
+          <div className="md:col-span-4 space-y-1.5">
             <Label htmlFor="cc-sub">ID Central / Usuário API</Label>
             <div className="relative">
               <Building2 className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
               <Input 
                 id="cc-sub" 
                 placeholder="Ex.: sua-clinica" 
-                className="pl-9"
+                className="pl-9 h-11"
                 value={subscriberId} 
                 onChange={(e) => setSubscriberId(e.target.value)} 
                 maxLength={128} 
               />
             </div>
-            <p className="text-[11px] text-muted-foreground">O campo "Usuário API" exibido no painel da Clinicorp.</p>
+            <p className="text-[10px] text-muted-foreground px-1">O "Usuário API" do painel Clinicorp.</p>
           </div>
 
-          <div className="space-y-1.5">
+          <div className="md:col-span-8 space-y-1.5">
             <Label htmlFor="cc-token">Token API</Label>
             <div className="relative">
               <KeyRound className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
               <Input
                 id="cc-token"
                 type={showToken ? "text" : "password"}
-                className="pl-9 pr-10"
+                className="pl-9 pr-10 h-11"
                 value={apiToken}
                 onChange={(e) => setApiToken(e.target.value)}
-                placeholder={settings?.has_api_token ? "•••••••• (já configurado — preencha para substituir)" : "Cole o Token API gerado na Clinicorp"}
+                placeholder={settings?.has_api_token ? "•••••••• (já configurado)" : "Cole o Token API gerado"}
                 autoComplete="off"
               />
               <button 
@@ -295,12 +295,11 @@ export function ClinicorpUserCredentials() {
               <div className="mt-2 p-2 rounded-lg bg-destructive/10 border border-destructive/20 flex items-start gap-2 animate-in fade-in slide-in-from-top-1">
                 <AlertCircle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
                 <div className="text-[11px] text-destructive leading-tight font-medium">
-                  Parece que você colou um Link (URL) em vez do Token. 
-                  Remova o link e cole apenas a chave (UUID) gerada na Clinicorp.
+                  Parece que você colou um Link em vez do Token.
                 </div>
               </div>
             )}
-            <p className="text-[11px] text-muted-foreground">Armazenado criptografado no banco. Nunca aparece no frontend após salvar.</p>
+            <p className="text-[10px] text-muted-foreground px-1">Criptografado e seguro.</p>
           </div>
         </div>
 
