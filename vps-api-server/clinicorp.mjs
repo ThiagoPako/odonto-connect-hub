@@ -417,8 +417,8 @@ async function upsertProfessional(pool, p, tenantId = null) {
   if (!id) return;
   const tId = await resolveTenantId(pool, tenantId);
   // A API Clinicorp retorna o nome em diversos campos dependendo da versão/endpoint
-  const fullName = (p.FullName ?? p.Full_Name ?? p.Name ?? p.PersonName ?? p.UserName ?? p.full_name ?? `Profissional ${id}`).toString().trim();
-  const userName = p.UserName ?? p.Username ?? p.Email ?? null;
+  const fullName = (p.FullName ?? p.Full_Name ?? p.Name ?? p.PersonName ?? p.UserName ?? p.full_name ?? p.Professional_FullName ?? p.ProfessionalName ?? p.Dentist_FullName ?? p.DentistName ?? `Profissional ${id}`).toString().trim();
+  const userName = p.UserName ?? p.Username ?? p.Email ?? p.Login ?? null;
   await pool.query(
     `INSERT INTO clinicorp_professionals (id, tenant_id, full_name, user_name, raw, synced_at)
      VALUES ($1,$2,$3,$4,$5, NOW())
