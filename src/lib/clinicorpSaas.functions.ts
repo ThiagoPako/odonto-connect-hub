@@ -485,11 +485,11 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
         if (!patientSeeds.has(pid)) {
           patientSeeds.set(pid, {
             name: pickFirst(a, 'PatientName', 'Patient_FullName', 'Patient_Name', 'PatientFullName', 'patient_name', 'nome_paciente') ?? a?.Patient?.Name ?? a?.Patient?.FullName ?? a?.Patient?.nome,
-            phone: pickFirst(a, 'Patient_MobilePhone', 'PatientMobilePhone', 'Patient_Phone', 'PatientPhone', 'celular_paciente') ?? a?.Patient?.MobilePhone ?? a?.Patient?.celular,
-            email: pickFirst(a, 'Patient_Email', 'PatientEmail', 'email_paciente') ?? a?.Patient?.Email ?? a?.Patient?.email,
-            cpf: pickFirst(a, 'Patient_Cpf', 'PatientCpf', 'Patient_CPF', 'PatientCPF', 'cpf_paciente') ?? a?.Patient?.Cpf ?? a?.Patient?.CPF ?? a?.Patient?.cpf,
-            sex: pickFirst(a, 'Patient_Sex', 'PatientSex', 'Patient_Gender', 'PatientGender', 'sexo_paciente') ?? a?.Patient?.Sex ?? a?.Patient?.Gender ?? a?.Patient?.sexo,
-            birthDate: pickFirst(a, 'Patient_BirthDate', 'PatientBirthDate', 'Patient_BirthDay', 'PatientBirthday', 'data_nascimento_paciente') ?? a?.Patient?.BirthDate ?? a?.Patient?.BirthDay ?? a?.Patient?.data_nascimento,
+            phone: pickFirst(a, 'Patient_MobilePhone', 'PatientMobilePhone', 'Patient_Phone', 'PatientPhone', 'MobilePhone', 'mobile_phone', 'celular_paciente') ?? a?.Patient?.MobilePhone ?? a?.Patient?.celular,
+            email: pickFirst(a, 'Patient_Email', 'PatientEmail', 'Email', 'email', 'email_paciente') ?? a?.Patient?.Email ?? a?.Patient?.email,
+            cpf: pickFirst(a, 'Patient_Cpf', 'PatientCpf', 'Patient_CPF', 'PatientCPF', 'Cpf', 'cpf', 'cpf_paciente') ?? a?.Patient?.Cpf ?? a?.Patient?.CPF ?? a?.Patient?.cpf,
+            sex: pickFirst(a, 'Patient_Sex', 'PatientSex', 'Patient_Gender', 'PatientGender', 'Sex', 'Gender', 'sexo_paciente') ?? a?.Patient?.Sex ?? a?.Patient?.Gender ?? a?.Patient?.sexo,
+            birthDate: pickFirst(a, 'Patient_BirthDate', 'PatientBirthDate', 'Patient_BirthDay', 'PatientBirthday', 'BirthDate', 'BirthDay', 'data_nascimento_paciente') ?? a?.Patient?.BirthDate ?? a?.Patient?.BirthDay ?? a?.Patient?.data_nascimento,
           });
         }
       }
@@ -538,8 +538,8 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
       const appointmentUpserts = [];
       for (const a of allAppts) {
         const apId = String(pickFirst(a, 'Id', 'id', 'AppointmentId', 'AppointmentID', 'Appointment_Id', 'appointment_id') ?? '');
-        const apDate = pickFirst(a, 'Date', 'date', 'AppointmentDate', 'Appointment_Date', 'start_date', 'data', 'Data');
-        const apTime = pickFirst(a, 'FromTime', 'from_time', 'StartTime', 'time', 'Time', 'start_time', 'inicio', 'Inicio', 'from', 'From');
+        const apDate = pickFirst(a, 'Date', 'date', 'AppointmentDate', 'Appointment_Date', 'start_date', 'data', 'Data', 'AtomicDate');
+        const apTime = pickFirst(a, 'FromTime', 'fromTime', 'from_time', 'StartTime', 'time', 'Time', 'start_time', 'inicio', 'Inicio', 'from', 'From');
         
         if (!apId || !apDate || !apTime) {
           if (allAppts.indexOf(a) === 0) {
@@ -557,9 +557,9 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
           dentista_id: profMap.get(did) || null,
           data: String(apDate).slice(0, 10),
           hora: String(apTime).slice(0, 8),
-          duracao: Number(pickFirst(a, 'Duration', 'duration', 'minutes', 'Minutes') ?? 30),
+          duracao: Number(pickFirst(a, 'Duration', 'duration', 'minutes', 'Minutes', 'ProceduresDuration') ?? 30),
           procedimento: pickFirst(a, 'Category_Description', 'CategoryDescription', 'procedure', 'Procedure', 'description', 'Description', 'category_name') ?? '',
-          status: String(pickFirst(a, 'Status', 'status', 'status_name', 'StatusName') ?? 'agendado'),
+          status: String(pickFirst(a, 'Status', 'status', 'status_name', 'StatusName', 'StatusId') ?? 'agendado'),
           clinicorp_appointment_id: apId,
         });
       }
