@@ -585,49 +585,42 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
 
       const appointmentUpserts = [];
       for (const a of allAppts) {
-        const apId = String(pickFirst(a, 'Id', 'id', 'AppointmentId', 'AppointmentID', 'Appointment_Id', 'appointment_id') ?? '');
-        let apDateRaw = pickFirst(a, 'Date', 'date', 'AppointmentDate', 'Appointment_Date', 'start_date', 'data', 'Data', 'AtomicDate');
-        let apTimeRaw = pickFirst(a, 'FromTime', 'fromTime', 'from_time', 'StartTime', 'time', 'Time', 'start_time', 'inicio', 'Inicio', 'from', 'From');
+        const apId = String(pickFirst(a, "Id", "id", "ID", "AppointmentId", "AppointmentID", "Appointment_Id", "appointment_id", "appointmentId", "ScheduleId", "Schedule_ID") ?? "");
+        const apDate = normalizeClinicorpDate(pickFirst(a, "Date", "date", "AppointmentDate", "SK_DateFirstTime", "DateFirstTime", "StartDate", "StartDateTime", "StartTime", "fromTime", "FromTime", "appointment_date", "AtomicDate"));
+        const apTime = normalizeClinicorpTime(pickFirst(a, "FromTime", "Time", "StartTime", "StartDateTime", "ScheduleTime", "Hour", "fromTime", "from_time", "hora", "toTime"));
 
-        // Robust parsing for ISO strings or date strings containing time
-        if (typeof apDateRaw === 'string' && apDateRaw.includes('T')) {
-          const parts = apDateRaw.split('T');
-          if (!apTimeRaw || apTimeRaw === '00:00:00' || apTimeRaw === '00:00') {
-             apTimeRaw = parts[1].slice(0, 8);
-          }
-          apDateRaw = parts[0];
-        }
-        
-        const apDate = apDateRaw;
-        const apTime = apTimeRaw;
-        
         if (!apId || !apDate || !apTime) {
           if (allAppts.indexOf(a) === 0 || allAppts.length < 5) {
-             log('Appointment skip - missing fields:', { apId, apDate, apTime, keys: Object.keys(a).slice(0, 20) });
+            log("Appointment skip - missing fields:", { apId, apDate, apTime, keys: Object.keys(a).slice(0, 20) });
           }
           continue;
         }
 
-        const pid = String(pickFirst(a, 'PatientId', 'Patient_PersonId', 'PatientPersonId', 'Patient_Id', 'patient_id', 'id_paciente') ?? a?.Patient?.Id ?? a?.Patient?.id ?? '');
-        const did = String(pickFirst(a, 'ProfessionalId', 'Dentist_PersonId', 'DentistPersonId', 'Professional_PersonId', 'ScheduleToId', 'DentistId', 'professional_id', 'dentist_id', 'id_profissional') ?? a?.Dentist?.Id ?? a?.Dentist?.id ?? '');
+        const pid = String(pickFirst(a, "PatientId", "Patient_PersonId", "PatientPersonId", "Patient_Id", "patient_id", "id_paciente") ?? a?.Patient?.Id ?? a?.Patient?.id ?? "");
+        const did = String(pickFirst(a, "ProfessionalId", "Dentist_PersonId", "DentistPersonId", "Professional_PersonId", "ScheduleToId", "DentistId", "professional_id", "dentist_id", "id_profissional") ?? a?.Dentist?.Id ?? a?.Dentist?.id ?? "");
         
         appointmentUpserts.push({
           tenant_id,
           paciente_id: paMap.get(pid) || null,
           dentista_id: profMap.get(did) || null,
-          data: String(apDate).slice(0, 10),
-          hora: String(apTime).slice(0, 8),
-          duracao: Number(pickFirst(a, 'Duration', 'duration', 'minutes', 'Minutes', 'ProceduresDuration') ?? 30),
-          procedimento: pickFirst(a, 'Category_Description', 'CategoryDescription', 'procedure', 'Procedure', 'description', 'Description', 'category_name') ?? '',
-          status: String(pickFirst(a, 'Status', 'status', 'status_name', 'StatusName', 'StatusId', 'StatusDescription') ?? 'agendado'),
+          data: apDate,
+          hora: apTime,
+          duracao: Number(pickFirst(a, "Duration", "duration", "minutes", "Minutes", "ProceduresDuration") ?? 30),
+          procedimento: pickFirst(a, "Category_Description", "CategoryDescription", "procedure", "Procedure", "description", "Description", "category_name") ?? "",
+          status: String(pickFirst(a, "Status", "status", "status_name", "StatusName", "StatusId", "StatusDescription") ?? "agendado"),
           clinicorp_appointment_id: apId,
         });
       }
 
       if (allAppts.length > 0 && appointmentUpserts.length === 0) {
         const first = allAppts[0];
-        errors.push(`Aviso: ${allAppts.length} agendamentos recebidos, mas nenhum pôde ser processado. Verifique os campos: ${Object.keys(first).join(', ')}`);
-        log('DEBUG: First appt keys', Object.keys(first));
+        errors.push(`Aviso: ${allAppts.length} agendamentos recebidos, mas nenhum pôde ser processado. Verifique os campos: ${Object.keys(first).join(", ")}`);
+        log("DEBUG: First appt keys", Object.keys(first));
+        log("DEBUG: First appt sample values", { 
+          id: pickFirst(first, "Id", "id", "AppointmentId"),
+          date: pickFirst(first, "Date", "date", "AtomicDate"),
+          time: pickFirst(first, "FromTime", "fromTime")
+        });
       }
 
       // Batch upsert appointments in chunks
