@@ -557,9 +557,9 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
           dentista_id: profMap.get(did) || null,
           data: String(apDate).slice(0, 10),
           hora: String(apTime).slice(0, 8),
-          duracao: Number(pickFirst(a, 'Duration', 'duration', 'minutes', 'Minutes') ?? 30),
+          duracao: Number(pickFirst(a, 'Duration', 'duration', 'minutes', 'Minutes', 'ProceduresDuration') ?? 30),
           procedimento: pickFirst(a, 'Category_Description', 'CategoryDescription', 'procedure', 'Procedure', 'description', 'Description', 'category_name') ?? '',
-          status: String(pickFirst(a, 'Status', 'status', 'status_name', 'StatusName') ?? 'agendado'),
+          status: String(pickFirst(a, 'Status', 'status', 'status_name', 'StatusName', 'StatusId') ?? 'agendado'),
           clinicorp_appointment_id: apId,
         });
       }
