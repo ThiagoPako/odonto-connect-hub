@@ -174,6 +174,35 @@ function AgendaPage() {
   const goNext = () => { const d = new Date(currentDate); d.setDate(d.getDate() + 1); setCurrentDate(d); };
   const goToday = () => setCurrentDate(new Date());
 
+  const handleSyncClinicorp = async () => {
+    setIsSyncing(true);
+    const toastId = toast.loading("Sincronizando com Clinicorp...");
+    try {
+      await clinicorpApi.syncMyNow({ force_metadata: true });
+      toast.success("Sincronização iniciada em segundo plano!", { id: toastId });
+    } catch (err: any) {
+      toast.error("Erro ao sincronizar: " + err.message, { id: toastId });
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const handleReproject = async () => {
+    setIsReprojecting(true);
+    const toastId = toast.loading("Enviando dados para Agenda e Pacientes...");
+    try {
+      const result = await clinicorpApi.reproject();
+      toast.success(`Dados enviados! ${result.appointments} agendamentos, ${result.patients} pacientes e ${result.professionals} profissionais sincronizados.`, { id: toastId });
+      loadAppointments();
+      const { data } = await dentistasApi.list();
+      if (Array.isArray(data)) setProfs(data.filter(p => p.id));
+    } catch (err: any) {
+      toast.error("Erro ao enviar dados: " + err.message, { id: toastId });
+    } finally {
+      setIsReprojecting(false);
+    }
+  };
+
   return (
     <div className="flex-1 flex flex-col min-h-screen bg-background/50 animate-fade-in">
       <DashboardHeader title="Agenda" />
