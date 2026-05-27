@@ -2788,17 +2788,8 @@ export function registerClinicorp(app, pool) {
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
-  // ── Auto-sync manual trigger (force:true reseta lock/next_sync_at) ──
-  app.post('/api/clinicorp/sync/auto', async (req, res) => {
-    try {
-      if (req.body?.force === true) {
-        await pool.query(`UPDATE clinicorp_settings SET next_sync_at = NOW(), sync_lock_until = NULL WHERE id = 1`);
-        invalidateSettings();
-      }
-      const result = await reconciliationTick(pool);
-      res.json(result);
-    } catch (e) { res.status(500).json({ error: e.message }); }
-  });
+  // Rota de sync automático removida.
+
 
   // ── Unified Audit Log (Webhook + Push) — escopo por tenant ──
   app.get('/api/clinicorp/audit-log', async (req, res) => {
