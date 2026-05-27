@@ -1949,11 +1949,13 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
       console.error('[clinicorp sync] Integrity check failed:', e.message);
     }
 
-    await pool.query(
-      `UPDATE clinicorp_settings SET last_sync_at = NOW(), last_sync_status = $1, last_sync_error = $2, updated_at = NOW() WHERE id = 1`,
-      [status, errors.length ? errors.join(' | ') : null]
-    );
-    invalidateSettings();
+    if (user_id) {
+      await pool.query(
+        `UPDATE clinicorp_user_settings SET last_sync_at = NOW(), last_sync_status = $1, last_sync_error = $2, updated_at = NOW() WHERE user_id = $3`,
+        [status, errors.length ? errors.join(' | ') : null, user_id]
+      );
+    }
+
   }
 
   try {
