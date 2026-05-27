@@ -2259,10 +2259,12 @@ export function registerClinicorp(app, pool) {
   });
 
   // ── Forçar reconciliação agora (reseta next_sync_at) ─────────
-  app.post('/api/clinicorp/reconcile', async (_req, res) => {
+  app.post('/api/clinicorp/reconcile', async (req, res) => {
     try {
+      const tId = await tenantOf(req);
       await pool.query(`UPDATE clinicorp_settings SET next_sync_at = NOW(), sync_lock_until = NULL WHERE id = 1`);
       invalidateSettings();
+      // O reconciliationTick global ainda é global, mas o manual sync é preferível
       const r = await reconciliationTick(pool);
       res.json(r);
     } catch (e) { res.status(500).json({ error: e.message }); }
