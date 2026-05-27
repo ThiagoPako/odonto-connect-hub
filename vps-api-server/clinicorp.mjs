@@ -2240,10 +2240,12 @@ export function registerClinicorp(app, pool) {
   // ── Manual sync ──────────────────────────────────────────────
   app.post('/api/clinicorp/sync', async (req, res) => {
     try {
+      const tId = await tenantOf(req);
       const result = await runFullSync(pool, { 
         from: req.body?.from, 
         to: req.body?.to,
-        force_metadata: req.body?.force_metadata === true 
+        force_metadata: req.body?.force_metadata === true,
+        tenant_id: tId
       });
       res.json(result);
     } catch (e) {
