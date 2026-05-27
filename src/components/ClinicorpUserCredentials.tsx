@@ -315,7 +315,7 @@ export function ClinicorpUserCredentials() {
           </button>
 
           {showAdvanced && (
-            <div className="mt-3 p-4 rounded-lg border border-dashed border-border/60 bg-muted/20 space-y-3 animate-in fade-in slide-in-from-top-2">
+            <div className="mt-3 p-4 rounded-lg border border-dashed border-border/60 bg-muted/20 space-y-4 animate-in fade-in slide-in-from-top-2">
               <div className="space-y-1.5">
                 <Label htmlFor="cc-url" className="text-xs">URL base da API</Label>
                 <Input 
@@ -327,6 +327,40 @@ export function ClinicorpUserCredentials() {
                   placeholder={DEFAULT_BASE} 
                 />
                 <p className="text-[10px] text-muted-foreground">Padrão: {DEFAULT_BASE}. Altere apenas se instruído pelo suporte.</p>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="cc-secret" className="text-xs">Chave de Segurança do Webhook (Secret)</Label>
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <Input
+                      id="cc-secret"
+                      type={showSecret ? "text" : "password"}
+                      className="h-8 text-xs"
+                      value={webhookSecret}
+                      onChange={(e) => setWebhookSecret(e.target.value)}
+                      placeholder={settings?.has_webhook_secret ? `Atual: ${settings.webhook_secret_preview}` : "Gere um secret"}
+                      autoComplete="off"
+                    />
+                    <button type="button" onClick={() => setShowSecret((v) => !v)} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" aria-label="Mostrar secret">
+                      {showSecret ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                    </button>
+                  </div>
+                  <Button type="button" variant="outline" size="xs" className="h-8 px-2 text-[10px]" onClick={() => setWebhookSecret(generateWebhookSecret(40))}>
+                    <RefreshCw className="h-3 w-3 mr-1" /> Gerar
+                  </Button>
+                </div>
+                {webhookSecret && (
+                  <div className="mt-2 p-2 rounded border border-border/60 bg-background flex items-center justify-between gap-2">
+                    <div className="flex-1 overflow-hidden">
+                      <p className="text-[9px] text-muted-foreground font-medium uppercase mb-0.5">Link para Webhook na Clinicorp:</p>
+                      <code className="text-[10px] truncate block font-mono">{buildWebhookUrl(webhookSecret)}</code>
+                    </div>
+                    <Button type="button" variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => copy(buildWebhookUrl(webhookSecret), "URL")}>
+                      <Copy className="h-3 w-3" />
+                    </Button>
+                  </div>
+                )}
               </div>
             </div>
           )}
