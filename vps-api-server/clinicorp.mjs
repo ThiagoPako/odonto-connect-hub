@@ -1535,7 +1535,9 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     // duplicar todas as chamadas com a versão "global" (que ANTES rodava
     // antes do loop por clínica e dobrava o consumo da API).
     if (clinics.length === 0) {
+      console.warn('[clinicorp sync] nenhuma clínica encontrada localmente, tentando busca global de agendamentos');
       for (const r of ranges) {
+
         try {
           const list = await clinicorpApi.listAppointments(settings, r.from, r.to);
           await processAppts(list);
