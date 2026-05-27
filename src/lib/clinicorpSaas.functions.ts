@@ -493,8 +493,9 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
 
       const allAppts: any[] = [];
       let rateLimitHit = false;
-      const CONCURRENCY = 2; // Reduzido para evitar 429
+      const CONCURRENCY = 1; // Sincronização serial para ser o mais seguro possível contra 429
       for (let i = 0; i < days.length && !rateLimitHit; i += CONCURRENCY) {
+
         const batch = days.slice(i, i + CONCURRENCY);
         const results = await Promise.allSettled(batch.map(ds =>
           clinicorpProbe(base_url, subscriber_id, api_token, '/appointment/list', { from: ds, to: ds }, 25000, activeAuthHeader)
