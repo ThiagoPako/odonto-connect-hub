@@ -729,8 +729,11 @@ async function ensureLocalProfessional(pool, cpProfId, fallbackName = null, tena
   const cleanFallback = (fallbackName || '').toString().trim() || null;
   const found = await pool.query(`SELECT id, nome, tenant_id FROM dentistas WHERE clinicorp_professional_id=$1 LIMIT 1`, [cpProfId]);
   if (found.rows[0]) {
-    if (!found.rows[0].tenant_id) {
-      await pool.query(`UPDATE dentistas SET tenant_id=$1, updated_at=NOW() WHERE id=$2 AND tenant_id IS NULL`, [tId, found.rows[0].id]);
+    // Migra para o tenant atual se estiver NULL ou em outro tenant — garante visibilidade na agenda
+    if (String(found.rows[0].tenant_id || '') !== String(tId)) {
+      try {
+        await pool.query(`UPDATE dentistas SET tenant_id=$1, updated_at=NOW() WHERE id=$2`, [tId, found.rows[0].id]);
+      } catch (e) { console.warn('[clinicorp] dentista tenant migrate fail', e.message); }
     }
     // Atualiza nome se estava como placeholder "Profissional XXX" e agora temos um real
     const currentName = (found.rows[0].nome || '').trim();
