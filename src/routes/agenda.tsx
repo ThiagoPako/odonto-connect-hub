@@ -13,6 +13,7 @@ import { AgendaProfessionalsList } from "@/components/agenda/AgendaProfessionals
 import { AgendaGrid } from "@/components/agenda/AgendaGrid";
 import { NovoAgendamentoModal } from "@/components/agenda/NovoAgendamentoModal";
 import { AgendamentoPopover } from "@/components/agenda/AgendamentoPopover";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/agenda")({
   ssr: false,
