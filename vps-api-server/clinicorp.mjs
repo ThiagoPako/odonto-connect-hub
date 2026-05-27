@@ -940,7 +940,13 @@ async function projectAppointmentToLocal(pool, a, cpApptId, tenantId = null) {
   const procedimento = pickFirst(a, 'CategoryDescription', 'Category_Description', 'Category', 'category_description', 'ProcedureName', 'Procedure') ?? null;
   const categoriaCor = pickFirst(a, 'CategoryColor', 'Category_Color', 'Color', 'category_color') ?? null;
   const observacoes = pickFirst(a, 'Notes', 'Observation', 'Observations', 'notes', 'observacoes') ?? null;
+  if (!data || !hora) {
+    console.warn(`[clinicorp] skipping projection for appointment ${cpApptId} due to invalid date/time`, { data, hora });
+    return null;
+  }
+
   // Busca em QUALQUER tenant — se achar em outro, migra para o tenant atual.
+
   // Isso evita que agendamentos fiquem "presos" no tenant do admin original e
   // não apareçam para o usuário que rodou a sincronização.
   const exists = await pool.query(
