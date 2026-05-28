@@ -668,8 +668,12 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
           birth_date: p.data_nascimento,
           sex: p.sexo,
           synced_at: new Date().toISOString()
-        }));
-        await supabase.from('clinicorp_patients').upsert(mirrorPatients, { onConflict: 'id,tenant_id' });
+        })).filter(p => p.id); // Garante que temos ID
+
+        if (mirrorPatients.length) {
+          const { error: mirrorErr } = await supabase.from('clinicorp_patients').upsert(mirrorPatients, { onConflict: 'id,tenant_id' });
+          if (mirrorErr) log('Error syncing mirror clinicorp_patients', mirrorErr);
+        }
 
         if (upErr) errors.push(`pacientes chunk ${i}: ${upErr.message}`);
         else summary.patients += chunk.length;
