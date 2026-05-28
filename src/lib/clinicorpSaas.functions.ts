@@ -660,7 +660,7 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
         
         // Populate mirror table (New)
         const mirrorPatients = chunk.map(p => ({
-          id: p.clinicorp_patient_id,
+          id: p.clinicorp_patient_id ? Number(p.clinicorp_patient_id) : null,
           tenant_id: p.tenant_id,
           name: p.nome,
           email: p.email,
@@ -668,7 +668,7 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
           birth_date: p.data_nascimento,
           sex: p.sexo,
           synced_at: new Date().toISOString()
-        })).filter(p => p.id); // Garante que temos ID
+        })).filter(p => p.id !== null); // Garante que temos ID numérico
 
         if (mirrorPatients.length) {
           const { error: mirrorErr } = await supabase.from('clinicorp_patients').upsert(mirrorPatients, { onConflict: 'id,tenant_id' });
