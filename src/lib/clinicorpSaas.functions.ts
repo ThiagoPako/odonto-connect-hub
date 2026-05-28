@@ -455,7 +455,7 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
 
       // 2. Profissionais
       try {
-        const { status, data: pr } = await clinicorpProbe(base_url, subscriber_id, api_token, '/dentist/list', {}, 25000, activeAuthHeader);
+        const { status, data: pr } = await clinicorpProbe(base_url, subscriber_id, api_token, '/professional/list_all_professionals', {}, 25000, activeAuthHeader);
         const list = extractList(pr);
         log(`dentists status=${status} count=${list.length}`);
         
