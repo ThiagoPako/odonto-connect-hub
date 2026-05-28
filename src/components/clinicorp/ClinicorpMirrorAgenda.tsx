@@ -2,10 +2,13 @@ import { useState, useEffect, useMemo } from "react";
 import { clinicorpApi } from "@/lib/clinicorpApi";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ChevronLeft, ChevronRight, Clock, User2, CalendarDays, RefreshCw, AlertCircle, PlayCircle } from "lucide-react";
+import { ChevronLeft, ChevronRight, Clock, User2, CalendarDays, RefreshCw, AlertCircle, PlayCircle, Calendar as CalendarIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
+import { ptBR } from "date-fns/locale";
 import { toast } from "sonner";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
 
 export function ClinicorpMirrorAgenda({ refreshTrigger = 0 }: { refreshTrigger?: number }) {
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -95,6 +98,25 @@ export function ClinicorpMirrorAgenda({ refreshTrigger = 0 }: { refreshTrigger?:
           <Button size="sm" variant="outline" onClick={goPrev}><ChevronLeft className="h-4 w-4" /></Button>
           <Button size="sm" variant="outline" onClick={goToday}>Hoje</Button>
           <Button size="sm" variant="outline" onClick={goNext}><ChevronRight className="h-4 w-4" /></Button>
+          
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="outline" size="sm" className="gap-2">
+                <CalendarIcon className="h-4 w-4 text-primary" />
+                <span className="hidden sm:inline">Trocar Data</span>
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0 border-none shadow-2xl glass-card rounded-2xl" align="start">
+              <Calendar
+                mode="single"
+                selected={currentDate}
+                onSelect={(d) => d && setCurrentDate(d)}
+                initialFocus
+                locale={ptBR}
+              />
+            </PopoverContent>
+          </Popover>
+
           <div className="ml-2 flex flex-col">
             <span className="font-semibold text-sm">
               {currentDate.toLocaleDateString("pt-BR", { day: "2-digit", month: "long", year: "numeric" })}
