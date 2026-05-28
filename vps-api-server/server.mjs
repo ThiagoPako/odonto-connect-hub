@@ -224,7 +224,9 @@ const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY;
 const APP_URL = (process.env.APP_URL || 'https://odontoconnect.tech').replace(/\/$/, '').replace(':443', '');
 const WEBHOOK_PUBLIC_URL = process.env.WEBHOOK_PUBLIC_URL?.replace(/\/$/, '');
 const isLocalAppUrl = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(APP_URL);
-const WEBHOOK_URL = WEBHOOK_PUBLIC_URL || (isLocalAppUrl ? `${APP_URL.replace(/:\d+$/, `:${PORT}`)}/api/webhook/evolution` : `${APP_URL}/api/webhook/evolution`);
+
+// Ensure the webhook URL points to the backend API endpoint
+const WEBHOOK_URL = WEBHOOK_PUBLIC_URL || (isLocalAppUrl ? `${APP_URL.replace(/:\d+$/, `:${PORT}`)}/api/webhook/evolution` : `https://backend.odontoconnect.tech/api/webhook/evolution`);
 
 // ─── Web Push (VAPID) Config ────────────────────────────────
 // Generate keys once: npx web-push generate-vapid-keys
@@ -351,9 +353,9 @@ async function verifyUser(req) {
     await pool.query('SELECT set_config($1, $2, true)', ['app.is_super_admin', user.is_super_admin ? 'true' : 'false']);
 
     if (user.tenant_id) {
-      await pool.query('SELECT set_config($1, $2, true)', ['app.current_tenant_id', user.tenant_id]);
+      await pool.query('SELECT set_config($1, $2, true)', ['app.tenant_id', user.tenant_id]);
     } else {
-      await pool.query('SELECT set_config($1, $2, true)', ['app.current_tenant_id', '']);
+      await pool.query('SELECT set_config($1, $2, true)', ['app.tenant_id', '']);
     }
   } catch (err) {
     console.error('Failed to set DB session context:', err.message);

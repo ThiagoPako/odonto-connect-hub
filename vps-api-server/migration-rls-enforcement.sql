@@ -15,12 +15,21 @@ $$ LANGUAGE plpgsql STABLE;
 CREATE OR REPLACE FUNCTION is_super_admin() RETURNS BOOLEAN AS $$
   DECLARE
     payload TEXT;
+    simple_check TEXT;
   BEGIN
-    payload := current_setting('app.jwt_payload', true);
-    IF payload IS NULL OR payload = '' THEN
-      RETURN FALSE;
+    -- Check simple session variable first
+    simple_check := current_setting('app.is_super_admin', true);
+    IF simple_check = 'true' THEN
+      RETURN TRUE;
     END IF;
-    RETURN (payload::jsonb->>'is_super_admin')::boolean;
+
+    -- Fallback to JWT payload
+    payload := current_setting('app.jwt_payload', true);
+    IF payload IS NOT NULL AND payload <> '' THEN
+      RETURN (payload::jsonb->>'is_super_admin')::boolean;
+    END IF;
+
+    RETURN FALSE;
   EXCEPTION WHEN OTHERS THEN
     RETURN FALSE;
   END;
