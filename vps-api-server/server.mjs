@@ -10826,8 +10826,8 @@ app.post('/api/clinicorp/my-settings/test', async (req, res) => {
     const probes = [
       { key: 'clinics',       label: 'Clínicas',      path: '/business/list' },
       { key: 'appointments',  label: 'Agenda',        path: '/appointment/list',           query: { from: dateStr, to: dateStr } },
-      { key: 'professionals', label: 'Profissionais', path: '/professional/list_all_professionals', query: { subscriber_id } },
-      { key: 'patients',      label: 'Pacientes',     path: '/patient/list' }, // Alterado para /patient/list para maior clareza
+      { key: 'professionals', label: 'Profissionais', path: '/dentist/list' },
+      { key: 'patients',      label: 'Pacientes',     path: '/patient/birthdays',          query: { from: dateStr, to: dateStr } },
       { key: 'estimates',     label: 'Orçamentos',    path: '/estimates/list',             query: { from: dateStr, to: dateStr } },
       { key: 'financial',     label: 'Financeiro',    path: '/financial/list_invoices',    query: { from: dateStr, to: dateStr } },
     ];
