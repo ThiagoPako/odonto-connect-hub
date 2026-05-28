@@ -14,6 +14,7 @@ export function ClinicorpMirrorAgenda({ refreshTrigger = 0 }: { refreshTrigger?:
   const [chairs, setChairs] = useState<any[]>([]);
   const [selectedProfId, setSelectedProfId] = useState<string>("all");
   const [selectedChairId, setSelectedChairId] = useState<string>("all");
+  const [selectedStatus, setSelectedStatus] = useState<string>("all");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [syncingThisDay, setSyncingThisDay] = useState(false);
@@ -64,9 +65,10 @@ export function ClinicorpMirrorAgenda({ refreshTrigger = 0 }: { refreshTrigger?:
     return appointments.filter(a => {
       const matchProf = selectedProfId === "all" || String(a.professional_id) === selectedProfId;
       const matchChair = selectedChairId === "all" || String(a.chair_id) === selectedChairId;
-      return matchProf && matchChair;
+      const matchStatus = selectedStatus === "all" || String(a.status).toLowerCase() === selectedStatus.toLowerCase();
+      return matchProf && matchChair && matchStatus;
     });
-  }, [appointments, selectedProfId, selectedChairId]);
+  }, [appointments, selectedProfId, selectedChairId, selectedStatus]);
 
   const goPrev = () => { const d = new Date(currentDate); d.setDate(d.getDate() - 1); setCurrentDate(d); };
   const goNext = () => { const d = new Date(currentDate); d.setDate(d.getDate() + 1); setCurrentDate(d); };
@@ -127,6 +129,21 @@ export function ClinicorpMirrorAgenda({ refreshTrigger = 0 }: { refreshTrigger?:
               {chairs.map(c => (
                 <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>
               ))}
+            </SelectContent>
+          </Select>
+
+          <Select value={selectedStatus} onValueChange={setSelectedStatus}>
+            <SelectTrigger className="w-[140px]">
+              <SelectValue placeholder="Status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todos os Status</SelectItem>
+              <SelectItem value="agendado">Agendado</SelectItem>
+              <SelectItem value="confirmado">Confirmado</SelectItem>
+              <SelectItem value="faltou">Faltou</SelectItem>
+              <SelectItem value="cancelado">Cancelado</SelectItem>
+              <SelectItem value="em atendimento">Em atendimento</SelectItem>
+              <SelectItem value="finalizado">Finalizado</SelectItem>
             </SelectContent>
           </Select>
 
