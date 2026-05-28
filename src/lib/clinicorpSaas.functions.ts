@@ -479,7 +479,7 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
       // 3. Agendamentos
       const today = new Date();
       const from = data.from || ymd(new Date(today.getTime() - 7 * 86400000));
-      const to = data.to || ymd(new Date(today.getTime() + 60 * 86400000)); // Reduzido para 60 dias para evitar 429
+      const to = data.to || ymd(new Date(today.getTime() + 365 * 86400000)); // Aumentado para 365 dias atendendo pedido do usuário
 
       log(`appointments range ${from} → ${to}`);
 
