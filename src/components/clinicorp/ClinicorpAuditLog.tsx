@@ -247,7 +247,36 @@ export function ClinicorpAuditLog() {
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="auditoria" className="space-y-4">
+        <TabsContent value="auditoria" className="space-y-6">
+          {healthData && (
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+              {[
+                { label: 'Agenda', key: 'appointments', icon: CalendarDays },
+                { label: 'Orçamentos', key: 'estimates', icon: FileText },
+                { label: 'Financeiro', key: 'financial', icon: Landmark },
+                { label: 'Profissionais', key: 'professionals', icon: Users },
+                { label: 'Pacientes', key: 'patients', icon: UserRound },
+                { label: 'Clínicas', key: 'clinics', icon: Building2 },
+              ].map((item) => {
+                const data = healthData[item.key] || { count: 0, status: 'warning' };
+                const Icon = item.icon;
+                return (
+                  <div key={item.key} className="bg-card p-3 rounded-xl border border-border shadow-sm flex flex-col items-center text-center gap-1">
+                    <Icon className={cn("h-5 w-5", data.status === 'success' ? "text-success" : "text-warning")} />
+                    <span className="text-[10px] font-medium text-muted-foreground uppercase">{item.label}</span>
+                    <span className="text-lg font-bold">{data.count}</span>
+                    <Badge variant="outline" className={cn(
+                      "text-[8px] py-0 h-4 uppercase",
+                      data.status === 'success' ? "bg-success/10 text-success border-success/20" : "bg-warning/10 text-warning border-warning/20"
+                    )}>
+                      {data.status === 'success' ? 'OK' : 'Vazio'}
+                    </Badge>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
           <div className="flex flex-col md:flex-row gap-4 items-start md:items-center justify-between">
             <div className="flex items-center gap-2">
               <History className="h-5 w-5 text-primary" />
