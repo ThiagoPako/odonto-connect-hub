@@ -773,23 +773,37 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
       for (const clinicId of (clinicIds.length ? clinicIds : [undefined])) {
         // Estimates
         try {
-          const { data: estData } = await clinicorpProbe(base_url, subscriber_id, api_token, '/estimates/list', { 
-            from: finFrom, to: finTo, ...(clinicId ? { clinic_id: clinicId } : {}) 
-          }, 30000, activeAuthHeader);
-          const estList = extractList(estData);
+          const estEndpoints = ['/estimates/list', '/budget/list', '/treatment/list'];
+          let estList: any[] = [];
+          
+          for (const ep of estEndpoints) {
+            const { status, data: estData } = await clinicorpProbe(base_url, subscriber_id, api_token, ep, { 
+              from: finFrom, to: finTo, ...(clinicId ? { clinic_id: clinicId } : {}) 
+            }, 30000, activeAuthHeader);
+            
+            if (status === 200) {
+              const list = extractList(estData);
+              if (list.length) {
+                estList = list;
+                log(`Estates found using ${ep}: ${list.length}`);
+                break;
+              }
+            }
+          }
+
           if (estList.length) {
             const estUpserts = estList.map((e: any) => ({
-              id: pickFirst(e, 'Id', 'id', 'treatment_id') || '0',
+              id: pickFirst(e, 'Id', 'id', 'treatment_id', 'estimate_id', 'EstimateId') || '0',
               tenant_id,
-              treatment_id: pickFirst(e, 'treatment_id', 'Id', 'id'),
-              patient_id: pickFirst(e, 'patient_id', 'PatientId'),
-              patient_name: pickFirst(e, 'patient_name', 'PatientName'),
-              professional_id: pickFirst(e, 'professional_id', 'ProfessionalId'),
-              professional_name: pickFirst(e, 'professional_name', 'ProfessionalName'),
-              business_id: clinicId || pickFirst(e, 'business_id', 'ClinicId'),
-              amount: pickFirst(e, 'amount', 'total_amount', 'value') || 0,
-              status: pickFirst(e, 'status', 'status_name') || 'Pendente',
-              date: normalizeClinicorpDate(pickFirst(e, 'date', 'create_date')),
+              treatment_id: pickFirst(e, 'treatment_id', 'Id', 'id', 'estimate_id'),
+              patient_id: pickFirst(e, 'patient_id', 'PatientId', 'Patient_PersonId'),
+              patient_name: pickFirst(e, 'patient_name', 'PatientName', 'Patient_FullName'),
+              professional_id: pickFirst(e, 'professional_id', 'ProfessionalId', 'Professional_PersonId'),
+              professional_name: pickFirst(e, 'professional_name', 'ProfessionalName', 'Professional_FullName'),
+              business_id: clinicId || pickFirst(e, 'business_id', 'ClinicId', 'BusinessId'),
+              amount: pickFirst(e, 'amount', 'total_amount', 'value', 'TotalValue', 'total_value') || 0,
+              status: pickFirst(e, 'status', 'status_name', 'StatusDescription') || 'Pendente',
+              date: normalizeClinicorpDate(pickFirst(e, 'date', 'create_date', 'EstimateDate')),
               create_date: normalizeClinicorpDate(pickFirst(e, 'create_date', 'date')),
               raw: e,
               synced_at: new Date().toISOString()
