@@ -20,7 +20,7 @@ const pool = new pg.Pool({
 async function createSuperAdmin() {
   try {
     const email = 'superadmin@odontoconnect.tech';
-    const password = 'admin123';
+    const password = 'Connect#SecureAdmin@2026'; // Senha alterada para maior segurança
     const name = 'Super Admin';
     const hash = await bcrypt.hash(password, 12);
 
