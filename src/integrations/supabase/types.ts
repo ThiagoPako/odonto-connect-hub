@@ -983,6 +983,36 @@ export type Database = {
           },
         ]
       }
+      clinicorp_local_overrides: {
+        Row: {
+          conflict_strategy: string | null
+          id: string
+          keep_local: boolean | null
+          note: string | null
+          scope_id: string | null
+          scope_type: string
+          updated_at: string | null
+        }
+        Insert: {
+          conflict_strategy?: string | null
+          id?: string
+          keep_local?: boolean | null
+          note?: string | null
+          scope_id?: string | null
+          scope_type: string
+          updated_at?: string | null
+        }
+        Update: {
+          conflict_strategy?: string | null
+          id?: string
+          keep_local?: boolean | null
+          note?: string | null
+          scope_id?: string | null
+          scope_type?: string
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       clinicorp_monthly_summary: {
         Row: {
           bank_slip: number | null
@@ -4270,6 +4300,7 @@ export type Database = {
     }
     Functions: {
       current_tenant_id: { Args: never; Returns: string }
+      get_current_tenant_id: { Args: never; Returns: string }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
@@ -4277,7 +4308,9 @@ export type Database = {
         }
         Returns: boolean
       }
-      is_super_admin: { Args: { _user_id: string }; Returns: boolean }
+      is_super_admin:
+        | { Args: never; Returns: boolean }
+        | { Args: { _user_id: string }; Returns: boolean }
     }
     Enums: {
       app_role:
