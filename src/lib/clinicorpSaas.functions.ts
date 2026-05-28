@@ -258,7 +258,7 @@ export const testMyClinicorpConnection = createServerFn({ method: 'POST' })
     const probes = [
       { key: 'clinics', label: 'Clínicas', path: '/business/list', query: {} as Record<string, string> },
       { key: 'appointments', label: 'Agenda', path: '/appointment/list', query: { from: dateStr, to: dateStr } as Record<string, string> },
-      { key: 'professionals', label: 'Profissionais', path: '/dentist/list', query: {} as Record<string, string> },
+      { key: 'professionals', label: 'Profissionais', path: '/professional/list_all_professionals', query: {} as Record<string, string> },
       { key: 'patients', label: 'Pacientes', path: '/patient/birthdays', query: { from: dateStr, to: dateStr } as Record<string, string> },
     ];
 
