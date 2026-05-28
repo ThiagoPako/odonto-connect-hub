@@ -744,14 +744,24 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
         // Save to mirror table first
         const mirrorChunk = chunk.map(a => {
           const raw = allAppts.find(rawA => String(getAppointmentId(rawA)) === String(a.clinicorp_appointment_id));
+          
           return {
-            id: a.clinicorp_appointment_id,
+            id: Number(a.clinicorp_appointment_id),
             tenant_id: a.tenant_id,
             date: a.data,
-            raw: raw ? JSON.stringify(raw) : null,
+            from_time: a.hora,
+            status: a.status,
+            patient_name: a.paciente_id ? paMap.get(a.paciente_id) : (pickFirst(raw, 'PatientName', 'Patient_FullName') || ''),
+            patient_id: raw ? Number(pickFirst(raw, 'PatientId', 'Patient_PersonId')) : null,
+            professional_id: raw ? Number(pickFirst(raw, 'ProfessionalId', 'Dentist_PersonId')) : null,
+            professional_name: a.dentista_id ? profMap.get(a.dentista_id) : (pickFirst(raw, 'ProfessionalName', 'Dentist_FullName') || ''),
+            category_description: a.categoria,
+            category_color: a.categoria_cor,
+            raw: raw ? raw : null,
             synced_at: new Date().toISOString()
           };
-        });
+        }).filter(m => m.id);
+        
         await supabase.from('clinicorp_appointments').upsert(mirrorChunk, { onConflict: 'id,tenant_id' });
 
         const { error: upErr } = await supabase.from('agendamentos').upsert(chunk, { onConflict: 'tenant_id,clinicorp_appointment_id' });
