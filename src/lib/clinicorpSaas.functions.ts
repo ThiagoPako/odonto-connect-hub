@@ -520,9 +520,47 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
       // 3. Agendamentos
       const today = new Date();
       const from = data.from || ymd(new Date(today.getTime() - 7 * 86400000));
-      const to = data.to || ymd(new Date(today.getTime() + 365 * 86400000)); // Aumentado para 365 dias atendendo pedido do usuário
+      const to = data.to || ymd(new Date(today.getTime() + 365 * 86400000));
 
       log(`appointments range ${from} → ${to}`);
+
+      // 3.1 Categorias e Especialidades (Novas)
+      try {
+        await updateProgress('Sincronizando categorias e especialidades...');
+        const [{ data: cats }, { data: specs }] = await Promise.all([
+          clinicorpProbe(base_url, subscriber_id, api_token, '/appointment/list_categories', {}, 20000, activeAuthHeader),
+          clinicorpProbe(base_url, subscriber_id, api_token, '/professional/list_specialties', {}, 20000, activeAuthHeader)
+        ]);
+
+        const catList = extractList(cats);
+        const specList = extractList(specs);
+
+        if (catList.length) {
+          const catUpserts = catList.map((c: any) => ({
+            id: pickFirst(c, 'Id', 'id') || '0',
+            tenant_id,
+            description: pickFirst(c, 'Description', 'description', 'Name', 'name') || '',
+            color: pickFirst(c, 'Color', 'color') || null,
+            raw: c,
+            synced_at: new Date().toISOString()
+          })).filter((c: any) => c.id !== '0');
+          await supabase.from('clinicorp_appointment_categories').upsert(catUpserts, { onConflict: 'id,tenant_id' });
+        }
+
+        if (specList.length) {
+          const specUpserts = specList.map((s: any) => ({
+            id: pickFirst(s, 'Id', 'id') || '0',
+            tenant_id,
+            description: pickFirst(s, 'Description', 'description', 'Name', 'name') || '',
+            raw: s,
+            synced_at: new Date().toISOString()
+          })).filter((s: any) => s.id !== '0');
+          await supabase.from('clinicorp_specialties').upsert(specUpserts, { onConflict: 'id,tenant_id' });
+        }
+      } catch (e: any) {
+        errors.push(`categorias/especialidades: ${e.message}`);
+      }
+
 
       const chunks: { from: string; to: string }[] = [];
       {
@@ -614,11 +652,28 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
       // Batch upsert patients in chunks
       for (let i = 0; i < patientUpserts.length; i += 200) {
         const chunk = patientUpserts.slice(i, i + 200);
+        
+        // Populate main table
         const { error: upErr } = await supabase.from('pacientes').upsert(chunk, { onConflict: 'tenant_id,clinicorp_patient_id' });
+        
+        // Populate mirror table (New)
+        const mirrorPatients = chunk.map(p => ({
+          id: p.clinicorp_patient_id,
+          tenant_id: p.tenant_id,
+          name: p.nome,
+          email: p.email,
+          mobile_phone: p.celular,
+          birth_date: p.data_nascimento,
+          sex: p.sexo,
+          synced_at: new Date().toISOString()
+        }));
+        await supabase.from('clinicorp_patients').upsert(mirrorPatients, { onConflict: 'id,tenant_id' });
+
         if (upErr) errors.push(`pacientes chunk ${i}: ${upErr.message}`);
         else summary.patients += chunk.length;
         await updateProgress(`Salvando pacientes: ${summary.patients}/${patientUpserts.length}`);
       }
+
 
       await updateProgress('Finalizando agendamentos...');
 
@@ -777,12 +832,27 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
       log('summary', summary);
       const finalStatus = errors.length > 3 ? 'partial' : 'success';
       
+      // 7. Gravar log de auditoria do sync (Novo)
+      try {
+        await supabase.from('clinicorp_push_log').insert({
+          tenant_id,
+          entity_type: 'sync_summary',
+          action: 'bulk_sync',
+          status: finalStatus,
+          payload: { summary, from, to },
+          error_message: errors.length ? errors.join(' | ') : null
+        });
+      } catch (logErr) {
+        log('Audit log error', logErr);
+      }
+
       await supabase.from('clinicorp_user_settings').update({
         last_sync_status: finalStatus,
         last_sync_at: new Date().toISOString(),
         last_sync_error: errors.length ? errors.slice(0, 3).join(' | ') : null,
         sync_progress: { summary, step: 'Concluído', completed: true, timestamp: new Date().toISOString() }
       }).eq('user_id', userId);
+
 
       return { ok: true, status: finalStatus, summary, errors: errors.slice(0, 20), from, to };
     } catch (err: any) {
