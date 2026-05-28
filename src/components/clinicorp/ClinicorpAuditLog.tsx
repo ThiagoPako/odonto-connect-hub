@@ -63,13 +63,30 @@ export function ClinicorpAuditLog() {
     }).catch(console.error);
     
     // Buscar um resumo rápido dos dados locais
-    Promise.all([
-      clinicorpApi.listPatients().then(d => d.length),
-      clinicorpApi.listAppointments({ from: '2020-01-01', to: '2030-12-31' }).then(d => d.length),
-      clinicorpApi.listEstimates().then(d => d.length)
-    ]).then(([p, a, e]) => {
-      setSummary({ patients: p, appointments: a, estimates: e });
-    }).catch(console.error);
+    const fetchData = async () => {
+      try {
+        const [p, a, e, c, pr, f] = await Promise.all([
+          clinicorpApi.listPatients().then(d => d.length),
+          clinicorpApi.listAppointments({ from: '2020-01-01', to: '2030-12-31' }).then(d => d.length),
+          clinicorpApi.listEstimates().then(d => d.length),
+          clinicorpApi.listClinics().then(d => d.length),
+          clinicorpApi.listProfessionals().then(d => d.length),
+          clinicorpApi.listFinancial().then(d => d.length)
+        ]);
+        setSummary({ patients: p, appointments: a, estimates: e });
+        setHealthData({ 
+          patients: { count: p, status: p > 0 ? 'success' : 'warning' },
+          appointments: { count: a, status: a > 0 ? 'success' : 'warning' },
+          estimates: { count: e, status: e > 0 ? 'success' : 'warning' },
+          clinics: { count: c, status: c > 0 ? 'success' : 'warning' },
+          professionals: { count: pr, status: pr > 0 ? 'success' : 'warning' },
+          financial: { count: f, status: f > 0 ? 'success' : 'warning' }
+        });
+      } catch (err) {
+        console.error(err);
+      }
+    };
+    fetchData();
   }, [refreshTrigger]);
 
   const handleManualSync = async () => {
