@@ -236,6 +236,7 @@ export function ClinicorpMirrorAgenda({ refreshTrigger = 0 }: { refreshTrigger?:
         ) : (
           <div className="divide-y divide-border">
             {filteredAppointments.sort((a,b) => (a.from_time || "").localeCompare(b.from_time || "")).map((a) => (
+
               <div key={a.id} className="p-4 flex items-start gap-4 hover:bg-muted/30 transition-colors group">
                 <div className="w-16 shrink-0 text-center">
                   <div className="text-sm font-bold text-primary">{a.from_time}</div>
@@ -245,7 +246,7 @@ export function ClinicorpMirrorAgenda({ refreshTrigger = 0 }: { refreshTrigger?:
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between gap-2">
                     <h4 className="font-bold truncate text-foreground group-hover:text-primary transition-colors">
-                      {a.patient_name}
+                      {a.patient_name || 'Paciente sem nome'}
                     </h4>
                     <div 
                       className="px-2 py-0.5 rounded-full text-[10px] font-bold text-white shadow-sm"

@@ -175,19 +175,61 @@ export const clinicorpApi = {
     req<ClinicorpSyncResult>('/sync', { method: 'POST', body: JSON.stringify(range || {}) }),
   reconcileNow: () => req<{ ran?: boolean; skipped?: boolean; status?: string; summary?: Record<string, number>; error?: string }>('/reconcile', { method: 'POST' }),
   syncAuto: () => req<{ ran?: boolean; skipped?: boolean; status?: string; summary?: Record<string, number>; error?: string }>('/sync/auto', { method: 'POST' }),
-  listClinics: () => req<Array<Record<string, unknown>>>('/clinics'),
-  listProfessionals: () => req<Array<Record<string, unknown>>>('/professionals'),
-  listCategories: () => req<Array<Record<string, unknown>>>('/categories'),
-  listSpecialties: () => req<Array<Record<string, unknown>>>('/specialties'),
-  listPatients: (search?: string) => req<Array<Record<string, unknown>>>(`/patients${search ? `?search=${encodeURIComponent(search)}` : ''}`),
-  listAppointments: (params: { from?: string; to?: string; professional_id?: string | number; business_id?: string | number } = {}) => {
-    const qs = new URLSearchParams();
-    Object.entries(params).forEach(([k, v]) => { if (v !== undefined && v !== '') qs.set(k, String(v)); });
-    return req<Array<Record<string, unknown>>>(`/appointments${qs.toString() ? `?${qs}` : ''}`);
+  listClinics: async () => {
+    const { data, error } = await supabase.from('clinicorp_clinics').select('*');
+    if (error) throw error;
+    return data;
   },
-  listEstimates: () => req<Array<Record<string, unknown>>>('/estimates'),
-  listFinancial: (limit = 200) => req<Array<Record<string, unknown>>>(`/financial?limit=${limit}`),
-  listChairs: () => req<Array<Record<string, unknown>>>('/chairs'),
+  listProfessionals: async () => {
+    const { data, error } = await supabase.from('clinicorp_professionals').select('*');
+    if (error) throw error;
+    return data;
+  },
+  listCategories: async () => {
+    const { data, error } = await supabase.from('clinicorp_appointment_categories').select('*');
+    if (error) throw error;
+    return data;
+  },
+  listSpecialties: async () => {
+    const { data, error } = await supabase.from('clinicorp_specialties').select('*');
+    if (error) throw error;
+    return data;
+  },
+  listPatients: async (search?: string) => {
+    let q = supabase.from('clinicorp_patients').select('*');
+    if (search) q = q.ilike('name', `%${search}%`);
+    const { data, error } = await q;
+    if (error) throw error;
+    return data;
+  },
+  listAppointments: async (params: { from?: string; to?: string; professional_id?: string | number; business_id?: string | number } = {}) => {
+    let q = supabase.from('clinicorp_appointments').select('*');
+    if (params.from) q = q.gte('date', params.from);
+    if (params.to) q = q.lte('date', params.to);
+    if (params.professional_id && params.professional_id !== 'all') q = q.eq('professional_id', Number(params.professional_id));
+    if (params.business_id) q = q.eq('business_id', Number(params.business_id));
+
+    
+    const { data, error } = await q.order('date', { ascending: true });
+    if (error) throw error;
+    return data as any[];
+  },
+  listEstimates: async () => {
+    const { data, error } = await supabase.from('clinicorp_estimates').select('*');
+    if (error) throw error;
+    return data;
+  },
+  listFinancial: async (limit = 200) => {
+    const { data, error } = await supabase.from('clinicorp_financial_entries').select('*').limit(limit).order('date', { ascending: false });
+    if (error) throw error;
+    return data;
+  },
+  listChairs: async () => {
+    const { data, error } = await supabase.from('clinicorp_chairs').select('*');
+    if (error) throw error;
+    return data;
+  },
+
   listWebhookEvents: (limit = 50) => req<ClinicorpWebhookEvent[]>(`/webhook-events?limit=${limit}`),
   getWebhookEvent: (id: number) => req<ClinicorpWebhookEvent & { payload: unknown; headers: unknown; ip: string }>(`/webhook-events/${id}`),
   reproject: () => req<{ ok: true; patients: number; appointments: number; professionals: number }>('/reproject', { method: 'POST' }),
