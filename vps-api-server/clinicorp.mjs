@@ -310,27 +310,28 @@ export const clinicorpApi = {
     let dayCount = 0;
     let consecutiveErrors = 0;
 
-    for (let d = new Date(start); d <= end && dayCount < MAX_DAYS; d.setUTCDate(d.getUTCDate() + 1)) {
-      dayCount++;
-      const day = d.toISOString().slice(0, 10);
+    for (let d = new Date(start); d <= end && dayCount < MAX_DAYS; d.setUTCDate(d.getUTCDate() + 14)) {
+      dayCount += 14;
+      const dTo = new Date(d.getTime() + 13 * 86400000);
+      const toDay = (dTo < end ? dTo : end).toISOString().slice(0, 10);
+      const fromDay = d.toISOString().slice(0, 10);
+
       try {
         const data = await clinicorpFetch(s, '/appointment/list', {
-          query: { from: day, to: day, ...baseBiz },
+          query: { from: fromDay, to: toDay, ...baseBiz },
         });
         const arr = extract(data);
         if (Array.isArray(arr) && arr.length > 0) push(arr);
         consecutiveErrors = 0;
       } catch (e) {
-        if (e?.status === 429) throw e; // respeita rate limit imediatamente
-        // Se for 404, 400 ou 403 em um dia específico, pode ser que não existam agendamentos ou acesso negado àquele dia/clínica
-        // Não incrementamos consecutiveErrors tão agressivamente para esses casos.
-        if (e?.status === 404 || e?.status === 400) {
-           console.warn(`[clinicorp] listAppointments ignorando erro ${e.status} em ${day} (provavelmente sem dados)`);
+        if (e?.status === 429) throw e; 
+        if (e?.status === 400 || e?.status === 404) {
+           console.warn(`[clinicorp] listAppointments ignorando erro ${e.status} no range ${fromDay}..${toDay}`);
            continue;
         }
         consecutiveErrors++;
-        if (consecutiveErrors >= 10) {
-          console.warn(`[clinicorp] listAppointments abortando após ${consecutiveErrors} erros consecutivos em ${day}: ${e?.message || e}`);
+        if (consecutiveErrors >= 5) {
+          console.warn(`[clinicorp] listAppointments abortando após ${consecutiveErrors} erros consecutivos: ${e?.message || e}`);
           break;
         }
       }
