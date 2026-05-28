@@ -484,7 +484,10 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
         const dentistUpserts = [];
         for (const d of list) {
           const id = String(pickFirst(d, 'Id', 'id', 'PersonId', 'Person_Id', 'Dentist_PersonId', 'DentistPersonId', 'Professional_PersonId', 'DentistId', 'professional_id', 'ProfessionalId', 'dentist_id', 'ScheduleToId') ?? '');
-          const nome = String(pickFirst(d, 'FullName', 'Name', 'full_name', 'name', 'professional_name', 'ProfessionalName', 'Dentist_FullName', 'Dentist_Name', 'ScheduleToName') ?? '').trim();
+          let nome = String(pickFirst(d, 'FullName', 'Name', 'full_name', 'name', 'professional_name', 'ProfessionalName', 'Dentist_FullName', 'Dentist_Name', 'ScheduleToName') ?? '').trim();
+          if (nome.toLowerCase().includes('selecione seu nome') || !nome) {
+            nome = `Profissional ${id}`;
+          }
 
           if (!id || !nome) continue;
           dentistUpserts.push({
@@ -660,7 +663,7 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
         
         // Populate mirror table (New)
         const mirrorPatients = chunk.map(p => ({
-          id: p.clinicorp_patient_id,
+          id: p.clinicorp_patient_id ? Number(p.clinicorp_patient_id) : null,
           tenant_id: p.tenant_id,
           name: p.nome,
           email: p.email,
@@ -668,7 +671,7 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
           birth_date: p.data_nascimento,
           sex: p.sexo,
           synced_at: new Date().toISOString()
-        })).filter(p => p.id); // Garante que temos ID
+        })).filter(p => p.id !== null); // Garante que temos ID numérico
 
         if (mirrorPatients.length) {
           const { error: mirrorErr } = await supabase.from('clinicorp_patients').upsert(mirrorPatients, { onConflict: 'id,tenant_id' });
@@ -744,14 +747,24 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
         // Save to mirror table first
         const mirrorChunk = chunk.map(a => {
           const raw = allAppts.find(rawA => String(getAppointmentId(rawA)) === String(a.clinicorp_appointment_id));
+          
           return {
-            id: a.clinicorp_appointment_id,
+            id: Number(a.clinicorp_appointment_id),
             tenant_id: a.tenant_id,
             date: a.data,
-            raw: raw ? JSON.stringify(raw) : null,
+            from_time: a.hora,
+            status: a.status,
+            patient_name: a.paciente_id ? paMap.get(a.paciente_id) : (pickFirst(raw, 'PatientName', 'Patient_FullName') || ''),
+            patient_id: raw ? Number(pickFirst(raw, 'PatientId', 'Patient_PersonId')) : null,
+            professional_id: raw ? Number(pickFirst(raw, 'ProfessionalId', 'Dentist_PersonId')) : null,
+            professional_name: a.dentista_id ? profMap.get(a.dentista_id) : (pickFirst(raw, 'ProfessionalName', 'Dentist_FullName') || ''),
+            category_description: a.categoria,
+            category_color: a.categoria_cor,
+            raw: raw ? raw : null,
             synced_at: new Date().toISOString()
           };
-        });
+        }).filter(m => m.id);
+        
         await supabase.from('clinicorp_appointments').upsert(mirrorChunk, { onConflict: 'id,tenant_id' });
 
         const { error: upErr } = await supabase.from('agendamentos').upsert(chunk, { onConflict: 'tenant_id,clinicorp_appointment_id' });
