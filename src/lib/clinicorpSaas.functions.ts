@@ -841,7 +841,7 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
               })).filter(f => f.external_id !== '');
               
               if (finUpserts.length) {
-                await supabase.from('clinicorp_financial_entries').upsert(finUpserts);
+                await supabase.from('clinicorp_financial_entries').upsert(finUpserts, { onConflict: 'source,external_id,tenant_id' });
                 summary.financial += finUpserts.length;
               }
             }
