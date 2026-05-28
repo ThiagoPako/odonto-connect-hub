@@ -753,13 +753,15 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
             tenant_id: a.tenant_id,
             date: a.data,
             from_time: a.hora,
+            to_time: normalizeClinicorpTime(pickFirst(raw, 'ToTime', 'toTime', 'to_time', 'EndTime')),
             status: a.status,
-            patient_name: a.paciente_id ? paMap.get(a.paciente_id) : (pickFirst(raw, 'PatientName', 'Patient_FullName') || ''),
-            patient_id: raw ? Number(pickFirst(raw, 'PatientId', 'Patient_PersonId')) : null,
-            professional_id: raw ? Number(pickFirst(raw, 'ProfessionalId', 'Dentist_PersonId')) : null,
-            professional_name: a.dentista_id ? profMap.get(a.dentista_id) : (pickFirst(raw, 'ProfessionalName', 'Dentist_FullName') || ''),
+            patient_name: pickFirst(raw, 'PatientName', 'Patient_FullName', 'patient_name', 'Name') || (a.paciente_id ? paMap.get(a.paciente_id) : ''),
+            patient_id: raw ? Number(pickFirst(raw, 'Patient_PersonId', 'PatientId', 'PatientPersonId')) : null,
+            professional_id: raw ? Number(pickFirst(raw, 'Dentist_PersonId', 'ProfessionalId', 'ScheduleToId', 'DentistId')) : null,
+            professional_name: pickFirst(raw, 'Dentist_FullName', 'ProfessionalName', 'professional_name', 'ScheduleToName') || (a.dentista_id ? profMap.get(a.dentista_id) : ''),
             category_description: a.categoria,
             category_color: a.categoria_cor,
+            notes: pickFirst(raw, 'Notes', 'notes', 'Note'),
             raw: raw ? raw : null,
             synced_at: new Date().toISOString()
           };
@@ -786,7 +788,7 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
       for (const clinicId of (clinicIds.length ? clinicIds : [undefined])) {
         // Estimates
         try {
-          const estEndpoints = ['/estimates/list', '/budget/list', '/treatment/list'];
+          const estEndpoints = ['/estimates/list', '/budget/list', '/treatment/list', '/budget/list_budgets', '/treatment/list_treatments'];
           let estList: any[] = [];
           
           for (const ep of estEndpoints) {
@@ -830,7 +832,8 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
         const finEndpoints = [
           { key: 'invoice', path: '/financial/list_invoices' },
           { key: 'payment', path: '/financial/list_payments' },
-          { key: 'cashflow', path: '/financial/list_cash_flow' }
+          { key: 'cashflow', path: '/financial/list_cash_flow' },
+          { key: 'revenue', path: '/financial/list_revenues' }
         ];
 
         for (const ep of finEndpoints) {
@@ -860,6 +863,23 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
             }
           } catch (e: any) { errors.push(`${ep.key} (${clinicId || 'global'}): ${e.message}`); }
         }
+      }
+
+      // ─── BACKFILL SQL: Re-extrair colunas e derivar pacientes ───
+      try {
+        log('Iniciando backfill SQL para o tenant:', tenant_id);
+        
+        // 1. Atualizar agendamentos faltantes a partir do raw
+        await supabase.rpc('backfill_clinicorp_appointments', { p_tenant_id: tenant_id });
+        
+        // 2. Derivar pacientes que não foram importados mas estão na agenda
+        await supabase.rpc('backfill_clinicorp_patients', { p_tenant_id: tenant_id });
+        
+        // 3. Atualizar nomes de profissionais genéricos
+        await supabase.rpc('fix_generic_professionals', { p_tenant_id: tenant_id });
+
+      } catch (backfillErr: any) {
+        log('Backfill error', backfillErr.message);
       }
 
       log('summary', summary);

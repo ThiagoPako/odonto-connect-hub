@@ -4394,7 +4394,19 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      backfill_clinicorp_appointments: {
+        Args: { p_tenant_id: string }
+        Returns: undefined
+      }
+      backfill_clinicorp_patients: {
+        Args: { p_tenant_id: string }
+        Returns: undefined
+      }
       current_tenant_id: { Args: never; Returns: string }
+      fix_generic_professionals: {
+        Args: { p_tenant_id: string }
+        Returns: undefined
+      }
       get_current_tenant_id: { Args: never; Returns: string }
       has_role: {
         Args: {
