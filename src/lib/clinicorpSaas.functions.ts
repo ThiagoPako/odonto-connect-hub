@@ -832,7 +832,8 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
         const finEndpoints = [
           { key: 'invoice', path: '/financial/list_invoices' },
           { key: 'payment', path: '/financial/list_payments' },
-          { key: 'cashflow', path: '/financial/list_cash_flow' }
+          { key: 'cashflow', path: '/financial/list_cash_flow' },
+          { key: 'revenue', path: '/financial/list_revenues' }
         ];
 
         for (const ep of finEndpoints) {
