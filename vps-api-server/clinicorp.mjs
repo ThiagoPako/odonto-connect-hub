@@ -1884,10 +1884,77 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     } catch (e) { /* skip */ }
   });
 
+  // ─── BACKFILL SQL universal: re-extrai colunas a partir do raw JSONB ───
+  // Necessário porque rows antigas foram inseridas com upserts anteriores que
+  // não populavam todos os campos. Roda em todos os tenants.
+  try {
+    console.log('[clinicorp sync] backfill SQL: re-extraindo colunas a partir de raw...');
+    await pool.query(`
+      UPDATE clinicorp_appointments SET
+        patient_name = COALESCE(NULLIF(patient_name,''), raw->>'PatientName', raw->>'Patient_FullName', raw->>'Patient_Name', raw->'Patient'->>'Name', raw->'Patient'->>'FullName'),
+        patient_id = COALESCE(patient_id, NULLIF(regexp_replace(COALESCE(raw->>'Patient_PersonId', raw->>'PatientId', raw->>'PatientPersonId', raw->'Patient'->>'Id', ''), '\\D', '', 'g'), '')::bigint),
+        professional_id = COALESCE(professional_id, NULLIF(regexp_replace(COALESCE(raw->>'Dentist_PersonId', raw->>'ProfessionalId', raw->>'ScheduleToId', raw->'Dentist'->>'Id', ''), '\\D', '', 'g'), '')::bigint),
+        professional_name = COALESCE(NULLIF(professional_name,''), raw->>'Dentist_FullName', raw->>'Dentist_Name', raw->>'ScheduleToName', raw->>'ProfessionalName', raw->'Dentist'->>'FullName', raw->'Dentist'->>'Name'),
+        category_id = COALESCE(category_id, NULLIF(regexp_replace(COALESCE(raw->>'CategoryId', ''), '\\D', '', 'g'), '')::bigint),
+        category_description = COALESCE(NULLIF(category_description,''), raw->>'CategoryDescription', raw->>'Category'),
+        category_color = COALESCE(NULLIF(category_color,''), raw->>'CategoryColor', raw->>'Color'),
+        business_id = COALESCE(business_id, NULLIF(regexp_replace(COALESCE(raw->>'Clinic_BusinessId', raw->>'BusinessId', ''), '\\D', '', 'g'), '')::bigint),
+        date = COALESCE(date, (raw->>'date')::date, (raw->>'Date')::date),
+        from_time = COALESCE(NULLIF(from_time,''), raw->>'fromTime', raw->>'FromTime'),
+        to_time = COALESCE(NULLIF(to_time,''), raw->>'toTime', raw->>'ToTime'),
+        status = COALESCE(NULLIF(status,''), raw->>'StatusId', raw->>'Status'),
+        notes = COALESCE(NULLIF(notes,''), raw->>'Notes', raw->>'notes')
+      WHERE raw IS NOT NULL
+        AND (patient_name IS NULL OR patient_name='' OR patient_id IS NULL OR from_time IS NULL OR date IS NULL OR professional_id IS NULL);
+    `).catch(e => console.error('[clinicorp sync] backfill appointments cols:', e.message));
+
+    // Deriva clinicorp_patients a partir dos raws de agendamentos (Clinicorp não tem /patient/list)
+    await pool.query(`
+      INSERT INTO clinicorp_patients (id, tenant_id, name, mobile_phone, raw, synced_at)
+      SELECT DISTINCT ON (pid, tenant_id)
+        pid::bigint AS id,
+        tenant_id,
+        NULLIF(raw->>'PatientName',''),
+        NULLIF(raw->>'MobilePhone',''),
+        jsonb_build_object('derived_from','appointment_backfill','id',pid,'name',raw->>'PatientName','mobile_phone',raw->>'MobilePhone'),
+        NOW()
+      FROM (
+        SELECT tenant_id, raw,
+               NULLIF(regexp_replace(COALESCE(raw->>'Patient_PersonId', raw->>'PatientId',''), '\\D', '', 'g'), '') AS pid
+        FROM clinicorp_appointments
+        WHERE raw IS NOT NULL
+      ) s
+      WHERE pid IS NOT NULL AND pid ~ '^\\d+$'
+      ON CONFLICT (id, tenant_id) DO UPDATE SET
+        name = COALESCE(NULLIF(EXCLUDED.name,''), clinicorp_patients.name),
+        mobile_phone = COALESCE(NULLIF(EXCLUDED.mobile_phone,''), clinicorp_patients.mobile_phone),
+        synced_at = NOW();
+    `).catch(e => console.error('[clinicorp sync] backfill patients from appts:', e.message));
+
+    // Mapeia status numérico (StatusId) para texto legível usando heurística do raw
+    await pool.query(`
+      UPDATE clinicorp_appointments SET status =
+        CASE
+          WHEN raw->>'CheckinTime' IS NOT NULL AND raw->>'CheckinTime' <> '' AND raw->>'WaitEnds' IS NOT NULL AND raw->>'WaitEnds' <> '' THEN 'em_atendimento'
+          WHEN (raw->>'StatusColor') ILIKE '%66bb6a%' THEN 'confirmado'
+          WHEN (raw->>'StatusColor') ILIKE '%f44%' OR (raw->>'StatusColor') ILIKE '%e53%' THEN 'cancelado'
+          WHEN (raw->>'StatusColor') ILIKE '%ffa%' OR (raw->>'StatusColor') ILIKE '%ff9%' THEN 'faltou'
+          ELSE 'agendado'
+        END
+      WHERE status IS NULL OR status ~ '^\\d+$';
+    `).catch(e => console.error('[clinicorp sync] map status:', e.message));
+
+    console.log('[clinicorp sync] backfill SQL concluído');
+  } catch (e) {
+    console.error('[clinicorp sync] backfill SQL block:', e.message);
+  }
+
   // Força re-projeção final para garantir que dados espelhados apareçam nos módulos locais
   try {
     const tId = await resolveTenantId(pool, tenant_id);
     console.log(`[clinicorp sync] forçando projeção local para tenant ${tId}...`);
+
+
 
     // 1. Pacientes (todos do tenant)
     const { rows: pats } = await pool.query(`SELECT raw FROM clinicorp_patients WHERE tenant_id=$1`, [tId]);
