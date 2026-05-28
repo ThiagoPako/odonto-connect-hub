@@ -308,6 +308,17 @@ const syncSchema = z.object({
 }).default({});
 
 // ─── helpers ─────────────────────────────────────────────────
+function mapAppointmentStatus(raw: any): string {
+  const s = String(raw ?? '').toLowerCase();
+  if (!s) return 'agendado';
+  if (s.includes('confirm')) return 'confirmado';
+  if (s.includes('cancel') || s.includes('desmarc')) return 'cancelado';
+  if (s.includes('falt') || s.includes('no_show') || s.includes('noshow')) return 'faltou';
+  if (s.includes('atend') || s.includes('progress')) return 'em_atendimento';
+  if (s.includes('final') || s.includes('conclu') || s.includes('done') || s.includes('complete')) return 'finalizado';
+  return 'agendado';
+}
+
 function normalizeClinicorpDate(...values: any[]): string | null {
   for (const value of values) {
     if (value === null || value === undefined || value === "") continue;
