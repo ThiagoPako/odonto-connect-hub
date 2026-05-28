@@ -627,7 +627,7 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
           procedimento: procedimento,
           categoria: procedimento,
           categoria_cor: categoriaCor,
-          status: String(pickFirst(a, "Status", "status", "status_name", "StatusName", "StatusId", "StatusDescription") ?? "agendado"),
+          status: mapAppointmentStatus(pickFirst(a, "Status", "status", "status_name", "StatusName", "StatusId", "StatusDescription")),
           clinicorp_appointment_id: apId,
         });
       }
