@@ -1331,6 +1331,7 @@ async function projectFinanceToLocal(pool, source, item, tenantId = null) {
 
 // ─── Sync orchestration ───────────────────────────────────────
 export async function runFullSync(pool, { from, to, api_token, subscriber_id, base_url, tenant_id, force_metadata = false, user_id = null, apptFrom = null, apptTo = null, estFrom = null, estTo = null } = {}) {
+  console.log(`[clinicorp sync] STARTING for tenant_id=${tenant_id} subscriber_id=${subscriber_id}`);
   const tId = await resolveTenantId(pool, tenant_id);
   const syncKey = `${subscriber_id || 'global'}:${tId}`;
 
