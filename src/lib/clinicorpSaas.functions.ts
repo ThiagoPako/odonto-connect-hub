@@ -494,24 +494,26 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
 
       log(`appointments range ${from} → ${to}`);
 
-      const days: string[] = [];
+      const chunks: { from: string; to: string }[] = [];
       {
-        const start = new Date(from + 'T00:00:00Z');
+        let current = new Date(from + 'T00:00:00Z');
         const end = new Date(to + 'T00:00:00Z');
-        for (let d = new Date(start); d <= end; d = new Date(d.getTime() + 86400000)) {
-          days.push(ymd(d));
+        while (current <= end) {
+          const next = new Date(current.getTime() + 14 * 86400000); // Chunks de 14 dias
+          const toDs = next < end ? next : end;
+          chunks.push({ from: ymd(current), to: ymd(toDs) });
+          current = new Date(toDs.getTime() + 86400000);
         }
       }
 
       const allAppts: any[] = [];
       let rateLimitHit = false;
-      const CONCURRENCY = 1; // Sincronização serial para ser o mais seguro possível contra 429
-      for (let i = 0; i < days.length && !rateLimitHit; i += CONCURRENCY) {
-
-        const batch = days.slice(i, i + CONCURRENCY);
-        const results = await Promise.allSettled(batch.map(ds =>
-          clinicorpProbe(base_url, subscriber_id, api_token, '/appointment/list', { from: ds, to: ds }, 25000, activeAuthHeader)
-            .then(res => ({ ds, ...res }))
+      const CONCURRENCY = 1; 
+      for (let i = 0; i < chunks.length && !rateLimitHit; i += CONCURRENCY) {
+        const batch = chunks.slice(i, i + CONCURRENCY);
+        const results = await Promise.allSettled(batch.map(c =>
+          clinicorpProbe(base_url, subscriber_id, api_token, '/appointment/list', { from: c.from, to: c.to }, 30000, activeAuthHeader)
+            .then(res => ({ ds: c.from, ...res }))
         ));
         for (const r of results) {
           if (r.status === 'fulfilled') {
@@ -524,13 +526,13 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
             const list = extractList(ap);
             if (list.length) allAppts.push(...list);
           } else {
-            errors.push(`appt: ${(r.reason as any)?.message || 'erro'}`);
+            errors.push(`appt chunk: ${(r.reason as any)?.message || 'erro'}`);
           }
         }
         if (rateLimitHit) break;
         summary.appointments = allAppts.length;
-        await updateProgress(`Agenda: ${Math.min(i + CONCURRENCY, days.length)}/${days.length} dias (${allAppts.length} encontrados)`);
-        await new Promise(r => setTimeout(r, 1000)); // Delay de 1s entre dias para evitar rate limit
+        await updateProgress(`Agenda: ${Math.min(i + CONCURRENCY, chunks.length)}/${chunks.length} janelas (${allAppts.length} agendamentos)`);
+        await new Promise(r => setTimeout(r, 500)); 
       }
       log(`appointments total coletados=${allAppts.length}`);
       if (rateLimitHit) {
