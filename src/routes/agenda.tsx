@@ -13,7 +13,13 @@ import { AgendaProfessionalsList } from "@/components/agenda/AgendaProfessionals
 import { AgendaGrid } from "@/components/agenda/AgendaGrid";
 import { NovoAgendamentoModal } from "@/components/agenda/NovoAgendamentoModal";
 import { AgendamentoPopover } from "@/components/agenda/AgendamentoPopover";
+import { AgendaStatusFilter } from "@/components/agenda/AgendaStatusFilter";
 import { cn } from "@/lib/utils";
+import { Calendar as CalendarIcon } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
+import { format } from "date-fns";
+import { ptBR } from "date-fns/locale";
 
 export const Route = createFileRoute("/agenda")({
   ssr: false,
@@ -36,6 +42,7 @@ function AgendaPage() {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [profs, setProfs] = useState<Prof[]>([]);
   const [selectedProfs, setSelectedProfs] = useState<string[]>([]);
+  const [selectedStatuses, setSelectedStatuses] = useState<string[]>(["agendado", "confirmado", "em_atendimento", "finalizado", "faltou", "cancelado"]);
   const [appointments, setAppointments] = useState<AgendamentoVPS[]>([]);
   const [config, setConfig] = useState<ClinicaConfig | null>(null);
   const [loading, setLoading] = useState(false);
@@ -164,7 +171,11 @@ function AgendaPage() {
   };
 
   const visibleProfs = profs.filter((p) => selectedProfs.includes(p.id));
-  const visibleApts = appointments.filter((a) => !a.dentista_id || selectedProfs.includes(a.dentista_id));
+  const visibleApts = appointments.filter((a) => {
+    const matchProf = !a.dentista_id || selectedProfs.includes(a.dentista_id);
+    const matchStatus = selectedStatuses.includes(a.status || "agendado");
+    return matchProf && matchStatus;
+  });
 
   const handleCellClick = (profId: string, hora: string) => {
     setNovoDefaults({ hora, dentistaId: profId });
@@ -213,12 +224,31 @@ function AgendaPage() {
             <Button size="sm" variant="outline" onClick={goPrev}><ChevronLeft className="h-4 w-4" /></Button>
             <Button size="sm" variant="outline" onClick={goToday}>Hoje</Button>
             <Button size="sm" variant="outline" onClick={goNext}><ChevronRight className="h-4 w-4" /></Button>
+            
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="outline" size="sm" className="ml-2 gap-2 rounded-xl glass-card">
+                  <CalendarIcon className="h-4 w-4 text-primary" />
+                  <span className="hidden sm:inline">Selecionar Data</span>
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0 border-none shadow-2xl glass-card rounded-2xl" align="start">
+                <Calendar
+                  mode="single"
+                  selected={currentDate}
+                  onSelect={(d) => d && setCurrentDate(d)}
+                  initialFocus
+                  locale={ptBR}
+                />
+              </PopoverContent>
+            </Popover>
+
             <div className="ml-3">
               <div className="text-base font-semibold text-foreground">
-                <span className="font-heading tracking-tight">{DAYS_PT[currentDate.getDay()]}</span>, <span className="text-muted-foreground/80 font-normal">{fmtDateBR(currentDate)}</span>
+                <span className="font-heading tracking-tight capitalize">{DAYS_PT[currentDate.getDay()]}</span>, <span className="text-muted-foreground/80 font-normal">{fmtDateBR(currentDate)}</span>
               </div>
               <div className="text-xs text-muted-foreground">
-                {visibleApts.length} agendamento(s) · intervalo {intervalo}min
+                {visibleApts.length} agendamento(s) · {visibleProfs.length} profissional(is)
               </div>
             </div>
           </div>
@@ -275,6 +305,11 @@ function AgendaPage() {
         <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-6 h-[calc(100vh-220px)]">
           <aside className="space-y-3 overflow-y-auto">
             <AgendaMiniCalendar currentDate={currentDate} onChange={setCurrentDate} />
+            <AgendaStatusFilter 
+              selected={selectedStatuses}
+              onToggle={(id) => setSelectedStatuses(prev => prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id])}
+              onSelectAll={() => setSelectedStatuses(prev => prev.length === 6 ? [] : ["agendado", "confirmado", "em_atendimento", "finalizado", "faltou", "cancelado"])}
+            />
             <AgendaProfessionalsList
               professionals={profs}
               selected={selectedProfs}

@@ -2,10 +2,13 @@ import { useState, useEffect, useMemo } from "react";
 import { clinicorpApi } from "@/lib/clinicorpApi";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ChevronLeft, ChevronRight, Clock, User2, CalendarDays, RefreshCw, AlertCircle, PlayCircle } from "lucide-react";
+import { ChevronLeft, ChevronRight, Clock, User2, CalendarDays, RefreshCw, AlertCircle, PlayCircle, Calendar as CalendarIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
+import { ptBR } from "date-fns/locale";
 import { toast } from "sonner";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
 
 export function ClinicorpMirrorAgenda({ refreshTrigger = 0 }: { refreshTrigger?: number }) {
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -14,6 +17,7 @@ export function ClinicorpMirrorAgenda({ refreshTrigger = 0 }: { refreshTrigger?:
   const [chairs, setChairs] = useState<any[]>([]);
   const [selectedProfId, setSelectedProfId] = useState<string>("all");
   const [selectedChairId, setSelectedChairId] = useState<string>("all");
+  const [selectedStatus, setSelectedStatus] = useState<string>("all");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [syncingThisDay, setSyncingThisDay] = useState(false);
@@ -64,9 +68,10 @@ export function ClinicorpMirrorAgenda({ refreshTrigger = 0 }: { refreshTrigger?:
     return appointments.filter(a => {
       const matchProf = selectedProfId === "all" || String(a.professional_id) === selectedProfId;
       const matchChair = selectedChairId === "all" || String(a.chair_id) === selectedChairId;
-      return matchProf && matchChair;
+      const matchStatus = selectedStatus === "all" || String(a.status).toLowerCase() === selectedStatus.toLowerCase();
+      return matchProf && matchChair && matchStatus;
     });
-  }, [appointments, selectedProfId, selectedChairId]);
+  }, [appointments, selectedProfId, selectedChairId, selectedStatus]);
 
   const goPrev = () => { const d = new Date(currentDate); d.setDate(d.getDate() - 1); setCurrentDate(d); };
   const goNext = () => { const d = new Date(currentDate); d.setDate(d.getDate() + 1); setCurrentDate(d); };
@@ -93,6 +98,25 @@ export function ClinicorpMirrorAgenda({ refreshTrigger = 0 }: { refreshTrigger?:
           <Button size="sm" variant="outline" onClick={goPrev}><ChevronLeft className="h-4 w-4" /></Button>
           <Button size="sm" variant="outline" onClick={goToday}>Hoje</Button>
           <Button size="sm" variant="outline" onClick={goNext}><ChevronRight className="h-4 w-4" /></Button>
+          
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="outline" size="sm" className="gap-2">
+                <CalendarIcon className="h-4 w-4 text-primary" />
+                <span className="hidden sm:inline">Trocar Data</span>
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0 border-none shadow-2xl glass-card rounded-2xl" align="start">
+              <Calendar
+                mode="single"
+                selected={currentDate}
+                onSelect={(d) => d && setCurrentDate(d)}
+                initialFocus
+                locale={ptBR}
+              />
+            </PopoverContent>
+          </Popover>
+
           <div className="ml-2 flex flex-col">
             <span className="font-semibold text-sm">
               {currentDate.toLocaleDateString("pt-BR", { day: "2-digit", month: "long", year: "numeric" })}
@@ -127,6 +151,21 @@ export function ClinicorpMirrorAgenda({ refreshTrigger = 0 }: { refreshTrigger?:
               {chairs.map(c => (
                 <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>
               ))}
+            </SelectContent>
+          </Select>
+
+          <Select value={selectedStatus} onValueChange={setSelectedStatus}>
+            <SelectTrigger className="w-[140px]">
+              <SelectValue placeholder="Status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todos os Status</SelectItem>
+              <SelectItem value="agendado">Agendado</SelectItem>
+              <SelectItem value="confirmado">Confirmado</SelectItem>
+              <SelectItem value="faltou">Faltou</SelectItem>
+              <SelectItem value="cancelado">Cancelado</SelectItem>
+              <SelectItem value="em atendimento">Em atendimento</SelectItem>
+              <SelectItem value="finalizado">Finalizado</SelectItem>
             </SelectContent>
           </Select>
 
