@@ -305,26 +305,33 @@ export const clinicorpApi = {
     const end = new Date(to + 'T00:00:00Z');
     if (isNaN(start.getTime()) || isNaN(end.getTime()) || end < start) return [];
 
-    // Limite de segurança: no máximo 400 dias por chamada para evitar loops descontrolados.
-    const MAX_DAYS = 400;
+    // Limite de segurança: no máximo 500 dias por chamada para evitar loops descontrolados.
+    const MAX_DAYS = 500;
     let dayCount = 0;
     let consecutiveErrors = 0;
 
-    for (let d = new Date(start); d <= end && dayCount < MAX_DAYS; d.setUTCDate(d.getUTCDate() + 1)) {
-      dayCount++;
-      const day = d.toISOString().slice(0, 10);
+    for (let d = new Date(start); d <= end && dayCount < MAX_DAYS; d.setUTCDate(d.getUTCDate() + 14)) {
+      dayCount += 14;
+      const dTo = new Date(d.getTime() + 13 * 86400000);
+      const toDay = (dTo < end ? dTo : end).toISOString().slice(0, 10);
+      const fromDay = d.toISOString().slice(0, 10);
+
       try {
         const data = await clinicorpFetch(s, '/appointment/list', {
-          query: { from: day, to: day, ...baseBiz },
+          query: { from: fromDay, to: toDay, ...baseBiz },
         });
         const arr = extract(data);
         if (Array.isArray(arr) && arr.length > 0) push(arr);
         consecutiveErrors = 0;
       } catch (e) {
-        if (e?.status === 429) throw e; // respeita rate limit imediatamente
+        if (e?.status === 429) throw e; 
+        if (e?.status === 400 || e?.status === 404) {
+           console.warn(`[clinicorp] listAppointments ignorando erro ${e.status} no range ${fromDay}..${toDay}`);
+           continue;
+        }
         consecutiveErrors++;
         if (consecutiveErrors >= 5) {
-          console.warn(`[clinicorp] listAppointments abortando após ${consecutiveErrors} erros consecutivos em ${day}: ${e?.message || e}`);
+          console.warn(`[clinicorp] listAppointments abortando após ${consecutiveErrors} erros consecutivos: ${e?.message || e}`);
           break;
         }
       }
@@ -1358,9 +1365,9 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     const fromDate = from || new Date(today.getTime() - 15 * 86400_000).toISOString().slice(0, 10);
     const toDate = to || new Date(today.getTime() + 30 * 86400_000).toISOString().slice(0, 10);
     
-    // AGENDA: Reduzido para 60 dias totais, começando por padrão 3 dias atrás para capturar edições recentes
+    // AGENDA: Janela de 368 dias (3 dias atrás até 1 ano no futuro)
     const apptFromDate = apptFrom || from || new Date(today.getTime() - 3 * 86400_000).toISOString().slice(0, 10);
-    const apptToDate = apptTo || to || new Date(today.getTime() + 57 * 86400_000).toISOString().slice(0, 10);
+    const apptToDate = apptTo || to || new Date(today.getTime() + 365 * 86400_000).toISOString().slice(0, 10);
     
     // ORÇAMENTOS: janela de 90 dias por padrão
     const estFromDate = estFrom || from || new Date(today.getTime() - 45 * 86400_000).toISOString().slice(0, 10);

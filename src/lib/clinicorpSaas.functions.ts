@@ -308,6 +308,17 @@ const syncSchema = z.object({
 }).default({});
 
 // ─── helpers ─────────────────────────────────────────────────
+function mapAppointmentStatus(raw: any): string {
+  const s = String(raw ?? '').toLowerCase();
+  if (!s) return 'agendado';
+  if (s.includes('confirm')) return 'confirmado';
+  if (s.includes('cancel') || s.includes('desmarc')) return 'cancelado';
+  if (s.includes('falt') || s.includes('no_show') || s.includes('noshow')) return 'faltou';
+  if (s.includes('atend') || s.includes('progress')) return 'em_atendimento';
+  if (s.includes('final') || s.includes('conclu') || s.includes('done') || s.includes('complete')) return 'finalizado';
+  return 'agendado';
+}
+
 function normalizeClinicorpDate(...values: any[]): string | null {
   for (const value of values) {
     if (value === null || value === undefined || value === "") continue;
@@ -345,6 +356,10 @@ function pickFirst(obj: any, ...keys: string[]): any {
     if (obj[k] !== undefined && obj[k] !== null && obj[k] !== "") return obj[k];
   }
   return undefined;
+}
+
+function getAppointmentId(a: any): string | null {
+  return pickFirst(a, 'id', 'Id', 'ID', 'AppointmentId', 'AppointmentID', 'Appointment_Id', 'appointment_id', 'appointmentId', 'ScheduleId', 'Schedule_ID', 'id_agendamento', 'AtomicId');
 }
 
 function extractList(data: any): any[] {
@@ -444,7 +459,7 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
 
       // 2. Profissionais
       try {
-        const { status, data: pr } = await clinicorpProbe(base_url, subscriber_id, api_token, '/dentist/list', {}, 25000, activeAuthHeader);
+        const { status, data: pr } = await clinicorpProbe(base_url, subscriber_id, api_token, '/professional/list_all_professionals', {}, 25000, activeAuthHeader);
         const list = extractList(pr);
         log(`dentists status=${status} count=${list.length}`);
         
@@ -479,28 +494,30 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
       // 3. Agendamentos
       const today = new Date();
       const from = data.from || ymd(new Date(today.getTime() - 7 * 86400000));
-      const to = data.to || ymd(new Date(today.getTime() + 60 * 86400000)); // Reduzido para 60 dias para evitar 429
+      const to = data.to || ymd(new Date(today.getTime() + 365 * 86400000)); // Aumentado para 365 dias atendendo pedido do usuário
 
       log(`appointments range ${from} → ${to}`);
 
-      const days: string[] = [];
+      const chunks: { from: string; to: string }[] = [];
       {
-        const start = new Date(from + 'T00:00:00Z');
+        let current = new Date(from + 'T00:00:00Z');
         const end = new Date(to + 'T00:00:00Z');
-        for (let d = new Date(start); d <= end; d = new Date(d.getTime() + 86400000)) {
-          days.push(ymd(d));
+        while (current <= end) {
+          const next = new Date(current.getTime() + 14 * 86400000); // Chunks de 14 dias
+          const toDs = next < end ? next : end;
+          chunks.push({ from: ymd(current), to: ymd(toDs) });
+          current = new Date(toDs.getTime() + 86400000);
         }
       }
 
       const allAppts: any[] = [];
       let rateLimitHit = false;
-      const CONCURRENCY = 1; // Sincronização serial para ser o mais seguro possível contra 429
-      for (let i = 0; i < days.length && !rateLimitHit; i += CONCURRENCY) {
-
-        const batch = days.slice(i, i + CONCURRENCY);
-        const results = await Promise.allSettled(batch.map(ds =>
-          clinicorpProbe(base_url, subscriber_id, api_token, '/appointment/list', { from: ds, to: ds }, 25000, activeAuthHeader)
-            .then(res => ({ ds, ...res }))
+      const CONCURRENCY = 1; 
+      for (let i = 0; i < chunks.length && !rateLimitHit; i += CONCURRENCY) {
+        const batch = chunks.slice(i, i + CONCURRENCY);
+        const results = await Promise.allSettled(batch.map(c =>
+          clinicorpProbe(base_url, subscriber_id, api_token, '/appointment/list', { from: c.from, to: c.to }, 30000, activeAuthHeader)
+            .then(res => ({ ds: c.from, ...res }))
         ));
         for (const r of results) {
           if (r.status === 'fulfilled') {
@@ -513,13 +530,13 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
             const list = extractList(ap);
             if (list.length) allAppts.push(...list);
           } else {
-            errors.push(`appt: ${(r.reason as any)?.message || 'erro'}`);
+            errors.push(`appt chunk: ${(r.reason as any)?.message || 'erro'}`);
           }
         }
         if (rateLimitHit) break;
         summary.appointments = allAppts.length;
-        await updateProgress(`Agenda: ${Math.min(i + CONCURRENCY, days.length)}/${days.length} dias (${allAppts.length} encontrados)`);
-        await new Promise(r => setTimeout(r, 1000)); // Delay de 1s entre dias para evitar rate limit
+        await updateProgress(`Agenda: ${Math.min(i + CONCURRENCY, chunks.length)}/${chunks.length} janelas (${allAppts.length} agendamentos)`);
+        await new Promise(r => setTimeout(r, 500)); 
       }
       log(`appointments total coletados=${allAppts.length}`);
       if (rateLimitHit) {
@@ -616,7 +633,7 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
           procedimento: procedimento,
           categoria: procedimento,
           categoria_cor: categoriaCor,
-          status: String(pickFirst(a, "Status", "status", "status_name", "StatusName", "StatusId", "StatusDescription") ?? "agendado"),
+          status: mapAppointmentStatus(pickFirst(a, "Status", "status", "status_name", "StatusName", "StatusId", "StatusDescription")),
           clinicorp_appointment_id: apId,
         });
       }
@@ -636,6 +653,20 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
       let apptsSaved = 0;
       for (let i = 0; i < appointmentUpserts.length; i += 200) {
         const chunk = appointmentUpserts.slice(i, i + 200);
+        
+        // Save to mirror table first
+        const mirrorChunk = chunk.map(a => {
+          const raw = allAppts.find(rawA => String(getAppointmentId(rawA)) === String(a.clinicorp_appointment_id));
+          return {
+            id: a.clinicorp_appointment_id,
+            tenant_id: a.tenant_id,
+            date: a.data,
+            raw: raw ? JSON.stringify(raw) : null,
+            synced_at: new Date().toISOString()
+          };
+        });
+        await supabase.from('clinicorp_appointments').upsert(mirrorChunk, { onConflict: 'id,tenant_id' });
+
         const { error: upErr } = await supabase.from('agendamentos').upsert(chunk, { onConflict: 'tenant_id,clinicorp_appointment_id' });
         if (upErr) {
           log(`AGENDAMENTOS UPSERT ERROR chunk ${i}`, upErr);
