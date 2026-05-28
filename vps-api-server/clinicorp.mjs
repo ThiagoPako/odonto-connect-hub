@@ -381,8 +381,10 @@ export const clinicorpApi = {
 async function upsertClinic(pool, c, tenantId = null) {
   const tId = await resolveTenantId(pool, tenantId);
   const clinicId = c.id ?? c.Id ?? c.BusinessId ?? c.Clinic_BusinessId ?? c.ClinicBusinessId ?? c.CompanyId ?? c.Business?.Id;
+  console.log(`[clinicorp] upsertClinic clinicId=${clinicId} tenantId=${tId}`);
   if (!clinicId) return;
-  await pool.query(
+  try {
+    await pool.query(
     `INSERT INTO clinicorp_clinics
        (id, tenant_id, company_id, business_name, name, email, address, active,
         landline, other_landline, slot_time, no_limit_apt_same_time,
@@ -411,7 +413,12 @@ async function upsertClinic(pool, c, tenantId = null) {
       c.WorkingDaysHours ? JSON.stringify(c.WorkingDaysHours) : null,
       JSON.stringify(c),
     ]
-  );
+    );
+    console.log(`[clinicorp] upsertClinic success clinicId=${clinicId}`);
+  } catch (err) {
+    console.error(`[clinicorp] upsertClinic FAILED clinicId=${clinicId}:`, err.message);
+    throw err;
+  }
 }
 
 async function upsertProfessional(pool, p, tenantId = null) {
