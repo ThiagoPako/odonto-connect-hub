@@ -1,4 +1,3 @@
-import pg from 'pg';
 import { clinicorpApi } from './clinicorp.mjs';
 
 const settings = {
@@ -15,32 +14,30 @@ async function runDebug() {
   
   try {
     const clinics = await clinicorpApi.listClinics(settings);
-    console.log('Clinics:', clinics);
-    const clinicId = clinics?.[0]?.id || clinics?.Results?.[0]?.id;
-    console.log('Using Clinic ID:', clinicId);
+    console.log('Clinics:', JSON.stringify(clinics, null, 2));
+    
+    // Extract clinic ID from various possible structures
+    let clinicId = null;
+    if (Array.isArray(clinics)) {
+      clinicId = clinics[0]?.id || clinics[0]?.BusinessId;
+    } else if (clinics?.Results && Array.isArray(clinics.Results)) {
+      clinicId = clinics.Results[0]?.id || clinics.Results[0]?.BusinessId;
+    } else if (clinics?.data && Array.isArray(clinics.data)) {
+      clinicId = clinics.data[0]?.id;
+    }
+    
+    console.log('Detected Clinic ID:', clinicId);
 
     if (clinicId) {
       console.log(`\nTesting listEstimates (${lastMonth} to ${today})...`);
       const estimates = await clinicorpApi.listEstimates(settings, lastMonth, today, clinicId);
-      console.log('Estimates result count:', Array.isArray(estimates) ? estimates.length : 'not an array');
-      if (Array.isArray(estimates) && estimates.length > 0) {
-        console.log('First estimate sample:', JSON.stringify(estimates[0], null, 2));
-      } else {
-        console.log('Estimates raw response:', JSON.stringify(estimates, null, 2));
-      }
+      console.log('Estimates result:', JSON.stringify(estimates, null, 2).slice(0, 1000));
 
       console.log(`\nTesting listPayments (${lastMonth} to ${today})...`);
       const payments = await clinicorpApi.listPayments(settings, { from: lastMonth, to: today, clinic_id: clinicId });
-      console.log('Payments result count:', Array.isArray(payments) ? payments.length : 'not an array');
-      if (Array.isArray(payments) && payments.length > 0) {
-        console.log('First payment sample:', JSON.stringify(payments[0], null, 2));
-      } else {
-        console.log('Payments raw response:', JSON.stringify(payments, null, 2));
-      }
-      
-      console.log(`\nTesting listInvoices (${lastMonth} to ${today})...`);
-      const invoices = await clinicorpApi.listInvoices(settings, { from: lastMonth, to: today, clinic_id: clinicId });
-      console.log('Invoices result count:', Array.isArray(invoices) ? invoices.length : 'not an array');
+      console.log('Payments result:', JSON.stringify(payments, null, 2).slice(0, 1000));
+    } else {
+      console.error('No clinic ID found, cannot test other endpoints.');
     }
   } catch (err) {
     console.error('Debug failed:', err.message);
