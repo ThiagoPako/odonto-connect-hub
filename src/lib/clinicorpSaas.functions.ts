@@ -260,6 +260,8 @@ export const testMyClinicorpConnection = createServerFn({ method: 'POST' })
       { key: 'appointments', label: 'Agenda', path: '/appointment/list', query: { from: dateStr, to: dateStr } as Record<string, string> },
       { key: 'professionals', label: 'Profissionais', path: '/professional/list_all_professionals', query: {} as Record<string, string> },
       { key: 'patients', label: 'Pacientes', path: '/patient/birthdays', query: { from: dateStr, to: dateStr } as Record<string, string> },
+      { key: 'estimates', label: 'Orçamentos', path: '/estimates/list', query: { from: dateStr, to: dateStr } as Record<string, string> },
+      { key: 'financial', label: 'Financeiro', path: '/financial/list_invoices', query: { from: dateStr, to: dateStr } as Record<string, string> },
     ];
 
     const startedAt = Date.now();
