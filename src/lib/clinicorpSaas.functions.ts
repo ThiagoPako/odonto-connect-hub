@@ -414,7 +414,7 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
     const tenant_id = profile?.tenant_id;
     if (!tenant_id) throw new Error('Usuário não possui um tenant_id associado.');
 
-    const summary = { clinics: 0, professionals: 0, patients: 0, appointments: 0 };
+    const summary = { clinics: 0, professionals: 0, patients: 0, appointments: 0, estimates: 0, financial: 0 };
     const errors: string[] = [];
     const log = (msg: string, extra?: any) => console.log(`[clinicorp-sync] ${msg}`, extra ?? '');
 
@@ -443,11 +443,27 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
         errors.push(`Erro ao validar autenticação: ${e.message}`);
       }
 
-      // 1. Clinicas (apenas contagem)
+      // 1. Clinicas
+      let clinicIds: string[] = [];
       try {
         const { status, data: cl } = await clinicorpProbe(base_url, subscriber_id, api_token, '/business/list', {}, 25000, activeAuthHeader);
         const list = extractList(cl);
-        summary.clinics = list.length;
+        const clinicUpserts = list.map((c: any) => ({
+          id: pickFirst(c, 'Id', 'id', 'BusinessId', 'Clinic_BusinessId', 'ClinicBusinessId', 'CompanyId') || '0',
+          tenant_id,
+          name: pickFirst(c, 'Name', 'name', 'BusinessName') || '',
+          business_name: pickFirst(c, 'BusinessName', 'Name') || '',
+          address: pickFirst(c, 'Address', 'address') || '',
+          email: pickFirst(c, 'Email', 'email') || '',
+          raw: c,
+          synced_at: new Date().toISOString()
+        })).filter(c => c.id !== '0');
+        
+        if (clinicUpserts.length) {
+          await supabase.from('clinicorp_clinics').upsert(clinicUpserts, { onConflict: 'id,tenant_id' });
+          summary.clinics = clinicUpserts.length;
+          clinicIds = clinicUpserts.map(c => String(c.id));
+        }
         log(`clinics status=${status} count=${list.length}`);
         if (status === 429) throw new Error('Rate Limit na listagem de clínicas.');
       } catch (e: any) { 
@@ -479,6 +495,16 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
           });
         }
         if (dentistUpserts.length) {
+          // Mirror table sync
+          const mirrorProfs = dentistUpserts.map(d => ({
+            id: d.clinicorp_professional_id,
+            tenant_id: d.tenant_id,
+            full_name: d.nome,
+            user_name: d.email,
+            synced_at: new Date().toISOString()
+          }));
+          await supabase.from('clinicorp_professionals').upsert(mirrorProfs, { onConflict: 'id,tenant_id' });
+
           const { error: upErr } = await supabase.from('dentistas').upsert(dentistUpserts, { onConflict: 'tenant_id,clinicorp_professional_id' });
           if (upErr) errors.push(`profissionais upsert: ${upErr.message}`);
           else summary.professionals = dentistUpserts.length;
@@ -677,6 +703,76 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
         await updateProgress(`Salvando agenda: ${apptsSaved}/${appointmentUpserts.length}`);
       }
       summary.appointments = apptsSaved;
+
+      // 6. Orçamentos e Financeiro
+      await updateProgress('Buscando orçamentos e financeiro...');
+      const finFrom = data.from || ymd(new Date(today.getTime() - 90 * 86400000));
+      const finTo = data.to || ymd(new Date(today.getTime() + 30 * 86400000));
+
+      for (const clinicId of (clinicIds.length ? clinicIds : [undefined])) {
+        // Estimates
+        try {
+          const { data: estData } = await clinicorpProbe(base_url, subscriber_id, api_token, '/estimates/list', { 
+            from: finFrom, to: finTo, ...(clinicId ? { clinic_id: clinicId } : {}) 
+          }, 30000, activeAuthHeader);
+          const estList = extractList(estData);
+          if (estList.length) {
+            const estUpserts = estList.map((e: any) => ({
+              id: pickFirst(e, 'Id', 'id', 'treatment_id') || '0',
+              tenant_id,
+              treatment_id: pickFirst(e, 'treatment_id', 'Id', 'id'),
+              patient_id: pickFirst(e, 'patient_id', 'PatientId'),
+              patient_name: pickFirst(e, 'patient_name', 'PatientName'),
+              professional_id: pickFirst(e, 'professional_id', 'ProfessionalId'),
+              professional_name: pickFirst(e, 'professional_name', 'ProfessionalName'),
+              business_id: clinicId || pickFirst(e, 'business_id', 'ClinicId'),
+              amount: pickFirst(e, 'amount', 'total_amount', 'value') || 0,
+              status: pickFirst(e, 'status', 'status_name') || 'Pendente',
+              date: normalizeClinicorpDate(pickFirst(e, 'date', 'create_date')),
+              create_date: normalizeClinicorpDate(pickFirst(e, 'create_date', 'date')),
+              raw: e,
+              synced_at: new Date().toISOString()
+            })).filter(e => e.id !== '0');
+            await supabase.from('clinicorp_estimates').upsert(estUpserts, { onConflict: 'id,tenant_id' });
+            summary.estimates += estUpserts.length;
+          }
+        } catch (e: any) { errors.push(`orçamentos (${clinicId || 'global'}): ${e.message}`); }
+
+        // Financial (Invoices/Payments)
+        const finEndpoints = [
+          { key: 'invoice', path: '/financial/list_invoices' },
+          { key: 'payment', path: '/financial/list_payments' },
+          { key: 'cashflow', path: '/financial/list_cash_flow' }
+        ];
+
+        for (const ep of finEndpoints) {
+          try {
+            const { data: finData } = await clinicorpProbe(base_url, subscriber_id, api_token, ep.path, {
+              from: finFrom, to: finTo, ...(clinicId ? { business_id: clinicId } : {})
+            }, 30000, activeAuthHeader);
+            const finList = extractList(finData);
+            if (finList.length) {
+              const finUpserts = finList.map((f: any) => ({
+                tenant_id,
+                source: ep.key,
+                external_id: String(pickFirst(f, 'Id', 'id', 'InvoiceId', 'PaymentId', 'CashFlowId') || ''),
+                business_id: clinicId || pickFirst(f, 'business_id', 'BusinessId'),
+                patient_id: pickFirst(f, 'patient_id', 'PatientId'),
+                amount: pickFirst(f, 'amount', 'value', 'total') || 0,
+                date: normalizeClinicorpDate(pickFirst(f, 'date', 'vencimento', 'Data')),
+                description: pickFirst(f, 'description', 'memo', 'Note') || '',
+                raw: f,
+                synced_at: new Date().toISOString()
+              })).filter(f => f.external_id !== '');
+              
+              if (finUpserts.length) {
+                await supabase.from('clinicorp_financial_entries').upsert(finUpserts);
+                summary.financial += finUpserts.length;
+              }
+            }
+          } catch (e: any) { errors.push(`${ep.key} (${clinicId || 'global'}): ${e.message}`); }
+        }
+      }
 
       log('summary', summary);
       const finalStatus = errors.length > 3 ? 'partial' : 'success';
