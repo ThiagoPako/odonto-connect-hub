@@ -74,7 +74,7 @@ export function ClinicorpAuditLog() {
   const handleManualSync = async () => {
     setSyncing(true);
     try {
-      const res = await clinicorpApi.sync({ force_metadata: forceMetadata });
+      const res = await clinicorpApi.syncMyNow({ force_metadata: forceMetadata });
       setLastSync(new Date().toLocaleString("pt-BR"));
       setRefreshTrigger(prev => prev + 1);
       loadLogs();
