@@ -760,7 +760,7 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
             professional_id: raw ? Number(pickFirst(raw, 'Dentist_PersonId', 'ProfessionalId', 'ScheduleToId', 'DentistId')) : null,
             professional_name: pickFirst(raw, 'Dentist_FullName', 'ProfessionalName', 'professional_name', 'ScheduleToName') || (a.dentista_id ? profMap.get(a.dentista_id) : ''),
             category_description: a.categoria,
-            category_color: a.category_cor,
+            category_color: a.categoria_cor,
             notes: pickFirst(raw, 'Notes', 'notes', 'Note'),
             raw: raw ? raw : null,
             synced_at: new Date().toISOString()
