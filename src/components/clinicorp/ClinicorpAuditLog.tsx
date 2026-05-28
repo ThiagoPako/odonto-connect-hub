@@ -51,6 +51,7 @@ export function ClinicorpAuditLog() {
   const [lastSync, setLastSync] = useState<string | null>(null);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [summary, setSummary] = useState<any>(null);
+  const [healthData, setHealthData] = useState<any>(null);
 
   useEffect(() => {
     loadLogs();
