@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { Loader2, RefreshCw, CheckCircle2, AlertCircle, PlayCircle, Plug, ListChecks, Shield, Trash2, Plus, ChevronDown, ChevronRight, ExternalLink, User, Users, CalendarDays, History, Pencil, X, Building2 } from "lucide-react";
+import { Loader2, RefreshCw, CheckCircle2, AlertCircle, PlayCircle, Plug, ListChecks, Shield, Trash2, Plus, ChevronDown, ChevronRight, ExternalLink, User, Users, CalendarDays, History, Pencil, X, Building2, FileText, DollarSign } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -400,7 +400,9 @@ export function ClinicorpPanel() {
                   { label: "Clínicas", key: "clinics", icon: Building2 },
                   { label: "Profissionais", key: "professionals", icon: User },
                   { label: "Pacientes", key: "patients", icon: Users },
-                  { label: "Agendamentos", key: "appointments", icon: CalendarDays },
+                  { label: "Agenda", key: "appointments", icon: CalendarDays },
+                  { label: "Orçamentos", key: "estimates", icon: FileText },
+                  { label: "Financeiro", key: "financial", icon: DollarSign },
                 ].map((item) => (
                   <div key={item.key} className="p-3 rounded-xl bg-muted/40 border border-border/50 flex flex-col items-center gap-1">
                     <item.icon className="h-4 w-4 text-muted-foreground" />
