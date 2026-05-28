@@ -358,6 +358,10 @@ function pickFirst(obj: any, ...keys: string[]): any {
   return undefined;
 }
 
+function getAppointmentId(a: any): string | null {
+  return pickFirst(a, 'id', 'Id', 'ID', 'AppointmentId', 'AppointmentID', 'Appointment_Id', 'appointment_id', 'appointmentId', 'ScheduleId', 'Schedule_ID', 'id_agendamento', 'AtomicId');
+}
+
 function extractList(data: any): any[] {
   if (Array.isArray(data)) return data;
   if (!data || typeof data !== "object") return [];
