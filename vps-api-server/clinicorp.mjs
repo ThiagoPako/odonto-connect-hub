@@ -1803,6 +1803,38 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
         console.log(`[clinicorp sync] backfill scan: criou ${found.size} profissionais via raw scan`);
       }
 
+
+      // Fallback final: para qualquer profissional ainda com nome genérico
+      // ("Profissional <id>") OU NULL/vazio, tenta resolver via API individual.
+      try {
+        const { rows: generics } = await pool.query(
+          `SELECT id FROM clinicorp_professionals
+            WHERE tenant_id=$1
+              AND (full_name IS NULL OR full_name='' OR full_name ~ '^Profissional\\s+\\d+$')`,
+          [tId]
+        );
+        let resolved = 0;
+        for (const g of generics) {
+          try {
+            const obj = await clinicorpApi.getProfessional(settings, g.id);
+            if (!obj) continue;
+            const realName = (obj.FullName || obj.Full_Name || obj.Name || obj.PersonName || obj.ProfessionalName || '').toString().trim();
+            if (!realName) continue;
+            await pool.query(
+              `UPDATE clinicorp_professionals
+                  SET full_name=$1, raw=$2, synced_at=NOW()
+                WHERE id=$3 AND tenant_id=$4`,
+              [realName, JSON.stringify(obj), g.id, tId]
+            );
+            await ensureLocalProfessional(pool, String(g.id), realName, tId);
+            resolved++;
+          } catch (e) {
+            console.warn('[clinicorp sync] getProfessional fallback', g.id, e.message);
+          }
+        }
+        if (generics.length) console.log(`[clinicorp sync] resolveu ${resolved}/${generics.length} nomes genéricos via API individual`);
+      } catch (e) { console.error('[clinicorp sync] fallback getProfessional', e.message); }
+
       const { rows: pcount } = await pool.query(`SELECT COUNT(*)::int AS c FROM clinicorp_professionals WHERE tenant_id=$1`, [tId]);
       summary.professionals = pcount[0]?.c || summary.professionals;
     } catch (e) { console.error('[clinicorp sync] backfill professionals', e.message); }
