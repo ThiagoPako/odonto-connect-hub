@@ -25,13 +25,19 @@ async function runTestSync() {
     // Credentials provided by user
     const apiToken = '1af93b09-189a-4491-99c8-7a374e677e4a';
     const subscriberId = 'sorrisominacu';
+
+    const today = new Date().toISOString().slice(0, 10);
     
     const result = await runFullSync(pool, {
       user_id: userId,
       tenant_id: tenantId,
       api_token: apiToken,
       subscriber_id: subscriberId,
-      force_metadata: true // Force clinics/professionals sync
+      from: today,
+      to: today,
+      apptFrom: today,
+      apptTo: today,
+      force_metadata: true 
     });
     
     console.log('✅ Sincronização concluída!');

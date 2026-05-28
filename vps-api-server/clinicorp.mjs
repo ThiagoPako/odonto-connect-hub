@@ -112,7 +112,7 @@ function getAppointmentId(a) {
 // Throttle SERIALIZADO por subscriber_id para evitar 429: as chamadas são enfileiradas
 // e disparadas com espaçamento mínimo. O modelo anterior (apenas _lastCallAt + await)
 // permitia que N callers concorrentes lessem o mesmo timestamp e disparassem em rajada.
-const THROTTLE_MS = 1000; // ~1 req/s por subscriber — Clinicorp aplica limites agressivos por hora.
+const THROTTLE_MS = 200; // Aumentando velocidade para o teste inicial
 const GLOBAL_PAUSE_AFTER_429_MS = 120_000; // se levarmos 429, pausa toda a fila por 120s
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
