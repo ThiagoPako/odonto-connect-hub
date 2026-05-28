@@ -113,9 +113,9 @@ export function ClinicorpPanel() {
       setLookaheadDays(s.sync_lookahead_days);
       setConflictStrategy(s.conflict_strategy);
       const [evs, ovs, cfs, hist] = await Promise.all([
-        clinicorpApi.listWebhookEvents(50),
-        clinicorpApi.listOverrides(),
-        clinicorpApi.listConflicts({ limit: 50 }),
+        clinicorpApi.listWebhookEvents(50).catch(() => []),
+        clinicorpApi.listOverrides().catch(() => []),
+        clinicorpApi.listConflicts({ limit: 50 }).catch(() => []),
         clinicorpApi.listOverrideHistory({ limit: 100 }).catch(() => []),
       ]);
       setEvents(evs);
