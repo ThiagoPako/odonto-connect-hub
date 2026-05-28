@@ -1,0 +1,5 @@
+UPDATE dentistas SET nome='Dra. Napoliane Imaculada de Jesus Lara', updated_at=NOW() WHERE tenant_id='426e9a3e-9216-41be-99a9-7b345c74d62b' AND clinicorp_professional_id='5644819808649216';
+UPDATE dentistas SET nome='Dra. Izabella Oliveira Lopes', updated_at=NOW() WHERE tenant_id='426e9a3e-9216-41be-99a9-7b345c74d62b' AND clinicorp_professional_id='6105230566752256';
+UPDATE dentistas SET nome='Dra. Larissa Santana Barros', updated_at=NOW() WHERE tenant_id='426e9a3e-9216-41be-99a9-7b345c74d62b' AND clinicorp_professional_id='6191142549061632';
+UPDATE dentistas SET nome='Dr. Luíz Gustavo Pereira Lara', updated_at=NOW() WHERE tenant_id='426e9a3e-9216-41be-99a9-7b345c74d62b' AND clinicorp_professional_id='6198727454228480';
+UPDATE dentistas SET nome='Dr. Johny Sidney Azara', updated_at=NOW() WHERE tenant_id='426e9a3e-9216-41be-99a9-7b345c74d62b' AND clinicorp_professional_id='6504047402811392';
