@@ -18,6 +18,8 @@ import {
   Activity,
   RefreshCw
 } from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
+
 import { clinicorpApi, type ClinicorpAuditEntry } from "@/lib/clinicorpApi";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -93,7 +95,7 @@ export function ClinicorpAuditLog() {
         supabase.from('clinicorp_push_log').select('*').order('created_at', { ascending: false }).limit(100)
       ]);
 
-      const formattedPushLogs: ClinicorpAuditEntry[] = (pushLogs.data || []).map(l => ({
+      const formattedPushLogs: ClinicorpAuditEntry[] = (pushLogs.data || []).map((l: any) => ({
         id: l.id,
         source: 'odonto_connect',
         event: l.action || l.entity_type,
@@ -104,7 +106,7 @@ export function ClinicorpAuditLog() {
         error_message: l.error_message
       }));
 
-      const formattedWebhookLogs: ClinicorpAuditEntry[] = (webhookEvents || []).map(e => ({
+      const formattedWebhookLogs: ClinicorpAuditEntry[] = (webhookEvents || []).map((e: any) => ({
         id: e.id,
         source: 'clinicorp',
         event: e.event_type || 'webhook_received',

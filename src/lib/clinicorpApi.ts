@@ -206,8 +206,9 @@ export const clinicorpApi = {
     let q = supabase.from('clinicorp_appointments').select('*');
     if (params.from) q = q.gte('date', params.from);
     if (params.to) q = q.lte('date', params.to);
-    if (params.professional_id && params.professional_id !== 'all') q = q.eq('professional_id', params.professional_id);
-    if (params.business_id) q = q.eq('business_id', params.business_id);
+    if (params.professional_id && params.professional_id !== 'all') q = q.eq('professional_id', Number(params.professional_id));
+    if (params.business_id) q = q.eq('business_id', Number(params.business_id));
+
     
     const { data, error } = await q.order('date', { ascending: true });
     if (error) throw error;
