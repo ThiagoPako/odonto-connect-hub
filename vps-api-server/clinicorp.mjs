@@ -1364,9 +1364,9 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
     const fromDate = from || new Date(today.getTime() - 15 * 86400_000).toISOString().slice(0, 10);
     const toDate = to || new Date(today.getTime() + 30 * 86400_000).toISOString().slice(0, 10);
     
-    // AGENDA: Reduzido para 60 dias totais, começando por padrão 3 dias atrás para capturar edições recentes
+    // AGENDA: Janela de 368 dias (3 dias atrás até 1 ano no futuro)
     const apptFromDate = apptFrom || from || new Date(today.getTime() - 3 * 86400_000).toISOString().slice(0, 10);
-    const apptToDate = apptTo || to || new Date(today.getTime() + 57 * 86400_000).toISOString().slice(0, 10);
+    const apptToDate = apptTo || to || new Date(today.getTime() + 365 * 86400_000).toISOString().slice(0, 10);
     
     // ORÇAMENTOS: janela de 90 dias por padrão
     const estFromDate = estFrom || from || new Date(today.getTime() - 45 * 86400_000).toISOString().slice(0, 10);
