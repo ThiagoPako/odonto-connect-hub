@@ -10,11 +10,8 @@ const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.join(__dirname, '.env') });
 
 const pool = new pg.Pool({
-  host: process.env.PG_HOST || 'localhost',
-  port: Number(process.env.PG_PORT) || 5432,
-  database: process.env.PG_DATABASE || 'odonto_db',
-  user: process.env.PG_USER || 'odonto_user',
-  password: process.env.PG_PASSWORD,
+  connectionString: process.env.SUPABASE_DB_URL,
+  ssl: { rejectUnauthorized: false }
 });
 
 async function runTestSync() {
