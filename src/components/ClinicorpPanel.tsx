@@ -227,7 +227,12 @@ export function ClinicorpPanel() {
         completed: true,
       }));
       toast.success(`Sincronização concluída: ${Object.values(r.summary).reduce((a, b) => a + b, 0)} registros.`);
-      await load();
+      // Recarrega dados auxiliares sem deixar erros de endpoints opcionais (VPS) quebrarem o status
+      try {
+        await load();
+      } catch (reloadErr) {
+        console.warn('Falha ao recarregar dados auxiliares pós-sync:', reloadErr);
+      }
     } catch (e) {
       polling = false;
       const msg = (e as Error).message;
