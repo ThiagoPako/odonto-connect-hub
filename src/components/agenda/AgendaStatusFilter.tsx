@@ -6,7 +6,7 @@ const STATUS_OPTIONS = [
   { id: "em_atendimento", label: "Em atendimento", icon: PlayCircle, color: "bg-blue-500" },
   { id: "finalizado", label: "Finalizado", icon: CheckCircle2, color: "bg-muted-foreground" },
   { id: "faltou", label: "Faltou", icon: AlertCircle, color: "bg-amber-500" },
-  { id: "cancelado", label: "Cancelado", icon: XCircle, color: "bg-destructive" },
+  { id: "cancelado", label: "Cancelado / Desmarcado", icon: XCircle, color: "bg-destructive" },
 ];
 
 interface Props {
