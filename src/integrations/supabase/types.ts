@@ -25,6 +25,8 @@ export type Database = {
           duracao: number | null
           hora: string
           id: string
+          keep_local: boolean | null
+          last_clinicorp_sync_at: string | null
           observacoes: string | null
           paciente_id: string | null
           procedimento: string | null
@@ -42,6 +44,8 @@ export type Database = {
           duracao?: number | null
           hora: string
           id?: string
+          keep_local?: boolean | null
+          last_clinicorp_sync_at?: string | null
           observacoes?: string | null
           paciente_id?: string | null
           procedimento?: string | null
@@ -59,6 +63,8 @@ export type Database = {
           duracao?: number | null
           hora?: string
           id?: string
+          keep_local?: boolean | null
+          last_clinicorp_sync_at?: string | null
           observacoes?: string | null
           paciente_id?: string | null
           procedimento?: string | null
@@ -776,6 +782,83 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "clinicorp_clinics_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      clinicorp_conflicts: {
+        Row: {
+          after_data: Json | null
+          agendamento_id: string | null
+          before_data: Json | null
+          changed_fields: string[] | null
+          clinicorp_id: string | null
+          clinicorp_updated_at: string | null
+          created_at: string | null
+          decision: string | null
+          diff: Json | null
+          entity: string
+          id: string
+          last_sync_at: string | null
+          lead_id: string | null
+          local_id: string | null
+          local_updated_at: string | null
+          paciente_id: string | null
+          scope_id: string | null
+          scope_type: string | null
+          strategy: string | null
+          tenant_id: string | null
+        }
+        Insert: {
+          after_data?: Json | null
+          agendamento_id?: string | null
+          before_data?: Json | null
+          changed_fields?: string[] | null
+          clinicorp_id?: string | null
+          clinicorp_updated_at?: string | null
+          created_at?: string | null
+          decision?: string | null
+          diff?: Json | null
+          entity: string
+          id?: string
+          last_sync_at?: string | null
+          lead_id?: string | null
+          local_id?: string | null
+          local_updated_at?: string | null
+          paciente_id?: string | null
+          scope_id?: string | null
+          scope_type?: string | null
+          strategy?: string | null
+          tenant_id?: string | null
+        }
+        Update: {
+          after_data?: Json | null
+          agendamento_id?: string | null
+          before_data?: Json | null
+          changed_fields?: string[] | null
+          clinicorp_id?: string | null
+          clinicorp_updated_at?: string | null
+          created_at?: string | null
+          decision?: string | null
+          diff?: Json | null
+          entity?: string
+          id?: string
+          last_sync_at?: string | null
+          lead_id?: string | null
+          local_id?: string | null
+          local_updated_at?: string | null
+          paciente_id?: string | null
+          scope_id?: string | null
+          scope_type?: string | null
+          strategy?: string | null
+          tenant_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "clinicorp_conflicts_tenant_id_fkey"
             columns: ["tenant_id"]
             isOneToOne: false
             referencedRelation: "tenants"
@@ -1758,6 +1841,8 @@ export type Database = {
           email: string | null
           especialidade: string | null
           id: string
+          keep_local: boolean | null
+          last_clinicorp_sync_at: string | null
           nome: string
           sala: string | null
           telefone: string | null
@@ -1774,6 +1859,8 @@ export type Database = {
           email?: string | null
           especialidade?: string | null
           id?: string
+          keep_local?: boolean | null
+          last_clinicorp_sync_at?: string | null
           nome: string
           sala?: string | null
           telefone?: string | null
@@ -1790,6 +1877,8 @@ export type Database = {
           email?: string | null
           especialidade?: string | null
           id?: string
+          keep_local?: boolean | null
+          last_clinicorp_sync_at?: string | null
           nome?: string
           sala?: string | null
           telefone?: string | null
@@ -3258,6 +3347,8 @@ export type Database = {
           email: string | null
           estado: string | null
           id: string
+          keep_local: boolean | null
+          last_clinicorp_sync_at: string | null
           logradouro: string | null
           nome: string
           numero: string | null
@@ -3285,6 +3376,8 @@ export type Database = {
           email?: string | null
           estado?: string | null
           id?: string
+          keep_local?: boolean | null
+          last_clinicorp_sync_at?: string | null
           logradouro?: string | null
           nome: string
           numero?: string | null
@@ -3312,6 +3405,8 @@ export type Database = {
           email?: string | null
           estado?: string | null
           id?: string
+          keep_local?: boolean | null
+          last_clinicorp_sync_at?: string | null
           logradouro?: string | null
           nome?: string
           numero?: string | null
