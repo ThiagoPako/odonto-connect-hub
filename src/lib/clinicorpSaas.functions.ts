@@ -788,7 +788,7 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
       for (const clinicId of (clinicIds.length ? clinicIds : [undefined])) {
         // Estimates
         try {
-          const estEndpoints = ['/estimates/list', '/budget/list', '/treatment/list'];
+          const estEndpoints = ['/estimates/list', '/budget/list', '/treatment/list', '/budget/list_budgets', '/treatment/list_treatments'];
           let estList: any[] = [];
           
           for (const ep of estEndpoints) {
