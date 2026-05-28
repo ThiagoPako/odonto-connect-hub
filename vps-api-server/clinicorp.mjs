@@ -676,6 +676,20 @@ async function ensureLocalPatient(pool, cpId, fallback = {}, tenantId = null) {
   const found = await pool.query(`SELECT id, tenant_id FROM pacientes WHERE clinicorp_patient_id = $1 LIMIT 1`, [cpId]);
   const cp = await pool.query(`SELECT * FROM clinicorp_patients WHERE id = $1 AND tenant_id = $2`, [cpId, tId]);
   const src = cp.rows[0] || {};
+  
+  // Se não estiver no mirror, tenta colocar (auto-espelhamento)
+  if (!cp.rows[0] && (fallback.name || fallback.phone)) {
+    try {
+      await upsertPatient(pool, { 
+        id: cpId, 
+        Name: fallback.name, 
+        MobilePhone: fallback.phone, 
+        Email: fallback.email,
+        derived: true
+      }, tId);
+    } catch (err) { /* silent */ }
+  }
+
   const nome = src.name || fallback.name || 'Paciente';
   const telefone = src.mobile_phone || onlyDigits(fallback.phone) || null;
   const email = src.email || fallback.email || null;
@@ -1203,8 +1217,7 @@ async function upsertFinancial(pool, source, item, tenantId = null) {
     `INSERT INTO clinicorp_financial_entries
        (source, external_id, tenant_id, business_id, patient_id, amount, date, description, raw, synced_at)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, NOW())
-     ON CONFLICT (source, external_id) DO UPDATE SET
-       tenant_id = EXCLUDED.tenant_id,
+     ON CONFLICT (source, external_id, tenant_id) DO UPDATE SET
        business_id = EXCLUDED.business_id,
        patient_id = EXCLUDED.patient_id,
        amount = EXCLUDED.amount,
@@ -1257,14 +1270,14 @@ async function upsertMonthlySummary(pool, source, item, businessId = null, tenan
         cash, credit_card, debit_card, pix, bank_slip, raw, synced_at)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NOW())
      ON CONFLICT (source, period_month, business_id, tenant_id) DO UPDATE SET
-       total_in = COALESCE(clinicorp_monthly_summary.total_in, 0) + COALESCE(EXCLUDED.total_in, 0),
-       total_out = COALESCE(clinicorp_monthly_summary.total_out, 0) + COALESCE(EXCLUDED.total_out, 0),
-       total_amount = COALESCE(clinicorp_monthly_summary.total_amount, 0) + COALESCE(EXCLUDED.total_amount, 0),
-       cash = COALESCE(clinicorp_monthly_summary.cash, 0) + COALESCE(EXCLUDED.cash, 0),
-       credit_card = COALESCE(clinicorp_monthly_summary.credit_card, 0) + COALESCE(EXCLUDED.credit_card, 0),
-       debit_card = COALESCE(clinicorp_monthly_summary.debit_card, 0) + COALESCE(EXCLUDED.debit_card, 0),
-       pix = COALESCE(clinicorp_monthly_summary.pix, 0) + COALESCE(EXCLUDED.pix, 0),
-       bank_slip = COALESCE(clinicorp_monthly_summary.bank_slip, 0) + COALESCE(EXCLUDED.bank_slip, 0),
+       total_in = EXCLUDED.total_in,
+       total_out = EXCLUDED.total_out,
+       total_amount = EXCLUDED.total_amount,
+       cash = EXCLUDED.cash,
+       credit_card = EXCLUDED.credit_card,
+       debit_card = EXCLUDED.debit_card,
+       pix = EXCLUDED.pix,
+       bank_slip = EXCLUDED.bank_slip,
        raw = EXCLUDED.raw,
        synced_at = NOW()`,
     [
@@ -1428,10 +1441,11 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
           [user_id, `Processando: ${label}...`]
         ).catch(() => {});
       }
+      console.log(`[clinicorp sync] processing ${label}...`);
       await fn(); 
     } catch (e) { 
       errors.push(`${label}: ${e.message}`); 
-      console.error(`[clinicorp sync] ${label}`, e.message); 
+      console.error(`[clinicorp sync] ${label} ERROR:`, e.message, e.stack); 
       if (isClinicorpRateLimitError(e)) throw e;
     }
   };
