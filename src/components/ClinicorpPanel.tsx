@@ -113,9 +113,9 @@ export function ClinicorpPanel() {
       setLookaheadDays(s.sync_lookahead_days);
       setConflictStrategy(s.conflict_strategy);
       const [evs, ovs, cfs, hist] = await Promise.all([
-        clinicorpApi.listWebhookEvents(50),
-        clinicorpApi.listOverrides(),
-        clinicorpApi.listConflicts({ limit: 50 }),
+        clinicorpApi.listWebhookEvents(50).catch(() => []),
+        clinicorpApi.listOverrides().catch(() => []),
+        clinicorpApi.listConflicts({ limit: 50 }).catch(() => []),
         clinicorpApi.listOverrideHistory({ limit: 100 }).catch(() => []),
       ]);
       setEvents(evs);
@@ -227,7 +227,12 @@ export function ClinicorpPanel() {
         completed: true,
       }));
       toast.success(`Sincronização concluída: ${Object.values(r.summary).reduce((a, b) => a + b, 0)} registros.`);
-      await load();
+      // Recarrega dados auxiliares sem deixar erros de endpoints opcionais (VPS) quebrarem o status
+      try {
+        await load();
+      } catch (reloadErr) {
+        console.warn('Falha ao recarregar dados auxiliares pós-sync:', reloadErr);
+      }
     } catch (e) {
       polling = false;
       const msg = (e as Error).message;
