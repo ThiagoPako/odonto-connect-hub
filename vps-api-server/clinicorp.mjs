@@ -247,28 +247,65 @@ async function _clinicorpFetchRaw(settings, pathName, { method = 'GET', query = 
 // ─── High-level API helpers ───────────────────────────────────
 export const clinicorpApi = {
   listUsers: async (s) => {
-    // Tenta primeiro o endpoint que funcionou no teste de probe
+    // MERGE de todos os endpoints (em vez de parar no primeiro). Alguns
+    // retornam só profissionais ATIVOS; outros incluem inativos. Combinando,
+    // pegamos nomes de profissionais que aparecem em agendamentos antigos
+    // mas estão desativados na clínica.
     const endpoints = [
       { path: '/professional/list_all_professionals', query: { subscriber_id: s.subscriber_id } },
+      { path: '/professional/list_all_professionals', query: { subscriber_id: s.subscriber_id, include_inactive: true } },
+      { path: '/professional/list_all_professionals', query: { subscriber_id: s.subscriber_id, only_active: false } },
       { path: '/dentist/list', query: { subscriber_id: s.subscriber_id } },
       { path: '/professional/list', query: { subscriber_id: s.subscriber_id } },
       { path: '/security/list_users', query: {} },
     ];
+    const merged = new Map();
+    const hasRealName = (x) => !!(x?.FullName || x?.Full_Name || x?.Name || x?.PersonName || x?.ProfessionalName || x?.Dentist_FullName);
     for (const ep of endpoints) {
       try {
         const r = await clinicorpFetch(s, ep.path, { query: ep.query });
         const list = Array.isArray(r) ? r
           : (r?.Results || r?.Professionals || r?.Users || r?.Items || r?.data || r?.users || r?.professionals || []);
-        
         if (Array.isArray(list) && list.length > 0) {
-          console.log(`[clinicorp] listUsers ${ep.path} success -> ${list.length} users`);
-          return list;
+          for (const p of list) {
+            const id = p?.id ?? p?.Id ?? p?.UserId ?? p?.PersonId ?? p?.Professional_PersonId ?? p?.ProfessionalPersonId ?? p?.ProfessionalId ?? p?.Dentist_PersonId ?? p?.DentistId;
+            if (!id) continue;
+            const key = String(id);
+            const existing = merged.get(key);
+            if (!existing || (!hasRealName(existing) && hasRealName(p))) merged.set(key, p);
+          }
+          console.log(`[clinicorp] listUsers ${ep.path} +${list.length} (total merged: ${merged.size})`);
         }
-      } catch (e) { 
-        console.warn(`[clinicorp] listUsers ${ep.path} failed:`, e.message); 
+      } catch (e) {
+        console.warn(`[clinicorp] listUsers ${ep.path} failed:`, e.message);
       }
     }
-    return [];
+    return Array.from(merged.values());
+  },
+  getProfessional: async (s, id) => {
+    // Fallback para buscar 1 profissional por ID quando o /list não o retorna
+    // (geralmente profissionais inativos/excluídos). Tenta vários endpoints.
+    const candidates = [
+      { path: '/professional/get', query: { subscriber_id: s.subscriber_id, id } },
+      { path: '/professional/get', query: { subscriber_id: s.subscriber_id, ProfessionalId: id } },
+      { path: '/professional/get', query: { subscriber_id: s.subscriber_id, Professional_PersonId: id } },
+      { path: '/dentist/get', query: { subscriber_id: s.subscriber_id, id } },
+      { path: '/dentist/get', query: { subscriber_id: s.subscriber_id, DentistId: id } },
+      { path: '/security/get_user', query: { subscriber_id: s.subscriber_id, id } },
+      { path: '/security/get_user', query: { subscriber_id: s.subscriber_id, UserId: id } },
+    ];
+    for (const ep of candidates) {
+      try {
+        const r = await clinicorpFetch(s, ep.path, { query: ep.query });
+        const obj = (r && typeof r === 'object' && !Array.isArray(r))
+          ? (r.Result || r.Professional || r.User || r.data || r)
+          : (Array.isArray(r) ? r[0] : null);
+        if (obj && (obj.FullName || obj.Full_Name || obj.Name || obj.PersonName || obj.ProfessionalName)) {
+          return obj;
+        }
+      } catch { /* tenta próximo */ }
+    }
+    return null;
   },
   listClinics: (s) => clinicorpFetch(s, '/business/list', { query: { subscriber_id: s.subscriber_id } }),
   listSubscribersClinics: (s) => clinicorpFetch(s, '/group/list_subscribers_clinics', { query: { subscriber_id: s.subscriber_id } }),
@@ -1765,6 +1802,38 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
         }
         console.log(`[clinicorp sync] backfill scan: criou ${found.size} profissionais via raw scan`);
       }
+
+
+      // Fallback final: para qualquer profissional ainda com nome genérico
+      // ("Profissional <id>") OU NULL/vazio, tenta resolver via API individual.
+      try {
+        const { rows: generics } = await pool.query(
+          `SELECT id FROM clinicorp_professionals
+            WHERE tenant_id=$1
+              AND (full_name IS NULL OR full_name='' OR full_name ~ '^Profissional\\s+\\d+$')`,
+          [tId]
+        );
+        let resolved = 0;
+        for (const g of generics) {
+          try {
+            const obj = await clinicorpApi.getProfessional(settings, g.id);
+            if (!obj) continue;
+            const realName = (obj.FullName || obj.Full_Name || obj.Name || obj.PersonName || obj.ProfessionalName || '').toString().trim();
+            if (!realName) continue;
+            await pool.query(
+              `UPDATE clinicorp_professionals
+                  SET full_name=$1, raw=$2, synced_at=NOW()
+                WHERE id=$3 AND tenant_id=$4`,
+              [realName, JSON.stringify(obj), g.id, tId]
+            );
+            await ensureLocalProfessional(pool, String(g.id), realName, tId);
+            resolved++;
+          } catch (e) {
+            console.warn('[clinicorp sync] getProfessional fallback', g.id, e.message);
+          }
+        }
+        if (generics.length) console.log(`[clinicorp sync] resolveu ${resolved}/${generics.length} nomes genéricos via API individual`);
+      } catch (e) { console.error('[clinicorp sync] fallback getProfessional', e.message); }
 
       const { rows: pcount } = await pool.query(`SELECT COUNT(*)::int AS c FROM clinicorp_professionals WHERE tenant_id=$1`, [tId]);
       summary.professionals = pcount[0]?.c || summary.professionals;
