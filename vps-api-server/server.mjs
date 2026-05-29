@@ -9172,10 +9172,12 @@ app.post('/api/messages/import-whatsapp', async (req, res) => {
       res.json(finalResult);
     }
   } catch (error) {
+    const isAuth = error.message === 'Unauthorized' || error.message === 'Invalid Supabase token';
+    const status = isAuth ? 401 : 500;
     if (res.headersSent) {
       try { res.write(`data: ${JSON.stringify({ phase: 'done', success: false, error: error.message, instances: [] })}\n\n`); res.end(); } catch (_) {}
     } else {
-      res.status(500).json({ error: error.message });
+      res.status(status).json({ error: error.message });
     }
   }
 });
