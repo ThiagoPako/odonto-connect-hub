@@ -168,13 +168,14 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onRe
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <p className="text-sm font-semibold text-foreground">{lead.name}</p>
+              <p className="text-sm font-semibold text-foreground">{getDisplayName(lead)}</p>
               {currentStage && (
                 <span className="inline-flex items-center gap-0.5 px-1.5 py-0 rounded-full text-[9px] font-semibold text-white shadow-sm" style={{ backgroundColor: CRM_QUICK_STAGES.find((s) => s.id === currentStage)?.color || "#6b7280" }}>
                   {CRM_QUICK_STAGES.find((s) => s.id === currentStage)?.emoji} {CRM_QUICK_STAGES.find((s) => s.id === currentStage)?.label}
                 </span>
               )}
             </div>
+            {lead.phone && <p className="text-[11px] text-muted-foreground font-mono">{formatPhoneDisplay(lead.phone)}</p>}
             {presence === "typing" ? (
               <div className="flex items-center gap-1.5 h-4">
                 <div className="flex items-center gap-[3px]">
