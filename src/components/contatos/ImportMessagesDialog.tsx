@@ -165,6 +165,13 @@ export function ImportMessagesDialog({
     try {
       // Garante token Supabase fresco (faz refresh se expirado)
       let token = await getAccessToken();
+      try {
+        const { data: userData, error: userError } = await supabase.auth.getUser();
+        if (userError || !userData.user) {
+          const { data } = await supabase.auth.refreshSession();
+          token = data.session?.access_token ?? token;
+        }
+      } catch { /* ignore */ }
       if (!token) {
         try {
           const { data } = await supabase.auth.refreshSession();
@@ -202,7 +209,7 @@ export function ImportMessagesDialog({
       if (!res.ok || !res.body) {
         const errText = await res.text().catch(() => "Erro desconhecido");
         const friendly = res.status === 401 || /unauthorized/i.test(errText)
-          ? "Sessão expirada ou sem permissão. Faça logout e login novamente."
+          ? "Sua sessão está válida no app, mas a API do VPS ainda não aceitou o login. Atualize o VPS com o comando de deploy e tente novamente."
           : errText;
         setResult({ success: false, imported: 0, skipped: 0, instances: [], error: friendly });
         setLoading(false);
