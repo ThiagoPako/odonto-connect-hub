@@ -197,7 +197,7 @@ function CanaisPage() {
           open={!!qrInstance}
           onOpenChange={(open) => !open && setQrInstance(null)}
           instanceName={qrInstance}
-          onConnected={() => void loadInstances(false)}
+          onConnected={() => void loadInstances()}
         />
       )}
 
