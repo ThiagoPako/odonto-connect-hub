@@ -369,20 +369,50 @@ export async function fetchWhatsAppContacts(instanceName: string): Promise<Whats
 }
 
 export async function fetchWhatsAppMessages(instanceName: string, remoteJid: string): Promise<any[]> {
-  const raw = await apiCall<any>(`/chat/findMessages/${instanceName}`, {
-    method: "POST",
-    body: JSON.stringify({ where: { key: { remoteJid } } }),
-  });
+  // Evolution API v2 paginates messages — fetch all pages.
+  const all: any[] = [];
+  let page = 1;
+  const pageSize = 100;
+  // Safety cap to avoid infinite loops
+  const maxPages = 50;
 
-  return Array.isArray(raw)
-    ? raw
-    : Array.isArray(raw?.messages)
-      ? raw.messages
-      : Array.isArray(raw?.data)
-        ? raw.data
-        : Array.isArray(raw?.result)
-          ? raw.result
-          : [];
+  while (page <= maxPages) {
+    let raw: any;
+    try {
+      raw = await apiCall<any>(`/chat/findMessages/${instanceName}`, {
+        method: "POST",
+        body: JSON.stringify({
+          where: { key: { remoteJid } },
+          page,
+          offset: pageSize,
+        }),
+      });
+    } catch (err) {
+      console.warn("[fetchWhatsAppMessages] error", { instanceName, remoteJid, page, err });
+      break;
+    }
+
+    // Evolution API v2 typically returns: { messages: { total, pages, currentPage, records: [...] } }
+    // Older / alternate shapes: array directly, { messages: [...] }, { data: [...] }, { result: [...] }
+    let batch: any[] = [];
+    if (Array.isArray(raw)) batch = raw;
+    else if (Array.isArray(raw?.messages?.records)) batch = raw.messages.records;
+    else if (Array.isArray(raw?.messages)) batch = raw.messages;
+    else if (Array.isArray(raw?.data?.records)) batch = raw.data.records;
+    else if (Array.isArray(raw?.data)) batch = raw.data;
+    else if (Array.isArray(raw?.result)) batch = raw.result;
+    else if (Array.isArray(raw?.records)) batch = raw.records;
+
+    if (batch.length === 0) break;
+    all.push(...batch);
+
+    const totalPages = raw?.messages?.pages ?? raw?.pages ?? null;
+    if (totalPages && page >= totalPages) break;
+    if (batch.length < pageSize) break;
+    page++;
+  }
+
+  return all;
 }
 
 export { type ConnectionStatus, type EvolutionInstance, type InstanceState, type QrCodeResponse };

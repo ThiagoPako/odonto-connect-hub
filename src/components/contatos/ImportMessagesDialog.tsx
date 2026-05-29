@@ -65,9 +65,31 @@ type ParsedMessage = {
 };
 
 const getMessageTimestamp = (msg: any): Date | null => {
-  const raw = msg?.messageTimestamp ?? msg?.timestamp ?? msg?.createdAt;
+  const raw =
+    msg?.messageTimestamp ??
+    msg?.message?.messageTimestamp ??
+    msg?.timestamp ??
+    msg?.createdAt ??
+    msg?.messageTimestampMs ??
+    msg?.key?.timestamp;
   if (!raw) return null;
-  const date = new Date(typeof raw === "number" ? (raw > 1e12 ? raw : raw * 1000) : raw);
+  let ms: number;
+  if (typeof raw === "number") {
+    ms = raw > 1e12 ? raw : raw * 1000;
+  } else if (typeof raw === "string") {
+    // Could be ISO date or numeric string (seconds)
+    const asNum = Number(raw);
+    if (!Number.isNaN(asNum) && asNum > 0 && /^\d+$/.test(raw)) {
+      ms = asNum > 1e12 ? asNum : asNum * 1000;
+    } else {
+      const d = new Date(raw);
+      if (Number.isNaN(d.getTime())) return null;
+      return d;
+    }
+  } else {
+    return null;
+  }
+  const date = new Date(ms);
   return Number.isNaN(date.getTime()) ? null : date;
 };
 
@@ -83,6 +105,9 @@ const parseMessageContent = (msg: any): ParsedMessage | null => {
   if (m.contactMessage) return { content: `👤 ${m.contactMessage.displayName || "Contato"}`, type: "contact" };
   if (m.locationMessage) return { content: "📍 Localização", type: "location" };
   if (m.protocolMessage || m.senderKeyDistributionMessage || msg?.messageStubType) return null;
+  // Fallback: if message text is at top level (some Evolution v2 records)
+  if (typeof msg?.text === "string" && msg.text) return { content: msg.text, type: "text" };
+  if (typeof msg?.content === "string" && msg.content) return { content: msg.content, type: "text" };
   return { content: "[Mensagem não suportada]", type: "text" };
 };
 
@@ -288,10 +313,27 @@ export function ImportMessagesDialog({
           if (!leadId) continue;
 
           const rawMessages = await fetchWhatsAppMessages(instanceName, remoteJid);
-          const rows = rawMessages
-            .map((msg) => ({ msg, timestamp: getMessageTimestamp(msg), parsed: parseMessageContent(msg) }))
-            .filter((item) => item.timestamp && item.timestamp >= startDate && item.timestamp <= new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59, 999) && item.parsed)
-            .map((item) => {
+          const startMs = startDate.getTime();
+          const endMs = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59, 999).getTime();
+          const parsed = rawMessages.map((msg) => ({
+            msg,
+            timestamp: getMessageTimestamp(msg),
+            parsed: parseMessageContent(msg),
+          }));
+          const inRange = parsed.filter(
+            (item) => item.timestamp && item.timestamp.getTime() >= startMs && item.timestamp.getTime() <= endMs && item.parsed,
+          );
+
+          console.log("[ImportMessages]", {
+            contact: contactName,
+            phone,
+            rawCount: rawMessages.length,
+            parsedWithTs: parsed.filter((p) => p.timestamp).length,
+            inRange: inRange.length,
+            sample: rawMessages[0],
+          });
+
+          const rows = inRange.map((item) => {
               const msgId = item.msg?.key?.id || item.msg?.id || `evo-${instanceName}-${phone}-${item.timestamp!.getTime()}`;
               return {
                 id: msgId,
