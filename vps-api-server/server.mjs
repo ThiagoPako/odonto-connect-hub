@@ -2690,6 +2690,9 @@ app.post('/api/whatsapp/sync-profile-pictures', async (req, res) => {
 
     console.log(`🔄 Found ${leads.length} leads to sync`);
 
+    let updated = 0;
+    let failed = 0;
+
     for (const lead of leads) {
       try {
         const cleanNumber = lead.telefone.replace(/\D/g, '');
@@ -2715,7 +2718,8 @@ app.post('/api/whatsapp/sync-profile-pictures', async (req, res) => {
 
     res.json({ total: leads.length, updated, failed });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    const isAuth = error.message === 'Unauthorized' || error.message === 'Invalid Supabase token';
+    res.status(isAuth ? 401 : 500).json({ error: error.message });
   }
 });
 
