@@ -9,6 +9,7 @@ import { Users, MessageSquare, Inbox, Filter, Kanban, UserPlus, Wifi, RefreshCw 
 import { Button } from "@/components/ui/button";
 import { NewChatFromContactDialog } from "@/components/chat/NewChatFromContactDialog";
 import { SatisfactionSurveyDialog } from "@/components/chat/SatisfactionSurveyDialog";
+import { ImportMessagesDialog } from "@/components/contatos/ImportMessagesDialog";
 import type { Contato } from "@/lib/vpsApi";
 import type { AttendanceQueue } from "@/data/queueData";
 import { toast } from "sonner";
@@ -57,6 +58,7 @@ function ChatPage() {
   const [filterStage, setFilterStage] = useState<string | null>(null);
   const [filterStatus, setFilterStatus] = useState<"all" | "active" | "finished">("all");
   const [newChatOpen, setNewChatOpen] = useState(false);
+  const [importMessagesOpen, setImportMessagesOpen] = useState(false);
   const [isLeadTyping, setIsLeadTyping] = useState(false);
   const [syncingPhotos, setSyncingPhotos] = useState(false);
   const [availableQueues, setAvailableQueues] = useState<AttendanceQueue[]>([]);
@@ -78,6 +80,41 @@ function ChatPage() {
   queueRef.current = queue;
   myLeadsRef.current = myLeads;
   selectedLeadRef.current = selectedLead;
+
+  const reloadQueueLeads = useCallback(async () => {
+    const { data } = await queueLeadsApi.list();
+    if (!data) return;
+
+    const { data: contactsData } = await supabase.from('contatos').select('telefone, nome');
+    const contactMap = new Map((contactsData || []).map((c: any) => [c.telefone?.replace(/\D/g, ''), c.nome]));
+
+    const toLead = (r: any): Lead => {
+      const phone = r.phone?.replace(/\D/g, '') || "";
+      const resolvedName = r.name && !r.name.includes('@') && isNaN(Number(r.name))
+        ? r.name
+        : contactMap.get(phone) || r.name || r.phone;
+
+      return {
+        id: r.id,
+        name: resolvedName,
+        initials: (resolvedName || "?").split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase(),
+        phone: r.phone,
+        avatarUrl: r.avatarUrl,
+        lastMessage: r.lastMessage || "",
+        lastMessageTime: r.lastMessageTime ? new Date(r.lastMessageTime) : new Date(),
+        unreadCount: r.unreadCount || 0,
+        status: r.sessionStatus === "active" ? "active" : "waiting",
+        avatarColor: "bg-chart-1",
+        queueId: r.queueId,
+        queueName: r.queueName,
+        assignedTo: r.attendantId ? "current" : undefined,
+        priority: r.priority || false,
+      };
+    };
+
+    setQueue((data.queue || []).map(toLead));
+    setMyLeads((data.active || []).map(toLead));
+  }, []);
 
   // Load queues, tags, assignments and unread counts from VPS
   useEffect(() => {
@@ -104,40 +141,7 @@ function ChatPage() {
       setCrmStages(stages);
     });
 
-    // Load leads from queue/active from backend
-    queueLeadsApi.list().then(async ({ data }) => {
-      if (!data) return;
-      
-      // Load contacts for name resolution if name is missing/ID
-      const { data: contactsData } = await supabase.from('contatos').select('telefone, nome');
-      const contactMap = new Map((contactsData || []).map((c: any) => [c.telefone?.replace(/\D/g, ''), c.nome]));
-
-      const toLead = (r: any): Lead => {
-        const phone = r.phone?.replace(/\D/g, '') || "";
-        const resolvedName = r.name && !r.name.includes('@') && isNaN(Number(r.name)) 
-          ? r.name 
-          : contactMap.get(phone) || r.name || r.phone;
-
-        return {
-          id: r.id,
-          name: resolvedName,
-          initials: (resolvedName || "?").split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase(),
-          phone: r.phone,
-          avatarUrl: r.avatarUrl,
-          lastMessage: r.lastMessage || "",
-          lastMessageTime: r.lastMessageTime ? new Date(r.lastMessageTime) : new Date(),
-          unreadCount: r.unreadCount || 0,
-          status: r.sessionStatus === "active" ? "active" : "waiting",
-          avatarColor: "bg-chart-1",
-          queueId: r.queueId,
-          queueName: r.queueName,
-          assignedTo: r.attendantId ? "current" : undefined,
-          priority: r.priority || false,
-        };
-      };
-      if (data.queue?.length) setQueue(data.queue.map(toLead));
-      if (data.active?.length) setMyLeads(data.active.map(toLead));
-    });
+    void reloadQueueLeads();
 
     // Load unread counts from backend and apply to leads
     const fetchUnreadCounts = () => {
@@ -171,7 +175,7 @@ function ChatPage() {
       clearInterval(unreadInterval);
       document.removeEventListener("visibilitychange", handleVisibility);
     };
-  }, []);
+  }, [reloadQueueLeads]);
 
 
   // ─── Dedup set — prevent duplicate messages ───
@@ -1345,6 +1349,15 @@ function ChatPage() {
               disabled={syncingPhotos}
             >
               <RefreshCw className={`h-4 w-4 text-muted-foreground ${syncingPhotos ? "animate-spin" : ""}`} />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-10 w-10 shrink-0"
+              title="Importar conversas do WhatsApp"
+              onClick={() => setImportMessagesOpen(true)}
+            >
+              <MessageSquare className="h-4 w-4 text-primary" />
             </Button>
             <button
               onClick={() => setActiveTab("queue")}

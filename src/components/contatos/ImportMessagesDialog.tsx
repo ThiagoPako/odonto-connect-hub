@@ -29,7 +29,7 @@ import {
   WifiOff,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { whatsappApi, getAccessToken } from "@/lib/vpsApi";
+import { whatsappApi, getAccessToken, VPS_API_BASE } from "@/lib/vpsApi";
 
 interface InstanceResult {
   name: string;
@@ -135,7 +135,7 @@ export function ImportMessagesDialog({
 
     try {
       const token = await getAccessToken();
-      const res = await fetch("https://odontoconnect.tech/api/messages/import-whatsapp", {
+      const res = await fetch(`${VPS_API_BASE}/messages/import-whatsapp`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
