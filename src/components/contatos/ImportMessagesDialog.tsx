@@ -343,118 +343,30 @@ export function ImportMessagesDialog({
     abortRef.current = controller;
 
     try {
-      // Garante token Supabase fresco (faz refresh se expirado)
-      let token = await getAccessToken();
-      try {
-        const { data: userData, error: userError } = await supabase.auth.getUser();
-        if (userError || !userData.user) {
-          const { data } = await supabase.auth.refreshSession();
-          token = data.session?.access_token ?? token;
-        }
-      } catch { /* ignore */ }
-      if (!token) {
-        try {
-          const { data } = await supabase.auth.refreshSession();
-          token = data.session?.access_token ?? null;
-        } catch { /* ignore */ }
+      // Garante sessão Supabase válida antes de importar
+      const { data: userData, error: userError } = await supabase.auth.getUser();
+      if (userError || !userData.user) {
+        await supabase.auth.refreshSession();
       }
-      if (!token) {
+
+      // Import direto (cliente -> Evolution API + Supabase).
+      // O endpoint VPS /messages/import-whatsapp tem bugs conhecidos
+      // (lead_id incorreto como telefone string, tenant_id ausente em
+      // chat_messages, e errors silenciados) — usamos o caminho direto
+      // que cria leads corretamente e insere mensagens com tenant_id.
+      const directResult = await runDirectImport();
+      setResult(directResult);
+      setProgress(null);
+      if (directResult.imported > 0) onImported?.();
+    } catch (err: any) {
+      if (err.name !== "AbortError") {
         setResult({
           success: false,
           imported: 0,
           skipped: 0,
           instances: [],
-          error: "Sessão expirada. Faça logout e login novamente para importar mensagens.",
+          error: err.message || "Erro ao importar mensagens",
         });
-        setLoading(false);
-        setProgress(null);
-        return;
-      }
-
-      const res = await fetch(`${VPS_API_BASE}/messages/import-whatsapp`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          startDate: startDate.toISOString(),
-          endDate: endDate.toISOString(),
-          instances: Array.from(selectedInstances),
-          stream: true,
-        }),
-        signal: controller.signal,
-      });
-
-      if (!res.ok || !res.body) {
-        const errText = await res.text().catch(() => "Erro desconhecido");
-        if (res.status === 401 || /unauthorized/i.test(errText)) {
-          const directResult = await runDirectImport();
-          setResult(directResult);
-          if (directResult.imported > 0) onImported?.();
-        } else {
-          setResult({ success: false, imported: 0, skipped: 0, instances: [], error: errText });
-        }
-        setLoading(false);
-        setProgress(null);
-        return;
-      }
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          try {
-            const evt = JSON.parse(line.slice(6));
-
-            if (evt.phase === "done") {
-              setResult(evt as ImportResult);
-              setProgress(null);
-              if (evt.imported > 0) onImported?.();
-            } else if (evt.phase === "contact") {
-              setProgress({
-                message: `Processando ${evt.contactName}...`,
-                contactName: evt.contactName,
-                contactIndex: evt.contactIndex,
-                totalContacts: evt.totalContacts,
-                instanceName: evt.instance,
-                instanceIndex: evt.instanceIndex,
-                totalInstances: evt.totalInstances,
-                imported: evt.imported,
-                skipped: evt.skipped,
-              });
-            } else if (evt.phase === "instance") {
-              setProgress({
-                message: evt.message,
-                instanceName: evt.instance,
-                instanceIndex: evt.instanceIndex,
-                totalInstances: evt.totalInstances,
-              });
-            } else if (evt.phase === "contacts_found") {
-              setProgress(prev => ({
-                ...prev!,
-                message: `${evt.totalContacts} contatos encontrados em ${evt.instance}`,
-                totalContacts: evt.totalContacts,
-              }));
-            } else if (evt.phase === "init") {
-              setProgress({ message: evt.message });
-            }
-          } catch (_) { /* ignore parse errors */ }
-        }
-      }
-    } catch (err: any) {
-      if (err.name !== "AbortError") {
-        setResult({ success: false, imported: 0, skipped: 0, instances: [], error: err.message });
         setProgress(null);
       }
     }
