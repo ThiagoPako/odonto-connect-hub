@@ -1589,6 +1589,12 @@ function ChatPage() {
           onSkip={() => setSurveyLead(null)}
         />
       )}
+
+      <ImportMessagesDialog 
+        open={importMessagesOpen}
+        onOpenChange={setImportMessagesOpen}
+        onImported={reloadQueueLeads}
+      />
     </div>
   );
 }
