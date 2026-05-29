@@ -1359,7 +1359,7 @@ function ChatPage() {
               title="Importar contatos do WhatsApp"
               onClick={() => setImportContactsOpen(true)}
             >
-              <UserPlus className="h-4 w-4 text-primary" />
+              <Users className="h-4 w-4 text-primary" />
             </Button>
             <Button
               variant="ghost"
