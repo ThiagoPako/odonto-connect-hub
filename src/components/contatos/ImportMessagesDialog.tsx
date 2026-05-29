@@ -30,6 +30,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { whatsappApi, getAccessToken, VPS_API_BASE } from "@/lib/vpsApi";
+import { useWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
+import { fetchInstances as fetchEvolutionInstances } from "@/lib/evolutionApi";
 
 interface InstanceResult {
   name: string;
