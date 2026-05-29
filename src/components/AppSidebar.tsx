@@ -127,8 +127,9 @@ function filterByRole(
   isSuperAdmin?: boolean, 
   tenantFeatures?: Record<string, boolean>
 ): NavSection[] {
+  // Super Admin vê TUDO + a seção exclusiva de SaaS Management
   if (isSuperAdmin) {
-    return superAdminSections;
+    return [...sections, ...superAdminSections];
   }
   
   return sections
