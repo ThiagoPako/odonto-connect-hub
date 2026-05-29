@@ -296,9 +296,12 @@ export function ImportMessagesDialog({
           if (abortRef.current?.signal.aborted) break;
           const contact = uniqueContacts[ci];
           const phone = contact.id.replace(/\D/g, "");
-          if (!phone) continue;
+          // Skip invalid / community / LID-style identifiers (real E.164 is <= 15 digits)
+          if (!phone || phone.length < 8 || phone.length > 15) continue;
           const remoteJid = `${phone}@s.whatsapp.net`;
-          const contactName = contact.pushName?.trim() || phone;
+          // Reject the generic "WhatsApp" pushName (returned for contacts without real name)
+          const rawName = contact.pushName?.trim();
+          const contactName = rawName && rawName.toLowerCase() !== "whatsapp" ? rawName : phone;
 
           setProgress({
             message: `Processando ${contactName}...`,
@@ -311,6 +314,12 @@ export function ImportMessagesDialog({
             imported: totalImported,
             skipped: totalSkipped,
           });
+
+          // Resolve profile picture (best-effort)
+          let avatarUrl: string | null = contact.profilePictureUrl || null;
+          if (!avatarUrl) {
+            avatarUrl = await fetchProfilePictureUrl(instanceName, phone);
+          }
 
           const { data: existingContact } = await supabase
             .from("contatos")
@@ -325,7 +334,7 @@ export function ImportMessagesDialog({
           const suffix = phone.slice(-11);
           const { data: existingLeads } = await supabase
             .from("crm_leads")
-            .select("id,nome,telefone")
+            .select("id,nome,telefone,avatar_url")
             .eq("tenant_id", tenantId)
             .or(`telefone.eq.${phone},telefone.ilike.%${suffix}`)
             .limit(1);
@@ -334,11 +343,22 @@ export function ImportMessagesDialog({
           if (!leadId) {
             const { data: newLead, error: leadError } = await supabase
               .from("crm_leads")
-              .insert({ tenant_id: tenantId, nome: contactName, telefone: phone, origem: "whatsapp", status: "novo", kanban_stage: "lead", awaiting_queue_selection: true } as never)
+              .insert({ tenant_id: tenantId, nome: contactName, telefone: phone, avatar_url: avatarUrl, origem: "whatsapp", status: "novo", kanban_stage: "lead", awaiting_queue_selection: true } as never)
               .select("id")
               .single();
             if (leadError) throw leadError;
             leadId = newLead?.id as string | undefined;
+          } else {
+            // Update avatar / name if we have better info now
+            const existing = existingLeads![0] as any;
+            const updates: Record<string, unknown> = {};
+            if (avatarUrl && !existing.avatar_url) updates.avatar_url = avatarUrl;
+            if (rawName && rawName.toLowerCase() !== "whatsapp" && (!existing.nome || existing.nome === existing.telefone)) {
+              updates.nome = rawName;
+            }
+            if (Object.keys(updates).length > 0) {
+              await supabase.from("crm_leads").update(updates as never).eq("id", leadId);
+            }
           }
           if (!leadId) continue;
 
