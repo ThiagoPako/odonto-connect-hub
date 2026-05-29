@@ -29,14 +29,21 @@ async function loadUserFromSession(session: Session): Promise<AuthUser | null> {
   if (!authUser) return null;
 
   // Fetch profile (created by handle_new_user trigger)
-  const { data: profile } = await supabase
+  // Important: never silently downgrade to "user" when permission reads fail.
+  // If the database/policy query errors, keep the app in an auth-loading/error
+  // path instead of rendering a limited menu for an admin account.
+  const { data: profile, error: profileError } = await supabase
     .from("profiles")
     .select("id, nome, email, tenant_id, is_super_admin, avatar_url")
     .eq("id", authUser.id)
     .maybeSingle();
 
+  if (profileError) {
+    throw new Error(`Erro ao carregar perfil: ${profileError.message}`);
+  }
+
   // Fetch role from user_roles (separate table, prevents privilege escalation)
-  const { data: roleRow } = await supabase
+  const { data: roleRow, error: roleError } = await supabase
     .from("user_roles")
     .select("role")
     .eq("user_id", authUser.id)
@@ -44,14 +51,21 @@ async function loadUserFromSession(session: Session): Promise<AuthUser | null> {
     .limit(1)
     .maybeSingle();
 
+  if (roleError) {
+    throw new Error(`Erro ao carregar permissões: ${roleError.message}`);
+  }
+
   // Fetch tenant feature flags from metadata jsonb (optional)
   let tenant_features: Record<string, boolean> = {};
   if (profile?.tenant_id) {
-    const { data: tenant } = await supabase
+    const { data: tenant, error: tenantError } = await supabase
       .from("tenants")
       .select("metadata")
       .eq("id", profile.tenant_id)
       .maybeSingle();
+    if (tenantError) {
+      throw new Error(`Erro ao carregar recursos da clínica: ${tenantError.message}`);
+    }
     const meta = tenant?.metadata as { features?: Record<string, boolean> } | null;
     if (meta?.features && typeof meta.features === "object") {
       tenant_features = meta.features;
