@@ -21,6 +21,29 @@ function formatLastSeen(date: Date): string {
   return date.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
 }
 
+function formatPhoneDisplay(phone: string): string {
+  const d = (phone || "").replace(/\D/g, "");
+  if (!d) return "";
+  if (d.length === 13 && d.startsWith("55")) {
+    return `+55 (${d.slice(2, 4)}) ${d.slice(4, 9)}-${d.slice(9)}`;
+  }
+  if (d.length === 12 && d.startsWith("55")) {
+    return `+55 (${d.slice(2, 4)}) ${d.slice(4, 8)}-${d.slice(8)}`;
+  }
+  if (d.length === 11) return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+  if (d.length === 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+  return `+${d}`;
+}
+
+function getDisplayName(lead: { name?: string; phone?: string }): string {
+  const n = (lead.name || "").trim();
+  // Reject empty, very short, generic, or purely numeric placeholders
+  if (!n || n.length < 2 || n.toLowerCase() === "whatsapp" || /^[\d\s+()-]+$/.test(n)) {
+    return lead.phone ? formatPhoneDisplay(lead.phone) : "Contato";
+  }
+  return n;
+}
+
 interface Attendant {
   id: string;
   name: string;
@@ -168,13 +191,14 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onRe
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <p className="text-sm font-semibold text-foreground">{lead.name}</p>
+              <p className="text-sm font-semibold text-foreground">{getDisplayName(lead)}</p>
               {currentStage && (
                 <span className="inline-flex items-center gap-0.5 px-1.5 py-0 rounded-full text-[9px] font-semibold text-white shadow-sm" style={{ backgroundColor: CRM_QUICK_STAGES.find((s) => s.id === currentStage)?.color || "#6b7280" }}>
                   {CRM_QUICK_STAGES.find((s) => s.id === currentStage)?.emoji} {CRM_QUICK_STAGES.find((s) => s.id === currentStage)?.label}
                 </span>
               )}
             </div>
+            {lead.phone && <p className="text-[11px] text-muted-foreground font-mono">{formatPhoneDisplay(lead.phone)}</p>}
             {presence === "typing" ? (
               <div className="flex items-center gap-1.5 h-4">
                 <div className="flex items-center gap-[3px]">
