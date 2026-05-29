@@ -130,8 +130,10 @@ export function ImportMessagesDialog({
   const [loadingInstances, setLoadingInstances] = useState(false);
   const [selectedInstances, setSelectedInstances] = useState<Set<string>>(new Set());
 
-  const loadInstances = useCallback(async () => {
-    setLoadingInstances(true);
+  const hasLoadedRef = useRef(false);
+
+  const loadInstances = useCallback(async (showLoading = true) => {
+    if (showLoading) setLoadingInstances(true);
     let list: WaInstance[] = [];
 
     // 1) Try Evolution API directly (same as Canais)
@@ -158,17 +160,41 @@ export function ImportMessagesDialog({
       list = hookInstances.map((i) => ({ name: i.instanceName, status: i.connectionState }));
     }
 
-    setInstances(list);
-    setSelectedInstances(new Set(list.filter((i) => i.status === "open").map((i) => i.name)));
-    setLoadingInstances(false);
+    // Only update state if list actually changed (prevents flicker from polling)
+    setInstances((prev) => {
+      if (
+        prev.length === list.length &&
+        prev.every((p, i) => p.name === list[i].name && p.status === list[i].status)
+      ) {
+        return prev;
+      }
+      return list;
+    });
+
+    // Only auto-select connected instances on first load
+    if (!hasLoadedRef.current) {
+      setSelectedInstances(new Set(list.filter((i) => i.status === "open").map((i) => i.name)));
+      hasLoadedRef.current = true;
+    }
+    if (showLoading) setLoadingInstances(false);
   }, [hookInstances]);
 
   useEffect(() => {
     if (open) {
+      hasLoadedRef.current = false;
       void refreshHookInstances();
-      void loadInstances();
+      void loadInstances(true);
     }
-  }, [open, loadInstances, refreshHookInstances]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  // Silent refresh when shared hook cache updates (no flicker)
+  useEffect(() => {
+    if (open && hasLoadedRef.current) {
+      void loadInstances(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hookInstances]);
 
   const toggleInstance = (name: string) => {
     setSelectedInstances(prev => {
