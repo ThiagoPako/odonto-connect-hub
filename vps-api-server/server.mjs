@@ -2659,14 +2659,21 @@ app.post('/api/whatsapp/profile-picture', async (req, res) => {
 // Bulk fetch: update all leads without avatar_url
 app.post('/api/whatsapp/sync-profile-pictures', async (req, res) => {
   try {
-    await verifyAdmin(req);
+    const { user } = await verifyUser(req);
     const { instance } = req.body;
     if (!instance) return res.status(400).json({ error: 'instance é obrigatório' });
 
-    // Get leads without avatar
-    const { rows: leads } = await pool.query(
-      "SELECT id, telefone FROM crm_leads WHERE telefone IS NOT NULL AND (avatar_url IS NULL OR avatar_url = '')"
-    );
+    // Get leads (scoped to tenant when available) without avatar
+    const tenantId = user.tenant_id || null;
+    const { rows: leads } = tenantId
+      ? await pool.query(
+          "SELECT id, telefone FROM crm_leads WHERE tenant_id = $1 AND telefone IS NOT NULL AND (avatar_url IS NULL OR avatar_url = '')",
+          [tenantId]
+        )
+      : await pool.query(
+          "SELECT id, telefone FROM crm_leads WHERE telefone IS NOT NULL AND (avatar_url IS NULL OR avatar_url = '')"
+        );
+
 
     let updated = 0;
     let failed = 0;
