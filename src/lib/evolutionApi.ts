@@ -368,4 +368,21 @@ export async function fetchWhatsAppContacts(instanceName: string): Promise<Whats
     .filter((c: WhatsAppContact) => c.id.length > 0);
 }
 
+export async function fetchWhatsAppMessages(instanceName: string, remoteJid: string): Promise<any[]> {
+  const raw = await apiCall<any>(`/chat/findMessages/${instanceName}`, {
+    method: "POST",
+    body: JSON.stringify({ where: { key: { remoteJid } } }),
+  });
+
+  return Array.isArray(raw)
+    ? raw
+    : Array.isArray(raw?.messages)
+      ? raw.messages
+      : Array.isArray(raw?.data)
+        ? raw.data
+        : Array.isArray(raw?.result)
+          ? raw.result
+          : [];
+}
+
 export { type ConnectionStatus, type EvolutionInstance, type InstanceState, type QrCodeResponse };

@@ -31,7 +31,7 @@ import {
 import { cn } from "@/lib/utils";
 import { whatsappApi, getAccessToken, VPS_API_BASE } from "@/lib/vpsApi";
 import { useWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
-import { fetchInstances as fetchEvolutionInstances } from "@/lib/evolutionApi";
+import { fetchInstances as fetchEvolutionInstances, fetchWhatsAppContacts, fetchWhatsAppMessages } from "@/lib/evolutionApi";
 import { supabase } from "@/integrations/supabase/client";
 
 interface InstanceResult {
@@ -56,6 +56,35 @@ interface WaInstance {
   status: string;
   profilePictureUrl?: string;
 }
+
+type ParsedMessage = {
+  content: string;
+  type: string;
+  file_name?: string;
+  mime_type?: string;
+};
+
+const getMessageTimestamp = (msg: any): Date | null => {
+  const raw = msg?.messageTimestamp ?? msg?.timestamp ?? msg?.createdAt;
+  if (!raw) return null;
+  const date = new Date(typeof raw === "number" ? (raw > 1e12 ? raw : raw * 1000) : raw);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const parseMessageContent = (msg: any): ParsedMessage | null => {
+  const m = msg?.message || {};
+  if (m.conversation) return { content: m.conversation, type: "text" };
+  if (m.extendedTextMessage?.text) return { content: m.extendedTextMessage.text, type: "text" };
+  if (m.imageMessage) return { content: m.imageMessage.caption || "📷 Imagem", type: "image", mime_type: m.imageMessage.mimetype };
+  if (m.videoMessage) return { content: m.videoMessage.caption || "🎥 Vídeo", type: "video", mime_type: m.videoMessage.mimetype };
+  if (m.audioMessage) return { content: "🎵 Áudio", type: "audio", mime_type: m.audioMessage.mimetype };
+  if (m.documentMessage) return { content: m.documentMessage.fileName || "📄 Documento", type: "document", file_name: m.documentMessage.fileName, mime_type: m.documentMessage.mimetype };
+  if (m.stickerMessage) return { content: "🏷️ Sticker", type: "sticker" };
+  if (m.contactMessage) return { content: `👤 ${m.contactMessage.displayName || "Contato"}`, type: "contact" };
+  if (m.locationMessage) return { content: "📍 Localização", type: "location" };
+  if (m.protocolMessage || m.senderKeyDistributionMessage || msg?.messageStubType) return null;
+  return { content: "[Mensagem não suportada]", type: "text" };
+};
 
 interface ImportMessagesDialogProps {
   open: boolean;
@@ -154,6 +183,131 @@ export function ImportMessagesDialog({
     setEndDate(new Date());
   };
 
+  const runDirectImport = async (): Promise<ImportResult> => {
+    const { data: userData, error: userError } = await supabase.auth.getUser();
+    if (userError || !userData.user) throw new Error("Sessão expirada. Faça login novamente.");
+
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .select("tenant_id")
+      .eq("id", userData.user.id)
+      .maybeSingle();
+    if (profileError || !profile?.tenant_id) throw new Error("Não foi possível identificar a clínica da sessão atual.");
+
+    const tenantId = profile.tenant_id;
+    const selected = Array.from(selectedInstances);
+    const instanceResults: InstanceResult[] = [];
+    let totalImported = 0;
+    let totalSkipped = 0;
+
+    for (let ii = 0; ii < selected.length; ii++) {
+      if (abortRef.current?.signal.aborted) break;
+      const instanceName = selected[ii];
+      const instResult: InstanceResult = { name: instanceName, imported: 0, skipped: 0, contacts: 0, error: null };
+      setProgress({ message: `Buscando contatos de ${instanceName}...`, instanceName, instanceIndex: ii, totalInstances: selected.length });
+
+      try {
+        const contacts = await fetchWhatsAppContacts(instanceName);
+        const uniqueContacts = Array.from(new Map(contacts.map((c) => [c.id, c])).values());
+        instResult.contacts = uniqueContacts.length;
+
+        for (let ci = 0; ci < uniqueContacts.length; ci++) {
+          if (abortRef.current?.signal.aborted) break;
+          const contact = uniqueContacts[ci];
+          const phone = contact.id.replace(/\D/g, "");
+          if (!phone) continue;
+          const remoteJid = `${phone}@s.whatsapp.net`;
+          const contactName = contact.pushName?.trim() || phone;
+
+          setProgress({
+            message: `Processando ${contactName}...`,
+            contactName,
+            contactIndex: ci,
+            totalContacts: uniqueContacts.length,
+            instanceName,
+            instanceIndex: ii,
+            totalInstances: selected.length,
+            imported: totalImported,
+            skipped: totalSkipped,
+          });
+
+          const { data: existingContact } = await supabase
+            .from("contatos")
+            .select("id")
+            .eq("tenant_id", tenantId)
+            .eq("telefone", phone)
+            .limit(1);
+          if (!existingContact?.length) {
+            await supabase.from("contatos").insert({ tenant_id: tenantId, nome: contactName, telefone: phone, tipo: "pessoal" } as never).then(() => undefined);
+          }
+
+          const suffix = phone.slice(-11);
+          const { data: existingLeads } = await supabase
+            .from("crm_leads")
+            .select("id,nome,telefone")
+            .eq("tenant_id", tenantId)
+            .or(`telefone.eq.${phone},telefone.ilike.%${suffix}`)
+            .limit(1);
+
+          let leadId = existingLeads?.[0]?.id as string | undefined;
+          if (!leadId) {
+            const { data: newLead, error: leadError } = await supabase
+              .from("crm_leads")
+              .insert({ tenant_id: tenantId, nome: contactName, telefone: phone, origem: "whatsapp", status: "novo", kanban_stage: "lead", awaiting_queue_selection: true } as never)
+              .select("id")
+              .single();
+            if (leadError) throw leadError;
+            leadId = newLead?.id as string | undefined;
+          }
+          if (!leadId) continue;
+
+          const rawMessages = await fetchWhatsAppMessages(instanceName, remoteJid);
+          const rows = rawMessages
+            .map((msg) => ({ msg, timestamp: getMessageTimestamp(msg), parsed: parseMessageContent(msg) }))
+            .filter((item) => item.timestamp && item.timestamp >= startDate && item.timestamp <= new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59, 999) && item.parsed)
+            .map((item) => {
+              const msgId = item.msg?.key?.id || item.msg?.id || `evo-${instanceName}-${phone}-${item.timestamp!.getTime()}`;
+              return {
+                id: msgId,
+                tenant_id: tenantId,
+                lead_id: leadId,
+                content: item.parsed!.content,
+                sender: item.msg?.key?.fromMe ? "attendant" : "lead",
+                type: item.parsed!.type,
+                status: "delivered",
+                timestamp: item.timestamp!.toISOString(),
+                file_name: item.parsed!.file_name ?? null,
+                mime_type: item.parsed!.mime_type ?? null,
+                instance: instanceName,
+                phone,
+                metadata: { importedFrom: "whatsapp", contactName },
+              };
+            });
+
+          if (rows.length === 0) continue;
+          const ids = rows.map((r) => r.id);
+          const { data: existingMessages } = await supabase.from("chat_messages").select("id").in("id", ids);
+          const existingIds = new Set((existingMessages || []).map((r: any) => r.id));
+          const newRows = rows.filter((r) => !existingIds.has(r.id));
+          instResult.skipped += rows.length - newRows.length;
+          totalSkipped += rows.length - newRows.length;
+
+          if (newRows.length > 0) {
+            const { error: insertError } = await supabase.from("chat_messages").insert(newRows as never);
+            if (insertError) throw insertError;
+            instResult.imported += newRows.length;
+            totalImported += newRows.length;
+          }
+        }
+      } catch (error) {
+        instResult.error = error instanceof Error ? error.message : "Erro na importação direta";
+      }
+      instanceResults.push(instResult);
+    }
+
+    return { success: true, imported: totalImported, skipped: totalSkipped, instances: instanceResults };
+  };
+
   const handleImport = async () => {
     setLoading(true);
     setResult(null);
@@ -208,10 +362,13 @@ export function ImportMessagesDialog({
 
       if (!res.ok || !res.body) {
         const errText = await res.text().catch(() => "Erro desconhecido");
-        const friendly = res.status === 401 || /unauthorized/i.test(errText)
-          ? "Sua sessão está válida no app, mas a API do VPS ainda não aceitou o login. Atualize o VPS com o comando de deploy e tente novamente."
-          : errText;
-        setResult({ success: false, imported: 0, skipped: 0, instances: [], error: friendly });
+        if (res.status === 401 || /unauthorized/i.test(errText)) {
+          const directResult = await runDirectImport();
+          setResult(directResult);
+          if (directResult.imported > 0) onImported?.();
+        } else {
+          setResult({ success: false, imported: 0, skipped: 0, instances: [], error: errText });
+        }
         setLoading(false);
         setProgress(null);
         return;
