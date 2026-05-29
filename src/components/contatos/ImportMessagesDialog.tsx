@@ -31,7 +31,7 @@ import {
 import { cn } from "@/lib/utils";
 import { whatsappApi, getAccessToken, VPS_API_BASE } from "@/lib/vpsApi";
 import { useWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
-import { fetchInstances as fetchEvolutionInstances, fetchWhatsAppContacts, fetchWhatsAppMessages } from "@/lib/evolutionApi";
+import { fetchInstances as fetchEvolutionInstances, fetchWhatsAppContacts, fetchWhatsAppMessages, fetchProfilePictureUrl } from "@/lib/evolutionApi";
 import { supabase } from "@/integrations/supabase/client";
 
 interface InstanceResult {
@@ -93,22 +93,52 @@ const getMessageTimestamp = (msg: any): Date | null => {
   return Number.isNaN(date.getTime()) ? null : date;
 };
 
+const unwrapMessage = (m: any): any => {
+  if (!m || typeof m !== "object") return m;
+  if (m.ephemeralMessage?.message) return unwrapMessage(m.ephemeralMessage.message);
+  if (m.viewOnceMessage?.message) return unwrapMessage(m.viewOnceMessage.message);
+  if (m.viewOnceMessageV2?.message) return unwrapMessage(m.viewOnceMessageV2.message);
+  if (m.viewOnceMessageV2Extension?.message) return unwrapMessage(m.viewOnceMessageV2Extension.message);
+  if (m.documentWithCaptionMessage?.message) return unwrapMessage(m.documentWithCaptionMessage.message);
+  if (m.editedMessage?.message?.protocolMessage?.editedMessage)
+    return unwrapMessage(m.editedMessage.message.protocolMessage.editedMessage);
+  if (m.buttonsResponseMessage) return { conversation: m.buttonsResponseMessage.selectedDisplayText || m.buttonsResponseMessage.selectedButtonId || "" };
+  if (m.listResponseMessage) return { conversation: m.listResponseMessage.title || m.listResponseMessage.singleSelectReply?.selectedRowId || "" };
+  if (m.templateButtonReplyMessage) return { conversation: m.templateButtonReplyMessage.selectedDisplayText || "" };
+  return m;
+};
+
 const parseMessageContent = (msg: any): ParsedMessage | null => {
-  const m = msg?.message || {};
+  const rawMsg = msg?.message || {};
+  const m = unwrapMessage(rawMsg);
   if (m.conversation) return { content: m.conversation, type: "text" };
   if (m.extendedTextMessage?.text) return { content: m.extendedTextMessage.text, type: "text" };
   if (m.imageMessage) return { content: m.imageMessage.caption || "📷 Imagem", type: "image", mime_type: m.imageMessage.mimetype };
   if (m.videoMessage) return { content: m.videoMessage.caption || "🎥 Vídeo", type: "video", mime_type: m.videoMessage.mimetype };
   if (m.audioMessage) return { content: "🎵 Áudio", type: "audio", mime_type: m.audioMessage.mimetype };
-  if (m.documentMessage) return { content: m.documentMessage.fileName || "📄 Documento", type: "document", file_name: m.documentMessage.fileName, mime_type: m.documentMessage.mimetype };
+  if (m.documentMessage) return { content: m.documentMessage.caption || m.documentMessage.fileName || "📄 Documento", type: "document", file_name: m.documentMessage.fileName, mime_type: m.documentMessage.mimetype };
   if (m.stickerMessage) return { content: "🏷️ Sticker", type: "sticker" };
   if (m.contactMessage) return { content: `👤 ${m.contactMessage.displayName || "Contato"}`, type: "contact" };
+  if (m.contactsArrayMessage) return { content: `👤 ${m.contactsArrayMessage.displayName || "Contatos"}`, type: "contact" };
   if (m.locationMessage) return { content: "📍 Localização", type: "location" };
+  if (m.liveLocationMessage) return { content: "📍 Localização ao vivo", type: "location" };
+  if (m.pollCreationMessage || m.pollCreationMessageV3) return { content: `📊 ${m.pollCreationMessage?.name || m.pollCreationMessageV3?.name || "Enquete"}`, type: "poll" };
+  if (m.reactionMessage) return { content: m.reactionMessage.text || "👍", type: "text" };
   if (m.protocolMessage || m.senderKeyDistributionMessage || msg?.messageStubType) return null;
-  // Fallback: if message text is at top level (some Evolution v2 records)
+  // Top-level fallbacks (Evolution v2 alternate shapes)
   if (typeof msg?.text === "string" && msg.text) return { content: msg.text, type: "text" };
+  if (typeof msg?.body === "string" && msg.body) return { content: msg.body, type: "text" };
   if (typeof msg?.content === "string" && msg.content) return { content: msg.content, type: "text" };
-  return { content: "[Mensagem não suportada]", type: "text" };
+  if (typeof msg?.caption === "string" && msg.caption) return { content: msg.caption, type: "text" };
+  // messageType hint (Evolution v2 stores type at top level)
+  const mt = String(msg?.messageType || "").toLowerCase();
+  if (mt.includes("image")) return { content: "📷 Imagem", type: "image" };
+  if (mt.includes("video")) return { content: "🎥 Vídeo", type: "video" };
+  if (mt.includes("audio") || mt.includes("ptt")) return { content: "🎵 Áudio", type: "audio" };
+  if (mt.includes("document")) return { content: "📄 Documento", type: "document" };
+  if (mt.includes("sticker")) return { content: "🏷️ Sticker", type: "sticker" };
+  // Skip unknown/system messages instead of polluting the queue
+  return null;
 };
 
 interface ImportMessagesDialogProps {
@@ -266,9 +296,12 @@ export function ImportMessagesDialog({
           if (abortRef.current?.signal.aborted) break;
           const contact = uniqueContacts[ci];
           const phone = contact.id.replace(/\D/g, "");
-          if (!phone) continue;
+          // Skip invalid / community / LID-style identifiers (real E.164 is <= 15 digits)
+          if (!phone || phone.length < 8 || phone.length > 15) continue;
           const remoteJid = `${phone}@s.whatsapp.net`;
-          const contactName = contact.pushName?.trim() || phone;
+          // Reject the generic "WhatsApp" pushName (returned for contacts without real name)
+          const rawName = contact.pushName?.trim();
+          const contactName = rawName && rawName.toLowerCase() !== "whatsapp" ? rawName : phone;
 
           setProgress({
             message: `Processando ${contactName}...`,
@@ -281,6 +314,12 @@ export function ImportMessagesDialog({
             imported: totalImported,
             skipped: totalSkipped,
           });
+
+          // Resolve profile picture (best-effort)
+          let avatarUrl: string | null = contact.profilePictureUrl || null;
+          if (!avatarUrl) {
+            avatarUrl = await fetchProfilePictureUrl(instanceName, phone);
+          }
 
           const { data: existingContact } = await supabase
             .from("contatos")
@@ -295,7 +334,7 @@ export function ImportMessagesDialog({
           const suffix = phone.slice(-11);
           const { data: existingLeads } = await supabase
             .from("crm_leads")
-            .select("id,nome,telefone")
+            .select("id,nome,telefone,avatar_url")
             .eq("tenant_id", tenantId)
             .or(`telefone.eq.${phone},telefone.ilike.%${suffix}`)
             .limit(1);
@@ -304,11 +343,22 @@ export function ImportMessagesDialog({
           if (!leadId) {
             const { data: newLead, error: leadError } = await supabase
               .from("crm_leads")
-              .insert({ tenant_id: tenantId, nome: contactName, telefone: phone, origem: "whatsapp", status: "novo", kanban_stage: "lead", awaiting_queue_selection: true } as never)
+              .insert({ tenant_id: tenantId, nome: contactName, telefone: phone, avatar_url: avatarUrl, origem: "whatsapp", status: "novo", kanban_stage: "lead", awaiting_queue_selection: true } as never)
               .select("id")
               .single();
             if (leadError) throw leadError;
             leadId = newLead?.id as string | undefined;
+          } else {
+            // Update avatar / name if we have better info now
+            const existing = existingLeads![0] as any;
+            const updates: Record<string, unknown> = {};
+            if (avatarUrl && !existing.avatar_url) updates.avatar_url = avatarUrl;
+            if (rawName && rawName.toLowerCase() !== "whatsapp" && (!existing.nome || existing.nome === existing.telefone)) {
+              updates.nome = rawName;
+            }
+            if (Object.keys(updates).length > 0) {
+              await supabase.from("crm_leads").update(updates as never).eq("id", leadId);
+            }
           }
           if (!leadId) continue;
 

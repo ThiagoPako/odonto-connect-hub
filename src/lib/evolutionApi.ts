@@ -324,6 +324,21 @@ export async function sendTextWithQuote(
   });
 }
 
+/** Fetch profile picture URL for a phone number on a given instance (Evolution v2). */
+export async function fetchProfilePictureUrl(instanceName: string, phone: string): Promise<string | null> {
+  const number = phone.replace(/\D/g, "");
+  if (!number) return null;
+  try {
+    const raw = await apiCall<any>(`/chat/fetchProfilePictureUrl/${instanceName}`, {
+      method: "POST",
+      body: JSON.stringify({ number }),
+    });
+    return raw?.profilePictureUrl || raw?.url || null;
+  } catch {
+    return null;
+  }
+}
+
 export interface WhatsAppContact {
   id: string;
   pushName?: string;
@@ -350,19 +365,28 @@ export async function fetchWhatsAppContacts(instanceName: string): Promise<Whats
     .filter((c: any) => {
       const jid = c?.remoteJid || c?.jid || c?.id || "";
       const type = String(c?.type || "").toLowerCase();
-      return (
-        jid.includes("@") &&
-        !jid.endsWith("@g.us") &&
-        !jid.endsWith("@broadcast") &&
-        type !== "group_member"
-      );
+      if (!jid.includes("@")) return false;
+      // Only standard WhatsApp users — skip groups, broadcasts, communities, channels, status, LIDs
+      if (
+        jid.endsWith("@g.us") ||
+        jid.endsWith("@broadcast") ||
+        jid.endsWith("@newsletter") ||
+        jid.endsWith("@lid") ||
+        jid.includes("status@")
+      )
+        return false;
+      if (type === "group_member") return false;
+      // Real phone numbers are <= 15 digits (E.164). Anything longer is likely a LID/community ID.
+      const digits = jid.replace(/@.*$/, "").replace(/\D/g, "");
+      if (digits.length === 0 || digits.length > 15) return false;
+      return true;
     })
     .map((c: any) => {
       const jid = c?.remoteJid || c?.jid || c?.id || "";
       return {
         id: jid.replace(/@.*$/, "").replace(/\D/g, ""),
-        pushName: c?.name || c?.pushName || c?.profileName || c?.notify || "",
-        profilePictureUrl: c?.profilePictureUrl || c?.profilePicUrl || "",
+        pushName: c?.name || c?.pushName || c?.profileName || c?.notify || c?.verifiedName || "",
+        profilePictureUrl: c?.profilePictureUrl || c?.profilePicUrl || c?.picture || "",
       };
     })
     .filter((c: WhatsAppContact) => c.id.length > 0);
