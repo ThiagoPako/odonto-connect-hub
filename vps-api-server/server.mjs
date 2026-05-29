@@ -176,13 +176,17 @@ async function resolveSupabaseUser(token) {
   const sbUser = await userRes.json();
   if (!sbUser?.id) throw new Error('Invalid Supabase user');
 
-  // 2) Busca profile (tenant_id, role, is_super_admin) via service role
+  const restAuthKey = SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
+  const restBearer = SUPABASE_SERVICE_ROLE_KEY || token;
+
+  // 2) Busca profile (tenant_id, role, is_super_admin). Se o VPS ainda não tiver
+  // service role configurada, usa o próprio access_token validado do usuário.
   const profRes = await fetch(
     `${SUPABASE_URL}/rest/v1/profiles?id=eq.${sbUser.id}&select=id,email,nome,tenant_id,is_super_admin`,
     {
       headers: {
-        apikey: SUPABASE_SERVICE_ROLE_KEY,
-        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        apikey: restAuthKey,
+        Authorization: `Bearer ${restBearer}`,
       },
     }
   );
@@ -196,8 +200,8 @@ async function resolveSupabaseUser(token) {
       `${SUPABASE_URL}/rest/v1/user_roles?user_id=eq.${sbUser.id}&select=role&limit=1`,
       {
         headers: {
-          apikey: SUPABASE_SERVICE_ROLE_KEY,
-          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+          apikey: restAuthKey,
+          Authorization: `Bearer ${restBearer}`,
         },
       }
     );
