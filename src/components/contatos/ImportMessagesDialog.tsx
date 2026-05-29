@@ -176,6 +176,123 @@ export function ImportMessagesDialog({
     setEndDate(new Date());
   };
 
+  const runDirectImport = async (): Promise<ImportResult> => {
+    const { data: userData, error: userError } = await supabase.auth.getUser();
+    if (userError || !userData.user) throw new Error("Sessão expirada. Faça login novamente.");
+
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .select("tenant_id")
+      .eq("id", userData.user.id)
+      .maybeSingle();
+    if (profileError || !profile?.tenant_id) throw new Error("Não foi possível identificar a clínica da sessão atual.");
+
+    const tenantId = profile.tenant_id;
+    const selected = Array.from(selectedInstances);
+    const instanceResults: InstanceResult[] = [];
+    let totalImported = 0;
+    let totalSkipped = 0;
+
+    for (let ii = 0; ii < selected.length; ii++) {
+      if (abortRef.current?.signal.aborted) break;
+      const instanceName = selected[ii];
+      const instResult: InstanceResult = { name: instanceName, imported: 0, skipped: 0, contacts: 0, error: null };
+      setProgress({ phase: undefined as never, message: `Buscando contatos de ${instanceName}...`, instanceName, instanceIndex: ii, totalInstances: selected.length });
+
+      try {
+        const contacts = await fetchWhatsAppContacts(instanceName);
+        const uniqueContacts = Array.from(new Map(contacts.map((c) => [c.id, c])).values());
+        instResult.contacts = uniqueContacts.length;
+
+        for (let ci = 0; ci < uniqueContacts.length; ci++) {
+          if (abortRef.current?.signal.aborted) break;
+          const contact = uniqueContacts[ci];
+          const phone = contact.id.replace(/\D/g, "");
+          if (!phone) continue;
+          const remoteJid = `${phone}@s.whatsapp.net`;
+          const contactName = contact.pushName?.trim() || phone;
+
+          setProgress({
+            message: `Processando ${contactName}...`,
+            contactName,
+            contactIndex: ci,
+            totalContacts: uniqueContacts.length,
+            instanceName,
+            instanceIndex: ii,
+            totalInstances: selected.length,
+            imported: totalImported,
+            skipped: totalSkipped,
+          });
+
+          await supabase.from("contatos").upsert({ tenant_id: tenantId, nome: contactName, telefone: phone, tipo: "pessoal" } as never, { onConflict: "tenant_id,telefone" }).then(() => undefined);
+
+          const suffix = phone.slice(-11);
+          const { data: existingLeads } = await supabase
+            .from("crm_leads")
+            .select("id,nome,telefone")
+            .eq("tenant_id", tenantId)
+            .or(`telefone.eq.${phone},telefone.ilike.%${suffix}`)
+            .limit(1);
+
+          let leadId = existingLeads?.[0]?.id as string | undefined;
+          if (!leadId) {
+            const { data: newLead, error: leadError } = await supabase
+              .from("crm_leads")
+              .insert({ tenant_id: tenantId, nome: contactName, telefone: phone, origem: "whatsapp", status: "novo", kanban_stage: "lead", awaiting_queue_selection: true } as never)
+              .select("id")
+              .single();
+            if (leadError) throw leadError;
+            leadId = newLead?.id as string | undefined;
+          }
+          if (!leadId) continue;
+
+          const rawMessages = await fetchWhatsAppMessages(instanceName, remoteJid);
+          const rows = rawMessages
+            .map((msg) => ({ msg, timestamp: getMessageTimestamp(msg), parsed: parseMessageContent(msg) }))
+            .filter((item) => item.timestamp && item.timestamp >= startDate && item.timestamp <= new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59, 999) && item.parsed)
+            .map((item) => {
+              const msgId = item.msg?.key?.id || item.msg?.id || `evo-${instanceName}-${phone}-${item.timestamp!.getTime()}`;
+              return {
+                id: msgId,
+                tenant_id: tenantId,
+                lead_id: leadId,
+                content: item.parsed!.content,
+                sender: item.msg?.key?.fromMe ? "attendant" : "lead",
+                type: item.parsed!.type,
+                status: "delivered",
+                timestamp: item.timestamp!.toISOString(),
+                file_name: item.parsed!.file_name ?? null,
+                mime_type: item.parsed!.mime_type ?? null,
+                instance: instanceName,
+                phone,
+                metadata: { importedFrom: "whatsapp", contactName },
+              };
+            });
+
+          if (rows.length === 0) continue;
+          const ids = rows.map((r) => r.id);
+          const { data: existingMessages } = await supabase.from("chat_messages").select("id").in("id", ids);
+          const existingIds = new Set((existingMessages || []).map((r: any) => r.id));
+          const newRows = rows.filter((r) => !existingIds.has(r.id));
+          instResult.skipped += rows.length - newRows.length;
+          totalSkipped += rows.length - newRows.length;
+
+          if (newRows.length > 0) {
+            const { error: insertError } = await supabase.from("chat_messages").insert(newRows as never);
+            if (insertError) throw insertError;
+            instResult.imported += newRows.length;
+            totalImported += newRows.length;
+          }
+        }
+      } catch (error) {
+        instResult.error = error instanceof Error ? error.message : "Erro na importação direta";
+      }
+      instanceResults.push(instResult);
+    }
+
+    return { success: true, imported: totalImported, skipped: totalSkipped, instances: instanceResults };
+  };
+
   const handleImport = async () => {
     setLoading(true);
     setResult(null);
