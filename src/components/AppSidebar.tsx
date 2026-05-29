@@ -159,7 +159,7 @@ export function AppSidebar() {
       }));
     }
     return sections;
-  }, [user?.role, chatUnread]);
+  }, [user?.role, user?.is_super_admin, user?.tenant_features, chatUnread]);
 
   const expanded = pinned || hovered;
 
