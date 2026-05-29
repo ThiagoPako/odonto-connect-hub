@@ -65,9 +65,31 @@ type ParsedMessage = {
 };
 
 const getMessageTimestamp = (msg: any): Date | null => {
-  const raw = msg?.messageTimestamp ?? msg?.timestamp ?? msg?.createdAt;
+  const raw =
+    msg?.messageTimestamp ??
+    msg?.message?.messageTimestamp ??
+    msg?.timestamp ??
+    msg?.createdAt ??
+    msg?.messageTimestampMs ??
+    msg?.key?.timestamp;
   if (!raw) return null;
-  const date = new Date(typeof raw === "number" ? (raw > 1e12 ? raw : raw * 1000) : raw);
+  let ms: number;
+  if (typeof raw === "number") {
+    ms = raw > 1e12 ? raw : raw * 1000;
+  } else if (typeof raw === "string") {
+    // Could be ISO date or numeric string (seconds)
+    const asNum = Number(raw);
+    if (!Number.isNaN(asNum) && asNum > 0 && /^\d+$/.test(raw)) {
+      ms = asNum > 1e12 ? asNum : asNum * 1000;
+    } else {
+      const d = new Date(raw);
+      if (Number.isNaN(d.getTime())) return null;
+      return d;
+    }
+  } else {
+    return null;
+  }
+  const date = new Date(ms);
   return Number.isNaN(date.getTime()) ? null : date;
 };
 
@@ -83,6 +105,9 @@ const parseMessageContent = (msg: any): ParsedMessage | null => {
   if (m.contactMessage) return { content: `👤 ${m.contactMessage.displayName || "Contato"}`, type: "contact" };
   if (m.locationMessage) return { content: "📍 Localização", type: "location" };
   if (m.protocolMessage || m.senderKeyDistributionMessage || msg?.messageStubType) return null;
+  // Fallback: if message text is at top level (some Evolution v2 records)
+  if (typeof msg?.text === "string" && msg.text) return { content: msg.text, type: "text" };
+  if (typeof msg?.content === "string" && msg.content) return { content: msg.content, type: "text" };
   return { content: "[Mensagem não suportada]", type: "text" };
 };
 
