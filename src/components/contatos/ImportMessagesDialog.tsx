@@ -57,6 +57,28 @@ interface WaInstance {
   profilePictureUrl?: string;
 }
 
+const getMessageTimestamp = (msg: any): Date | null => {
+  const raw = msg?.messageTimestamp ?? msg?.timestamp ?? msg?.createdAt;
+  if (!raw) return null;
+  const date = new Date(typeof raw === "number" ? (raw > 1e12 ? raw : raw * 1000) : raw);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const parseMessageContent = (msg: any) => {
+  const m = msg?.message || {};
+  if (m.conversation) return { content: m.conversation, type: "text" };
+  if (m.extendedTextMessage?.text) return { content: m.extendedTextMessage.text, type: "text" };
+  if (m.imageMessage) return { content: m.imageMessage.caption || "📷 Imagem", type: "image", mime_type: m.imageMessage.mimetype };
+  if (m.videoMessage) return { content: m.videoMessage.caption || "🎥 Vídeo", type: "video", mime_type: m.videoMessage.mimetype };
+  if (m.audioMessage) return { content: "🎵 Áudio", type: "audio", mime_type: m.audioMessage.mimetype };
+  if (m.documentMessage) return { content: m.documentMessage.fileName || "📄 Documento", type: "document", file_name: m.documentMessage.fileName, mime_type: m.documentMessage.mimetype };
+  if (m.stickerMessage) return { content: "🏷️ Sticker", type: "sticker" };
+  if (m.contactMessage) return { content: `👤 ${m.contactMessage.displayName || "Contato"}`, type: "contact" };
+  if (m.locationMessage) return { content: "📍 Localização", type: "location" };
+  if (m.protocolMessage || m.senderKeyDistributionMessage || msg?.messageStubType) return null;
+  return { content: "[Mensagem não suportada]", type: "text" };
+};
+
 interface ImportMessagesDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
