@@ -1798,9 +1798,21 @@ async function transcodeAudioToWhatsAppOgg(base64Audio, mimeType) {
 // List instances
 app.get('/api/whatsapp/instances', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
     const result = await evolutionFetch('/instance/fetchInstances');
-    res.json(result.data);
+    
+    let instances = Array.isArray(result.data) ? result.data : [];
+    
+    // Isolation by tenant
+    if (!user.is_super_admin && user.tenant_id) {
+      const prefix = user.tenant_id.substring(0, 8);
+      instances = instances.filter(i => {
+        const name = i.name || i.instanceName || i.instance?.instanceName || "";
+        return name.startsWith(prefix);
+      });
+    }
+    
+    res.json(instances);
   } catch (error) {
     res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
   }
