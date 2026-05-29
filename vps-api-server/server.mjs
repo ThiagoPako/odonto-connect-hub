@@ -147,14 +147,16 @@ const JWT_EXPIRES_IN = '7d';
 // Aceita access_tokens emitidos pela Supabase. Quando o token não é o
 // legacy (HS256 com JWT_SECRET), validamos via REST /auth/v1/user e
 // resolvemos o profile/tenant na tabela `profiles` via service role.
-const SUPABASE_URL = (process.env.SUPABASE_URL || '').replace(/\/$/, '');
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || '';
+const SUPABASE_PUBLIC_URL_FALLBACK = 'https://ncgcwdwrkikfwbmvpunq.supabase.co';
+const SUPABASE_PUBLIC_ANON_KEY_FALLBACK = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5jZ2N3ZHdya2lrZndibXZwdW5xIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk3MzUwNzcsImV4cCI6MjA5NTMxMTA3N30.g6RhHAhsSiTQ0pA2yGXZ09j7I6zQu6QhqucUCMYZQe4';
+const SUPABASE_URL = (process.env.SUPABASE_URL || SUPABASE_PUBLIC_URL_FALLBACK).replace(/\/$/, '');
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || SUPABASE_PUBLIC_ANON_KEY_FALLBACK;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
-const SUPABASE_BRIDGE_ENABLED = !!(SUPABASE_URL && SUPABASE_ANON_KEY && SUPABASE_SERVICE_ROLE_KEY);
+const SUPABASE_BRIDGE_ENABLED = !!(SUPABASE_URL && SUPABASE_ANON_KEY);
 if (SUPABASE_BRIDGE_ENABLED) {
-  console.log('🔐 Supabase auth bridge enabled →', SUPABASE_URL);
+  console.log('🔐 Supabase auth bridge enabled →', SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY ? '(service role)' : '(user token)');
 } else {
-  console.warn('⚠️ Supabase auth bridge disabled — set SUPABASE_URL, SUPABASE_ANON_KEY (ou SUPABASE_PUBLISHABLE_KEY) e SUPABASE_SERVICE_ROLE_KEY no .env do VPS');
+  console.warn('⚠️ Supabase auth bridge disabled — set SUPABASE_URL e SUPABASE_ANON_KEY (ou SUPABASE_PUBLISHABLE_KEY) no .env do VPS');
 }
 
 // Cache em memória: token → { user, exp }
