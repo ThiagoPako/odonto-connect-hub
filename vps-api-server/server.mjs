@@ -9232,23 +9232,25 @@ app.post('/api/whatsapp/switch-primary', async (req, res) => {
       return res.status(400).json({ error: 'Mensagem deve ter no mínimo 10 caracteres' });
     }
 
-    // 1. Find open attendances (status = 'em_atendimento')
+    // 1. Find open attendances for the CURRENT tenant
     const { rows: openChats } = await pool.query(
-      `SELECT DISTINCT c.lead_phone, c.instance_name
+      `SELECT DISTINCT c.phone as lead_phone, c.instance
        FROM chat_messages c
-       WHERE c.instance_name IS NOT NULL
-         AND c.instance_name != $1
+       WHERE c.instance IS NOT NULL
+         AND c.instance != $1
          AND c.created_at > NOW() - INTERVAL '7 days'
-         AND c.lead_phone IS NOT NULL
-       ORDER BY c.lead_phone`,
+         AND c.phone IS NOT NULL
+         AND (is_super_admin() OR c.tenant_id = get_current_tenant_id())
+       ORDER BY c.phone`,
       [newInstance]
     );
 
-    // Also check attendance queue
+    // Also check attendance queue for the CURRENT tenant
     const { rows: queueChats } = await pool.query(
-      `SELECT DISTINCT phone FROM attendance_queue
-       WHERE status IN ('waiting', 'in_progress')
-         AND phone IS NOT NULL`
+      `SELECT DISTINCT lead_phone as phone FROM attendance_sessions
+       WHERE status IN ('waiting', 'active')
+         AND lead_phone IS NOT NULL
+         AND (is_super_admin() OR tenant_id = get_current_tenant_id())`
     );
 
     // Merge unique phone numbers
