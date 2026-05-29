@@ -376,9 +376,10 @@ export async function fetchWhatsAppContacts(instanceName: string): Promise<Whats
       )
         return false;
       if (type === "group_member") return false;
-      // Real phone numbers are <= 15 digits (E.164). Anything longer is likely a LID/community ID.
+      // Real phone numbers: 10-13 digits (BR landline = 12, BR mobile = 13, intl up to 13).
+      // 14-15 digit "numbers" are typically LIDs / community / group identifiers in disguise.
       const digits = jid.replace(/@.*$/, "").replace(/\D/g, "");
-      if (digits.length === 0 || digits.length > 15) return false;
+      if (digits.length < 10 || digits.length > 13) return false;
       return true;
     })
     .map((c: any) => {
