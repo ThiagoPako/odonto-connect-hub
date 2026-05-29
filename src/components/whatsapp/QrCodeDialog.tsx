@@ -76,6 +76,33 @@ export function QrCodeDialog({ open, onOpenChange, instanceName, onConnected }: 
     return () => clearInterval(t);
   }, [open, phase]);
 
+  // Auto-import contacts once the instance reports "connected"
+  const autoImportContacts = useCallback(async () => {
+    setImporting(true);
+    try {
+      // Give WhatsApp a few seconds to populate the contact list after pairing
+      await new Promise((r) => setTimeout(r, 4000));
+      const contacts = await fetchWhatsAppContacts(instanceName);
+      if (contacts.length === 0) {
+        toast.info("Nenhum contato encontrado no WhatsApp ainda. Tente importar manualmente em instantes.");
+        setImporting(false);
+        return;
+      }
+      const mapped = contacts.map((c) => ({
+        telefone: c.id,
+        nome: c.pushName || c.id,
+      }));
+      const { data, error } = await contatosApi.bulkImport(mapped);
+      if (error) throw new Error(error);
+      setImportResult({ imported: data?.imported ?? 0, skipped: data?.skipped ?? 0 });
+      toast.success(`${data?.imported ?? 0} contatos importados automaticamente do WhatsApp!`);
+    } catch (err: any) {
+      toast.error(err?.message || "Erro ao importar contatos automaticamente");
+    } finally {
+      setImporting(false);
+    }
+  }, [instanceName]);
+
   // Poll for state + retry QR
   useEffect(() => {
     if (!open || phase === "connected" || phase === "failed") return;
@@ -96,6 +123,8 @@ export function QrCodeDialog({ open, onOpenChange, instanceName, onConnected }: 
           toast.success(`WhatsApp "${instanceName}" conectado!`);
           onConnected?.();
           clearInterval(interval);
+          // Kick off automatic contact import
+          void autoImportContacts();
           return;
         }
 
@@ -118,7 +147,7 @@ export function QrCodeDialog({ open, onOpenChange, instanceName, onConnected }: 
       cancelled = true;
       clearInterval(interval);
     };
-  }, [open, phase, instanceName, onConnected, qrBase64, fetchQr]);
+  }, [open, phase, instanceName, onConnected, qrBase64, fetchQr, autoImportContacts]);
 
   // Auto-refresh QR every 30s
   useEffect(() => {
