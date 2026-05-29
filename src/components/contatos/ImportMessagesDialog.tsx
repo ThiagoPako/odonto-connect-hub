@@ -347,10 +347,13 @@ export function ImportMessagesDialog({
 
       if (!res.ok || !res.body) {
         const errText = await res.text().catch(() => "Erro desconhecido");
-        const friendly = res.status === 401 || /unauthorized/i.test(errText)
-          ? "Sua sessão está válida no app, mas a API do VPS ainda não aceitou o login. Atualize o VPS com o comando de deploy e tente novamente."
-          : errText;
-        setResult({ success: false, imported: 0, skipped: 0, instances: [], error: friendly });
+        if (res.status === 401 || /unauthorized/i.test(errText)) {
+          const directResult = await runDirectImport();
+          setResult(directResult);
+          if (directResult.imported > 0) onImported?.();
+        } else {
+          setResult({ success: false, imported: 0, skipped: 0, instances: [], error: errText });
+        }
         setLoading(false);
         setProgress(null);
         return;
