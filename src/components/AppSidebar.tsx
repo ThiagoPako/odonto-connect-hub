@@ -317,6 +317,7 @@ function SidebarUserFooter({ expanded }: { expanded: boolean }) {
   const { user, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
+  const roleLabel = user?.is_super_admin ? "Super Admin" : user?.role ?? "";
 
   const initials = user?.name
     ? user.name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase()
@@ -373,7 +374,7 @@ function SidebarUserFooter({ expanded }: { expanded: boolean }) {
         {avatarSmall}
         <div className="flex-1 min-w-0">
           <p className="text-[11px] font-semibold text-sidebar-foreground leading-tight truncate">{user?.name ?? "Usuário"}</p>
-          <p className="text-[9px] text-muted-foreground capitalize">{user?.role ?? ""}</p>
+          <p className="text-[9px] text-muted-foreground capitalize">{roleLabel}</p>
         </div>
       </Link>
       <button
