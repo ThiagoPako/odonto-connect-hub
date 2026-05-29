@@ -296,8 +296,8 @@ export function ImportMessagesDialog({
           if (abortRef.current?.signal.aborted) break;
           const contact = uniqueContacts[ci];
           const phone = contact.id.replace(/\D/g, "");
-          // Skip invalid / community / LID-style identifiers (real E.164 is <= 15 digits)
-          if (!phone || phone.length < 8 || phone.length > 15) continue;
+          // Real phones: 10-13 digits. Reject LIDs / community IDs (14-15 digit identifiers).
+          if (!phone || phone.length < 10 || phone.length > 13) continue;
           const remoteJid = `${phone}@s.whatsapp.net`;
           // Reject the generic "WhatsApp" pushName (returned for contacts without real name)
           const rawName = contact.pushName?.trim();
