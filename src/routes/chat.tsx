@@ -9,6 +9,7 @@ import { Users, MessageSquare, Inbox, Filter, Kanban, UserPlus, Wifi, RefreshCw 
 import { Button } from "@/components/ui/button";
 import { NewChatFromContactDialog } from "@/components/chat/NewChatFromContactDialog";
 import { SatisfactionSurveyDialog } from "@/components/chat/SatisfactionSurveyDialog";
+import { ImportMessagesDialog } from "@/components/contatos/ImportMessagesDialog";
 import type { Contato } from "@/lib/vpsApi";
 import type { AttendanceQueue } from "@/data/queueData";
 import { toast } from "sonner";
@@ -57,6 +58,7 @@ function ChatPage() {
   const [filterStage, setFilterStage] = useState<string | null>(null);
   const [filterStatus, setFilterStatus] = useState<"all" | "active" | "finished">("all");
   const [newChatOpen, setNewChatOpen] = useState(false);
+  const [importMessagesOpen, setImportMessagesOpen] = useState(false);
   const [isLeadTyping, setIsLeadTyping] = useState(false);
   const [syncingPhotos, setSyncingPhotos] = useState(false);
   const [availableQueues, setAvailableQueues] = useState<AttendanceQueue[]>([]);
