@@ -21,6 +21,29 @@ function formatLastSeen(date: Date): string {
   return date.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
 }
 
+function formatPhoneDisplay(phone: string): string {
+  const d = (phone || "").replace(/\D/g, "");
+  if (!d) return "";
+  if (d.length === 13 && d.startsWith("55")) {
+    return `+55 (${d.slice(2, 4)}) ${d.slice(4, 9)}-${d.slice(9)}`;
+  }
+  if (d.length === 12 && d.startsWith("55")) {
+    return `+55 (${d.slice(2, 4)}) ${d.slice(4, 8)}-${d.slice(8)}`;
+  }
+  if (d.length === 11) return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+  if (d.length === 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+  return `+${d}`;
+}
+
+function getDisplayName(lead: { name?: string; phone?: string }): string {
+  const n = (lead.name || "").trim();
+  // Reject empty, very short, generic, or purely numeric placeholders
+  if (!n || n.length < 2 || n.toLowerCase() === "whatsapp" || /^[\d\s+()-]+$/.test(n)) {
+    return lead.phone ? formatPhoneDisplay(lead.phone) : "Contato";
+  }
+  return n;
+}
+
 interface Attendant {
   id: string;
   name: string;
