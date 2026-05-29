@@ -1350,6 +1350,15 @@ function ChatPage() {
             >
               <RefreshCw className={`h-4 w-4 text-muted-foreground ${syncingPhotos ? "animate-spin" : ""}`} />
             </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-10 w-10 shrink-0"
+              title="Importar conversas do WhatsApp"
+              onClick={() => setImportMessagesOpen(true)}
+            >
+              <MessageSquare className="h-4 w-4 text-primary" />
+            </Button>
             <button
               onClick={() => setActiveTab("queue")}
               className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-colors border-b-2 ${
