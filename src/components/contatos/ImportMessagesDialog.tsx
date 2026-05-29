@@ -32,6 +32,7 @@ import { cn } from "@/lib/utils";
 import { whatsappApi, getAccessToken, VPS_API_BASE } from "@/lib/vpsApi";
 import { useWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
 import { fetchInstances as fetchEvolutionInstances } from "@/lib/evolutionApi";
+import { supabase } from "@/integrations/supabase/client";
 
 interface InstanceResult {
   name: string;
