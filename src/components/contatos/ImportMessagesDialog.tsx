@@ -133,6 +133,13 @@ export function ImportMessagesDialog({
     setLoadingInstances(false);
   }, [hookInstances]);
 
+  useEffect(() => {
+    if (open) {
+      void refreshHookInstances();
+      void loadInstances();
+    }
+  }, [open, loadInstances, refreshHookInstances]);
+
   const toggleInstance = (name: string) => {
     setSelectedInstances(prev => {
       const next = new Set(prev);
