@@ -57,6 +57,13 @@ interface WaInstance {
   profilePictureUrl?: string;
 }
 
+type ParsedMessage = {
+  content: string;
+  type: string;
+  file_name?: string;
+  mime_type?: string;
+};
+
 const getMessageTimestamp = (msg: any): Date | null => {
   const raw = msg?.messageTimestamp ?? msg?.timestamp ?? msg?.createdAt;
   if (!raw) return null;
@@ -64,7 +71,7 @@ const getMessageTimestamp = (msg: any): Date | null => {
   return Number.isNaN(date.getTime()) ? null : date;
 };
 
-const parseMessageContent = (msg: any) => {
+const parseMessageContent = (msg: any): ParsedMessage | null => {
   const m = msg?.message || {};
   if (m.conversation) return { content: m.conversation, type: "text" };
   if (m.extendedTextMessage?.text) return { content: m.extendedTextMessage.text, type: "text" };
