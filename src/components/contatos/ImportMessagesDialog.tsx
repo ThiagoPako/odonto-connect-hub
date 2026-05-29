@@ -313,10 +313,27 @@ export function ImportMessagesDialog({
           if (!leadId) continue;
 
           const rawMessages = await fetchWhatsAppMessages(instanceName, remoteJid);
-          const rows = rawMessages
-            .map((msg) => ({ msg, timestamp: getMessageTimestamp(msg), parsed: parseMessageContent(msg) }))
-            .filter((item) => item.timestamp && item.timestamp >= startDate && item.timestamp <= new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59, 999) && item.parsed)
-            .map((item) => {
+          const startMs = startDate.getTime();
+          const endMs = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59, 999).getTime();
+          const parsed = rawMessages.map((msg) => ({
+            msg,
+            timestamp: getMessageTimestamp(msg),
+            parsed: parseMessageContent(msg),
+          }));
+          const inRange = parsed.filter(
+            (item) => item.timestamp && item.timestamp.getTime() >= startMs && item.timestamp.getTime() <= endMs && item.parsed,
+          );
+
+          console.log("[ImportMessages]", {
+            contact: contactName,
+            phone,
+            rawCount: rawMessages.length,
+            parsedWithTs: parsed.filter((p) => p.timestamp).length,
+            inRange: inRange.length,
+            sample: rawMessages[0],
+          });
+
+          const rows = inRange.map((item) => {
               const msgId = item.msg?.key?.id || item.msg?.id || `evo-${instanceName}-${phone}-${item.timestamp!.getTime()}`;
               return {
                 id: msgId,
