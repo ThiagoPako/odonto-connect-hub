@@ -231,7 +231,15 @@ export function ImportMessagesDialog({
             skipped: totalSkipped,
           });
 
-          await supabase.from("contatos").upsert({ tenant_id: tenantId, nome: contactName, telefone: phone, tipo: "pessoal" } as never, { onConflict: "tenant_id,telefone" }).then(() => undefined);
+          const { data: existingContact } = await supabase
+            .from("contatos")
+            .select("id")
+            .eq("tenant_id", tenantId)
+            .eq("telefone", phone)
+            .limit(1);
+          if (!existingContact?.length) {
+            await supabase.from("contatos").insert({ tenant_id: tenantId, nome: contactName, telefone: phone, tipo: "pessoal" } as never).then(() => undefined);
+          }
 
           const suffix = phone.slice(-11);
           const { data: existingLeads } = await supabase
