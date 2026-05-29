@@ -324,6 +324,21 @@ export async function sendTextWithQuote(
   });
 }
 
+/** Fetch profile picture URL for a phone number on a given instance (Evolution v2). */
+export async function fetchProfilePictureUrl(instanceName: string, phone: string): Promise<string | null> {
+  const number = phone.replace(/\D/g, "");
+  if (!number) return null;
+  try {
+    const raw = await apiCall<any>(`/chat/fetchProfilePictureUrl/${instanceName}`, {
+      method: "POST",
+      body: JSON.stringify({ number }),
+    });
+    return raw?.profilePictureUrl || raw?.url || null;
+  } catch {
+    return null;
+  }
+}
+
 export interface WhatsAppContact {
   id: string;
   pushName?: string;
