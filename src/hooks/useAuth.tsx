@@ -19,6 +19,7 @@ interface AuthState {
   isLoading: boolean;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+  refreshUser: () => Promise<AuthUser | null>;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -57,14 +58,17 @@ async function loadUserFromSession(session: Session): Promise<AuthUser | null> {
     }
   }
 
+  const isSuperAdmin = !!profile?.is_super_admin;
+  const role = isSuperAdmin ? "admin" : ((roleRow?.role as string) ?? "user");
+
   return {
     id: authUser.id,
     email: profile?.email ?? authUser.email ?? "",
     name: profile?.nome ?? (authUser.user_metadata?.nome as string) ?? authUser.email ?? "",
-    role: (roleRow?.role as string) ?? "user",
+    role,
     avatar_url: profile?.avatar_url ?? null,
     tenant_id: profile?.tenant_id ?? null,
-    is_super_admin: !!profile?.is_super_admin,
+    is_super_admin: isSuperAdmin,
     tenant_features,
   };
 }
@@ -72,6 +76,18 @@ async function loadUserFromSession(session: Session): Promise<AuthUser | null> {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+
+  const refreshUser = useCallback(async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      setUser(null);
+      return null;
+    }
+
+    const freshUser = await loadUserFromSession(session);
+    setUser(freshUser);
+    return freshUser;
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -106,16 +122,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     });
 
+    const refreshOnFocus = () => {
+      if (!mounted) return;
+      refreshUser().catch(() => undefined);
+    };
+    const refreshOnVisibility = () => {
+      if (document.visibilityState === "visible") refreshOnFocus();
+    };
+
+    window.addEventListener("focus", refreshOnFocus);
+    document.addEventListener("visibilitychange", refreshOnVisibility);
+
     return () => {
       mounted = false;
+      window.removeEventListener("focus", refreshOnFocus);
+      document.removeEventListener("visibilitychange", refreshOnVisibility);
       subscription.unsubscribe();
     };
-  }, []);
+  }, [refreshUser]);
 
   const login = useCallback(async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) throw new Error(error.message);
-    // user state will be populated by onAuthStateChange
+    if (data.session) {
+      const freshUser = await loadUserFromSession(data.session);
+      setUser(freshUser);
+    }
   }, []);
 
   const logout = useCallback(async () => {
@@ -131,6 +163,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         isLoading,
         login,
         logout,
+        refreshUser,
       }}
     >
       {children}
