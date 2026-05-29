@@ -114,6 +114,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setTimeout(() => {
           loadUserFromSession(session).then((u) => {
             if (mounted) setUser(u);
+          }).catch((error) => {
+            console.error("Failed to refresh authenticated user", error);
           });
         }, 0);
       } else {
@@ -128,6 +130,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         loadUserFromSession(session).then((u) => {
           if (mounted) {
             setUser(u);
+            setIsLoading(false);
+          }
+        }).catch((error) => {
+          console.error("Failed to load authenticated user", error);
+          if (mounted) {
+            setUser(null);
             setIsLoading(false);
           }
         });
