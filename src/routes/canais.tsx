@@ -7,8 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Plus, RefreshCw, Loader2, WifiOff, Smartphone, Wifi, Star } from "lucide-react";
-import { useState, useEffect, useCallback } from "react";
-import { fetchInstances, type EvolutionInstance } from "@/lib/evolutionApi";
+import { useState, useEffect } from "react";
+import { useWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
 import { vpsApiFetch } from "@/lib/vpsApi";
 import { toast } from "sonner";
 
@@ -17,15 +17,11 @@ export const Route = createFileRoute("/canais")({
   component: CanaisPage,
 });
 
-interface InstanceWithState extends EvolutionInstance {
-  connectionState: "open" | "close" | "connecting";
-}
 
 const DEFAULT_SWITCH_MSG = `Olá! Informamos que tivemos um problema técnico temporário com nossa conexão anterior. Estamos continuando seu atendimento por este novo número. Fique tranquilo(a), temos todo o histórico da sua conversa e seguiremos de onde paramos. 😊`;
 
 function CanaisPage() {
-  const [instances, setInstances] = useState<InstanceWithState[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { instances, loading, refresh: loadInstances } = useWhatsAppInstances({ active: true });
   const [error, setError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [qrInstance, setQrInstance] = useState<string | null>(null);
@@ -39,30 +35,6 @@ function CanaisPage() {
   const [switchMsg, setSwitchMsg] = useState(DEFAULT_SWITCH_MSG);
   const [switching, setSwitching] = useState(false);
 
-  const loadInstances = useCallback(async (showLoader = true) => {
-    if (showLoader) {
-      setLoading(true);
-      setError(null);
-    }
-    try {
-      const list = await fetchInstances();
-      setInstances(list.map((inst) => ({ ...inst, connectionState: inst.status })));
-    } catch (err) {
-      if (showLoader || instances.length === 0) {
-        setError(err instanceof Error ? err.message : "Erro ao carregar instâncias");
-      }
-    } finally {
-      if (showLoader) setLoading(false);
-    }
-  }, [instances.length]);
-
-  useEffect(() => { void loadInstances(); }, [loadInstances]);
-
-  useEffect(() => {
-    if (!instances.some((inst) => inst.connectionState === "connecting")) return;
-    const interval = setInterval(() => { void loadInstances(false); }, 5000);
-    return () => clearInterval(interval);
-  }, [instances, loadInstances]);
 
   const handleCreated = (name: string) => {
     void loadInstances();
@@ -225,7 +197,7 @@ function CanaisPage() {
           open={!!qrInstance}
           onOpenChange={(open) => !open && setQrInstance(null)}
           instanceName={qrInstance}
-          onConnected={() => void loadInstances(false)}
+          onConnected={() => void loadInstances()}
         />
       )}
 
