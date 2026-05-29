@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { NewChatFromContactDialog } from "@/components/chat/NewChatFromContactDialog";
 import { SatisfactionSurveyDialog } from "@/components/chat/SatisfactionSurveyDialog";
 import { ImportMessagesDialog } from "@/components/contatos/ImportMessagesDialog";
+import { ImportWhatsAppDialog } from "@/components/contatos/ImportWhatsAppDialog";
 import type { Contato } from "@/lib/vpsApi";
 import type { AttendanceQueue } from "@/data/queueData";
 import { toast } from "sonner";
@@ -59,6 +60,7 @@ function ChatPage() {
   const [filterStatus, setFilterStatus] = useState<"all" | "active" | "finished">("all");
   const [newChatOpen, setNewChatOpen] = useState(false);
   const [importMessagesOpen, setImportMessagesOpen] = useState(false);
+  const [importContactsOpen, setImportContactsOpen] = useState(false);
   const [isLeadTyping, setIsLeadTyping] = useState(false);
   const [syncingPhotos, setSyncingPhotos] = useState(false);
   const [availableQueues, setAvailableQueues] = useState<AttendanceQueue[]>([]);
@@ -1354,6 +1356,15 @@ function ChatPage() {
               variant="ghost"
               size="icon"
               className="h-10 w-10 shrink-0"
+              title="Importar contatos do WhatsApp"
+              onClick={() => setImportContactsOpen(true)}
+            >
+              <UserPlus className="h-4 w-4 text-primary" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-10 w-10 shrink-0"
               title="Importar conversas do WhatsApp"
               onClick={() => setImportMessagesOpen(true)}
             >
@@ -1593,6 +1604,12 @@ function ChatPage() {
       <ImportMessagesDialog 
         open={importMessagesOpen}
         onOpenChange={setImportMessagesOpen}
+        onImported={reloadQueueLeads}
+      />
+
+      <ImportWhatsAppDialog
+        open={importContactsOpen}
+        onOpenChange={setImportContactsOpen}
         onImported={reloadQueueLeads}
       />
     </div>
