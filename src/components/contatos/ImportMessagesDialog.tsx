@@ -197,7 +197,7 @@ export function ImportMessagesDialog({
       if (abortRef.current?.signal.aborted) break;
       const instanceName = selected[ii];
       const instResult: InstanceResult = { name: instanceName, imported: 0, skipped: 0, contacts: 0, error: null };
-      setProgress({ phase: undefined as never, message: `Buscando contatos de ${instanceName}...`, instanceName, instanceIndex: ii, totalInstances: selected.length });
+      setProgress({ message: `Buscando contatos de ${instanceName}...`, instanceName, instanceIndex: ii, totalInstances: selected.length });
 
       try {
         const contacts = await fetchWhatsAppContacts(instanceName);
