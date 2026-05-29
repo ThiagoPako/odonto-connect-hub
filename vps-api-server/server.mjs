@@ -1798,9 +1798,21 @@ async function transcodeAudioToWhatsAppOgg(base64Audio, mimeType) {
 // List instances
 app.get('/api/whatsapp/instances', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
     const result = await evolutionFetch('/instance/fetchInstances');
-    res.json(result.data);
+    
+    let instances = Array.isArray(result.data) ? result.data : [];
+    
+    // Isolation by tenant
+    if (!user.is_super_admin && user.tenant_id) {
+      const prefix = user.tenant_id.substring(0, 8);
+      instances = instances.filter(i => {
+        const name = i.name || i.instanceName || i.instance?.instanceName || "";
+        return name.startsWith(prefix);
+      });
+    }
+    
+    res.json(instances);
   } catch (error) {
     res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
   }
@@ -2663,6 +2675,8 @@ app.post('/api/whatsapp/sync-profile-pictures', async (req, res) => {
     const { instance } = req.body;
     if (!instance) return res.status(400).json({ error: 'instance é obrigatório' });
 
+    console.log(`🔄 Syncing profile pictures for tenant ${user.tenant_id} on instance ${instance} (User: ${user.email}, SuperAdmin: ${user.is_super_admin})`);
+
     // Get leads (scoped to tenant when available) without avatar
     const tenantId = user.tenant_id || null;
     const { rows: leads } = tenantId
@@ -2674,9 +2688,7 @@ app.post('/api/whatsapp/sync-profile-pictures', async (req, res) => {
           "SELECT id, telefone FROM crm_leads WHERE telefone IS NOT NULL AND (avatar_url IS NULL OR avatar_url = '')"
         );
 
-
-    let updated = 0;
-    let failed = 0;
+    console.log(`🔄 Found ${leads.length} leads to sync`);
 
     for (const lead of leads) {
       try {
@@ -8980,8 +8992,11 @@ app.post('/api/contatos/sync/now', async (req, res) => {
 // ─── Import WhatsApp Messages by date range ─────────────────
 app.post('/api/messages/import-whatsapp', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
     const { startDate, endDate, instances: allowedInstances, stream } = req.body;
+    
+    console.log(`📥 Importing WhatsApp messages for tenant ${user.tenant_id} (User: ${user.email}, SuperAdmin: ${user.is_super_admin})`);
+    
     if (!startDate || !endDate) return res.status(400).json({ error: 'startDate e endDate obrigatórios' });
 
     const start = new Date(startDate);

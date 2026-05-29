@@ -9,7 +9,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Plus, RefreshCw, Loader2, WifiOff, Smartphone, Wifi, Star } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
-import { vpsApiFetch } from "@/lib/vpsApi";
+import { vpsApiFetch, contatosApi } from "@/lib/vpsApi";
+import { ImportWhatsAppDialog } from "@/components/contatos/ImportWhatsAppDialog";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/canais")({
@@ -34,6 +35,7 @@ function CanaisPage() {
   const [pendingSwitchName, setPendingSwitchName] = useState<string | null>(null);
   const [switchMsg, setSwitchMsg] = useState(DEFAULT_SWITCH_MSG);
   const [switching, setSwitching] = useState(false);
+  const [importContactsOpen, setImportContactsOpen] = useState(false);
 
 
   const handleCreated = (name: string) => {
@@ -123,6 +125,10 @@ function CanaisPage() {
             </p>
           </div>
           <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => setImportContactsOpen(true)}>
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Sincronizar Contatos
+            </Button>
             <Button variant="outline" size="sm" onClick={() => void loadInstances()} disabled={loading}>
               <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} />
               Atualizar
@@ -233,6 +239,12 @@ function CanaisPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ImportWhatsAppDialog
+        open={importContactsOpen}
+        onOpenChange={setImportContactsOpen}
+        onImported={() => {}}
+      />
     </div>
   );
 }
