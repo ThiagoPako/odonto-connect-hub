@@ -81,6 +81,41 @@ function ChatPage() {
   myLeadsRef.current = myLeads;
   selectedLeadRef.current = selectedLead;
 
+  const reloadQueueLeads = useCallback(async () => {
+    const { data } = await queueLeadsApi.list();
+    if (!data) return;
+
+    const { data: contactsData } = await supabase.from('contatos').select('telefone, nome');
+    const contactMap = new Map((contactsData || []).map((c: any) => [c.telefone?.replace(/\D/g, ''), c.nome]));
+
+    const toLead = (r: any): Lead => {
+      const phone = r.phone?.replace(/\D/g, '') || "";
+      const resolvedName = r.name && !r.name.includes('@') && isNaN(Number(r.name))
+        ? r.name
+        : contactMap.get(phone) || r.name || r.phone;
+
+      return {
+        id: r.id,
+        name: resolvedName,
+        initials: (resolvedName || "?").split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase(),
+        phone: r.phone,
+        avatarUrl: r.avatarUrl,
+        lastMessage: r.lastMessage || "",
+        lastMessageTime: r.lastMessageTime ? new Date(r.lastMessageTime) : new Date(),
+        unreadCount: r.unreadCount || 0,
+        status: r.sessionStatus === "active" ? "active" : "waiting",
+        avatarColor: "bg-chart-1",
+        queueId: r.queueId,
+        queueName: r.queueName,
+        assignedTo: r.attendantId ? "current" : undefined,
+        priority: r.priority || false,
+      };
+    };
+
+    setQueue((data.queue || []).map(toLead));
+    setMyLeads((data.active || []).map(toLead));
+  }, []);
+
   // Load queues, tags, assignments and unread counts from VPS
   useEffect(() => {
     queuesApi.list().then(({ data }) => {
@@ -106,40 +141,7 @@ function ChatPage() {
       setCrmStages(stages);
     });
 
-    // Load leads from queue/active from backend
-    queueLeadsApi.list().then(async ({ data }) => {
-      if (!data) return;
-      
-      // Load contacts for name resolution if name is missing/ID
-      const { data: contactsData } = await supabase.from('contatos').select('telefone, nome');
-      const contactMap = new Map((contactsData || []).map((c: any) => [c.telefone?.replace(/\D/g, ''), c.nome]));
-
-      const toLead = (r: any): Lead => {
-        const phone = r.phone?.replace(/\D/g, '') || "";
-        const resolvedName = r.name && !r.name.includes('@') && isNaN(Number(r.name)) 
-          ? r.name 
-          : contactMap.get(phone) || r.name || r.phone;
-
-        return {
-          id: r.id,
-          name: resolvedName,
-          initials: (resolvedName || "?").split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase(),
-          phone: r.phone,
-          avatarUrl: r.avatarUrl,
-          lastMessage: r.lastMessage || "",
-          lastMessageTime: r.lastMessageTime ? new Date(r.lastMessageTime) : new Date(),
-          unreadCount: r.unreadCount || 0,
-          status: r.sessionStatus === "active" ? "active" : "waiting",
-          avatarColor: "bg-chart-1",
-          queueId: r.queueId,
-          queueName: r.queueName,
-          assignedTo: r.attendantId ? "current" : undefined,
-          priority: r.priority || false,
-        };
-      };
-      if (data.queue?.length) setQueue(data.queue.map(toLead));
-      if (data.active?.length) setMyLeads(data.active.map(toLead));
-    });
+    void reloadQueueLeads();
 
     // Load unread counts from backend and apply to leads
     const fetchUnreadCounts = () => {
@@ -173,7 +175,7 @@ function ChatPage() {
       clearInterval(unreadInterval);
       document.removeEventListener("visibilitychange", handleVisibility);
     };
-  }, []);
+  }, [reloadQueueLeads]);
 
 
   // ─── Dedup set — prevent duplicate messages ───
