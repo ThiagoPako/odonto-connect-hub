@@ -93,22 +93,52 @@ const getMessageTimestamp = (msg: any): Date | null => {
   return Number.isNaN(date.getTime()) ? null : date;
 };
 
+const unwrapMessage = (m: any): any => {
+  if (!m || typeof m !== "object") return m;
+  if (m.ephemeralMessage?.message) return unwrapMessage(m.ephemeralMessage.message);
+  if (m.viewOnceMessage?.message) return unwrapMessage(m.viewOnceMessage.message);
+  if (m.viewOnceMessageV2?.message) return unwrapMessage(m.viewOnceMessageV2.message);
+  if (m.viewOnceMessageV2Extension?.message) return unwrapMessage(m.viewOnceMessageV2Extension.message);
+  if (m.documentWithCaptionMessage?.message) return unwrapMessage(m.documentWithCaptionMessage.message);
+  if (m.editedMessage?.message?.protocolMessage?.editedMessage)
+    return unwrapMessage(m.editedMessage.message.protocolMessage.editedMessage);
+  if (m.buttonsResponseMessage) return { conversation: m.buttonsResponseMessage.selectedDisplayText || m.buttonsResponseMessage.selectedButtonId || "" };
+  if (m.listResponseMessage) return { conversation: m.listResponseMessage.title || m.listResponseMessage.singleSelectReply?.selectedRowId || "" };
+  if (m.templateButtonReplyMessage) return { conversation: m.templateButtonReplyMessage.selectedDisplayText || "" };
+  return m;
+};
+
 const parseMessageContent = (msg: any): ParsedMessage | null => {
-  const m = msg?.message || {};
+  const rawMsg = msg?.message || {};
+  const m = unwrapMessage(rawMsg);
   if (m.conversation) return { content: m.conversation, type: "text" };
   if (m.extendedTextMessage?.text) return { content: m.extendedTextMessage.text, type: "text" };
   if (m.imageMessage) return { content: m.imageMessage.caption || "📷 Imagem", type: "image", mime_type: m.imageMessage.mimetype };
   if (m.videoMessage) return { content: m.videoMessage.caption || "🎥 Vídeo", type: "video", mime_type: m.videoMessage.mimetype };
   if (m.audioMessage) return { content: "🎵 Áudio", type: "audio", mime_type: m.audioMessage.mimetype };
-  if (m.documentMessage) return { content: m.documentMessage.fileName || "📄 Documento", type: "document", file_name: m.documentMessage.fileName, mime_type: m.documentMessage.mimetype };
+  if (m.documentMessage) return { content: m.documentMessage.caption || m.documentMessage.fileName || "📄 Documento", type: "document", file_name: m.documentMessage.fileName, mime_type: m.documentMessage.mimetype };
   if (m.stickerMessage) return { content: "🏷️ Sticker", type: "sticker" };
   if (m.contactMessage) return { content: `👤 ${m.contactMessage.displayName || "Contato"}`, type: "contact" };
+  if (m.contactsArrayMessage) return { content: `👤 ${m.contactsArrayMessage.displayName || "Contatos"}`, type: "contact" };
   if (m.locationMessage) return { content: "📍 Localização", type: "location" };
+  if (m.liveLocationMessage) return { content: "📍 Localização ao vivo", type: "location" };
+  if (m.pollCreationMessage || m.pollCreationMessageV3) return { content: `📊 ${m.pollCreationMessage?.name || m.pollCreationMessageV3?.name || "Enquete"}`, type: "poll" };
+  if (m.reactionMessage) return { content: m.reactionMessage.text || "👍", type: "text" };
   if (m.protocolMessage || m.senderKeyDistributionMessage || msg?.messageStubType) return null;
-  // Fallback: if message text is at top level (some Evolution v2 records)
+  // Top-level fallbacks (Evolution v2 alternate shapes)
   if (typeof msg?.text === "string" && msg.text) return { content: msg.text, type: "text" };
+  if (typeof msg?.body === "string" && msg.body) return { content: msg.body, type: "text" };
   if (typeof msg?.content === "string" && msg.content) return { content: msg.content, type: "text" };
-  return { content: "[Mensagem não suportada]", type: "text" };
+  if (typeof msg?.caption === "string" && msg.caption) return { content: msg.caption, type: "text" };
+  // messageType hint (Evolution v2 stores type at top level)
+  const mt = String(msg?.messageType || "").toLowerCase();
+  if (mt.includes("image")) return { content: "📷 Imagem", type: "image" };
+  if (mt.includes("video")) return { content: "🎥 Vídeo", type: "video" };
+  if (mt.includes("audio") || mt.includes("ptt")) return { content: "🎵 Áudio", type: "audio" };
+  if (mt.includes("document")) return { content: "📄 Documento", type: "document" };
+  if (mt.includes("sticker")) return { content: "🏷️ Sticker", type: "sticker" };
+  // Skip unknown/system messages instead of polluting the queue
+  return null;
 };
 
 interface ImportMessagesDialogProps {
