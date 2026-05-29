@@ -1247,7 +1247,10 @@ function ChatPage() {
     try {
       const { data, error } = await whatsappApi.syncProfilePictures(instanceName);
       if (error) {
-        toast.error("Erro ao sincronizar: " + error);
+        const friendly = /unauthorized/i.test(error)
+          ? "Sessão expirada ou sem permissão para sincronizar. Faça logout/login e tente de novo."
+          : error;
+        toast.error("Erro ao sincronizar: " + friendly);
       } else {
         toast.success(`Fotos sincronizadas: ${data?.updated || 0} atualizadas de ${data?.total || 0}`);
         // Reload leads to show updated avatars
