@@ -163,12 +163,32 @@ export function ImportMessagesDialog({
     abortRef.current = controller;
 
     try {
-      const token = await getAccessToken();
+      // Garante token Supabase fresco (faz refresh se expirado)
+      let token = await getAccessToken();
+      if (!token) {
+        try {
+          const { data } = await supabase.auth.refreshSession();
+          token = data.session?.access_token ?? null;
+        } catch { /* ignore */ }
+      }
+      if (!token) {
+        setResult({
+          success: false,
+          imported: 0,
+          skipped: 0,
+          instances: [],
+          error: "Sessão expirada. Faça logout e login novamente para importar mensagens.",
+        });
+        setLoading(false);
+        setProgress(null);
+        return;
+      }
+
       const res = await fetch(`${VPS_API_BASE}/messages/import-whatsapp`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           startDate: startDate.toISOString(),
@@ -181,7 +201,10 @@ export function ImportMessagesDialog({
 
       if (!res.ok || !res.body) {
         const errText = await res.text().catch(() => "Erro desconhecido");
-        setResult({ success: false, imported: 0, skipped: 0, instances: [], error: errText });
+        const friendly = res.status === 401 || /unauthorized/i.test(errText)
+          ? "Sessão expirada ou sem permissão. Faça logout e login novamente."
+          : errText;
+        setResult({ success: false, imported: 0, skipped: 0, instances: [], error: friendly });
         setLoading(false);
         setProgress(null);
         return;
