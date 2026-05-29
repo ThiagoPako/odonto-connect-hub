@@ -30,6 +30,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { whatsappApi, getAccessToken, VPS_API_BASE } from "@/lib/vpsApi";
+import { useWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
+import { fetchInstances as fetchEvolutionInstances } from "@/lib/evolutionApi";
 
 interface InstanceResult {
   name: string;
@@ -91,26 +93,52 @@ export function ImportMessagesDialog({
   } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  // Instance selection
+  // Instance selection — uses the same source as Canais page (Evolution API direct)
+  // with fallback to VPS backend, so what appears in Canais also appears here.
+  const { instances: hookInstances, refresh: refreshHookInstances } = useWhatsAppInstances({ active: open });
   const [instances, setInstances] = useState<WaInstance[]>([]);
   const [loadingInstances, setLoadingInstances] = useState(false);
   const [selectedInstances, setSelectedInstances] = useState<Set<string>>(new Set());
 
   const loadInstances = useCallback(async () => {
     setLoadingInstances(true);
-    const { data } = await whatsappApi.instances();
-    const list: WaInstance[] = Array.isArray(data) ? data.map((i: any) => ({
-      name: i.name || i.instanceName || i.instance?.instanceName,
-      status: i.connectionStatus || i.status || 'unknown',
-    })) : [];
+    let list: WaInstance[] = [];
+
+    // 1) Try Evolution API directly (same as Canais)
+    try {
+      const evo = await fetchEvolutionInstances();
+      list = evo.map((i) => ({ name: i.instanceName, status: i.status }));
+    } catch (e) {
+      console.warn("[ImportMessages] Evolution fetch failed, trying VPS backend", e);
+    }
+
+    // 2) Fallback to VPS backend
+    if (list.length === 0) {
+      const { data } = await whatsappApi.instances();
+      if (Array.isArray(data)) {
+        list = data.map((i: any) => ({
+          name: i.name || i.instanceName || i.instance?.instanceName,
+          status: i.connectionStatus || i.status || "unknown",
+        }));
+      }
+    }
+
+    // 3) Last resort — use shared hook cache
+    if (list.length === 0 && hookInstances.length > 0) {
+      list = hookInstances.map((i) => ({ name: i.instanceName, status: i.connectionState }));
+    }
+
     setInstances(list);
-    setSelectedInstances(new Set(list.filter(i => i.status === 'open').map(i => i.name)));
+    setSelectedInstances(new Set(list.filter((i) => i.status === "open").map((i) => i.name)));
     setLoadingInstances(false);
-  }, []);
+  }, [hookInstances]);
 
   useEffect(() => {
-    if (open) void loadInstances();
-  }, [open, loadInstances]);
+    if (open) {
+      void refreshHookInstances();
+      void loadInstances();
+    }
+  }, [open, loadInstances, refreshHookInstances]);
 
   const toggleInstance = (name: string) => {
     setSelectedInstances(prev => {
