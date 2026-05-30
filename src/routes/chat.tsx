@@ -747,12 +747,15 @@ function ChatPage() {
     // 2. Otherwise use the first available connected instance.
     const preferredInstanceName = selectedLead.instance;
     const connected = connectedInstances.find(i => i.instanceName === preferredInstanceName) || connectedInstances[0];
-
+    
     if (!connected) {
+      toast.error("Nenhum WhatsApp conectado", {
+        description: "Conecte um número na página de Canais para enviar mensagens."
+      });
       setMessages((prev) => ({
         ...prev,
         [selectedLead.id]: (prev[selectedLead.id] || []).map((m) =>
-          m.id === msgId ? { ...m, status: "sent" as const } : m
+          m.id === msgId ? { ...m, status: "failed" as const } : m
         ),
       }));
       return;

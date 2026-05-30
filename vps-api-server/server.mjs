@@ -172,6 +172,7 @@ async function getTenantIdByInstance(instanceName) {
     return instanceToTenantCache.get(instanceName);
   }
 
+  // 1. Try local DB
   try {
     const { rows } = await pool.query(
       'SELECT tenant_id FROM whatsapp_instances WHERE instance_name = $1 LIMIT 1',
@@ -182,8 +183,36 @@ async function getTenantIdByInstance(instanceName) {
       return rows[0].tenant_id;
     }
   } catch (err) {
-    console.error(`Error resolving tenant for instance ${instanceName}:`, err.message);
+    if (err.code !== '42P01') { // 42P01 = table does not exist
+      console.error(`Error resolving tenant for instance ${instanceName}:`, err.message);
+    }
   }
+
+  // 2. Fallback to Supabase
+  if (SUPABASE_BRIDGE_ENABLED) {
+    try {
+      const restAuthKey = SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
+      const res = await fetch(
+        `${SUPABASE_URL}/rest/v1/whatsapp_instances?instance_name=eq.${instanceName}&select=tenant_id`,
+        {
+          headers: {
+            apikey: restAuthKey,
+            Authorization: `Bearer ${restAuthKey}`,
+          },
+        }
+      );
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.[0]?.tenant_id) {
+          instanceToTenantCache.set(instanceName, data[0].tenant_id);
+          return data[0].tenant_id;
+        }
+      }
+    } catch (err) {
+      console.error(`Supabase fallback failed for ${instanceName}:`, err.message);
+    }
+  }
+
   return null;
 }
 
@@ -318,7 +347,7 @@ async function registerWebhook(instanceName) {
     if (result.ok) {
       console.log(`✅ Webhook registered for ${instanceName} → ${WEBHOOK_URL}`);
     } else {
-      console.error(`⚠️ Webhook registration failed for ${instanceName}:`, result.data);
+      console.error(`⚠️ Webhook registration failed for ${instanceName} (${WEBHOOK_URL}):`, result.data);
     }
     return result;
   } catch (err) {
@@ -384,8 +413,10 @@ async function verifyUser(req) {
 
     if (user.tenant_id) {
       await pool.query('SELECT set_config($1, $2, true)', ['app.tenant_id', user.tenant_id]);
+      await pool.query('SELECT set_config($1, $2, true)', ['app.current_tenant_id', user.tenant_id]);
     } else {
       await pool.query('SELECT set_config($1, $2, true)', ['app.tenant_id', '']);
+      await pool.query('SELECT set_config($1, $2, true)', ['app.current_tenant_id', '']);
     }
   } catch (err) {
     console.error('Failed to set DB session context:', err.message);
@@ -1701,12 +1732,19 @@ async function evolutionFetch(path, options = {}) {
 }
 
 function normalizeWhatsappNumber(value) {
-  return String(value || '')
+  const digits = String(value || '')
     .replace('@s.whatsapp.net', '')
     .replace('@c.us', '')
     .replace('@lid', '')
     .replace(/:\d+$/, '')
     .replace(/\D/g, '');
+  
+  if (!digits) return '';
+  // Prepende 55 (Brasil) se o número tiver 10 ou 11 dígitos e não começar com 55
+  if (!digits.startsWith('55') && (digits.length === 10 || digits.length === 11)) {
+    return `55${digits}`;
+  }
+  return digits;
 }
 
 const presenceStateCache = new Map();
@@ -1862,19 +1900,41 @@ app.get('/api/whatsapp/instances', async (req, res) => {
 // Create instance (+ auto-register webhook)
 app.post('/api/whatsapp/instances', async (req, res) => {
   try {
-    await verifyAdmin(req);
+    const { user } = await verifyAdmin(req);
     const { instanceName } = req.body;
+    
+    // Isolation: prepend tenant prefix if not present
+    let finalName = instanceName;
+    if (user.tenant_id) {
+      const prefix = user.tenant_id.substring(0, 8);
+      if (!finalName.startsWith(prefix)) {
+        finalName = `${prefix}-${finalName}`;
+      }
+    }
+
     const result = await evolutionFetch('/instance/create', {
       method: 'POST',
       body: JSON.stringify({
-        instanceName,
+        instanceName: finalName,
         integration: 'WHATSAPP-BAILEYS',
         qrcode: true,
       }),
     });
 
-    // Auto-register webhook so all messages go to queue
-    await registerWebhook(instanceName);
+    if (result.ok && user.tenant_id) {
+      // Save mapping locally for webhook resolution
+      await pool.query(
+        `INSERT INTO whatsapp_instances (instance_name, tenant_id) 
+         VALUES ($1, $2) 
+         ON CONFLICT (instance_name) DO UPDATE SET tenant_id = $2`,
+        [finalName, user.tenant_id]
+      ).catch(e => console.error('Failed to save instance mapping locally:', e.message));
+      
+      instanceToTenantCache.set(finalName, user.tenant_id);
+    }
+
+    // Auto-register webhook
+    await registerWebhook(finalName);
 
     res.json(result.data);
   } catch (error) {
@@ -11549,6 +11609,12 @@ if (process.env.NODE_ENV !== 'test') {
         updated_at TIMESTAMPTZ DEFAULT NOW()
       )`,
 
+      `CREATE TABLE IF NOT EXISTS whatsapp_instances (
+        instance_name TEXT PRIMARY KEY,
+        tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )`,
+
       // ─── 3. Apply RLS to all multi-tenant tables ───
       // Function to dynamically apply RLS to a table
       `CREATE OR REPLACE FUNCTION apply_tenant_rls(table_name TEXT) RETURNS VOID AS $$
@@ -11569,7 +11635,7 @@ if (process.env.NODE_ENV !== 'test') {
       // Apply to all relevant tables
       `SELECT apply_tenant_rls(t) FROM unnest(ARRAY[
         'profiles', 'user_roles', 'chat_messages', 'pacientes', 'dentistas', 
-        'agendamentos', 'financeiro', 'tratamentos', 'estoque', 'crm_leads'
+        'agendamentos', 'financeiro', 'tratamentos', 'estoque', 'crm_leads', 'whatsapp_instances'
       ]) t;`,
 
       // ─── 4. Clinicorp Integration columns for local projection ───
