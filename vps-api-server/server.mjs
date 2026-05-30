@@ -6252,9 +6252,9 @@ app.post('/api/webhook/evolution', async (req, res) => {
           'Olá! Nosso horário de atendimento encerrou. Deixe sua mensagem que retornaremos assim que possível! 😊';
         await evolutionFetch(`/message/sendText/${instance}`, {
           method: 'POST',
-          body: JSON.stringify({ number: phone, text: offMsg }),
+          body: JSON.stringify({ number: resolvedPhone, text: offMsg }),
         });
-        console.log(`🕐 Off-hours message sent to ${phone}`);
+        console.log(`🕐 Off-hours message sent to ${resolvedPhone}`);
         await persistIncomingMessage({
           msgId,
           leadId: lead.id,
