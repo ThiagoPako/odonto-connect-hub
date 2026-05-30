@@ -6142,14 +6142,13 @@ app.post('/api/webhook/evolution', async (req, res) => {
     const message = body.data;
     const remoteJid = message?.key?.remoteJid;
 
+    // Skip group messages
     if (!remoteJid || remoteJid.endsWith('@g.us')) {
       return res.json({ ignored: true, reason: 'group_or_missing_jid' });
     }
 
-    // Skip outgoing messages
-    if (message?.key?.fromMe) {
-      return res.json({ ignored: true, reason: 'outgoing' });
-    }
+    const isFromMe = !!message?.key?.fromMe;
+    const senderRole = isFromMe ? 'attendant' : 'lead';
 
     // Resolve clean phone number from remoteJid (handles LID resolution)
     const phone = normalizeWhatsappNumber(remoteJid);
