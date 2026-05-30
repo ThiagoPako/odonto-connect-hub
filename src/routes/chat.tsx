@@ -111,6 +111,7 @@ function ChatPage() {
         queueName: r.queueName,
         assignedTo: r.attendantId ? "current" : undefined,
         priority: r.priority || false,
+        instance: r.instance,
       };
     };
 
