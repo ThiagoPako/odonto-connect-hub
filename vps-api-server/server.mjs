@@ -6618,7 +6618,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
             phone,
             fromStage: currentStage,
             timestamp: new Date().toISOString(),
-          });
+          }, tenantId);
         }
       } catch (recoveryErr) {
         console.error('Recovery auto-return error:', recoveryErr.message);
