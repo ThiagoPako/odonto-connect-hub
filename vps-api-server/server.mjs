@@ -163,6 +163,30 @@ if (SUPABASE_BRIDGE_ENABLED) {
 const _supabaseUserCache = new Map();
 const SUPABASE_CACHE_TTL_MS = 5 * 60 * 1000;
 
+// Cache for instance -> tenant_id mapping to avoid repeated DB hits in webhooks
+const instanceToTenantCache = new Map();
+
+async function getTenantIdByInstance(instanceName) {
+  if (!instanceName) return null;
+  if (instanceToTenantCache.has(instanceName)) {
+    return instanceToTenantCache.get(instanceName);
+  }
+
+  try {
+    const { rows } = await pool.query(
+      'SELECT tenant_id FROM whatsapp_instances WHERE instance_name = $1 LIMIT 1',
+      [instanceName]
+    );
+    if (rows[0]?.tenant_id) {
+      instanceToTenantCache.set(instanceName, rows[0].tenant_id);
+      return rows[0].tenant_id;
+    }
+  } catch (err) {
+    console.error(`Error resolving tenant for instance ${instanceName}:`, err.message);
+  }
+  return null;
+}
+
 async function resolveSupabaseUser(token) {
   if (!SUPABASE_BRIDGE_ENABLED) throw new Error('Supabase bridge not configured');
   const cached = _supabaseUserCache.get(token);
