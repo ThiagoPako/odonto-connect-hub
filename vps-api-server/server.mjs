@@ -11633,7 +11633,7 @@ if (process.env.NODE_ENV !== 'test') {
       // Apply to all relevant tables
       `SELECT apply_tenant_rls(t) FROM unnest(ARRAY[
         'profiles', 'user_roles', 'chat_messages', 'pacientes', 'dentistas', 
-        'agendamentos', 'financeiro', 'tratamentos', 'estoque', 'crm_leads'
+        'agendamentos', 'financeiro', 'tratamentos', 'estoque', 'crm_leads', 'whatsapp_instances'
       ]) t;`,
 
       // ─── 4. Clinicorp Integration columns for local projection ───
