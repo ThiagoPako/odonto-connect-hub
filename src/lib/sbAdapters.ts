@@ -1304,6 +1304,8 @@ export const sbSessionsApi = {
   assign: async (body: { leadId: string }): Promise<Result<{ success: boolean; id: string; waitTime: number }>> => {
     const { data: userData } = await supabase.auth.getUser();
     if (!userData.user) return { data: null, error: 'Não autenticado' };
+    const tenant_id = await getTenantId();
+    if (!tenant_id) return { data: null, error: 'Sem tenant ativo' };
     const { data: profile } = await supabase
       .from('profiles').select('nome').eq('id', userData.user.id).maybeSingle();
     // Find latest waiting session for this lead
@@ -1316,7 +1318,34 @@ export const sbSessionsApi = {
       .limit(1)
       .maybeSingle();
     if (findErr) return { data: null, error: err(findErr) };
-    if (!session) return { data: null, error: 'Sessão não encontrada' };
+    if (!session) {
+      const { data: lead } = await supabase
+        .from('crm_leads')
+        .select('nome,telefone,queue_id,queue_name')
+        .eq('id', body.leadId)
+        .maybeSingle();
+      const now = new Date().toISOString();
+      const { data: created, error: createErr } = await supabase
+        .from('attendance_sessions')
+        .insert({
+          tenant_id,
+          lead_id: body.leadId,
+          lead_name: (lead as any)?.nome ?? null,
+          lead_phone: (lead as any)?.telefone ?? null,
+          queue_id: (lead as any)?.queue_id ?? null,
+          queue_name: (lead as any)?.queue_name ?? null,
+          attendant_id: userData.user.id,
+          attendant_name: profile?.nome ?? null,
+          assigned_at: now,
+          started_waiting_at: now,
+          wait_time_seconds: 0,
+          status: 'active',
+        } as never)
+        .select('id')
+        .single();
+      if (createErr) return { data: null, error: err(createErr) };
+      return { data: { success: true, id: (created as any).id, waitTime: 0 }, error: null };
+    }
     const now = new Date();
     const waitTime = session.started_waiting_at
       ? Math.floor((now.getTime() - new Date(session.started_waiting_at).getTime()) / 1000)
