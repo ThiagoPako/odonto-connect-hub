@@ -6150,8 +6150,10 @@ app.post('/api/webhook/evolution', async (req, res) => {
       return res.json({ ignored: true, reason: 'outgoing' });
     }
 
-    const phone = remoteJid.replace('@s.whatsapp.net', '').replace('@c.us', '');
-    const phoneSuffix = phone.slice(-11);
+    // Resolve clean phone number from remoteJid (handles LID resolution)
+    const phone = normalizeWhatsappNumber(remoteJid);
+    const resolvedPhone = resolvePhoneFromLid(phone);
+    const phoneSuffix = resolvedPhone.slice(-11);
 
     // Extract message content
     const msgContent =
@@ -6202,12 +6204,12 @@ app.post('/api/webhook/evolution', async (req, res) => {
       }
     }
 
-    // Find lead by phone
+    // Find lead by phone and tenant_id
     const { rows: leads } = await pool.query(
       `SELECT id, nome as name, avatar_url, telefone as phone, queue_id, awaiting_queue_selection FROM crm_leads 
-       WHERE REPLACE(REPLACE(REPLACE(REPLACE(telefone, ' ', ''), '-', ''), '(', ''), ')', '') LIKE '%' || $1
+       WHERE tenant_id = $1 AND REPLACE(REPLACE(REPLACE(REPLACE(telefone, ' ', ''), '-', ''), '(', ''), ')', '') LIKE '%' || $2
        LIMIT 1`,
-      [phoneSuffix]
+      [tenantId, phoneSuffix]
     );
 
     let lead = leads[0] || null;
