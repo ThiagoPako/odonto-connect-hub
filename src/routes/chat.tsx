@@ -216,7 +216,19 @@ function ChatPage() {
     );
 
     const currentSelected = selectedLeadRef.current;
-    const isViewing = existingLead && currentSelected?.id === existingLead.id;
+    const isViewing = existingLead && selectedLeadRef.current?.id === existingLead.id;
+    const isFromMe = msg.sender === "attendant";
+
+    if (isFromMe) {
+      // If message is from me, add it to history if it's not already there
+      setMessages((prev) => {
+        const existing = prev[existingLead?.id || msg.leadId || ''] || [];
+        if (existing.some((m) => m.id === msg.id)) return prev;
+        const outMsg: ChatMessage = { ...chatMsg, sender: "attendant" };
+        return { ...prev, [(existingLead?.id || msg.leadId || '')]: [...existing, outMsg] };
+      });
+      return;
+    }
 
     const addMessage = () => {
       if (existingLead) {

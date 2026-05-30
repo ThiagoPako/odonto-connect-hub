@@ -95,7 +95,7 @@ export function useRealtimeChat(options: RealtimeChatOptions) {
           if (!row) return;
           // Only forward incoming (non-agent) messages to onMessage to avoid echoing our own sends.
           const sender = String(row.sender ?? "");
-          if (sender === "agent" || sender === "me") return;
+          if (sender === "attendant" || sender === "agent" || sender === "me") return;
 
           const metadata = (row.metadata as Record<string, unknown> | null) ?? {};
           const incoming: IncomingMessage = {
