@@ -407,10 +407,10 @@ export async function fetchWhatsAppMessages(instanceName: string, remoteJid: str
       raw = await apiCall<any>(`/chat/findMessages/${instanceName}`, {
         method: "POST",
         body: JSON.stringify({
-          // Evolution v2 filters this endpoint by top-level remoteJid (it also
-          // matches key.remoteJidAlt for LID-mode chats). Nesting under key
-          // returns zero records for normal contacts.
-          where: { remoteJid },
+          // Evolution v2 only filters this endpoint when remoteJid is nested
+          // under `key`. Top-level `{ remoteJid }` is silently ignored and
+          // returns the ENTIRE message history of the instance.
+          where: { key: { remoteJid } },
           page,
           offset: pageSize,
         }),
