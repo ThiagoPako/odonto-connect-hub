@@ -1841,7 +1841,18 @@ app.get('/api/whatsapp/instances', async (req, res) => {
         return name.startsWith(prefix);
       });
     }
-    
+
+    // Safety net: re-ensure webhook registration for every connected instance
+    // so incoming/outgoing messages always reach our /api/webhook/evolution endpoint.
+    // ensureWebhookRegistration is internally throttled (5 min) per instance.
+    for (const inst of instances) {
+      const name = inst.name || inst.instanceName || inst.instance?.instanceName;
+      const status = inst.connectionStatus || inst.status || inst.instance?.status;
+      if (name && status === 'open') {
+        ensureWebhookRegistration(name).catch(() => {});
+      }
+    }
+
     res.json(instances);
   } catch (error) {
     res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
