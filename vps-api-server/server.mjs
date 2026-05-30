@@ -6255,7 +6255,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
             phone,
             status: newStatus,
             instance,
-          });
+          }, tenantId);
         }
       }
       return res.json({ processed: true, event: 'messages.update' });
