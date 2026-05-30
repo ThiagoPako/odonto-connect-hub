@@ -781,7 +781,10 @@ function ChatPage() {
       if (type === "text") {
         let result;
         if (replyMessageId) {
-          const cleanNumber = selectedLead.phone.replace(/\D/g, "");
+          let cleanNumber = selectedLead.phone.replace(/\D/g, "");
+          if (!cleanNumber.startsWith("55") && (cleanNumber.length === 10 || cleanNumber.length === 11)) {
+            cleanNumber = `55${cleanNumber}`;
+          }
           result = await whatsappApi.sendText(connected.instanceName, selectedLead.phone, content, {
             key: { remoteJid: `${cleanNumber}@s.whatsapp.net`, id: replyMessageId },
           });

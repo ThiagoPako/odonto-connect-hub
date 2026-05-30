@@ -278,7 +278,7 @@ async function resolveSupabaseUser(token) {
 }
 
 // ─── Evolution API Config ───────────────────────────────────
-const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL || 'https://api.odontoconnect.tech';
+const EVOLUTION_API_URL = (process.env.EVOLUTION_API_URL || 'https://api.odontoconnect.tech').replace(/\/$/, '');
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY;
 const APP_URL = (process.env.APP_URL || 'https://odontoconnect.tech').replace(/\/$/, '').replace(':443', '');
 const WEBHOOK_PUBLIC_URL = process.env.WEBHOOK_PUBLIC_URL?.replace(/\/$/, '');
@@ -1719,16 +1719,24 @@ const execFileAsync = promisify(execFile);
 
 async function evolutionFetch(path, options = {}) {
   const url = `${EVOLUTION_API_URL}${path}`;
-  const res = await fetch(url, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      apikey: EVOLUTION_API_KEY,
-      ...options.headers,
-    },
-  });
-  const data = await res.json().catch(() => ({}));
-  return { ok: res.ok, status: res.status, data };
+  try {
+    const res = await fetch(url, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: EVOLUTION_API_KEY,
+        ...options.headers,
+      },
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      console.warn(`⚠️ Evolution API ${res.status} for ${path}:`, JSON.stringify(data).slice(0, 500));
+    }
+    return { ok: res.ok, status: res.status, data };
+  } catch (err) {
+    console.error(`❌ Evolution fetch error (${path}):`, err.message);
+    return { ok: false, status: 500, data: { error: err.message } };
+  }
 }
 
 function normalizeWhatsappNumber(value) {
