@@ -413,8 +413,10 @@ async function verifyUser(req) {
 
     if (user.tenant_id) {
       await pool.query('SELECT set_config($1, $2, true)', ['app.tenant_id', user.tenant_id]);
+      await pool.query('SELECT set_config($1, $2, true)', ['app.current_tenant_id', user.tenant_id]);
     } else {
       await pool.query('SELECT set_config($1, $2, true)', ['app.tenant_id', '']);
+      await pool.query('SELECT set_config($1, $2, true)', ['app.current_tenant_id', '']);
     }
   } catch (err) {
     console.error('Failed to set DB session context:', err.message);
