@@ -6161,7 +6161,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
             phone: resolvedPhone,
             status,
             instance,
-          });
+          }, tenantId);
         }
       } else if (fallbackPhone && globalStatus) {
         const resolvedFallback = resolvePhoneFromLid(fallbackPhone);
@@ -6176,7 +6176,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
           phone: finalPhone,
           status: globalStatus,
           instance,
-        });
+        }, tenantId);
       } else {
         console.log(`⚠️ PRESENCE_UPDATE: could not extract phone or status from:`, JSON.stringify(presenceData).slice(0, 300));
       }
