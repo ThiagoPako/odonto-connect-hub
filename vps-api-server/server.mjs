@@ -3988,18 +3988,18 @@ app.get('/api/tratamentos', async (req, res) => {
 
 app.post('/api/tratamentos', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
     const { paciente_id, dentista_id, descricao, dente, valor, status, plano, observacoes } = req.body;
     const id = crypto.randomUUID();
     await pool.query(
-      'INSERT INTO tratamentos (id, paciente_id, dentista_id, descricao, dente, valor, status, plano, observacoes) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
-      [id, paciente_id, dentista_id, descricao, dente, valor, status || 'planejado', plano, observacoes]
+      'INSERT INTO tratamentos (id, paciente_id, dentista_id, descricao, dente, valor, status, plano, observacoes, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
+      [id, paciente_id, dentista_id, descricao, dente, valor, status || 'planejado', plano, observacoes, user.tenant_id]
     );
     try {
       broadcastSSE('tratamento_changed', {
         action: 'created', id, paciente_id, dentista_id, descricao, dente, valor,
         status: status || 'planejado', plano, observacoes, ts: Date.now(),
-      });
+      }, user.tenant_id);
     } catch (e) { console.error('SSE tratamento_changed error:', e); }
     res.json({ id, success: true });
   } catch (error) {
@@ -4009,7 +4009,7 @@ app.post('/api/tratamentos', async (req, res) => {
 
 app.put('/api/tratamentos/:id', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
     const { descricao, dente, valor, status, plano, observacoes, dentista_id } = req.body;
     const sets = []; const params = [];
     if (descricao !== undefined) { params.push(descricao); sets.push(`descricao=$${params.length}`); }
@@ -4021,8 +4021,8 @@ app.put('/api/tratamentos/:id', async (req, res) => {
     if (dentista_id !== undefined) { params.push(dentista_id); sets.push(`dentista_id=$${params.length}`); }
     if (sets.length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
     params.push(req.params.id);
-    await pool.query(`UPDATE tratamentos SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length}`, params);
-    const { rows } = await pool.query('SELECT * FROM tratamentos WHERE id=$1', [req.params.id]);
+    await pool.query(`UPDATE tratamentos SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length} AND tenant_id = '${user.tenant_id}'`, params);
+    const { rows } = await pool.query('SELECT * FROM tratamentos WHERE id=$1 AND tenant_id = $2', [req.params.id, user.tenant_id]);
     try {
       broadcastSSE('tratamento_changed', {
         action: 'updated', id: req.params.id,
@@ -4030,7 +4030,7 @@ app.put('/api/tratamentos/:id', async (req, res) => {
         descricao: rows[0]?.descricao, dente: rows[0]?.dente, valor: rows[0]?.valor,
         status: rows[0]?.status, plano: rows[0]?.plano, observacoes: rows[0]?.observacoes,
         ts: Date.now(),
-      });
+      }, user.tenant_id);
     } catch (e) { console.error('SSE tratamento_changed error:', e); }
     res.json(rows[0]);
   } catch (error) {
@@ -4040,15 +4040,15 @@ app.put('/api/tratamentos/:id', async (req, res) => {
 
 app.delete('/api/tratamentos/:id', async (req, res) => {
   try {
-    await verifyUser(req);
-    const { rows: prev } = await pool.query('SELECT paciente_id, dentista_id FROM tratamentos WHERE id=$1', [req.params.id]);
-    await pool.query('DELETE FROM tratamentos WHERE id=$1', [req.params.id]);
+    const { user } = await verifyUser(req);
+    const { rows: prev } = await pool.query('SELECT paciente_id, dentista_id FROM tratamentos WHERE id=$1 AND tenant_id = $2', [req.params.id, user.tenant_id]);
+    await pool.query('DELETE FROM tratamentos WHERE id=$1 AND tenant_id = $2', [req.params.id, user.tenant_id]);
     try {
       broadcastSSE('tratamento_changed', {
         action: 'deleted', id: req.params.id,
         paciente_id: prev[0]?.paciente_id, dentista_id: prev[0]?.dentista_id,
         ts: Date.now(),
-      });
+      }, user.tenant_id);
     } catch (e) { console.error('SSE tratamento_changed error:', e); }
     res.json({ success: true });
   } catch (error) {
