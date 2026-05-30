@@ -1841,7 +1841,18 @@ app.get('/api/whatsapp/instances', async (req, res) => {
         return name.startsWith(prefix);
       });
     }
-    
+
+    // Safety net: re-ensure webhook registration for every connected instance
+    // so incoming/outgoing messages always reach our /api/webhook/evolution endpoint.
+    // ensureWebhookRegistration is internally throttled (5 min) per instance.
+    for (const inst of instances) {
+      const name = inst.name || inst.instanceName || inst.instance?.instanceName;
+      const status = inst.connectionStatus || inst.status || inst.instance?.status;
+      if (name && status === 'open') {
+        ensureWebhookRegistration(name).catch(() => {});
+      }
+    }
+
     res.json(instances);
   } catch (error) {
     res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
@@ -2165,6 +2176,13 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
   try {
     await verifyUser(req);
     const { instance, number, text, quoted } = req.body;
+    if (!instance || !number || typeof text !== 'string') {
+      return res.status(400).json({ error: 'instance, number e text são obrigatórios' });
+    }
+    // Make sure Evolution forwards events back to our webhook before sending,
+    // otherwise the outgoing message ACK + the recipient reply never arrive.
+    ensureWebhookRegistration(instance).catch(() => {});
+
     const cleanNumber = normalizeWhatsappNumber(number);
     const payload = { number: cleanNumber, text };
     if (quoted) payload.quoted = quoted;
@@ -2172,6 +2190,16 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
       method: 'POST',
       body: JSON.stringify(payload),
     });
+
+    if (!result.ok) {
+      const errMsg = result.data?.response?.message?.[0]
+        || result.data?.message
+        || result.data?.error
+        || `Evolution API respondeu ${result.status}`;
+      console.error(`❌ send-text failed for ${instance} → ${cleanNumber}: ${errMsg}`, result.data);
+      return res.status(result.status || 502).json({ error: errMsg, details: result.data });
+    }
+
     res.json(result.data);
   } catch (error) {
     res.status(500).json({ error: error.message });
