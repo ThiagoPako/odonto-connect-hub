@@ -5873,7 +5873,7 @@ async function persistIncomingMessage({ msgId, leadId, content, msgType, phone, 
   }
 }
 
-function broadcastIncomingMessage({ msgId, phone, pushName, leadId, leadName, content, msgType, instance, queueId = null, queueName, queueColor, mediaUrl, fileName, mimeType }) {
+function broadcastIncomingMessage({ msgId, phone, pushName, leadId, leadName, content, msgType, instance, queueId = null, queueName, queueColor, mediaUrl, fileName, mimeType, sender = 'lead' }) {
   broadcastSSE('new_message', {
     id: msgId,
     phone,
@@ -5890,6 +5890,7 @@ function broadcastIncomingMessage({ msgId, phone, pushName, leadId, leadName, co
     mediaUrl: mediaUrl || null,
     fileName: fileName || null,
     mimeType: mimeType || null,
+    sender: sender || 'lead',
   });
 }
 
