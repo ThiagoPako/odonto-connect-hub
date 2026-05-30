@@ -1014,6 +1014,31 @@ app.get('/api/super-admin/stats', async (req, res) => {
   }
 });
 
+// ─── Diagnostic Route ──────────────────────────────────────
+app.get('/api/debug/config', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (user.role !== 'admin') return res.status(403).json({ error: 'Admin required' });
+    
+    res.json({
+      environment: process.env.NODE_ENV,
+      evolution_url: EVOLUTION_API_URL,
+      webhook_url: WEBHOOK_URL,
+      app_url: APP_URL,
+      api_port: PORT,
+      supabase_bridge: SUPABASE_BRIDGE_ENABLED,
+      supabase_url: SUPABASE_URL,
+      db_host: process.env.PG_HOST,
+      db_database: process.env.PG_DATABASE,
+      vapid_public_key: VAPID_PUBLIC_KEY ? 'Set' : 'Not set',
+      sse_clients: sseClients.size,
+      time: new Date().toISOString()
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ─── Health check (used by deploy validation + monitoring) ──────────────
 //
 // Standardized error codes (stable contract — do not rename):
