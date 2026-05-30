@@ -2176,6 +2176,13 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
   try {
     await verifyUser(req);
     const { instance, number, text, quoted } = req.body;
+    if (!instance || !number || typeof text !== 'string') {
+      return res.status(400).json({ error: 'instance, number e text são obrigatórios' });
+    }
+    // Make sure Evolution forwards events back to our webhook before sending,
+    // otherwise the outgoing message ACK + the recipient reply never arrive.
+    ensureWebhookRegistration(instance).catch(() => {});
+
     const cleanNumber = normalizeWhatsappNumber(number);
     const payload = { number: cleanNumber, text };
     if (quoted) payload.quoted = quoted;
@@ -2183,6 +2190,16 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
       method: 'POST',
       body: JSON.stringify(payload),
     });
+
+    if (!result.ok) {
+      const errMsg = result.data?.response?.message?.[0]
+        || result.data?.message
+        || result.data?.error
+        || `Evolution API respondeu ${result.status}`;
+      console.error(`❌ send-text failed for ${instance} → ${cleanNumber}: ${errMsg}`, result.data);
+      return res.status(result.status || 502).json({ error: errMsg, details: result.data });
+    }
+
     res.json(result.data);
   } catch (error) {
     res.status(500).json({ error: error.message });
