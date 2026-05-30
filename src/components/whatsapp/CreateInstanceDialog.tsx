@@ -27,32 +27,17 @@ export function CreateInstanceDialog({ open, onOpenChange, onCreated }: CreateIn
     setError(null);
 
     try {
-      const { data: authData } = await supabase.auth.getUser();
-      const userId = authData.user?.id;
-      if (userId) {
-        const { data: profile } = await supabase.from('profiles').select('tenant_id').eq('id', userId).maybeSingle();
-        if (profile?.tenant_id) {
-          // Prefix instance name with first 8 chars of tenant_id for isolation
-          const tenantPrefix = profile.tenant_id.substring(0, 8);
-          if (!sanitized.startsWith(tenantPrefix)) {
-            sanitized = `${tenantPrefix}-${sanitized}`;
-          }
-
-          // Register in whatsapp_instances table
-          const { error: regError } = await supabase.from('whatsapp_instances').insert({
-            tenant_id: profile.tenant_id,
-            instance_name: sanitized,
-            description: label || null
-          });
-          
-          if (regError) {
-            console.error("Failed to register instance in Supabase:", regError);
-          }
-        }
-      }
+      // Create via VPS API so it manages the prefix and registers webhooks
+      const { data, error: apiError } = await whatsappApi.create(sanitized);
       
-      await createInstance({ instanceName: sanitized });
-      onCreated?.(sanitized);
+      if (apiError) throw new Error(apiError);
+      
+      // The VPS might have prepended a prefix, let's use the actual name returned if possible
+      // but usually sanitized is already correct if the user entered it.
+      // Evolution API create returns { instance: { instanceName: ... } }
+      const actualName = (data as any)?.instance?.instanceName || sanitized;
+      
+      onCreated?.(actualName);
       onOpenChange(false);
       setName("");
       setLabel("");
