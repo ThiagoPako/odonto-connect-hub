@@ -1215,6 +1215,7 @@ export const sbQueueLeadsApi = {
           sessionStatus: session?.status || 'waiting',
           attendantId: session?.attendant_id || undefined,
           attendantName: session?.attendant_name || undefined,
+          instance: latest?.instance || undefined,
         };
 
         if (session?.status === 'active' && session?.attendant_id) active.push(item);

@@ -14,6 +14,7 @@ export interface Lead {
   queueName?: string;
   queueColor?: string;
   priority?: boolean;
+  instance?: string;
 }
 
 export type MessageType =
@@ -106,6 +107,7 @@ export interface ChatMessage {
   stickerUrl?: string;
   list?: ListData;
   formatting?: "bold" | "italic" | "strikethrough" | "monospace";
+  instance?: string;
 }
 
 export const mockLeadsQueue: Lead[] = [];

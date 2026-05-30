@@ -111,6 +111,7 @@ function ChatPage() {
         queueName: r.queueName,
         assignedTo: r.attendantId ? "current" : undefined,
         priority: r.priority || false,
+        instance: r.instance,
       };
     };
 
@@ -194,17 +195,20 @@ function ChatPage() {
       processedMsgIds.current = new Set(entries.slice(entries.length - 2500));
     }
 
+    const isFromMe = msg.sender === "attendant" || msg.sender === "agent" || msg.sender === "me";
+
     const chatMsg: ChatMessage = {
       id: msg.id,
       leadId: msg.leadId || msg.phone,
       content: msg.content,
-      sender: "lead",
+      sender: isFromMe ? "attendant" : "lead",
       type: (msg.type as MessageType) || "text",
       timestamp: new Date(msg.timestamp),
       status: "delivered",
       fileUrl: msg.mediaUrl || undefined,
       fileName: msg.fileName || undefined,
       mimeType: msg.mimeType || undefined,
+      instance: msg.instance || undefined,
     };
 
     // Use refs to avoid stale closure
@@ -214,7 +218,19 @@ function ChatPage() {
     );
 
     const currentSelected = selectedLeadRef.current;
-    const isViewing = existingLead && currentSelected?.id === existingLead.id;
+    const isViewing = existingLead && selectedLeadRef.current?.id === existingLead.id;
+
+    if (isFromMe) {
+      // If message is from me, add it to history if it's not already there
+      setMessages((prev) => {
+        const leadId = existingLead?.id || msg.leadId || '';
+        if (!leadId) return prev;
+        const existing = prev[leadId] || [];
+        if (existing.some((m) => m.id === msg.id)) return prev;
+        return { ...prev, [leadId]: [...existing, chatMsg] };
+      });
+      return;
+    }
 
     const addMessage = () => {
       if (existingLead) {
@@ -235,6 +251,7 @@ function ChatPage() {
                 lastMessage: msg.content && !["🖼️ Imagem","🎬 Vídeo","📎"].some(p => msg.content.startsWith(p)) ? msg.content : ({ image: "📷 Foto", video: "🎬 Vídeo", audio: "🎤 Áudio", document: "📄 Documento", sticker: "🏷️ Sticker" } as Record<string, string>)[msg.type] || msg.content || "",
                 lastMessageTime: new Date(msg.timestamp),
                 unreadCount: currentSelected?.id === existingLead.id ? lead.unreadCount : lead.unreadCount + 1,
+                instance: msg.instance || lead.instance,
               }
             : lead;
 
@@ -255,6 +272,7 @@ function ChatPage() {
           queueId: incomingMsg.queueId,
           queueName: incomingMsg.queueName,
           queueColor: incomingMsg.queueColor,
+          instance: msg.instance,
         };
         setQueue((prev) => [newLead, ...prev]);
         setMessages((prev) => ({
@@ -724,7 +742,12 @@ function ChatPage() {
     }));
     setReplyingTo(null);
 
-    const connected = connectedInstances[0];
+    // Resolve which instance to use:
+    // 1. If the lead has an instance assigned, use it.
+    // 2. Otherwise use the first available connected instance.
+    const preferredInstanceName = selectedLead.instance;
+    const connected = connectedInstances.find(i => i.instanceName === preferredInstanceName) || connectedInstances[0];
+
     if (!connected) {
       setMessages((prev) => ({
         ...prev,

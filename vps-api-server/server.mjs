@@ -163,6 +163,30 @@ if (SUPABASE_BRIDGE_ENABLED) {
 const _supabaseUserCache = new Map();
 const SUPABASE_CACHE_TTL_MS = 5 * 60 * 1000;
 
+// Cache for instance -> tenant_id mapping to avoid repeated DB hits in webhooks
+const instanceToTenantCache = new Map();
+
+async function getTenantIdByInstance(instanceName) {
+  if (!instanceName) return null;
+  if (instanceToTenantCache.has(instanceName)) {
+    return instanceToTenantCache.get(instanceName);
+  }
+
+  try {
+    const { rows } = await pool.query(
+      'SELECT tenant_id FROM whatsapp_instances WHERE instance_name = $1 LIMIT 1',
+      [instanceName]
+    );
+    if (rows[0]?.tenant_id) {
+      instanceToTenantCache.set(instanceName, rows[0].tenant_id);
+      return rows[0].tenant_id;
+    }
+  } catch (err) {
+    console.error(`Error resolving tenant for instance ${instanceName}:`, err.message);
+  }
+  return null;
+}
+
 async function resolveSupabaseUser(token) {
   if (!SUPABASE_BRIDGE_ENABLED) throw new Error('Supabase bridge not configured');
   const cached = _supabaseUserCache.get(token);
@@ -2141,7 +2165,8 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
   try {
     await verifyUser(req);
     const { instance, number, text, quoted } = req.body;
-    const payload = { number, text };
+    const cleanNumber = normalizeWhatsappNumber(number);
+    const payload = { number: cleanNumber, text };
     if (quoted) payload.quoted = quoted;
     const result = await evolutionFetch(`/message/sendText/${instance}`, {
       method: 'POST',
@@ -2162,7 +2187,7 @@ app.post('/api/whatsapp/send-media', async (req, res) => {
       return res.status(400).json({ error: 'instance, number e mediaType são obrigatórios' });
     }
 
-    const cleanNumber = number.replace(/\D/g, '');
+    const cleanNumber = normalizeWhatsappNumber(number);
 
     if (mediaType === 'audio') {
       const rawMime = media.mimeType || 'audio/webm';
@@ -2290,7 +2315,7 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '6
       return res.status(400).json({ error: 'Arquivo não enviado' });
     }
 
-    const cleanNumber = String(number).replace(/\D/g, '');
+    const cleanNumber = normalizeWhatsappNumber(number);
     const resolvedMimeType = String(mimeType || req.headers['content-type'] || 'application/octet-stream');
     jobId = randomUUID();
 
@@ -2470,7 +2495,7 @@ app.post('/api/whatsapp/send-location', async (req, res) => {
   try {
     await verifyUser(req);
     const { instance, number, latitude, longitude, name, address } = req.body;
-    const cleanNumber = number.replace(/\D/g, '');
+    const cleanNumber = normalizeWhatsappNumber(number);
     const result = await evolutionFetch(`/message/sendLocation/${instance}`, {
       method: 'POST',
       body: JSON.stringify({
@@ -2492,7 +2517,7 @@ app.post('/api/whatsapp/send-contact', async (req, res) => {
   try {
     await verifyUser(req);
     const { instance, number, contact } = req.body;
-    const cleanNumber = number.replace(/\D/g, '');
+    const cleanNumber = normalizeWhatsappNumber(number);
     const result = await evolutionFetch(`/message/sendContact/${instance}`, {
       method: 'POST',
       body: JSON.stringify({
@@ -2518,7 +2543,7 @@ app.post('/api/whatsapp/send-poll', async (req, res) => {
   try {
     await verifyUser(req);
     const { instance, number, question, options } = req.body;
-    const cleanNumber = number.replace(/\D/g, '');
+    const cleanNumber = normalizeWhatsappNumber(number);
     const result = await evolutionFetch(`/message/sendPoll/${instance}`, {
       method: 'POST',
       body: JSON.stringify({
@@ -5831,24 +5856,24 @@ async function matchQueue(content) {
   ) || null;
 }
 
-async function persistIncomingMessage({ msgId, leadId, content, msgType, phone, instance, pushName, remoteJid, rawType, mediaUrl, fileName, mimeType }) {
+async function persistIncomingMessage({ msgId, leadId, content, msgType, phone, instance, pushName, remoteJid, rawType, mediaUrl, fileName, mimeType, tenantId, sender = 'lead' }) {
   try {
     await pool.query(
-      `INSERT INTO chat_messages (id, lead_id, content, sender, type, status, timestamp, phone, instance, media_url, file_name, mime_type, metadata)
-       VALUES ($1,$2,$3,'lead',$4,'delivered',NOW(),$5,$6,$7,$8,$9,$10)
+      `INSERT INTO chat_messages (id, lead_id, content, sender, type, status, timestamp, phone, instance, media_url, file_name, mime_type, metadata, tenant_id)
+       VALUES ($1,$2,$3,$12,$4,'delivered',NOW(),$5,$6,$7,$8,$9,$10,$11)
        ON CONFLICT (id) DO NOTHING`,
       [msgId, leadId, content, msgType, phone, instance, mediaUrl || null, fileName || null, mimeType || null, JSON.stringify({
         pushName,
         remoteJid,
         rawType,
-      })]
+      }), tenantId, sender]
     );
   } catch (dbErr) {
     console.error('DB insert error (incoming msg):', dbErr.message);
   }
 }
 
-function broadcastIncomingMessage({ msgId, phone, pushName, leadId, leadName, content, msgType, instance, queueId = null, queueName, queueColor, mediaUrl, fileName, mimeType }) {
+function broadcastIncomingMessage({ msgId, phone, pushName, leadId, leadName, content, msgType, instance, queueId = null, queueName, queueColor, mediaUrl, fileName, mimeType, sender = 'lead' }) {
   broadcastSSE('new_message', {
     id: msgId,
     phone,
@@ -5865,6 +5890,7 @@ function broadcastIncomingMessage({ msgId, phone, pushName, leadId, leadName, co
     mediaUrl: mediaUrl || null,
     fileName: fileName || null,
     mimeType: mimeType || null,
+    sender: sender || 'lead',
   });
 }
 
@@ -5873,8 +5899,9 @@ app.post('/api/webhook/evolution', async (req, res) => {
     const body = req.body;
     const event = typeof body.event === 'string' ? body.event.toLowerCase().replace(/_/g, '.') : '';
     const instance = body.instance || body.instanceName;
+    const tenantId = await getTenantIdByInstance(instance);
     
-    console.log(`📩 Webhook event: ${event} from ${instance}`);
+    console.log(`📩 Webhook event: ${event} from ${instance} (tenant: ${tenantId})`);
 
     // ─── Presence updates (typing, recording, online) ───
     if (event === 'presence.update') {
@@ -6051,8 +6078,8 @@ app.post('/api/webhook/evolution', async (req, res) => {
             // Try to find the phone from the message in DB
             try {
               const { rows: msgRows } = await pool.query(
-                `SELECT phone FROM chat_messages WHERE id = $1 LIMIT 1`,
-                [primaryMessageId]
+                `SELECT phone FROM chat_messages WHERE id = $1 AND tenant_id = $2 LIMIT 1`,
+                [primaryMessageId, tenantId]
               );
               if (msgRows[0]?.phone) {
                 registerLidMapping(lidNum, msgRows[0].phone);
@@ -6090,8 +6117,8 @@ app.post('/api/webhook/evolution', async (req, res) => {
 
           try {
             await pool.query(
-              `UPDATE chat_messages SET status = $1 WHERE id = $2 OR (metadata::text LIKE '%' || $2 || '%')`,
-              [newStatus, lookupId]
+              `UPDATE chat_messages SET status = $1 WHERE tenant_id = $3 AND (id = $2 OR (metadata::text LIKE '%' || $2 || '%'))`,
+              [newStatus, lookupId, tenantId]
             );
           } catch (ackErr) {
             console.error('ACK DB update error:', ackErr.message);
@@ -6116,17 +6143,18 @@ app.post('/api/webhook/evolution', async (req, res) => {
     const message = body.data;
     const remoteJid = message?.key?.remoteJid;
 
+    // Skip group messages
     if (!remoteJid || remoteJid.endsWith('@g.us')) {
       return res.json({ ignored: true, reason: 'group_or_missing_jid' });
     }
 
-    // Skip outgoing messages
-    if (message?.key?.fromMe) {
-      return res.json({ ignored: true, reason: 'outgoing' });
-    }
+    const isFromMe = !!message?.key?.fromMe;
+    const senderRole = isFromMe ? 'attendant' : 'lead';
 
-    const phone = remoteJid.replace('@s.whatsapp.net', '').replace('@c.us', '');
-    const phoneSuffix = phone.slice(-11);
+    // Resolve clean phone number from remoteJid (handles LID resolution)
+    const phone = normalizeWhatsappNumber(remoteJid);
+    const resolvedPhone = resolvePhoneFromLid(phone);
+    const phoneSuffix = resolvedPhone.slice(-11);
 
     // Extract message content
     const msgContent =
@@ -6177,12 +6205,12 @@ app.post('/api/webhook/evolution', async (req, res) => {
       }
     }
 
-    // Find lead by phone
+    // Find lead by phone and tenant_id
     const { rows: leads } = await pool.query(
       `SELECT id, nome as name, avatar_url, telefone as phone, queue_id, awaiting_queue_selection FROM crm_leads 
-       WHERE REPLACE(REPLACE(REPLACE(REPLACE(telefone, ' ', ''), '-', ''), '(', ''), ')', '') LIKE '%' || $1
+       WHERE tenant_id = $1 AND REPLACE(REPLACE(REPLACE(REPLACE(telefone, ' ', ''), '-', ''), '(', ''), ')', '') LIKE '%' || $2
        LIMIT 1`,
-      [phoneSuffix]
+      [tenantId, phoneSuffix]
     );
 
     let lead = leads[0] || null;
@@ -6195,9 +6223,9 @@ app.post('/api/webhook/evolution', async (req, res) => {
     if (!lead) {
       const newId = crypto.randomUUID();
       await pool.query(
-        `INSERT INTO crm_leads (id, nome, telefone, origem, status, kanban_stage, awaiting_queue_selection)
-         VALUES ($1, $2, $3, 'whatsapp', 'novo', 'lead', true)`,
-        [newId, pushName, phone]
+        `INSERT INTO crm_leads (id, nome, telefone, origem, status, kanban_stage, awaiting_queue_selection, tenant_id)
+         VALUES ($1, $2, $3, 'whatsapp', 'novo', 'lead', true, $4)`,
+        [newId, pushName, phone, tenantId]
       );
       lead = { id: newId, name: pushName, phone, queue_id: null, awaiting_queue_selection: true, avatar_url: null };
       console.log(`🆕 New lead created: ${pushName} (${phone})`);
@@ -6225,15 +6253,15 @@ app.post('/api/webhook/evolution', async (req, res) => {
           'Olá! Nosso horário de atendimento encerrou. Deixe sua mensagem que retornaremos assim que possível! 😊';
         await evolutionFetch(`/message/sendText/${instance}`, {
           method: 'POST',
-          body: JSON.stringify({ number: phone, text: offMsg }),
+          body: JSON.stringify({ number: resolvedPhone, text: offMsg }),
         });
-        console.log(`🕐 Off-hours message sent to ${phone}`);
+        console.log(`🕐 Off-hours message sent to ${resolvedPhone}`);
         await persistIncomingMessage({
           msgId,
           leadId: lead.id,
           content: resolvedContent,
           msgType,
-          phone,
+          phone: resolvedPhone,
           instance,
           pushName,
           remoteJid,
@@ -6241,10 +6269,12 @@ app.post('/api/webhook/evolution', async (req, res) => {
           mediaUrl,
           fileName: mediaFileName,
           mimeType: mediaMimeType,
+          tenantId,
+          sender: senderRole,
         });
         broadcastIncomingMessage({
           msgId,
-          phone,
+          phone: resolvedPhone,
           pushName,
           leadId: lead.id,
           leadName: lead.name,
@@ -6254,6 +6284,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
           mediaUrl,
           fileName: mediaFileName,
           mimeType: mediaMimeType,
+          sender: senderRole,
         });
         return res.json({ processed: true, offHours: true, leadId: lead.id });
       }
@@ -6326,7 +6357,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
           leadId: lead.id,
           content: resolvedContent,
           msgType,
-          phone,
+          phone: resolvedPhone,
           instance,
           pushName,
           remoteJid,
@@ -6334,10 +6365,12 @@ app.post('/api/webhook/evolution', async (req, res) => {
           mediaUrl,
           fileName: mediaFileName,
           mimeType: mediaMimeType,
+          tenantId,
+          sender: senderRole,
         });
         broadcastIncomingMessage({
           msgId,
-          phone,
+          phone: resolvedPhone,
           pushName,
           leadId: lead.id,
           leadName: lead.name,
@@ -6348,6 +6381,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
           mediaUrl,
           fileName: mediaFileName,
           mimeType: mediaMimeType,
+          sender: senderRole,
         });
         // Invalid selection — resend menu
         await sendQueueMenu(instance, phone);
@@ -6469,7 +6503,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
       leadId: lead.id,
       content: resolvedContent,
       msgType,
-      phone,
+      phone: resolvedPhone,
       instance,
       pushName,
       remoteJid,
@@ -6477,11 +6511,13 @@ app.post('/api/webhook/evolution', async (req, res) => {
       mediaUrl,
       fileName: mediaFileName,
       mimeType: mediaMimeType,
+      tenantId,
+      sender: senderRole,
     });
 
     broadcastIncomingMessage({
       msgId,
-      phone,
+      phone: resolvedPhone,
       pushName,
       leadId: lead.id,
       leadName: lead.name,
@@ -6492,6 +6528,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
       mediaUrl,
       fileName: mediaFileName,
       mimeType: mediaMimeType,
+      sender: senderRole,
     });
 
     console.log(`💬 New message from ${pushName} (${phone}) → saved + broadcast to ${sseClients.size} clients`);
