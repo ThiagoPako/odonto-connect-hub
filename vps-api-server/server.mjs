@@ -2495,7 +2495,7 @@ app.post('/api/whatsapp/send-location', async (req, res) => {
   try {
     await verifyUser(req);
     const { instance, number, latitude, longitude, name, address } = req.body;
-    const cleanNumber = number.replace(/\D/g, '');
+    const cleanNumber = normalizeWhatsappNumber(number);
     const result = await evolutionFetch(`/message/sendLocation/${instance}`, {
       method: 'POST',
       body: JSON.stringify({
@@ -2517,7 +2517,7 @@ app.post('/api/whatsapp/send-contact', async (req, res) => {
   try {
     await verifyUser(req);
     const { instance, number, contact } = req.body;
-    const cleanNumber = number.replace(/\D/g, '');
+    const cleanNumber = normalizeWhatsappNumber(number);
     const result = await evolutionFetch(`/message/sendContact/${instance}`, {
       method: 'POST',
       body: JSON.stringify({
@@ -2543,7 +2543,7 @@ app.post('/api/whatsapp/send-poll', async (req, res) => {
   try {
     await verifyUser(req);
     const { instance, number, question, options } = req.body;
-    const cleanNumber = number.replace(/\D/g, '');
+    const cleanNumber = normalizeWhatsappNumber(number);
     const result = await evolutionFetch(`/message/sendPoll/${instance}`, {
       method: 'POST',
       body: JSON.stringify({
