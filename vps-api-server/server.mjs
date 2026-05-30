@@ -2636,34 +2636,49 @@ app.post('/api/whatsapp/send-list', async (req, res) => {
 // Send reaction emoji
 app.post('/api/whatsapp/send-reaction', async (req, res) => {
   try {
-    await verifyUser(req);
-    const { instance, number, messageId, reaction } = req.body;
+    try {
+      await verifyUser(req);
+    } catch (authErr) {
+      console.warn('[send-reaction] auth failed:', authErr.message);
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const { instance, number, messageId, reaction } = req.body || {};
     if (!instance || !number || !messageId || typeof reaction !== 'string') {
       return res.status(400).json({ error: 'instance, number, messageId e reaction são obrigatórios' });
     }
 
-    const cleanNumber = number.replace(/\D/g, '');
+    const cleanNumber = String(number).replace(/\D/g, '');
     const { rows: messageRows } = await pool.query(
       `SELECT sender FROM chat_messages WHERE id = $1 LIMIT 1`,
       [messageId]
     );
     const fromMe = messageRows[0]?.sender === 'attendant';
 
+    const payload = {
+      key: {
+        remoteJid: `${cleanNumber}@s.whatsapp.net`,
+        fromMe,
+        id: messageId,
+      },
+      reaction,
+    };
+
+    console.log('[send-reaction] payload:', JSON.stringify(payload));
+
     const result = await evolutionFetch(`/message/sendReaction/${instance}`, {
       method: 'POST',
-      body: JSON.stringify({
-        key: {
-          remoteJid: `${cleanNumber}@s.whatsapp.net`,
-          fromMe,
-          id: messageId,
-        },
-        reaction,
-      }),
+      body: JSON.stringify(payload),
     });
 
+    console.log('[send-reaction] evolution response:', result.status, JSON.stringify(result.data).slice(0, 500));
+
     if (!result.ok) {
-      const errorMessage = result.data?.response?.message || result.data?.error || result.data?.message || `Evolution API HTTP ${result.status}`;
-      return res.status(result.status || 500).json({ error: errorMessage, details: result.data });
+      const rawMsg = result.data?.response?.message ?? result.data?.error ?? result.data?.message;
+      const errorMessage = Array.isArray(rawMsg) ? rawMsg.join('; ') : (rawMsg || `Evolution API HTTP ${result.status}`);
+      // Não devolve 401 para evitar logout no frontend; mapeia para 400/502
+      const safeStatus = result.status === 401 || result.status === 403 ? 400 : (result.status >= 400 && result.status < 600 ? result.status : 502);
+      return res.status(safeStatus).json({ error: `Falha ao enviar reação: ${errorMessage}`, details: result.data });
     }
 
     await pool.query(
@@ -2675,6 +2690,7 @@ app.post('/api/whatsapp/send-reaction', async (req, res) => {
 
     res.json({ success: true, reaction, result: result.data });
   } catch (error) {
+    console.error('[send-reaction] error:', error);
     res.status(500).json({ error: error.message });
   }
 });
