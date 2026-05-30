@@ -278,7 +278,7 @@ async function resolveSupabaseUser(token) {
 }
 
 // ─── Evolution API Config ───────────────────────────────────
-const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL || 'https://api.odontoconnect.tech';
+const EVOLUTION_API_URL = (process.env.EVOLUTION_API_URL || 'https://api.odontoconnect.tech').replace(/\/$/, '');
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY;
 const APP_URL = (process.env.APP_URL || 'https://odontoconnect.tech').replace(/\/$/, '').replace(':443', '');
 const WEBHOOK_PUBLIC_URL = process.env.WEBHOOK_PUBLIC_URL?.replace(/\/$/, '');
@@ -1014,6 +1014,31 @@ app.get('/api/super-admin/stats', async (req, res) => {
   }
 });
 
+// ─── Diagnostic Route ──────────────────────────────────────
+app.get('/api/debug/config', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (user.role !== 'admin') return res.status(403).json({ error: 'Admin required' });
+    
+    res.json({
+      environment: process.env.NODE_ENV,
+      evolution_url: EVOLUTION_API_URL,
+      webhook_url: WEBHOOK_URL,
+      app_url: APP_URL,
+      api_port: PORT,
+      supabase_bridge: SUPABASE_BRIDGE_ENABLED,
+      supabase_url: SUPABASE_URL,
+      db_host: process.env.PG_HOST,
+      db_database: process.env.PG_DATABASE,
+      vapid_public_key: VAPID_PUBLIC_KEY ? 'Set' : 'Not set',
+      sse_clients: sseClients.size,
+      time: new Date().toISOString()
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ─── Health check (used by deploy validation + monitoring) ──────────────
 //
 // Standardized error codes (stable contract — do not rename):
@@ -1719,16 +1744,24 @@ const execFileAsync = promisify(execFile);
 
 async function evolutionFetch(path, options = {}) {
   const url = `${EVOLUTION_API_URL}${path}`;
-  const res = await fetch(url, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      apikey: EVOLUTION_API_KEY,
-      ...options.headers,
-    },
-  });
-  const data = await res.json().catch(() => ({}));
-  return { ok: res.ok, status: res.status, data };
+  try {
+    const res = await fetch(url, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: EVOLUTION_API_KEY,
+        ...options.headers,
+      },
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      console.warn(`⚠️ Evolution API ${res.status} for ${path}:`, JSON.stringify(data).slice(0, 500));
+    }
+    return { ok: res.ok, status: res.status, data };
+  } catch (err) {
+    console.error(`❌ Evolution fetch error (${path}):`, err.message);
+    return { ok: false, status: 500, data: { error: err.message } };
+  }
 }
 
 function normalizeWhatsappNumber(value) {
@@ -3988,18 +4021,18 @@ app.get('/api/tratamentos', async (req, res) => {
 
 app.post('/api/tratamentos', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
     const { paciente_id, dentista_id, descricao, dente, valor, status, plano, observacoes } = req.body;
     const id = crypto.randomUUID();
     await pool.query(
-      'INSERT INTO tratamentos (id, paciente_id, dentista_id, descricao, dente, valor, status, plano, observacoes) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
-      [id, paciente_id, dentista_id, descricao, dente, valor, status || 'planejado', plano, observacoes]
+      'INSERT INTO tratamentos (id, paciente_id, dentista_id, descricao, dente, valor, status, plano, observacoes, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
+      [id, paciente_id, dentista_id, descricao, dente, valor, status || 'planejado', plano, observacoes, user.tenant_id]
     );
     try {
       broadcastSSE('tratamento_changed', {
         action: 'created', id, paciente_id, dentista_id, descricao, dente, valor,
         status: status || 'planejado', plano, observacoes, ts: Date.now(),
-      });
+      }, user.tenant_id);
     } catch (e) { console.error('SSE tratamento_changed error:', e); }
     res.json({ id, success: true });
   } catch (error) {
@@ -4009,7 +4042,7 @@ app.post('/api/tratamentos', async (req, res) => {
 
 app.put('/api/tratamentos/:id', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
     const { descricao, dente, valor, status, plano, observacoes, dentista_id } = req.body;
     const sets = []; const params = [];
     if (descricao !== undefined) { params.push(descricao); sets.push(`descricao=$${params.length}`); }
@@ -4021,8 +4054,8 @@ app.put('/api/tratamentos/:id', async (req, res) => {
     if (dentista_id !== undefined) { params.push(dentista_id); sets.push(`dentista_id=$${params.length}`); }
     if (sets.length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
     params.push(req.params.id);
-    await pool.query(`UPDATE tratamentos SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length}`, params);
-    const { rows } = await pool.query('SELECT * FROM tratamentos WHERE id=$1', [req.params.id]);
+    await pool.query(`UPDATE tratamentos SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length} AND tenant_id = '${user.tenant_id}'`, params);
+    const { rows } = await pool.query('SELECT * FROM tratamentos WHERE id=$1 AND tenant_id = $2', [req.params.id, user.tenant_id]);
     try {
       broadcastSSE('tratamento_changed', {
         action: 'updated', id: req.params.id,
@@ -4030,7 +4063,7 @@ app.put('/api/tratamentos/:id', async (req, res) => {
         descricao: rows[0]?.descricao, dente: rows[0]?.dente, valor: rows[0]?.valor,
         status: rows[0]?.status, plano: rows[0]?.plano, observacoes: rows[0]?.observacoes,
         ts: Date.now(),
-      });
+      }, user.tenant_id);
     } catch (e) { console.error('SSE tratamento_changed error:', e); }
     res.json(rows[0]);
   } catch (error) {
@@ -4040,15 +4073,15 @@ app.put('/api/tratamentos/:id', async (req, res) => {
 
 app.delete('/api/tratamentos/:id', async (req, res) => {
   try {
-    await verifyUser(req);
-    const { rows: prev } = await pool.query('SELECT paciente_id, dentista_id FROM tratamentos WHERE id=$1', [req.params.id]);
-    await pool.query('DELETE FROM tratamentos WHERE id=$1', [req.params.id]);
+    const { user } = await verifyUser(req);
+    const { rows: prev } = await pool.query('SELECT paciente_id, dentista_id FROM tratamentos WHERE id=$1 AND tenant_id = $2', [req.params.id, user.tenant_id]);
+    await pool.query('DELETE FROM tratamentos WHERE id=$1 AND tenant_id = $2', [req.params.id, user.tenant_id]);
     try {
       broadcastSSE('tratamento_changed', {
         action: 'deleted', id: req.params.id,
         paciente_id: prev[0]?.paciente_id, dentista_id: prev[0]?.dentista_id,
         ts: Date.now(),
-      });
+      }, user.tenant_id);
     } catch (e) { console.error('SSE tratamento_changed error:', e); }
     res.json({ success: true });
   } catch (error) {
@@ -5780,31 +5813,53 @@ app.delete('/api/queues/:id', async (req, res) => {
 // SSE — Real-time event stream for frontend
 // ═══════════════════════════════════════════════════════════════
 
-const sseClients = new Set();
+const sseClients = new Map();
 
-function broadcastSSE(event, data) {
+function broadcastSSE(event, data, tenantId = null) {
   const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-  for (const client of sseClients) {
+  for (const [client, info] of sseClients.entries()) {
+    // If tenantId is provided, only send to clients belonging to that tenant
+    if (tenantId && info.tenantId !== tenantId) continue;
     client.write(payload);
   }
 }
 
-app.get('/api/events', (req, res) => {
-  // Optional: verify JWT from query param
-  // const token = req.query.token;
-  // try { verifyToken(token); } catch { return res.status(401).end(); }
+app.get('/api/events', async (req, res) => {
+  let tenantId = null;
+  const token = req.query.token;
 
+  if (token) {
+    try {
+      // 1) Try legacy token
+      let decoded = null;
+      try {
+        decoded = verifyToken(token);
+        tenantId = decoded?.tenant_id;
+      } catch {
+        // 2) Fallback to Supabase
+        if (SUPABASE_BRIDGE_ENABLED) {
+          const sbUser = await resolveSupabaseUser(token);
+          tenantId = sbUser.tenant_id;
+        }
+      }
+    } catch (err) {
+      console.warn('📡 SSE connection failed: invalid token');
+    }
+  }
+
+  // Set headers for SSE
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
     'Connection': 'keep-alive',
     'Access-Control-Allow-Origin': '*',
+    'X-Accel-Buffering': 'no', // Disable Nginx buffering for SSE
   });
 
-  res.write(`event: connected\ndata: ${JSON.stringify({ ts: Date.now() })}\n\n`);
+  res.write(`event: connected\ndata: ${JSON.stringify({ ts: Date.now(), tenantId })}\n\n`);
 
-  sseClients.add(res);
-  console.log(`📡 SSE client connected (total: ${sseClients.size})`);
+  sseClients.set(res, { tenantId });
+  console.log(`📡 SSE client connected (tenant: ${tenantId || 'anonymous'}, total: ${sseClients.size})`);
 
   // Keepalive ping every 25s to prevent proxy/browser timeouts
   const keepalive = setInterval(() => {
@@ -5977,7 +6032,7 @@ async function persistIncomingMessage({ msgId, leadId, content, msgType, phone, 
   }
 }
 
-function broadcastIncomingMessage({ msgId, phone, pushName, leadId, leadName, content, msgType, instance, queueId = null, queueName, queueColor, mediaUrl, fileName, mimeType, sender = 'lead' }) {
+function broadcastIncomingMessage({ msgId, phone, pushName, leadId, leadName, content, msgType, instance, queueId = null, queueName, queueColor, mediaUrl, fileName, mimeType, tenantId, sender = 'lead' }) {
   broadcastSSE('new_message', {
     id: msgId,
     phone,
@@ -5995,7 +6050,7 @@ function broadcastIncomingMessage({ msgId, phone, pushName, leadId, leadName, co
     fileName: fileName || null,
     mimeType: mimeType || null,
     sender: sender || 'lead',
-  });
+  }, tenantId);
 }
 
 app.post('/api/webhook/evolution', async (req, res) => {
@@ -6006,6 +6061,9 @@ app.post('/api/webhook/evolution', async (req, res) => {
     const tenantId = await getTenantIdByInstance(instance);
     
     console.log(`📩 Webhook event: ${event} from ${instance} (tenant: ${tenantId})`);
+    if (event !== 'presence.update') {
+      console.log(`📦 Webhook Body:`, JSON.stringify(body).slice(0, 1000));
+    }
 
     // ─── Presence updates (typing, recording, online) ───
     if (event === 'presence.update') {
@@ -6139,7 +6197,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
             phone: resolvedPhone,
             status,
             instance,
-          });
+          }, tenantId);
         }
       } else if (fallbackPhone && globalStatus) {
         const resolvedFallback = resolvePhoneFromLid(fallbackPhone);
@@ -6154,7 +6212,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
           phone: finalPhone,
           status: globalStatus,
           instance,
-        });
+        }, tenantId);
       } else {
         console.log(`⚠️ PRESENCE_UPDATE: could not extract phone or status from:`, JSON.stringify(presenceData).slice(0, 300));
       }
@@ -6233,7 +6291,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
             phone,
             status: newStatus,
             instance,
-          });
+          }, tenantId);
         }
       }
       return res.json({ processed: true, event: 'messages.update' });
@@ -6388,6 +6446,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
           mediaUrl,
           fileName: mediaFileName,
           mimeType: mediaMimeType,
+          tenantId,
           sender: senderRole,
         });
         return res.json({ processed: true, offHours: true, leadId: lead.id });
@@ -6436,7 +6495,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
           queueName: selectedQueue.name,
           queueColor: selectedQueue.color,
           timestamp: new Date().toISOString(),
-        });
+        }, tenantId);
 
         // Also broadcast the message itself
         broadcastSSE('new_message', {
@@ -6485,6 +6544,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
           mediaUrl,
           fileName: mediaFileName,
           mimeType: mediaMimeType,
+          tenantId,
           sender: senderRole,
         });
         // Invalid selection — resend menu
@@ -6594,7 +6654,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
             phone,
             fromStage: currentStage,
             timestamp: new Date().toISOString(),
-          });
+          }, tenantId);
         }
       } catch (recoveryErr) {
         console.error('Recovery auto-return error:', recoveryErr.message);
@@ -6632,6 +6692,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
       mediaUrl,
       fileName: mediaFileName,
       mimeType: mediaMimeType,
+      tenantId,
       sender: senderRole,
     });
 
