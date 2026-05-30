@@ -2187,7 +2187,7 @@ app.post('/api/whatsapp/send-media', async (req, res) => {
       return res.status(400).json({ error: 'instance, number e mediaType são obrigatórios' });
     }
 
-    const cleanNumber = number.replace(/\D/g, '');
+    const cleanNumber = normalizeWhatsappNumber(number);
 
     if (mediaType === 'audio') {
       const rawMime = media.mimeType || 'audio/webm';
