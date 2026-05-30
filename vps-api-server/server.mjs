@@ -6220,9 +6220,9 @@ app.post('/api/webhook/evolution', async (req, res) => {
     if (!lead) {
       const newId = crypto.randomUUID();
       await pool.query(
-        `INSERT INTO crm_leads (id, nome, telefone, origem, status, kanban_stage, awaiting_queue_selection)
-         VALUES ($1, $2, $3, 'whatsapp', 'novo', 'lead', true)`,
-        [newId, pushName, phone]
+        `INSERT INTO crm_leads (id, nome, telefone, origem, status, kanban_stage, awaiting_queue_selection, tenant_id)
+         VALUES ($1, $2, $3, 'whatsapp', 'novo', 'lead', true, $4)`,
+        [newId, pushName, phone, tenantId]
       );
       lead = { id: newId, name: pushName, phone, queue_id: null, awaiting_queue_selection: true, avatar_url: null };
       console.log(`🆕 New lead created: ${pushName} (${phone})`);
@@ -6266,6 +6266,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
           mediaUrl,
           fileName: mediaFileName,
           mimeType: mediaMimeType,
+          tenantId,
         });
         broadcastIncomingMessage({
           msgId,
