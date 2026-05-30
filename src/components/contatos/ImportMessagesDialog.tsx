@@ -31,7 +31,7 @@ import {
 import { cn } from "@/lib/utils";
 import { whatsappApi, getAccessToken, VPS_API_BASE } from "@/lib/vpsApi";
 import { useWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
-import { fetchInstances as fetchEvolutionInstances, fetchWhatsAppContacts, fetchWhatsAppMessages, fetchProfilePictureUrl } from "@/lib/evolutionApi";
+import { fetchInstances as fetchEvolutionInstances, fetchWhatsAppInstanceMessages, fetchProfilePictureUrl } from "@/lib/evolutionApi";
 import { supabase } from "@/integrations/supabase/client";
 
 interface InstanceResult {
@@ -62,6 +62,26 @@ type ParsedMessage = {
   type: string;
   file_name?: string;
   mime_type?: string;
+};
+
+const getMessageRemoteJid = (msg: any): string =>
+  String(msg?.key?.remoteJid || msg?.remoteJid || msg?.jid || "");
+
+const getMessagePhone = (msg: any): string => {
+  const directJid = getMessageRemoteJid(msg);
+  const altJid = String(msg?.key?.remoteJidAlt || msg?.remoteJidAlt || "");
+  const candidate = altJid.endsWith("@s.whatsapp.net") ? altJid : directJid;
+  return candidate.replace(/@.*$/, "").replace(/\D/g, "");
+};
+
+const isImportableConversationJid = (jid: string): boolean => {
+  if (!jid || !jid.includes("@")) return false;
+  if (jid.endsWith("@g.us") || jid.endsWith("@broadcast") || jid.endsWith("@newsletter") || jid.includes("status@")) return false;
+  if (jid.endsWith("@s.whatsapp.net")) {
+    const digits = jid.replace(/@.*$/, "").replace(/\D/g, "");
+    return digits.length >= 10 && digits.length <= 13 && digits !== "0";
+  }
+  return jid.endsWith("@lid");
 };
 
 const getMessageTimestamp = (msg: any): Date | null => {
@@ -148,6 +168,7 @@ interface ImportMessagesDialogProps {
 }
 
 const PERIOD_PRESETS = [
+  { label: "Todo histórico", days: 3650 },
   { label: "Últimos 7 dias", days: 7 },
   { label: "Últimos 15 dias", days: 15 },
   { label: "Últimos 30 dias", days: 30 },
@@ -159,7 +180,7 @@ export function ImportMessagesDialog({
   onOpenChange,
   onImported,
 }: ImportMessagesDialogProps) {
-  const [startDate, setStartDate] = useState<Date>(subDays(new Date(), 7));
+  const [startDate, setStartDate] = useState<Date>(subDays(new Date(), 3650));
   const [endDate, setEndDate] = useState<Date>(new Date());
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ImportResult | null>(null);
@@ -288,26 +309,65 @@ export function ImportMessagesDialog({
       setProgress({ message: `Buscando contatos de ${instanceName}...`, instanceName, instanceIndex: ii, totalInstances: selected.length });
 
       try {
-        const contacts = await fetchWhatsAppContacts(instanceName);
-        const uniqueContacts = Array.from(new Map(contacts.map((c) => [c.id, c])).values());
-        instResult.contacts = uniqueContacts.length;
+        let pageTotal: number | undefined;
+        const allMessages = await fetchWhatsAppInstanceMessages(instanceName, {
+          pageSize: 1000,
+          maxPages: 250,
+          onPage: ({ totalFetched, total, totalPages, page }) => {
+            pageTotal = total;
+            setProgress({
+              message: `Baixando histórico de ${instanceName}: ${totalFetched}${total ? `/${total}` : ""} mensagens...`,
+              instanceName,
+              instanceIndex: ii,
+              totalInstances: selected.length,
+              contactIndex: page - 1,
+              totalContacts: totalPages ?? Math.max(page, 1),
+              imported: totalImported,
+              skipped: totalSkipped,
+            });
+          },
+        });
 
-        for (let ci = 0; ci < uniqueContacts.length; ci++) {
+        const startMs = startDate.getTime();
+        const endMs = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59, 999).getTime();
+        const conversations = new Map<string, any[]>();
+
+        for (const msg of allMessages) {
+          const jid = getMessageRemoteJid(msg);
+          if (!isImportableConversationJid(jid)) continue;
+          const timestamp = getMessageTimestamp(msg);
+          if (!timestamp || timestamp.getTime() < startMs || timestamp.getTime() > endMs) continue;
+          if (!parseMessageContent(msg)) continue;
+          const key = msg?.key?.remoteJidAlt || jid;
+          const existing = conversations.get(key) || [];
+          existing.push(msg);
+          conversations.set(key, existing);
+        }
+
+        const conversationEntries = Array.from(conversations.entries());
+        instResult.contacts = conversationEntries.length;
+
+        console.log("[ImportMessages] instance scan", {
+          instanceName,
+          totalFromApi: pageTotal ?? allMessages.length,
+          fetched: allMessages.length,
+          conversations: conversationEntries.length,
+        });
+
+        for (let ci = 0; ci < conversationEntries.length; ci++) {
           if (abortRef.current?.signal.aborted) break;
-          const contact = uniqueContacts[ci];
-          const phone = contact.id.replace(/\D/g, "");
-          // Real phones: 10-13 digits. Reject LIDs / community IDs (14-15 digit identifiers).
+          const [conversationJid, rawMessages] = conversationEntries[ci];
+          const sampleMessage = rawMessages.find((m) => getMessagePhone(m)) || rawMessages[0];
+          const phone = getMessagePhone(sampleMessage);
           if (!phone || phone.length < 10 || phone.length > 13) continue;
-          const remoteJid = `${phone}@s.whatsapp.net`;
-          // Reject the generic "WhatsApp" pushName (returned for contacts without real name)
-          const rawName = contact.pushName?.trim();
-          const contactName = rawName && rawName.toLowerCase() !== "whatsapp" ? rawName : phone;
+          const rawName = rawMessages.find((m) => m?.pushName && String(m.pushName).trim().toLowerCase() !== "whatsapp")?.pushName?.trim();
+          const contactName = rawName || phone;
 
           setProgress({
             message: `Processando ${contactName}...`,
             contactName,
             contactIndex: ci,
-            totalContacts: uniqueContacts.length,
+            totalContacts: conversationEntries.length,
             instanceName,
             instanceIndex: ii,
             totalInstances: selected.length,
@@ -316,7 +376,7 @@ export function ImportMessagesDialog({
           });
 
           // Resolve profile picture (best-effort)
-          let avatarUrl: string | null = contact.profilePictureUrl || null;
+          let avatarUrl: string | null = null;
           if (!avatarUrl) {
             avatarUrl = await fetchProfilePictureUrl(instanceName, phone);
           }
@@ -328,7 +388,7 @@ export function ImportMessagesDialog({
             .eq("telefone", phone)
             .limit(1);
           if (!existingContact?.length) {
-            await supabase.from("contatos").insert({ tenant_id: tenantId, nome: contactName, telefone: phone, tipo: "pessoal" } as never).then(() => undefined);
+            await supabase.from("contatos").insert({ tenant_id: tenantId, nome: contactName, telefone: phone, tipo: "pessoal", avatar_url: avatarUrl } as never).then(() => undefined);
           }
 
           const suffix = phone.slice(-11);
@@ -362,28 +422,26 @@ export function ImportMessagesDialog({
           }
           if (!leadId) continue;
 
-          const rawMessages = await fetchWhatsAppMessages(instanceName, remoteJid);
-          const startMs = startDate.getTime();
-          const endMs = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59, 999).getTime();
-          const parsed = rawMessages.map((msg) => ({
+          const parsed = rawMessages.map((msg: any) => ({
             msg,
             timestamp: getMessageTimestamp(msg),
             parsed: parseMessageContent(msg),
           }));
           const inRange = parsed.filter(
-            (item) => item.timestamp && item.timestamp.getTime() >= startMs && item.timestamp.getTime() <= endMs && item.parsed,
+            (item: { timestamp: Date | null; parsed: ParsedMessage | null }) => item.timestamp && item.timestamp.getTime() >= startMs && item.timestamp.getTime() <= endMs && item.parsed,
           );
 
           console.log("[ImportMessages]", {
             contact: contactName,
             phone,
+            conversationJid,
             rawCount: rawMessages.length,
-            parsedWithTs: parsed.filter((p) => p.timestamp).length,
+            parsedWithTs: parsed.filter((p: { timestamp: Date | null }) => p.timestamp).length,
             inRange: inRange.length,
             sample: rawMessages[0],
           });
 
-          const rows = inRange.map((item) => {
+          const rows = inRange.map((item: { msg: any; timestamp: Date | null; parsed: ParsedMessage | null }) => {
               const msgId = item.msg?.key?.id || item.msg?.id || `evo-${instanceName}-${phone}-${item.timestamp!.getTime()}`;
               return {
                 id: msgId,
@@ -398,15 +456,15 @@ export function ImportMessagesDialog({
                 mime_type: item.parsed!.mime_type ?? null,
                 instance: instanceName,
                 phone,
-                metadata: { importedFrom: "whatsapp", contactName },
+                metadata: { importedFrom: "whatsapp", contactName, remoteJid: getMessageRemoteJid(item.msg), remoteJidAlt: item.msg?.key?.remoteJidAlt || null },
               };
             });
 
           if (rows.length === 0) continue;
-          const ids = rows.map((r) => r.id);
+          const ids = rows.map((r: { id: string }) => r.id);
           const { data: existingMessages } = await supabase.from("chat_messages").select("id").in("id", ids);
           const existingIds = new Set((existingMessages || []).map((r: any) => r.id));
-          const newRows = rows.filter((r) => !existingIds.has(r.id));
+          const newRows = rows.filter((r: { id: string }) => !existingIds.has(r.id));
           instResult.skipped += rows.length - newRows.length;
           totalSkipped += rows.length - newRows.length;
 
