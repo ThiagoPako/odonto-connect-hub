@@ -5999,7 +5999,7 @@ async function persistIncomingMessage({ msgId, leadId, content, msgType, phone, 
   }
 }
 
-function broadcastIncomingMessage({ msgId, phone, pushName, leadId, leadName, content, msgType, instance, queueId = null, queueName, queueColor, mediaUrl, fileName, mimeType, sender = 'lead' }) {
+function broadcastIncomingMessage({ msgId, phone, pushName, leadId, leadName, content, msgType, instance, queueId = null, queueName, queueColor, mediaUrl, fileName, mimeType, tenantId, sender = 'lead' }) {
   broadcastSSE('new_message', {
     id: msgId,
     phone,
@@ -6017,7 +6017,7 @@ function broadcastIncomingMessage({ msgId, phone, pushName, leadId, leadName, co
     fileName: fileName || null,
     mimeType: mimeType || null,
     sender: sender || 'lead',
-  });
+  }, tenantId);
 }
 
 app.post('/api/webhook/evolution', async (req, res) => {
