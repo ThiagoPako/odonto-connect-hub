@@ -5897,8 +5897,9 @@ app.post('/api/webhook/evolution', async (req, res) => {
     const body = req.body;
     const event = typeof body.event === 'string' ? body.event.toLowerCase().replace(/_/g, '.') : '';
     const instance = body.instance || body.instanceName;
+    const tenantId = await getTenantIdByInstance(instance);
     
-    console.log(`📩 Webhook event: ${event} from ${instance}`);
+    console.log(`📩 Webhook event: ${event} from ${instance} (tenant: ${tenantId})`);
 
     // ─── Presence updates (typing, recording, online) ───
     if (event === 'presence.update') {
