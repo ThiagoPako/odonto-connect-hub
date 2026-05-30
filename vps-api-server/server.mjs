@@ -11607,6 +11607,12 @@ if (process.env.NODE_ENV !== 'test') {
         updated_at TIMESTAMPTZ DEFAULT NOW()
       )`,
 
+      `CREATE TABLE IF NOT EXISTS whatsapp_instances (
+        instance_name TEXT PRIMARY KEY,
+        tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )`,
+
       // ─── 3. Apply RLS to all multi-tenant tables ───
       // Function to dynamically apply RLS to a table
       `CREATE OR REPLACE FUNCTION apply_tenant_rls(table_name TEXT) RETURNS VOID AS $$
