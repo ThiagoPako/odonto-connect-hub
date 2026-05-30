@@ -6363,6 +6363,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
           fileName: mediaFileName,
           mimeType: mediaMimeType,
           tenantId,
+          sender: senderRole,
         });
         broadcastIncomingMessage({
           msgId,
@@ -6507,6 +6508,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
       fileName: mediaFileName,
       mimeType: mediaMimeType,
       tenantId,
+      sender: senderRole,
     });
 
     broadcastIncomingMessage({
