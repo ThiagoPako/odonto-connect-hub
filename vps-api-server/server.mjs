@@ -2165,7 +2165,8 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
   try {
     await verifyUser(req);
     const { instance, number, text, quoted } = req.body;
-    const payload = { number, text };
+    const cleanNumber = normalizeWhatsappNumber(number);
+    const payload = { number: cleanNumber, text };
     if (quoted) payload.quoted = quoted;
     const result = await evolutionFetch(`/message/sendText/${instance}`, {
       method: 'POST',
