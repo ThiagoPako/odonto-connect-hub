@@ -507,7 +507,7 @@ export function ImportMessagesDialog({
       const directResult = await runDirectImport();
       setResult(directResult);
       setProgress(null);
-      if (directResult.imported > 0) onImported?.();
+      if (directResult.imported > 0 || directResult.skipped > 0) onImported?.();
     } catch (err: any) {
       if (err.name !== "AbortError") {
         setResult({

@@ -1105,6 +1105,133 @@ export const sbMessagesApi = {
   },
 };
 
+const normalizePhoneDigits = (value?: string | null): string => (value ?? '').replace(/\D/g, '');
+
+const isUsableLeadName = (value?: string | null): boolean => {
+  const v = (value ?? '').trim();
+  return !!v && !v.includes('@') && Number.isNaN(Number(v.replace(/\D/g, '')));
+};
+
+async function fetchChatMessagesForLeadList(tenant_id: string, maxRows = 20_000): Promise<Record<string, any>[]> {
+  const all: Record<string, any>[] = [];
+  const pageSize = 1000;
+
+  for (let from = 0; from < maxRows; from += pageSize) {
+    const { data, error } = await supabase
+      .from('chat_messages')
+      .select('lead_id, content, sender, type, timestamp, phone, instance, metadata')
+      .eq('tenant_id', tenant_id)
+      .order('timestamp', { ascending: false })
+      .range(from, from + pageSize - 1);
+
+    if (error) throw error;
+    const batch = (data ?? []) as Record<string, any>[];
+    all.push(...batch);
+    if (batch.length < pageSize) break;
+  }
+
+  return all;
+}
+
+export const sbQueueLeadsApi = {
+  list: async (): Promise<Result<{ queue: any[]; active: any[] }>> => {
+    try {
+      const tenant_id = await getTenantId();
+      const { data: userData } = await supabase.auth.getUser();
+      if (!tenant_id) return { data: { queue: [], active: [] }, error: null };
+
+      const [{ data: leads, error: leadsError }, { data: sessions, error: sessionsError }, { data: reads }] = await Promise.all([
+        supabase
+          .from('crm_leads')
+          .select('id,nome,telefone,avatar_url,queue_id,queue_name,origem,priority,kanban_stage,updated_at')
+          .eq('tenant_id', tenant_id),
+        supabase
+          .from('attendance_sessions')
+          .select('id,lead_id,status,attendant_id,attendant_name,started_waiting_at,assigned_at,queue_id,queue_name,created_at')
+          .eq('tenant_id', tenant_id)
+          .in('status', ['waiting', 'active'])
+          .order('created_at', { ascending: false }),
+        userData.user
+          ? supabase.from('chat_read_status').select('lead_id,last_read_at').eq('tenant_id', tenant_id).eq('user_id', userData.user.id)
+          : Promise.resolve({ data: [], error: null } as any),
+      ]);
+
+      if (leadsError) return { data: null, error: err(leadsError) };
+      if (sessionsError) return { data: null, error: err(sessionsError) };
+
+      const chatRows = await fetchChatMessagesForLeadList(tenant_id);
+      const leadMap = new Map<string, any>();
+      (leads ?? []).forEach((lead: any) => leadMap.set(String(lead.id), lead));
+
+      const sessionMap = new Map<string, any>();
+      (sessions ?? []).forEach((session: any) => {
+        const leadId = String(session.lead_id ?? '');
+        if (leadId && !sessionMap.has(leadId)) sessionMap.set(leadId, session);
+      });
+
+      const readMap = new Map<string, string>();
+      (reads ?? []).forEach((read: any) => readMap.set(String(read.lead_id), String(read.last_read_at)));
+
+      const latestByLead = new Map<string, any>();
+      const unreadByLead = new Map<string, number>();
+      for (const msg of chatRows) {
+        const leadId = String(msg.lead_id ?? '');
+        if (!leadId) continue;
+        if (!latestByLead.has(leadId)) latestByLead.set(leadId, msg);
+
+        const isIncoming = !['attendant', 'agent', 'me'].includes(String(msg.sender ?? ''));
+        const lastRead = readMap.get(leadId);
+        if (isIncoming && (!lastRead || new Date(msg.timestamp) > new Date(lastRead))) {
+          unreadByLead.set(leadId, (unreadByLead.get(leadId) ?? 0) + 1);
+        }
+      }
+
+      const leadIds = new Set<string>([...latestByLead.keys(), ...sessionMap.keys()]);
+      const queue: any[] = [];
+      const active: any[] = [];
+
+      for (const leadId of leadIds) {
+        const crmLead = leadMap.get(leadId);
+        const latest = latestByLead.get(leadId);
+        const session = sessionMap.get(leadId);
+        const meta = (latest?.metadata ?? {}) as Record<string, any>;
+        const phone = crmLead?.telefone || latest?.phone || normalizePhoneDigits(meta.remoteJidAlt || meta.remoteJid || '');
+        const fallbackName = meta.contactName || meta.pushName || normalizePhoneDigits(phone) || 'Sem nome';
+        const name = isUsableLeadName(crmLead?.nome) ? crmLead.nome : fallbackName;
+        const lastMessageTime = latest?.timestamp || session?.assigned_at || session?.started_waiting_at || session?.created_at || crmLead?.updated_at || new Date().toISOString();
+
+        const item = {
+          id: leadId,
+          name,
+          phone,
+          avatarUrl: crmLead?.avatar_url ?? null,
+          queueId: session?.queue_id || crmLead?.queue_id || undefined,
+          queueName: session?.queue_name || crmLead?.queue_name || undefined,
+          origem: crmLead?.origem,
+          priority: crmLead?.priority || false,
+          lastMessage: latest?.content || '',
+          lastMessageTime,
+          unreadCount: unreadByLead.get(leadId) ?? 0,
+          sessionStatus: session?.status || 'waiting',
+          attendantId: session?.attendant_id || undefined,
+          attendantName: session?.attendant_name || undefined,
+        };
+
+        if (session?.status === 'active' && session?.attendant_id) active.push(item);
+        else queue.push(item);
+      }
+
+      const byRecent = (a: any, b: any) => new Date(b.lastMessageTime || 0).getTime() - new Date(a.lastMessageTime || 0).getTime();
+      queue.sort((a, b) => (a.priority && !b.priority ? -1 : !a.priority && b.priority ? 1 : byRecent(a, b)));
+      active.sort(byRecent);
+
+      return { data: { queue, active }, error: null };
+    } catch (e) {
+      return { data: null, error: err(e) };
+    }
+  },
+};
+
 // ─── Attendance Queues ──────────────────────────────────────
 
 export const sbQueuesApi = {
@@ -1177,6 +1304,8 @@ export const sbSessionsApi = {
   assign: async (body: { leadId: string }): Promise<Result<{ success: boolean; id: string; waitTime: number }>> => {
     const { data: userData } = await supabase.auth.getUser();
     if (!userData.user) return { data: null, error: 'Não autenticado' };
+    const tenant_id = await getTenantId();
+    if (!tenant_id) return { data: null, error: 'Sem tenant ativo' };
     const { data: profile } = await supabase
       .from('profiles').select('nome').eq('id', userData.user.id).maybeSingle();
     // Find latest waiting session for this lead
@@ -1189,7 +1318,34 @@ export const sbSessionsApi = {
       .limit(1)
       .maybeSingle();
     if (findErr) return { data: null, error: err(findErr) };
-    if (!session) return { data: null, error: 'Sessão não encontrada' };
+    if (!session) {
+      const { data: lead } = await supabase
+        .from('crm_leads')
+        .select('nome,telefone,queue_id,queue_name')
+        .eq('id', body.leadId)
+        .maybeSingle();
+      const now = new Date().toISOString();
+      const { data: created, error: createErr } = await supabase
+        .from('attendance_sessions')
+        .insert({
+          tenant_id,
+          lead_id: body.leadId,
+          lead_name: (lead as any)?.nome ?? null,
+          lead_phone: (lead as any)?.telefone ?? null,
+          queue_id: (lead as any)?.queue_id ?? null,
+          queue_name: (lead as any)?.queue_name ?? null,
+          attendant_id: userData.user.id,
+          attendant_name: profile?.nome ?? null,
+          assigned_at: now,
+          started_waiting_at: now,
+          wait_time_seconds: 0,
+          status: 'active',
+        } as never)
+        .select('id')
+        .single();
+      if (createErr) return { data: null, error: err(createErr) };
+      return { data: { success: true, id: (created as any).id, waitTime: 0 }, error: null };
+    }
     const now = new Date();
     const waitTime = session.started_waiting_at
       ? Math.floor((now.getTime() - new Date(session.started_waiting_at).getTime()) / 1000)
