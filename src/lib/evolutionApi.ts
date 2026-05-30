@@ -443,4 +443,60 @@ export async function fetchWhatsAppMessages(instanceName: string, remoteJid: str
   return all;
 }
 
+export async function fetchWhatsAppInstanceMessages(
+  instanceName: string,
+  options?: {
+    pageSize?: number;
+    maxPages?: number;
+    onPage?: (info: { page: number; pageSize: number; batchCount: number; totalFetched: number; total?: number; totalPages?: number }) => void;
+  }
+): Promise<any[]> {
+  const all: any[] = [];
+  let page = 1;
+  const pageSize = options?.pageSize ?? 1000;
+  const maxPages = options?.maxPages ?? 250;
+
+  while (page <= maxPages) {
+    let raw: any;
+    try {
+      raw = await apiCall<any>(`/chat/findMessages/${instanceName}`, {
+        method: "POST",
+        body: JSON.stringify({ page, offset: pageSize }),
+      });
+    } catch (err) {
+      console.warn("[fetchWhatsAppInstanceMessages] error", { instanceName, page, err });
+      break;
+    }
+
+    let batch: any[] = [];
+    if (Array.isArray(raw)) batch = raw;
+    else if (Array.isArray(raw?.messages?.records)) batch = raw.messages.records;
+    else if (Array.isArray(raw?.messages)) batch = raw.messages;
+    else if (Array.isArray(raw?.data?.records)) batch = raw.data.records;
+    else if (Array.isArray(raw?.data)) batch = raw.data;
+    else if (Array.isArray(raw?.result)) batch = raw.result;
+    else if (Array.isArray(raw?.records)) batch = raw.records;
+
+    if (batch.length === 0) break;
+    all.push(...batch);
+
+    const totalPages = raw?.messages?.pages ?? raw?.pages ?? null;
+    const total = raw?.messages?.total ?? raw?.total ?? null;
+    options?.onPage?.({
+      page,
+      pageSize,
+      batchCount: batch.length,
+      totalFetched: all.length,
+      total: typeof total === "number" ? total : undefined,
+      totalPages: typeof totalPages === "number" ? totalPages : undefined,
+    });
+
+    if (totalPages && page >= totalPages) break;
+    if (batch.length < pageSize) break;
+    page++;
+  }
+
+  return all;
+}
+
 export { type ConnectionStatus, type EvolutionInstance, type InstanceState, type QrCodeResponse };
