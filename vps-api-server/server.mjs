@@ -2315,7 +2315,7 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '6
       return res.status(400).json({ error: 'Arquivo não enviado' });
     }
 
-    const cleanNumber = String(number).replace(/\D/g, '');
+    const cleanNumber = normalizeWhatsappNumber(number);
     const resolvedMimeType = String(mimeType || req.headers['content-type'] || 'application/octet-stream');
     jobId = randomUUID();
 
