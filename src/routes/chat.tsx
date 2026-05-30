@@ -728,7 +728,12 @@ function ChatPage() {
     }));
     setReplyingTo(null);
 
-    const connected = connectedInstances[0];
+    // Resolve which instance to use:
+    // 1. If the lead has an instance assigned, use it.
+    // 2. Otherwise use the first available connected instance.
+    const preferredInstanceName = selectedLead.instance;
+    const connected = connectedInstances.find(i => i.instanceName === preferredInstanceName) || connectedInstances[0];
+
     if (!connected) {
       setMessages((prev) => ({
         ...prev,
