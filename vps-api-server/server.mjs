@@ -6410,6 +6410,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
           mediaUrl,
           fileName: mediaFileName,
           mimeType: mediaMimeType,
+          tenantId,
           sender: senderRole,
         });
         return res.json({ processed: true, offHours: true, leadId: lead.id });
@@ -6458,7 +6459,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
           queueName: selectedQueue.name,
           queueColor: selectedQueue.color,
           timestamp: new Date().toISOString(),
-        });
+        }, tenantId);
 
         // Also broadcast the message itself
         broadcastSSE('new_message', {
@@ -6507,6 +6508,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
           mediaUrl,
           fileName: mediaFileName,
           mimeType: mediaMimeType,
+          tenantId,
           sender: senderRole,
         });
         // Invalid selection — resend menu
@@ -6654,6 +6656,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
       mediaUrl,
       fileName: mediaFileName,
       mimeType: mediaMimeType,
+      tenantId,
       sender: senderRole,
     });
 
