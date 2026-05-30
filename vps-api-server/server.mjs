@@ -1730,12 +1730,19 @@ async function evolutionFetch(path, options = {}) {
 }
 
 function normalizeWhatsappNumber(value) {
-  return String(value || '')
+  const digits = String(value || '')
     .replace('@s.whatsapp.net', '')
     .replace('@c.us', '')
     .replace('@lid', '')
     .replace(/:\d+$/, '')
     .replace(/\D/g, '');
+  
+  if (!digits) return '';
+  // Prepende 55 (Brasil) se o número tiver 10 ou 11 dígitos e não começar com 55
+  if (!digits.startsWith('55') && (digits.length === 10 || digits.length === 11)) {
+    return `55${digits}`;
+  }
+  return digits;
 }
 
 const presenceStateCache = new Map();
