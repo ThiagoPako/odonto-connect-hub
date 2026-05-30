@@ -5780,31 +5780,53 @@ app.delete('/api/queues/:id', async (req, res) => {
 // SSE — Real-time event stream for frontend
 // ═══════════════════════════════════════════════════════════════
 
-const sseClients = new Set();
+const sseClients = new Map();
 
-function broadcastSSE(event, data) {
+function broadcastSSE(event, data, tenantId = null) {
   const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-  for (const client of sseClients) {
+  for (const [client, info] of sseClients.entries()) {
+    // If tenantId is provided, only send to clients belonging to that tenant
+    if (tenantId && info.tenantId !== tenantId) continue;
     client.write(payload);
   }
 }
 
-app.get('/api/events', (req, res) => {
-  // Optional: verify JWT from query param
-  // const token = req.query.token;
-  // try { verifyToken(token); } catch { return res.status(401).end(); }
+app.get('/api/events', async (req, res) => {
+  let tenantId = null;
+  const token = req.query.token;
 
+  if (token) {
+    try {
+      // 1) Try legacy token
+      let decoded = null;
+      try {
+        decoded = verifyToken(token);
+        tenantId = decoded?.tenant_id;
+      } catch {
+        // 2) Fallback to Supabase
+        if (SUPABASE_BRIDGE_ENABLED) {
+          const sbUser = await resolveSupabaseUser(token);
+          tenantId = sbUser.tenant_id;
+        }
+      }
+    } catch (err) {
+      console.warn('📡 SSE connection failed: invalid token');
+    }
+  }
+
+  // Set headers for SSE
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
     'Connection': 'keep-alive',
     'Access-Control-Allow-Origin': '*',
+    'X-Accel-Buffering': 'no', // Disable Nginx buffering for SSE
   });
 
-  res.write(`event: connected\ndata: ${JSON.stringify({ ts: Date.now() })}\n\n`);
+  res.write(`event: connected\ndata: ${JSON.stringify({ ts: Date.now(), tenantId })}\n\n`);
 
-  sseClients.add(res);
-  console.log(`📡 SSE client connected (total: ${sseClients.size})`);
+  sseClients.set(res, { tenantId });
+  console.log(`📡 SSE client connected (tenant: ${tenantId || 'anonymous'}, total: ${sseClients.size})`);
 
   // Keepalive ping every 25s to prevent proxy/browser timeouts
   const keepalive = setInterval(() => {
