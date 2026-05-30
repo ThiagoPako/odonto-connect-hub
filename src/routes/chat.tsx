@@ -195,11 +195,13 @@ function ChatPage() {
       processedMsgIds.current = new Set(entries.slice(entries.length - 2500));
     }
 
+    const isFromMe = msg.sender === "attendant" || msg.sender === "agent" || msg.sender === "me";
+
     const chatMsg: ChatMessage = {
       id: msg.id,
       leadId: msg.leadId || msg.phone,
       content: msg.content,
-      sender: "lead",
+      sender: isFromMe ? "attendant" : "lead",
       type: (msg.type as MessageType) || "text",
       timestamp: new Date(msg.timestamp),
       status: "delivered",
@@ -217,15 +219,15 @@ function ChatPage() {
 
     const currentSelected = selectedLeadRef.current;
     const isViewing = existingLead && selectedLeadRef.current?.id === existingLead.id;
-    const isFromMe = msg.sender === "attendant";
 
     if (isFromMe) {
       // If message is from me, add it to history if it's not already there
       setMessages((prev) => {
-        const existing = prev[existingLead?.id || msg.leadId || ''] || [];
+        const leadId = existingLead?.id || msg.leadId || '';
+        if (!leadId) return prev;
+        const existing = prev[leadId] || [];
         if (existing.some((m) => m.id === msg.id)) return prev;
-        const outMsg: ChatMessage = { ...chatMsg, sender: "attendant" };
-        return { ...prev, [(existingLead?.id || msg.leadId || '')]: [...existing, outMsg] };
+        return { ...prev, [leadId]: [...existing, chatMsg] };
       });
       return;
     }
