@@ -172,6 +172,7 @@ async function getTenantIdByInstance(instanceName) {
     return instanceToTenantCache.get(instanceName);
   }
 
+  // 1. Try local DB
   try {
     const { rows } = await pool.query(
       'SELECT tenant_id FROM whatsapp_instances WHERE instance_name = $1 LIMIT 1',
@@ -182,8 +183,36 @@ async function getTenantIdByInstance(instanceName) {
       return rows[0].tenant_id;
     }
   } catch (err) {
-    console.error(`Error resolving tenant for instance ${instanceName}:`, err.message);
+    if (err.code !== '42P01') { // 42P01 = table does not exist
+      console.error(`Error resolving tenant for instance ${instanceName}:`, err.message);
+    }
   }
+
+  // 2. Fallback to Supabase
+  if (SUPABASE_BRIDGE_ENABLED) {
+    try {
+      const restAuthKey = SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
+      const res = await fetch(
+        `${SUPABASE_URL}/rest/v1/whatsapp_instances?instance_name=eq.${instanceName}&select=tenant_id`,
+        {
+          headers: {
+            apikey: restAuthKey,
+            Authorization: `Bearer ${restAuthKey}`,
+          },
+        }
+      );
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.[0]?.tenant_id) {
+          instanceToTenantCache.set(instanceName, data[0].tenant_id);
+          return data[0].tenant_id;
+        }
+      }
+    } catch (err) {
+      console.error(`Supabase fallback failed for ${instanceName}:`, err.message);
+    }
+  }
+
   return null;
 }
 
