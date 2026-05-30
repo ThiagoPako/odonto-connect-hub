@@ -206,6 +206,7 @@ function ChatPage() {
       fileUrl: msg.mediaUrl || undefined,
       fileName: msg.fileName || undefined,
       mimeType: msg.mimeType || undefined,
+      instance: msg.instance || undefined,
     };
 
     // Use refs to avoid stale closure
@@ -236,6 +237,7 @@ function ChatPage() {
                 lastMessage: msg.content && !["🖼️ Imagem","🎬 Vídeo","📎"].some(p => msg.content.startsWith(p)) ? msg.content : ({ image: "📷 Foto", video: "🎬 Vídeo", audio: "🎤 Áudio", document: "📄 Documento", sticker: "🏷️ Sticker" } as Record<string, string>)[msg.type] || msg.content || "",
                 lastMessageTime: new Date(msg.timestamp),
                 unreadCount: currentSelected?.id === existingLead.id ? lead.unreadCount : lead.unreadCount + 1,
+                instance: msg.instance || lead.instance,
               }
             : lead;
 
@@ -256,6 +258,7 @@ function ChatPage() {
           queueId: incomingMsg.queueId,
           queueName: incomingMsg.queueName,
           queueColor: incomingMsg.queueColor,
+          instance: msg.instance,
         };
         setQueue((prev) => [newLead, ...prev]);
         setMessages((prev) => ({
