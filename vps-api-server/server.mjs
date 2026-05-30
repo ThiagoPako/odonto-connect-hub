@@ -6498,7 +6498,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
       leadId: lead.id,
       content: resolvedContent,
       msgType,
-      phone,
+      phone: resolvedPhone,
       instance,
       pushName,
       remoteJid,
@@ -6506,11 +6506,12 @@ app.post('/api/webhook/evolution', async (req, res) => {
       mediaUrl,
       fileName: mediaFileName,
       mimeType: mediaMimeType,
+      tenantId,
     });
 
     broadcastIncomingMessage({
       msgId,
-      phone,
+      phone: resolvedPhone,
       pushName,
       leadId: lead.id,
       leadName: lead.name,
