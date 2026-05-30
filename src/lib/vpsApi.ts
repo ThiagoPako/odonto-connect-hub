@@ -789,9 +789,7 @@ export { sbMediaApi as mediaApi } from './sbAdapters';
 
 // ─── Queue Leads ────────────────────────────────────────────
 
-export const queueLeadsApi = {
-  list: () => vpsApiFetch<{ queue: any[]; active: any[] }>('/queue/leads', { background: true }),
-};
+export { sbQueueLeadsApi as queueLeadsApi } from './sbAdapters';
 
 // ─── Automations ────────────────────────────────────────────
 
