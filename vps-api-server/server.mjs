@@ -347,7 +347,7 @@ async function registerWebhook(instanceName) {
     if (result.ok) {
       console.log(`✅ Webhook registered for ${instanceName} → ${WEBHOOK_URL}`);
     } else {
-      console.error(`⚠️ Webhook registration failed for ${instanceName}:`, result.data);
+      console.error(`⚠️ Webhook registration failed for ${instanceName} (${WEBHOOK_URL}):`, result.data);
     }
     return result;
   } catch (err) {
