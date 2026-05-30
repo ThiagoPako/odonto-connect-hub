@@ -1898,19 +1898,41 @@ app.get('/api/whatsapp/instances', async (req, res) => {
 // Create instance (+ auto-register webhook)
 app.post('/api/whatsapp/instances', async (req, res) => {
   try {
-    await verifyAdmin(req);
+    const { user } = await verifyAdmin(req);
     const { instanceName } = req.body;
+    
+    // Isolation: prepend tenant prefix if not present
+    let finalName = instanceName;
+    if (user.tenant_id) {
+      const prefix = user.tenant_id.substring(0, 8);
+      if (!finalName.startsWith(prefix)) {
+        finalName = `${prefix}-${finalName}`;
+      }
+    }
+
     const result = await evolutionFetch('/instance/create', {
       method: 'POST',
       body: JSON.stringify({
-        instanceName,
+        instanceName: finalName,
         integration: 'WHATSAPP-BAILEYS',
         qrcode: true,
       }),
     });
 
-    // Auto-register webhook so all messages go to queue
-    await registerWebhook(instanceName);
+    if (result.ok && user.tenant_id) {
+      // Save mapping locally for webhook resolution
+      await pool.query(
+        `INSERT INTO whatsapp_instances (instance_name, tenant_id) 
+         VALUES ($1, $2) 
+         ON CONFLICT (instance_name) DO UPDATE SET tenant_id = $2`,
+        [finalName, user.tenant_id]
+      ).catch(e => console.error('Failed to save instance mapping locally:', e.message));
+      
+      instanceToTenantCache.set(finalName, user.tenant_id);
+    }
+
+    // Auto-register webhook
+    await registerWebhook(finalName);
 
     res.json(result.data);
   } catch (error) {
