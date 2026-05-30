@@ -6077,8 +6077,8 @@ app.post('/api/webhook/evolution', async (req, res) => {
             // Try to find the phone from the message in DB
             try {
               const { rows: msgRows } = await pool.query(
-                `SELECT phone FROM chat_messages WHERE id = $1 LIMIT 1`,
-                [primaryMessageId]
+                `SELECT phone FROM chat_messages WHERE id = $1 AND tenant_id = $2 LIMIT 1`,
+                [primaryMessageId, tenantId]
               );
               if (msgRows[0]?.phone) {
                 registerLidMapping(lidNum, msgRows[0].phone);
@@ -6116,8 +6116,8 @@ app.post('/api/webhook/evolution', async (req, res) => {
 
           try {
             await pool.query(
-              `UPDATE chat_messages SET status = $1 WHERE id = $2 OR (metadata::text LIKE '%' || $2 || '%')`,
-              [newStatus, lookupId]
+              `UPDATE chat_messages SET status = $1 WHERE tenant_id = $3 AND (id = $2 OR (metadata::text LIKE '%' || $2 || '%'))`,
+              [newStatus, lookupId, tenantId]
             );
           } catch (ackErr) {
             console.error('ACK DB update error:', ackErr.message);
