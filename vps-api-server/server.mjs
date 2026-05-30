@@ -5856,17 +5856,17 @@ async function matchQueue(content) {
   ) || null;
 }
 
-async function persistIncomingMessage({ msgId, leadId, content, msgType, phone, instance, pushName, remoteJid, rawType, mediaUrl, fileName, mimeType, tenantId }) {
+async function persistIncomingMessage({ msgId, leadId, content, msgType, phone, instance, pushName, remoteJid, rawType, mediaUrl, fileName, mimeType, tenantId, sender = 'lead' }) {
   try {
     await pool.query(
       `INSERT INTO chat_messages (id, lead_id, content, sender, type, status, timestamp, phone, instance, media_url, file_name, mime_type, metadata, tenant_id)
-       VALUES ($1,$2,$3,'lead',$4,'delivered',NOW(),$5,$6,$7,$8,$9,$10,$11)
+       VALUES ($1,$2,$3,$12,$4,'delivered',NOW(),$5,$6,$7,$8,$9,$10,$11)
        ON CONFLICT (id) DO NOTHING`,
       [msgId, leadId, content, msgType, phone, instance, mediaUrl || null, fileName || null, mimeType || null, JSON.stringify({
         pushName,
         remoteJid,
         rawType,
-      }), tenantId]
+      }), tenantId, sender]
     );
   } catch (dbErr) {
     console.error('DB insert error (incoming msg):', dbErr.message);
