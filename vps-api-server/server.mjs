@@ -1954,6 +1954,18 @@ app.post('/api/whatsapp/instances', async (req, res) => {
       }),
     });
 
+    if (!result.ok) {
+      console.error(`❌ Evolution API instance creation failed:`, result.data);
+      // Special case: 403 Forbidden on /instance/create usually means API Key is wrong
+      if (result.status === 403) {
+         return res.status(403).json({ error: "Evolution API Unauthorized (403). Verifique a EVOLUTION_API_KEY no .env do VPS." });
+      }
+      return res.status(result.status || 500).json({ 
+        error: result.data?.message || "Erro na Evolution API ao criar instância",
+        details: result.data 
+      });
+    }
+
     if (result.ok && user.tenant_id) {
       // Save mapping locally for webhook resolution
       await pool.query(
@@ -1971,7 +1983,8 @@ app.post('/api/whatsapp/instances', async (req, res) => {
 
     res.json(result.data);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('Create instance error:', error);
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
   }
 });
 
