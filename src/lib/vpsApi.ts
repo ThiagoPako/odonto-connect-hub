@@ -57,6 +57,9 @@ function resetAuthFailureCount() {
 /** Retorna o access_token Supabase da sessão atual (ou null). */
 export async function getAccessToken(forceRefresh = false): Promise<string | null> {
   try {
+    const legacyToken = getToken();
+    if (legacyToken) return legacyToken;
+
     if (forceRefresh) {
       const { data: refreshed } = await supabase.auth.refreshSession();
       if (refreshed.session?.access_token) return refreshed.session.access_token;
@@ -103,6 +106,9 @@ export async function getAuthHeaders(forceRefresh = false): Promise<Record<strin
 export function getToken(): string | null {
   if (typeof window === 'undefined') return null;
   try {
+    const legacyToken = localStorage.getItem(TOKEN_KEY);
+    if (legacyToken) return legacyToken;
+
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
       if (key && key.startsWith('sb-') && key.endsWith('-auth-token')) {
@@ -116,8 +122,8 @@ export function getToken(): string | null {
   return null;
 }
 
-export function setToken(_token: string): void {
-  // no-op: sessão é gerenciada pela Supabase
+export function setToken(token: string): void {
+  if (typeof window !== 'undefined') localStorage.setItem(TOKEN_KEY, token);
 }
 
 export function clearToken(): void {
