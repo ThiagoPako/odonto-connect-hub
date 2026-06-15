@@ -2,8 +2,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Button } from "@/components/ui/button";
 import { RefreshCw, Loader2, CheckCircle2, WifiOff, Wifi, QrCode, Download, Users } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
-import { connectInstance, getInstanceState, fetchWhatsAppContacts } from "@/lib/evolutionApi";
-import { contatosApi } from "@/lib/vpsApi";
+import { fetchWhatsAppContacts } from "@/lib/evolutionApi";
+import { contatosApi, whatsappApi } from "@/lib/vpsApi";
 import { playNotificationSound } from "@/lib/notificationSound";
 import { toast } from "sonner";
 
@@ -17,6 +17,18 @@ const phaseConfig: Record<ConnectionPhase, { label: string; color: string }> = {
   connected: { label: "Conectado com sucesso!", color: "text-success" },
   failed: { label: "Falha na conexão", color: "text-destructive" },
 };
+
+function extractQrBase64(data: unknown): string {
+  const raw = data as any;
+  const qr = raw?.qrcode ?? raw?.qrCode ?? raw;
+  return qr?.base64 || raw?.base64 || "";
+}
+
+function extractConnectionState(data: unknown): "open" | "close" | "connecting" {
+  const raw = data as any;
+  const value = raw?.instance?.state ?? raw?.state ?? raw?.connectionStatus ?? raw?.status;
+  return value === "open" || value === "connecting" ? value : "close";
+}
 
 interface QrCodeDialogProps {
   open: boolean;
@@ -40,9 +52,12 @@ export function QrCodeDialog({ open, onOpenChange, instanceName, onConnected }: 
     }
 
     try {
-      const res = await connectInstance(instanceName);
-      if (res.base64) {
-        setQrBase64(res.base64);
+      const { data, error } = await whatsappApi.connect(instanceName);
+      if (error) throw new Error(error);
+
+      const base64 = extractQrBase64(data);
+      if (base64) {
+        setQrBase64(base64);
         setPhase("qr_ready");
         return true;
       }
@@ -114,10 +129,12 @@ export function QrCodeDialog({ open, onOpenChange, instanceName, onConnected }: 
       if (cancelled) return;
 
       try {
-        const state = await getInstanceState(instanceName);
+        const { data, error } = await whatsappApi.state(instanceName);
+        if (error) throw new Error(error);
+        const state = extractConnectionState(data);
         if (cancelled) return;
 
-        if (state.state === "open") {
+        if (state === "open") {
           setPhase("connected");
           playNotificationSound();
           toast.success(`WhatsApp "${instanceName}" conectado!`);
@@ -128,7 +145,7 @@ export function QrCodeDialog({ open, onOpenChange, instanceName, onConnected }: 
           return;
         }
 
-        if (state.state === "connecting" && phase !== "qr_ready") {
+        if (state === "connecting" && phase !== "qr_ready") {
           setPhase("connecting");
         }
 
