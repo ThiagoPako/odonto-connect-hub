@@ -55,18 +55,25 @@ function resetAuthFailureCount() {
 // ─── Auth helpers ───────────────────────────────────────────
 
 /** Retorna o access_token Supabase da sessão atual (ou null). */
-export async function getAccessToken(): Promise<string | null> {
+export async function getAccessToken(forceRefresh = false): Promise<string | null> {
   try {
+    if (forceRefresh) {
+      const { data: refreshed } = await supabase.auth.refreshSession();
+      if (refreshed.session?.access_token) return refreshed.session.access_token;
+    }
+
     const { data } = await supabase.auth.getSession();
-    return data.session?.access_token ?? null;
+    if (data.session?.access_token) return data.session.access_token;
+
+    return getToken();
   } catch {
-    return null;
+    return getToken();
   }
 }
 
-export async function getAuthHeaders(): Promise<Record<string, string>> {
+export async function getAuthHeaders(forceRefresh = false): Promise<Record<string, string>> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  const token = await getAccessToken();
+  const token = await getAccessToken(forceRefresh);
   if (token) headers['Authorization'] = `Bearer ${token}`;
   
   // Try to get tenant_id from local storage cache or fetch it
@@ -130,18 +137,24 @@ export async function vpsApiFetch<T = unknown>(
 ): Promise<{ data: T | null; error: string | null }> {
   try {
     const method = options?.method || 'GET';
-    const fetchOptions: RequestInit = { method, headers: await getAuthHeaders() };
 
     let url = `${VPS_API_BASE}${path}`;
 
     if (method === 'GET' && options?.params) {
       const searchParams = new URLSearchParams(options.params);
       url += `?${searchParams.toString()}`;
-    } else if (options?.body) {
-      fetchOptions.body = JSON.stringify(options.body);
     }
 
-    const response = await fetch(url, fetchOptions);
+    const buildFetchOptions = async (forceRefresh = false): Promise<RequestInit> => ({
+      method,
+      headers: await getAuthHeaders(forceRefresh),
+      ...(method !== 'GET' && options?.body ? { body: JSON.stringify(options.body) } : {}),
+    });
+
+    let response = await fetch(url, await buildFetchOptions(false));
+    if (response.status === 401) {
+      response = await fetch(url, await buildFetchOptions(true));
+    }
 
     const contentType = response.headers.get('content-type') || '';
     if (!contentType.includes('application/json')) {
@@ -154,7 +167,7 @@ export async function vpsApiFetch<T = unknown>(
     if (!response.ok) {
       if (isAuthError(response.status, data?.error)) {
         handleAuthFailure(!!options?.background);
-        return { data: null, error: 'Sessão expirada. Faça login novamente.' };
+        return { data: null, error: data?.error || 'Sessão expirada. Faça login novamente.' };
       }
 
       return { data: null, error: data.error || `HTTP ${response.status}` };
