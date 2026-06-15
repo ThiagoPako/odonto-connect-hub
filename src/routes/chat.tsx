@@ -17,6 +17,7 @@ import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { useRealtimeChat, type IncomingMessage } from "@/hooks/useRealtimeChat";
 import { whatsappApi, transferApi, sessionsApi, queuesApi, messagesApi, queueLeadsApi, mediaApi, crmApi, type ChatMessageApi } from "@/lib/vpsApi";
+import { sendTextMessage as evolutionSendText } from "@/lib/evolutionApi";
 import { useWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
 import { playNotificationSound, playRecoverySound } from "@/lib/notificationSound";
 import { showBrowserNotification, requestNotificationPermission } from "@/lib/browserNotification";
