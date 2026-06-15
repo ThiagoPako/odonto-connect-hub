@@ -17,6 +17,7 @@ import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { useRealtimeChat, type IncomingMessage } from "@/hooks/useRealtimeChat";
 import { whatsappApi, transferApi, sessionsApi, queuesApi, messagesApi, queueLeadsApi, mediaApi, crmApi, type ChatMessageApi } from "@/lib/vpsApi";
+import { sendTextMessage as evolutionSendText } from "@/lib/evolutionApi";
 import { useWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
 import { playNotificationSound, playRecoverySound } from "@/lib/notificationSound";
 import { showBrowserNotification, requestNotificationPermission } from "@/lib/browserNotification";
@@ -791,7 +792,18 @@ function ChatPage() {
         } else {
           result = await whatsappApi.sendText(connected.instanceName, selectedLead.phone, content);
         }
-        evolutionMsgId = (result?.data as any)?.key?.id || null;
+        // Fallback direto na Evolution API se o proxy VPS falhar (401/erro)
+        if (result?.error || !(result?.data as any)?.key?.id) {
+          console.warn("[CHAT] VPS sendText falhou, tentando Evolution direto:", result?.error);
+          try {
+            const direct = await evolutionSendText(connected.instanceName, selectedLead.phone, content);
+            evolutionMsgId = direct?.key?.id || null;
+          } catch (err) {
+            throw new Error(result?.error || (err instanceof Error ? err.message : "Falha ao enviar mensagem"));
+          }
+        } else {
+          evolutionMsgId = (result.data as any)?.key?.id || null;
+        }
       } else if (type === "image" || type === "video" || type === "document" || type === "audio") {
         const mediaFile = (extra as any)?._mediaFile as File | undefined;
         const mediaBase64 = (extra as any)?._mediaBase64 as string | undefined;
