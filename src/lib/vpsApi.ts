@@ -57,7 +57,7 @@ function resetAuthFailureCount() {
 /** Retorna o access_token Supabase da sessão atual (ou null). */
 export async function getAccessToken(forceRefresh = false): Promise<string | null> {
   try {
-    const legacyToken = getToken();
+    const legacyToken = !forceRefresh ? getToken() : null;
     if (legacyToken) return legacyToken;
 
     if (forceRefresh) {
