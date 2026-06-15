@@ -5,7 +5,6 @@ import { Label } from "@/components/ui/label";
 import { Loader2 } from "lucide-react";
 import { useState } from "react";
 import { whatsappApi } from "@/lib/vpsApi";
-import { supabase } from "@/integrations/supabase/client";
 
 interface CreateInstanceDialogProps {
   open: boolean;
@@ -22,7 +21,7 @@ export function CreateInstanceDialog({ open, onOpenChange, onCreated }: CreateIn
   const handleCreate = async () => {
     if (!name.trim()) return;
 
-    let sanitized = name.trim().toLowerCase().replace(/[^a-z0-9-_]/g, "-");
+    const sanitized = name.trim().toLowerCase().replace(/[^a-z0-9-_]/g, "-");
     setLoading(true);
     setError(null);
 
@@ -30,7 +29,14 @@ export function CreateInstanceDialog({ open, onOpenChange, onCreated }: CreateIn
       // Create via VPS API so it manages the prefix and registers webhooks
       const { data, error: apiError } = await whatsappApi.create(sanitized);
       
-      if (apiError) throw new Error(apiError);
+      if (apiError) {
+        const authMessage = apiError.includes("Admin access required")
+          ? "Seu usuário está logado, mas não tem permissão de administrador para adicionar números WhatsApp."
+          : apiError.includes("Unauthorized") || apiError.includes("Sessão expirada")
+            ? "Sua sessão não foi aceita pela VPS. Saia do sistema, entre novamente e confirme que o deploy da VPS foi reiniciado."
+            : apiError;
+        throw new Error(authMessage);
+      }
       
       // The VPS might have prepended a prefix, let's use the actual name returned if possible
       // but usually sanitized is already correct if the user entered it.
