@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import type { Session } from "@supabase/supabase-js";
+import { login as loginVps, clearToken } from "@/lib/vpsApi";
 
 export interface AuthUser {
   id: string;
@@ -166,6 +167,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (email: string, password: string) => {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) throw new Error(error.message);
+    await loginVps(email, password).catch((err) => {
+      console.warn("VPS legacy login bridge failed", err);
+    });
     if (data.session) {
       const freshUser = await loadUserFromSession(data.session);
       setUser(freshUser);
@@ -174,6 +178,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     await supabase.auth.signOut();
+    clearToken();
     setUser(null);
   }, []);
 
