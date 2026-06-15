@@ -88,6 +88,27 @@ export async function createInstance(payload: CreateInstancePayload) {
   );
 }
 
+export async function registerWebhook(instanceName: string) {
+  return apiCall(`/webhook/set/${instanceName}`, {
+    method: "POST",
+    body: JSON.stringify({
+      webhook: {
+        enabled: true,
+        url: "https://backend.odontoconnect.tech/api/webhook/evolution",
+        webhookByEvents: false,
+        webhookBase64: false,
+        events: [
+          "MESSAGES_UPSERT",
+          "MESSAGES_UPDATE",
+          "CONNECTION_UPDATE",
+          "QRCODE_UPDATED",
+          "PRESENCE_UPDATE",
+        ],
+      },
+    }),
+  });
+}
+
 export async function connectInstance(instanceName: string): Promise<QrCodeResponse> {
   const raw = await apiCall<any>(`/instance/connect/${instanceName}`);
   const qr = raw?.qrcode ?? raw;
