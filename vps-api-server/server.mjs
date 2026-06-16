@@ -9569,11 +9569,11 @@ app.get('/api/messages/:leadId', async (req, res) => {
 
     let query, params;
     if (before) {
-      query = `SELECT * FROM chat_messages WHERE lead_id = $1 AND timestamp < $2 ORDER BY timestamp DESC LIMIT $3`;
-      params = [leadId, before, safeLimit];
+      query = `SELECT * FROM chat_messages WHERE lead_id = $1 AND tenant_id = $4 AND timestamp < $2 ORDER BY timestamp DESC LIMIT $3`;
+      params = [leadId, before, safeLimit, user.tenant_id];
     } else {
-      query = `SELECT * FROM chat_messages WHERE lead_id = $1 ORDER BY timestamp DESC LIMIT $2`;
-      params = [leadId, safeLimit];
+      query = `SELECT * FROM chat_messages WHERE lead_id = $1 AND tenant_id = $3 ORDER BY timestamp DESC LIMIT $2`;
+      params = [leadId, safeLimit, user.tenant_id];
     }
 
     const { rows } = await pool.query(query, params);
@@ -9624,14 +9624,14 @@ app.post('/api/messages', async (req, res) => {
     }
 
     await pool.query(
-      `INSERT INTO chat_messages (id, lead_id, content, sender, type, status, timestamp, media_url, file_name, mime_type, reply_to_id, reply_to_content, reply_to_sender, attendant_id, attendant_name, instance, phone)
-       VALUES ($1,$2,$3,'attendant',$4,$5,NOW(),$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+      `INSERT INTO chat_messages (id, lead_id, content, sender, type, status, timestamp, media_url, file_name, mime_type, reply_to_id, reply_to_content, reply_to_sender, attendant_id, attendant_name, instance, phone, tenant_id)
+       VALUES ($1,$2,$3,'attendant',$4,$5,NOW(),$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
        ON CONFLICT (id) DO NOTHING`,
       [
         id, leadId, content || '', type || 'text', status || 'sent',
         persistedMediaUrl, fileName || null, mimeType || null,
         replyTo?.messageId || null, replyTo?.content || null, replyTo?.sender || null,
-        user.id, attendantName, instance || null, phone || null,
+        user.id, attendantName, instance || null, phone || null, user.tenant_id,
       ]
     );
 
