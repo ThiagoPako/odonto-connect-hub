@@ -167,8 +167,9 @@ export function QrCodeDialog({ open, onOpenChange, instanceName, onConnected }: 
           setPhase("connecting");
         }
 
-        // Retry QR if we don't have one yet
-        if (!qrBase64 && qrRetries < 10) {
+        // Retry QR ONLY if we don't have one and after a few state polls
+        // (calling /instance/connect repeatedly is the #1 trigger for WhatsApp block)
+        if (!qrBase64 && qrRetries < 3) {
           qrRetries += 1;
           const got = await fetchQr(true);
           if (got) setPhase("qr_ready");
@@ -176,7 +177,7 @@ export function QrCodeDialog({ open, onOpenChange, instanceName, onConnected }: 
       } catch {
         // ignore
       }
-    }, 3000);
+    }, 5000);
 
     return () => {
       cancelled = true;
@@ -184,10 +185,10 @@ export function QrCodeDialog({ open, onOpenChange, instanceName, onConnected }: 
     };
   }, [open, phase, instanceName, onConnected, qrBase64, fetchQr, autoImportContacts]);
 
-  // Auto-refresh QR every 30s
+  // Auto-refresh QR every 45s (QR code itself expires ~60s on WhatsApp side)
   useEffect(() => {
     if (!open || phase !== "qr_ready") return;
-    const t = setInterval(() => void fetchQr(true), 30000);
+    const t = setInterval(() => void fetchQr(true), 45000);
     return () => clearInterval(t);
   }, [open, phase, fetchQr]);
 
