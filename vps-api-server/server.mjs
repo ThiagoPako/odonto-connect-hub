@@ -9406,7 +9406,7 @@ app.post('/api/messages/import-whatsapp', async (req, res) => {
 // List all active attendance sessions (for /dashboard widget)
 app.get('/api/sessions/active', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
     const sql = `
       SELECT
         s.id,
@@ -9415,18 +9415,18 @@ app.get('/api/sessions/active', async (req, res) => {
         COALESCE(s.attendant_name, '—') AS attendant_name,
         s.assigned_at AS started_at,
         (
-          SELECT m.body FROM chat_messages m
+          SELECT m.content FROM chat_messages m
           WHERE m.lead_id = s.lead_id
-          ORDER BY m.created_at DESC LIMIT 1
+          ORDER BY m.timestamp DESC LIMIT 1
         ) AS last_message
       FROM attendance_sessions s
       LEFT JOIN crm_leads l ON l.id = s.lead_id
-      WHERE s.status = 'active'
+      WHERE s.status = 'active' AND s.tenant_id = $1
       ORDER BY s.assigned_at DESC
       LIMIT 30
     `;
     try {
-      const { rows } = await pool.query(sql);
+      const { rows } = await pool.query(sql, [user.tenant_id]);
       res.json(rows);
     } catch (err) {
       if (err.code === '42P01' || err.code === '42703') return res.json([]);
@@ -9562,7 +9562,7 @@ app.post('/api/whatsapp/switch-primary', async (req, res) => {
 // GET /api/messages/:leadId — histórico paginado (mais recentes primeiro, retorna em ordem cronológica)
 app.get('/api/messages/:leadId', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
     const { leadId } = req.params;
     const { before, limit = '50' } = req.query;
     const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 100);
