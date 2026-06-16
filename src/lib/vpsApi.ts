@@ -693,7 +693,7 @@ export const attendanceSettingsApi = {
 // ─── Attendance Queues ──────────────────────────────────────
 
 export const queuesApi = {
-  list: () => vpsApiFetch<unknown[]>('/queues', { background: true }),
+  list: () => vpsApiFetch<any[]>('/queues', { background: true }),
   create: (body: Record<string, unknown>) => vpsApiFetch<{ success: boolean; id: string }>('/queues', { method: 'POST', body }),
   update: (id: string, body: Record<string, unknown>) =>
     vpsApiFetch<{ success: boolean }>(`/queues/${id}`, { method: 'PUT', body }),
@@ -726,8 +726,10 @@ export const sessionsApi = {
     vpsApiFetch<{ success: boolean }>('/sessions/first-response', { method: 'POST', body, background: true }),
   close: (body: unknown) =>
     vpsApiFetch<{ success: boolean; sessionId?: string; duration?: number }>('/sessions/close', { method: 'POST', body }),
+  checkActive: (leadId: string) =>
+    vpsApiFetch<{ active: boolean; attendantId?: string; attendantName?: string; isCurrentUser?: boolean }>(`/sessions/active/${leadId}`, { background: true }),
   list: (params?: { active?: boolean }) =>
-    vpsApiFetch<unknown[]>('/sessions/active', { params: params?.active ? { active: 'true' } : undefined, background: true }),
+    vpsApiFetch<any[]>('/sessions/active', { params: params?.active ? { active: 'true' } : undefined, background: true }),
 };
 
 
@@ -770,7 +772,7 @@ export interface AttendanceMetrics {
 }
 
 export const metricsApi = {
-  attendance: (days?: number) => vpsApiFetch('/metrics/attendance', {
+  attendance: (days?: number) => vpsApiFetch<AttendanceMetrics>('/metrics/attendance', {
     params: days ? { days: String(days) } : undefined,
     background: true,
   }),
