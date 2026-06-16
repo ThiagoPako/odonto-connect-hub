@@ -149,7 +149,7 @@ export async function vpsApiFetch<T = unknown>(
 
     let url = `${VPS_API_BASE}${path}`;
 
-    if (method === 'GET' && options?.params) {
+    if (options?.params) {
       const searchParams = new URLSearchParams(options.params);
       url += `?${searchParams.toString()}`;
     }
