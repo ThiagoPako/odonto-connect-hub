@@ -9448,9 +9448,9 @@ app.get('/api/sessions/active/:leadId', async (req, res) => {
     const { rows } = await pool.query(
       `SELECT s.id, s.attendant_id, s.attendant_name, s.assigned_at, s.status
        FROM attendance_sessions s
-       WHERE s.lead_id = $1 AND s.status = 'active'
+       WHERE s.lead_id = $1 AND s.tenant_id = $2 AND s.status = 'active'
        ORDER BY s.assigned_at DESC LIMIT 1`,
-      [leadId]
+      [leadId, user.tenant_id]
     );
 
     if (rows.length === 0) {
