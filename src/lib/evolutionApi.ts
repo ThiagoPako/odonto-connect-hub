@@ -74,18 +74,53 @@ export async function getInstanceState(instanceName: string): Promise<InstanceSt
   };
 }
 
+/**
+ * Defensive settings to reduce WhatsApp anti-spam ban risk:
+ * - rejectCall + msgCall: auto-reject calls (prevents flag for ignored calls)
+ * - groupsIgnore: don't receive group spam during connection
+ * - alwaysOnline: false → don't broadcast suspicious always-online presence
+ * - readMessages/readStatus: false → don't auto-mark, looks more human
+ * - syncFullHistory: false → don't hammer WhatsApp servers right after pairing
+ */
+const SAFE_INSTANCE_SETTINGS = {
+  rejectCall: true,
+  msgCall: "Não posso atender chamadas no momento. Por favor, envie uma mensagem.",
+  groupsIgnore: true,
+  alwaysOnline: false,
+  readMessages: false,
+  readStatus: false,
+  syncFullHistory: false,
+};
+
 export async function createInstance(payload: CreateInstancePayload) {
-  return apiCall<{ instance: EvolutionInstance; qrcode?: QrCodeResponse }>(
+  const result = await apiCall<{ instance: EvolutionInstance; qrcode?: QrCodeResponse }>(
     "/instance/create",
     {
       method: "POST",
       body: JSON.stringify({
         integration: "WHATSAPP-BAILEYS",
         qrcode: true,
+        ...SAFE_INSTANCE_SETTINGS,
         ...payload,
       }),
     }
   );
+
+  // Apply settings explicitly (some Evolution builds ignore them on create)
+  try {
+    await applyInstanceSettings(payload.instanceName);
+  } catch {
+    // non-fatal
+  }
+
+  return result;
+}
+
+export async function applyInstanceSettings(instanceName: string) {
+  return apiCall(`/settings/set/${instanceName}`, {
+    method: "POST",
+    body: JSON.stringify(SAFE_INSTANCE_SETTINGS),
+  });
 }
 
 export async function registerWebhook(instanceName: string) {
