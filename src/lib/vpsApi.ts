@@ -57,16 +57,19 @@ function resetAuthFailureCount() {
 /** Retorna o access_token Supabase da sessão atual (ou null). */
 export async function getAccessToken(forceRefresh = false): Promise<string | null> {
   try {
-    const legacyToken = !forceRefresh ? getToken() : null;
-    if (legacyToken) return legacyToken;
-
     if (forceRefresh) {
       const { data: refreshed } = await supabase.auth.refreshSession();
-      if (refreshed.session?.access_token) return refreshed.session.access_token;
+      if (refreshed.session?.access_token) {
+        clearToken();
+        return refreshed.session.access_token;
+      }
     }
 
     const { data } = await supabase.auth.getSession();
-    if (data.session?.access_token) return data.session.access_token;
+    if (data.session?.access_token) {
+      clearToken();
+      return data.session.access_token;
+    }
 
     return getToken();
   } catch {
