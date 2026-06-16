@@ -684,12 +684,21 @@ export const whatsappApi = {
 
 // ─── Attendance Settings ────────────────────────────────────
 
-export { sbAttendanceSettingsApi as attendanceSettingsApi } from './sbAdapters';
+export const attendanceSettingsApi = {
+  get: () => vpsApiFetch('/attendance-settings', { background: true }),
+  update: (body: unknown) => vpsApiFetch('/attendance-settings', { method: 'PUT', body }),
+};
 
 
 // ─── Attendance Queues ──────────────────────────────────────
 
-export { sbQueuesApi as queuesApi } from './sbAdapters';
+export const queuesApi = {
+  list: () => vpsApiFetch<unknown[]>('/queues', { background: true }),
+  create: (body: Record<string, unknown>) => vpsApiFetch<{ success: boolean; id: string }>('/queues', { method: 'POST', body }),
+  update: (id: string, body: Record<string, unknown>) =>
+    vpsApiFetch<{ success: boolean }>(`/queues/${id}`, { method: 'PUT', body }),
+  delete: (id: string) => vpsApiFetch<{ success: boolean }>(`/queues/${id}`, { method: 'DELETE' }),
+};
 
 
 // ─── Generic table ──────────────────────────────────────────
@@ -700,12 +709,26 @@ export const tableApi = {
 
 // ─── Transfer Logs ──────────────────────────────────────────
 
-export { sbTransferApi as transferApi } from './sbAdapters';
+export const transferApi = {
+  create: (body: unknown) => vpsApiFetch('/transfers', { method: 'POST', body }),
+  list: (leadId?: string) => vpsApiFetch('/transfers', { params: leadId ? { leadId } : undefined, background: true }),
+};
 
 
 // ─── Attendance Sessions ────────────────────────────────────
 
-export { sbSessionsApi as sessionsApi } from './sbAdapters';
+export const sessionsApi = {
+  start: (body: { leadId: string; leadName?: string; leadPhone?: string; queueId?: string; queueName?: string }) =>
+    vpsApiFetch<{ success: boolean; id: string; existing?: boolean }>('/sessions/start', { method: 'POST', body }),
+  assign: (body: { leadId: string }) =>
+    vpsApiFetch<{ success: boolean; id: string; waitTime?: number }>('/sessions/assign', { method: 'POST', body }),
+  firstResponse: (body: { leadId: string }) =>
+    vpsApiFetch<{ success: boolean }>('/sessions/first-response', { method: 'POST', body, background: true }),
+  close: (body: unknown) =>
+    vpsApiFetch<{ success: boolean; sessionId?: string; duration?: number }>('/sessions/close', { method: 'POST', body }),
+  list: (params?: { active?: boolean }) =>
+    vpsApiFetch<unknown[]>('/sessions/active', { params: params?.active ? { active: 'true' } : undefined, background: true }),
+};
 
 
 // ─── Attendance Metrics ─────────────────────────────────────
@@ -746,7 +769,12 @@ export interface AttendanceMetrics {
   }>;
 }
 
-export { sbMetricsApi as metricsApi } from './sbAdapters';
+export const metricsApi = {
+  attendance: (days?: number) => vpsApiFetch('/metrics/attendance', {
+    params: days ? { days: String(days) } : undefined,
+    background: true,
+  }),
+};
 
 
 // ─── Lead Tags ──────────────────────────────────────────────
