@@ -801,17 +801,70 @@ export interface ChatMessageApi {
   metadata?: Record<string, unknown>;
 }
 
-// messagesApi migrado para Supabase (ver src/lib/sbAdapters.ts → sbMessagesApi)
-export { sbMessagesApi as messagesApi } from './sbAdapters';
+export const messagesApi = {
+  list: (leadId: string, params?: { before?: string; limit?: number }) =>
+    vpsApiFetch<{ messages: ChatMessageApi[]; hasMore: boolean }>(`/messages/${leadId}`, {
+      params: Object.fromEntries(Object.entries(params || {}).map(([key, value]) => [key, String(value)])),
+    }),
+  save: (body: {
+    id: string;
+    leadId: string;
+    content: string;
+    type: string;
+    status?: string;
+    fileName?: string;
+    fileUrl?: string;
+    mimeType?: string;
+    replyTo?: { messageId: string; content: string; sender: string } | null;
+    instance?: string;
+    phone?: string;
+  }) => vpsApiFetch<{ success: boolean; id: string; mediaUrl?: string }>('/messages', { method: 'POST', body }),
+  saveBatch: (messages: Array<Record<string, unknown>>) =>
+    vpsApiFetch<{ success: boolean; count: number }>('/messages/batch', { method: 'POST', body: { messages } }),
+  markRead: (leadId: string) =>
+    vpsApiFetch<{ success: boolean }>('/messages/mark-read', { method: 'POST', body: { leadId }, background: true }),
+  updateStatus: (id: string, status: string) =>
+    vpsApiFetch<{ success: boolean }>(`/messages/${id}/status`, { method: 'PUT', body: { status } }),
+  delete: (id: string, hard = false) =>
+    vpsApiFetch<{ success: boolean }>(`/messages/${id}`, { method: 'DELETE', params: hard ? { hard: 'true' } : undefined }),
+  unreadCounts: () => vpsApiFetch<Record<string, number>>('/messages/unread', { background: true }),
+  search: (q: string, leadId?: string) =>
+    vpsApiFetch<ChatMessageApi[]>('/messages/search', {
+      params: { q, ...(leadId ? { lead_id: leadId } : {}) },
+      background: true,
+    }),
+};
 
 // ─── Media Upload ───────────────────────────────────────────
 
-export { sbMediaApi as mediaApi } from './sbAdapters';
+export const mediaApi = {
+  upload: async (file: File): Promise<{ url: string | null; error: string | null }> => {
+    try {
+      const token = await getAccessToken();
+      const params = new URLSearchParams({ fileName: file.name, mimeType: file.type || 'application/octet-stream' });
+      const response = await fetch(`${VPS_API_BASE}/media/upload?${params.toString()}`, {
+        method: 'POST',
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          'Content-Type': file.type || 'application/octet-stream',
+        },
+        body: file,
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) return { url: null, error: data?.error || `HTTP ${response.status}` };
+      return { url: data.url || null, error: null };
+    } catch (error: unknown) {
+      return { url: null, error: error instanceof Error ? error.message : 'Erro de rede' };
+    }
+  },
+};
 
 
 // ─── Queue Leads ────────────────────────────────────────────
 
-export { sbQueueLeadsApi as queueLeadsApi } from './sbAdapters';
+export const queueLeadsApi = {
+  list: () => vpsApiFetch<{ queue: unknown[]; active: unknown[] }>('/queue/leads', { background: true }),
+};
 
 // ─── Automations ────────────────────────────────────────────
 
