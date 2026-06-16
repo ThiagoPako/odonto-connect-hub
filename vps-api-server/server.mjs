@@ -9406,7 +9406,7 @@ app.post('/api/messages/import-whatsapp', async (req, res) => {
 // List all active attendance sessions (for /dashboard widget)
 app.get('/api/sessions/active', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
     const sql = `
       SELECT
         s.id,
@@ -9415,18 +9415,18 @@ app.get('/api/sessions/active', async (req, res) => {
         COALESCE(s.attendant_name, '—') AS attendant_name,
         s.assigned_at AS started_at,
         (
-          SELECT m.body FROM chat_messages m
+          SELECT m.content FROM chat_messages m
           WHERE m.lead_id = s.lead_id
-          ORDER BY m.created_at DESC LIMIT 1
+          ORDER BY m.timestamp DESC LIMIT 1
         ) AS last_message
       FROM attendance_sessions s
       LEFT JOIN crm_leads l ON l.id = s.lead_id
-      WHERE s.status = 'active'
+      WHERE s.status = 'active' AND s.tenant_id = $1
       ORDER BY s.assigned_at DESC
       LIMIT 30
     `;
     try {
-      const { rows } = await pool.query(sql);
+      const { rows } = await pool.query(sql, [user.tenant_id]);
       res.json(rows);
     } catch (err) {
       if (err.code === '42P01' || err.code === '42703') return res.json([]);
@@ -9448,9 +9448,9 @@ app.get('/api/sessions/active/:leadId', async (req, res) => {
     const { rows } = await pool.query(
       `SELECT s.id, s.attendant_id, s.attendant_name, s.assigned_at, s.status
        FROM attendance_sessions s
-       WHERE s.lead_id = $1 AND s.status = 'active'
+       WHERE s.lead_id = $1 AND s.tenant_id = $2 AND s.status = 'active'
        ORDER BY s.assigned_at DESC LIMIT 1`,
-      [leadId]
+      [leadId, user.tenant_id]
     );
 
     if (rows.length === 0) {
@@ -9562,18 +9562,18 @@ app.post('/api/whatsapp/switch-primary', async (req, res) => {
 // GET /api/messages/:leadId — histórico paginado (mais recentes primeiro, retorna em ordem cronológica)
 app.get('/api/messages/:leadId', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
     const { leadId } = req.params;
     const { before, limit = '50' } = req.query;
     const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 100);
 
     let query, params;
     if (before) {
-      query = `SELECT * FROM chat_messages WHERE lead_id = $1 AND timestamp < $2 ORDER BY timestamp DESC LIMIT $3`;
-      params = [leadId, before, safeLimit];
+      query = `SELECT * FROM chat_messages WHERE lead_id = $1 AND tenant_id = $4 AND timestamp < $2 ORDER BY timestamp DESC LIMIT $3`;
+      params = [leadId, before, safeLimit, user.tenant_id];
     } else {
-      query = `SELECT * FROM chat_messages WHERE lead_id = $1 ORDER BY timestamp DESC LIMIT $2`;
-      params = [leadId, safeLimit];
+      query = `SELECT * FROM chat_messages WHERE lead_id = $1 AND tenant_id = $3 ORDER BY timestamp DESC LIMIT $2`;
+      params = [leadId, safeLimit, user.tenant_id];
     }
 
     const { rows } = await pool.query(query, params);
@@ -9624,14 +9624,14 @@ app.post('/api/messages', async (req, res) => {
     }
 
     await pool.query(
-      `INSERT INTO chat_messages (id, lead_id, content, sender, type, status, timestamp, media_url, file_name, mime_type, reply_to_id, reply_to_content, reply_to_sender, attendant_id, attendant_name, instance, phone)
-       VALUES ($1,$2,$3,'attendant',$4,$5,NOW(),$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+      `INSERT INTO chat_messages (id, lead_id, content, sender, type, status, timestamp, media_url, file_name, mime_type, reply_to_id, reply_to_content, reply_to_sender, attendant_id, attendant_name, instance, phone, tenant_id)
+       VALUES ($1,$2,$3,'attendant',$4,$5,NOW(),$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
        ON CONFLICT (id) DO NOTHING`,
       [
         id, leadId, content || '', type || 'text', status || 'sent',
         persistedMediaUrl, fileName || null, mimeType || null,
         replyTo?.messageId || null, replyTo?.content || null, replyTo?.sender || null,
-        user.id, attendantName, instance || null, phone || null,
+        user.id, attendantName, instance || null, phone || null, user.tenant_id,
       ]
     );
 

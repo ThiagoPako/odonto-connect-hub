@@ -57,16 +57,19 @@ function resetAuthFailureCount() {
 /** Retorna o access_token Supabase da sessão atual (ou null). */
 export async function getAccessToken(forceRefresh = false): Promise<string | null> {
   try {
-    const legacyToken = !forceRefresh ? getToken() : null;
-    if (legacyToken) return legacyToken;
-
     if (forceRefresh) {
       const { data: refreshed } = await supabase.auth.refreshSession();
-      if (refreshed.session?.access_token) return refreshed.session.access_token;
+      if (refreshed.session?.access_token) {
+        clearToken();
+        return refreshed.session.access_token;
+      }
     }
 
     const { data } = await supabase.auth.getSession();
-    if (data.session?.access_token) return data.session.access_token;
+    if (data.session?.access_token) {
+      clearToken();
+      return data.session.access_token;
+    }
 
     return getToken();
   } catch {
@@ -146,7 +149,7 @@ export async function vpsApiFetch<T = unknown>(
 
     let url = `${VPS_API_BASE}${path}`;
 
-    if (method === 'GET' && options?.params) {
+    if (options?.params) {
       const searchParams = new URLSearchParams(options.params);
       url += `?${searchParams.toString()}`;
     }
@@ -681,12 +684,21 @@ export const whatsappApi = {
 
 // ─── Attendance Settings ────────────────────────────────────
 
-export { sbAttendanceSettingsApi as attendanceSettingsApi } from './sbAdapters';
+export const attendanceSettingsApi = {
+  get: () => vpsApiFetch('/attendance-settings', { background: true }),
+  update: (body: unknown) => vpsApiFetch('/attendance-settings', { method: 'PUT', body }),
+};
 
 
 // ─── Attendance Queues ──────────────────────────────────────
 
-export { sbQueuesApi as queuesApi } from './sbAdapters';
+export const queuesApi = {
+  list: () => vpsApiFetch<any[]>('/queues', { background: true }),
+  create: (body: Record<string, unknown>) => vpsApiFetch<{ success: boolean; id: string }>('/queues', { method: 'POST', body }),
+  update: (id: string, body: Record<string, unknown>) =>
+    vpsApiFetch<{ success: boolean }>(`/queues/${id}`, { method: 'PUT', body }),
+  delete: (id: string) => vpsApiFetch<{ success: boolean }>(`/queues/${id}`, { method: 'DELETE' }),
+};
 
 
 // ─── Generic table ──────────────────────────────────────────
@@ -697,12 +709,28 @@ export const tableApi = {
 
 // ─── Transfer Logs ──────────────────────────────────────────
 
-export { sbTransferApi as transferApi } from './sbAdapters';
+export const transferApi = {
+  create: (body: unknown) => vpsApiFetch('/transfers', { method: 'POST', body }),
+  list: (leadId?: string) => vpsApiFetch('/transfers', { params: leadId ? { leadId } : undefined, background: true }),
+};
 
 
 // ─── Attendance Sessions ────────────────────────────────────
 
-export { sbSessionsApi as sessionsApi } from './sbAdapters';
+export const sessionsApi = {
+  start: (body: { leadId: string; leadName?: string; leadPhone?: string; queueId?: string; queueName?: string }) =>
+    vpsApiFetch<{ success: boolean; id: string; existing?: boolean }>('/sessions/start', { method: 'POST', body }),
+  assign: (body: { leadId: string }) =>
+    vpsApiFetch<{ success: boolean; id: string; waitTime?: number }>('/sessions/assign', { method: 'POST', body }),
+  firstResponse: (body: { leadId: string }) =>
+    vpsApiFetch<{ success: boolean }>('/sessions/first-response', { method: 'POST', body, background: true }),
+  close: (body: unknown) =>
+    vpsApiFetch<{ success: boolean; sessionId?: string; duration?: number }>('/sessions/close', { method: 'POST', body }),
+  checkActive: (leadId: string) =>
+    vpsApiFetch<{ active: boolean; attendantId?: string; attendantName?: string; isCurrentUser?: boolean }>(`/sessions/active/${leadId}`, { background: true }),
+  list: (params?: { active?: boolean }) =>
+    vpsApiFetch<any[]>('/sessions/active', { params: params?.active ? { active: 'true' } : undefined, background: true }),
+};
 
 
 // ─── Attendance Metrics ─────────────────────────────────────
@@ -743,7 +771,12 @@ export interface AttendanceMetrics {
   }>;
 }
 
-export { sbMetricsApi as metricsApi } from './sbAdapters';
+export const metricsApi = {
+  attendance: (days?: number) => vpsApiFetch<AttendanceMetrics>('/metrics/attendance', {
+    params: days ? { days: String(days) } : undefined,
+    background: true,
+  }),
+};
 
 
 // ─── Lead Tags ──────────────────────────────────────────────
@@ -798,17 +831,70 @@ export interface ChatMessageApi {
   metadata?: Record<string, unknown>;
 }
 
-// messagesApi migrado para Supabase (ver src/lib/sbAdapters.ts → sbMessagesApi)
-export { sbMessagesApi as messagesApi } from './sbAdapters';
+export const messagesApi = {
+  list: (leadId: string, params?: { before?: string; limit?: number }) =>
+    vpsApiFetch<{ messages: ChatMessageApi[]; hasMore: boolean }>(`/messages/${leadId}`, {
+      params: Object.fromEntries(Object.entries(params || {}).map(([key, value]) => [key, String(value)])),
+    }),
+  save: (body: {
+    id: string;
+    leadId: string;
+    content: string;
+    type: string;
+    status?: string;
+    fileName?: string;
+    fileUrl?: string;
+    mimeType?: string;
+    replyTo?: { messageId: string; content: string; sender: string } | null;
+    instance?: string;
+    phone?: string;
+  }) => vpsApiFetch<{ success: boolean; id: string; mediaUrl?: string }>('/messages', { method: 'POST', body }),
+  saveBatch: (messages: Array<Record<string, unknown>>) =>
+    vpsApiFetch<{ success: boolean; count: number }>('/messages/batch', { method: 'POST', body: { messages } }),
+  markRead: (leadId: string) =>
+    vpsApiFetch<{ success: boolean }>('/messages/mark-read', { method: 'POST', body: { leadId }, background: true }),
+  updateStatus: (id: string, status: string) =>
+    vpsApiFetch<{ success: boolean }>(`/messages/${id}/status`, { method: 'PUT', body: { status } }),
+  delete: (id: string, hard = false) =>
+    vpsApiFetch<{ success: boolean }>(`/messages/${id}`, { method: 'DELETE', params: hard ? { hard: 'true' } : undefined }),
+  unreadCounts: () => vpsApiFetch<Record<string, number>>('/messages/unread', { background: true }),
+  search: (q: string, leadId?: string) =>
+    vpsApiFetch<ChatMessageApi[]>('/messages/search', {
+      params: { q, ...(leadId ? { lead_id: leadId } : {}) },
+      background: true,
+    }),
+};
 
 // ─── Media Upload ───────────────────────────────────────────
 
-export { sbMediaApi as mediaApi } from './sbAdapters';
+export const mediaApi = {
+  upload: async (file: File): Promise<{ url: string | null; error: string | null }> => {
+    try {
+      const token = await getAccessToken();
+      const params = new URLSearchParams({ fileName: file.name, mimeType: file.type || 'application/octet-stream' });
+      const response = await fetch(`${VPS_API_BASE}/media/upload?${params.toString()}`, {
+        method: 'POST',
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          'Content-Type': file.type || 'application/octet-stream',
+        },
+        body: file,
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) return { url: null, error: data?.error || `HTTP ${response.status}` };
+      return { url: data.url || null, error: null };
+    } catch (error: unknown) {
+      return { url: null, error: error instanceof Error ? error.message : 'Erro de rede' };
+    }
+  },
+};
 
 
 // ─── Queue Leads ────────────────────────────────────────────
 
-export { sbQueueLeadsApi as queueLeadsApi } from './sbAdapters';
+export const queueLeadsApi = {
+  list: () => vpsApiFetch<{ queue: unknown[]; active: unknown[] }>('/queue/leads', { background: true }),
+};
 
 // ─── Automations ────────────────────────────────────────────
 
