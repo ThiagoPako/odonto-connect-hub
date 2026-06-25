@@ -67,35 +67,97 @@ const VALID_TEETH = new Set<number>([
   81, 82, 83, 84, 85,
 ]);
 
-async function extractPdfText(file: File): Promise<string> {
+type Line = { y: number; text: string; items: Array<{ x: number; str: string; width: number }> };
+
+async function extractPdfStructured(file: File): Promise<{ lines: Line[]; fullText: string }> {
   const buf = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
-  let out = "";
+  const lines: Line[] = [];
+  const Y_TOL = 3;
+
   for (let p = 1; p <= pdf.numPages; p++) {
     const page = await pdf.getPage(p);
     const tc = await page.getTextContent();
-    out += tc.items.map((it: any) => it.str).join(" ") + "\n";
+    const buckets = new Map<number, Array<{ x: number; str: string; width: number }>>();
+    for (const it of tc.items as any[]) {
+      const str: string = it.str ?? "";
+      if (!str.trim()) continue;
+      const x = it.transform[4] as number;
+      const y = it.transform[5] as number;
+      const key = Math.round(y / Y_TOL) * Y_TOL;
+      const arr = buckets.get(key) ?? [];
+      arr.push({ x, str, width: it.width ?? str.length * 4 });
+      buckets.set(key, arr);
+    }
+    const pageLines = Array.from(buckets.entries())
+      .sort((a, b) => b[0] - a[0])
+      .map(([y, items]) => {
+        items.sort((a, b) => a.x - b.x);
+        let text = "";
+        for (let i = 0; i < items.length; i++) {
+          if (i > 0) {
+            const gap = items[i].x - (items[i - 1].x + items[i - 1].width);
+            text += gap > 8 ? "  " : "";
+          }
+          text += items[i].str;
+        }
+        return { y: y + p * 10000, text: text.replace(/\s+/g, " ").trim(), items };
+      })
+      .filter((l) => l.text);
+    lines.push(...pageLines);
   }
-  return out;
+  return { lines, fullText: lines.map((l) => l.text).join("\n") };
 }
 
-function pickField(text: string, label: RegExp): string | undefined {
-  const m = text.match(label);
-  if (!m) return undefined;
-  return m[1].trim().replace(/\s{2,}/g, " ").slice(0, 200) || undefined;
+const LABELS = [
+  "paciente", "cpf", "endereço", "endereco", "fone", "telefone",
+  "data de nasc", "data nasc", "nasc", "dr(a)", "dra", "dr.", "doutor",
+  "cro", "obs", "observações", "observacoes", "análise", "analise",
+];
+
+function stripLabels(s: string): string {
+  let out = s.trim();
+  // Remove a trailing label like "CPF:" that might leak in
+  for (const lab of LABELS) {
+    const re = new RegExp(`\\s*${lab.replace(/[.()]/g, (m) => "\\" + m)}\\s*:?\\s*$`, "i");
+    out = out.replace(re, "");
+  }
+  return out.replace(/\s{2,}/g, " ").trim();
 }
 
-function parseText(text: string): ParsedPedido {
-  const lower = text.toLowerCase();
+function findValueForLabel(lines: Line[], labelRegex: RegExp): string | undefined {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const m = line.text.match(labelRegex);
+    if (!m) continue;
+    // Value can be: rest of same line after the label, possibly split by another label
+    const afterIdx = (m.index ?? 0) + m[0].length;
+    let rest = line.text.slice(afterIdx).trim();
+    // cut at next known label
+    const cutRe = /\b(PACIENTE|CPF|ENDERE[ÇC]O|FONE|TELEFONE|DATA\s+DE\s+NASC|DR\(A\)|DRA|DOUTOR|CRO|OBS|OBSERVA[ÇC][ÕO]ES|AN[ÁA]LISE)\s*:?/i;
+    const cm = rest.match(cutRe);
+    if (cm && (cm.index ?? 0) > 0) rest = rest.slice(0, cm.index).trim();
+    rest = stripLabels(rest);
+    if (rest && rest.length > 0) return rest;
+    // Otherwise look at next line
+    if (i + 1 < lines.length) {
+      const next = stripLabels(lines[i + 1].text);
+      if (next && !labelRegex.test(next)) return next;
+    }
+  }
+  return undefined;
+}
+
+function parseStructured(lines: Line[], fullText: string): ParsedPedido {
+  const lower = fullText.toLowerCase();
   const checks: Record<string, boolean> = {};
   for (const [key, kws] of KEYWORDS) {
     if (kws.some((k) => lower.includes(k))) checks[key] = true;
   }
 
-  // Split teeth by tomografia section
   const tomoIdx = lower.search(/tomografia/);
-  const beforeTomo = tomoIdx >= 0 ? text.slice(0, tomoIdx) : text;
-  const afterTomo = tomoIdx >= 0 ? text.slice(tomoIdx) : "";
+  const beforeTomo = tomoIdx >= 0 ? fullText.slice(0, tomoIdx) : fullText;
+  const afterTomo = tomoIdx >= 0 ? fullText.slice(tomoIdx) : "";
 
   const extractTeeth = (src: string): number[] => {
     const found = new Set<number>();
@@ -111,35 +173,43 @@ function parseText(text: string): ParsedPedido {
   const teeth = extractTeeth(beforeTomo);
   const tomoTeeth = extractTeeth(afterTomo);
 
-  const result: ParsedPedido = {
-    paciente: pickField(text, /Paciente[:\s]+([^\n]+?)(?=\s+(?:CPF|Endere|Fone|Dr|Data)|$)/i),
-    cpf: pickField(text, /CPF[:\s]+([\d.\-/]+)/i),
-    endereco: pickField(text, /Endere[çc]o[:\s]+([^\n]+?)(?=\s+(?:Fone|Tel|CEP|Data|Dr)|$)/i),
-    fone: pickField(text, /(?:Fone|Telefone)[:\s]+([\d().\-\s+]+)/i),
-    dataNasc: pickField(text, /Data\s+de\s+Nasc[\w.]*[:\s]+([\d/\-]+)/i),
-    doutor: pickField(text, /Dr\(a\)[:\s]+([^\n]+?)(?=\s+(?:CRO|$))/i),
-    cro: pickField(text, /CRO[:\s]+([\w\-./\s]+?)(?=\s|$)/i),
-    obs: pickField(text, /OBS[:\s]+([\s\S]+?)(?=\s+Favor\s+enviar|$)/i),
-    analise: pickField(text, /An[áa]lise[:\s]+([^\n]+?)(?=\s|$)/i),
+  const paciente = findValueForLabel(lines, /PACIENTE\s*:?\s*/i);
+  const cpfRaw = findValueForLabel(lines, /CPF\s*:?\s*/i);
+  const cpf = cpfRaw?.match(/[\d.\-/]{6,}/)?.[0] ?? cpfRaw;
+  const endereco = findValueForLabel(lines, /ENDERE[ÇC]O\s*:?\s*/i);
+  const foneRaw = findValueForLabel(lines, /(?:FONE|TELEFONE)\s*:?\s*/i);
+  const fone = foneRaw?.match(/[\d()+\-.\s]{6,}/)?.[0]?.trim() ?? foneRaw;
+  let dataNasc = findValueForLabel(lines, /DATA\s+(?:DE\s+)?NASC[\w.]*\s*:?\s*/i);
+  if (dataNasc) {
+    const dm = dataNasc.match(/(\d{2})[\/\-.](\d{2})[\/\-.](\d{4})/);
+    if (dm) dataNasc = `${dm[3]}-${dm[2]}-${dm[1]}`;
+  }
+  const doutor = findValueForLabel(lines, /(?:DR\(A\)|DRA|DR\.|DOUTOR)\s*:?\s*/i);
+  const croRaw = findValueForLabel(lines, /CRO\s*:?\s*/i);
+  const cro = croRaw?.replace(/\s{2,}/g, " ").trim();
+  const obs = findValueForLabel(lines, /OBS(?:ERVA[ÇC][ÕO]ES)?\s*:?\s*/i);
+  const analise = findValueForLabel(lines, /AN[ÁA]LISE\s*:?\s*/i);
+
+  return {
+    paciente,
+    cpf,
+    endereco,
+    fone,
+    dataNasc,
+    doutor,
+    cro,
+    obs,
+    analise,
     teeth,
     tomoTeeth,
     checks,
   };
-
-  // Normalize date dd/mm/yyyy → yyyy-mm-dd
-  if (result.dataNasc) {
-    const d = result.dataNasc.match(/^(\d{2})[\/\-](\d{2})[\/\-](\d{4})$/);
-    if (d) result.dataNasc = `${d[3]}-${d[2]}-${d[1]}`;
-  }
-
-  return result;
 }
 
 export async function parsePedidoFile(file: File): Promise<ParsedPedido> {
   if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
-    const text = await extractPdfText(file);
-    return parseText(text);
+    const { lines, fullText } = await extractPdfStructured(file);
+    return parseStructured(lines, fullText);
   }
-  // For non-PDF (images), no OCR available client-side — return empty parse
   return { teeth: [], tomoTeeth: [], checks: {} };
 }
