@@ -173,7 +173,7 @@ function PedidoExamePage() {
     try {
       const { data: userData } = await supabase.auth.getUser();
       const uid = userData.user?.id ?? "anon";
-      const novos: Array<{ name: string; url: string; path: string; file?: File }> = [];
+      const novos: Array<{ name: string; url: string; path: string; type: string; file?: File }> = [];
       for (const file of files) {
         const path = `${uid}/pedidos/${Date.now()}-${file.name.replace(/[^\w.\-]/g, "_")}`;
         const { error } = await supabase.storage.from("exam-images").upload(path, file, {
@@ -185,7 +185,7 @@ function PedidoExamePage() {
           continue;
         }
         const { data: signed } = await supabase.storage.from("exam-images").createSignedUrl(path, 60 * 60 * 24 * 7);
-        novos.push({ name: file.name, url: signed?.signedUrl ?? "", path, file });
+        novos.push({ name: file.name, url: signed?.signedUrl ?? "", path, type: file.type || "application/octet-stream", file });
       }
       if (novos.length) {
         setUploads((prev) => [...prev, ...novos]);
