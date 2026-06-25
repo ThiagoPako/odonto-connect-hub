@@ -8,9 +8,9 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { Printer, Send, FileDown, Upload, X } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import odontogramaFullAsset from "@/assets/odontograma-full.png.asset.json";
 import odontogramaAdultoAsset from "@/assets/odontograma-adulto.png.asset.json";
+import { parsePedidoFile } from "@/lib/pedidoExameParser";
 
 type ToothPos = { n: number; x: number };
 
@@ -121,7 +121,33 @@ function PedidoExamePage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [uploads, setUploads] = useState<Array<{ name: string; url: string; path: string; type: string; file?: File }>>([]);
-  const [previewFile, setPreviewFile] = useState<{ name: string; url: string; type: string } | null>(null);
+  const [activeFile, setActiveFile] = useState<string | null>(null);
+
+  const applyParsed = useCallback(async (u: { name: string; file?: File; url: string; type: string }) => {
+    if (!u.file) {
+      toast.error("Arquivo não disponível para leitura nesta sessão. Refaça o upload.");
+      return;
+    }
+    try {
+      const parsed = await parsePedidoFile(u.file);
+      if (parsed.paciente) setPaciente(parsed.paciente);
+      if (parsed.cpf) setCpf(parsed.cpf);
+      if (parsed.endereco) setEndereco(parsed.endereco);
+      if (parsed.fone) setFone(parsed.fone);
+      if (parsed.dataNasc) setDataNasc(parsed.dataNasc);
+      if (parsed.doutor) setDoutor(parsed.doutor);
+      if (parsed.cro) setCro(parsed.cro);
+      if (parsed.obs) setObs(parsed.obs);
+      if (parsed.analise) setAnalise(parsed.analise);
+      setTeethSel(new Set(parsed.teeth));
+      setTomoSel(new Set(parsed.tomoTeeth));
+      setChk(parsed.checks);
+      setActiveFile(u.name);
+      toast.success(`Conteúdo de "${u.name}" aplicado ao pedido`);
+    } catch (err: any) {
+      toast.error(`Não foi possível ler ${u.name}: ${err?.message ?? "erro"}`);
+    }
+  }, []);
 
   const handleImprimir = async () => {
     const images = Array.from(printAreaRef.current?.querySelectorAll("img") ?? []);
@@ -369,22 +395,28 @@ function PedidoExamePage() {
         </div>
         {uploads.length > 0 && (
           <div className="no-print px-4 py-2 bg-slate-50 border-b flex flex-wrap gap-2">
-            {uploads.map((u) => (
-              <div key={u.path} className="inline-flex items-center gap-1 text-xs bg-white border rounded px-2 py-1 hover:bg-slate-100 text-slate-700">
-                <button
-                  type="button"
-                  onClick={() => setPreviewFile({ name: u.name, url: u.url, type: u.type })}
-                  className="inline-flex items-center gap-1 max-w-[240px] truncate text-slate-700 hover:text-orange-600"
-                  title={`Visualizar ${u.name}`}
-                >
-                  <FileDown className="size-3 shrink-0" />
-                  <span className="truncate">{u.name}</span>
-                </button>
-                <button type="button" onClick={() => removeUpload(u.path)} className="ml-1 text-slate-400 hover:text-red-500">
-                  <X className="size-3" />
-                </button>
-              </div>
-            ))}
+            {uploads.map((u) => {
+              const isActive = activeFile === u.name;
+              return (
+                <div key={u.path} className={cn(
+                  "inline-flex items-center gap-1 text-xs border rounded px-2 py-1 transition-colors",
+                  isActive ? "bg-orange-100 border-orange-400 text-orange-800" : "bg-white text-slate-700 hover:bg-slate-100"
+                )}>
+                  <button
+                    type="button"
+                    onClick={() => applyParsed(u)}
+                    className="inline-flex items-center gap-1 max-w-[240px] truncate hover:text-orange-600"
+                    title={`Ler e aplicar conteúdo de ${u.name}`}
+                  >
+                    <FileDown className="size-3 shrink-0" />
+                    <span className="truncate">{u.name}</span>
+                  </button>
+                  <button type="button" onClick={() => removeUpload(u.path)} className="ml-1 text-slate-400 hover:text-red-500">
+                    <X className="size-3" />
+                  </button>
+                </div>
+              );
+            })}
           </div>
         )}
 
@@ -624,30 +656,6 @@ function PedidoExamePage() {
           </div>
         </div>
       </div>
-
-      <Dialog open={!!previewFile} onOpenChange={(open) => !open && setPreviewFile(null)}>
-        <DialogContent className="max-w-5xl w-[90vw] h-[85vh] flex flex-col p-0">
-          <DialogHeader className="px-4 py-3 border-b">
-            <DialogTitle className="truncate text-sm">{previewFile?.name}</DialogTitle>
-          </DialogHeader>
-          <div className="flex-1 overflow-auto bg-slate-100">
-            {previewFile && (
-              previewFile.type.startsWith("image/") ? (
-                <img src={previewFile.url} alt={previewFile.name} className="mx-auto max-h-full" />
-              ) : (
-                <iframe src={previewFile.url} title={previewFile.name} className="w-full h-full border-0" />
-              )
-            )}
-          </div>
-          {previewFile && (
-            <div className="px-4 py-2 border-t flex justify-end">
-              <a href={previewFile.url} target="_blank" rel="noreferrer" className="text-xs text-orange-600 hover:underline">
-                Abrir em nova aba
-              </a>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
