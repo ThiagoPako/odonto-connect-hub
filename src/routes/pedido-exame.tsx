@@ -120,7 +120,8 @@ function PedidoExamePage() {
   const [saving, setSaving] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
-  const [uploads, setUploads] = useState<Array<{ name: string; url: string; path: string; file?: File }>>([]);
+  const [uploads, setUploads] = useState<Array<{ name: string; url: string; path: string; type: string; file?: File }>>([]);
+  const [previewFile, setPreviewFile] = useState<{ name: string; url: string; type: string } | null>(null);
 
   const handleImprimir = async () => {
     const images = Array.from(printAreaRef.current?.querySelectorAll("img") ?? []);
