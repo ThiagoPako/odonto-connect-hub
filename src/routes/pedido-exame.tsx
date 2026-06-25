@@ -656,30 +656,6 @@ function PedidoExamePage() {
           </div>
         </div>
       </div>
-
-      <Dialog open={!!previewFile} onOpenChange={(open) => !open && setPreviewFile(null)}>
-        <DialogContent className="max-w-5xl w-[90vw] h-[85vh] flex flex-col p-0">
-          <DialogHeader className="px-4 py-3 border-b">
-            <DialogTitle className="truncate text-sm">{previewFile?.name}</DialogTitle>
-          </DialogHeader>
-          <div className="flex-1 overflow-auto bg-slate-100">
-            {previewFile && (
-              previewFile.type.startsWith("image/") ? (
-                <img src={previewFile.url} alt={previewFile.name} className="mx-auto max-h-full" />
-              ) : (
-                <iframe src={previewFile.url} title={previewFile.name} className="w-full h-full border-0" />
-              )
-            )}
-          </div>
-          {previewFile && (
-            <div className="px-4 py-2 border-t flex justify-end">
-              <a href={previewFile.url} target="_blank" rel="noreferrer" className="text-xs text-orange-600 hover:underline">
-                Abrir em nova aba
-              </a>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
