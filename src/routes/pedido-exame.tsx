@@ -8,9 +8,9 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { Printer, Send, FileDown, Upload, X } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import odontogramaFullAsset from "@/assets/odontograma-full.png.asset.json";
 import odontogramaAdultoAsset from "@/assets/odontograma-adulto.png.asset.json";
+import { parsePedidoFile } from "@/lib/pedidoExameParser";
 
 type ToothPos = { n: number; x: number };
 
