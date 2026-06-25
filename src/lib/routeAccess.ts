@@ -33,6 +33,7 @@ export const routeRoleMap: Record<string, AppRole[]> = {
   "/pacientes": ["admin", "dentista", "recepcionista", "comercial"],
   "/agenda": ["admin", "dentista", "recepcionista", "comercial"],
   "/exames": ["admin", "dentista", "recepcionista"],
+  "/pedido-exame": ["admin", "dentista", "recepcionista"],
 };
 
 export function canAccessRoute(
