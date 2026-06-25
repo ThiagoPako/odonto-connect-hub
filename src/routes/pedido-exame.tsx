@@ -121,7 +121,33 @@ function PedidoExamePage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [uploads, setUploads] = useState<Array<{ name: string; url: string; path: string; type: string; file?: File }>>([]);
-  const [previewFile, setPreviewFile] = useState<{ name: string; url: string; type: string } | null>(null);
+  const [activeFile, setActiveFile] = useState<string | null>(null);
+
+  const applyParsed = useCallback(async (u: { name: string; file?: File; url: string; type: string }) => {
+    if (!u.file) {
+      toast.error("Arquivo não disponível para leitura nesta sessão. Refaça o upload.");
+      return;
+    }
+    try {
+      const parsed = await parsePedidoFile(u.file);
+      if (parsed.paciente) setPaciente(parsed.paciente);
+      if (parsed.cpf) setCpf(parsed.cpf);
+      if (parsed.endereco) setEndereco(parsed.endereco);
+      if (parsed.fone) setFone(parsed.fone);
+      if (parsed.dataNasc) setDataNasc(parsed.dataNasc);
+      if (parsed.doutor) setDoutor(parsed.doutor);
+      if (parsed.cro) setCro(parsed.cro);
+      if (parsed.obs) setObs(parsed.obs);
+      if (parsed.analise) setAnalise(parsed.analise);
+      setTeethSel(new Set(parsed.teeth));
+      setTomoSel(new Set(parsed.tomoTeeth));
+      setChk(parsed.checks);
+      setActiveFile(u.name);
+      toast.success(`Conteúdo de "${u.name}" aplicado ao pedido`);
+    } catch (err: any) {
+      toast.error(`Não foi possível ler ${u.name}: ${err?.message ?? "erro"}`);
+    }
+  }, []);
 
   const handleImprimir = async () => {
     const images = Array.from(printAreaRef.current?.querySelectorAll("img") ?? []);
