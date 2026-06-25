@@ -182,8 +182,8 @@ function PedidoExamePage() {
           toast.error(`Falha ao enviar ${file.name}: ${error.message}`);
           continue;
         }
-        const { data: pub } = supabase.storage.from("exam-images").getPublicUrl(path);
-        novos.push({ name: file.name, url: pub.publicUrl, path, file });
+        const { data: signed } = await supabase.storage.from("exam-images").createSignedUrl(path, 60 * 60 * 24 * 7);
+        novos.push({ name: file.name, url: signed?.signedUrl ?? "", path, file });
       }
       if (novos.length) {
         setUploads((prev) => [...prev, ...novos]);
