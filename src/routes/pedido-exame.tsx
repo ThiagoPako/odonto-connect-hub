@@ -395,22 +395,28 @@ function PedidoExamePage() {
         </div>
         {uploads.length > 0 && (
           <div className="no-print px-4 py-2 bg-slate-50 border-b flex flex-wrap gap-2">
-            {uploads.map((u) => (
-              <div key={u.path} className="inline-flex items-center gap-1 text-xs bg-white border rounded px-2 py-1 hover:bg-slate-100 text-slate-700">
-                <button
-                  type="button"
-                  onClick={() => setPreviewFile({ name: u.name, url: u.url, type: u.type })}
-                  className="inline-flex items-center gap-1 max-w-[240px] truncate text-slate-700 hover:text-orange-600"
-                  title={`Visualizar ${u.name}`}
-                >
-                  <FileDown className="size-3 shrink-0" />
-                  <span className="truncate">{u.name}</span>
-                </button>
-                <button type="button" onClick={() => removeUpload(u.path)} className="ml-1 text-slate-400 hover:text-red-500">
-                  <X className="size-3" />
-                </button>
-              </div>
-            ))}
+            {uploads.map((u) => {
+              const isActive = activeFile === u.name;
+              return (
+                <div key={u.path} className={cn(
+                  "inline-flex items-center gap-1 text-xs border rounded px-2 py-1 transition-colors",
+                  isActive ? "bg-orange-100 border-orange-400 text-orange-800" : "bg-white text-slate-700 hover:bg-slate-100"
+                )}>
+                  <button
+                    type="button"
+                    onClick={() => applyParsed(u)}
+                    className="inline-flex items-center gap-1 max-w-[240px] truncate hover:text-orange-600"
+                    title={`Ler e aplicar conteúdo de ${u.name}`}
+                  >
+                    <FileDown className="size-3 shrink-0" />
+                    <span className="truncate">{u.name}</span>
+                  </button>
+                  <button type="button" onClick={() => removeUpload(u.path)} className="ml-1 text-slate-400 hover:text-red-500">
+                    <X className="size-3" />
+                  </button>
+                </div>
+              );
+            })}
           </div>
         )}
 
