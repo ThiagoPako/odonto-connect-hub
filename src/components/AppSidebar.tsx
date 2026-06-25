@@ -28,6 +28,7 @@ import {
   Headset,
   Timer,
   Contact,
+  FileText,
 } from "lucide-react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { useState, useMemo } from "react";
@@ -66,6 +67,7 @@ const navSections: NavSection[] = [
       { title: "Pacientes", url: "/pacientes", icon: UserRound },
       { title: "Dentistas", url: "/dentistas", icon: Stethoscope },
       { title: "Exames", url: "/exames", icon: FileHeart },
+      { title: "Pedido de Exame", url: "/pedido-exame", icon: FileText },
       { title: "Prontuário", url: "/prontuario", icon: FileHeart },
       { title: "Relatórios IA", url: "/relatorios-clinicos", icon: FileHeart },
       { title: "Orçamentos", url: "/orcamentos", icon: Receipt },

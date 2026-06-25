@@ -22,6 +22,7 @@ import { Route as ReativacaoRouteImport } from './routes/reativacao'
 import { Route as ProntuarioRouteImport } from './routes/prontuario'
 import { Route as ProcedimentosRouteImport } from './routes/procedimentos'
 import { Route as PerfilRouteImport } from './routes/perfil'
+import { Route as PedidoExameRouteImport } from './routes/pedido-exame'
 import { Route as PainelDentistaRouteImport } from './routes/painel-dentista'
 import { Route as PainelComercialRouteImport } from './routes/painel-comercial'
 import { Route as PacientesRouteImport } from './routes/pacientes'
@@ -114,6 +115,11 @@ const ProcedimentosRoute = ProcedimentosRouteImport.update({
 const PerfilRoute = PerfilRouteImport.update({
   id: '/perfil',
   path: '/perfil',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PedidoExameRoute = PedidoExameRouteImport.update({
+  id: '/pedido-exame',
+  path: '/pedido-exame',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PainelDentistaRoute = PainelDentistaRouteImport.update({
@@ -285,6 +291,7 @@ export interface FileRoutesByFullPath {
   '/pacientes': typeof PacientesRoute
   '/painel-comercial': typeof PainelComercialRoute
   '/painel-dentista': typeof PainelDentistaRoute
+  '/pedido-exame': typeof PedidoExameRoute
   '/perfil': typeof PerfilRoute
   '/procedimentos': typeof ProcedimentosRoute
   '/prontuario': typeof ProntuarioRoute
@@ -328,6 +335,7 @@ export interface FileRoutesByTo {
   '/pacientes': typeof PacientesRoute
   '/painel-comercial': typeof PainelComercialRoute
   '/painel-dentista': typeof PainelDentistaRoute
+  '/pedido-exame': typeof PedidoExameRoute
   '/perfil': typeof PerfilRoute
   '/procedimentos': typeof ProcedimentosRoute
   '/prontuario': typeof ProntuarioRoute
@@ -372,6 +380,7 @@ export interface FileRoutesById {
   '/pacientes': typeof PacientesRoute
   '/painel-comercial': typeof PainelComercialRoute
   '/painel-dentista': typeof PainelDentistaRoute
+  '/pedido-exame': typeof PedidoExameRoute
   '/perfil': typeof PerfilRoute
   '/procedimentos': typeof ProcedimentosRoute
   '/prontuario': typeof ProntuarioRoute
@@ -417,6 +426,7 @@ export interface FileRouteTypes {
     | '/pacientes'
     | '/painel-comercial'
     | '/painel-dentista'
+    | '/pedido-exame'
     | '/perfil'
     | '/procedimentos'
     | '/prontuario'
@@ -460,6 +470,7 @@ export interface FileRouteTypes {
     | '/pacientes'
     | '/painel-comercial'
     | '/painel-dentista'
+    | '/pedido-exame'
     | '/perfil'
     | '/procedimentos'
     | '/prontuario'
@@ -503,6 +514,7 @@ export interface FileRouteTypes {
     | '/pacientes'
     | '/painel-comercial'
     | '/painel-dentista'
+    | '/pedido-exame'
     | '/perfil'
     | '/procedimentos'
     | '/prontuario'
@@ -547,6 +559,7 @@ export interface RootRouteChildren {
   PacientesRoute: typeof PacientesRoute
   PainelComercialRoute: typeof PainelComercialRoute
   PainelDentistaRoute: typeof PainelDentistaRoute
+  PedidoExameRoute: typeof PedidoExameRoute
   PerfilRoute: typeof PerfilRoute
   ProcedimentosRoute: typeof ProcedimentosRoute
   ProntuarioRoute: typeof ProntuarioRoute
@@ -653,6 +666,13 @@ declare module '@tanstack/react-router' {
       path: '/perfil'
       fullPath: '/perfil'
       preLoaderRoute: typeof PerfilRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/pedido-exame': {
+      id: '/pedido-exame'
+      path: '/pedido-exame'
+      fullPath: '/pedido-exame'
+      preLoaderRoute: typeof PedidoExameRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/painel-dentista': {
@@ -894,6 +914,7 @@ const rootRouteChildren: RootRouteChildren = {
   PacientesRoute: PacientesRoute,
   PainelComercialRoute: PainelComercialRoute,
   PainelDentistaRoute: PainelDentistaRoute,
+  PedidoExameRoute: PedidoExameRoute,
   PerfilRoute: PerfilRoute,
   ProcedimentosRoute: ProcedimentosRoute,
   ProntuarioRoute: ProntuarioRoute,
