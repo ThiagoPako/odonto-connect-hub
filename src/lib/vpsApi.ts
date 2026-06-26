@@ -582,7 +582,6 @@ export const whatsappApi = {
     fileName?: string; caption?: string; mimeType?: string;
   }) => {
     try {
-      const token = await getAccessToken();
       const params = new URLSearchParams({
         instance,
         number,
@@ -592,20 +591,28 @@ export const whatsappApi = {
         ...(media.mimeType ? { mimeType: media.mimeType } : {}),
       });
 
-      const response = await fetch(`${VPS_API_BASE}/whatsapp/send-media-upload?${params.toString()}`, {
-        method: 'POST',
-        headers: {
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          'Content-Type': file.type || media.mimeType || 'application/octet-stream',
-        },
-        body: file,
-      });
+      const buildUploadOptions = async (forceRefresh = false): Promise<RequestInit> => {
+        const token = await getAccessToken(forceRefresh);
+        return {
+          method: 'POST',
+          headers: {
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            'Content-Type': file.type || media.mimeType || 'application/octet-stream',
+          },
+          body: file,
+        };
+      };
+
+      let response = await fetch(`${VPS_API_BASE}/whatsapp/send-media-upload?${params.toString()}`, await buildUploadOptions(false));
+      if (response.status === 401) {
+        response = await fetch(`${VPS_API_BASE}/whatsapp/send-media-upload?${params.toString()}`, await buildUploadOptions(true));
+      }
 
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
         if (isAuthError(response.status, data?.error)) {
           handleAuthFailure(false);
-          return { data: null, error: 'Sessão expirada. Faça login novamente.' };
+          return { data: null, error: data?.error || 'Sessão expirada. Faça login novamente.' };
         }
         return { data: null, error: data.error || `HTTP ${response.status}` };
       }
@@ -616,7 +623,13 @@ export const whatsappApi = {
       return { data: null, error: message };
     }
   },
-  getMediaSendStatus: (jobId: string) => vpsApiFetch<{ status: string; result?: { key?: { id?: string } }; error?: string }>(`/whatsapp/send-media-status/${jobId}`, { background: true }),
+  getMediaSendStatus: async (jobId: string) => {
+    let result = await vpsApiFetch<{ status: string; result?: { key?: { id?: string } }; error?: string }>(`/whatsapp/send-media-status/${jobId}`, { background: true });
+    if (result.error === 'Unauthorized') {
+      result = await vpsApiFetch<{ status: string; result?: { key?: { id?: string } }; error?: string }>(`/whatsapp/send-media-status/${jobId}`, { background: true });
+    }
+    return result;
+  },
   sendLocation: (instance: string, number: string, location: {
     latitude: number; longitude: number; name?: string; address?: string;
   }) => vpsApiFetch('/whatsapp/send-location', { method: 'POST', body: { instance, number, ...location } }),
