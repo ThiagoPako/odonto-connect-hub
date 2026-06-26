@@ -2369,11 +2369,32 @@ app.post('/api/whatsapp/send-media', async (req, res) => {
       });
 
       if (!result.ok) {
+        console.warn('sendWhatsAppAudio v2 failed:', result.status, JSON.stringify(result.data));
         result = await evolutionFetch(`/message/sendWhatsAppAudio/${instance}`, {
           method: 'POST',
           body: JSON.stringify(v1Payload),
         });
       }
+
+      // Fallback final: enviar como mídia normal (não-PTT) caso sendWhatsAppAudio falhe
+      if (!result.ok) {
+        console.warn('sendWhatsAppAudio v1 failed, falling back to sendMedia:', result.status, JSON.stringify(result.data));
+        const mediaPayload = {
+          number: cleanNumber,
+          mediaMessage: {
+            mediaType: 'audio',
+            mimetype: outgoingMime,
+            fileName: media.fileName || `audio-${Date.now()}.ogg`,
+            media: outgoingBase64 || media.url,
+          },
+          options: { delay: 1200, presence: 'recording' },
+        };
+        result = await evolutionFetch(`/message/sendMedia/${instance}`, {
+          method: 'POST',
+          body: JSON.stringify(mediaPayload),
+        });
+      }
+
       if (!result.ok) {
         return res.status(result.status || 502).json({
           error: result.data?.response?.message?.[0] || result.data?.error || 'Falha ao enviar áudio',
