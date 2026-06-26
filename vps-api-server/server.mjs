@@ -1896,7 +1896,25 @@ async function transcodeAudioToWhatsAppOgg(base64Audio, mimeType) {
   }
 }
 
-async function sendWhatsAppAudioWithFallback(instance, cleanNumber, base64Audio, mimeType, fileName) {
+function toPublicMediaUrl(mediaPath) {
+  if (!mediaPath) return null;
+  if (/^https?:\/\//i.test(mediaPath)) return mediaPath;
+  const backendOrigin = (
+    process.env.BACKEND_PUBLIC_URL
+    || process.env.API_PUBLIC_URL
+    || process.env.VPS_API_PUBLIC_URL
+    || 'https://backend.odontoconnect.tech'
+  ).replace(/\/$/, '').replace(/\/api$/, '');
+  return `${backendOrigin}${mediaPath.startsWith('/') ? '' : '/'}${mediaPath}`;
+}
+
+function extractEvolutionErrorMessage(data) {
+  const responseMessage = data?.response?.message;
+  if (Array.isArray(responseMessage)) return responseMessage[0];
+  return responseMessage || data?.error || data?.message || null;
+}
+
+async function sendWhatsAppAudioWithFallback(instance, cleanNumber, base64Audio, mimeType, fileName, publicMediaUrl = null) {
   const sourceMime = String(mimeType || 'audio/webm').split(';')[0].trim() || 'audio/webm';
   const originalBase64 = cleanBase64Media(base64Audio);
 
@@ -1921,24 +1939,53 @@ async function sendWhatsAppAudioWithFallback(instance, cleanNumber, base64Audio,
 
   const dataUriAudio = `data:${outgoingMime};base64,${outgoingBase64}`;
   const normalizedFileName = fileName || `audio-${Date.now()}.${outgoingMime.includes('ogg') ? 'ogg' : 'webm'}`;
+  let audioUrl = publicMediaUrl;
+
+  if (!audioUrl) {
+    const savedAudioPath = await saveMediaToDisk(outgoingBase64, outgoingMime, normalizedFileName);
+    audioUrl = toPublicMediaUrl(savedAudioPath);
+  }
 
   const attempts = [
-    {
-      label: 'sendWhatsAppAudio-datauri',
-      path: `/message/sendWhatsAppAudio/${instance}`,
-      body: {
-        number: cleanNumber,
-        audio: dataUriAudio,
-        delay: 1200,
-        mimetype: outgoingMime,
+    ...(audioUrl ? [
+      {
+        label: 'sendWhatsAppAudio-url',
+        path: `/message/sendWhatsAppAudio/${instance}`,
+        body: {
+          number: cleanNumber,
+          audio: audioUrl,
+          delay: 1200,
+        },
       },
-    },
+      {
+        label: 'sendMedia-audio-url-flat',
+        path: `/message/sendMedia/${instance}`,
+        body: {
+          number: cleanNumber,
+          mediatype: 'audio',
+          mimetype: outgoingMime,
+          fileName: normalizedFileName,
+          media: audioUrl,
+          delay: 1200,
+        },
+      },
+    ] : []),
     {
       label: 'sendWhatsAppAudio-base64',
       path: `/message/sendWhatsAppAudio/${instance}`,
       body: {
         number: cleanNumber,
         audio: outgoingBase64,
+        delay: 1200,
+        mimetype: outgoingMime,
+      },
+    },
+    {
+      label: 'sendWhatsAppAudio-datauri',
+      path: `/message/sendWhatsAppAudio/${instance}`,
+      body: {
+        number: cleanNumber,
+        audio: dataUriAudio,
         delay: 1200,
         mimetype: outgoingMime,
       },
@@ -1997,6 +2044,9 @@ async function sendWhatsAppAudioWithFallback(instance, cleanNumber, base64Audio,
 
     console.log(`📤 audio send result ${attempt.label} ok=${lastResult.ok} status=${lastResult.status}`);
     if (lastResult.ok) return lastResult;
+
+    const errMsg = extractEvolutionErrorMessage(lastResult.data);
+    console.error(`❌ audio send failed ${attempt.label}: ${errMsg || `HTTP ${lastResult.status}`}`);
   }
 
   return lastResult || {
