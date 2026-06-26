@@ -183,22 +183,19 @@ export function MessageInput({ onSendMessage, onPresenceChange, disabled, replyi
   }, []);
 
   const handleAudioComplete = (blob: Blob, recordedDuration: number) => {
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const base64 = (reader.result as string).split(",")[1];
-      const rawMime = blob.type || "audio/ogg";
-      const cleanMime = rawMime.split(";")[0].trim();
-      const finalMime = cleanMime || "audio/ogg";
-      const ext = finalMime.includes("mp4") ? "m4a" : finalMime.includes("webm") ? "webm" : "ogg";
-      onSendMessage("🎤 Mensagem de áudio", "audio", {
-        duration: Math.max(1, Math.round(recordedDuration)),
-        fileUrl: URL.createObjectURL(blob),
-        mimeType: finalMime,
-        fileName: `audio-${Date.now()}.${ext}`,
-        _mediaBase64: base64,
-      } as any);
-    };
-    reader.readAsDataURL(blob);
+    const rawMime = blob.type || "audio/ogg";
+    const cleanMime = rawMime.split(";")[0].trim();
+    const finalMime = cleanMime || "audio/ogg";
+    const ext = finalMime.includes("mp4") ? "m4a" : finalMime.includes("webm") ? "webm" : "ogg";
+    const fileName = `audio-${Date.now()}.${ext}`;
+    const file = new File([blob], fileName, { type: finalMime });
+    onSendMessage("🎤 Mensagem de áudio", "audio", {
+      duration: Math.max(1, Math.round(recordedDuration)),
+      fileUrl: URL.createObjectURL(blob),
+      mimeType: finalMime,
+      fileName,
+      _mediaFile: file,
+    } as any);
   };
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>, mediaType: MessageType) => {
