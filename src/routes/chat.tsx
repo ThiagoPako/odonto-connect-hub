@@ -822,7 +822,7 @@ function ChatPage() {
 
         console.log(`📤 [CHAT] Media send: type=${type}, hasFile=${!!mediaFile}, fileSize=${mediaFile?.size}, hasBase64=${!!mediaBase64}, base64Len=${mediaBase64?.length}, instance=${connected.instanceName}, phone=${selectedLead.phone}`);
 
-        if (type === "audio" && mediaBase64) {
+        if (type === "audio" && mediaBase64 && !mediaFile) {
           const result = await whatsappApi.sendMedia(connected.instanceName, selectedLead.phone, type, {
             base64: mediaBase64,
             fileName: extra?.fileName,
