@@ -858,7 +858,7 @@ function ChatPage() {
 
             const job = statusResult.data as any;
             if (job?.status === "sent") {
-              evolutionMsgId = job?.result?.key?.id || null;
+              evolutionMsgId = job?.result?.key?.id || job?.result?.message?.key?.id || job?.result?.data?.key?.id || msgId;
               break;
             }
             if (job?.status === "failed") {
