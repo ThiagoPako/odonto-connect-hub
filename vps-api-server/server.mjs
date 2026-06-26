@@ -1896,6 +1896,116 @@ async function transcodeAudioToWhatsAppOgg(base64Audio, mimeType) {
   }
 }
 
+async function sendWhatsAppAudioWithFallback(instance, cleanNumber, base64Audio, mimeType, fileName) {
+  const sourceMime = String(mimeType || 'audio/webm').split(';')[0].trim() || 'audio/webm';
+  const originalBase64 = cleanBase64Media(base64Audio);
+
+  if (!originalBase64 || originalBase64.length < 10) {
+    return {
+      ok: false,
+      status: 400,
+      data: { error: 'Áudio inválido ou vazio' },
+    };
+  }
+
+  let outgoingMime = sourceMime;
+  let outgoingBase64 = originalBase64;
+
+  try {
+    const transcoded = await transcodeAudioToWhatsAppOgg(originalBase64, sourceMime);
+    outgoingBase64 = transcoded.base64;
+    outgoingMime = transcoded.mimeType;
+  } catch (transcodeError) {
+    console.error('Audio transcode failed, falling back to original payload:', transcodeError.message);
+  }
+
+  const dataUriAudio = `data:${outgoingMime};base64,${outgoingBase64}`;
+  const normalizedFileName = fileName || `audio-${Date.now()}.${outgoingMime.includes('ogg') ? 'ogg' : 'webm'}`;
+
+  const attempts = [
+    {
+      label: 'sendWhatsAppAudio-datauri',
+      path: `/message/sendWhatsAppAudio/${instance}`,
+      body: {
+        number: cleanNumber,
+        audio: dataUriAudio,
+        delay: 1200,
+        mimetype: outgoingMime,
+      },
+    },
+    {
+      label: 'sendWhatsAppAudio-base64',
+      path: `/message/sendWhatsAppAudio/${instance}`,
+      body: {
+        number: cleanNumber,
+        audio: outgoingBase64,
+        delay: 1200,
+        mimetype: outgoingMime,
+      },
+    },
+    {
+      label: 'sendWhatsAppAudio-audioMessage',
+      path: `/message/sendWhatsAppAudio/${instance}`,
+      body: {
+        number: cleanNumber,
+        audioMessage: {
+          audio: dataUriAudio,
+          mimetype: outgoingMime,
+        },
+        options: {
+          delay: 1200,
+          presence: 'recording',
+          encoding: true,
+        },
+      },
+    },
+    {
+      label: 'sendMedia-audio-flat',
+      path: `/message/sendMedia/${instance}`,
+      body: {
+        number: cleanNumber,
+        mediatype: 'audio',
+        mimetype: outgoingMime,
+        fileName: normalizedFileName,
+        media: dataUriAudio,
+        delay: 1200,
+      },
+    },
+    {
+      label: 'sendMedia-audio-message',
+      path: `/message/sendMedia/${instance}`,
+      body: {
+        number: cleanNumber,
+        mediaMessage: {
+          mediaType: 'audio',
+          mimetype: outgoingMime,
+          fileName: normalizedFileName,
+          media: dataUriAudio,
+        },
+        options: { delay: 1200, presence: 'recording' },
+      },
+    },
+  ];
+
+  let lastResult = null;
+  for (const attempt of attempts) {
+    console.log(`📤 audio send trying ${attempt.label}, payload size: ${JSON.stringify(attempt.body).length} bytes`);
+    lastResult = await evolutionFetch(attempt.path, {
+      method: 'POST',
+      body: JSON.stringify(attempt.body),
+    });
+
+    console.log(`📤 audio send result ${attempt.label} ok=${lastResult.ok} status=${lastResult.status}`);
+    if (lastResult.ok) return lastResult;
+  }
+
+  return lastResult || {
+    ok: false,
+    status: 502,
+    data: { error: 'Falha ao enviar áudio' },
+  };
+}
+
 // List instances
 app.get('/api/whatsapp/instances', async (req, res) => {
   try {
@@ -2324,76 +2434,13 @@ app.post('/api/whatsapp/send-media', async (req, res) => {
     const cleanNumber = normalizeWhatsappNumber(number);
 
     if (mediaType === 'audio') {
-      const rawMime = media.mimeType || 'audio/webm';
-      const cleanMime = rawMime.split(';')[0].trim();
-      const sourceMime = cleanMime || 'audio/webm';
-      const audioBase64 = cleanBase64Media(media.base64);
-
-      let outgoingMime = sourceMime;
-      let outgoingBase64 = audioBase64;
-
-      if (audioBase64) {
-        try {
-          const transcoded = await transcodeAudioToWhatsAppOgg(audioBase64, sourceMime);
-          outgoingBase64 = transcoded.base64;
-          outgoingMime = transcoded.mimeType;
-        } catch (transcodeError) {
-          console.error('Audio transcode failed, falling back to original payload:', transcodeError.message);
-        }
-      }
-
-      const audioValue = outgoingBase64 || media.url;
-
-      const v2Payload = {
-        number: cleanNumber,
-        audio: audioValue,
-        delay: 1200,
-        mimetype: outgoingMime,
-      };
-      const v1Payload = {
-        number: cleanNumber,
-        audioMessage: {
-          audio: audioValue,
-          mimetype: outgoingMime,
-        },
-        options: {
-          delay: 1200,
-          presence: 'recording',
-          encoding: true,
-        },
-      };
-
-      let result = await evolutionFetch(`/message/sendWhatsAppAudio/${instance}`, {
-        method: 'POST',
-        body: JSON.stringify(v2Payload),
-      });
-
-      if (!result.ok) {
-        console.warn('sendWhatsAppAudio v2 failed:', result.status, JSON.stringify(result.data));
-        result = await evolutionFetch(`/message/sendWhatsAppAudio/${instance}`, {
-          method: 'POST',
-          body: JSON.stringify(v1Payload),
-        });
-      }
-
-      // Fallback final: enviar como mídia normal (não-PTT) caso sendWhatsAppAudio falhe
-      if (!result.ok) {
-        console.warn('sendWhatsAppAudio v1 failed, falling back to sendMedia:', result.status, JSON.stringify(result.data));
-        const mediaPayload = {
-          number: cleanNumber,
-          mediaMessage: {
-            mediaType: 'audio',
-            mimetype: outgoingMime,
-            fileName: media.fileName || `audio-${Date.now()}.ogg`,
-            media: outgoingBase64 || media.url,
-          },
-          options: { delay: 1200, presence: 'recording' },
-        };
-        result = await evolutionFetch(`/message/sendMedia/${instance}`, {
-          method: 'POST',
-          body: JSON.stringify(mediaPayload),
-        });
-      }
+      const result = await sendWhatsAppAudioWithFallback(
+        instance,
+        cleanNumber,
+        media.base64,
+        media.mimeType,
+        media.fileName,
+      );
 
       if (!result.ok) {
         return res.status(result.status || 502).json({
@@ -2494,6 +2541,37 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '6
     const mediaCaption = caption && String(caption).trim() ? String(caption).trim() : undefined;
 
     console.log(`📤 send-media-upload jobId=${jobId} [${String(mediaType)}] to ${cleanNumber}, binary size: ${rawBody.length}, base64 len: ${base64Data.length}, mime: ${resolvedMimeType}`);
+
+    if (String(mediaType) === 'audio') {
+      const result = await sendWhatsAppAudioWithFallback(
+        String(instance),
+        cleanNumber,
+        base64Data,
+        resolvedMimeType,
+        normalizedFileName,
+      );
+
+      if (!result.ok) {
+        mediaSendJobs.set(jobId, {
+          ...mediaSendJobs.get(jobId),
+          status: 'failed',
+          error: result?.data?.response?.message?.[0] || result?.data?.error || result?.data?.message || 'Falha ao enviar áudio',
+          details: result?.data,
+          finishedAt: Date.now(),
+        });
+        return;
+      }
+
+      const savedMediaUrl = await saveBufferToDisk(rawBody, resolvedMimeType, normalizedFileName);
+      mediaSendJobs.set(jobId, {
+        ...mediaSendJobs.get(jobId),
+        status: 'sent',
+        result: result.data,
+        mediaUrl: savedMediaUrl,
+        finishedAt: Date.now(),
+      });
+      return;
+    }
 
     const captionField = mediaCaption ? { caption: mediaCaption } : {};
 
