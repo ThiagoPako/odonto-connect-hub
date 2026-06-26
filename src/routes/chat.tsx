@@ -564,7 +564,7 @@ function ChatPage() {
         timestamp: new Date(m.timestamp),
         status: (m.status as any) || "delivered",
         fileName: m.file_name || undefined,
-        fileUrl: m.media_url || undefined,
+        fileUrl: resolveMediaUrl(m.media_url) || undefined,
         mimeType: m.mime_type || undefined,
         reactions: Array.isArray(m.reactions) ? m.reactions : [],
       }));
