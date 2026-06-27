@@ -6652,7 +6652,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
     // Find lead by phone and tenant_id
     const { rows: leads } = await pool.query(
       `SELECT id, nome as name, avatar_url, telefone as phone, queue_id, queue_name, awaiting_queue_selection FROM crm_leads 
-       WHERE tenant_id = $1 AND REPLACE(REPLACE(REPLACE(REPLACE(telefone, ' ', ''), '-', ''), '(', ''), ')', '') LIKE '%' || $2
+       WHERE tenant_id = $1 AND REGEXP_REPLACE(COALESCE(telefone, ''), '\\D', '', 'g') LIKE '%' || $2
        LIMIT 1`,
       [tenantId, phoneSuffix]
     );
