@@ -243,7 +243,7 @@ async function getFallbackTenantIdForIncomingMessage({ instanceName, phoneSuffix
            FROM whatsapp_instances
           WHERE tenant_id IS NOT NULL
             AND ($1 = '' OR instance_name = $1)
-          ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST
+          ORDER BY created_at DESC NULLS LAST
           LIMIT 1`,
         [instanceName]
       );
