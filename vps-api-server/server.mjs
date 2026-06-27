@@ -9944,10 +9944,10 @@ app.post('/api/messages/mark-read', async (req, res) => {
     if (!leadId) return res.status(400).json({ error: 'leadId obrigatório' });
 
     await pool.query(
-      `INSERT INTO chat_read_status (lead_id, user_id, last_read_at)
-       VALUES ($1, $2, NOW())
-       ON CONFLICT (lead_id, user_id) DO UPDATE SET last_read_at = NOW()`,
-      [leadId, user.id]
+      `INSERT INTO chat_read_status (lead_id, user_id, last_read_at, tenant_id)
+       VALUES ($1, $2, NOW(), $3)
+       ON CONFLICT (lead_id, user_id) DO UPDATE SET last_read_at = NOW(), tenant_id = EXCLUDED.tenant_id`,
+      [leadId, user.id, user.tenant_id]
     );
     res.json({ success: true });
   } catch (error) {
@@ -10137,11 +10137,12 @@ app.get('/api/messages/unread', async (req, res) => {
     const { rows } = await pool.query(`
       SELECT m.lead_id, COUNT(*) as unread_count
       FROM chat_messages m
-      LEFT JOIN chat_read_status r ON r.lead_id = m.lead_id AND r.user_id = $1
+      LEFT JOIN chat_read_status r ON r.lead_id = m.lead_id AND r.user_id = $1 AND r.tenant_id = $2
       WHERE m.sender = 'lead'
+        AND m.tenant_id = $2
         AND (r.last_read_at IS NULL OR m.timestamp > r.last_read_at)
       GROUP BY m.lead_id
-    `, [user.id]);
+    `, [user.id, user.tenant_id]);
 
     const counts = {};
     for (const row of rows) {
