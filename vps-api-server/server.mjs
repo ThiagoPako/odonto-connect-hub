@@ -6330,7 +6330,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
     const body = req.body;
     const event = typeof body.event === 'string' ? body.event.toLowerCase().replace(/_/g, '.') : '';
     const instance = body.instance || body.instanceName;
-    const tenantId = await getTenantIdByInstance(instance);
+    let tenantId = await getTenantIdByInstance(instance);
     
     console.log(`📩 Webhook event: ${event} from ${instance} (tenant: ${tenantId})`);
     if (event !== 'presence.update') {
@@ -6589,6 +6589,16 @@ app.post('/api/webhook/evolution', async (req, res) => {
     const phone = normalizeWhatsappNumber(remoteJid);
     const resolvedPhone = resolvePhoneFromLid(phone);
     const phoneSuffix = resolvedPhone.slice(-11);
+
+    if (!tenantId) {
+      tenantId = await getFallbackTenantIdForIncomingMessage({ instanceName: instance, phoneSuffix });
+      if (tenantId) {
+        console.log(`🔐 Tenant resolved by fallback for ${instance || 'unknown-instance'} / ${phoneSuffix}: ${tenantId}`);
+      } else {
+        console.warn(`⚠️ Webhook message without tenant_id: instance=${instance || 'unknown'} phone=${phoneSuffix}. Message will be ignored to avoid cross-clinic leakage.`);
+        return res.status(202).json({ ignored: true, reason: 'tenant_not_resolved' });
+      }
+    }
 
     // Extract message content
     const msgContent =
