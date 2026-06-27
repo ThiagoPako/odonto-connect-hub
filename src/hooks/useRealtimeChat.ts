@@ -103,19 +103,48 @@ export function useRealtimeChat(options: RealtimeChatOptions) {
   useEffect(() => {
     let eventSource: EventSource | null = null;
     let cancelled = false;
+    let retryTimer: ReturnType<typeof window.setTimeout> | null = null;
+    let retryAttempt = 0;
 
     const parse = <T,>(event: MessageEvent<string>): T | null => {
       try { return JSON.parse(event.data) as T; } catch { return null; }
     };
 
-    Promise.all([getAccessToken(), getActiveTenantId()]).then(([token, tenantId]) => {
+    const closeCurrent = () => {
+      if (eventSource) {
+        eventSource.close();
+        eventSource = null;
+      }
+    };
+
+    const scheduleReconnect = () => {
       if (cancelled) return;
+      if (retryTimer) window.clearTimeout(retryTimer);
+      const delay = Math.min(30_000, 1_000 * Math.pow(2, retryAttempt++));
+      retryTimer = window.setTimeout(() => void connect(true), delay);
+    };
+
+    const connect = async (forceRefresh = false) => {
+      if (cancelled) return;
+      closeCurrent();
+
+      const [token, tenantId] = await Promise.all([getAccessToken(forceRefresh), getActiveTenantId()]);
+      if (cancelled) return;
+
       const url = new URL(`${VPS_API_BASE}/events`);
       if (token) url.searchParams.set("token", token);
       if (tenantId) url.searchParams.set("tenantId", tenantId);
       eventSource = new EventSource(url.toString());
 
-      eventSource.addEventListener("connected", () => console.log("📡 Chat realtime connected"));
+      eventSource.addEventListener("connected", (event) => {
+        retryAttempt = 0;
+        const data = parse<{ tenantId?: string | null }>(event as MessageEvent<string>);
+        console.log("📡 Chat realtime connected", data?.tenantId ? `(tenant: ${data.tenantId})` : "(sem tenant)");
+        if (tenantId && data && !data.tenantId) {
+          console.warn("📡 Chat realtime connected without tenant; forcing fresh reconnect");
+          scheduleReconnect();
+        }
+      });
       eventSource.addEventListener("new_message", (event) => {
         const data = parse<IncomingMessage>(event as MessageEvent<string>);
         if (data) messageRef.current(data);
@@ -136,11 +165,18 @@ export function useRealtimeChat(options: RealtimeChatOptions) {
         const data = parse<LeadRecoveryReturn>(event as MessageEvent<string>);
         if (data) leadRecoveryRef.current?.(data);
       });
-      eventSource.onerror = () => console.warn("📡 Chat realtime disconnected/reconnecting");
-    });
+      eventSource.onerror = () => {
+        console.warn("📡 Chat realtime disconnected; reconnecting with fresh token");
+        closeCurrent();
+        scheduleReconnect();
+      };
+    };
+
+    void connect(false);
 
     return () => {
       cancelled = true;
+      if (retryTimer) window.clearTimeout(retryTimer);
       eventSource?.close();
     };
   }, []);
