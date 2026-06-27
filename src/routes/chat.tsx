@@ -719,19 +719,25 @@ function ChatPage() {
     }
   }, [leadSearch, myLeads.length, queue.length]);
 
-  const handleAssign = (lead: Lead) => {
-    setQueue((prev) => prev.filter((l) => l.id !== lead.id));
-    const assignedLead: Lead = { ...lead, status: "active", assignedTo: "current", unreadCount: 0 };
-    setMyLeads((prev) => [assignedLead, ...prev]);
-    setSelectedLead(assignedLead);
-    setActiveTab("mine");
+  const handleAssign = async (lead: Lead) => {
+    try {
+      const { data, error } = await sessionsApi.assign({ leadId: lead.id });
+      if (error) throw error;
 
-    // Track session assignment
-    sessionsApi.assign({ leadId: lead.id }).then(({ data }) => {
       if (data?.waitTime) {
         console.log(`⏱️ Wait time for ${lead.name}: ${data.waitTime}s`);
       }
-    });
+
+      setQueue((prev) => prev.filter((l) => l.id !== lead.id));
+      const assignedLead: Lead = { ...lead, status: "active", assignedTo: "current", unreadCount: 0 };
+      setMyLeads((prev) => [assignedLead, ...prev.filter((l) => l.id !== lead.id)]);
+      setSelectedLead(assignedLead);
+      setActiveTab("mine");
+    } catch (error) {
+      toast.error("Não foi possível assumir este atendimento. Ele continuará na fila.");
+      console.error("Erro ao assumir atendimento:", error);
+      return;
+    }
 
     // Restore archived messages or create initial message
     const archived = conversationArchiveRef.current[lead.id];
