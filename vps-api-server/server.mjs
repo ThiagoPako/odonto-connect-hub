@@ -6943,6 +6943,8 @@ app.post('/api/webhook/evolution', async (req, res) => {
           msgType,
           instance,
           queueId: lead.queue_id || null,
+          queueName: lead.queue_name || null,
+          queueColor: lead.queue_color || null,
           mediaUrl,
           fileName: mediaFileName,
           mimeType: mediaMimeType,
@@ -6950,8 +6952,8 @@ app.post('/api/webhook/evolution', async (req, res) => {
           sender: senderRole,
         });
         // Invalid selection — resend menu
-        await sendQueueMenu(instance, phone);
-        console.log(`💬 Incoming message from ${pushName} (${phone}) awaiting queue selection → saved + broadcast to ${sseClients.size} clients`);
+        await sendQueueMenu(instance, resolvedPhone);
+        console.log(`💬 Incoming message from ${pushName} (${resolvedPhone}) awaiting queue selection → saved + broadcast to ${sseClients.size} clients`);
         return res.json({ processed: true, resent_menu: true, leadId: lead.id });
       }
     }
