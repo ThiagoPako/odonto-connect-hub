@@ -7139,24 +7139,24 @@ app.post('/api/sessions/assign', async (req, res) => {
       `UPDATE attendance_sessions SET 
          attendant_id = $1, attendant_name = $2, assigned_at = NOW(), status = 'active',
          wait_time_seconds = EXTRACT(EPOCH FROM (NOW() - started_waiting_at))::INTEGER
-       WHERE lead_id = $3 AND status = 'waiting'
+       WHERE lead_id = $3 AND tenant_id = $4 AND status = 'waiting'
        RETURNING id, wait_time_seconds`,
-      [user.id, attendantName, leadId]
+      [user.id, attendantName, leadId, user.tenant_id]
     );
 
     // Auto-move lead to "em_atendimento" in CRM kanban
     await pool.query(
-      `UPDATE crm_leads SET kanban_stage = 'em_atendimento', status = 'em_atendimento', updated_at = NOW() WHERE id = $1`,
-      [leadId]
+      `UPDATE crm_leads SET kanban_stage = 'em_atendimento', status = 'em_atendimento', updated_at = NOW() WHERE id = $1 AND tenant_id = $2`,
+      [leadId, user.tenant_id]
     ).catch(err => console.error('Failed to update kanban_stage:', err.message));
 
     if (result.rows.length === 0) {
       // No waiting session, create one as active directly
       const id = crypto.randomUUID();
       await pool.query(
-        `INSERT INTO attendance_sessions (id, lead_id, attendant_id, attendant_name, assigned_at, started_waiting_at, status, wait_time_seconds)
-         VALUES ($1,$2,$3,$4, NOW(), NOW(), 'active', 0)`,
-        [id, leadId, user.id, attendantName]
+        `INSERT INTO attendance_sessions (id, lead_id, attendant_id, attendant_name, assigned_at, started_waiting_at, status, wait_time_seconds, tenant_id)
+         VALUES ($1,$2,$3,$4, NOW(), NOW(), 'active', 0, $5)`,
+        [id, leadId, user.id, attendantName, user.tenant_id]
       );
       return res.json({ success: true, id, waitTime: 0 });
     }
