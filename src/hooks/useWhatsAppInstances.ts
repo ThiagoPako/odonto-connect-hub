@@ -5,6 +5,7 @@
  */
 import { useState, useEffect, useCallback, useRef } from "react";
 import { fetchInstances, type EvolutionInstance } from "@/lib/evolutionApi";
+import { whatsappApi } from "@/lib/vpsApi";
 import { toast } from "sonner";
 import { playDisconnectAlert } from "@/lib/notificationSound";
 import { supabase } from "@/integrations/supabase/client";
@@ -71,7 +72,19 @@ function detectChanges(newInstances: ConnectedInstance[]) {
 
 async function refreshInstances(): Promise<ConnectedInstance[]> {
   try {
-    const list = await fetchInstances();
+    const { data: vpsInstances } = await whatsappApi.instances();
+    const rawList = Array.isArray(vpsInstances) ? vpsInstances : await fetchInstances();
+    const list: EvolutionInstance[] = rawList.map((inst: any) => ({
+      instanceName: inst.name || inst.instanceName || inst.instance?.instanceName,
+      instanceId: inst.id || inst.instanceId || inst.instance?.instanceId || inst.instance?.id || "",
+      integration: inst.integration || inst.instance?.integration || "",
+      status: inst.connectionStatus === "open" || inst.status === "open" || inst.instance?.state === "open"
+        ? "open"
+        : inst.connectionStatus === "connecting" || inst.status === "connecting" || inst.instance?.state === "connecting"
+          ? "connecting"
+          : "close",
+      owner: inst.ownerJid || inst.owner || inst.instance?.ownerJid,
+    })).filter((inst) => !!inst.instanceName);
     
     // Filter instances by tenant_id prefix
     let filteredList = list;
