@@ -10032,30 +10032,49 @@ app.get('/api/queue/leads', async (req, res) => {
     // visible until an attendant explicitly assumes them; they must not expire
     // just because the chat page was closed or refreshed.
     const { rows } = await pool.query(`
-      SELECT DISTINCT ON (l.id)
-        l.id,
-        l.nome as name,
-        l.telefone as phone,
+      SELECT DISTINCT ON (s.lead_id)
+        COALESCE(l.id::text, s.lead_id) as id,
+        COALESCE(l.nome, s.lead_name, latest.phone, s.lead_phone) as name,
+        COALESCE(l.telefone, s.lead_phone, latest.phone) as phone,
         l.avatar_url,
-        l.queue_id,
-        l.queue_name,
+        COALESCE(l.queue_id, s.queue_id) as queue_id,
+        COALESCE(l.queue_name, s.queue_name) as queue_name,
         l.origem,
-        l.priority,
+        COALESCE(l.priority, false) as priority,
         s.id as session_id,
         s.status as session_status,
         s.attendant_id,
         s.attendant_name,
         s.started_waiting_at,
-        (SELECT content FROM chat_messages WHERE lead_id = l.id::text AND tenant_id = $2 ORDER BY timestamp DESC LIMIT 1) as last_message,
-        (SELECT timestamp FROM chat_messages WHERE lead_id = l.id::text AND tenant_id = $2 ORDER BY timestamp DESC LIMIT 1) as last_message_time,
-        (SELECT COUNT(*) FROM chat_messages WHERE lead_id = l.id::text AND tenant_id = $2 AND sender = 'lead' AND timestamp > COALESCE(
-          (SELECT last_read_at FROM chat_read_status WHERE lead_id = l.id::text AND user_id = $1 AND tenant_id = $2 LIMIT 1),
-          '1970-01-01'
-        ))::INTEGER as unread_count
-      FROM crm_leads l
-      INNER JOIN attendance_sessions s ON s.lead_id = l.id::text AND s.tenant_id = $2 AND s.status IN ('waiting', 'active')
-      WHERE l.tenant_id = $2
-      ORDER BY l.id, s.started_waiting_at DESC NULLS LAST
+        latest.content as last_message,
+        latest.timestamp as last_message_time,
+        latest.instance as instance,
+        (SELECT COUNT(*)
+           FROM chat_messages cm_unread
+          WHERE cm_unread.lead_id = s.lead_id
+            AND cm_unread.tenant_id = $2
+            AND cm_unread.sender = 'lead'
+            AND cm_unread.timestamp > COALESCE(
+              (SELECT last_read_at FROM chat_read_status WHERE lead_id = s.lead_id AND user_id = $1 AND tenant_id = $2 LIMIT 1),
+              '1970-01-01'
+            )
+        )::INTEGER as unread_count
+      FROM attendance_sessions s
+      LEFT JOIN crm_leads l ON l.id::text = s.lead_id AND l.tenant_id = $2
+      LEFT JOIN LATERAL (
+        SELECT cm.content, cm.timestamp, cm.phone, cm.instance
+          FROM chat_messages cm
+         WHERE cm.tenant_id = $2
+           AND (
+             cm.lead_id = s.lead_id
+             OR (s.lead_phone IS NOT NULL AND cm.phone = s.lead_phone)
+           )
+         ORDER BY cm.timestamp DESC
+         LIMIT 1
+      ) latest ON true
+      WHERE s.tenant_id = $2
+        AND s.status IN ('waiting', 'active')
+      ORDER BY s.lead_id, s.started_waiting_at DESC NULLS LAST, s.created_at DESC NULLS LAST
     `, [user.id, user.tenant_id]);
 
     // Separate into queue (waiting) and active (assigned)
@@ -10077,6 +10096,7 @@ app.get('/api/queue/leads', async (req, res) => {
         attendantId: r.attendant_id,
         attendantName: r.attendant_name,
         priority: r.priority || false,
+        instance: r.instance,
       };
 
       if (r.session_status === 'active' && r.attendant_id) {
