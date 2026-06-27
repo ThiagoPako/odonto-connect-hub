@@ -6872,7 +6872,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
         broadcastSSE('queue_assigned', {
           leadId: lead.id,
           leadName: lead.name,
-          phone,
+          phone: resolvedPhone,
           queueId: selectedQueue.id,
           queueName: selectedQueue.name,
           queueColor: selectedQueue.color,
@@ -7091,6 +7091,8 @@ app.post('/api/webhook/evolution', async (req, res) => {
       msgType,
       instance,
       queueId: lead.queue_id || null,
+      queueName: lead.queue_name || null,
+      queueColor: lead.queue_color || null,
       mediaUrl,
       fileName: mediaFileName,
       mimeType: mediaMimeType,
