@@ -59,6 +59,7 @@ type PresenceHandler = (update: PresenceUpdate) => void;
 type QueueAssignHandler = (assignment: QueueAssignment) => void;
 type MessageStatusHandler = (update: MessageStatusUpdate) => void;
 type LeadRecoveryHandler = (data: LeadRecoveryReturn) => void;
+type ConnectedHandler = (data: { tenantId?: string | null } | null) => void;
 
 async function getActiveTenantId(): Promise<string | null> {
   try {
@@ -76,15 +77,19 @@ async function getActiveTenantId(): Promise<string | null> {
 }
 
 interface RealtimeChatOptions {
+  enabled?: boolean;
   onMessage: MessageHandler;
   onPresence?: PresenceHandler;
   onQueueAssigned?: QueueAssignHandler;
   onMessageStatus?: MessageStatusHandler;
   onLeadRecoveryReturn?: LeadRecoveryHandler;
+  onConnected?: ConnectedHandler;
 }
 
 /** Realtime chat hook — VPS SSE backed. */
 export function useRealtimeChat(options: RealtimeChatOptions) {
+  const enabled = options.enabled ?? true;
+
   const messageRef = useRef<MessageHandler>(options.onMessage);
   messageRef.current = options.onMessage;
 
@@ -100,7 +105,12 @@ export function useRealtimeChat(options: RealtimeChatOptions) {
   const leadRecoveryRef = useRef<LeadRecoveryHandler | undefined>(options.onLeadRecoveryReturn);
   leadRecoveryRef.current = options.onLeadRecoveryReturn;
 
+  const connectedRef = useRef<ConnectedHandler | undefined>(options.onConnected);
+  connectedRef.current = options.onConnected;
+
   useEffect(() => {
+    if (!enabled) return;
+
     let eventSource: EventSource | null = null;
     let cancelled = false;
     let retryTimer: number | null = null;
@@ -140,6 +150,7 @@ export function useRealtimeChat(options: RealtimeChatOptions) {
         retryAttempt = 0;
         const data = parse<{ tenantId?: string | null }>(event as MessageEvent<string>);
         console.log("📡 Chat realtime connected", data?.tenantId ? `(tenant: ${data.tenantId})` : "(sem tenant)");
+        connectedRef.current?.(data);
         if (tenantId && data && !data.tenantId) {
           console.warn("📡 Chat realtime connected without tenant; forcing fresh reconnect");
           scheduleReconnect();
@@ -179,5 +190,5 @@ export function useRealtimeChat(options: RealtimeChatOptions) {
       if (retryTimer) window.clearTimeout(retryTimer);
       eventSource?.close();
     };
-  }, []);
+  }, [enabled]);
 }
