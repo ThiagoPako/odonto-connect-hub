@@ -7100,13 +7100,14 @@ app.get('/api/transfers', async (req, res) => {
 // Start session (when lead enters queue)
 app.post('/api/sessions/start', async (req, res) => {
   try {
+    const { user } = await verifyUser(req);
     const { leadId, leadName, leadPhone, queueId, queueName } = req.body;
     if (!leadId) return res.status(400).json({ error: 'leadId obrigatório' });
     
     // Check if there's already an open session for this lead
     const { rows: existing } = await pool.query(
-      "SELECT id FROM attendance_sessions WHERE lead_id = $1 AND status != 'closed' LIMIT 1",
-      [leadId]
+      "SELECT id FROM attendance_sessions WHERE lead_id = $1 AND tenant_id = $2 AND status != 'closed' LIMIT 1",
+      [leadId, user.tenant_id]
     );
     if (existing.length > 0) {
       return res.json({ success: true, id: existing[0].id, existing: true });
@@ -7114,9 +7115,9 @@ app.post('/api/sessions/start', async (req, res) => {
 
     const id = crypto.randomUUID();
     await pool.query(
-      `INSERT INTO attendance_sessions (id, lead_id, lead_name, lead_phone, queue_id, queue_name, started_waiting_at, status)
-       VALUES ($1,$2,$3,$4,$5,$6, NOW(), 'waiting')`,
-      [id, leadId, leadName || null, leadPhone || null, queueId || null, queueName || null]
+      `INSERT INTO attendance_sessions (id, lead_id, lead_name, lead_phone, queue_id, queue_name, started_waiting_at, status, tenant_id)
+       VALUES ($1,$2,$3,$4,$5,$6, NOW(), 'waiting', $7)`,
+      [id, leadId, leadName || null, leadPhone || null, queueId || null, queueName || null, user.tenant_id]
     );
     res.json({ success: true, id });
   } catch (error) {
