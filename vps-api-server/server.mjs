@@ -1152,6 +1152,7 @@ const REQUIRED_SCHEMA = [
   { migration: 'migration.sql',                   table: 'user_roles' },
   { migration: 'migration-chat-messages.sql',     table: 'chat_messages' },
   { migration: 'migration-chat-messages.sql',     table: 'chat_read_status' },
+  { migration: 'migration-attendance-sessions.sql', table: 'attendance_sessions', column: 'tenant_id' },
   { migration: 'migration-push-subscriptions.sql', table: 'push_subscriptions' },
   { migration: 'migration-crm-kanban.sql',        table: 'kanban_movements' },
   { migration: 'migration-crm-kanban.sql',        table: 'crm_leads', column: 'consciousness_level' },
@@ -11862,6 +11863,8 @@ if (process.env.NODE_ENV !== 'test') {
       `CREATE INDEX IF NOT EXISTS idx_attendance_sessions_open ON attendance_sessions(tenant_id, status, lead_id)`,
       `ALTER TABLE chat_read_status ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE`,
       `CREATE INDEX IF NOT EXISTS idx_chat_read_status_tenant ON chat_read_status(tenant_id)`,
+      `UPDATE attendance_sessions s SET tenant_id = l.tenant_id FROM crm_leads l WHERE s.tenant_id IS NULL AND l.id::text = s.lead_id AND l.tenant_id IS NOT NULL`,
+      `UPDATE chat_read_status r SET tenant_id = l.tenant_id FROM crm_leads l WHERE r.tenant_id IS NULL AND l.id::text = r.lead_id AND l.tenant_id IS NOT NULL`,
 
       // Backfill tenant_id on legacy chat_messages tables created before multi-tenant
       `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE`,
