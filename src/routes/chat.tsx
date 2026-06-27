@@ -34,7 +34,7 @@ import { useWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
 import { playNotificationSound, playRecoverySound } from "@/lib/notificationSound";
 import { showBrowserNotification, requestNotificationPermission } from "@/lib/browserNotification";
 import { setChatUnreadCount } from "@/lib/chatUnreadStore";
-import { rememberPendingChatMessage, takePendingChatMessagesForLead } from "@/lib/chatPendingStore";
+import { takePendingChatMessagesForLead } from "@/lib/chatPendingStore";
 import { supabase } from "@/integrations/supabase/client";
 import {
   type Lead,
@@ -699,7 +699,7 @@ function ChatPage() {
         setMyLeads((prev) => [assigned, ...prev]);
         setSelectedLead(assigned);
         setActiveTab("mine");
-        messagesApi.assign?.({ leadId: match.id });
+        sessionsApi.assign({ leadId: match.id }).catch(() => {});
         if (!messages[match.id]) {
           setMessages((prev) => ({
             ...prev,
