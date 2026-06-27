@@ -6586,7 +6586,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
 
     // Find lead by phone and tenant_id
     const { rows: leads } = await pool.query(
-      `SELECT id, nome as name, avatar_url, telefone as phone, queue_id, awaiting_queue_selection FROM crm_leads 
+      `SELECT id, nome as name, avatar_url, telefone as phone, queue_id, queue_name, awaiting_queue_selection FROM crm_leads 
        WHERE tenant_id = $1 AND REPLACE(REPLACE(REPLACE(REPLACE(telefone, ' ', ''), '-', ''), '(', ''), ')', '') LIKE '%' || $2
        LIMIT 1`,
       [tenantId, phoneSuffix]
@@ -6606,7 +6606,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
          VALUES ($1, $2, $3, 'whatsapp', 'novo', 'lead', true, $4)`,
         [newId, pushName, phone, tenantId]
       );
-      lead = { id: newId, name: pushName, phone, queue_id: null, awaiting_queue_selection: true, avatar_url: null };
+      lead = { id: newId, name: pushName, phone, queue_id: null, queue_name: null, awaiting_queue_selection: true, avatar_url: null };
       console.log(`🆕 New lead created: ${pushName} (${phone})`);
 
       // 🤖 Trigger "Lead entrou no CRM" automation
@@ -6909,10 +6909,10 @@ app.post('/api/webhook/evolution', async (req, res) => {
           // Create a new waiting session so lead appears at top of queue
           const sessionId = crypto.randomUUID();
           await pool.query(
-            `INSERT INTO attendance_sessions (id, lead_id, lead_phone, status, started_waiting_at)
-             VALUES ($1, $2, $3, 'waiting', NOW())
+            `INSERT INTO attendance_sessions (id, lead_id, lead_phone, status, started_waiting_at, tenant_id)
+             VALUES ($1, $2, $3, 'waiting', NOW(), $4)
              ON CONFLICT DO NOTHING`,
-            [sessionId, lead.id.toString(), phone]
+            [sessionId, lead.id.toString(), phone, tenantId]
           ).catch(() => {});
 
           console.log(`🔄 Lead ${lead.name} (${phone}) replied from recovery stage ${currentStage} → returned to queue with priority`);
