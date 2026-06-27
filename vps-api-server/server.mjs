@@ -208,6 +208,33 @@ async function getTenantIdByInstance(instanceName) {
     }
   }
 
+  // 1b. Infer tenant from the instance name prefix used by this app
+  // (<first 8 chars of tenant_id>-<label>). This covers instances created
+  // directly in Evolution before the local VPS mapping table was populated.
+  try {
+    const { rows } = await pool.query(
+      `SELECT tenant_id
+         FROM profiles
+        WHERE tenant_id IS NOT NULL
+          AND $1 LIKE substring(tenant_id::text from 1 for 8) || '-%'
+        GROUP BY tenant_id
+        LIMIT 1`,
+      [instanceName]
+    );
+    if (rows[0]?.tenant_id) {
+      await pool.query(
+        `INSERT INTO whatsapp_instances (instance_name, tenant_id)
+         VALUES ($1, $2)
+         ON CONFLICT (instance_name) DO UPDATE SET tenant_id = $2`,
+        [instanceName, rows[0].tenant_id]
+      ).catch(() => {});
+      setCachedTenantId(instanceName, rows[0].tenant_id);
+      return rows[0].tenant_id;
+    }
+  } catch (err) {
+    console.error(`Tenant prefix inference failed for ${instanceName}:`, err.message);
+  }
+
   // 2. Fallback to Supabase
   if (SUPABASE_BRIDGE_ENABLED) {
     try {
@@ -2204,6 +2231,15 @@ app.get('/api/whatsapp/instances', async (req, res) => {
     for (const inst of instances) {
       const name = inst.name || inst.instanceName || inst.instance?.instanceName;
       const status = inst.connectionStatus || inst.status || inst.instance?.status;
+      if (name && user.tenant_id && name.startsWith(user.tenant_id.substring(0, 8))) {
+        await pool.query(
+          `INSERT INTO whatsapp_instances (instance_name, tenant_id)
+           VALUES ($1, $2)
+           ON CONFLICT (instance_name) DO UPDATE SET tenant_id = $2`,
+          [name, user.tenant_id]
+        ).catch(e => console.error('Failed to refresh instance mapping locally:', e.message));
+        setCachedTenantId(name, user.tenant_id);
+      }
       if (name && status === 'open') {
         ensureWebhookRegistration(name).catch(() => {});
       }
