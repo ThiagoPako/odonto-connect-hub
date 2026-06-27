@@ -6861,7 +6861,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
         await evolutionFetch(`/message/sendText/${instance}`, {
           method: 'POST',
           body: JSON.stringify({
-            number: phone,
+            number: resolvedPhone,
             text: `✅ Você foi direcionado para o setor *${selectedQueue.icon} ${selectedQueue.name}*.\n\nUm de nossos atendentes irá te ajudar em breve! 😊`,
           }),
         });
