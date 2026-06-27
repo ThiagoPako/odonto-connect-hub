@@ -6501,7 +6501,7 @@ async function ensureWaitingSessionForIncomingLead({ lead, phone, queueId = null
 app.post('/api/webhook/evolution', async (req, res) => {
   try {
     const body = req.body;
-    const event = typeof body.event === 'string' ? body.event.toLowerCase().replace(/_/g, '.') : '';
+    const event = normalizeEvolutionEventName(body.event || body.type || body.eventType);
     const instance = extractEvolutionInstanceName(body);
     let tenantId = await getTenantIdByInstance(instance);
     
@@ -6511,7 +6511,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
     }
 
     // ─── Presence updates (typing, recording, online) ───
-    if (event === 'presence.update') {
+    if (isEvolutionEvent(event, 'presence.update', 'presence_update')) {
       const presenceData = body.data;
       console.log(`👁️ PRESENCE_UPDATE raw:`, JSON.stringify(presenceData).slice(0, 500));
 
@@ -6665,7 +6665,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
     }
 
     // ─── Message ACK / status updates ───
-    if (event === 'messages.update') {
+    if (isEvolutionEvent(event, 'messages.update', 'messages_update', 'send.message.update', 'send_message_update')) {
       const updates = Array.isArray(body.data) ? body.data : [body.data];
       console.log(`📩 MESSAGES_UPDATE: ${updates.length} updates, raw:`, JSON.stringify(body.data).slice(0, 500));
       for (const update of updates) {
@@ -6743,13 +6743,12 @@ app.post('/api/webhook/evolution', async (req, res) => {
     }
 
     // Only process incoming messages from here
-    if (event !== 'messages.upsert') {
+    if (!isEvolutionEvent(event, 'messages.upsert', 'messages_upsert', 'send.message', 'send_message')) {
       return res.json({ ignored: true, event });
     }
 
-    const message = Array.isArray(body.data)
-      ? body.data[0]
-      : (Array.isArray(body.data?.messages) ? body.data.messages[0] : body.data);
+    const messages = extractEvolutionMessages(body.data);
+    const message = messages[0];
     const remoteJid = message?.key?.remoteJid;
 
     // Skip group messages
