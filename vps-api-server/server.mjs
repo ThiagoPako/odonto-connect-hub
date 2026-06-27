@@ -443,12 +443,23 @@ async function registerWebhook(instanceName) {
       ],
     };
 
-    const result = await evolutionFetch(`/webhook/set/${instanceName}`, {
+    let result = await evolutionFetch(`/webhook/set/${instanceName}`, {
       method: 'POST',
       body: JSON.stringify({
         webhook: webhookConfig,
       }),
     });
+
+    // Some Evolution API v2 builds expect the config at the root instead of
+    // nested under `webhook`. Retry once with the alternate shape so a schema
+    // mismatch does not silently stop incoming message delivery.
+    if (!result.ok) {
+      console.warn(`⚠️ Retrying webhook registration with root payload for ${instanceName}`);
+      result = await evolutionFetch(`/webhook/set/${instanceName}`, {
+        method: 'POST',
+        body: JSON.stringify(webhookConfig),
+      });
+    }
     if (result.ok) {
       console.log(`✅ Webhook registered for ${instanceName} → ${WEBHOOK_URL}`);
     } else {
