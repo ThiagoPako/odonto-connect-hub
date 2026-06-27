@@ -165,12 +165,32 @@ const SUPABASE_CACHE_TTL_MS = 5 * 60 * 1000;
 
 // Cache for instance -> tenant_id mapping to avoid repeated DB hits in webhooks
 const instanceToTenantCache = new Map();
+const INSTANCE_TENANT_CACHE_TTL_MS = 5 * 60 * 1000;
+
+function getCachedTenantId(instanceName) {
+  const cached = instanceToTenantCache.get(instanceName);
+  if (!cached) return null;
+
+  // Backward compatible with older in-memory values during rolling restarts.
+  if (typeof cached === 'string') return cached;
+
+  if (cached.expiresAt && cached.expiresAt > Date.now()) return cached.tenantId;
+  instanceToTenantCache.delete(instanceName);
+  return null;
+}
+
+function setCachedTenantId(instanceName, tenantId) {
+  if (!instanceName || !tenantId) return;
+  instanceToTenantCache.set(instanceName, {
+    tenantId,
+    expiresAt: Date.now() + INSTANCE_TENANT_CACHE_TTL_MS,
+  });
+}
 
 async function getTenantIdByInstance(instanceName) {
   if (!instanceName) return null;
-  if (instanceToTenantCache.has(instanceName)) {
-    return instanceToTenantCache.get(instanceName);
-  }
+  const cachedTenantId = getCachedTenantId(instanceName);
+  if (cachedTenantId) return cachedTenantId;
 
   // 1. Try local DB
   try {
@@ -179,7 +199,7 @@ async function getTenantIdByInstance(instanceName) {
       [instanceName]
     );
     if (rows[0]?.tenant_id) {
-      instanceToTenantCache.set(instanceName, rows[0].tenant_id);
+      setCachedTenantId(instanceName, rows[0].tenant_id);
       return rows[0].tenant_id;
     }
   } catch (err) {
@@ -204,7 +224,7 @@ async function getTenantIdByInstance(instanceName) {
       if (res.ok) {
         const data = await res.json();
         if (data?.[0]?.tenant_id) {
-          instanceToTenantCache.set(instanceName, data[0].tenant_id);
+          setCachedTenantId(instanceName, data[0].tenant_id);
           return data[0].tenant_id;
         }
       }
