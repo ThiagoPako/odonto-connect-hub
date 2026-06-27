@@ -312,7 +312,7 @@ async function getFallbackTenantIdForIncomingMessage({ instanceName, phoneSuffix
           LIMIT 1`,
         [suffix]
       );
-      if (rows[0]?.tenant_id) return rows[0].tenant_id;
+      if (rows[0]?.tenant_id && isValidTenantId(rows[0].tenant_id)) return rows[0].tenant_id;
     } catch (err) {
       console.error(`Tenant fallback by phone failed (${suffix}):`, err.message);
     }
