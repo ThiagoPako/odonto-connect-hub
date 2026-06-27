@@ -6406,9 +6406,14 @@ app.put('/api/attendance-settings', async (req, res) => {
 });
 
 // Helper: send WhatsApp button menu with active queues
-async function sendQueueMenu(instance, phone) {
+async function sendQueueMenu(instance, phone, tenantId) {
   const { rows: queues } = await pool.query(
-    "SELECT id, name, icon, whatsapp_button_label FROM attendance_queues WHERE active = true ORDER BY name ASC"
+    `SELECT id, name, icon, whatsapp_button_label
+       FROM attendance_queues
+      WHERE active = true
+        AND ($1::uuid IS NULL OR tenant_id = $1 OR tenant_id IS NULL)
+      ORDER BY name ASC`,
+    [isValidTenantId(tenantId) ? tenantId : null]
   );
   if (queues.length === 0) return; // No queues configured
 
@@ -6451,34 +6456,53 @@ async function sendQueueMenu(instance, phone) {
   // Mark lead as awaiting queue selection
   await pool.query(
     `UPDATE crm_leads SET awaiting_queue_selection = true, updated_at = NOW()
-     WHERE REPLACE(REPLACE(REPLACE(REPLACE(telefone, ' ', ''), '-', ''), '(', ''), ')', '') LIKE '%' || $1`,
-    [phone.slice(-11)]
+     WHERE tenant_id = $2
+       AND REPLACE(REPLACE(REPLACE(REPLACE(telefone, ' ', ''), '-', ''), '(', ''), ')', '') LIKE '%' || $1`,
+    [phone.slice(-11), tenantId]
   );
 
   console.log(`📋 Queue menu sent to ${phone} (${queues.length} options)`);
 }
 
 // Helper: match queue from button response or number
-async function matchQueue(content) {
+async function matchQueue(content, tenantId) {
   if (!content) return null;
   const trimmed = content.trim();
+  const tenantParam = isValidTenantId(tenantId) ? tenantId : null;
 
   // Match by button ID (queue_UUID)
   if (trimmed.startsWith('queue_')) {
     const queueId = trimmed.replace('queue_', '');
-    const { rows } = await pool.query('SELECT * FROM attendance_queues WHERE id = $1 AND active = true', [queueId]);
+    const { rows } = await pool.query(
+      `SELECT * FROM attendance_queues
+        WHERE id = $1
+          AND active = true
+          AND ($2::uuid IS NULL OR tenant_id = $2 OR tenant_id IS NULL)`,
+      [queueId, tenantParam]
+    );
     return rows[0] || null;
   }
 
   // Match by number (1, 2, 3...)
   const num = parseInt(trimmed, 10);
   if (!isNaN(num) && num > 0) {
-    const { rows } = await pool.query('SELECT * FROM attendance_queues WHERE active = true ORDER BY name ASC');
+    const { rows } = await pool.query(
+      `SELECT * FROM attendance_queues
+        WHERE active = true
+          AND ($1::uuid IS NULL OR tenant_id = $1 OR tenant_id IS NULL)
+        ORDER BY name ASC`,
+      [tenantParam]
+    );
     return rows[num - 1] || null;
   }
 
   // Match by name (fuzzy)
-  const { rows } = await pool.query('SELECT * FROM attendance_queues WHERE active = true');
+  const { rows } = await pool.query(
+    `SELECT * FROM attendance_queues
+      WHERE active = true
+        AND ($1::uuid IS NULL OR tenant_id = $1 OR tenant_id IS NULL)`,
+    [tenantParam]
+  );
   const lower = trimmed.toLowerCase();
   return rows.find(q =>
     q.name.toLowerCase().includes(lower) ||
@@ -6490,13 +6514,13 @@ async function persistIncomingMessage({ msgId, leadId, content, msgType, phone, 
   try {
     await pool.query(
       `INSERT INTO chat_messages (id, lead_id, content, sender, type, status, timestamp, phone, instance, media_url, file_name, mime_type, metadata, tenant_id)
-       VALUES ($1,$2,$3,$12,$4,'delivered',NOW(),$5,$6,$7,$8,$9,$10,$11)
+       VALUES ($1,$2,$3,$4,$5,'delivered',NOW(),$6,$7,$8,$9,$10,$11,$12)
        ON CONFLICT (id) DO NOTHING`,
-      [msgId, leadId, content, msgType, phone, instance, mediaUrl || null, fileName || null, mimeType || null, JSON.stringify({
+      [msgId, leadId, content, sender, msgType, phone, instance, mediaUrl || null, fileName || null, mimeType || null, JSON.stringify({
         pushName,
         remoteJid,
         rawType,
-      }), tenantId, sender]
+      }), tenantId]
     );
   } catch (dbErr) {
     console.error('DB insert error (incoming msg):', dbErr.message);
