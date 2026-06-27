@@ -6658,7 +6658,9 @@ app.post('/api/webhook/evolution', async (req, res) => {
       return res.json({ ignored: true, event });
     }
 
-    const message = body.data;
+    const message = Array.isArray(body.data)
+      ? body.data[0]
+      : (Array.isArray(body.data?.messages) ? body.data.messages[0] : body.data);
     const remoteJid = message?.key?.remoteJid;
 
     // Skip group messages
