@@ -6667,20 +6667,40 @@ app.post('/api/webhook/evolution', async (req, res) => {
           timestamp: new Date().toISOString(),
         }, tenantId);
 
-        // Also broadcast the message itself
-        broadcastSSE('new_message', {
-          id: message?.key?.id || `wh-${Date.now()}`,
-          phone,
+        // Also persist and broadcast the queue-selection message itself so it
+        // appears when the attendant opens the chat from a global notification.
+        const queueSelectionContent = `[Selecionou: ${selectedQueue.name}]`;
+        await persistIncomingMessage({
+          msgId,
+          leadId: lead.id,
+          content: queueSelectionContent,
+          msgType: 'text',
+          phone: resolvedPhone,
+          instance,
+          pushName,
+          remoteJid,
+          rawType,
+          mediaUrl,
+          fileName: mediaFileName,
+          mimeType: mediaMimeType,
+          tenantId,
+          sender: senderRole,
+        });
+
+        broadcastIncomingMessage({
+          msgId,
+          phone: resolvedPhone,
           pushName,
           leadId: lead.id,
           leadName: lead.name,
-          content: `[Selecionou: ${selectedQueue.name}]`,
-          type: 'text',
-          timestamp: new Date().toISOString(),
+          content: queueSelectionContent,
+          msgType: 'text',
           instance,
           queueId: selectedQueue.id,
           queueName: selectedQueue.name,
           queueColor: selectedQueue.color,
+          tenantId,
+          sender: senderRole,
         });
 
         return res.json({ processed: true, leadId: lead.id, queueId: selectedQueue.id });
