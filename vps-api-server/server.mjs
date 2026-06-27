@@ -1943,6 +1943,29 @@ function extractEvolutionInstanceName(body) {
   return '';
 }
 
+function normalizeEvolutionEventName(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/-/g, '_')
+    .replace(/\./g, '_');
+}
+
+function isEvolutionEvent(event, ...names) {
+  const normalized = normalizeEvolutionEventName(event);
+  return names.some((name) => normalizeEvolutionEventName(name) === normalized);
+}
+
+function extractEvolutionMessages(data) {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.messages)) return data.messages;
+  if (Array.isArray(data?.message)) return data.message;
+  if (Array.isArray(data?.records)) return data.records;
+  if (data?.message?.key) return [data.message];
+  if (data?.key) return [data];
+  return [];
+}
+
 const presenceStateCache = new Map();
 const webhookEnsureTimestamps = new Map();
 const mediaSendJobs = new Map();
