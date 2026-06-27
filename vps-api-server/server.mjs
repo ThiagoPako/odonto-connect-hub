@@ -6093,10 +6093,22 @@ const sseClients = new Map();
 
 function broadcastSSE(event, data, tenantId = null) {
   const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  let sent = 0;
   for (const [client, info] of sseClients.entries()) {
-    // If tenantId is provided, only send to clients belonging to that tenant
-    if (tenantId && info.tenantId !== tenantId) continue;
-    client.write(payload);
+    // If tenantId is provided, only send to clients belonging to that tenant.
+    // Clients that authenticated but temporarily resolved without tenant_id are
+    // still allowed to receive the event; otherwise realtime can fail silently
+    // even though the message was persisted in the correct clinic queue.
+    if (tenantId && info.tenantId && info.tenantId !== tenantId) continue;
+    try {
+      client.write(payload);
+      sent++;
+    } catch (err) {
+      sseClients.delete(client);
+    }
+  }
+  if (sent === 0) {
+    console.warn(`⚠️ SSE broadcast '${event}' tenant=${tenantId || 'all'} delivered to 0 clients`);
   }
 }
 
