@@ -27,6 +27,10 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Multi-tenant isolation (added later — keep idempotent)
+ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS idx_chat_messages_tenant ON chat_messages(tenant_id);
+
 -- Índices para consultas frequentes
 CREATE INDEX IF NOT EXISTS idx_chat_messages_lead_id ON chat_messages(lead_id);
 CREATE INDEX IF NOT EXISTS idx_chat_messages_timestamp ON chat_messages(lead_id, timestamp DESC);
