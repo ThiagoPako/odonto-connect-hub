@@ -286,10 +286,12 @@ async function resolveSupabaseUser(token) {
   const restAuthKey = SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
   const restBearer = SUPABASE_SERVICE_ROLE_KEY || token;
 
-  // 2) Busca profile (tenant_id, role, is_super_admin). Se o VPS ainda não tiver
-  // service role configurada, usa o próprio access_token validado do usuário.
+  // 2) Busca profile (tenant_id, role, is_super_admin). Use select=* because
+  // Lovable Cloud / local VPS schemas have varied between `name` and `nome`;
+  // selecting a missing column makes PostgREST return 400 and leaves SSE
+  // clients without tenant_id, so no WhatsApp alert reaches the browser.
   const profRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/profiles?id=eq.${sbUser.id}&select=id,email,nome,tenant_id,is_super_admin`,
+    `${SUPABASE_URL}/rest/v1/profiles?id=eq.${sbUser.id}&select=*&limit=1`,
     {
       headers: {
         apikey: restAuthKey,
@@ -297,11 +299,32 @@ async function resolveSupabaseUser(token) {
       },
     }
   );
-  const profiles = profRes.ok ? await profRes.json() : [];
-  const profile = profiles?.[0] || {};
+  let profiles = profRes.ok ? await profRes.json() : [];
+  let profile = profiles?.[0] || {};
+
+  // 2b) Fallback para o banco local da VPS. Isso cobre casos em que o token
+  // é válido, mas a leitura do profile via REST fica sem tenant por diferença
+  // de schema/RLS. Sem tenant_id o /api/events conecta como "anonymous" e o
+  // broadcast filtrado por clínica nunca chega ao chat/notificador.
+  if (!profile?.tenant_id) {
+    try {
+      const { rows } = await pool.query(
+        `SELECT id, email, name, role, tenant_id, COALESCE(is_super_admin, false) as is_super_admin
+           FROM profiles
+          WHERE id = $1 OR email = $2
+          LIMIT 1`,
+        [sbUser.id, sbUser.email]
+      );
+      if (rows[0]?.tenant_id) {
+        profile = { ...profile, ...rows[0] };
+      }
+    } catch (err) {
+      console.warn('Local profile fallback failed:', err.message);
+    }
+  }
 
   // 3) Resolve role (admin/atendente/etc) a partir de user_roles
-  let role = 'user';
+  let role = profile.role || 'user';
   try {
     const roleRes = await fetch(
       `${SUPABASE_URL}/rest/v1/user_roles?user_id=eq.${sbUser.id}&select=role&limit=1`,
