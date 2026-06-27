@@ -2249,7 +2249,7 @@ app.post('/api/whatsapp/instances', async (req, res) => {
         [finalName, user.tenant_id]
       ).catch(e => console.error('Failed to save instance mapping locally:', e.message));
       
-      instanceToTenantCache.set(finalName, user.tenant_id);
+      setCachedTenantId(finalName, user.tenant_id);
     }
 
     // Auto-register webhook
