@@ -9963,9 +9963,9 @@ app.get('/api/queue/leads', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
 
-    // Get leads that have:
-    // 1. An open waiting session (not assigned)
-    // 2. OR recent messages but no active/closed session (orphaned)
+    // Get leads that have an open attendance session. Waiting sessions remain
+    // visible until an attendant explicitly assumes them; they must not expire
+    // just because the chat page was closed or refreshed.
     const { rows } = await pool.query(`
       SELECT DISTINCT ON (l.id)
         l.id,
@@ -9981,17 +9981,17 @@ app.get('/api/queue/leads', async (req, res) => {
         s.attendant_id,
         s.attendant_name,
         s.started_waiting_at,
-        (SELECT content FROM chat_messages WHERE lead_id = l.id::text ORDER BY timestamp DESC LIMIT 1) as last_message,
-        (SELECT timestamp FROM chat_messages WHERE lead_id = l.id::text ORDER BY timestamp DESC LIMIT 1) as last_message_time,
-        (SELECT COUNT(*) FROM chat_messages WHERE lead_id = l.id::text AND sender = 'lead' AND timestamp > COALESCE(
-          (SELECT last_read_at FROM chat_read_status WHERE lead_id = l.id::text AND user_id = $1 LIMIT 1),
+        (SELECT content FROM chat_messages WHERE lead_id = l.id::text AND tenant_id = $2 ORDER BY timestamp DESC LIMIT 1) as last_message,
+        (SELECT timestamp FROM chat_messages WHERE lead_id = l.id::text AND tenant_id = $2 ORDER BY timestamp DESC LIMIT 1) as last_message_time,
+        (SELECT COUNT(*) FROM chat_messages WHERE lead_id = l.id::text AND tenant_id = $2 AND sender = 'lead' AND timestamp > COALESCE(
+          (SELECT last_read_at FROM chat_read_status WHERE lead_id = l.id::text AND user_id = $1 AND tenant_id = $2 LIMIT 1),
           '1970-01-01'
         ))::INTEGER as unread_count
       FROM crm_leads l
-      LEFT JOIN attendance_sessions s ON s.lead_id = l.id::text AND s.status IN ('waiting', 'active')
-      WHERE EXISTS (SELECT 1 FROM chat_messages WHERE lead_id = l.id::text AND timestamp > NOW() - INTERVAL '7 days')
+      INNER JOIN attendance_sessions s ON s.lead_id = l.id::text AND s.tenant_id = $2 AND s.status IN ('waiting', 'active')
+      WHERE l.tenant_id = $2
       ORDER BY l.id, s.started_waiting_at DESC NULLS LAST
-    `, [user.id]);
+    `, [user.id, user.tenant_id]);
 
     // Separate into queue (waiting) and active (assigned)
     const queueLeads = [];
