@@ -146,6 +146,7 @@ function AuthGate() {
   // Authenticated — show sidebar + content (or unauthorized)
   return (
     <div className="flex h-screen w-full overflow-hidden">
+      <GlobalChatNotifierMount />
       <AppSidebar />
       <div className="flex-1 flex flex-col overflow-hidden">
         <WhatsAppConnectionBanner />
@@ -155,6 +156,11 @@ function AuthGate() {
       </div>
     </div>
   );
+}
+
+function GlobalChatNotifierMount() {
+  useGlobalChatNotifier();
+  return null;
 }
 
 function RedirectToLogin() {
