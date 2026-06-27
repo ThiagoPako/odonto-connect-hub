@@ -14,6 +14,12 @@ export interface ConnectedInstance extends EvolutionInstance {
   connectionState: "open" | "close" | "connecting";
 }
 
+type ConnectionState = ConnectedInstance["connectionState"];
+
+function normalizeConnectionState(value: unknown): ConnectionState {
+  return value === "open" || value === "connecting" ? value : "close";
+}
+
 let cachedInstances: ConnectedInstance[] = [];
 let lastFetchTime = 0;
 const CACHE_TTL = 30_000; // 30 seconds
@@ -78,11 +84,7 @@ async function refreshInstances(): Promise<ConnectedInstance[]> {
       instanceName: inst.name || inst.instanceName || inst.instance?.instanceName,
       instanceId: inst.id || inst.instanceId || inst.instance?.instanceId || inst.instance?.id || "",
       integration: inst.integration || inst.instance?.integration || "",
-      status: inst.connectionStatus === "open" || inst.status === "open" || inst.instance?.state === "open"
-        ? "open"
-        : inst.connectionStatus === "connecting" || inst.status === "connecting" || inst.instance?.state === "connecting"
-          ? "connecting"
-          : "close",
+      status: normalizeConnectionState(inst.connectionStatus || inst.status || inst.instance?.state),
       owner: inst.ownerJid || inst.owner || inst.instance?.ownerJid,
     })).filter((inst) => !!inst.instanceName);
     
