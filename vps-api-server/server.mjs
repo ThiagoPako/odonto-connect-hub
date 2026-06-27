@@ -200,6 +200,24 @@ function setCachedTenantId(instanceName, tenantId) {
   });
 }
 
+async function setDbTenantContext({ tenantId = null, isSuperAdmin = false, payload = null } = {}) {
+  const safeTenantId = isValidTenantId(tenantId) ? String(tenantId) : '00000000-0000-0000-0000-000000000000';
+  try {
+    // Use session-level settings (is_local=false). With pg Pool, the old
+    // is_local=true value vanished at the end of the standalone SELECT, so the
+    // next tenant-filtered/RLS query could see no tenant and return an empty
+    // chat/fila even when messages were saved.
+    if (payload) {
+      await pool.query('SELECT set_config($1, $2, false)', ['app.jwt_payload', JSON.stringify(payload)]);
+    }
+    await pool.query('SELECT set_config($1, $2, false)', ['app.is_super_admin', isSuperAdmin ? 'true' : 'false']);
+    await pool.query('SELECT set_config($1, $2, false)', ['app.tenant_id', safeTenantId]);
+    await pool.query('SELECT set_config($1, $2, false)', ['app.current_tenant_id', safeTenantId]);
+  } catch (err) {
+    console.error('Failed to set DB tenant context:', err.message);
+  }
+}
+
 async function getTenantIdByInstance(instanceName) {
   if (!instanceName) return null;
   const cachedTenantId = getCachedTenantId(instanceName);
