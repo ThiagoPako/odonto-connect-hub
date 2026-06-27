@@ -103,7 +103,7 @@ export function useRealtimeChat(options: RealtimeChatOptions) {
   useEffect(() => {
     let eventSource: EventSource | null = null;
     let cancelled = false;
-    let retryTimer: ReturnType<typeof window.setTimeout> | null = null;
+    let retryTimer: number | null = null;
     let retryAttempt = 0;
 
     const parse = <T,>(event: MessageEvent<string>): T | null => {
