@@ -33,6 +33,7 @@ export function useGlobalChatNotifier() {
   const navigate = useNavigate();
   const seenLeadTimesRef = useRef<Record<string, number>>({});
   const queuePollInitializedRef = useRef(false);
+  const isOnChatPage = location.pathname === "/chat";
 
   const notify = (name: string, body: string, lead: string) => {
     playNotificationSound();
@@ -49,13 +50,12 @@ export function useGlobalChatNotifier() {
   };
 
   useRealtimeChat({
+    enabled: !isOnChatPage,
     onMessage: (msg: IncomingMessage) => {
       if (msg.sender === "agent" || msg.sender === "attendant" || msg.sender === "me") return; // ignore our own outgoing messages
 
       rememberPendingChatMessage(msg);
       seenLeadTimesRef.current[leadKey({ id: msg.leadId || undefined, phone: msg.phone, name: msg.leadName || msg.pushName })] = new Date(msg.timestamp).getTime();
-
-      if (location.pathname === "/chat") return;
 
       const name = msg.leadName || msg.pushName || msg.phone;
       const body = msg.content?.slice(0, 80) || `[${msg.type}]`;
@@ -85,7 +85,7 @@ export function useGlobalChatNotifier() {
 
         if (!queuePollInitializedRef.current) continue;
         if (time <= previous || (row.unreadCount || 0) <= 0) continue;
-        if (location.pathname === "/chat") continue;
+        if (isOnChatPage) continue;
 
         const name = row.name || row.phone || "WhatsApp";
         const body = row.lastMessage?.slice(0, 80) || "Nova mensagem";
@@ -101,5 +101,5 @@ export function useGlobalChatNotifier() {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [location.pathname, navigate]);
+  }, [isOnChatPage, navigate]);
 }

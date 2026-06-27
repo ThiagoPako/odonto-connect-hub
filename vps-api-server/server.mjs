@@ -200,6 +200,24 @@ function setCachedTenantId(instanceName, tenantId) {
   });
 }
 
+async function setDbTenantContext({ tenantId = null, isSuperAdmin = false, payload = null } = {}) {
+  const safeTenantId = isValidTenantId(tenantId) ? String(tenantId) : '00000000-0000-0000-0000-000000000000';
+  try {
+    // Use session-level settings (is_local=false). With pg Pool, the old
+    // is_local=true value vanished at the end of the standalone SELECT, so the
+    // next tenant-filtered/RLS query could see no tenant and return an empty
+    // chat/fila even when messages were saved.
+    if (payload) {
+      await pool.query('SELECT set_config($1, $2, false)', ['app.jwt_payload', JSON.stringify(payload)]);
+    }
+    await pool.query('SELECT set_config($1, $2, false)', ['app.is_super_admin', isSuperAdmin ? 'true' : 'false']);
+    await pool.query('SELECT set_config($1, $2, false)', ['app.tenant_id', safeTenantId]);
+    await pool.query('SELECT set_config($1, $2, false)', ['app.current_tenant_id', safeTenantId]);
+  } catch (err) {
+    console.error('Failed to set DB tenant context:', err.message);
+  }
+}
+
 async function getTenantIdByInstance(instanceName) {
   if (!instanceName) return null;
   const cachedTenantId = getCachedTenantId(instanceName);
@@ -611,21 +629,13 @@ async function verifyUser(req) {
     throw new Error('Unauthorized');
   }
 
-  // Set context in DB session for RLS
-  try {
-    await pool.query('SELECT set_config($1, $2, true)', ['app.jwt_payload', JSON.stringify(decoded)]);
-    await pool.query('SELECT set_config($1, $2, true)', ['app.is_super_admin', user.is_super_admin ? 'true' : 'false']);
-
-    if (user.tenant_id) {
-      await pool.query('SELECT set_config($1, $2, true)', ['app.tenant_id', user.tenant_id]);
-      await pool.query('SELECT set_config($1, $2, true)', ['app.current_tenant_id', user.tenant_id]);
-    } else {
-      await pool.query('SELECT set_config($1, $2, true)', ['app.tenant_id', '']);
-      await pool.query('SELECT set_config($1, $2, true)', ['app.current_tenant_id', '']);
-    }
-  } catch (err) {
-    console.error('Failed to set DB session context:', err.message);
-  }
+  // Set tenant context for RLS-backed queries. This must be session-level; the
+  // previous transaction-local setting was cleared immediately after SELECT.
+  await setDbTenantContext({
+    tenantId: user.tenant_id,
+    isSuperAdmin: user.is_super_admin,
+    payload: decoded,
+  });
 
   return { user };
 }
@@ -6185,8 +6195,13 @@ app.patch('/api/orcamentos/:id/status', async (req, res) => {
 
 app.get('/api/queues', async (req, res) => {
   try {
-    await verifyUser(req);
-    const { rows } = await pool.query('SELECT * FROM attendance_queues ORDER BY name ASC');
+    const { user } = await verifyUser(req);
+    const { rows } = await pool.query(
+      `SELECT * FROM attendance_queues
+        WHERE $1::uuid IS NULL OR tenant_id = $1 OR tenant_id IS NULL
+        ORDER BY name ASC`,
+      [isValidTenantId(user.tenant_id) ? user.tenant_id : null]
+    );
     res.json(rows);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -6195,14 +6210,14 @@ app.get('/api/queues', async (req, res) => {
 
 app.post('/api/queues', async (req, res) => {
   try {
-    await verifyAdmin(req);
+    const { user } = await verifyAdmin(req);
     const { name, color, icon, description, whatsapp_button_label, contact_numbers, team_member_ids } = req.body;
     if (!name) return res.status(400).json({ error: 'Nome é obrigatório' });
     const id = crypto.randomUUID();
     await pool.query(
-      `INSERT INTO attendance_queues (id, name, color, icon, description, whatsapp_button_label, contact_numbers, team_member_ids)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-      [id, name, color || '#3B82F6', icon || '📋', description, whatsapp_button_label || name, JSON.stringify(contact_numbers || []), JSON.stringify(team_member_ids || [])]
+      `INSERT INTO attendance_queues (id, name, color, icon, description, whatsapp_button_label, contact_numbers, team_member_ids, tenant_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [id, name, color || '#3B82F6', icon || '📋', description, whatsapp_button_label || name, JSON.stringify(contact_numbers || []), JSON.stringify(team_member_ids || []), user.tenant_id]
     );
     res.json({ success: true, id });
   } catch (error) {
@@ -6212,14 +6227,15 @@ app.post('/api/queues', async (req, res) => {
 
 app.put('/api/queues/:id', async (req, res) => {
   try {
-    await verifyAdmin(req);
+    const { user } = await verifyAdmin(req);
     const { name, color, icon, description, whatsapp_button_label, contact_numbers, team_member_ids, active } = req.body;
     await pool.query(
       `UPDATE attendance_queues SET name=COALESCE($1,name), color=COALESCE($2,color), icon=COALESCE($3,icon),
        description=COALESCE($4,description), whatsapp_button_label=COALESCE($5,whatsapp_button_label),
        contact_numbers=COALESCE($6,contact_numbers), team_member_ids=COALESCE($7,team_member_ids),
-       active=COALESCE($8,active), updated_at=NOW() WHERE id=$9`,
-      [name, color, icon, description, whatsapp_button_label, contact_numbers ? JSON.stringify(contact_numbers) : null, team_member_ids ? JSON.stringify(team_member_ids) : null, active, req.params.id]
+       active=COALESCE($8,active), updated_at=NOW()
+       WHERE id=$9 AND ($10::uuid IS NULL OR tenant_id = $10 OR tenant_id IS NULL)`,
+      [name, color, icon, description, whatsapp_button_label, contact_numbers ? JSON.stringify(contact_numbers) : null, team_member_ids ? JSON.stringify(team_member_ids) : null, active, req.params.id, isValidTenantId(user.tenant_id) ? user.tenant_id : null]
     );
     res.json({ success: true });
   } catch (error) {
@@ -6229,8 +6245,11 @@ app.put('/api/queues/:id', async (req, res) => {
 
 app.delete('/api/queues/:id', async (req, res) => {
   try {
-    await verifyAdmin(req);
-    await pool.query('DELETE FROM attendance_queues WHERE id = $1', [req.params.id]);
+    const { user } = await verifyAdmin(req);
+    await pool.query(
+      'DELETE FROM attendance_queues WHERE id = $1 AND ($2::uuid IS NULL OR tenant_id = $2 OR tenant_id IS NULL)',
+      [req.params.id, isValidTenantId(user.tenant_id) ? user.tenant_id : null]
+    );
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -6396,9 +6415,14 @@ app.put('/api/attendance-settings', async (req, res) => {
 });
 
 // Helper: send WhatsApp button menu with active queues
-async function sendQueueMenu(instance, phone) {
+async function sendQueueMenu(instance, phone, tenantId) {
   const { rows: queues } = await pool.query(
-    "SELECT id, name, icon, whatsapp_button_label FROM attendance_queues WHERE active = true ORDER BY name ASC"
+    `SELECT id, name, icon, whatsapp_button_label
+       FROM attendance_queues
+      WHERE active = true
+        AND ($1::uuid IS NULL OR tenant_id = $1 OR tenant_id IS NULL)
+      ORDER BY name ASC`,
+    [isValidTenantId(tenantId) ? tenantId : null]
   );
   if (queues.length === 0) return; // No queues configured
 
@@ -6441,34 +6465,53 @@ async function sendQueueMenu(instance, phone) {
   // Mark lead as awaiting queue selection
   await pool.query(
     `UPDATE crm_leads SET awaiting_queue_selection = true, updated_at = NOW()
-     WHERE REPLACE(REPLACE(REPLACE(REPLACE(telefone, ' ', ''), '-', ''), '(', ''), ')', '') LIKE '%' || $1`,
-    [phone.slice(-11)]
+     WHERE tenant_id = $2
+       AND REPLACE(REPLACE(REPLACE(REPLACE(telefone, ' ', ''), '-', ''), '(', ''), ')', '') LIKE '%' || $1`,
+    [phone.slice(-11), tenantId]
   );
 
   console.log(`📋 Queue menu sent to ${phone} (${queues.length} options)`);
 }
 
 // Helper: match queue from button response or number
-async function matchQueue(content) {
+async function matchQueue(content, tenantId) {
   if (!content) return null;
   const trimmed = content.trim();
+  const tenantParam = isValidTenantId(tenantId) ? tenantId : null;
 
   // Match by button ID (queue_UUID)
   if (trimmed.startsWith('queue_')) {
     const queueId = trimmed.replace('queue_', '');
-    const { rows } = await pool.query('SELECT * FROM attendance_queues WHERE id = $1 AND active = true', [queueId]);
+    const { rows } = await pool.query(
+      `SELECT * FROM attendance_queues
+        WHERE id = $1
+          AND active = true
+          AND ($2::uuid IS NULL OR tenant_id = $2 OR tenant_id IS NULL)`,
+      [queueId, tenantParam]
+    );
     return rows[0] || null;
   }
 
   // Match by number (1, 2, 3...)
   const num = parseInt(trimmed, 10);
   if (!isNaN(num) && num > 0) {
-    const { rows } = await pool.query('SELECT * FROM attendance_queues WHERE active = true ORDER BY name ASC');
+    const { rows } = await pool.query(
+      `SELECT * FROM attendance_queues
+        WHERE active = true
+          AND ($1::uuid IS NULL OR tenant_id = $1 OR tenant_id IS NULL)
+        ORDER BY name ASC`,
+      [tenantParam]
+    );
     return rows[num - 1] || null;
   }
 
   // Match by name (fuzzy)
-  const { rows } = await pool.query('SELECT * FROM attendance_queues WHERE active = true');
+  const { rows } = await pool.query(
+    `SELECT * FROM attendance_queues
+      WHERE active = true
+        AND ($1::uuid IS NULL OR tenant_id = $1 OR tenant_id IS NULL)`,
+    [tenantParam]
+  );
   const lower = trimmed.toLowerCase();
   return rows.find(q =>
     q.name.toLowerCase().includes(lower) ||
@@ -6480,13 +6523,13 @@ async function persistIncomingMessage({ msgId, leadId, content, msgType, phone, 
   try {
     await pool.query(
       `INSERT INTO chat_messages (id, lead_id, content, sender, type, status, timestamp, phone, instance, media_url, file_name, mime_type, metadata, tenant_id)
-       VALUES ($1,$2,$3,$12,$4,'delivered',NOW(),$5,$6,$7,$8,$9,$10,$11)
+       VALUES ($1,$2,$3,$4,$5,'delivered',NOW(),$6,$7,$8,$9,$10,$11,$12)
        ON CONFLICT (id) DO NOTHING`,
-      [msgId, leadId, content, msgType, phone, instance, mediaUrl || null, fileName || null, mimeType || null, JSON.stringify({
+      [msgId, leadId, content, sender, msgType, phone, instance, mediaUrl || null, fileName || null, mimeType || null, JSON.stringify({
         pushName,
         remoteJid,
         rawType,
-      }), tenantId, sender]
+      }), tenantId]
     );
   } catch (dbErr) {
     console.error('DB insert error (incoming msg):', dbErr.message);
@@ -6840,6 +6883,12 @@ app.post('/api/webhook/evolution', async (req, res) => {
       }
     }
 
+    // Webhooks do not carry a user token, but all chat tables are tenant/RLS
+    // protected. Set the resolved clinic context before looking up/creating the
+    // lead, saving chat_messages and creating attendance_sessions; otherwise a
+    // pooled connection can return an empty queue/chat or reject inserts.
+    await setDbTenantContext({ tenantId, isSuperAdmin: false });
+
     // Extract message content
     const msgContent =
       message?.message?.conversation ||
@@ -6992,7 +7041,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
       }
 
       // Send queue menu
-      await sendQueueMenu(instance, resolvedPhone);
+      await sendQueueMenu(instance, resolvedPhone, tenantId);
     }
 
     if (!isFromMe) {
@@ -7007,7 +7056,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
 
     // ─── Lead is awaiting queue selection ───
     if (lead.awaiting_queue_selection && (msgType === 'text' || msgType === 'button_response' || msgType === 'list_response')) {
-      const selectedQueue = await matchQueue(msgContent);
+      const selectedQueue = await matchQueue(msgContent, tenantId);
 
       if (selectedQueue) {
         // Assign queue to lead
@@ -7123,7 +7172,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
           sender: senderRole,
         });
         // Invalid selection — resend menu
-        await sendQueueMenu(instance, resolvedPhone);
+        await sendQueueMenu(instance, resolvedPhone, tenantId);
         console.log(`💬 Incoming message from ${pushName} (${resolvedPhone}) awaiting queue selection → saved + broadcast to ${sseClients.size} clients`);
         return res.json({ processed: true, resent_menu: true, leadId: lead.id });
       }
@@ -12184,6 +12233,22 @@ if (process.env.NODE_ENV !== 'test') {
       `ALTER TABLE profiles ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE`,
       
       // ─── 2. Operational Tables ───
+      `CREATE TABLE IF NOT EXISTS attendance_queues (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        name TEXT NOT NULL,
+        color TEXT DEFAULT '#3B82F6',
+        icon TEXT DEFAULT '📋',
+        description TEXT,
+        whatsapp_button_label TEXT,
+        contact_numbers JSONB DEFAULT '[]',
+        team_member_ids JSONB DEFAULT '[]',
+        active BOOLEAN DEFAULT true,
+        tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )`,
+      `ALTER TABLE attendance_queues ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE`,
+      `CREATE INDEX IF NOT EXISTS idx_attendance_queues_tenant ON attendance_queues(tenant_id)`, 
       `ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS avatar_url TEXT`,
       `ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS queue_id UUID`,
       `ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS queue_name TEXT`,
@@ -12267,6 +12332,11 @@ if (process.env.NODE_ENV !== 'test') {
       // Backfill tenant_id on legacy chat_messages tables created before multi-tenant
       `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE`,
       `CREATE INDEX IF NOT EXISTS idx_chat_messages_tenant ON chat_messages(tenant_id)`,
+      `ALTER TABLE chat_messages NO FORCE ROW LEVEL SECURITY`,
+      `ALTER TABLE crm_leads NO FORCE ROW LEVEL SECURITY`,
+      `ALTER TABLE attendance_sessions NO FORCE ROW LEVEL SECURITY`,
+      `ALTER TABLE whatsapp_instances NO FORCE ROW LEVEL SECURITY`,
+      `ALTER TABLE chat_read_status NO FORCE ROW LEVEL SECURITY`,
       `UPDATE chat_messages cm
           SET tenant_id = l.tenant_id
          FROM crm_leads l
@@ -12410,7 +12480,7 @@ if (process.env.NODE_ENV !== 'test') {
       `CREATE OR REPLACE FUNCTION apply_tenant_rls(table_name TEXT) RETURNS VOID AS $$
        BEGIN
          EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', table_name);
-         EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', table_name);
+         EXECUTE format('ALTER TABLE %I NO FORCE ROW LEVEL SECURITY', table_name);
          EXECUTE format('DROP POLICY IF EXISTS tenant_isolation_policy ON %I', table_name);
          EXECUTE format('CREATE POLICY tenant_isolation_policy ON %I USING (
            (current_setting(''app.is_super_admin'', true) = ''true'') OR 

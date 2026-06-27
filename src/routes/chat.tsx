@@ -466,7 +466,14 @@ function ChatPage() {
     );
   }, []);
 
-  useRealtimeChat({ onMessage: handleIncomingMessage, onPresence: handlePresenceUpdate, onQueueAssigned: handleQueueAssigned, onMessageStatus: handleMessageStatusUpdate, onLeadRecoveryReturn: handleLeadRecoveryReturn });
+  useRealtimeChat({
+    onMessage: handleIncomingMessage,
+    onPresence: handlePresenceUpdate,
+    onQueueAssigned: handleQueueAssigned,
+    onMessageStatus: handleMessageStatusUpdate,
+    onLeadRecoveryReturn: handleLeadRecoveryReturn,
+    onConnected: () => void reloadQueueLeads(),
+  });
 
   useEffect(() => {
     const currentLead = selectedLead;
@@ -1333,7 +1340,13 @@ function ChatPage() {
   const baseList = activeTab === "queue" ? queue : myLeads;
   const filteredByStatus = activeTab === "mine" && filterStatus !== "all" ? baseList.filter((l) => l.status === filterStatus) : baseList;
   const filteredByQueue = filterQueue ? filteredByStatus.filter((l) => l.queueId === filterQueue) : filteredByStatus;
-  const filteredByStage = filterStage ? filteredByQueue.filter((l) => crmStages[l.id] === filterStage) : filteredByQueue;
+  // A fila de espera precisa mostrar toda mensagem recebida do WhatsApp, mesmo
+  // quando o lead ainda não tem estágio CRM carregado. O filtro de estágio é
+  // útil para atendimentos assumidos, mas escondia leads recém-chegados e dava
+  // a impressão de chat vazio.
+  const filteredByStage = activeTab === "mine" && filterStage
+    ? filteredByQueue.filter((l) => crmStages[l.id] === filterStage)
+    : filteredByQueue;
   const currentList = [...filteredByStage].sort((a, b) => {
     // Priority leads (recovery) always at the top
     if (a.priority && !b.priority) return -1;
