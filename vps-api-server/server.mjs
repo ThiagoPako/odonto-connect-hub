@@ -12498,17 +12498,6 @@ if (process.env.NODE_ENV !== 'test') {
         'agendamentos', 'financeiro', 'tratamentos', 'estoque', 'crm_leads', 'whatsapp_instances'
       ]) t;`,
 
-      // The VPS API already enforces tenant_id in its chat/queue SQL. Keep RLS
-      // disabled on the local chat transport tables so webhook requests (which
-      // do not have a browser JWT) can persist incoming WhatsApp messages and
-      // the queue endpoint can read them consistently from pooled connections.
-      `ALTER TABLE chat_messages DISABLE ROW LEVEL SECURITY`,
-      `ALTER TABLE chat_read_status DISABLE ROW LEVEL SECURITY`,
-      `ALTER TABLE attendance_sessions DISABLE ROW LEVEL SECURITY`,
-      `ALTER TABLE attendance_queues DISABLE ROW LEVEL SECURITY`,
-      `ALTER TABLE crm_leads DISABLE ROW LEVEL SECURITY`,
-      `ALTER TABLE whatsapp_instances DISABLE ROW LEVEL SECURITY`,
-
       // ─── 4. Clinicorp Integration columns for local projection ───
       `ALTER TABLE dentistas ADD COLUMN IF NOT EXISTS clinicorp_professional_id TEXT`,
       `ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS clinicorp_patient_id TEXT`,
