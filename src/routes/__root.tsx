@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { AppSidebar } from "@/components/AppSidebar";
 import { WhatsAppConnectionBanner } from "@/components/WhatsAppConnectionBanner";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
+import { useGlobalChatNotifier } from "@/hooks/useGlobalChatNotifier";
 import { canAccessRoute } from "@/lib/routeAccess";
 import { captureUtmFromUrl } from "@/data/campanhasStore";
 import { Loader2, ShieldAlert } from "lucide-react";
