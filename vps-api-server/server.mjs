@@ -12318,6 +12318,11 @@ if (process.env.NODE_ENV !== 'test') {
       // Backfill tenant_id on legacy chat_messages tables created before multi-tenant
       `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE`,
       `CREATE INDEX IF NOT EXISTS idx_chat_messages_tenant ON chat_messages(tenant_id)`,
+      `ALTER TABLE chat_messages NO FORCE ROW LEVEL SECURITY`,
+      `ALTER TABLE crm_leads NO FORCE ROW LEVEL SECURITY`,
+      `ALTER TABLE attendance_sessions NO FORCE ROW LEVEL SECURITY`,
+      `ALTER TABLE whatsapp_instances NO FORCE ROW LEVEL SECURITY`,
+      `ALTER TABLE chat_read_status NO FORCE ROW LEVEL SECURITY`,
       `UPDATE chat_messages cm
           SET tenant_id = l.tenant_id
          FROM crm_leads l
