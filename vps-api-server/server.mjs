@@ -1152,6 +1152,7 @@ const REQUIRED_SCHEMA = [
   { migration: 'migration.sql',                   table: 'user_roles' },
   { migration: 'migration-chat-messages.sql',     table: 'chat_messages' },
   { migration: 'migration-chat-messages.sql',     table: 'chat_read_status' },
+  { migration: 'migration-attendance-sessions.sql', table: 'attendance_sessions', column: 'tenant_id' },
   { migration: 'migration-push-subscriptions.sql', table: 'push_subscriptions' },
   { migration: 'migration-crm-kanban.sql',        table: 'kanban_movements' },
   { migration: 'migration-crm-kanban.sql',        table: 'crm_leads', column: 'consciousness_level' },
@@ -6223,6 +6224,53 @@ function broadcastIncomingMessage({ msgId, phone, pushName, leadId, leadName, co
   }, tenantId);
 }
 
+async function ensureWaitingSessionForIncomingLead({ lead, phone, queueId = null, queueName = null, tenantId }) {
+  if (!lead?.id || !tenantId) return null;
+
+  try {
+    const { rows: existing } = await pool.query(
+      `SELECT id, status
+         FROM attendance_sessions
+        WHERE lead_id = $1
+          AND tenant_id = $2
+          AND status IN ('waiting', 'active')
+        ORDER BY started_waiting_at DESC NULLS LAST, created_at DESC
+        LIMIT 1`,
+      [lead.id.toString(), tenantId]
+    );
+
+    if (existing[0]?.status === 'active') {
+      return existing[0].id;
+    }
+
+    if (existing[0]?.status === 'waiting') {
+      await pool.query(
+        `UPDATE attendance_sessions
+            SET lead_name = COALESCE($2, lead_name),
+                lead_phone = COALESCE($3, lead_phone),
+                queue_id = COALESCE($4, queue_id),
+                queue_name = COALESCE($5, queue_name)
+          WHERE id = $1
+            AND tenant_id = $6`,
+        [existing[0].id, lead.name || null, phone || null, queueId || null, queueName || null, tenantId]
+      );
+      return existing[0].id;
+    }
+
+    const sessionId = crypto.randomUUID();
+    await pool.query(
+      `INSERT INTO attendance_sessions (id, lead_id, lead_name, lead_phone, queue_id, queue_name, started_waiting_at, status, tenant_id)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW(), 'waiting', $7)`,
+      [sessionId, lead.id.toString(), lead.name || null, phone || null, queueId || null, queueName || null, tenantId]
+    );
+    console.log(`📥 Lead ${lead.name || phone} entrou na fila de espera (session=${sessionId})`);
+    return sessionId;
+  } catch (err) {
+    console.error('Failed to ensure waiting session:', err.message);
+    return null;
+  }
+}
+
 app.post('/api/webhook/evolution', async (req, res) => {
   try {
     const body = req.body;
@@ -6539,7 +6587,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
 
     // Find lead by phone and tenant_id
     const { rows: leads } = await pool.query(
-      `SELECT id, nome as name, avatar_url, telefone as phone, queue_id, awaiting_queue_selection FROM crm_leads 
+      `SELECT id, nome as name, avatar_url, telefone as phone, queue_id, queue_name, awaiting_queue_selection FROM crm_leads 
        WHERE tenant_id = $1 AND REPLACE(REPLACE(REPLACE(REPLACE(telefone, ' ', ''), '-', ''), '(', ''), ')', '') LIKE '%' || $2
        LIMIT 1`,
       [tenantId, phoneSuffix]
@@ -6559,7 +6607,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
          VALUES ($1, $2, $3, 'whatsapp', 'novo', 'lead', true, $4)`,
         [newId, pushName, phone, tenantId]
       );
-      lead = { id: newId, name: pushName, phone, queue_id: null, awaiting_queue_selection: true, avatar_url: null };
+      lead = { id: newId, name: pushName, phone, queue_id: null, queue_name: null, awaiting_queue_selection: true, avatar_url: null };
       console.log(`🆕 New lead created: ${pushName} (${phone})`);
 
       // 🤖 Trigger "Lead entrou no CRM" automation
@@ -6588,6 +6636,15 @@ app.post('/api/webhook/evolution', async (req, res) => {
           body: JSON.stringify({ number: resolvedPhone, text: offMsg }),
         });
         console.log(`🕐 Off-hours message sent to ${resolvedPhone}`);
+        if (!isFromMe) {
+          await ensureWaitingSessionForIncomingLead({
+            lead,
+            phone: resolvedPhone,
+            queueId: lead.queue_id || null,
+            queueName: lead.queue_name || null,
+            tenantId,
+          });
+        }
         await persistIncomingMessage({
           msgId,
           leadId: lead.id,
@@ -6634,6 +6691,16 @@ app.post('/api/webhook/evolution', async (req, res) => {
       await sendQueueMenu(instance, phone);
     }
 
+    if (!isFromMe) {
+      await ensureWaitingSessionForIncomingLead({
+        lead,
+        phone: resolvedPhone,
+        queueId: lead.queue_id || null,
+        queueName: lead.queue_name || null,
+        tenantId,
+      });
+    }
+
     // ─── Lead is awaiting queue selection ───
     if (lead.awaiting_queue_selection && (msgType === 'text' || msgType === 'button_response' || msgType === 'list_response')) {
       const selectedQueue = await matchQueue(msgContent);
@@ -6644,6 +6711,18 @@ app.post('/api/webhook/evolution', async (req, res) => {
           `UPDATE crm_leads SET queue_id = $1, queue_name = $2, awaiting_queue_selection = false, updated_at = NOW() WHERE id = $3`,
           [selectedQueue.id, selectedQueue.name, lead.id]
         );
+        lead.queue_id = selectedQueue.id;
+        lead.queue_name = selectedQueue.name;
+
+        if (!isFromMe) {
+          await ensureWaitingSessionForIncomingLead({
+            lead,
+            phone: resolvedPhone,
+            queueId: selectedQueue.id,
+            queueName: selectedQueue.name,
+            tenantId,
+          });
+        }
 
         // Send confirmation
         await evolutionFetch(`/message/sendText/${instance}`, {
@@ -6831,10 +6910,10 @@ app.post('/api/webhook/evolution', async (req, res) => {
           // Create a new waiting session so lead appears at top of queue
           const sessionId = crypto.randomUUID();
           await pool.query(
-            `INSERT INTO attendance_sessions (id, lead_id, lead_phone, status, started_waiting_at)
-             VALUES ($1, $2, $3, 'waiting', NOW())
+            `INSERT INTO attendance_sessions (id, lead_id, lead_phone, status, started_waiting_at, tenant_id)
+             VALUES ($1, $2, $3, 'waiting', NOW(), $4)
              ON CONFLICT DO NOTHING`,
-            [sessionId, lead.id.toString(), phone]
+            [sessionId, lead.id.toString(), phone, tenantId]
           ).catch(() => {});
 
           console.log(`🔄 Lead ${lead.name} (${phone}) replied from recovery stage ${currentStage} → returned to queue with priority`);
@@ -7022,13 +7101,14 @@ app.get('/api/transfers', async (req, res) => {
 // Start session (when lead enters queue)
 app.post('/api/sessions/start', async (req, res) => {
   try {
+    const { user } = await verifyUser(req);
     const { leadId, leadName, leadPhone, queueId, queueName } = req.body;
     if (!leadId) return res.status(400).json({ error: 'leadId obrigatório' });
     
     // Check if there's already an open session for this lead
     const { rows: existing } = await pool.query(
-      "SELECT id FROM attendance_sessions WHERE lead_id = $1 AND status != 'closed' LIMIT 1",
-      [leadId]
+      "SELECT id FROM attendance_sessions WHERE lead_id = $1 AND tenant_id = $2 AND status != 'closed' LIMIT 1",
+      [leadId, user.tenant_id]
     );
     if (existing.length > 0) {
       return res.json({ success: true, id: existing[0].id, existing: true });
@@ -7036,9 +7116,9 @@ app.post('/api/sessions/start', async (req, res) => {
 
     const id = crypto.randomUUID();
     await pool.query(
-      `INSERT INTO attendance_sessions (id, lead_id, lead_name, lead_phone, queue_id, queue_name, started_waiting_at, status)
-       VALUES ($1,$2,$3,$4,$5,$6, NOW(), 'waiting')`,
-      [id, leadId, leadName || null, leadPhone || null, queueId || null, queueName || null]
+      `INSERT INTO attendance_sessions (id, lead_id, lead_name, lead_phone, queue_id, queue_name, started_waiting_at, status, tenant_id)
+       VALUES ($1,$2,$3,$4,$5,$6, NOW(), 'waiting', $7)`,
+      [id, leadId, leadName || null, leadPhone || null, queueId || null, queueName || null, user.tenant_id]
     );
     res.json({ success: true, id });
   } catch (error) {
@@ -7060,24 +7140,24 @@ app.post('/api/sessions/assign', async (req, res) => {
       `UPDATE attendance_sessions SET 
          attendant_id = $1, attendant_name = $2, assigned_at = NOW(), status = 'active',
          wait_time_seconds = EXTRACT(EPOCH FROM (NOW() - started_waiting_at))::INTEGER
-       WHERE lead_id = $3 AND status = 'waiting'
+       WHERE lead_id = $3 AND tenant_id = $4 AND status = 'waiting'
        RETURNING id, wait_time_seconds`,
-      [user.id, attendantName, leadId]
+      [user.id, attendantName, leadId, user.tenant_id]
     );
 
     // Auto-move lead to "em_atendimento" in CRM kanban
     await pool.query(
-      `UPDATE crm_leads SET kanban_stage = 'em_atendimento', status = 'em_atendimento', updated_at = NOW() WHERE id = $1`,
-      [leadId]
+      `UPDATE crm_leads SET kanban_stage = 'em_atendimento', status = 'em_atendimento', updated_at = NOW() WHERE id = $1 AND tenant_id = $2`,
+      [leadId, user.tenant_id]
     ).catch(err => console.error('Failed to update kanban_stage:', err.message));
 
     if (result.rows.length === 0) {
       // No waiting session, create one as active directly
       const id = crypto.randomUUID();
       await pool.query(
-        `INSERT INTO attendance_sessions (id, lead_id, attendant_id, attendant_name, assigned_at, started_waiting_at, status, wait_time_seconds)
-         VALUES ($1,$2,$3,$4, NOW(), NOW(), 'active', 0)`,
-        [id, leadId, user.id, attendantName]
+        `INSERT INTO attendance_sessions (id, lead_id, attendant_id, attendant_name, assigned_at, started_waiting_at, status, wait_time_seconds, tenant_id)
+         VALUES ($1,$2,$3,$4, NOW(), NOW(), 'active', 0, $5)`,
+        [id, leadId, user.id, attendantName, user.tenant_id]
       );
       return res.json({ success: true, id, waitTime: 0 });
     }
@@ -9865,10 +9945,10 @@ app.post('/api/messages/mark-read', async (req, res) => {
     if (!leadId) return res.status(400).json({ error: 'leadId obrigatório' });
 
     await pool.query(
-      `INSERT INTO chat_read_status (lead_id, user_id, last_read_at)
-       VALUES ($1, $2, NOW())
-       ON CONFLICT (lead_id, user_id) DO UPDATE SET last_read_at = NOW()`,
-      [leadId, user.id]
+      `INSERT INTO chat_read_status (lead_id, user_id, last_read_at, tenant_id)
+       VALUES ($1, $2, NOW(), $3)
+       ON CONFLICT (lead_id, user_id) DO UPDATE SET last_read_at = NOW(), tenant_id = EXCLUDED.tenant_id`,
+      [leadId, user.id, user.tenant_id]
     );
     res.json({ success: true });
   } catch (error) {
@@ -9884,9 +9964,9 @@ app.get('/api/queue/leads', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
 
-    // Get leads that have:
-    // 1. An open waiting session (not assigned)
-    // 2. OR recent messages but no active/closed session (orphaned)
+    // Get leads that have an open attendance session. Waiting sessions remain
+    // visible until an attendant explicitly assumes them; they must not expire
+    // just because the chat page was closed or refreshed.
     const { rows } = await pool.query(`
       SELECT DISTINCT ON (l.id)
         l.id,
@@ -9902,17 +9982,17 @@ app.get('/api/queue/leads', async (req, res) => {
         s.attendant_id,
         s.attendant_name,
         s.started_waiting_at,
-        (SELECT content FROM chat_messages WHERE lead_id = l.id::text ORDER BY timestamp DESC LIMIT 1) as last_message,
-        (SELECT timestamp FROM chat_messages WHERE lead_id = l.id::text ORDER BY timestamp DESC LIMIT 1) as last_message_time,
-        (SELECT COUNT(*) FROM chat_messages WHERE lead_id = l.id::text AND sender = 'lead' AND timestamp > COALESCE(
-          (SELECT last_read_at FROM chat_read_status WHERE lead_id = l.id::text AND user_id = $1 LIMIT 1),
+        (SELECT content FROM chat_messages WHERE lead_id = l.id::text AND tenant_id = $2 ORDER BY timestamp DESC LIMIT 1) as last_message,
+        (SELECT timestamp FROM chat_messages WHERE lead_id = l.id::text AND tenant_id = $2 ORDER BY timestamp DESC LIMIT 1) as last_message_time,
+        (SELECT COUNT(*) FROM chat_messages WHERE lead_id = l.id::text AND tenant_id = $2 AND sender = 'lead' AND timestamp > COALESCE(
+          (SELECT last_read_at FROM chat_read_status WHERE lead_id = l.id::text AND user_id = $1 AND tenant_id = $2 LIMIT 1),
           '1970-01-01'
         ))::INTEGER as unread_count
       FROM crm_leads l
-      LEFT JOIN attendance_sessions s ON s.lead_id = l.id::text AND s.status IN ('waiting', 'active')
-      WHERE EXISTS (SELECT 1 FROM chat_messages WHERE lead_id = l.id::text AND timestamp > NOW() - INTERVAL '7 days')
+      INNER JOIN attendance_sessions s ON s.lead_id = l.id::text AND s.tenant_id = $2 AND s.status IN ('waiting', 'active')
+      WHERE l.tenant_id = $2
       ORDER BY l.id, s.started_waiting_at DESC NULLS LAST
-    `, [user.id]);
+    `, [user.id, user.tenant_id]);
 
     // Separate into queue (waiting) and active (assigned)
     const queueLeads = [];
@@ -10058,11 +10138,12 @@ app.get('/api/messages/unread', async (req, res) => {
     const { rows } = await pool.query(`
       SELECT m.lead_id, COUNT(*) as unread_count
       FROM chat_messages m
-      LEFT JOIN chat_read_status r ON r.lead_id = m.lead_id AND r.user_id = $1
+      LEFT JOIN chat_read_status r ON r.lead_id = m.lead_id AND r.user_id = $1 AND r.tenant_id = $2
       WHERE m.sender = 'lead'
+        AND m.tenant_id = $2
         AND (r.last_read_at IS NULL OR m.timestamp > r.last_read_at)
       GROUP BY m.lead_id
-    `, [user.id]);
+    `, [user.id, user.tenant_id]);
 
     const counts = {};
     for (const row of rows) {
@@ -11755,6 +11836,50 @@ if (process.env.NODE_ENV !== 'test') {
         tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
         metadata JSONB DEFAULT '{}'
       )`,
+
+      `CREATE TABLE IF NOT EXISTS attendance_sessions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        lead_id TEXT NOT NULL,
+        lead_name TEXT,
+        lead_phone TEXT,
+        attendant_id UUID REFERENCES profiles(id),
+        attendant_name TEXT,
+        queue_id TEXT,
+        queue_name TEXT,
+        started_waiting_at TIMESTAMPTZ,
+        assigned_at TIMESTAMPTZ,
+        first_response_at TIMESTAMPTZ,
+        closed_at TIMESTAMPTZ,
+        status TEXT DEFAULT 'waiting',
+        wait_time_seconds INTEGER,
+        response_time_seconds INTEGER,
+        duration_seconds INTEGER,
+        tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )`,
+
+      `ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE`,
+      `ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS lead_name TEXT`,
+      `ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS lead_phone TEXT`,
+      `ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS attendant_id UUID REFERENCES profiles(id)`,
+      `ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS attendant_name TEXT`,
+      `ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS queue_id TEXT`,
+      `ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS queue_name TEXT`,
+      `ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS started_waiting_at TIMESTAMPTZ`,
+      `ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS assigned_at TIMESTAMPTZ`,
+      `ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS first_response_at TIMESTAMPTZ`,
+      `ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS closed_at TIMESTAMPTZ`,
+      `ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'waiting'`,
+      `ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS wait_time_seconds INTEGER`,
+      `ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS response_time_seconds INTEGER`,
+      `ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS duration_seconds INTEGER`,
+      `ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`,
+      `CREATE INDEX IF NOT EXISTS idx_attendance_sessions_tenant ON attendance_sessions(tenant_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_attendance_sessions_open ON attendance_sessions(tenant_id, status, lead_id)`,
+      `ALTER TABLE chat_read_status ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE`,
+      `CREATE INDEX IF NOT EXISTS idx_chat_read_status_tenant ON chat_read_status(tenant_id)`,
+      `UPDATE attendance_sessions s SET tenant_id = l.tenant_id FROM crm_leads l WHERE s.tenant_id IS NULL AND l.id::text = s.lead_id AND l.tenant_id IS NOT NULL`,
+      `UPDATE chat_read_status r SET tenant_id = l.tenant_id FROM crm_leads l WHERE r.tenant_id IS NULL AND l.id::text = r.lead_id AND l.tenant_id IS NOT NULL`,
 
       // Backfill tenant_id on legacy chat_messages tables created before multi-tenant
       `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE`,

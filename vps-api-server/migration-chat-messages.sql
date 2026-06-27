@@ -43,8 +43,11 @@ CREATE TABLE IF NOT EXISTS chat_read_status (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   lead_id TEXT NOT NULL,
   user_id UUID REFERENCES profiles(id) ON DELETE CASCADE NOT NULL,
+  tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
   last_read_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (lead_id, user_id)
 );
 
+ALTER TABLE chat_read_status ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
 CREATE INDEX IF NOT EXISTS idx_chat_read_status_user ON chat_read_status(user_id);
+CREATE INDEX IF NOT EXISTS idx_chat_read_status_tenant ON chat_read_status(tenant_id);
