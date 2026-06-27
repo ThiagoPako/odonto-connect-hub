@@ -6635,6 +6635,15 @@ app.post('/api/webhook/evolution', async (req, res) => {
           body: JSON.stringify({ number: resolvedPhone, text: offMsg }),
         });
         console.log(`🕐 Off-hours message sent to ${resolvedPhone}`);
+        if (!isFromMe) {
+          await ensureWaitingSessionForIncomingLead({
+            lead,
+            phone: resolvedPhone,
+            queueId: lead.queue_id || null,
+            queueName: lead.queue_name || null,
+            tenantId,
+          });
+        }
         await persistIncomingMessage({
           msgId,
           leadId: lead.id,
