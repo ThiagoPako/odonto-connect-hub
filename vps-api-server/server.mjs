@@ -11772,8 +11772,6 @@ if (process.env.NODE_ENV !== 'test') {
       `ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS queue_name TEXT`,
       `ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS awaiting_queue_selection BOOLEAN DEFAULT false`,
       `ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE`,
-      `ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE`,
-      `CREATE INDEX IF NOT EXISTS idx_attendance_sessions_tenant ON attendance_sessions(tenant_id)`,
 
       `CREATE TABLE IF NOT EXISTS user_roles (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -11804,6 +11802,31 @@ if (process.env.NODE_ENV !== 'test') {
         tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
         metadata JSONB DEFAULT '{}'
       )`,
+
+      `CREATE TABLE IF NOT EXISTS attendance_sessions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        lead_id TEXT NOT NULL,
+        lead_name TEXT,
+        lead_phone TEXT,
+        attendant_id UUID REFERENCES profiles(id),
+        attendant_name TEXT,
+        queue_id TEXT,
+        queue_name TEXT,
+        started_waiting_at TIMESTAMPTZ,
+        assigned_at TIMESTAMPTZ,
+        first_response_at TIMESTAMPTZ,
+        closed_at TIMESTAMPTZ,
+        status TEXT DEFAULT 'waiting',
+        wait_time_seconds INTEGER,
+        response_time_seconds INTEGER,
+        duration_seconds INTEGER,
+        tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )`,
+
+      `ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE`,
+      `CREATE INDEX IF NOT EXISTS idx_attendance_sessions_tenant ON attendance_sessions(tenant_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_attendance_sessions_open ON attendance_sessions(tenant_id, status, lead_id)`,
 
       // Backfill tenant_id on legacy chat_messages tables created before multi-tenant
       `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE`,
