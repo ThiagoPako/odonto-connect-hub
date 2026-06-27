@@ -6195,8 +6195,13 @@ app.patch('/api/orcamentos/:id/status', async (req, res) => {
 
 app.get('/api/queues', async (req, res) => {
   try {
-    await verifyUser(req);
-    const { rows } = await pool.query('SELECT * FROM attendance_queues ORDER BY name ASC');
+    const { user } = await verifyUser(req);
+    const { rows } = await pool.query(
+      `SELECT * FROM attendance_queues
+        WHERE $1::uuid IS NULL OR tenant_id = $1 OR tenant_id IS NULL
+        ORDER BY name ASC`,
+      [isValidTenantId(user.tenant_id) ? user.tenant_id : null]
+    );
     res.json(rows);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -6205,14 +6210,14 @@ app.get('/api/queues', async (req, res) => {
 
 app.post('/api/queues', async (req, res) => {
   try {
-    await verifyAdmin(req);
+    const { user } = await verifyAdmin(req);
     const { name, color, icon, description, whatsapp_button_label, contact_numbers, team_member_ids } = req.body;
     if (!name) return res.status(400).json({ error: 'Nome é obrigatório' });
     const id = crypto.randomUUID();
     await pool.query(
-      `INSERT INTO attendance_queues (id, name, color, icon, description, whatsapp_button_label, contact_numbers, team_member_ids)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-      [id, name, color || '#3B82F6', icon || '📋', description, whatsapp_button_label || name, JSON.stringify(contact_numbers || []), JSON.stringify(team_member_ids || [])]
+      `INSERT INTO attendance_queues (id, name, color, icon, description, whatsapp_button_label, contact_numbers, team_member_ids, tenant_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [id, name, color || '#3B82F6', icon || '📋', description, whatsapp_button_label || name, JSON.stringify(contact_numbers || []), JSON.stringify(team_member_ids || []), user.tenant_id]
     );
     res.json({ success: true, id });
   } catch (error) {
@@ -6222,14 +6227,15 @@ app.post('/api/queues', async (req, res) => {
 
 app.put('/api/queues/:id', async (req, res) => {
   try {
-    await verifyAdmin(req);
+    const { user } = await verifyAdmin(req);
     const { name, color, icon, description, whatsapp_button_label, contact_numbers, team_member_ids, active } = req.body;
     await pool.query(
       `UPDATE attendance_queues SET name=COALESCE($1,name), color=COALESCE($2,color), icon=COALESCE($3,icon),
        description=COALESCE($4,description), whatsapp_button_label=COALESCE($5,whatsapp_button_label),
        contact_numbers=COALESCE($6,contact_numbers), team_member_ids=COALESCE($7,team_member_ids),
-       active=COALESCE($8,active), updated_at=NOW() WHERE id=$9`,
-      [name, color, icon, description, whatsapp_button_label, contact_numbers ? JSON.stringify(contact_numbers) : null, team_member_ids ? JSON.stringify(team_member_ids) : null, active, req.params.id]
+       active=COALESCE($8,active), updated_at=NOW()
+       WHERE id=$9 AND ($10::uuid IS NULL OR tenant_id = $10 OR tenant_id IS NULL)`,
+      [name, color, icon, description, whatsapp_button_label, contact_numbers ? JSON.stringify(contact_numbers) : null, team_member_ids ? JSON.stringify(team_member_ids) : null, active, req.params.id, isValidTenantId(user.tenant_id) ? user.tenant_id : null]
     );
     res.json({ success: true });
   } catch (error) {
@@ -6239,8 +6245,11 @@ app.put('/api/queues/:id', async (req, res) => {
 
 app.delete('/api/queues/:id', async (req, res) => {
   try {
-    await verifyAdmin(req);
-    await pool.query('DELETE FROM attendance_queues WHERE id = $1', [req.params.id]);
+    const { user } = await verifyAdmin(req);
+    await pool.query(
+      'DELETE FROM attendance_queues WHERE id = $1 AND ($2::uuid IS NULL OR tenant_id = $2 OR tenant_id IS NULL)',
+      [req.params.id, isValidTenantId(user.tenant_id) ? user.tenant_id : null]
+    );
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
