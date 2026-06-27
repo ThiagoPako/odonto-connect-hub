@@ -365,11 +365,13 @@ async function getFallbackTenantIdForIncomingMessage({ instanceName, phoneSuffix
       `SELECT tenant_id
          FROM profiles
         WHERE tenant_id IS NOT NULL
+          AND tenant_id <> '00000000-0000-0000-0000-000000000001'::uuid
+          AND tenant_id <> '00000000-0000-0000-0000-000000000000'::uuid
         GROUP BY tenant_id
         ORDER BY COUNT(*) DESC
         LIMIT 1`
     );
-    if (rows[0]?.tenant_id) return rows[0].tenant_id;
+    if (rows[0]?.tenant_id && isValidTenantId(rows[0].tenant_id)) return rows[0].tenant_id;
   } catch (err) {
     console.error('Tenant fallback by profiles failed:', err.message);
   }
