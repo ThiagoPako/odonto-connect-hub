@@ -167,20 +167,33 @@ const SUPABASE_CACHE_TTL_MS = 5 * 60 * 1000;
 const instanceToTenantCache = new Map();
 const INSTANCE_TENANT_CACHE_TTL_MS = 5 * 60 * 1000;
 
+// Placeholder/seed tenant that must NEVER be used to route real messages.
+const PLACEHOLDER_TENANT_IDS = new Set([
+  '00000000-0000-0000-0000-000000000000',
+  '00000000-0000-0000-0000-000000000001',
+]);
+function isValidTenantId(id) {
+  if (!id) return false;
+  const s = String(id).toLowerCase();
+  return !PLACEHOLDER_TENANT_IDS.has(s);
+}
+
 function getCachedTenantId(instanceName) {
   const cached = instanceToTenantCache.get(instanceName);
   if (!cached) return null;
 
   // Backward compatible with older in-memory values during rolling restarts.
-  if (typeof cached === 'string') return cached;
+  if (typeof cached === 'string') return isValidTenantId(cached) ? cached : null;
 
-  if (cached.expiresAt && cached.expiresAt > Date.now()) return cached.tenantId;
+  if (cached.expiresAt && cached.expiresAt > Date.now()) {
+    return isValidTenantId(cached.tenantId) ? cached.tenantId : null;
+  }
   instanceToTenantCache.delete(instanceName);
   return null;
 }
 
 function setCachedTenantId(instanceName, tenantId) {
-  if (!instanceName || !tenantId) return;
+  if (!instanceName || !isValidTenantId(tenantId)) return;
   instanceToTenantCache.set(instanceName, {
     tenantId,
     expiresAt: Date.now() + INSTANCE_TENANT_CACHE_TTL_MS,
@@ -192,71 +205,93 @@ async function getTenantIdByInstance(instanceName) {
   const cachedTenantId = getCachedTenantId(instanceName);
   if (cachedTenantId) return cachedTenantId;
 
-  // 1. Try local DB
+  // 1. Try local DB whatsapp_instances
   try {
     const { rows } = await pool.query(
       'SELECT tenant_id FROM whatsapp_instances WHERE instance_name = $1 LIMIT 1',
       [instanceName]
     );
-    if (rows[0]?.tenant_id) {
+    if (rows[0]?.tenant_id && isValidTenantId(rows[0].tenant_id)) {
       setCachedTenantId(instanceName, rows[0].tenant_id);
       return rows[0].tenant_id;
     }
   } catch (err) {
-    if (err.code !== '42P01') { // 42P01 = table does not exist
+    if (err.code !== '42P01') {
       console.error(`Error resolving tenant for instance ${instanceName}:`, err.message);
     }
   }
 
-  // 1b. Infer tenant from the instance name prefix used by this app
-  // (<first 8 chars of tenant_id>-<label>). This covers instances created
-  // directly in Evolution before the local VPS mapping table was populated.
-  try {
-    const { rows } = await pool.query(
-      `SELECT tenant_id
-         FROM profiles
-        WHERE tenant_id IS NOT NULL
-          AND $1 LIKE substring(tenant_id::text from 1 for 8) || '-%'
-        GROUP BY tenant_id
-        LIMIT 1`,
-      [instanceName]
-    );
-    if (rows[0]?.tenant_id) {
-      await pool.query(
-        `INSERT INTO whatsapp_instances (instance_name, tenant_id)
-         VALUES ($1, $2)
-         ON CONFLICT (instance_name) DO UPDATE SET tenant_id = $2`,
-        [instanceName, rows[0].tenant_id]
-      ).catch(() => {});
-      setCachedTenantId(instanceName, rows[0].tenant_id);
-      return rows[0].tenant_id;
+  // 1b. Infer tenant from instance name prefix "<first 8 chars of tenant_id>-<label>"
+  // Search in local tenants and profiles tables.
+  const prefixMatch = String(instanceName).match(/^([0-9a-f]{8})-/i);
+  const prefix = prefixMatch ? prefixMatch[1].toLowerCase() : null;
+  if (prefix) {
+    for (const table of ['tenants', 'profiles']) {
+      try {
+        const col = table === 'tenants' ? 'id' : 'tenant_id';
+        const { rows } = await pool.query(
+          `SELECT DISTINCT ${col} AS tenant_id
+             FROM ${table}
+            WHERE ${col} IS NOT NULL
+              AND substring(${col}::text from 1 for 8) = $1
+            LIMIT 1`,
+          [prefix]
+        );
+        if (rows[0]?.tenant_id && isValidTenantId(rows[0].tenant_id)) {
+          await pool.query(
+            `INSERT INTO whatsapp_instances (instance_name, tenant_id)
+             VALUES ($1, $2)
+             ON CONFLICT (instance_name) DO UPDATE SET tenant_id = EXCLUDED.tenant_id`,
+            [instanceName, rows[0].tenant_id]
+          ).catch(() => {});
+          setCachedTenantId(instanceName, rows[0].tenant_id);
+          return rows[0].tenant_id;
+        }
+      } catch (err) {
+        if (err.code !== '42P01') {
+          console.error(`Tenant prefix inference (${table}) failed for ${instanceName}:`, err.message);
+        }
+      }
     }
-  } catch (err) {
-    console.error(`Tenant prefix inference failed for ${instanceName}:`, err.message);
   }
 
-  // 2. Fallback to Supabase
+  // 2. Fallback to Supabase Cloud: exact instance, then prefix on tenants.id
   if (SUPABASE_BRIDGE_ENABLED) {
+    const restAuthKey = SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
+    const headers = { apikey: restAuthKey, Authorization: `Bearer ${restAuthKey}` };
     try {
-      const restAuthKey = SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
       const res = await fetch(
-        `${SUPABASE_URL}/rest/v1/whatsapp_instances?instance_name=eq.${instanceName}&select=tenant_id`,
-        {
-          headers: {
-            apikey: restAuthKey,
-            Authorization: `Bearer ${restAuthKey}`,
-          },
-        }
+        `${SUPABASE_URL}/rest/v1/whatsapp_instances?instance_name=eq.${encodeURIComponent(instanceName)}&select=tenant_id`,
+        { headers }
       );
       if (res.ok) {
         const data = await res.json();
-        if (data?.[0]?.tenant_id) {
-          setCachedTenantId(instanceName, data[0].tenant_id);
-          return data[0].tenant_id;
+        const candidate = data?.[0]?.tenant_id;
+        if (candidate && isValidTenantId(candidate)) {
+          setCachedTenantId(instanceName, candidate);
+          return candidate;
         }
       }
     } catch (err) {
       console.error(`Supabase fallback failed for ${instanceName}:`, err.message);
+    }
+    if (prefix) {
+      try {
+        const res = await fetch(
+          `${SUPABASE_URL}/rest/v1/tenants?id=like.${prefix}*&select=id&limit=1`,
+          { headers }
+        );
+        if (res.ok) {
+          const data = await res.json();
+          const candidate = data?.[0]?.id;
+          if (candidate && isValidTenantId(candidate)) {
+            setCachedTenantId(instanceName, candidate);
+            return candidate;
+          }
+        }
+      } catch (err) {
+        console.error(`Supabase tenants prefix fallback failed for ${instanceName}:`, err.message);
+      }
     }
   }
 
@@ -277,7 +312,7 @@ async function getFallbackTenantIdForIncomingMessage({ instanceName, phoneSuffix
           LIMIT 1`,
         [suffix]
       );
-      if (rows[0]?.tenant_id) return rows[0].tenant_id;
+      if (rows[0]?.tenant_id && isValidTenantId(rows[0].tenant_id)) return rows[0].tenant_id;
     } catch (err) {
       console.error(`Tenant fallback by phone failed (${suffix}):`, err.message);
     }
@@ -289,14 +324,39 @@ async function getFallbackTenantIdForIncomingMessage({ instanceName, phoneSuffix
         `SELECT tenant_id
            FROM whatsapp_instances
           WHERE tenant_id IS NOT NULL
+            AND tenant_id <> '00000000-0000-0000-0000-000000000001'::uuid
+            AND tenant_id <> '00000000-0000-0000-0000-000000000000'::uuid
             AND ($1 = '' OR instance_name = $1)
           ORDER BY created_at DESC NULLS LAST
           LIMIT 1`,
         [instanceName]
       );
-      if (rows[0]?.tenant_id) return rows[0].tenant_id;
+      if (rows[0]?.tenant_id && isValidTenantId(rows[0].tenant_id)) return rows[0].tenant_id;
     } catch (err) {
       console.error(`Tenant fallback by instance failed (${instanceName}):`, err.message);
+    }
+  }
+
+  // Try local tenants table by instance name prefix
+  const prefixMatch = String(instanceName || '').match(/^([0-9a-f]{8})-/i);
+  const prefix = prefixMatch ? prefixMatch[1].toLowerCase() : null;
+  if (prefix) {
+    for (const table of ['tenants', 'profiles']) {
+      try {
+        const col = table === 'tenants' ? 'id' : 'tenant_id';
+        const { rows } = await pool.query(
+          `SELECT DISTINCT ${col} AS tenant_id FROM ${table}
+            WHERE ${col} IS NOT NULL
+              AND substring(${col}::text from 1 for 8) = $1
+            LIMIT 1`,
+          [prefix]
+        );
+        if (rows[0]?.tenant_id && isValidTenantId(rows[0].tenant_id)) return rows[0].tenant_id;
+      } catch (err) {
+        if (err.code !== '42P01') {
+          console.error(`Tenant fallback prefix (${table}) failed:`, err.message);
+        }
+      }
     }
   }
 
@@ -305,11 +365,13 @@ async function getFallbackTenantIdForIncomingMessage({ instanceName, phoneSuffix
       `SELECT tenant_id
          FROM profiles
         WHERE tenant_id IS NOT NULL
+          AND tenant_id <> '00000000-0000-0000-0000-000000000001'::uuid
+          AND tenant_id <> '00000000-0000-0000-0000-000000000000'::uuid
         GROUP BY tenant_id
         ORDER BY COUNT(*) DESC
         LIMIT 1`
     );
-    if (rows[0]?.tenant_id) return rows[0].tenant_id;
+    if (rows[0]?.tenant_id && isValidTenantId(rows[0].tenant_id)) return rows[0].tenant_id;
   } catch (err) {
     console.error('Tenant fallback by profiles failed:', err.message);
   }
