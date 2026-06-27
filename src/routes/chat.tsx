@@ -693,13 +693,10 @@ function ChatPage() {
     );
     if (match) {
       if (match.status === "waiting") {
-        // Auto-assign from queue
-        setQueue((prev) => prev.filter((l) => l.id !== match.id));
-        const assigned: Lead = { ...match, status: "active", assignedTo: "current", unreadCount: 0 };
-        setMyLeads((prev) => [assigned, ...prev]);
-        setSelectedLead(assigned);
-        setActiveTab("mine");
-        sessionsApi.assign({ leadId: match.id }).catch(() => {});
+        // Opening from a notification must not approve/assume the attendance.
+        // The lead remains in the waiting queue until an attendant clicks "Assumir".
+        setSelectedLead(match);
+        setActiveTab("queue");
         if (!messages[match.id]) {
           setMessages((prev) => ({
             ...prev,
