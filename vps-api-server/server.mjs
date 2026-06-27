@@ -216,6 +216,60 @@ async function getTenantIdByInstance(instanceName) {
   return null;
 }
 
+async function getFallbackTenantIdForIncomingMessage({ instanceName, phoneSuffix }) {
+  const suffix = String(phoneSuffix || '').replace(/\D/g, '').slice(-11);
+
+  if (suffix) {
+    try {
+      const { rows } = await pool.query(
+        `SELECT tenant_id
+           FROM crm_leads
+          WHERE tenant_id IS NOT NULL
+            AND REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(telefone, ''), ' ', ''), '-', ''), '(', ''), ')', '') LIKE '%' || $1
+          ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST
+          LIMIT 1`,
+        [suffix]
+      );
+      if (rows[0]?.tenant_id) return rows[0].tenant_id;
+    } catch (err) {
+      console.error(`Tenant fallback by phone failed (${suffix}):`, err.message);
+    }
+  }
+
+  if (instanceName) {
+    try {
+      const { rows } = await pool.query(
+        `SELECT tenant_id
+           FROM whatsapp_instances
+          WHERE tenant_id IS NOT NULL
+            AND ($1 = '' OR instance_name = $1)
+          ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST
+          LIMIT 1`,
+        [instanceName]
+      );
+      if (rows[0]?.tenant_id) return rows[0].tenant_id;
+    } catch (err) {
+      console.error(`Tenant fallback by instance failed (${instanceName}):`, err.message);
+    }
+  }
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT tenant_id
+         FROM profiles
+        WHERE tenant_id IS NOT NULL
+        GROUP BY tenant_id
+        ORDER BY COUNT(*) DESC
+        LIMIT 1`
+    );
+    if (rows[0]?.tenant_id) return rows[0].tenant_id;
+  } catch (err) {
+    console.error('Tenant fallback by profiles failed:', err.message);
+  }
+
+  return null;
+}
+
 async function resolveSupabaseUser(token) {
   if (!SUPABASE_BRIDGE_ENABLED) throw new Error('Supabase bridge not configured');
   const cached = _supabaseUserCache.get(token);
