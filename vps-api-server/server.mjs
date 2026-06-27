@@ -2272,7 +2272,7 @@ app.get('/api/whatsapp/instances', async (req, res) => {
     // ensureWebhookRegistration is internally throttled (5 min) per instance.
     for (const inst of instances) {
       const name = inst.name || inst.instanceName || inst.instance?.instanceName;
-      const status = inst.connectionStatus || inst.status || inst.instance?.status;
+      const status = inst.connectionStatus || inst.status || inst.instance?.status || inst.instance?.state;
       if (name && user.tenant_id && name.startsWith(user.tenant_id.substring(0, 8))) {
         await pool.query(
           `INSERT INTO whatsapp_instances (instance_name, tenant_id)
@@ -9499,7 +9499,7 @@ async function syncWhatsAppContacts() {
     });
     if (!instRes.ok) return;
     const instances = await instRes.json();
-    const connected = instances.filter(i => (i.connectionStatus || i.status) === 'open');
+    const connected = instances.filter(i => (i.connectionStatus || i.status || i.instance?.status || i.instance?.state) === 'open');
     if (connected.length === 0) return;
 
     let totalImported = 0;
