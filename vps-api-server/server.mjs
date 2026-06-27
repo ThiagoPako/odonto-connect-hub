@@ -9890,10 +9890,49 @@ app.get('/api/messages/:leadId', async (req, res) => {
 
     let query, params;
     if (before) {
-      query = `SELECT * FROM chat_messages WHERE lead_id = $1 AND tenant_id = $4 AND timestamp < $2 ORDER BY timestamp DESC LIMIT $3`;
+      query = `
+        WITH lead_lookup AS (
+          SELECT COALESCE(
+            (SELECT telefone FROM crm_leads WHERE id::text = $1 AND tenant_id = $4 LIMIT 1),
+            (SELECT lead_phone FROM attendance_sessions WHERE lead_id = $1 AND tenant_id = $4 ORDER BY created_at DESC NULLS LAST LIMIT 1)
+          ) AS phone
+        )
+        SELECT cm.*
+          FROM chat_messages cm, lead_lookup ll
+         WHERE cm.tenant_id = $4
+           AND cm.timestamp < $2
+           AND (
+             cm.lead_id = $1
+             OR (
+               ll.phone IS NOT NULL
+               AND cm.phone IS NOT NULL
+               AND RIGHT(REGEXP_REPLACE(cm.phone, '\\D', '', 'g'), 11) = RIGHT(REGEXP_REPLACE(ll.phone, '\\D', '', 'g'), 11)
+             )
+           )
+         ORDER BY cm.timestamp DESC
+         LIMIT $3`;
       params = [leadId, before, safeLimit, user.tenant_id];
     } else {
-      query = `SELECT * FROM chat_messages WHERE lead_id = $1 AND tenant_id = $3 ORDER BY timestamp DESC LIMIT $2`;
+      query = `
+        WITH lead_lookup AS (
+          SELECT COALESCE(
+            (SELECT telefone FROM crm_leads WHERE id::text = $1 AND tenant_id = $3 LIMIT 1),
+            (SELECT lead_phone FROM attendance_sessions WHERE lead_id = $1 AND tenant_id = $3 ORDER BY created_at DESC NULLS LAST LIMIT 1)
+          ) AS phone
+        )
+        SELECT cm.*
+          FROM chat_messages cm, lead_lookup ll
+         WHERE cm.tenant_id = $3
+           AND (
+             cm.lead_id = $1
+             OR (
+               ll.phone IS NOT NULL
+               AND cm.phone IS NOT NULL
+               AND RIGHT(REGEXP_REPLACE(cm.phone, '\\D', '', 'g'), 11) = RIGHT(REGEXP_REPLACE(ll.phone, '\\D', '', 'g'), 11)
+             )
+           )
+         ORDER BY cm.timestamp DESC
+         LIMIT $2`;
       params = [leadId, safeLimit, user.tenant_id];
     }
 
