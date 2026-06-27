@@ -6681,6 +6681,16 @@ app.post('/api/webhook/evolution', async (req, res) => {
       await sendQueueMenu(instance, phone);
     }
 
+    if (!isFromMe) {
+      await ensureWaitingSessionForIncomingLead({
+        lead,
+        phone: resolvedPhone,
+        queueId: lead.queue_id || null,
+        queueName: lead.queue_name || null,
+        tenantId,
+      });
+    }
+
     // ─── Lead is awaiting queue selection ───
     if (lead.awaiting_queue_selection && (msgType === 'text' || msgType === 'button_response' || msgType === 'list_response')) {
       const selectedQueue = await matchQueue(msgContent);
@@ -6691,6 +6701,18 @@ app.post('/api/webhook/evolution', async (req, res) => {
           `UPDATE crm_leads SET queue_id = $1, queue_name = $2, awaiting_queue_selection = false, updated_at = NOW() WHERE id = $3`,
           [selectedQueue.id, selectedQueue.name, lead.id]
         );
+        lead.queue_id = selectedQueue.id;
+        lead.queue_name = selectedQueue.name;
+
+        if (!isFromMe) {
+          await ensureWaitingSessionForIncomingLead({
+            lead,
+            phone: resolvedPhone,
+            queueId: selectedQueue.id,
+            queueName: selectedQueue.name,
+            tenantId,
+          });
+        }
 
         // Send confirmation
         await evolutionFetch(`/message/sendText/${instance}`, {
