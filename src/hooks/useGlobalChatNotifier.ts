@@ -25,9 +25,8 @@ function leadKey(row: Pick<QueueLeadNotificationRow, "id" | "phone" | "name">): 
  * Global chat notifier — runs on every authenticated page so the user is
  * alerted about new WhatsApp messages even when the /chat route is closed.
  *
- * To avoid duplicate alerts when the chat page is already open and focused
- * (it has its own SSE subscription that also fires notifications), we skip
- * here in that exact situation.
+ * To avoid duplicate alerts when the chat page is already open, we skip here
+ * while /chat is mounted because that route has its own realtime handler.
  */
 export function useGlobalChatNotifier() {
   const location = useLocation();
@@ -51,17 +50,12 @@ export function useGlobalChatNotifier() {
 
   useRealtimeChat({
     onMessage: (msg: IncomingMessage) => {
-      if (msg.sender === "agent") return; // ignore our own outgoing messages
+      if (msg.sender === "agent" || msg.sender === "attendant" || msg.sender === "me") return; // ignore our own outgoing messages
 
       rememberPendingChatMessage(msg);
       seenLeadTimesRef.current[leadKey({ id: msg.leadId || undefined, phone: msg.phone, name: msg.leadName || msg.pushName })] = new Date(msg.timestamp).getTime();
 
-      const chatOpenAndFocused =
-        typeof document !== "undefined" &&
-        location.pathname === "/chat" &&
-        document.hasFocus();
-
-      if (chatOpenAndFocused) return;
+      if (location.pathname === "/chat") return;
 
       const name = msg.leadName || msg.pushName || msg.phone;
       const body = msg.content?.slice(0, 80) || `[${msg.type}]`;
@@ -91,7 +85,7 @@ export function useGlobalChatNotifier() {
 
         if (!queuePollInitializedRef.current) continue;
         if (time <= previous || (row.unreadCount || 0) <= 0) continue;
-        if (location.pathname === "/chat" && typeof document !== "undefined" && document.hasFocus()) continue;
+        if (location.pathname === "/chat") continue;
 
         const name = row.name || row.phone || "WhatsApp";
         const body = row.lastMessage?.slice(0, 80) || "Nova mensagem";
