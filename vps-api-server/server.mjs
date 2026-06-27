@@ -7035,7 +7035,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
       }
 
       // Send queue menu
-      await sendQueueMenu(instance, resolvedPhone);
+      await sendQueueMenu(instance, resolvedPhone, tenantId);
     }
 
     if (!isFromMe) {
@@ -7050,7 +7050,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
 
     // ─── Lead is awaiting queue selection ───
     if (lead.awaiting_queue_selection && (msgType === 'text' || msgType === 'button_response' || msgType === 'list_response')) {
-      const selectedQueue = await matchQueue(msgContent);
+      const selectedQueue = await matchQueue(msgContent, tenantId);
 
       if (selectedQueue) {
         // Assign queue to lead
@@ -7166,7 +7166,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
           sender: senderRole,
         });
         // Invalid selection — resend menu
-        await sendQueueMenu(instance, resolvedPhone);
+        await sendQueueMenu(instance, resolvedPhone, tenantId);
         console.log(`💬 Incoming message from ${pushName} (${resolvedPhone}) awaiting queue selection → saved + broadcast to ${sseClients.size} clients`);
         return res.json({ processed: true, resent_menu: true, leadId: lead.id });
       }
