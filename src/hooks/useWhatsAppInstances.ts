@@ -5,12 +5,19 @@
  */
 import { useState, useEffect, useCallback, useRef } from "react";
 import { fetchInstances, type EvolutionInstance } from "@/lib/evolutionApi";
+import { whatsappApi } from "@/lib/vpsApi";
 import { toast } from "sonner";
 import { playDisconnectAlert } from "@/lib/notificationSound";
 import { supabase } from "@/integrations/supabase/client";
 
 export interface ConnectedInstance extends EvolutionInstance {
   connectionState: "open" | "close" | "connecting";
+}
+
+type ConnectionState = ConnectedInstance["connectionState"];
+
+function normalizeConnectionState(value: unknown): ConnectionState {
+  return value === "open" || value === "connecting" ? value : "close";
 }
 
 let cachedInstances: ConnectedInstance[] = [];
@@ -71,7 +78,15 @@ function detectChanges(newInstances: ConnectedInstance[]) {
 
 async function refreshInstances(): Promise<ConnectedInstance[]> {
   try {
-    const list = await fetchInstances();
+    const { data: vpsInstances } = await whatsappApi.instances();
+    const rawList = Array.isArray(vpsInstances) ? vpsInstances : await fetchInstances();
+    const list: EvolutionInstance[] = rawList.map((inst: any) => ({
+      instanceName: inst.name || inst.instanceName || inst.instance?.instanceName,
+      instanceId: inst.id || inst.instanceId || inst.instance?.instanceId || inst.instance?.id || "",
+      integration: inst.integration || inst.instance?.integration || "",
+      status: normalizeConnectionState(inst.connectionStatus || inst.status || inst.instance?.state),
+      owner: inst.ownerJid || inst.owner || inst.instance?.ownerJid,
+    })).filter((inst) => !!inst.instanceName);
     
     // Filter instances by tenant_id prefix
     let filteredList = list;

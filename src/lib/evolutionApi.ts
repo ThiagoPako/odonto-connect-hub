@@ -124,24 +124,35 @@ export async function applyInstanceSettings(instanceName: string) {
 }
 
 export async function registerWebhook(instanceName: string) {
-  return apiCall(`/webhook/set/${instanceName}`, {
-    method: "POST",
-    body: JSON.stringify({
-      webhook: {
-        enabled: true,
-        url: "https://backend.odontoconnect.tech/api/webhook/evolution",
-        webhookByEvents: false,
-        webhookBase64: false,
-        events: [
-          "MESSAGES_UPSERT",
-          "MESSAGES_UPDATE",
-          "CONNECTION_UPDATE",
-          "QRCODE_UPDATED",
-          "PRESENCE_UPDATE",
-        ],
-      },
-    }),
-  });
+  const webhook = {
+    enabled: true,
+    url: "https://backend.odontoconnect.tech/api/webhook/evolution",
+    byEvents: false,
+    base64: false,
+    webhookByEvents: false,
+    webhookBase64: false,
+    events: [
+      "MESSAGES_UPSERT",
+      "MESSAGES_UPDATE",
+      "SEND_MESSAGE",
+      "SEND_MESSAGE_UPDATE",
+      "CONNECTION_UPDATE",
+      "QRCODE_UPDATED",
+      "PRESENCE_UPDATE",
+    ],
+  };
+
+  try {
+    return await apiCall(`/webhook/set/${instanceName}`, {
+      method: "POST",
+      body: JSON.stringify({ webhook }),
+    });
+  } catch {
+    return apiCall(`/webhook/set/${instanceName}`, {
+      method: "POST",
+      body: JSON.stringify(webhook),
+    });
+  }
 }
 
 export async function connectInstance(instanceName: string): Promise<QrCodeResponse> {

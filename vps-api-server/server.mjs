@@ -208,6 +208,33 @@ async function getTenantIdByInstance(instanceName) {
     }
   }
 
+  // 1b. Infer tenant from the instance name prefix used by this app
+  // (<first 8 chars of tenant_id>-<label>). This covers instances created
+  // directly in Evolution before the local VPS mapping table was populated.
+  try {
+    const { rows } = await pool.query(
+      `SELECT tenant_id
+         FROM profiles
+        WHERE tenant_id IS NOT NULL
+          AND $1 LIKE substring(tenant_id::text from 1 for 8) || '-%'
+        GROUP BY tenant_id
+        LIMIT 1`,
+      [instanceName]
+    );
+    if (rows[0]?.tenant_id) {
+      await pool.query(
+        `INSERT INTO whatsapp_instances (instance_name, tenant_id)
+         VALUES ($1, $2)
+         ON CONFLICT (instance_name) DO UPDATE SET tenant_id = $2`,
+        [instanceName, rows[0].tenant_id]
+      ).catch(() => {});
+      setCachedTenantId(instanceName, rows[0].tenant_id);
+      return rows[0].tenant_id;
+    }
+  } catch (err) {
+    console.error(`Tenant prefix inference failed for ${instanceName}:`, err.message);
+  }
+
   // 2. Fallback to Supabase
   if (SUPABASE_BRIDGE_ENABLED) {
     try {
@@ -443,12 +470,23 @@ async function registerWebhook(instanceName) {
       ],
     };
 
-    const result = await evolutionFetch(`/webhook/set/${instanceName}`, {
+    let result = await evolutionFetch(`/webhook/set/${instanceName}`, {
       method: 'POST',
       body: JSON.stringify({
         webhook: webhookConfig,
       }),
     });
+
+    // Some Evolution API v2 builds expect the config at the root instead of
+    // nested under `webhook`. Retry once with the alternate shape so a schema
+    // mismatch does not silently stop incoming message delivery.
+    if (!result.ok) {
+      console.warn(`⚠️ Retrying webhook registration with root payload for ${instanceName}`);
+      result = await evolutionFetch(`/webhook/set/${instanceName}`, {
+        method: 'POST',
+        body: JSON.stringify(webhookConfig),
+      });
+    }
     if (result.ok) {
       console.log(`✅ Webhook registered for ${instanceName} → ${WEBHOOK_URL}`);
     } else {
@@ -1886,6 +1924,48 @@ function normalizeWhatsappNumber(value) {
   return digits;
 }
 
+function extractEvolutionInstanceName(body) {
+  const candidates = [
+    body?.instanceName,
+    body?.instance,
+    body?.instance?.instanceName,
+    body?.instance?.name,
+    body?.data?.instanceName,
+    body?.data?.instance,
+    body?.data?.instance?.instanceName,
+    body?.data?.instance?.name,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
+  }
+
+  return '';
+}
+
+function normalizeEvolutionEventName(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/-/g, '_')
+    .replace(/\./g, '_');
+}
+
+function isEvolutionEvent(event, ...names) {
+  const normalized = normalizeEvolutionEventName(event);
+  return names.some((name) => normalizeEvolutionEventName(name) === normalized);
+}
+
+function extractEvolutionMessages(data) {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.messages)) return data.messages;
+  if (Array.isArray(data?.message)) return data.message;
+  if (Array.isArray(data?.records)) return data.records;
+  if (data?.message?.key) return [data.message];
+  if (data?.key) return [data];
+  return [];
+}
+
 const presenceStateCache = new Map();
 const webhookEnsureTimestamps = new Map();
 const mediaSendJobs = new Map();
@@ -2192,7 +2272,16 @@ app.get('/api/whatsapp/instances', async (req, res) => {
     // ensureWebhookRegistration is internally throttled (5 min) per instance.
     for (const inst of instances) {
       const name = inst.name || inst.instanceName || inst.instance?.instanceName;
-      const status = inst.connectionStatus || inst.status || inst.instance?.status;
+      const status = inst.connectionStatus || inst.status || inst.instance?.status || inst.instance?.state;
+      if (name && user.tenant_id && name.startsWith(user.tenant_id.substring(0, 8))) {
+        await pool.query(
+          `INSERT INTO whatsapp_instances (instance_name, tenant_id)
+           VALUES ($1, $2)
+           ON CONFLICT (instance_name) DO UPDATE SET tenant_id = $2`,
+          [name, user.tenant_id]
+        ).catch(e => console.error('Failed to refresh instance mapping locally:', e.message));
+        setCachedTenantId(name, user.tenant_id);
+      }
       if (name && status === 'open') {
         ensureWebhookRegistration(name).catch(() => {});
       }
@@ -6153,6 +6242,7 @@ app.get('/api/events', async (req, res) => {
       }
     } catch (err) {
       console.warn('📡 SSE connection failed: invalid token');
+      return res.status(401).json({ error: 'Invalid realtime token' });
     }
   }
 
@@ -6411,9 +6501,9 @@ async function ensureWaitingSessionForIncomingLead({ lead, phone, queueId = null
 
 app.post('/api/webhook/evolution', async (req, res) => {
   try {
-    const body = req.body;
-    const event = typeof body.event === 'string' ? body.event.toLowerCase().replace(/_/g, '.') : '';
-    const instance = body.instance || body.instanceName;
+    const body = Array.isArray(req.body) ? req.body[0] : req.body;
+    const event = normalizeEvolutionEventName(body.event || body.type || body.eventType);
+    const instance = extractEvolutionInstanceName(body);
     let tenantId = await getTenantIdByInstance(instance);
     
     console.log(`📩 Webhook event: ${event} from ${instance} (tenant: ${tenantId})`);
@@ -6422,7 +6512,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
     }
 
     // ─── Presence updates (typing, recording, online) ───
-    if (event === 'presence.update') {
+    if (isEvolutionEvent(event, 'presence.update', 'presence_update')) {
       const presenceData = body.data;
       console.log(`👁️ PRESENCE_UPDATE raw:`, JSON.stringify(presenceData).slice(0, 500));
 
@@ -6576,7 +6666,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
     }
 
     // ─── Message ACK / status updates ───
-    if (event === 'messages.update') {
+    if (isEvolutionEvent(event, 'messages.update', 'messages_update', 'send.message.update', 'send_message_update')) {
       const updates = Array.isArray(body.data) ? body.data : [body.data];
       console.log(`📩 MESSAGES_UPDATE: ${updates.length} updates, raw:`, JSON.stringify(body.data).slice(0, 500));
       for (const update of updates) {
@@ -6654,13 +6744,15 @@ app.post('/api/webhook/evolution', async (req, res) => {
     }
 
     // Only process incoming messages from here
-    if (event !== 'messages.upsert') {
+    if (!isEvolutionEvent(event, 'messages.upsert', 'messages_upsert', 'send.message', 'send_message')) {
       return res.json({ ignored: true, event });
     }
 
-    const message = Array.isArray(body.data)
-      ? body.data[0]
-      : (Array.isArray(body.data?.messages) ? body.data.messages[0] : body.data);
+    const messages = extractEvolutionMessages(body.data);
+    const message = messages.find((item) => {
+      const jid = item?.key?.remoteJid;
+      return jid && !String(jid).endsWith('@g.us');
+    }) || messages[0];
     const remoteJid = message?.key?.remoteJid;
 
     // Skip group messages
@@ -9411,7 +9503,7 @@ async function syncWhatsAppContacts() {
     });
     if (!instRes.ok) return;
     const instances = await instRes.json();
-    const connected = instances.filter(i => (i.connectionStatus || i.status) === 'open');
+    const connected = instances.filter(i => (i.connectionStatus || i.status || i.instance?.status || i.instance?.state) === 'open');
     if (connected.length === 0) return;
 
     let totalImported = 0;
