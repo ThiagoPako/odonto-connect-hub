@@ -165,12 +165,32 @@ const SUPABASE_CACHE_TTL_MS = 5 * 60 * 1000;
 
 // Cache for instance -> tenant_id mapping to avoid repeated DB hits in webhooks
 const instanceToTenantCache = new Map();
+const INSTANCE_TENANT_CACHE_TTL_MS = 5 * 60 * 1000;
+
+function getCachedTenantId(instanceName) {
+  const cached = instanceToTenantCache.get(instanceName);
+  if (!cached) return null;
+
+  // Backward compatible with older in-memory values during rolling restarts.
+  if (typeof cached === 'string') return cached;
+
+  if (cached.expiresAt && cached.expiresAt > Date.now()) return cached.tenantId;
+  instanceToTenantCache.delete(instanceName);
+  return null;
+}
+
+function setCachedTenantId(instanceName, tenantId) {
+  if (!instanceName || !tenantId) return;
+  instanceToTenantCache.set(instanceName, {
+    tenantId,
+    expiresAt: Date.now() + INSTANCE_TENANT_CACHE_TTL_MS,
+  });
+}
 
 async function getTenantIdByInstance(instanceName) {
   if (!instanceName) return null;
-  if (instanceToTenantCache.has(instanceName)) {
-    return instanceToTenantCache.get(instanceName);
-  }
+  const cachedTenantId = getCachedTenantId(instanceName);
+  if (cachedTenantId) return cachedTenantId;
 
   // 1. Try local DB
   try {
@@ -179,7 +199,7 @@ async function getTenantIdByInstance(instanceName) {
       [instanceName]
     );
     if (rows[0]?.tenant_id) {
-      instanceToTenantCache.set(instanceName, rows[0].tenant_id);
+      setCachedTenantId(instanceName, rows[0].tenant_id);
       return rows[0].tenant_id;
     }
   } catch (err) {
@@ -204,7 +224,7 @@ async function getTenantIdByInstance(instanceName) {
       if (res.ok) {
         const data = await res.json();
         if (data?.[0]?.tenant_id) {
-          instanceToTenantCache.set(instanceName, data[0].tenant_id);
+          setCachedTenantId(instanceName, data[0].tenant_id);
           return data[0].tenant_id;
         }
       }
@@ -286,10 +306,12 @@ async function resolveSupabaseUser(token) {
   const restAuthKey = SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
   const restBearer = SUPABASE_SERVICE_ROLE_KEY || token;
 
-  // 2) Busca profile (tenant_id, role, is_super_admin). Se o VPS ainda não tiver
-  // service role configurada, usa o próprio access_token validado do usuário.
+  // 2) Busca profile (tenant_id, role, is_super_admin). Use select=* because
+  // Lovable Cloud / local VPS schemas have varied between `name` and `nome`;
+  // selecting a missing column makes PostgREST return 400 and leaves SSE
+  // clients without tenant_id, so no WhatsApp alert reaches the browser.
   const profRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/profiles?id=eq.${sbUser.id}&select=id,email,nome,tenant_id,is_super_admin`,
+    `${SUPABASE_URL}/rest/v1/profiles?id=eq.${sbUser.id}&select=*&limit=1`,
     {
       headers: {
         apikey: restAuthKey,
@@ -297,11 +319,32 @@ async function resolveSupabaseUser(token) {
       },
     }
   );
-  const profiles = profRes.ok ? await profRes.json() : [];
-  const profile = profiles?.[0] || {};
+  let profiles = profRes.ok ? await profRes.json() : [];
+  let profile = profiles?.[0] || {};
+
+  // 2b) Fallback para o banco local da VPS. Isso cobre casos em que o token
+  // é válido, mas a leitura do profile via REST fica sem tenant por diferença
+  // de schema/RLS. Sem tenant_id o /api/events conecta como "anonymous" e o
+  // broadcast filtrado por clínica nunca chega ao chat/notificador.
+  if (!profile?.tenant_id) {
+    try {
+      const { rows } = await pool.query(
+        `SELECT id, email, name, role, tenant_id, COALESCE(is_super_admin, false) as is_super_admin
+           FROM profiles
+          WHERE id = $1 OR email = $2
+          LIMIT 1`,
+        [sbUser.id, sbUser.email]
+      );
+      if (rows[0]?.tenant_id) {
+        profile = { ...profile, ...rows[0] };
+      }
+    } catch (err) {
+      console.warn('Local profile fallback failed:', err.message);
+    }
+  }
 
   // 3) Resolve role (admin/atendente/etc) a partir de user_roles
-  let role = 'user';
+  let role = profile.role || 'user';
   try {
     const roleRes = await fetch(
       `${SUPABASE_URL}/rest/v1/user_roles?user_id=eq.${sbUser.id}&select=role&limit=1`,
@@ -380,22 +423,30 @@ async function sendPushToAll(payload) {
 // ─── Auto-register webhook on Evolution API instance ─────────
 async function registerWebhook(instanceName) {
   try {
+    const webhookConfig = {
+      enabled: true,
+      url: WEBHOOK_URL,
+      // Evolution API v2 expects these exact property names. Keep legacy
+      // aliases too so older deployments do not break during rolling updates.
+      byEvents: false,
+      base64: false,
+      webhookByEvents: false,
+      webhookBase64: false,
+      events: [
+        'MESSAGES_UPSERT',
+        'MESSAGES_UPDATE',
+        'SEND_MESSAGE',
+        'SEND_MESSAGE_UPDATE',
+        'CONNECTION_UPDATE',
+        'QRCODE_UPDATED',
+        'PRESENCE_UPDATE',
+      ],
+    };
+
     const result = await evolutionFetch(`/webhook/set/${instanceName}`, {
       method: 'POST',
       body: JSON.stringify({
-        webhook: {
-          enabled: true,
-          url: WEBHOOK_URL,
-          webhookByEvents: false,
-          webhookBase64: false,
-          events: [
-            'MESSAGES_UPSERT',
-            'MESSAGES_UPDATE',
-            'CONNECTION_UPDATE',
-            'QRCODE_UPDATED',
-            'PRESENCE_UPDATE',
-          ],
-        },
+        webhook: webhookConfig,
       }),
     });
     if (result.ok) {
@@ -2198,7 +2249,7 @@ app.post('/api/whatsapp/instances', async (req, res) => {
         [finalName, user.tenant_id]
       ).catch(e => console.error('Failed to save instance mapping locally:', e.message));
       
-      instanceToTenantCache.set(finalName, user.tenant_id);
+      setCachedTenantId(finalName, user.tenant_id);
     }
 
     // Auto-register webhook
@@ -6042,16 +6093,30 @@ const sseClients = new Map();
 
 function broadcastSSE(event, data, tenantId = null) {
   const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  let sent = 0;
   for (const [client, info] of sseClients.entries()) {
-    // If tenantId is provided, only send to clients belonging to that tenant
-    if (tenantId && info.tenantId !== tenantId) continue;
-    client.write(payload);
+    // If tenantId is provided, only send to clients belonging to that tenant.
+    if (tenantId) {
+      if (info.tenantId !== tenantId) continue;
+    }
+    try {
+      client.write(payload);
+      sent++;
+    } catch (err) {
+      sseClients.delete(client);
+    }
+  }
+  if (sent === 0) {
+    console.warn(`⚠️ SSE broadcast '${event}' tenant=${tenantId || 'all'} delivered to 0 clients`);
   }
 }
 
 app.get('/api/events', async (req, res) => {
   let tenantId = null;
+  let authenticated = false;
+  let authenticatedUserId = null;
   const token = req.query.token;
+  const requestedTenantId = typeof req.query.tenantId === 'string' ? req.query.tenantId : null;
 
   if (token) {
     try {
@@ -6060,11 +6125,30 @@ app.get('/api/events', async (req, res) => {
       try {
         decoded = verifyToken(token);
         tenantId = decoded?.tenant_id;
+        authenticatedUserId = decoded?.sub || decoded?.id || null;
+        authenticated = true;
       } catch {
         // 2) Fallback to Supabase
         if (SUPABASE_BRIDGE_ENABLED) {
           const sbUser = await resolveSupabaseUser(token);
           tenantId = sbUser.tenant_id;
+          authenticatedUserId = sbUser.id || sbUser.sub || null;
+          authenticated = true;
+        }
+      }
+
+      // EventSource cannot send custom X-Tenant-Id headers. If the token was
+      // valid but did not carry tenant_id, accept the tenant query parameter
+      // only after checking it belongs to the authenticated profile locally.
+      if (authenticated && !tenantId && requestedTenantId && authenticatedUserId) {
+        try {
+          const { rows } = await pool.query(
+            `SELECT tenant_id FROM profiles WHERE id = $1 AND tenant_id = $2 LIMIT 1`,
+            [authenticatedUserId, requestedTenantId]
+          );
+          if (rows[0]?.tenant_id) tenantId = rows[0].tenant_id;
+        } catch (tenantErr) {
+          console.warn('📡 SSE tenant query fallback failed:', tenantErr.message);
         }
       }
     } catch (err) {
@@ -6083,7 +6167,7 @@ app.get('/api/events', async (req, res) => {
 
   res.write(`event: connected\ndata: ${JSON.stringify({ ts: Date.now(), tenantId })}\n\n`);
 
-  sseClients.set(res, { tenantId });
+  sseClients.set(res, { tenantId, authenticated });
   console.log(`📡 SSE client connected (tenant: ${tenantId || 'anonymous'}, total: ${sseClients.size})`);
 
   // Keepalive ping every 25s to prevent proxy/browser timeouts
@@ -6574,7 +6658,9 @@ app.post('/api/webhook/evolution', async (req, res) => {
       return res.json({ ignored: true, event });
     }
 
-    const message = body.data;
+    const message = Array.isArray(body.data)
+      ? body.data[0]
+      : (Array.isArray(body.data?.messages) ? body.data.messages[0] : body.data);
     const remoteJid = message?.key?.remoteJid;
 
     // Skip group messages
@@ -6669,23 +6755,23 @@ app.post('/api/webhook/evolution', async (req, res) => {
       await pool.query(
         `INSERT INTO crm_leads (id, nome, telefone, origem, status, kanban_stage, awaiting_queue_selection, tenant_id)
          VALUES ($1, $2, $3, 'whatsapp', 'novo', 'lead', true, $4)`,
-        [newId, pushName, phone, tenantId]
+        [newId, pushName, resolvedPhone, tenantId]
       );
-      lead = { id: newId, name: pushName, phone, queue_id: null, queue_name: null, awaiting_queue_selection: true, avatar_url: null };
-      console.log(`🆕 New lead created: ${pushName} (${phone})`);
+      lead = { id: newId, name: pushName, phone: resolvedPhone, queue_id: null, queue_name: null, awaiting_queue_selection: true, avatar_url: null };
+      console.log(`🆕 New lead created: ${pushName} (${resolvedPhone})`);
 
       // 🤖 Trigger "Lead entrou no CRM" automation
       triggerAutomationFlows('Lead entrou no CRM', { name: pushName, phone }).catch(() => {});
 
       // Auto-save to contatos table (skip if phone already exists)
       try {
-        const existingContato = await pool.query('SELECT id FROM contatos WHERE telefone = $1', [phone]);
+        const existingContato = await pool.query('SELECT id FROM contatos WHERE telefone = $1', [resolvedPhone]);
         if (existingContato.rows.length === 0) {
           await pool.query(
             'INSERT INTO contatos (id, nome, telefone, tipo) VALUES ($1, $2, $3, $4)',
-            [crypto.randomUUID(), pushName, phone, 'pessoal']
+            [crypto.randomUUID(), pushName, resolvedPhone, 'pessoal']
           );
-          console.log(`📇 Auto-saved contact: ${pushName} (${phone})`);
+          console.log(`📇 Auto-saved contact: ${pushName} (${resolvedPhone})`);
         }
       } catch (contatoErr) {
         console.error('Failed to auto-save contato:', contatoErr.message);
@@ -6747,12 +6833,12 @@ app.post('/api/webhook/evolution', async (req, res) => {
       if (attendanceSettingsCache?.autoGreetingEnabled && attendanceSettingsCache?.welcomeMessage) {
         await evolutionFetch(`/message/sendText/${instance}`, {
           method: 'POST',
-          body: JSON.stringify({ number: phone, text: attendanceSettingsCache.welcomeMessage }),
+          body: JSON.stringify({ number: resolvedPhone, text: attendanceSettingsCache.welcomeMessage }),
         });
       }
 
       // Send queue menu
-      await sendQueueMenu(instance, phone);
+      await sendQueueMenu(instance, resolvedPhone);
     }
 
     if (!isFromMe) {
@@ -6792,7 +6878,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
         await evolutionFetch(`/message/sendText/${instance}`, {
           method: 'POST',
           body: JSON.stringify({
-            number: phone,
+            number: resolvedPhone,
             text: `✅ Você foi direcionado para o setor *${selectedQueue.icon} ${selectedQueue.name}*.\n\nUm de nossos atendentes irá te ajudar em breve! 😊`,
           }),
         });
@@ -6803,7 +6889,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
         broadcastSSE('queue_assigned', {
           leadId: lead.id,
           leadName: lead.name,
-          phone,
+          phone: resolvedPhone,
           queueId: selectedQueue.id,
           queueName: selectedQueue.name,
           queueColor: selectedQueue.color,
@@ -6874,6 +6960,8 @@ app.post('/api/webhook/evolution', async (req, res) => {
           msgType,
           instance,
           queueId: lead.queue_id || null,
+          queueName: lead.queue_name || null,
+          queueColor: lead.queue_color || null,
           mediaUrl,
           fileName: mediaFileName,
           mimeType: mediaMimeType,
@@ -6881,8 +6969,8 @@ app.post('/api/webhook/evolution', async (req, res) => {
           sender: senderRole,
         });
         // Invalid selection — resend menu
-        await sendQueueMenu(instance, phone);
-        console.log(`💬 Incoming message from ${pushName} (${phone}) awaiting queue selection → saved + broadcast to ${sseClients.size} clients`);
+        await sendQueueMenu(instance, resolvedPhone);
+        console.log(`💬 Incoming message from ${pushName} (${resolvedPhone}) awaiting queue selection → saved + broadcast to ${sseClients.size} clients`);
         return res.json({ processed: true, resent_menu: true, leadId: lead.id });
       }
     }
@@ -7022,6 +7110,8 @@ app.post('/api/webhook/evolution', async (req, res) => {
       msgType,
       instance,
       queueId: lead.queue_id || null,
+      queueName: lead.queue_name || null,
+      queueColor: lead.queue_color || null,
       mediaUrl,
       fileName: mediaFileName,
       mimeType: mediaMimeType,
@@ -9681,10 +9771,10 @@ app.post('/api/messages/import-whatsapp', async (req, res) => {
               if (!content) continue;
 
               await pool.query(
-                `INSERT INTO chat_messages (id, lead_id, content, sender, type, status, timestamp, media_url, file_name, mime_type, instance, phone, metadata)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                `INSERT INTO chat_messages (id, lead_id, content, sender, type, status, timestamp, media_url, file_name, mime_type, instance, phone, metadata, tenant_id)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
                  ON CONFLICT (id) DO NOTHING`,
-                [msgId, leadId, content, sender, type, 'delivered', msgTimestamp, mediaUrl, fileName, mimeType, name, phone, JSON.stringify({ importedFrom: 'whatsapp', contactName })]
+                [msgId, leadId, content, sender, type, 'delivered', msgTimestamp, mediaUrl, fileName, mimeType, name, phone, JSON.stringify({ importedFrom: 'whatsapp', contactName }), user.tenant_id]
               );
               instResult.imported++;
               totalImported++;
@@ -9994,6 +10084,22 @@ app.post('/api/messages', async (req, res) => {
         user.id, attendantName, instance || null, phone || null, user.tenant_id,
       ]
     );
+
+    broadcastSSE('new_message', {
+      id,
+      phone: phone || null,
+      pushName: attendantName,
+      leadId,
+      leadName: attendantName,
+      content: content || '',
+      type: type || 'text',
+      timestamp: new Date().toISOString(),
+      instance: instance || null,
+      mediaUrl: persistedMediaUrl || null,
+      fileName: fileName || null,
+      mimeType: mimeType || null,
+      sender: 'attendant',
+    }, user.tenant_id);
 
     res.json({ success: true, id, mediaUrl: persistedMediaUrl });
   } catch (error) {

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { getAccessToken, VPS_API_BASE } from "@/lib/vpsApi";
+import { supabase } from "@/integrations/supabase/client";
 
 export interface IncomingMessage {
   id: string;
@@ -59,6 +60,21 @@ type QueueAssignHandler = (assignment: QueueAssignment) => void;
 type MessageStatusHandler = (update: MessageStatusUpdate) => void;
 type LeadRecoveryHandler = (data: LeadRecoveryReturn) => void;
 
+async function getActiveTenantId(): Promise<string | null> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return null;
+    const { data } = await supabase
+      .from("profiles")
+      .select("tenant_id")
+      .eq("id", user.id)
+      .maybeSingle();
+    return data?.tenant_id || null;
+  } catch {
+    return null;
+  }
+}
+
 interface RealtimeChatOptions {
   onMessage: MessageHandler;
   onPresence?: PresenceHandler;
@@ -92,10 +108,11 @@ export function useRealtimeChat(options: RealtimeChatOptions) {
       try { return JSON.parse(event.data) as T; } catch { return null; }
     };
 
-    getAccessToken().then((token) => {
+    Promise.all([getAccessToken(), getActiveTenantId()]).then(([token, tenantId]) => {
       if (cancelled) return;
       const url = new URL(`${VPS_API_BASE}/events`);
       if (token) url.searchParams.set("token", token);
+      if (tenantId) url.searchParams.set("tenantId", tenantId);
       eventSource = new EventSource(url.toString());
 
       eventSource.addEventListener("connected", () => console.log("📡 Chat realtime connected"));
