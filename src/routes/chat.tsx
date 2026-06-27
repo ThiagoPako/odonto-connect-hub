@@ -34,6 +34,7 @@ import { useWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
 import { playNotificationSound, playRecoverySound } from "@/lib/notificationSound";
 import { showBrowserNotification, requestNotificationPermission } from "@/lib/browserNotification";
 import { setChatUnreadCount } from "@/lib/chatUnreadStore";
+import { rememberPendingChatMessage, takePendingChatMessagesForLead } from "@/lib/chatPendingStore";
 import { supabase } from "@/integrations/supabase/client";
 import {
   type Lead,
@@ -51,6 +52,38 @@ import { z } from "zod";
 const chatSearchSchema = z.object({
   lead: fallback(z.string(), "").default(""),
 });
+
+function incomingToChatMessage(msg: IncomingMessage, leadId?: string): ChatMessage {
+  const isFromMe = msg.sender === "attendant" || msg.sender === "agent" || msg.sender === "me";
+
+  return {
+    id: msg.id,
+    leadId: leadId || msg.leadId || msg.phone,
+    content: msg.content,
+    sender: isFromMe ? "attendant" : "lead",
+    type: (msg.type as MessageType) || "text",
+    timestamp: new Date(msg.timestamp),
+    status: isFromMe ? "sent" : "delivered",
+    fileUrl: resolveMediaUrl(msg.mediaUrl) || undefined,
+    fileName: msg.fileName || undefined,
+    mimeType: msg.mimeType || undefined,
+    instance: msg.instance || undefined,
+  };
+}
+
+function getMessagePreview(msg: IncomingMessage): string {
+  if (msg.content && !["🖼️ Imagem", "🎬 Vídeo", "📎"].some((prefix) => msg.content.startsWith(prefix))) {
+    return msg.content;
+  }
+
+  return ({
+    image: "📷 Foto",
+    video: "🎬 Vídeo",
+    audio: "🎤 Áudio",
+    document: "📄 Documento",
+    sticker: "🏷️ Sticker",
+  } as Record<string, string>)[msg.type] || msg.content || "";
+}
 
 export const Route = createFileRoute("/chat")({
   ssr: false,
@@ -209,20 +242,7 @@ function ChatPage() {
     }
 
     const isFromMe = msg.sender === "attendant" || msg.sender === "agent" || msg.sender === "me";
-
-    const chatMsg: ChatMessage = {
-      id: msg.id,
-      leadId: msg.leadId || msg.phone,
-      content: msg.content,
-      sender: isFromMe ? "attendant" : "lead",
-      type: (msg.type as MessageType) || "text",
-      timestamp: new Date(msg.timestamp),
-      status: "delivered",
-      fileUrl: resolveMediaUrl(msg.mediaUrl) || undefined,
-      fileName: msg.fileName || undefined,
-      mimeType: msg.mimeType || undefined,
-      instance: msg.instance || undefined,
-    };
+    const chatMsg = incomingToChatMessage(msg);
 
     // Use refs to avoid stale closure
     const allLeads = [...queueRef.current, ...myLeadsRef.current];
@@ -261,7 +281,7 @@ function ChatPage() {
           lead.id === existingLead.id
             ? {
                 ...lead,
-                lastMessage: msg.content && !["🖼️ Imagem","🎬 Vídeo","📎"].some(p => msg.content.startsWith(p)) ? msg.content : ({ image: "📷 Foto", video: "🎬 Vídeo", audio: "🎤 Áudio", document: "📄 Documento", sticker: "🏷️ Sticker" } as Record<string, string>)[msg.type] || msg.content || "",
+                lastMessage: getMessagePreview(msg),
                 lastMessageTime: new Date(msg.timestamp),
                 unreadCount: currentSelected?.id === existingLead.id ? lead.unreadCount : lead.unreadCount + 1,
                 instance: msg.instance || lead.instance,
@@ -277,7 +297,7 @@ function ChatPage() {
           name: msg.leadName || msg.pushName,
           initials: (msg.leadName || msg.pushName).split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase(),
           phone: msg.phone,
-          lastMessage: msg.content && !["🖼️ Imagem","🎬 Vídeo","📎"].some(p => msg.content.startsWith(p)) ? msg.content : ({ image: "📷 Foto", video: "🎬 Vídeo", audio: "🎤 Áudio", document: "📄 Documento", sticker: "🏷️ Sticker" } as Record<string, string>)[msg.type] || msg.content || "",
+          lastMessage: getMessagePreview(msg),
           lastMessageTime: new Date(msg.timestamp),
           unreadCount: 1,
           status: "waiting",
@@ -314,7 +334,7 @@ function ChatPage() {
       duration: 5000,
       action: {
         label: "Abrir",
-        onClick: () => navigate({ to: "/chat", search: { lead: name } }),
+          onClick: () => navigate({ to: "/chat", search: { lead: msg.leadId || msg.phone || name } }),
       },
     });
     showBrowserNotification(`💬 ${name}`, body, name);
@@ -550,6 +570,25 @@ function ChatPage() {
 
   useEffect(() => {
     if (!selectedLead) return;
+
+    const pendingMessages = takePendingChatMessagesForLead({
+      id: selectedLead.id,
+      phone: selectedLead.phone,
+      name: selectedLead.name,
+    });
+
+    if (pendingMessages.length > 0) {
+      const pendingChatMessages = pendingMessages.map((message) => incomingToChatMessage(message, selectedLead.id));
+      setMessages((prev) => {
+        const existing = prev[selectedLead.id] || [];
+        const existingIds = new Set(existing.map((message) => message.id));
+        const merged = [...existing, ...pendingChatMessages.filter((message) => !existingIds.has(message.id))]
+          .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+        return { ...prev, [selectedLead.id]: merged };
+      });
+    }
+
     if (historyLoadedRef.current.has(selectedLead.id)) return;
     historyLoadedRef.current.add(selectedLead.id);
 
@@ -637,10 +676,20 @@ function ChatPage() {
     const allLeads = [...myLeads, ...queue];
     if (allLeads.length === 0) return; // wait for leads to load
 
+    const normalizedSearchPhone = leadSearch.replace(/\D/g, "");
+    const normalizedSearchName = leadSearch.trim().toLowerCase();
+
     const match = allLeads.find(
-      (l) => l.name.toLowerCase() === leadSearch.toLowerCase()
-        || l.id === leadSearch
-        || l.phone === leadSearch
+      (l) => {
+        const leadPhone = l.phone.replace(/\D/g, "");
+        return l.name.toLowerCase() === normalizedSearchName
+          || l.id === leadSearch
+          || (normalizedSearchPhone.length >= 8 && (
+            leadPhone === normalizedSearchPhone
+            || leadPhone.endsWith(normalizedSearchPhone.slice(-11))
+            || normalizedSearchPhone.endsWith(leadPhone.slice(-11))
+          ));
+      }
     );
     if (match) {
       if (match.status === "waiting") {
@@ -650,6 +699,7 @@ function ChatPage() {
         setMyLeads((prev) => [assigned, ...prev]);
         setSelectedLead(assigned);
         setActiveTab("mine");
+        messagesApi.assign?.({ leadId: match.id });
         if (!messages[match.id]) {
           setMessages((prev) => ({
             ...prev,

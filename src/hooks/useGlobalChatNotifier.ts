@@ -5,6 +5,7 @@ import { useRealtimeChat, type IncomingMessage } from "@/hooks/useRealtimeChat";
 import { playNotificationSound } from "@/lib/notificationSound";
 import { showBrowserNotification } from "@/lib/browserNotification";
 import { incrementChatUnread } from "@/lib/chatUnreadStore";
+import { rememberPendingChatMessage } from "@/lib/chatPendingStore";
 
 /**
  * Global chat notifier — runs on every authenticated page so the user is
@@ -21,6 +22,8 @@ export function useGlobalChatNotifier() {
   useRealtimeChat({
     onMessage: (msg: IncomingMessage) => {
       if (msg.sender === "agent") return; // ignore our own outgoing messages
+
+      rememberPendingChatMessage(msg);
 
       const chatOpenAndFocused =
         typeof document !== "undefined" &&
@@ -39,7 +42,7 @@ export function useGlobalChatNotifier() {
         duration: 5000,
         action: {
           label: "Abrir",
-          onClick: () => navigate({ to: "/chat", search: { lead: name } as never }),
+          onClick: () => navigate({ to: "/chat", search: { lead: msg.leadId || msg.phone || name } as never }),
         },
       });
       showBrowserNotification(`💬 ${name}`, body, name);
