@@ -6096,12 +6096,8 @@ function broadcastSSE(event, data, tenantId = null) {
   let sent = 0;
   for (const [client, info] of sseClients.entries()) {
     // If tenantId is provided, only send to clients belonging to that tenant.
-    // Clients that authenticated but temporarily resolved without tenant_id are
-    // still allowed to receive the event; otherwise realtime can fail silently
-    // even though the message was persisted in the correct clinic queue.
     if (tenantId) {
-      if (info.tenantId && info.tenantId !== tenantId) continue;
-      if (!info.tenantId && !info.authenticated) continue;
+      if (info.tenantId !== tenantId) continue;
     }
     try {
       client.write(payload);
@@ -6118,7 +6114,9 @@ function broadcastSSE(event, data, tenantId = null) {
 app.get('/api/events', async (req, res) => {
   let tenantId = null;
   let authenticated = false;
+  let authenticatedUserId = null;
   const token = req.query.token;
+  const requestedTenantId = typeof req.query.tenantId === 'string' ? req.query.tenantId : null;
 
   if (token) {
     try {
@@ -6127,13 +6125,30 @@ app.get('/api/events', async (req, res) => {
       try {
         decoded = verifyToken(token);
         tenantId = decoded?.tenant_id;
+        authenticatedUserId = decoded?.sub || decoded?.id || null;
         authenticated = true;
       } catch {
         // 2) Fallback to Supabase
         if (SUPABASE_BRIDGE_ENABLED) {
           const sbUser = await resolveSupabaseUser(token);
           tenantId = sbUser.tenant_id;
+          authenticatedUserId = sbUser.id || sbUser.sub || null;
           authenticated = true;
+        }
+      }
+
+      // EventSource cannot send custom X-Tenant-Id headers. If the token was
+      // valid but did not carry tenant_id, accept the tenant query parameter
+      // only after checking it belongs to the authenticated profile locally.
+      if (authenticated && !tenantId && requestedTenantId && authenticatedUserId) {
+        try {
+          const { rows } = await pool.query(
+            `SELECT tenant_id FROM profiles WHERE id = $1 AND tenant_id = $2 LIMIT 1`,
+            [authenticatedUserId, requestedTenantId]
+          );
+          if (rows[0]?.tenant_id) tenantId = rows[0].tenant_id;
+        } catch (tenantErr) {
+          console.warn('📡 SSE tenant query fallback failed:', tenantErr.message);
         }
       }
     } catch (err) {
