@@ -466,7 +466,14 @@ function ChatPage() {
     );
   }, []);
 
-  useRealtimeChat({ onMessage: handleIncomingMessage, onPresence: handlePresenceUpdate, onQueueAssigned: handleQueueAssigned, onMessageStatus: handleMessageStatusUpdate, onLeadRecoveryReturn: handleLeadRecoveryReturn });
+  useRealtimeChat({
+    onMessage: handleIncomingMessage,
+    onPresence: handlePresenceUpdate,
+    onQueueAssigned: handleQueueAssigned,
+    onMessageStatus: handleMessageStatusUpdate,
+    onLeadRecoveryReturn: handleLeadRecoveryReturn,
+    onConnected: () => void reloadQueueLeads(),
+  });
 
   useEffect(() => {
     const currentLead = selectedLead;
