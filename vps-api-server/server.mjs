@@ -12218,6 +12218,8 @@ if (process.env.NODE_ENV !== 'test') {
       `ALTER TABLE profiles ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE`,
       
       // ─── 2. Operational Tables ───
+      `ALTER TABLE attendance_queues ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE`,
+      `CREATE INDEX IF NOT EXISTS idx_attendance_queues_tenant ON attendance_queues(tenant_id)`, 
       `ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS avatar_url TEXT`,
       `ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS queue_id UUID`,
       `ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS queue_name TEXT`,
