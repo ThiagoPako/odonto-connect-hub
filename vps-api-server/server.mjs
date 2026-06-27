@@ -12466,7 +12466,7 @@ if (process.env.NODE_ENV !== 'test') {
       `CREATE OR REPLACE FUNCTION apply_tenant_rls(table_name TEXT) RETURNS VOID AS $$
        BEGIN
          EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', table_name);
-         EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', table_name);
+         EXECUTE format('ALTER TABLE %I NO FORCE ROW LEVEL SECURITY', table_name);
          EXECUTE format('DROP POLICY IF EXISTS tenant_isolation_policy ON %I', table_name);
          EXECUTE format('CREATE POLICY tenant_isolation_policy ON %I USING (
            (current_setting(''app.is_super_admin'', true) = ''true'') OR 
