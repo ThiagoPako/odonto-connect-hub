@@ -1924,6 +1924,25 @@ function normalizeWhatsappNumber(value) {
   return digits;
 }
 
+function extractEvolutionInstanceName(body) {
+  const candidates = [
+    body?.instanceName,
+    body?.instance,
+    body?.instance?.instanceName,
+    body?.instance?.name,
+    body?.data?.instanceName,
+    body?.data?.instance,
+    body?.data?.instance?.instanceName,
+    body?.data?.instance?.name,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
+  }
+
+  return '';
+}
+
 const presenceStateCache = new Map();
 const webhookEnsureTimestamps = new Map();
 const mediaSendJobs = new Map();
