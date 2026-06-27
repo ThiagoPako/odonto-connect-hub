@@ -6479,7 +6479,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
   try {
     const body = req.body;
     const event = typeof body.event === 'string' ? body.event.toLowerCase().replace(/_/g, '.') : '';
-    const instance = body.instance || body.instanceName;
+    const instance = extractEvolutionInstanceName(body);
     let tenantId = await getTenantIdByInstance(instance);
     
     console.log(`📩 Webhook event: ${event} from ${instance} (tenant: ${tenantId})`);
