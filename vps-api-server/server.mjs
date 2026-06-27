@@ -167,20 +167,33 @@ const SUPABASE_CACHE_TTL_MS = 5 * 60 * 1000;
 const instanceToTenantCache = new Map();
 const INSTANCE_TENANT_CACHE_TTL_MS = 5 * 60 * 1000;
 
+// Placeholder/seed tenant that must NEVER be used to route real messages.
+const PLACEHOLDER_TENANT_IDS = new Set([
+  '00000000-0000-0000-0000-000000000000',
+  '00000000-0000-0000-0000-000000000001',
+]);
+function isValidTenantId(id) {
+  if (!id) return false;
+  const s = String(id).toLowerCase();
+  return !PLACEHOLDER_TENANT_IDS.has(s);
+}
+
 function getCachedTenantId(instanceName) {
   const cached = instanceToTenantCache.get(instanceName);
   if (!cached) return null;
 
   // Backward compatible with older in-memory values during rolling restarts.
-  if (typeof cached === 'string') return cached;
+  if (typeof cached === 'string') return isValidTenantId(cached) ? cached : null;
 
-  if (cached.expiresAt && cached.expiresAt > Date.now()) return cached.tenantId;
+  if (cached.expiresAt && cached.expiresAt > Date.now()) {
+    return isValidTenantId(cached.tenantId) ? cached.tenantId : null;
+  }
   instanceToTenantCache.delete(instanceName);
   return null;
 }
 
 function setCachedTenantId(instanceName, tenantId) {
-  if (!instanceName || !tenantId) return;
+  if (!instanceName || !isValidTenantId(tenantId)) return;
   instanceToTenantCache.set(instanceName, {
     tenantId,
     expiresAt: Date.now() + INSTANCE_TENANT_CACHE_TTL_MS,
