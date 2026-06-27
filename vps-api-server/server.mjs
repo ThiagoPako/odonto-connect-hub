@@ -6500,7 +6500,7 @@ async function ensureWaitingSessionForIncomingLead({ lead, phone, queueId = null
 
 app.post('/api/webhook/evolution', async (req, res) => {
   try {
-    const body = req.body;
+    const body = Array.isArray(req.body) ? req.body[0] : req.body;
     const event = normalizeEvolutionEventName(body.event || body.type || body.eventType);
     const instance = extractEvolutionInstanceName(body);
     let tenantId = await getTenantIdByInstance(instance);
