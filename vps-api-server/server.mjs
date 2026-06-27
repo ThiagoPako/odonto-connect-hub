@@ -6242,6 +6242,7 @@ app.get('/api/events', async (req, res) => {
       }
     } catch (err) {
       console.warn('📡 SSE connection failed: invalid token');
+      return res.status(401).json({ error: 'Invalid realtime token' });
     }
   }
 
