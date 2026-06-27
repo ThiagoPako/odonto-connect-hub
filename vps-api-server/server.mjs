@@ -6816,12 +6816,12 @@ app.post('/api/webhook/evolution', async (req, res) => {
       if (attendanceSettingsCache?.autoGreetingEnabled && attendanceSettingsCache?.welcomeMessage) {
         await evolutionFetch(`/message/sendText/${instance}`, {
           method: 'POST',
-          body: JSON.stringify({ number: phone, text: attendanceSettingsCache.welcomeMessage }),
+          body: JSON.stringify({ number: resolvedPhone, text: attendanceSettingsCache.welcomeMessage }),
         });
       }
 
       // Send queue menu
-      await sendQueueMenu(instance, phone);
+      await sendQueueMenu(instance, resolvedPhone);
     }
 
     if (!isFromMe) {
