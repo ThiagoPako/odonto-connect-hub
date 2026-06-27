@@ -324,14 +324,39 @@ async function getFallbackTenantIdForIncomingMessage({ instanceName, phoneSuffix
         `SELECT tenant_id
            FROM whatsapp_instances
           WHERE tenant_id IS NOT NULL
+            AND tenant_id <> '00000000-0000-0000-0000-000000000001'::uuid
+            AND tenant_id <> '00000000-0000-0000-0000-000000000000'::uuid
             AND ($1 = '' OR instance_name = $1)
           ORDER BY created_at DESC NULLS LAST
           LIMIT 1`,
         [instanceName]
       );
-      if (rows[0]?.tenant_id) return rows[0].tenant_id;
+      if (rows[0]?.tenant_id && isValidTenantId(rows[0].tenant_id)) return rows[0].tenant_id;
     } catch (err) {
       console.error(`Tenant fallback by instance failed (${instanceName}):`, err.message);
+    }
+  }
+
+  // Try local tenants table by instance name prefix
+  const prefixMatch = String(instanceName || '').match(/^([0-9a-f]{8})-/i);
+  const prefix = prefixMatch ? prefixMatch[1].toLowerCase() : null;
+  if (prefix) {
+    for (const table of ['tenants', 'profiles']) {
+      try {
+        const col = table === 'tenants' ? 'id' : 'tenant_id';
+        const { rows } = await pool.query(
+          `SELECT DISTINCT ${col} AS tenant_id FROM ${table}
+            WHERE ${col} IS NOT NULL
+              AND substring(${col}::text from 1 for 8) = $1
+            LIMIT 1`,
+          [prefix]
+        );
+        if (rows[0]?.tenant_id && isValidTenantId(rows[0].tenant_id)) return rows[0].tenant_id;
+      } catch (err) {
+        if (err.code !== '42P01') {
+          console.error(`Tenant fallback prefix (${table}) failed:`, err.message);
+        }
+      }
     }
   }
 
