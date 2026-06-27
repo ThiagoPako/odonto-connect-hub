@@ -10066,6 +10066,22 @@ app.post('/api/messages', async (req, res) => {
       ]
     );
 
+    broadcastSSE('new_message', {
+      id,
+      phone: phone || null,
+      pushName: attendantName,
+      leadId,
+      leadName: attendantName,
+      content: content || '',
+      type: type || 'text',
+      timestamp: new Date().toISOString(),
+      instance: instance || null,
+      mediaUrl: persistedMediaUrl || null,
+      fileName: fileName || null,
+      mimeType: mimeType || null,
+      sender: 'attendant',
+    }, user.tenant_id);
+
     res.json({ success: true, id, mediaUrl: persistedMediaUrl });
   } catch (error) {
     res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
