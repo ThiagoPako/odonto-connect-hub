@@ -6223,6 +6223,53 @@ function broadcastIncomingMessage({ msgId, phone, pushName, leadId, leadName, co
   }, tenantId);
 }
 
+async function ensureWaitingSessionForIncomingLead({ lead, phone, queueId = null, queueName = null, tenantId }) {
+  if (!lead?.id || !tenantId) return null;
+
+  try {
+    const { rows: existing } = await pool.query(
+      `SELECT id, status
+         FROM attendance_sessions
+        WHERE lead_id = $1
+          AND tenant_id = $2
+          AND status IN ('waiting', 'active')
+        ORDER BY started_waiting_at DESC NULLS LAST, created_at DESC
+        LIMIT 1`,
+      [lead.id.toString(), tenantId]
+    );
+
+    if (existing[0]?.status === 'active') {
+      return existing[0].id;
+    }
+
+    if (existing[0]?.status === 'waiting') {
+      await pool.query(
+        `UPDATE attendance_sessions
+            SET lead_name = COALESCE($2, lead_name),
+                lead_phone = COALESCE($3, lead_phone),
+                queue_id = COALESCE($4, queue_id),
+                queue_name = COALESCE($5, queue_name)
+          WHERE id = $1
+            AND tenant_id = $6`,
+        [existing[0].id, lead.name || null, phone || null, queueId || null, queueName || null, tenantId]
+      );
+      return existing[0].id;
+    }
+
+    const sessionId = crypto.randomUUID();
+    await pool.query(
+      `INSERT INTO attendance_sessions (id, lead_id, lead_name, lead_phone, queue_id, queue_name, started_waiting_at, status, tenant_id)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW(), 'waiting', $7)`,
+      [sessionId, lead.id.toString(), lead.name || null, phone || null, queueId || null, queueName || null, tenantId]
+    );
+    console.log(`📥 Lead ${lead.name || phone} entrou na fila de espera (session=${sessionId})`);
+    return sessionId;
+  } catch (err) {
+    console.error('Failed to ensure waiting session:', err.message);
+    return null;
+  }
+}
+
 app.post('/api/webhook/evolution', async (req, res) => {
   try {
     const body = req.body;
