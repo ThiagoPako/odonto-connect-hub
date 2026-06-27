@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { AppSidebar } from "@/components/AppSidebar";
 import { WhatsAppConnectionBanner } from "@/components/WhatsAppConnectionBanner";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
+import { useGlobalChatNotifier } from "@/hooks/useGlobalChatNotifier";
 import { canAccessRoute } from "@/lib/routeAccess";
 import { captureUtmFromUrl } from "@/data/campanhasStore";
 import { Loader2, ShieldAlert } from "lucide-react";
@@ -145,6 +146,7 @@ function AuthGate() {
   // Authenticated — show sidebar + content (or unauthorized)
   return (
     <div className="flex h-screen w-full overflow-hidden">
+      <GlobalChatNotifierMount />
       <AppSidebar />
       <div className="flex-1 flex flex-col overflow-hidden">
         <WhatsAppConnectionBanner />
@@ -154,6 +156,11 @@ function AuthGate() {
       </div>
     </div>
   );
+}
+
+function GlobalChatNotifierMount() {
+  useGlobalChatNotifier();
+  return null;
 }
 
 function RedirectToLogin() {
