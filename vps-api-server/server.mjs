@@ -403,22 +403,30 @@ async function sendPushToAll(payload) {
 // ─── Auto-register webhook on Evolution API instance ─────────
 async function registerWebhook(instanceName) {
   try {
+    const webhookConfig = {
+      enabled: true,
+      url: WEBHOOK_URL,
+      // Evolution API v2 expects these exact property names. Keep legacy
+      // aliases too so older deployments do not break during rolling updates.
+      byEvents: false,
+      base64: false,
+      webhookByEvents: false,
+      webhookBase64: false,
+      events: [
+        'MESSAGES_UPSERT',
+        'MESSAGES_UPDATE',
+        'SEND_MESSAGE',
+        'SEND_MESSAGE_UPDATE',
+        'CONNECTION_UPDATE',
+        'QRCODE_UPDATED',
+        'PRESENCE_UPDATE',
+      ],
+    };
+
     const result = await evolutionFetch(`/webhook/set/${instanceName}`, {
       method: 'POST',
       body: JSON.stringify({
-        webhook: {
-          enabled: true,
-          url: WEBHOOK_URL,
-          webhookByEvents: false,
-          webhookBase64: false,
-          events: [
-            'MESSAGES_UPSERT',
-            'MESSAGES_UPDATE',
-            'CONNECTION_UPDATE',
-            'QRCODE_UPDATED',
-            'PRESENCE_UPDATE',
-          ],
-        },
+        webhook: webhookConfig,
       }),
     });
     if (result.ok) {
