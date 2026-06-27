@@ -26,6 +26,21 @@ CREATE TABLE IF NOT EXISTS attendance_sessions (
 );
 
 ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE;
+ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS lead_name TEXT;
+ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS lead_phone TEXT;
+ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS attendant_id UUID REFERENCES profiles(id);
+ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS attendant_name TEXT;
+ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS queue_id TEXT;
+ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS queue_name TEXT;
+ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS started_waiting_at TIMESTAMPTZ;
+ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS assigned_at TIMESTAMPTZ;
+ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS first_response_at TIMESTAMPTZ;
+ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS closed_at TIMESTAMPTZ;
+ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'waiting';
+ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS wait_time_seconds INTEGER;
+ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS response_time_seconds INTEGER;
+ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS duration_seconds INTEGER;
+ALTER TABLE attendance_sessions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
 CREATE INDEX IF NOT EXISTS idx_attendance_sessions_status ON attendance_sessions(status);
 CREATE INDEX IF NOT EXISTS idx_attendance_sessions_attendant ON attendance_sessions(attendant_id);
 CREATE INDEX IF NOT EXISTS idx_attendance_sessions_created ON attendance_sessions(created_at DESC);
