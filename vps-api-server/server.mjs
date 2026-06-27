@@ -12233,6 +12233,20 @@ if (process.env.NODE_ENV !== 'test') {
       `ALTER TABLE profiles ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE`,
       
       // ─── 2. Operational Tables ───
+      `CREATE TABLE IF NOT EXISTS attendance_queues (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        name TEXT NOT NULL,
+        color TEXT DEFAULT '#3B82F6',
+        icon TEXT DEFAULT '📋',
+        description TEXT,
+        whatsapp_button_label TEXT,
+        contact_numbers JSONB DEFAULT '[]',
+        team_member_ids JSONB DEFAULT '[]',
+        active BOOLEAN DEFAULT true,
+        tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )`,
       `ALTER TABLE attendance_queues ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE`,
       `CREATE INDEX IF NOT EXISTS idx_attendance_queues_tenant ON attendance_queues(tenant_id)`, 
       `ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS avatar_url TEXT`,
