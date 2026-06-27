@@ -11968,6 +11968,33 @@ if (process.env.NODE_ENV !== 'test') {
       // Backfill tenant_id on legacy chat_messages tables created before multi-tenant
       `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE`,
       `CREATE INDEX IF NOT EXISTS idx_chat_messages_tenant ON chat_messages(tenant_id)`,
+      `UPDATE chat_messages cm
+          SET tenant_id = l.tenant_id
+         FROM crm_leads l
+        WHERE cm.tenant_id IS NULL
+          AND l.tenant_id IS NOT NULL
+          AND (
+            l.id::text = cm.lead_id
+            OR (cm.phone IS NOT NULL AND REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(l.telefone, ''), ' ', ''), '-', ''), '(', ''), ')', '') LIKE '%' || RIGHT(REGEXP_REPLACE(cm.phone, '\\D', '', 'g'), 11))
+          )`,
+      `UPDATE attendance_sessions s
+          SET tenant_id = cm.tenant_id
+         FROM chat_messages cm
+        WHERE s.tenant_id IS NULL
+          AND cm.tenant_id IS NOT NULL
+          AND (
+            cm.lead_id = s.lead_id
+            OR (s.lead_phone IS NOT NULL AND cm.phone IS NOT NULL AND REGEXP_REPLACE(cm.phone, '\\D', '', 'g') LIKE '%' || RIGHT(REGEXP_REPLACE(s.lead_phone, '\\D', '', 'g'), 11))
+          )`,
+      `UPDATE chat_messages cm
+          SET tenant_id = s.tenant_id
+         FROM attendance_sessions s
+        WHERE cm.tenant_id IS NULL
+          AND s.tenant_id IS NOT NULL
+          AND (
+            cm.lead_id = s.lead_id
+            OR (s.lead_phone IS NOT NULL AND cm.phone IS NOT NULL AND REGEXP_REPLACE(cm.phone, '\\D', '', 'g') LIKE '%' || RIGHT(REGEXP_REPLACE(s.lead_phone, '\\D', '', 'g'), 11))
+          )`,
 
       `CREATE TABLE IF NOT EXISTS pacientes (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
