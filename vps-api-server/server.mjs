@@ -6099,7 +6099,10 @@ function broadcastSSE(event, data, tenantId = null) {
     // Clients that authenticated but temporarily resolved without tenant_id are
     // still allowed to receive the event; otherwise realtime can fail silently
     // even though the message was persisted in the correct clinic queue.
-    if (tenantId && info.tenantId && info.tenantId !== tenantId) continue;
+    if (tenantId) {
+      if (info.tenantId && info.tenantId !== tenantId) continue;
+      if (!info.tenantId && !info.authenticated) continue;
+    }
     try {
       client.write(payload);
       sent++;
@@ -6114,6 +6117,7 @@ function broadcastSSE(event, data, tenantId = null) {
 
 app.get('/api/events', async (req, res) => {
   let tenantId = null;
+  let authenticated = false;
   const token = req.query.token;
 
   if (token) {
@@ -6123,11 +6127,13 @@ app.get('/api/events', async (req, res) => {
       try {
         decoded = verifyToken(token);
         tenantId = decoded?.tenant_id;
+        authenticated = true;
       } catch {
         // 2) Fallback to Supabase
         if (SUPABASE_BRIDGE_ENABLED) {
           const sbUser = await resolveSupabaseUser(token);
           tenantId = sbUser.tenant_id;
+          authenticated = true;
         }
       }
     } catch (err) {
@@ -6146,7 +6152,7 @@ app.get('/api/events', async (req, res) => {
 
   res.write(`event: connected\ndata: ${JSON.stringify({ ts: Date.now(), tenantId })}\n\n`);
 
-  sseClients.set(res, { tenantId });
+  sseClients.set(res, { tenantId, authenticated });
   console.log(`📡 SSE client connected (tenant: ${tenantId || 'anonymous'}, total: ${sseClients.size})`);
 
   // Keepalive ping every 25s to prevent proxy/browser timeouts
