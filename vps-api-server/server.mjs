@@ -6883,6 +6883,12 @@ app.post('/api/webhook/evolution', async (req, res) => {
       }
     }
 
+    // Webhooks do not carry a user token, but all chat tables are tenant/RLS
+    // protected. Set the resolved clinic context before looking up/creating the
+    // lead, saving chat_messages and creating attendance_sessions; otherwise a
+    // pooled connection can return an empty queue/chat or reject inserts.
+    await setDbTenantContext({ tenantId, isSuperAdmin: false });
+
     // Extract message content
     const msgContent =
       message?.message?.conversation ||
