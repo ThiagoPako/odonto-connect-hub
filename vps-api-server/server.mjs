@@ -6749,7 +6749,10 @@ app.post('/api/webhook/evolution', async (req, res) => {
     }
 
     const messages = extractEvolutionMessages(body.data);
-    const message = messages[0];
+    const message = messages.find((item) => {
+      const jid = item?.key?.remoteJid;
+      return jid && !String(jid).endsWith('@g.us');
+    }) || messages[0];
     const remoteJid = message?.key?.remoteJid;
 
     // Skip group messages
