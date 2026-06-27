@@ -11736,6 +11736,10 @@ if (process.env.NODE_ENV !== 'test') {
         metadata JSONB DEFAULT '{}'
       )`,
 
+      // Backfill tenant_id on legacy chat_messages tables created before multi-tenant
+      `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE`,
+      `CREATE INDEX IF NOT EXISTS idx_chat_messages_tenant ON chat_messages(tenant_id)`,
+
       `CREATE TABLE IF NOT EXISTS pacientes (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         nome TEXT NOT NULL,
