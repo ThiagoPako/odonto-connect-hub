@@ -2461,7 +2461,7 @@ app.get('/api/whatsapp/instances', async (req, res) => {
     const { user } = await verifyUser(req);
     const result = await evolutionFetch('/instance/fetchInstances');
     
-    let instances = Array.isArray(result.data) ? result.data : [];
+    let instances = extractEvolutionArray(result.data);
     
     // Isolation by tenant
     if (!user.is_super_admin && user.tenant_id) {
