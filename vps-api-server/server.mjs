@@ -290,8 +290,11 @@ async function getTenantIdByInstance(instanceName) {
         const data = await res.json();
         const candidate = data?.[0]?.tenant_id;
         if (candidate && isValidTenantId(candidate)) {
-          setCachedTenantId(instanceName, candidate);
-          return candidate;
+          if (!prefix || String(candidate).toLowerCase().startsWith(prefix)) {
+            setCachedTenantId(instanceName, candidate);
+            return candidate;
+          }
+          console.warn(`⚠️ Ignoring stale Supabase tenant mapping for ${instanceName}: ${candidate} does not match prefix ${prefix}`);
         }
       }
     } catch (err) {
@@ -342,6 +345,8 @@ async function getFallbackTenantIdForIncomingMessage({ instanceName, phoneSuffix
 
   if (instanceName) {
     try {
+      const prefixMatch = String(instanceName || '').match(/^([0-9a-f]{8})-/i);
+      const prefix = prefixMatch ? prefixMatch[1].toLowerCase() : null;
       const { rows } = await pool.query(
         `SELECT tenant_id
            FROM whatsapp_instances
@@ -349,9 +354,10 @@ async function getFallbackTenantIdForIncomingMessage({ instanceName, phoneSuffix
             AND tenant_id <> '00000000-0000-0000-0000-000000000001'::uuid
             AND tenant_id <> '00000000-0000-0000-0000-000000000000'::uuid
             AND ($1 = '' OR instance_name = $1)
+            AND ($2 = '' OR substring(tenant_id::text from 1 for 8) = $2)
           ORDER BY created_at DESC NULLS LAST
           LIMIT 1`,
-        [instanceName]
+        [instanceName, prefix || '']
       );
       if (rows[0]?.tenant_id && isValidTenantId(rows[0].tenant_id)) return rows[0].tenant_id;
     } catch (err) {
