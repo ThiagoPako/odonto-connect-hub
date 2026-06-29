@@ -117,7 +117,7 @@ export function QrCodeDialog({ open, onOpenChange, instanceName, onConnected }: 
       const skipped = data?.skipped ?? 0;
       setImportResult({ imported, skipped });
       toast.success(imported > 0
-        ? `${imported} mensagem(ns) importada(s) para o Comercial/Chat.`
+        ? `${imported} ${imported === 1 ? "mensagem importada" : "mensagens importadas"} para o Comercial/Chat.`
         : "WhatsApp vinculado ao Comercial/Chat. Novas mensagens já devem aparecer em tempo real."
       );
     } catch (err: any) {
@@ -155,7 +155,7 @@ export function QrCodeDialog({ open, onOpenChange, instanceName, onConnected }: 
           toast.success(`WhatsApp "${instanceName}" conectado!`);
           onConnected?.();
           clearInterval(interval);
-          // Kick off automatic contact import
+          // Kick off automatic chat synchronization
           void autoImportContacts();
           return;
         }
@@ -252,7 +252,8 @@ export function QrCodeDialog({ open, onOpenChange, instanceName, onConnected }: 
                       const { data, error } = await whatsappApi.syncChat(instanceName, 30);
                       if (error) throw new Error(error);
                       setImportResult({ imported: data?.imported ?? 0, skipped: data?.skipped ?? 0 });
-                      toast.success(`${data?.imported ?? 0} mensagem(ns) importada(s) para o Comercial/Chat!`);
+                      const imported = data?.imported ?? 0;
+                      toast.success(`${imported} ${imported === 1 ? "mensagem importada" : "mensagens importadas"} para o Comercial/Chat!`);
                     } catch (err: any) {
                       toast.error(err?.message || "Erro ao vincular WhatsApp ao chat");
                     } finally {
