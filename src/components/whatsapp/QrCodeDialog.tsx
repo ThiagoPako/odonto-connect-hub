@@ -233,7 +233,7 @@ export function QrCodeDialog({ open, onOpenChange, instanceName, onConnected }: 
                 <div className="bg-muted/50 rounded-lg p-3 text-center space-y-1">
                   <p className="text-sm font-medium text-foreground">
                     <Users className="h-4 w-4 inline mr-1" />
-                    {importResult.imported} mensagem{importResult.imported !== 1 ? "ns" : ""} importada{importResult.imported !== 1 ? "s" : ""}
+                    {importResult.imported} {importResult.imported === 1 ? "mensagem importada" : "mensagens importadas"}
                   </p>
                   {importResult.skipped > 0 && (
                     <p className="text-xs text-muted-foreground">
