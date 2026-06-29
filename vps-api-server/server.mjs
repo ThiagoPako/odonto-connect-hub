@@ -10376,53 +10376,131 @@ app.get('/api/queue/leads', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
 
-    // Get leads that have an open attendance session. Waiting sessions remain
-    // visible until an attendant explicitly assumes them; they must not expire
-    // just because the chat page was closed or refreshed.
+    // Get leads that have an open attendance session AND also recover any
+    // inbound WhatsApp message that was persisted but failed to create a
+    // waiting session. This is the safety net that keeps the chat from looking
+    // empty after refresh when the webhook saved chat_messages but the queue
+    // row/session got missed by an older deployment or a transient DB error.
     const { rows } = await pool.query(`
-      SELECT DISTINCT ON (s.lead_id)
-        COALESCE(l.id::text, s.lead_id) as id,
-        COALESCE(l.nome, s.lead_name, latest.phone, s.lead_phone) as name,
-        COALESCE(l.telefone, s.lead_phone, latest.phone) as phone,
-        l.avatar_url,
-        COALESCE(l.queue_id, s.queue_id) as queue_id,
-        COALESCE(l.queue_name, s.queue_name) as queue_name,
-        l.origem,
-        COALESCE(l.priority, false) as priority,
-        s.id as session_id,
-        s.status as session_status,
-        s.attendant_id,
-        s.attendant_name,
-        s.started_waiting_at,
-        latest.content as last_message,
-        latest.timestamp as last_message_time,
-        latest.instance as instance,
-        (SELECT COUNT(*)
-           FROM chat_messages cm_unread
-          WHERE cm_unread.lead_id = s.lead_id
-            AND cm_unread.tenant_id = $2
-            AND cm_unread.sender = 'lead'
-            AND cm_unread.timestamp > COALESCE(
-              (SELECT last_read_at FROM chat_read_status WHERE lead_id = s.lead_id AND user_id = $1 AND tenant_id = $2 LIMIT 1),
-              '1970-01-01'
-            )
-        )::INTEGER as unread_count
-      FROM attendance_sessions s
-      LEFT JOIN crm_leads l ON l.id::text = s.lead_id AND l.tenant_id = $2
-      LEFT JOIN LATERAL (
-        SELECT cm.content, cm.timestamp, cm.phone, cm.instance
-          FROM chat_messages cm
-         WHERE cm.tenant_id = $2
-           AND (
-             cm.lead_id = s.lead_id
-             OR (s.lead_phone IS NOT NULL AND cm.phone = s.lead_phone)
+      WITH open_sessions AS (
+        SELECT DISTINCT ON (s.lead_id)
+          COALESCE(l.id::text, s.lead_id) as id,
+          COALESCE(l.nome, s.lead_name, latest.phone, s.lead_phone) as name,
+          COALESCE(l.telefone, s.lead_phone, latest.phone) as phone,
+          l.avatar_url,
+          COALESCE(l.queue_id::text, s.queue_id) as queue_id,
+          COALESCE(l.queue_name, s.queue_name) as queue_name,
+          COALESCE(l.priority, false) as priority,
+          s.id as session_id,
+          s.status as session_status,
+          s.attendant_id,
+          s.attendant_name,
+          s.started_waiting_at,
+          latest.content as last_message,
+          latest.timestamp as last_message_time,
+          latest.instance as instance,
+          (SELECT COUNT(*)
+             FROM chat_messages cm_unread
+            WHERE cm_unread.tenant_id = $2
+              AND cm_unread.sender = 'lead'
+              AND (
+                cm_unread.lead_id = s.lead_id
+                OR (s.lead_phone IS NOT NULL AND REGEXP_REPLACE(COALESCE(cm_unread.phone, ''), '\\D', '', 'g') LIKE '%' || RIGHT(REGEXP_REPLACE(s.lead_phone, '\\D', '', 'g'), 11))
+              )
+              AND cm_unread.timestamp > COALESCE(
+                (SELECT last_read_at FROM chat_read_status WHERE lead_id = s.lead_id AND user_id = $1 AND tenant_id = $2 LIMIT 1),
+                '1970-01-01'
+              )
+          )::INTEGER as unread_count
+        FROM attendance_sessions s
+        LEFT JOIN crm_leads l ON l.id::text = s.lead_id AND l.tenant_id = $2
+        LEFT JOIN LATERAL (
+          SELECT cm.content, cm.timestamp, cm.phone, cm.instance
+            FROM chat_messages cm
+           WHERE cm.tenant_id = $2
+             AND (
+               cm.lead_id = s.lead_id
+               OR (s.lead_phone IS NOT NULL AND REGEXP_REPLACE(COALESCE(cm.phone, ''), '\\D', '', 'g') LIKE '%' || RIGHT(REGEXP_REPLACE(s.lead_phone, '\\D', '', 'g'), 11))
+             )
+           ORDER BY cm.timestamp DESC
+           LIMIT 1
+        ) latest ON true
+        WHERE s.tenant_id = $2
+          AND s.status IN ('waiting', 'active')
+        ORDER BY s.lead_id, s.started_waiting_at DESC NULLS LAST, s.created_at DESC NULLS LAST
+      ),
+      message_candidates AS (
+        SELECT
+          cm.id as message_id,
+          COALESCE(l.id::text, cm.lead_id, cm.phone) as id,
+          COALESCE(l.nome, cm.metadata->>'pushName', cm.phone) as name,
+          COALESCE(l.telefone, cm.phone) as phone,
+          l.avatar_url,
+          l.queue_id::text as queue_id,
+          l.queue_name,
+          COALESCE(l.priority, false) as priority,
+          cm.content as last_message,
+          cm.timestamp as last_message_time,
+          cm.instance,
+          ROW_NUMBER() OVER (
+            PARTITION BY COALESCE(l.id::text, cm.lead_id, cm.phone)
+            ORDER BY cm.timestamp DESC
+          ) as rn
+        FROM chat_messages cm
+        LEFT JOIN crm_leads l
+          ON l.tenant_id = $2
+         AND (
+           l.id::text = cm.lead_id
+           OR (
+             cm.phone IS NOT NULL
+             AND REGEXP_REPLACE(COALESCE(l.telefone, ''), '\\D', '', 'g') LIKE '%' || RIGHT(REGEXP_REPLACE(cm.phone, '\\D', '', 'g'), 11)
            )
-         ORDER BY cm.timestamp DESC
-         LIMIT 1
-      ) latest ON true
-      WHERE s.tenant_id = $2
-        AND s.status IN ('waiting', 'active')
-      ORDER BY s.lead_id, s.started_waiting_at DESC NULLS LAST, s.created_at DESC NULLS LAST
+         )
+        WHERE cm.tenant_id = $2
+          AND cm.sender = 'lead'
+      ),
+      orphan_messages AS (
+        SELECT
+          mc.id,
+          mc.name,
+          mc.phone,
+          mc.avatar_url,
+          mc.queue_id,
+          mc.queue_name,
+          mc.priority,
+          NULL::uuid as session_id,
+          'waiting'::text as session_status,
+          NULL::uuid as attendant_id,
+          NULL::text as attendant_name,
+          mc.last_message_time as started_waiting_at,
+          mc.last_message,
+          mc.last_message_time,
+          mc.instance,
+          (SELECT COUNT(*)
+             FROM chat_messages cm_unread
+            WHERE cm_unread.tenant_id = $2
+              AND cm_unread.sender = 'lead'
+              AND (
+                cm_unread.lead_id = mc.id
+                OR (mc.phone IS NOT NULL AND REGEXP_REPLACE(COALESCE(cm_unread.phone, ''), '\\D', '', 'g') LIKE '%' || RIGHT(REGEXP_REPLACE(mc.phone, '\\D', '', 'g'), 11))
+              )
+              AND cm_unread.timestamp > COALESCE(
+                (SELECT last_read_at FROM chat_read_status WHERE lead_id = mc.id AND user_id = $1 AND tenant_id = $2 LIMIT 1),
+                '1970-01-01'
+              )
+          )::INTEGER as unread_count
+        FROM message_candidates mc
+        WHERE mc.rn = 1
+          AND NOT EXISTS (
+            SELECT 1
+              FROM open_sessions os
+             WHERE os.id = mc.id
+                OR (os.phone IS NOT NULL AND mc.phone IS NOT NULL AND REGEXP_REPLACE(os.phone, '\\D', '', 'g') LIKE '%' || RIGHT(REGEXP_REPLACE(mc.phone, '\\D', '', 'g'), 11))
+          )
+      )
+      SELECT * FROM open_sessions
+      UNION ALL
+      SELECT * FROM orphan_messages
     `, [user.id, user.tenant_id]);
 
     // Separate into queue (waiting) and active (assigned)
