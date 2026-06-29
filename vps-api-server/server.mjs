@@ -301,21 +301,26 @@ async function getTenantIdByInstance(instanceName) {
       console.error(`Supabase fallback failed for ${instanceName}:`, err.message);
     }
     if (prefix) {
-      try {
-        const res = await fetch(
-          `${SUPABASE_URL}/rest/v1/tenants?id=like.${prefix}*&select=id&limit=1`,
-          { headers }
-        );
-        if (res.ok) {
-          const data = await res.json();
-          const candidate = data?.[0]?.id;
-          if (candidate && isValidTenantId(candidate)) {
-            setCachedTenantId(instanceName, candidate);
-            return candidate;
+      for (const lookup of [
+        { table: 'tenants', column: 'id' },
+        { table: 'profiles', column: 'tenant_id' },
+      ]) {
+        try {
+          const res = await fetch(
+            `${SUPABASE_URL}/rest/v1/${lookup.table}?${lookup.column}=like.${prefix}*&select=${lookup.column}&limit=1`,
+            { headers }
+          );
+          if (res.ok) {
+            const data = await res.json();
+            const candidate = data?.[0]?.[lookup.column];
+            if (candidate && isValidTenantId(candidate)) {
+              setCachedTenantId(instanceName, candidate);
+              return candidate;
+            }
           }
+        } catch (err) {
+          console.error(`Supabase ${lookup.table} prefix fallback failed for ${instanceName}:`, err.message);
         }
-      } catch (err) {
-        console.error(`Supabase tenants prefix fallback failed for ${instanceName}:`, err.message);
       }
     }
   }
