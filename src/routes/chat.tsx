@@ -120,6 +120,7 @@ function ChatPage() {
   const queueRef = useRef(queue);
   const myLeadsRef = useRef(myLeads);
   const selectedLeadRef = useRef(selectedLead);
+  const syncedChatInstancesRef = useRef(new Set<string>());
   const lastSentPresenceRef = useRef<{ leadId: string | null; status: "composing" | "recording" | "paused"; timestamp: number }>({
     leadId: null,
     status: "paused",
@@ -225,6 +226,31 @@ function ChatPage() {
       document.removeEventListener("visibilitychange", handleVisibility);
     };
   }, [reloadQueueLeads]);
+
+  // Vincula automaticamente as instâncias conectadas em Canais ao Comercial/Chat.
+  // Se o WhatsApp já estava conectado antes de abrir esta tela, o chat ainda
+  // precisa garantir: tenant mapping + webhook + importação das conversas recentes.
+  useEffect(() => {
+    const openInstances = connectedInstances.filter((inst) => inst.connectionState === "open");
+    for (const inst of openInstances) {
+      const instanceName = inst.instanceName;
+      if (!instanceName || syncedChatInstancesRef.current.has(instanceName)) continue;
+      syncedChatInstancesRef.current.add(instanceName);
+
+      void whatsappApi.syncChat(instanceName, 30).then(async ({ data, error }) => {
+        if (error) {
+          syncedChatInstancesRef.current.delete(instanceName);
+          console.warn("Falha ao vincular instância WhatsApp ao chat:", instanceName, error);
+          return;
+        }
+        await reloadQueueLeads();
+        const imported = data?.imported ?? 0;
+        if (imported > 0) {
+          toast.success(`${imported} ${imported === 1 ? "mensagem vinculada" : "mensagens vinculadas"} ao chat.`);
+        }
+      });
+    }
+  }, [connectedInstances, reloadQueueLeads]);
 
 
   // ─── Dedup set — prevent duplicate messages ───
