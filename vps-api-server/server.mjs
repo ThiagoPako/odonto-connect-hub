@@ -564,21 +564,21 @@ async function registerWebhook(instanceName) {
       ],
     };
 
+    // Evolution API v2 normally expects the webhook config at the request root.
+    // Sending it nested under `webhook` can be accepted by some builds but not
+    // actually replace the active callback URL, leaving Canais "conectado" while
+    // Comercial/Chat receives nothing. Register root-first and keep the nested
+    // shape only as a fallback for older builds.
     let result = await evolutionFetch(`/webhook/set/${instanceName}`, {
       method: 'POST',
-      body: JSON.stringify({
-        webhook: webhookConfig,
-      }),
+      body: JSON.stringify(webhookConfig),
     });
 
-    // Some Evolution API v2 builds expect the config at the root instead of
-    // nested under `webhook`. Retry once with the alternate shape so a schema
-    // mismatch does not silently stop incoming message delivery.
     if (!result.ok) {
-      console.warn(`⚠️ Retrying webhook registration with root payload for ${instanceName}`);
+      console.warn(`⚠️ Retrying webhook registration with nested payload for ${instanceName}`);
       result = await evolutionFetch(`/webhook/set/${instanceName}`, {
         method: 'POST',
-        body: JSON.stringify(webhookConfig),
+        body: JSON.stringify({ webhook: webhookConfig }),
       });
     }
     if (result.ok) {
