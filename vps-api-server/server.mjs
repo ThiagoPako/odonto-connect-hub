@@ -564,21 +564,21 @@ async function registerWebhook(instanceName) {
       ],
     };
 
+    // Evolution API v2 normally expects the webhook config at the request root.
+    // Sending it nested under `webhook` can be accepted by some builds but not
+    // actually replace the active callback URL, leaving Canais "conectado" while
+    // Comercial/Chat receives nothing. Register root-first and keep the nested
+    // shape only as a fallback for older builds.
     let result = await evolutionFetch(`/webhook/set/${instanceName}`, {
       method: 'POST',
-      body: JSON.stringify({
-        webhook: webhookConfig,
-      }),
+      body: JSON.stringify(webhookConfig),
     });
 
-    // Some Evolution API v2 builds expect the config at the root instead of
-    // nested under `webhook`. Retry once with the alternate shape so a schema
-    // mismatch does not silently stop incoming message delivery.
     if (!result.ok) {
-      console.warn(`⚠️ Retrying webhook registration with root payload for ${instanceName}`);
+      console.warn(`⚠️ Retrying webhook registration with nested payload for ${instanceName}`);
       result = await evolutionFetch(`/webhook/set/${instanceName}`, {
         method: 'POST',
-        body: JSON.stringify(webhookConfig),
+        body: JSON.stringify({ webhook: webhookConfig }),
       });
     }
     if (result.ok) {
@@ -6494,10 +6494,11 @@ app.get('/api/events', async (req, res) => {
         }
       }
 
-      // EventSource cannot send custom X-Tenant-Id headers. If the token was
-      // valid but did not carry tenant_id, accept the tenant query parameter
-      // only after checking it belongs to the authenticated profile locally.
-      if (authenticated && !tenantId && requestedTenantId && authenticatedUserId) {
+      // EventSource cannot send custom X-Tenant-Id headers. Accept the tenant
+      // query parameter after checking it belongs to the authenticated profile.
+      // This also fixes old/legacy tokens carrying a stale/placeholder tenant_id,
+      // which made the chat connect but miss all webhook broadcasts.
+      if (authenticated && requestedTenantId && authenticatedUserId && tenantId !== requestedTenantId) {
         try {
           const { rows } = await pool.query(
             `SELECT tenant_id FROM profiles WHERE id = $1 AND tenant_id = $2 LIMIT 1`,
