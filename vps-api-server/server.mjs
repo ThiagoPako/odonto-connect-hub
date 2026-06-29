@@ -2044,12 +2044,131 @@ function isEvolutionEvent(event, ...names) {
 
 function extractEvolutionMessages(data) {
   if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.messages?.records)) return data.messages.records;
   if (Array.isArray(data?.messages)) return data.messages;
+  if (Array.isArray(data?.data?.records)) return data.data.records;
+  if (Array.isArray(data?.data)) return data.data;
+  if (Array.isArray(data?.result?.records)) return data.result.records;
+  if (Array.isArray(data?.result)) return data.result;
   if (Array.isArray(data?.message)) return data.message;
   if (Array.isArray(data?.records)) return data.records;
   if (data?.message?.key) return [data.message];
   if (data?.key) return [data];
   return [];
+}
+
+function extractEvolutionArray(data) {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.messages?.records)) return data.messages.records;
+  if (Array.isArray(data?.messages)) return data.messages;
+  if (Array.isArray(data?.contacts?.records)) return data.contacts.records;
+  if (Array.isArray(data?.contacts)) return data.contacts;
+  if (Array.isArray(data?.data?.records)) return data.data.records;
+  if (Array.isArray(data?.data)) return data.data;
+  if (Array.isArray(data?.result?.records)) return data.result.records;
+  if (Array.isArray(data?.result)) return data.result;
+  if (Array.isArray(data?.records)) return data.records;
+  return [];
+}
+
+function isUsableChatJid(jid) {
+  const raw = String(jid || '');
+  if (!raw || !raw.includes('@')) return false;
+  if (
+    raw.endsWith('@g.us') ||
+    raw.endsWith('@broadcast') ||
+    raw.endsWith('@newsletter') ||
+    raw.includes('status@')
+  ) return false;
+  // LIDs are not directly usable as patient phone numbers in the CRM/chat list.
+  if (raw.endsWith('@lid')) return false;
+  const digits = normalizeWhatsappNumber(raw);
+  return digits.length >= 10 && digits.length <= 13;
+}
+
+function parseEvolutionTimestamp(value) {
+  if (!value) return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  if (typeof value === 'number') {
+    const ms = value > 1e12 ? value : value * 1000;
+    const d = new Date(ms);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  if (typeof value === 'string') {
+    const asNumber = Number(value);
+    if (Number.isFinite(asNumber) && value.trim() !== '') return parseEvolutionTimestamp(asNumber);
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  if (typeof value === 'object') {
+    // Some Baileys builds serialize protobuf Long as { low, high }.
+    if (typeof value.low === 'number') return parseEvolutionTimestamp(value.low);
+    if (typeof value.low === 'string') return parseEvolutionTimestamp(value.low);
+  }
+  return null;
+}
+
+function extractMessageTimestamp(msg) {
+  return parseEvolutionTimestamp(
+    msg?.messageTimestamp ||
+    msg?.timestamp ||
+    msg?.createdAt ||
+    msg?.created_at ||
+    msg?.dateTime
+  );
+}
+
+function extractMessageContentAndType(msg) {
+  const m = msg?.message || msg?.messageData || {};
+  let content = '';
+  let type = 'text';
+  let fileName = null;
+  let mimeType = null;
+
+  if (m.conversation) content = m.conversation;
+  else if (m.extendedTextMessage?.text) content = m.extendedTextMessage.text;
+  else if (m.imageMessage) { type = 'image'; content = m.imageMessage.caption || '📷 Imagem'; mimeType = m.imageMessage.mimetype || null; }
+  else if (m.videoMessage) { type = 'video'; content = m.videoMessage.caption || '🎥 Vídeo'; mimeType = m.videoMessage.mimetype || null; }
+  else if (m.audioMessage) { type = 'audio'; content = '🎵 Áudio'; mimeType = m.audioMessage.mimetype || null; }
+  else if (m.documentMessage) { type = 'document'; content = m.documentMessage.fileName || m.documentMessage.caption || '📄 Documento'; fileName = m.documentMessage.fileName || null; mimeType = m.documentMessage.mimetype || null; }
+  else if (m.stickerMessage) { type = 'sticker'; content = '🏷️ Sticker'; mimeType = m.stickerMessage.mimetype || null; }
+  else if (m.contactMessage) { type = 'contact'; content = `👤 ${m.contactMessage.displayName || 'Contato'}`; }
+  else if (m.contactsArrayMessage) { type = 'contact'; content = '👥 Contatos'; }
+  else if (m.locationMessage) { type = 'location'; content = '📍 Localização'; }
+  else if (m.reactionMessage) { type = 'reaction'; content = m.reactionMessage.text || '👍 Reação'; }
+  else if (m.buttonsResponseMessage) content = m.buttonsResponseMessage.selectedDisplayText || m.buttonsResponseMessage.selectedButtonId || '';
+  else if (m.listResponseMessage) content = m.listResponseMessage.title || m.listResponseMessage.singleSelectReply?.selectedRowId || '';
+  else if (m.templateButtonReplyMessage) content = m.templateButtonReplyMessage.selectedDisplayText || m.templateButtonReplyMessage.selectedId || '';
+  else if (m.protocolMessage || m.senderKeyDistributionMessage || msg?.messageStubType) return null;
+  else content = '[Mensagem não suportada]';
+
+  if (!content) return null;
+  return { content, type, fileName, mimeType };
+}
+
+async function ensureLeadForWhatsAppConversation({ tenantId, phone, name }) {
+  if (!tenantId || !phone) return null;
+  const suffix = normalizeWhatsappNumber(phone).slice(-11);
+  const displayName = String(name || phone).trim() || phone;
+
+  const { rows } = await pool.query(
+    `SELECT id, nome as name, telefone as phone, queue_id, queue_name, awaiting_queue_selection, avatar_url
+       FROM crm_leads
+      WHERE tenant_id = $1
+        AND REGEXP_REPLACE(COALESCE(telefone, ''), '\\D', '', 'g') LIKE '%' || $2
+      ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST
+      LIMIT 1`,
+    [tenantId, suffix]
+  );
+  if (rows[0]) return rows[0];
+
+  const id = randomUUID();
+  await pool.query(
+    `INSERT INTO crm_leads (id, nome, telefone, origem, status, kanban_stage, awaiting_queue_selection, tenant_id)
+     VALUES ($1, $2, $3, 'whatsapp', 'novo', 'lead', false, $4)`,
+    [id, displayName, phone, tenantId]
+  );
+  return { id, name: displayName, phone, queue_id: null, queue_name: null, awaiting_queue_selection: false, avatar_url: null };
 }
 
 const presenceStateCache = new Map();
