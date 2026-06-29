@@ -222,6 +222,8 @@ async function getTenantIdByInstance(instanceName) {
   if (!instanceName) return null;
   const cachedTenantId = getCachedTenantId(instanceName);
   if (cachedTenantId) return cachedTenantId;
+  const prefixMatch = String(instanceName).match(/^([0-9a-f]{8})-/i);
+  const prefix = prefixMatch ? prefixMatch[1].toLowerCase() : null;
 
   // 1. Try local DB whatsapp_instances
   try {
@@ -229,9 +231,13 @@ async function getTenantIdByInstance(instanceName) {
       'SELECT tenant_id FROM whatsapp_instances WHERE instance_name = $1 LIMIT 1',
       [instanceName]
     );
-    if (rows[0]?.tenant_id && isValidTenantId(rows[0].tenant_id)) {
-      setCachedTenantId(instanceName, rows[0].tenant_id);
-      return rows[0].tenant_id;
+    const localTenantId = rows[0]?.tenant_id ? String(rows[0].tenant_id) : '';
+    if (localTenantId && isValidTenantId(localTenantId)) {
+      if (!prefix || localTenantId.toLowerCase().startsWith(prefix)) {
+        setCachedTenantId(instanceName, localTenantId);
+        return localTenantId;
+      }
+      console.warn(`⚠️ Ignoring stale tenant mapping for ${instanceName}: ${localTenantId} does not match prefix ${prefix}`);
     }
   } catch (err) {
     if (err.code !== '42P01') {
@@ -241,8 +247,6 @@ async function getTenantIdByInstance(instanceName) {
 
   // 1b. Infer tenant from instance name prefix "<first 8 chars of tenant_id>-<label>"
   // Search in local tenants and profiles tables.
-  const prefixMatch = String(instanceName).match(/^([0-9a-f]{8})-/i);
-  const prefix = prefixMatch ? prefixMatch[1].toLowerCase() : null;
   if (prefix) {
     for (const table of ['tenants', 'profiles']) {
       try {
