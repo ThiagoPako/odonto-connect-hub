@@ -16,7 +16,7 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import webpush from 'web-push';
 import path from 'path';
-import { randomUUID } from 'crypto';
+import { randomUUID, createHash } from 'crypto';
 import { execFile } from 'child_process';
 import { mkdtemp, writeFile, readFile, rm, mkdir } from 'fs/promises';
 import { tmpdir } from 'os';
