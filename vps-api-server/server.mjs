@@ -10187,7 +10187,8 @@ app.get('/api/messages/:leadId', async (req, res) => {
         WITH lead_lookup AS (
           SELECT COALESCE(
             (SELECT telefone FROM crm_leads WHERE id::text = $1 AND tenant_id = $4 LIMIT 1),
-            (SELECT lead_phone FROM attendance_sessions WHERE lead_id = $1 AND tenant_id = $4 ORDER BY created_at DESC NULLS LAST LIMIT 1)
+            (SELECT lead_phone FROM attendance_sessions WHERE lead_id = $1 AND tenant_id = $4 ORDER BY created_at DESC NULLS LAST LIMIT 1),
+            $1
           ) AS phone
         )
         SELECT cm.*
@@ -10210,7 +10211,8 @@ app.get('/api/messages/:leadId', async (req, res) => {
         WITH lead_lookup AS (
           SELECT COALESCE(
             (SELECT telefone FROM crm_leads WHERE id::text = $1 AND tenant_id = $3 LIMIT 1),
-            (SELECT lead_phone FROM attendance_sessions WHERE lead_id = $1 AND tenant_id = $3 ORDER BY created_at DESC NULLS LAST LIMIT 1)
+            (SELECT lead_phone FROM attendance_sessions WHERE lead_id = $1 AND tenant_id = $3 ORDER BY created_at DESC NULLS LAST LIMIT 1),
+            $1
           ) AS phone
         )
         SELECT cm.*
@@ -10491,6 +10493,18 @@ app.get('/api/queue/leads', async (req, res) => {
           )::INTEGER as unread_count
         FROM message_candidates mc
         WHERE mc.rn = 1
+          AND NOT EXISTS (
+            SELECT 1
+              FROM attendance_sessions closed_s
+             WHERE closed_s.tenant_id = $2
+               AND closed_s.status = 'closed'
+               AND closed_s.closed_at IS NOT NULL
+               AND closed_s.closed_at >= mc.last_message_time
+               AND (
+                 closed_s.lead_id = mc.id
+                 OR (closed_s.lead_phone IS NOT NULL AND mc.phone IS NOT NULL AND REGEXP_REPLACE(closed_s.lead_phone, '\\D', '', 'g') LIKE '%' || RIGHT(REGEXP_REPLACE(mc.phone, '\\D', '', 'g'), 11))
+               )
+          )
           AND NOT EXISTS (
             SELECT 1
               FROM open_sessions os
