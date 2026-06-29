@@ -2,8 +2,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Button } from "@/components/ui/button";
 import { RefreshCw, Loader2, CheckCircle2, WifiOff, Wifi, QrCode, Download, Users } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
-import { connectInstance, fetchWhatsAppContacts, getInstanceState } from "@/lib/evolutionApi";
-import { contatosApi, whatsappApi, vpsApiFetch } from "@/lib/vpsApi";
+import { connectInstance, getInstanceState } from "@/lib/evolutionApi";
+import { whatsappApi } from "@/lib/vpsApi";
 import { playNotificationSound } from "@/lib/notificationSound";
 import { toast } from "sonner";
 
@@ -103,50 +103,25 @@ export function QrCodeDialog({ open, onOpenChange, instanceName, onConnected }: 
     return () => clearInterval(t);
   }, [open, phase]);
 
-  // Auto-import contacts once the instance reports "connected"
+  // Auto-link the connected channel to Comercial/Chat and import recent conversations.
   const autoImportContacts = useCallback(async () => {
     setImporting(true);
     try {
-      // Give WhatsApp a few seconds to populate the contact list after pairing
+      // Give WhatsApp a few seconds to finish pairing before reading history.
       await new Promise((r) => setTimeout(r, 4000));
-      const contacts = await fetchWhatsAppContacts(instanceName);
-      if (contacts.length === 0) {
-        toast.info("Nenhum contato encontrado no WhatsApp ainda. Tente importar manualmente em instantes.");
-        setImporting(false);
-        return;
-      }
-      const mapped = contacts.map((c) => ({
-        telefone: c.id,
-        nome: c.pushName || c.id,
-      }));
-      const { data, error } = await contatosApi.bulkImport(mapped);
-      if (error) throw new Error(error);
-      setImportResult({ imported: data?.imported ?? 0, skipped: data?.skipped ?? 0 });
-      toast.success(`${data?.imported ?? 0} contatos importados automaticamente do WhatsApp!`);
 
-      // Also pull the last 30 days of conversations so the chat is not empty
-      // right after pairing. Runs in the background; errors are non-fatal.
-      try {
-        const end = new Date();
-        const start = new Date();
-        start.setDate(start.getDate() - 30);
-        toast.info("Importando últimas conversas do WhatsApp em segundo plano…");
-        void vpsApiFetch("/messages/import-whatsapp", {
-          method: "POST",
-          body: {
-            startDate: start.toISOString(),
-            endDate: end.toISOString(),
-            instances: [instanceName],
-          },
-        }).then((r) => {
-          const imp = (r.data as any)?.imported ?? 0;
-          if (imp > 0) toast.success(`${imp} mensagens importadas do WhatsApp.`);
-        }).catch(() => {});
-      } catch {
-        // ignore
-      }
+      toast.info("Vinculando WhatsApp ao Comercial/Chat e importando conversas…");
+      const { data, error } = await whatsappApi.syncChat(instanceName, 30);
+      if (error) throw new Error(error);
+      const imported = data?.imported ?? 0;
+      const skipped = data?.skipped ?? 0;
+      setImportResult({ imported, skipped });
+      toast.success(imported > 0
+        ? `${imported} mensagem(ns) importada(s) para o Comercial/Chat.`
+        : "WhatsApp vinculado ao Comercial/Chat. Novas mensagens já devem aparecer em tempo real."
+      );
     } catch (err: any) {
-      toast.error(err?.message || "Erro ao importar contatos automaticamente");
+      toast.error(err?.message || "Erro ao vincular WhatsApp ao chat");
     } finally {
       setImporting(false);
     }
@@ -258,11 +233,11 @@ export function QrCodeDialog({ open, onOpenChange, instanceName, onConnected }: 
                 <div className="bg-muted/50 rounded-lg p-3 text-center space-y-1">
                   <p className="text-sm font-medium text-foreground">
                     <Users className="h-4 w-4 inline mr-1" />
-                    {importResult.imported} contato{importResult.imported !== 1 ? "s" : ""} importado{importResult.imported !== 1 ? "s" : ""}
+                    {importResult.imported} mensagem{importResult.imported !== 1 ? "ns" : ""} importada{importResult.imported !== 1 ? "s" : ""}
                   </p>
                   {importResult.skipped > 0 && (
                     <p className="text-xs text-muted-foreground">
-                      {importResult.skipped} já existiam e foram ignorados
+                      {importResult.skipped} já existiam ou estavam fora do período
                     </p>
                   )}
                 </div>
@@ -274,22 +249,12 @@ export function QrCodeDialog({ open, onOpenChange, instanceName, onConnected }: 
                   onClick={async () => {
                     setImporting(true);
                     try {
-                      const contacts = await fetchWhatsAppContacts(instanceName);
-                      if (contacts.length === 0) {
-                        toast.info("Nenhum contato encontrado no WhatsApp");
-                        setImporting(false);
-                        return;
-                      }
-                      const mapped = contacts.map((c) => ({
-                        telefone: c.id,
-                        nome: c.pushName || c.id,
-                      }));
-                      const { data, error } = await contatosApi.bulkImport(mapped);
+                      const { data, error } = await whatsappApi.syncChat(instanceName, 30);
                       if (error) throw new Error(error);
                       setImportResult({ imported: data?.imported ?? 0, skipped: data?.skipped ?? 0 });
-                      toast.success(`${data?.imported ?? 0} contatos importados do WhatsApp!`);
+                      toast.success(`${data?.imported ?? 0} mensagem(ns) importada(s) para o Comercial/Chat!`);
                     } catch (err: any) {
-                      toast.error(err?.message || "Erro ao importar contatos");
+                      toast.error(err?.message || "Erro ao vincular WhatsApp ao chat");
                     } finally {
                       setImporting(false);
                     }
@@ -300,7 +265,7 @@ export function QrCodeDialog({ open, onOpenChange, instanceName, onConnected }: 
                   ) : (
                     <Download className="h-4 w-4 mr-2" />
                   )}
-                  {importing ? "Importando contatos…" : "Importar contatos do WhatsApp"}
+                  {importing ? "Vinculando ao chat…" : "Vincular conversas ao Comercial/Chat"}
                 </Button>
               )}
             </div>
