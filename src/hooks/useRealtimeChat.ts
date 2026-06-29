@@ -70,7 +70,18 @@ async function getActiveTenantId(): Promise<string | null> {
       .select("tenant_id")
       .eq("id", user.id)
       .maybeSingle();
-    return data?.tenant_id || null;
+    if (data?.tenant_id) return data.tenant_id;
+
+    // Fallback pelo VPS: quando o profile não vem pelo client Supabase/RLS,
+    // ainda assim precisamos enviar tenantId no SSE para receber broadcasts.
+    const token = await getAccessToken();
+    if (!token) return null;
+    const res = await fetch(`${VPS_API_BASE}/auth/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return null;
+    const me = await res.json().catch(() => null);
+    return me?.tenant_id || null;
   } catch {
     return null;
   }
