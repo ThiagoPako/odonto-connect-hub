@@ -9,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Plus, RefreshCw, Loader2, WifiOff, Smartphone, Wifi, Star } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
-import { vpsApiFetch, contatosApi } from "@/lib/vpsApi";
+import { vpsApiFetch, whatsappApi } from "@/lib/vpsApi";
 import { ImportWhatsAppDialog } from "@/components/contatos/ImportWhatsAppDialog";
 import { toast } from "sonner";
 
@@ -20,6 +20,7 @@ export const Route = createFileRoute("/canais")({
 
 
 const DEFAULT_SWITCH_MSG = `Olá! Informamos que tivemos um problema técnico temporário com nossa conexão anterior. Estamos continuando seu atendimento por este novo número. Fique tranquilo(a), temos todo o histórico da sua conversa e seguiremos de onde paramos. 😊`;
+const syncedChatInstances = new Set<string>();
 
 function CanaisPage() {
   const { instances, loading, refresh: loadInstances } = useWhatsAppInstances({ active: true });
@@ -79,6 +80,27 @@ function CanaisPage() {
 
   const connectedCount = instances.filter((i) => i.connectionState === "open").length;
   const disconnectedCount = instances.filter((i) => i.connectionState !== "open").length;
+
+  // Whenever Canais sees an open WhatsApp instance, make sure it is linked to
+  // Comercial/Chat: tenant mapping + webhook + recent message import. This is
+  // intentionally once per browser session to avoid repeatedly scanning history.
+  useEffect(() => {
+    const openInstances = instances.filter((i) => i.connectionState === "open");
+    for (const inst of openInstances) {
+      if (!inst.instanceName || syncedChatInstances.has(inst.instanceName)) continue;
+      syncedChatInstances.add(inst.instanceName);
+      void whatsappApi.syncChat(inst.instanceName, 30).then(({ data, error }) => {
+        if (error) {
+          syncedChatInstances.delete(inst.instanceName);
+          return;
+        }
+        const imported = data?.imported ?? 0;
+        if (imported > 0) {
+          toast.success(`${imported} ${imported === 1 ? "conversa vinculada" : "conversas vinculadas"} ao Comercial/Chat.`);
+        }
+      });
+    }
+  }, [instances]);
 
   return (
     <div className="flex-1 flex flex-col min-h-screen">
