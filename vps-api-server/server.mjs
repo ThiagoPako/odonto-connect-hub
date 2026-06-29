@@ -2559,8 +2559,17 @@ app.post('/api/whatsapp/instances', async (req, res) => {
 // Connect (get QR Code) + ensure webhook is registered
 app.get('/api/whatsapp/connect/:instance', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
     const instanceName = req.params.instance;
+    if (user.tenant_id) {
+      await pool.query(
+        `INSERT INTO whatsapp_instances (instance_name, tenant_id)
+         VALUES ($1, $2)
+         ON CONFLICT (instance_name) DO UPDATE SET tenant_id = EXCLUDED.tenant_id`,
+        [instanceName, user.tenant_id]
+      ).catch(e => console.error('Failed to save instance mapping on connect:', e.message));
+      setCachedTenantId(instanceName, user.tenant_id);
+    }
     const result = await evolutionFetch(`/instance/connect/${instanceName}`);
 
     // Ensure webhook is registered on every connect attempt
@@ -2569,6 +2578,44 @@ app.get('/api/whatsapp/connect/:instance', async (req, res) => {
     res.json(result.data);
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+// After a number is connected in Canais, bind it to the logged tenant, ensure
+// webhook delivery, and import recent conversations so Comercial/Chat is filled.
+app.post('/api/whatsapp/sync-chat/:instance', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    const instanceName = req.params.instance;
+    const days = Math.min(Math.max(Number(req.body?.days) || 30, 1), 365);
+
+    if (!user.tenant_id) return res.status(400).json({ error: 'Usuário sem tenant_id' });
+
+    await pool.query(
+      `INSERT INTO whatsapp_instances (instance_name, tenant_id)
+       VALUES ($1, $2)
+       ON CONFLICT (instance_name) DO UPDATE SET tenant_id = EXCLUDED.tenant_id`,
+      [instanceName, user.tenant_id]
+    );
+    setCachedTenantId(instanceName, user.tenant_id);
+    await registerWebhook(instanceName).catch(() => undefined);
+
+    const end = new Date();
+    const start = new Date(end.getTime() - days * 86400000);
+    const result = await importWhatsAppMessagesForTenant({
+      tenantId: user.tenant_id,
+      requestedInstances: [instanceName],
+      start,
+      end,
+      createWaitingSessions: true,
+      maxPages: 80,
+      pageSize: 100,
+    });
+
+    res.json({ success: true, ...result });
+  } catch (error) {
+    console.error('sync-chat error:', error);
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
   }
 });
 
