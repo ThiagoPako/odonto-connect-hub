@@ -6494,10 +6494,11 @@ app.get('/api/events', async (req, res) => {
         }
       }
 
-      // EventSource cannot send custom X-Tenant-Id headers. If the token was
-      // valid but did not carry tenant_id, accept the tenant query parameter
-      // only after checking it belongs to the authenticated profile locally.
-      if (authenticated && !tenantId && requestedTenantId && authenticatedUserId) {
+      // EventSource cannot send custom X-Tenant-Id headers. Accept the tenant
+      // query parameter after checking it belongs to the authenticated profile.
+      // This also fixes old/legacy tokens carrying a stale/placeholder tenant_id,
+      // which made the chat connect but miss all webhook broadcasts.
+      if (authenticated && requestedTenantId && authenticatedUserId && tenantId !== requestedTenantId) {
         try {
           const { rows } = await pool.query(
             `SELECT tenant_id FROM profiles WHERE id = $1 AND tenant_id = $2 LIMIT 1`,
