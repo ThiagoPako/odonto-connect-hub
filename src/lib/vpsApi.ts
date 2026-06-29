@@ -569,6 +569,12 @@ export const whatsappApi = {
   instances: () => vpsApiFetch('/whatsapp/instances'),
   create: (instanceName: string) => vpsApiFetch('/whatsapp/instances', { method: 'POST', body: { instanceName } }),
   connect: (instance: string) => vpsApiFetch(`/whatsapp/connect/${instance}`),
+  syncChat: (instance: string, days = 30) => vpsApiFetch<{
+    success: boolean;
+    imported: number;
+    skipped: number;
+    instances: Array<{ name: string; imported: number; skipped: number; error?: string | null }>;
+  }>(`/whatsapp/sync-chat/${encodeURIComponent(instance)}`, { method: 'POST', body: { days }, background: true }),
   state: (instance: string) => vpsApiFetch(`/whatsapp/state/${instance}`),
   logout: (instance: string) => vpsApiFetch(`/whatsapp/logout/${instance}`, { method: 'DELETE' }),
   delete: (instance: string) => vpsApiFetch(`/whatsapp/instances/${instance}`, { method: 'DELETE' }),

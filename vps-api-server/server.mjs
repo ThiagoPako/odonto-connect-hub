@@ -16,7 +16,7 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import webpush from 'web-push';
 import path from 'path';
-import { randomUUID } from 'crypto';
+import { randomUUID, createHash } from 'crypto';
 import { execFile } from 'child_process';
 import { mkdtemp, writeFile, readFile, rm, mkdir } from 'fs/promises';
 import { tmpdir } from 'os';
@@ -2044,12 +2044,131 @@ function isEvolutionEvent(event, ...names) {
 
 function extractEvolutionMessages(data) {
   if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.messages?.records)) return data.messages.records;
   if (Array.isArray(data?.messages)) return data.messages;
+  if (Array.isArray(data?.data?.records)) return data.data.records;
+  if (Array.isArray(data?.data)) return data.data;
+  if (Array.isArray(data?.result?.records)) return data.result.records;
+  if (Array.isArray(data?.result)) return data.result;
   if (Array.isArray(data?.message)) return data.message;
   if (Array.isArray(data?.records)) return data.records;
   if (data?.message?.key) return [data.message];
   if (data?.key) return [data];
   return [];
+}
+
+function extractEvolutionArray(data) {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.messages?.records)) return data.messages.records;
+  if (Array.isArray(data?.messages)) return data.messages;
+  if (Array.isArray(data?.contacts?.records)) return data.contacts.records;
+  if (Array.isArray(data?.contacts)) return data.contacts;
+  if (Array.isArray(data?.data?.records)) return data.data.records;
+  if (Array.isArray(data?.data)) return data.data;
+  if (Array.isArray(data?.result?.records)) return data.result.records;
+  if (Array.isArray(data?.result)) return data.result;
+  if (Array.isArray(data?.records)) return data.records;
+  return [];
+}
+
+function isUsableChatJid(jid) {
+  const raw = String(jid || '');
+  if (!raw || !raw.includes('@')) return false;
+  if (
+    raw.endsWith('@g.us') ||
+    raw.endsWith('@broadcast') ||
+    raw.endsWith('@newsletter') ||
+    raw.includes('status@')
+  ) return false;
+  // LIDs are not directly usable as patient phone numbers in the CRM/chat list.
+  if (raw.endsWith('@lid')) return false;
+  const digits = normalizeWhatsappNumber(raw);
+  return digits.length >= 10 && digits.length <= 13;
+}
+
+function parseEvolutionTimestamp(value) {
+  if (!value) return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  if (typeof value === 'number') {
+    const ms = value > 1e12 ? value : value * 1000;
+    const d = new Date(ms);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  if (typeof value === 'string') {
+    const asNumber = Number(value);
+    if (Number.isFinite(asNumber) && value.trim() !== '') return parseEvolutionTimestamp(asNumber);
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  if (typeof value === 'object') {
+    // Some Baileys builds serialize protobuf Long as { low, high }.
+    if (typeof value.low === 'number') return parseEvolutionTimestamp(value.low);
+    if (typeof value.low === 'string') return parseEvolutionTimestamp(value.low);
+  }
+  return null;
+}
+
+function extractMessageTimestamp(msg) {
+  return parseEvolutionTimestamp(
+    msg?.messageTimestamp ||
+    msg?.timestamp ||
+    msg?.createdAt ||
+    msg?.created_at ||
+    msg?.dateTime
+  );
+}
+
+function extractMessageContentAndType(msg) {
+  const m = msg?.message || msg?.messageData || {};
+  let content = '';
+  let type = 'text';
+  let fileName = null;
+  let mimeType = null;
+
+  if (m.conversation) content = m.conversation;
+  else if (m.extendedTextMessage?.text) content = m.extendedTextMessage.text;
+  else if (m.imageMessage) { type = 'image'; content = m.imageMessage.caption || '📷 Imagem'; mimeType = m.imageMessage.mimetype || null; }
+  else if (m.videoMessage) { type = 'video'; content = m.videoMessage.caption || '🎥 Vídeo'; mimeType = m.videoMessage.mimetype || null; }
+  else if (m.audioMessage) { type = 'audio'; content = '🎵 Áudio'; mimeType = m.audioMessage.mimetype || null; }
+  else if (m.documentMessage) { type = 'document'; content = m.documentMessage.fileName || m.documentMessage.caption || '📄 Documento'; fileName = m.documentMessage.fileName || null; mimeType = m.documentMessage.mimetype || null; }
+  else if (m.stickerMessage) { type = 'sticker'; content = '🏷️ Sticker'; mimeType = m.stickerMessage.mimetype || null; }
+  else if (m.contactMessage) { type = 'contact'; content = `👤 ${m.contactMessage.displayName || 'Contato'}`; }
+  else if (m.contactsArrayMessage) { type = 'contact'; content = '👥 Contatos'; }
+  else if (m.locationMessage) { type = 'location'; content = '📍 Localização'; }
+  else if (m.reactionMessage) { type = 'reaction'; content = m.reactionMessage.text || '👍 Reação'; }
+  else if (m.buttonsResponseMessage) content = m.buttonsResponseMessage.selectedDisplayText || m.buttonsResponseMessage.selectedButtonId || '';
+  else if (m.listResponseMessage) content = m.listResponseMessage.title || m.listResponseMessage.singleSelectReply?.selectedRowId || '';
+  else if (m.templateButtonReplyMessage) content = m.templateButtonReplyMessage.selectedDisplayText || m.templateButtonReplyMessage.selectedId || '';
+  else if (m.protocolMessage || m.senderKeyDistributionMessage || msg?.messageStubType) return null;
+  else content = '[Mensagem não suportada]';
+
+  if (!content) return null;
+  return { content, type, fileName, mimeType };
+}
+
+async function ensureLeadForWhatsAppConversation({ tenantId, phone, name }) {
+  if (!tenantId || !phone) return null;
+  const suffix = normalizeWhatsappNumber(phone).slice(-11);
+  const displayName = String(name || phone).trim() || phone;
+
+  const { rows } = await pool.query(
+    `SELECT id, nome as name, telefone as phone, queue_id, queue_name, awaiting_queue_selection, avatar_url
+       FROM crm_leads
+      WHERE tenant_id = $1
+        AND REGEXP_REPLACE(COALESCE(telefone, ''), '\\D', '', 'g') LIKE '%' || $2
+      ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST
+      LIMIT 1`,
+    [tenantId, suffix]
+  );
+  if (rows[0]) return rows[0];
+
+  const id = randomUUID();
+  await pool.query(
+    `INSERT INTO crm_leads (id, nome, telefone, origem, status, kanban_stage, awaiting_queue_selection, tenant_id)
+     VALUES ($1, $2, $3, 'whatsapp', 'novo', 'lead', false, $4)`,
+    [id, displayName, phone, tenantId]
+  );
+  return { id, name: displayName, phone, queue_id: null, queue_name: null, awaiting_queue_selection: false, avatar_url: null };
 }
 
 const presenceStateCache = new Map();
@@ -2342,7 +2461,7 @@ app.get('/api/whatsapp/instances', async (req, res) => {
     const { user } = await verifyUser(req);
     const result = await evolutionFetch('/instance/fetchInstances');
     
-    let instances = Array.isArray(result.data) ? result.data : [];
+    let instances = extractEvolutionArray(result.data);
     
     // Isolation by tenant
     if (!user.is_super_admin && user.tenant_id) {
@@ -2430,7 +2549,14 @@ app.post('/api/whatsapp/instances', async (req, res) => {
     // Auto-register webhook
     await registerWebhook(finalName);
 
-    res.json(result.data);
+    res.json({
+      ...(result.data || {}),
+      instanceName: finalName,
+      instance: {
+        ...(result.data?.instance || {}),
+        instanceName: result.data?.instance?.instanceName || finalName,
+      },
+    });
   } catch (error) {
     console.error('Create instance error:', error);
     res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
@@ -2440,8 +2566,17 @@ app.post('/api/whatsapp/instances', async (req, res) => {
 // Connect (get QR Code) + ensure webhook is registered
 app.get('/api/whatsapp/connect/:instance', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
     const instanceName = req.params.instance;
+    if (user.tenant_id) {
+      await pool.query(
+        `INSERT INTO whatsapp_instances (instance_name, tenant_id)
+         VALUES ($1, $2)
+         ON CONFLICT (instance_name) DO UPDATE SET tenant_id = EXCLUDED.tenant_id`,
+        [instanceName, user.tenant_id]
+      ).catch(e => console.error('Failed to save instance mapping on connect:', e.message));
+      setCachedTenantId(instanceName, user.tenant_id);
+    }
     const result = await evolutionFetch(`/instance/connect/${instanceName}`);
 
     // Ensure webhook is registered on every connect attempt
@@ -2450,6 +2585,44 @@ app.get('/api/whatsapp/connect/:instance', async (req, res) => {
     res.json(result.data);
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+// After a number is connected in Canais, bind it to the logged tenant, ensure
+// webhook delivery, and import recent conversations so Comercial/Chat is filled.
+app.post('/api/whatsapp/sync-chat/:instance', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    const instanceName = req.params.instance;
+    const days = Math.min(Math.max(Number(req.body?.days) || 30, 1), 365);
+
+    if (!user.tenant_id) return res.status(400).json({ error: 'Usuário sem tenant_id' });
+
+    await pool.query(
+      `INSERT INTO whatsapp_instances (instance_name, tenant_id)
+       VALUES ($1, $2)
+       ON CONFLICT (instance_name) DO UPDATE SET tenant_id = EXCLUDED.tenant_id`,
+      [instanceName, user.tenant_id]
+    );
+    setCachedTenantId(instanceName, user.tenant_id);
+    await registerWebhook(instanceName).catch(() => undefined);
+
+    const end = new Date();
+    const start = new Date(end.getTime() - days * 86400000);
+    const result = await importWhatsAppMessagesForTenant({
+      tenantId: user.tenant_id,
+      requestedInstances: [instanceName],
+      start,
+      end,
+      createWaitingSessions: true,
+      maxPages: 80,
+      pageSize: 100,
+    });
+
+    res.json({ success: true, ...result });
+  } catch (error) {
+    console.error('sync-chat error:', error);
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
   }
 });
 
@@ -9842,21 +10015,172 @@ app.post('/api/contatos/sync/now', async (req, res) => {
   }
 });
 
+async function importWhatsAppMessagesForTenant({ tenantId, requestedInstances = null, start, end, createWaitingSessions = true, maxPages = 120, pageSize = 100, onProgress = null }) {
+  if (!tenantId) throw new Error('tenant_id obrigatório para importar conversas');
+
+  onProgress?.({ phase: 'init', message: 'Buscando instâncias conectadas...' });
+  const instResult = await evolutionFetch('/instance/fetchInstances');
+  if (!instResult.ok) throw new Error('Falha ao buscar instâncias na Evolution API');
+
+  const requestedSet = Array.isArray(requestedInstances) && requestedInstances.length > 0
+    ? new Set(requestedInstances.map(String))
+    : null;
+  const prefix = String(tenantId).slice(0, 8).toLowerCase();
+
+  let connected = extractEvolutionArray(instResult.data)
+    .map((i) => ({ raw: i, name: i?.name || i?.instanceName || i?.instance?.instanceName || i?.instance?.name, status: i?.connectionStatus || i?.status || i?.instance?.state }))
+    .filter((i) => i.name && (i.status === 'open' || String(i.status).toLowerCase() === 'open'))
+    .filter((i) => !requestedSet || requestedSet.has(i.name));
+
+  // Strong tenant binding: only import instances owned by this clinic naming convention.
+  connected = connected.filter((i) => String(i.name).toLowerCase().startsWith(prefix));
+
+  if (connected.length === 0) {
+    return { imported: 0, skipped: 0, instances: [], message: 'Nenhuma instância conectada/selecionada deste tenant' };
+  }
+
+  const instanceResults = [];
+  let totalImported = 0;
+  let totalSkipped = 0;
+
+  for (let ii = 0; ii < connected.length; ii++) {
+    const { name } = connected[ii];
+    const instStats = { name, imported: 0, skipped: 0, contacts: 0, scanned: 0, sessions: 0, error: null };
+    instanceResults.push(instStats);
+
+    await pool.query(
+      `INSERT INTO whatsapp_instances (instance_name, tenant_id)
+       VALUES ($1, $2)
+       ON CONFLICT (instance_name) DO UPDATE SET tenant_id = EXCLUDED.tenant_id`,
+      [name, tenantId]
+    ).catch(() => {});
+    setCachedTenantId(name, tenantId);
+
+    onProgress?.({ phase: 'instance', instance: name, instanceIndex: ii, totalInstances: connected.length, message: `Importando conversas de ${name}...` });
+
+    const contactNames = new Map();
+    try {
+      const contactsResult = await evolutionFetch(`/chat/findContacts/${name}`, {
+        method: 'POST',
+        body: JSON.stringify({ where: {} }),
+      });
+      if (contactsResult.ok) {
+        for (const c of extractEvolutionArray(contactsResult.data)) {
+          const jid = c?.remoteJid || c?.jid || c?.id;
+          if (!isUsableChatJid(jid)) continue;
+          const phone = normalizeWhatsappNumber(jid);
+          const display = String(c?.name || c?.pushName || c?.profileName || c?.notify || c?.verifiedName || phone).trim();
+          contactNames.set(phone, display);
+        }
+        instStats.contacts = contactNames.size;
+      }
+    } catch (contactErr) {
+      console.warn(`[import-whatsapp] contacts skipped for ${name}:`, contactErr.message);
+    }
+
+    const seenMessageIds = new Set();
+    try {
+      for (let page = 1; page <= maxPages; page++) {
+        const messagesResult = await evolutionFetch(`/chat/findMessages/${name}`, {
+          method: 'POST',
+          body: JSON.stringify({ page, offset: pageSize }),
+        });
+        if (!messagesResult.ok) throw new Error(`findMessages HTTP ${messagesResult.status}`);
+
+        const batch = extractEvolutionMessages(messagesResult.data);
+        if (batch.length === 0) break;
+        instStats.scanned += batch.length;
+
+        for (const msg of batch) {
+          const remoteJid = msg?.key?.remoteJid || msg?.remoteJid || msg?.jid;
+          if (!isUsableChatJid(remoteJid)) { instStats.skipped++; totalSkipped++; continue; }
+
+          const msgTimestamp = extractMessageTimestamp(msg);
+          if (!msgTimestamp || msgTimestamp < start || msgTimestamp > end) { instStats.skipped++; totalSkipped++; continue; }
+
+          const parsed = extractMessageContentAndType(msg);
+          if (!parsed) { instStats.skipped++; totalSkipped++; continue; }
+
+          const rawId = msg?.key?.id || msg?.id || createHash('sha1').update(JSON.stringify(msg).slice(0, 2000)).digest('hex');
+          const msgId = String(rawId);
+          if (seenMessageIds.has(msgId)) { instStats.skipped++; totalSkipped++; continue; }
+          seenMessageIds.add(msgId);
+
+          const phone = normalizeWhatsappNumber(remoteJid);
+          const contactName = contactNames.get(phone) || msg?.pushName || msg?.participantName || phone;
+          const fromMe = !!msg?.key?.fromMe;
+          const sender = fromMe ? 'attendant' : 'lead';
+          const lead = await ensureLeadForWhatsAppConversation({ tenantId, phone, name: contactName });
+          if (!lead?.id) { instStats.skipped++; totalSkipped++; continue; }
+
+          if (createWaitingSessions) {
+            const sessionId = await ensureWaitingSessionForIncomingLead({
+              lead,
+              phone,
+              queueId: lead.queue_id || null,
+              queueName: lead.queue_name || null,
+              tenantId,
+            });
+            if (sessionId) instStats.sessions++;
+          }
+
+          const insert = await pool.query(
+            `INSERT INTO chat_messages (id, lead_id, content, sender, type, status, timestamp, media_url, file_name, mime_type, instance, phone, metadata, tenant_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, $8, $9, $10, $11, $12, $13)
+             ON CONFLICT (id) DO NOTHING`,
+            [
+              msgId,
+              lead.id.toString(),
+              parsed.content,
+              sender,
+              parsed.type,
+              fromMe ? 'sent' : 'delivered',
+              msgTimestamp,
+              parsed.fileName,
+              parsed.mimeType,
+              name,
+              phone,
+              JSON.stringify({ importedFrom: 'whatsapp', contactName, remoteJid, rawType: Object.keys(msg?.message || {})[0] || null }),
+              tenantId,
+            ]
+          );
+
+          if (insert.rowCount > 0) {
+            instStats.imported++;
+            totalImported++;
+          } else {
+            instStats.skipped++;
+            totalSkipped++;
+          }
+        }
+
+        onProgress?.({ phase: 'page', instance: name, page, imported: totalImported, skipped: totalSkipped, scanned: instStats.scanned });
+        const totalPages = messagesResult.data?.messages?.pages ?? messagesResult.data?.pages ?? null;
+        if (totalPages && page >= totalPages) break;
+        if (batch.length < pageSize) break;
+      }
+    } catch (err) {
+      instStats.error = err.message;
+    }
+  }
+
+  return { imported: totalImported, skipped: totalSkipped, instances: instanceResults };
+}
+
 // ─── Import WhatsApp Messages by date range ─────────────────
 app.post('/api/messages/import-whatsapp', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     const { startDate, endDate, instances: allowedInstances, stream } = req.body;
-    
+
     console.log(`📥 Importing WhatsApp messages for tenant ${user.tenant_id} (User: ${user.email}, SuperAdmin: ${user.is_super_admin})`);
-    
+
     if (!startDate || !endDate) return res.status(400).json({ error: 'startDate e endDate obrigatórios' });
 
     const start = new Date(startDate);
     const end = new Date(endDate);
     end.setHours(23, 59, 59, 999);
 
-    // SSE streaming mode
     const isStream = stream === true;
     if (isStream) {
       res.writeHead(200, {
@@ -9866,154 +10190,20 @@ app.post('/api/messages/import-whatsapp', async (req, res) => {
         'X-Accel-Buffering': 'no',
       });
     }
-
     const sendProgress = (data) => {
-      if (isStream) {
-        res.write(`data: ${JSON.stringify(data)}\n\n`);
-      }
+      if (isStream) res.write(`data: ${JSON.stringify(data)}\n\n`);
     };
 
-    // 1. Fetch connected instances
-    sendProgress({ phase: 'init', message: 'Buscando instâncias conectadas...' });
-    const instRes = await fetch(`${EVOLUTION_API_URL}/instance/fetchInstances`, {
-      headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
+    const result = await importWhatsAppMessagesForTenant({
+      tenantId: user.tenant_id,
+      requestedInstances: allowedInstances,
+      start,
+      end,
+      createWaitingSessions: true,
+      onProgress: sendProgress,
     });
-    if (!instRes.ok) {
-      const err = { success: false, error: 'Falha ao buscar instâncias', instances: [] };
-      if (isStream) { sendProgress({ phase: 'done', ...err }); res.end(); } else res.json(err);
-      return;
-    }
-    const allInstances = await instRes.json();
-    let connected = allInstances.filter(i => (i.connectionStatus || i.status) === 'open');
 
-    if (Array.isArray(allowedInstances) && allowedInstances.length > 0) {
-      connected = connected.filter(i => allowedInstances.includes(i.name || i.instanceName));
-    }
-
-    if (connected.length === 0) {
-      const err = { success: true, imported: 0, skipped: 0, instances: [], message: 'Nenhuma instância conectada/selecionada' };
-      if (isStream) { sendProgress({ phase: 'done', ...err }); res.end(); } else res.json(err);
-      return;
-    }
-
-    const instanceResults = [];
-    let totalImported = 0;
-    let totalSkipped = 0;
-
-    for (let ii = 0; ii < connected.length; ii++) {
-      const inst = connected[ii];
-      const name = inst.name || inst.instanceName;
-      const instResult = { name, imported: 0, skipped: 0, contacts: 0, error: null };
-
-      sendProgress({ phase: 'instance', instance: name, instanceIndex: ii, totalInstances: connected.length, message: `Buscando contatos de ${name}...` });
-
-      try {
-        const cRes = await fetch(`${EVOLUTION_API_URL}/chat/findContacts/${name}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
-          body: JSON.stringify({}),
-        });
-        if (!cRes.ok) { instResult.error = `findContacts HTTP ${cRes.status}`; instanceResults.push(instResult); continue; }
-        const contacts = await cRes.json();
-        const waContacts = (contacts || []).filter(c => c.id?.endsWith('@s.whatsapp.net'));
-        instResult.contacts = waContacts.length;
-
-        sendProgress({ phase: 'contacts_found', instance: name, totalContacts: waContacts.length });
-
-        for (let ci = 0; ci < waContacts.length; ci++) {
-          const contact = waContacts[ci];
-          const remoteJid = contact.id;
-          const phone = remoteJid.replace('@s.whatsapp.net', '').replace(/\D/g, '');
-          const contactName = (contact.pushName || contact.name || phone).trim();
-
-          sendProgress({
-            phase: 'contact',
-            instance: name,
-            contactIndex: ci,
-            totalContacts: waContacts.length,
-            contactName,
-            phone,
-            imported: totalImported,
-            skipped: totalSkipped,
-          });
-
-          try {
-            const mRes = await fetch(`${EVOLUTION_API_URL}/chat/findMessages/${name}`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
-              body: JSON.stringify({ where: { key: { remoteJid } } }),
-            });
-            if (!mRes.ok) continue;
-            const allMessages = await mRes.json();
-            const messages = Array.isArray(allMessages) ? allMessages : (allMessages?.messages || allMessages?.data || []);
-            const leadId = phone;
-
-            for (const msg of messages) {
-              const msgTimestamp = msg.messageTimestamp
-                ? new Date(typeof msg.messageTimestamp === 'number'
-                    ? (msg.messageTimestamp > 1e12 ? msg.messageTimestamp : msg.messageTimestamp * 1000)
-                    : msg.messageTimestamp)
-                : null;
-
-              if (!msgTimestamp || msgTimestamp < start || msgTimestamp > end) continue;
-
-              const msgId = msg.key?.id || msg.id || `evo-${randomUUID()}`;
-              const existing = await pool.query('SELECT id FROM chat_messages WHERE id = $1', [msgId]);
-              if (existing.rows.length > 0) { instResult.skipped++; totalSkipped++; continue; }
-
-              const fromMe = msg.key?.fromMe || false;
-              const sender = fromMe ? 'attendant' : 'lead';
-
-              let content = '';
-              let type = 'text';
-              let mediaUrl = null;
-              let fileName = null;
-              let mimeType = null;
-
-              const m = msg.message || {};
-              if (m.conversation) { content = m.conversation; }
-              else if (m.extendedTextMessage?.text) { content = m.extendedTextMessage.text; }
-              else if (m.imageMessage) { type = 'image'; content = m.imageMessage.caption || '📷 Imagem'; mimeType = m.imageMessage.mimetype; }
-              else if (m.videoMessage) { type = 'video'; content = m.videoMessage.caption || '🎥 Vídeo'; mimeType = m.videoMessage.mimetype; }
-              else if (m.audioMessage) { type = 'audio'; content = '🎵 Áudio'; mimeType = m.audioMessage.mimetype; }
-              else if (m.documentMessage) { type = 'document'; content = m.documentMessage.fileName || '📄 Documento'; fileName = m.documentMessage.fileName; mimeType = m.documentMessage.mimetype; }
-              else if (m.stickerMessage) { type = 'sticker'; content = '🏷️ Sticker'; }
-              else if (m.contactMessage) { type = 'contact'; content = `👤 ${m.contactMessage.displayName || 'Contato'}`; }
-              else if (m.locationMessage) { type = 'location'; content = '📍 Localização'; }
-              else {
-                if (m.protocolMessage || m.senderKeyDistributionMessage || msg.messageStubType) continue;
-                content = '[Mensagem não suportada]';
-              }
-
-              if (!content) continue;
-
-              await pool.query(
-                `INSERT INTO chat_messages (id, lead_id, content, sender, type, status, timestamp, media_url, file_name, mime_type, instance, phone, metadata, tenant_id)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-                 ON CONFLICT (id) DO NOTHING`,
-                [msgId, leadId, content, sender, type, 'delivered', msgTimestamp, mediaUrl, fileName, mimeType, name, phone, JSON.stringify({ importedFrom: 'whatsapp', contactName }), user.tenant_id]
-              );
-              instResult.imported++;
-              totalImported++;
-            }
-          } catch (msgErr) {
-            // Skip individual contact errors
-          }
-        }
-      } catch (err) {
-        instResult.error = err.message;
-      }
-      instanceResults.push(instResult);
-    }
-
-    const finalResult = {
-      phase: 'done',
-      success: true,
-      imported: totalImported,
-      skipped: totalSkipped,
-      instances: instanceResults,
-    };
-
+    const finalResult = { phase: 'done', success: true, ...result };
     if (isStream) {
       sendProgress(finalResult);
       res.end();
