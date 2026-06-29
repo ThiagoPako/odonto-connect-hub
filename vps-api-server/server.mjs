@@ -325,6 +325,8 @@ async function getTenantIdByInstance(instanceName) {
 
 async function getFallbackTenantIdForIncomingMessage({ instanceName, phoneSuffix }) {
   const suffix = String(phoneSuffix || '').replace(/\D/g, '').slice(-11);
+  const prefixMatch = String(instanceName || '').match(/^([0-9a-f]{8})-/i);
+  const prefix = prefixMatch ? prefixMatch[1].toLowerCase() : null;
 
   if (suffix) {
     try {
@@ -332,10 +334,11 @@ async function getFallbackTenantIdForIncomingMessage({ instanceName, phoneSuffix
         `SELECT tenant_id
            FROM crm_leads
           WHERE tenant_id IS NOT NULL
+            AND ($2 = '' OR substring(tenant_id::text from 1 for 8) = $2)
             AND REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(telefone, ''), ' ', ''), '-', ''), '(', ''), ')', '') LIKE '%' || $1
           ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST
           LIMIT 1`,
-        [suffix]
+        [suffix, prefix || '']
       );
       if (rows[0]?.tenant_id && isValidTenantId(rows[0].tenant_id)) return rows[0].tenant_id;
     } catch (err) {
@@ -345,8 +348,6 @@ async function getFallbackTenantIdForIncomingMessage({ instanceName, phoneSuffix
 
   if (instanceName) {
     try {
-      const prefixMatch = String(instanceName || '').match(/^([0-9a-f]{8})-/i);
-      const prefix = prefixMatch ? prefixMatch[1].toLowerCase() : null;
       const { rows } = await pool.query(
         `SELECT tenant_id
            FROM whatsapp_instances
@@ -366,8 +367,6 @@ async function getFallbackTenantIdForIncomingMessage({ instanceName, phoneSuffix
   }
 
   // Try local tenants table by instance name prefix
-  const prefixMatch = String(instanceName || '').match(/^([0-9a-f]{8})-/i);
-  const prefix = prefixMatch ? prefixMatch[1].toLowerCase() : null;
   if (prefix) {
     for (const table of ['tenants', 'profiles']) {
       try {
