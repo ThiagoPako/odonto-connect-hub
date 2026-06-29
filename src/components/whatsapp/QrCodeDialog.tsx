@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { RefreshCw, Loader2, CheckCircle2, WifiOff, Wifi, QrCode, Download, Users } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import { connectInstance, fetchWhatsAppContacts, getInstanceState } from "@/lib/evolutionApi";
-import { contatosApi, whatsappApi } from "@/lib/vpsApi";
+import { contatosApi, whatsappApi, vpsApiFetch } from "@/lib/vpsApi";
 import { playNotificationSound } from "@/lib/notificationSound";
 import { toast } from "sonner";
 
