@@ -2549,7 +2549,14 @@ app.post('/api/whatsapp/instances', async (req, res) => {
     // Auto-register webhook
     await registerWebhook(finalName);
 
-    res.json(result.data);
+    res.json({
+      ...(result.data || {}),
+      instanceName: finalName,
+      instance: {
+        ...(result.data?.instance || {}),
+        instanceName: result.data?.instance?.instanceName || finalName,
+      },
+    });
   } catch (error) {
     console.error('Create instance error:', error);
     res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
