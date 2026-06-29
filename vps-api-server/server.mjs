@@ -222,6 +222,8 @@ async function getTenantIdByInstance(instanceName) {
   if (!instanceName) return null;
   const cachedTenantId = getCachedTenantId(instanceName);
   if (cachedTenantId) return cachedTenantId;
+  const prefixMatch = String(instanceName).match(/^([0-9a-f]{8})-/i);
+  const prefix = prefixMatch ? prefixMatch[1].toLowerCase() : null;
 
   // 1. Try local DB whatsapp_instances
   try {
@@ -229,9 +231,13 @@ async function getTenantIdByInstance(instanceName) {
       'SELECT tenant_id FROM whatsapp_instances WHERE instance_name = $1 LIMIT 1',
       [instanceName]
     );
-    if (rows[0]?.tenant_id && isValidTenantId(rows[0].tenant_id)) {
-      setCachedTenantId(instanceName, rows[0].tenant_id);
-      return rows[0].tenant_id;
+    const localTenantId = rows[0]?.tenant_id ? String(rows[0].tenant_id) : '';
+    if (localTenantId && isValidTenantId(localTenantId)) {
+      if (!prefix || localTenantId.toLowerCase().startsWith(prefix)) {
+        setCachedTenantId(instanceName, localTenantId);
+        return localTenantId;
+      }
+      console.warn(`⚠️ Ignoring stale tenant mapping for ${instanceName}: ${localTenantId} does not match prefix ${prefix}`);
     }
   } catch (err) {
     if (err.code !== '42P01') {
@@ -241,8 +247,6 @@ async function getTenantIdByInstance(instanceName) {
 
   // 1b. Infer tenant from instance name prefix "<first 8 chars of tenant_id>-<label>"
   // Search in local tenants and profiles tables.
-  const prefixMatch = String(instanceName).match(/^([0-9a-f]{8})-/i);
-  const prefix = prefixMatch ? prefixMatch[1].toLowerCase() : null;
   if (prefix) {
     for (const table of ['tenants', 'profiles']) {
       try {
@@ -286,29 +290,37 @@ async function getTenantIdByInstance(instanceName) {
         const data = await res.json();
         const candidate = data?.[0]?.tenant_id;
         if (candidate && isValidTenantId(candidate)) {
-          setCachedTenantId(instanceName, candidate);
-          return candidate;
+          if (!prefix || String(candidate).toLowerCase().startsWith(prefix)) {
+            setCachedTenantId(instanceName, candidate);
+            return candidate;
+          }
+          console.warn(`⚠️ Ignoring stale Supabase tenant mapping for ${instanceName}: ${candidate} does not match prefix ${prefix}`);
         }
       }
     } catch (err) {
       console.error(`Supabase fallback failed for ${instanceName}:`, err.message);
     }
     if (prefix) {
-      try {
-        const res = await fetch(
-          `${SUPABASE_URL}/rest/v1/tenants?id=like.${prefix}*&select=id&limit=1`,
-          { headers }
-        );
-        if (res.ok) {
-          const data = await res.json();
-          const candidate = data?.[0]?.id;
-          if (candidate && isValidTenantId(candidate)) {
-            setCachedTenantId(instanceName, candidate);
-            return candidate;
+      for (const lookup of [
+        { table: 'tenants', column: 'id' },
+        { table: 'profiles', column: 'tenant_id' },
+      ]) {
+        try {
+          const res = await fetch(
+            `${SUPABASE_URL}/rest/v1/${lookup.table}?${lookup.column}=like.${prefix}*&select=${lookup.column}&limit=1`,
+            { headers }
+          );
+          if (res.ok) {
+            const data = await res.json();
+            const candidate = data?.[0]?.[lookup.column];
+            if (candidate && isValidTenantId(candidate)) {
+              setCachedTenantId(instanceName, candidate);
+              return candidate;
+            }
           }
+        } catch (err) {
+          console.error(`Supabase ${lookup.table} prefix fallback failed for ${instanceName}:`, err.message);
         }
-      } catch (err) {
-        console.error(`Supabase tenants prefix fallback failed for ${instanceName}:`, err.message);
       }
     }
   }
@@ -318,6 +330,8 @@ async function getTenantIdByInstance(instanceName) {
 
 async function getFallbackTenantIdForIncomingMessage({ instanceName, phoneSuffix }) {
   const suffix = String(phoneSuffix || '').replace(/\D/g, '').slice(-11);
+  const prefixMatch = String(instanceName || '').match(/^([0-9a-f]{8})-/i);
+  const prefix = prefixMatch ? prefixMatch[1].toLowerCase() : null;
 
   if (suffix) {
     try {
@@ -325,10 +339,11 @@ async function getFallbackTenantIdForIncomingMessage({ instanceName, phoneSuffix
         `SELECT tenant_id
            FROM crm_leads
           WHERE tenant_id IS NOT NULL
+            AND ($2 = '' OR substring(tenant_id::text from 1 for 8) = $2)
             AND REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(telefone, ''), ' ', ''), '-', ''), '(', ''), ')', '') LIKE '%' || $1
           ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST
           LIMIT 1`,
-        [suffix]
+        [suffix, prefix || '']
       );
       if (rows[0]?.tenant_id && isValidTenantId(rows[0].tenant_id)) return rows[0].tenant_id;
     } catch (err) {
@@ -345,9 +360,10 @@ async function getFallbackTenantIdForIncomingMessage({ instanceName, phoneSuffix
             AND tenant_id <> '00000000-0000-0000-0000-000000000001'::uuid
             AND tenant_id <> '00000000-0000-0000-0000-000000000000'::uuid
             AND ($1 = '' OR instance_name = $1)
+            AND ($2 = '' OR substring(tenant_id::text from 1 for 8) = $2)
           ORDER BY created_at DESC NULLS LAST
           LIMIT 1`,
-        [instanceName]
+        [instanceName, prefix || '']
       );
       if (rows[0]?.tenant_id && isValidTenantId(rows[0].tenant_id)) return rows[0].tenant_id;
     } catch (err) {
@@ -356,8 +372,6 @@ async function getFallbackTenantIdForIncomingMessage({ instanceName, phoneSuffix
   }
 
   // Try local tenants table by instance name prefix
-  const prefixMatch = String(instanceName || '').match(/^([0-9a-f]{8})-/i);
-  const prefix = prefixMatch ? prefixMatch[1].toLowerCase() : null;
   if (prefix) {
     for (const table of ['tenants', 'profiles']) {
       try {
@@ -10187,7 +10201,8 @@ app.get('/api/messages/:leadId', async (req, res) => {
         WITH lead_lookup AS (
           SELECT COALESCE(
             (SELECT telefone FROM crm_leads WHERE id::text = $1 AND tenant_id = $4 LIMIT 1),
-            (SELECT lead_phone FROM attendance_sessions WHERE lead_id = $1 AND tenant_id = $4 ORDER BY created_at DESC NULLS LAST LIMIT 1)
+            (SELECT lead_phone FROM attendance_sessions WHERE lead_id = $1 AND tenant_id = $4 ORDER BY created_at DESC NULLS LAST LIMIT 1),
+            $1
           ) AS phone
         )
         SELECT cm.*
@@ -10210,7 +10225,8 @@ app.get('/api/messages/:leadId', async (req, res) => {
         WITH lead_lookup AS (
           SELECT COALESCE(
             (SELECT telefone FROM crm_leads WHERE id::text = $1 AND tenant_id = $3 LIMIT 1),
-            (SELECT lead_phone FROM attendance_sessions WHERE lead_id = $1 AND tenant_id = $3 ORDER BY created_at DESC NULLS LAST LIMIT 1)
+            (SELECT lead_phone FROM attendance_sessions WHERE lead_id = $1 AND tenant_id = $3 ORDER BY created_at DESC NULLS LAST LIMIT 1),
+            $1
           ) AS phone
         )
         SELECT cm.*
@@ -10376,53 +10392,143 @@ app.get('/api/queue/leads', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
 
-    // Get leads that have an open attendance session. Waiting sessions remain
-    // visible until an attendant explicitly assumes them; they must not expire
-    // just because the chat page was closed or refreshed.
+    // Get leads that have an open attendance session AND also recover any
+    // inbound WhatsApp message that was persisted but failed to create a
+    // waiting session. This is the safety net that keeps the chat from looking
+    // empty after refresh when the webhook saved chat_messages but the queue
+    // row/session got missed by an older deployment or a transient DB error.
     const { rows } = await pool.query(`
-      SELECT DISTINCT ON (s.lead_id)
-        COALESCE(l.id::text, s.lead_id) as id,
-        COALESCE(l.nome, s.lead_name, latest.phone, s.lead_phone) as name,
-        COALESCE(l.telefone, s.lead_phone, latest.phone) as phone,
-        l.avatar_url,
-        COALESCE(l.queue_id, s.queue_id) as queue_id,
-        COALESCE(l.queue_name, s.queue_name) as queue_name,
-        l.origem,
-        COALESCE(l.priority, false) as priority,
-        s.id as session_id,
-        s.status as session_status,
-        s.attendant_id,
-        s.attendant_name,
-        s.started_waiting_at,
-        latest.content as last_message,
-        latest.timestamp as last_message_time,
-        latest.instance as instance,
-        (SELECT COUNT(*)
-           FROM chat_messages cm_unread
-          WHERE cm_unread.lead_id = s.lead_id
-            AND cm_unread.tenant_id = $2
-            AND cm_unread.sender = 'lead'
-            AND cm_unread.timestamp > COALESCE(
-              (SELECT last_read_at FROM chat_read_status WHERE lead_id = s.lead_id AND user_id = $1 AND tenant_id = $2 LIMIT 1),
-              '1970-01-01'
-            )
-        )::INTEGER as unread_count
-      FROM attendance_sessions s
-      LEFT JOIN crm_leads l ON l.id::text = s.lead_id AND l.tenant_id = $2
-      LEFT JOIN LATERAL (
-        SELECT cm.content, cm.timestamp, cm.phone, cm.instance
-          FROM chat_messages cm
-         WHERE cm.tenant_id = $2
-           AND (
-             cm.lead_id = s.lead_id
-             OR (s.lead_phone IS NOT NULL AND cm.phone = s.lead_phone)
+      WITH open_sessions AS (
+        SELECT DISTINCT ON (s.lead_id)
+          COALESCE(l.id::text, s.lead_id) as id,
+          COALESCE(l.nome, s.lead_name, latest.phone, s.lead_phone) as name,
+          COALESCE(l.telefone, s.lead_phone, latest.phone) as phone,
+          l.avatar_url,
+          COALESCE(l.queue_id::text, s.queue_id) as queue_id,
+          COALESCE(l.queue_name, s.queue_name) as queue_name,
+          COALESCE(l.priority, false) as priority,
+          s.id as session_id,
+          s.status as session_status,
+          s.attendant_id,
+          s.attendant_name,
+          s.started_waiting_at,
+          latest.content as last_message,
+          latest.timestamp as last_message_time,
+          latest.instance as instance,
+          (SELECT COUNT(*)
+             FROM chat_messages cm_unread
+            WHERE cm_unread.tenant_id = $2
+              AND cm_unread.sender = 'lead'
+              AND (
+                cm_unread.lead_id = s.lead_id
+                OR (s.lead_phone IS NOT NULL AND REGEXP_REPLACE(COALESCE(cm_unread.phone, ''), '\\D', '', 'g') LIKE '%' || RIGHT(REGEXP_REPLACE(s.lead_phone, '\\D', '', 'g'), 11))
+              )
+              AND cm_unread.timestamp > COALESCE(
+                (SELECT last_read_at FROM chat_read_status WHERE lead_id = s.lead_id AND user_id = $1 AND tenant_id = $2 LIMIT 1),
+                '1970-01-01'
+              )
+          )::INTEGER as unread_count
+        FROM attendance_sessions s
+        LEFT JOIN crm_leads l ON l.id::text = s.lead_id AND l.tenant_id = $2
+        LEFT JOIN LATERAL (
+          SELECT cm.content, cm.timestamp, cm.phone, cm.instance
+            FROM chat_messages cm
+           WHERE cm.tenant_id = $2
+             AND (
+               cm.lead_id = s.lead_id
+               OR (s.lead_phone IS NOT NULL AND REGEXP_REPLACE(COALESCE(cm.phone, ''), '\\D', '', 'g') LIKE '%' || RIGHT(REGEXP_REPLACE(s.lead_phone, '\\D', '', 'g'), 11))
+             )
+           ORDER BY cm.timestamp DESC
+           LIMIT 1
+        ) latest ON true
+        WHERE s.tenant_id = $2
+          AND s.status IN ('waiting', 'active')
+        ORDER BY s.lead_id, s.started_waiting_at DESC NULLS LAST, s.created_at DESC NULLS LAST
+      ),
+      message_candidates AS (
+        SELECT
+          cm.id as message_id,
+          COALESCE(l.id::text, cm.lead_id, cm.phone) as id,
+          COALESCE(l.nome, cm.metadata->>'pushName', cm.phone) as name,
+          COALESCE(l.telefone, cm.phone) as phone,
+          l.avatar_url,
+          l.queue_id::text as queue_id,
+          l.queue_name,
+          COALESCE(l.priority, false) as priority,
+          cm.content as last_message,
+          cm.timestamp as last_message_time,
+          cm.instance,
+          ROW_NUMBER() OVER (
+            PARTITION BY COALESCE(l.id::text, cm.lead_id, cm.phone)
+            ORDER BY cm.timestamp DESC
+          ) as rn
+        FROM chat_messages cm
+        LEFT JOIN crm_leads l
+          ON l.tenant_id = $2
+         AND (
+           l.id::text = cm.lead_id
+           OR (
+             cm.phone IS NOT NULL
+             AND REGEXP_REPLACE(COALESCE(l.telefone, ''), '\\D', '', 'g') LIKE '%' || RIGHT(REGEXP_REPLACE(cm.phone, '\\D', '', 'g'), 11)
            )
-         ORDER BY cm.timestamp DESC
-         LIMIT 1
-      ) latest ON true
-      WHERE s.tenant_id = $2
-        AND s.status IN ('waiting', 'active')
-      ORDER BY s.lead_id, s.started_waiting_at DESC NULLS LAST, s.created_at DESC NULLS LAST
+         )
+        WHERE cm.tenant_id = $2
+          AND cm.sender = 'lead'
+      ),
+      orphan_messages AS (
+        SELECT
+          mc.id,
+          mc.name,
+          mc.phone,
+          mc.avatar_url,
+          mc.queue_id,
+          mc.queue_name,
+          mc.priority,
+          NULL::uuid as session_id,
+          'waiting'::text as session_status,
+          NULL::uuid as attendant_id,
+          NULL::text as attendant_name,
+          mc.last_message_time as started_waiting_at,
+          mc.last_message,
+          mc.last_message_time,
+          mc.instance,
+          (SELECT COUNT(*)
+             FROM chat_messages cm_unread
+            WHERE cm_unread.tenant_id = $2
+              AND cm_unread.sender = 'lead'
+              AND (
+                cm_unread.lead_id = mc.id
+                OR (mc.phone IS NOT NULL AND REGEXP_REPLACE(COALESCE(cm_unread.phone, ''), '\\D', '', 'g') LIKE '%' || RIGHT(REGEXP_REPLACE(mc.phone, '\\D', '', 'g'), 11))
+              )
+              AND cm_unread.timestamp > COALESCE(
+                (SELECT last_read_at FROM chat_read_status WHERE lead_id = mc.id AND user_id = $1 AND tenant_id = $2 LIMIT 1),
+                '1970-01-01'
+              )
+          )::INTEGER as unread_count
+        FROM message_candidates mc
+        WHERE mc.rn = 1
+          AND NOT EXISTS (
+            SELECT 1
+              FROM attendance_sessions closed_s
+             WHERE closed_s.tenant_id = $2
+               AND closed_s.status = 'closed'
+               AND closed_s.closed_at IS NOT NULL
+               AND closed_s.closed_at >= mc.last_message_time
+               AND (
+                 closed_s.lead_id = mc.id
+                 OR (closed_s.lead_phone IS NOT NULL AND mc.phone IS NOT NULL AND REGEXP_REPLACE(closed_s.lead_phone, '\\D', '', 'g') LIKE '%' || RIGHT(REGEXP_REPLACE(mc.phone, '\\D', '', 'g'), 11))
+               )
+          )
+          AND NOT EXISTS (
+            SELECT 1
+              FROM open_sessions os
+             WHERE os.id = mc.id
+                OR (os.phone IS NOT NULL AND mc.phone IS NOT NULL AND REGEXP_REPLACE(os.phone, '\\D', '', 'g') LIKE '%' || RIGHT(REGEXP_REPLACE(mc.phone, '\\D', '', 'g'), 11))
+          )
+      )
+      SELECT * FROM open_sessions
+      UNION ALL
+      SELECT * FROM orphan_messages
     `, [user.id, user.tenant_id]);
 
     // Separate into queue (waiting) and active (assigned)
