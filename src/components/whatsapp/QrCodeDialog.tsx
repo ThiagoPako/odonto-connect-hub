@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { RefreshCw, Loader2, CheckCircle2, WifiOff, Wifi, QrCode, Download, Users } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import { connectInstance, fetchWhatsAppContacts, getInstanceState } from "@/lib/evolutionApi";
-import { contatosApi, whatsappApi } from "@/lib/vpsApi";
+import { contatosApi, whatsappApi, vpsApiFetch } from "@/lib/vpsApi";
 import { playNotificationSound } from "@/lib/notificationSound";
 import { toast } from "sonner";
 
@@ -123,6 +123,28 @@ export function QrCodeDialog({ open, onOpenChange, instanceName, onConnected }: 
       if (error) throw new Error(error);
       setImportResult({ imported: data?.imported ?? 0, skipped: data?.skipped ?? 0 });
       toast.success(`${data?.imported ?? 0} contatos importados automaticamente do WhatsApp!`);
+
+      // Also pull the last 30 days of conversations so the chat is not empty
+      // right after pairing. Runs in the background; errors are non-fatal.
+      try {
+        const end = new Date();
+        const start = new Date();
+        start.setDate(start.getDate() - 30);
+        toast.info("Importando últimas conversas do WhatsApp em segundo plano…");
+        void vpsApiFetch("/messages/import-whatsapp", {
+          method: "POST",
+          body: {
+            startDate: start.toISOString(),
+            endDate: end.toISOString(),
+            instances: [instanceName],
+          },
+        }).then((r) => {
+          const imp = (r.data as any)?.imported ?? 0;
+          if (imp > 0) toast.success(`${imp} mensagens importadas do WhatsApp.`);
+        }).catch(() => {});
+      } catch {
+        // ignore
+      }
     } catch (err: any) {
       toast.error(err?.message || "Erro ao importar contatos automaticamente");
     } finally {

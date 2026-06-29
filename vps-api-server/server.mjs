@@ -10392,6 +10392,37 @@ app.get('/api/queue/leads', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
 
+    // ─── Backfill safety net ────────────────────────────────────────────────
+    // Any chat_messages row saved with NULL tenant_id (because webhook tenant
+    // resolution failed at insert time) whose instance maps to this user's
+    // tenant via whatsapp_instances gets stamped now so the queries below find
+    // it. Also covers messages whose instance name starts with the first 8
+    // chars of the tenant id (our naming convention). This makes BOTH historical
+    // conversations imported from WhatsApp and brand new inbound messages
+    // visible in the queue even if the tenant mapping was missing at write time.
+    try {
+      await pool.query(
+        `UPDATE chat_messages cm
+            SET tenant_id = wi.tenant_id
+           FROM whatsapp_instances wi
+          WHERE cm.tenant_id IS NULL
+            AND cm.instance IS NOT NULL
+            AND cm.instance = wi.instance_name
+            AND wi.tenant_id = $1`,
+        [user.tenant_id]
+      );
+      await pool.query(
+        `UPDATE chat_messages
+            SET tenant_id = $1
+          WHERE tenant_id IS NULL
+            AND instance IS NOT NULL
+            AND lower(substring(instance from 1 for 8)) = lower(substring($1::text from 1 for 8))`,
+        [user.tenant_id]
+      );
+    } catch (backfillErr) {
+      console.warn('[queue/leads] tenant backfill skipped:', backfillErr.message);
+    }
+
     // Get leads that have an open attendance session AND also recover any
     // inbound WhatsApp message that was persisted but failed to create a
     // waiting session. This is the safety net that keeps the chat from looking
