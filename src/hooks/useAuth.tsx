@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import type { Session } from "@supabase/supabase-js";
-import { login as loginVps, clearToken, setCachedTenantId } from "@/lib/vpsApi";
+import { login as loginVps, clearToken, setCachedAccessToken, setCachedTenantId } from "@/lib/vpsApi";
 
 export interface AuthUser {
   id: string;
@@ -28,6 +28,7 @@ const AuthContext = createContext<AuthState | null>(null);
 async function loadUserFromSession(session: Session): Promise<AuthUser | null> {
   const authUser = session.user;
   if (!authUser) return null;
+  setCachedAccessToken(session);
 
   // Fetch profile (created by handle_new_user trigger)
   // Important: never silently downgrade to "user" when permission reads fail.
@@ -114,6 +115,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       if (!mounted) return;
       if (session) {
+        setCachedAccessToken(session);
         // defer DB calls to avoid deadlock inside the auth callback
         setTimeout(() => {
           loadUserFromSession(session).then((u) => {
@@ -123,6 +125,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           });
         }, 0);
       } else {
+        setCachedAccessToken(null);
+        setCachedTenantId(null);
         setUser(null);
       }
     });
@@ -131,6 +135,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (!mounted) return;
       if (session) {
+        setCachedAccessToken(session);
         loadUserFromSession(session).then((u) => {
           if (mounted) {
             setUser(u);
@@ -144,6 +149,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }
         });
       } else {
+        setCachedAccessToken(null);
+        setCachedTenantId(null);
         setIsLoading(false);
       }
     });
