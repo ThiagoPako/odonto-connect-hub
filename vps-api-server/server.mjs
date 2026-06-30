@@ -538,7 +538,15 @@ async function resolveSupabaseUser(token) {
     is_super_admin: !!profile.is_super_admin,
     _source: 'supabase',
   };
-  _supabaseUserCache.set(token, { user, exp: Date.now() + SUPABASE_CACHE_TTL_MS });
+  // Never cache an authenticated user without tenant_id. A transient profile/RLS
+  // miss here used to poison the auth bridge for 5 minutes, making queue/chat
+  // endpoints run with tenant_id=NULL and return an empty chat even though the
+  // WhatsApp messages were already persisted correctly.
+  if (user.tenant_id) {
+    _supabaseUserCache.set(token, { user, exp: Date.now() + SUPABASE_CACHE_TTL_MS });
+  } else {
+    _supabaseUserCache.delete(token);
+  }
   return user;
 }
 
@@ -10719,6 +10727,11 @@ app.post('/api/messages/mark-read', async (req, res) => {
 app.get('/api/queue/leads', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+
+    if (!isValidTenantId(user.tenant_id)) {
+      console.warn(`[queue/leads] user ${user.id || user.email || 'unknown'} has no valid tenant_id; returning explicit empty queue`);
+      return res.json({ queue: [], active: [], _warn: 'tenant_not_resolved' });
+    }
 
     // ─── Backfill safety net ────────────────────────────────────────────────
     // Any chat_messages row saved with NULL tenant_id (because webhook tenant
