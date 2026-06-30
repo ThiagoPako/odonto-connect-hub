@@ -142,9 +142,6 @@ export async function getAuthHeaders(forceRefresh = false): Promise<Record<strin
 export function getToken(): string | null {
   if (typeof window === 'undefined') return null;
   try {
-    const legacyToken = localStorage.getItem(TOKEN_KEY);
-    if (legacyToken) return legacyToken;
-
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
       if (key && key.startsWith('sb-') && key.endsWith('-auth-token')) {
@@ -157,6 +154,9 @@ export function getToken(): string | null {
           ?? null;
       }
     }
+
+    const legacyToken = localStorage.getItem(TOKEN_KEY);
+    if (legacyToken) return legacyToken;
   } catch { /* ignore */ }
   return null;
 }
