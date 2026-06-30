@@ -7830,10 +7830,35 @@ app.post('/api/sessions/assign', async (req, res) => {
     const result = await pool.query(
       `WITH target_session AS (
          SELECT id
-           FROM attendance_sessions
-          WHERE lead_id = $3
-            AND tenant_id = $4
-            AND status = 'waiting'
+           FROM attendance_sessions s
+          WHERE s.tenant_id = $4
+            AND s.status = 'waiting'
+            AND (
+              s.lead_id = $3
+              OR (
+                REGEXP_REPLACE($3, '\\D', '', 'g') <> ''
+                AND RIGHT(REGEXP_REPLACE(COALESCE(s.lead_phone, ''), '\\D', '', 'g'), 11) = RIGHT(REGEXP_REPLACE($3, '\\D', '', 'g'), 11)
+              )
+              OR EXISTS (
+                SELECT 1
+                  FROM crm_leads l
+                 WHERE l.tenant_id = $4
+                   AND (
+                     l.id::text = $3
+                     OR (
+                       REGEXP_REPLACE($3, '\\D', '', 'g') <> ''
+                       AND RIGHT(REGEXP_REPLACE(COALESCE(l.telefone, ''), '\\D', '', 'g'), 11) = RIGHT(REGEXP_REPLACE($3, '\\D', '', 'g'), 11)
+                     )
+                   )
+                   AND (
+                     s.lead_id = l.id::text
+                     OR (
+                       s.lead_phone IS NOT NULL
+                       AND RIGHT(REGEXP_REPLACE(COALESCE(s.lead_phone, ''), '\\D', '', 'g'), 11) = RIGHT(REGEXP_REPLACE(COALESCE(l.telefone, ''), '\\D', '', 'g'), 11)
+                     )
+                   )
+              )
+            )
           ORDER BY created_at DESC
           LIMIT 1
        )
