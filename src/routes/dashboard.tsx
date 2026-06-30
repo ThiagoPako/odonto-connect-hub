@@ -51,6 +51,7 @@ function getInitials(name: string): string {
 }
 
 function DashboardPage() {
+  const { user, isLoading: authLoading } = useAuth();
   const [kpis, setKpis] = useState<any>(EMPTY_KPIS);
 
   const [sessions, setSessions] = useState<ActiveSession[]>([]);
@@ -58,6 +59,12 @@ function DashboardPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    // Wait for auth to resolve before querying — avoids "Sem tenant" race
+    if (authLoading) return;
+    if (!user?.tenant_id) {
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     async function load() {
       setLoading(true);
@@ -69,9 +76,7 @@ function DashboardPage() {
       if (cancelled) return;
       if (kpiErr) setError(kpiErr);
       if (data) {
-        // Merge with EMPTY_KPIS so legacy backend payloads (missing nested keys) don't crash the UI
         const d = data as any;
-
         setKpis({
           ...EMPTY_KPIS,
           ...d,
@@ -86,9 +91,9 @@ function DashboardPage() {
       setLoading(false);
     }
     load();
-    const interval = setInterval(load, 60_000); // refresh a cada 60s
+    const interval = setInterval(load, 60_000);
     return () => { cancelled = true; clearInterval(interval); };
-  }, []);
+  }, [authLoading, user?.tenant_id]);
 
   const { agenda, orcamentos: orcamento, crm, estoque, pacientes } = kpis;
   const isEmpty = !loading && !error && pacientes.totalCadastrados === 0 && agenda.total === 0;
