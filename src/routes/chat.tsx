@@ -338,13 +338,6 @@ function ChatPage() {
           ...prev,
           [newLead.id]: [chatMsg],
         }));
-        sessionsApi.start({
-          leadId: newLead.id,
-          leadName: newLead.name,
-          leadPhone: newLead.phone,
-          queueId: incomingMsg.queueId,
-          queueName: incomingMsg.queueName,
-        });
       }
     };
 
