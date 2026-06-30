@@ -2116,6 +2116,21 @@ function getEvolutionErrorMessage(result, fallback = 'Falha ao enviar mensagem')
   return text;
 }
 
+function getEvolutionResponseText(data) {
+  const responseMessage = data?.response?.message;
+  const raw = Array.isArray(responseMessage)
+    ? responseMessage.join(' ')
+    : responseMessage || data?.message || data?.error || '';
+  return String(raw || '');
+}
+
+function isEvolutionInstanceAlreadyInUse(result, instanceName) {
+  const text = getEvolutionResponseText(result?.data).toLowerCase();
+  return result?.status === 403
+    && text.includes('already in use')
+    && (!instanceName || text.includes(String(instanceName).toLowerCase()));
+}
+
 async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = null) {
   const basePayload = {
     number: cleanNumber,
@@ -2671,7 +2686,32 @@ app.post('/api/whatsapp/instances', async (req, res) => {
 
     if (!result.ok) {
       console.error(`❌ Evolution API instance creation failed:`, result.data);
-      // Special case: 403 Forbidden on /instance/create usually means API Key is wrong
+      if (isEvolutionInstanceAlreadyInUse(result, finalName)) {
+        console.warn(`ℹ️ Instance ${finalName} already exists in Evolution; reusing it and opening QR connection.`);
+
+        if (user.tenant_id) {
+          await pool.query(
+            `INSERT INTO whatsapp_instances (instance_name, tenant_id)
+             VALUES ($1, $2)
+             ON CONFLICT (instance_name) DO UPDATE SET tenant_id = $2`,
+            [finalName, user.tenant_id]
+          ).catch(e => console.error('Failed to save existing instance mapping locally:', e.message));
+
+          setCachedTenantId(finalName, user.tenant_id);
+        }
+
+        await registerWebhook(finalName);
+
+        return res.json({
+          reused: true,
+          instanceName: finalName,
+          instance: { instanceName: finalName },
+          message: 'Instância já existia; reutilizando para conexão.',
+        });
+      }
+
+      // Special case: 403 Forbidden may mean API Key is wrong, unless Evolution
+      // explicitly says the requested instance name already exists (handled above).
       if (result.status === 403) {
          return res.status(403).json({ error: "Evolution API Unauthorized (403). Verifique a EVOLUTION_API_KEY no .env do VPS." });
       }
