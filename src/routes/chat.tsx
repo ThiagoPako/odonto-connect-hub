@@ -338,18 +338,16 @@ function ChatPage() {
           ...prev,
           [newLead.id]: [chatMsg],
         }));
-        sessionsApi.start({
-          leadId: newLead.id,
-          leadName: newLead.name,
-          leadPhone: newLead.phone,
-          queueId: incomingMsg.queueId,
-          queueName: incomingMsg.queueName,
-        });
       }
     };
 
     // Add message immediately — no artificial delay
     addMessage();
+
+    // The backend is the source of truth for whether a WhatsApp reply belongs
+    // in "Fila de Espera" or "Meus Atendimentos". Refresh after inbound SSE so
+    // stale active sessions returned to queue appear immediately on screen.
+    void reloadQueueLeads();
 
     // Play sound + show toast + browser push notification
     playNotificationSound();
@@ -364,7 +362,7 @@ function ChatPage() {
       },
     });
     showBrowserNotification(`💬 ${name}`, body, name);
-  }, []);
+  }, [navigate, reloadQueueLeads]);
 
   const handlePresenceUpdate = useCallback((update: import("@/hooks/useRealtimeChat").PresenceUpdate) => {
     const phone = update.phone?.replace(/\D/g, "");

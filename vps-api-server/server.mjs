@@ -6786,6 +6786,54 @@ async function persistIncomingMessage({ msgId, leadId, content, msgType, phone, 
   }
 }
 
+// Active sessions left open from previous days were hiding new WhatsApp replies
+// inside "Meus Atendimentos" instead of putting them back in the waiting queue.
+// If a patient sends a new message after an old assigned session is stale, the
+// conversation must be visible in Fila de Espera again until someone assumes it.
+const STALE_ACTIVE_SESSION_REQUEUE_INTERVAL = '8 hours';
+
+async function requeueStaleActiveSessionsForTenant(tenantId) {
+  if (!tenantId) return 0;
+
+  try {
+    const { rowCount } = await pool.query(
+      `WITH latest_inbound AS (
+         SELECT DISTINCT ON (lead_id)
+                lead_id,
+                phone,
+                timestamp,
+                content,
+                instance
+           FROM chat_messages
+          WHERE tenant_id = $1
+            AND sender = 'lead'
+          ORDER BY lead_id, timestamp DESC
+       )
+       UPDATE attendance_sessions s
+          SET status = 'waiting',
+              attendant_id = NULL,
+              attendant_name = NULL,
+              assigned_at = NULL,
+              started_waiting_at = GREATEST(COALESCE(li.timestamp, NOW()), COALESCE(s.started_waiting_at, li.timestamp, NOW()))
+         FROM latest_inbound li
+        WHERE s.tenant_id = $1
+          AND s.status = 'active'
+          AND s.lead_id = li.lead_id
+          AND COALESCE(s.assigned_at, s.created_at, s.started_waiting_at, NOW() - INTERVAL '30 days') < NOW() - ($2::text)::interval
+          AND li.timestamp > COALESCE(s.assigned_at, s.created_at, s.started_waiting_at, '1970-01-01'::timestamptz)`,
+      [tenantId, STALE_ACTIVE_SESSION_REQUEUE_INTERVAL]
+    );
+
+    if (rowCount > 0) {
+      console.log(`📥 Requeued ${rowCount} stale active WhatsApp session(s) for tenant ${tenantId}`);
+    }
+    return rowCount || 0;
+  } catch (err) {
+    console.warn('Failed to requeue stale active sessions:', err.message);
+    return 0;
+  }
+}
+
 function broadcastIncomingMessage({ msgId, phone, pushName, leadId, leadName, content, msgType, instance, queueId = null, queueName, queueColor, mediaUrl, fileName, mimeType, tenantId, sender = 'lead' }) {
   broadcastSSE('new_message', {
     id: msgId,
@@ -6812,7 +6860,7 @@ async function ensureWaitingSessionForIncomingLead({ lead, phone, queueId = null
 
   try {
     const { rows: existing } = await pool.query(
-      `SELECT id, status
+      `SELECT id, status, assigned_at, created_at, started_waiting_at
          FROM attendance_sessions
         WHERE lead_id = $1
           AND tenant_id = $2
@@ -6823,6 +6871,27 @@ async function ensureWaitingSessionForIncomingLead({ lead, phone, queueId = null
     );
 
     if (existing[0]?.status === 'active') {
+      const assignedAt = existing[0].assigned_at || existing[0].created_at || existing[0].started_waiting_at;
+      const assignedTime = assignedAt ? new Date(assignedAt).getTime() : 0;
+      const staleMs = 8 * 60 * 60 * 1000;
+      if (!assignedTime || Date.now() - assignedTime > staleMs) {
+        await pool.query(
+          `UPDATE attendance_sessions
+              SET status = 'waiting',
+                  attendant_id = NULL,
+                  attendant_name = NULL,
+                  assigned_at = NULL,
+                  started_waiting_at = NOW(),
+                  lead_name = COALESCE($2, lead_name),
+                  lead_phone = COALESCE($3, lead_phone),
+                  queue_id = COALESCE($4, queue_id),
+                  queue_name = COALESCE($5, queue_name)
+            WHERE id = $1
+              AND tenant_id = $6`,
+          [existing[0].id, lead.name || null, phone || null, queueId || null, queueName || null, tenantId]
+        );
+        console.log(`📥 Stale active session returned to queue for ${lead.name || phone} (session=${existing[0].id})`);
+      }
       return existing[0].id;
     }
 
@@ -10675,6 +10744,8 @@ app.get('/api/queue/leads', async (req, res) => {
     } catch (backfillErr) {
       console.warn('[queue/leads] tenant backfill skipped:', backfillErr.message);
     }
+
+    await requeueStaleActiveSessionsForTenant(user.tenant_id);
 
     // Get leads that have an open attendance session AND also recover any
     // inbound WhatsApp message that was persisted but failed to create a
