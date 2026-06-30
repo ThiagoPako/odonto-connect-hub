@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2 } from "lucide-react";
 import { useState } from "react";
-import { whatsappApi } from "@/lib/vpsApi";
+import { whatsappApi, getMe, getAccessToken } from "@/lib/vpsApi";
 import { supabase } from "@/integrations/supabase/client";
 
 interface CreateInstanceDialogProps {
@@ -27,32 +27,44 @@ export function CreateInstanceDialog({ open, onOpenChange, onCreated }: CreateIn
     setError(null);
 
     try {
-      // Force refresh Supabase session so the VPS receives a fresh bearer token.
-      // Without this, an expired access token causes verifyUser → "Unauthorized".
+      // 1) Garante um access_token Supabase válido (força refresh).
       await supabase.auth.refreshSession().catch(() => null);
+      const token = await getAccessToken(true);
+      if (!token) {
+        throw new Error("Sua sessão expirou. Saia e entre novamente.");
+      }
 
+      // 2) Probe: confirma que a VPS aceita o token atual ANTES de tentar criar.
+      // Isola se o problema é sessão (probe falha) ou permissão/Evolution (probe ok).
+      const probe = await getMe();
+      if (probe.error || !probe.data) {
+        if (probe.error === "Unauthorized" || probe.error === "Não autenticado") {
+          throw new Error("Sessão não reconhecida pelo servidor. Saia e entre novamente.");
+        }
+        throw new Error(probe.error || "Não foi possível validar sua sessão na VPS.");
+      }
+
+      // 3) Cria a instância. Aqui o 401 só pode vir de admin-check ou rota Evolution.
       let { data, error: apiError } = await whatsappApi.create(sanitized);
-
-      // Retry once if the VPS still rejects the token (race with refresh).
       if (apiError === "Unauthorized") {
         await supabase.auth.refreshSession().catch(() => null);
         ({ data, error: apiError } = await whatsappApi.create(sanitized));
       }
 
       if (apiError) {
-        const message = apiError === "Unauthorized"
-          ? "Sua sessão expirou. Saia e entre novamente para adicionar um número."
-          : apiError.includes("Admin access required")
-            ? "Seu usuário está logado, mas não tem permissão de administrador para adicionar números WhatsApp."
-            : apiError;
-        throw new Error(message);
+        if (apiError === "Unauthorized") {
+          throw new Error("A VPS recusou o token nesta rota. Faça logout/login e tente novamente.");
+        }
+        if (apiError.includes("Admin access required")) {
+          throw new Error("Seu usuário não tem permissão de administrador para adicionar números WhatsApp.");
+        }
+        if (apiError.includes("EVOLUTION_API_KEY") || apiError.toLowerCase().includes("evolution api unauthorized")) {
+          throw new Error("Evolution API recusou a chave da VPS. Verifique EVOLUTION_API_KEY no .env do VPS.");
+        }
+        throw new Error(apiError);
       }
-      
-      // The VPS might have prepended a prefix, let's use the actual name returned if possible
-      // but usually sanitized is already correct if the user entered it.
-      // Evolution API create returns { instance: { instanceName: ... } }
+
       const actualName = (data as any)?.instance?.instanceName || sanitized;
-      
       onCreated?.(actualName);
       onOpenChange(false);
       setName("");
