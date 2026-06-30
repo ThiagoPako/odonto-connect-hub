@@ -1147,7 +1147,7 @@ export const sbQueueLeadsApi = {
           .eq('tenant_id', tenant_id),
         supabase
           .from('attendance_sessions')
-          .select('id,lead_id,status,attendant_id,attendant_name,started_waiting_at,assigned_at,queue_id,queue_name,created_at')
+          .select('id,lead_id,lead_phone,status,attendant_id,attendant_name,started_waiting_at,assigned_at,queue_id,queue_name,created_at')
           .eq('tenant_id', tenant_id)
           .in('status', ['waiting', 'active'])
           .order('created_at', { ascending: false }),
@@ -1161,12 +1161,19 @@ export const sbQueueLeadsApi = {
 
       const chatRows = await fetchChatMessagesForLeadList(tenant_id);
       const leadMap = new Map<string, any>();
+      const leadByPhone = new Map<string, any>();
       (leads ?? []).forEach((lead: any) => leadMap.set(String(lead.id), lead));
+      (leads ?? []).forEach((lead: any) => {
+        const phone = normalizePhoneDigits(lead.telefone);
+        if (phone) leadByPhone.set(phone.slice(-11), lead);
+      });
 
       const sessionMap = new Map<string, any>();
       (sessions ?? []).forEach((session: any) => {
         const leadId = String(session.lead_id ?? '');
-        if (leadId && !sessionMap.has(leadId)) sessionMap.set(leadId, session);
+        const phoneKey = normalizePhoneDigits(session.lead_phone).slice(-11);
+        const key = leadId || phoneKey;
+        if (key && !sessionMap.has(key)) sessionMap.set(key, session);
       });
 
       const readMap = new Map<string, string>();
@@ -1175,9 +1182,13 @@ export const sbQueueLeadsApi = {
       const latestByLead = new Map<string, any>();
       const unreadByLead = new Map<string, number>();
       for (const msg of chatRows) {
-        const leadId = String(msg.lead_id ?? '');
+        const meta = (msg.metadata ?? {}) as Record<string, any>;
+        const msgPhone = normalizePhoneDigits(msg.phone || meta.remoteJidAlt || meta.remoteJid || '');
+        const phoneKey = msgPhone.slice(-11);
+        const matchedLead = phoneKey ? leadByPhone.get(phoneKey) : null;
+        const leadId = String(matchedLead?.id || msg.lead_id || phoneKey || '');
         if (!leadId) continue;
-        if (!latestByLead.has(leadId)) latestByLead.set(leadId, msg);
+        if (!latestByLead.has(leadId)) latestByLead.set(leadId, { ...msg, lead_id: leadId, phone: msg.phone || msgPhone });
 
         const isIncoming = !['attendant', 'agent', 'me'].includes(String(msg.sender ?? ''));
         const lastRead = readMap.get(leadId);
@@ -1191,11 +1202,12 @@ export const sbQueueLeadsApi = {
       const active: any[] = [];
 
       for (const leadId of leadIds) {
-        const crmLead = leadMap.get(leadId);
-        const latest = latestByLead.get(leadId);
         const session = sessionMap.get(leadId);
+        const latest = latestByLead.get(leadId);
         const meta = (latest?.metadata ?? {}) as Record<string, any>;
-        const phone = crmLead?.telefone || latest?.phone || normalizePhoneDigits(meta.remoteJidAlt || meta.remoteJid || '');
+        const latestPhone = latest?.phone || normalizePhoneDigits(meta.remoteJidAlt || meta.remoteJid || '');
+        const crmLead = leadMap.get(leadId) || leadByPhone.get(normalizePhoneDigits(latestPhone || session?.lead_phone).slice(-11));
+        const phone = crmLead?.telefone || latestPhone || session?.lead_phone || '';
         const fallbackName = meta.contactName || meta.pushName || normalizePhoneDigits(phone) || 'Sem nome';
         const name = isUsableLeadName(crmLead?.nome) ? crmLead.nome : fallbackName;
         const lastMessageTime = latest?.timestamp || session?.assigned_at || session?.started_waiting_at || session?.created_at || crmLead?.updated_at || new Date().toISOString();
