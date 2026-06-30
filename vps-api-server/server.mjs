@@ -178,10 +178,6 @@ function isValidTenantId(id) {
   return !PLACEHOLDER_TENANT_IDS.has(s);
 }
 
-function isUuid(value) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || ''));
-}
-
 function getCachedTenantId(instanceName) {
   const cached = instanceToTenantCache.get(instanceName);
   if (!cached) return null;
