@@ -242,7 +242,7 @@ async function validateRequestedTenantForUser(user, requestedTenantId) {
   if (SUPABASE_BRIDGE_ENABLED) {
     try {
       const restAuthKey = SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
-      const restBearer = SUPABASE_SERVICE_ROLE_KEY || requestedTenantId;
+      const restBearer = SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
       const res = await fetch(
         `${SUPABASE_URL}/rest/v1/profiles?id=eq.${encodeURIComponent(user.id)}&tenant_id=eq.${encodeURIComponent(tenant)}&select=tenant_id&limit=1`,
         { headers: { apikey: restAuthKey, Authorization: `Bearer ${restBearer}` } }
