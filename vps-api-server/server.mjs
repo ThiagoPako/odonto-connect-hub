@@ -491,14 +491,20 @@ async function resolveSupabaseUser(token) {
   if (!profile?.tenant_id) {
     try {
       const { rows } = await pool.query(
-        `SELECT id, email, name, role, tenant_id, COALESCE(is_super_admin, false) as is_super_admin
+        `SELECT *
            FROM profiles
           WHERE id = $1 OR email = $2
           LIMIT 1`,
         [sbUser.id, sbUser.email]
       );
       if (rows[0]?.tenant_id) {
-        profile = { ...profile, ...rows[0] };
+        profile = {
+          ...profile,
+          ...rows[0],
+          name: rows[0].name || rows[0].nome || profile.name,
+          role: rows[0].role || profile.role,
+          is_super_admin: rows[0].is_super_admin ?? profile.is_super_admin,
+        };
       }
     } catch (err) {
       console.warn('Local profile fallback failed:', err.message);
