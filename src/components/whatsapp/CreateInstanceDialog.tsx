@@ -32,7 +32,7 @@ export function CreateInstanceDialog({ open, onOpenChange, onCreated }: CreateIn
       const { data, error: apiError } = await whatsappApi.create(sanitized);
       
       if (apiError) {
-        if (apiError.includes("Unauthorized") || apiError.includes("Sessão expirada")) {
+        if (apiError.includes("Unauthorized") || apiError.includes("Sessão expirada") || apiError.toLowerCase().includes("already in use")) {
           const actualName = await createDirectEvolutionInstance(sanitized);
           onCreated?.(actualName);
           onOpenChange(false);

@@ -2116,6 +2116,21 @@ function getEvolutionErrorMessage(result, fallback = 'Falha ao enviar mensagem')
   return text;
 }
 
+function getEvolutionResponseText(data) {
+  const responseMessage = data?.response?.message;
+  const raw = Array.isArray(responseMessage)
+    ? responseMessage.join(' ')
+    : responseMessage || data?.message || data?.error || '';
+  return String(raw || '');
+}
+
+function isEvolutionInstanceAlreadyInUse(result, instanceName) {
+  const text = getEvolutionResponseText(result?.data).toLowerCase();
+  return result?.status === 403
+    && text.includes('already in use')
+    && (!instanceName || text.includes(String(instanceName).toLowerCase()));
+}
+
 async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = null) {
   const basePayload = {
     number: cleanNumber,
