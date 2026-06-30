@@ -3034,12 +3034,7 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
     ensureWebhookRegistration(instance).catch(() => {});
 
     const cleanNumber = normalizeWhatsappNumber(number);
-    const payload = { number: cleanNumber, text };
-    if (quoted) payload.quoted = quoted;
-    const result = await evolutionFetch(`/message/sendText/${instance}`, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
+    const result = await sendEvolutionTextMessage(instance, cleanNumber, text, quoted || null);
 
     if (!result.ok) {
       const errMsg = result.data?.response?.message?.[0]
