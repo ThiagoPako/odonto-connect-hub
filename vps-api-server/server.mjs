@@ -433,22 +433,27 @@ async function getFallbackTenantIdForIncomingMessage({ instanceName, phoneSuffix
     }
   }
 
-  try {
-    const { rows } = await pool.query(
-      `SELECT tenant_id
-         FROM profiles
-        WHERE tenant_id IS NOT NULL
-          AND tenant_id <> '00000000-0000-0000-0000-000000000001'::uuid
-          AND tenant_id <> '00000000-0000-0000-0000-000000000000'::uuid
-        GROUP BY tenant_id
-        ORDER BY COUNT(*) DESC
-        LIMIT 1`
-    );
-    if (rows[0]?.tenant_id && isValidTenantId(rows[0].tenant_id)) return rows[0].tenant_id;
-  } catch (err) {
-    console.error('Tenant fallback by profiles failed:', err.message);
+  // Supabase Cloud lookup by tenant prefix (covers tenants that only exist in Cloud, not on the VPS local DB)
+  if (prefix && SUPABASE_BRIDGE_ENABLED) {
+    try {
+      const restAuthKey = SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
+      const url = `${SUPABASE_URL}/rest/v1/tenants?select=id&id=like.${prefix}*&limit=1`;
+      const r = await fetch(url, {
+        headers: { apikey: restAuthKey, Authorization: `Bearer ${restAuthKey}` },
+      });
+      if (r.ok) {
+        const rows = await r.json();
+        if (rows?.[0]?.id && isValidTenantId(rows[0].id)) return rows[0].id;
+      }
+    } catch (err) {
+      console.error('Tenant fallback Supabase prefix failed:', err.message);
+    }
   }
 
+  // NEVER fall back to "most common tenant" — when a prefix is known but no
+  // match was found, returning a foreign tenant leaks messages to the wrong
+  // clinic and SSE broadcast lands on 0 clients (since the real user is
+  // connected under the correct tenant prefix).
   return null;
 }
 
