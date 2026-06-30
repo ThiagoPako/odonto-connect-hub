@@ -10745,6 +10745,8 @@ app.get('/api/queue/leads', async (req, res) => {
       console.warn('[queue/leads] tenant backfill skipped:', backfillErr.message);
     }
 
+    await requeueStaleActiveSessionsForTenant(user.tenant_id);
+
     // Get leads that have an open attendance session AND also recover any
     // inbound WhatsApp message that was persisted but failed to create a
     // waiting session. This is the safety net that keeps the chat from looking
