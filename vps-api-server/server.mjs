@@ -7871,6 +7871,7 @@ app.post('/api/sessions/assign', async (req, res) => {
 
     res.json({ success: true, id: result.rows[0].id, waitTime: result.rows[0].wait_time_seconds });
   } catch (error) {
+    console.error('[sessions/assign] error:', error);
     res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
   }
 });
