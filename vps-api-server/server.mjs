@@ -1744,9 +1744,9 @@ app.get('/api/auth/me', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     const { rows } = await pool.query(
-      `SELECT p.id, p.name, p.email, p.avatar_url, p.role, ur.role as user_role,
+      `SELECT p.id, p.nome as name, p.email, p.avatar_url, ur.role as user_role,
               p.tenant_id, COALESCE(p.is_super_admin, false) as is_super_admin,
-              t.features as tenant_features
+              t.metadata as tenant_metadata
          FROM profiles p 
          LEFT JOIN user_roles ur ON ur.user_id = p.id
          LEFT JOIN tenants t ON t.id = p.tenant_id
@@ -1757,10 +1757,10 @@ app.get('/api/auth/me', async (req, res) => {
     const profile = rows[0];
     res.json({
       id: profile.id, email: profile.email, name: profile.name,
-      role: profile.user_role || profile.role, avatar_url: profile.avatar_url,
+      role: profile.user_role || user.role || 'user', avatar_url: profile.avatar_url,
       tenant_id: profile.tenant_id || null,
       is_super_admin: !!profile.is_super_admin,
-      tenant_features: profile.tenant_features || {},
+      tenant_features: profile.tenant_metadata?.features || {},
     });
   } catch (error) {
     res.status(401).json({ error: 'Não autenticado' });
@@ -7744,8 +7744,8 @@ app.post('/api/transfers', async (req, res) => {
       return res.status(400).json({ error: 'leadId, toUserId e reason são obrigatórios' });
     }
 
-    const { rows } = await pool.query('SELECT name FROM profiles WHERE id = $1', [user.id]);
-    const fromName = rows[0]?.name || 'Desconhecido';
+    const { rows } = await pool.query('SELECT nome FROM profiles WHERE id = $1', [user.id]);
+    const fromName = rows[0]?.nome || 'Desconhecido';
 
     const id = crypto.randomUUID();
     await pool.query(
@@ -7815,8 +7815,8 @@ app.post('/api/sessions/assign', async (req, res) => {
     const { leadId } = req.body;
     if (!leadId) return res.status(400).json({ error: 'leadId obrigatório' });
 
-    const { rows } = await pool.query('SELECT name FROM profiles WHERE id = $1', [user.id]);
-    const attendantName = rows[0]?.name || 'Atendente';
+    const { rows } = await pool.query('SELECT nome FROM profiles WHERE id = $1', [user.id]);
+    const attendantName = rows[0]?.nome || 'Atendente';
 
     const result = await pool.query(
       `UPDATE attendance_sessions SET 
@@ -10610,8 +10610,8 @@ app.post('/api/messages', async (req, res) => {
     const { id, leadId, content, type, status, fileName, fileUrl, mimeType, replyTo, instance, phone } = req.body;
     if (!leadId || !id) return res.status(400).json({ error: 'id e leadId obrigatórios' });
 
-    const { rows: profile } = await pool.query('SELECT name FROM profiles WHERE id = $1', [user.id]);
-    const attendantName = profile[0]?.name || 'Atendente';
+    const { rows: profile } = await pool.query('SELECT nome FROM profiles WHERE id = $1', [user.id]);
+    const attendantName = profile[0]?.nome || 'Atendente';
 
     // If fileUrl is a base64 data URI, save to disk for persistent storage
     let persistedMediaUrl = fileUrl || null;
