@@ -8,6 +8,7 @@
  */
 
 import { supabase } from "@/integrations/supabase/client";
+import { sbQueueLeadsApi } from "./sbAdapters";
 
 // Lovable preview (lovableproject.com / lovable.app) doesn't proxy /api to the VPS,
 // so we must hit the absolute VPS URL there. Only localhost uses the local proxy.
@@ -929,7 +930,22 @@ export const mediaApi = {
 // ─── Queue Leads ────────────────────────────────────────────
 
 export const queueLeadsApi = {
-  list: () => vpsApiFetch<{ queue: unknown[]; active: unknown[] }>('/queue/leads', { background: true }),
+  list: async () => {
+    const vpsResult = await vpsApiFetch<{ queue: unknown[]; active: unknown[] }>('/queue/leads', { background: true });
+
+    // Defensive fallback: the messages are already in Supabase, but if the VPS
+    // tenant/auth bridge is stale after deploy and returns an empty queue, read
+    // the persisted chat tables directly so Comercial/Chat never shows a false
+    // "Nenhum lead" while WhatsApp messages exist.
+    if (vpsResult.error || (((vpsResult.data?.queue?.length ?? 0) + (vpsResult.data?.active?.length ?? 0)) === 0)) {
+      const sbResult = await sbQueueLeadsApi.list();
+      if (!sbResult.error && ((sbResult.data?.queue?.length ?? 0) + (sbResult.data?.active?.length ?? 0)) > 0) {
+        return sbResult;
+      }
+    }
+
+    return vpsResult;
+  },
 };
 
 // ─── Automations ────────────────────────────────────────────
