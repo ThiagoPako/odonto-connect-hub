@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import type { Session } from "@supabase/supabase-js";
-import { login as loginVps, clearToken } from "@/lib/vpsApi";
+import { login as loginVps, clearToken, setCachedTenantId } from "@/lib/vpsApi";
 
 export interface AuthUser {
   id: string;
@@ -76,7 +76,7 @@ async function loadUserFromSession(session: Session): Promise<AuthUser | null> {
   const isSuperAdmin = !!profile?.is_super_admin;
   const role = isSuperAdmin ? "admin" : ((roleRow?.role as string) ?? "user");
 
-  return {
+  const resolvedUser = {
     id: authUser.id,
     email: profile?.email ?? authUser.email ?? "",
     name: profile?.nome ?? (authUser.user_metadata?.nome as string) ?? authUser.email ?? "",
@@ -86,6 +86,9 @@ async function loadUserFromSession(session: Session): Promise<AuthUser | null> {
     is_super_admin: isSuperAdmin,
     tenant_features,
   };
+
+  setCachedTenantId(resolvedUser.tenant_id);
+  return resolvedUser;
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -179,6 +182,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(async () => {
     await supabase.auth.signOut();
     clearToken();
+    setCachedTenantId(null);
     setUser(null);
   }, []);
 

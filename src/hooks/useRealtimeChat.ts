@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { getAccessToken, VPS_API_BASE } from "@/lib/vpsApi";
+import { getAccessToken, VPS_API_BASE, getCachedTenantId, setCachedTenantId } from "@/lib/vpsApi";
 import { supabase } from "@/integrations/supabase/client";
 
 export interface IncomingMessage {
@@ -63,6 +63,9 @@ type ConnectedHandler = (data: { tenantId?: string | null } | null) => void;
 
 async function getActiveTenantId(): Promise<string | null> {
   try {
+    const cachedTenantId = getCachedTenantId();
+    if (cachedTenantId) return cachedTenantId;
+
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return null;
     const { data } = await supabase
@@ -70,7 +73,10 @@ async function getActiveTenantId(): Promise<string | null> {
       .select("tenant_id")
       .eq("id", user.id)
       .maybeSingle();
-    if (data?.tenant_id) return data.tenant_id;
+    if (data?.tenant_id) {
+      setCachedTenantId(data.tenant_id);
+      return data.tenant_id;
+    }
 
     // Fallback pelo VPS: quando o profile não vem pelo client Supabase/RLS,
     // ainda assim precisamos enviar tenantId no SSE para receber broadcasts.
@@ -81,6 +87,7 @@ async function getActiveTenantId(): Promise<string | null> {
     });
     if (!res.ok) return null;
     const me = await res.json().catch(() => null);
+    if (me?.tenant_id) setCachedTenantId(me.tenant_id);
     return me?.tenant_id || null;
   } catch {
     return null;

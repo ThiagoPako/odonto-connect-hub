@@ -218,6 +218,47 @@ async function setDbTenantContext({ tenantId = null, isSuperAdmin = false, paylo
   }
 }
 
+async function validateRequestedTenantForUser(user, requestedTenantId) {
+  if (!isValidTenantId(requestedTenantId) || !user?.id) return null;
+  const tenant = String(requestedTenantId);
+
+  if (user.tenant_id && String(user.tenant_id) === tenant) return tenant;
+  if (user.is_super_admin) return tenant;
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT tenant_id
+         FROM profiles
+        WHERE id = $1
+          AND tenant_id = $2
+        LIMIT 1`,
+      [user.id, tenant]
+    );
+    if (rows[0]?.tenant_id) return tenant;
+  } catch (err) {
+    console.warn('Tenant header local validation failed:', err.message);
+  }
+
+  if (SUPABASE_BRIDGE_ENABLED) {
+    try {
+      const restAuthKey = SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
+      const restBearer = SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
+      const res = await fetch(
+        `${SUPABASE_URL}/rest/v1/profiles?id=eq.${encodeURIComponent(user.id)}&tenant_id=eq.${encodeURIComponent(tenant)}&select=tenant_id&limit=1`,
+        { headers: { apikey: restAuthKey, Authorization: `Bearer ${restBearer}` } }
+      );
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.[0]?.tenant_id) return tenant;
+      }
+    } catch (err) {
+      console.warn('Tenant header Supabase validation failed:', err.message);
+    }
+  }
+
+  return null;
+}
+
 async function getTenantIdByInstance(instanceName) {
   if (!instanceName) return null;
   const cachedTenantId = getCachedTenantId(instanceName);
@@ -606,6 +647,7 @@ async function verifyUser(req) {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) throw new Error('Unauthorized');
   const token = authHeader.replace('Bearer ', '');
+  const requestedTenantId = req.headers['x-tenant-id'] || req.query?.tenantId || req.body?.tenantId;
 
   // 1) Tenta token legacy (HS256 com JWT_SECRET)
   let decoded = null;
@@ -641,6 +683,16 @@ async function verifyUser(req) {
     }
   } else {
     throw new Error('Unauthorized');
+  }
+
+  // Some Lovable/Supabase sessions authenticate correctly but the profile
+  // lookup can return without tenant_id because of schema/RLS differences.
+  // The frontend sends the active tenant in x-tenant-id; accept it only after
+  // validating that this user belongs to that tenant, otherwise queue/chat
+  // endpoints run with "sem tenant" and return empty messages.
+  if (isValidTenantId(requestedTenantId)) {
+    const validatedTenant = await validateRequestedTenantForUser(user, requestedTenantId);
+    if (validatedTenant) user.tenant_id = validatedTenant;
   }
 
   // Set tenant context for RLS-backed queries. This must be session-level; the
@@ -6499,15 +6551,11 @@ app.get('/api/events', async (req, res) => {
       // This also fixes old/legacy tokens carrying a stale/placeholder tenant_id,
       // which made the chat connect but miss all webhook broadcasts.
       if (authenticated && requestedTenantId && authenticatedUserId && tenantId !== requestedTenantId) {
-        try {
-          const { rows } = await pool.query(
-            `SELECT tenant_id FROM profiles WHERE id = $1 AND tenant_id = $2 LIMIT 1`,
-            [authenticatedUserId, requestedTenantId]
-          );
-          if (rows[0]?.tenant_id) tenantId = rows[0].tenant_id;
-        } catch (tenantErr) {
-          console.warn('📡 SSE tenant query fallback failed:', tenantErr.message);
-        }
+        const validatedTenant = await validateRequestedTenantForUser(
+          { id: authenticatedUserId, tenant_id: tenantId, is_super_admin: decoded?.is_super_admin },
+          requestedTenantId
+        );
+        if (validatedTenant) tenantId = validatedTenant;
       }
     } catch (err) {
       console.warn('📡 SSE connection failed: invalid token');
