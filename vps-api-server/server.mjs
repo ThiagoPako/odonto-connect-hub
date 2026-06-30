@@ -2686,7 +2686,32 @@ app.post('/api/whatsapp/instances', async (req, res) => {
 
     if (!result.ok) {
       console.error(`❌ Evolution API instance creation failed:`, result.data);
-      // Special case: 403 Forbidden on /instance/create usually means API Key is wrong
+      if (isEvolutionInstanceAlreadyInUse(result, finalName)) {
+        console.warn(`ℹ️ Instance ${finalName} already exists in Evolution; reusing it and opening QR connection.`);
+
+        if (user.tenant_id) {
+          await pool.query(
+            `INSERT INTO whatsapp_instances (instance_name, tenant_id)
+             VALUES ($1, $2)
+             ON CONFLICT (instance_name) DO UPDATE SET tenant_id = $2`,
+            [finalName, user.tenant_id]
+          ).catch(e => console.error('Failed to save existing instance mapping locally:', e.message));
+
+          setCachedTenantId(finalName, user.tenant_id);
+        }
+
+        await registerWebhook(finalName);
+
+        return res.json({
+          reused: true,
+          instanceName: finalName,
+          instance: { instanceName: finalName },
+          message: 'Instância já existia; reutilizando para conexão.',
+        });
+      }
+
+      // Special case: 403 Forbidden may mean API Key is wrong, unless Evolution
+      // explicitly says the requested instance name already exists (handled above).
       if (result.status === 403) {
          return res.status(403).json({ error: "Evolution API Unauthorized (403). Verifique a EVOLUTION_API_KEY no .env do VPS." });
       }
