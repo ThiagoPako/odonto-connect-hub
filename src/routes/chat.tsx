@@ -86,14 +86,22 @@ function getMessagePreview(msg: IncomingMessage): string {
 }
 
 function getEvolutionMessageId(data: unknown): string | null {
-  const value = data as any;
-  return value?.key?.id
-    || value?.message?.key?.id
-    || value?.data?.key?.id
-    || value?.data?.message?.key?.id
-    || value?.response?.key?.id
-    || value?.response?.message?.key?.id
-    || null;
+  if (!data || typeof data !== "object") return null;
+  const value = data as Record<string, unknown>;
+  const readId = (source: unknown): string | null => {
+    if (!source || typeof source !== "object") return null;
+    const key = (source as Record<string, unknown>).key;
+    if (!key || typeof key !== "object") return null;
+    const id = (key as Record<string, unknown>).id;
+    return typeof id === "string" && id ? id : null;
+  };
+
+  return readId(value)
+    || readId(value.message)
+    || readId(value.data)
+    || (value.data && typeof value.data === "object" ? readId((value.data as Record<string, unknown>).message) : null)
+    || readId(value.response)
+    || (value.response && typeof value.response === "object" ? readId((value.response as Record<string, unknown>).message) : null);
 }
 
 export const Route = createFileRoute("/chat")({
