@@ -7859,7 +7859,7 @@ app.post('/api/sessions/assign', async (req, res) => {
                    )
               )
             )
-          ORDER BY created_at DESC
+          ORDER BY s.created_at DESC
           LIMIT 1
        )
        UPDATE attendance_sessions s SET 
