@@ -50,6 +50,10 @@ export function setCachedAccessToken(sessionOrToken: Pick<Session, 'access_token
     : sessionOrToken.access_token || null;
 }
 
+function clearLegacyToken(): void {
+  if (typeof window !== 'undefined') localStorage.removeItem(TOKEN_KEY);
+}
+
 function isAuthError(status: number, _error: unknown): boolean {
   return status === 401;
 }
@@ -89,7 +93,7 @@ export async function getAccessToken(forceRefresh = false): Promise<string | nul
       const { data: refreshed } = await supabase.auth.refreshSession();
       if (refreshed.session?.access_token) {
         setCachedAccessToken(refreshed.session);
-        clearToken();
+        clearLegacyToken();
         return refreshed.session.access_token;
       }
     }
@@ -97,7 +101,7 @@ export async function getAccessToken(forceRefresh = false): Promise<string | nul
     const { data } = await supabase.auth.getSession();
     if (data.session?.access_token) {
       setCachedAccessToken(data.session);
-      clearToken();
+      clearLegacyToken();
       return data.session.access_token;
     }
 
