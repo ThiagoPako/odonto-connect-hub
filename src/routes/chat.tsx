@@ -131,7 +131,16 @@ function ChatPage() {
   selectedLeadRef.current = selectedLead;
 
   const reloadQueueLeads = useCallback(async () => {
-    const { data } = await queueLeadsApi.list();
+    // Do not load the queue until Auth has resolved the clinic tenant. Calling
+    // the VPS too early returns an empty/unauthorized background response and
+    // used to leave the Chat stuck on "Nenhum lead" until a hard refresh.
+    if (!currentUser?.tenant_id) return;
+
+    const { data, error } = await queueLeadsApi.list();
+    if (error) {
+      console.warn("Falha ao carregar fila do chat:", error);
+      return;
+    }
     if (!data) return;
 
     const { data: contactsData } = await supabase.from('contatos').select('telefone, nome');
@@ -164,10 +173,12 @@ function ChatPage() {
 
     setQueue((data.queue || []).map(toLead));
     setMyLeads((data.active || []).map(toLead));
-  }, []);
+  }, [currentUser?.tenant_id]);
 
   // Load queues, tags, assignments and unread counts from VPS
   useEffect(() => {
+    if (!currentUser?.tenant_id) return;
+
     queuesApi.list().then(({ data }) => {
       if (data && Array.isArray(data)) {
         setAvailableQueues(data.filter((q: any) => q.active).map((q: any) => ({
@@ -225,7 +236,18 @@ function ChatPage() {
       clearInterval(unreadInterval);
       document.removeEventListener("visibilitychange", handleVisibility);
     };
-  }, [reloadQueueLeads]);
+  }, [currentUser?.tenant_id, reloadQueueLeads]);
+
+  // Poll the source-of-truth queue while the chat is open. This is a defensive
+  // fallback for missed SSE events and for webhook messages that were persisted
+  // while the page was loading or the browser temporarily dropped the stream.
+  useEffect(() => {
+    if (!currentUser?.tenant_id) return;
+    const interval = window.setInterval(() => {
+      if (!document.hidden) void reloadQueueLeads();
+    }, 8_000);
+    return () => window.clearInterval(interval);
+  }, [currentUser?.tenant_id, reloadQueueLeads]);
 
   // Vincula automaticamente as instâncias conectadas em Canais ao Comercial/Chat.
   // Se o WhatsApp já estava conectado antes de abrir esta tela, o chat ainda
@@ -241,6 +263,7 @@ function ChatPage() {
         if (error) {
           syncedChatInstancesRef.current.delete(instanceName);
           console.warn("Falha ao vincular instância WhatsApp ao chat:", instanceName, error);
+          await reloadQueueLeads();
           return;
         }
         await reloadQueueLeads();
