@@ -185,10 +185,21 @@ export async function sendTextMessage(
   text: string
 ): Promise<{ key: { id: string } }> {
   const cleanNumber = number.replace(/\D/g, "");
-  return apiCall(`/message/sendText/${instanceName}`, {
-    method: "POST",
-    body: JSON.stringify({ number: cleanNumber, text }),
-  });
+  try {
+    return await apiCall(`/message/sendText/${instanceName}`, {
+      method: "POST",
+      body: JSON.stringify({ number: cleanNumber, text, delay: 800, linkPreview: true }),
+    });
+  } catch (firstError) {
+    try {
+      return await apiCall(`/message/sendText/${instanceName}`, {
+        method: "POST",
+        body: JSON.stringify({ number: cleanNumber, textMessage: { text }, delay: 800, linkPreview: true }),
+      });
+    } catch {
+      throw firstError;
+    }
+  }
 }
 
 /** Send media (image, video, document) via base64 or URL */
