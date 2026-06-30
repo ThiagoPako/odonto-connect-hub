@@ -218,6 +218,47 @@ async function setDbTenantContext({ tenantId = null, isSuperAdmin = false, paylo
   }
 }
 
+async function validateRequestedTenantForUser(user, requestedTenantId) {
+  if (!isValidTenantId(requestedTenantId) || !user?.id) return null;
+  const tenant = String(requestedTenantId);
+
+  if (user.tenant_id && String(user.tenant_id) === tenant) return tenant;
+  if (user.is_super_admin) return tenant;
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT tenant_id
+         FROM profiles
+        WHERE id = $1
+          AND tenant_id = $2
+        LIMIT 1`,
+      [user.id, tenant]
+    );
+    if (rows[0]?.tenant_id) return tenant;
+  } catch (err) {
+    console.warn('Tenant header local validation failed:', err.message);
+  }
+
+  if (SUPABASE_BRIDGE_ENABLED) {
+    try {
+      const restAuthKey = SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
+      const restBearer = SUPABASE_SERVICE_ROLE_KEY || requestedTenantId;
+      const res = await fetch(
+        `${SUPABASE_URL}/rest/v1/profiles?id=eq.${encodeURIComponent(user.id)}&tenant_id=eq.${encodeURIComponent(tenant)}&select=tenant_id&limit=1`,
+        { headers: { apikey: restAuthKey, Authorization: `Bearer ${restBearer}` } }
+      );
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.[0]?.tenant_id) return tenant;
+      }
+    } catch (err) {
+      console.warn('Tenant header Supabase validation failed:', err.message);
+    }
+  }
+
+  return null;
+}
+
 async function getTenantIdByInstance(instanceName) {
   if (!instanceName) return null;
   const cachedTenantId = getCachedTenantId(instanceName);
