@@ -159,9 +159,15 @@ export function useRealtimeChat(options: RealtimeChatOptions) {
       const [token, tenantId] = await Promise.all([getAccessToken(forceRefresh), getActiveTenantId()]);
       if (cancelled) return;
 
+      if (!token || !tenantId) {
+        console.warn("📡 Chat realtime waiting for authenticated tenant before connecting");
+        scheduleReconnect();
+        return;
+      }
+
       const url = new URL(`${VPS_API_BASE}/events`);
-      if (token) url.searchParams.set("token", token);
-      if (tenantId) url.searchParams.set("tenantId", tenantId);
+      url.searchParams.set("token", token);
+      url.searchParams.set("tenantId", tenantId);
       eventSource = new EventSource(url.toString());
 
       eventSource.addEventListener("connected", (event) => {

@@ -78,7 +78,11 @@ function detectChanges(newInstances: ConnectedInstance[]) {
 
 async function refreshInstances(): Promise<ConnectedInstance[]> {
   try {
-    const { data: vpsInstances } = await whatsappApi.instances();
+    const { data: vpsInstances, error: vpsError } = await whatsappApi.instances();
+    if (vpsError && /unauthorized|sessão expirada/i.test(vpsError)) {
+      return cachedInstances;
+    }
+
     const rawList = Array.isArray(vpsInstances) ? vpsInstances : await fetchInstances();
     const list: EvolutionInstance[] = rawList.map((inst: any) => ({
       instanceName: inst.name || inst.instanceName || inst.instance?.instanceName,

@@ -272,6 +272,7 @@ function ChatPage() {
   // Se o WhatsApp já estava conectado antes de abrir esta tela, o chat ainda
   // precisa garantir: tenant mapping + webhook + importação das conversas recentes.
   useEffect(() => {
+    if (!activeTenantId) return;
     const openInstances = connectedInstances.filter((inst) => inst.connectionState === "open");
     for (const inst of openInstances) {
       const instanceName = inst.instanceName;
@@ -292,7 +293,7 @@ function ChatPage() {
         }
       });
     }
-  }, [connectedInstances, reloadQueueLeads]);
+  }, [activeTenantId, connectedInstances, reloadQueueLeads]);
 
 
   // ─── Dedup set — prevent duplicate messages ───
@@ -492,6 +493,7 @@ function ChatPage() {
   }, []);
 
   const handleAttendantPresenceChange = useCallback((status: "composing" | "recording" | "paused") => {
+    if (!activeTenantId) return;
     const activeLead = selectedLeadRef.current;
     const instanceName = connectedInstances[0]?.instanceName;
     if (!activeLead?.phone || !instanceName) return;
@@ -511,7 +513,7 @@ function ChatPage() {
     whatsappApi.sendPresence(instanceName, activeLead.phone, status).catch((err: any) => {
       console.error("Failed to send presence:", err);
     });
-  }, [connectedInstances]);
+  }, [activeTenantId, connectedInstances]);
 
   // Handle lead returning from recovery (follow-up) with priority
   const handleLeadRecoveryReturn = useCallback((data: import("@/hooks/useRealtimeChat").LeadRecoveryReturn) => {
@@ -542,19 +544,21 @@ function ChatPage() {
   });
 
   useEffect(() => {
+    if (!activeTenantId) return;
     const currentLead = selectedLead;
     const instanceName = connectedInstances[0]?.instanceName;
     return () => {
       if (!currentLead?.phone || !instanceName) return;
       whatsappApi.sendPresence(instanceName, currentLead.phone, "paused").catch(() => {});
     };
-  }, [selectedLead?.id, connectedInstances[0]?.instanceName]);
+  }, [activeTenantId, selectedLead?.id, connectedInstances[0]?.instanceName]);
 
   // Request browser notification permission on first visit
   useEffect(() => { requestNotificationPermission(); }, []);
 
   // Auto-fetch WhatsApp avatar when opening a conversation
   useEffect(() => {
+    if (!activeTenantId) return;
     if (!selectedLead?.phone) return;
     if (selectedLead.avatarUrl) return; // already has photo
 
@@ -571,7 +575,7 @@ function ChatPage() {
       setMyLeads((prev) => prev.map(updateAvatar));
       setSelectedLead((prev) => prev && prev.id === selectedLead.id ? { ...prev, avatarUrl: url } : prev);
     });
-  }, [selectedLead?.id]);
+  }, [activeTenantId, selectedLead?.id]);
 
   const applyPresence = useCallback((leadId: string, presenceStr: string) => {
     let displayStatus: "online" | "offline" | "typing" | "recording" = "offline";
@@ -590,6 +594,7 @@ function ChatPage() {
   }, []);
 
   const fetchPresence = useCallback((leadId: string, phone: string, instanceName: string) => {
+    if (!activeTenantId) return;
     whatsappApi.subscribePresence(instanceName, phone).then(({ data }) => {
       if (data?.presence) {
         applyPresence(leadId, data.presence);
@@ -603,10 +608,11 @@ function ChatPage() {
         }).catch(() => {});
       }, 2000);
     }).catch(() => {});
-  }, [applyPresence]);
+  }, [activeTenantId, applyPresence]);
 
   // Subscribe presence for all active leads (myLeads)
   useEffect(() => {
+    if (!activeTenantId) return;
     const instanceName = connectedInstances[0]?.instanceName;
     if (!instanceName || myLeads.length === 0) return;
 
@@ -617,18 +623,20 @@ function ChatPage() {
         fetchPresence(lead.id, lead.phone, instanceName);
       }, i * 500);
     });
-  }, [myLeads.map(l => l.id).join(","), connectedInstances[0]?.instanceName, fetchPresence]);
+  }, [activeTenantId, myLeads.map(l => l.id).join(","), connectedInstances[0]?.instanceName, fetchPresence]);
 
   // Also subscribe for selected lead immediately (covers queue leads)
   useEffect(() => {
+    if (!activeTenantId) return;
     if (!selectedLead?.phone) return;
     const instanceName = connectedInstances[0]?.instanceName;
     if (!instanceName) return;
     fetchPresence(selectedLead.id, selectedLead.phone, instanceName);
-  }, [selectedLead?.id, selectedLead?.phone, connectedInstances[0]?.instanceName, fetchPresence]);
+  }, [activeTenantId, selectedLead?.id, selectedLead?.phone, connectedInstances[0]?.instanceName, fetchPresence]);
 
   // Refresh presence for selected lead every 30s
   useEffect(() => {
+    if (!activeTenantId) return;
     if (!selectedLead?.phone) return;
     const instanceName = connectedInstances[0]?.instanceName;
     if (!instanceName) return;
@@ -636,7 +644,7 @@ function ChatPage() {
       fetchPresence(selectedLead.id, selectedLead.phone, instanceName);
     }, 30000);
     return () => clearInterval(interval);
-  }, [selectedLead?.id, selectedLead?.phone, connectedInstances[0]?.instanceName, fetchPresence]);
+  }, [activeTenantId, selectedLead?.id, selectedLead?.phone, connectedInstances[0]?.instanceName, fetchPresence]);
 
   // ─── Load initial message history from VPS when selecting a lead ───
   const historyLoadedRef = useRef<Set<string>>(new Set());

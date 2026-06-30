@@ -8,6 +8,7 @@
  */
 
 import { supabase } from "@/integrations/supabase/client";
+import type { Session } from "@supabase/supabase-js";
 import { sbMessagesApi, sbQueueLeadsApi, sbSessionsApi } from "./sbAdapters";
 
 // Lovable preview (lovableproject.com / lovable.app) doesn't proxy /api to the VPS,
@@ -23,6 +24,7 @@ const VPS_API_BASE = (() => {
 })();
 const TOKEN_KEY = 'odonto_jwt'; // legacy — mantido só para cleanup
 const TENANT_KEY = 'odonto_active_tenant_id';
+let cachedSupabaseAccessToken: string | null = null;
 
 export function getCachedTenantId(): string | null {
   if (typeof window === 'undefined') return null;
@@ -35,6 +37,21 @@ export function setCachedTenantId(tenantId: string | null | undefined): void {
     if (tenantId) localStorage.setItem(TENANT_KEY, tenantId);
     else localStorage.removeItem(TENANT_KEY);
   } catch { /* ignore */ }
+}
+
+export function setCachedAccessToken(sessionOrToken: Pick<Session, 'access_token'> | string | null | undefined): void {
+  if (!sessionOrToken) {
+    cachedSupabaseAccessToken = null;
+    return;
+  }
+
+  cachedSupabaseAccessToken = typeof sessionOrToken === 'string'
+    ? sessionOrToken
+    : sessionOrToken.access_token || null;
+}
+
+function clearLegacyToken(): void {
+  if (typeof window !== 'undefined') localStorage.removeItem(TOKEN_KEY);
 }
 
 function isAuthError(status: number, _error: unknown): boolean {
@@ -75,20 +92,22 @@ export async function getAccessToken(forceRefresh = false): Promise<string | nul
     if (forceRefresh) {
       const { data: refreshed } = await supabase.auth.refreshSession();
       if (refreshed.session?.access_token) {
-        clearToken();
+        setCachedAccessToken(refreshed.session);
+        clearLegacyToken();
         return refreshed.session.access_token;
       }
     }
 
     const { data } = await supabase.auth.getSession();
     if (data.session?.access_token) {
-      clearToken();
+      setCachedAccessToken(data.session);
+      clearLegacyToken();
       return data.session.access_token;
     }
 
-    return getToken();
+    return cachedSupabaseAccessToken || getToken();
   } catch {
-    return getToken();
+    return cachedSupabaseAccessToken || getToken();
   }
 }
 
@@ -127,18 +146,21 @@ export async function getAuthHeaders(forceRefresh = false): Promise<Record<strin
 export function getToken(): string | null {
   if (typeof window === 'undefined') return null;
   try {
-    const legacyToken = localStorage.getItem(TOKEN_KEY);
-    if (legacyToken) return legacyToken;
-
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
       if (key && key.startsWith('sb-') && key.endsWith('-auth-token')) {
         const raw = localStorage.getItem(key);
         if (!raw) continue;
         const parsed = JSON.parse(raw);
-        return parsed?.access_token ?? null;
+        return parsed?.access_token
+          ?? parsed?.currentSession?.access_token
+          ?? parsed?.session?.access_token
+          ?? null;
       }
     }
+
+    const legacyToken = localStorage.getItem(TOKEN_KEY);
+    if (legacyToken) return legacyToken;
   } catch { /* ignore */ }
   return null;
 }
@@ -148,6 +170,7 @@ export function setToken(token: string): void {
 }
 
 export function clearToken(): void {
+  cachedSupabaseAccessToken = null;
   if (typeof window !== 'undefined') localStorage.removeItem(TOKEN_KEY);
 }
 
