@@ -1390,10 +1390,15 @@ function ChatPage() {
     setSyncingPhotos(true);
     toast.info("Sincronizando fotos de perfil...");
     try {
-      const { data, error } = await whatsappApi.syncProfilePictures(instanceName);
+      let { data, error } = await whatsappApi.syncProfilePictures(instanceName);
+      // If unauthorized, try refreshing the Supabase session once and retry.
+      if (error && /unauthorized/i.test(error)) {
+        try { await supabase.auth.refreshSession(); } catch { /* ignore */ }
+        ({ data, error } = await whatsappApi.syncProfilePictures(instanceName));
+      }
       if (error) {
         const friendly = /unauthorized/i.test(error)
-          ? "Sessão expirada ou sem permissão para sincronizar. Faça logout/login e tente de novo."
+          ? "Sessão expirada. Saia e entre novamente para sincronizar."
           : error;
         toast.error("Erro ao sincronizar: " + friendly);
       } else {
