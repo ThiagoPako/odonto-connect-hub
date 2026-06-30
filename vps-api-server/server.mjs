@@ -3514,8 +3514,15 @@ app.post('/api/whatsapp/profile-picture', async (req, res) => {
 
 // Bulk fetch: update all leads without avatar_url
 app.post('/api/whatsapp/sync-profile-pictures', async (req, res) => {
+  let user;
   try {
-    const { user } = await verifyUser(req);
+    ({ user } = await verifyUser(req));
+  } catch (error) {
+    console.error('[sync-profile-pictures] auth failed:', error.message);
+    return res.status(401).json({ error: 'Unauthorized: ' + error.message });
+  }
+
+  try {
     const { instance } = req.body;
     if (!instance) return res.status(400).json({ error: 'instance é obrigatório' });
 
@@ -3534,10 +3541,18 @@ app.post('/api/whatsapp/sync-profile-pictures', async (req, res) => {
 
     console.log(`🔄 Found ${leads.length} leads to sync`);
 
+    if (leads.length === 0) {
+      return res.json({ total: 0, updated: 0, failed: 0, message: 'Nenhum contato pendente de foto.' });
+    }
+
+    // Cap per request to avoid proxy/idle timeouts (each lead waits ~500ms).
+    const MAX_PER_RUN = 60;
+    const batch = leads.slice(0, MAX_PER_RUN);
+
     let updated = 0;
     let failed = 0;
 
-    for (const lead of leads) {
+    for (const lead of batch) {
       try {
         const cleanNumber = lead.telefone.replace(/\D/g, '');
         if (!cleanNumber) continue;
@@ -3556,14 +3571,13 @@ app.post('/api/whatsapp/sync-profile-pictures', async (req, res) => {
         failed++;
       }
 
-      // Rate limit: 500ms between requests
-      await new Promise(r => setTimeout(r, 500));
+      await new Promise(r => setTimeout(r, 350));
     }
 
-    res.json({ total: leads.length, updated, failed });
+    res.json({ total: batch.length, updated, failed, remaining: Math.max(0, leads.length - batch.length) });
   } catch (error) {
-    const isAuth = error.message === 'Unauthorized' || error.message === 'Invalid Supabase token';
-    res.status(isAuth ? 401 : 500).json({ error: error.message });
+    console.error('[sync-profile-pictures] error:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
