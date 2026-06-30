@@ -85,6 +85,25 @@ function getMessagePreview(msg: IncomingMessage): string {
   } as Record<string, string>)[msg.type] || msg.content || "";
 }
 
+function getEvolutionMessageId(data: unknown): string | null {
+  if (!data || typeof data !== "object") return null;
+  const value = data as Record<string, unknown>;
+  const readId = (source: unknown): string | null => {
+    if (!source || typeof source !== "object") return null;
+    const key = (source as Record<string, unknown>).key;
+    if (!key || typeof key !== "object") return null;
+    const id = (key as Record<string, unknown>).id;
+    return typeof id === "string" && id ? id : null;
+  };
+
+  return readId(value)
+    || readId(value.message)
+    || readId(value.data)
+    || (value.data && typeof value.data === "object" ? readId((value.data as Record<string, unknown>).message) : null)
+    || readId(value.response)
+    || (value.response && typeof value.response === "object" ? readId((value.response as Record<string, unknown>).message) : null);
+}
+
 export const Route = createFileRoute("/chat")({
   ssr: false,
   validateSearch: zodValidator(chatSearchSchema),
@@ -961,16 +980,17 @@ function ChatPage() {
           result = await whatsappApi.sendText(connected.instanceName, selectedLead.phone, content);
         }
         // Fallback direto na Evolution API se o proxy VPS falhar (401/erro)
-        if (result?.error || !(result?.data as any)?.key?.id) {
+        const proxyMessageId = getEvolutionMessageId(result?.data);
+        if (result?.error) {
           console.warn("[CHAT] VPS sendText falhou, tentando Evolution direto:", result?.error);
           try {
             const direct = await evolutionSendText(connected.instanceName, selectedLead.phone, content);
-            evolutionMsgId = direct?.key?.id || null;
+            evolutionMsgId = getEvolutionMessageId(direct);
           } catch (err) {
             throw new Error(result?.error || (err instanceof Error ? err.message : "Falha ao enviar mensagem"));
           }
         } else {
-          evolutionMsgId = (result.data as any)?.key?.id || null;
+          evolutionMsgId = proxyMessageId;
         }
       } else if (type === "image" || type === "video" || type === "document" || type === "audio") {
         const mediaFile = (extra as any)?._mediaFile as File | undefined;

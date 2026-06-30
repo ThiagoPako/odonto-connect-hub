@@ -2081,6 +2081,57 @@ function normalizeWhatsappNumber(value) {
   return digits;
 }
 
+function extractEvolutionMessageId(data) {
+  return data?.key?.id
+    || data?.message?.key?.id
+    || data?.data?.key?.id
+    || data?.data?.message?.key?.id
+    || data?.response?.key?.id
+    || data?.response?.message?.key?.id
+    || null;
+}
+
+async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = null) {
+  const basePayload = {
+    number: cleanNumber,
+    delay: 800,
+    linkPreview: true,
+    ...(quoted ? { quoted } : {}),
+  };
+
+  const payloads = [
+    { ...basePayload, text },
+    { ...basePayload, textMessage: { text } },
+  ];
+
+  let lastResult = null;
+  for (const payload of payloads) {
+    const result = await evolutionFetch(`/message/sendText/${instance}`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    lastResult = result;
+
+    if (result.ok) {
+      const messageId = extractEvolutionMessageId(result.data);
+      return {
+        ...result,
+        data: messageId ? { ...result.data, key: { ...(result.data?.key || {}), id: messageId } } : result.data,
+      };
+    }
+
+    const errorText = JSON.stringify(result.data || {}).toLowerCase();
+    const canRetryPayloadShape = result.status === 400
+      || errorText.includes('textmessage')
+      || errorText.includes('text message')
+      || errorText.includes('required')
+      || errorText.includes('validation');
+    if (!canRetryPayloadShape) break;
+  }
+
+  return lastResult || { ok: false, status: 502, data: { error: 'Falha ao enviar mensagem' } };
+}
+
 function extractEvolutionInstanceName(body) {
   const candidates = [
     body?.instanceName,
@@ -2983,12 +3034,7 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
     ensureWebhookRegistration(instance).catch(() => {});
 
     const cleanNumber = normalizeWhatsappNumber(number);
-    const payload = { number: cleanNumber, text };
-    if (quoted) payload.quoted = quoted;
-    const result = await evolutionFetch(`/message/sendText/${instance}`, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
+    const result = await sendEvolutionTextMessage(instance, cleanNumber, text, quoted || null);
 
     if (!result.ok) {
       const errMsg = result.data?.response?.message?.[0]

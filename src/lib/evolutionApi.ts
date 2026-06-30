@@ -53,6 +53,14 @@ async function apiCall<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
+function normalizeWhatsappNumber(number: string): string {
+  const cleanNumber = number.replace(/\D/g, "");
+  if (!cleanNumber.startsWith("55") && (cleanNumber.length === 10 || cleanNumber.length === 11)) {
+    return `55${cleanNumber}`;
+  }
+  return cleanNumber;
+}
+
 export async function fetchInstances(): Promise<EvolutionInstance[]> {
   const raw = await apiCall<any[]>("/instance/fetchInstances");
   return raw.map((inst) => ({
@@ -184,11 +192,22 @@ export async function sendTextMessage(
   number: string,
   text: string
 ): Promise<{ key: { id: string } }> {
-  const cleanNumber = number.replace(/\D/g, "");
-  return apiCall(`/message/sendText/${instanceName}`, {
-    method: "POST",
-    body: JSON.stringify({ number: cleanNumber, text }),
-  });
+  const cleanNumber = normalizeWhatsappNumber(number);
+  try {
+    return await apiCall(`/message/sendText/${instanceName}`, {
+      method: "POST",
+      body: JSON.stringify({ number: cleanNumber, text, delay: 800, linkPreview: true }),
+    });
+  } catch (firstError) {
+    try {
+      return await apiCall(`/message/sendText/${instanceName}`, {
+        method: "POST",
+        body: JSON.stringify({ number: cleanNumber, textMessage: { text }, delay: 800, linkPreview: true }),
+      });
+    } catch {
+      throw firstError;
+    }
+  }
 }
 
 /** Send media (image, video, document) via base64 or URL */
