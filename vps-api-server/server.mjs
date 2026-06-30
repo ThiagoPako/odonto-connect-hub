@@ -561,6 +561,9 @@ const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY;
 const APP_URL = (process.env.APP_URL || 'https://odontoconnect.tech').replace(/\/$/, '').replace(':443', '');
 const WEBHOOK_PUBLIC_URL = process.env.WEBHOOK_PUBLIC_URL?.replace(/\/$/, '');
 const isLocalAppUrl = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(APP_URL);
+if (!EVOLUTION_API_KEY) {
+  console.error('❌ EVOLUTION_API_KEY não definida no .env do VPS — envios do WhatsApp retornarão erro até configurar a chave.');
+}
 
 // Ensure the webhook URL points to the backend API endpoint
 const WEBHOOK_URL = WEBHOOK_PUBLIC_URL || (isLocalAppUrl ? `${APP_URL.replace(/:\d+$/, `:${PORT}`)}/api/webhook/evolution` : `https://backend.odontoconnect.tech/api/webhook/evolution`);
@@ -2044,6 +2047,14 @@ app.put('/api/auth/users/:id', async (req, res) => {
 const execFileAsync = promisify(execFile);
 
 async function evolutionFetch(path, options = {}) {
+  if (!EVOLUTION_API_KEY) {
+    return {
+      ok: false,
+      status: 500,
+      data: { error: 'EVOLUTION_API_KEY não configurada no VPS' },
+    };
+  }
+
   const url = `${EVOLUTION_API_URL}${path}`;
   try {
     const res = await fetch(url, {
@@ -2089,6 +2100,20 @@ function extractEvolutionMessageId(data) {
     || data?.response?.key?.id
     || data?.response?.message?.key?.id
     || null;
+}
+
+function getEvolutionErrorMessage(result, fallback = 'Falha ao enviar mensagem') {
+  const data = result?.data || {};
+  const raw = data?.response?.message?.[0]
+    || data?.message
+    || data?.error
+    || data?.details?.message
+    || (result?.status ? `Evolution API respondeu ${result.status}` : fallback);
+  const text = Array.isArray(raw) ? raw.join(', ') : String(raw || fallback);
+  if (result?.status === 401 || result?.status === 403 || /unauthori[sz]ed|forbidden/i.test(text)) {
+    return 'Evolution recusou o envio por autenticação. Verifique a EVOLUTION_API_KEY no .env do VPS e reinicie o odonto-api.';
+  }
+  return text;
 }
 
 async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = null) {
@@ -3037,12 +3062,18 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
     const result = await sendEvolutionTextMessage(instance, cleanNumber, text, quoted || null);
 
     if (!result.ok) {
-      const errMsg = result.data?.response?.message?.[0]
-        || result.data?.message
-        || result.data?.error
-        || `Evolution API respondeu ${result.status}`;
+      const errMsg = getEvolutionErrorMessage(result);
       console.error(`❌ send-text failed for ${instance} → ${cleanNumber}: ${errMsg}`, result.data);
       return res.status(result.status || 502).json({ error: errMsg, details: result.data });
+    }
+
+    const messageId = extractEvolutionMessageId(result.data);
+    if (!messageId) {
+      console.error(`❌ send-text without Evolution message id for ${instance} → ${cleanNumber}:`, result.data);
+      return res.status(502).json({
+        error: 'WhatsApp não confirmou o envio da mensagem',
+        details: result.data,
+      });
     }
 
     res.json(result.data);
