@@ -647,6 +647,7 @@ async function verifyUser(req) {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) throw new Error('Unauthorized');
   const token = authHeader.replace('Bearer ', '');
+  const requestedTenantId = req.headers['x-tenant-id'] || req.query?.tenantId || req.body?.tenantId;
 
   // 1) Tenta token legacy (HS256 com JWT_SECRET)
   let decoded = null;
@@ -682,6 +683,16 @@ async function verifyUser(req) {
     }
   } else {
     throw new Error('Unauthorized');
+  }
+
+  // Some Lovable/Supabase sessions authenticate correctly but the profile
+  // lookup can return without tenant_id because of schema/RLS differences.
+  // The frontend sends the active tenant in x-tenant-id; accept it only after
+  // validating that this user belongs to that tenant, otherwise queue/chat
+  // endpoints run with "sem tenant" and return empty messages.
+  if (isValidTenantId(requestedTenantId)) {
+    const validatedTenant = await validateRequestedTenantForUser(user, requestedTenantId);
+    if (validatedTenant) user.tenant_id = validatedTenant;
   }
 
   // Set tenant context for RLS-backed queries. This must be session-level; the
