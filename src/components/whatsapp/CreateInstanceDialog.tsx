@@ -27,14 +27,25 @@ export function CreateInstanceDialog({ open, onOpenChange, onCreated }: CreateIn
     setError(null);
 
     try {
-      // Create via VPS API so it manages the prefix and registers webhooks
-      const { data, error: apiError } = await whatsappApi.create(sanitized);
-      
+      // Force refresh Supabase session so the VPS receives a fresh bearer token.
+      // Without this, an expired access token causes verifyUser → "Unauthorized".
+      await supabase.auth.refreshSession().catch(() => null);
+
+      let { data, error: apiError } = await whatsappApi.create(sanitized);
+
+      // Retry once if the VPS still rejects the token (race with refresh).
+      if (apiError === "Unauthorized") {
+        await supabase.auth.refreshSession().catch(() => null);
+        ({ data, error: apiError } = await whatsappApi.create(sanitized));
+      }
+
       if (apiError) {
-        const authMessage = apiError.includes("Admin access required")
-          ? "Seu usuário está logado, mas não tem permissão de administrador para adicionar números WhatsApp."
-          : apiError;
-        throw new Error(authMessage);
+        const message = apiError === "Unauthorized"
+          ? "Sua sessão expirou. Saia e entre novamente para adicionar um número."
+          : apiError.includes("Admin access required")
+            ? "Seu usuário está logado, mas não tem permissão de administrador para adicionar números WhatsApp."
+            : apiError;
+        throw new Error(message);
       }
       
       // The VPS might have prepended a prefix, let's use the actual name returned if possible
