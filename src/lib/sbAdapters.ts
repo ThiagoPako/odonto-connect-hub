@@ -1151,6 +1151,8 @@ export const sbMessagesApi = {
 
 const normalizePhoneDigits = (value?: string | null): string => (value ?? '').replace(/\D/g, '');
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const isUsableLeadName = (value?: string | null): boolean => {
   const v = (value ?? '').trim();
   return !!v && !v.includes('@') && Number.isNaN(Number(v.replace(/\D/g, '')));
@@ -1370,25 +1372,62 @@ export const sbSessionsApi = {
       .from('attendance_sessions')
       .select('id, started_waiting_at')
       .eq('lead_id', body.leadId)
+      .eq('tenant_id', tenant_id)
       .eq('status', 'waiting')
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle();
     if (findErr) return { data: null, error: err(findErr) };
     if (!session) {
-      const { data: lead } = await supabase
-        .from('crm_leads')
-        .select('nome,telefone,queue_id,queue_name')
-        .eq('id', body.leadId)
-        .maybeSingle();
+      let lead: any = null;
+      if (UUID_REGEX.test(body.leadId)) {
+        const { data } = await supabase
+          .from('crm_leads')
+          .select('nome,telefone,queue_id,queue_name')
+          .eq('tenant_id', tenant_id)
+          .eq('id', body.leadId)
+          .maybeSingle();
+        lead = data;
+      }
+
+      if (!lead) {
+        const phoneSuffix = normalizePhoneDigits(body.leadId).slice(-11);
+        if (phoneSuffix) {
+          const { data } = await supabase
+            .from('crm_leads')
+            .select('nome,telefone,queue_id,queue_name')
+            .eq('tenant_id', tenant_id)
+            .ilike('telefone', `%${phoneSuffix}`)
+            .limit(1)
+            .maybeSingle();
+          lead = data;
+        }
+      }
+
+      let messageLeadName: string | null = null;
+      let messageLeadPhone: string | null = null;
+      if (!lead) {
+        const { data: latestMessage } = await supabase
+          .from('chat_messages')
+          .select('phone,metadata')
+          .eq('tenant_id', tenant_id)
+          .eq('lead_id', body.leadId)
+          .order('timestamp', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        const meta = (latestMessage as any)?.metadata ?? {};
+        messageLeadPhone = (latestMessage as any)?.phone ?? null;
+        messageLeadName = meta.contactName || meta.pushName || meta.notifyName || null;
+      }
+
       const now = new Date().toISOString();
       const { data: created, error: createErr } = await supabase
         .from('attendance_sessions')
         .insert({
           tenant_id,
           lead_id: body.leadId,
-          lead_name: (lead as any)?.nome ?? null,
-          lead_phone: (lead as any)?.telefone ?? null,
+          lead_name: (lead as any)?.nome ?? messageLeadName,
+          lead_phone: (lead as any)?.telefone ?? messageLeadPhone,
           queue_id: (lead as any)?.queue_id ?? null,
           queue_name: (lead as any)?.queue_name ?? null,
           attendant_id: userData.user.id,
