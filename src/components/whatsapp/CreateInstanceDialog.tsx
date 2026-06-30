@@ -5,7 +5,7 @@ import { Label } from "@/components/ui/label";
 import { Loader2 } from "lucide-react";
 import { useState } from "react";
 import { whatsappApi } from "@/lib/vpsApi";
-import { createInstance, registerWebhook } from "@/lib/evolutionApi";
+import { createInstance, registerWebhook, applyInstanceSettings } from "@/lib/evolutionApi";
 import { supabase } from "@/integrations/supabase/client";
 
 interface CreateInstanceDialogProps {
@@ -121,7 +121,19 @@ async function createDirectEvolutionInstance(instanceName: string) {
     ? `${tenantId.substring(0, 8)}-${instanceName}`
     : instanceName;
 
-  const data = await createInstance({ instanceName: finalName });
+  let data;
+  try {
+    data = await createInstance({ instanceName: finalName });
+  } catch (err: any) {
+    if (err.message?.toLowerCase().includes("already in use")) {
+      data = { instance: { instanceName: finalName } };
+      // If it already exists, ensure settings are applied
+      await applyInstanceSettings(finalName).catch(() => undefined);
+    } else {
+      throw err;
+    }
+  }
+
   await registerWebhook(finalName).catch(() => undefined);
 
   if (tenantId) {
