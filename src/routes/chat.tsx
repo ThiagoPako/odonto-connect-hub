@@ -29,7 +29,6 @@ function resolveMediaUrl(url?: string | null): string | undefined {
     return url;
   }
 }
-import { sendTextMessage as evolutionSendText } from "@/lib/evolutionApi";
 import { useWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
 import { playNotificationSound, playRecoverySound } from "@/lib/notificationSound";
 import { showBrowserNotification, requestNotificationPermission } from "@/lib/browserNotification";
@@ -930,9 +929,10 @@ function ChatPage() {
     }));
     setReplyingTo(null);
 
-    // Resolve which instance to use:
-    // 1. If the lead has an instance assigned, use it.
-    // 2. Otherwise use the first available connected instance.
+    // Resolve the WhatsApp instance through the backend only. Do not call the
+    // Evolution API directly from the browser: CORS blocks it in production and
+    // a browser fallback can make the UI look successful when WhatsApp rejected
+    // the send.
     const preferredInstanceName = selectedLead.instance;
     const connected = connectedInstances.find(i => i.instanceName === preferredInstanceName) || connectedInstances[0];
     
@@ -979,19 +979,14 @@ function ChatPage() {
         } else {
           result = await whatsappApi.sendText(connected.instanceName, selectedLead.phone, content);
         }
-        // Fallback direto na Evolution API se o proxy VPS falhar (401/erro)
         const proxyMessageId = getEvolutionMessageId(result?.data);
         if (result?.error) {
-          console.warn("[CHAT] VPS sendText falhou, tentando Evolution direto:", result?.error);
-          try {
-            const direct = await evolutionSendText(connected.instanceName, selectedLead.phone, content);
-            evolutionMsgId = getEvolutionMessageId(direct);
-          } catch (err) {
-            throw new Error(result?.error || (err instanceof Error ? err.message : "Falha ao enviar mensagem"));
-          }
-        } else {
-          evolutionMsgId = proxyMessageId;
+          throw new Error(result.error);
         }
+        if (!proxyMessageId) {
+          throw new Error("WhatsApp não confirmou o envio da mensagem");
+        }
+        evolutionMsgId = proxyMessageId;
       } else if (type === "image" || type === "video" || type === "document" || type === "audio") {
         const mediaFile = (extra as any)?._mediaFile as File | undefined;
         const mediaBase64 = (extra as any)?._mediaBase64 as string | undefined;
