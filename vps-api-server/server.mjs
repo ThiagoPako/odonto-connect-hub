@@ -3064,7 +3064,8 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
     if (!result.ok) {
       const errMsg = getEvolutionErrorMessage(result);
       console.error(`❌ send-text failed for ${instance} → ${cleanNumber}: ${errMsg}`, result.data);
-      return res.status(result.status || 502).json({ error: errMsg, details: result.data });
+      const httpStatus = result.status === 401 || result.status === 403 ? 502 : (result.status || 502);
+      return res.status(httpStatus).json({ error: errMsg, details: result.data });
     }
 
     const messageId = extractEvolutionMessageId(result.data);
@@ -3078,7 +3079,7 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
 
     res.json(result.data);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
   }
 });
 
