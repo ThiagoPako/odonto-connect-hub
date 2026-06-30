@@ -675,6 +675,54 @@ function ChatPage() {
     });
   }, [selectedLead?.id]);
 
+  // ─── Polling fallback: re-fetch most recent messages for the active lead ───
+  // Garante recebimento em "tempo real" mesmo quando o SSE/EventSource falha
+  // (proxy buffering, perda de conexão, tenant mismatch, etc.).
+  useEffect(() => {
+    if (!selectedLead?.id) return;
+    const leadId = selectedLead.id;
+    let cancelled = false;
+
+    const tick = async () => {
+      try {
+        const { data } = await messagesApi.list(leadId, { limit: 30 });
+        if (cancelled || !data?.messages?.length) return;
+        setMessages((prev) => {
+          const existing = prev[leadId] || [];
+          const existingIds = new Set(existing.map((m) => m.id));
+          const incoming = data.messages
+            .filter((m: ChatMessageApi) => !existingIds.has(m.id))
+            .map((m: ChatMessageApi) => ({
+              id: m.id,
+              leadId: m.lead_id,
+              content: m.content,
+              sender: m.sender,
+              type: (m.type as MessageType) || "text",
+              timestamp: new Date(m.timestamp),
+              status: (m.status as any) || "delivered",
+              fileName: m.file_name || undefined,
+              fileUrl: resolveMediaUrl(m.media_url) || undefined,
+              mimeType: m.mime_type || undefined,
+              reactions: Array.isArray(m.reactions) ? m.reactions : [],
+            } as ChatMessage));
+          if (incoming.length === 0) return prev;
+          const merged = [...existing, ...incoming].sort(
+            (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+          );
+          return { ...prev, [leadId]: merged };
+        });
+      } catch {
+        /* swallow — próxima iteração tenta de novo */
+      }
+    };
+
+    const interval = window.setInterval(() => void tick(), 4000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [selectedLead?.id]);
+
   const handleLoadMore = async () => {
     if (!selectedLead || historyLoading) return;
     const currentMessages = messages[selectedLead.id] || [];
