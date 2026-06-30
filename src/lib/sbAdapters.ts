@@ -966,6 +966,7 @@ export const sbMessagesApi = {
     params?: { before?: string; limit?: number },
   ): Promise<Result<{ messages: any[]; hasMore: boolean }>> => {
     const limit = params?.limit ?? 50;
+    const tenant_id = await getTenantId();
     let q = supabase
       .from('chat_messages')
       .select('*')
@@ -975,7 +976,47 @@ export const sbMessagesApi = {
     if (params?.before) q = q.lt('timestamp', params.before);
     const { data, error } = await q;
     if (error) return { data: null, error: err(error) };
-    const rows = (data ?? []) as Record<string, any>[];
+
+    let rows = (data ?? []) as Record<string, any>[];
+
+    // Some older webhook/import versions persisted WhatsApp messages with the
+    // phone filled but with lead_id missing or not matching the CRM lead UUID.
+    // When the queue resolves the lead by phone, opening the chat would then
+    // show an empty conversation. If the exact lead_id lookup returns nothing,
+    // recover by matching the same tenant + last 11 digits of the phone.
+    if (rows.length === 0 && tenant_id) {
+      let phoneSuffix = normalizePhoneDigits(leadId).slice(-11);
+      if (!phoneSuffix || phoneSuffix.length < 8) {
+        const { data: leadPhone } = await supabase
+          .from('crm_leads')
+          .select('telefone')
+          .eq('tenant_id', tenant_id)
+          .eq('id', leadId)
+          .maybeSingle();
+        phoneSuffix = normalizePhoneDigits((leadPhone as any)?.telefone).slice(-11);
+      }
+
+      if (phoneSuffix) {
+        let phoneQuery = supabase
+          .from('chat_messages')
+          .select('*')
+          .eq('tenant_id', tenant_id)
+          .order('timestamp', { ascending: false })
+          .limit(1000);
+        if (params?.before) phoneQuery = phoneQuery.lt('timestamp', params.before);
+        const { data: phoneRows, error: phoneError } = await phoneQuery;
+        if (!phoneError) {
+          rows = ((phoneRows ?? []) as Record<string, any>[])
+            .filter((row) => {
+              const meta = (row.metadata ?? {}) as Record<string, any>;
+              const rowPhone = normalizePhoneDigits(row.phone || meta.remoteJidAlt || meta.remoteJid || '');
+              return String(row.lead_id ?? '') === leadId || rowPhone.endsWith(phoneSuffix);
+            })
+            .slice(0, limit + 1);
+        }
+      }
+    }
+
     const hasMore = rows.length > limit;
     const sliced = hasMore ? rows.slice(0, limit) : rows;
     // Return oldest-first
@@ -1076,6 +1117,7 @@ export const sbMessagesApi = {
     const { data: msgs, error } = await supabase
       .from('chat_messages')
       .select('lead_id, timestamp, sender')
+      .eq('tenant_id', tenant_id)
       .neq('sender', 'attendant')
       .order('timestamp', { ascending: false })
       .limit(1000);
@@ -1092,12 +1134,14 @@ export const sbMessagesApi = {
   },
 
   search: async (q: string, leadId?: string): Promise<Result<any[]>> => {
+    const tenant_id = await getTenantId();
     let query = supabase
       .from('chat_messages')
       .select('*')
       .ilike('content', `%${q}%`)
       .order('timestamp', { ascending: false })
       .limit(50);
+    if (tenant_id) query = query.eq('tenant_id', tenant_id);
     if (leadId) query = query.eq('lead_id', leadId);
     const { data, error } = await query;
     if (error) return { data: null, error: err(error) };
