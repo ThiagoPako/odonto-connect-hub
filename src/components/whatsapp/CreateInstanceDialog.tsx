@@ -5,6 +5,7 @@ import { Label } from "@/components/ui/label";
 import { Loader2 } from "lucide-react";
 import { useState } from "react";
 import { whatsappApi } from "@/lib/vpsApi";
+import { supabase } from "@/integrations/supabase/client";
 
 interface CreateInstanceDialogProps {
   open: boolean;
