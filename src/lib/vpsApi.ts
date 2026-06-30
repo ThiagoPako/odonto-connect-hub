@@ -8,6 +8,7 @@
  */
 
 import { supabase } from "@/integrations/supabase/client";
+import { sbMessagesApi, sbQueueLeadsApi } from "./sbAdapters";
 
 // Lovable preview (lovableproject.com / lovable.app) doesn't proxy /api to the VPS,
 // so we must hit the absolute VPS URL there. Only localhost uses the local proxy.
@@ -868,10 +869,16 @@ export interface ChatMessageApi {
 }
 
 export const messagesApi = {
-  list: (leadId: string, params?: { before?: string; limit?: number }) =>
-    vpsApiFetch<{ messages: ChatMessageApi[]; hasMore: boolean }>(`/messages/${leadId}`, {
+  list: async (leadId: string, params?: { before?: string; limit?: number }) => {
+    const vpsResult = await vpsApiFetch<{ messages: ChatMessageApi[]; hasMore: boolean }>(`/messages/${leadId}`, {
       params: Object.fromEntries(Object.entries(params || {}).map(([key, value]) => [key, String(value)])),
-    }),
+    });
+    if (vpsResult.error || (vpsResult.data?.messages?.length ?? 0) === 0) {
+      const sbResult = await sbMessagesApi.list(leadId, params);
+      if (!sbResult.error && (sbResult.data?.messages?.length ?? 0) > 0) return sbResult;
+    }
+    return vpsResult;
+  },
   save: (body: {
     id: string;
     leadId: string;
@@ -893,12 +900,25 @@ export const messagesApi = {
     vpsApiFetch<{ success: boolean }>(`/messages/${id}/status`, { method: 'PUT', body: { status } }),
   delete: (id: string, hard = false) =>
     vpsApiFetch<{ success: boolean }>(`/messages/${id}`, { method: 'DELETE', params: hard ? { hard: 'true' } : undefined }),
-  unreadCounts: () => vpsApiFetch<Record<string, number>>('/messages/unread', { background: true }),
-  search: (q: string, leadId?: string) =>
-    vpsApiFetch<ChatMessageApi[]>('/messages/search', {
+  unreadCounts: async () => {
+    const vpsResult = await vpsApiFetch<Record<string, number>>('/messages/unread', { background: true });
+    if (vpsResult.error || Object.keys(vpsResult.data || {}).length === 0) {
+      const sbResult = await sbMessagesApi.unreadCounts();
+      if (!sbResult.error && Object.keys(sbResult.data || {}).length > 0) return sbResult;
+    }
+    return vpsResult;
+  },
+  search: async (q: string, leadId?: string) => {
+    const vpsResult = await vpsApiFetch<ChatMessageApi[]>('/messages/search', {
       params: { q, ...(leadId ? { lead_id: leadId } : {}) },
       background: true,
-    }),
+    });
+    if (vpsResult.error || (vpsResult.data?.length ?? 0) === 0) {
+      const sbResult = await sbMessagesApi.search(q, leadId);
+      if (!sbResult.error && (sbResult.data?.length ?? 0) > 0) return sbResult;
+    }
+    return vpsResult;
+  },
 };
 
 // ─── Media Upload ───────────────────────────────────────────
@@ -929,7 +949,22 @@ export const mediaApi = {
 // ─── Queue Leads ────────────────────────────────────────────
 
 export const queueLeadsApi = {
-  list: () => vpsApiFetch<{ queue: unknown[]; active: unknown[] }>('/queue/leads', { background: true }),
+  list: async () => {
+    const vpsResult = await vpsApiFetch<{ queue: unknown[]; active: unknown[] }>('/queue/leads', { background: true });
+
+    // Defensive fallback: the messages are already in Supabase, but if the VPS
+    // tenant/auth bridge is stale after deploy and returns an empty queue, read
+    // the persisted chat tables directly so Comercial/Chat never shows a false
+    // "Nenhum lead" while WhatsApp messages exist.
+    if (vpsResult.error || (((vpsResult.data?.queue?.length ?? 0) + (vpsResult.data?.active?.length ?? 0)) === 0)) {
+      const sbResult = await sbQueueLeadsApi.list();
+      if (!sbResult.error && ((sbResult.data?.queue?.length ?? 0) + (sbResult.data?.active?.length ?? 0)) > 0) {
+        return sbResult;
+      }
+    }
+
+    return vpsResult;
+  },
 };
 
 // ─── Automations ────────────────────────────────────────────
