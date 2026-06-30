@@ -6551,15 +6551,11 @@ app.get('/api/events', async (req, res) => {
       // This also fixes old/legacy tokens carrying a stale/placeholder tenant_id,
       // which made the chat connect but miss all webhook broadcasts.
       if (authenticated && requestedTenantId && authenticatedUserId && tenantId !== requestedTenantId) {
-        try {
-          const { rows } = await pool.query(
-            `SELECT tenant_id FROM profiles WHERE id = $1 AND tenant_id = $2 LIMIT 1`,
-            [authenticatedUserId, requestedTenantId]
-          );
-          if (rows[0]?.tenant_id) tenantId = rows[0].tenant_id;
-        } catch (tenantErr) {
-          console.warn('📡 SSE tenant query fallback failed:', tenantErr.message);
-        }
+        const validatedTenant = await validateRequestedTenantForUser(
+          { id: authenticatedUserId, tenant_id: tenantId, is_super_admin: decoded?.is_super_admin },
+          requestedTenantId
+        );
+        if (validatedTenant) tenantId = validatedTenant;
       }
     } catch (err) {
       console.warn('📡 SSE connection failed: invalid token');
