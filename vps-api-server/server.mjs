@@ -7842,12 +7842,29 @@ app.post('/api/sessions/assign', async (req, res) => {
     ).catch(err => console.error('Failed to update kanban_stage:', err.message));
 
     if (result.rows.length === 0) {
-      // No waiting session, create one as active directly
-      const id = crypto.randomUUID();
+      // No waiting session — try to enrich from chat_messages (orphan leads)
+      let leadPhone = null;
+      let leadName = null;
+      try {
+        const { rows: msgRows } = await pool.query(
+          `SELECT phone, lead_name FROM chat_messages
+            WHERE tenant_id = $1 AND (lead_id = $2 OR id::text = $2)
+            ORDER BY timestamp DESC LIMIT 1`,
+          [user.tenant_id, leadId]
+        );
+        if (msgRows[0]) {
+          leadPhone = msgRows[0].phone || null;
+          leadName = msgRows[0].lead_name || null;
+        }
+      } catch (e) {
+        console.warn('[sessions/assign] enrich lookup failed:', e.message);
+      }
+
+      const id = randomUUID();
       await pool.query(
-        `INSERT INTO attendance_sessions (id, lead_id, attendant_id, attendant_name, assigned_at, started_waiting_at, status, wait_time_seconds, tenant_id)
-         VALUES ($1,$2,$3,$4, NOW(), NOW(), 'active', 0, $5)`,
-        [id, leadId, user.id, attendantName, user.tenant_id]
+        `INSERT INTO attendance_sessions (id, lead_id, lead_name, lead_phone, attendant_id, attendant_name, assigned_at, started_waiting_at, status, wait_time_seconds, tenant_id)
+         VALUES ($1,$2,$3,$4,$5,$6, NOW(), NOW(), 'active', 0, $7)`,
+        [id, leadId, leadName, leadPhone, user.id, attendantName, user.tenant_id]
       );
       return res.json({ success: true, id, waitTime: 0 });
     }
