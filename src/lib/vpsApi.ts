@@ -21,6 +21,20 @@ const VPS_API_BASE = (() => {
   return 'https://backend.odontoconnect.tech/api';
 })();
 const TOKEN_KEY = 'odonto_jwt'; // legacy — mantido só para cleanup
+const TENANT_KEY = 'odonto_active_tenant_id';
+
+export function getCachedTenantId(): string | null {
+  if (typeof window === 'undefined') return null;
+  try { return localStorage.getItem(TENANT_KEY); } catch { return null; }
+}
+
+export function setCachedTenantId(tenantId: string | null | undefined): void {
+  if (typeof window === 'undefined') return;
+  try {
+    if (tenantId) localStorage.setItem(TENANT_KEY, tenantId);
+    else localStorage.removeItem(TENANT_KEY);
+  } catch { /* ignore */ }
+}
 
 function isAuthError(status: number, _error: unknown): boolean {
   return status === 401;
@@ -81,6 +95,8 @@ export async function getAuthHeaders(forceRefresh = false): Promise<Record<strin
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   const token = await getAccessToken(forceRefresh);
   if (token) headers['Authorization'] = `Bearer ${token}`;
+  const cachedTenantId = getCachedTenantId();
+  if (cachedTenantId) headers['X-Tenant-Id'] = cachedTenantId;
   
   // Try to get tenant_id from local storage cache or fetch it
   try {
@@ -93,6 +109,7 @@ export async function getAuthHeaders(forceRefresh = false): Promise<Record<strin
         .maybeSingle();
       if (profile?.tenant_id) {
         headers['X-Tenant-Id'] = profile.tenant_id;
+        setCachedTenantId(profile.tenant_id);
       }
     }
   } catch (e) {
