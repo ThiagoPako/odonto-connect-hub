@@ -8,7 +8,7 @@
  */
 
 import { supabase } from "@/integrations/supabase/client";
-import { sbMessagesApi, sbQueueLeadsApi } from "./sbAdapters";
+import { sbMessagesApi, sbQueueLeadsApi, sbSessionsApi } from "./sbAdapters";
 
 // Lovable preview (lovableproject.com / lovable.app) doesn't proxy /api to the VPS,
 // so we must hit the absolute VPS URL there. Only localhost uses the local proxy.
@@ -757,8 +757,13 @@ export const transferApi = {
 export const sessionsApi = {
   start: (body: { leadId: string; leadName?: string; leadPhone?: string; queueId?: string; queueName?: string }) =>
     vpsApiFetch<{ success: boolean; id: string; existing?: boolean }>('/sessions/start', { method: 'POST', body }),
-  assign: (body: { leadId: string }) =>
-    vpsApiFetch<{ success: boolean; id: string; waitTime?: number }>('/sessions/assign', { method: 'POST', body }),
+  assign: async (body: { leadId: string }) => {
+    const primary = await vpsApiFetch<{ success: boolean; id: string; waitTime?: number }>('/sessions/assign', { method: 'POST', body });
+    if (!primary.error) return primary;
+
+    console.warn('[sessionsApi.assign] VPS failed, trying Supabase fallback:', primary.error);
+    return sbSessionsApi.assign(body);
+  },
   firstResponse: (body: { leadId: string }) =>
     vpsApiFetch<{ success: boolean }>('/sessions/first-response', { method: 'POST', body, background: true }),
   close: (body: unknown) =>

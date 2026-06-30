@@ -7822,23 +7822,71 @@ app.post('/api/sessions/assign', async (req, res) => {
     const { user } = await verifyUser(req);
     const { leadId } = req.body;
     if (!leadId) return res.status(400).json({ error: 'leadId obrigatório' });
+    if (!isValidTenantId(user.tenant_id)) return res.status(400).json({ error: 'Tenant inválido para assumir atendimento' });
 
     const { rows } = await pool.query('SELECT nome FROM profiles WHERE id = $1', [user.id]);
     const attendantName = rows[0]?.nome || 'Atendente';
 
     const result = await pool.query(
-      `UPDATE attendance_sessions SET 
-         attendant_id = $1, attendant_name = $2, assigned_at = NOW(), status = 'active',
-         wait_time_seconds = EXTRACT(EPOCH FROM (NOW() - started_waiting_at))::INTEGER
-       WHERE lead_id = $3 AND tenant_id = $4 AND status = 'waiting'
-       RETURNING id, wait_time_seconds`,
+      `WITH target_session AS (
+         SELECT id
+           FROM attendance_sessions s
+          WHERE s.tenant_id = $4
+            AND s.status = 'waiting'
+            AND (
+              s.lead_id = $3
+              OR (
+                REGEXP_REPLACE($3, '\\D', '', 'g') <> ''
+                AND RIGHT(REGEXP_REPLACE(COALESCE(s.lead_phone, ''), '\\D', '', 'g'), 11) = RIGHT(REGEXP_REPLACE($3, '\\D', '', 'g'), 11)
+              )
+              OR EXISTS (
+                SELECT 1
+                  FROM crm_leads l
+                 WHERE l.tenant_id = $4
+                   AND (
+                     l.id::text = $3
+                     OR (
+                       REGEXP_REPLACE($3, '\\D', '', 'g') <> ''
+                       AND RIGHT(REGEXP_REPLACE(COALESCE(l.telefone, ''), '\\D', '', 'g'), 11) = RIGHT(REGEXP_REPLACE($3, '\\D', '', 'g'), 11)
+                     )
+                   )
+                   AND (
+                     s.lead_id = l.id::text
+                     OR (
+                       s.lead_phone IS NOT NULL
+                       AND RIGHT(REGEXP_REPLACE(COALESCE(s.lead_phone, ''), '\\D', '', 'g'), 11) = RIGHT(REGEXP_REPLACE(COALESCE(l.telefone, ''), '\\D', '', 'g'), 11)
+                     )
+                   )
+              )
+            )
+          ORDER BY s.created_at DESC
+          LIMIT 1
+       )
+       UPDATE attendance_sessions s SET 
+         attendant_id = $1,
+         attendant_name = $2,
+         assigned_at = NOW(),
+         status = 'active',
+         wait_time_seconds = COALESCE(EXTRACT(EPOCH FROM (NOW() - s.started_waiting_at))::INTEGER, 0)
+       FROM target_session
+       WHERE s.id = target_session.id
+       RETURNING s.id, s.wait_time_seconds`,
       [user.id, attendantName, leadId, user.tenant_id]
     );
 
     // Auto-move lead to "em_atendimento" in CRM kanban
     await pool.query(
-      `UPDATE crm_leads SET kanban_stage = 'em_atendimento', status = 'em_atendimento', updated_at = NOW() WHERE id = $1 AND tenant_id = $2`,
-      [leadId, user.tenant_id]
+      `UPDATE crm_leads
+          SET kanban_stage = 'em_atendimento', status = 'em_atendimento', updated_at = NOW()
+        WHERE tenant_id = $2
+          AND (
+            id::text = $1
+            OR (
+              REGEXP_REPLACE($1, '\\D', '', 'g') <> ''
+              AND RIGHT(REGEXP_REPLACE(COALESCE(telefone, ''), '\\D', '', 'g'), 11) = RIGHT(REGEXP_REPLACE($1, '\\D', '', 'g'), 11)
+            )
+          )`,
+      [String(leadId), user.tenant_id]
     ).catch(err => console.error('Failed to update kanban_stage:', err.message));
 
     if (result.rows.length === 0) {
@@ -7847,17 +7895,64 @@ app.post('/api/sessions/assign', async (req, res) => {
       let leadName = null;
       try {
         const { rows: msgRows } = await pool.query(
-          `SELECT phone, lead_name FROM chat_messages
-            WHERE tenant_id = $1 AND (lead_id = $2 OR id::text = $2)
-            ORDER BY timestamp DESC LIMIT 1`,
-          [user.tenant_id, leadId]
+          `SELECT
+             cm.phone,
+             COALESCE(
+               NULLIF(cm.metadata->>'contactName', ''),
+               NULLIF(cm.metadata->>'pushName', ''),
+               NULLIF(cm.metadata->>'notifyName', ''),
+               NULLIF(l.nome, '')
+             ) AS lead_name,
+             l.telefone AS crm_phone
+           FROM chat_messages cm
+           LEFT JOIN crm_leads l
+             ON l.tenant_id = cm.tenant_id
+            AND (
+              l.id::text = cm.lead_id
+              OR (cm.phone IS NOT NULL AND RIGHT(REGEXP_REPLACE(COALESCE(l.telefone, ''), '\\D', '', 'g'), 11) = RIGHT(REGEXP_REPLACE(cm.phone, '\\D', '', 'g'), 11))
+            )
+          WHERE cm.tenant_id = $1
+            AND (
+              cm.lead_id = $2
+              OR cm.id::text = $2
+              OR (
+                REGEXP_REPLACE($2, '\\D', '', 'g') <> ''
+                AND RIGHT(REGEXP_REPLACE(COALESCE(cm.phone, ''), '\\D', '', 'g'), 11) = RIGHT(REGEXP_REPLACE($2, '\\D', '', 'g'), 11)
+              )
+            )
+          ORDER BY cm.timestamp DESC
+          LIMIT 1`,
+          [user.tenant_id, String(leadId)]
         );
         if (msgRows[0]) {
-          leadPhone = msgRows[0].phone || null;
+          leadPhone = msgRows[0].phone || msgRows[0].crm_phone || null;
           leadName = msgRows[0].lead_name || null;
         }
       } catch (e) {
         console.warn('[sessions/assign] enrich lookup failed:', e.message);
+      }
+
+      if (!leadName || !leadPhone) {
+        try {
+          const { rows: leadRows } = await pool.query(
+            `SELECT nome, telefone
+               FROM crm_leads
+              WHERE tenant_id = $2
+                AND (
+                  id::text = $1
+                  OR (
+                    REGEXP_REPLACE($1, '\\D', '', 'g') <> ''
+                    AND RIGHT(REGEXP_REPLACE(COALESCE(telefone, ''), '\\D', '', 'g'), 11) = RIGHT(REGEXP_REPLACE($1, '\\D', '', 'g'), 11)
+                  )
+                )
+              LIMIT 1`,
+            [String(leadId), user.tenant_id]
+          );
+          leadName = leadName || leadRows[0]?.nome || null;
+          leadPhone = leadPhone || leadRows[0]?.telefone || null;
+        } catch (e) {
+          console.warn('[sessions/assign] CRM enrich lookup failed:', e.message);
+        }
       }
 
       const id = randomUUID();
