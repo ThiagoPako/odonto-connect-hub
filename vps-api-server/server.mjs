@@ -665,6 +665,16 @@ function verifyToken(token) {
   return jwt.verify(token, JWT_SECRET);
 }
 
+function looksLikeSupabaseAccessToken(decoded) {
+  if (!decoded || typeof decoded !== 'object') return false;
+  const issuer = String(decoded.iss || '');
+  const audience = String(decoded.aud || '');
+  return issuer.includes('/auth/v1')
+    || audience === 'authenticated'
+    || !!decoded.app_metadata
+    || !!decoded.user_metadata;
+}
+
 async function verifyUser(req) {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) throw new Error('Unauthorized');
@@ -675,6 +685,11 @@ async function verifyUser(req) {
   let decoded = null;
   try {
     decoded = verifyToken(token);
+    // If JWT_SECRET matches the Supabase project JWT secret, a Supabase access
+    // token also verifies here. Do not treat it as our legacy VPS token, because
+    // it does not contain tenant_id/is_super_admin in the legacy shape. Force the
+    // Supabase bridge path so profile, tenant and role are resolved correctly.
+    if (looksLikeSupabaseAccessToken(decoded)) decoded = null;
   } catch {
     decoded = null;
   }
