@@ -665,6 +665,16 @@ function verifyToken(token) {
   return jwt.verify(token, JWT_SECRET);
 }
 
+function looksLikeSupabaseAccessToken(decoded) {
+  if (!decoded || typeof decoded !== 'object') return false;
+  const issuer = String(decoded.iss || '');
+  const audience = String(decoded.aud || '');
+  return issuer.includes('/auth/v1')
+    || audience === 'authenticated'
+    || !!decoded.app_metadata
+    || !!decoded.user_metadata;
+}
+
 async function verifyUser(req) {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) throw new Error('Unauthorized');
@@ -675,6 +685,11 @@ async function verifyUser(req) {
   let decoded = null;
   try {
     decoded = verifyToken(token);
+    // If JWT_SECRET matches the Supabase project JWT secret, a Supabase access
+    // token also verifies here. Do not treat it as our legacy VPS token, because
+    // it does not contain tenant_id/is_super_admin in the legacy shape. Force the
+    // Supabase bridge path so profile, tenant and role are resolved correctly.
+    if (looksLikeSupabaseAccessToken(decoded)) decoded = null;
   } catch {
     decoded = null;
   }
@@ -1759,26 +1774,47 @@ app.get('/api/health', async (req, res) => {
 app.get('/api/auth/me', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
-    const { rows } = await pool.query(
-      `SELECT p.id, p.nome as name, p.email, p.avatar_url, ur.role as user_role,
-              p.tenant_id, COALESCE(p.is_super_admin, false) as is_super_admin,
-              t.metadata as tenant_metadata
-         FROM profiles p 
-         LEFT JOIN user_roles ur ON ur.user_id = p.id
-         LEFT JOIN tenants t ON t.id = p.tenant_id
-        WHERE p.id = $1 LIMIT 1`,
-      [user.id]
-    );
+    const { rows } = await pool.query('SELECT * FROM profiles WHERE id = $1 LIMIT 1', [user.id]);
     if (rows.length === 0) return res.status(404).json({ error: 'Perfil não encontrado' });
+
     const profile = rows[0];
+    let userRole = user.role || profile.role || 'user';
+    let tenantMetadata = {};
+
+    try {
+      const { rows: roleRows } = await pool.query(
+        'SELECT role FROM user_roles WHERE user_id = $1 LIMIT 1',
+        [user.id]
+      );
+      if (roleRows[0]?.role) userRole = roleRows[0].role;
+    } catch (roleError) {
+      console.warn('auth/me role lookup failed:', roleError.message);
+    }
+
+    if (profile.tenant_id) {
+      try {
+        const { rows: tenantRows } = await pool.query(
+          'SELECT metadata FROM tenants WHERE id = $1 LIMIT 1',
+          [profile.tenant_id]
+        );
+        tenantMetadata = tenantRows[0]?.metadata || {};
+      } catch (tenantError) {
+        console.warn('auth/me tenant metadata lookup failed:', tenantError.message);
+      }
+    }
+
     res.json({
-      id: profile.id, email: profile.email, name: profile.name,
-      role: profile.user_role || user.role || 'user', avatar_url: profile.avatar_url,
+      id: profile.id,
+      email: profile.email || user.email,
+      name: profile.nome || profile.name || user.email || '',
+      role: userRole,
+      avatar_url: profile.avatar_url,
       tenant_id: profile.tenant_id || null,
       is_super_admin: !!profile.is_super_admin,
-      tenant_features: profile.tenant_metadata?.features || {},
+      tenant_features: tenantMetadata?.features || {},
     });
   } catch (error) {
+    console.error('auth/me error:', error.message);
     res.status(401).json({ error: 'Não autenticado' });
   }
 });
