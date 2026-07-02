@@ -321,29 +321,17 @@ function ChatPage() {
   }, [activeTenantId, reloadQueueLeads]);
 
   // Vincula automaticamente as instâncias conectadas em Canais ao Comercial/Chat.
-  // Se o WhatsApp já estava conectado antes de abrir esta tela, o chat ainda
-  // precisa garantir: tenant mapping + webhook + importação das conversas recentes.
+  // Não importe histórico automaticamente aqui: a importação pesada de 30 dias
+  // logo ao abrir o chat congestiona a Evolution e faz envio/recebimento parar
+  // minutos depois. Histórico deve ser importado somente pelo botão manual.
   useEffect(() => {
     if (!activeTenantId) return;
     const openInstances = connectedInstances.filter((inst) => inst.connectionState === "open");
-    for (const inst of openInstances) {
-      const instanceName = inst.instanceName;
-      if (!instanceName || syncedChatInstancesRef.current.has(instanceName)) continue;
-      syncedChatInstancesRef.current.add(instanceName);
-
-      void whatsappApi.syncChat(instanceName, 30).then(async ({ data, error }) => {
-        if (error) {
-          syncedChatInstancesRef.current.delete(instanceName);
-          console.warn("Falha ao vincular instância WhatsApp ao chat:", instanceName, error);
-          await reloadQueueLeads();
-          return;
-        }
-        await reloadQueueLeads();
-        const imported = data?.imported ?? 0;
-        if (imported > 0) {
-          toast.success(`${imported} ${imported === 1 ? "mensagem vinculada" : "mensagens vinculadas"} ao chat.`);
-        }
+    if (openInstances.some((inst) => inst.instanceName && !syncedChatInstancesRef.current.has(inst.instanceName))) {
+      openInstances.forEach((inst) => {
+        if (inst.instanceName) syncedChatInstancesRef.current.add(inst.instanceName);
       });
+      void reloadQueueLeads();
     }
   }, [activeTenantId, connectedInstances, reloadQueueLeads]);
 
