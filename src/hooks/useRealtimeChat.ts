@@ -19,6 +19,7 @@ export interface IncomingMessage {
   fileName?: string | null;
   mimeType?: string | null;
   sender?: string;
+  status?: "sending" | "sent" | "delivered" | "read" | "failed";
 }
 
 export type PresenceStatus = "available" | "composing" | "recording" | "paused" | "unavailable";
