@@ -3207,22 +3207,20 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
     if (!instance || !number || typeof text !== 'string') {
       return res.status(400).json({ error: 'instance, number e text são obrigatórios' });
     }
-    // Make sure Evolution forwards events back to our webhook before sending,
-    // otherwise the outgoing message ACK + the recipient reply never arrive.
-    ensureWebhookRegistration(instance).catch(() => {});
-
-    const rawNumber = normalizeWhatsappNumber(number);
-
-    // Best-effort JID resolution — never block the send. If Evolution's
-    // /chat/whatsappNumbers responds with a canonical JID we use it,
-    // otherwise we send the number as-is (previous working behavior).
-    let cleanNumber = rawNumber;
+    // Make sure Evolution forwards events back to our webhook before sending.
+    // If this is fire-and-forget, a newly/reconnected instance can send before
+    // ACK/reply webhooks are registered, producing one-check messages forever.
     try {
-      const check = await resolveValidWhatsAppNumber(instance, rawNumber);
-      if (check?.canonical) cleanNumber = check.canonical;
-    } catch (err) {
-      console.warn(`⚠️ send-text: number check skipped for ${rawNumber}:`, err?.message);
+      await ensureWebhookRegistration(instance);
+    } catch (webhookErr) {
+      console.warn(`⚠️ send-text: webhook registration check failed for ${instance}:`, webhookErr?.message);
     }
+
+    // Envio isolado: não trocar o destino com /chat/whatsappNumbers aqui.
+    // Esse endpoint pode retornar JID/canonical diferente e causar envio com
+    // apenas 1 check sem chegar ao cliente. Mantemos o número normalizado que
+    // veio da conversa, que era o comportamento funcional anterior.
+    const cleanNumber = normalizeWhatsappNumber(number);
 
     const result = await sendEvolutionTextMessage(instance, cleanNumber, text, quoted || null);
 
@@ -6779,6 +6777,43 @@ app.delete('/api/queues/:id', async (req, res) => {
 
 const sseClients = new Map();
 
+// ACKs da Evolution podem chegar antes do frontend salvar a mensagem enviada
+// em chat_messages. Sem essa reconciliação, a UI fica presa em um único check
+// mesmo quando o WhatsApp já confirmou entrega/leitura.
+const pendingMessageStatusByTenant = new Map();
+const MESSAGE_STATUS_PRIORITY = { failed: -1, sending: 0, sent: 1, delivered: 2, read: 3 };
+
+function pendingStatusKey(tenantId, messageId) {
+  return `${tenantId || 'unknown'}:${messageId}`;
+}
+
+function isHigherMessageStatus(nextStatus, currentStatus = 'sent') {
+  return (MESSAGE_STATUS_PRIORITY[nextStatus] ?? 0) > (MESSAGE_STATUS_PRIORITY[currentStatus] ?? 0);
+}
+
+function rememberPendingMessageStatus(tenantId, messageId, status) {
+  if (!tenantId || !messageId || !status) return;
+  const key = pendingStatusKey(tenantId, messageId);
+  const existing = pendingMessageStatusByTenant.get(key);
+  if (!existing || isHigherMessageStatus(status, existing.status)) {
+    pendingMessageStatusByTenant.set(key, { status, createdAt: Date.now() });
+  }
+
+  const expiresBefore = Date.now() - 10 * 60 * 1000;
+  for (const [entryKey, entry] of pendingMessageStatusByTenant.entries()) {
+    if (entry.createdAt < expiresBefore) pendingMessageStatusByTenant.delete(entryKey);
+  }
+}
+
+function consumePendingMessageStatus(tenantId, messageId) {
+  if (!tenantId || !messageId) return null;
+  const key = pendingStatusKey(tenantId, messageId);
+  const entry = pendingMessageStatusByTenant.get(key);
+  if (!entry) return null;
+  pendingMessageStatusByTenant.delete(key);
+  return entry.status;
+}
+
 function broadcastSSE(event, data, tenantId = null) {
   const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
   let sent = 0;
@@ -7371,7 +7406,12 @@ app.post('/api/webhook/evolution', async (req, res) => {
         const lookupIds = [...new Set([update?.messageId, key?.id, update?.keyId].filter(Boolean))];
         const primaryMessageId = lookupIds[0];
         const remoteJid = key?.remoteJid || update?.remoteJid;
-        const ack = update?.update?.status ?? update?.status ?? key?.status;
+        const ack = update?.update?.status
+          ?? update?.update?.ack
+          ?? update?.status
+          ?? update?.ack
+          ?? key?.status
+          ?? key?.ack;
 
         if (!primaryMessageId || !remoteJid || remoteJid.endsWith('@g.us')) continue;
 
@@ -7417,16 +7457,29 @@ app.post('/api/webhook/evolution', async (req, res) => {
         // Resolve LID to real phone if mapped
         phone = resolvePhoneFromLid(phone);
 
+        if (!tenantId) {
+          tenantId = await getFallbackTenantIdForIncomingMessage({
+            instanceName: instance,
+            phoneSuffix: phone.slice(-11),
+          });
+          if (!tenantId) {
+            console.warn(`⚠️ ACK ignored without tenant: instance=${instance || 'unknown'} phone=${phone.slice(-11)} ids=${lookupIds.join(',')}`);
+            continue;
+          }
+        }
+
         for (const lookupId of lookupIds) {
           console.log(`✅ ACK: ${lookupId} → ${newStatus} (ack=${ack}, phone=${phone})`);
 
           try {
-            await pool.query(
+            const { rowCount } = await pool.query(
               `UPDATE chat_messages SET status = $1 WHERE tenant_id = $3 AND (id = $2 OR (metadata::text LIKE '%' || $2 || '%'))`,
               [newStatus, lookupId, tenantId]
             );
+            if (!rowCount) rememberPendingMessageStatus(tenantId, lookupId, newStatus);
           } catch (ackErr) {
             console.error('ACK DB update error:', ackErr.message);
+            rememberPendingMessageStatus(tenantId, lookupId, newStatus);
           }
 
           broadcastSSE('message_status_update', {
@@ -7540,10 +7593,10 @@ app.post('/api/webhook/evolution', async (req, res) => {
 
     let lead = leads[0] || null;
     const pushName = message?.pushName || phone;
+    const resolvedContent = msgContent || `[${msgType}]`;
     const msgId = message?.key?.id || `wh-${createHash('sha1')
       .update(`${instance || 'unknown'}:${resolvedPhone}:${resolvedContent}:${message?.messageTimestamp || body?.date_time || ''}`)
       .digest('hex')}`;
-    const resolvedContent = msgContent || `[${msgType}]`;
     const rawType = Object.keys(message?.message || {})[0] || null;
 
     // ─── New contact: create lead + contato + check hours + send menu ───
@@ -11002,12 +11055,17 @@ app.post('/api/messages', async (req, res) => {
       if (diskUrl) persistedMediaUrl = diskUrl;
     }
 
+    const pendingStatus = consumePendingMessageStatus(user.tenant_id, id);
+    const initialStatus = pendingStatus && isHigherMessageStatus(pendingStatus, status || 'sent')
+      ? pendingStatus
+      : (status || 'sent');
+
     await pool.query(
       `INSERT INTO chat_messages (id, lead_id, content, sender, type, status, timestamp, media_url, file_name, mime_type, reply_to_id, reply_to_content, reply_to_sender, attendant_id, attendant_name, instance, phone, tenant_id)
        VALUES ($1,$2,$3,'attendant',$4,$5,NOW(),$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
        ON CONFLICT (id) DO NOTHING`,
       [
-        id, leadId, content || '', type || 'text', status || 'sent',
+        id, leadId, content || '', type || 'text', initialStatus,
         persistedMediaUrl, fileName || null, mimeType || null,
         replyTo?.messageId || null, replyTo?.content || null, replyTo?.sender || null,
         user.id, attendantName, instance || null, phone || null, user.tenant_id,
@@ -11028,6 +11086,7 @@ app.post('/api/messages', async (req, res) => {
       fileName: fileName || null,
       mimeType: mimeType || null,
       sender: 'attendant',
+      status: initialStatus,
     }, user.tenant_id);
 
     res.json({ success: true, id, mediaUrl: persistedMediaUrl });
