@@ -7598,7 +7598,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
     }
 
     // ─── Message ACK / status updates ───
-    if (isEvolutionEvent(event, 'messages.update', 'messages_update', 'send.message.update', 'send_message_update', 'message.update', 'message_update', 'send.message', 'send_message')) {
+    if (isEvolutionEvent(event, 'messages.update', 'messages_update', 'send.message.update', 'send_message_update', 'message.update', 'message_update')) {
       const updates = extractStatusUpdates(body.data || body);
       console.log(`📩 MESSAGES_UPDATE: ${updates.length} updates, raw:`, JSON.stringify(body.data || body).slice(0, 500));
       for (const update of updates) {
@@ -7664,6 +7664,11 @@ app.post('/api/webhook/evolution', async (req, res) => {
           });
           if (!tenantId) {
             console.warn(`⚠️ ACK ignored without tenant: instance=${instance || 'unknown'} phone=${phone.slice(-11)} ids=${lookupIds.join(',')}`);
+            // Do not lose this ACK. It can arrive before the instance→tenant
+            // mapping is warm or before /api/messages persists the outgoing row.
+            // Store it globally by message id; /api/messages will consume it once
+            // the frontend saves the real Evolution message id under the user tenant.
+            for (const lookupId of lookupIds) rememberPendingMessageStatus(null, lookupId, newStatus);
             continue;
           }
         }
