@@ -2116,13 +2116,18 @@ async function evolutionFetch(path, options = {}) {
   }
 
   const url = `${EVOLUTION_API_URL}${path}`;
+  const timeoutMs = Number(options.timeoutMs || process.env.EVOLUTION_API_REQUEST_TIMEOUT_MS || 15000);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    const { timeoutMs: _timeoutMs, ...fetchOptions } = options;
     const res = await fetch(url, {
-      ...options,
+      ...fetchOptions,
+      signal: fetchOptions.signal || controller.signal,
       headers: {
         'Content-Type': 'application/json',
         apikey: EVOLUTION_API_KEY,
-        ...options.headers,
+        ...fetchOptions.headers,
       },
     });
     const data = await res.json().catch(() => ({}));
@@ -2132,7 +2137,9 @@ async function evolutionFetch(path, options = {}) {
     return { ok: res.ok, status: res.status, data };
   } catch (err) {
     console.error(`❌ Evolution fetch error (${path}):`, err.message);
-    return { ok: false, status: 500, data: { error: err.message } };
+    return { ok: false, status: err.name === 'AbortError' ? 504 : 500, data: { error: err.name === 'AbortError' ? 'Evolution API timeout' : err.message } };
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
