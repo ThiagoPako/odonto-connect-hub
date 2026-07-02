@@ -10980,7 +10980,21 @@ async function importWhatsAppMessagesForTenant({ tenantId, requestedInstances = 
     .filter((i) => !requestedSet || requestedSet.has(i.name));
 
   // Strong tenant binding: only import instances owned by this clinic naming convention.
-  connected = connected.filter((i) => String(i.name).toLowerCase().startsWith(prefix));
+  let ownedInstanceNames = new Set();
+  try {
+    const { rows } = await pool.query(
+      `SELECT instance_name FROM whatsapp_instances WHERE tenant_id = $1`,
+      [tenantId]
+    );
+    ownedInstanceNames = new Set(rows.map((row) => String(row.instance_name || '')).filter(Boolean));
+  } catch (ownedErr) {
+    console.warn(`[import-whatsapp] could not load owned instances for tenant ${tenantId}:`, ownedErr.message);
+  }
+
+  connected = connected.filter((i) => {
+    const name = String(i.name || '');
+    return name.toLowerCase().startsWith(prefix) || ownedInstanceNames.has(name);
+  });
 
   if (connected.length === 0) {
     return { imported: 0, skipped: 0, instances: [], message: 'Nenhuma instância conectada/selecionada deste tenant' };
