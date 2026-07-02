@@ -585,7 +585,7 @@ async function resolveSupabaseUser(token) {
   let role = profile.role || 'user';
   try {
     const roleRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/user_roles?user_id=eq.${sbUser.id}&select=role&limit=1`,
+      `${SUPABASE_URL}/rest/v1/user_roles?user_id=eq.${sbUser.id}&select=role,tenant_id&limit=1`,
       {
         headers: {
           apikey: restAuthKey,
@@ -7245,6 +7245,10 @@ app.get('/api/events', async (req, res) => {
       let decoded = null;
       try {
         decoded = verifyToken(token);
+        if (looksLikeSupabaseAccessToken(decoded)) {
+          decoded = null;
+          throw new Error('supabase_token_requires_bridge');
+        }
         tenantId = decoded?.tenant_id;
         authenticatedUserId = decoded?.sub || decoded?.id || null;
         authenticatedIsSuperAdmin = !!decoded?.is_super_admin;
