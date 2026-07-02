@@ -6791,6 +6791,154 @@ function isHigherMessageStatus(nextStatus, currentStatus = 'sent') {
   return (MESSAGE_STATUS_PRIORITY[nextStatus] ?? 0) > (MESSAGE_STATUS_PRIORITY[currentStatus] ?? 0);
 }
 
+function normalizeEvolutionAckStatus(ack) {
+  if (ack === null || ack === undefined) return null;
+
+  const ackStr = String(ack).trim().toUpperCase();
+  const ackNum = typeof ack === 'number' ? ack : Number.parseInt(ackStr, 10);
+
+  if (ackStr === 'ERROR' || ackStr === 'FAILED' || ackStr === 'NACK' || ackNum === 0) return 'failed';
+  if (ackStr === 'PENDING' || ackStr === 'PENDING_ACK' || ackNum === 1) return 'sent';
+  if (ackStr === 'SERVER_ACK' || ackStr === 'SENT' || ackStr === 'SEND' || ackNum === 2) return 'sent';
+  if (ackStr === 'DELIVERY_ACK' || ackStr === 'DELIVERED' || ackStr === 'RECEIVED' || ackStr === 'DEVICE_ACK' || ackNum === 3) return 'delivered';
+  if (ackStr === 'READ' || ackStr === 'READ_ACK' || ackStr === 'PLAYED' || ackStr === 'PLAYED_ACK' || ackNum === 4 || ackNum === 5) return 'read';
+
+  return null;
+}
+
+function extractStatusUpdates(data) {
+  const extracted = extractEvolutionArray(data);
+  if (extracted.length > 0) return extracted;
+  return data ? [data] : [];
+}
+
+function extractStatusLookupIds(update) {
+  const candidates = [
+    update?.messageId,
+    update?.message_id,
+    update?.keyId,
+    update?.key_id,
+    update?.id,
+    update?.key?.id,
+    update?.message?.key?.id,
+    update?.data?.key?.id,
+    update?.data?.message?.key?.id,
+    update?.update?.key?.id,
+    update?.update?.messageId,
+    update?.update?.message_id,
+    extractEvolutionMessageId(update),
+  ];
+
+  return [...new Set(candidates
+    .filter((value) => typeof value === 'string' || typeof value === 'number')
+    .map((value) => String(value).trim())
+    .filter((value) => value && !value.includes('@'))
+  )];
+}
+
+function extractStatusRemoteJid(update) {
+  const candidates = [
+    update?.key?.remoteJid,
+    update?.remoteJid,
+    update?.remote_jid,
+    update?.chatId,
+    update?.chat_id,
+    update?.jid,
+    update?.message?.key?.remoteJid,
+    update?.data?.key?.remoteJid,
+    update?.update?.key?.remoteJid,
+  ];
+
+  return candidates.find((value) => typeof value === 'string' && value.includes('@')) || null;
+}
+
+function extractStatusAckValue(update) {
+  return update?.update?.status
+    ?? update?.update?.ack
+    ?? update?.status
+    ?? update?.ack
+    ?? update?.message?.status
+    ?? update?.message?.ack
+    ?? update?.data?.status
+    ?? update?.data?.ack
+    ?? update?.key?.status
+    ?? update?.key?.ack;
+}
+
+async function findMessageStatusContext({ tenantId, lookupIds = [], phone = '', instance = '' }) {
+  const ids = [...new Set(lookupIds.map((id) => String(id || '').trim()).filter(Boolean))];
+  const clauses = [];
+  const params = [];
+
+  if (isValidTenantId(tenantId)) {
+    params.push(tenantId);
+    clauses.push(`cm.tenant_id = $${params.length}`);
+  }
+
+  const matchers = [];
+  if (ids.length > 0) {
+    params.push(ids);
+    const idsParam = params.length;
+    matchers.push(`cm.id = ANY($${idsParam}::text[])`);
+    matchers.push(`EXISTS (SELECT 1 FROM unnest($${idsParam}::text[]) AS lookup(id) WHERE cm.metadata::text LIKE '%' || lookup.id || '%')`);
+  }
+
+  const phoneSuffix = normalizeWhatsappNumber(phone).slice(-11);
+  if (phoneSuffix) {
+    params.push(phoneSuffix);
+    const phoneParam = params.length;
+    matchers.push(`RIGHT(REGEXP_REPLACE(COALESCE(cm.phone, ''), '\\D', '', 'g'), 11) = $${phoneParam}`);
+  }
+
+  if (instance) {
+    params.push(instance);
+    const instanceParam = params.length;
+    clauses.push(`(cm.instance = $${instanceParam} OR cm.instance IS NULL)`);
+  }
+
+  if (matchers.length === 0) return null;
+
+  const where = [...clauses, `(${matchers.join(' OR ')})`].join(' AND ');
+  const { rows } = await pool.query(
+    `SELECT cm.id, cm.lead_id, cm.phone, cm.instance, cm.tenant_id, cm.status
+       FROM chat_messages cm
+      WHERE ${where}
+      ORDER BY cm.timestamp DESC
+      LIMIT 1`,
+    params,
+  );
+
+  return rows[0] || null;
+}
+
+async function applyMessageStatusUpdate({ tenantId, lookupIds = [], newStatus }) {
+  const ids = [...new Set(lookupIds.map((id) => String(id || '').trim()).filter(Boolean))];
+  if (!isValidTenantId(tenantId) || ids.length === 0 || !newStatus) return [];
+
+  const nextPriority = MESSAGE_STATUS_PRIORITY[newStatus] ?? 0;
+  const { rows } = await pool.query(
+    `UPDATE chat_messages cm
+        SET status = $1
+      WHERE cm.tenant_id = $2
+        AND (
+          cm.id = ANY($3::text[])
+          OR EXISTS (SELECT 1 FROM unnest($3::text[]) AS lookup(id) WHERE cm.metadata::text LIKE '%' || lookup.id || '%')
+        )
+        AND CASE COALESCE(cm.status, 'sent')
+              WHEN 'failed' THEN -1
+              WHEN 'sending' THEN 0
+              WHEN 'sent' THEN 1
+              WHEN 'delivered' THEN 2
+              WHEN 'read' THEN 3
+              ELSE 1
+            END < $4
+      RETURNING cm.id, cm.lead_id, cm.phone, cm.instance, cm.status`,
+    [newStatus, tenantId, ids, nextPriority],
+  );
+
+  return rows;
+}
+
 function rememberPendingMessageStatus(tenantId, messageId, status) {
   if (!tenantId || !messageId || !status) return;
   const key = pendingStatusKey(tenantId, messageId);
