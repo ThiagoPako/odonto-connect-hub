@@ -610,6 +610,17 @@ async function sendPushToAll(payload) {
 }
 
 // ─── Auto-register webhook on Evolution API instance ─────────
+function webhookFindHasExpectedUrl(data) {
+  if (!data) return false;
+  return JSON.stringify(data).includes(WEBHOOK_URL);
+}
+
+async function verifyWebhookRegistration(instanceName) {
+  const check = await evolutionFetch(`/webhook/find/${instanceName}`);
+  if (!check.ok) return { ok: false, data: check.data, status: check.status };
+  return { ok: webhookFindHasExpectedUrl(check.data), data: check.data, status: check.status };
+}
+
 async function registerWebhook(instanceName) {
   try {
     const webhookConfig = {
@@ -634,29 +645,35 @@ async function registerWebhook(instanceName) {
       ],
     };
 
-    // Evolution API v2 normally expects the webhook config at the request root.
-    // Sending it nested under `webhook` can be accepted by some builds but not
-    // actually replace the active callback URL, leaving Canais "conectado" while
-    // Comercial/Chat receives nothing. Register root-first and keep the nested
-    // shape only as a fallback for older builds.
+    // Evolution API v2 expects the config nested under `webhook` on many builds.
+    // If we send only the root shape, some servers answer 200 but keep the old
+    // callback, which leaves the channel connected while Chat receives nothing.
+    // Register nested-first and use the root shape only as compatibility fallback.
     let result = await evolutionFetch(`/webhook/set/${instanceName}`, {
       method: 'POST',
-      body: JSON.stringify(webhookConfig),
+      body: JSON.stringify({ webhook: webhookConfig }),
     });
 
-    if (!result.ok) {
-      console.warn(`⚠️ Retrying webhook registration with nested payload for ${instanceName}`);
+    let verified = result.ok ? await verifyWebhookRegistration(instanceName).catch((err) => ({ ok: false, error: err.message })) : null;
+
+    if (!result.ok || !verified?.ok) {
+      console.warn(`⚠️ Retrying webhook registration with root payload for ${instanceName}${result.ok ? ' (nested payload not verified)' : ''}`);
       result = await evolutionFetch(`/webhook/set/${instanceName}`, {
         method: 'POST',
-        body: JSON.stringify({ webhook: webhookConfig }),
+        body: JSON.stringify(webhookConfig),
+      });
+      verified = result.ok ? await verifyWebhookRegistration(instanceName).catch((err) => ({ ok: false, error: err.message })) : verified;
+    }
+
+    if (result.ok && (verified?.ok || verified?.status === 404 || verified?.status === 405)) {
+      console.log(`✅ Webhook registered for ${instanceName} → ${WEBHOOK_URL}${verified?.ok ? ' (verified)' : ''}`);
+    } else {
+      console.error(`⚠️ Webhook registration failed/not verified for ${instanceName} (${WEBHOOK_URL}):`, {
+        set: result.data,
+        verify: verified?.data || verified?.error,
       });
     }
-    if (result.ok) {
-      console.log(`✅ Webhook registered for ${instanceName} → ${WEBHOOK_URL}`);
-    } else {
-      console.error(`⚠️ Webhook registration failed for ${instanceName} (${WEBHOOK_URL}):`, result.data);
-    }
-    return result;
+    return result.ok ? { ...result, verified: !!verified?.ok } : result;
   } catch (err) {
     console.error(`❌ Webhook registration error for ${instanceName}:`, err.message);
   }
@@ -2324,6 +2341,42 @@ function isUsableChatJid(jid) {
   return digits.length >= 10 && digits.length <= 13;
 }
 
+function extractActualRemoteJidFromMessage(msg) {
+  const key = msg?.key || {};
+  const primary = typeof key.remoteJid === 'string' ? key.remoteJid : '';
+  const candidates = [
+    key.remoteJidAlt,
+    key.participantAlt,
+    key.senderPn,
+    key.participantPn,
+    key.remoteJid,
+    msg?.remoteJidAlt,
+    msg?.participantAlt,
+    msg?.senderPn,
+    msg?.participantPn,
+    msg?.remoteJid,
+  ].filter((value) => typeof value === 'string' && value.includes('@'));
+
+  if (primary.includes('@lid')) {
+    const realJid = candidates.find(isUsableChatJid);
+    if (realJid) return realJid;
+  }
+
+  return primary || candidates[0] || '';
+}
+
+function rememberLidMappingFromMessage(msg, resolvedRemoteJid) {
+  const rawRemoteJid = msg?.key?.remoteJid;
+  if (!rawRemoteJid?.includes?.('@lid') || !isUsableChatJid(resolvedRemoteJid)) return;
+
+  const lidNumber = normalizeWhatsappNumber(rawRemoteJid);
+  const phoneNumber = normalizeWhatsappNumber(resolvedRemoteJid);
+  if (lidNumber && phoneNumber && lidNumber !== phoneNumber) {
+    registerLidMapping(lidNumber, phoneNumber);
+    console.log(`🔗 LID mapped from message: ${lidNumber} → ${phoneNumber}`);
+  }
+}
+
 function parseEvolutionTimestamp(value) {
   if (!value) return null;
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
@@ -2532,7 +2585,11 @@ async function ensureWebhookRegistration(instanceName) {
   if (Date.now() - lastEnsure < 5 * 60 * 1000) return { ok: true, cached: true };
   const result = await registerWebhook(instanceName);
   if (!result?.ok) {
-    throw new Error(`Webhook não registrado para ${instanceName}`);
+    // O webhook é necessário para receber respostas/ACKs, mas não pode bloquear
+    // o envio. Em algumas versões da Evolution o /webhook/set retorna formato
+    // inesperado mesmo mantendo a instância apta a enviar mensagens.
+    console.warn(`⚠️ Webhook não confirmado para ${instanceName}; envio seguirá mesmo assim.`, result?.data || result?.error || 'sem detalhes');
+    return result || { ok: false, error: 'Webhook não registrado' };
   }
   webhookEnsureTimestamps.set(instanceName, Date.now());
   return result;
@@ -3246,11 +3303,7 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
     try {
       await ensureWebhookRegistration(instance);
     } catch (webhookErr) {
-      console.warn(`⚠️ send-text: webhook registration check failed for ${instance}:`, webhookErr?.message);
-      return res.status(502).json({
-        error: 'Webhook do WhatsApp não está registrado na Evolution; envio bloqueado para evitar mensagem sem confirmação em tempo real.',
-        details: { instance, webhookUrl: WEBHOOK_URL, reason: webhookErr?.message },
-      });
+      console.warn(`⚠️ send-text: webhook registration check failed for ${instance}; continuing send:`, webhookErr?.message);
     }
 
     // Envio isolado: não trocar o destino com /chat/whatsappNumbers aqui.
@@ -3296,6 +3349,10 @@ app.post('/api/whatsapp/send-media', async (req, res) => {
     }
 
     const cleanNumber = normalizeWhatsappNumber(number);
+
+    ensureWebhookRegistration(instance).catch((webhookErr) => {
+      console.warn(`⚠️ send-media: webhook registration check failed for ${instance}; continuing send:`, webhookErr?.message);
+    });
 
     if (mediaType === 'audio') {
       const result = await sendWhatsAppAudioWithFallback(
@@ -3384,6 +3441,10 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '6
     const cleanNumber = normalizeWhatsappNumber(number);
     const resolvedMimeType = String(mimeType || req.headers['content-type'] || 'application/octet-stream');
     jobId = randomUUID();
+
+    ensureWebhookRegistration(String(instance)).catch((webhookErr) => {
+      console.warn(`⚠️ send-media-upload: webhook registration check failed for ${instance}; continuing send:`, webhookErr?.message);
+    });
 
     mediaSendJobs.set(jobId, {
       status: 'processing',
@@ -6820,8 +6881,12 @@ const sseClients = new Map();
 const pendingMessageStatusByTenant = new Map();
 const MESSAGE_STATUS_PRIORITY = { failed: -1, sending: 0, sent: 1, delivered: 2, read: 3 };
 
+function normalizePendingStatusMessageId(messageId) {
+  return String(messageId || '').trim().toLowerCase();
+}
+
 function pendingStatusKey(tenantId, messageId) {
-  return `${tenantId || 'unknown'}:${messageId}`;
+  return `${tenantId || 'unknown'}:${normalizePendingStatusMessageId(messageId)}`;
 }
 
 function pendingStatusUnknownKey(messageId) {
@@ -6882,6 +6947,26 @@ function extractStatusLookupIds(update) {
 
 function extractStatusRemoteJid(update) {
   const candidates = [
+    update?.key?.remoteJidAlt,
+    update?.key?.participantAlt,
+    update?.key?.senderPn,
+    update?.key?.participantPn,
+    update?.remoteJidAlt,
+    update?.participantAlt,
+    update?.senderPn,
+    update?.participantPn,
+    update?.message?.key?.remoteJidAlt,
+    update?.message?.key?.participantAlt,
+    update?.message?.key?.senderPn,
+    update?.message?.key?.participantPn,
+    update?.data?.key?.remoteJidAlt,
+    update?.data?.key?.participantAlt,
+    update?.data?.key?.senderPn,
+    update?.data?.key?.participantPn,
+    update?.update?.key?.remoteJidAlt,
+    update?.update?.key?.participantAlt,
+    update?.update?.key?.senderPn,
+    update?.update?.key?.participantPn,
     update?.key?.remoteJid,
     update?.remoteJid,
     update?.remote_jid,
@@ -6893,7 +6978,8 @@ function extractStatusRemoteJid(update) {
     update?.update?.key?.remoteJid,
   ];
 
-  return candidates.find((value) => typeof value === 'string' && value.includes('@')) || null;
+  const values = candidates.filter((value) => typeof value === 'string' && value.includes('@'));
+  return values.find(isUsableChatJid) || values[0] || null;
 }
 
 function extractStatusAckValue(update) {
@@ -6984,8 +7070,9 @@ async function applyMessageStatusUpdate({ tenantId, lookupIds = [], newStatus })
 }
 
 function rememberPendingMessageStatus(tenantId, messageId, status) {
-  if (!messageId || !status) return;
-  const key = pendingStatusKey(tenantId, messageId);
+  const normalizedMessageId = normalizePendingStatusMessageId(messageId);
+  if (!normalizedMessageId || !status) return;
+  const key = pendingStatusKey(tenantId, normalizedMessageId);
   const existing = pendingMessageStatusByTenant.get(key);
   if (!existing || isHigherMessageStatus(status, existing.status)) {
     pendingMessageStatusByTenant.set(key, { status, createdAt: Date.now() });
@@ -6998,8 +7085,9 @@ function rememberPendingMessageStatus(tenantId, messageId, status) {
 }
 
 function consumePendingMessageStatus(tenantId, messageId) {
-  if (!tenantId || !messageId) return null;
-  const keys = [pendingStatusKey(tenantId, messageId), pendingStatusUnknownKey(messageId)];
+  const normalizedMessageId = normalizePendingStatusMessageId(messageId);
+  if (!tenantId || !normalizedMessageId) return null;
+  const keys = [pendingStatusKey(tenantId, normalizedMessageId), pendingStatusUnknownKey(normalizedMessageId)];
   let entry = null;
   let hitKey = null;
   for (const key of keys) {
@@ -7015,13 +7103,14 @@ function consumePendingMessageStatus(tenantId, messageId) {
 }
 
 function broadcastSSE(event, data, tenantId = null) {
+  if (!isValidTenantId(tenantId)) {
+    console.warn(`⚠️ SSE broadcast '${event}' bloqueado: tenant_id ausente ou inválido`);
+    return;
+  }
   const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
   let sent = 0;
   for (const [client, info] of sseClients.entries()) {
-    // If tenantId is provided, only send to clients belonging to that tenant.
-    if (tenantId) {
-      if (info.tenantId !== tenantId) continue;
-    }
+    if (info.tenantId !== tenantId) continue;
     try {
       client.write(payload);
       sent++;
@@ -7282,13 +7371,23 @@ async function persistIncomingMessage({ msgId, leadId, content, msgType, phone, 
     const initialStatus = sender === 'lead' ? 'delivered' : 'sent';
     await pool.query(
       `INSERT INTO chat_messages (id, lead_id, content, sender, type, status, timestamp, phone, instance, media_url, file_name, mime_type, metadata, tenant_id)
-       VALUES ($1,$2,$3,$4,$5,$13,NOW(),$6,$7,$8,$9,$10,$11,$12)
+       VALUES ($1,$2,$3,$4,$5,$6,NOW(),$7,$8,$9,$10,$11,$12,$13)
        ON CONFLICT (id) DO NOTHING`,
-      [msgId, leadId, content, sender, msgType, phone, instance, mediaUrl || null, fileName || null, mimeType || null, JSON.stringify({
-        pushName,
-        remoteJid,
-        rawType,
-      }), tenantId, initialStatus]
+      [
+        msgId,
+        leadId,
+        content,
+        sender,
+        msgType,
+        initialStatus,
+        phone,
+        instance,
+        mediaUrl || null,
+        fileName || null,
+        mimeType || null,
+        JSON.stringify({ pushName, remoteJid, rawType }),
+        tenantId,
+      ]
     );
   } catch (dbErr) {
     console.error('DB insert error (incoming msg):', dbErr.message);
@@ -7708,10 +7807,11 @@ app.post('/api/webhook/evolution', async (req, res) => {
 
     const messages = extractEvolutionMessages(body.data);
     const message = messages.find((item) => {
-      const jid = item?.key?.remoteJid;
+      const jid = extractActualRemoteJidFromMessage(item);
       return jid && !String(jid).endsWith('@g.us');
     }) || messages[0];
-    const remoteJid = message?.key?.remoteJid;
+    const remoteJid = extractActualRemoteJidFromMessage(message);
+    rememberLidMappingFromMessage(message, remoteJid);
 
     // Skip group messages
     if (!remoteJid || remoteJid.endsWith('@g.us')) {
@@ -11330,13 +11430,30 @@ app.post('/api/media/upload', express.raw({ type: '*/*', limit: '64mb' }), async
 // PUT /api/messages/:id/status — atualizar status de entrega/leitura
 app.put('/api/messages/:id/status', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
     const { status } = req.body;
     if (!['sending', 'sent', 'delivered', 'read', 'failed'].includes(status)) {
       return res.status(400).json({ error: 'Status inválido' });
     }
-    await pool.query('UPDATE chat_messages SET status = $1 WHERE id = $2', [status, req.params.id]);
-    res.json({ success: true });
+    const { rows } = await pool.query(
+      `UPDATE chat_messages
+          SET status = $1
+        WHERE id = $2
+          AND tenant_id = $3
+        RETURNING id, lead_id, phone, instance, status`,
+      [status, req.params.id, user.tenant_id]
+    );
+    if (rows[0]) {
+      broadcastSSE('message_status_update', {
+        messageId: rows[0].id,
+        id: rows[0].id,
+        leadId: rows[0].lead_id,
+        phone: rows[0].phone,
+        instance: rows[0].instance,
+        status: rows[0].status,
+      }, user.tenant_id);
+    }
+    res.json({ success: true, updated: rows.length });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

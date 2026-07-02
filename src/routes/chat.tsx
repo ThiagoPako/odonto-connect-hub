@@ -87,6 +87,12 @@ function getMessagePreview(msg: IncomingMessage): string {
 function getEvolutionMessageId(data: unknown): string | null {
   if (!data || typeof data !== "object") return null;
   const value = data as Record<string, unknown>;
+  const readPlainId = (source: unknown): string | null => {
+    if (!source || typeof source !== "object") return null;
+    const record = source as Record<string, unknown>;
+    const candidate = record.messageId || record.message_id || record.id;
+    return typeof candidate === "string" && candidate.trim() ? candidate.trim() : null;
+  };
   const readId = (source: unknown): string | null => {
     if (!source || typeof source !== "object") return null;
     const key = (source as Record<string, unknown>).key;
@@ -100,7 +106,10 @@ function getEvolutionMessageId(data: unknown): string | null {
     || readId(value.data)
     || (value.data && typeof value.data === "object" ? readId((value.data as Record<string, unknown>).message) : null)
     || readId(value.response)
-    || (value.response && typeof value.response === "object" ? readId((value.response as Record<string, unknown>).message) : null);
+    || (value.response && typeof value.response === "object" ? readId((value.response as Record<string, unknown>).message) : null)
+    || readPlainId(value)
+    || readPlainId(value.data)
+    || readPlainId(value.response);
 }
 
 function normalizeInstanceName(value?: string | null): string {
