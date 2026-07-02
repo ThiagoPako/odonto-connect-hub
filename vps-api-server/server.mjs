@@ -3207,9 +3207,14 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
     if (!instance || !number || typeof text !== 'string') {
       return res.status(400).json({ error: 'instance, number e text são obrigatórios' });
     }
-    // Make sure Evolution forwards events back to our webhook before sending,
-    // otherwise the outgoing message ACK + the recipient reply never arrive.
-    ensureWebhookRegistration(instance).catch(() => {});
+    // Make sure Evolution forwards events back to our webhook before sending.
+    // If this is fire-and-forget, a newly/reconnected instance can send before
+    // ACK/reply webhooks are registered, producing one-check messages forever.
+    try {
+      await ensureWebhookRegistration(instance);
+    } catch (webhookErr) {
+      console.warn(`⚠️ send-text: webhook registration check failed for ${instance}:`, webhookErr?.message);
+    }
 
     const rawNumber = normalizeWhatsappNumber(number);
 
@@ -11057,12 +11062,17 @@ app.post('/api/messages', async (req, res) => {
       if (diskUrl) persistedMediaUrl = diskUrl;
     }
 
+    const pendingStatus = consumePendingMessageStatus(user.tenant_id, id);
+    const initialStatus = pendingStatus && isHigherMessageStatus(pendingStatus, status || 'sent')
+      ? pendingStatus
+      : (status || 'sent');
+
     await pool.query(
       `INSERT INTO chat_messages (id, lead_id, content, sender, type, status, timestamp, media_url, file_name, mime_type, reply_to_id, reply_to_content, reply_to_sender, attendant_id, attendant_name, instance, phone, tenant_id)
        VALUES ($1,$2,$3,'attendant',$4,$5,NOW(),$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
        ON CONFLICT (id) DO NOTHING`,
       [
-        id, leadId, content || '', type || 'text', status || 'sent',
+        id, leadId, content || '', type || 'text', initialStatus,
         persistedMediaUrl, fileName || null, mimeType || null,
         replyTo?.messageId || null, replyTo?.content || null, replyTo?.sender || null,
         user.id, attendantName, instance || null, phone || null, user.tenant_id,
@@ -11083,6 +11093,7 @@ app.post('/api/messages', async (req, res) => {
       fileName: fileName || null,
       mimeType: mimeType || null,
       sender: 'attendant',
+      status: initialStatus,
     }, user.tenant_id);
 
     res.json({ success: true, id, mediaUrl: persistedMediaUrl });
