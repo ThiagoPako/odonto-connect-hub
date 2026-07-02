@@ -6820,6 +6820,10 @@ function pendingStatusKey(tenantId, messageId) {
   return `${tenantId || 'unknown'}:${messageId}`;
 }
 
+function pendingStatusUnknownKey(messageId) {
+  return pendingStatusKey('unknown', messageId);
+}
+
 function isHigherMessageStatus(nextStatus, currentStatus = 'sent') {
   return (MESSAGE_STATUS_PRIORITY[nextStatus] ?? 0) > (MESSAGE_STATUS_PRIORITY[currentStatus] ?? 0);
 }
@@ -6976,7 +6980,7 @@ async function applyMessageStatusUpdate({ tenantId, lookupIds = [], newStatus })
 }
 
 function rememberPendingMessageStatus(tenantId, messageId, status) {
-  if (!tenantId || !messageId || !status) return;
+  if (!messageId || !status) return;
   const key = pendingStatusKey(tenantId, messageId);
   const existing = pendingMessageStatusByTenant.get(key);
   if (!existing || isHigherMessageStatus(status, existing.status)) {
@@ -6991,10 +6995,18 @@ function rememberPendingMessageStatus(tenantId, messageId, status) {
 
 function consumePendingMessageStatus(tenantId, messageId) {
   if (!tenantId || !messageId) return null;
-  const key = pendingStatusKey(tenantId, messageId);
-  const entry = pendingMessageStatusByTenant.get(key);
+  const keys = [pendingStatusKey(tenantId, messageId), pendingStatusUnknownKey(messageId)];
+  let entry = null;
+  let hitKey = null;
+  for (const key of keys) {
+    entry = pendingMessageStatusByTenant.get(key);
+    if (entry) {
+      hitKey = key;
+      break;
+    }
+  }
   if (!entry) return null;
-  pendingMessageStatusByTenant.delete(key);
+  pendingMessageStatusByTenant.delete(hitKey);
   return entry.status;
 }
 
