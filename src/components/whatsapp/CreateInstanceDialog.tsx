@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2 } from "lucide-react";
 import { useState } from "react";
-import { whatsappApi, getMe, getAccessToken } from "@/lib/vpsApi";
+import { whatsappApi, getAccessToken } from "@/lib/vpsApi";
 import { supabase } from "@/integrations/supabase/client";
 
 interface CreateInstanceDialogProps {
@@ -34,17 +34,10 @@ export function CreateInstanceDialog({ open, onOpenChange, onCreated }: CreateIn
         throw new Error("Sua sessão expirou. Saia e entre novamente.");
       }
 
-      // 2) Probe: confirma que a VPS aceita o token atual ANTES de tentar criar.
-      // Isola se o problema é sessão (probe falha) ou permissão/Evolution (probe ok).
-      const probe = await getMe();
-      if (probe.error || !probe.data) {
-        if (probe.error === "Unauthorized" || probe.error === "Não autenticado") {
-          throw new Error("Sessão não reconhecida pelo servidor. Saia e entre novamente.");
-        }
-        throw new Error(probe.error || "Não foi possível validar sua sessão na VPS.");
-      }
-
-      // 3) Cria a instância. Aqui o 401 só pode vir de admin-check ou rota Evolution.
+      // 2) Cria a instância direto no backend.
+      // Não usamos /auth/me aqui: essa rota depende do profile local da VPS e
+      // pode retornar "Perfil não encontrado" mesmo com sessão Supabase válida,
+      // bloqueando indevidamente a geração do QR Code.
       let { data, error: apiError } = await whatsappApi.create(sanitized);
       if (apiError === "Unauthorized") {
         await supabase.auth.refreshSession().catch(() => null);
