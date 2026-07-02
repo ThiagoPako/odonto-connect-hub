@@ -7405,13 +7405,35 @@ async function matchQueue(content, tenantId) {
   ) || null;
 }
 
-async function persistIncomingMessage({ msgId, leadId, content, msgType, phone, instance, pushName, remoteJid, rawType, mediaUrl, fileName, mimeType, tenantId, sender = 'lead' }) {
+async function persistIncomingMessage({ msgId, leadId, content, msgType, phone, instance, pushName, remoteJid, rawType, mediaUrl, fileName, mimeType, tenantId, sender = 'lead', messageTimestamp = null }) {
   try {
     const initialStatus = sender === 'lead' ? 'delivered' : 'sent';
+    const timestamp = parseEvolutionTimestamp(messageTimestamp) || new Date();
     await pool.query(
       `INSERT INTO chat_messages (id, lead_id, content, sender, type, status, timestamp, phone, instance, media_url, file_name, mime_type, metadata, tenant_id)
-       VALUES ($1,$2,$3,$4,$5,$6,NOW(),$7,$8,$9,$10,$11,$12,$13)
-       ON CONFLICT (id) DO NOTHING`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+       ON CONFLICT (id) DO UPDATE
+         SET lead_id = COALESCE(chat_messages.lead_id, EXCLUDED.lead_id),
+             content = COALESCE(NULLIF(chat_messages.content, ''), EXCLUDED.content),
+             sender = COALESCE(chat_messages.sender, EXCLUDED.sender),
+             type = COALESCE(chat_messages.type, EXCLUDED.type),
+             status = CASE
+               WHEN chat_messages.status = 'read' THEN chat_messages.status
+               WHEN chat_messages.status = 'delivered' AND EXCLUDED.status IN ('sent', 'sending') THEN chat_messages.status
+               ELSE COALESCE(EXCLUDED.status, chat_messages.status)
+             END,
+             timestamp = CASE
+               WHEN EXCLUDED.timestamp IS NOT NULL AND (chat_messages.timestamp IS NULL OR EXCLUDED.timestamp < chat_messages.timestamp)
+               THEN EXCLUDED.timestamp
+               ELSE chat_messages.timestamp
+             END,
+             phone = COALESCE(chat_messages.phone, EXCLUDED.phone),
+             instance = COALESCE(chat_messages.instance, EXCLUDED.instance),
+             media_url = COALESCE(chat_messages.media_url, EXCLUDED.media_url),
+             file_name = COALESCE(chat_messages.file_name, EXCLUDED.file_name),
+             mime_type = COALESCE(chat_messages.mime_type, EXCLUDED.mime_type),
+             metadata = COALESCE(chat_messages.metadata, '{}'::jsonb) || COALESCE(EXCLUDED.metadata, '{}'::jsonb),
+             tenant_id = COALESCE(chat_messages.tenant_id, EXCLUDED.tenant_id)`,
       [
         msgId,
         leadId,
@@ -7419,6 +7441,7 @@ async function persistIncomingMessage({ msgId, leadId, content, msgType, phone, 
         sender,
         msgType,
         initialStatus,
+        timestamp,
         phone,
         instance,
         mediaUrl || null,
