@@ -913,6 +913,8 @@ function ChatPage() {
   const handleSendMessage = async (content: string, type: MessageType, extra?: Partial<ChatMessage>) => {
     if (!selectedLead) return;
 
+    const capturedReplyingTo = replyingTo;
+
     if (selectedLead.status === "active" && !firstResponseTracked.has(selectedLead.id)) {
       sessionsApi.firstResponse({ leadId: selectedLead.id });
       setFirstResponseTracked((prev) => new Set(prev).add(selectedLead.id));
@@ -927,7 +929,7 @@ function ChatPage() {
       type,
       timestamp: new Date(),
       status: "sending",
-      replyTo: replyingTo || undefined,
+      replyTo: capturedReplyingTo || undefined,
       ...extra,
     };
 
@@ -979,7 +981,7 @@ function ChatPage() {
     };
 
     try {
-      const replyMessageId = replyingTo?.messageId;
+      const replyMessageId = capturedReplyingTo?.messageId;
       let evolutionMsgId: string | null = null;
 
       if (type === "text") {
@@ -1073,6 +1075,7 @@ function ChatPage() {
           name: extra.location.name,
           address: extra.location.address,
         });
+        if (result.error) throw new Error(result.error);
         evolutionMsgId = (result?.data as any)?.key?.id || null;
       } else if (type === "contact" && extra?.contact) {
         const result = await whatsappApi.sendContact(connected.instanceName, selectedLead.phone, {
@@ -1082,14 +1085,17 @@ function ChatPage() {
           company: extra.contact.company,
           url: extra.contact.url,
         });
+        if (result.error) throw new Error(result.error);
         evolutionMsgId = (result?.data as any)?.key?.id || null;
       } else if (type === "poll" && extra?.poll) {
         const opts = extra.poll.options.map((o: any) => (typeof o === "string" ? o : o.text));
         const result = await whatsappApi.sendPoll(connected.instanceName, selectedLead.phone, extra.poll.question, opts);
+        if (result.error) throw new Error(result.error);
         evolutionMsgId = (result?.data as any)?.key?.id || null;
       } else if (type === "sticker") {
         const stickerData = (extra as any)?.stickerUrl || content;
         const result = await whatsappApi.sendSticker(connected.instanceName, selectedLead.phone, stickerData);
+        if (result.error) throw new Error(result.error);
         evolutionMsgId = (result?.data as any)?.key?.id || null;
       } else if (type === "list" && extra?.list) {
         const result = await whatsappApi.sendList(connected.instanceName, selectedLead.phone, {
@@ -1097,17 +1103,23 @@ function ChatPage() {
           buttonText: extra.list.buttonText || "Ver opções",
           sections: extra.list.sections,
         });
+        if (result.error) throw new Error(result.error);
         evolutionMsgId = (result?.data as any)?.key?.id || null;
       } else if (type === "reaction") {
         const reactionData = extra as any;
         if (reactionData?.targetMessageId && reactionData?.emoji) {
-          await whatsappApi.sendReaction(
+          const result = await whatsappApi.sendReaction(
             connected.instanceName,
             selectedLead.phone,
             reactionData.targetMessageId,
             reactionData.emoji
           );
+          if (result.error) throw new Error(result.error);
         }
+      }
+
+      if (type !== "reaction" && !evolutionMsgId) {
+        throw new Error("WhatsApp não confirmou o envio da mensagem");
       }
 
       updateStatus("sent");
@@ -1149,7 +1161,7 @@ function ChatPage() {
         fileName: extra?.fileName,
         fileUrl: persistFileUrl,
         mimeType: extra?.mimeType,
-        replyTo: replyingTo,
+        replyTo: capturedReplyingTo,
         instance: connected.instanceName,
         phone: selectedLead.phone,
       }).catch((err) => console.error("Failed to persist message:", err));
