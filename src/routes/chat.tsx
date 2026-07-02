@@ -1089,9 +1089,9 @@ function ChatPage() {
           }
           result = await whatsappApi.sendText(connected.instanceName, selectedLead.phone, content, {
             key: { remoteJid: `${cleanNumber}@s.whatsapp.net`, id: replyMessageId },
-          });
+          }, selectedLead.id);
         } else {
-          result = await whatsappApi.sendText(connected.instanceName, selectedLead.phone, content);
+          result = await whatsappApi.sendText(connected.instanceName, selectedLead.phone, content, undefined, selectedLead.id);
         }
         const proxyMessageId = getEvolutionMessageId(result?.data);
         if (result?.error) {

@@ -2247,6 +2247,14 @@ async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = nu
 
     if (result.ok) {
       const messageId = extractEvolutionMessageId(result.data);
+      if (!messageId) {
+        // Algumas versões da Evolution respondem HTTP 200 para o payload aceito
+        // pelo endpoint, mas sem key.id quando o formato do corpo não gerou uma
+        // mensagem real. Isso NÃO deve encerrar o loop: tentamos o próximo
+        // formato compatível antes de declarar falha.
+        console.warn(`⚠️ sendText ${instance}: resposta OK sem message id; tentando próximo formato`, JSON.stringify(result.data || {}).slice(0, 500));
+        continue;
+      }
       return {
         ...result,
         data: messageId ? { ...result.data, key: { ...(result.data?.key || {}), id: messageId } } : result.data,
@@ -3292,8 +3300,8 @@ app.post('/api/whatsapp/send-presence', async (req, res) => {
 
 app.post('/api/whatsapp/send-text', async (req, res) => {
   try {
-    await verifyUser(req);
-    const { instance, number, text, quoted } = req.body;
+    const { user } = await verifyUser(req);
+    const { instance, number, text, quoted, leadId } = req.body;
     if (!instance || !number || typeof text !== 'string') {
       return res.status(400).json({ error: 'instance, number e text são obrigatórios' });
     }
@@ -3333,7 +3341,38 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
       });
     }
 
-    res.json(result.data);
+    // Persistência defensiva no próprio endpoint de envio. Antes, o frontend só
+    // salvava depois da resposta da Evolution; qualquer falha entre send-text e
+    // POST /api/messages fazia a mensagem enviada sumir ao atualizar a página.
+    // Persistimos apenas depois de confirmação real (messageId), então mensagens
+    // não enviadas continuam sem entrar no histórico, como esperado.
+    if (leadId && user?.tenant_id) {
+      try {
+        const { rows: profile } = await pool.query('SELECT nome FROM profiles WHERE id = $1', [user.id]);
+        const attendantName = profile[0]?.nome || 'Atendente';
+        const pendingStatus = consumePendingMessageStatus(user.tenant_id, messageId);
+        const initialStatus = pendingStatus && isHigherMessageStatus(pendingStatus, 'sent') ? pendingStatus : 'sent';
+
+        await pool.query(
+          `INSERT INTO chat_messages (id, lead_id, content, sender, type, status, timestamp, attendant_id, attendant_name, instance, phone, tenant_id)
+           VALUES ($1,$2,$3,'attendant','text',$4,NOW(),$5,$6,$7,$8,$9)
+           ON CONFLICT (id) DO UPDATE
+             SET status = CASE
+               WHEN chat_messages.status = 'read' THEN chat_messages.status
+               WHEN chat_messages.status = 'delivered' AND EXCLUDED.status IN ('sent', 'sending') THEN chat_messages.status
+               ELSE EXCLUDED.status
+             END,
+             instance = COALESCE(chat_messages.instance, EXCLUDED.instance),
+             phone = COALESCE(chat_messages.phone, EXCLUDED.phone),
+             tenant_id = COALESCE(chat_messages.tenant_id, EXCLUDED.tenant_id)`,
+          [messageId, leadId, text || '', initialStatus, user.id, attendantName, instance, cleanNumber, user.tenant_id]
+        );
+      } catch (persistErr) {
+        console.error(`⚠️ send-text enviado mas não persistido (${messageId}):`, persistErr.message);
+      }
+    }
+
+    res.json({ ...(result.data || {}), key: { ...(result.data?.key || {}), id: messageId }, messageId, sent: true });
   } catch (error) {
     res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
   }
