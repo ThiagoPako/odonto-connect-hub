@@ -6807,8 +6807,11 @@ function normalizeEvolutionAckStatus(ack) {
 }
 
 function extractStatusUpdates(data) {
-  const extracted = extractEvolutionArray(data);
-  if (extracted.length > 0) return extracted;
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.updates)) return data.updates;
+  if (Array.isArray(data?.messages)) return data.messages;
+  if (Array.isArray(data?.records)) return data.records;
+  if (Array.isArray(data?.data)) return data.data;
   return data ? [data] : [];
 }
 
