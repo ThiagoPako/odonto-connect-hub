@@ -7549,26 +7549,24 @@ app.post('/api/webhook/evolution', async (req, res) => {
     }
 
     // ─── Message ACK / status updates ───
-    if (isEvolutionEvent(event, 'messages.update', 'messages_update', 'send.message.update', 'send_message_update')) {
-      const updates = Array.isArray(body.data) ? body.data : [body.data];
-      console.log(`📩 MESSAGES_UPDATE: ${updates.length} updates, raw:`, JSON.stringify(body.data).slice(0, 500));
+    if (isEvolutionEvent(event, 'messages.update', 'messages_update', 'send.message.update', 'send_message_update', 'message.update', 'message_update')) {
+      const updates = extractStatusUpdates(body.data || body);
+      console.log(`📩 MESSAGES_UPDATE: ${updates.length} updates, raw:`, JSON.stringify(body.data || body).slice(0, 500));
       for (const update of updates) {
-        const key = update?.key || {};
-        const lookupIds = [...new Set([update?.messageId, key?.id, update?.keyId].filter(Boolean))];
+        const lookupIds = extractStatusLookupIds(update);
         const primaryMessageId = lookupIds[0];
-        const remoteJid = key?.remoteJid || update?.remoteJid;
-        const ack = update?.update?.status
-          ?? update?.update?.ack
-          ?? update?.status
-          ?? update?.ack
-          ?? key?.status
-          ?? key?.ack;
+        const remoteJid = extractStatusRemoteJid(update);
+        const ack = extractStatusAckValue(update);
 
-        if (!primaryMessageId || !remoteJid || remoteJid.endsWith('@g.us')) continue;
+        if (!primaryMessageId) {
+          console.log(`⚠️ ACK ignored: missing message id in update`, JSON.stringify(update).slice(0, 300));
+          continue;
+        }
+        if (remoteJid && remoteJid.endsWith('@g.us')) continue;
 
         // Build LID→phone mapping from ACK events
         // remoteJid is often a LID; look up the real phone from our DB
-        if (remoteJid.includes('@lid')) {
+        if (remoteJid?.includes('@lid')) {
           const lidNum = normalizeWhatsappNumber(remoteJid);
           if (lidNum && !lidToPhoneMap.has(lidNum)) {
             // Try to find the phone from the message in DB
@@ -7585,28 +7583,30 @@ app.post('/api/webhook/evolution', async (req, res) => {
           }
         }
 
-        let newStatus = null;
-        const ackStr = String(ack).toUpperCase();
-        const ackNum = typeof ack === 'number' ? ack : parseInt(ack);
-
-        if (ackStr === 'SERVER_ACK' || ackNum === 2) newStatus = 'sent';
-        else if (ackStr === 'DELIVERY_ACK' || ackNum === 3) newStatus = 'delivered';
-        else if (ackStr === 'READ' || ackStr === 'PLAYED' || ackNum === 4 || ackNum === 5) newStatus = 'read';
-        else if (ackStr === 'ERROR' || ackNum === 0) newStatus = 'failed';
+        const newStatus = normalizeEvolutionAckStatus(ack);
 
         if (!newStatus) {
           console.log(`⚠️ ACK ignored: ack=${ack}, messageIds=${lookupIds.join(',')}`);
           continue;
         }
 
-        let phone = String(remoteJid)
+        let phone = remoteJid ? String(remoteJid)
           .replace('@s.whatsapp.net', '')
           .replace('@c.us', '')
           .replace('@lid', '')
           .replace(/:\d+$/, '')
-          .replace(/\D/g, '');
+          .replace(/\D/g, '') : '';
         // Resolve LID to real phone if mapped
-        phone = resolvePhoneFromLid(phone);
+        phone = phone ? resolvePhoneFromLid(phone) : '';
+
+        let messageContext = null;
+        try {
+          messageContext = await findMessageStatusContext({ tenantId, lookupIds, phone, instance });
+          if (messageContext?.tenant_id && !tenantId) tenantId = messageContext.tenant_id;
+          if (!phone && messageContext?.phone) phone = messageContext.phone;
+        } catch (lookupErr) {
+          console.warn('ACK context lookup failed:', lookupErr.message);
+        }
 
         if (!tenantId) {
           tenantId = await getFallbackTenantIdForIncomingMessage({
@@ -7619,25 +7619,26 @@ app.post('/api/webhook/evolution', async (req, res) => {
           }
         }
 
-        for (const lookupId of lookupIds) {
-          console.log(`✅ ACK: ${lookupId} → ${newStatus} (ack=${ack}, phone=${phone})`);
+        console.log(`✅ ACK: ${lookupIds.join(',')} → ${newStatus} (ack=${ack}, phone=${phone || messageContext?.phone || 'unknown'})`);
 
-          try {
-            const { rowCount } = await pool.query(
-              `UPDATE chat_messages SET status = $1 WHERE tenant_id = $3 AND (id = $2 OR (metadata::text LIKE '%' || $2 || '%'))`,
-              [newStatus, lookupId, tenantId]
-            );
-            if (!rowCount) rememberPendingMessageStatus(tenantId, lookupId, newStatus);
-          } catch (ackErr) {
-            console.error('ACK DB update error:', ackErr.message);
-            rememberPendingMessageStatus(tenantId, lookupId, newStatus);
+        let updatedRows = [];
+        try {
+          updatedRows = await applyMessageStatusUpdate({ tenantId, lookupIds, newStatus });
+          if (updatedRows.length === 0) {
+            for (const lookupId of lookupIds) rememberPendingMessageStatus(tenantId, lookupId, newStatus);
           }
+        } catch (ackErr) {
+          console.error('ACK DB update error:', ackErr.message);
+          for (const lookupId of lookupIds) rememberPendingMessageStatus(tenantId, lookupId, newStatus);
+        }
 
+        const broadcastIds = new Set([...lookupIds, ...updatedRows.map((row) => row.id).filter(Boolean)]);
+        for (const lookupId of broadcastIds) {
           broadcastSSE('message_status_update', {
             messageId: lookupId,
-            phone,
+            phone: phone || messageContext?.phone || null,
             status: newStatus,
-            instance,
+            instance: instance || messageContext?.instance || null,
           }, tenantId);
         }
       }
