@@ -130,6 +130,10 @@ function resolveConnectedInstance(
   return connectedInstances.length === 1 ? connectedInstances[0] : undefined;
 }
 
+function normalizePhoneSuffix(value?: string | null): string {
+  return (value || "").replace(/\D/g, "").slice(-11);
+}
+
 export const Route = createFileRoute("/chat")({
   ssr: false,
   validateSearch: zodValidator(chatSearchSchema),
@@ -506,13 +510,22 @@ function ChatPage() {
   const statusPriority: Record<string, number> = { sending: 0, sent: 1, delivered: 2, read: 3, failed: -1 };
 
   const handleMessageStatusUpdate = useCallback((update: import("@/hooks/useRealtimeChat").MessageStatusUpdate) => {
+    const updatePhone = normalizePhoneSuffix(update.phone);
+    const matchingLeadIds = new Set(
+      [...queueRef.current, ...myLeadsRef.current]
+        .filter((lead) => updatePhone && normalizePhoneSuffix(lead.phone) === updatePhone)
+        .map((lead) => lead.id),
+    );
+
     setMessages((prev) => {
       let changed = false;
       const next: Record<string, ChatMessage[]> = {};
       for (const leadId of Object.keys(prev)) {
         const msgs = prev[leadId];
+        let exactMatch = false;
         const updated = msgs.map((m) => {
           if (m.id !== update.messageId) return m;
+          exactMatch = true;
           if (update.status === "failed") {
             changed = true;
             return { ...m, status: update.status as MessageStatus };
@@ -525,6 +538,26 @@ function ChatPage() {
           }
           return m;
         });
+
+        // Some Evolution builds emit ACKs with a device/protocol id that differs
+        // from the id returned by sendText. When that happens, reconcile by the
+        // conversation phone and upgrade the latest outgoing message instead of
+        // leaving the UI frozen at one check.
+        if (!exactMatch && matchingLeadIds.has(leadId) && update.status !== "failed") {
+          const fallbackIndex = [...updated].reverse().findIndex((message) => {
+            if (message.sender === "lead" || message.id.startsWith("sys-")) return false;
+            const currentPri = statusPriority[message.status || "sent"] ?? 1;
+            const newPri = statusPriority[update.status] ?? 1;
+            return newPri > currentPri;
+          });
+
+          if (fallbackIndex >= 0) {
+            const targetIndex = updated.length - 1 - fallbackIndex;
+            updated[targetIndex] = { ...updated[targetIndex], status: update.status as MessageStatus };
+            changed = true;
+          }
+        }
+
         next[leadId] = updated;
       }
       return changed ? next : prev;
