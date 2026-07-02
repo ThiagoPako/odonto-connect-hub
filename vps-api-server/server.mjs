@@ -11404,13 +11404,30 @@ app.post('/api/media/upload', express.raw({ type: '*/*', limit: '64mb' }), async
 // PUT /api/messages/:id/status — atualizar status de entrega/leitura
 app.put('/api/messages/:id/status', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
     const { status } = req.body;
     if (!['sending', 'sent', 'delivered', 'read', 'failed'].includes(status)) {
       return res.status(400).json({ error: 'Status inválido' });
     }
-    await pool.query('UPDATE chat_messages SET status = $1 WHERE id = $2', [status, req.params.id]);
-    res.json({ success: true });
+    const { rows } = await pool.query(
+      `UPDATE chat_messages
+          SET status = $1
+        WHERE id = $2
+          AND tenant_id = $3
+        RETURNING id, lead_id, phone, instance, status`,
+      [status, req.params.id, user.tenant_id]
+    );
+    if (rows[0]) {
+      broadcastSSE('message_status_update', {
+        messageId: rows[0].id,
+        id: rows[0].id,
+        leadId: rows[0].lead_id,
+        phone: rows[0].phone,
+        instance: rows[0].instance,
+        status: rows[0].status,
+      }, user.tenant_id);
+    }
+    res.json({ success: true, updated: rows.length });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
