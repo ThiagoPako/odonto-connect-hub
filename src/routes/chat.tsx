@@ -1260,6 +1260,17 @@ function ChatPage() {
       });
       if (saveResult.error) {
         console.error("Failed to persist message:", saveResult.error);
+      } else if (saveResult.data?.status && saveResult.data.status !== "sent") {
+        const savedStatus = saveResult.data.status as MessageStatus;
+        setMessages((prev) => ({
+          ...prev,
+          [selectedLead.id]: (prev[selectedLead.id] || []).map((m) => {
+            if (m.id !== (evolutionMsgId || msgId)) return m;
+            const currentPri = statusPriority[m.status || "sent"] ?? 1;
+            const savedPri = statusPriority[savedStatus] ?? 1;
+            return savedPri > currentPri ? { ...m, status: savedStatus } : m;
+          }),
+        }));
       }
     } catch (err: any) {
       toast.error("Erro ao enviar: " + (err?.message || "Falha no envio"));
