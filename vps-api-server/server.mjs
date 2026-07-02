@@ -3216,18 +3216,11 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
       console.warn(`⚠️ send-text: webhook registration check failed for ${instance}:`, webhookErr?.message);
     }
 
-    const rawNumber = normalizeWhatsappNumber(number);
-
-    // Best-effort JID resolution — never block the send. If Evolution's
-    // /chat/whatsappNumbers responds with a canonical JID we use it,
-    // otherwise we send the number as-is (previous working behavior).
-    let cleanNumber = rawNumber;
-    try {
-      const check = await resolveValidWhatsAppNumber(instance, rawNumber);
-      if (check?.canonical) cleanNumber = check.canonical;
-    } catch (err) {
-      console.warn(`⚠️ send-text: number check skipped for ${rawNumber}:`, err?.message);
-    }
+    // Envio isolado: não trocar o destino com /chat/whatsappNumbers aqui.
+    // Esse endpoint pode retornar JID/canonical diferente e causar envio com
+    // apenas 1 check sem chegar ao cliente. Mantemos o número normalizado que
+    // veio da conversa, que era o comportamento funcional anterior.
+    const cleanNumber = normalizeWhatsappNumber(number);
 
     const result = await sendEvolutionTextMessage(instance, cleanNumber, text, quoted || null);
 
