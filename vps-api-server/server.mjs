@@ -634,21 +634,20 @@ async function registerWebhook(instanceName) {
       ],
     };
 
-    // Evolution API v2 normally expects the webhook config at the request root.
-    // Sending it nested under `webhook` can be accepted by some builds but not
-    // actually replace the active callback URL, leaving Canais "conectado" while
-    // Comercial/Chat receives nothing. Register root-first and keep the nested
-    // shape only as a fallback for older builds.
+    // Evolution API v2 expects the config nested under `webhook` on many builds.
+    // If we send only the root shape, some servers answer 200 but keep the old
+    // callback, which leaves the channel connected while Chat receives nothing.
+    // Register nested-first and use the root shape only as compatibility fallback.
     let result = await evolutionFetch(`/webhook/set/${instanceName}`, {
       method: 'POST',
-      body: JSON.stringify(webhookConfig),
+      body: JSON.stringify({ webhook: webhookConfig }),
     });
 
     if (!result.ok) {
-      console.warn(`⚠️ Retrying webhook registration with nested payload for ${instanceName}`);
+      console.warn(`⚠️ Retrying webhook registration with root payload for ${instanceName}`);
       result = await evolutionFetch(`/webhook/set/${instanceName}`, {
         method: 'POST',
-        body: JSON.stringify({ webhook: webhookConfig }),
+        body: JSON.stringify(webhookConfig),
       });
     }
     if (result.ok) {
@@ -2324,6 +2323,42 @@ function isUsableChatJid(jid) {
   return digits.length >= 10 && digits.length <= 13;
 }
 
+function extractActualRemoteJidFromMessage(msg) {
+  const key = msg?.key || {};
+  const primary = typeof key.remoteJid === 'string' ? key.remoteJid : '';
+  const candidates = [
+    key.remoteJidAlt,
+    key.participantAlt,
+    key.senderPn,
+    key.participantPn,
+    key.remoteJid,
+    msg?.remoteJidAlt,
+    msg?.participantAlt,
+    msg?.senderPn,
+    msg?.participantPn,
+    msg?.remoteJid,
+  ].filter((value) => typeof value === 'string' && value.includes('@'));
+
+  if (primary.includes('@lid')) {
+    const realJid = candidates.find(isUsableChatJid);
+    if (realJid) return realJid;
+  }
+
+  return primary || candidates[0] || '';
+}
+
+function rememberLidMappingFromMessage(msg, resolvedRemoteJid) {
+  const rawRemoteJid = msg?.key?.remoteJid;
+  if (!rawRemoteJid?.includes?.('@lid') || !isUsableChatJid(resolvedRemoteJid)) return;
+
+  const lidNumber = normalizeWhatsappNumber(rawRemoteJid);
+  const phoneNumber = normalizeWhatsappNumber(resolvedRemoteJid);
+  if (lidNumber && phoneNumber && lidNumber !== phoneNumber) {
+    registerLidMapping(lidNumber, phoneNumber);
+    console.log(`🔗 LID mapped from message: ${lidNumber} → ${phoneNumber}`);
+  }
+}
+
 function parseEvolutionTimestamp(value) {
   if (!value) return null;
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
@@ -3246,11 +3281,7 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
     try {
       await ensureWebhookRegistration(instance);
     } catch (webhookErr) {
-      console.warn(`⚠️ send-text: webhook registration check failed for ${instance}:`, webhookErr?.message);
-      return res.status(502).json({
-        error: 'Webhook do WhatsApp não está registrado na Evolution; envio bloqueado para evitar mensagem sem confirmação em tempo real.',
-        details: { instance, webhookUrl: WEBHOOK_URL, reason: webhookErr?.message },
-      });
+      console.warn(`⚠️ send-text: webhook registration check failed for ${instance}; continuing send:`, webhookErr?.message);
     }
 
     // Envio isolado: não trocar o destino com /chat/whatsappNumbers aqui.
@@ -6882,6 +6913,26 @@ function extractStatusLookupIds(update) {
 
 function extractStatusRemoteJid(update) {
   const candidates = [
+    update?.key?.remoteJidAlt,
+    update?.key?.participantAlt,
+    update?.key?.senderPn,
+    update?.key?.participantPn,
+    update?.remoteJidAlt,
+    update?.participantAlt,
+    update?.senderPn,
+    update?.participantPn,
+    update?.message?.key?.remoteJidAlt,
+    update?.message?.key?.participantAlt,
+    update?.message?.key?.senderPn,
+    update?.message?.key?.participantPn,
+    update?.data?.key?.remoteJidAlt,
+    update?.data?.key?.participantAlt,
+    update?.data?.key?.senderPn,
+    update?.data?.key?.participantPn,
+    update?.update?.key?.remoteJidAlt,
+    update?.update?.key?.participantAlt,
+    update?.update?.key?.senderPn,
+    update?.update?.key?.participantPn,
     update?.key?.remoteJid,
     update?.remoteJid,
     update?.remote_jid,
@@ -6893,7 +6944,8 @@ function extractStatusRemoteJid(update) {
     update?.update?.key?.remoteJid,
   ];
 
-  return candidates.find((value) => typeof value === 'string' && value.includes('@')) || null;
+  const values = candidates.filter((value) => typeof value === 'string' && value.includes('@'));
+  return values.find(isUsableChatJid) || values[0] || null;
 }
 
 function extractStatusAckValue(update) {
@@ -7708,10 +7760,11 @@ app.post('/api/webhook/evolution', async (req, res) => {
 
     const messages = extractEvolutionMessages(body.data);
     const message = messages.find((item) => {
-      const jid = item?.key?.remoteJid;
+      const jid = extractActualRemoteJidFromMessage(item);
       return jid && !String(jid).endsWith('@g.us');
     }) || messages[0];
-    const remoteJid = message?.key?.remoteJid;
+    const remoteJid = extractActualRemoteJidFromMessage(message);
+    rememberLidMappingFromMessage(message, remoteJid);
 
     // Skip group messages
     if (!remoteJid || remoteJid.endsWith('@g.us')) {
