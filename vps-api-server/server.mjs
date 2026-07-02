@@ -7599,14 +7599,15 @@ app.post('/api/webhook/evolution', async (req, res) => {
     }
 
     // ─── Message ACK / status updates ───
-    if (isEvolutionEvent(event, 'messages.update', 'messages_update', 'send.message.update', 'send_message_update', 'message.update', 'message_update')) {
+    const isSendMessageEvent = isEvolutionEvent(event, 'send.message', 'send_message');
+    if (isEvolutionEvent(event, 'messages.update', 'messages_update', 'send.message.update', 'send_message_update', 'message.update', 'message_update', 'send.message', 'send_message')) {
       const updates = extractStatusUpdates(body.data || body);
       console.log(`📩 MESSAGES_UPDATE: ${updates.length} updates, raw:`, JSON.stringify(body.data || body).slice(0, 500));
       for (const update of updates) {
         const lookupIds = extractStatusLookupIds(update);
         const primaryMessageId = lookupIds[0];
         const remoteJid = extractStatusRemoteJid(update);
-        const ack = extractStatusAckValue(update);
+        const ack = extractStatusAckValue(update) ?? (isSendMessageEvent ? 'SERVER_ACK' : null);
 
         if (!primaryMessageId) {
           console.log(`⚠️ ACK ignored: missing message id in update`, JSON.stringify(update).slice(0, 300));
@@ -7701,7 +7702,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
     }
 
     // Only process incoming messages from here
-    if (!isEvolutionEvent(event, 'messages.upsert', 'messages_upsert', 'send.message', 'send_message')) {
+    if (!isEvolutionEvent(event, 'messages.upsert', 'messages_upsert')) {
       return res.json({ ignored: true, event });
     }
 
