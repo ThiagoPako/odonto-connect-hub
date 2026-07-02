@@ -742,10 +742,7 @@ function ChatPage() {
         if (cancelled || !data?.messages?.length) return;
         setMessages((prev) => {
           const existing = prev[leadId] || [];
-          const existingIds = new Set(existing.map((m) => m.id));
-          const incoming = data.messages
-            .filter((m: ChatMessageApi) => !existingIds.has(m.id))
-            .map((m: ChatMessageApi) => ({
+          const apiMessages = data.messages.map((m: ChatMessageApi) => ({
               id: m.id,
               leadId: m.lead_id,
               content: m.content,
@@ -758,8 +755,23 @@ function ChatPage() {
               mimeType: m.mime_type || undefined,
               reactions: Array.isArray(m.reactions) ? m.reactions : [],
             } as ChatMessage));
-          if (incoming.length === 0) return prev;
-          const merged = [...existing, ...incoming].sort(
+          const apiById = new Map(apiMessages.map((message) => [message.id, message]));
+          let changed = false;
+          const updatedExisting = existing.map((message) => {
+            const fromApi = apiById.get(message.id);
+            if (!fromApi) return message;
+            const currentPri = statusPriority[message.status || "sent"] ?? 1;
+            const apiPri = statusPriority[fromApi.status || "sent"] ?? 1;
+            if (apiPri > currentPri || JSON.stringify(fromApi.reactions || []) !== JSON.stringify(message.reactions || [])) {
+              changed = true;
+              return { ...message, status: fromApi.status, reactions: fromApi.reactions };
+            }
+            return message;
+          });
+          const existingIds = new Set(existing.map((m) => m.id));
+          const incoming = apiMessages.filter((m) => !existingIds.has(m.id));
+          if (incoming.length === 0 && !changed) return prev;
+          const merged = [...updatedExisting, ...incoming].sort(
             (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
           );
           return { ...prev, [leadId]: merged };
