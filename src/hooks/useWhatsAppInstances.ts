@@ -83,7 +83,8 @@ async function refreshInstances(): Promise<ConnectedInstance[]> {
       return cachedInstances;
     }
 
-    const rawList = Array.isArray(vpsInstances) ? vpsInstances : await fetchInstances();
+    const usingVpsList = Array.isArray(vpsInstances);
+    const rawList = usingVpsList ? vpsInstances : await fetchInstances();
     const list: EvolutionInstance[] = rawList.map((inst: any) => ({
       instanceName: inst.name || inst.instanceName || inst.instance?.instanceName,
       instanceId: inst.id || inst.instanceId || inst.instance?.instanceId || inst.instance?.id || "",
@@ -92,19 +93,20 @@ async function refreshInstances(): Promise<ConnectedInstance[]> {
       owner: inst.ownerJid || inst.owner || inst.instance?.ownerJid,
     })).filter((inst) => !!inst.instanceName);
     
-    // Filter instances by tenant_id prefix
+    // The VPS endpoint already filters by authenticated tenant and also includes
+    // legacy instance names mapped in whatsapp_instances (for example "testedg"
+    // without the tenant UUID prefix). Only apply prefix filtering when falling
+    // back to the direct Evolution list.
     let filteredList = list;
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
         const { data: profile } = await supabase.from('profiles').select('tenant_id, is_super_admin').eq('id', user.id).maybeSingle();
         
-        // Super admins see everything
-        if (profile?.is_super_admin) {
+        if (usingVpsList || profile?.is_super_admin) {
           filteredList = list;
         } else if (profile?.tenant_id) {
           const prefix = profile.tenant_id.substring(0, 8);
-          // Only show instances that belong to this tenant or are public (no prefix)
           filteredList = list.filter(inst => inst.instanceName.startsWith(prefix));
         }
       }

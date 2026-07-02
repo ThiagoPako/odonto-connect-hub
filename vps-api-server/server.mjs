@@ -2726,11 +2726,24 @@ app.get('/api/whatsapp/instances', async (req, res) => {
     let instances = extractEvolutionArray(result.data);
     
     // Isolation by tenant
+    let mappedInstanceNames = new Set();
     if (!user.is_super_admin && user.tenant_id) {
       const prefix = user.tenant_id.substring(0, 8);
+      try {
+        const { rows } = await pool.query(
+          `SELECT instance_name
+             FROM whatsapp_instances
+            WHERE tenant_id = $1`,
+          [user.tenant_id]
+        );
+        mappedInstanceNames = new Set(rows.map((row) => row.instance_name).filter(Boolean));
+      } catch (err) {
+        console.warn('Failed to load tenant WhatsApp instance mappings:', err.message);
+      }
+
       instances = instances.filter(i => {
         const name = i.name || i.instanceName || i.instance?.instanceName || "";
-        return name.startsWith(prefix);
+        return name.startsWith(prefix) || mappedInstanceNames.has(name);
       });
     }
 
@@ -2740,7 +2753,7 @@ app.get('/api/whatsapp/instances', async (req, res) => {
     for (const inst of instances) {
       const name = inst.name || inst.instanceName || inst.instance?.instanceName;
       const status = inst.connectionStatus || inst.status || inst.instance?.status || inst.instance?.state;
-      if (name && user.tenant_id && name.startsWith(user.tenant_id.substring(0, 8))) {
+      if (name && user.tenant_id && (name.startsWith(user.tenant_id.substring(0, 8)) || mappedInstanceNames.has(name))) {
         await pool.query(
           `INSERT INTO whatsapp_instances (instance_name, tenant_id)
            VALUES ($1, $2)
