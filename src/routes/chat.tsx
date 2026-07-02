@@ -355,7 +355,19 @@ function ChatPage() {
         const leadId = existingLead?.id || msg.leadId || '';
         if (!leadId) return prev;
         const existing = prev[leadId] || [];
-        if (existing.some((m) => m.id === msg.id)) return prev;
+        if (existing.some((m) => m.id === msg.id)) {
+          const nextStatus = chatMsg.status || "sent";
+          let changed = false;
+          const updated = existing.map((message) => {
+            if (message.id !== msg.id) return message;
+            const currentPri = statusPriority[message.status || "sent"] ?? 1;
+            const nextPri = statusPriority[nextStatus] ?? 1;
+            if (nextPri <= currentPri) return message;
+            changed = true;
+            return { ...message, status: nextStatus };
+          });
+          return changed ? { ...prev, [leadId]: updated } : prev;
+        }
         return { ...prev, [leadId]: [...existing, chatMsg] };
       });
       return;
