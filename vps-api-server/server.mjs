@@ -621,6 +621,8 @@ async function registerWebhook(instanceName) {
       base64: false,
       webhookByEvents: false,
       webhookBase64: false,
+      webhook_by_events: false,
+      webhook_base64: false,
       events: [
         'MESSAGES_UPSERT',
         'MESSAGES_UPDATE',
@@ -2134,19 +2136,46 @@ function normalizeWhatsappNumber(value) {
 }
 
 function extractEvolutionMessageId(data) {
-  return data?.key?.id
-    || data?.message?.key?.id
-    || data?.data?.key?.id
-    || data?.data?.message?.key?.id
-    || data?.response?.key?.id
-    || data?.response?.message?.key?.id
-    || data?.messageId
-    || data?.id
-    || data?.data?.id
-    || data?.data?.messageId
-    || data?.response?.messageId
-    || data?.response?.id
-    || null;
+  if (!data) return null;
+  if (Array.isArray(data)) {
+    for (const item of data) {
+      const id = extractEvolutionMessageId(item);
+      if (id) return id;
+    }
+    return null;
+  }
+
+  const pick = (value) => {
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      // WhatsApp/Baileys message ids are string-like and normally contain more
+      // entropy than wrapper request ids. Avoid accepting plain numeric wrapper
+      // ids because ACK correlation then becomes impossible.
+      if (trimmed && (!/^\d+$/.test(trimmed) || trimmed.length >= 12)) return trimmed;
+    }
+    return null;
+  };
+
+  const candidates = [
+    data?.key?.id,
+    data?.message?.key?.id,
+    data?.data?.key?.id,
+    data?.data?.message?.key?.id,
+    data?.response?.key?.id,
+    data?.response?.message?.key?.id,
+    data?.messageId,
+    data?.data?.messageId,
+    data?.response?.messageId,
+    data?.data?.id,
+    data?.response?.id,
+    data?.id,
+  ];
+
+  for (const candidate of candidates) {
+    const id = pick(candidate);
+    if (id) return id;
+  }
+  return null;
 }
 
 function getEvolutionErrorMessage(result, fallback = 'Falha ao enviar mensagem') {
@@ -2500,9 +2529,13 @@ async function resolveValidWhatsAppNumber(instance, cleanNumber) {
 
 async function ensureWebhookRegistration(instanceName) {
   const lastEnsure = webhookEnsureTimestamps.get(instanceName) || 0;
-  if (Date.now() - lastEnsure < 5 * 60 * 1000) return;
-  await registerWebhook(instanceName);
+  if (Date.now() - lastEnsure < 5 * 60 * 1000) return { ok: true, cached: true };
+  const result = await registerWebhook(instanceName);
+  if (!result?.ok) {
+    throw new Error(`Webhook não registrado para ${instanceName}`);
+  }
   webhookEnsureTimestamps.set(instanceName, Date.now());
+  return result;
 }
 
 function cleanBase64Media(value) {
