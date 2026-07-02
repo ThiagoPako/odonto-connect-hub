@@ -2567,7 +2567,11 @@ async function ensureWebhookRegistration(instanceName) {
   if (Date.now() - lastEnsure < 5 * 60 * 1000) return { ok: true, cached: true };
   const result = await registerWebhook(instanceName);
   if (!result?.ok) {
-    throw new Error(`Webhook não registrado para ${instanceName}`);
+    // O webhook é necessário para receber respostas/ACKs, mas não pode bloquear
+    // o envio. Em algumas versões da Evolution o /webhook/set retorna formato
+    // inesperado mesmo mantendo a instância apta a enviar mensagens.
+    console.warn(`⚠️ Webhook não confirmado para ${instanceName}; envio seguirá mesmo assim.`, result?.data || result?.error || 'sem detalhes');
+    return result || { ok: false, error: 'Webhook não registrado' };
   }
   webhookEnsureTimestamps.set(instanceName, Date.now());
   return result;
