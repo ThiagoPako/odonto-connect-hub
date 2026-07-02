@@ -6779,6 +6779,43 @@ app.delete('/api/queues/:id', async (req, res) => {
 
 const sseClients = new Map();
 
+// ACKs da Evolution podem chegar antes do frontend salvar a mensagem enviada
+// em chat_messages. Sem essa reconciliação, a UI fica presa em um único check
+// mesmo quando o WhatsApp já confirmou entrega/leitura.
+const pendingMessageStatusByTenant = new Map();
+const MESSAGE_STATUS_PRIORITY = { failed: -1, sending: 0, sent: 1, delivered: 2, read: 3 };
+
+function pendingStatusKey(tenantId, messageId) {
+  return `${tenantId || 'unknown'}:${messageId}`;
+}
+
+function isHigherMessageStatus(nextStatus, currentStatus = 'sent') {
+  return (MESSAGE_STATUS_PRIORITY[nextStatus] ?? 0) > (MESSAGE_STATUS_PRIORITY[currentStatus] ?? 0);
+}
+
+function rememberPendingMessageStatus(tenantId, messageId, status) {
+  if (!tenantId || !messageId || !status) return;
+  const key = pendingStatusKey(tenantId, messageId);
+  const existing = pendingMessageStatusByTenant.get(key);
+  if (!existing || isHigherMessageStatus(status, existing.status)) {
+    pendingMessageStatusByTenant.set(key, { status, createdAt: Date.now() });
+  }
+
+  const expiresBefore = Date.now() - 10 * 60 * 1000;
+  for (const [entryKey, entry] of pendingMessageStatusByTenant.entries()) {
+    if (entry.createdAt < expiresBefore) pendingMessageStatusByTenant.delete(entryKey);
+  }
+}
+
+function consumePendingMessageStatus(tenantId, messageId) {
+  if (!tenantId || !messageId) return null;
+  const key = pendingStatusKey(tenantId, messageId);
+  const entry = pendingMessageStatusByTenant.get(key);
+  if (!entry) return null;
+  pendingMessageStatusByTenant.delete(key);
+  return entry.status;
+}
+
 function broadcastSSE(event, data, tenantId = null) {
   const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
   let sent = 0;
