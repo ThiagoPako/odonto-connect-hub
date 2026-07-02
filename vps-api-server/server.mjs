@@ -621,6 +621,8 @@ async function registerWebhook(instanceName) {
       base64: false,
       webhookByEvents: false,
       webhookBase64: false,
+      webhook_by_events: false,
+      webhook_base64: false,
       events: [
         'MESSAGES_UPSERT',
         'MESSAGES_UPDATE',
@@ -2134,19 +2136,46 @@ function normalizeWhatsappNumber(value) {
 }
 
 function extractEvolutionMessageId(data) {
-  return data?.key?.id
-    || data?.message?.key?.id
-    || data?.data?.key?.id
-    || data?.data?.message?.key?.id
-    || data?.response?.key?.id
-    || data?.response?.message?.key?.id
-    || data?.messageId
-    || data?.id
-    || data?.data?.id
-    || data?.data?.messageId
-    || data?.response?.messageId
-    || data?.response?.id
-    || null;
+  if (!data) return null;
+  if (Array.isArray(data)) {
+    for (const item of data) {
+      const id = extractEvolutionMessageId(item);
+      if (id) return id;
+    }
+    return null;
+  }
+
+  const pick = (value) => {
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      // WhatsApp/Baileys message ids are string-like and normally contain more
+      // entropy than wrapper request ids. Avoid accepting plain numeric wrapper
+      // ids because ACK correlation then becomes impossible.
+      if (trimmed && (!/^\d+$/.test(trimmed) || trimmed.length >= 12)) return trimmed;
+    }
+    return null;
+  };
+
+  const candidates = [
+    data?.key?.id,
+    data?.message?.key?.id,
+    data?.data?.key?.id,
+    data?.data?.message?.key?.id,
+    data?.response?.key?.id,
+    data?.response?.message?.key?.id,
+    data?.messageId,
+    data?.data?.messageId,
+    data?.response?.messageId,
+    data?.data?.id,
+    data?.response?.id,
+    data?.id,
+  ];
+
+  for (const candidate of candidates) {
+    const id = pick(candidate);
+    if (id) return id;
+  }
+  return null;
 }
 
 function getEvolutionErrorMessage(result, fallback = 'Falha ao enviar mensagem') {
@@ -2500,9 +2529,13 @@ async function resolveValidWhatsAppNumber(instance, cleanNumber) {
 
 async function ensureWebhookRegistration(instanceName) {
   const lastEnsure = webhookEnsureTimestamps.get(instanceName) || 0;
-  if (Date.now() - lastEnsure < 5 * 60 * 1000) return;
-  await registerWebhook(instanceName);
+  if (Date.now() - lastEnsure < 5 * 60 * 1000) return { ok: true, cached: true };
+  const result = await registerWebhook(instanceName);
+  if (!result?.ok) {
+    throw new Error(`Webhook não registrado para ${instanceName}`);
+  }
   webhookEnsureTimestamps.set(instanceName, Date.now());
+  return result;
 }
 
 function cleanBase64Media(value) {
@@ -3214,6 +3247,10 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
       await ensureWebhookRegistration(instance);
     } catch (webhookErr) {
       console.warn(`⚠️ send-text: webhook registration check failed for ${instance}:`, webhookErr?.message);
+      return res.status(502).json({
+        error: 'Webhook do WhatsApp não está registrado na Evolution; envio bloqueado para evitar mensagem sem confirmação em tempo real.',
+        details: { instance, webhookUrl: WEBHOOK_URL, reason: webhookErr?.message },
+      });
     }
 
     // Envio isolado: não trocar o destino com /chat/whatsappNumbers aqui.
@@ -6787,6 +6824,10 @@ function pendingStatusKey(tenantId, messageId) {
   return `${tenantId || 'unknown'}:${messageId}`;
 }
 
+function pendingStatusUnknownKey(messageId) {
+  return pendingStatusKey('unknown', messageId);
+}
+
 function isHigherMessageStatus(nextStatus, currentStatus = 'sent') {
   return (MESSAGE_STATUS_PRIORITY[nextStatus] ?? 0) > (MESSAGE_STATUS_PRIORITY[currentStatus] ?? 0);
 }
@@ -6943,7 +6984,7 @@ async function applyMessageStatusUpdate({ tenantId, lookupIds = [], newStatus })
 }
 
 function rememberPendingMessageStatus(tenantId, messageId, status) {
-  if (!tenantId || !messageId || !status) return;
+  if (!messageId || !status) return;
   const key = pendingStatusKey(tenantId, messageId);
   const existing = pendingMessageStatusByTenant.get(key);
   if (!existing || isHigherMessageStatus(status, existing.status)) {
@@ -6958,10 +6999,18 @@ function rememberPendingMessageStatus(tenantId, messageId, status) {
 
 function consumePendingMessageStatus(tenantId, messageId) {
   if (!tenantId || !messageId) return null;
-  const key = pendingStatusKey(tenantId, messageId);
-  const entry = pendingMessageStatusByTenant.get(key);
+  const keys = [pendingStatusKey(tenantId, messageId), pendingStatusUnknownKey(messageId)];
+  let entry = null;
+  let hitKey = null;
+  for (const key of keys) {
+    entry = pendingMessageStatusByTenant.get(key);
+    if (entry) {
+      hitKey = key;
+      break;
+    }
+  }
   if (!entry) return null;
-  pendingMessageStatusByTenant.delete(key);
+  pendingMessageStatusByTenant.delete(hitKey);
   return entry.status;
 }
 
@@ -7230,15 +7279,16 @@ async function matchQueue(content, tenantId) {
 
 async function persistIncomingMessage({ msgId, leadId, content, msgType, phone, instance, pushName, remoteJid, rawType, mediaUrl, fileName, mimeType, tenantId, sender = 'lead' }) {
   try {
+    const initialStatus = sender === 'lead' ? 'delivered' : 'sent';
     await pool.query(
       `INSERT INTO chat_messages (id, lead_id, content, sender, type, status, timestamp, phone, instance, media_url, file_name, mime_type, metadata, tenant_id)
-       VALUES ($1,$2,$3,$4,$5,'delivered',NOW(),$6,$7,$8,$9,$10,$11,$12)
+       VALUES ($1,$2,$3,$4,$5,$13,NOW(),$6,$7,$8,$9,$10,$11,$12)
        ON CONFLICT (id) DO NOTHING`,
       [msgId, leadId, content, sender, msgType, phone, instance, mediaUrl || null, fileName || null, mimeType || null, JSON.stringify({
         pushName,
         remoteJid,
         rawType,
-      }), tenantId]
+      }), tenantId, initialStatus]
     );
   } catch (dbErr) {
     console.error('DB insert error (incoming msg):', dbErr.message);
@@ -7549,6 +7599,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
     }
 
     // ─── Message ACK / status updates ───
+    const isSendMessageEvent = isEvolutionEvent(event, 'send.message', 'send_message');
     if (isEvolutionEvent(event, 'messages.update', 'messages_update', 'send.message.update', 'send_message_update', 'message.update', 'message_update', 'send.message', 'send_message')) {
       const updates = extractStatusUpdates(body.data || body);
       console.log(`📩 MESSAGES_UPDATE: ${updates.length} updates, raw:`, JSON.stringify(body.data || body).slice(0, 500));
@@ -7556,7 +7607,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
         const lookupIds = extractStatusLookupIds(update);
         const primaryMessageId = lookupIds[0];
         const remoteJid = extractStatusRemoteJid(update);
-        const ack = extractStatusAckValue(update);
+        const ack = extractStatusAckValue(update) ?? (isSendMessageEvent ? 'SERVER_ACK' : null);
 
         if (!primaryMessageId) {
           console.log(`⚠️ ACK ignored: missing message id in update`, JSON.stringify(update).slice(0, 300));
@@ -7615,6 +7666,11 @@ app.post('/api/webhook/evolution', async (req, res) => {
           });
           if (!tenantId) {
             console.warn(`⚠️ ACK ignored without tenant: instance=${instance || 'unknown'} phone=${phone.slice(-11)} ids=${lookupIds.join(',')}`);
+            // Do not lose this ACK. It can arrive before the instance→tenant
+            // mapping is warm or before /api/messages persists the outgoing row.
+            // Store it globally by message id; /api/messages will consume it once
+            // the frontend saves the real Evolution message id under the user tenant.
+            for (const lookupId of lookupIds) rememberPendingMessageStatus(null, lookupId, newStatus);
             continue;
           }
         }
@@ -7646,7 +7702,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
     }
 
     // Only process incoming messages from here
-    if (!isEvolutionEvent(event, 'messages.upsert', 'messages_upsert', 'send.message', 'send_message')) {
+    if (!isEvolutionEvent(event, 'messages.upsert', 'messages_upsert')) {
       return res.json({ ignored: true, event });
     }
 
@@ -11241,7 +11297,7 @@ app.post('/api/messages', async (req, res) => {
       status: initialStatus,
     }, user.tenant_id);
 
-    res.json({ success: true, id, mediaUrl: persistedMediaUrl });
+    res.json({ success: true, id, mediaUrl: persistedMediaUrl, status: initialStatus });
   } catch (error) {
     res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
   }
