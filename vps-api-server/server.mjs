@@ -2699,7 +2699,7 @@ app.get('/api/whatsapp/instances', async (req, res) => {
 // Create instance (+ auto-register webhook)
 app.post('/api/whatsapp/instances', async (req, res) => {
   try {
-    const { user } = await verifyAdmin(req);
+    const { user } = await verifyUser(req);
     const { instanceName } = req.body;
     
     // Isolation: prepend tenant prefix if not present
