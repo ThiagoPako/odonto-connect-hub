@@ -610,6 +610,17 @@ async function sendPushToAll(payload) {
 }
 
 // ─── Auto-register webhook on Evolution API instance ─────────
+function webhookFindHasExpectedUrl(data) {
+  if (!data) return false;
+  return JSON.stringify(data).includes(WEBHOOK_URL);
+}
+
+async function verifyWebhookRegistration(instanceName) {
+  const check = await evolutionFetch(`/webhook/find/${instanceName}`);
+  if (!check.ok) return { ok: false, data: check.data, status: check.status };
+  return { ok: webhookFindHasExpectedUrl(check.data), data: check.data, status: check.status };
+}
+
 async function registerWebhook(instanceName) {
   try {
     const webhookConfig = {
@@ -643,19 +654,26 @@ async function registerWebhook(instanceName) {
       body: JSON.stringify({ webhook: webhookConfig }),
     });
 
-    if (!result.ok) {
-      console.warn(`⚠️ Retrying webhook registration with root payload for ${instanceName}`);
+    let verified = result.ok ? await verifyWebhookRegistration(instanceName).catch((err) => ({ ok: false, error: err.message })) : null;
+
+    if (!result.ok || !verified?.ok) {
+      console.warn(`⚠️ Retrying webhook registration with root payload for ${instanceName}${result.ok ? ' (nested payload not verified)' : ''}`);
       result = await evolutionFetch(`/webhook/set/${instanceName}`, {
         method: 'POST',
         body: JSON.stringify(webhookConfig),
       });
+      verified = result.ok ? await verifyWebhookRegistration(instanceName).catch((err) => ({ ok: false, error: err.message })) : verified;
     }
-    if (result.ok) {
-      console.log(`✅ Webhook registered for ${instanceName} → ${WEBHOOK_URL}`);
+
+    if (result.ok && (verified?.ok || verified?.status === 404 || verified?.status === 405)) {
+      console.log(`✅ Webhook registered for ${instanceName} → ${WEBHOOK_URL}${verified?.ok ? ' (verified)' : ''}`);
     } else {
-      console.error(`⚠️ Webhook registration failed for ${instanceName} (${WEBHOOK_URL}):`, result.data);
+      console.error(`⚠️ Webhook registration failed/not verified for ${instanceName} (${WEBHOOK_URL}):`, {
+        set: result.data,
+        verify: verified?.data || verified?.error,
+      });
     }
-    return result;
+    return result.ok ? { ...result, verified: !!verified?.ok } : result;
   } catch (err) {
     console.error(`❌ Webhook registration error for ${instanceName}:`, err.message);
   }
