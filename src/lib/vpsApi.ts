@@ -620,8 +620,8 @@ export const whatsappApi = {
   logout: (instance: string) => vpsApiFetch(`/whatsapp/logout/${instance}`, { method: 'DELETE' }),
   delete: (instance: string) => vpsApiFetch(`/whatsapp/instances/${instance}`, { method: 'DELETE' }),
   restart: (instance: string) => vpsApiFetch(`/whatsapp/restart/${instance}`, { method: 'PUT' }),
-  sendText: (instance: string, number: string, text: string, quoted?: { key: { remoteJid: string; id: string } }) =>
-    vpsApiFetch('/whatsapp/send-text', { method: 'POST', body: { instance, number, text, quoted } }),
+  sendText: (instance: string, number: string, text: string, quoted?: { key: { remoteJid: string; id: string } }, leadId?: string) =>
+    vpsApiFetch('/whatsapp/send-text', { method: 'POST', body: { instance, number, text, quoted, leadId } }),
   sendMedia: (instance: string, number: string, mediaType: string, media: {
     base64?: string; url?: string; fileName?: string; caption?: string; mimeType?: string;
   }) => vpsApiFetch('/whatsapp/send-media', { method: 'POST', body: { instance, number, mediaType, media } }),
