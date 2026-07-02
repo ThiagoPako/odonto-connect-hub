@@ -919,7 +919,7 @@ export const messagesApi = {
     replyTo?: { messageId: string; content: string; sender: string } | null;
     instance?: string;
     phone?: string;
-  }) => vpsApiFetch<{ success: boolean; id: string; mediaUrl?: string }>('/messages', { method: 'POST', body }),
+  }) => vpsApiFetch<{ success: boolean; id: string; mediaUrl?: string; status?: string }>('/messages', { method: 'POST', body }),
   saveBatch: (messages: Array<Record<string, unknown>>) =>
     vpsApiFetch<{ success: boolean; count: number }>('/messages/batch', { method: 'POST', body: { messages } }),
   markRead: (leadId: string) =>
