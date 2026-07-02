@@ -11142,7 +11142,10 @@ async function importWhatsAppMessagesForTenant({ tenantId, requestedInstances = 
         const totalPages = messagesResult.data?.messages?.pages ?? messagesResult.data?.pages ?? null;
         if (totalPages && page >= totalPages) break;
         if (batch.length < pageSize) break;
+        // Throttle: evita saturar Evolution/socket WhatsApp (proteção anti-ban / anti-freeze pós-import)
+        await new Promise((r) => setTimeout(r, 300));
       }
+
     } catch (err) {
       instStats.error = err.message;
     }
