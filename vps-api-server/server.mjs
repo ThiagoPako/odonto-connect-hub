@@ -8030,6 +8030,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
           mimeType: mediaMimeType,
           tenantId,
           sender: senderRole,
+          messageTimestamp: message?.messageTimestamp || message?.timestamp || body?.date_time || body?.dateTime || body?.createdAt || null,
         });
         broadcastIncomingMessage({
           msgId,
@@ -8045,6 +8046,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
           mimeType: mediaMimeType,
           tenantId,
           sender: senderRole,
+          messageTimestamp: message?.messageTimestamp || message?.timestamp || body?.date_time || body?.dateTime || body?.createdAt || null,
         });
         return res.json({ processed: true, offHours: true, leadId: lead.id });
       }
@@ -8134,6 +8136,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
           mimeType: mediaMimeType,
           tenantId,
           sender: senderRole,
+          messageTimestamp: message?.messageTimestamp || message?.timestamp || body?.date_time || body?.dateTime || body?.createdAt || null,
         });
 
         broadcastIncomingMessage({
@@ -8318,6 +8321,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
       mimeType: mediaMimeType,
       tenantId,
       sender: senderRole,
+      messageTimestamp: message?.messageTimestamp || message?.timestamp || body?.date_time || body?.dateTime || body?.createdAt || null,
     });
 
     broadcastIncomingMessage({
