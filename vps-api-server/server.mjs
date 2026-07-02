@@ -7939,6 +7939,14 @@ app.post('/api/webhook/evolution', async (req, res) => {
       message?.message?.listResponseMessage ? 'list_response' :
       'text';
 
+    // Acknowledge Evolution immediately after the message is accepted for
+    // processing. Media download, avatar lookup, menu replies and automations can
+    // take seconds; if Evolution waits for all of that it can retry/stall the
+    // socket and the chat appears stuck in "digitando" with no message delivery.
+    if (!res.headersSent) {
+      res.json({ accepted: true, event: 'messages.upsert' });
+    }
+
     // Extract media metadata
     const mediaMsg = message?.message?.imageMessage || message?.message?.audioMessage ||
       message?.message?.videoMessage || message?.message?.documentMessage || message?.message?.stickerMessage;
