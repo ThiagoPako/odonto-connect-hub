@@ -7345,13 +7345,23 @@ async function persistIncomingMessage({ msgId, leadId, content, msgType, phone, 
     const initialStatus = sender === 'lead' ? 'delivered' : 'sent';
     await pool.query(
       `INSERT INTO chat_messages (id, lead_id, content, sender, type, status, timestamp, phone, instance, media_url, file_name, mime_type, metadata, tenant_id)
-       VALUES ($1,$2,$3,$4,$5,$13,NOW(),$6,$7,$8,$9,$10,$11,$12)
+       VALUES ($1,$2,$3,$4,$5,$6,NOW(),$7,$8,$9,$10,$11,$12,$13)
        ON CONFLICT (id) DO NOTHING`,
-      [msgId, leadId, content, sender, msgType, phone, instance, mediaUrl || null, fileName || null, mimeType || null, JSON.stringify({
-        pushName,
-        remoteJid,
-        rawType,
-      }), tenantId, initialStatus]
+      [
+        msgId,
+        leadId,
+        content,
+        sender,
+        msgType,
+        initialStatus,
+        phone,
+        instance,
+        mediaUrl || null,
+        fileName || null,
+        mimeType || null,
+        JSON.stringify({ pushName, remoteJid, rawType }),
+        tenantId,
+      ]
     );
   } catch (dbErr) {
     console.error('DB insert error (incoming msg):', dbErr.message);
