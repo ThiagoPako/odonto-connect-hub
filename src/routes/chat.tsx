@@ -103,6 +103,33 @@ function getEvolutionMessageId(data: unknown): string | null {
     || (value.response && typeof value.response === "object" ? readId((value.response as Record<string, unknown>).message) : null);
 }
 
+function normalizeInstanceName(value?: string | null): string {
+  return (value || "")
+    .toLowerCase()
+    .trim()
+    .replace(/^[0-9a-f]{8}-/i, "")
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function resolveConnectedInstance(
+  connectedInstances: Array<{ instanceName: string }>,
+  preferredInstanceName?: string | null,
+) {
+  if (preferredInstanceName) {
+    const preferred = normalizeInstanceName(preferredInstanceName);
+    const exact = connectedInstances.find((instance) => instance.instanceName === preferredInstanceName);
+    if (exact) return exact;
+
+    const normalized = connectedInstances.find((instance) => {
+      const current = normalizeInstanceName(instance.instanceName);
+      return current === preferred || current.endsWith(preferred) || preferred.endsWith(current);
+    });
+    if (normalized) return normalized;
+  }
+
+  return connectedInstances.length === 1 ? connectedInstances[0] : undefined;
+}
+
 export const Route = createFileRoute("/chat")({
   ssr: false,
   validateSearch: zodValidator(chatSearchSchema),
@@ -946,11 +973,7 @@ function ChatPage() {
     const leadMessages = messages[selectedLead.id] || [];
     const lastKnownInstance = [...leadMessages].reverse().find((message) => message.instance)?.instance;
     const preferredInstanceName = selectedLead.instance || lastKnownInstance;
-    const connected = preferredInstanceName
-      ? connectedInstances.find((instance) => instance.instanceName === preferredInstanceName)
-      : connectedInstances.length === 1
-        ? connectedInstances[0]
-        : undefined;
+    const connected = resolveConnectedInstance(connectedInstances, preferredInstanceName);
     
     if (!connected) {
       toast.error(preferredInstanceName ? "WhatsApp da conversa não conectado" : "Selecione a conversa com origem WhatsApp", {
