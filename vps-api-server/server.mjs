@@ -2135,6 +2135,12 @@ function extractEvolutionMessageId(data) {
     || data?.data?.message?.key?.id
     || data?.response?.key?.id
     || data?.response?.message?.key?.id
+    || data?.messageId
+    || data?.id
+    || data?.data?.id
+    || data?.data?.messageId
+    || data?.response?.messageId
+    || data?.response?.id
     || null;
 }
 
