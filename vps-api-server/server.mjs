@@ -11473,7 +11473,26 @@ app.post('/api/messages', async (req, res) => {
     await pool.query(
       `INSERT INTO chat_messages (id, lead_id, content, sender, type, status, timestamp, media_url, file_name, mime_type, reply_to_id, reply_to_content, reply_to_sender, attendant_id, attendant_name, instance, phone, tenant_id)
        VALUES ($1,$2,$3,'attendant',$4,$5,NOW(),$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
-       ON CONFLICT (id) DO NOTHING`,
+       ON CONFLICT (id) DO UPDATE
+         SET lead_id = COALESCE(chat_messages.lead_id, EXCLUDED.lead_id),
+             content = COALESCE(NULLIF(chat_messages.content, ''), EXCLUDED.content),
+             type = COALESCE(chat_messages.type, EXCLUDED.type),
+             status = CASE
+               WHEN chat_messages.status = 'read' THEN chat_messages.status
+               WHEN chat_messages.status = 'delivered' AND EXCLUDED.status IN ('sent', 'sending') THEN chat_messages.status
+               ELSE COALESCE(EXCLUDED.status, chat_messages.status)
+             END,
+             media_url = COALESCE(chat_messages.media_url, EXCLUDED.media_url),
+             file_name = COALESCE(chat_messages.file_name, EXCLUDED.file_name),
+             mime_type = COALESCE(chat_messages.mime_type, EXCLUDED.mime_type),
+             reply_to_id = COALESCE(chat_messages.reply_to_id, EXCLUDED.reply_to_id),
+             reply_to_content = COALESCE(chat_messages.reply_to_content, EXCLUDED.reply_to_content),
+             reply_to_sender = COALESCE(chat_messages.reply_to_sender, EXCLUDED.reply_to_sender),
+             attendant_id = COALESCE(chat_messages.attendant_id, EXCLUDED.attendant_id),
+             attendant_name = COALESCE(chat_messages.attendant_name, EXCLUDED.attendant_name),
+             instance = COALESCE(chat_messages.instance, EXCLUDED.instance),
+             phone = COALESCE(chat_messages.phone, EXCLUDED.phone),
+             tenant_id = COALESCE(chat_messages.tenant_id, EXCLUDED.tenant_id)`,
       [
         id, leadId, content || '', type || 'text', initialStatus,
         persistedMediaUrl, fileName || null, mimeType || null,
