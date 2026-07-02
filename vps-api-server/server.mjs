@@ -7603,6 +7603,14 @@ async function ensureWaitingSessionForIncomingLead({ lead, phone, queueId = null
 
 app.post('/api/webhook/evolution', async (req, res) => {
   try {
+    // Evolution must receive a response quickly. Some message paths do extra
+    // work (media download, avatar lookup, queue menu) after the DB save; make
+    // duplicate/late responses harmless if a branch has already acknowledged.
+    const originalJson = res.json.bind(res);
+    const originalStatus = res.status.bind(res);
+    res.json = (payload) => (res.headersSent ? res : originalJson(payload));
+    res.status = (code) => (res.headersSent ? res : originalStatus(code));
+
     const body = Array.isArray(req.body) ? req.body[0] : req.body;
     const event = normalizeEvolutionEventName(body.event || body.type || body.eventType);
     const instance = extractEvolutionInstanceName(body);
@@ -8006,7 +8014,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
       }
 
       // Check business hours
-      if (!isWithinBusinessHours(attendanceSettingsCache)) {
+      if (!isFromMe && !isWithinBusinessHours(attendanceSettingsCache)) {
         const offMsg = attendanceSettingsCache?.offHoursMessage ||
           'Olá! Nosso horário de atendimento encerrou. Deixe sua mensagem que retornaremos assim que possível! 😊';
         await evolutionFetch(`/message/sendText/${instance}`, {
@@ -8060,7 +8068,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
       }
 
       // Send welcome message if enabled
-      if (attendanceSettingsCache?.autoGreetingEnabled && attendanceSettingsCache?.welcomeMessage) {
+      if (!isFromMe && attendanceSettingsCache?.autoGreetingEnabled && attendanceSettingsCache?.welcomeMessage) {
         await evolutionFetch(`/message/sendText/${instance}`, {
           method: 'POST',
           body: JSON.stringify({ number: resolvedPhone, text: attendanceSettingsCache.welcomeMessage }),
@@ -8068,7 +8076,10 @@ app.post('/api/webhook/evolution', async (req, res) => {
       }
 
       // Send queue menu
-      await sendQueueMenu(instance, resolvedPhone, tenantId);
+      if (!isFromMe) {
+        sendQueueMenu(instance, resolvedPhone, tenantId)
+          .catch((err) => console.warn('Queue menu send failed:', err.message));
+      }
     }
 
     if (!isFromMe) {
@@ -8082,7 +8093,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
     }
 
     // ─── Lead is awaiting queue selection ───
-    if (lead.awaiting_queue_selection && (msgType === 'text' || msgType === 'button_response' || msgType === 'list_response')) {
+    if (!isFromMe && lead.awaiting_queue_selection && (msgType === 'text' || msgType === 'button_response' || msgType === 'list_response')) {
       const selectedQueue = await matchQueue(msgContent, tenantId);
 
       if (selectedQueue) {
@@ -8200,8 +8211,10 @@ app.post('/api/webhook/evolution', async (req, res) => {
           tenantId,
           sender: senderRole,
         });
-        // Invalid selection — resend menu
-        await sendQueueMenu(instance, resolvedPhone, tenantId);
+        // Invalid selection — resend menu in background so the webhook does not
+        // block message delivery/realtime if Evolution is slow.
+        sendQueueMenu(instance, resolvedPhone, tenantId)
+          .catch((err) => console.warn('Queue menu resend failed:', err.message));
         console.log(`💬 Incoming message from ${pushName} (${resolvedPhone}) awaiting queue selection → saved + broadcast to ${sseClients.size} clients`);
         return res.json({ processed: true, resent_menu: true, leadId: lead.id });
       }
@@ -8364,19 +8377,22 @@ app.post('/api/webhook/evolution', async (req, res) => {
     });
 
     if (lead && !lead.avatar_url) {
-      try {
-        const result = await evolutionFetch(`/chat/fetchProfilePictureUrl/${instance}`, {
-          method: 'POST',
-          body: JSON.stringify({ number: phone }),
-        });
-        const pictureUrl = result.data?.profilePictureUrl || result.data?.picture || result.data?.url || null;
-        if (pictureUrl) {
-          await pool.query('UPDATE crm_leads SET avatar_url = $1, updated_at = NOW() WHERE id = $2', [pictureUrl, lead.id]);
-          console.log(`📸 Auto-synced avatar for lead ${lead.id} (${phone})`);
+      (async () => {
+        try {
+          const result = await evolutionFetch(`/chat/fetchProfilePictureUrl/${instance}`, {
+            method: 'POST',
+            body: JSON.stringify({ number: phone }),
+            timeoutMs: 5000,
+          });
+          const pictureUrl = result.data?.profilePictureUrl || result.data?.picture || result.data?.url || null;
+          if (pictureUrl) {
+            await pool.query('UPDATE crm_leads SET avatar_url = $1, updated_at = NOW() WHERE id = $2', [pictureUrl, lead.id]);
+            console.log(`📸 Auto-synced avatar for lead ${lead.id} (${phone})`);
+          }
+        } catch (fetchErr) {
+          console.error('Webhook profile fetch error:', fetchErr.message);
         }
-      } catch (fetchErr) {
-        console.error('Webhook profile fetch error:', fetchErr.message);
-      }
+      })();
     }
 
     // ─── Auto-confirm appointment when patient replies SIM to reminder ───
@@ -8433,7 +8449,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
     res.json({ processed: true, leadId: lead.id });
   } catch (error) {
     console.error('Webhook error:', error);
-    res.status(500).json({ error: error.message });
+    if (!res.headersSent) res.status(500).json({ error: error.message });
   }
 });
 
