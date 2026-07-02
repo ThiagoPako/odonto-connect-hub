@@ -3332,6 +3332,10 @@ app.post('/api/whatsapp/send-media', async (req, res) => {
 
     const cleanNumber = normalizeWhatsappNumber(number);
 
+    ensureWebhookRegistration(instance).catch((webhookErr) => {
+      console.warn(`⚠️ send-media: webhook registration check failed for ${instance}; continuing send:`, webhookErr?.message);
+    });
+
     if (mediaType === 'audio') {
       const result = await sendWhatsAppAudioWithFallback(
         instance,
@@ -3419,6 +3423,10 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '6
     const cleanNumber = normalizeWhatsappNumber(number);
     const resolvedMimeType = String(mimeType || req.headers['content-type'] || 'application/octet-stream');
     jobId = randomUUID();
+
+    ensureWebhookRegistration(String(instance)).catch((webhookErr) => {
+      console.warn(`⚠️ send-media-upload: webhook registration check failed for ${instance}; continuing send:`, webhookErr?.message);
+    });
 
     mediaSendJobs.set(jobId, {
       status: 'processing',
