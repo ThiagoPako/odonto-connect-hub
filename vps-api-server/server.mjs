@@ -11296,7 +11296,7 @@ app.post('/api/messages', async (req, res) => {
       status: initialStatus,
     }, user.tenant_id);
 
-    res.json({ success: true, id, mediaUrl: persistedMediaUrl });
+    res.json({ success: true, id, mediaUrl: persistedMediaUrl, status: initialStatus });
   } catch (error) {
     res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
   }
