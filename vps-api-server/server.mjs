@@ -3187,7 +3187,21 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
     // otherwise the outgoing message ACK + the recipient reply never arrive.
     ensureWebhookRegistration(instance).catch(() => {});
 
-    const cleanNumber = normalizeWhatsappNumber(number);
+    const rawNumber = normalizeWhatsappNumber(number);
+
+    // Validate against WhatsApp first — avoids "silent send" on invalid JIDs
+    // (typical for Brazilian numbers missing the leading 9 after the DDD).
+    const { exists, canonical } = await resolveValidWhatsAppNumber(instance, rawNumber);
+    if (!exists) {
+      console.warn(`❌ send-text: number ${rawNumber} is not on WhatsApp (instance ${instance})`);
+      return res.status(422).json({
+        error: 'Este número não possui WhatsApp ativo. Confira o DDD e o 9º dígito.',
+        code: 'WHATSAPP_NUMBER_NOT_FOUND',
+        number: rawNumber,
+      });
+    }
+    const cleanNumber = canonical;
+
     const result = await sendEvolutionTextMessage(instance, cleanNumber, text, quoted || null);
 
     if (!result.ok) {
