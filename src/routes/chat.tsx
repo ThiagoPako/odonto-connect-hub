@@ -62,7 +62,7 @@ function incomingToChatMessage(msg: IncomingMessage, leadId?: string): ChatMessa
     sender: isFromMe ? "attendant" : "lead",
     type: (msg.type as MessageType) || "text",
     timestamp: new Date(msg.timestamp),
-    status: isFromMe ? "sent" : "delivered",
+    status: (msg.status as MessageStatus | undefined) || (isFromMe ? "sent" : "delivered"),
     fileUrl: resolveMediaUrl(msg.mediaUrl) || undefined,
     fileName: msg.fileName || undefined,
     mimeType: msg.mimeType || undefined,
