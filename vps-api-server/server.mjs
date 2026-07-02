@@ -3316,11 +3316,9 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
     // Make sure Evolution forwards events back to our webhook before sending.
     // If this is fire-and-forget, a newly/reconnected instance can send before
     // ACK/reply webhooks are registered, producing one-check messages forever.
-    try {
-      await ensureWebhookRegistration(instance);
-    } catch (webhookErr) {
+    ensureWebhookRegistration(instance).catch((webhookErr) => {
       console.warn(`⚠️ send-text: webhook registration check failed for ${instance}; continuing send:`, webhookErr?.message);
-    }
+    });
 
     // Envio isolado: não trocar o destino com /chat/whatsappNumbers aqui.
     // Esse endpoint pode retornar JID/canonical diferente e causar envio com
