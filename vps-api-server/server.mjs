@@ -3013,8 +3013,9 @@ app.post('/api/whatsapp/sync-chat/:instance', async (req, res) => {
       start,
       end,
       createWaitingSessions: true,
-      maxPages: 80,
-      pageSize: 100,
+      maxPages: 20,
+      pageSize: 50,
+
     });
 
     res.json({ success: true, ...result });
@@ -11141,7 +11142,10 @@ async function importWhatsAppMessagesForTenant({ tenantId, requestedInstances = 
         const totalPages = messagesResult.data?.messages?.pages ?? messagesResult.data?.pages ?? null;
         if (totalPages && page >= totalPages) break;
         if (batch.length < pageSize) break;
+        // Throttle: evita saturar Evolution/socket WhatsApp (proteção anti-ban / anti-freeze pós-import)
+        await new Promise((r) => setTimeout(r, 300));
       }
+
     } catch (err) {
       instStats.error = err.message;
     }
@@ -11183,7 +11187,10 @@ app.post('/api/messages/import-whatsapp', async (req, res) => {
       start,
       end,
       createWaitingSessions: true,
+      maxPages: 30,
+      pageSize: 50,
       onProgress: sendProgress,
+
     });
 
     const finalResult = { phase: 'done', success: true, ...result };

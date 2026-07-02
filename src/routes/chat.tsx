@@ -526,7 +526,7 @@ function ChatPage() {
           }
           return prev;
         });
-      }, 10000);
+      }, 4000);
     }
   }, []);
 
