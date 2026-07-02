@@ -3013,8 +3013,9 @@ app.post('/api/whatsapp/sync-chat/:instance', async (req, res) => {
       start,
       end,
       createWaitingSessions: true,
-      maxPages: 80,
-      pageSize: 100,
+      maxPages: 20,
+      pageSize: 50,
+
     });
 
     res.json({ success: true, ...result });
