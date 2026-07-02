@@ -3222,12 +3222,14 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
 
     const messageId = extractEvolutionMessageId(result.data);
     if (!messageId) {
-      // Evolution v2 às vezes responde 200 sem key.id explícito.
-      // Aceitamos o envio (Evolution já enfileirou) e sintetizamos um id
-      // para o frontend marcar como enviado. O ACK real chega via webhook.
-      const synthetic = `local-${randomUUID()}`;
-      console.warn(`⚠️ send-text sem message id para ${instance} → ${cleanNumber}; usando synthetic ${synthetic}`);
-      return res.json({ ...result.data, key: { ...(result.data?.key || {}), id: synthetic }, synthetic: true });
+      // Sem key.id/messageId real não há como correlacionar ACK, persistir status
+      // ou garantir entrega. Retornar sucesso aqui gera exatamente o falso
+      // positivo visto na UI: "enviado", mas nada chega ao WhatsApp.
+      console.error(`❌ send-text sem message id real para ${instance} → ${cleanNumber}:`, result.data);
+      return res.status(502).json({
+        error: 'Evolution aceitou a requisição, mas não retornou confirmação real da mensagem. Envio não confirmado.',
+        details: result.data,
+      });
     }
 
     res.json(result.data);

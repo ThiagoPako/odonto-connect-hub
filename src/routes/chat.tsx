@@ -941,12 +941,20 @@ function ChatPage() {
     // Evolution API directly from the browser: CORS blocks it in production and
     // a browser fallback can make the UI look successful when WhatsApp rejected
     // the send.
-    const preferredInstanceName = selectedLead.instance;
-    const connected = connectedInstances.find(i => i.instanceName === preferredInstanceName) || connectedInstances[0];
+    const leadMessages = messages[selectedLead.id] || [];
+    const lastKnownInstance = [...leadMessages].reverse().find((message) => message.instance)?.instance;
+    const preferredInstanceName = selectedLead.instance || lastKnownInstance;
+    const connected = preferredInstanceName
+      ? connectedInstances.find((instance) => instance.instanceName === preferredInstanceName)
+      : connectedInstances.length === 1
+        ? connectedInstances[0]
+        : undefined;
     
     if (!connected) {
-      toast.error("Nenhum WhatsApp conectado", {
-        description: "Conecte um número na página de Canais para enviar mensagens."
+      toast.error(preferredInstanceName ? "WhatsApp da conversa não conectado" : "Selecione a conversa com origem WhatsApp", {
+        description: preferredInstanceName
+          ? `A instância ${preferredInstanceName} precisa estar conectada para responder esta conversa.`
+          : "Há mais de um número conectado e esta conversa não tem instância definida. Aguarde uma mensagem do cliente ou reabra pela fila."
       });
       setMessages((prev) => ({
         ...prev,
