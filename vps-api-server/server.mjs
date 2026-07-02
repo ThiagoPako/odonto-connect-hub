@@ -244,6 +244,22 @@ async function validateRequestedTenantForUser(user, requestedTenantId) {
     console.warn('Tenant header local validation failed:', err.message);
   }
 
+  try {
+    const { rows } = await pool.query(
+      `SELECT tenant_id
+         FROM user_roles
+        WHERE user_id = $1
+          AND tenant_id = $2
+        LIMIT 1`,
+      [user.id, tenant]
+    );
+    if (rows[0]?.tenant_id) return tenant;
+  } catch (err) {
+    if (err.code !== '42P01' && err.code !== '42703') {
+      console.warn('Tenant header local role validation failed:', err.message);
+    }
+  }
+
   if (SUPABASE_BRIDGE_ENABLED) {
     try {
       const restAuthKey = SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
@@ -258,6 +274,21 @@ async function validateRequestedTenantForUser(user, requestedTenantId) {
       }
     } catch (err) {
       console.warn('Tenant header Supabase validation failed:', err.message);
+    }
+
+    try {
+      const restAuthKey = SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
+      const restBearer = SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
+      const res = await fetch(
+        `${SUPABASE_URL}/rest/v1/user_roles?user_id=eq.${encodeURIComponent(user.id)}&tenant_id=eq.${encodeURIComponent(tenant)}&select=tenant_id&limit=1`,
+        { headers: { apikey: restAuthKey, Authorization: `Bearer ${restBearer}` } }
+      );
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.[0]?.tenant_id) return tenant;
+      }
+    } catch (err) {
+      console.warn('Tenant header Supabase role validation failed:', err.message);
     }
   }
 
@@ -279,6 +310,35 @@ async function getTenantIdByInstance(instanceName) {
     );
     const localTenantId = rows[0]?.tenant_id ? String(rows[0].tenant_id) : '';
     if (localTenantId && isValidTenantId(localTenantId)) {
+      // Non-prefixed legacy instance names (ex.: "testedg") can carry a stale
+      // tenant mapping in the VPS local DB. Lovable Cloud is the canonical
+      // mapping used by the logged-in app, so prefer it and repair local cache.
+      if (!prefix && SUPABASE_BRIDGE_ENABLED) {
+        try {
+          const restAuthKey = SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
+          const cloudRes = await fetch(
+            `${SUPABASE_URL}/rest/v1/whatsapp_instances?instance_name=eq.${encodeURIComponent(instanceName)}&select=tenant_id&limit=1`,
+            { headers: { apikey: restAuthKey, Authorization: `Bearer ${restAuthKey}` } }
+          );
+          if (cloudRes.ok) {
+            const cloudRows = await cloudRes.json();
+            const cloudTenantId = cloudRows?.[0]?.tenant_id ? String(cloudRows[0].tenant_id) : '';
+            if (isValidTenantId(cloudTenantId) && cloudTenantId !== localTenantId) {
+              await pool.query(
+                `UPDATE whatsapp_instances
+                    SET tenant_id = $2, updated_at = NOW()
+                  WHERE instance_name = $1`,
+                [instanceName, cloudTenantId]
+              ).catch(() => {});
+              setCachedTenantId(instanceName, cloudTenantId);
+              console.warn(`🔁 Repaired stale tenant mapping for ${instanceName}: ${localTenantId} → ${cloudTenantId}`);
+              return cloudTenantId;
+            }
+          }
+        } catch (err) {
+          console.warn(`Cloud tenant mapping check failed for ${instanceName}:`, err.message);
+        }
+      }
       if (!prefix || localTenantId.toLowerCase().startsWith(prefix)) {
         setCachedTenantId(instanceName, localTenantId);
         return localTenantId;
@@ -525,7 +585,7 @@ async function resolveSupabaseUser(token) {
   let role = profile.role || 'user';
   try {
     const roleRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/user_roles?user_id=eq.${sbUser.id}&select=role&limit=1`,
+      `${SUPABASE_URL}/rest/v1/user_roles?user_id=eq.${sbUser.id}&select=role,tenant_id&limit=1`,
       {
         headers: {
           apikey: restAuthKey,
@@ -536,6 +596,9 @@ async function resolveSupabaseUser(token) {
     if (roleRes.ok) {
       const roles = await roleRes.json();
       if (roles?.[0]?.role) role = roles[0].role;
+      if (!profile?.tenant_id && roles?.[0]?.tenant_id && isValidTenantId(roles[0].tenant_id)) {
+        profile.tenant_id = roles[0].tenant_id;
+      }
     }
   } catch { /* default user */ }
 
@@ -7182,6 +7245,10 @@ app.get('/api/events', async (req, res) => {
       let decoded = null;
       try {
         decoded = verifyToken(token);
+        if (looksLikeSupabaseAccessToken(decoded)) {
+          decoded = null;
+          throw new Error('supabase_token_requires_bridge');
+        }
         tenantId = decoded?.tenant_id;
         authenticatedUserId = decoded?.sub || decoded?.id || null;
         authenticatedIsSuperAdmin = !!decoded?.is_super_admin;
