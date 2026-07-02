@@ -130,6 +130,10 @@ function resolveConnectedInstance(
   return connectedInstances.length === 1 ? connectedInstances[0] : undefined;
 }
 
+function normalizePhoneSuffix(value?: string | null): string {
+  return (value || "").replace(/\D/g, "").slice(-11);
+}
+
 export const Route = createFileRoute("/chat")({
   ssr: false,
   validateSearch: zodValidator(chatSearchSchema),
@@ -167,6 +171,7 @@ function ChatPage() {
   const myLeadsRef = useRef(myLeads);
   const selectedLeadRef = useRef(selectedLead);
   const syncedChatInstancesRef = useRef(new Set<string>());
+  const pendingStatusByMessageIdRef = useRef(new Map<string, MessageStatus>());
   const lastSentPresenceRef = useRef<{ leadId: string | null; status: "composing" | "recording" | "paused"; timestamp: number }>({
     leadId: null,
     status: "paused",
@@ -506,26 +511,61 @@ function ChatPage() {
   const statusPriority: Record<string, number> = { sending: 0, sent: 1, delivered: 2, read: 3, failed: -1 };
 
   const handleMessageStatusUpdate = useCallback((update: import("@/hooks/useRealtimeChat").MessageStatusUpdate) => {
+    const updatePhone = normalizePhoneSuffix(update.phone);
+    const applyStatus = (message: ChatMessage, status: MessageStatus): ChatMessage => {
+      if (status === "failed") return { ...message, status };
+      const currentPri = statusPriority[message.status || "sent"] ?? 1;
+      const newPri = statusPriority[status] ?? 1;
+      return newPri > currentPri ? { ...message, status } : message;
+    };
+    const matchingLeadIds = new Set(
+      [...queueRef.current, ...myLeadsRef.current]
+        .filter((lead) => updatePhone && normalizePhoneSuffix(lead.phone) === updatePhone)
+        .map((lead) => lead.id),
+    );
+
     setMessages((prev) => {
       let changed = false;
+      let matchedAnyMessage = false;
       const next: Record<string, ChatMessage[]> = {};
       for (const leadId of Object.keys(prev)) {
         const msgs = prev[leadId];
+        let exactMatch = false;
         const updated = msgs.map((m) => {
           if (m.id !== update.messageId) return m;
-          if (update.status === "failed") {
-            changed = true;
-            return { ...m, status: update.status as MessageStatus };
-          }
-          const currentPri = statusPriority[m.status || "sent"] ?? 1;
-          const newPri = statusPriority[update.status] ?? 1;
-          if (newPri > currentPri) {
-            changed = true;
-            return { ...m, status: update.status as MessageStatus };
-          }
-          return m;
+          exactMatch = true;
+          matchedAnyMessage = true;
+          const nextMessage = applyStatus(m, update.status as MessageStatus);
+          if (nextMessage !== m) changed = true;
+          return nextMessage;
         });
+
+        // Some Evolution builds emit ACKs with a device/protocol id that differs
+        // from the id returned by sendText. When that happens, reconcile by the
+        // conversation phone and upgrade the latest outgoing message instead of
+        // leaving the UI frozen at one check.
+        if (!exactMatch && matchingLeadIds.has(leadId) && update.status !== "failed") {
+          const fallbackIndex = [...updated].reverse().findIndex((message) => {
+            if (message.sender === "lead" || message.id.startsWith("sys-")) return false;
+            const currentPri = statusPriority[message.status || "sent"] ?? 1;
+            const newPri = statusPriority[update.status] ?? 1;
+            return newPri > currentPri;
+          });
+
+          if (fallbackIndex >= 0) {
+            const targetIndex = updated.length - 1 - fallbackIndex;
+            updated[targetIndex] = applyStatus(updated[targetIndex], update.status as MessageStatus);
+            matchedAnyMessage = true;
+            changed = true;
+          }
+        }
+
         next[leadId] = updated;
+      }
+      if (!matchedAnyMessage) {
+        pendingStatusByMessageIdRef.current.set(update.messageId, update.status as MessageStatus);
+      } else {
+        pendingStatusByMessageIdRef.current.delete(update.messageId);
       }
       return changed ? next : prev;
     });
@@ -1172,12 +1212,18 @@ function ChatPage() {
       updateStatus("sent");
 
       if (evolutionMsgId) {
+        const pendingStatus = pendingStatusByMessageIdRef.current.get(evolutionMsgId);
+        if (pendingStatus) pendingStatusByMessageIdRef.current.delete(evolutionMsgId);
         setMessages((prev) => ({
           ...prev,
           [selectedLead.id]: (prev[selectedLead.id] || []).map((m) => {
             if (m.id !== msgId && m.id !== evolutionMsgId) return m;
             const currentPri = statusPriority[m.status || "sending"] ?? 0;
+            const pendingPri = pendingStatus ? (statusPriority[pendingStatus] ?? 1) : -1;
             const newId = evolutionMsgId!;
+            if (pendingStatus && pendingPri > currentPri) {
+              return { ...m, id: newId, status: pendingStatus };
+            }
             return currentPri >= (statusPriority["sent"] ?? 1)
               ? { ...m, id: newId }
               : { ...m, id: newId, status: "sent" as MessageStatus };
@@ -1199,7 +1245,7 @@ function ChatPage() {
         }
       }
 
-      messagesApi.save({
+      const saveResult = await messagesApi.save({
         id: evolutionMsgId || msgId,
         leadId: selectedLead.id,
         content,
@@ -1211,7 +1257,10 @@ function ChatPage() {
         replyTo: capturedReplyingTo,
         instance: connected.instanceName,
         phone: selectedLead.phone,
-      }).catch((err) => console.error("Failed to persist message:", err));
+      });
+      if (saveResult.error) {
+        console.error("Failed to persist message:", saveResult.error);
+      }
     } catch (err: any) {
       toast.error("Erro ao enviar: " + (err?.message || "Falha no envio"));
       updateStatus("failed");

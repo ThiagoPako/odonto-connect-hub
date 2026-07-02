@@ -6791,6 +6791,157 @@ function isHigherMessageStatus(nextStatus, currentStatus = 'sent') {
   return (MESSAGE_STATUS_PRIORITY[nextStatus] ?? 0) > (MESSAGE_STATUS_PRIORITY[currentStatus] ?? 0);
 }
 
+function normalizeEvolutionAckStatus(ack) {
+  if (ack === null || ack === undefined) return null;
+
+  const ackStr = String(ack).trim().toUpperCase();
+  const ackNum = typeof ack === 'number' ? ack : Number.parseInt(ackStr, 10);
+
+  if (ackStr === 'ERROR' || ackStr === 'FAILED' || ackStr === 'NACK' || ackNum === 0) return 'failed';
+  if (ackStr === 'PENDING' || ackStr === 'PENDING_ACK' || ackNum === 1) return 'sent';
+  if (ackStr === 'SERVER_ACK' || ackStr === 'SENT' || ackStr === 'SEND' || ackNum === 2) return 'sent';
+  if (ackStr === 'DELIVERY_ACK' || ackStr === 'DELIVERED' || ackStr === 'RECEIVED' || ackStr === 'DEVICE_ACK' || ackNum === 3) return 'delivered';
+  if (ackStr === 'READ' || ackStr === 'READ_ACK' || ackStr === 'PLAYED' || ackStr === 'PLAYED_ACK' || ackNum === 4 || ackNum === 5) return 'read';
+
+  return null;
+}
+
+function extractStatusUpdates(data) {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.updates)) return data.updates;
+  if (Array.isArray(data?.messages)) return data.messages;
+  if (Array.isArray(data?.records)) return data.records;
+  if (Array.isArray(data?.data)) return data.data;
+  return data ? [data] : [];
+}
+
+function extractStatusLookupIds(update) {
+  const candidates = [
+    update?.messageId,
+    update?.message_id,
+    update?.keyId,
+    update?.key_id,
+    update?.id,
+    update?.key?.id,
+    update?.message?.key?.id,
+    update?.data?.key?.id,
+    update?.data?.message?.key?.id,
+    update?.update?.key?.id,
+    update?.update?.messageId,
+    update?.update?.message_id,
+    extractEvolutionMessageId(update),
+  ];
+
+  return [...new Set(candidates
+    .filter((value) => typeof value === 'string' || typeof value === 'number')
+    .map((value) => String(value).trim())
+    .filter((value) => value && !value.includes('@'))
+  )];
+}
+
+function extractStatusRemoteJid(update) {
+  const candidates = [
+    update?.key?.remoteJid,
+    update?.remoteJid,
+    update?.remote_jid,
+    update?.chatId,
+    update?.chat_id,
+    update?.jid,
+    update?.message?.key?.remoteJid,
+    update?.data?.key?.remoteJid,
+    update?.update?.key?.remoteJid,
+  ];
+
+  return candidates.find((value) => typeof value === 'string' && value.includes('@')) || null;
+}
+
+function extractStatusAckValue(update) {
+  return update?.update?.status
+    ?? update?.update?.ack
+    ?? update?.status
+    ?? update?.ack
+    ?? update?.message?.status
+    ?? update?.message?.ack
+    ?? update?.data?.status
+    ?? update?.data?.ack
+    ?? update?.key?.status
+    ?? update?.key?.ack;
+}
+
+async function findMessageStatusContext({ tenantId, lookupIds = [], phone = '', instance = '' }) {
+  const ids = [...new Set(lookupIds.map((id) => String(id || '').trim()).filter(Boolean))];
+  const clauses = [];
+  const params = [];
+
+  if (isValidTenantId(tenantId)) {
+    params.push(tenantId);
+    clauses.push(`cm.tenant_id = $${params.length}`);
+  }
+
+  const matchers = [];
+  if (ids.length > 0) {
+    params.push(ids);
+    const idsParam = params.length;
+    matchers.push(`cm.id = ANY($${idsParam}::text[])`);
+    matchers.push(`EXISTS (SELECT 1 FROM unnest($${idsParam}::text[]) AS lookup(id) WHERE cm.metadata::text LIKE '%' || lookup.id || '%')`);
+  }
+
+  const phoneSuffix = normalizeWhatsappNumber(phone).slice(-11);
+  if (phoneSuffix) {
+    params.push(phoneSuffix);
+    const phoneParam = params.length;
+    matchers.push(`RIGHT(REGEXP_REPLACE(COALESCE(cm.phone, ''), '\\D', '', 'g'), 11) = $${phoneParam}`);
+  }
+
+  if (instance) {
+    params.push(instance);
+    const instanceParam = params.length;
+    clauses.push(`(cm.instance = $${instanceParam} OR cm.instance IS NULL)`);
+  }
+
+  if (matchers.length === 0) return null;
+
+  const where = [...clauses, `(${matchers.join(' OR ')})`].join(' AND ');
+  const { rows } = await pool.query(
+    `SELECT cm.id, cm.lead_id, cm.phone, cm.instance, cm.tenant_id, cm.status
+       FROM chat_messages cm
+      WHERE ${where}
+      ORDER BY cm.timestamp DESC
+      LIMIT 1`,
+    params,
+  );
+
+  return rows[0] || null;
+}
+
+async function applyMessageStatusUpdate({ tenantId, lookupIds = [], newStatus }) {
+  const ids = [...new Set(lookupIds.map((id) => String(id || '').trim()).filter(Boolean))];
+  if (!isValidTenantId(tenantId) || ids.length === 0 || !newStatus) return [];
+
+  const nextPriority = MESSAGE_STATUS_PRIORITY[newStatus] ?? 0;
+  const { rows } = await pool.query(
+    `UPDATE chat_messages cm
+        SET status = $1
+      WHERE cm.tenant_id = $2
+        AND (
+          cm.id = ANY($3::text[])
+          OR EXISTS (SELECT 1 FROM unnest($3::text[]) AS lookup(id) WHERE cm.metadata::text LIKE '%' || lookup.id || '%')
+        )
+        AND CASE COALESCE(cm.status, 'sent')
+              WHEN 'failed' THEN -1
+              WHEN 'sending' THEN 0
+              WHEN 'sent' THEN 1
+              WHEN 'delivered' THEN 2
+              WHEN 'read' THEN 3
+              ELSE 1
+            END < $4
+      RETURNING cm.id, cm.lead_id, cm.phone, cm.instance, cm.status`,
+    [newStatus, tenantId, ids, nextPriority],
+  );
+
+  return rows;
+}
+
 function rememberPendingMessageStatus(tenantId, messageId, status) {
   if (!tenantId || !messageId || !status) return;
   const key = pendingStatusKey(tenantId, messageId);
@@ -7398,26 +7549,24 @@ app.post('/api/webhook/evolution', async (req, res) => {
     }
 
     // ─── Message ACK / status updates ───
-    if (isEvolutionEvent(event, 'messages.update', 'messages_update', 'send.message.update', 'send_message_update')) {
-      const updates = Array.isArray(body.data) ? body.data : [body.data];
-      console.log(`📩 MESSAGES_UPDATE: ${updates.length} updates, raw:`, JSON.stringify(body.data).slice(0, 500));
+    if (isEvolutionEvent(event, 'messages.update', 'messages_update', 'send.message.update', 'send_message_update', 'message.update', 'message_update', 'send.message', 'send_message')) {
+      const updates = extractStatusUpdates(body.data || body);
+      console.log(`📩 MESSAGES_UPDATE: ${updates.length} updates, raw:`, JSON.stringify(body.data || body).slice(0, 500));
       for (const update of updates) {
-        const key = update?.key || {};
-        const lookupIds = [...new Set([update?.messageId, key?.id, update?.keyId].filter(Boolean))];
+        const lookupIds = extractStatusLookupIds(update);
         const primaryMessageId = lookupIds[0];
-        const remoteJid = key?.remoteJid || update?.remoteJid;
-        const ack = update?.update?.status
-          ?? update?.update?.ack
-          ?? update?.status
-          ?? update?.ack
-          ?? key?.status
-          ?? key?.ack;
+        const remoteJid = extractStatusRemoteJid(update);
+        const ack = extractStatusAckValue(update);
 
-        if (!primaryMessageId || !remoteJid || remoteJid.endsWith('@g.us')) continue;
+        if (!primaryMessageId) {
+          console.log(`⚠️ ACK ignored: missing message id in update`, JSON.stringify(update).slice(0, 300));
+          continue;
+        }
+        if (remoteJid && remoteJid.endsWith('@g.us')) continue;
 
         // Build LID→phone mapping from ACK events
         // remoteJid is often a LID; look up the real phone from our DB
-        if (remoteJid.includes('@lid')) {
+        if (remoteJid?.includes('@lid')) {
           const lidNum = normalizeWhatsappNumber(remoteJid);
           if (lidNum && !lidToPhoneMap.has(lidNum)) {
             // Try to find the phone from the message in DB
@@ -7434,28 +7583,30 @@ app.post('/api/webhook/evolution', async (req, res) => {
           }
         }
 
-        let newStatus = null;
-        const ackStr = String(ack).toUpperCase();
-        const ackNum = typeof ack === 'number' ? ack : parseInt(ack);
-
-        if (ackStr === 'SERVER_ACK' || ackNum === 2) newStatus = 'sent';
-        else if (ackStr === 'DELIVERY_ACK' || ackNum === 3) newStatus = 'delivered';
-        else if (ackStr === 'READ' || ackStr === 'PLAYED' || ackNum === 4 || ackNum === 5) newStatus = 'read';
-        else if (ackStr === 'ERROR' || ackNum === 0) newStatus = 'failed';
+        const newStatus = normalizeEvolutionAckStatus(ack);
 
         if (!newStatus) {
           console.log(`⚠️ ACK ignored: ack=${ack}, messageIds=${lookupIds.join(',')}`);
           continue;
         }
 
-        let phone = String(remoteJid)
+        let phone = remoteJid ? String(remoteJid)
           .replace('@s.whatsapp.net', '')
           .replace('@c.us', '')
           .replace('@lid', '')
           .replace(/:\d+$/, '')
-          .replace(/\D/g, '');
+          .replace(/\D/g, '') : '';
         // Resolve LID to real phone if mapped
-        phone = resolvePhoneFromLid(phone);
+        phone = phone ? resolvePhoneFromLid(phone) : '';
+
+        let messageContext = null;
+        try {
+          messageContext = await findMessageStatusContext({ tenantId, lookupIds, phone, instance });
+          if (messageContext?.tenant_id && !tenantId) tenantId = messageContext.tenant_id;
+          if (!phone && messageContext?.phone) phone = messageContext.phone;
+        } catch (lookupErr) {
+          console.warn('ACK context lookup failed:', lookupErr.message);
+        }
 
         if (!tenantId) {
           tenantId = await getFallbackTenantIdForIncomingMessage({
@@ -7468,25 +7619,26 @@ app.post('/api/webhook/evolution', async (req, res) => {
           }
         }
 
-        for (const lookupId of lookupIds) {
-          console.log(`✅ ACK: ${lookupId} → ${newStatus} (ack=${ack}, phone=${phone})`);
+        console.log(`✅ ACK: ${lookupIds.join(',')} → ${newStatus} (ack=${ack}, phone=${phone || messageContext?.phone || 'unknown'})`);
 
-          try {
-            const { rowCount } = await pool.query(
-              `UPDATE chat_messages SET status = $1 WHERE tenant_id = $3 AND (id = $2 OR (metadata::text LIKE '%' || $2 || '%'))`,
-              [newStatus, lookupId, tenantId]
-            );
-            if (!rowCount) rememberPendingMessageStatus(tenantId, lookupId, newStatus);
-          } catch (ackErr) {
-            console.error('ACK DB update error:', ackErr.message);
-            rememberPendingMessageStatus(tenantId, lookupId, newStatus);
+        let updatedRows = [];
+        try {
+          updatedRows = await applyMessageStatusUpdate({ tenantId, lookupIds, newStatus });
+          if (updatedRows.length === 0) {
+            for (const lookupId of lookupIds) rememberPendingMessageStatus(tenantId, lookupId, newStatus);
           }
+        } catch (ackErr) {
+          console.error('ACK DB update error:', ackErr.message);
+          for (const lookupId of lookupIds) rememberPendingMessageStatus(tenantId, lookupId, newStatus);
+        }
 
+        const broadcastIds = new Set([...lookupIds, ...updatedRows.map((row) => row.id).filter(Boolean)]);
+        for (const lookupId of broadcastIds) {
           broadcastSSE('message_status_update', {
             messageId: lookupId,
-            phone,
+            phone: phone || messageContext?.phone || null,
             status: newStatus,
-            instance,
+            instance: instance || messageContext?.instance || null,
           }, tenantId);
         }
       }
