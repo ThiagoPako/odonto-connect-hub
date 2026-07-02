@@ -6855,8 +6855,12 @@ const sseClients = new Map();
 const pendingMessageStatusByTenant = new Map();
 const MESSAGE_STATUS_PRIORITY = { failed: -1, sending: 0, sent: 1, delivered: 2, read: 3 };
 
+function normalizePendingStatusMessageId(messageId) {
+  return String(messageId || '').trim().toLowerCase();
+}
+
 function pendingStatusKey(tenantId, messageId) {
-  return `${tenantId || 'unknown'}:${messageId}`;
+  return `${tenantId || 'unknown'}:${normalizePendingStatusMessageId(messageId)}`;
 }
 
 function pendingStatusUnknownKey(messageId) {
@@ -7040,8 +7044,9 @@ async function applyMessageStatusUpdate({ tenantId, lookupIds = [], newStatus })
 }
 
 function rememberPendingMessageStatus(tenantId, messageId, status) {
-  if (!messageId || !status) return;
-  const key = pendingStatusKey(tenantId, messageId);
+  const normalizedMessageId = normalizePendingStatusMessageId(messageId);
+  if (!normalizedMessageId || !status) return;
+  const key = pendingStatusKey(tenantId, normalizedMessageId);
   const existing = pendingMessageStatusByTenant.get(key);
   if (!existing || isHigherMessageStatus(status, existing.status)) {
     pendingMessageStatusByTenant.set(key, { status, createdAt: Date.now() });
@@ -7054,8 +7059,9 @@ function rememberPendingMessageStatus(tenantId, messageId, status) {
 }
 
 function consumePendingMessageStatus(tenantId, messageId) {
-  if (!tenantId || !messageId) return null;
-  const keys = [pendingStatusKey(tenantId, messageId), pendingStatusUnknownKey(messageId)];
+  const normalizedMessageId = normalizePendingStatusMessageId(messageId);
+  if (!tenantId || !normalizedMessageId) return null;
+  const keys = [pendingStatusKey(tenantId, normalizedMessageId), pendingStatusUnknownKey(normalizedMessageId)];
   let entry = null;
   let hitKey = null;
   for (const key of keys) {
@@ -7071,13 +7077,14 @@ function consumePendingMessageStatus(tenantId, messageId) {
 }
 
 function broadcastSSE(event, data, tenantId = null) {
+  if (!isValidTenantId(tenantId)) {
+    console.warn(`⚠️ SSE broadcast '${event}' bloqueado: tenant_id ausente ou inválido`);
+    return;
+  }
   const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
   let sent = 0;
   for (const [client, info] of sseClients.entries()) {
-    // If tenantId is provided, only send to clients belonging to that tenant.
-    if (tenantId) {
-      if (info.tenantId !== tenantId) continue;
-    }
+    if (info.tenantId !== tenantId) continue;
     try {
       client.write(payload);
       sent++;
