@@ -2135,6 +2135,12 @@ function extractEvolutionMessageId(data) {
     || data?.data?.message?.key?.id
     || data?.response?.key?.id
     || data?.response?.message?.key?.id
+    || data?.messageId
+    || data?.id
+    || data?.data?.id
+    || data?.data?.messageId
+    || data?.response?.messageId
+    || data?.response?.id
     || null;
 }
 
@@ -3211,11 +3217,12 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
 
     const messageId = extractEvolutionMessageId(result.data);
     if (!messageId) {
-      console.error(`❌ send-text without Evolution message id for ${instance} → ${cleanNumber}:`, result.data);
-      return res.status(502).json({
-        error: 'WhatsApp não confirmou o envio da mensagem',
-        details: result.data,
-      });
+      // Evolution v2 às vezes responde 200 sem key.id explícito.
+      // Aceitamos o envio (Evolution já enfileirou) e sintetizamos um id
+      // para o frontend marcar como enviado. O ACK real chega via webhook.
+      const synthetic = `local-${randomUUID()}`;
+      console.warn(`⚠️ send-text sem message id para ${instance} → ${cleanNumber}; usando synthetic ${synthetic}`);
+      return res.json({ ...result.data, key: { ...(result.data?.key || {}), id: synthetic }, synthetic: true });
     }
 
     res.json(result.data);
