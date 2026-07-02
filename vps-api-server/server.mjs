@@ -6790,6 +6790,7 @@ app.get('/api/events', async (req, res) => {
   let tenantId = null;
   let authenticated = false;
   let authenticatedUserId = null;
+  let authenticatedIsSuperAdmin = false;
   const token = req.query.token;
   const requestedTenantId = typeof req.query.tenantId === 'string' ? req.query.tenantId : null;
 
@@ -6801,6 +6802,7 @@ app.get('/api/events', async (req, res) => {
         decoded = verifyToken(token);
         tenantId = decoded?.tenant_id;
         authenticatedUserId = decoded?.sub || decoded?.id || null;
+        authenticatedIsSuperAdmin = !!decoded?.is_super_admin;
         authenticated = true;
       } catch {
         // 2) Fallback to Supabase
@@ -6808,6 +6810,7 @@ app.get('/api/events', async (req, res) => {
           const sbUser = await resolveSupabaseUser(token);
           tenantId = sbUser.tenant_id;
           authenticatedUserId = sbUser.id || sbUser.sub || null;
+          authenticatedIsSuperAdmin = !!sbUser.is_super_admin;
           authenticated = true;
         }
       }
@@ -6818,7 +6821,7 @@ app.get('/api/events', async (req, res) => {
       // which made the chat connect but miss all webhook broadcasts.
       if (authenticated && requestedTenantId && authenticatedUserId && tenantId !== requestedTenantId) {
         const validatedTenant = await validateRequestedTenantForUser(
-          { id: authenticatedUserId, tenant_id: tenantId, is_super_admin: decoded?.is_super_admin },
+          { id: authenticatedUserId, tenant_id: tenantId, is_super_admin: authenticatedIsSuperAdmin },
           requestedTenantId
         );
         if (validatedTenant) tenantId = validatedTenant;
@@ -7524,7 +7527,9 @@ app.post('/api/webhook/evolution', async (req, res) => {
 
     let lead = leads[0] || null;
     const pushName = message?.pushName || phone;
-    const msgId = message?.key?.id || `wh-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
+    const msgId = message?.key?.id || `wh-${createHash('sha1')
+      .update(`${instance || 'unknown'}:${resolvedPhone}:${resolvedContent}:${message?.messageTimestamp || body?.date_time || ''}`)
+      .digest('hex')}`;
     const resolvedContent = msgContent || `[${msgType}]`;
     const rawType = Object.keys(message?.message || {})[0] || null;
 

@@ -148,7 +148,10 @@ export function useRealtimeChat(options: RealtimeChatOptions) {
     const scheduleReconnect = () => {
       if (cancelled) return;
       if (retryTimer) window.clearTimeout(retryTimer);
-      const delay = Math.min(30_000, 1_000 * Math.pow(2, retryAttempt++));
+      const delay = retryAttempt < 2
+        ? 500
+        : Math.min(30_000, 1_000 * Math.pow(2, retryAttempt - 1));
+      retryAttempt++;
       retryTimer = window.setTimeout(() => void connect(true), delay);
     };
 
