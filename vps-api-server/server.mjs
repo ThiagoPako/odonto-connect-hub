@@ -7405,13 +7405,35 @@ async function matchQueue(content, tenantId) {
   ) || null;
 }
 
-async function persistIncomingMessage({ msgId, leadId, content, msgType, phone, instance, pushName, remoteJid, rawType, mediaUrl, fileName, mimeType, tenantId, sender = 'lead' }) {
+async function persistIncomingMessage({ msgId, leadId, content, msgType, phone, instance, pushName, remoteJid, rawType, mediaUrl, fileName, mimeType, tenantId, sender = 'lead', messageTimestamp = null }) {
   try {
     const initialStatus = sender === 'lead' ? 'delivered' : 'sent';
+    const timestamp = parseEvolutionTimestamp(messageTimestamp) || new Date();
     await pool.query(
       `INSERT INTO chat_messages (id, lead_id, content, sender, type, status, timestamp, phone, instance, media_url, file_name, mime_type, metadata, tenant_id)
-       VALUES ($1,$2,$3,$4,$5,$6,NOW(),$7,$8,$9,$10,$11,$12,$13)
-       ON CONFLICT (id) DO NOTHING`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+       ON CONFLICT (id) DO UPDATE
+         SET lead_id = COALESCE(chat_messages.lead_id, EXCLUDED.lead_id),
+             content = COALESCE(NULLIF(chat_messages.content, ''), EXCLUDED.content),
+             sender = COALESCE(chat_messages.sender, EXCLUDED.sender),
+             type = COALESCE(chat_messages.type, EXCLUDED.type),
+             status = CASE
+               WHEN chat_messages.status = 'read' THEN chat_messages.status
+               WHEN chat_messages.status = 'delivered' AND EXCLUDED.status IN ('sent', 'sending') THEN chat_messages.status
+               ELSE COALESCE(EXCLUDED.status, chat_messages.status)
+             END,
+             timestamp = CASE
+               WHEN EXCLUDED.timestamp IS NOT NULL AND (chat_messages.timestamp IS NULL OR EXCLUDED.timestamp < chat_messages.timestamp)
+               THEN EXCLUDED.timestamp
+               ELSE chat_messages.timestamp
+             END,
+             phone = COALESCE(chat_messages.phone, EXCLUDED.phone),
+             instance = COALESCE(chat_messages.instance, EXCLUDED.instance),
+             media_url = COALESCE(chat_messages.media_url, EXCLUDED.media_url),
+             file_name = COALESCE(chat_messages.file_name, EXCLUDED.file_name),
+             mime_type = COALESCE(chat_messages.mime_type, EXCLUDED.mime_type),
+             metadata = COALESCE(chat_messages.metadata, '{}'::jsonb) || COALESCE(EXCLUDED.metadata, '{}'::jsonb),
+             tenant_id = COALESCE(chat_messages.tenant_id, EXCLUDED.tenant_id)`,
       [
         msgId,
         leadId,
@@ -7419,6 +7441,7 @@ async function persistIncomingMessage({ msgId, leadId, content, msgType, phone, 
         sender,
         msgType,
         initialStatus,
+        timestamp,
         phone,
         instance,
         mediaUrl || null,
@@ -8007,6 +8030,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
           mimeType: mediaMimeType,
           tenantId,
           sender: senderRole,
+          messageTimestamp: message?.messageTimestamp || message?.timestamp || body?.date_time || body?.dateTime || body?.createdAt || null,
         });
         broadcastIncomingMessage({
           msgId,
@@ -8022,6 +8046,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
           mimeType: mediaMimeType,
           tenantId,
           sender: senderRole,
+          messageTimestamp: message?.messageTimestamp || message?.timestamp || body?.date_time || body?.dateTime || body?.createdAt || null,
         });
         return res.json({ processed: true, offHours: true, leadId: lead.id });
       }
@@ -8111,6 +8136,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
           mimeType: mediaMimeType,
           tenantId,
           sender: senderRole,
+          messageTimestamp: message?.messageTimestamp || message?.timestamp || body?.date_time || body?.dateTime || body?.createdAt || null,
         });
 
         broadcastIncomingMessage({
@@ -8146,6 +8172,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
           mimeType: mediaMimeType,
           tenantId,
           sender: senderRole,
+          messageTimestamp: message?.messageTimestamp || message?.timestamp || body?.date_time || body?.dateTime || body?.createdAt || null,
         });
         broadcastIncomingMessage({
           msgId,
@@ -8295,6 +8322,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
       mimeType: mediaMimeType,
       tenantId,
       sender: senderRole,
+      messageTimestamp: message?.messageTimestamp || message?.timestamp || body?.date_time || body?.dateTime || body?.createdAt || null,
     });
 
     broadcastIncomingMessage({
@@ -10953,7 +10981,21 @@ async function importWhatsAppMessagesForTenant({ tenantId, requestedInstances = 
     .filter((i) => !requestedSet || requestedSet.has(i.name));
 
   // Strong tenant binding: only import instances owned by this clinic naming convention.
-  connected = connected.filter((i) => String(i.name).toLowerCase().startsWith(prefix));
+  let ownedInstanceNames = new Set();
+  try {
+    const { rows } = await pool.query(
+      `SELECT instance_name FROM whatsapp_instances WHERE tenant_id = $1`,
+      [tenantId]
+    );
+    ownedInstanceNames = new Set(rows.map((row) => String(row.instance_name || '')).filter(Boolean));
+  } catch (ownedErr) {
+    console.warn(`[import-whatsapp] could not load owned instances for tenant ${tenantId}:`, ownedErr.message);
+  }
+
+  connected = connected.filter((i) => {
+    const name = String(i.name || '');
+    return name.toLowerCase().startsWith(prefix) || ownedInstanceNames.has(name);
+  });
 
   if (connected.length === 0) {
     return { imported: 0, skipped: 0, instances: [], message: 'Nenhuma instância conectada/selecionada deste tenant' };
@@ -11012,7 +11054,8 @@ async function importWhatsAppMessagesForTenant({ tenantId, requestedInstances = 
         instStats.scanned += batch.length;
 
         for (const msg of batch) {
-          const remoteJid = msg?.key?.remoteJid || msg?.remoteJid || msg?.jid;
+          const remoteJid = extractActualRemoteJidFromMessage(msg) || msg?.remoteJid || msg?.jid;
+          rememberLidMappingFromMessage(msg, remoteJid);
           if (!isUsableChatJid(remoteJid)) { instStats.skipped++; totalSkipped++; continue; }
 
           const msgTimestamp = extractMessageTimestamp(msg);
@@ -11047,7 +11090,27 @@ async function importWhatsAppMessagesForTenant({ tenantId, requestedInstances = 
           const insert = await pool.query(
             `INSERT INTO chat_messages (id, lead_id, content, sender, type, status, timestamp, media_url, file_name, mime_type, instance, phone, metadata, tenant_id)
              VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, $8, $9, $10, $11, $12, $13)
-             ON CONFLICT (id) DO NOTHING`,
+             ON CONFLICT (id) DO UPDATE
+               SET lead_id = COALESCE(chat_messages.lead_id, EXCLUDED.lead_id),
+                   content = COALESCE(NULLIF(chat_messages.content, ''), EXCLUDED.content),
+                   sender = COALESCE(chat_messages.sender, EXCLUDED.sender),
+                   type = COALESCE(chat_messages.type, EXCLUDED.type),
+                   status = CASE
+                     WHEN chat_messages.status = 'read' THEN chat_messages.status
+                     WHEN chat_messages.status = 'delivered' AND EXCLUDED.status IN ('sent', 'sending') THEN chat_messages.status
+                     ELSE COALESCE(EXCLUDED.status, chat_messages.status)
+                   END,
+                   timestamp = CASE
+                     WHEN EXCLUDED.timestamp IS NOT NULL AND (chat_messages.timestamp IS NULL OR EXCLUDED.timestamp < chat_messages.timestamp)
+                     THEN EXCLUDED.timestamp
+                     ELSE chat_messages.timestamp
+                   END,
+                   file_name = COALESCE(chat_messages.file_name, EXCLUDED.file_name),
+                   mime_type = COALESCE(chat_messages.mime_type, EXCLUDED.mime_type),
+                   instance = COALESCE(chat_messages.instance, EXCLUDED.instance),
+                   phone = COALESCE(chat_messages.phone, EXCLUDED.phone),
+                   metadata = COALESCE(chat_messages.metadata, '{}'::jsonb) || COALESCE(EXCLUDED.metadata, '{}'::jsonb),
+                   tenant_id = COALESCE(chat_messages.tenant_id, EXCLUDED.tenant_id)`,
             [
               msgId,
               lead.id.toString(),
@@ -11410,7 +11473,26 @@ app.post('/api/messages', async (req, res) => {
     await pool.query(
       `INSERT INTO chat_messages (id, lead_id, content, sender, type, status, timestamp, media_url, file_name, mime_type, reply_to_id, reply_to_content, reply_to_sender, attendant_id, attendant_name, instance, phone, tenant_id)
        VALUES ($1,$2,$3,'attendant',$4,$5,NOW(),$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
-       ON CONFLICT (id) DO NOTHING`,
+       ON CONFLICT (id) DO UPDATE
+         SET lead_id = COALESCE(chat_messages.lead_id, EXCLUDED.lead_id),
+             content = COALESCE(NULLIF(chat_messages.content, ''), EXCLUDED.content),
+             type = COALESCE(chat_messages.type, EXCLUDED.type),
+             status = CASE
+               WHEN chat_messages.status = 'read' THEN chat_messages.status
+               WHEN chat_messages.status = 'delivered' AND EXCLUDED.status IN ('sent', 'sending') THEN chat_messages.status
+               ELSE COALESCE(EXCLUDED.status, chat_messages.status)
+             END,
+             media_url = COALESCE(chat_messages.media_url, EXCLUDED.media_url),
+             file_name = COALESCE(chat_messages.file_name, EXCLUDED.file_name),
+             mime_type = COALESCE(chat_messages.mime_type, EXCLUDED.mime_type),
+             reply_to_id = COALESCE(chat_messages.reply_to_id, EXCLUDED.reply_to_id),
+             reply_to_content = COALESCE(chat_messages.reply_to_content, EXCLUDED.reply_to_content),
+             reply_to_sender = COALESCE(chat_messages.reply_to_sender, EXCLUDED.reply_to_sender),
+             attendant_id = COALESCE(chat_messages.attendant_id, EXCLUDED.attendant_id),
+             attendant_name = COALESCE(chat_messages.attendant_name, EXCLUDED.attendant_name),
+             instance = COALESCE(chat_messages.instance, EXCLUDED.instance),
+             phone = COALESCE(chat_messages.phone, EXCLUDED.phone),
+             tenant_id = COALESCE(chat_messages.tenant_id, EXCLUDED.tenant_id)`,
       [
         id, leadId, content || '', type || 'text', initialStatus,
         persistedMediaUrl, fileName || null, mimeType || null,

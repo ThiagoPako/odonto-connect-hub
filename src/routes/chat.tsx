@@ -143,6 +143,17 @@ function normalizePhoneSuffix(value?: string | null): string {
   return (value || "").replace(/\D/g, "").slice(-11);
 }
 
+function isLikelySameOutgoingMessage(local: ChatMessage, remote: ChatMessage): boolean {
+  if (local.sender === "lead" || remote.sender === "lead") return false;
+  if (!local.id.startsWith("msg-")) return false;
+  if (local.content !== remote.content) return false;
+  if ((local.type || "text") !== (remote.type || "text")) return false;
+  const localTime = new Date(local.timestamp).getTime();
+  const remoteTime = new Date(remote.timestamp).getTime();
+  if (!Number.isFinite(localTime) || !Number.isFinite(remoteTime)) return true;
+  return Math.abs(localTime - remoteTime) < 5 * 60 * 1000;
+}
+
 export const Route = createFileRoute("/chat")({
   ssr: false,
   validateSearch: zodValidator(chatSearchSchema),
@@ -381,6 +392,20 @@ function ChatPage() {
             return { ...message, status: nextStatus };
           });
           return changed ? { ...prev, [leadId]: updated } : prev;
+        }
+
+        const optimisticIndex = existing.findIndex((message) => isLikelySameOutgoingMessage(message, chatMsg));
+        if (optimisticIndex >= 0) {
+          const updated = [...existing];
+          const current = updated[optimisticIndex];
+          const currentPri = statusPriority[current.status || "sending"] ?? 0;
+          const nextPri = statusPriority[chatMsg.status || "sent"] ?? 1;
+          updated[optimisticIndex] = {
+            ...current,
+            ...chatMsg,
+            status: nextPri > currentPri ? chatMsg.status : current.status,
+          };
+          return { ...prev, [leadId]: updated };
         }
         return { ...prev, [leadId]: [...existing, chatMsg] };
       });
