@@ -2434,6 +2434,59 @@ async function resolveLidForPhone(instance, phone) {
   return null;
 }
 
+// In-memory cache: instance|number → { exists, canonical, checkedAt }
+const whatsappNumberValidationCache = new Map();
+const WA_NUMBER_CACHE_TTL_MS = 10 * 60 * 1000;
+
+/**
+ * Validates a Brazilian WhatsApp number against Evolution's /chat/whatsappNumbers
+ * to avoid "silent send" — accepted by Evolution but never delivered because the
+ * JID doesn't exist (typical for old 8-digit mobiles missing the leading 9).
+ * Returns { exists, canonical } where canonical is the JID number WhatsApp knows.
+ */
+async function resolveValidWhatsAppNumber(instance, cleanNumber) {
+  const cacheKey = `${instance}|${cleanNumber}`;
+  const cached = whatsappNumberValidationCache.get(cacheKey);
+  if (cached && Date.now() - cached.checkedAt < WA_NUMBER_CACHE_TTL_MS) {
+    return { exists: cached.exists, canonical: cached.canonical };
+  }
+
+  // Brazilian mobiles: if 12 digits (55 + DDD + 8) try also with the extra 9.
+  const candidates = new Set([cleanNumber]);
+  if (/^55\d{10}$/.test(cleanNumber)) {
+    // 55 + 2-digit DDD + 8-digit legacy → insert 9 after DDD
+    candidates.add(`${cleanNumber.slice(0, 4)}9${cleanNumber.slice(4)}`);
+  }
+
+  try {
+    const result = await evolutionFetch(`/chat/whatsappNumbers/${instance}`, {
+      method: 'POST',
+      body: JSON.stringify({ numbers: Array.from(candidates) }),
+    });
+
+    if (result.ok && Array.isArray(result.data)) {
+      // Prefer entries where exists === true
+      const hit = result.data.find((e) => e?.exists === true)
+        || result.data.find((e) => e?.jid || e?.number);
+      if (hit) {
+        const jidNum = normalizeWhatsappNumber(hit.jid || hit.number || '');
+        const canonical = jidNum || cleanNumber;
+        const exists = hit.exists !== false;
+        whatsappNumberValidationCache.set(cacheKey, { exists, canonical, checkedAt: Date.now() });
+        return { exists, canonical };
+      }
+      // Empty array or no hit → number not on WhatsApp
+      whatsappNumberValidationCache.set(cacheKey, { exists: false, canonical: cleanNumber, checkedAt: Date.now() });
+      return { exists: false, canonical: cleanNumber };
+    }
+  } catch (err) {
+    console.warn(`⚠️ whatsappNumbers check failed for ${cleanNumber}:`, err.message);
+  }
+
+  // Failure to validate → don't block; assume exists but keep original number.
+  return { exists: true, canonical: cleanNumber };
+}
+
 async function ensureWebhookRegistration(instanceName) {
   const lastEnsure = webhookEnsureTimestamps.get(instanceName) || 0;
   if (Date.now() - lastEnsure < 5 * 60 * 1000) return;
