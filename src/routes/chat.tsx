@@ -321,29 +321,17 @@ function ChatPage() {
   }, [activeTenantId, reloadQueueLeads]);
 
   // Vincula automaticamente as instâncias conectadas em Canais ao Comercial/Chat.
-  // Se o WhatsApp já estava conectado antes de abrir esta tela, o chat ainda
-  // precisa garantir: tenant mapping + webhook + importação das conversas recentes.
+  // Não importe histórico automaticamente aqui: a importação pesada de 30 dias
+  // logo ao abrir o chat congestiona a Evolution e faz envio/recebimento parar
+  // minutos depois. Histórico deve ser importado somente pelo botão manual.
   useEffect(() => {
     if (!activeTenantId) return;
     const openInstances = connectedInstances.filter((inst) => inst.connectionState === "open");
-    for (const inst of openInstances) {
-      const instanceName = inst.instanceName;
-      if (!instanceName || syncedChatInstancesRef.current.has(instanceName)) continue;
-      syncedChatInstancesRef.current.add(instanceName);
-
-      void whatsappApi.syncChat(instanceName, 30).then(async ({ data, error }) => {
-        if (error) {
-          syncedChatInstancesRef.current.delete(instanceName);
-          console.warn("Falha ao vincular instância WhatsApp ao chat:", instanceName, error);
-          await reloadQueueLeads();
-          return;
-        }
-        await reloadQueueLeads();
-        const imported = data?.imported ?? 0;
-        if (imported > 0) {
-          toast.success(`${imported} ${imported === 1 ? "mensagem vinculada" : "mensagens vinculadas"} ao chat.`);
-        }
+    if (openInstances.some((inst) => inst.instanceName && !syncedChatInstancesRef.current.has(inst.instanceName))) {
+      openInstances.forEach((inst) => {
+        if (inst.instanceName) syncedChatInstancesRef.current.add(inst.instanceName);
       });
+      void reloadQueueLeads();
     }
   }, [activeTenantId, connectedInstances, reloadQueueLeads]);
 
@@ -623,6 +611,11 @@ function ChatPage() {
       timestamp: now,
     };
 
+    // Não envie "composing" em loop a cada tecla. A Evolution fica presa em
+    // presença/digitando e passa a atrasar webhook/envio de mensagens. Mantemos
+    // somente o "paused" ao sair/parar para limpar o status no WhatsApp.
+    if (status !== "paused") return;
+
     whatsappApi.sendPresence(instanceName, activeLead.phone, status).catch((err: any) => {
       console.error("Failed to send presence:", err);
     });
@@ -708,35 +701,16 @@ function ChatPage() {
 
   const fetchPresence = useCallback((leadId: string, phone: string, instanceName: string) => {
     if (!activeTenantId) return;
+    // Isolamento do módulo de mensagens: não consultar/assinar presença pela UI.
+    // Esse endpoint aciona a Evolution API e pode congestionar o socket logo após
+    // importações/testes. Presença continuará entrando se vier por webhook SSE.
+    return;
     whatsappApi.subscribePresence(instanceName, phone).then(({ data }) => {
       if (data?.presence) {
         applyPresence(leadId, data.presence);
       }
-      // Retry after 2s — Evolution API often needs time to report real status after subscribe
-      setTimeout(() => {
-        whatsappApi.subscribePresence(instanceName, phone).then(({ data: data2 }) => {
-          if (data2?.presence) {
-            applyPresence(leadId, data2.presence);
-          }
-        }).catch(() => {});
-      }, 2000);
     }).catch(() => {});
   }, [activeTenantId, applyPresence]);
-
-  // Subscribe presence for all active leads (myLeads)
-  useEffect(() => {
-    if (!activeTenantId) return;
-    const instanceName = connectedInstances[0]?.instanceName;
-    if (!instanceName || myLeads.length === 0) return;
-
-    // Stagger subscriptions to avoid hammering the API
-    myLeads.forEach((lead, i) => {
-      if (!lead.phone) return;
-      setTimeout(() => {
-        fetchPresence(lead.id, lead.phone, instanceName);
-      }, i * 500);
-    });
-  }, [activeTenantId, myLeads.map(l => l.id).join(","), connectedInstances[0]?.instanceName, fetchPresence]);
 
   // Also subscribe for selected lead immediately (covers queue leads)
   useEffect(() => {
@@ -747,17 +721,8 @@ function ChatPage() {
     fetchPresence(selectedLead.id, selectedLead.phone, instanceName);
   }, [activeTenantId, selectedLead?.id, selectedLead?.phone, connectedInstances[0]?.instanceName, fetchPresence]);
 
-  // Refresh presence for selected lead every 30s
-  useEffect(() => {
-    if (!activeTenantId) return;
-    if (!selectedLead?.phone) return;
-    const instanceName = connectedInstances[0]?.instanceName;
-    if (!instanceName) return;
-    const interval = setInterval(() => {
-      fetchPresence(selectedLead.id, selectedLead.phone, instanceName);
-    }, 30000);
-    return () => clearInterval(interval);
-  }, [activeTenantId, selectedLead?.id, selectedLead?.phone, connectedInstances[0]?.instanceName, fetchPresence]);
+  // Não faça polling de presença. O recebimento/envio de mensagens é prioridade;
+  // presença é atualizada apenas via webhook SSE quando a Evolution enviar.
 
   // ─── Load initial message history from VPS when selecting a lead ───
   const historyLoadedRef = useRef<Set<string>>(new Set());

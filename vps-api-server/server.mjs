@@ -2116,13 +2116,18 @@ async function evolutionFetch(path, options = {}) {
   }
 
   const url = `${EVOLUTION_API_URL}${path}`;
+  const timeoutMs = Number(options.timeoutMs || process.env.EVOLUTION_API_REQUEST_TIMEOUT_MS || 15000);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    const { timeoutMs: _timeoutMs, ...fetchOptions } = options;
     const res = await fetch(url, {
-      ...options,
+      ...fetchOptions,
+      signal: fetchOptions.signal || controller.signal,
       headers: {
         'Content-Type': 'application/json',
         apikey: EVOLUTION_API_KEY,
-        ...options.headers,
+        ...fetchOptions.headers,
       },
     });
     const data = await res.json().catch(() => ({}));
@@ -2132,7 +2137,9 @@ async function evolutionFetch(path, options = {}) {
     return { ok: res.ok, status: res.status, data };
   } catch (err) {
     console.error(`❌ Evolution fetch error (${path}):`, err.message);
-    return { ok: false, status: 500, data: { error: err.message } };
+    return { ok: false, status: err.name === 'AbortError' ? 504 : 500, data: { error: err.name === 'AbortError' ? 'Evolution API timeout' : err.message } };
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -3309,11 +3316,9 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
     // Make sure Evolution forwards events back to our webhook before sending.
     // If this is fire-and-forget, a newly/reconnected instance can send before
     // ACK/reply webhooks are registered, producing one-check messages forever.
-    try {
-      await ensureWebhookRegistration(instance);
-    } catch (webhookErr) {
+    ensureWebhookRegistration(instance).catch((webhookErr) => {
       console.warn(`⚠️ send-text: webhook registration check failed for ${instance}; continuing send:`, webhookErr?.message);
-    }
+    });
 
     // Envio isolado: não trocar o destino com /chat/whatsappNumbers aqui.
     // Esse endpoint pode retornar JID/canonical diferente e causar envio com
@@ -7596,6 +7601,14 @@ async function ensureWaitingSessionForIncomingLead({ lead, phone, queueId = null
 
 app.post('/api/webhook/evolution', async (req, res) => {
   try {
+    // Evolution must receive a response quickly. Some message paths do extra
+    // work (media download, avatar lookup, queue menu) after the DB save; make
+    // duplicate/late responses harmless if a branch has already acknowledged.
+    const originalJson = res.json.bind(res);
+    const originalStatus = res.status.bind(res);
+    res.json = (payload) => (res.headersSent ? res : originalJson(payload));
+    res.status = (code) => (res.headersSent ? res : originalStatus(code));
+
     const body = Array.isArray(req.body) ? req.body[0] : req.body;
     const event = normalizeEvolutionEventName(body.event || body.type || body.eventType);
     const instance = extractEvolutionInstanceName(body);
@@ -7926,6 +7939,14 @@ app.post('/api/webhook/evolution', async (req, res) => {
       message?.message?.listResponseMessage ? 'list_response' :
       'text';
 
+    // Acknowledge Evolution immediately after the message is accepted for
+    // processing. Media download, avatar lookup, menu replies and automations can
+    // take seconds; if Evolution waits for all of that it can retry/stall the
+    // socket and the chat appears stuck in "digitando" with no message delivery.
+    if (!res.headersSent) {
+      res.json({ accepted: true, event: 'messages.upsert' });
+    }
+
     // Extract media metadata
     const mediaMsg = message?.message?.imageMessage || message?.message?.audioMessage ||
       message?.message?.videoMessage || message?.message?.documentMessage || message?.message?.stickerMessage;
@@ -7999,7 +8020,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
       }
 
       // Check business hours
-      if (!isWithinBusinessHours(attendanceSettingsCache)) {
+      if (!isFromMe && !isWithinBusinessHours(attendanceSettingsCache)) {
         const offMsg = attendanceSettingsCache?.offHoursMessage ||
           'Olá! Nosso horário de atendimento encerrou. Deixe sua mensagem que retornaremos assim que possível! 😊';
         await evolutionFetch(`/message/sendText/${instance}`, {
@@ -8053,7 +8074,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
       }
 
       // Send welcome message if enabled
-      if (attendanceSettingsCache?.autoGreetingEnabled && attendanceSettingsCache?.welcomeMessage) {
+      if (!isFromMe && attendanceSettingsCache?.autoGreetingEnabled && attendanceSettingsCache?.welcomeMessage) {
         await evolutionFetch(`/message/sendText/${instance}`, {
           method: 'POST',
           body: JSON.stringify({ number: resolvedPhone, text: attendanceSettingsCache.welcomeMessage }),
@@ -8061,7 +8082,10 @@ app.post('/api/webhook/evolution', async (req, res) => {
       }
 
       // Send queue menu
-      await sendQueueMenu(instance, resolvedPhone, tenantId);
+      if (!isFromMe) {
+        sendQueueMenu(instance, resolvedPhone, tenantId)
+          .catch((err) => console.warn('Queue menu send failed:', err.message));
+      }
     }
 
     if (!isFromMe) {
@@ -8075,7 +8099,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
     }
 
     // ─── Lead is awaiting queue selection ───
-    if (lead.awaiting_queue_selection && (msgType === 'text' || msgType === 'button_response' || msgType === 'list_response')) {
+    if (!isFromMe && lead.awaiting_queue_selection && (msgType === 'text' || msgType === 'button_response' || msgType === 'list_response')) {
       const selectedQueue = await matchQueue(msgContent, tenantId);
 
       if (selectedQueue) {
@@ -8193,8 +8217,10 @@ app.post('/api/webhook/evolution', async (req, res) => {
           tenantId,
           sender: senderRole,
         });
-        // Invalid selection — resend menu
-        await sendQueueMenu(instance, resolvedPhone, tenantId);
+        // Invalid selection — resend menu in background so the webhook does not
+        // block message delivery/realtime if Evolution is slow.
+        sendQueueMenu(instance, resolvedPhone, tenantId)
+          .catch((err) => console.warn('Queue menu resend failed:', err.message));
         console.log(`💬 Incoming message from ${pushName} (${resolvedPhone}) awaiting queue selection → saved + broadcast to ${sseClients.size} clients`);
         return res.json({ processed: true, resent_menu: true, leadId: lead.id });
       }
@@ -8357,19 +8383,22 @@ app.post('/api/webhook/evolution', async (req, res) => {
     });
 
     if (lead && !lead.avatar_url) {
-      try {
-        const result = await evolutionFetch(`/chat/fetchProfilePictureUrl/${instance}`, {
-          method: 'POST',
-          body: JSON.stringify({ number: phone }),
-        });
-        const pictureUrl = result.data?.profilePictureUrl || result.data?.picture || result.data?.url || null;
-        if (pictureUrl) {
-          await pool.query('UPDATE crm_leads SET avatar_url = $1, updated_at = NOW() WHERE id = $2', [pictureUrl, lead.id]);
-          console.log(`📸 Auto-synced avatar for lead ${lead.id} (${phone})`);
+      (async () => {
+        try {
+          const result = await evolutionFetch(`/chat/fetchProfilePictureUrl/${instance}`, {
+            method: 'POST',
+            body: JSON.stringify({ number: phone }),
+            timeoutMs: 5000,
+          });
+          const pictureUrl = result.data?.profilePictureUrl || result.data?.picture || result.data?.url || null;
+          if (pictureUrl) {
+            await pool.query('UPDATE crm_leads SET avatar_url = $1, updated_at = NOW() WHERE id = $2', [pictureUrl, lead.id]);
+            console.log(`📸 Auto-synced avatar for lead ${lead.id} (${phone})`);
+          }
+        } catch (fetchErr) {
+          console.error('Webhook profile fetch error:', fetchErr.message);
         }
-      } catch (fetchErr) {
-        console.error('Webhook profile fetch error:', fetchErr.message);
-      }
+      })();
     }
 
     // ─── Auto-confirm appointment when patient replies SIM to reminder ───
@@ -8426,7 +8455,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
     res.json({ processed: true, leadId: lead.id });
   } catch (error) {
     console.error('Webhook error:', error);
-    res.status(500).json({ error: error.message });
+    if (!res.headersSent) res.status(500).json({ error: error.message });
   }
 });
 
