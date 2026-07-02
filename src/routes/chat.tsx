@@ -713,6 +713,10 @@ function ChatPage() {
 
   const fetchPresence = useCallback((leadId: string, phone: string, instanceName: string) => {
     if (!activeTenantId) return;
+    // Isolamento do módulo de mensagens: não consultar/assinar presença pela UI.
+    // Esse endpoint aciona a Evolution API e pode congestionar o socket logo após
+    // importações/testes. Presença continuará entrando se vier por webhook SSE.
+    return;
     whatsappApi.subscribePresence(instanceName, phone).then(({ data }) => {
       if (data?.presence) {
         applyPresence(leadId, data.presence);
