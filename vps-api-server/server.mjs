@@ -7549,7 +7549,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
     }
 
     // ─── Message ACK / status updates ───
-    if (isEvolutionEvent(event, 'messages.update', 'messages_update', 'send.message.update', 'send_message_update', 'message.update', 'message_update')) {
+    if (isEvolutionEvent(event, 'messages.update', 'messages_update', 'send.message.update', 'send_message_update', 'message.update', 'message_update', 'send.message', 'send_message')) {
       const updates = extractStatusUpdates(body.data || body);
       console.log(`📩 MESSAGES_UPDATE: ${updates.length} updates, raw:`, JSON.stringify(body.data || body).slice(0, 500));
       for (const update of updates) {
