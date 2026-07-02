@@ -24,6 +24,11 @@ import { promisify } from 'util';
 import { existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 
+// Compatibilidade para trechos legados deste arquivo que ainda chamam
+// crypto.randomUUID(). O módulo importa randomUUID de forma nomeada; sem este
+// alias, o webhook quebra ao criar lead/sessão e a mensagem não chega ao chat.
+const crypto = { randomUUID };
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -3217,12 +3222,14 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
 
     const messageId = extractEvolutionMessageId(result.data);
     if (!messageId) {
-      // Evolution v2 às vezes responde 200 sem key.id explícito.
-      // Aceitamos o envio (Evolution já enfileirou) e sintetizamos um id
-      // para o frontend marcar como enviado. O ACK real chega via webhook.
-      const synthetic = `local-${randomUUID()}`;
-      console.warn(`⚠️ send-text sem message id para ${instance} → ${cleanNumber}; usando synthetic ${synthetic}`);
-      return res.json({ ...result.data, key: { ...(result.data?.key || {}), id: synthetic }, synthetic: true });
+      // Sem key.id/messageId real não há como correlacionar ACK, persistir status
+      // ou garantir entrega. Retornar sucesso aqui gera exatamente o falso
+      // positivo visto na UI: "enviado", mas nada chega ao WhatsApp.
+      console.error(`❌ send-text sem message id real para ${instance} → ${cleanNumber}:`, result.data);
+      return res.status(502).json({
+        error: 'Evolution aceitou a requisição, mas não retornou confirmação real da mensagem. Envio não confirmado.',
+        details: result.data,
+      });
     }
 
     res.json(result.data);
@@ -6783,6 +6790,7 @@ app.get('/api/events', async (req, res) => {
   let tenantId = null;
   let authenticated = false;
   let authenticatedUserId = null;
+  let authenticatedIsSuperAdmin = false;
   const token = req.query.token;
   const requestedTenantId = typeof req.query.tenantId === 'string' ? req.query.tenantId : null;
 
@@ -6794,6 +6802,7 @@ app.get('/api/events', async (req, res) => {
         decoded = verifyToken(token);
         tenantId = decoded?.tenant_id;
         authenticatedUserId = decoded?.sub || decoded?.id || null;
+        authenticatedIsSuperAdmin = !!decoded?.is_super_admin;
         authenticated = true;
       } catch {
         // 2) Fallback to Supabase
@@ -6801,6 +6810,7 @@ app.get('/api/events', async (req, res) => {
           const sbUser = await resolveSupabaseUser(token);
           tenantId = sbUser.tenant_id;
           authenticatedUserId = sbUser.id || sbUser.sub || null;
+          authenticatedIsSuperAdmin = !!sbUser.is_super_admin;
           authenticated = true;
         }
       }
@@ -6811,7 +6821,7 @@ app.get('/api/events', async (req, res) => {
       // which made the chat connect but miss all webhook broadcasts.
       if (authenticated && requestedTenantId && authenticatedUserId && tenantId !== requestedTenantId) {
         const validatedTenant = await validateRequestedTenantForUser(
-          { id: authenticatedUserId, tenant_id: tenantId, is_super_admin: decoded?.is_super_admin },
+          { id: authenticatedUserId, tenant_id: tenantId, is_super_admin: authenticatedIsSuperAdmin },
           requestedTenantId
         );
         if (validatedTenant) tenantId = validatedTenant;
@@ -6820,6 +6830,11 @@ app.get('/api/events', async (req, res) => {
       console.warn('📡 SSE connection failed: invalid token');
       return res.status(401).json({ error: 'Invalid realtime token' });
     }
+  }
+
+  if (!authenticated || !isValidTenantId(tenantId)) {
+    console.warn('📡 SSE connection rejected: authenticated tenant not resolved');
+    return res.status(401).json({ error: 'Authenticated tenant not resolved' });
   }
 
   // Set headers for SSE
@@ -7512,7 +7527,9 @@ app.post('/api/webhook/evolution', async (req, res) => {
 
     let lead = leads[0] || null;
     const pushName = message?.pushName || phone;
-    const msgId = message?.key?.id || `wh-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
+    const msgId = message?.key?.id || `wh-${createHash('sha1')
+      .update(`${instance || 'unknown'}:${resolvedPhone}:${resolvedContent}:${message?.messageTimestamp || body?.date_time || ''}`)
+      .digest('hex')}`;
     const resolvedContent = msgContent || `[${msgType}]`;
     const rawType = Object.keys(message?.message || {})[0] || null;
 
