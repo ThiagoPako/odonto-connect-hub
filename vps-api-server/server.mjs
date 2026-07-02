@@ -11054,7 +11054,8 @@ async function importWhatsAppMessagesForTenant({ tenantId, requestedInstances = 
         instStats.scanned += batch.length;
 
         for (const msg of batch) {
-          const remoteJid = msg?.key?.remoteJid || msg?.remoteJid || msg?.jid;
+          const remoteJid = extractActualRemoteJidFromMessage(msg) || msg?.remoteJid || msg?.jid;
+          rememberLidMappingFromMessage(msg, remoteJid);
           if (!isUsableChatJid(remoteJid)) { instStats.skipped++; totalSkipped++; continue; }
 
           const msgTimestamp = extractMessageTimestamp(msg);
@@ -11089,7 +11090,27 @@ async function importWhatsAppMessagesForTenant({ tenantId, requestedInstances = 
           const insert = await pool.query(
             `INSERT INTO chat_messages (id, lead_id, content, sender, type, status, timestamp, media_url, file_name, mime_type, instance, phone, metadata, tenant_id)
              VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, $8, $9, $10, $11, $12, $13)
-             ON CONFLICT (id) DO NOTHING`,
+             ON CONFLICT (id) DO UPDATE
+               SET lead_id = COALESCE(chat_messages.lead_id, EXCLUDED.lead_id),
+                   content = COALESCE(NULLIF(chat_messages.content, ''), EXCLUDED.content),
+                   sender = COALESCE(chat_messages.sender, EXCLUDED.sender),
+                   type = COALESCE(chat_messages.type, EXCLUDED.type),
+                   status = CASE
+                     WHEN chat_messages.status = 'read' THEN chat_messages.status
+                     WHEN chat_messages.status = 'delivered' AND EXCLUDED.status IN ('sent', 'sending') THEN chat_messages.status
+                     ELSE COALESCE(EXCLUDED.status, chat_messages.status)
+                   END,
+                   timestamp = CASE
+                     WHEN EXCLUDED.timestamp IS NOT NULL AND (chat_messages.timestamp IS NULL OR EXCLUDED.timestamp < chat_messages.timestamp)
+                     THEN EXCLUDED.timestamp
+                     ELSE chat_messages.timestamp
+                   END,
+                   file_name = COALESCE(chat_messages.file_name, EXCLUDED.file_name),
+                   mime_type = COALESCE(chat_messages.mime_type, EXCLUDED.mime_type),
+                   instance = COALESCE(chat_messages.instance, EXCLUDED.instance),
+                   phone = COALESCE(chat_messages.phone, EXCLUDED.phone),
+                   metadata = COALESCE(chat_messages.metadata, '{}'::jsonb) || COALESCE(EXCLUDED.metadata, '{}'::jsonb),
+                   tenant_id = COALESCE(chat_messages.tenant_id, EXCLUDED.tenant_id)`,
             [
               msgId,
               lead.id.toString(),
