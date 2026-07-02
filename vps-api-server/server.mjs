@@ -24,6 +24,11 @@ import { promisify } from 'util';
 import { existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 
+// Compatibilidade para trechos legados deste arquivo que ainda chamam
+// crypto.randomUUID(). O módulo importa randomUUID de forma nomeada; sem este
+// alias, o webhook quebra ao criar lead/sessão e a mensagem não chega ao chat.
+const crypto = { randomUUID };
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -6820,6 +6825,11 @@ app.get('/api/events', async (req, res) => {
       console.warn('📡 SSE connection failed: invalid token');
       return res.status(401).json({ error: 'Invalid realtime token' });
     }
+  }
+
+  if (!authenticated || !isValidTenantId(tenantId)) {
+    console.warn('📡 SSE connection rejected: authenticated tenant not resolved');
+    return res.status(401).json({ error: 'Authenticated tenant not resolved' });
   }
 
   // Set headers for SSE
