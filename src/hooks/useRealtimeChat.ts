@@ -43,9 +43,9 @@ export interface QueueAssignment {
 
 export interface MessageStatusUpdate {
   messageId: string;
-  phone: string;
+  phone: string | null;
   status: "sent" | "delivered" | "read" | "failed";
-  instance: string;
+  instance: string | null;
 }
 
 export interface LeadRecoveryReturn {
