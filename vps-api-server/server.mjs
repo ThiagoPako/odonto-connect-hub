@@ -3189,18 +3189,16 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
 
     const rawNumber = normalizeWhatsappNumber(number);
 
-    // Validate against WhatsApp first — avoids "silent send" on invalid JIDs
-    // (typical for Brazilian numbers missing the leading 9 after the DDD).
-    const { exists, canonical } = await resolveValidWhatsAppNumber(instance, rawNumber);
-    if (!exists) {
-      console.warn(`❌ send-text: number ${rawNumber} is not on WhatsApp (instance ${instance})`);
-      return res.status(422).json({
-        error: 'Este número não possui WhatsApp ativo. Confira o DDD e o 9º dígito.',
-        code: 'WHATSAPP_NUMBER_NOT_FOUND',
-        number: rawNumber,
-      });
+    // Best-effort JID resolution — never block the send. If Evolution's
+    // /chat/whatsappNumbers responds with a canonical JID we use it,
+    // otherwise we send the number as-is (previous working behavior).
+    let cleanNumber = rawNumber;
+    try {
+      const check = await resolveValidWhatsAppNumber(instance, rawNumber);
+      if (check?.canonical) cleanNumber = check.canonical;
+    } catch (err) {
+      console.warn(`⚠️ send-text: number check skipped for ${rawNumber}:`, err?.message);
     }
-    const cleanNumber = canonical;
 
     const result = await sendEvolutionTextMessage(instance, cleanNumber, text, quoted || null);
 
