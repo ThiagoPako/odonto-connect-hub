@@ -7408,7 +7408,12 @@ app.post('/api/webhook/evolution', async (req, res) => {
         const lookupIds = [...new Set([update?.messageId, key?.id, update?.keyId].filter(Boolean))];
         const primaryMessageId = lookupIds[0];
         const remoteJid = key?.remoteJid || update?.remoteJid;
-        const ack = update?.update?.status ?? update?.status ?? key?.status;
+        const ack = update?.update?.status
+          ?? update?.update?.ack
+          ?? update?.status
+          ?? update?.ack
+          ?? key?.status
+          ?? key?.ack;
 
         if (!primaryMessageId || !remoteJid || remoteJid.endsWith('@g.us')) continue;
 
@@ -7454,16 +7459,29 @@ app.post('/api/webhook/evolution', async (req, res) => {
         // Resolve LID to real phone if mapped
         phone = resolvePhoneFromLid(phone);
 
+        if (!tenantId) {
+          tenantId = await getFallbackTenantIdForIncomingMessage({
+            instanceName: instance,
+            phoneSuffix: phone.slice(-11),
+          });
+          if (!tenantId) {
+            console.warn(`⚠️ ACK ignored without tenant: instance=${instance || 'unknown'} phone=${phone.slice(-11)} ids=${lookupIds.join(',')}`);
+            continue;
+          }
+        }
+
         for (const lookupId of lookupIds) {
           console.log(`✅ ACK: ${lookupId} → ${newStatus} (ack=${ack}, phone=${phone})`);
 
           try {
-            await pool.query(
+            const { rowCount } = await pool.query(
               `UPDATE chat_messages SET status = $1 WHERE tenant_id = $3 AND (id = $2 OR (metadata::text LIKE '%' || $2 || '%'))`,
               [newStatus, lookupId, tenantId]
             );
+            if (!rowCount) rememberPendingMessageStatus(tenantId, lookupId, newStatus);
           } catch (ackErr) {
             console.error('ACK DB update error:', ackErr.message);
+            rememberPendingMessageStatus(tenantId, lookupId, newStatus);
           }
 
           broadcastSSE('message_status_update', {
@@ -7577,10 +7595,10 @@ app.post('/api/webhook/evolution', async (req, res) => {
 
     let lead = leads[0] || null;
     const pushName = message?.pushName || phone;
+    const resolvedContent = msgContent || `[${msgType}]`;
     const msgId = message?.key?.id || `wh-${createHash('sha1')
       .update(`${instance || 'unknown'}:${resolvedPhone}:${resolvedContent}:${message?.messageTimestamp || body?.date_time || ''}`)
       .digest('hex')}`;
-    const resolvedContent = msgContent || `[${msgType}]`;
     const rawType = Object.keys(message?.message || {})[0] || null;
 
     // ─── New contact: create lead + contato + check hours + send menu ───
