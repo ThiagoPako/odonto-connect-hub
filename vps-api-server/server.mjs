@@ -11184,7 +11184,10 @@ app.post('/api/messages/import-whatsapp', async (req, res) => {
       start,
       end,
       createWaitingSessions: true,
+      maxPages: 30,
+      pageSize: 50,
       onProgress: sendProgress,
+
     });
 
     const finalResult = { phase: 'done', success: true, ...result };
