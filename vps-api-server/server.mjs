@@ -3247,6 +3247,10 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
       await ensureWebhookRegistration(instance);
     } catch (webhookErr) {
       console.warn(`⚠️ send-text: webhook registration check failed for ${instance}:`, webhookErr?.message);
+      return res.status(502).json({
+        error: 'Webhook do WhatsApp não está registrado na Evolution; envio bloqueado para evitar mensagem sem confirmação em tempo real.',
+        details: { instance, webhookUrl: WEBHOOK_URL, reason: webhookErr?.message },
+      });
     }
 
     // Envio isolado: não trocar o destino com /chat/whatsappNumbers aqui.
