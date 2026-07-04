@@ -2694,7 +2694,9 @@ async function resolveValidWhatsAppNumber(instance, cleanNumber) {
   }
 
   const candidates = getWhatsappNumberVariants(cleanNumber);
-  const preferredMobileCandidate = candidates[0] || cleanNumber;
+  const preferredMobileCandidate = candidates.length > 1 && candidates[0] !== cleanNumber
+    ? candidates[0]
+    : null;
 
   const normalizeResultNumber = (entry) => {
     const raw = entry?.jid || entry?.number || entry?.id || '';
