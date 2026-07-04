@@ -2335,82 +2335,162 @@ function isEvolutionInstanceAlreadyInUse(result, instanceName) {
 }
 
 async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = null) {
-  const targetNumber = normalizeWhatsappNumber(cleanNumber);
+  const submittedNumber = normalizeWhatsappNumber(cleanNumber);
 
-  if (!isUsableWhatsappPhoneNumber(targetNumber)) {
+  if (!isUsableWhatsappPhoneNumber(submittedNumber)) {
     return {
       ok: false,
       status: 400,
       data: {
         error: `Número inválido para WhatsApp: ${cleanNumber}`,
         checkedNumber: cleanNumber,
-        targetNumber,
+        targetNumber: submittedNumber,
       },
     };
   }
 
-  const normalizedQuoted = quoted?.key?.id
-    ? {
-        ...quoted,
-        key: {
-          ...quoted.key,
-          remoteJid: quoted.key.remoteJid && !String(quoted.key.remoteJid).includes('@g.us')
-            ? `${targetNumber}@s.whatsapp.net`
-            : quoted.key.remoteJid,
-        },
-      }
-    : quoted;
-
-  const basePayload = {
-    number: targetNumber,
-    delay: 800,
-    linkPreview: true,
-    ...(normalizedQuoted ? { quoted: normalizedQuoted } : {}),
+  const candidateNumbers = [];
+  const addCandidate = (value) => {
+    const normalized = normalizeWhatsappNumber(value);
+    if (isUsableWhatsappPhoneNumber(normalized) && !candidateNumbers.includes(normalized)) {
+      candidateNumbers.push(normalized);
+    }
   };
 
-  const payloads = [
-    { ...basePayload, text },
-    // Fallback for Evolution builds that follow the newer documented v2 schema.
-    // The VPS logs for this project show the installed instance currently rejects
-    // this shape with: Instance requires property "text"; therefore it cannot be
-    // attempted first.
-    { ...basePayload, textMessage: { text } },
-  ];
+  // 1) Start with the exact number stored on the conversation. This preserves
+  // legacy WhatsApp JIDs that still deliver with 8 subscriber digits.
+  addCandidate(submittedNumber);
 
-  let lastResult = null;
-  for (const payload of payloads) {
-    const result = await evolutionFetch(`/message/sendText/${instance}`, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
-    lastResult = result;
-
-    if (result.ok) {
-      const messageId = extractEvolutionMessageId(result.data);
-      if (!messageId) {
-        // Algumas versões da Evolution respondem HTTP 200 para o payload aceito
-        // pelo endpoint, mas sem key.id quando o formato do corpo não gerou uma
-        // mensagem real. Isso NÃO deve encerrar o loop: tentamos o próximo
-        // formato compatível antes de declarar falha.
-        console.warn(`⚠️ sendText ${instance}: resposta OK sem message id; tentando próximo formato`, JSON.stringify(result.data || {}).slice(0, 500));
-        continue;
-      }
+  // 2) Ask Evolution what WhatsApp considers valid. If it can confirm a
+  // canonical JID, try that next; otherwise keep going with local variants.
+  let validation = null;
+  try {
+    validation = await resolveValidWhatsAppNumber(instance, submittedNumber);
+    if (validation?.exists === false) {
       return {
-        ...result,
-        data: messageId ? { ...result.data, key: { ...(result.data?.key || {}), id: messageId }, sentNumber: targetNumber } : result.data,
+        ok: false,
+        status: 400,
+        data: {
+          error: `Número não encontrado no WhatsApp: ${cleanNumber}`,
+          checkedNumber: cleanNumber,
+          targetNumber: submittedNumber,
+          validation,
+        },
       };
     }
-
-    const errorText = JSON.stringify(result.data || {}).toLowerCase();
-    const canRetryPayloadShape = result.status === 400
-      || errorText.includes('textmessage')
-      || errorText.includes('text message')
-      || errorText.includes('required')
-      || errorText.includes('validation');
-    if (!canRetryPayloadShape) break;
+    addCandidate(validation?.canonical);
+  } catch (validationErr) {
+    console.warn(`⚠️ sendText ${instance}: validação do número falhou; tentando envio direto:`, validationErr?.message);
   }
 
-  return lastResult || { ok: false, status: 502, data: { error: 'Falha ao enviar mensagem' } };
+  // 3) Finally try known BR variants (with/without 9th digit). This is safer
+  // than forcing a single transformation because Evolution/Baileys deployments
+  // disagree on whether old contacts deliver with the legacy or modern JID.
+  for (const variant of getWhatsappNumberVariants(submittedNumber)) addCandidate(variant);
+
+  let lastResult = null;
+  const attempted = [];
+
+  for (const targetNumber of candidateNumbers) {
+    const normalizedQuoted = quoted?.key?.id
+      ? {
+          ...quoted,
+          key: {
+            ...quoted.key,
+            remoteJid: quoted.key.remoteJid && !String(quoted.key.remoteJid).includes('@g.us')
+              ? `${targetNumber}@s.whatsapp.net`
+              : quoted.key.remoteJid,
+          },
+        }
+      : quoted;
+
+    const basePayload = {
+      number: targetNumber,
+      delay: 800,
+      linkPreview: true,
+      ...(normalizedQuoted ? { quoted: normalizedQuoted } : {}),
+    };
+
+    const payloads = [
+      { label: 'text', body: { ...basePayload, text } },
+      // Fallback for Evolution builds that follow the newer documented v2 schema.
+      { label: 'textMessage', body: { ...basePayload, textMessage: { text } } },
+    ];
+
+    for (const payload of payloads) {
+      const result = await evolutionFetch(`/message/sendText/${instance}`, {
+        method: 'POST',
+        body: JSON.stringify(payload.body),
+      });
+      lastResult = result;
+      attempted.push({ number: targetNumber, format: payload.label, status: result.status, ok: result.ok });
+
+      if (result.ok) {
+        const messageId = extractEvolutionMessageId(result.data);
+        if (!messageId) {
+          // Algumas versões da Evolution respondem HTTP 200 para o payload aceito
+          // pelo endpoint, mas sem key.id quando o formato do corpo não gerou uma
+          // mensagem real. Isso NÃO deve encerrar o loop.
+          console.warn(`⚠️ sendText ${instance}: OK sem message id; tentando próximo formato/número`, {
+            targetNumber,
+            format: payload.label,
+            response: JSON.stringify(result.data || {}).slice(0, 500),
+          });
+          continue;
+        }
+        return {
+          ...result,
+          data: { ...result.data, key: { ...(result.data?.key || {}), id: messageId }, sentNumber: targetNumber, attempted },
+        };
+      }
+
+      const errorText = JSON.stringify(result.data || {}).toLowerCase();
+      const canRetryPayloadShape = result.status === 400
+        || errorText.includes('textmessage')
+        || errorText.includes('text message')
+        || errorText.includes('required')
+        || errorText.includes('validation');
+      if (!canRetryPayloadShape) {
+        // Auth, missing instance, disconnected instance, and server errors are
+        // not fixed by changing the message body. Stop fast and surface it.
+        break;
+      }
+    }
+
+    const lastErrorText = JSON.stringify(lastResult?.data || {}).toLowerCase();
+    const canRetryNumber = lastResult?.ok
+      || lastResult?.status === 400
+      || lastErrorText.includes('jid')
+      || lastErrorText.includes('number')
+      || lastErrorText.includes('not found')
+      || lastErrorText.includes('exists')
+      || lastErrorText.includes('valid');
+    if (!canRetryNumber && lastResult) break;
+  }
+
+  if (lastResult?.ok && !extractEvolutionMessageId(lastResult.data)) {
+    return {
+      ok: false,
+      status: 502,
+      data: {
+        error: 'Evolution aceitou a requisição, mas não retornou o id real da mensagem.',
+        attempted,
+        lastResponse: lastResult.data,
+      },
+    };
+  }
+
+  if (lastResult?.data && attempted.length > 0) {
+    return {
+      ...lastResult,
+      data: {
+        ...lastResult.data,
+        attempted,
+      },
+    };
+  }
+
+  return lastResult || { ok: false, status: 502, data: { error: 'Falha ao enviar mensagem', attempted } };
 }
 
 function extractEvolutionInstanceName(body) {
