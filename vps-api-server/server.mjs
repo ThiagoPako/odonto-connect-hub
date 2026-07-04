@@ -3802,29 +3802,26 @@ app.post('/api/whatsapp/send-media', async (req, res) => {
 
     const payload = {
       number: cleanNumber,
-      mediaMessage: {
-        mediaType,
-        fileName: media.fileName || undefined,
-        caption: media.caption || '',
-      },
-      options: {
-        delay: 1200,
-        presence: 'composing',
-      },
+      mediatype: mediaType,
+      caption: media.caption || '',
+      delay: 1200,
     };
+    if (media.fileName) {
+      payload.fileName = media.fileName;
+    }
     if (mimeType) {
-      payload.mediaMessage.mimetype = mimeType;
+      payload.mimetype = mimeType;
     }
     if (cleanedBase64 && cleanedBase64.length > 10) {
-      payload.mediaMessage.media = cleanedBase64;
+      payload.media = cleanedBase64;
     } else if (media.url) {
-      payload.mediaMessage.media = media.url;
+      payload.media = media.url;
     } else {
       console.error('❌ sendMedia: no valid media (base64 or url). base64 length:', cleanedBase64?.length, 'url:', media.url);
       return res.status(400).json({ error: 'Nenhuma mídia válida fornecida (base64 vazio ou URL ausente)' });
     }
 
-    console.log(`📤 sendMedia payload size: ${JSON.stringify(payload).length} bytes, media field starts with: ${String(payload.mediaMessage.media).substring(0, 50)}`);
+    console.log(`📤 sendMedia payload size: ${JSON.stringify(payload).length} bytes, media field starts with: ${String(payload.media).substring(0, 50)}`);
 
     const result = await evolutionFetch(`/message/sendMedia/${instance}`, {
       method: 'POST',
