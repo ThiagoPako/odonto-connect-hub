@@ -2297,7 +2297,11 @@ function getWhatsappPhoneSuffixVariants(value) {
 
 function isUsableWhatsappPhoneNumber(value) {
   const digits = normalizeWhatsappNumber(value);
-  return digits.length >= 10 && digits.length <= 13;
+  // Brazilian phones are usually 12-13 digits with DDI, but recent WhatsApp
+  // LID identifiers can be 14+ digits. Keep the upper bound aligned with E.164
+  // so replies to LID-migrated contacts are not rejected before Evolution can
+  // resolve the target.
+  return digits.length >= 10 && digits.length <= 16;
 }
 
 function extractEvolutionMessageId(data) {
@@ -2420,7 +2424,57 @@ async function inspectEvolutionStoredMessage(instance, messageId, remoteJid) {
   };
 }
 
-async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = null) {
+function isLidJid(value) {
+  return String(value || '').includes('@lid');
+}
+
+function buildLidJid(value) {
+  const digits = normalizeWhatsappNumber(value);
+  return digits && digits.length >= 10 ? `${digits}@lid` : '';
+}
+
+async function getStoredSendTargetCandidates({ instance, leadId, tenantId }) {
+  if (!leadId || !tenantId) return [];
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT phone, metadata
+         FROM chat_messages
+        WHERE lead_id = $1
+          AND tenant_id = $2
+          AND ($3 = '' OR instance = $3 OR instance IS NULL)
+        ORDER BY timestamp DESC NULLS LAST
+        LIMIT 30`,
+      [leadId, tenantId, instance || '']
+    );
+
+    const candidates = [];
+    for (const row of rows) {
+      const metadata = row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
+      const values = [
+        row.phone,
+        metadata.remoteJid,
+        metadata.remoteJidAlt,
+        metadata.participantAlt,
+        metadata.senderPn,
+        metadata.participantPn,
+      ];
+
+      for (const value of values) {
+        if (!value) continue;
+        if (isLidJid(value)) candidates.push(buildLidJid(value));
+        else candidates.push(normalizeWhatsappNumber(value));
+      }
+    }
+
+    return [...new Set(candidates.filter(Boolean))];
+  } catch (err) {
+    console.warn('Failed to load stored WhatsApp send target candidates:', err.message);
+    return [];
+  }
+}
+
+async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = null, context = {}) {
   const submittedNumber = normalizeWhatsappNumber(cleanNumber);
 
   if (!isUsableWhatsappPhoneNumber(submittedNumber)) {
@@ -2435,17 +2489,53 @@ async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = nu
     };
   }
 
-  const candidateNumbers = [];
-  const addCandidate = (value) => {
-    const normalized = normalizeWhatsappNumber(value);
-    if (isUsableWhatsappPhoneNumber(normalized) && !candidateNumbers.includes(normalized)) {
-      candidateNumbers.push(normalized);
+  const candidateTargets = [];
+  const addCandidate = (value, source = 'number', prefer = false) => {
+    const raw = String(value || '').trim();
+    const normalized = normalizeWhatsappNumber(raw);
+    if (!isUsableWhatsappPhoneNumber(normalized)) return;
+
+    const target = isLidJid(raw) ? buildLidJid(raw) : normalized;
+    if (!target || candidateTargets.some((candidate) => candidate.target === target)) return;
+
+    const candidate = {
+      target,
+      normalized,
+      source,
+      isLid: isLidJid(target),
+    };
+
+    if (prefer) {
+      candidateTargets.unshift(candidate);
+    } else {
+      candidateTargets.push(candidate);
     }
   };
 
+  // If the conversation phone is already a long LID-like identifier, try the
+  // explicit @lid target before the numeric fallback. This matches Evolution's
+  // current workaround for contacts migrated to Linked Identity.
+  if (submittedNumber.length > 13 && !submittedNumber.startsWith('55')) {
+    addCandidate(`${submittedNumber}@lid`, 'submitted-lid', true);
+  }
+
+  // When Evolution knows a LID for this phone, prefer it. On builds that do not
+  // accept @lid in sendText this attempt fails fast and the normal phone variants
+  // below are tried next; on affected builds it avoids the silent one-check send.
+  const discoveredLid = await resolveLidForPhone(instance, submittedNumber).catch(() => null);
+  if (discoveredLid) addCandidate(`${discoveredLid}@lid`, 'whatsappNumbers-lid', true);
+
+  for (const storedCandidate of await getStoredSendTargetCandidates({
+    instance,
+    leadId: context.leadId,
+    tenantId: context.tenantId,
+  })) {
+    addCandidate(storedCandidate, isLidJid(storedCandidate) ? 'stored-lid' : 'stored-phone', isLidJid(storedCandidate));
+  }
+
   // 1) Start with the exact number stored on the conversation. This preserves
   // legacy WhatsApp JIDs that still deliver with 8 subscriber digits.
-  addCandidate(submittedNumber);
+  addCandidate(submittedNumber, 'submitted-phone');
 
   // 2) Try known BR variants (with/without 9th digit). Do not block sending via
   // /chat/whatsappNumbers here: on this Evolution build that endpoint can return
@@ -2453,19 +2543,21 @@ async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = nu
   // The send endpoint is the source of truth; failed attempts are surfaced below.
   // than forcing a single transformation because Evolution/Baileys deployments
   // disagree on whether old contacts deliver with the legacy or modern JID.
-  for (const variant of getWhatsappNumberVariants(submittedNumber)) addCandidate(variant);
+  for (const variant of getWhatsappNumberVariants(submittedNumber)) addCandidate(variant, 'br-variant');
 
   let lastResult = null;
   const attempted = [];
 
-  for (const targetNumber of candidateNumbers) {
+  for (const candidate of candidateTargets) {
+    const targetNumber = candidate.target;
+    const targetRemoteJid = candidate.isLid ? targetNumber : `${candidate.normalized}@s.whatsapp.net`;
     const normalizedQuoted = quoted?.key?.id
       ? {
           ...quoted,
           key: {
             ...quoted.key,
             remoteJid: quoted.key.remoteJid && !String(quoted.key.remoteJid).includes('@g.us')
-              ? `${targetNumber}@s.whatsapp.net`
+              ? targetRemoteJid
               : quoted.key.remoteJid,
           },
         }
@@ -2490,7 +2582,7 @@ async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = nu
         body: JSON.stringify(payload.body),
       });
       lastResult = result;
-      attempted.push({ number: targetNumber, format: payload.label, status: result.status, ok: result.ok });
+      attempted.push({ number: targetNumber, source: candidate.source, format: payload.label, status: result.status, ok: result.ok });
 
       if (result.ok) {
         const messageId = extractEvolutionMessageId(result.data);
@@ -2513,15 +2605,14 @@ async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = nu
         if (result.status === 201) {
           return {
             ...result,
-            data: { ...result.data, key: { ...(result.data?.key || {}), id: messageId }, sentNumber: targetNumber, attempted },
+            data: { ...result.data, key: { ...(result.data?.key || {}), id: messageId }, sentNumber: candidate.normalized, sentTarget: targetNumber, attempted },
           };
         }
 
         // For non-201 OK responses, keep a defensive inspection, but only when
         // the exact message id is found; inspectEvolutionStoredMessage never
         // falls back to unrelated records.
-        const remoteJid = `${targetNumber}@s.whatsapp.net`;
-        const stored = await inspectEvolutionStoredMessage(instance, messageId, remoteJid).catch((err) => ({
+        const stored = await inspectEvolutionStoredMessage(instance, messageId, targetRemoteJid).catch((err) => ({
           found: false,
           status: null,
           error: err?.message,
@@ -2539,7 +2630,8 @@ async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = nu
             data: {
               error: 'Evolution gerou a mensagem, mas marcou o envio como ERROR imediatamente.',
               key: { id: messageId },
-              sentNumber: targetNumber,
+              sentNumber: candidate.normalized,
+              sentTarget: targetNumber,
               attempted,
               storedStatus: stored?.status || null,
             },
@@ -2553,7 +2645,7 @@ async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = nu
 
         return {
           ...result,
-          data: { ...result.data, key: { ...(result.data?.key || {}), id: messageId }, sentNumber: targetNumber, attempted },
+          data: { ...result.data, key: { ...(result.data?.key || {}), id: messageId }, sentNumber: candidate.normalized, sentTarget: targetNumber, attempted },
         };
       }
 
