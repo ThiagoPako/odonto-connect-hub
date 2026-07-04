@@ -3795,7 +3795,10 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
       return null;
     });
 
-    const result = await sendEvolutionTextMessage(instance, cleanNumber, text, quoted || null);
+    const result = await sendEvolutionTextMessage(instance, cleanNumber, text, quoted || null, {
+      leadId,
+      tenantId: user?.tenant_id || null,
+    });
     const sentNumber = result.data?.sentNumber || cleanNumber;
 
     if (!result.ok) {
