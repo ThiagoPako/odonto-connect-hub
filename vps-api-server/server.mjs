@@ -2206,6 +2206,44 @@ async function evolutionFetch(path, options = {}) {
   }
 }
 
+function extractEvolutionConnectionState(data) {
+  const state = data?.instance?.state
+    || data?.instance?.connectionStatus
+    || data?.state
+    || data?.connectionStatus
+    || data?.status;
+  return String(state || '').toLowerCase();
+}
+
+async function ensureEvolutionInstanceOpen(instanceName) {
+  const result = await evolutionFetch(`/instance/connectionState/${instanceName}`, { timeoutMs: 8000 });
+  if (!result.ok) {
+    return {
+      ok: false,
+      status: result.status || 502,
+      data: {
+        error: 'Não foi possível verificar a conexão do WhatsApp antes do envio.',
+        details: result.data,
+      },
+    };
+  }
+
+  const state = extractEvolutionConnectionState(result.data);
+  if (state !== 'open') {
+    return {
+      ok: false,
+      status: 409,
+      data: {
+        error: `WhatsApp não está conectado para envio (estado: ${state || 'desconhecido'}). Reconecte o canal antes de enviar mensagens.`,
+        state: state || null,
+        details: result.data,
+      },
+    };
+  }
+
+  return { ok: true, status: 200, data: result.data, state };
+}
+
 function normalizeWhatsappNumber(value) {
   const digits = String(value || '')
     .replace('@s.whatsapp.net', '')
@@ -3655,6 +3693,18 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
     // apenas 1 check sem chegar ao cliente. Mantemos o número normalizado que
     // veio da conversa, que era o comportamento funcional anterior.
     const cleanNumber = normalizeWhatsappNumber(number);
+
+    const mappedTenantId = await getTenantIdByInstance(instance);
+    if (user.tenant_id && mappedTenantId && String(mappedTenantId) !== String(user.tenant_id)) {
+      return res.status(403).json({
+        error: 'Esta instância do WhatsApp não pertence à clínica atual. Atualize a página e selecione o canal correto.',
+      });
+    }
+
+    const connectionCheck = await ensureEvolutionInstanceOpen(instance);
+    if (!connectionCheck.ok) {
+      return res.status(connectionCheck.status || 409).json(connectionCheck.data);
+    }
 
     const result = await sendEvolutionTextMessage(instance, cleanNumber, text, quoted || null);
     const sentNumber = result.data?.sentNumber || cleanNumber;
