@@ -2506,9 +2506,20 @@ async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = nu
           continue;
         }
 
-        // Evolution/Baileys can return HTTP 201 + key.id and still persist the
-        // message immediately as MessageUpdate.status=ERROR. In that case the UI
-        // must not show a sent checkmark; try the next compatible variant first.
+        // Evolution/Baileys writes the message store asynchronously. Immediately
+        // after send, ACK/CLOCK can still be represented as status 0/ERROR on
+        // some Evolution builds. Do not second-guess a 201 + key.id response;
+        // later webhook ACK updates are responsible for marking true failures.
+        if (result.status === 201) {
+          return {
+            ...result,
+            data: { ...result.data, key: { ...(result.data?.key || {}), id: messageId }, sentNumber: targetNumber, attempted },
+          };
+        }
+
+        // For non-201 OK responses, keep a defensive inspection, but only when
+        // the exact message id is found; inspectEvolutionStoredMessage never
+        // falls back to unrelated records.
         const remoteJid = `${targetNumber}@s.whatsapp.net`;
         const stored = await inspectEvolutionStoredMessage(instance, messageId, remoteJid).catch((err) => ({
           found: false,
@@ -7315,8 +7326,12 @@ function normalizeEvolutionAckStatus(ack) {
   const ackStr = String(ack).trim().toUpperCase();
   const ackNum = typeof ack === 'number' ? ack : Number.parseInt(ackStr, 10);
 
-  if (ackStr === 'ERROR' || ackStr === 'FAILED' || ackStr === 'NACK' || ackNum === 0) return 'failed';
-  if (ackStr === 'PENDING' || ackStr === 'PENDING_ACK' || ackNum === 1) return 'sent';
+  if (ackStr === 'FAILED' || ackStr === 'NACK' || ackNum === -1) return 'failed';
+  if (ackStr === 'PENDING' || ackStr === 'PENDING_ACK' || ackStr === 'CLOCK' || ackNum === 0 || ackNum === 1) return 'sent';
+  // Evolution/Baileys versions can stringify ACK 0 as ERROR while the message is
+  // still only pending. Treat webhook/store ERROR as failed only when no numeric
+  // ACK is available; immediate send validation skips 201 responses above.
+  if (ackStr === 'ERROR') return 'failed';
   if (ackStr === 'SERVER_ACK' || ackStr === 'SENT' || ackStr === 'SEND' || ackNum === 2) return 'sent';
   if (ackStr === 'DELIVERY_ACK' || ackStr === 'DELIVERED' || ackStr === 'RECEIVED' || ackStr === 'DEVICE_ACK' || ackNum === 3) return 'delivered';
   if (ackStr === 'READ' || ackStr === 'READ_ACK' || ackStr === 'PLAYED' || ackStr === 'PLAYED_ACK' || ackNum === 4 || ackNum === 5) return 'read';
