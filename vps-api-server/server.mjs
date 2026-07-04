@@ -3840,8 +3840,7 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
     // não enviadas continuam sem entrar no histórico, como esperado.
     if (leadId && user?.tenant_id) {
       try {
-        const { rows: profile } = await pool.query('SELECT nome FROM profiles WHERE id = $1', [user.id]);
-        const attendantName = profile[0]?.nome || 'Atendente';
+        const attendantName = await getProfileDisplayName(user.id, 'Atendente');
         const pendingStatus = consumePendingMessageStatus(user.tenant_id, messageId);
         const initialStatus = pendingStatus && isHigherMessageStatus(pendingStatus, 'sent') ? pendingStatus : 'sent';
 
@@ -9016,8 +9015,7 @@ app.post('/api/transfers', async (req, res) => {
       return res.status(400).json({ error: 'leadId, toUserId e reason são obrigatórios' });
     }
 
-    const { rows } = await pool.query('SELECT nome FROM profiles WHERE id = $1', [user.id]);
-    const fromName = rows[0]?.nome || 'Desconhecido';
+    const fromName = await getProfileDisplayName(user.id, 'Desconhecido');
 
     const id = crypto.randomUUID();
     await pool.query(
@@ -9088,8 +9086,7 @@ app.post('/api/sessions/assign', async (req, res) => {
     if (!leadId) return res.status(400).json({ error: 'leadId obrigatório' });
     if (!isValidTenantId(user.tenant_id)) return res.status(400).json({ error: 'Tenant inválido para assumir atendimento' });
 
-    const { rows } = await pool.query('SELECT nome FROM profiles WHERE id = $1', [user.id]);
-    const attendantName = rows[0]?.nome || 'Atendente';
+    const attendantName = await getProfileDisplayName(user.id, 'Atendente');
 
     const result = await pool.query(
       `WITH target_session AS (
@@ -12037,8 +12034,7 @@ app.post('/api/messages', async (req, res) => {
     const { id, leadId, content, type, status, fileName, fileUrl, mimeType, replyTo, instance, phone } = req.body;
     if (!leadId || !id) return res.status(400).json({ error: 'id e leadId obrigatórios' });
 
-    const { rows: profile } = await pool.query('SELECT nome FROM profiles WHERE id = $1', [user.id]);
-    const attendantName = profile[0]?.nome || 'Atendente';
+    const attendantName = await getProfileDisplayName(user.id, 'Atendente');
 
     // If fileUrl is a base64 data URI, save to disk for persistent storage
     let persistedMediaUrl = fileUrl || null;
