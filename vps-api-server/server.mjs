@@ -2461,21 +2461,41 @@ async function getStoredSendTargetCandidates({ instance, leadId, tenantId }) {
     );
 
     const candidates = [];
+    const addSendableCandidate = (value) => {
+      if (!value) return;
+      const raw = String(value).trim();
+      const digits = normalizeWhatsappNumber(raw);
+      if (!digits) return;
+
+      // Do not send to @lid. Evolution/Baileys can accept the request and create
+      // a local one-check message that never reaches the patient. When a LID is
+      // present, use the phone mapping learned from remoteJidAlt/senderPn instead.
+      if (isLidJid(raw)) {
+        const mappedPhone = resolvePhoneFromLid(digits);
+        if (mappedPhone && mappedPhone !== digits && isUsableWhatsappPhoneNumber(mappedPhone)) {
+          candidates.push(mappedPhone);
+        }
+        return;
+      }
+
+      if (isUsableWhatsappPhoneNumber(digits)) candidates.push(digits);
+    };
+
     for (const row of rows) {
       const metadata = row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
       const values = [
-        row.phone,
-        metadata.remoteJid,
+        // Prefer phone-number JIDs captured by newer Evolution fields before the
+        // primary remoteJid, because the primary field may be an unsendable @lid.
         metadata.remoteJidAlt,
-        metadata.participantAlt,
         metadata.senderPn,
         metadata.participantPn,
+        metadata.participantAlt,
+        row.phone,
+        metadata.remoteJid,
       ];
 
       for (const value of values) {
-        if (!value) continue;
-        if (isLidJid(value)) candidates.push(buildLidJid(value));
-        else candidates.push(normalizeWhatsappNumber(value));
+        addSendableCandidate(value);
       }
     }
 
@@ -2487,7 +2507,12 @@ async function getStoredSendTargetCandidates({ instance, leadId, tenantId }) {
 }
 
 async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = null, context = {}) {
-  const submittedNumber = normalizeWhatsappNumber(cleanNumber);
+  const rawSubmitted = String(cleanNumber || '').trim();
+  const normalizedSubmitted = normalizeWhatsappNumber(rawSubmitted);
+  const mappedSubmittedPhone = resolvePhoneFromLid(normalizedSubmitted);
+  const submittedNumber = mappedSubmittedPhone && mappedSubmittedPhone !== normalizedSubmitted
+    ? normalizeWhatsappNumber(mappedSubmittedPhone)
+    : normalizedSubmitted;
 
   if (!isUsableWhatsappPhoneNumber(submittedNumber)) {
     return {
@@ -2507,7 +2532,24 @@ async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = nu
     const normalized = normalizeWhatsappNumber(raw);
     if (!isUsableWhatsappPhoneNumber(normalized)) return;
 
-    const target = isLidJid(raw) ? buildLidJid(raw) : normalized;
+    if (isLidJid(raw) || (normalized.length > 13 && !normalized.startsWith('55'))) {
+      const mappedPhone = resolvePhoneFromLid(normalized);
+      if (!mappedPhone || mappedPhone === normalized) return;
+      const mappedDigits = normalizeWhatsappNumber(mappedPhone);
+      if (!isUsableWhatsappPhoneNumber(mappedDigits)) return;
+      if (candidateTargets.some((candidate) => candidate.target === mappedDigits)) return;
+      const candidate = {
+        target: mappedDigits,
+        normalized: mappedDigits,
+        source: `${source}-mapped-from-lid`,
+        isLid: false,
+      };
+      if (prefer) candidateTargets.unshift(candidate);
+      else candidateTargets.push(candidate);
+      return;
+    }
+
+    const target = normalized;
     if (!target || candidateTargets.some((candidate) => candidate.target === target)) return;
 
     const candidate = {
@@ -2524,25 +2566,12 @@ async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = nu
     }
   };
 
-  // If the conversation phone is already a long LID-like identifier, try the
-  // explicit @lid target before the numeric fallback. This matches Evolution's
-  // current workaround for contacts migrated to Linked Identity.
-  if (submittedNumber.length > 13 && !submittedNumber.startsWith('55')) {
-    addCandidate(`${submittedNumber}@lid`, 'submitted-lid', true);
-  }
-
-  // When Evolution knows a LID for this phone, prefer it. On builds that do not
-  // accept @lid in sendText this attempt fails fast and the normal phone variants
-  // below are tried next; on affected builds it avoids the silent one-check send.
-  const discoveredLid = await resolveLidForPhone(instance, submittedNumber).catch(() => null);
-  if (discoveredLid) addCandidate(`${discoveredLid}@lid`, 'whatsappNumbers-lid', true);
-
   for (const storedCandidate of await getStoredSendTargetCandidates({
     instance,
     leadId: context.leadId,
     tenantId: context.tenantId,
   })) {
-    addCandidate(storedCandidate, isLidJid(storedCandidate) ? 'stored-lid' : 'stored-phone', isLidJid(storedCandidate));
+    addCandidate(storedCandidate, 'stored-phone', true);
   }
 
   // 1) Start with the exact number stored on the conversation. This preserves
@@ -2556,6 +2585,18 @@ async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = nu
   // than forcing a single transformation because Evolution/Baileys deployments
   // disagree on whether old contacts deliver with the legacy or modern JID.
   for (const variant of getWhatsappNumberVariants(submittedNumber)) addCandidate(variant, 'br-variant');
+
+  if (candidateTargets.length === 0) {
+    return {
+      ok: false,
+      status: 400,
+      data: {
+        error: 'Não foi possível resolver um número WhatsApp comum para esta conversa. A mensagem veio como LID (@lid) sem remoteJidAlt/telefone associado; importe uma mensagem recente do contato ou atualize a Evolution para expor remoteJidAlt.',
+        checkedNumber: cleanNumber,
+        targetNumber: submittedNumber,
+      },
+    };
+  }
 
   let lastResult = null;
   const attempted = [];
