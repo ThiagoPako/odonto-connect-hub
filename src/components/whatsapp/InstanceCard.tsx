@@ -122,7 +122,10 @@ export function InstanceCard({ instanceName, instanceId, status, isPrimary, onCo
               variant="outline"
               size="sm"
               disabled={actionLoading === "logout"}
-              onClick={() => handleAction("logout", () => logoutInstance(instanceName))}
+              onClick={() => handleAction("logout", async () => {
+                const { error } = await whatsappApi.logout(instanceName);
+                if (error) throw new Error(error);
+              })}
             >
               {actionLoading === "logout" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <LogOut className="h-3.5 w-3.5" />}
             </Button>
@@ -133,7 +136,10 @@ export function InstanceCard({ instanceName, instanceId, status, isPrimary, onCo
           variant="ghost"
           size="sm"
           disabled={actionLoading === "restart"}
-          onClick={() => handleAction("restart", () => restartInstance(instanceName))}
+          onClick={() => handleAction("restart", async () => {
+            const { error } = await whatsappApi.restart(instanceName);
+            if (error) throw new Error(error);
+          })}
         >
           {actionLoading === "restart" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
         </Button>
