@@ -11838,7 +11838,7 @@ app.get('/api/messages/:leadId', async (req, res, next) => {
   try {
     const { user } = await verifyUser(req);
     const { leadId } = req.params;
-    if (leadId === 'unread' || leadId === 'search') return next();
+    if (leadId === 'unread' || leadId === 'search') return next('route');
     const { before, limit = '50' } = req.query;
     const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 100);
 
