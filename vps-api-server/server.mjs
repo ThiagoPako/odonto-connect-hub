@@ -2295,23 +2295,12 @@ function isEvolutionInstanceAlreadyInUse(result, instanceName) {
 }
 
 async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = null) {
-  const resolvedNumber = await resolveValidWhatsAppNumber(instance, cleanNumber);
-  if (!resolvedNumber.exists) {
-    return {
-      ok: false,
-      status: 400,
-      data: {
-        error: `Número ${cleanNumber} não foi confirmado como WhatsApp válido pela Evolution`,
-        code: 'WHATSAPP_NUMBER_NOT_FOUND',
-        number: cleanNumber,
-      },
-    };
-  }
-
-  const targetNumber = resolvedNumber.canonical || cleanNumber;
-  if (targetNumber !== cleanNumber) {
-    console.log(`📱 sendText ${instance}: número corrigido ${cleanNumber} → ${targetNumber}`);
-  }
+  // Não valide nem troque o destino com /chat/whatsappNumbers no envio manual.
+  // Em instâncias com LID/contatos sincronizados, esse endpoint pode retornar um
+  // canonical/JID diferente do telefone da conversa; a Evolution aceita a chamada,
+  // mas o WhatsApp fica em um check ou a resposta entra em outro lead. O Chat deve
+  // enviar exatamente para o número normalizado da conversa.
+  const targetNumber = cleanNumber;
 
   const basePayload = {
     number: targetNumber,
@@ -2706,6 +2695,13 @@ async function ensureWebhookRegistration(instanceName) {
     // inesperado mesmo mantendo a instância apta a enviar mensagens.
     console.warn(`⚠️ Webhook não confirmado para ${instanceName}; envio seguirá mesmo assim.`, result?.data || result?.error || 'sem detalhes');
     return result || { ok: false, error: 'Webhook não registrado' };
+  }
+  if (result.verified === false) {
+    // Não grave cache quando a Evolution respondeu 200 mas /webhook/find não
+    // confirmou a URL atual. Esse era o cenário em que o envio até podia sair,
+    // porém respostas/ACKs não voltavam para o Chat.
+    console.warn(`⚠️ Webhook set retornou OK, mas a URL atual não foi verificada para ${instanceName}; tentativa será repetida no próximo ciclo.`);
+    return result;
   }
   webhookEnsureTimestamps.set(instanceName, Date.now());
   return result;
@@ -3417,8 +3413,9 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
     // Make sure Evolution forwards events back to our webhook before sending.
     // If this is fire-and-forget, a newly/reconnected instance can send before
     // ACK/reply webhooks are registered, producing one-check messages forever.
-    ensureWebhookRegistration(instance).catch((webhookErr) => {
+    await ensureWebhookRegistration(instance).catch((webhookErr) => {
       console.warn(`⚠️ send-text: webhook registration check failed for ${instance}; continuing send:`, webhookErr?.message);
+      return null;
     });
 
     // Envio isolado: não trocar o destino com /chat/whatsappNumbers aqui.
