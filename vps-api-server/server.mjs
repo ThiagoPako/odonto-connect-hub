@@ -2551,6 +2551,7 @@ async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = nu
   for (const candidate of candidateTargets) {
     const targetNumber = candidate.target;
     const targetRemoteJid = candidate.isLid ? targetNumber : `${candidate.normalized}@s.whatsapp.net`;
+    const persistedSentNumber = candidate.isLid ? submittedNumber : candidate.normalized;
     const normalizedQuoted = quoted?.key?.id
       ? {
           ...quoted,
@@ -2605,7 +2606,7 @@ async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = nu
         if (result.status === 201) {
           return {
             ...result,
-            data: { ...result.data, key: { ...(result.data?.key || {}), id: messageId }, sentNumber: candidate.normalized, sentTarget: targetNumber, attempted },
+            data: { ...result.data, key: { ...(result.data?.key || {}), id: messageId }, sentNumber: persistedSentNumber, sentTarget: targetNumber, attempted },
           };
         }
 
@@ -2630,7 +2631,7 @@ async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = nu
             data: {
               error: 'Evolution gerou a mensagem, mas marcou o envio como ERROR imediatamente.',
               key: { id: messageId },
-              sentNumber: candidate.normalized,
+              sentNumber: persistedSentNumber,
               sentTarget: targetNumber,
               attempted,
               storedStatus: stored?.status || null,
@@ -2645,7 +2646,7 @@ async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = nu
 
         return {
           ...result,
-          data: { ...result.data, key: { ...(result.data?.key || {}), id: messageId }, sentNumber: candidate.normalized, sentTarget: targetNumber, attempted },
+          data: { ...result.data, key: { ...(result.data?.key || {}), id: messageId }, sentNumber: persistedSentNumber, sentTarget: targetNumber, attempted },
         };
       }
 
