@@ -2335,15 +2335,14 @@ function isEvolutionInstanceAlreadyInUse(result, instanceName) {
 }
 
 async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = null) {
-  const validation = await resolveValidWhatsAppNumber(instance, cleanNumber);
-  const targetNumber = validation.canonical || getWhatsappNumberVariants(cleanNumber)[0] || cleanNumber;
+  const targetNumber = normalizeWhatsappNumber(cleanNumber);
 
-  if (validation.exists === false) {
+  if (!isUsableWhatsappPhoneNumber(targetNumber)) {
     return {
       ok: false,
       status: 400,
       data: {
-        error: `Número ${cleanNumber} não foi confirmado como WhatsApp conectado na Evolution`,
+        error: `Número inválido para WhatsApp: ${cleanNumber}`,
         checkedNumber: cleanNumber,
         targetNumber,
       },
