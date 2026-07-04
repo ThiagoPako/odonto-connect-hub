@@ -2309,11 +2309,24 @@ function getWhatsappPhoneSuffixVariants(value) {
 
 function isUsableWhatsappPhoneNumber(value) {
   const digits = normalizeWhatsappNumber(value);
-  // Brazilian phones are usually 12-13 digits with DDI, but recent WhatsApp
-  // LID identifiers can be 14+ digits. Keep the upper bound aligned with E.164
-  // so replies to LID-migrated contacts are not rejected before Evolution can
-  // resolve the target.
+  // Generic sanity check for identifiers we can reason about. Do not use this
+  // alone to decide a value is a sendable phone number: WhatsApp LID values can
+  // also be 14-16 digits and some of them start with 55.
   return digits.length >= 10 && digits.length <= 16;
+}
+
+function isSendableWhatsappPhoneNumber(value) {
+  const digits = normalizeWhatsappNumber(value);
+  // Evolution sendText expects the public phone number, not Baileys LID. For BR
+  // contacts this is 55 + DDD + 8/9 digits (12-13 total). Values longer than 13
+  // are LID-like and must be mapped back to a phone before sending.
+  return digits.length >= 10 && digits.length <= 13;
+}
+
+function isLikelyLidIdentifier(value) {
+  const raw = String(value || '');
+  const digits = normalizeWhatsappNumber(raw);
+  return raw.includes('@lid') || digits.length > 13;
 }
 
 function extractEvolutionMessageId(data) {
