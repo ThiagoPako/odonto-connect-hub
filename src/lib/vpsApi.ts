@@ -115,27 +115,14 @@ export async function getAuthHeaders(forceRefresh = false): Promise<Record<strin
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   const token = await getAccessToken(forceRefresh);
   if (token) headers['Authorization'] = `Bearer ${token}`;
+
+  // Use only the tenant resolved by AuthProvider/useAuth. Do not perform an
+  // extra profile query here: if that async read fails or races during auth
+  // hydration, a stale local fallback can send/persist chat messages under the
+  // wrong clinic. When absent, the VPS resolves tenant from the bearer token.
   const cachedTenantId = getCachedTenantId();
   if (cachedTenantId) headers['X-Tenant-Id'] = cachedTenantId;
-  
-  // Try to get tenant_id from local storage cache or fetch it
-  try {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (user) {
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('tenant_id')
-        .eq('id', user.id)
-        .maybeSingle();
-      if (profile?.tenant_id) {
-        headers['X-Tenant-Id'] = profile.tenant_id;
-        setCachedTenantId(profile.tenant_id);
-      }
-    }
-  } catch (e) {
-    console.error("Failed to append tenant header", e);
-  }
-  
+
   return headers;
 }
 

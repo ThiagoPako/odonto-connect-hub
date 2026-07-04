@@ -131,7 +131,7 @@ function resolveConnectedInstance(
 
     const normalized = connectedInstances.find((instance) => {
       const current = normalizeInstanceName(instance.instanceName);
-      return current === preferred || current.endsWith(preferred) || preferred.endsWith(current);
+      return current === preferred;
     });
     if (normalized) return normalized;
   }
