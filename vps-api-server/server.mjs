@@ -2538,20 +2538,6 @@ async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = nu
     ? normalizeWhatsappNumber(mappedSubmittedPhone)
     : normalizedSubmitted;
 
-  if (!isSendableWhatsappPhoneNumber(submittedNumber)) {
-    return {
-      ok: false,
-      status: 400,
-      data: {
-        error: isLikelyLidIdentifier(rawSubmitted)
-          ? 'Esta conversa está identificada por LID (@lid), mas o backend ainda não recebeu um telefone comum associado. Importe/receba uma mensagem recente do contato para capturar remoteJidAlt/senderPn antes de enviar.'
-          : `Número inválido para WhatsApp: ${cleanNumber}`,
-        checkedNumber: cleanNumber,
-        targetNumber: submittedNumber,
-      },
-    };
-  }
-
   const candidateTargets = [];
   const addCandidate = (value, source = 'number', prefer = false) => {
     const raw = String(value || '').trim();
@@ -2602,7 +2588,9 @@ async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = nu
   }
 
   // 1) Start with the exact number stored on the conversation. This preserves
-  // legacy WhatsApp JIDs that still deliver with 8 subscriber digits.
+  // legacy WhatsApp JIDs that still deliver with 8 subscriber digits. If the
+  // submitted value is a LID, addCandidate only accepts it when a prior webhook
+  // mapped it back to a public phone number.
   addCandidate(submittedNumber, 'submitted-phone');
 
   // 2) Try known BR variants (with/without 9th digit). Do not block sending via
@@ -2611,14 +2599,18 @@ async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = nu
   // The send endpoint is the source of truth; failed attempts are surfaced below.
   // than forcing a single transformation because Evolution/Baileys deployments
   // disagree on whether old contacts deliver with the legacy or modern JID.
-  for (const variant of getWhatsappNumberVariants(submittedNumber)) addCandidate(variant, 'br-variant');
+  if (isSendableWhatsappPhoneNumber(submittedNumber)) {
+    for (const variant of getWhatsappNumberVariants(submittedNumber)) addCandidate(variant, 'br-variant');
+  }
 
   if (candidateTargets.length === 0) {
     return {
       ok: false,
       status: 400,
       data: {
-        error: 'Não foi possível resolver um número WhatsApp comum para esta conversa. A mensagem veio como LID (@lid) sem remoteJidAlt/telefone associado; importe uma mensagem recente do contato ou atualize a Evolution para expor remoteJidAlt.',
+        error: isLikelyLidIdentifier(rawSubmitted)
+          ? 'Esta conversa está identificada por LID (@lid), mas o backend ainda não encontrou um telefone comum no histórico. Importe/receba uma mensagem recente do contato para capturar remoteJidAlt/senderPn antes de enviar.'
+          : 'Não foi possível resolver um número WhatsApp comum para esta conversa.',
         checkedNumber: cleanNumber,
         targetNumber: submittedNumber,
       },
