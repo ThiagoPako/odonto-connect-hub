@@ -2222,6 +2222,46 @@ function normalizeWhatsappNumber(value) {
   return digits;
 }
 
+function getWhatsappNumberVariants(value) {
+  const normalized = normalizeWhatsappNumber(value);
+  if (!normalized) return [];
+
+  const variants = [];
+  const add = (candidate) => {
+    const digits = normalizeWhatsappNumber(candidate);
+    if (digits && !variants.includes(digits)) variants.push(digits);
+  };
+
+  const withCountry = !normalized.startsWith('55') && (normalized.length === 10 || normalized.length === 11)
+    ? `55${normalized}`
+    : normalized;
+
+  // BR mobile numbers migrated from 8 to 9 subscriber digits. A stale CRM lead
+  // can still store 55 + DDD + 8 digits (ex.: 556285279808), while WhatsApp only
+  // delivers to 55 + DDD + 9 + 8 digits (ex.: 5562985279808). Prefer the modern
+  // form for sending, but keep both forms for lookup/reconciliation.
+  if (/^55\d{10}$/.test(withCountry) && /^[6-9]/.test(withCountry.slice(4, 5))) {
+    add(`${withCountry.slice(0, 4)}9${withCountry.slice(4)}`);
+  }
+
+  add(withCountry);
+
+  if (/^55\d{11}$/.test(withCountry) && withCountry[4] === '9') {
+    add(`${withCountry.slice(0, 4)}${withCountry.slice(5)}`);
+  }
+
+  return variants;
+}
+
+function getWhatsappPhoneSuffixVariants(value) {
+  return [...new Set(getWhatsappNumberVariants(value).map((candidate) => candidate.slice(-11)).filter(Boolean))];
+}
+
+function isUsableWhatsappPhoneNumber(value) {
+  const digits = normalizeWhatsappNumber(value);
+  return digits.length >= 10 && digits.length <= 13;
+}
+
 function extractEvolutionMessageId(data) {
   if (!data) return null;
   if (Array.isArray(data)) {
@@ -2295,18 +2335,38 @@ function isEvolutionInstanceAlreadyInUse(result, instanceName) {
 }
 
 async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = null) {
-  // Não valide nem troque o destino com /chat/whatsappNumbers no envio manual.
-  // Em instâncias com LID/contatos sincronizados, esse endpoint pode retornar um
-  // canonical/JID diferente do telefone da conversa; a Evolution aceita a chamada,
-  // mas o WhatsApp fica em um check ou a resposta entra em outro lead. O Chat deve
-  // enviar exatamente para o número normalizado da conversa.
-  const targetNumber = cleanNumber;
+  const validation = await resolveValidWhatsAppNumber(instance, cleanNumber);
+  const targetNumber = validation.canonical || getWhatsappNumberVariants(cleanNumber)[0] || cleanNumber;
+
+  if (validation.exists === false) {
+    return {
+      ok: false,
+      status: 400,
+      data: {
+        error: `Número ${cleanNumber} não foi confirmado como WhatsApp conectado na Evolution`,
+        checkedNumber: cleanNumber,
+        targetNumber,
+      },
+    };
+  }
+
+  const normalizedQuoted = quoted?.key?.id
+    ? {
+        ...quoted,
+        key: {
+          ...quoted.key,
+          remoteJid: quoted.key.remoteJid && !String(quoted.key.remoteJid).includes('@g.us')
+            ? `${targetNumber}@s.whatsapp.net`
+            : quoted.key.remoteJid,
+        },
+      }
+    : quoted;
 
   const basePayload = {
     number: targetNumber,
     delay: 800,
     linkPreview: true,
-    ...(quoted ? { quoted } : {}),
+    ...(normalizedQuoted ? { quoted: normalizedQuoted } : {}),
   };
 
   const payloads = [
@@ -2633,20 +2693,19 @@ async function resolveValidWhatsAppNumber(instance, cleanNumber) {
     return { exists: cached.exists, canonical: cached.canonical };
   }
 
-  // Brazilian mobiles: if 12 digits (55 + DDD + 8) and the subscriber number
-  // starts as a mobile range, prefer the current 9-digit mobile format. The
-  // previous order tested/sent the old 8-digit form first, which Evolution
-  // accepted as PENDING and later returned ACK ERROR (as seen in the VPS logs).
-  const preferredMobileCandidate = /^55\d{10}$/.test(cleanNumber) && /^[6-9]/.test(cleanNumber.slice(4, 5))
-    ? `${cleanNumber.slice(0, 4)}9${cleanNumber.slice(4)}`
+  const candidates = getWhatsappNumberVariants(cleanNumber);
+  const preferredMobileCandidate = candidates.length > 1 && candidates[0] !== cleanNumber
+    ? candidates[0]
     : null;
-  const candidates = preferredMobileCandidate
-    ? [preferredMobileCandidate, cleanNumber]
-    : [cleanNumber];
 
-  const normalizeResultNumber = (entry) => normalizeWhatsappNumber(entry?.jid || entry?.number || entry?.id || '');
+  const normalizeResultNumber = (entry) => {
+    const raw = entry?.jid || entry?.number || entry?.id || '';
+    if (String(raw).includes('@lid')) return '';
+    const digits = normalizeWhatsappNumber(raw);
+    return isUsableWhatsappPhoneNumber(digits) ? digits : '';
+  };
   const pickResult = (entries) => {
-    const existing = entries.filter((entry) => entry?.exists === true || entry?.jid || entry?.number || entry?.id);
+    const existing = entries.filter((entry) => normalizeResultNumber(entry) && (entry?.exists === true || entry?.jid || entry?.number || entry?.id));
     if (preferredMobileCandidate) {
       const preferredHit = existing.find((entry) => normalizeResultNumber(entry) === preferredMobileCandidate && entry?.exists !== false);
       if (preferredHit) return preferredHit;
@@ -2663,6 +2722,14 @@ async function resolveValidWhatsAppNumber(instance, cleanNumber) {
     });
 
     if (result.ok && Array.isArray(result.data)) {
+      if (preferredMobileCandidate) {
+        const preferredEntry = result.data.find((entry) => normalizeResultNumber(entry) === preferredMobileCandidate);
+        if (!preferredEntry || preferredEntry.exists !== false) {
+          whatsappNumberValidationCache.set(cacheKey, { exists: true, canonical: preferredMobileCandidate, checkedAt: Date.now() });
+          return { exists: true, canonical: preferredMobileCandidate };
+        }
+      }
+
       const hit = pickResult(result.data);
       if (hit) {
         const jidNum = normalizeResultNumber(hit);
@@ -7159,9 +7226,10 @@ async function findMessageStatusContext({ tenantId, lookupIds = [], phone = '', 
 
   const phoneSuffix = normalizeWhatsappNumber(phone).slice(-11);
   if (phoneSuffix) {
-    params.push(phoneSuffix);
+    const phoneSuffixes = getWhatsappPhoneSuffixVariants(phone);
+    params.push(phoneSuffixes.length ? phoneSuffixes : [phoneSuffix]);
     const phoneParam = params.length;
-    matchers.push(`RIGHT(REGEXP_REPLACE(COALESCE(cm.phone, ''), '\\D', '', 'g'), 11) = $${phoneParam}`);
+    matchers.push(`RIGHT(REGEXP_REPLACE(COALESCE(cm.phone, ''), '\\D', '', 'g'), 11) = ANY($${phoneParam}::text[])`);
   }
 
   if (instance) {
@@ -8004,6 +8072,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
     const phone = normalizeWhatsappNumber(remoteJid);
     const resolvedPhone = resolvePhoneFromLid(phone);
     const phoneSuffix = resolvedPhone.slice(-11);
+    const phoneSuffixes = getWhatsappPhoneSuffixVariants(resolvedPhone);
 
     if (!tenantId) {
       tenantId = await getFallbackTenantIdForIncomingMessage({ instanceName: instance, phoneSuffix });
@@ -8081,9 +8150,10 @@ app.post('/api/webhook/evolution', async (req, res) => {
     // Find lead by phone and tenant_id
     const { rows: leads } = await pool.query(
       `SELECT id, nome as name, avatar_url, telefone as phone, queue_id, queue_name, awaiting_queue_selection FROM crm_leads 
-       WHERE tenant_id = $1 AND REGEXP_REPLACE(COALESCE(telefone, ''), '\\D', '', 'g') LIKE '%' || $2
+       WHERE tenant_id = $1
+         AND RIGHT(REGEXP_REPLACE(COALESCE(telefone, ''), '\\D', '', 'g'), 11) = ANY($2::text[])
        LIMIT 1`,
-      [tenantId, phoneSuffix]
+      [tenantId, phoneSuffixes.length ? phoneSuffixes : [phoneSuffix]]
     );
 
     let lead = leads[0] || null;
