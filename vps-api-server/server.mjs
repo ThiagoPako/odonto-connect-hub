@@ -11834,10 +11834,11 @@ app.post('/api/whatsapp/switch-primary', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════
 
 // GET /api/messages/:leadId — histórico paginado (mais recentes primeiro, retorna em ordem cronológica)
-app.get('/api/messages/:leadId', async (req, res) => {
+app.get('/api/messages/:leadId', async (req, res, next) => {
   try {
     const { user } = await verifyUser(req);
     const { leadId } = req.params;
+    if (leadId === 'unread' || leadId === 'search') return next();
     const { before, limit = '50' } = req.query;
     const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 100);
 
