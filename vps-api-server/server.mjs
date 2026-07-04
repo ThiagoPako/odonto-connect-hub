@@ -2407,11 +2407,16 @@ async function inspectEvolutionStoredMessage(instance, messageId, remoteJid) {
 
   if (!result.ok) return { found: false, status: null, record: null, error: result.data };
   const records = extractEvolutionStoredMessageRecords(result.data);
-  const record = records.find((item) => item?.key?.id === messageId) || records[0] || null;
+  // Some Evolution builds ignore part of the `where` object and return the
+  // latest messages for the chat. Never inspect `records[0]` as a fallback: it
+  // can belong to an older failed send and make a fresh successful send look
+  // like an immediate ERROR.
+  const record = records.find((item) => item?.key?.id === messageId) || null;
   return {
     found: !!record,
     status: getStoredEvolutionMessageStatus(record),
     record,
+    inspectedCount: records.length,
   };
 }
 
@@ -2442,29 +2447,10 @@ async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = nu
   // legacy WhatsApp JIDs that still deliver with 8 subscriber digits.
   addCandidate(submittedNumber);
 
-  // 2) Ask Evolution what WhatsApp considers valid. If it can confirm a
-  // canonical JID, try that next; otherwise keep going with local variants.
-  let validation = null;
-  try {
-    validation = await resolveValidWhatsAppNumber(instance, submittedNumber);
-    if (validation?.exists === false) {
-      return {
-        ok: false,
-        status: 400,
-        data: {
-          error: `Número não encontrado no WhatsApp: ${cleanNumber}`,
-          checkedNumber: cleanNumber,
-          targetNumber: submittedNumber,
-          validation,
-        },
-      };
-    }
-    addCandidate(validation?.canonical);
-  } catch (validationErr) {
-    console.warn(`⚠️ sendText ${instance}: validação do número falhou; tentando envio direto:`, validationErr?.message);
-  }
-
-  // 3) Finally try known BR variants (with/without 9th digit). This is safer
+  // 2) Try known BR variants (with/without 9th digit). Do not block sending via
+  // /chat/whatsappNumbers here: on this Evolution build that endpoint can return
+  // false negatives/canonical JIDs that accept the request but never deliver.
+  // The send endpoint is the source of truth; failed attempts are surfaced below.
   // than forcing a single transformation because Evolution/Baileys deployments
   // disagree on whether old contacts deliver with the legacy or modern JID.
   for (const variant of getWhatsappNumberVariants(submittedNumber)) addCandidate(variant);
@@ -2535,7 +2521,7 @@ async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = nu
           messageId,
           storedStatus: stored?.status || null,
         };
-        if (storedStatus === 'failed') {
+        if (stored?.found && storedStatus === 'failed') {
           lastResult = {
             ok: false,
             status: 502,
