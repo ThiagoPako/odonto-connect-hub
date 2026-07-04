@@ -3680,14 +3680,6 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
     if (!instance || !number || typeof text !== 'string') {
       return res.status(400).json({ error: 'instance, number e text são obrigatórios' });
     }
-    // Make sure Evolution forwards events back to our webhook before sending.
-    // If this is fire-and-forget, a newly/reconnected instance can send before
-    // ACK/reply webhooks are registered, producing one-check messages forever.
-    await ensureWebhookRegistration(instance).catch((webhookErr) => {
-      console.warn(`⚠️ send-text: webhook registration check failed for ${instance}; continuing send:`, webhookErr?.message);
-      return null;
-    });
-
     // Envio isolado: não trocar o destino com /chat/whatsappNumbers aqui.
     // Esse endpoint pode retornar JID/canonical diferente e causar envio com
     // apenas 1 check sem chegar ao cliente. Mantemos o número normalizado que
@@ -3705,6 +3697,14 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
     if (!connectionCheck.ok) {
       return res.status(connectionCheck.status || 409).json(connectionCheck.data);
     }
+
+    // Make sure Evolution forwards events back to our webhook before sending.
+    // If this is fire-and-forget, a newly/reconnected instance can send before
+    // ACK/reply webhooks are registered, producing one-check messages forever.
+    await ensureWebhookRegistration(instance).catch((webhookErr) => {
+      console.warn(`⚠️ send-text: webhook registration check failed for ${instance}; continuing send:`, webhookErr?.message);
+      return null;
+    });
 
     const result = await sendEvolutionTextMessage(instance, cleanNumber, text, quoted || null);
     const sentNumber = result.data?.sentNumber || cleanNumber;
