@@ -55,10 +55,17 @@ async function apiCall<T>(path: string, options?: RequestInit): Promise<T> {
 
 function normalizeWhatsappNumber(number: string): string {
   const cleanNumber = number.replace(/\D/g, "");
-  if (!cleanNumber.startsWith("55") && (cleanNumber.length === 10 || cleanNumber.length === 11)) {
-    return `55${cleanNumber}`;
+  const withCountry = !cleanNumber.startsWith("55") && (cleanNumber.length === 10 || cleanNumber.length === 11)
+    ? `55${cleanNumber}`
+    : cleanNumber;
+
+  // BR mobile numbers must be sent as 55 + DDD + 9 + subscriber. If the CRM has
+  // the legacy 8-digit mobile form, Evolution accepts the request but WhatsApp
+  // later fails delivery with ACK ERROR.
+  if (/^55\d{10}$/.test(withCountry) && /^[6-9]/.test(withCountry.slice(4, 5))) {
+    return `${withCountry.slice(0, 4)}9${withCountry.slice(4)}`;
   }
-  return cleanNumber;
+  return withCountry;
 }
 
 export async function fetchInstances(): Promise<EvolutionInstance[]> {
