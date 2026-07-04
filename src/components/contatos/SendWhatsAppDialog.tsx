@@ -16,12 +16,31 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Loader2, Send, CheckCircle2, AlertCircle, Wifi } from "lucide-react";
-import {
-  fetchInstances,
-  sendTextMessage,
-  type EvolutionInstance,
-} from "@/lib/evolutionApi";
+import { whatsappApi } from "@/lib/vpsApi";
 import { toast } from "sonner";
+
+type ConnectionStatus = "open" | "close" | "connecting";
+
+interface WhatsAppInstance {
+  instanceName: string;
+  instanceId: string;
+  status: ConnectionStatus;
+}
+
+function normalizeConnectionStatus(value: unknown): ConnectionStatus {
+  return value === "open" || value === "connecting" ? value : "close";
+}
+
+function normalizeInstance(raw: any): WhatsAppInstance | null {
+  const instanceName = raw?.name || raw?.instanceName || raw?.instance?.instanceName;
+  if (!instanceName) return null;
+
+  return {
+    instanceName,
+    instanceId: raw?.id || raw?.instanceId || raw?.instance?.id || raw?.instance?.instanceId || "",
+    status: normalizeConnectionStatus(raw?.connectionStatus || raw?.status || raw?.instance?.state),
+  };
+}
 
 interface SendWhatsAppDialogProps {
   open: boolean;
@@ -36,7 +55,7 @@ export function SendWhatsAppDialog({
   contactName,
   contactPhone,
 }: SendWhatsAppDialogProps) {
-  const [instances, setInstances] = useState<EvolutionInstance[]>([]);
+  const [instances, setInstances] = useState<WhatsAppInstance[]>([]);
   const [selectedInstance, setSelectedInstance] = useState("");
   const [message, setMessage] = useState("");
   const [loadingInstances, setLoadingInstances] = useState(false);
@@ -48,8 +67,10 @@ export function SendWhatsAppDialog({
     setSent(false);
     setMessage("");
     setLoadingInstances(true);
-    fetchInstances()
-      .then((list) => {
+    whatsappApi.instances()
+      .then(({ data, error }) => {
+        if (error) throw new Error(error);
+        const list = Array.isArray(data) ? data.map(normalizeInstance).filter(Boolean) as WhatsAppInstance[] : [];
         const connected = list.filter((i) => i.status === "open");
         setInstances(connected);
         if (connected.length === 1) setSelectedInstance(connected[0].instanceName);
@@ -63,7 +84,8 @@ export function SendWhatsAppDialog({
     if (!selectedInstance || !message.trim()) return;
     setSending(true);
     try {
-      await sendTextMessage(selectedInstance, contactPhone, message.trim());
+      const { error } = await whatsappApi.sendText(selectedInstance, contactPhone, message.trim());
+      if (error) throw new Error(error);
       setSent(true);
       toast.success(`Mensagem enviada para ${contactName}`);
       setTimeout(() => onOpenChange(false), 1500);

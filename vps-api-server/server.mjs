@@ -2407,11 +2407,16 @@ async function inspectEvolutionStoredMessage(instance, messageId, remoteJid) {
 
   if (!result.ok) return { found: false, status: null, record: null, error: result.data };
   const records = extractEvolutionStoredMessageRecords(result.data);
-  const record = records.find((item) => item?.key?.id === messageId) || records[0] || null;
+  // Some Evolution builds ignore part of the `where` object and return the
+  // latest messages for the chat. Never inspect `records[0]` as a fallback: it
+  // can belong to an older failed send and make a fresh successful send look
+  // like an immediate ERROR.
+  const record = records.find((item) => item?.key?.id === messageId) || null;
   return {
     found: !!record,
     status: getStoredEvolutionMessageStatus(record),
     record,
+    inspectedCount: records.length,
   };
 }
 
@@ -2442,29 +2447,10 @@ async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = nu
   // legacy WhatsApp JIDs that still deliver with 8 subscriber digits.
   addCandidate(submittedNumber);
 
-  // 2) Ask Evolution what WhatsApp considers valid. If it can confirm a
-  // canonical JID, try that next; otherwise keep going with local variants.
-  let validation = null;
-  try {
-    validation = await resolveValidWhatsAppNumber(instance, submittedNumber);
-    if (validation?.exists === false) {
-      return {
-        ok: false,
-        status: 400,
-        data: {
-          error: `Número não encontrado no WhatsApp: ${cleanNumber}`,
-          checkedNumber: cleanNumber,
-          targetNumber: submittedNumber,
-          validation,
-        },
-      };
-    }
-    addCandidate(validation?.canonical);
-  } catch (validationErr) {
-    console.warn(`⚠️ sendText ${instance}: validação do número falhou; tentando envio direto:`, validationErr?.message);
-  }
-
-  // 3) Finally try known BR variants (with/without 9th digit). This is safer
+  // 2) Try known BR variants (with/without 9th digit). Do not block sending via
+  // /chat/whatsappNumbers here: on this Evolution build that endpoint can return
+  // false negatives/canonical JIDs that accept the request but never deliver.
+  // The send endpoint is the source of truth; failed attempts are surfaced below.
   // than forcing a single transformation because Evolution/Baileys deployments
   // disagree on whether old contacts deliver with the legacy or modern JID.
   for (const variant of getWhatsappNumberVariants(submittedNumber)) addCandidate(variant);
@@ -2520,9 +2506,20 @@ async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = nu
           continue;
         }
 
-        // Evolution/Baileys can return HTTP 201 + key.id and still persist the
-        // message immediately as MessageUpdate.status=ERROR. In that case the UI
-        // must not show a sent checkmark; try the next compatible variant first.
+        // Evolution/Baileys writes the message store asynchronously. Immediately
+        // after send, ACK/CLOCK can still be represented as status 0/ERROR on
+        // some Evolution builds. Do not second-guess a 201 + key.id response;
+        // later webhook ACK updates are responsible for marking true failures.
+        if (result.status === 201) {
+          return {
+            ...result,
+            data: { ...result.data, key: { ...(result.data?.key || {}), id: messageId }, sentNumber: targetNumber, attempted },
+          };
+        }
+
+        // For non-201 OK responses, keep a defensive inspection, but only when
+        // the exact message id is found; inspectEvolutionStoredMessage never
+        // falls back to unrelated records.
         const remoteJid = `${targetNumber}@s.whatsapp.net`;
         const stored = await inspectEvolutionStoredMessage(instance, messageId, remoteJid).catch((err) => ({
           found: false,
@@ -2535,7 +2532,7 @@ async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = nu
           messageId,
           storedStatus: stored?.status || null,
         };
-        if (storedStatus === 'failed') {
+        if (stored?.found && storedStatus === 'failed') {
           lastResult = {
             ok: false,
             status: 502,
@@ -3805,29 +3802,26 @@ app.post('/api/whatsapp/send-media', async (req, res) => {
 
     const payload = {
       number: cleanNumber,
-      mediaMessage: {
-        mediaType,
-        fileName: media.fileName || undefined,
-        caption: media.caption || '',
-      },
-      options: {
-        delay: 1200,
-        presence: 'composing',
-      },
+      mediatype: mediaType,
+      caption: media.caption || '',
+      delay: 1200,
     };
+    if (media.fileName) {
+      payload.fileName = media.fileName;
+    }
     if (mimeType) {
-      payload.mediaMessage.mimetype = mimeType;
+      payload.mimetype = mimeType;
     }
     if (cleanedBase64 && cleanedBase64.length > 10) {
-      payload.mediaMessage.media = cleanedBase64;
+      payload.media = cleanedBase64;
     } else if (media.url) {
-      payload.mediaMessage.media = media.url;
+      payload.media = media.url;
     } else {
       console.error('❌ sendMedia: no valid media (base64 or url). base64 length:', cleanedBase64?.length, 'url:', media.url);
       return res.status(400).json({ error: 'Nenhuma mídia válida fornecida (base64 vazio ou URL ausente)' });
     }
 
-    console.log(`📤 sendMedia payload size: ${JSON.stringify(payload).length} bytes, media field starts with: ${String(payload.mediaMessage.media).substring(0, 50)}`);
+    console.log(`📤 sendMedia payload size: ${JSON.stringify(payload).length} bytes, media field starts with: ${String(payload.media).substring(0, 50)}`);
 
     const result = await evolutionFetch(`/message/sendMedia/${instance}`, {
       method: 'POST',
@@ -7329,8 +7323,12 @@ function normalizeEvolutionAckStatus(ack) {
   const ackStr = String(ack).trim().toUpperCase();
   const ackNum = typeof ack === 'number' ? ack : Number.parseInt(ackStr, 10);
 
-  if (ackStr === 'ERROR' || ackStr === 'FAILED' || ackStr === 'NACK' || ackNum === 0) return 'failed';
-  if (ackStr === 'PENDING' || ackStr === 'PENDING_ACK' || ackNum === 1) return 'sent';
+  if (ackStr === 'FAILED' || ackStr === 'NACK' || ackNum === -1) return 'failed';
+  if (ackStr === 'PENDING' || ackStr === 'PENDING_ACK' || ackStr === 'CLOCK' || ackNum === 0 || ackNum === 1) return 'sent';
+  // Evolution/Baileys versions can stringify ACK 0 as ERROR while the message is
+  // still only pending. Treat webhook/store ERROR as failed only when no numeric
+  // ACK is available; immediate send validation skips 201 responses above.
+  if (ackStr === 'ERROR') return 'failed';
   if (ackStr === 'SERVER_ACK' || ackStr === 'SENT' || ackStr === 'SEND' || ackNum === 2) return 'sent';
   if (ackStr === 'DELIVERY_ACK' || ackStr === 'DELIVERED' || ackStr === 'RECEIVED' || ackStr === 'DEVICE_ACK' || ackNum === 3) return 'delivered';
   if (ackStr === 'READ' || ackStr === 'READ_ACK' || ackStr === 'PLAYED' || ackStr === 'PLAYED_ACK' || ackNum === 4 || ackNum === 5) return 'read';
@@ -11836,10 +11834,11 @@ app.post('/api/whatsapp/switch-primary', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════
 
 // GET /api/messages/:leadId — histórico paginado (mais recentes primeiro, retorna em ordem cronológica)
-app.get('/api/messages/:leadId', async (req, res) => {
+app.get('/api/messages/:leadId', async (req, res, next) => {
   try {
     const { user } = await verifyUser(req);
     const { leadId } = req.params;
+    if (leadId === 'unread' || leadId === 'search') return next('route');
     const { before, limit = '50' } = req.query;
     const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 100);
 

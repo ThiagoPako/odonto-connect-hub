@@ -2,7 +2,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Button } from "@/components/ui/button";
 import { RefreshCw, Loader2, CheckCircle2, WifiOff, Wifi, QrCode, Download, Users } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
-import { connectInstance, getInstanceState } from "@/lib/evolutionApi";
 import { whatsappApi } from "@/lib/vpsApi";
 import { playNotificationSound } from "@/lib/notificationSound";
 import { toast } from "sonner";
@@ -54,16 +53,6 @@ export function QrCodeDialog({ open, onOpenChange, instanceName, onConnected }: 
     try {
       const { data, error } = await whatsappApi.connect(instanceName);
       if (error) {
-        if (error.includes("Unauthorized") || error.includes("Sessão expirada")) {
-          const qr = await connectInstance(instanceName);
-          if (qr.base64) {
-            setQrBase64(qr.base64);
-            setPhase("qr_ready");
-            return true;
-          }
-          if (!silent) setPhase("waiting_qr");
-          return false;
-        }
         throw new Error(error);
       }
 
@@ -141,11 +130,7 @@ export function QrCodeDialog({ open, onOpenChange, instanceName, onConnected }: 
         const { data, error } = await whatsappApi.state(instanceName);
         let state = extractConnectionState(data);
         if (error) {
-          if (error.includes("Unauthorized") || error.includes("Sessão expirada")) {
-            state = (await getInstanceState(instanceName)).state;
-          } else {
-            throw new Error(error);
-          }
+          throw new Error(error);
         }
         if (cancelled) return;
 
