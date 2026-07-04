@@ -1,6 +1,6 @@
 // Evolution API client — connects to self-hosted instance on VPS
 const EVOLUTION_API_URL = "https://api.odontoconnect.tech";
-const EVOLUTION_API_KEY = "0a4c40e588465f7c078587511143c18cf979fcdf967b7debe58ef690a8907cbc";
+const EVOLUTION_API_KEY = "";
 
 type ConnectionStatus = "open" | "close" | "connecting";
 
@@ -36,6 +36,10 @@ function normalizeStatus(value: unknown): ConnectionStatus {
 }
 
 async function apiCall<T>(path: string, options?: RequestInit): Promise<T> {
+  if (!EVOLUTION_API_KEY) {
+    throw new Error("Cliente direto da Evolution desativado. Use as rotas seguras do backend.");
+  }
+
   const res = await fetch(`${EVOLUTION_API_URL}${path}`, {
     ...options,
     headers: {
