@@ -636,6 +636,16 @@ if (!EVOLUTION_API_KEY) {
 // Ensure the webhook URL points to the backend API endpoint
 const WEBHOOK_URL = WEBHOOK_PUBLIC_URL || (isLocalAppUrl ? `${APP_URL.replace(/:\d+$/, `:${PORT}`)}/api/webhook/evolution` : `https://backend.odontoconnect.tech/api/webhook/evolution`);
 
+function getCredentialDebugMeta(value) {
+  const raw = String(value || '');
+  return {
+    present: raw.length > 0,
+    length: raw.length,
+    prefix: raw.length >= 4 ? raw.slice(0, 4) : '',
+    suffix: raw.length >= 4 ? raw.slice(-4) : '',
+  };
+}
+
 // ─── Web Push (VAPID) Config ────────────────────────────────
 // Generate keys once: npx web-push generate-vapid-keys
 const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || '';
@@ -1440,6 +1450,7 @@ app.get('/api/debug/config', async (req, res) => {
     res.json({
       environment: process.env.NODE_ENV,
       evolution_url: EVOLUTION_API_URL,
+      evolution_api_key: getCredentialDebugMeta(EVOLUTION_API_KEY),
       webhook_url: WEBHOOK_URL,
       app_url: APP_URL,
       api_port: PORT,
@@ -2309,11 +2320,24 @@ function getWhatsappPhoneSuffixVariants(value) {
 
 function isUsableWhatsappPhoneNumber(value) {
   const digits = normalizeWhatsappNumber(value);
-  // Brazilian phones are usually 12-13 digits with DDI, but recent WhatsApp
-  // LID identifiers can be 14+ digits. Keep the upper bound aligned with E.164
-  // so replies to LID-migrated contacts are not rejected before Evolution can
-  // resolve the target.
+  // Generic sanity check for identifiers we can reason about. Do not use this
+  // alone to decide a value is a sendable phone number: WhatsApp LID values can
+  // also be 14-16 digits and some of them start with 55.
   return digits.length >= 10 && digits.length <= 16;
+}
+
+function isSendableWhatsappPhoneNumber(value) {
+  const digits = normalizeWhatsappNumber(value);
+  // Evolution sendText expects the public phone number, not Baileys LID. For BR
+  // contacts this is 55 + DDD + 8/9 digits (12-13 total). Values longer than 13
+  // are LID-like and must be mapped back to a phone before sending.
+  return digits.length >= 10 && digits.length <= 13;
+}
+
+function isLikelyLidIdentifier(value) {
+  const raw = String(value || '');
+  const digits = normalizeWhatsappNumber(raw);
+  return raw.includes('@lid') || digits.length > 13;
 }
 
 function extractEvolutionMessageId(data) {
@@ -2470,15 +2494,15 @@ async function getStoredSendTargetCandidates({ instance, leadId, tenantId }) {
       // Do not send to @lid. Evolution/Baileys can accept the request and create
       // a local one-check message that never reaches the patient. When a LID is
       // present, use the phone mapping learned from remoteJidAlt/senderPn instead.
-      if (isLidJid(raw)) {
+      if (isLikelyLidIdentifier(raw)) {
         const mappedPhone = resolvePhoneFromLid(digits);
-        if (mappedPhone && mappedPhone !== digits && isUsableWhatsappPhoneNumber(mappedPhone)) {
+        if (mappedPhone && mappedPhone !== digits && isSendableWhatsappPhoneNumber(mappedPhone)) {
           candidates.push(mappedPhone);
         }
         return;
       }
 
-      if (isUsableWhatsappPhoneNumber(digits)) candidates.push(digits);
+      if (isSendableWhatsappPhoneNumber(digits)) candidates.push(digits);
     };
 
     for (const row of rows) {
@@ -2514,29 +2538,17 @@ async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = nu
     ? normalizeWhatsappNumber(mappedSubmittedPhone)
     : normalizedSubmitted;
 
-  if (!isUsableWhatsappPhoneNumber(submittedNumber)) {
-    return {
-      ok: false,
-      status: 400,
-      data: {
-        error: `Número inválido para WhatsApp: ${cleanNumber}`,
-        checkedNumber: cleanNumber,
-        targetNumber: submittedNumber,
-      },
-    };
-  }
-
   const candidateTargets = [];
   const addCandidate = (value, source = 'number', prefer = false) => {
     const raw = String(value || '').trim();
     const normalized = normalizeWhatsappNumber(raw);
     if (!isUsableWhatsappPhoneNumber(normalized)) return;
 
-    if (isLidJid(raw) || (normalized.length > 13 && !normalized.startsWith('55'))) {
+    if (isLikelyLidIdentifier(raw)) {
       const mappedPhone = resolvePhoneFromLid(normalized);
       if (!mappedPhone || mappedPhone === normalized) return;
       const mappedDigits = normalizeWhatsappNumber(mappedPhone);
-      if (!isUsableWhatsappPhoneNumber(mappedDigits)) return;
+      if (!isSendableWhatsappPhoneNumber(mappedDigits)) return;
       if (candidateTargets.some((candidate) => candidate.target === mappedDigits)) return;
       const candidate = {
         target: mappedDigits,
@@ -2550,6 +2562,7 @@ async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = nu
     }
 
     const target = normalized;
+    if (!isSendableWhatsappPhoneNumber(target)) return;
     if (!target || candidateTargets.some((candidate) => candidate.target === target)) return;
 
     const candidate = {
@@ -2575,7 +2588,9 @@ async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = nu
   }
 
   // 1) Start with the exact number stored on the conversation. This preserves
-  // legacy WhatsApp JIDs that still deliver with 8 subscriber digits.
+  // legacy WhatsApp JIDs that still deliver with 8 subscriber digits. If the
+  // submitted value is a LID, addCandidate only accepts it when a prior webhook
+  // mapped it back to a public phone number.
   addCandidate(submittedNumber, 'submitted-phone');
 
   // 2) Try known BR variants (with/without 9th digit). Do not block sending via
@@ -2584,14 +2599,18 @@ async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = nu
   // The send endpoint is the source of truth; failed attempts are surfaced below.
   // than forcing a single transformation because Evolution/Baileys deployments
   // disagree on whether old contacts deliver with the legacy or modern JID.
-  for (const variant of getWhatsappNumberVariants(submittedNumber)) addCandidate(variant, 'br-variant');
+  if (isSendableWhatsappPhoneNumber(submittedNumber)) {
+    for (const variant of getWhatsappNumberVariants(submittedNumber)) addCandidate(variant, 'br-variant');
+  }
 
   if (candidateTargets.length === 0) {
     return {
       ok: false,
       status: 400,
       data: {
-        error: 'Não foi possível resolver um número WhatsApp comum para esta conversa. A mensagem veio como LID (@lid) sem remoteJidAlt/telefone associado; importe uma mensagem recente do contato ou atualize a Evolution para expor remoteJidAlt.',
+        error: isLikelyLidIdentifier(rawSubmitted)
+          ? 'Esta conversa está identificada por LID (@lid), mas o backend ainda não encontrou um telefone comum no histórico. Importe/receba uma mensagem recente do contato para capturar remoteJidAlt/senderPn antes de enviar.'
+          : 'Não foi possível resolver um número WhatsApp comum para esta conversa.',
         checkedNumber: cleanNumber,
         targetNumber: submittedNumber,
       },
@@ -2637,6 +2656,16 @@ async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = nu
       });
       lastResult = result;
       attempted.push({ number: targetNumber, source: candidate.source, format: payload.label, status: result.status, ok: result.ok });
+
+      console.log(`📤 sendText attempt ${instance}`, {
+        numberLength: targetNumber.length,
+        numberSuffix: targetNumber.slice(-4),
+        source: candidate.source,
+        format: payload.label,
+        httpStatus: result.status,
+        ok: result.ok,
+        key: getCredentialDebugMeta(EVOLUTION_API_KEY),
+      });
 
       if (result.ok) {
         const messageId = extractEvolutionMessageId(result.data);
