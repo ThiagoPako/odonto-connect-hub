@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Smartphone, Wifi, WifiOff, QrCode, Trash2, RotateCcw, Loader2, LogOut, Star, StarOff } from "lucide-react";
 import { useState } from "react";
-import { deleteInstance, logoutInstance, restartInstance } from "@/lib/evolutionApi";
+import { whatsappApi } from "@/lib/vpsApi";
 
 interface InstanceCardProps {
   instanceName: string;
@@ -145,7 +145,10 @@ export function InstanceCard({ instanceName, instanceId, status, isPrimary, onCo
           disabled={actionLoading === "delete"}
           onClick={() => {
             if (confirm(`Tem certeza que deseja excluir "${instanceName}"?`)) {
-              handleAction("delete", () => deleteInstance(instanceName));
+              handleAction("delete", async () => {
+                const { error } = await whatsappApi.delete(instanceName);
+                if (error) throw new Error(error);
+              });
             }
           }}
         >

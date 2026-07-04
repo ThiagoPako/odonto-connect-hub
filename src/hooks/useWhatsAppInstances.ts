@@ -4,11 +4,20 @@
  * Includes real-time polling with toast notifications on connection changes.
  */
 import { useState, useEffect, useCallback, useRef } from "react";
-import { fetchInstances, type EvolutionInstance } from "@/lib/evolutionApi";
 import { whatsappApi } from "@/lib/vpsApi";
 import { toast } from "sonner";
 import { playDisconnectAlert } from "@/lib/notificationSound";
 import { supabase } from "@/integrations/supabase/client";
+
+type ConnectionStatus = "open" | "close" | "connecting";
+
+interface EvolutionInstance {
+  instanceName: string;
+  instanceId: string;
+  integration: string;
+  status: ConnectionStatus;
+  owner?: string;
+}
 
 export interface ConnectedInstance extends EvolutionInstance {
   connectionState: "open" | "close" | "connecting";
@@ -79,12 +88,15 @@ function detectChanges(newInstances: ConnectedInstance[]) {
 async function refreshInstances(): Promise<ConnectedInstance[]> {
   try {
     const { data: vpsInstances, error: vpsError } = await whatsappApi.instances();
-    if (vpsError && /unauthorized|sessão expirada/i.test(vpsError)) {
+    if (vpsError) {
+      if (!/unauthorized|sessão expirada/i.test(vpsError)) {
+        console.warn("Failed to load WhatsApp instances via backend:", vpsError);
+      }
       return cachedInstances;
     }
 
-    const usingVpsList = Array.isArray(vpsInstances);
-    const rawList = usingVpsList ? vpsInstances : await fetchInstances();
+    const usingVpsList = true;
+    const rawList = Array.isArray(vpsInstances) ? vpsInstances : [];
     const list: EvolutionInstance[] = rawList.map((inst: any) => ({
       instanceName: inst.name || inst.instanceName || inst.instance?.instanceName,
       instanceId: inst.id || inst.instanceId || inst.instance?.instanceId || inst.instance?.id || "",
