@@ -830,6 +830,18 @@ async function verifyUser(req) {
   return { user };
 }
 
+async function getProfileDisplayName(userId, fallback = 'Atendente') {
+  if (!userId) return fallback;
+
+  try {
+    const { rows } = await pool.query('SELECT * FROM profiles WHERE id = $1 LIMIT 1', [userId]);
+    return rows[0]?.nome || rows[0]?.name || rows[0]?.full_name || rows[0]?.email || fallback;
+  } catch (err) {
+    console.warn('Profile display name lookup failed:', err.message);
+    return fallback;
+  }
+}
+
 async function verifySuperAdmin(req) {
   const { user } = await verifyUser(req);
   if (!user.is_super_admin) {
