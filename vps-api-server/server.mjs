@@ -2704,6 +2704,11 @@ async function resolveValidWhatsAppNumber(instance, cleanNumber) {
     const digits = normalizeWhatsappNumber(raw);
     return isUsableWhatsappPhoneNumber(digits) ? digits : '';
   };
+  const normalizeSubmittedNumber = (entry) => {
+    const raw = entry?.number || entry?.input || entry?.jid || entry?.id || '';
+    const digits = normalizeWhatsappNumber(raw);
+    return isUsableWhatsappPhoneNumber(digits) ? digits : '';
+  };
   const pickResult = (entries) => {
     const existing = entries.filter((entry) => normalizeResultNumber(entry) && (entry?.exists === true || entry?.jid || entry?.number || entry?.id));
     if (preferredMobileCandidate) {
@@ -2723,10 +2728,13 @@ async function resolveValidWhatsAppNumber(instance, cleanNumber) {
 
     if (result.ok && Array.isArray(result.data)) {
       if (preferredMobileCandidate) {
-        const preferredEntry = result.data.find((entry) => normalizeResultNumber(entry) === preferredMobileCandidate);
-        if (!preferredEntry || preferredEntry.exists !== false) {
-          whatsappNumberValidationCache.set(cacheKey, { exists: true, canonical: preferredMobileCandidate, checkedAt: Date.now() });
-          return { exists: true, canonical: preferredMobileCandidate };
+        const preferredEntry = result.data.find((entry) =>
+          normalizeSubmittedNumber(entry) === preferredMobileCandidate || normalizeResultNumber(entry) === preferredMobileCandidate
+        );
+        if (preferredEntry && preferredEntry.exists !== false) {
+          const canonical = normalizeResultNumber(preferredEntry) || preferredMobileCandidate;
+          whatsappNumberValidationCache.set(cacheKey, { exists: true, canonical, checkedAt: Date.now() });
+          return { exists: true, canonical };
         }
       }
 
@@ -2746,10 +2754,10 @@ async function resolveValidWhatsAppNumber(instance, cleanNumber) {
     console.warn(`⚠️ whatsappNumbers check failed for ${cleanNumber}:`, err.message);
   }
 
-  // Failure to validate → don't block. For legacy Brazilian mobile shape, still
-  // use the modern 9-digit candidate because the old shape is what produced the
-  // runtime ACK ERROR in the reported logs.
-  return { exists: true, canonical: preferredMobileCandidate || cleanNumber };
+  // Failure to validate → don't block, but do not invent a destination number.
+  // The installed Evolution build can return `number=55..9..` while the real JID
+  // remains `55..8..`; forcing the invented 9-digit value makes sends disappear.
+  return { exists: true, canonical: cleanNumber };
 }
 
 async function ensureWebhookRegistration(instanceName) {
