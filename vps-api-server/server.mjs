@@ -2321,11 +2321,12 @@ async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = nu
   };
 
   const payloads = [
-    { ...basePayload, textMessage: { text } },
-    // Legacy fallback for older Evolution builds. Keep it second: current
-    // Evolution v2 accepts `text` in some deployments but can leave messages
-    // stuck as PENDING/one-check without real delivery.
     { ...basePayload, text },
+    // Fallback for Evolution builds that follow the newer documented v2 schema.
+    // The VPS logs for this project show the installed instance currently rejects
+    // this shape with: Instance requires property "text"; therefore it cannot be
+    // attempted first.
+    { ...basePayload, textMessage: { text } },
   ];
 
   let lastResult = null;
@@ -2643,25 +2644,39 @@ async function resolveValidWhatsAppNumber(instance, cleanNumber) {
     return { exists: cached.exists, canonical: cached.canonical };
   }
 
-  // Brazilian mobiles: if 12 digits (55 + DDD + 8) try also with the extra 9.
-  const candidates = new Set([cleanNumber]);
-  if (/^55\d{10}$/.test(cleanNumber)) {
-    // 55 + 2-digit DDD + 8-digit legacy → insert 9 after DDD
-    candidates.add(`${cleanNumber.slice(0, 4)}9${cleanNumber.slice(4)}`);
-  }
+  // Brazilian mobiles: if 12 digits (55 + DDD + 8) and the subscriber number
+  // starts as a mobile range, prefer the current 9-digit mobile format. The
+  // previous order tested/sent the old 8-digit form first, which Evolution
+  // accepted as PENDING and later returned ACK ERROR (as seen in the VPS logs).
+  const preferredMobileCandidate = /^55\d{10}$/.test(cleanNumber) && /^[6-9]/.test(cleanNumber.slice(4, 5))
+    ? `${cleanNumber.slice(0, 4)}9${cleanNumber.slice(4)}`
+    : null;
+  const candidates = preferredMobileCandidate
+    ? [preferredMobileCandidate, cleanNumber]
+    : [cleanNumber];
+
+  const normalizeResultNumber = (entry) => normalizeWhatsappNumber(entry?.jid || entry?.number || entry?.id || '');
+  const pickResult = (entries) => {
+    const existing = entries.filter((entry) => entry?.exists === true || entry?.jid || entry?.number || entry?.id);
+    if (preferredMobileCandidate) {
+      const preferredHit = existing.find((entry) => normalizeResultNumber(entry) === preferredMobileCandidate && entry?.exists !== false);
+      if (preferredHit) return preferredHit;
+    }
+    return existing.find((entry) => entry?.exists === true)
+      || existing.find((entry) => entry?.exists !== false)
+      || null;
+  };
 
   try {
     const result = await evolutionFetch(`/chat/whatsappNumbers/${instance}`, {
       method: 'POST',
-      body: JSON.stringify({ numbers: Array.from(candidates) }),
+      body: JSON.stringify({ numbers: candidates }),
     });
 
     if (result.ok && Array.isArray(result.data)) {
-      // Prefer entries where exists === true
-      const hit = result.data.find((e) => e?.exists === true)
-        || result.data.find((e) => e?.jid || e?.number);
+      const hit = pickResult(result.data);
       if (hit) {
-        const jidNum = normalizeWhatsappNumber(hit.jid || hit.number || '');
+        const jidNum = normalizeResultNumber(hit);
         const canonical = jidNum || cleanNumber;
         const exists = hit.exists !== false;
         whatsappNumberValidationCache.set(cacheKey, { exists, canonical, checkedAt: Date.now() });
@@ -2675,8 +2690,10 @@ async function resolveValidWhatsAppNumber(instance, cleanNumber) {
     console.warn(`⚠️ whatsappNumbers check failed for ${cleanNumber}:`, err.message);
   }
 
-  // Failure to validate → don't block; assume exists but keep original number.
-  return { exists: true, canonical: cleanNumber };
+  // Failure to validate → don't block. For legacy Brazilian mobile shape, still
+  // use the modern 9-digit candidate because the old shape is what produced the
+  // runtime ACK ERROR in the reported logs.
+  return { exists: true, canonical: preferredMobileCandidate || cleanNumber };
 }
 
 async function ensureWebhookRegistration(instanceName) {

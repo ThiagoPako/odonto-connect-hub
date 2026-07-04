@@ -196,13 +196,13 @@ export async function sendTextMessage(
   try {
     return await apiCall(`/message/sendText/${instanceName}`, {
       method: "POST",
-      body: JSON.stringify({ number: cleanNumber, textMessage: { text }, delay: 800, linkPreview: true }),
+      body: JSON.stringify({ number: cleanNumber, text, delay: 800, linkPreview: true }),
     });
   } catch (firstError) {
     try {
       return await apiCall(`/message/sendText/${instanceName}`, {
         method: "POST",
-        body: JSON.stringify({ number: cleanNumber, text, delay: 800, linkPreview: true }),
+        body: JSON.stringify({ number: cleanNumber, textMessage: { text }, delay: 800, linkPreview: true }),
       });
     } catch {
       throw firstError;
