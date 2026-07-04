@@ -7216,9 +7216,10 @@ async function findMessageStatusContext({ tenantId, lookupIds = [], phone = '', 
 
   const phoneSuffix = normalizeWhatsappNumber(phone).slice(-11);
   if (phoneSuffix) {
-    params.push(phoneSuffix);
+    const phoneSuffixes = getWhatsappPhoneSuffixVariants(phone);
+    params.push(phoneSuffixes.length ? phoneSuffixes : [phoneSuffix]);
     const phoneParam = params.length;
-    matchers.push(`RIGHT(REGEXP_REPLACE(COALESCE(cm.phone, ''), '\\D', '', 'g'), 11) = $${phoneParam}`);
+    matchers.push(`RIGHT(REGEXP_REPLACE(COALESCE(cm.phone, ''), '\\D', '', 'g'), 11) = ANY($${phoneParam}::text[])`);
   }
 
   if (instance) {
@@ -8061,6 +8062,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
     const phone = normalizeWhatsappNumber(remoteJid);
     const resolvedPhone = resolvePhoneFromLid(phone);
     const phoneSuffix = resolvedPhone.slice(-11);
+    const phoneSuffixes = getWhatsappPhoneSuffixVariants(resolvedPhone);
 
     if (!tenantId) {
       tenantId = await getFallbackTenantIdForIncomingMessage({ instanceName: instance, phoneSuffix });
@@ -8138,9 +8140,10 @@ app.post('/api/webhook/evolution', async (req, res) => {
     // Find lead by phone and tenant_id
     const { rows: leads } = await pool.query(
       `SELECT id, nome as name, avatar_url, telefone as phone, queue_id, queue_name, awaiting_queue_selection FROM crm_leads 
-       WHERE tenant_id = $1 AND REGEXP_REPLACE(COALESCE(telefone, ''), '\\D', '', 'g') LIKE '%' || $2
+       WHERE tenant_id = $1
+         AND RIGHT(REGEXP_REPLACE(COALESCE(telefone, ''), '\\D', '', 'g'), 11) = ANY($2::text[])
        LIMIT 1`,
-      [tenantId, phoneSuffix]
+      [tenantId, phoneSuffixes.length ? phoneSuffixes : [phoneSuffix]]
     );
 
     let lead = leads[0] || null;
