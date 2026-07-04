@@ -2334,6 +2334,49 @@ function isEvolutionInstanceAlreadyInUse(result, instanceName) {
     && (!instanceName || text.includes(String(instanceName).toLowerCase()));
 }
 
+function extractEvolutionStoredMessageRecords(data) {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.messages?.records)) return data.messages.records;
+  if (Array.isArray(data?.messages)) return data.messages;
+  if (Array.isArray(data?.data?.records)) return data.data.records;
+  if (Array.isArray(data?.data)) return data.data;
+  if (Array.isArray(data?.records)) return data.records;
+  return [];
+}
+
+function getStoredEvolutionMessageStatus(record) {
+  const updates = Array.isArray(record?.MessageUpdate) ? record.MessageUpdate : [];
+  const latestUpdate = updates.length ? updates[updates.length - 1] : null;
+  return latestUpdate?.status
+    || latestUpdate?.ack
+    || record?.status
+    || record?.ack
+    || null;
+}
+
+async function inspectEvolutionStoredMessage(instance, messageId, remoteJid) {
+  if (!messageId) return { found: false, status: null, record: null };
+
+  const where = remoteJid
+    ? { key: { remoteJid, id: messageId } }
+    : { key: { id: messageId } };
+
+  const result = await evolutionFetch(`/chat/findMessages/${instance}`, {
+    method: 'POST',
+    timeoutMs: 5000,
+    body: JSON.stringify({ where, page: 1, offset: 1 }),
+  });
+
+  if (!result.ok) return { found: false, status: null, record: null, error: result.data };
+  const records = extractEvolutionStoredMessageRecords(result.data);
+  const record = records.find((item) => item?.key?.id === messageId) || records[0] || null;
+  return {
+    found: !!record,
+    status: getStoredEvolutionMessageStatus(record),
+    record,
+  };
+}
+
 async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = null) {
   const submittedNumber = normalizeWhatsappNumber(cleanNumber);
 
@@ -2438,6 +2481,41 @@ async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = nu
           });
           continue;
         }
+
+        // Evolution/Baileys can return HTTP 201 + key.id and still persist the
+        // message immediately as MessageUpdate.status=ERROR. In that case the UI
+        // must not show a sent checkmark; try the next compatible variant first.
+        const remoteJid = `${targetNumber}@s.whatsapp.net`;
+        const stored = await inspectEvolutionStoredMessage(instance, messageId, remoteJid).catch((err) => ({
+          found: false,
+          status: null,
+          error: err?.message,
+        }));
+        const storedStatus = normalizeEvolutionAckStatus(stored?.status);
+        attempted[attempted.length - 1] = {
+          ...attempted[attempted.length - 1],
+          messageId,
+          storedStatus: stored?.status || null,
+        };
+        if (storedStatus === 'failed') {
+          lastResult = {
+            ok: false,
+            status: 502,
+            data: {
+              error: 'Evolution gerou a mensagem, mas marcou o envio como ERROR imediatamente.',
+              key: { id: messageId },
+              sentNumber: targetNumber,
+              attempted,
+              storedStatus: stored?.status || null,
+            },
+          };
+          console.warn(`❌ sendText ${instance}: Evolution marcou ERROR para ${messageId}; tentando próxima variante`, {
+            targetNumber,
+            format: payload.label,
+          });
+          continue;
+        }
+
         return {
           ...result,
           data: { ...result.data, key: { ...(result.data?.key || {}), id: messageId }, sentNumber: targetNumber, attempted },
