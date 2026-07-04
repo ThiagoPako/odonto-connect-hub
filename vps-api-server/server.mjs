@@ -2720,6 +2720,14 @@ async function resolveValidWhatsAppNumber(instance, cleanNumber) {
     });
 
     if (result.ok && Array.isArray(result.data)) {
+      if (preferredMobileCandidate) {
+        const preferredEntry = result.data.find((entry) => normalizeResultNumber(entry) === preferredMobileCandidate);
+        if (!preferredEntry || preferredEntry.exists !== false) {
+          whatsappNumberValidationCache.set(cacheKey, { exists: true, canonical: preferredMobileCandidate, checkedAt: Date.now() });
+          return { exists: true, canonical: preferredMobileCandidate };
+        }
+      }
+
       const hit = pickResult(result.data);
       if (hit) {
         const jidNum = normalizeResultNumber(hit);
