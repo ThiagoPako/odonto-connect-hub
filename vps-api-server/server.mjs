@@ -2303,8 +2303,11 @@ async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = nu
   };
 
   const payloads = [
-    { ...basePayload, text },
     { ...basePayload, textMessage: { text } },
+    // Legacy fallback for older Evolution builds. Keep it second: current
+    // Evolution v2 accepts `text` in some deployments but can leave messages
+    // stuck as PENDING/one-check without real delivery.
+    { ...basePayload, text },
   ];
 
   let lastResult = null;
