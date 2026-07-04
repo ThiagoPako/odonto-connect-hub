@@ -636,6 +636,16 @@ if (!EVOLUTION_API_KEY) {
 // Ensure the webhook URL points to the backend API endpoint
 const WEBHOOK_URL = WEBHOOK_PUBLIC_URL || (isLocalAppUrl ? `${APP_URL.replace(/:\d+$/, `:${PORT}`)}/api/webhook/evolution` : `https://backend.odontoconnect.tech/api/webhook/evolution`);
 
+function getCredentialDebugMeta(value) {
+  const raw = String(value || '');
+  return {
+    present: raw.length > 0,
+    length: raw.length,
+    prefix: raw.length >= 4 ? raw.slice(0, 4) : '',
+    suffix: raw.length >= 4 ? raw.slice(-4) : '',
+  };
+}
+
 // ─── Web Push (VAPID) Config ────────────────────────────────
 // Generate keys once: npx web-push generate-vapid-keys
 const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || '';
@@ -1440,6 +1450,7 @@ app.get('/api/debug/config', async (req, res) => {
     res.json({
       environment: process.env.NODE_ENV,
       evolution_url: EVOLUTION_API_URL,
+      evolution_api_key: getCredentialDebugMeta(EVOLUTION_API_KEY),
       webhook_url: WEBHOOK_URL,
       app_url: APP_URL,
       api_port: PORT,
@@ -2483,15 +2494,15 @@ async function getStoredSendTargetCandidates({ instance, leadId, tenantId }) {
       // Do not send to @lid. Evolution/Baileys can accept the request and create
       // a local one-check message that never reaches the patient. When a LID is
       // present, use the phone mapping learned from remoteJidAlt/senderPn instead.
-      if (isLidJid(raw)) {
+      if (isLikelyLidIdentifier(raw)) {
         const mappedPhone = resolvePhoneFromLid(digits);
-        if (mappedPhone && mappedPhone !== digits && isUsableWhatsappPhoneNumber(mappedPhone)) {
+        if (mappedPhone && mappedPhone !== digits && isSendableWhatsappPhoneNumber(mappedPhone)) {
           candidates.push(mappedPhone);
         }
         return;
       }
 
-      if (isUsableWhatsappPhoneNumber(digits)) candidates.push(digits);
+      if (isSendableWhatsappPhoneNumber(digits)) candidates.push(digits);
     };
 
     for (const row of rows) {
@@ -2527,12 +2538,14 @@ async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = nu
     ? normalizeWhatsappNumber(mappedSubmittedPhone)
     : normalizedSubmitted;
 
-  if (!isUsableWhatsappPhoneNumber(submittedNumber)) {
+  if (!isSendableWhatsappPhoneNumber(submittedNumber)) {
     return {
       ok: false,
       status: 400,
       data: {
-        error: `Número inválido para WhatsApp: ${cleanNumber}`,
+        error: isLikelyLidIdentifier(rawSubmitted)
+          ? 'Esta conversa está identificada por LID (@lid), mas o backend ainda não recebeu um telefone comum associado. Importe/receba uma mensagem recente do contato para capturar remoteJidAlt/senderPn antes de enviar.'
+          : `Número inválido para WhatsApp: ${cleanNumber}`,
         checkedNumber: cleanNumber,
         targetNumber: submittedNumber,
       },
@@ -2545,11 +2558,11 @@ async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = nu
     const normalized = normalizeWhatsappNumber(raw);
     if (!isUsableWhatsappPhoneNumber(normalized)) return;
 
-    if (isLidJid(raw) || (normalized.length > 13 && !normalized.startsWith('55'))) {
+    if (isLikelyLidIdentifier(raw)) {
       const mappedPhone = resolvePhoneFromLid(normalized);
       if (!mappedPhone || mappedPhone === normalized) return;
       const mappedDigits = normalizeWhatsappNumber(mappedPhone);
-      if (!isUsableWhatsappPhoneNumber(mappedDigits)) return;
+      if (!isSendableWhatsappPhoneNumber(mappedDigits)) return;
       if (candidateTargets.some((candidate) => candidate.target === mappedDigits)) return;
       const candidate = {
         target: mappedDigits,
@@ -2563,6 +2576,7 @@ async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = nu
     }
 
     const target = normalized;
+    if (!isSendableWhatsappPhoneNumber(target)) return;
     if (!target || candidateTargets.some((candidate) => candidate.target === target)) return;
 
     const candidate = {
@@ -2650,6 +2664,16 @@ async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = nu
       });
       lastResult = result;
       attempted.push({ number: targetNumber, source: candidate.source, format: payload.label, status: result.status, ok: result.ok });
+
+      console.log(`📤 sendText attempt ${instance}`, {
+        numberLength: targetNumber.length,
+        numberSuffix: targetNumber.slice(-4),
+        source: candidate.source,
+        format: payload.label,
+        httpStatus: result.status,
+        ok: result.ok,
+        key: getCredentialDebugMeta(EVOLUTION_API_KEY),
+      });
 
       if (result.ok) {
         const messageId = extractEvolutionMessageId(result.data);
