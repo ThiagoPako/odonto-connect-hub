@@ -2295,8 +2295,26 @@ function isEvolutionInstanceAlreadyInUse(result, instanceName) {
 }
 
 async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = null) {
+  const resolvedNumber = await resolveValidWhatsAppNumber(instance, cleanNumber);
+  if (!resolvedNumber.exists) {
+    return {
+      ok: false,
+      status: 400,
+      data: {
+        error: `Número ${cleanNumber} não foi confirmado como WhatsApp válido pela Evolution`,
+        code: 'WHATSAPP_NUMBER_NOT_FOUND',
+        number: cleanNumber,
+      },
+    };
+  }
+
+  const targetNumber = resolvedNumber.canonical || cleanNumber;
+  if (targetNumber !== cleanNumber) {
+    console.log(`📱 sendText ${instance}: número corrigido ${cleanNumber} → ${targetNumber}`);
+  }
+
   const basePayload = {
-    number: cleanNumber,
+    number: targetNumber,
     delay: 800,
     linkPreview: true,
     ...(quoted ? { quoted } : {}),
@@ -2330,7 +2348,7 @@ async function sendEvolutionTextMessage(instance, cleanNumber, text, quoted = nu
       }
       return {
         ...result,
-        data: messageId ? { ...result.data, key: { ...(result.data?.key || {}), id: messageId } } : result.data,
+        data: messageId ? { ...result.data, key: { ...(result.data?.key || {}), id: messageId }, sentNumber: targetNumber } : result.data,
       };
     }
 
@@ -3393,10 +3411,11 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
     const cleanNumber = normalizeWhatsappNumber(number);
 
     const result = await sendEvolutionTextMessage(instance, cleanNumber, text, quoted || null);
+    const sentNumber = result.data?.sentNumber || cleanNumber;
 
     if (!result.ok) {
       const errMsg = getEvolutionErrorMessage(result);
-      console.error(`❌ send-text failed for ${instance} → ${cleanNumber}: ${errMsg}`, result.data);
+      console.error(`❌ send-text failed for ${instance} → ${sentNumber}: ${errMsg}`, result.data);
       const httpStatus = result.status === 401 || result.status === 403 ? 502 : (result.status || 502);
       return res.status(httpStatus).json({ error: errMsg, details: result.data });
     }
@@ -3406,7 +3425,7 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
       // Sem key.id/messageId real não há como correlacionar ACK, persistir status
       // ou garantir entrega. Retornar sucesso aqui gera exatamente o falso
       // positivo visto na UI: "enviado", mas nada chega ao WhatsApp.
-      console.error(`❌ send-text sem message id real para ${instance} → ${cleanNumber}:`, result.data);
+      console.error(`❌ send-text sem message id real para ${instance} → ${sentNumber}:`, result.data);
       return res.status(502).json({
         error: 'Evolution aceitou a requisição, mas não retornou confirmação real da mensagem. Envio não confirmado.',
         details: result.data,
@@ -3437,14 +3456,14 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
              instance = COALESCE(chat_messages.instance, EXCLUDED.instance),
              phone = COALESCE(chat_messages.phone, EXCLUDED.phone),
              tenant_id = COALESCE(chat_messages.tenant_id, EXCLUDED.tenant_id)`,
-          [messageId, leadId, text || '', initialStatus, user.id, attendantName, instance, cleanNumber, user.tenant_id]
+          [messageId, leadId, text || '', initialStatus, user.id, attendantName, instance, sentNumber, user.tenant_id]
         );
       } catch (persistErr) {
         console.error(`⚠️ send-text enviado mas não persistido (${messageId}):`, persistErr.message);
       }
     }
 
-    res.json({ ...(result.data || {}), key: { ...(result.data?.key || {}), id: messageId }, messageId, sent: true });
+    res.json({ ...(result.data || {}), key: { ...(result.data?.key || {}), id: messageId }, messageId, sent: true, sentNumber });
   } catch (error) {
     res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
   }
