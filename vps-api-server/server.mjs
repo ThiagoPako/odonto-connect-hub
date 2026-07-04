@@ -8171,6 +8171,57 @@ app.post('/api/webhook/evolution', async (req, res) => {
       .digest('hex')}`;
     const rawType = Object.keys(message?.message || {})[0] || null;
 
+    // Mensagens geradas pelo próprio número conectado também chegam via
+    // MESSAGES_UPSERT. Elas servem para sincronizar histórico, mas não podem
+    // entrar no fluxo de "cliente respondeu": não criam fila, não reenviam menu,
+    // não disparam automações e não geram notificação de entrada.
+    if (isFromMe) {
+      if (!lead) {
+        console.log(`↪️ Outgoing webhook ignored without existing lead: ${resolvedPhone} (${msgId})`);
+        return res.json({ processed: true, fromMe: true, ignored: 'lead_not_found' });
+      }
+
+      await persistIncomingMessage({
+        msgId,
+        leadId: lead.id,
+        content: resolvedContent,
+        msgType,
+        phone: resolvedPhone,
+        instance,
+        pushName,
+        remoteJid,
+        rawType,
+        mediaUrl,
+        fileName: mediaFileName,
+        mimeType: mediaMimeType,
+        tenantId,
+        sender: 'attendant',
+        messageTimestamp: message?.messageTimestamp || message?.timestamp || body?.date_time || body?.dateTime || body?.createdAt || null,
+      });
+
+      broadcastIncomingMessage({
+        msgId,
+        phone: resolvedPhone,
+        pushName,
+        leadId: lead.id,
+        leadName: lead.name,
+        content: resolvedContent,
+        msgType,
+        instance,
+        queueId: lead.queue_id || null,
+        queueName: lead.queue_name || null,
+        queueColor: lead.queue_color || null,
+        mediaUrl,
+        fileName: mediaFileName,
+        mimeType: mediaMimeType,
+        tenantId,
+        sender: 'attendant',
+      });
+
+      console.log(`↪️ Outgoing webhook synced: ${resolvedPhone} (${msgId})`);
+      return res.json({ processed: true, fromMe: true, leadId: lead.id });
+    }
+
     // ─── New contact: create lead + contato + check hours + send menu ───
     if (!lead) {
       const newId = crypto.randomUUID();
