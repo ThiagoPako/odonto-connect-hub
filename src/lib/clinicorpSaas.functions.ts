@@ -191,43 +191,15 @@ async function clinicorpProbe(
     }
   };
 
-  const basicAuth = `Basic ${btoa(`${cleanUser}:${cleanToken}`)}`;
-  const bearerAuth = `Bearer ${cleanToken}`;
-  
-  // Create versions of the URL: one with query params, one without
-  const urlWithParams = new URL(base + pathName);
-  urlWithParams.searchParams.set('subscriber_id', cleanUser);
-  urlWithParams.searchParams.set('user_api', cleanUser);
-  urlWithParams.searchParams.set('api_key', cleanToken);
-  for (const [k, v] of Object.entries(query)) urlWithParams.searchParams.set(k, v);
+  // A API da Clinicorp só aceita Basic (Usuário API : Token API). O token
+  // não vai na URL para não aparecer em logs.
+  const authHeader = forcedAuthHeader || `Basic ${btoa(`${cleanUser}:${cleanToken}`)}`;
+  const url = new URL(base + pathName);
+  url.searchParams.set('subscriber_id', cleanUser);
+  for (const [k, v] of Object.entries(query)) url.searchParams.set(k, v);
 
-  const urlPlain = new URL(base + pathName);
-  for (const [k, v] of Object.entries(query)) urlPlain.searchParams.set(k, v);
-
-  if (forcedAuthHeader) {
-    const res = await attempt(urlWithParams.toString(), forcedAuthHeader);
-    if (res.status >= 200 && res.status < 300) return { ...res, usedAuth: forcedAuthHeader };
-    const res2 = await attempt(urlPlain.toString(), forcedAuthHeader);
-    return { ...res2, usedAuth: forcedAuthHeader };
-  }
-
-  // Strategy 1: URL params + Basic Auth
-  let res = await attempt(urlWithParams.toString(), basicAuth);
-  if (res.status >= 200 && res.status < 300) return { ...res, usedAuth: basicAuth };
-
-  // Strategy 2: URL params + Bearer Auth
-  res = await attempt(urlWithParams.toString(), bearerAuth);
-  if (res.status >= 200 && res.status < 300) return { ...res, usedAuth: bearerAuth };
-
-  // Strategy 3: Just URL params (no header)
-  res = await attempt(urlWithParams.toString());
-  if (res.status >= 200 && res.status < 300) return { ...res, usedAuth: 'QueryParam' };
-
-  // Strategy 4: Plain URL + Basic Auth
-  res = await attempt(urlPlain.toString(), basicAuth);
-  if (res.status >= 200 && res.status < 300) return { ...res, usedAuth: basicAuth };
-
-  return { ...res, usedAuth: bearerAuth }; // Return last attempt
+  const res = await attempt(url.toString(), authHeader);
+  return { ...res, usedAuth: authHeader };
 }
 
 export const testMyClinicorpConnection = createServerFn({ method: 'POST' })
@@ -438,10 +410,13 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
         if (status === 429) {
           throw new Error('A Clinicorp bloqueou temporariamente o acesso (Rate Limit). Por favor, aguarde pelo menos 15-30 minutos sem tentar sincronizar.');
         }
-        activeAuthHeader = usedAuth;
-        log(`Auth detectado: ${activeAuthHeader?.split(' ')[0]}`);
+        if (status === 401 || status === 403) {
+          throw new Error('Credenciais Clinicorp inválidas (HTTP ' + status + '). Confira o Usuário API e o Token API em Gerenciar Assinatura → Acesso Externo e Integrações.');
+        }
+        if (status >= 200 && status < 300) activeAuthHeader = usedAuth;
+        log(`Auth status=${status}`);
       } catch (e: any) {
-        if (e.message.includes('Rate Limit')) throw e;
+        if (e.message.includes('Rate Limit') || e.message.includes('Credenciais Clinicorp')) throw e;
         errors.push(`Erro ao validar autenticação: ${e.message}`);
       }
 
@@ -462,7 +437,10 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
         })).filter(c => c.id !== '0');
         
         if (clinicUpserts.length) {
-          await supabase.from('clinicorp_clinics').upsert(clinicUpserts, { onConflict: 'id,tenant_id' });
+          {
+            const { error: upErr } = await supabase.from('clinicorp_clinics').upsert(clinicUpserts, { onConflict: 'id,tenant_id' });
+            if (upErr) errors.push(`clinicorp_clinics: ${upErr.message}`);
+          }
           summary.clinics = clinicUpserts.length;
           clinicIds = clinicUpserts.map(c => String(c.id));
         }
@@ -508,7 +486,10 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
             user_name: d.email,
             synced_at: new Date().toISOString()
           }));
-          await supabase.from('clinicorp_professionals').upsert(mirrorProfs, { onConflict: 'id,tenant_id' });
+          {
+            const { error: upErr } = await supabase.from('clinicorp_professionals').upsert(mirrorProfs, { onConflict: 'id,tenant_id' });
+            if (upErr) errors.push(`clinicorp_professionals: ${upErr.message}`);
+          }
 
           const { error: upErr } = await supabase.from('dentistas').upsert(dentistUpserts, { onConflict: 'tenant_id,clinicorp_professional_id' });
           if (upErr) errors.push(`profissionais upsert: ${upErr.message}`);
@@ -534,7 +515,7 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
         await updateProgress('Sincronizando categorias e especialidades...');
         const [{ data: cats }, { data: specs }] = await Promise.all([
           clinicorpProbe(base_url, subscriber_id, api_token, '/appointment/list_categories', {}, 20000, activeAuthHeader),
-          clinicorpProbe(base_url, subscriber_id, api_token, '/professional/list_specialties', {}, 20000, activeAuthHeader)
+          clinicorpProbe(base_url, subscriber_id, api_token, '/procedures/list_specialties', {}, 20000, activeAuthHeader)
         ]);
 
         const catList = extractList(cats);
@@ -549,7 +530,10 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
             raw: c,
             synced_at: new Date().toISOString()
           })).filter((c: any) => c.id !== '0');
-          await supabase.from('clinicorp_appointment_categories').upsert(catUpserts, { onConflict: 'id,tenant_id' });
+          {
+            const { error: upErr } = await supabase.from('clinicorp_appointment_categories').upsert(catUpserts, { onConflict: 'id,tenant_id' });
+            if (upErr) errors.push(`clinicorp_appointment_categories: ${upErr.message}`);
+          }
         }
 
         if (specList.length) {
@@ -560,7 +544,10 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
             raw: s,
             synced_at: new Date().toISOString()
           })).filter((s: any) => s.id !== '0');
-          await supabase.from('clinicorp_specialties').upsert(specUpserts, { onConflict: 'id,tenant_id' });
+          {
+            const { error: upErr } = await supabase.from('clinicorp_specialties').upsert(specUpserts, { onConflict: 'id,tenant_id' });
+            if (upErr) errors.push(`clinicorp_specialties: ${upErr.message}`);
+          }
         }
       } catch (e: any) {
         errors.push(`categorias/especialidades: ${e.message}`);
@@ -767,7 +754,10 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
           };
         }).filter(m => m.id);
         
-        await supabase.from('clinicorp_appointments').upsert(mirrorChunk, { onConflict: 'id,tenant_id' });
+        {
+          const { error: upErr } = await supabase.from('clinicorp_appointments').upsert(mirrorChunk, { onConflict: 'id,tenant_id' });
+          if (upErr) errors.push(`clinicorp_appointments: ${upErr.message}`);
+        }
 
         const { error: upErr } = await supabase.from('agendamentos').upsert(chunk, { onConflict: 'tenant_id,clinicorp_appointment_id' });
         if (upErr) {
@@ -788,7 +778,7 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
       for (const clinicId of (clinicIds.length ? clinicIds : [undefined])) {
         // Estimates
         try {
-          const estEndpoints = ['/estimates/list', '/budget/list', '/treatment/list', '/budget/list_budgets', '/treatment/list_treatments'];
+          const estEndpoints = ['/estimates/list'];
           let estList: any[] = [];
           
           for (const ep of estEndpoints) {
@@ -796,6 +786,7 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
               from: finFrom, to: finTo, ...(clinicId ? { clinic_id: clinicId } : {}) 
             }, 30000, activeAuthHeader);
             
+            if (status >= 400) errors.push(`orçamentos ${ep} (${clinicId || 'global'}): HTTP ${status}`);
             if (status === 200) {
               const list = extractList(estData);
               if (list.length) {
@@ -823,7 +814,10 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
               raw: e,
               synced_at: new Date().toISOString()
             })).filter(e => e.id !== '0');
-            await supabase.from('clinicorp_estimates').upsert(estUpserts, { onConflict: 'id,tenant_id' });
+            {
+              const { error: upErr } = await supabase.from('clinicorp_estimates').upsert(estUpserts, { onConflict: 'id,tenant_id' });
+              if (upErr) errors.push(`clinicorp_estimates: ${upErr.message}`);
+            }
             summary.estimates += estUpserts.length;
           }
         } catch (e: any) { errors.push(`orçamentos (${clinicId || 'global'}): ${e.message}`); }
@@ -832,15 +826,16 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
         const finEndpoints = [
           { key: 'invoice', path: '/financial/list_invoices' },
           { key: 'payment', path: '/financial/list_payments' },
-          { key: 'cashflow', path: '/financial/list_cash_flow' },
-          { key: 'revenue', path: '/financial/list_revenues' }
+          { key: 'cashflow', path: '/financial/list_cash_flow' }
         ];
 
         for (const ep of finEndpoints) {
+          if (!clinicId && ep.key !== 'invoice') continue;
           try {
-            const { data: finData } = await clinicorpProbe(base_url, subscriber_id, api_token, ep.path, {
+            const { status: finStatus, data: finData } = await clinicorpProbe(base_url, subscriber_id, api_token, ep.path, {
               from: finFrom, to: finTo, ...(clinicId ? { business_id: clinicId } : {})
             }, 30000, activeAuthHeader);
+            if (finStatus >= 400) errors.push(`${ep.key} (${clinicId || 'global'}): HTTP ${finStatus}`);
             const finList = extractList(finData);
             if (finList.length) {
               const finUpserts = finList.map((f: any) => ({
@@ -857,7 +852,10 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
               })).filter(f => f.external_id !== '');
               
               if (finUpserts.length) {
-                await supabase.from('clinicorp_financial_entries').upsert(finUpserts, { onConflict: 'source,external_id,tenant_id' });
+                {
+                  const { error: upErr } = await supabase.from('clinicorp_financial_entries').upsert(finUpserts, { onConflict: 'source,external_id,tenant_id' });
+                  if (upErr) errors.push(`clinicorp_financial_entries: ${upErr.message}`);
+                }
                 summary.financial += finUpserts.length;
               }
             }
@@ -870,13 +868,22 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
         log('Iniciando backfill SQL para o tenant:', tenant_id);
         
         // 1. Atualizar agendamentos faltantes a partir do raw
-        await supabase.rpc('backfill_clinicorp_appointments', { p_tenant_id: tenant_id });
+        {
+          const { error: rpcErr } = await supabase.rpc('backfill_clinicorp_appointments', { p_tenant_id: tenant_id });
+          if (rpcErr) errors.push(`backfill_clinicorp_appointments: ${rpcErr.message}`);
+        }
         
         // 2. Derivar pacientes que não foram importados mas estão na agenda
-        await supabase.rpc('backfill_clinicorp_patients', { p_tenant_id: tenant_id });
+        {
+          const { error: rpcErr } = await supabase.rpc('backfill_clinicorp_patients', { p_tenant_id: tenant_id });
+          if (rpcErr) errors.push(`backfill_clinicorp_patients: ${rpcErr.message}`);
+        }
         
         // 3. Atualizar nomes de profissionais genéricos
-        await supabase.rpc('fix_generic_professionals', { p_tenant_id: tenant_id });
+        {
+          const { error: rpcErr } = await supabase.rpc('fix_generic_professionals', { p_tenant_id: tenant_id });
+          if (rpcErr) errors.push(`fix_generic_professionals: ${rpcErr.message}`);
+        }
 
       } catch (backfillErr: any) {
         log('Backfill error', backfillErr.message);
