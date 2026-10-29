@@ -27,16 +27,14 @@ class ClinicorpHttpError extends Error {
 }
 
 async function req<T = unknown>(path: string, init: RequestInit = {}, base: string = API_BASE): Promise<T> {
-  const doFetch = async (forceRefresh: boolean) => fetch(`${base}${path}`, {
+  const res = await fetch(`${base}${path}`, {
     ...init,
     headers: {
       'Content-Type': 'application/json',
-      ...(await getAuthHeaders(forceRefresh)),
+      ...(await getAuthHeaders()),
       ...(init.headers || {}),
     },
   });
-  let res = await doFetch(false);
-  if (res.status === 401) res = await doFetch(true);
   const text = await res.text();
   let data: unknown = null;
   try { data = text ? JSON.parse(text) : null; } catch { data = text; }

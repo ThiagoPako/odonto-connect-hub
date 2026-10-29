@@ -13,7 +13,6 @@ import { Route as UsuariosRouteImport } from './routes/usuarios'
 import { Route as TratamentosRouteImport } from './routes/tratamentos'
 import { Route as SuperAdminRouteImport } from './routes/super-admin'
 import { Route as SignupRouteImport } from './routes/signup'
-import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as RelatoriosClinicosRouteImport } from './routes/relatorios-clinicos'
 import { Route as ReativacaoRouteImport } from './routes/reativacao'
 import { Route as ProntuarioRouteImport } from './routes/prontuario'
@@ -67,11 +66,6 @@ const SuperAdminRoute = SuperAdminRouteImport.update({
 const SignupRoute = SignupRouteImport.update({
   id: '/signup',
   path: '/signup',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ResetPasswordRoute = ResetPasswordRouteImport.update({
-  id: '/reset-password',
-  path: '/reset-password',
   getParentRoute: () => rootRouteImport,
 } as any)
 const RelatoriosClinicosRoute = RelatoriosClinicosRouteImport.update({
@@ -279,7 +273,6 @@ export interface FileRoutesByFullPath {
   '/prontuario': typeof ProntuarioRoute
   '/reativacao': typeof ReativacaoRoute
   '/relatorios-clinicos': typeof RelatoriosClinicosRoute
-  '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
   '/super-admin': typeof SuperAdminRoute
   '/tratamentos': typeof TratamentosRoute
@@ -320,7 +313,6 @@ export interface FileRoutesByTo {
   '/prontuario': typeof ProntuarioRoute
   '/reativacao': typeof ReativacaoRoute
   '/relatorios-clinicos': typeof RelatoriosClinicosRoute
-  '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
   '/super-admin': typeof SuperAdminRoute
   '/tratamentos': typeof TratamentosRoute
@@ -362,7 +354,6 @@ export interface FileRoutesById {
   '/prontuario': typeof ProntuarioRoute
   '/reativacao': typeof ReativacaoRoute
   '/relatorios-clinicos': typeof RelatoriosClinicosRoute
-  '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
   '/super-admin': typeof SuperAdminRoute
   '/tratamentos': typeof TratamentosRoute
@@ -405,7 +396,6 @@ export interface FileRouteTypes {
     | '/prontuario'
     | '/reativacao'
     | '/relatorios-clinicos'
-    | '/reset-password'
     | '/signup'
     | '/super-admin'
     | '/tratamentos'
@@ -446,7 +436,6 @@ export interface FileRouteTypes {
     | '/prontuario'
     | '/reativacao'
     | '/relatorios-clinicos'
-    | '/reset-password'
     | '/signup'
     | '/super-admin'
     | '/tratamentos'
@@ -487,7 +476,6 @@ export interface FileRouteTypes {
     | '/prontuario'
     | '/reativacao'
     | '/relatorios-clinicos'
-    | '/reset-password'
     | '/signup'
     | '/super-admin'
     | '/tratamentos'
@@ -529,7 +517,6 @@ export interface RootRouteChildren {
   ProntuarioRoute: typeof ProntuarioRoute
   ReativacaoRoute: typeof ReativacaoRoute
   RelatoriosClinicosRoute: typeof RelatoriosClinicosRoute
-  ResetPasswordRoute: typeof ResetPasswordRoute
   SignupRoute: typeof SignupRoute
   SuperAdminRoute: typeof SuperAdminRoute
   TratamentosRoute: typeof TratamentosRoute
@@ -564,13 +551,6 @@ declare module '@tanstack/react-router' {
       path: '/signup'
       fullPath: '/signup'
       preLoaderRoute: typeof SignupRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/reset-password': {
-      id: '/reset-password'
-      path: '/reset-password'
-      fullPath: '/reset-password'
-      preLoaderRoute: typeof ResetPasswordRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/relatorios-clinicos': {
@@ -860,7 +840,6 @@ const rootRouteChildren: RootRouteChildren = {
   ProntuarioRoute: ProntuarioRoute,
   ReativacaoRoute: ReativacaoRoute,
   RelatoriosClinicosRoute: RelatoriosClinicosRoute,
-  ResetPasswordRoute: ResetPasswordRoute,
   SignupRoute: SignupRoute,
   SuperAdminRoute: SuperAdminRoute,
   TratamentosRoute: TratamentosRoute,
