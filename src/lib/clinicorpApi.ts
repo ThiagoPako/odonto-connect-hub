@@ -157,24 +157,6 @@ export interface ClinicorpSyncResult {
 }
 
 export const clinicorpApi = {
-  getSettings: () => req<ClinicorpSettings>('/settings'),
-  saveSettings: (payload: Partial<{
-    enabled: boolean;
-    api_token: string;
-    subscriber_id: string;
-    webhook_secret: string;
-    base_url: string;
-    auto_sync_enabled: boolean;
-    sync_interval_minutes: number;
-    sync_lookback_days: number;
-    sync_lookahead_days: number;
-    conflict_strategy: 'clinicorp_wins' | 'local_wins' | 'newest_wins';
-  }>) => req<{ ok: true }>('/settings', { method: 'PUT', body: JSON.stringify(payload) }),
-  testConnection: () => req<{ ok: boolean; clinics_count: number; sample: unknown; error?: string }>('/test', { method: 'POST' }),
-  sync: (range?: { from?: string; to?: string; force_metadata?: boolean }) =>
-    req<ClinicorpSyncResult>('/sync', { method: 'POST', body: JSON.stringify(range || {}) }),
-  reconcileNow: () => req<{ ran?: boolean; skipped?: boolean; status?: string; summary?: Record<string, number>; error?: string }>('/reconcile', { method: 'POST' }),
-  syncAuto: () => req<{ ran?: boolean; skipped?: boolean; status?: string; summary?: Record<string, number>; error?: string }>('/sync/auto', { method: 'POST' }),
   listClinics: async () => {
     const { data, error } = await supabase.from('clinicorp_clinics').select('*');
     if (error) throw error;
@@ -232,7 +214,13 @@ export const clinicorpApi = {
 
   listWebhookEvents: (limit = 50) => req<ClinicorpWebhookEvent[]>(`/webhook-events?limit=${limit}`),
   getWebhookEvent: (id: number) => req<ClinicorpWebhookEvent & { payload: unknown; headers: unknown; ip: string }>(`/webhook-events/${id}`),
-  reproject: () => req<{ ok: true; patients: number; appointments: number; professionals: number }>('/reproject', { method: 'POST' }),
+  // Reprocessa o espelho Clinicorp (Supabase) da clínica do usuário. A rota
+  // /reproject da VPS gravava em outro banco, que a agenda não lê.
+  reproject: async () => {
+    const { data, error } = await supabase.rpc('clinicorp_run_backfill');
+    if (error) throw error;
+    return data as { ok: true; patients: number; appointments: number; professionals: number };
+  },
   listOverrides: () => req<ClinicorpOverride[]>('/overrides'),
   upsertOverride: (payload: Partial<Pick<ClinicorpOverride, 'scope_type' | 'scope_id' | 'keep_local' | 'conflict_strategy' | 'note'>> & { scope_label?: string }) =>
     req<{ ok: true; override: ClinicorpOverride }>('/overrides', { method: 'PUT', body: JSON.stringify(payload) }),

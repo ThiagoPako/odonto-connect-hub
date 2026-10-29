@@ -27,7 +27,6 @@ export function ClinicorpPanel() {
   const [settings, setSettings] = useState<ClinicorpSettings | null>(null);
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<ClinicorpConnectionTest | null>(null);
   const [syncing, setSyncing] = useState(false);
@@ -42,11 +41,6 @@ export function ClinicorpPanel() {
   const [lastSync, setLastSync] = useState<ClinicorpSyncResult | null>(null);
 
   // form state (apenas configurações de comportamento — credenciais ficam no ClinicorpUserCredentials)
-  const [autoSync, setAutoSync] = useState(true);
-  const [intervalMin, setIntervalMin] = useState(30);
-  const [lookbackDays, setLookbackDays] = useState(30);
-  const [lookaheadDays, setLookaheadDays] = useState(60);
-  const [conflictStrategy, setConflictStrategy] = useState<"clinicorp_wins" | "local_wins" | "newest_wins">("newest_wins");
   const [overrides, setOverrides] = useState<ClinicorpOverride[]>([]);
   const [conflicts, setConflicts] = useState<ClinicorpConflict[]>([]);
   const [conflictFilterEntity, setConflictFilterEntity] = useState<"" | "appointment" | "patient">("");
@@ -107,11 +101,6 @@ export function ClinicorpPanel() {
       } as unknown as ClinicorpSettings;
       
       setSettings(s);
-      setAutoSync(s.auto_sync_enabled);
-      setIntervalMin(s.sync_interval_minutes);
-      setLookbackDays(s.sync_lookback_days);
-      setLookaheadDays(s.sync_lookahead_days);
-      setConflictStrategy(s.conflict_strategy);
       const [evs, ovs, cfs, hist] = await Promise.all([
         clinicorpApi.listWebhookEvents(50).catch(() => []),
         clinicorpApi.listOverrides().catch(() => []),
@@ -145,25 +134,6 @@ export function ClinicorpPanel() {
   }
 
   useEffect(() => { load(); }, []);
-
-  async function handleSave() {
-    setSaving(true);
-    try {
-      await clinicorpApi.saveSettings({
-        auto_sync_enabled: autoSync,
-        sync_interval_minutes: intervalMin,
-        sync_lookback_days: lookbackDays,
-        sync_lookahead_days: lookaheadDays,
-        conflict_strategy: conflictStrategy,
-      });
-      toast.success("Configurações salvas");
-      await load();
-    } catch (e) {
-      toast.error(`Erro ao salvar: ${(e as Error).message}`);
-    } finally {
-      setSaving(false);
-    }
-  }
 
   async function handleTest() {
     setTesting(true);
@@ -348,22 +318,6 @@ export function ClinicorpPanel() {
             Enviar dados
           </Button>
 
-          <Button
-            variant="outline"
-            onClick={async () => {
-              try {
-                const r = await clinicorpApi.reconcileNow();
-                if (r.skipped) toast.info("Reconciliação não foi disparada (integração desabilitada ou bloqueada)");
-                else if (r.error) toast.error(`Reconciliação falhou: ${r.error}`);
-                else toast.success(`Reconciliação ${r.status} concluída`);
-                await load();
-              } catch (e) { toast.error(`Falha: ${(e as Error).message}`); }
-            }}
-            disabled={!settings?.enabled}
-          >
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Reconciliar agora
-          </Button>
         </div>
         
         {/* Sync Status Real-time Panel */}
@@ -512,50 +466,6 @@ export function ClinicorpPanel() {
           </div>
         )}
 
-        {/* Auto-reconciliação */}
-        <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-3">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="text-sm font-semibold text-foreground">Reconciliação automática</div>
-              <div className="text-xs text-muted-foreground">
-                Job interno garante que o Postgres fique consistente com a Clinicorp mesmo após interrupções (catch-up automático).
-              </div>
-            </div>
-            <Switch checked={autoSync} onCheckedChange={setAutoSync} />
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div className="space-y-1">
-              <Label className="text-xs">Intervalo (min)</Label>
-              <Input type="number" min={5} max={1440} value={intervalMin}
-                onChange={(e) => setIntervalMin(Number(e.target.value) || 30)} />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Janela passada (dias)</Label>
-              <Input type="number" min={1} max={365} value={lookbackDays}
-                onChange={(e) => setLookbackDays(Number(e.target.value) || 30)} />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Janela futura (dias)</Label>
-              <Input type="number" min={1} max={365} value={lookaheadDays}
-                onChange={(e) => setLookaheadDays(Number(e.target.value) || 60)} />
-            </div>
-          </div>
-          {settings?.next_sync_at && (
-            <div className="text-xs text-muted-foreground">
-              Próxima execução: <span className="text-foreground">{new Date(settings.next_sync_at).toLocaleString("pt-BR")}</span>
-              {settings.sync_lock_until && new Date(settings.sync_lock_until) > new Date() && (
-                <span className="ml-2 text-warning">• Lock ativo até {new Date(settings.sync_lock_until).toLocaleTimeString("pt-BR")}</span>
-              )}
-            </div>
-          )}
-          <div className="flex justify-end pt-2">
-            <Button size="sm" onClick={handleSave} disabled={saving}>
-              {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              Salvar configurações
-            </Button>
-          </div>
-        </div>
-
         {lastSync && (
           <div className="rounded-lg bg-muted/40 border border-border p-3 text-xs space-y-1">
             <div className="font-medium text-foreground">Resultado do último sync ({lastSync.status})</div>
@@ -571,7 +481,8 @@ export function ClinicorpPanel() {
         )}
       </div>
 
-      {/* Resolução de conflitos */}
+      {/* Resolução de conflitos — overrides são globais, só super admin */}
+      {isSuperAdmin && (
       <div className="rounded-2xl border border-border bg-card p-5 space-y-4">
         <div className="flex items-center gap-2">
           <Shield className="h-4 w-4 text-primary" />
@@ -582,28 +493,6 @@ export function ClinicorpPanel() {
           A precedência é: <strong>profissional &gt; clínica &gt; global &gt; padrão</strong>.
           “Manter local” congela o registro contra qualquer sobrescrita vinda da Clinicorp.
         </p>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-          {([
-            { v: "newest_wins",     t: "Mais recente vence", d: "Compara updated_at. Padrão recomendado." },
-            { v: "clinicorp_wins",  t: "Clinicorp sempre",   d: "Sobrescreve o local em todo sync." },
-            { v: "local_wins",      t: "Local sempre",       d: "Só atualiza se o local não foi tocado." },
-          ] as const).map((opt) => (
-            <button
-              key={opt.v}
-              type="button"
-              onClick={() => setConflictStrategy(opt.v)}
-              className={`text-left rounded-lg border p-3 transition ${
-                conflictStrategy === opt.v
-                  ? "border-primary bg-primary/5"
-                  : "border-border hover:bg-muted/30"
-              }`}
-            >
-              <div className="text-sm font-medium text-foreground">{opt.t}</div>
-              <div className="text-[11px] text-muted-foreground mt-0.5">{opt.d}</div>
-            </button>
-          ))}
-        </div>
 
         {/* Overrides — UI completa */}
         <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-3">
@@ -1089,6 +978,7 @@ export function ClinicorpPanel() {
           )}
         </div>
       </div>
+      )}
 
       {/* Webhook info — secret é gerenciado em "Minhas credenciais Clinicorp" acima */}
 

@@ -4394,6 +4394,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      clinicorp_run_backfill: {
+        Args: Record<PropertyKey, never>
+        Returns: Json
+      }
       backfill_clinicorp_appointments: {
         Args: { p_tenant_id: string }
         Returns: undefined

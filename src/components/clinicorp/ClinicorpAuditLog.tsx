@@ -58,7 +58,7 @@ export function ClinicorpAuditLog() {
   }, []);
 
   useEffect(() => {
-    clinicorpApi.getSettings().then(s => {
+    clinicorpApi.getMySettings().then(s => {
       if (s.last_sync_at) setLastSync(new Date(s.last_sync_at).toLocaleString("pt-BR"));
     }).catch(console.error);
     

@@ -867,23 +867,10 @@ export const syncMyClinicorpNow = createServerFn({ method: 'POST' })
       try {
         log('Iniciando backfill SQL para o tenant:', tenant_id);
         
-        // 1. Atualizar agendamentos faltantes a partir do raw
-        {
-          const { error: rpcErr } = await supabase.rpc('backfill_clinicorp_appointments', { p_tenant_id: tenant_id });
-          if (rpcErr) errors.push(`backfill_clinicorp_appointments: ${rpcErr.message}`);
-        }
-        
-        // 2. Derivar pacientes que não foram importados mas estão na agenda
-        {
-          const { error: rpcErr } = await supabase.rpc('backfill_clinicorp_patients', { p_tenant_id: tenant_id });
-          if (rpcErr) errors.push(`backfill_clinicorp_patients: ${rpcErr.message}`);
-        }
-        
-        // 3. Atualizar nomes de profissionais genéricos
-        {
-          const { error: rpcErr } = await supabase.rpc('fix_generic_professionals', { p_tenant_id: tenant_id });
-          if (rpcErr) errors.push(`fix_generic_professionals: ${rpcErr.message}`);
-        }
+        // Re-extrai colunas do raw, deriva pacientes da agenda e corrige
+        // nomes de profissionais — sempre na clínica do usuário logado.
+        const { error: rpcErr } = await supabase.rpc('clinicorp_run_backfill');
+        if (rpcErr) errors.push(`backfill: ${rpcErr.message}`);
 
       } catch (backfillErr: any) {
         log('Backfill error', backfillErr.message);
