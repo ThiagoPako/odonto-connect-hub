@@ -18,5 +18,9 @@ CREATE TABLE IF NOT EXISTS clinicorp_user_settings (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Progresso/resultado da sincronização manual (lido pela tela durante o sync).
+-- registerClinicorp() também garante esta coluna na inicialização.
+ALTER TABLE clinicorp_user_settings ADD COLUMN IF NOT EXISTS sync_progress JSONB;
+
 CREATE INDEX IF NOT EXISTS idx_clinicorp_user_settings_enabled
   ON clinicorp_user_settings(enabled) WHERE enabled = TRUE;

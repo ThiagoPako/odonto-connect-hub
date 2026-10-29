@@ -4955,10 +4955,14 @@ app.delete('/api/agenda/:id', async (req, res) => {
       const { rowCount } = await pool.query('DELETE FROM agendamentos WHERE serie_id=$1', [sid]);
       return res.json({ success: true, deleted: rowCount });
     }
-    // Push to Clinicorp before deleting locally if it exists
+    // Push to Clinicorp: lê o vínculo ANTES do DELETE local (o push roda depois)
     const aptId = req.params.id;
-    import('./clinicorp.mjs').then(m => m.clinicorpPush.deleteAppointment(pool, aptId)).catch(e => console.error('Clinicorp push failed:', e.message));
+    const { rows: cpRows } = await pool.query('SELECT clinicorp_appointment_id, tenant_id FROM agendamentos WHERE id=$1', [aptId]);
+    const cpSnapshot = cpRows[0] || null;
     await pool.query('DELETE FROM agendamentos WHERE id=$1', [req.params.id]);
+    if (cpSnapshot?.clinicorp_appointment_id) {
+      import('./clinicorp.mjs').then(m => m.clinicorpPush.deleteAppointment(pool, aptId, cpSnapshot)).catch(e => console.error('Clinicorp push failed:', e.message));
+    }
     res.json({ success: true, deleted: 1 });
   } catch (error) {
     console.error('❌ Error deleting appointment:', error.message);
@@ -13625,10 +13629,20 @@ registerClinicorp(app, pool, { verifyUser });
 
 // ── Per-user Clinicorp credentials (SaaS multi-tenant) ─────────
 // Each authenticated user has their own row in clinicorp_user_settings.
-// Access is enforced by JWT — users can only read/write their own row.
+// O middleware de /api/clinicorp (registerClinicorp) já verificou o token e
+// preencheu req.clinicorpUser; cada usuário só lê/grava a própria linha.
+const CLINICORP_DEFAULT_BASE_URL = 'https://api.clinicorp.com/rest/v1';
+async function clinicorpUserOf(req) {
+  if (req.clinicorpUser) return req.clinicorpUser;
+  const { user } = await verifyUser(req);
+  return user;
+}
+
 app.get('/api/clinicorp/my-settings', async (req, res) => {
+  let user;
+  try { user = await clinicorpUserOf(req); }
+  catch { return res.status(401).json({ error: 'Unauthorized' }); }
   try {
-    const { user } = await verifyUser(req);
     const { rows } = await pool.query(
       `SELECT enabled, subscriber_id, base_url,
               api_token IS NOT NULL AND api_token <> '' AS has_api_token,
@@ -13636,7 +13650,7 @@ app.get('/api/clinicorp/my-settings', async (req, res) => {
               CASE WHEN webhook_secret IS NOT NULL AND length(webhook_secret) >= 8
                    THEN substring(webhook_secret from 1 for 4) || '…' || substring(webhook_secret from length(webhook_secret) - 3)
                    ELSE '' END AS webhook_secret_preview,
-              last_sync_at, last_sync_status, last_sync_error, updated_at
+              last_sync_at, last_sync_status, last_sync_error, sync_progress, updated_at
          FROM clinicorp_user_settings WHERE user_id = $1`,
       [user.id]
     );
@@ -13644,23 +13658,28 @@ app.get('/api/clinicorp/my-settings', async (req, res) => {
     res.json({
       enabled: s.enabled ?? false,
       subscriber_id: s.subscriber_id || '',
-      base_url: s.base_url || 'https://api.clinicorp.com/rest/v1',
+      base_url: s.base_url || CLINICORP_DEFAULT_BASE_URL,
       has_api_token: Boolean(s.has_api_token),
       has_webhook_secret: Boolean(s.has_webhook_secret),
       webhook_secret_preview: s.webhook_secret_preview || '',
       last_sync_at: s.last_sync_at || null,
       last_sync_status: s.last_sync_status || null,
       last_sync_error: s.last_sync_error || null,
+      sync_progress: s.sync_progress || null,
       updated_at: s.updated_at || null,
+      is_super_admin: Boolean(user.is_super_admin),
     });
   } catch (e) {
-    res.status(401).json({ error: e.message });
+    console.error('[clinicorp my-settings GET]', e.message);
+    res.status(500).json({ error: e.message });
   }
 });
 
 app.put('/api/clinicorp/my-settings', async (req, res) => {
+  let user;
+  try { user = await clinicorpUserOf(req); }
+  catch { return res.status(401).json({ error: 'Unauthorized' }); }
   try {
-    const { user } = await verifyUser(req);
     const { enabled, api_token, subscriber_id, webhook_secret, base_url } = req.body || {};
 
     // Validation
@@ -13685,7 +13704,7 @@ app.put('/api/clinicorp/my-settings', async (req, res) => {
 
     await pool.query(
       `INSERT INTO clinicorp_user_settings (user_id, enabled, api_token, subscriber_id, webhook_secret, base_url, updated_at)
-       VALUES ($1, COALESCE($2, FALSE), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), COALESCE(NULLIF($6, ''), 'https://api.clinicorp.com/rest/v1'), NOW())
+       VALUES ($1, COALESCE($2, FALSE), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), COALESCE(NULLIF($6, ''), '${CLINICORP_DEFAULT_BASE_URL}'), NOW())
        ON CONFLICT (user_id) DO UPDATE SET
          enabled = COALESCE($2, clinicorp_user_settings.enabled),
          api_token = COALESCE(NULLIF($3, ''), clinicorp_user_settings.api_token),
@@ -13696,25 +13715,30 @@ app.put('/api/clinicorp/my-settings', async (req, res) => {
       [
         user.id,
         typeof enabled === 'boolean' ? enabled : null,
-        api_token ?? '',
-        subscriber_id ?? '',
+        typeof api_token === 'string' ? api_token.trim().replace(/^Bearer\s+/i, '') : '',
+        typeof subscriber_id === 'string' ? subscriber_id.trim() : '',
         webhook_secret ?? '',
         base_url ?? '',
       ]
     );
     res.json({ ok: true });
   } catch (e) {
-    res.status(e.message === 'Unauthorized' ? 401 : 500).json({ error: e.message });
+    // webhook_secret é usado para achar o tenant do webhook: precisa ser único.
+    if (e.code === '23505') return res.status(409).json({ error: 'Este webhook secret já está em uso. Gere outro.' });
+    console.error('[clinicorp my-settings PUT]', e.message);
+    res.status(500).json({ error: e.message });
   }
 });
 
 app.delete('/api/clinicorp/my-settings', async (req, res) => {
+  let user;
+  try { user = await clinicorpUserOf(req); }
+  catch { return res.status(401).json({ error: 'Unauthorized' }); }
   try {
-    const { user } = await verifyUser(req);
     await pool.query('DELETE FROM clinicorp_user_settings WHERE user_id = $1', [user.id]);
     res.json({ ok: true });
   } catch (e) {
-    res.status(401).json({ error: e.message });
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -13737,8 +13761,10 @@ function setClinicorpTestCooldown(settings, retryAfterSeconds) {
 }
 
 app.post('/api/clinicorp/my-settings/test', async (req, res) => {
+  let user;
+  try { user = await clinicorpUserOf(req); }
+  catch { return res.status(401).json({ ok: false, error: 'Unauthorized' }); }
   try {
-    const { user } = await verifyUser(req);
     let { api_token, subscriber_id, base_url } = req.body || {};
 
     if (!api_token || !subscriber_id) {
@@ -13751,152 +13777,110 @@ app.post('/api/clinicorp/my-settings/test', async (req, res) => {
       subscriber_id = subscriber_id || saved.subscriber_id;
       base_url = base_url || saved.base_url;
     }
+    base_url = base_url || CLINICORP_DEFAULT_BASE_URL;
+    const emptyResult = { total_latency_ms: 0, base_url, subscriber_id: subscriber_id || '', results: [] };
 
-    if (!api_token) return res.status(400).json({ ok: false, error: 'Informe o API Token' });
-    if (!subscriber_id) return res.status(400).json({ ok: false, error: 'Informe o Subscriber ID' });
-    if (base_url) { try { new URL(base_url); } catch { return res.status(400).json({ ok: false, error: 'URL base inválida' }); } }
+    if (!api_token) return res.json({ ok: false, auth: 'invalid_token', error: 'Informe o API Token', ...emptyResult });
+    if (!subscriber_id) return res.json({ ok: false, auth: 'invalid_token', error: 'Informe o Subscriber ID', ...emptyResult });
+    try { new URL(base_url); } catch { return res.status(400).json({ ok: false, error: 'URL base inválida' }); }
 
-    const settings = {
-      api_token,
-      subscriber_id,
-      base_url: base_url || 'https://api.clinicorp.com/rest/v1',
-    };
+    const settings = { api_token, subscriber_id, base_url };
 
     const cooldownSeconds = getClinicorpTestCooldownSeconds(settings);
     if (cooldownSeconds > 0) {
-      const retryAfterSeconds = cooldownSeconds;
       return res.json({
         ok: false,
         auth: 'rate_limited',
         rate_limited: true,
-        retry_after_seconds: retryAfterSeconds,
-        error: `A Clinicorp limitou temporariamente as chamadas desta integração. Aguarde ${Math.ceil(retryAfterSeconds / 60)} min antes de testar de novo.`,
-        total_latency_ms: 0,
-        base_url: settings.base_url,
-        subscriber_id: settings.subscriber_id,
-        results: [],
+        retry_after_seconds: cooldownSeconds,
+        error: `A Clinicorp limitou temporariamente as chamadas desta integração. Aguarde ${Math.ceil(cooldownSeconds / 60)} min antes de testar de novo.`,
+        ...emptyResult,
       });
     }
 
-    const auditData = {
-      entity: 'connection_test',
-      local_id: user.id,
-      clinicorp_id: subscriber_id,
-      action: 'test',
-      status: 'success',
-      payload: { base_url: settings.base_url },
-    };
-
-
-    // Testamos um endpoint por módulo para validar que a integração cobre
-    // Clínicas, Agenda, Profissionais, Pacientes e Orçamentos.
-    // Chamadas sequenciais com pequeno delay para não acionar 429.
+    // Um endpoint (da spec oficial) por módulo, em sequência com pausa curta
+    // para não acionar 429.
     const today = new Date();
-    const yyyy = today.getFullYear();
-    const mm = String(today.getMonth() + 1).padStart(2, '0');
-    const dd = String(today.getDate()).padStart(2, '0');
-    const dateStr = `${yyyy}-${mm}-${dd}`;
-
+    const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
     const probes = [
       { key: 'clinics',       label: 'Clínicas',      path: '/business/list' },
-      { key: 'appointments',  label: 'Agenda',        path: '/appointment/list',           query: { from: dateStr, to: dateStr } },
-      { key: 'professionals', label: 'Profissionais', path: '/dentist/list' },
-      { key: 'patients',      label: 'Pacientes',     path: '/patient/birthdays',          query: { from: dateStr, to: dateStr } },
-      { key: 'estimates',     label: 'Orçamentos',    path: '/estimates/list',             query: { from: dateStr, to: dateStr } },
-      { key: 'financial',     label: 'Financeiro',    path: '/financial/list_invoices',    query: { from: dateStr, to: dateStr } },
+      { key: 'appointments',  label: 'Agenda',        path: '/appointment/list',                    query: { from: dateStr, to: dateStr } },
+      { key: 'professionals', label: 'Profissionais', path: '/professional/list_all_professionals' },
+      { key: 'patients',      label: 'Pacientes',     path: '/patient/birthdays',                   query: { date: dateStr } },
+      { key: 'estimates',     label: 'Orçamentos',    path: '/estimates/list',                      query: { from: dateStr, to: dateStr } },
+      { key: 'financial',     label: 'Financeiro',    path: '/financial/list_invoices',             query: { from: dateStr, to: dateStr } },
     ];
 
-    console.log(`[ClinicorpTest] Testing connection for user ${user.id} (${user.email}) - Subscriber: ${subscriber_id}`);
+    console.log(`[ClinicorpTest] user ${user.id} subscriber ${subscriber_id}`);
     const startedAt = Date.now();
     const results = [];
     for (const p of probes) {
       const t0 = Date.now();
-      let attempt = 0;
-      let lastError = null;
-      let success = false;
-      let data = null;
-
-      while (attempt < 2 && !success) {
-        try {
-          data = await clinicorpFetchProbe(settings, p.path, { timeoutMs: 12_000, query: p.query });
-          success = true;
-        } catch (e) {
-          lastError = e;
-          if (e.status === 401 || (e.status >= 500 && e.status < 600)) {
-            attempt++;
-            if (attempt < 2) await clinicorpProbeSleep(600);
-          } else {
-            console.error(`[ClinicorpTest] Probe ${p.key} failed (non-retryable): ${e.status} ${e.message}`);
-            break;
-          }
-        }
-      }
-
-      if (success) {
-        results.push({ ...p, ok: true, latency_ms: Date.now() - t0, count: Array.isArray(data) ? data.length : (data ? 1 : 0), retries: attempt });
-      } else {
+      try {
+        const data = await clinicorpFetchProbe(settings, p.path, { timeoutMs: 15_000, query: p.query });
+        const list = Array.isArray(data) ? data : null;
+        results.push({ ...p, ok: true, latency_ms: Date.now() - t0, count: list ? list.length : (data ? 1 : 0) });
+      } catch (e) {
         results.push({
           ...p,
           ok: false,
           latency_ms: Date.now() - t0,
-          status: lastError?.status || null,
-          error: lastError?.message || 'timeout',
-          retry_after_seconds: lastError?.retryAfter ?? null,
-          retries: attempt,
+          status: e.status || null,
+          error: e.message || 'timeout',
+          retry_after_seconds: e.retryAfter ?? null,
         });
-        // Se 429, pare imediatamente para não piorar o rate limit.
-        if (lastError?.status === 429) break;
+        // 401/403 (credencial) ou 429 (limite): as demais chamadas falhariam igual.
+        if (e.status === 401 || e.status === 403 || e.status === 429) break;
       }
-      // Pequena pausa entre probes para respeitar limites.
       await clinicorpProbeSleep(350);
     }
 
-
-    const ok = results.every((r) => r.ok);
+    const ok = results.length === probes.length && results.every((r) => r.ok);
     const rateLimit = results.find((r) => r.status === 429);
-    const auth = results[0]?.status === 401 || results.some((r) => r.status === 401)
-      ? 'invalid_token'
-      : (rateLimit ? 'rate_limited' : (ok ? 'valid' : 'partial'));
+    const invalid = results.some((r) => r.status === 401 || r.status === 403);
+    const auth = invalid ? 'invalid_token' : (rateLimit ? 'rate_limited' : (ok ? 'valid' : 'partial'));
     const retryAfterSeconds = rateLimit?.retry_after_seconds ?? null;
-    if (rateLimit) {
-      setClinicorpTestCooldown(settings, retryAfterSeconds);
-    } else if (ok) {
-      clinicorpTestCooldowns.delete(`${settings.base_url}|${settings.subscriber_id}`);
-    }
+    if (rateLimit) setClinicorpTestCooldown(settings, retryAfterSeconds);
+    else if (ok) clinicorpTestCooldowns.delete(`${settings.base_url}|${settings.subscriber_id}`);
 
     res.json({
       ok,
       auth,
       rate_limited: Boolean(rateLimit),
       retry_after_seconds: retryAfterSeconds,
-      error: rateLimit
-        ? `A Clinicorp limitou temporariamente as chamadas desta integração. Aguarde ${Math.ceil((retryAfterSeconds || 60) / 60)} min antes de testar de novo.`
-        : undefined,
+      error: invalid
+        ? 'Credenciais Clinicorp inválidas. Confira o Usuário API e o Token API em Gerenciar Assinatura → Acesso Externo e Integrações.'
+        : rateLimit
+          ? `A Clinicorp limitou temporariamente as chamadas desta integração. Aguarde ${Math.ceil((retryAfterSeconds || 60) / 60)} min antes de testar de novo.`
+          : undefined,
       total_latency_ms: Date.now() - startedAt,
       base_url: settings.base_url,
       subscriber_id: settings.subscriber_id,
       results,
     });
-    
-    // Log to audit (using the imported clinicorpPush if available, or manual insert)
+
     try {
       await pool.query(
-        `INSERT INTO clinicorp_push_log (entity_type, local_id, clinicorp_id, action, status, payload, response)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        ['connection_test', user.id, subscriber_id, 'test', ok ? 'success' : 'error', 
-         JSON.stringify({ base_url: settings.base_url }), JSON.stringify({ ok, auth, results })]
+        `INSERT INTO clinicorp_push_log (entity_type, local_id, clinicorp_id, action, status, payload, response, tenant_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        ['connection_test', user.id, subscriber_id, 'test', ok ? 'success' : 'error',
+         JSON.stringify({ base_url: settings.base_url }), JSON.stringify({ ok, auth, results }), user.tenant_id || null]
       );
-    } catch (auditErr) { console.error('Audit log failed:', auditErr.message); }
-
+    } catch (auditErr) { console.error('[ClinicorpTest] audit log failed:', auditErr.message); }
   } catch (e) {
-    res.status(e.message === 'Unauthorized' ? 401 : 500).json({ ok: false, error: e.message });
+    if (!res.headersSent) res.status(500).json({ ok: false, error: e.message });
   }
 });
 
-// Trigger a manual full sync for the current user
+// Sincronização manual completa do usuário logado (única sincronização da
+// integração — roda na VPS e grava nas tabelas que o app lê). O progresso fica
+// em clinicorp_user_settings.sync_progress para a tela acompanhar.
 app.post('/api/clinicorp/sync/now', async (req, res) => {
+  let user;
+  try { user = await clinicorpUserOf(req); }
+  catch { return res.status(401).json({ error: 'Unauthorized' }); }
   try {
-    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica (tenant) associada' });
     const { rows } = await pool.query(
       'SELECT enabled, api_token, subscriber_id, base_url FROM clinicorp_user_settings WHERE user_id = $1',
       [user.id]
@@ -13909,10 +13893,7 @@ app.post('/api/clinicorp/sync/now', async (req, res) => {
       return res.status(400).json({ error: 'Ative a sincronização Clinicorp antes de sincronizar' });
     }
 
-    const normalizedSettings = {
-      ...settings,
-      base_url: settings.base_url || 'https://api.clinicorp.com/rest/v1',
-    };
+    const normalizedSettings = { ...settings, base_url: settings.base_url || CLINICORP_DEFAULT_BASE_URL };
     const cooldownSeconds = getClinicorpTestCooldownSeconds(normalizedSettings);
     if (cooldownSeconds > 0) {
       return res.status(429).json({
@@ -13922,121 +13903,87 @@ app.post('/api/clinicorp/sync/now', async (req, res) => {
       });
     }
 
+    const isDate = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
     const { runFullSync } = await import('./clinicorp.mjs');
-    const result = await runFullSync(pool, { 
-      api_token: settings.api_token, 
-      subscriber_id: settings.subscriber_id, 
-      base_url: settings.base_url,
+    const result = await runFullSync(pool, {
+      api_token: normalizedSettings.api_token,
+      subscriber_id: normalizedSettings.subscriber_id,
+      base_url: normalizedSettings.base_url,
       tenant_id: user.tenant_id,
-      from: req.body?.from,
-      to: req.body?.to,
-      force_metadata: req.body?.force_metadata === true
+      user_id: user.id,
+      from: isDate(req.body?.from) ? req.body.from : undefined,
+      to: isDate(req.body?.to) ? req.body.to : undefined,
+      force_metadata: req.body?.force_metadata === true,
     });
-
-    await pool.query(
-      `UPDATE clinicorp_user_settings
-          SET last_sync_at = NOW(), last_sync_status = $2, last_sync_error = $3, updated_at = NOW()
-        WHERE user_id = $1`,
-      [user.id, result.status, result.errors?.length ? result.errors.join(' | ') : null]
-    );
-
     res.json(result);
   } catch (e) {
-    console.error('[clinicorp manual sync error]', e);
+    console.error('[clinicorp manual sync error]', e.message);
+    if (e.invalidCredentials) return res.status(400).json({ error: e.message, auth: 'invalid_token' });
     const retryAfterSeconds = Number(e.retry_after_seconds ?? e.retryAfter);
-    if (e.status === 429 || /HTTP 429|rate limited/i.test(String(e.message || ''))) {
+    if (e.status === 429 || /HTTP 429|rate limit/i.test(String(e.message || ''))) {
       return res.status(429).json({
         error: e.message,
         rate_limited: true,
         retry_after_seconds: Number.isFinite(retryAfterSeconds) ? retryAfterSeconds : null,
       });
     }
+    if (/sincronização em andamento/i.test(String(e.message || ''))) return res.status(409).json({ error: e.message });
     res.status(500).json({ error: e.message });
   }
 });
 
-// Lightweight probe — same logic as clinicorp.mjs#clinicorpFetch but local
+// Probe leve para o teste de conexão (sem a fila/pausa global do sync).
+// A Clinicorp só aceita HTTP Basic (Usuário API : Token API); o token nunca
+// vai na URL.
 async function clinicorpFetchProbe(settings, pathName, opts = {}) {
-  const base = (settings.base_url || 'https://api.clinicorp.com/rest/v1').replace(/\/$/, '');
+  const base = (settings.base_url || CLINICORP_DEFAULT_BASE_URL).replace(/\/$/, '');
   const url = new URL(base + pathName);
-  
-  // Limpar e normalizar query parameters
-  const allQuery = { ...(opts.query || {}) };
-  
-  // subscriber_id é OBRIGATÓRIO em TODAS as chamadas da Clinicorp
-  if (settings.subscriber_id) {
-    url.searchParams.set('subscriber_id', settings.subscriber_id);
-    if (!allQuery.subscriber_id) allQuery.subscriber_id = settings.subscriber_id;
-  }
-  
-  // Clinicorp autentica via query params user_api + api_key (mesmo formato do webhook).
-  const _apiUserQ = String(settings.subscriber_id || '').trim();
-  const _apiTokenQ = String(settings.api_token || '').trim().replace(/^Bearer\s+/i, '');
-  if (_apiUserQ) url.searchParams.set('user_api', _apiUserQ);
-  if (_apiTokenQ) url.searchParams.set('api_key', _apiTokenQ);
-
-  if (allQuery) {
-    for (const [k, v] of Object.entries(allQuery)) {
-      if (v !== undefined && v !== null && v !== '') {
-        url.searchParams.set(k, String(v));
-      }
-    }
+  const apiUser = String(settings.subscriber_id || '').trim();
+  const apiToken = String(settings.api_token || '').trim().replace(/^Bearer\s+/i, '');
+  url.searchParams.set('subscriber_id', apiUser);
+  for (const [k, v] of Object.entries(opts.query || {})) {
+    if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));
   }
 
   const ctrl = new AbortController();
   const timeout = setTimeout(() => ctrl.abort(), opts.timeoutMs || 45_000);
-  
   try {
-    const apiToken = String(settings.api_token || '').trim().replace(/^Bearer\s+/i, '');
-    const apiUser = String(settings.subscriber_id || '').trim();
-    
-    const requestOnce = async (authMode) => {
-      // Tenta ambos os formatos de autenticação simultaneamente para máxima compatibilidade
-      const headers = { Accept: 'application/json' };
-      if (authMode === 'basic' && apiUser) {
-        headers.Authorization = `Basic ${Buffer.from(`${apiUser}:${apiToken}`).toString('base64')}`;
-      } else {
-        headers.Authorization = `Bearer ${apiToken}`;
-      }
-      
-      const r = await fetch(url.toString(), {
-        method: 'GET',
-        headers,
-        signal: ctrl.signal,
-      });
+    const r = await fetch(url.toString(), {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Basic ${Buffer.from(`${apiUser}:${apiToken}`).toString('base64')}`,
+      },
+      signal: ctrl.signal,
+    });
+    const text = await r.text();
+    let data; try { data = text ? JSON.parse(text) : null; } catch { data = text; }
 
-      const text = await r.text();
-      let data; try { data = text ? JSON.parse(text) : null; } catch { data = text; }
-
-      if (r.status === 429) {
-        const retryAfter = Number(r.headers.get('retry-after'));
-        const err = new Error(`HTTP 429 (rate limited by Clinicorp${Number.isFinite(retryAfter) ? `, retry-after ${retryAfter}s` : ''})`);
-        err.status = 429;
-        err.retryAfter = Number.isFinite(retryAfter) ? retryAfter : null;
-        throw err;
-      }
-
-      if ((r.status === 401 || r.status === 502 || r.status === 503 || r.status === 504) && !requestOnce._retried) {
-        requestOnce._retried = true;
-        await clinicorpProbeSleep(opts.retryDelayMs || 2000);
-        return requestOnce(authMode === 'basic' ? 'bearer' : 'basic'); // Alterna modo no retry
-      }
-
-      if (!r.ok) {
-        const err = new Error(`HTTP ${r.status}${typeof data === 'string' && data ? ': ' + data.slice(0, 200) : ''}`);
-        err.status = r.status;
-        err.authMode = authMode;
-        throw err;
-      }
-      return data;
-    };
-
-    return await requestOnce('basic');
+    if (r.status === 429) {
+      const retryAfter = Number(r.headers.get('retry-after'));
+      const err = new Error(`HTTP 429 (rate limited by Clinicorp${Number.isFinite(retryAfter) ? `, retry-after ${retryAfter}s` : ''})`);
+      err.status = 429;
+      err.retryAfter = Number.isFinite(retryAfter) ? retryAfter : null;
+      throw err;
+    }
+    if (!r.ok) {
+      const msg = data && typeof data === 'object' && 'message' in data ? String(data.message) : (typeof data === 'string' ? data.slice(0, 200) : '');
+      const err = new Error(`HTTP ${r.status}${msg ? `: ${msg}` : ''}`);
+      err.status = r.status;
+      throw err;
+    }
+    return data;
+  } catch (e) {
+    if (e.name === 'AbortError') {
+      const err = new Error('timeout');
+      err.status = null;
+      throw err;
+    }
+    throw e;
   } finally {
     clearTimeout(timeout);
   }
 }
-
 
 const clinicorpProbeSleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
