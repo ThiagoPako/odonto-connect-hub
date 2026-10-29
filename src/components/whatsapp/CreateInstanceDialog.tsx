@@ -31,10 +31,6 @@ export function CreateInstanceDialog({ open, onOpenChange, onCreated }: CreateIn
         throw new Error("Sua sessão expirou. Saia e entre novamente.");
       }
 
-      // 2) Cria a instância direto no backend.
-      // Não usamos /auth/me aqui: essa rota depende do profile local da VPS e
-      // pode retornar "Perfil não encontrado" mesmo com sessão Supabase válida,
-      // bloqueando indevidamente a geração do QR Code.
       const { data, error: apiError } = await whatsappApi.create(sanitized);
 
       if (apiError) {
