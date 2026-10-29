@@ -45,6 +45,18 @@ const PORT = process.env.API_PORT || 3002;
 app.use(cors());
 app.use(express.json({ limit: '64mb' }));
 
+// Várias rotas fazem `catch (e) { res.status(500).json({ error: e.message }) }`
+// e transformam o 'Unauthorized' do verifyUser em 500. O front só renova o
+// token quando recebe 401, então corrigimos o status aqui de forma central.
+app.use((req, res, next) => {
+  const json = res.json.bind(res);
+  res.json = (body) => {
+    if (res.statusCode === 500 && body && body.error === 'Unauthorized') res.status(401);
+    return json(body);
+  };
+  next();
+});
+
 // ─── Media File Storage ─────────────────────────────────────
 const UPLOADS_DIR = path.join(__dirname, '..', 'uploads', 'media');
 // Ensure uploads directory exists
@@ -53,7 +65,7 @@ const UPLOADS_DIR = path.join(__dirname, '..', 'uploads', 'media');
     await mkdir(UPLOADS_DIR, { recursive: true });
     console.log('📁 Created media uploads directory:', UPLOADS_DIR);
   }
-})();
+})().catch((err) => console.error('Failed to create media uploads directory:', err.message));
 
 // Serve uploaded media files statically
 app.use('/uploads/media', express.static(UPLOADS_DIR, {
@@ -134,6 +146,13 @@ const pool = new Pool({
   password: process.env.PG_PASSWORD,
 });
 
+// Um cliente ocioso que cai (ex.: restart do Postgres) emite 'error'; sem
+// listener isso derruba o processo inteiro.
+pool.on('error', (err) => console.error('Postgres idle client error:', err.message));
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled rejection:', reason instanceof Error ? reason.stack : reason);
+});
+
 console.log('🗄️ Postgres env loaded', {
   host: process.env.PG_HOST || 'localhost',
   port: Number(process.env.PG_PORT) || 5432,
@@ -146,6 +165,8 @@ console.log('🗄️ Postgres env loaded', {
 
 // ─── JWT Config ─────────────────────────────────────────────
 const JWT_SECRET = process.env.JWT_SECRET || 'CHANGE_ME_IN_PRODUCTION';
+const LEGACY_JWT_ENABLED = Boolean(process.env.JWT_SECRET);
+if (!LEGACY_JWT_ENABLED) console.warn('⚠️ JWT_SECRET não definido — tokens legacy desativados (só Supabase).');
 const JWT_EXPIRES_IN = '7d';
 
 // ─── Supabase Auth Bridge ───────────────────────────────────
@@ -658,10 +679,12 @@ if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
 }
 
 // ─── Send push to all subscriptions ─────────────────────────
-async function sendPushToAll(payload) {
+async function sendPushToAll(payload, tenantId) {
   if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return;
+  // Sem tenant não envia: antes a prévia da mensagem ia para todas as clínicas.
+  if (!tenantId) return;
   try {
-    const { rows: subs } = await pool.query('SELECT * FROM push_subscriptions');
+    const { rows: subs } = await pool.query('SELECT * FROM push_subscriptions WHERE tenant_id = $1', [tenantId]);
     const pushPayload = JSON.stringify(payload);
     for (const sub of subs) {
       const subscription = {
@@ -781,6 +804,7 @@ async function verifyUser(req) {
   // 1) Tenta token legacy (HS256 com JWT_SECRET)
   let decoded = null;
   try {
+    if (!LEGACY_JWT_ENABLED) throw new Error('legacy disabled');
     decoded = verifyToken(token);
     // If JWT_SECRET matches the Supabase project JWT secret, a Supabase access
     // token also verifies here. Do not treat it as our legacy VPS token, because
@@ -8994,7 +9018,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
       tag: `msg-${lead.id}`,
       url: `/chat?lead=${encodeURIComponent(lead.id)}`,
       leadId: lead.id,
-    });
+    }, tenantId);
 
     if (lead && !lead.avatar_url) {
       (async () => {
@@ -12639,10 +12663,10 @@ app.post('/api/push/subscribe', async (req, res) => {
     }
 
     await pool.query(
-      `INSERT INTO push_subscriptions (user_id, endpoint, keys_p256dh, keys_auth, updated_at)
-       VALUES ($1, $2, $3, $4, NOW())
-       ON CONFLICT (endpoint) DO UPDATE SET user_id = $1, keys_p256dh = $3, keys_auth = $4, updated_at = NOW()`,
-      [user.id, subscription.endpoint, subscription.keys.p256dh, subscription.keys.auth]
+      `INSERT INTO push_subscriptions (user_id, tenant_id, endpoint, keys_p256dh, keys_auth, updated_at)
+       VALUES ($1, $5, $2, $3, $4, NOW())
+       ON CONFLICT (endpoint) DO UPDATE SET user_id = $1, tenant_id = $5, keys_p256dh = $3, keys_auth = $4, updated_at = NOW()`,
+      [user.id, subscription.endpoint, subscription.keys.p256dh, subscription.keys.auth, user.tenant_id || null]
     );
 
     res.json({ success: true });

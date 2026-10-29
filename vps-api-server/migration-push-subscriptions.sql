@@ -15,3 +15,7 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
 
 CREATE INDEX IF NOT EXISTS idx_push_subs_user ON push_subscriptions(user_id);
 CREATE INDEX IF NOT EXISTS idx_push_subs_endpoint ON push_subscriptions(endpoint);
+
+-- Push por clínica: inscrições sem tenant_id não recebem até o navegador se reinscrever.
+ALTER TABLE push_subscriptions ADD COLUMN IF NOT EXISTS tenant_id UUID;
+CREATE INDEX IF NOT EXISTS idx_push_subs_tenant ON push_subscriptions(tenant_id);
