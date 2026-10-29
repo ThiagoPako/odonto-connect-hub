@@ -7,7 +7,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
 import {
   clinicorpApi,
   type ClinicorpSettings,
@@ -79,15 +78,9 @@ export function ClinicorpPanel() {
   async function load() {
     setLoading(true);
     try {
-      const { data: authData } = await supabase.auth.getUser();
-      const userId = authData.user?.id;
-      if (userId) {
-        const { data: profile } = await supabase.from('profiles').select('is_super_admin').eq('id', userId).maybeSingle();
-        setIsSuperAdmin(!!profile?.is_super_admin);
-      }
-
-      // Use getMySettings instead of getSettings to ensure user sees only their credentials
+      // Credenciais do próprio usuário (VPS); is_super_admin vem do perfil verificado lá.
       const mySettings = await clinicorpApi.getMySettings();
+      setIsSuperAdmin(!!mySettings.is_super_admin);
       // Cast to include global fields with defaults for UI consistency
       const s = {
         ...mySettings,
