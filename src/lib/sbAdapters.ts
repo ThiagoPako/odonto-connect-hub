@@ -2014,6 +2014,19 @@ export const followUpsApi = makeCrud({ table: 'follow_ups', orderBy: { column: '
 export const atendentesApi = makeCrud({ table: 'atendentes', orderBy: { column: 'nome', ascending: true } });
 export const origensApi = makeCrud({ table: 'origens', orderBy: { column: 'nome', ascending: true } });
 
+/** crm_leads (tabela do Kanban) no formato que os painéis usam (status/valor_estimado/atendente_id). */
+function crmLeadsAsPanelLeads(rows: any[]): any[] {
+  return rows.map((l) => ({
+    ...l,
+    status: l.kanban_stage === 'orcamento_aprovado' || l.paciente_id ? 'convertido'
+      : l.status === 'perdido' ? 'perdido'
+      : (l.kanban_stage ?? 'lead') === 'lead' ? 'novo'
+      : 'ativo',
+    valor_estimado: l.valor,
+    atendente_id: l.assigned_to,
+  }));
+}
+
 export const comercialApi = {
   painel: async (attendantId?: string): Promise<Result<any>> => {
     try {
@@ -2022,12 +2035,12 @@ export const comercialApi = {
 
       // Parallel queries for dashboard components
       const [leadsRes, agendamentosRes, followUpsRes] = await Promise.all([
-        supabase.from('leads').select('*').eq('tenant_id', tenant_id),
+        supabase.from('crm_leads').select('*').eq('tenant_id', tenant_id),
         supabase.from('agendamentos').select('*').eq('tenant_id', tenant_id).gte('data', localDateISO()),
         supabase.from('follow_ups').select('*, leads(nome)').eq('tenant_id', tenant_id).eq('status', 'pendente').order('data_agendada', { ascending: true })
       ]);
 
-      const leads = leadsRes.data ?? [];
+      const leads = crmLeadsAsPanelLeads(leadsRes.data ?? []);
       const agendamentos = agendamentosRes.data ?? [];
       const followUpsRaw = followUpsRes.data ?? [];
 
@@ -2241,9 +2254,9 @@ export const sbDashboardApi = {
       ] = await Promise.all([
         (supabase as any).from('pacientes').select('*', { count: 'exact', head: true }).eq('tenant_id', tenant_id),
         (supabase as any).from('agendamentos').select('*').eq('tenant_id', tenant_id).eq('data', todayStr),
-        (supabase as any).from('movimentacoes_financeiras').select('*').eq('tenant_id', tenant_id).gte('data', firstDayOfMonth),
+        (supabase as any).from('fin_movements').select('*').eq('tenant_id', tenant_id).gte('date', firstDayOfMonth),
         (supabase as any).from('orcamentos').select('*').eq('tenant_id', tenant_id),
-        (supabase as any).from('leads').select('*').eq('tenant_id', tenant_id),
+        (supabase as any).from('crm_leads').select('*').eq('tenant_id', tenant_id),
         (supabase as any).from('estoque').select('*').eq('tenant_id', tenant_id)
       ]);
 
@@ -2263,8 +2276,8 @@ export const sbDashboardApi = {
       };
 
       const movs = (movimentacoes.data || []) as any[];
-      const receitaMensal = movs.filter(m => m.tipo === 'receita').reduce((acc, m) => acc + Number(m.valor || 0), 0);
-      const despesaMensal = movs.filter(m => m.tipo === 'despesa').reduce((acc, m) => acc + Number(m.valor || 0), 0);
+      const receitaMensal = movs.filter(m => m.type === 'entrada').reduce((acc, m) => acc + Number(m.value || 0), 0);
+      const despesaMensal = movs.filter(m => m.type === 'saida').reduce((acc, m) => acc + Number(m.value || 0), 0);
 
       const orcs = (orcamentos.data || []) as any[];
       const aprovados = orcs.filter(o => o.status === 'aprovado' || o.status === 'finalizado');
@@ -2280,7 +2293,7 @@ export const sbDashboardApi = {
         ticketMedio: aprovados.length > 0 ? valorAprovado / aprovados.length : 0
       };
 
-      const ls = (leads.data || []) as any[];
+      const ls = crmLeadsAsPanelLeads((leads.data || []) as any[]);
       const dashboardCrm = {
         totalLeadsKanban: ls.length,
         semResposta: ls.filter(l => l.status === 'novo').length,
