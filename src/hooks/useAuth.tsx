@@ -1,7 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react";
-import { supabase } from "@/integrations/supabase/client";
-import type { Session } from "@supabase/supabase-js";
-import { login as loginVps, clearToken, setCachedAccessToken, setCachedTenantId } from "@/lib/vpsApi";
+import { getToken, clearToken, getMe, login as loginVps, setCachedTenantId } from "@/lib/vpsApi";
 
 export interface AuthUser {
   id: string;
@@ -25,71 +23,19 @@ interface AuthState {
 
 const AuthContext = createContext<AuthState | null>(null);
 
-async function loadUserFromSession(session: Session): Promise<AuthUser | null> {
-  const authUser = session.user;
-  if (!authUser) return null;
-  setCachedAccessToken(session);
-
-  // Fetch profile (created by handle_new_user trigger)
-  // Important: never silently downgrade to "user" when permission reads fail.
-  // If the database/policy query errors, keep the app in an auth-loading/error
-  // path instead of rendering a limited menu for an admin account.
-  const { data: profile, error: profileError } = await supabase
-    .from("profiles")
-    .select("id, nome, email, tenant_id, is_super_admin, avatar_url")
-    .eq("id", authUser.id)
-    .maybeSingle();
-
-  if (profileError) {
-    throw new Error(`Erro ao carregar perfil: ${profileError.message}`);
-  }
-
-  // Fetch role from user_roles (separate table, prevents privilege escalation)
-  const { data: roleRow, error: roleError } = await supabase
-    .from("user_roles")
-    .select("role")
-    .eq("user_id", authUser.id)
-    .order("role", { ascending: true })
-    .limit(1)
-    .maybeSingle();
-
-  if (roleError) {
-    throw new Error(`Erro ao carregar permissões: ${roleError.message}`);
-  }
-
-  // Fetch tenant feature flags from metadata jsonb (optional)
-  let tenant_features: Record<string, boolean> = {};
-  if (profile?.tenant_id) {
-    const { data: tenant, error: tenantError } = await supabase
-      .from("tenants")
-      .select("metadata")
-      .eq("id", profile.tenant_id)
-      .maybeSingle();
-    if (tenantError) {
-      throw new Error(`Erro ao carregar recursos da clínica: ${tenantError.message}`);
-    }
-    const meta = tenant?.metadata as { features?: Record<string, boolean> } | null;
-    if (meta?.features && typeof meta.features === "object") {
-      tenant_features = meta.features;
-    }
-  }
-
-  const isSuperAdmin = !!profile?.is_super_admin;
-  const role = isSuperAdmin ? "admin" : ((roleRow?.role as string) ?? "user");
-
-  const resolvedUser = {
-    id: authUser.id,
-    email: profile?.email ?? authUser.email ?? "",
-    name: profile?.nome ?? (authUser.user_metadata?.nome as string) ?? authUser.email ?? "",
-    role,
-    avatar_url: profile?.avatar_url ?? null,
-    tenant_id: profile?.tenant_id ?? null,
-    is_super_admin: isSuperAdmin,
-    tenant_features,
+/** Lê o usuário completo (papel, clínica, módulos) do /auth/me da VPS. */
+async function fetchCurrentUser(): Promise<AuthUser | null> {
+  if (!getToken()) return null;
+  const { data } = await getMe();
+  if (!data) return null;
+  const user = data as unknown as AuthUser;
+  const resolved: AuthUser = {
+    ...user,
+    role: user.is_super_admin ? "admin" : user.role || "user",
+    tenant_features: user.tenant_features || {},
   };
-
-  setCachedTenantId(resolvedUser.tenant_id);
-  return resolvedUser;
+  setCachedTenantId(resolved.tenant_id);
+  return resolved;
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -97,97 +43,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
 
   const refreshUser = useCallback(async () => {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) {
-      setUser(null);
-      return null;
-    }
-
-    const freshUser = await loadUserFromSession(session);
-    setUser(freshUser);
-    return freshUser;
+    const fresh = await fetchCurrentUser();
+    setUser(fresh);
+    return fresh;
   }, []);
 
   useEffect(() => {
     let mounted = true;
+    fetchCurrentUser()
+      .then((u) => { if (mounted) setUser(u); })
+      .catch((error) => console.error("Failed to load authenticated user", error))
+      .finally(() => { if (mounted) setIsLoading(false); });
 
-    // Listener FIRST (must not call async supabase methods synchronously inside)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!mounted) return;
-      if (session) {
-        setCachedAccessToken(session);
-        // defer DB calls to avoid deadlock inside the auth callback
-        setTimeout(() => {
-          loadUserFromSession(session).then((u) => {
-            if (mounted) setUser(u);
-          }).catch((error) => {
-            console.error("Failed to refresh authenticated user", error);
-          });
-        }, 0);
-      } else {
-        setCachedAccessToken(null);
-        setCachedTenantId(null);
-        setUser(null);
-      }
-    });
-
-    // THEN check existing session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (!mounted) return;
-      if (session) {
-        setCachedAccessToken(session);
-        loadUserFromSession(session).then((u) => {
-          if (mounted) {
-            setUser(u);
-            setIsLoading(false);
-          }
-        }).catch((error) => {
-          console.error("Failed to load authenticated user", error);
-          if (mounted) {
-            setUser(null);
-            setIsLoading(false);
-          }
-        });
-      } else {
-        setCachedAccessToken(null);
-        setCachedTenantId(null);
-        setIsLoading(false);
-      }
-    });
-
-    const refreshOnFocus = () => {
-      if (!mounted) return;
-      refreshUser().catch(() => undefined);
-    };
+    // Reflete mudanças de papel/módulos feitas por um admin sem exigir novo login.
     const refreshOnVisibility = () => {
-      if (document.visibilityState === "visible") refreshOnFocus();
+      if (document.visibilityState === "visible" && getToken()) {
+        fetchCurrentUser().then((u) => { if (mounted && u) setUser(u); }).catch(() => undefined);
+      }
     };
-
-    window.addEventListener("focus", refreshOnFocus);
     document.addEventListener("visibilitychange", refreshOnVisibility);
-
     return () => {
       mounted = false;
-      window.removeEventListener("focus", refreshOnFocus);
       document.removeEventListener("visibilitychange", refreshOnVisibility);
-      subscription.unsubscribe();
     };
-  }, [refreshUser]);
+  }, []);
 
   const login = useCallback(async (email: string, password: string) => {
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) throw new Error(error.message);
-    await loginVps(email, password).catch((err) => {
-      console.warn("VPS legacy login bridge failed", err);
-    });
-    if (data.session) {
-      const freshUser = await loadUserFromSession(data.session);
-      setUser(freshUser);
-    }
+    const { error } = await loginVps(email, password);
+    if (error) throw new Error(error);
+    const fresh = await fetchCurrentUser();
+    if (!fresh) throw new Error("Não foi possível carregar seu perfil.");
+    setUser(fresh);
   }, []);
 
   const logout = useCallback(async () => {
-    await supabase.auth.signOut();
     clearToken();
     setCachedTenantId(null);
     setUser(null);

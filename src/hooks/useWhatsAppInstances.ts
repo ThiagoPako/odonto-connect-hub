@@ -7,7 +7,6 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { whatsappApi } from "@/lib/vpsApi";
 import { toast } from "sonner";
 import { playDisconnectAlert } from "@/lib/notificationSound";
-import { supabase } from "@/integrations/supabase/client";
 
 type ConnectionStatus = "open" | "close" | "connecting";
 
@@ -95,7 +94,6 @@ async function refreshInstances(): Promise<ConnectedInstance[]> {
       return cachedInstances;
     }
 
-    const usingVpsList = true;
     const rawList = Array.isArray(vpsInstances) ? vpsInstances : [];
     const list: EvolutionInstance[] = rawList.map((inst: any) => ({
       instanceName: inst.name || inst.instanceName || inst.instance?.instanceName,
@@ -109,22 +107,7 @@ async function refreshInstances(): Promise<ConnectedInstance[]> {
     // legacy instance names mapped in whatsapp_instances (for example "testedg"
     // without the tenant UUID prefix). Only apply prefix filtering when falling
     // back to the direct Evolution list.
-    let filteredList = list;
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        const { data: profile } = await supabase.from('profiles').select('tenant_id, is_super_admin').eq('id', user.id).maybeSingle();
-        
-        if (usingVpsList || profile?.is_super_admin) {
-          filteredList = list;
-        } else if (profile?.tenant_id) {
-          const prefix = profile.tenant_id.substring(0, 8);
-          filteredList = list.filter(inst => inst.instanceName.startsWith(prefix));
-        }
-      }
-    } catch (e) {
-      console.error("Failed to filter WhatsApp instances", e);
-    }
+    const filteredList = list;
 
     const mapped = filteredList.map((inst) => ({
       ...inst,

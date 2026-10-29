@@ -3,17 +3,14 @@
  * Registers SW, subscribes to push, and syncs with backend
  */
 
-import { supabase } from "@/integrations/supabase/client";
-
-const VPS_API_BASE = 'https://backend.odontoconnect.tech/api';
+import { VPS_API_BASE, getToken } from "@/lib/vpsApi";
 
 // VAPID public key — must match the one generated on the server
 let vapidPublicKey: string | null = null;
 
 async function getAuthHeaders(): Promise<Record<string, string>> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  const { data } = await supabase.auth.getSession();
-  const token = data.session?.access_token;
+  const token = getToken();
   if (token) headers['Authorization'] = `Bearer ${token}`;
   return headers;
 }

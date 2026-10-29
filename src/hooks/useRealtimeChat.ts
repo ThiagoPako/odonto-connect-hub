@@ -1,6 +1,5 @@
 import { useEffect, useRef } from "react";
 import { getAccessToken, VPS_API_BASE, getCachedTenantId, setCachedTenantId } from "@/lib/vpsApi";
-import { supabase } from "@/integrations/supabase/client";
 
 export interface IncomingMessage {
   id: string;
@@ -67,20 +66,7 @@ async function getActiveTenantId(): Promise<string | null> {
     const cachedTenantId = getCachedTenantId();
     if (cachedTenantId) return cachedTenantId;
 
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return null;
-    const { data } = await supabase
-      .from("profiles")
-      .select("tenant_id")
-      .eq("id", user.id)
-      .maybeSingle();
-    if (data?.tenant_id) {
-      setCachedTenantId(data.tenant_id);
-      return data.tenant_id;
-    }
-
-    // Fallback pelo VPS: quando o profile não vem pelo client Supabase/RLS,
-    // ainda assim precisamos enviar tenantId no SSE para receber broadcasts.
+    // Sem cache, pergunta à VPS: o SSE precisa do tenantId para receber broadcasts.
     const token = await getAccessToken();
     if (!token) return null;
     const res = await fetch(`${VPS_API_BASE}/auth/me`, {
@@ -160,7 +146,7 @@ export function useRealtimeChat(options: RealtimeChatOptions) {
       if (cancelled) return;
       closeCurrent();
 
-      const [token, tenantId] = await Promise.all([getAccessToken(forceRefresh), getActiveTenantId()]);
+      const [token, tenantId] = await Promise.all([getAccessToken(), getActiveTenantId()]);
       if (cancelled) return;
 
       if (!token || !tenantId) {

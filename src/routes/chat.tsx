@@ -16,7 +16,7 @@ import type { AttendanceQueue } from "@/data/queueData";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { useRealtimeChat, type IncomingMessage } from "@/hooks/useRealtimeChat";
-import { whatsappApi, transferApi, sessionsApi, queuesApi, messagesApi, queueLeadsApi, mediaApi, crmApi, VPS_API_BASE, getCachedTenantId, type ChatMessageApi } from "@/lib/vpsApi";
+import { whatsappApi, transferApi, sessionsApi, queuesApi, messagesApi, queueLeadsApi, mediaApi, crmApi, contatosApi, VPS_API_BASE, getCachedTenantId, type ChatMessageApi } from "@/lib/vpsApi";
 
 // Resolve relative media URLs (e.g. /uploads/media/...) against the backend origin.
 function resolveMediaUrl(url?: string | null): string | undefined {
@@ -34,7 +34,6 @@ import { playNotificationSound, playRecoverySound } from "@/lib/notificationSoun
 import { showBrowserNotification, requestNotificationPermission } from "@/lib/browserNotification";
 import { setChatUnreadCount } from "@/lib/chatUnreadStore";
 import { takePendingChatMessagesForLead } from "@/lib/chatPendingStore";
-import { supabase } from "@/integrations/supabase/client";
 import {
   type Lead,
   type ChatMessage,
@@ -214,8 +213,8 @@ function ChatPage() {
     }
     if (!data) return;
 
-    const { data: contactsData } = await supabase.from('contatos').select('telefone, nome');
-    const contactMap = new Map((contactsData || []).map((c: any) => [c.telefone?.replace(/\D/g, ''), c.nome]));
+    const { data: contactsData } = await contatosApi.list();
+    const contactMap = new Map(((contactsData as any[]) || []).map((c: any) => [c.telefone?.replace(/\D/g, ''), c.nome]));
 
     const toLead = (r: any): Lead => {
       const phone = r.phone?.replace(/\D/g, '') || "";
@@ -1609,12 +1608,7 @@ function ChatPage() {
     setSyncingPhotos(true);
     toast.info("Sincronizando fotos de perfil...");
     try {
-      let { data, error } = await whatsappApi.syncProfilePictures(instanceName);
-      // If unauthorized, try refreshing the Supabase session once and retry.
-      if (error && /unauthorized/i.test(error)) {
-        try { await supabase.auth.refreshSession(); } catch { /* ignore */ }
-        ({ data, error } = await whatsappApi.syncProfilePictures(instanceName));
-      }
+      const { data, error } = await whatsappApi.syncProfilePictures(instanceName);
       if (error) {
         const friendly = /unauthorized/i.test(error)
           ? "Sessão expirada. Saia e entre novamente para sincronizar."

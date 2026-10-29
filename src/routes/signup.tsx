@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useState, type FormEvent } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { saasApi } from "@/lib/saasApi";
+import { useAuth } from "@/hooks/useAuth";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,6 +19,8 @@ export const Route = createFileRoute("/signup")({
 
 function SignupPage() {
   const navigate = useNavigate();
+  const { plan } = Route.useSearch();
+  const { refreshUser } = useAuth();
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({
     nome: "",
@@ -38,32 +41,24 @@ function SignupPage() {
     }
 
     setLoading(true);
-    let error: { message: string } | null = null;
-    try {
-      ({ error } = await supabase.auth.signUp({
-        email: form.email,
-        password: form.password,
-        options: {
-          emailRedirectTo: `${window.location.origin}/dashboard`,
-          data: {
-            nome: form.nome,
-            clinic_name: form.clinic_name || `Clínica ${form.nome}`,
-          },
-        },
-      }));
-    } catch (e) {
-      error = { message: (e as Error).message || "Falha de conexão. Tente novamente." };
-    } finally {
-      setLoading(false);
-    }
-
+    const { error } = await saasApi.signupClinic({
+      clinic_name: form.clinic_name.trim() || `Clínica ${form.nome.trim()}`,
+      admin_name: form.nome.trim(),
+      email: form.email,
+      password: form.password,
+      ...(plan ? { plan_slug: plan } : {}),
+    });
     if (error) {
-      toast.error(error.message);
+      setLoading(false);
+      toast.error(error);
       return;
     }
 
-    toast.success("Conta criada! Verifique seu email para confirmar.");
-    navigate({ to: "/login" });
+    // signup-clinic já devolve o token; entra direto no sistema
+    await refreshUser().catch(() => null);
+    setLoading(false);
+    toast.success("Clínica cadastrada! Bem-vindo ao Odonto Connect.");
+    navigate({ to: "/dashboard" });
   };
 
   return (

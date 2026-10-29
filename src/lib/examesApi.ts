@@ -1,4 +1,4 @@
-import { sbExamesApi, sbExameTiposApi } from "./sbAdapters";
+import { vpsApiFetch } from "./vpsApi";
 
 export type ExameStatus = "novo" | "em_andamento" | "aguardando_laudo" | "concluido" | "entregue" | "cancelado";
 export type ExamePrioridade = "baixa" | "normal" | "alta" | "urgente";
@@ -53,26 +53,29 @@ async function unwrap<T>(p: Promise<{ data: T | null; error: string | null }>, f
 }
 
 export const examesApi = {
-  list: (params: Partial<{ status: ExameStatus; q: string; paciente_id: string; from: string; to: string; terceirizado: boolean }> = {}) =>
-    unwrap<Exame[]>(sbExamesApi.list(params as Record<string, unknown>) as Promise<{ data: Exame[] | null; error: string | null }>, []),
+  list: (params: Partial<{ status: ExameStatus; q: string; paciente_id: string; from: string; to: string; terceirizado: boolean }> = {}) => {
+    const qs: Record<string, string> = {};
+    Object.entries(params).forEach(([k, v]) => { if (v != null && v !== "") qs[k] = String(v); });
+    return unwrap<Exame[]>(vpsApiFetch<Exame[]>("/exames", { params: qs }), []);
+  },
   stats: () => unwrap<ExameStats>(
-    sbExamesApi.stats() as Promise<{ data: ExameStats | null; error: string | null }>,
+    vpsApiFetch<ExameStats>("/exames/stats"),
     { novo:0, em_andamento:0, aguardando_laudo:0, concluido:0, entregue:0, cancelado:0, total:0 }
   ),
   create: (data: Partial<Exame>) =>
-    unwrap<Exame>(sbExamesApi.create(data as Record<string, unknown>) as Promise<{ data: Exame | null; error: string | null }>, {} as Exame),
+    unwrap<Exame>(vpsApiFetch<Exame>("/exames", { method: "POST", body: data }), {} as Exame),
   update: (id: string, data: Partial<Exame>) =>
-    unwrap<Exame>(sbExamesApi.update(id, data as Record<string, unknown>) as Promise<{ data: Exame | null; error: string | null }>, {} as Exame),
+    unwrap<Exame>(vpsApiFetch<Exame>(`/exames/${id}`, { method: "PATCH", body: data }), {} as Exame),
   remove: (id: string) =>
-    unwrap<{ success: boolean }>(sbExamesApi.remove(id), { success: false }),
+    unwrap<{ success: boolean }>(vpsApiFetch<{ success: boolean }>(`/exames/${id}`, { method: "DELETE" }), { success: false }),
 };
 
 export const exameTiposApi = {
-  list: () => unwrap<ExameTipo[]>(sbExameTiposApi.list() as Promise<{ data: ExameTipo[] | null; error: string | null }>, []),
+  list: () => unwrap<ExameTipo[]>(vpsApiFetch<ExameTipo[]>("/exame-tipos"), []),
   upsert: (data: Partial<ExameTipo>) =>
-    unwrap<ExameTipo>(sbExameTiposApi.upsert(data as Record<string, unknown>) as Promise<{ data: ExameTipo | null; error: string | null }>, {} as ExameTipo),
+    unwrap<ExameTipo>(vpsApiFetch<ExameTipo>("/exame-tipos", { method: "POST", body: data }), {} as ExameTipo),
   remove: (id: string) =>
-    unwrap<{ success: boolean }>(sbExameTiposApi.remove(id), { success: false }),
+    unwrap<{ success: boolean }>(vpsApiFetch<{ success: boolean }>(`/exame-tipos/${id}`, { method: "DELETE" }), { success: false }),
 };
 
 export const STATUS_LABELS: Record<ExameStatus, string> = {

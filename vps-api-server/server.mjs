@@ -23,6 +23,7 @@ import { tmpdir } from 'os';
 import { promisify } from 'util';
 import { existsSync } from 'fs';
 import { fileURLToPath } from 'url';
+import { AsyncLocalStorage } from 'async_hooks';
 
 // Compatibilidade para trechos legados deste arquivo que ainda chamam
 // crypto.randomUUID(). O módulo importa randomUUID de forma nomeada; sem este
@@ -44,6 +45,11 @@ const PORT = process.env.API_PORT || 3002;
 // ─── Middleware ──────────────────────────────────────────────
 app.use(cors());
 app.use(express.json({ limit: '64mb' }));
+
+// Contexto de clínica por requisição. verifyUser/webhook preenchem o store e
+// pool.query (abaixo) aplica o tenant dentro da mesma transação da consulta.
+const tenantContext = new AsyncLocalStorage();
+app.use((req, res, next) => tenantContext.run({ tenantId: null, isSuperAdmin: false }, next));
 
 // Várias rotas fazem `catch (e) { res.status(500).json({ error: e.message }) }`
 // e transformam o 'Unauthorized' do verifyUser em 500. O front só renova o
@@ -146,6 +152,54 @@ const pool = new Pool({
   password: process.env.PG_PASSWORD,
 });
 
+// RLS da VPS lê app.tenant_id / app.is_super_admin. set_config de sessão num
+// pool vaza entre requisições (cada query pode cair noutra conexão), então,
+// dentro de uma requisição autenticada, cada query roda numa transação curta
+// com o contexto local (is_local=true) na mesma conexão.
+const rawPoolQuery = pool.query.bind(pool);
+const rawPoolConnect = pool.connect.bind(pool);
+const TENANT_SET_SQL = `SELECT set_config('app.tenant_id', $1, $3),
+              set_config('app.current_tenant_id', $1, $3),
+              set_config('app.is_super_admin', $2, $3)`;
+const activeTenantCtx = () => {
+  const ctx = tenantContext.getStore();
+  return ctx && (ctx.tenantId || ctx.isSuperAdmin) ? ctx : null;
+};
+
+// Transações manuais (pool.connect) numa requisição autenticada recebem o
+// contexto na sessão e ele é limpo antes de a conexão voltar ao pool.
+pool.connect = async (...args) => {
+  if (args.length) return rawPoolConnect(...args); // estilo callback (usado pelo próprio pg)
+  const client = await rawPoolConnect();
+  const ctx = activeTenantCtx();
+  if (!ctx) return client;
+  await client.query(TENANT_SET_SQL, [ctx.tenantId || '', ctx.isSuperAdmin ? 'true' : 'false', false]);
+  const release = client.release;
+  client.release = (err) => {
+    client.release = release;
+    client.query(TENANT_SET_SQL, ['', 'false', false]).catch(() => {}).finally(() => release.call(client, err));
+  };
+  return client;
+};
+
+pool.query = async (text, params) => {
+  const ctx = activeTenantCtx();
+  if (!ctx) return rawPoolQuery(text, params);
+  const client = await rawPoolConnect();
+  try {
+    await client.query('BEGIN');
+    await client.query(TENANT_SET_SQL, [ctx.tenantId || '', ctx.isSuperAdmin ? 'true' : 'false', true]);
+    const result = await client.query(text, params);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+};
+
 // Um cliente ocioso que cai (ex.: restart do Postgres) emite 'error'; sem
 // listener isso derruba o processo inteiro.
 pool.on('error', (err) => console.error('Postgres idle client error:', err.message));
@@ -226,22 +280,17 @@ function setCachedTenantId(instanceName, tenantId) {
   });
 }
 
-async function setDbTenantContext({ tenantId = null, isSuperAdmin = false, payload = null } = {}) {
-  const safeTenantId = isValidTenantId(tenantId) ? String(tenantId) : '00000000-0000-0000-0000-000000000000';
-  try {
-    // Use session-level settings (is_local=false). With pg Pool, the old
-    // is_local=true value vanished at the end of the standalone SELECT, so the
-    // next tenant-filtered/RLS query could see no tenant and return an empty
-    // chat/fila even when messages were saved.
-    if (payload) {
-      await pool.query('SELECT set_config($1, $2, false)', ['app.jwt_payload', JSON.stringify(payload)]);
-    }
-    await pool.query('SELECT set_config($1, $2, false)', ['app.is_super_admin', isSuperAdmin ? 'true' : 'false']);
-    await pool.query('SELECT set_config($1, $2, false)', ['app.tenant_id', safeTenantId]);
-    await pool.query('SELECT set_config($1, $2, false)', ['app.current_tenant_id', safeTenantId]);
-  } catch (err) {
-    console.error('Failed to set DB tenant context:', err.message);
-  }
+// Tarefas de fundo atravessam todas as clínicas: rodam como sistema
+// (is_super_admin no RLS) em vez de herdar config de conexões anteriores.
+function asSystemJob(fn) {
+  return (...args) => tenantContext.run({ tenantId: null, isSuperAdmin: true }, () => fn(...args));
+}
+
+async function setDbTenantContext({ tenantId = null, isSuperAdmin = false } = {}) {
+  const ctx = tenantContext.getStore();
+  if (!ctx) return;
+  ctx.tenantId = isValidTenantId(tenantId) ? String(tenantId) : null;
+  ctx.isSuperAdmin = !!isSuperAdmin;
 }
 
 async function validateRequestedTenantForUser(user, requestedTenantId) {
@@ -4789,10 +4838,11 @@ app.get('/api/pacientes/:id/historico', async (req, res) => {
 
 app.get('/api/agenda', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.json([]);
     const { data_inicio, data_fim, dentista_id } = req.query;
-    let query = 'SELECT a.*, p.nome as paciente_nome, d.nome as dentista_nome FROM agendamentos a LEFT JOIN pacientes p ON a.paciente_id = p.id LEFT JOIN dentistas d ON a.dentista_id = d.id WHERE 1=1';
-    const params = [];
+    let query = 'SELECT a.*, p.nome as paciente_nome, d.nome as dentista_nome FROM agendamentos a LEFT JOIN pacientes p ON a.paciente_id = p.id LEFT JOIN dentistas d ON a.dentista_id = d.id WHERE a.tenant_id = $1';
+    const params = [user.tenant_id];
     if (data_inicio) { params.push(data_inicio); query += ` AND a.data >= $${params.length}`; }
     if (data_fim) { params.push(data_fim); query += ` AND a.data <= $${params.length}`; }
     if (dentista_id) { params.push(dentista_id); query += ` AND a.dentista_id = $${params.length}`; }
@@ -4840,7 +4890,8 @@ app.delete('/api/agenda/marcadores/:id', async (req, res) => {
 
 app.post('/api/agenda', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Sem clínica vinculada' });
     const {
       paciente_id, dentista_id, data, hora, duracao, procedimento, status, observacoes, lead_id,
       tipo, primeira_consulta, dia_inteiro, escopo, categoria, categoria_cor,
@@ -4853,8 +4904,8 @@ app.post('/api/agenda', async (req, res) => {
         id, paciente_id, dentista_id, data, hora, duracao, procedimento, status, observacoes,
         tipo, primeira_consulta, dia_inteiro, escopo, categoria, categoria_cor,
         confirmacao_canal, confirmacao_quando, alerta_retorno_canal, alerta_retorno_quando,
-        evento_titulo, sala, serie_id, marcadores, como_conheceu
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23::jsonb,$24)`,
+        evento_titulo, sala, serie_id, marcadores, como_conheceu, tenant_id
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23::jsonb,$24,$25)`,
       [
         id, paciente_id || null, dentista_id || null, data, hora, duracao || 30,
         procedimento || null, status || 'agendado', observacoes || null,
@@ -4865,8 +4916,10 @@ app.post('/api/agenda', async (req, res) => {
         evento_titulo || null, sala || null, serie_id || null,
         JSON.stringify(Array.isArray(marcadores) ? marcadores : []),
         como_conheceu || null,
+        user.tenant_id,
       ]
     );
+    broadcastSSE('agendamento_changed', { action: 'created', id, data }, user.tenant_id);
     // Push to Clinicorp
     import('./clinicorp.mjs').then(m => m.clinicorpPush.pushAppointment(pool, id)).catch(e => console.error('Clinicorp push failed:', e.message));
 
@@ -4874,8 +4927,8 @@ app.post('/api/agenda', async (req, res) => {
     const resolvedLeadId = lead_id || paciente_id;
     if (resolvedLeadId) {
       await pool.query(
-        `UPDATE crm_leads SET kanban_stage = 'paciente_agendado', status = 'paciente_agendado', updated_at = NOW() WHERE id = $1`,
-        [resolvedLeadId]
+        `UPDATE crm_leads SET kanban_stage = 'paciente_agendado', status = 'paciente_agendado', updated_at = NOW() WHERE id = $1 AND tenant_id = $2`,
+        [resolvedLeadId, user.tenant_id]
       ).catch(err => console.error('Failed to update lead to paciente_agendado:', err.message));
     }
 
@@ -4889,7 +4942,8 @@ app.post('/api/agenda', async (req, res) => {
 // POST /api/agenda/serie — múltiplo agendamento (recorrência)
 app.post('/api/agenda/serie', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Sem clínica vinculada' });
     const {
       paciente_id, dentista_id, hora, duracao, procedimento, observacoes,
       data_inicio, quantidade, intervalo_dias,
@@ -4919,8 +4973,8 @@ app.post('/api/agenda/serie', async (req, res) => {
         `INSERT INTO agendamentos (
           id, paciente_id, dentista_id, data, hora, duracao, procedimento, status, observacoes,
           tipo, primeira_consulta, escopo, categoria, categoria_cor,
-          confirmacao_canal, confirmacao_quando, sala, serie_id
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,'agendado',$8,'consulta',$9,'dentista',$10,$11,$12,$13,$14,$15)`,
+          confirmacao_canal, confirmacao_quando, sala, serie_id, tenant_id
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,'agendado',$8,'consulta',$9,'dentista',$10,$11,$12,$13,$14,$15,$16)`,
         [
           id, paciente_id, dentista_id, dataStr, hora, duracao || 30,
           procedimento || null, observacoes || null,
@@ -4928,11 +4982,12 @@ app.post('/api/agenda/serie', async (req, res) => {
           i === 0 ? !!primeira_consulta : false,
           categoria || null, categoria_cor || null,
           confirmacao_canal || null, confirmacao_quando || null,
-          sala || null, serie_id,
+          sala || null, serie_id, user.tenant_id,
         ]
       );
       created.push({ id, data: dataStr });
     }
+    broadcastSSE('agendamento_changed', { action: 'created', serie_id }, user.tenant_id);
     res.json({ serie_id, total: created.length, agendamentos: created });
   } catch (error) {
     console.error('❌ Error creating series:', error.message);
@@ -4943,22 +4998,29 @@ app.post('/api/agenda/serie', async (req, res) => {
 // DELETE /api/agenda/:id — excluir agendamento
 app.delete('/api/agenda/:id', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    const tId = user.tenant_id;
+    if (!tId) return res.status(403).json({ error: 'Sem clínica vinculada' });
     const { serie } = req.query; // ?serie=true → exclui toda a série
+    const changed = () => broadcastSSE('agendamento_changed', { action: 'deleted', id: req.params.id }, tId);
     if (serie === 'true') {
-      const { rows } = await pool.query('SELECT serie_id FROM agendamentos WHERE id=$1', [req.params.id]);
+      const { rows } = await pool.query('SELECT serie_id FROM agendamentos WHERE id=$1 AND tenant_id=$2', [req.params.id, tId]);
       const sid = rows[0]?.serie_id;
       if (!sid) {
-        await pool.query('DELETE FROM agendamentos WHERE id=$1', [req.params.id]);
-        return res.json({ success: true, deleted: 1 });
+        const { rowCount } = await pool.query('DELETE FROM agendamentos WHERE id=$1 AND tenant_id=$2', [req.params.id, tId]);
+        changed();
+        return res.json({ success: true, deleted: rowCount });
       }
-      const { rowCount } = await pool.query('DELETE FROM agendamentos WHERE serie_id=$1', [sid]);
+      const { rowCount } = await pool.query('DELETE FROM agendamentos WHERE serie_id=$1 AND tenant_id=$2', [sid, tId]);
+      changed();
       return res.json({ success: true, deleted: rowCount });
     }
     // Push to Clinicorp before deleting locally if it exists
     const aptId = req.params.id;
     import('./clinicorp.mjs').then(m => m.clinicorpPush.deleteAppointment(pool, aptId)).catch(e => console.error('Clinicorp push failed:', e.message));
-    await pool.query('DELETE FROM agendamentos WHERE id=$1', [req.params.id]);
+    const { rowCount } = await pool.query('DELETE FROM agendamentos WHERE id=$1 AND tenant_id=$2', [req.params.id, tId]);
+    if (!rowCount) return res.status(404).json({ error: 'Agendamento não encontrado' });
+    changed();
     res.json({ success: true, deleted: 1 });
   } catch (error) {
     console.error('❌ Error deleting appointment:', error.message);
@@ -4969,7 +5031,8 @@ app.delete('/api/agenda/:id', async (req, res) => {
 // PUT /api/agenda/:id — update appointment (status, etc.)
 app.put('/api/agenda/:id', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Sem clínica vinculada' });
     const { id } = req.params;
     const { status, hora, duracao, procedimento, observacoes, sala, data, dentista_id, dentista_nome, marcadores, como_conheceu } = req.body;
     const sets = [];
@@ -4987,9 +5050,11 @@ app.put('/api/agenda/:id', async (req, res) => {
     if (como_conheceu !== undefined) { params.push(como_conheceu || null); sets.push(`como_conheceu = $${params.length}`); }
     if (sets.length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
     params.push(id);
-    const query = `UPDATE agendamentos SET ${sets.join(', ')}, updated_at = NOW() WHERE id = $${params.length} RETURNING *`;
+    params.push(user.tenant_id);
+    const query = `UPDATE agendamentos SET ${sets.join(', ')}, updated_at = NOW() WHERE id = $${params.length - 1} AND tenant_id = $${params.length} RETURNING *`;
     const { rows } = await pool.query(query, params);
     if (rows.length === 0) return res.status(404).json({ error: 'Agendamento não encontrado' });
+    broadcastSSE('agendamento_changed', { action: 'updated', id, data: rows[0].data }, user.tenant_id);
 
     // Push to Clinicorp
     import('./clinicorp.mjs').then(m => m.clinicorpPush.pushAppointment(pool, id)).catch(e => console.error('Clinicorp push failed:', e.message));
@@ -6579,6 +6644,114 @@ app.get(['/api/dashboard', '/api/dashboard/kpis'], async (req, res) => {
 // GET /api/comercial/painel?attendantId=<uuid|me>
 // Quando attendantId omitido OU = 'me' e role != admin → escopo do user logado
 // ═══════════════════════════════════════════════════════════════
+// ─── Dashboard KPIs (por clínica) ───────────────────────────
+app.get('/api/dashboard/kpis', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    const tId = user.tenant_id;
+    if (!tId) return res.status(403).json({ error: 'Sem clínica vinculada' });
+
+    // Tabela/coluna ausente em instalações antigas vira lista vazia, não 500.
+    const safe = async (sql) => {
+      try { return (await pool.query(sql, [tId])).rows; }
+      catch (err) {
+        if (err.code === '42P01' || err.code === '42703') return [];
+        throw err;
+      }
+    };
+    const TODAY = `(NOW() AT TIME ZONE 'America/Sao_Paulo')::date`;
+    const [pac, agenda, movs, orcs, leads, est] = await Promise.all([
+      safe('SELECT COUNT(*)::int AS n FROM pacientes WHERE tenant_id = $1'),
+      safe(`SELECT status FROM agendamentos WHERE tenant_id = $1 AND data = ${TODAY}`),
+      safe(`SELECT type, value FROM fin_movements WHERE tenant_id = $1 AND date >= date_trunc('month', ${TODAY})`),
+      safe('SELECT status, valor_total FROM orcamentos WHERE tenant_id = $1'),
+      safe('SELECT kanban_stage, status, valor, origem, paciente_id FROM crm_leads WHERE tenant_id = $1'),
+      safe('SELECT nome, quantidade, quantidade_minima, valor_unitario FROM estoque WHERE tenant_id = $1'),
+    ]);
+
+    const totalPacientes = pac[0]?.n || 0;
+    const count = (rows, fn) => rows.filter(fn).length;
+    const finalizados = count(agenda, (a) => a.status === 'concluido' || a.status === 'finalizado' || a.status === 'realizado');
+    const agendaKpis = {
+      total: agenda.length,
+      finalizados,
+      emAtendimento: count(agenda, (a) => a.status === 'em_atendimento'),
+      aguardando: count(agenda, (a) => a.status === 'agendado' || a.status === 'aguardando' || a.status === 'confirmado'),
+      faltas: count(agenda, (a) => a.status === 'cancelado' || a.status === 'faltou' || a.status === 'desmarcado'),
+      encaixes: count(agenda, (a) => a.status === 'encaixe'),
+      taxaPresenca: agenda.length ? Math.round((finalizados / agenda.length) * 100) : 0,
+    };
+
+    const sum = (rows, fn, val) => rows.filter(fn).reduce((acc, r) => acc + Number(val(r) || 0), 0);
+    const receitaMensal = sum(movs, (m) => m.type === 'entrada', (m) => m.value);
+    const despesaMensal = sum(movs, (m) => m.type === 'saida', (m) => m.value);
+
+    const aprovados = orcs.filter((o) => o.status === 'aprovado' || o.status === 'finalizado');
+    const valorAprovado = sum(aprovados, () => true, (o) => o.valor_total);
+    const orcamentos = {
+      total: orcs.length,
+      pendentes: count(orcs, (o) => o.status === 'pendente'),
+      aprovados: aprovados.length,
+      reprovados: count(orcs, (o) => o.status === 'reprovado'),
+      valorAprovado,
+      taxaConversao: orcs.length ? Math.round((aprovados.length / orcs.length) * 100) : 0,
+      ticketMedio: aprovados.length ? valorAprovado / aprovados.length : 0,
+    };
+
+    // Lead convertido = orçamento aprovado no Kanban ou já vinculado a paciente.
+    const leadStatus = (l) => (l.kanban_stage === 'orcamento_aprovado' || l.paciente_id) ? 'convertido'
+      : l.status === 'perdido' ? 'perdido'
+      : (l.kanban_stage || 'lead') === 'lead' ? 'novo' : 'ativo';
+    const ls = leads.map((l) => ({ ...l, st: leadStatus(l) }));
+    const crm = {
+      totalLeadsKanban: ls.length,
+      semResposta: count(ls, (l) => l.st === 'novo'),
+      ativos: count(ls, (l) => l.st !== 'perdido' && l.st !== 'convertido'),
+      inativos: count(ls, (l) => l.st === 'perdido'),
+      receitaTotal: sum(ls, (l) => l.st === 'convertido', (l) => l.valor),
+    };
+    const origins = new Map();
+    for (const l of ls) {
+      const k = l.origem || 'Outros';
+      const o = origins.get(k) || { leads: 0, convertidos: 0 };
+      o.leads++; if (l.st === 'convertido') o.convertidos++;
+      origins.set(k, o);
+    }
+    const conversionByOrigin = [...origins].map(([origin, o]) => ({
+      origin, leads: o.leads, convertidos: o.convertidos, rate: o.leads ? (o.convertidos / o.leads) * 100 : 0,
+    }));
+
+    const qtd = (i) => Number(i.quantidade || 0);
+    const abaixoMinimo = est.filter((i) => qtd(i) > 0 && qtd(i) <= Number(i.quantidade_minima || 0));
+    const semEstoque = est.filter((i) => qtd(i) <= 0);
+    const estoque = {
+      totalItens: est.length,
+      abaixoMinimo: abaixoMinimo.length,
+      itensAbaixoMinimo: abaixoMinimo.map((i) => i.nome),
+      semEstoque: semEstoque.length,
+      itensSemEstoque: semEstoque.map((i) => i.nome),
+      valorTotalEstoque: est.reduce((acc, i) => acc + Number(i.valor_unitario || 0) * qtd(i), 0),
+    };
+
+    res.json({
+      totalPacientes,
+      agendaHoje: agendaKpis.total,
+      receitaMensal,
+      despesaMensal,
+      agenda: agendaKpis,
+      orcamentos,
+      crm,
+      pacientes: { totalCadastrados: totalPacientes },
+      estoque,
+      conversionByOrigin,
+    });
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('GET /api/dashboard/kpis error:', error);
+    res.status(500).json({ error: 'Erro ao calcular KPIs' });
+  }
+});
+
 app.get('/api/comercial/painel', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
@@ -14592,33 +14765,33 @@ if (process.env.NODE_ENV !== 'test') {
   }
 
   // Start auto-sync every 30 minutes
-  syncWhatsAppContacts(); // Run once on startup
-  syncInterval = setInterval(syncWhatsAppContacts, 30 * 60 * 1000);
+  asSystemJob(syncWhatsAppContacts)(); // Run once on startup
+  syncInterval = setInterval(asSystemJob(syncWhatsAppContacts), 30 * 60 * 1000);
   console.log('   📇 Auto-sync de contatos WhatsApp ativo (a cada 30 min)');
 
   // Start automation job scheduler (every 30s)
-  processAutomationJobs();
-  automationSchedulerInterval = setInterval(processAutomationJobs, 30 * 1000);
+  asSystemJob(processAutomationJobs)();
+  automationSchedulerInterval = setInterval(asSystemJob(processAutomationJobs), 30 * 1000);
   console.log('   🤖 Automation scheduler ativo (a cada 30s)');
 
   // Start inactive patients cron (every 6h)
-  checkInactivePatientsTrigger();
-  automationCronInterval = setInterval(checkInactivePatientsTrigger, 6 * 60 * 60 * 1000);
+  asSystemJob(checkInactivePatientsTrigger)();
+  automationCronInterval = setInterval(asSystemJob(checkInactivePatientsTrigger), 6 * 60 * 60 * 1000);
   console.log('   📅 Cron de pacientes inativos ativo (a cada 6h)');
 
   // Start solution triggers cron (every 2h)
-  setTimeout(() => processSolutionTriggers(), 10000); // delay 10s to let DB settle
-  solutionCronInterval = setInterval(processSolutionTriggers, 2 * 60 * 60 * 1000);
+  setTimeout(asSystemJob(processSolutionTriggers), 10000); // delay 10s to let DB settle
+  solutionCronInterval = setInterval(asSystemJob(processSolutionTriggers), 2 * 60 * 60 * 1000);
   console.log('   🩺 Cron de soluções automáticas ativo (a cada 2h)');
 
   // Start campaign scheduler (every 60s)
-  processCampaignScheduler();
-  campaignSchedulerInterval = setInterval(processCampaignScheduler, 60 * 1000);
+  asSystemJob(processCampaignScheduler)();
+  campaignSchedulerInterval = setInterval(asSystemJob(processCampaignScheduler), 60 * 1000);
   console.log('   📢 Campaign scheduler ativo (a cada 60s)');
 
   // Start appointment reminder cron (every 1h)
-  processAppointmentReminders();
-  appointmentReminderInterval = setInterval(processAppointmentReminders, 60 * 60 * 1000);
+  asSystemJob(processAppointmentReminders)();
+  appointmentReminderInterval = setInterval(asSystemJob(processAppointmentReminders), 60 * 60 * 1000);
   console.log('   🔔 Lembrete de consulta 24h ativo (a cada 1h)');
 
   // Clinicorp auto-reconciliation: tick a cada 60s, decide via DB se executa

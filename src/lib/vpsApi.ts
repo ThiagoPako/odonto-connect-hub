@@ -1,30 +1,17 @@
 /**
  * VPS API Service — Odonto Connect
- * All API calls go through the VPS Express server.
- *
- * Auth bridge: o login agora é gerenciado pela Supabase. O VPS aceita
- * o access_token Supabase como Bearer, então buscamos a sessão atual
- * em vez do antigo `odonto_jwt` em localStorage.
+ * Todas as chamadas vão para o servidor Express da VPS. A autenticação é o JWT
+ * emitido por /api/auth/login, guardado em localStorage.
  */
 
-import { supabase } from "@/integrations/supabase/client";
-import type { Session } from "@supabase/supabase-js";
-import { sbMessagesApi, sbQueueLeadsApi, sbSessionsApi } from "./sbAdapters";
-
-// Lovable preview (lovableproject.com / lovable.app) doesn't proxy /api to the VPS,
-// so we must hit the absolute VPS URL there. Only localhost uses the local proxy.
-const VPS_API_BASE = (() => {
+export const VPS_API_BASE = (() => {
   if (typeof window === 'undefined') return 'https://backend.odontoconnect.tech/api';
   const host = window.location.hostname;
   if (host === 'localhost' || host === '127.0.0.1') return '/api';
-  if (host.includes('lovableproject.com') || host.includes('lovable.app') || host.includes('lovable.dev')) {
-    return 'https://backend.odontoconnect.tech/api';
-  }
   return 'https://backend.odontoconnect.tech/api';
 })();
-const TOKEN_KEY = 'odonto_jwt'; // legacy — mantido só para cleanup
+const TOKEN_KEY = 'odonto_jwt';
 const TENANT_KEY = 'odonto_active_tenant_id';
-let cachedSupabaseAccessToken: string | null = null;
 
 export function getCachedTenantId(): string | null {
   if (typeof window === 'undefined') return null;
@@ -39,39 +26,11 @@ export function setCachedTenantId(tenantId: string | null | undefined): void {
   } catch { /* ignore */ }
 }
 
-export function setCachedAccessToken(sessionOrToken: Pick<Session, 'access_token'> | string | null | undefined): void {
-  if (!sessionOrToken) {
-    cachedSupabaseAccessToken = null;
-    return;
-  }
-
-  cachedSupabaseAccessToken = typeof sessionOrToken === 'string'
-    ? sessionOrToken
-    : sessionOrToken.access_token || null;
-}
-
-function clearLegacyToken(): void {
-  if (typeof window !== 'undefined') localStorage.removeItem(TOKEN_KEY);
-}
-
-function isAuthError(status: number, _error: unknown): boolean {
-  return status === 401;
-}
-
 let _isRedirecting = false;
 
-async function handleAuthFailure(background = false) {
-  if (background) return;
-  if (_isRedirecting) return;
-
-  // Confirma com a Supabase antes de derrubar a sessão.
-  try {
-    const { data, error } = await supabase.auth.getUser();
-    if (!error && data.user) return; // sessão Supabase ok — 401 é da rota específica
-  } catch {
-    return;
-  }
-
+function handleAuthFailure(background = false) {
+  clearToken();
+  if (background || _isRedirecting) return;
   _isRedirecting = true;
   if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
     window.location.href = '/login';
@@ -79,77 +38,25 @@ async function handleAuthFailure(background = false) {
   setTimeout(() => { _isRedirecting = false; }, 2000);
 }
 
-function resetAuthFailureCount() {
-  // no-op
-}
-
-
 // ─── Auth helpers ───────────────────────────────────────────
 
-/** Retorna o access_token Supabase da sessão atual (ou null). */
-export async function getAccessToken(forceRefresh = false): Promise<string | null> {
-  try {
-    if (forceRefresh) {
-      const { data: refreshed } = await supabase.auth.refreshSession();
-      if (refreshed.session?.access_token) {
-        setCachedAccessToken(refreshed.session);
-        clearLegacyToken();
-        return refreshed.session.access_token;
-      }
-    }
-
-    const { data } = await supabase.auth.getSession();
-    if (data.session?.access_token) {
-      setCachedAccessToken(data.session);
-      clearLegacyToken();
-      return data.session.access_token;
-    }
-
-    return cachedSupabaseAccessToken || getToken();
-  } catch {
-    return cachedSupabaseAccessToken || getToken();
-  }
-}
-
-export async function getAuthHeaders(forceRefresh = false): Promise<Record<string, string>> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  const token = await getAccessToken(forceRefresh);
-  if (token) headers['Authorization'] = `Bearer ${token}`;
-
-  // Use only the tenant resolved by AuthProvider/useAuth. Do not perform an
-  // extra profile query here: if that async read fails or races during auth
-  // hydration, a stale local fallback can send/persist chat messages under the
-  // wrong clinic. When absent, the VPS resolves tenant from the bearer token.
-  const cachedTenantId = getCachedTenantId();
-  if (cachedTenantId) headers['X-Tenant-Id'] = cachedTenantId;
-
-  return headers;
-}
-
-/**
- * @deprecated Prefira `getAccessToken()` (async). Mantido sync para callers
- * legados — lê do storage da Supabase.
- */
 export function getToken(): string | null {
   if (typeof window === 'undefined') return null;
-  try {
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key && key.startsWith('sb-') && key.endsWith('-auth-token')) {
-        const raw = localStorage.getItem(key);
-        if (!raw) continue;
-        const parsed = JSON.parse(raw);
-        return parsed?.access_token
-          ?? parsed?.currentSession?.access_token
-          ?? parsed?.session?.access_token
-          ?? null;
-      }
-    }
+  try { return localStorage.getItem(TOKEN_KEY); } catch { return null; }
+}
 
-    const legacyToken = localStorage.getItem(TOKEN_KEY);
-    if (legacyToken) return legacyToken;
-  } catch { /* ignore */ }
-  return null;
+/** Mantido async para os callers existentes. */
+export async function getAccessToken(): Promise<string | null> {
+  return getToken();
+}
+
+export async function getAuthHeaders(): Promise<Record<string, string>> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const token = getToken();
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const cachedTenantId = getCachedTenantId();
+  if (cachedTenantId) headers['X-Tenant-Id'] = cachedTenantId;
+  return headers;
 }
 
 export function setToken(token: string): void {
@@ -157,8 +64,9 @@ export function setToken(token: string): void {
 }
 
 export function clearToken(): void {
-  cachedSupabaseAccessToken = null;
-  if (typeof window !== 'undefined') localStorage.removeItem(TOKEN_KEY);
+  if (typeof window === 'undefined') return;
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(TENANT_KEY);
 }
 
 export function isAuthenticated(): boolean {
@@ -182,16 +90,11 @@ export async function vpsApiFetch<T = unknown>(
       url += `?${searchParams.toString()}`;
     }
 
-    const buildFetchOptions = async (forceRefresh = false): Promise<RequestInit> => ({
+    const response = await fetch(url, {
       method,
-      headers: await getAuthHeaders(forceRefresh),
+      headers: await getAuthHeaders(),
       ...(method !== 'GET' && options?.body ? { body: JSON.stringify(options.body) } : {}),
     });
-
-    let response = await fetch(url, await buildFetchOptions(false));
-    if (response.status === 401) {
-      response = await fetch(url, await buildFetchOptions(true));
-    }
 
     const contentType = response.headers.get('content-type') || '';
     if (!contentType.includes('application/json')) {
@@ -202,7 +105,7 @@ export async function vpsApiFetch<T = unknown>(
     const data = await response.json();
 
     if (!response.ok) {
-      if (isAuthError(response.status, data?.error)) {
+      if (response.status === 401) {
         handleAuthFailure(!!options?.background);
         return { data: null, error: data?.error || 'Sessão expirada. Faça login novamente.' };
       }
@@ -210,8 +113,6 @@ export async function vpsApiFetch<T = unknown>(
       return { data: null, error: data.error || `HTTP ${response.status}` };
     }
 
-    // Successful response — reset consecutive 401 counter
-    resetAuthFailureCount();
     return { data, error: null };
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Erro de rede';
@@ -325,15 +226,57 @@ export async function adminUploadUserAvatar(userId: string, file: File) {
   }
 }
 
-// ─── Pacientes / Agenda / Marcadores → migrados pra Supabase ─
-// (reexportados de sbAdapters para não quebrar imports existentes)
+// ─── Pacientes / Agenda / Marcadores ───────────────────────
 
-export {
-  pacientesApi,
-  agendaApi,
-  marcadoresAgendaApi,
-} from './sbAdapters';
-export type { MarcadorAgenda } from './sbAdapters';
+export const pacientesApi = {
+  list: () => vpsApiFetch('/pacientes'),
+  create: (body: unknown) => vpsApiFetch('/pacientes', { method: 'POST', body }),
+  update: (id: string, body: unknown) => vpsApiFetch(`/pacientes/${id}`, { method: 'PUT', body }),
+  delete: (id: string) => vpsApiFetch(`/pacientes/${id}`, { method: 'DELETE' }),
+  getAnamnese: (id: string) => vpsApiFetch(`/pacientes/${id}/anamnese`),
+  saveAnamnese: (id: string, body: unknown) => vpsApiFetch(`/pacientes/${id}/anamnese`, { method: 'PUT', body }),
+  getOdontograma: (id: string) => vpsApiFetch(`/pacientes/${id}/odontograma`),
+  saveOdontograma: (id: string, body: unknown) => vpsApiFetch(`/pacientes/${id}/odontograma`, { method: 'PUT', body }),
+  getHistorico: (id: string) => vpsApiFetch<HistoricoConsulta[]>(`/pacientes/${id}/historico`),
+};
+
+export const agendaApi = {
+  list: (params?: Record<string, string>) => vpsApiFetch<AgendamentoVPS[]>('/agenda', { params }),
+  create: (body: unknown) => vpsApiFetch<{ id: string; success: boolean }>('/agenda', { method: 'POST', body }),
+  createSerie: (body: {
+    paciente_id: string;
+    dentista_id: string;
+    data_inicio: string;
+    hora: string;
+    duracao?: number;
+    procedimento?: string;
+    quantidade: number;
+    intervalo_dias: number;
+    categoria?: string;
+    categoria_cor?: string;
+    primeira_consulta?: boolean;
+    confirmacao_canal?: string;
+    confirmacao_quando?: string;
+    sala?: string;
+    observacoes?: string;
+  }) => vpsApiFetch<{ serie_id: string; total: number; agendamentos: { id: string; data: string }[] }>(
+    '/agenda/serie', { method: 'POST', body }
+  ),
+  update: (id: string, body: { status?: string; hora?: string; data?: string; duracao?: number; procedimento?: string; categoria?: string; categoria_cor?: string; observacoes?: string; sala?: string; dentista_id?: string; dentista_nome?: string; marcadores?: Array<{ id: string; nome: string; cor: string }>; como_conheceu?: string | null }) =>
+    vpsApiFetch(`/agenda/${encodeURIComponent(id)}`, { method: 'PUT', body }),
+  delete: (id: string, opts?: { serie?: boolean }) =>
+    vpsApiFetch(`/agenda/${encodeURIComponent(id)}${opts?.serie ? '?serie=true' : ''}`, { method: 'DELETE' }),
+};
+
+export interface MarcadorAgenda { id: string; nome: string; cor: string }
+
+export const marcadoresAgendaApi = {
+  list: () => vpsApiFetch<MarcadorAgenda[]>('/agenda/marcadores'),
+  create: (nome: string, cor: string) =>
+    vpsApiFetch<MarcadorAgenda>('/agenda/marcadores', { method: 'POST', body: { nome, cor } }),
+  delete: (id: string) =>
+    vpsApiFetch(`/agenda/marcadores/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+};
 
 export interface HistoricoConsulta {
   id: string;
@@ -405,32 +348,133 @@ export interface AgendamentoVPS {
   como_conheceu?: string | null;
 }
 
-// ─── Financeiro / Estoque / Tratamentos / Comissões / Prontuários / Dentistas / Comercial / CRM
-// migrados pra Supabase via sbAdapters
-export {
-  financeiroApi,
-  finBanksApi,
-  finEmployeesApi,
-  finPayrollsApi,
-  finBillsApi,
-  finMovementsApi,
-  finOverdueApi,
-  dentistasApi,
-  estoqueApi,
-  tratamentosApi,
-  comissoesApi,
-  prontuariosApi,
-  leadsApi,
-  funisApi,
-  etapasApi,
-  followUpsApi,
-  atendentesApi,
-  origensApi,
-  comercialApi,
-} from './sbAdapters';
+// ─── Financeiro / Estoque / Tratamentos / Comissões / Prontuários / Dentistas / Comercial
+
+export const financeiroApi = {
+  list: (params?: Record<string, string>) => vpsApiFetch('/financeiro', { params }),
+  create: (body: unknown) => vpsApiFetch('/financeiro', { method: 'POST', body }),
+  update: (id: string, body: unknown) => vpsApiFetch(`/financeiro/${id}`, { method: 'PUT', body }),
+  delete: (id: string) => vpsApiFetch(`/financeiro/${id}`, { method: 'DELETE' }),
+};
+
+export const finBanksApi = {
+  list: () => vpsApiFetch('/fin/banks'),
+  create: (body: unknown) => vpsApiFetch('/fin/banks', { method: 'POST', body }),
+  update: (id: string, body: unknown) => vpsApiFetch(`/fin/banks/${id}`, { method: 'PUT', body }),
+  delete: (id: string) => vpsApiFetch(`/fin/banks/${id}`, { method: 'DELETE' }),
+};
+
+export const finEmployeesApi = {
+  list: () => vpsApiFetch('/fin/employees'),
+  create: (body: unknown) => vpsApiFetch('/fin/employees', { method: 'POST', body }),
+  delete: (id: string) => vpsApiFetch(`/fin/employees/${id}`, { method: 'DELETE' }),
+};
+
+export const finPayrollsApi = {
+  list: (params?: Record<string, string>) => vpsApiFetch('/fin/payrolls', { params }),
+  create: (body: unknown) => vpsApiFetch('/fin/payrolls', { method: 'POST', body }),
+  update: (id: string, body: unknown) => vpsApiFetch(`/fin/payrolls/${id}`, { method: 'PUT', body }),
+};
+
+export const finBillsApi = {
+  list: () => vpsApiFetch('/fin/bills'),
+  create: (body: unknown) => vpsApiFetch('/fin/bills', { method: 'POST', body }),
+  update: (id: string, body: unknown) => vpsApiFetch(`/fin/bills/${id}`, { method: 'PUT', body }),
+  delete: (id: string) => vpsApiFetch(`/fin/bills/${id}`, { method: 'DELETE' }),
+};
+
+export const finMovementsApi = {
+  list: () => vpsApiFetch('/fin/movements'),
+  create: (body: unknown) => vpsApiFetch('/fin/movements', { method: 'POST', body }),
+};
+
+export const finOverdueApi = {
+  list: () => vpsApiFetch('/fin/overdue'),
+  create: (body: unknown) => vpsApiFetch('/fin/overdue', { method: 'POST', body }),
+  delete: (id: string) => vpsApiFetch(`/fin/overdue/${id}`, { method: 'DELETE' }),
+};
+
+export const dentistasApi = {
+  list: () => vpsApiFetch('/dentistas'),
+  create: (body: unknown) => vpsApiFetch('/dentistas', { method: 'POST', body }),
+  update: (id: string, body: unknown) => vpsApiFetch(`/dentistas/${id}`, { method: 'PUT', body }),
+  delete: (id: string) => vpsApiFetch(`/dentistas/${id}`, { method: 'DELETE' }),
+};
+
+export const estoqueApi = {
+  list: () => vpsApiFetch('/estoque'),
+  create: (body: unknown) => vpsApiFetch('/estoque', { method: 'POST', body }),
+  update: (id: string, body: unknown) => vpsApiFetch(`/estoque/${id}`, { method: 'PUT', body }),
+  delete: (id: string) => vpsApiFetch(`/estoque/${id}`, { method: 'DELETE' }),
+  getMovimentos: (id: string) => vpsApiFetch(`/estoque/${id}/movimentos`),
+  addMovimento: (id: string, body: unknown) => vpsApiFetch(`/estoque/${id}/movimentos`, { method: 'POST', body }),
+};
+
+export const tratamentosApi = {
+  list: (params?: Record<string, string>) => vpsApiFetch('/tratamentos', { params }),
+  create: (body: unknown) => vpsApiFetch('/tratamentos', { method: 'POST', body }),
+  update: (id: string, body: unknown) => vpsApiFetch(`/tratamentos/${id}`, { method: 'PUT', body }),
+  delete: (id: string) => vpsApiFetch(`/tratamentos/${id}`, { method: 'DELETE' }),
+  getEtapas: (id: string) => vpsApiFetch(`/tratamentos/${id}/etapas`),
+  addEtapa: (id: string, body: unknown) => vpsApiFetch(`/tratamentos/${id}/etapas`, { method: 'POST', body }),
+  updateEtapa: (id: string, body: unknown) => vpsApiFetch(`/tratamentos/etapas/${id}`, { method: 'PUT', body }),
+  deleteEtapa: (id: string) => vpsApiFetch(`/tratamentos/etapas/${id}`, { method: 'DELETE' }),
+};
+
+export const comissoesApi = {
+  list: (params?: Record<string, string>) => vpsApiFetch('/comissoes', { params }),
+  create: (body: unknown) => vpsApiFetch('/comissoes', { method: 'POST', body }),
+  update: (id: string, body: unknown) => vpsApiFetch(`/comissoes/${id}`, { method: 'PUT', body }),
+  delete: (id: string) => vpsApiFetch(`/comissoes/${id}`, { method: 'DELETE' }),
+};
+
+export const prontuariosApi = {
+  list: (params?: Record<string, string>) => vpsApiFetch('/prontuarios', { params }),
+  create: (body: unknown) => vpsApiFetch('/prontuarios', { method: 'POST', body }),
+  update: (id: string, body: unknown) => vpsApiFetch(`/prontuarios/${id}`, { method: 'PUT', body }),
+  delete: (id: string) => vpsApiFetch(`/prontuarios/${id}`, { method: 'DELETE' }),
+};
+
+export interface ComercialKpis {
+  atendimentosHoje: number;
+  agendamentosHoje: number;
+  taxaConversao: number;
+  leadsPendentes: number;
+}
+
+export interface ComercialFollowUp {
+  id: string;
+  leadName: string;
+  type: 'retorno' | 'confirmacao' | 'reativacao';
+  scheduledAt: string;
+  note: string;
+}
+
+export interface ComercialConversion {
+  origin: string;
+  leads: number;
+  convertidos: number;
+  rate: number;
+}
+
+export interface ComercialPainel {
+  attendantId: string;
+  kpis: ComercialKpis;
+  followUps: ComercialFollowUp[];
+  conversionByOrigin: ComercialConversion[];
+}
+
+export const comercialApi = {
+  painel: (attendantId?: string) =>
+    vpsApiFetch<ComercialPainel>('/comercial/painel', {
+      params: attendantId ? { attendantId } : undefined,
+    }),
+};
 
 // ─── Dashboard ──────────────────────────────────────────────
-export { sbDashboardApi as dashboardApi } from './sbAdapters';
+export const dashboardApi = {
+  getKpis: () => vpsApiFetch<Record<string, unknown>>('/dashboard/kpis'),
+};
 
 
 // ─── Painel Dentista ────────────────────────────────────────
@@ -520,19 +564,94 @@ export interface DentistaPainel {
   tratamentos: PainelTratamento[];
 }
 
-// painelDentistaApi migrado pra Supabase via sbAdapters
-export { painelDentistaApi } from './sbAdapters';
+export const painelDentistaApi = {
+  get: (dentistaId?: string) =>
+    vpsApiFetch<DentistaPainel>(dentistaId ? `/dentista/painel/${dentistaId}` : '/dentista/painel'),
+};
 
 
 // ─── CRM Leads ──────────────────────────────────────────────
 
 
-// crmApi e orcamentosApi migrados pra Supabase via sbAdapters
-export { crmApi, orcamentosApi } from './sbAdapters';
+export const crmApi = {
+  list: (params?: Record<string, string>) =>
+    vpsApiFetch<{ rows: any[]; total: number; limit: number; offset: number }>('/crm/leads', { params }),
+  kanban: () => vpsApiFetch('/crm/leads', { params: { grouped: 'kanban' } }),
+  updateStage: (id: string, stage: string, reason?: string) =>
+    vpsApiFetch(`/crm/leads/${id}/stage`, { method: 'PATCH', body: { stage, reason } }),
+  updateConsciousness: (id: string, level: string) =>
+    vpsApiFetch(`/crm/leads/${id}/consciousness`, { method: 'PATCH', body: { level } }),
+  assign: (id: string, assignedTo: string, assignedToName: string) =>
+    vpsApiFetch(`/crm/leads/${id}/assign`, { method: 'PATCH', body: { assignedTo, assignedToName } }),
+  movements: (id: string) =>
+    vpsApiFetch<Array<{ id: string; from_stage: string; to_stage: string; moved_by_name: string; reason: string; created_at: string }>>(`/crm/leads/${id}/movements`),
+  convertToPatient: (id: string) =>
+    vpsApiFetch<{ success: boolean; conflict?: boolean; paciente_id: string; nome?: string; paciente_nome?: string }>(`/crm/leads/${id}/convert-to-patient`, { method: 'POST' }),
+  linkToPatient: (id: string, pacienteId: string) =>
+    vpsApiFetch<{ success: boolean; paciente_id: string; paciente_nome: string }>(`/crm/leads/${id}/link-patient`, { method: 'POST', body: { paciente_id: pacienteId } }),
+  history: (id: string) =>
+    vpsApiFetch<Array<{ id: string; data: string; hora: string; procedimento: string; status: string; dentista_nome: string }>>(`/crm/leads/${id}/history`),
+  create: (body: { nome: string; telefone?: string; email?: string; origem?: string; stage?: string; value?: number }) =>
+    vpsApiFetch<any>('/crm/leads', { method: 'POST', body }),
+};
+
+export const orcamentosApi = {
+  list: () => vpsApiFetch('/orcamentos'),
+  create: (body: unknown) => vpsApiFetch<{ id: string; success: boolean }>('/orcamentos', { method: 'POST', body }),
+  update: (id: string, body: unknown) => vpsApiFetch(`/orcamentos/${id}`, { method: 'PUT', body }),
+  delete: (id: string) => vpsApiFetch(`/orcamentos/${id}`, { method: 'DELETE' }),
+  updateStatus: (id: string, status: string) =>
+    vpsApiFetch<{ success: boolean; budget: any; leadMoved: boolean }>(`/orcamentos/${id}/status`, { method: 'PATCH', body: { status } }),
+};
 
 // ─── Catálogo de Procedimentos (Fase B) ──────────────────────
-export { procedimentosCatalogoApi } from './sbAdapters';
-export type { ProcedimentoCatalogo, ProcedimentoVersao } from './sbAdapters';
+export interface ProcedimentoCatalogo {
+  id: string;
+  codigo: string | null;
+  nome: string;
+  categoria: string | null;
+  valor_particular: number;
+  valor_convenio: number;
+  duracao_minutos: number;
+  cor: string;
+  requer_dente: boolean;
+  requer_face: boolean;
+  ativo: boolean;
+  descricao: string | null;
+  versao_atual?: number;
+}
+
+export interface ProcedimentoVersao {
+  id: string;
+  procedimento_id: string;
+  versao: number;
+  codigo: string | null;
+  nome: string;
+  categoria: string | null;
+  valor_particular: number;
+  valor_convenio: number;
+  duracao_minutos: number;
+  cor: string | null;
+  requer_dente: boolean;
+  requer_face: boolean;
+  descricao: string | null;
+  motivo: string | null;
+  alterado_por: string | null;
+  valido_desde: string;
+  valido_ate: string | null;
+  created_at: string;
+}
+
+export const procedimentosCatalogoApi = {
+  list: () => vpsApiFetch<ProcedimentoCatalogo[]>('/procedimentos-catalogo'),
+  create: (body: Partial<ProcedimentoCatalogo>) => vpsApiFetch<ProcedimentoCatalogo>('/procedimentos-catalogo', { method: 'POST', body }),
+  update: (id: string, body: Partial<ProcedimentoCatalogo> & { motivo_versao?: string }) =>
+    vpsApiFetch<ProcedimentoCatalogo>(`/procedimentos-catalogo/${id}`, { method: 'PUT', body }),
+  delete: (id: string) => vpsApiFetch(`/procedimentos-catalogo/${id}`, { method: 'DELETE' }),
+  versoes: (id: string) => vpsApiFetch<ProcedimentoVersao[]>(`/procedimentos-catalogo/${id}/versoes`),
+  versaoEm: (id: string, dataIso: string) =>
+    vpsApiFetch<ProcedimentoVersao | null>(`/procedimentos-catalogo/${id}/versao-em?data=${encodeURIComponent(dataIso)}`),
+};
 
 
 // ─── Execuções e Assinaturas (Fase C) ───────────────────────
@@ -625,8 +744,8 @@ export const whatsappApi = {
         ...(media.mimeType ? { mimeType: media.mimeType } : {}),
       });
 
-      const buildUploadOptions = async (forceRefresh = false): Promise<RequestInit> => {
-        const token = await getAccessToken(forceRefresh);
+      const buildUploadOptions = async (): Promise<RequestInit> => {
+        const token = getToken();
         return {
           method: 'POST',
           headers: {
@@ -637,14 +756,11 @@ export const whatsappApi = {
         };
       };
 
-      let response = await fetch(`${VPS_API_BASE}/whatsapp/send-media-upload?${params.toString()}`, await buildUploadOptions(false));
-      if (response.status === 401) {
-        response = await fetch(`${VPS_API_BASE}/whatsapp/send-media-upload?${params.toString()}`, await buildUploadOptions(true));
-      }
+      const response = await fetch(`${VPS_API_BASE}/whatsapp/send-media-upload?${params.toString()}`, await buildUploadOptions());
 
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        if (isAuthError(response.status, data?.error)) {
+        if (response.status === 401) {
           handleAuthFailure(false);
           return { data: null, error: data?.error || 'Sessão expirada. Faça login novamente.' };
         }
@@ -767,13 +883,8 @@ export const transferApi = {
 export const sessionsApi = {
   start: (body: { leadId: string; leadName?: string; leadPhone?: string; queueId?: string; queueName?: string }) =>
     vpsApiFetch<{ success: boolean; id: string; existing?: boolean }>('/sessions/start', { method: 'POST', body }),
-  assign: async (body: { leadId: string }) => {
-    const primary = await vpsApiFetch<{ success: boolean; id: string; waitTime?: number }>('/sessions/assign', { method: 'POST', body });
-    if (!primary.error) return primary;
-
-    console.warn('[sessionsApi.assign] VPS failed, trying Supabase fallback:', primary.error);
-    return sbSessionsApi.assign(body);
-  },
+  assign: (body: { leadId: string }) =>
+    vpsApiFetch<{ success: boolean; id: string; waitTime?: number }>('/sessions/assign', { method: 'POST', body }),
   firstResponse: (body: { leadId: string }) =>
     vpsApiFetch<{ success: boolean }>('/sessions/first-response', { method: 'POST', body, background: true }),
   close: (body: unknown) =>
@@ -841,7 +952,17 @@ export interface LeadTagApi {
   created_at: string;
 }
 
-export { sbTagsApi as tagsApi } from './sbAdapters';
+export const tagsApi = {
+  list: () => vpsApiFetch<LeadTagApi[]>('/tags'),
+  create: (body: { name: string; color?: string; icon?: string }) =>
+    vpsApiFetch<LeadTagApi>('/tags', { method: 'POST', body }),
+  update: (id: string, body: { name?: string; color?: string; icon?: string }) =>
+    vpsApiFetch<{ success: boolean }>(`/tags/${id}`, { method: 'PUT', body }),
+  delete: (id: string) => vpsApiFetch<{ success: boolean }>(`/tags/${id}`, { method: 'DELETE' }),
+  assignments: () => vpsApiFetch<Record<string, string[]>>('/tag-assignments'),
+  toggle: (leadId: string, tagId: string) =>
+    vpsApiFetch<{ action: 'added' | 'removed' }>('/tag-assignments/toggle', { method: 'POST', body: { leadId, tagId } }),
+};
 
 
 // ─── Contatos ───────────────────────────────────────────────
@@ -861,7 +982,24 @@ export interface Contato {
   updated_at: string;
 }
 
-export { sbContatosApi as contatosApi } from './sbAdapters';
+export const contatosApi = {
+  list: (params?: Record<string, string>) =>
+    vpsApiFetch<Contato[]>('/contatos', { params }),
+  create: (body: { nome: string; telefone?: string; email?: string; tipo?: string; empresa?: string; cargo?: string; observacoes?: string }) =>
+    vpsApiFetch<Contato>('/contatos', { method: 'POST', body }),
+  update: (id: string, body: Partial<Contato>) =>
+    vpsApiFetch<Contato>(`/contatos/${id}`, { method: 'PUT', body }),
+  delete: (id: string) =>
+    vpsApiFetch<{ success: boolean }>(`/contatos/${id}`, { method: 'DELETE' }),
+  toggleFavorito: (id: string) =>
+    vpsApiFetch<Contato>(`/contatos/${id}/favorito`, { method: 'PATCH' }),
+  bulkImport: (contatos: Array<{ telefone: string; nome: string }>) =>
+    vpsApiFetch<{ imported: number; skipped: number; total: number }>('/contatos/import', { method: 'POST', body: { contatos } }),
+  syncNow: () =>
+    vpsApiFetch<{ success: boolean; imported: number; totalContatos: number; instances: Array<{ name: string; imported: number; skipped: number; total: number; error: string | null }>; message?: string }>('/contatos/sync/now', { method: 'POST' }),
+  syncStatus: () =>
+    vpsApiFetch<{ autoSync: boolean; intervalMinutes: number; totalContatos: number }>('/contatos/sync/status'),
+};
 
 
 // ─── Messages / Chat History ────────────────────────────────
@@ -884,16 +1022,10 @@ export interface ChatMessageApi {
 }
 
 export const messagesApi = {
-  list: async (leadId: string, params?: { before?: string; limit?: number }) => {
-    const vpsResult = await vpsApiFetch<{ messages: ChatMessageApi[]; hasMore: boolean }>(`/messages/${leadId}`, {
+  list: (leadId: string, params?: { before?: string; limit?: number }) =>
+    vpsApiFetch<{ messages: ChatMessageApi[]; hasMore: boolean }>(`/messages/${leadId}`, {
       params: Object.fromEntries(Object.entries(params || {}).map(([key, value]) => [key, String(value)])),
-    });
-    if (vpsResult.error || (vpsResult.data?.messages?.length ?? 0) === 0) {
-      const sbResult = await sbMessagesApi.list(leadId, params);
-      if (!sbResult.error && (sbResult.data?.messages?.length ?? 0) > 0) return sbResult;
-    }
-    return vpsResult;
-  },
+    }),
   save: (body: {
     id: string;
     leadId: string;
@@ -915,25 +1047,13 @@ export const messagesApi = {
     vpsApiFetch<{ success: boolean }>(`/messages/${id}/status`, { method: 'PUT', body: { status } }),
   delete: (id: string, hard = false) =>
     vpsApiFetch<{ success: boolean }>(`/messages/${id}`, { method: 'DELETE', params: hard ? { hard: 'true' } : undefined }),
-  unreadCounts: async () => {
-    const vpsResult = await vpsApiFetch<Record<string, number>>('/messages/unread', { background: true });
-    if (vpsResult.error || Object.keys(vpsResult.data || {}).length === 0) {
-      const sbResult = await sbMessagesApi.unreadCounts();
-      if (!sbResult.error && Object.keys(sbResult.data || {}).length > 0) return sbResult;
-    }
-    return vpsResult;
-  },
-  search: async (q: string, leadId?: string) => {
-    const vpsResult = await vpsApiFetch<ChatMessageApi[]>('/messages/search', {
+  unreadCounts: () =>
+    vpsApiFetch<Record<string, number>>('/messages/unread', { background: true }),
+  search: (q: string, leadId?: string) =>
+    vpsApiFetch<ChatMessageApi[]>('/messages/search', {
       params: { q, ...(leadId ? { lead_id: leadId } : {}) },
       background: true,
-    });
-    if (vpsResult.error || (vpsResult.data?.length ?? 0) === 0) {
-      const sbResult = await sbMessagesApi.search(q, leadId);
-      if (!sbResult.error && (sbResult.data?.length ?? 0) > 0) return sbResult;
-    }
-    return vpsResult;
-  },
+    }),
 };
 
 // ─── Media Upload ───────────────────────────────────────────
@@ -964,22 +1084,8 @@ export const mediaApi = {
 // ─── Queue Leads ────────────────────────────────────────────
 
 export const queueLeadsApi = {
-  list: async () => {
-    const vpsResult = await vpsApiFetch<{ queue: unknown[]; active: unknown[] }>('/queue/leads', { background: true });
-
-    // Defensive fallback: the messages are already in Supabase, but if the VPS
-    // tenant/auth bridge is stale after deploy and returns an empty queue, read
-    // the persisted chat tables directly so Comercial/Chat never shows a false
-    // "Nenhum lead" while WhatsApp messages exist.
-    if (vpsResult.error || (((vpsResult.data?.queue?.length ?? 0) + (vpsResult.data?.active?.length ?? 0)) === 0)) {
-      const sbResult = await sbQueueLeadsApi.list();
-      if (!sbResult.error && ((sbResult.data?.queue?.length ?? 0) + (sbResult.data?.active?.length ?? 0)) > 0) {
-        return sbResult;
-      }
-    }
-
-    return vpsResult;
-  },
+  list: () =>
+    vpsApiFetch<{ queue: unknown[]; active: unknown[] }>('/queue/leads', { background: true }),
 };
 
 // ─── Automations ────────────────────────────────────────────
@@ -1287,15 +1393,4 @@ export const reativacaoApi = {
 
 export const healthCheck = () => vpsApiFetch('/health');
 
-export { VPS_API_BASE };
-
-// ─── Supabase-backed extras ─────────────────────────────────
-export {
-  sbUserPreferencesApi as userPreferencesApi,
-  sbPushSubscriptionsApi as pushSubscriptionsApi,
-  sbSatisfactionApi as satisfactionApi,
-  sbReactivationApi as reactivationApi,
-  sbReactivationSendsApi as reactivationSendsApi,
-  sbSystemSettingsApi as systemSettingsApi,
-} from './sbAdapters';
 

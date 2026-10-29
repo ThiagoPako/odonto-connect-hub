@@ -1,6 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { localDateISO } from "@/lib/utils";
-import { supabase } from "@/integrations/supabase/client";
 import { useState, useCallback, useEffect, useRef } from "react";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import {
@@ -19,7 +18,7 @@ import {
   type Paciente
 } from "@/data/registroCentral";
 import { type Appointment } from "@/data/agendaMockData";
-import { aiApi, consultationsApi, agendaApi, type AgendamentoVPS, type ConsultationRecord } from "@/lib/vpsApi";
+import { aiApi, consultationsApi, agendaApi, dentistasApi, type AgendamentoVPS, type ConsultationRecord } from "@/lib/vpsApi";
 import { toast } from "sonner";
 
 type SearchParams = { appointmentId?: string };
@@ -439,7 +438,8 @@ function ConsultaPage() {
     const profissional = appointmentSelecionado?.professional || "";
     let croProfissional: string | undefined;
     if (profissional) {
-      const { data: dent } = await supabase.from("dentistas").select("cro").eq("nome", profissional).maybeSingle();
+      const { data: dents } = await dentistasApi.list();
+      const dent = Array.isArray(dents) ? (dents as Array<{ nome?: string; cro?: string | null }>).find((d) => d.nome === profissional) : undefined;
       croProfissional = dent?.cro || undefined;
     }
     exportarPrescricaoPdf({

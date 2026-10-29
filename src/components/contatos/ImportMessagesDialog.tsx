@@ -29,10 +29,9 @@ import {
   WifiOff,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { whatsappApi, getAccessToken, VPS_API_BASE } from "@/lib/vpsApi";
+import { whatsappApi } from "@/lib/vpsApi";
 import { useWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
-import { fetchInstances as fetchEvolutionInstances, fetchWhatsAppInstanceMessages, fetchProfilePictureUrl } from "@/lib/evolutionApi";
-import { supabase } from "@/integrations/supabase/client";
+import { fetchInstances as fetchEvolutionInstances } from "@/lib/evolutionApi";
 
 interface InstanceResult {
   name: string;
@@ -56,110 +55,6 @@ interface WaInstance {
   status: string;
   profilePictureUrl?: string;
 }
-
-type ParsedMessage = {
-  content: string;
-  type: string;
-  file_name?: string;
-  mime_type?: string;
-};
-
-const getMessageRemoteJid = (msg: any): string =>
-  String(msg?.key?.remoteJid || msg?.remoteJid || msg?.jid || "");
-
-const getMessagePhone = (msg: any): string => {
-  const directJid = getMessageRemoteJid(msg);
-  const altJid = String(msg?.key?.remoteJidAlt || msg?.remoteJidAlt || "");
-  const candidate = altJid.endsWith("@s.whatsapp.net") ? altJid : directJid;
-  return candidate.replace(/@.*$/, "").replace(/\D/g, "");
-};
-
-const isImportableConversationJid = (jid: string): boolean => {
-  if (!jid || !jid.includes("@")) return false;
-  if (jid.endsWith("@g.us") || jid.endsWith("@broadcast") || jid.endsWith("@newsletter") || jid.includes("status@")) return false;
-  if (jid.endsWith("@s.whatsapp.net")) {
-    const digits = jid.replace(/@.*$/, "").replace(/\D/g, "");
-    return digits.length >= 10 && digits.length <= 13 && digits !== "0";
-  }
-  return jid.endsWith("@lid");
-};
-
-const getMessageTimestamp = (msg: any): Date | null => {
-  const raw =
-    msg?.messageTimestamp ??
-    msg?.message?.messageTimestamp ??
-    msg?.timestamp ??
-    msg?.createdAt ??
-    msg?.messageTimestampMs ??
-    msg?.key?.timestamp;
-  if (!raw) return null;
-  let ms: number;
-  if (typeof raw === "number") {
-    ms = raw > 1e12 ? raw : raw * 1000;
-  } else if (typeof raw === "string") {
-    // Could be ISO date or numeric string (seconds)
-    const asNum = Number(raw);
-    if (!Number.isNaN(asNum) && asNum > 0 && /^\d+$/.test(raw)) {
-      ms = asNum > 1e12 ? asNum : asNum * 1000;
-    } else {
-      const d = new Date(raw);
-      if (Number.isNaN(d.getTime())) return null;
-      return d;
-    }
-  } else {
-    return null;
-  }
-  const date = new Date(ms);
-  return Number.isNaN(date.getTime()) ? null : date;
-};
-
-const unwrapMessage = (m: any): any => {
-  if (!m || typeof m !== "object") return m;
-  if (m.ephemeralMessage?.message) return unwrapMessage(m.ephemeralMessage.message);
-  if (m.viewOnceMessage?.message) return unwrapMessage(m.viewOnceMessage.message);
-  if (m.viewOnceMessageV2?.message) return unwrapMessage(m.viewOnceMessageV2.message);
-  if (m.viewOnceMessageV2Extension?.message) return unwrapMessage(m.viewOnceMessageV2Extension.message);
-  if (m.documentWithCaptionMessage?.message) return unwrapMessage(m.documentWithCaptionMessage.message);
-  if (m.editedMessage?.message?.protocolMessage?.editedMessage)
-    return unwrapMessage(m.editedMessage.message.protocolMessage.editedMessage);
-  if (m.buttonsResponseMessage) return { conversation: m.buttonsResponseMessage.selectedDisplayText || m.buttonsResponseMessage.selectedButtonId || "" };
-  if (m.listResponseMessage) return { conversation: m.listResponseMessage.title || m.listResponseMessage.singleSelectReply?.selectedRowId || "" };
-  if (m.templateButtonReplyMessage) return { conversation: m.templateButtonReplyMessage.selectedDisplayText || "" };
-  return m;
-};
-
-const parseMessageContent = (msg: any): ParsedMessage | null => {
-  const rawMsg = msg?.message || {};
-  const m = unwrapMessage(rawMsg);
-  if (m.conversation) return { content: m.conversation, type: "text" };
-  if (m.extendedTextMessage?.text) return { content: m.extendedTextMessage.text, type: "text" };
-  if (m.imageMessage) return { content: m.imageMessage.caption || "📷 Imagem", type: "image", mime_type: m.imageMessage.mimetype };
-  if (m.videoMessage) return { content: m.videoMessage.caption || "🎥 Vídeo", type: "video", mime_type: m.videoMessage.mimetype };
-  if (m.audioMessage) return { content: "🎵 Áudio", type: "audio", mime_type: m.audioMessage.mimetype };
-  if (m.documentMessage) return { content: m.documentMessage.caption || m.documentMessage.fileName || "📄 Documento", type: "document", file_name: m.documentMessage.fileName, mime_type: m.documentMessage.mimetype };
-  if (m.stickerMessage) return { content: "🏷️ Sticker", type: "sticker" };
-  if (m.contactMessage) return { content: `👤 ${m.contactMessage.displayName || "Contato"}`, type: "contact" };
-  if (m.contactsArrayMessage) return { content: `👤 ${m.contactsArrayMessage.displayName || "Contatos"}`, type: "contact" };
-  if (m.locationMessage) return { content: "📍 Localização", type: "location" };
-  if (m.liveLocationMessage) return { content: "📍 Localização ao vivo", type: "location" };
-  if (m.pollCreationMessage || m.pollCreationMessageV3) return { content: `📊 ${m.pollCreationMessage?.name || m.pollCreationMessageV3?.name || "Enquete"}`, type: "poll" };
-  if (m.reactionMessage) return { content: m.reactionMessage.text || "👍", type: "text" };
-  if (m.protocolMessage || m.senderKeyDistributionMessage || msg?.messageStubType) return null;
-  // Top-level fallbacks (Evolution v2 alternate shapes)
-  if (typeof msg?.text === "string" && msg.text) return { content: msg.text, type: "text" };
-  if (typeof msg?.body === "string" && msg.body) return { content: msg.body, type: "text" };
-  if (typeof msg?.content === "string" && msg.content) return { content: msg.content, type: "text" };
-  if (typeof msg?.caption === "string" && msg.caption) return { content: msg.caption, type: "text" };
-  // messageType hint (Evolution v2 stores type at top level)
-  const mt = String(msg?.messageType || "").toLowerCase();
-  if (mt.includes("image")) return { content: "📷 Imagem", type: "image" };
-  if (mt.includes("video")) return { content: "🎥 Vídeo", type: "video" };
-  if (mt.includes("audio") || mt.includes("ptt")) return { content: "🎵 Áudio", type: "audio" };
-  if (mt.includes("document")) return { content: "📄 Documento", type: "document" };
-  if (mt.includes("sticker")) return { content: "🏷️ Sticker", type: "sticker" };
-  // Skip unknown/system messages instead of polluting the queue
-  return null;
-};
 
 interface ImportMessagesDialogProps {
   open: boolean;
@@ -285,18 +180,9 @@ export function ImportMessagesDialog({
     setEndDate(new Date());
   };
 
-  const runDirectImport = async (): Promise<ImportResult> => {
-    const { data: userData, error: userError } = await supabase.auth.getUser();
-    if (userError || !userData.user) throw new Error("Sessão expirada. Faça login novamente.");
-
-    const { data: profile, error: profileError } = await supabase
-      .from("profiles")
-      .select("tenant_id")
-      .eq("id", userData.user.id)
-      .maybeSingle();
-    if (profileError || !profile?.tenant_id) throw new Error("Não foi possível identificar a clínica da sessão atual.");
-
-    const tenantId = profile.tenant_id;
+  // A VPS busca o histórico na Evolution e grava leads/mensagens na clínica certa.
+  const runVpsImport = async (): Promise<ImportResult> => {
+    const days = Math.min(365, Math.max(1, Math.ceil((Date.now() - startDate.getTime()) / 86400000)));
     const selected = Array.from(selectedInstances);
     const instanceResults: InstanceResult[] = [];
     let totalImported = 0;
@@ -305,180 +191,13 @@ export function ImportMessagesDialog({
     for (let ii = 0; ii < selected.length; ii++) {
       if (abortRef.current?.signal.aborted) break;
       const instanceName = selected[ii];
-      const instResult: InstanceResult = { name: instanceName, imported: 0, skipped: 0, contacts: 0, error: null };
-      setProgress({ message: `Buscando contatos de ${instanceName}...`, instanceName, instanceIndex: ii, totalInstances: selected.length });
-
-      try {
-        let pageTotal: number | undefined;
-        const allMessages = await fetchWhatsAppInstanceMessages(instanceName, {
-          pageSize: 1000,
-          maxPages: 250,
-          onPage: ({ totalFetched, total, totalPages, page }) => {
-            pageTotal = total;
-            setProgress({
-              message: `Baixando histórico de ${instanceName}: ${totalFetched}${total ? `/${total}` : ""} mensagens...`,
-              instanceName,
-              instanceIndex: ii,
-              totalInstances: selected.length,
-              contactIndex: page - 1,
-              totalContacts: totalPages ?? Math.max(page, 1),
-              imported: totalImported,
-              skipped: totalSkipped,
-            });
-          },
-        });
-
-        const startMs = startDate.getTime();
-        const endMs = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate(), 23, 59, 59, 999).getTime();
-        const conversations = new Map<string, any[]>();
-
-        for (const msg of allMessages) {
-          const jid = getMessageRemoteJid(msg);
-          if (!isImportableConversationJid(jid)) continue;
-          const timestamp = getMessageTimestamp(msg);
-          if (!timestamp || timestamp.getTime() < startMs || timestamp.getTime() > endMs) continue;
-          if (!parseMessageContent(msg)) continue;
-          const key = msg?.key?.remoteJidAlt || jid;
-          const existing = conversations.get(key) || [];
-          existing.push(msg);
-          conversations.set(key, existing);
-        }
-
-        const conversationEntries = Array.from(conversations.entries());
-        instResult.contacts = conversationEntries.length;
-
-        console.log("[ImportMessages] instance scan", {
-          instanceName,
-          totalFromApi: pageTotal ?? allMessages.length,
-          fetched: allMessages.length,
-          conversations: conversationEntries.length,
-        });
-
-        for (let ci = 0; ci < conversationEntries.length; ci++) {
-          if (abortRef.current?.signal.aborted) break;
-          const [conversationJid, rawMessages] = conversationEntries[ci];
-          const sampleMessage = rawMessages.find((m) => getMessagePhone(m)) || rawMessages[0];
-          const phone = getMessagePhone(sampleMessage);
-          if (!phone || phone.length < 10 || phone.length > 13) continue;
-          const rawName = rawMessages.find((m) => m?.pushName && String(m.pushName).trim().toLowerCase() !== "whatsapp")?.pushName?.trim();
-          const contactName = rawName || phone;
-
-          setProgress({
-            message: `Processando ${contactName}...`,
-            contactName,
-            contactIndex: ci,
-            totalContacts: conversationEntries.length,
-            instanceName,
-            instanceIndex: ii,
-            totalInstances: selected.length,
-            imported: totalImported,
-            skipped: totalSkipped,
-          });
-
-          // Resolve profile picture (best-effort)
-          let avatarUrl: string | null = null;
-          if (!avatarUrl) {
-            avatarUrl = await fetchProfilePictureUrl(instanceName, phone);
-          }
-
-          const { data: existingContact } = await supabase
-            .from("contatos")
-            .select("id")
-            .eq("tenant_id", tenantId)
-            .eq("telefone", phone)
-            .limit(1);
-          if (!existingContact?.length) {
-            await supabase.from("contatos").insert({ tenant_id: tenantId, nome: contactName, telefone: phone, tipo: "pessoal", avatar_url: avatarUrl } as never).then(() => undefined);
-          }
-
-          const suffix = phone.slice(-11);
-          const { data: existingLeads } = await supabase
-            .from("crm_leads")
-            .select("id,nome,telefone,avatar_url")
-            .eq("tenant_id", tenantId)
-            .or(`telefone.eq.${phone},telefone.ilike.%${suffix}`)
-            .limit(1);
-
-          let leadId = existingLeads?.[0]?.id as string | undefined;
-          if (!leadId) {
-            const { data: newLead, error: leadError } = await supabase
-              .from("crm_leads")
-              .insert({ tenant_id: tenantId, nome: contactName, telefone: phone, avatar_url: avatarUrl, origem: "whatsapp", status: "novo", kanban_stage: "lead", awaiting_queue_selection: true } as never)
-              .select("id")
-              .single();
-            if (leadError) throw leadError;
-            leadId = newLead?.id as string | undefined;
-          } else {
-            // Update avatar / name if we have better info now
-            const existing = existingLeads![0] as any;
-            const updates: Record<string, unknown> = {};
-            if (avatarUrl && !existing.avatar_url) updates.avatar_url = avatarUrl;
-            if (rawName && rawName.toLowerCase() !== "whatsapp" && (!existing.nome || existing.nome === existing.telefone)) {
-              updates.nome = rawName;
-            }
-            if (Object.keys(updates).length > 0) {
-              await supabase.from("crm_leads").update(updates as never).eq("id", leadId);
-            }
-          }
-          if (!leadId) continue;
-
-          const parsed = rawMessages.map((msg: any) => ({
-            msg,
-            timestamp: getMessageTimestamp(msg),
-            parsed: parseMessageContent(msg),
-          }));
-          const inRange = parsed.filter(
-            (item: { timestamp: Date | null; parsed: ParsedMessage | null }) => item.timestamp && item.timestamp.getTime() >= startMs && item.timestamp.getTime() <= endMs && item.parsed,
-          );
-
-          console.log("[ImportMessages]", {
-            contact: contactName,
-            phone,
-            conversationJid,
-            rawCount: rawMessages.length,
-            parsedWithTs: parsed.filter((p: { timestamp: Date | null }) => p.timestamp).length,
-            inRange: inRange.length,
-            sample: rawMessages[0],
-          });
-
-          const rows = inRange.map((item: { msg: any; timestamp: Date | null; parsed: ParsedMessage | null }) => {
-              const msgId = item.msg?.key?.id || item.msg?.id || `evo-${instanceName}-${phone}-${item.timestamp!.getTime()}`;
-              return {
-                id: msgId,
-                tenant_id: tenantId,
-                lead_id: leadId,
-                content: item.parsed!.content,
-                sender: item.msg?.key?.fromMe ? "attendant" : "lead",
-                type: item.parsed!.type,
-                status: "delivered",
-                timestamp: item.timestamp!.toISOString(),
-                file_name: item.parsed!.file_name ?? null,
-                mime_type: item.parsed!.mime_type ?? null,
-                instance: instanceName,
-                phone,
-                metadata: { importedFrom: "whatsapp", contactName, remoteJid: getMessageRemoteJid(item.msg), remoteJidAlt: item.msg?.key?.remoteJidAlt || null },
-              };
-            });
-
-          if (rows.length === 0) continue;
-          const ids = rows.map((r: { id: string }) => r.id);
-          const { data: existingMessages } = await supabase.from("chat_messages").select("id").in("id", ids);
-          const existingIds = new Set((existingMessages || []).map((r: any) => r.id));
-          const newRows = rows.filter((r: { id: string }) => !existingIds.has(r.id));
-          instResult.skipped += rows.length - newRows.length;
-          totalSkipped += rows.length - newRows.length;
-
-          if (newRows.length > 0) {
-            const { error: insertError } = await supabase.from("chat_messages").insert(newRows as never);
-            if (insertError) throw insertError;
-            instResult.imported += newRows.length;
-            totalImported += newRows.length;
-          }
-        }
-      } catch (error) {
-        instResult.error = error instanceof Error ? error.message : "Erro na importação direta";
-      }
-      instanceResults.push(instResult);
+      setProgress({ message: `Importando ${days} dia(s) de ${instanceName}...`, instanceName, instanceIndex: ii, totalInstances: selected.length });
+      const { data, error } = await whatsappApi.syncChat(instanceName, days);
+      const imported = data?.imported ?? 0;
+      const skipped = data?.skipped ?? 0;
+      totalImported += imported;
+      totalSkipped += skipped;
+      instanceResults.push({ name: instanceName, imported, skipped, contacts: 0, error: error || null });
     }
 
     return { success: true, imported: totalImported, skipped: totalSkipped, instances: instanceResults };
@@ -493,18 +212,7 @@ export function ImportMessagesDialog({
     abortRef.current = controller;
 
     try {
-      // Garante sessão Supabase válida antes de importar
-      const { data: userData, error: userError } = await supabase.auth.getUser();
-      if (userError || !userData.user) {
-        await supabase.auth.refreshSession();
-      }
-
-      // Import direto (cliente -> Evolution API + Supabase).
-      // O endpoint VPS /messages/import-whatsapp tem bugs conhecidos
-      // (lead_id incorreto como telefone string, tenant_id ausente em
-      // chat_messages, e errors silenciados) — usamos o caminho direto
-      // que cria leads corretamente e insere mensagens com tenant_id.
-      const directResult = await runDirectImport();
+      const directResult = await runVpsImport();
       setResult(directResult);
       setProgress(null);
       if (directResult.imported > 0 || directResult.skipped > 0) onImported?.();

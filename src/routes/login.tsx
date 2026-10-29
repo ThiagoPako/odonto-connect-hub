@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useState, useEffect, type FormEvent } from "react";
 import { useAuth } from "@/hooks/useAuth";
-import { supabase } from "@/integrations/supabase/client";
+import { forgotPassword } from "@/lib/vpsApi";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -51,13 +51,12 @@ function LoginPage() {
     setForgotError("");
     setForgotLoading(true);
     try {
-      const { error: err } = await supabase.auth.resetPasswordForEmail(forgotEmail, {
-        redirectTo: `${window.location.origin}/reset-password`,
-      });
-      if (err) setForgotError(err.message);
+      // A VPS registra o pedido; o admin da clínica redefine a senha no painel.
+      const { error: err } = await forgotPassword(forgotEmail);
+      if (err) setForgotError(err);
       else setForgotSent(true);
     } catch {
-      setForgotError("Erro ao enviar email");
+      setForgotError("Erro ao enviar solicitação");
     } finally {
       setForgotLoading(false);
     }
@@ -76,8 +75,8 @@ function LoginPage() {
             <CardTitle className="text-xl font-heading">Recuperar Senha</CardTitle>
             <CardDescription>
               {forgotSent
-                ? "Verifique seu email"
-                : "Informe seu email para receber o link de recuperação"}
+                ? "Solicitação enviada"
+                : "Informe seu email; o administrador da clínica vai redefinir sua senha"}
             </CardDescription>
           </CardHeader>
           <CardContent>

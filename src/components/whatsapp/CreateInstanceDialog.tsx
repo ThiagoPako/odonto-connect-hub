@@ -5,7 +5,6 @@ import { Label } from "@/components/ui/label";
 import { Loader2 } from "lucide-react";
 import { useState } from "react";
 import { whatsappApi, getAccessToken } from "@/lib/vpsApi";
-import { supabase } from "@/integrations/supabase/client";
 
 interface CreateInstanceDialogProps {
   open: boolean;
@@ -27,9 +26,7 @@ export function CreateInstanceDialog({ open, onOpenChange, onCreated }: CreateIn
     setError(null);
 
     try {
-      // 1) Garante um access_token Supabase válido (força refresh).
-      await supabase.auth.refreshSession().catch(() => null);
-      const token = await getAccessToken(true);
+      const token = await getAccessToken();
       if (!token) {
         throw new Error("Sua sessão expirou. Saia e entre novamente.");
       }
@@ -38,11 +35,7 @@ export function CreateInstanceDialog({ open, onOpenChange, onCreated }: CreateIn
       // Não usamos /auth/me aqui: essa rota depende do profile local da VPS e
       // pode retornar "Perfil não encontrado" mesmo com sessão Supabase válida,
       // bloqueando indevidamente a geração do QR Code.
-      let { data, error: apiError } = await whatsappApi.create(sanitized);
-      if (apiError === "Unauthorized") {
-        await supabase.auth.refreshSession().catch(() => null);
-        ({ data, error: apiError } = await whatsappApi.create(sanitized));
-      }
+      const { data, error: apiError } = await whatsappApi.create(sanitized);
 
       if (apiError) {
         if (apiError === "Unauthorized") {

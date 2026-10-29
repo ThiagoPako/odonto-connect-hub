@@ -1,5 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useVpsEvent } from "@/hooks/useVpsEvent";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -7,7 +8,6 @@ import { Plus, ChevronLeft, ChevronRight, Settings, RefreshCw, Clock, Database, 
 import { toast } from "sonner";
 import { agendaApi, dentistasApi, clinicaApi, type AgendamentoVPS, type ClinicaConfig } from "@/lib/vpsApi";
 import { clinicorpApi } from "@/lib/clinicorpApi";
-import { supabase } from "@/integrations/supabase/client";
 import { AgendaMiniCalendar } from "@/components/agenda/AgendaMiniCalendar";
 import { AgendaProfessionalsList } from "@/components/agenda/AgendaProfessionalsList";
 import { AgendaGrid } from "@/components/agenda/AgendaGrid";
@@ -112,19 +112,12 @@ function AgendaPage() {
   };
   useEffect(loadAppointments, [dateStr]);
   
-  // Tempo real via Supabase Realtime na tabela agendamentos (RLS limita à clínica)
+  // Tempo real: a VPS emite agendamento_changed só para a clínica do usuário
   const loadRef = useRef(loadAppointments);
   loadRef.current = loadAppointments;
-  useEffect(() => {
-    const channel = supabase
-      .channel("agenda-agendamentos")
-      .on("postgres_changes", { event: "*", schema: "public", table: "agendamentos" }, (payload) => {
-        const row = (payload.new ?? payload.old) as { data?: string } | null;
-        if (!row?.data || row.data === currentDateRef.current) loadRef.current();
-      })
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, []);
+  useVpsEvent<{ data?: string }>("agendamento_changed", (evt) => {
+    if (!evt?.data || evt.data === currentDateRef.current) loadRef.current();
+  });
 
 
   // Horário do dia atual com base na config

@@ -7,7 +7,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { Printer, Send, FileDown, Upload, X } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { mediaApi, pacientesApi } from "@/lib/vpsApi";
+import { examesApi } from "@/lib/examesApi";
 import odontogramaFullAsset from "@/assets/odontograma-full.png.asset.json";
 import odontogramaAdultoAsset from "@/assets/odontograma-adulto.png.asset.json";
 import { parsePedidoFile } from "@/lib/pedidoExameParser";
@@ -197,21 +198,15 @@ function PedidoExamePage() {
     if (!files.length) return;
     setUploading(true);
     try {
-      const { data: userData } = await supabase.auth.getUser();
-      const uid = userData.user?.id ?? "anon";
       const novos: Array<{ name: string; url: string; path: string; type: string; file?: File }> = [];
       for (const file of files) {
-        const path = `${uid}/pedidos/${Date.now()}-${file.name.replace(/[^\w.\-]/g, "_")}`;
-        const { error } = await supabase.storage.from("exam-images").upload(path, file, {
-          cacheControl: "3600",
-          upsert: false,
-        });
-        if (error) {
-          toast.error(`Falha ao enviar ${file.name}: ${error.message}`);
+        // Arquivos ficam em /uploads/media da VPS; a URL serve como identificador.
+        const { url, error } = await mediaApi.upload(file);
+        if (error || !url) {
+          toast.error(`Falha ao enviar ${file.name}: ${error || "sem URL"}`);
           continue;
         }
-        const { data: signed } = await supabase.storage.from("exam-images").createSignedUrl(path, 60 * 60 * 24 * 7);
-        novos.push({ name: file.name, url: signed?.signedUrl ?? "", path, type: file.type || "application/octet-stream", file });
+        novos.push({ name: file.name, url, path: url, type: file.type || "application/octet-stream", file });
       }
       if (novos.length) {
         setUploads((prev) => [...prev, ...novos]);
@@ -224,7 +219,6 @@ function PedidoExamePage() {
   };
 
   const removeUpload = async (path: string) => {
-    await supabase.storage.from("exam-images").remove([path]);
     setUploads((prev) => prev.filter((u) => u.path !== path));
   };
 
@@ -256,11 +250,8 @@ function PedidoExamePage() {
       let pacienteId: string | null = null;
       const cpfTrim = cpf.trim();
       if (cpfTrim) {
-        const { data: existente } = await supabase
-          .from("pacientes")
-          .select("id")
-          .eq("cpf", cpfTrim)
-          .maybeSingle();
+        const { data: lista } = await pacientesApi.list();
+        const existente = Array.isArray(lista) ? (lista as Array<{ id: string; cpf?: string | null }>).find((p) => p.cpf === cpfTrim) : undefined;
         if (existente?.id) pacienteId = existente.id;
       }
 
@@ -273,15 +264,12 @@ function PedidoExamePage() {
       };
 
       if (pacienteId) {
-        await supabase.from("pacientes").update(pacientePayload).eq("id", pacienteId);
+        const { error: errUpd } = await pacientesApi.update(pacienteId, pacientePayload);
+        if (errUpd) throw new Error(errUpd);
       } else {
-        const { data: novo, error: errPac } = await supabase
-          .from("pacientes")
-          .insert(pacientePayload)
-          .select("id")
-          .single();
-        if (errPac) throw errPac;
-        pacienteId = novo?.id ?? null;
+        const { data: novo, error: errPac } = await pacientesApi.create(pacientePayload);
+        if (errPac) throw new Error(errPac);
+        pacienteId = (novo as { id?: string } | null)?.id ?? null;
       }
 
       const obsResumo = [
@@ -296,13 +284,10 @@ function PedidoExamePage() {
 
       const rows = tipos.map((t) => ({
         paciente_id: pacienteId,
-        paciente_nome: paciente.trim(),
-        tipo_exame: t,
-        status: "pendente",
+        tipo_nome: t,
         observacoes: obsResumo || null,
       }));
-      const { error } = await supabase.from("exames").insert(rows as any);
-      if (error) throw error;
+      for (const row of rows) await examesApi.create(row);
 
       toast.success(`Paciente cadastrado e pedido salvo (${rows.length} ${rows.length === 1 ? "exame" : "exames"})`);
     } catch (e: any) {
