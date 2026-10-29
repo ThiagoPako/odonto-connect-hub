@@ -13,48 +13,48 @@ function normalizeApiToken(token) {
   return String(token || '').trim().replace(/^Bearer\s+/i, '');
 }
 
-function clinicorpAuthHeaders(settings, authMode = 'basic') {
+// A API da Clinicorp aceita SOMENTE HTTP Basic (usuário = "Usuário API",
+// senha = "Token API"). O token nunca vai na URL para não aparecer em logs.
+function clinicorpAuthHeaders(settings) {
   const apiToken = normalizeApiToken(settings?.api_token);
   const apiUser = String(settings?.subscriber_id || '').trim();
-  const headers = { Accept: 'application/json' };
-
-  if (authMode === 'basic' && apiUser) {
-    headers.Authorization = `Basic ${Buffer.from(`${apiUser}:${apiToken}`).toString('base64')}`;
-  } else {
-    headers.Authorization = `Bearer ${apiToken}`;
-  }
-
-  return headers;
+  return {
+    Accept: 'application/json',
+    Authorization: `Basic ${Buffer.from(`${apiUser}:${apiToken}`).toString('base64')}`,
+  };
 }
 
-// ─── Settings cache ───────────────────────────────────────────
-let _settingsCache = null;
-let _settingsCacheAt = 0;
-
-// REMOVIDO: loadSettings global removido para suportar apenas multi-tenant.
-async function loadSettings(pool, force = false) {
-  return null;
+// ─── Settings por tenant ──────────────────────────────────────
+// Não existe mais configuração global: as credenciais ficam em
+// clinicorp_user_settings (uma linha por usuário). Para operações disparadas
+// pelo sistema (push, webhook) usamos a credencial ativa mais recente de um
+// usuário daquele tenant.
+async function loadSettingsForTenant(pool, tenantId) {
+  if (!tenantId) return null;
+  const { rows } = await pool.query(
+    `SELECT s.user_id, s.enabled, s.api_token, s.subscriber_id, s.base_url, p.tenant_id
+       FROM clinicorp_user_settings s
+       JOIN profiles p ON p.id = s.user_id
+      WHERE p.tenant_id = $1
+        AND s.enabled = TRUE
+        AND s.api_token IS NOT NULL AND s.api_token <> ''
+        AND s.subscriber_id IS NOT NULL AND s.subscriber_id <> ''
+      ORDER BY s.updated_at DESC NULLS LAST
+      LIMIT 1`,
+    [tenantId]
+  );
+  const s = rows[0];
+  if (!s) return null;
+  return { ...s, base_url: s.base_url || DEFAULT_BASE_URL };
 }
 
-// ─── Tenant resolver ──────────────────────────────────────────
-// A integração Clinicorp grava em tabelas multi-tenant (dentistas, pacientes,
-// agendamentos, crm_leads). Sem tenant_id os GETs filtrados não enxergam nada.
-// REMOVIDO DEFAULT_TENANT_ID fixo. 
-async function resolveTenantId(pool, manualId = null) {
-  if (manualId) return manualId;
-  try {
-    const { rows } = await pool.query(
-      `SELECT tenant_id FROM profiles WHERE role = 'admin' ORDER BY created_at ASC LIMIT 1`
-    );
-    return rows[0]?.tenant_id || null;
-  } catch {
-    return null;
-  }
-}
-
-function invalidateSettings() {
-  _settingsCache = null;
-  _settingsCacheAt = 0;
+// ─── Tenant ───────────────────────────────────────────────────
+// Toda escrita da integração exige o tenant explícito (do usuário logado, do
+// webhook_secret ou do registro local). Não há mais fallback para o tenant do
+// primeiro admin — isso gravava dados de uma clínica em outra.
+async function resolveTenantId(_pool, tenantId = null) {
+  if (tenantId) return tenantId;
+  throw new Error('Clinicorp: tenant_id obrigatório');
 }
 
 // Converte valores que devem ir para colunas BIGINT: trata "", undefined, null,
@@ -149,43 +149,32 @@ async function clinicorpFetch(settings, pathName, { method = 'GET', query = {}, 
 }
 
 async function _clinicorpFetchRaw(settings, pathName, { method = 'GET', query = {}, body } = {}) {
-
-  if (!settings?.api_token) {
-    throw new Error('Clinicorp: api_token não configurado');
+  if (!settings?.api_token || !settings?.subscriber_id) {
+    throw new Error('Clinicorp: Usuário API (subscriber_id) e Token API são obrigatórios');
   }
   const base = (settings.base_url || DEFAULT_BASE_URL).replace(/\/$/, '');
   const url = new URL(base + pathName);
-  
-  // Limpar query parameters vazios ou nulos para evitar erros na API do Clinicorp
-  const allQuery = { ...query };
-  // subscriber_id é OBRIGATÓRIO em TODAS as chamadas da Clinicorp (mesmo quando há business_id).
-  if (settings.subscriber_id && (allQuery.subscriber_id === undefined || allQuery.subscriber_id === null || allQuery.subscriber_id === '')) {
-    allQuery.subscriber_id = settings.subscriber_id;
-  }
-  // Clinicorp autentica via query params user_api + api_key (mesmo formato do webhook).
-  // Mantemos também Authorization Basic como fallback.
-  const _apiUserQ = String(settings.subscriber_id || '').trim();
-  const _apiTokenQ = normalizeApiToken(settings.api_token);
-  if (_apiUserQ && !allQuery.user_api) allQuery.user_api = _apiUserQ;
-  if (_apiTokenQ && !allQuery.api_key) allQuery.api_key = _apiTokenQ;
 
+  // subscriber_id vai em todas as chamadas (a spec exige na maioria). Valores
+  // vazios são descartados para não gerar 400 na Clinicorp.
+  const allQuery = { ...query };
+  if (allQuery.subscriber_id === undefined || allQuery.subscriber_id === null || allQuery.subscriber_id === '') {
+    allQuery.subscriber_id = String(settings.subscriber_id).trim();
+  }
   for (const [k, v] of Object.entries(allQuery)) {
-    if (v !== undefined && v !== null && v !== '') {
-      url.searchParams.set(k, String(v));
-    }
+    if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));
   }
 
   const maxRetries = 3;
   let retryCount = 0;
 
-  const requestOnceWithRetry = async (authMode) => {
+  const requestOnce = async () => {
     const ctrl = new AbortController();
-    const timeout = setTimeout(() => ctrl.abort(), 45_000); // 45s timeout
-    
+    const timeout = setTimeout(() => ctrl.abort(), 45_000);
     try {
-      const headers = clinicorpAuthHeaders(settings, authMode);
+      const headers = clinicorpAuthHeaders(settings);
       if (body !== undefined) headers['Content-Type'] = 'application/json';
-      
+
       const res = await fetch(url.toString(), {
         method,
         headers,
@@ -197,35 +186,43 @@ async function _clinicorpFetchRaw(settings, pathName, { method = 'GET', query = 
       let data;
       try { data = text ? JSON.parse(text) : null; } catch { data = text; }
 
-      // Retry logic for 429 (Rate Limit) and 502/503/504 (Server Overload/Gateway errors)
       if (res.status === 429) {
         const retryAfter = Number(res.headers.get('retry-after'));
         const raSec = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : 60;
-        // Pausa GLOBAL pelo tempo REAL informado pela Clinicorp (cap em 1h para evitar travamento eterno).
+        // Pausa GLOBAL pelo tempo informado pela Clinicorp (cap em 1h).
         const pauseMs = Math.min(raSec * 1000, 3600_000);
         _globalPauseUntil = Math.max(_globalPauseUntil, Date.now() + pauseMs);
-        console.warn(`[clinicorp] HTTP 429 em ${pathName}. Retry-After=${raSec}s → pausando fila global por ${Math.round(pauseMs/1000)}s. SEM retry imediato.`);
+        console.warn(`[clinicorp] HTTP 429 em ${pathName}. Retry-After=${raSec}s → pausando fila global por ${Math.round(pauseMs / 1000)}s.`);
         const err = new Error(`Clinicorp ${method} ${pathName} → HTTP 429: rate limited (retry-after ${raSec}s)`);
         err.status = 429;
         err.retry_after_seconds = raSec;
         err.retryAfter = raSec;
         throw err;
       }
-      const shouldRetry = (res.status === 502 || res.status === 503 || res.status === 504) && retryCount < maxRetries;
-      if (shouldRetry) {
+
+      // Credencial inválida: não adianta tentar outro esquema de auth (a
+      // Clinicorp só aceita Basic) nem seguir com as demais chamadas.
+      if (res.status === 401 || res.status === 403) {
+        const err = new Error(`Credenciais Clinicorp inválidas (HTTP ${res.status}). Confira o Usuário API e o Token API em Gerenciar Assinatura → Acesso Externo e Integrações.`);
+        err.status = res.status;
+        err.invalidCredentials = true;
+        err.body = data;
+        throw err;
+      }
+
+      if ((res.status === 502 || res.status === 503 || res.status === 504) && retryCount < maxRetries) {
         retryCount++;
         const delay = Math.min(Math.pow(2, retryCount) * 2500, 30_000);
         console.warn(`[clinicorp] HTTP ${res.status} em ${pathName}. Backoff ${delay}ms (tentativa ${retryCount}/${maxRetries})`);
         await sleep(delay);
-        return requestOnceWithRetry(authMode);
+        return requestOnce();
       }
 
-
       if (!res.ok) {
-        const err = new Error(`Clinicorp ${method} ${pathName} → HTTP ${res.status}: ${typeof data === 'string' ? data : JSON.stringify(data)}`);
+        const detail = typeof data === 'string' ? data : JSON.stringify(data);
+        const err = new Error(`Clinicorp ${method} ${pathName} → HTTP ${res.status}: ${String(detail || '').slice(0, 300)}`);
         err.status = res.status;
         err.body = data;
-        err.authMode = authMode;
         throw err;
       }
       return data;
@@ -234,181 +231,85 @@ async function _clinicorpFetchRaw(settings, pathName, { method = 'GET', query = 
     }
   };
 
-  try {
-    return await requestOnceWithRetry('basic');
-  } catch (err) {
-    // Se falhar 401 no basic, tenta bearer
-    if (err?.status === 401) return await requestOnceWithRetry('bearer');
-    throw err;
-  }
+  return requestOnce();
+}
+
+function isClinicorpFatalError(err) {
+  return isClinicorpRateLimitError(err) || err?.invalidCredentials === true;
 }
 
 
 // ─── High-level API helpers ───────────────────────────────────
+// Somente endpoints da spec oficial (https://api.clinicorp.com/rest/v1).
+// Endpoints que não existem (patient/update, appointment/update|delete,
+// professional/get, dentist/*, treatment/*, budget/*, financial/list_revenues)
+// foram removidos — chamá-los só gerava 404 e consumia o rate limit.
 export const clinicorpApi = {
   listUsers: async (s) => {
-    // MERGE de todos os endpoints (em vez de parar no primeiro). Alguns
-    // retornam só profissionais ATIVOS; outros incluem inativos. Combinando,
-    // pegamos nomes de profissionais que aparecem em agendamentos antigos
-    // mas estão desativados na clínica.
-    const endpoints = [
-      { path: '/professional/list_all_professionals', query: { subscriber_id: s.subscriber_id } },
-      { path: '/professional/list_all_professionals', query: { subscriber_id: s.subscriber_id, include_inactive: true } },
-      { path: '/professional/list_all_professionals', query: { subscriber_id: s.subscriber_id, only_active: false } },
-      { path: '/dentist/list', query: { subscriber_id: s.subscriber_id } },
-      { path: '/professional/list', query: { subscriber_id: s.subscriber_id } },
-      { path: '/security/list_users', query: {} },
-    ];
-    const merged = new Map();
-    const hasRealName = (x) => !!(x?.FullName || x?.Full_Name || x?.Name || x?.PersonName || x?.ProfessionalName || x?.Dentist_FullName);
-    for (const ep of endpoints) {
-      try {
-        const r = await clinicorpFetch(s, ep.path, { query: ep.query });
-        const list = Array.isArray(r) ? r
-          : (r?.Results || r?.Professionals || r?.Users || r?.Items || r?.data || r?.users || r?.professionals || []);
-        if (Array.isArray(list) && list.length > 0) {
-          for (const p of list) {
-            const id = p?.id ?? p?.Id ?? p?.UserId ?? p?.PersonId ?? p?.Professional_PersonId ?? p?.ProfessionalPersonId ?? p?.ProfessionalId ?? p?.Dentist_PersonId ?? p?.DentistId;
-            if (!id) continue;
-            const key = String(id);
-            const existing = merged.get(key);
-            if (!existing || (!hasRealName(existing) && hasRealName(p))) merged.set(key, p);
-          }
-          console.log(`[clinicorp] listUsers ${ep.path} +${list.length} (total merged: ${merged.size})`);
-        }
-      } catch (e) {
-        console.warn(`[clinicorp] listUsers ${ep.path} failed:`, e.message);
-      }
-    }
-    return Array.from(merged.values());
+    const r = await clinicorpFetch(s, '/professional/list_all_professionals');
+    return extractClinicorpList(r);
   },
-  getProfessional: async (s, id) => {
-    // Fallback para buscar 1 profissional por ID quando o /list não o retorna
-    // (geralmente profissionais inativos/excluídos). Tenta vários endpoints.
-    const candidates = [
-      { path: '/professional/get', query: { subscriber_id: s.subscriber_id, id } },
-      { path: '/professional/get', query: { subscriber_id: s.subscriber_id, ProfessionalId: id } },
-      { path: '/professional/get', query: { subscriber_id: s.subscriber_id, Professional_PersonId: id } },
-      { path: '/dentist/get', query: { subscriber_id: s.subscriber_id, id } },
-      { path: '/dentist/get', query: { subscriber_id: s.subscriber_id, DentistId: id } },
-      { path: '/security/get_user', query: { subscriber_id: s.subscriber_id, id } },
-      { path: '/security/get_user', query: { subscriber_id: s.subscriber_id, UserId: id } },
-    ];
-    for (const ep of candidates) {
-      try {
-        const r = await clinicorpFetch(s, ep.path, { query: ep.query });
-        const obj = (r && typeof r === 'object' && !Array.isArray(r))
-          ? (r.Result || r.Professional || r.User || r.data || r)
-          : (Array.isArray(r) ? r[0] : null);
-        if (obj && (obj.FullName || obj.Full_Name || obj.Name || obj.PersonName || obj.ProfessionalName)) {
-          return obj;
-        }
-      } catch { /* tenta próximo */ }
-    }
-    return null;
-  },
-  listClinics: (s) => clinicorpFetch(s, '/business/list', { query: { subscriber_id: s.subscriber_id } }),
-  listSubscribersClinics: (s) => clinicorpFetch(s, '/group/list_subscribers_clinics', { query: { subscriber_id: s.subscriber_id } }),
-  listChairs: (s, businessId) => clinicorpFetch(s, '/business/list_chairs', { query: { Clinic_BusinessId: businessId } }),
+  listClinics: async (s) => extractClinicorpList(await clinicorpFetch(s, '/business/list')),
+  listSubscribersClinics: (s) => clinicorpFetch(s, '/group/list_subscribers_clinics'),
+  listChairs: async (s, businessId) => extractClinicorpList(await clinicorpFetch(s, '/business/list_chairs', { query: { Clinic_BusinessId: businessId } })),
   listAvailableTimes: (s, professionalId, clinicId, fromDate, toDate) =>
     clinicorpFetch(s, '/business/list_available_times', {
       query: { professionalId, clinicId, fromDate, toDate },
     }),
-  listAppointmentCategories: (s) => clinicorpFetch(s, '/appointment/list_categories'),
-  listSpecialties: (s) => clinicorpFetch(s, '/procedures/list_specialties'),
+  listAppointmentCategories: async (s) => extractClinicorpList(await clinicorpFetch(s, '/appointment/list_categories')),
+  listSpecialties: async (s) => extractClinicorpList(await clinicorpFetch(s, '/procedures/list_specialties')),
+  // GET /appointment/list (from, to obrigatórios; businessId filtra a clínica).
+  // Erros sobem para o chamador registrar — não são mais engolidos.
   listAppointments: async (s, from, to, businessId) => {
-    // Descoberta empírica: o endpoint /appointment/list da Clinicorp ACEITA os parâmetros
-    // `from` e `to` no formato YYYY-MM-DD, MAS só funciona quando `from === to` (um único dia).
-    // Para faixas maiores ele retorna HTTP 400 "É necessário informar a data inicial no formato
-    // JSON (YYYY-MM-DD)" — mensagem enganosa que na verdade significa "range não suportado".
-    // Solução: iterar dia-a-dia, exatamente como o probe de teste de conexão faz (e que funciona).
-    const aggregate = [];
+    const data = await clinicorpFetch(s, '/appointment/list', {
+      query: { from, to, ...(businessId ? { businessId } : {}) },
+    });
     const seen = new Set();
-    const push = (arr) => {
-      for (const a of (Array.isArray(arr) ? arr : [])) {
-        const id = getAppointmentId(a);
-        if (!id || seen.has(String(id))) continue;
-        seen.add(String(id));
-        aggregate.push(a);
-      }
-    };
-    const extract = extractClinicorpList;
-
-    const baseBiz = businessId
-      ? { Clinic_BusinessId: businessId, business_id: businessId, BusinessId: businessId }
-      : {};
-
-    const start = new Date(from + 'T00:00:00Z');
-    const end = new Date(to + 'T00:00:00Z');
-    if (isNaN(start.getTime()) || isNaN(end.getTime()) || end < start) return [];
-
-    // Limite de segurança: no máximo 500 dias por chamada para evitar loops descontrolados.
-    const MAX_DAYS = 500;
-    let dayCount = 0;
-    let consecutiveErrors = 0;
-
-    for (let d = new Date(start); d <= end && dayCount < MAX_DAYS; d.setUTCDate(d.getUTCDate() + 14)) {
-      dayCount += 14;
-      const dTo = new Date(d.getTime() + 13 * 86400000);
-      const toDay = (dTo < end ? dTo : end).toISOString().slice(0, 10);
-      const fromDay = d.toISOString().slice(0, 10);
-
-      try {
-        const data = await clinicorpFetch(s, '/appointment/list', {
-          query: { from: fromDay, to: toDay, ...baseBiz },
-        });
-        const arr = extract(data);
-        if (Array.isArray(arr) && arr.length > 0) push(arr);
-        consecutiveErrors = 0;
-      } catch (e) {
-        if (e?.status === 429) throw e; 
-        if (e?.status === 400 || e?.status === 404) {
-           console.warn(`[clinicorp] listAppointments ignorando erro ${e.status} no range ${fromDay}..${toDay}`);
-           continue;
-        }
-        consecutiveErrors++;
-        if (consecutiveErrors >= 5) {
-          console.warn(`[clinicorp] listAppointments abortando após ${consecutiveErrors} erros consecutivos: ${e?.message || e}`);
-          break;
-        }
-      }
+    const out = [];
+    for (const a of extractClinicorpList(data)) {
+      const id = getAppointmentId(a);
+      if (!id || seen.has(String(id))) continue;
+      seen.add(String(id));
+      out.push(a);
     }
-
-    return aggregate;
+    return out;
   },
 
-  appointmentStatusList: (s) => clinicorpFetch(s, '/appointment/status_list'),
-  changeAppointmentStatus: (s, query) => clinicorpFetch(s, '/appointment/change_status', { query }),
+  appointmentStatusList: async (s) => extractClinicorpList(await clinicorpFetch(s, '/appointment/status_list')),
+  changeAppointmentStatus: (s, { id, status_id }) => clinicorpFetch(s, '/appointment/change_status', { query: { id, status_id } }),
   confirmAppointment: (s, body) => clinicorpFetch(s, '/appointment/confirm_appointment', { method: 'POST', body }),
-  cancelAppointment: (s, body) => clinicorpFetch(s, '/appointment/cancel_appointment', { method: 'POST', body }),
+  cancelAppointment: (s, id) => clinicorpFetch(s, '/appointment/cancel_appointment', {
+    method: 'POST', body: { subscriber_id: String(s.subscriber_id).trim(), id: String(id) },
+  }),
   createAppointment: (s, body) => clinicorpFetch(s, '/appointment/create_appointment_by_api', { method: 'POST', body }),
-  updateAppointment: (s, id, body) => clinicorpFetch(s, `/appointment/update/${id}`, { method: 'PUT', body }),
-  deleteAppointment: (s, id) => clinicorpFetch(s, `/appointment/delete/${id}`, { method: 'DELETE' }),
   createOnlineScheduling: (s, body) => clinicorpFetch(s, '/appointment/create_online_scheduling', { method: 'POST', body }),
-  getAvailableDays: (s, query) => clinicorpFetch(s, '/appointment/get_avaliable_days', { query }),
-  getAvailableTimesCalendar: (s, query) => clinicorpFetch(s, '/appointment/get_avaliable_times_calendar', { query }),
-  getPatient: (s, id) => clinicorpFetch(s, '/patient/get', { query: { id } }),
-  // ATENÇÃO: A Clinicorp NÃO expõe endpoint de listagem em massa de pacientes.
-  // Apenas /patient/get (por id), /patient/birthdays, /patient/list_appointments, /patient/list_estimates.
-  // Pacientes são populados via backfill a partir de agendamentos.
-  listPatients: async () => { return []; },
-  patientBirthdays: (s, query) => clinicorpFetch(s, '/patient/birthdays', { query }),
-  createPatient: (s, body) => clinicorpFetch(s, '/patient/create', { method: 'POST', body }),
-  updatePatient: (s, id, body) => clinicorpFetch(s, `/patient/update/${id}`, { method: 'PUT', body }),
-  patientAppointments: (s, patientId) => clinicorpFetch(s, '/patient/list_appointments', { query: { patient_id: patientId } }),
-  patientEstimates: (s, patientId) => clinicorpFetch(s, '/patient/list_estimates', { query: { patient_id: patientId } }),
-  listEstimates: (s, from, to, clinicId) => clinicorpFetch(s, '/estimates/list', { query: { from, to, clinic_id: clinicId } }),
+  getPatient: (s, patientId) => clinicorpFetch(s, '/patient/get', { query: { PatientId: patientId } }),
+  // A Clinicorp não expõe listagem em massa de pacientes: eles são derivados
+  // dos agendamentos (ver runFullSync).
+  patientBirthdays: (s, date) => clinicorpFetch(s, '/patient/birthdays', { query: date ? { date } : {} }),
+  createPatient: (s, body) => clinicorpFetch(s, '/patient/create', {
+    method: 'POST', body: { subscriber_id: String(s.subscriber_id).trim(), ...body },
+  }),
+  patientAppointments: (s, patientId) => clinicorpFetch(s, '/patient/list_appointments', { query: { PatientId: patientId } }),
+  listPatientEstimates: (s, { from, to, business_id } = {}) => clinicorpFetch(s, '/patient/list_estimates', { query: { from, to, business_id } }),
+  listEstimates: async (s, from, to, clinicId) => extractClinicorpList(await clinicorpFetch(s, '/estimates/list', { query: { from, to, clinic_id: clinicId } })),
   getEstimate: (s, treatmentId) => clinicorpFetch(s, '/estimates/get', { query: { treatment_id: treatmentId } }),
   analytics: (s, from, to) => clinicorpFetch(s, '/analytics/list_results', { query: { from, to } }),
-  listInvoices: (s, { from, to, clinic_id } = {}) => clinicorpFetch(s, '/financial/list_invoices', { query: { from, to, business_id: clinic_id } }),
-  listCashFlow: (s, { from, to, clinic_id } = {}) => clinicorpFetch(s, '/financial/list_cash_flow', { query: { from, to, business_id: clinic_id } }),
-  listPayments: (s, { from, to, clinic_id } = {}) => clinicorpFetch(s, '/financial/list_payments', { query: { from, to, business_id: clinic_id } }),
+  // business_id é opcional só em list_invoices; payments e cash_flow exigem.
+  listInvoices: async (s, { from, to, clinic_id } = {}) =>
+    extractClinicorpList(await clinicorpFetch(s, '/financial/list_invoices', { query: { from, to, business_id: clinic_id } })),
+  listCashFlow: async (s, { from, to, clinic_id } = {}) => {
+    if (!clinic_id) throw new Error('Clinicorp /financial/list_cash_flow exige business_id');
+    return extractClinicorpList(await clinicorpFetch(s, '/financial/list_cash_flow', { query: { from, to, business_id: clinic_id } }));
+  },
+  listPayments: async (s, { from, to, clinic_id } = {}) => {
+    if (!clinic_id) throw new Error('Clinicorp /financial/list_payments exige business_id');
+    return extractClinicorpList(await clinicorpFetch(s, '/financial/list_payments', { query: { from, to, business_id: clinic_id } }));
+  },
   listFinancialSummary: (s, { from, to, clinic_id } = {}) => clinicorpFetch(s, '/financial/list_summary', { query: { from, to, business_id: clinic_id } }),
   listFinancialReceipts: (s, { from, to, clinic_id } = {}) => clinicorpFetch(s, '/financial/list_receipt', { query: { from, to, business_id: clinic_id } }),
-  averageInstallments: (s, { from, to, clinic_id } = {}) => clinicorpFetch(s, '/financial/average_installments', { query: { from, to, business_id: clinic_id } }),
   scheduleOccupation: (s, query) => clinicorpFetch(s, '/appointment/schedule_occupation', { query }),
   appointmentListInfo: (s, query) => clinicorpFetch(s, '/appointment/list_info', { query }),
-  getAppointment: (s, id) => clinicorpFetch(s, '/appointment/get_appointment', { query: { id } }),
   salesEstimatesAndConversion: (s, query) => clinicorpFetch(s, '/sales/estimates_and_conversion', { query }),
   salesExpertiseRevenue: (s, query) => clinicorpFetch(s, '/sales/expertise_revenue', { query }),
   addLead: (s, body) => clinicorpFetch(s, '/crm/add_leads', { method: 'POST', body }),
@@ -477,15 +378,21 @@ async function upsertProfessional(pool, p, tenantId = null) {
   );
   try { 
     await ensureLocalProfessional(pool, String(id), fullName, tId); 
-    // Atualiza status ativo/inativo local baseado no Clinicorp
-    const isActive = p.Active === true || p.active === true || p.status === 'active';
-    await pool.query(`UPDATE dentistas SET ativo = $1, updated_at = NOW() WHERE clinicorp_professional_id = $2 AND tenant_id = $3`, [isActive, String(id), tId]);
+    // /professional/list_all_professionals (spec) devolve só {id, name, cpf}:
+    // só mexe em "ativo" se a Clinicorp mandou o campo.
+    const rawActive = p.Active ?? p.active ?? p.status;
+    if (rawActive !== undefined && rawActive !== null) {
+      const isActive = rawActive === true || rawActive === 'X' || String(rawActive).toLowerCase() === 'active';
+      await pool.query(`UPDATE dentistas SET ativo = $1, updated_at = NOW() WHERE clinicorp_professional_id = $2 AND tenant_id = $3`, [isActive, String(id), tId]);
+    }
   }
   catch (e) { console.error('[clinicorp] ensureLocalProfessional:', e.message); }
 }
 
-async function upsertChair(pool, c, tenantId = null) {
+async function upsertChair(pool, c, tenantId = null, businessId = null) {
   const tId = await resolveTenantId(pool, tenantId);
+  const id = pickFirst(c, 'id', 'Id', 'ChairId');
+  if (!id) return;
   await pool.query(
     `INSERT INTO clinicorp_chairs (id, tenant_id, business_id, name, raw, synced_at)
      VALUES ($1,$2,$3,$4,$5, NOW())
@@ -494,12 +401,14 @@ async function upsertChair(pool, c, tenantId = null) {
        name = EXCLUDED.name,
        raw = EXCLUDED.raw,
        synced_at = NOW()`,
-    [c.id, tId, c.BusinessId ?? null, c.Name ?? null, JSON.stringify(c)]
+    [String(id), tId, toBigIntOrNull(pickFirst(c, 'BusinessId', 'Clinic_BusinessId') ?? businessId), pickFirst(c, 'Name', 'name', 'Description') ?? null, JSON.stringify(c)]
   );
 }
 
 async function upsertCategory(pool, c, tenantId = null) {
   const tId = await resolveTenantId(pool, tenantId);
+  const id = pickFirst(c, 'id', 'Id', 'CategoryId');
+  if (!id) return;
   await pool.query(
     `INSERT INTO clinicorp_appointment_categories (id, tenant_id, description, color, raw, synced_at)
      VALUES ($1,$2,$3,$4,$5, NOW())
@@ -508,12 +417,14 @@ async function upsertCategory(pool, c, tenantId = null) {
        color = EXCLUDED.color,
        raw = EXCLUDED.raw,
        synced_at = NOW()`,
-    [c.id, tId, c.Description ?? null, c.Color ?? null, JSON.stringify(c)]
+    [String(id), tId, pickFirst(c, 'Description', 'description', 'Name') ?? null, pickFirst(c, 'Color', 'color') ?? null, JSON.stringify(c)]
   );
 }
 
 async function upsertSpecialty(pool, s, tenantId = null) {
   const tId = await resolveTenantId(pool, tenantId);
+  const id = pickFirst(s, 'id', 'Id', 'SpecialtyId');
+  if (!id) return;
   await pool.query(
     `INSERT INTO clinicorp_specialties (id, tenant_id, description, raw, synced_at)
      VALUES ($1,$2,$3,$4, NOW())
@@ -521,12 +432,14 @@ async function upsertSpecialty(pool, s, tenantId = null) {
        description = EXCLUDED.description,
        raw = EXCLUDED.raw,
        synced_at = NOW()`,
-    [s.id, tId, s.Description ?? s.Name ?? null, JSON.stringify(s)]
+    [String(id), tId, pickFirst(s, 'Description', 'description', 'Name', 'name') ?? null, JSON.stringify(s)]
   );
 }
 
-async function upsertPatient(pool, p, tenantId = null) {
+async function upsertPatient(pool, p, tenantId = null, { project = true } = {}) {
   const tId = await resolveTenantId(pool, tenantId);
+  const cpId = pickFirst(p, 'id', 'Id', 'PatientId', 'Patient_PersonId', 'PersonId');
+  if (!cpId) return;
   await pool.query(
     `INSERT INTO clinicorp_patients
        (id, tenant_id, name, email, mobile_phone, birth_date, sex, document_id, notes, raw, synced_at)
@@ -542,14 +455,15 @@ async function upsertPatient(pool, p, tenantId = null) {
        raw = EXCLUDED.raw,
        synced_at = NOW()`,
     [
-      String(p.id ?? p.Patient_PersonId), tId, p.Name ?? null, p.Email ?? null,
+      String(cpId), tId, p.Name ?? null, p.Email ?? null,
       String(p.MobilePhone ?? '') || null,
       p.BirthDate || null, p.Sex ?? null,
       String(p.DocumentId ?? '') || null, p.Notes ?? null,
       JSON.stringify(p),
     ]
   );
-  try { await projectPatientToLocal(pool, p, tId); }
+  if (!project) return;
+  try { await projectPatientToLocal(pool, { ...p, id: cpId }, tId); }
   catch (e) { console.error('[clinicorp] projectPatientToLocal:', e.message); }
 }
 
@@ -560,7 +474,7 @@ async function upsertAppointment(pool, a, tenantId = null) {
   const businessId = pickFirst(a, 'BusinessId', 'Clinic_BusinessId', 'ClinicBusinessId', 'ClinicId', 'clinic_id', 'business_id') ?? a.Business?.Id ?? null;
   const patientId = pickFirst(a, 'PatientId', 'Patient_PersonId', 'PatientPersonId', 'Patient_Id', 'patient_id', 'patientId') ?? a.Patient?.Id ?? a.Patient?.PersonId ?? null;
   const professionalId = pickFirst(a, 'ProfessionalId', 'Dentist_PersonId', 'DentistPersonId', 'Professional_PersonId', 'ScheduleToId', 'ScheduleTo_PersonId', 'DentistId', 'Dentist_Id', 'professional_id', 'dentist_id') ?? a.Dentist?.Id ?? a.Professional?.Id ?? null;
-  const appointmentDate = normalizeClinicorpDate(pickFirst(a, 'Date', 'AppointmentDate', 'SK_DateFirstTime', 'DateFirstTime', 'StartDate', 'StartDateTime', 'StartTime', 'fromTime', 'FromTime', 'date', 'appointment_date'));
+  const appointmentDate = normalizeClinicorpDate(pickFirst(a, 'AtomicDate', 'Date', 'AppointmentDate', 'SK_DateFirstTime', 'DateFirstTime', 'StartDate', 'StartDateTime', 'StartTime', 'fromTime', 'FromTime', 'date', 'appointment_date'));
   const fromTime = normalizeClinicorpTime(pickFirst(a, 'FromTime', 'Time', 'StartTime', 'StartDateTime', 'ScheduleTime', 'Hour', 'fromTime', 'from_time', 'hora'));
   const toTime = normalizeClinicorpTime(pickFirst(a, 'ToTime', 'FinalTime', 'EndTime', 'EndDateTime', 'toTime', 'to_time'));
   await pool.query(
@@ -707,24 +621,31 @@ function normalizeClinicorpTime(...values) {
   return null;
 }
 
+// Projeção local: sempre restrita ao tenant da sincronização. Nunca move um
+// registro de outro tenant para este (isso fazia pacientes/dentistas/agendas
+// "pularem" de clínica quando duas contas apontavam para o mesmo Clinicorp).
 async function ensureLocalPatient(pool, cpId, fallback = {}, tenantId = null) {
   if (!cpId) return null;
   const tId = await resolveTenantId(pool, tenantId);
-  const found = await pool.query(`SELECT id, tenant_id FROM pacientes WHERE clinicorp_patient_id = $1 LIMIT 1`, [cpId]);
+  cpId = String(cpId);
+  const found = await pool.query(
+    `SELECT id FROM pacientes WHERE clinicorp_patient_id = $1 AND tenant_id = $2 LIMIT 1`,
+    [cpId, tId]
+  );
   const cp = await pool.query(`SELECT * FROM clinicorp_patients WHERE id = $1 AND tenant_id = $2`, [cpId, tId]);
   const src = cp.rows[0] || {};
-  
-  // Se não estiver no mirror, tenta colocar (auto-espelhamento)
+
+  // Se não estiver no espelho, registra (auto-espelhamento)
   if (!cp.rows[0] && (fallback.name || fallback.phone)) {
     try {
-      await upsertPatient(pool, { 
-        id: cpId, 
-        Name: fallback.name, 
-        MobilePhone: fallback.phone, 
+      await upsertPatient(pool, {
+        id: cpId,
+        Name: fallback.name,
+        MobilePhone: fallback.phone,
         Email: fallback.email,
-        derived: true
-      }, tId);
-    } catch (err) { /* silent */ }
+        derived: true,
+      }, tId, { project: false });
+    } catch (err) { console.warn('[clinicorp] espelho paciente', cpId, err.message); }
   }
 
   const nome = src.name || fallback.name || 'Paciente';
@@ -734,44 +655,38 @@ async function ensureLocalPatient(pool, cpId, fallback = {}, tenantId = null) {
   const sexo = src.sex || null;
   const cpf = src.document_id || null;
   if (found.rows[0]) {
-    if (String(found.rows[0].tenant_id || '') !== String(tId)) {
-      await pool.query(`UPDATE pacientes SET tenant_id=$1, updated_at=NOW() WHERE id=$2`, [tId, found.rows[0].id]);
-    }
     await pool.query(
       `UPDATE pacientes SET nome=COALESCE(NULLIF($2,''),nome), telefone=COALESCE($3,telefone),
          email=COALESCE($4,email), data_nascimento=COALESCE($5,data_nascimento),
-         sexo=COALESCE($6,sexo), cpf=COALESCE(NULLIF(cpf,''),$7), updated_at=NOW() WHERE id=$1`,
-      [found.rows[0].id, nome, telefone, email, nascimento, sexo, cpf]
+         sexo=COALESCE($6,sexo), cpf=COALESCE(NULLIF(cpf,''),$7), updated_at=NOW()
+       WHERE id=$1 AND tenant_id=$8`,
+      [found.rows[0].id, nome, telefone, email, nascimento, sexo, cpf, tId]
     );
     return found.rows[0].id;
   }
   let matchId = null;
   if (telefone) {
-    const r = await pool.query(`SELECT id FROM pacientes WHERE telefone=$1 AND tenant_id=$2 LIMIT 1`, [telefone, tId]);
+    const r = await pool.query(
+      `SELECT id FROM pacientes WHERE telefone=$1 AND tenant_id=$2 AND (clinicorp_patient_id IS NULL OR clinicorp_patient_id='') LIMIT 1`,
+      [telefone, tId]
+    );
     matchId = r.rows[0]?.id || null;
   }
   if (!matchId && cpf) {
-    const r = await pool.query(`SELECT id FROM pacientes WHERE cpf=$1 AND tenant_id=$2 LIMIT 1`, [cpf, tId]);
+    const r = await pool.query(
+      `SELECT id FROM pacientes WHERE cpf=$1 AND tenant_id=$2 AND (clinicorp_patient_id IS NULL OR clinicorp_patient_id='') LIMIT 1`,
+      [cpf, tId]
+    );
     matchId = r.rows[0]?.id || null;
   }
-  if (matchId) {
-    try {
-      await pool.query(`UPDATE pacientes SET clinicorp_patient_id=$1, tenant_id=$2, updated_at=NOW() WHERE id=$3`, [cpId, tId, matchId]);
-    } catch (e) {
-      if (e.code === '23505') {
-        const r = await pool.query(`SELECT id, tenant_id FROM pacientes WHERE clinicorp_patient_id=$1 LIMIT 1`, [cpId]);
-        if (r.rows[0]) {
-          if (String(r.rows[0].tenant_id || '') !== String(tId)) {
-            await pool.query(`UPDATE pacientes SET tenant_id=$1, updated_at=NOW() WHERE id=$2`, [tId, r.rows[0].id]);
-          }
-          return r.rows[0].id;
-        }
-      }
-      throw e;
-    }
-    return matchId;
-  }
   try {
+    if (matchId) {
+      await pool.query(
+        `UPDATE pacientes SET clinicorp_patient_id=$1, updated_at=NOW() WHERE id=$2 AND tenant_id=$3`,
+        [cpId, matchId, tId]
+      );
+      return matchId;
+    }
     const ins = await pool.query(
       `INSERT INTO pacientes (nome, telefone, email, data_nascimento, sexo, cpf, clinicorp_patient_id, tenant_id)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
@@ -779,70 +694,58 @@ async function ensureLocalPatient(pool, cpId, fallback = {}, tenantId = null) {
     );
     return ins.rows[0].id;
   } catch (e) {
-    // Race condition: outro processo inseriu o mesmo paciente — busca e retorna
     if (e.code === '23505') {
-      const r = await pool.query(`SELECT id, tenant_id FROM pacientes WHERE clinicorp_patient_id=$1 LIMIT 1`, [cpId]);
-      if (r.rows[0]) {
-        if (String(r.rows[0].tenant_id || '') !== String(tId)) {
-          await pool.query(`UPDATE pacientes SET tenant_id=$1, updated_at=NOW() WHERE id=$2`, [tId, r.rows[0].id]);
-        }
-        return r.rows[0].id;
-      }
+      // Corrida com outra sincronização do MESMO tenant: usa o registro dela.
+      const r = await pool.query(
+        `SELECT id FROM pacientes WHERE clinicorp_patient_id=$1 AND tenant_id=$2 LIMIT 1`,
+        [cpId, tId]
+      );
+      if (r.rows[0]) return r.rows[0].id;
+      // O id pertence a outro tenant (índice único global legado): não mexe.
+      console.warn(`[clinicorp] paciente Clinicorp ${cpId} já vinculado a outro tenant — ignorado para ${tId}`);
+      return null;
     }
     throw e;
   }
 }
 
 async function ensureLocalProfessional(pool, cpProfId, fallbackName = null, tenantId = null) {
-  if (!cpProfId) {
-    console.warn('[clinicorp] ensureLocalProfessional: cpProfId is missing');
-    return null;
-  }
+  if (!cpProfId) return null;
   const tId = await resolveTenantId(pool, tenantId);
+  cpProfId = String(cpProfId);
   const cleanFallback = (fallbackName || '').toString().trim() || null;
-  const found = await pool.query(`SELECT id, nome, tenant_id FROM dentistas WHERE clinicorp_professional_id=$1 LIMIT 1`, [cpProfId]);
-  
+  const found = await pool.query(
+    `SELECT id, nome FROM dentistas WHERE clinicorp_professional_id=$1 AND tenant_id=$2 LIMIT 1`,
+    [cpProfId, tId]
+  );
+
   if (found.rows[0]) {
-    // Migra para o tenant atual se estiver em outro tenant — garante visibilidade na agenda
-    if (String(found.rows[0].tenant_id || '') !== String(tId)) {
-      try {
-        console.log(`[clinicorp] migrating professional ${cpProfId} from tenant ${found.rows[0].tenant_id} to ${tId}`);
-        await pool.query(`UPDATE dentistas SET tenant_id=$1, updated_at=NOW() WHERE id=$2`, [tId, found.rows[0].id]);
-      } catch (e) { console.warn('[clinicorp] dentista tenant migrate fail', e.message); }
-    }
     // Atualiza nome se estava como placeholder "Profissional XXX" e agora temos um real
     const currentName = (found.rows[0].nome || '').trim();
     const newName = cleanFallback && !/^Profissional\s+\d+$/i.test(cleanFallback) ? cleanFallback : null;
     if (newName && /^Profissional\s+\d+$/i.test(currentName)) {
-      await pool.query(`UPDATE dentistas SET nome=$1, updated_at=NOW() WHERE id=$2`, [newName, found.rows[0].id]);
+      await pool.query(`UPDATE dentistas SET nome=$1, updated_at=NOW() WHERE id=$2 AND tenant_id=$3`, [newName, found.rows[0].id, tId]);
     }
     return found.rows[0].id;
   }
-  const cp = await pool.query(`SELECT * FROM clinicorp_professionals WHERE id=$1 AND tenant_id=$2`, [cpProfId, tId]);
+  const cp = await pool.query(`SELECT full_name FROM clinicorp_professionals WHERE id=$1 AND tenant_id=$2`, [cpProfId, tId]);
   const nome = (cp.rows[0]?.full_name || cleanFallback || `Profissional ${cpProfId}`).toString().trim();
-  // Dedupe por LOWER(TRIM(nome)) dentro do mesmo tenant — evita "Dra Napoliane" duplicado
-  const match = await pool.query(
-    `SELECT id FROM dentistas WHERE tenant_id=$2 AND LOWER(TRIM(nome))=LOWER($1) LIMIT 1`,
-    [nome, tId]
-  );
-  if (match.rows[0]) {
-    try {
-      await pool.query(`UPDATE dentistas SET clinicorp_professional_id=$1, updated_at=NOW() WHERE id=$2`, [cpProfId, match.rows[0].id]);
-      return match.rows[0].id;
-    } catch (e) {
-      if (e.code === '23505') {
-        const existing = await pool.query(`SELECT id, tenant_id FROM dentistas WHERE clinicorp_professional_id=$1 LIMIT 1`, [cpProfId]);
-        if (existing.rows[0]) {
-          if (!existing.rows[0].tenant_id) {
-            await pool.query(`UPDATE dentistas SET tenant_id=$1, updated_at=NOW() WHERE id=$2 AND tenant_id IS NULL`, [tId, existing.rows[0].id]);
-          }
-          return existing.rows[0].id;
-        }
-      }
-      throw e;
-    }
-  }
   try {
+    // Dedupe por LOWER(TRIM(nome)) dentro do mesmo tenant — evita "Dra X" duplicada
+    const match = await pool.query(
+      `SELECT id FROM dentistas
+        WHERE tenant_id=$2 AND LOWER(TRIM(nome))=LOWER($1)
+          AND (clinicorp_professional_id IS NULL OR clinicorp_professional_id='')
+        LIMIT 1`,
+      [nome, tId]
+    );
+    if (match.rows[0]) {
+      await pool.query(
+        `UPDATE dentistas SET clinicorp_professional_id=$1, updated_at=NOW() WHERE id=$2 AND tenant_id=$3`,
+        [cpProfId, match.rows[0].id, tId]
+      );
+      return match.rows[0].id;
+    }
     const ins = await pool.query(
       `INSERT INTO dentistas (nome, ativo, clinicorp_professional_id, tenant_id)
        VALUES ($1, true, $2, $3)
@@ -851,19 +754,17 @@ async function ensureLocalProfessional(pool, cpProfId, fallbackName = null, tena
     );
     return ins.rows[0].id;
   } catch (e) {
-    // race condition ou conflito de constraint unique (nome + tenant)
     if (e.code === '23505') {
       const r = await pool.query(
-        `SELECT id FROM dentistas WHERE clinicorp_professional_id=$1 OR (tenant_id=$2 AND LOWER(TRIM(nome))=LOWER($3)) LIMIT 1`,
-        [cpProfId, tId, nome]
+        `SELECT id FROM dentistas
+          WHERE tenant_id=$1 AND (clinicorp_professional_id=$2 OR LOWER(TRIM(nome))=LOWER($3))
+          ORDER BY (clinicorp_professional_id=$2) DESC NULLS LAST
+          LIMIT 1`,
+        [tId, cpProfId, nome]
       );
-      if (r.rows[0]) {
-        await pool.query(
-          `UPDATE dentistas SET clinicorp_professional_id=$1, tenant_id=COALESCE(tenant_id, $2), updated_at=NOW() WHERE id=$3`,
-          [cpProfId, tId, r.rows[0].id]
-        );
-        return r.rows[0].id;
-      }
+      if (r.rows[0]) return r.rows[0].id;
+      console.warn(`[clinicorp] profissional Clinicorp ${cpProfId} já vinculado a outro tenant — ignorado para ${tId}`);
+      return null;
     }
     throw e;
   }
@@ -900,8 +801,7 @@ async function ensureLeadForPatient(pool, pacienteId, cpPatientId, info = {}, te
 // Resolve estratégia efetiva e flag keep_local para um registro vindo da Clinicorp.
 // Precedência: profissional > clínica > global > settings.conflict_strategy.
 async function resolveConflictPolicy(pool, { clinicId, professionalId } = {}) {
-  const settings = await loadSettings(pool);
-  const defaultStrategy = settings?.conflict_strategy || 'newest_wins';
+  const defaultStrategy = 'newest_wins';
   const ovs = await pool.query(
     `SELECT scope_type, scope_id, keep_local, conflict_strategy
        FROM clinicorp_local_overrides
@@ -949,8 +849,8 @@ async function logConflict(pool, row) {
          (entity, clinicorp_id, local_id, decision, strategy, scope_type, scope_id,
           local_updated_at, clinicorp_updated_at, last_sync_at, diff,
           before_data, after_data, changed_fields,
-          paciente_id, lead_id, agendamento_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+          paciente_id, lead_id, agendamento_id, tenant_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
       [row.entity, row.clinicorp_id != null ? String(row.clinicorp_id) : null,
        row.local_id != null ? String(row.local_id) : null,
        row.decision, row.strategy, row.scope_type, row.scope_id,
@@ -959,7 +859,8 @@ async function logConflict(pool, row) {
        row.before_data ? JSON.stringify(row.before_data) : null,
        row.after_data  ? JSON.stringify(row.after_data)  : null,
        row.changed_fields && row.changed_fields.length ? row.changed_fields : null,
-       row.paciente_id || null, row.lead_id || null, row.agendamento_id || null]
+       row.paciente_id || null, row.lead_id || null, row.agendamento_id || null,
+       row.tenant_id || null]
     );
   } catch (e) { console.error('[clinicorp] logConflict', e.message); }
 }
@@ -997,7 +898,8 @@ async function projectAppointmentToLocal(pool, a, cpApptId, tenantId = null) {
   }, tenantId);
   
   const status = mapAppointmentStatus(pickFirst(a, 'Status', 'StatusId', 'status'));
-  const data = normalizeClinicorpDate(pickFirst(a, 'Date', 'date', 'AppointmentDate', 'SK_DateFirstTime', 'DateFirstTime', 'StartDate', 'StartDateTime', 'StartTime', 'fromTime', 'FromTime', 'appointment_date', 'AtomicDate'));
+  // AtomicDate (YYYYMMDD) primeiro: `date` vem em UTC e pode cair no dia seguinte.
+  const data = normalizeClinicorpDate(pickFirst(a, 'AtomicDate', 'Date', 'date', 'AppointmentDate', 'SK_DateFirstTime', 'DateFirstTime', 'StartDate', 'StartDateTime', 'StartTime', 'fromTime', 'FromTime', 'appointment_date'));
   const fromT = normalizeClinicorpTime(pickFirst(a, 'FromTime', 'Time', 'StartTime', 'StartDateTime', 'ScheduleTime', 'Hour', 'fromTime', 'from_time', 'hora')) || '00:00';
   const toT = normalizeClinicorpTime(pickFirst(a, 'ToTime', 'FinalTime', 'EndTime', 'EndDateTime', 'toTime', 'to_time')) || '';
   const hora = fromT;
@@ -1015,21 +917,13 @@ async function projectAppointmentToLocal(pool, a, cpApptId, tenantId = null) {
     return null;
   }
 
-  // Busca em QUALQUER tenant — se achar em outro, migra para o tenant atual.
-
-  // Isso evita que agendamentos fiquem "presos" no tenant do admin original e
-  // não apareçam para o usuário que rodou a sincronização.
+  // Somente agendamentos deste tenant.
   const exists = await pool.query(
     `SELECT id, paciente_id, dentista_id, data, hora, duracao, procedimento, categoria,
-            categoria_cor, status, observacoes, updated_at, last_clinicorp_sync_at, keep_local, tenant_id
-       FROM agendamentos WHERE clinicorp_appointment_id=$1 LIMIT 1`,
-    [String(cpApptId)]
+            categoria_cor, status, observacoes, updated_at, last_clinicorp_sync_at, keep_local
+       FROM agendamentos WHERE clinicorp_appointment_id=$1 AND tenant_id=$2 LIMIT 1`,
+    [String(cpApptId), tId]
   );
-  if (exists.rows[0] && String(exists.rows[0].tenant_id || '') !== String(tId)) {
-    try {
-      await pool.query(`UPDATE agendamentos SET tenant_id=$1, updated_at=NOW() WHERE id=$2`, [tId, exists.rows[0].id]);
-    } catch (e) { console.warn('[clinicorp] agendamento tenant migrate fail', e.message); }
-  }
   let agendamentoId;
   if (exists.rows[0]) {
     const localRow = exists.rows[0];
@@ -1055,8 +949,8 @@ async function projectAppointmentToLocal(pool, a, cpApptId, tenantId = null) {
            procedimento=COALESCE($7,procedimento), categoria=COALESCE($8,categoria),
            categoria_cor=COALESCE($9,categoria_cor), status=$10,
            observacoes=COALESCE($11,observacoes),
-           last_clinicorp_sync_at=NOW(), updated_at=NOW() WHERE id=$1`,
-        [agendamentoId, pacienteId, dentistaId, data, hora, duracao, procedimento, procedimento, categoriaCor, status, observacoes]
+           last_clinicorp_sync_at=NOW(), updated_at=NOW() WHERE id=$1 AND tenant_id=$12`,
+        [agendamentoId, pacienteId, dentistaId, data, hora, duracao, procedimento, procedimento, categoriaCor, status, observacoes, tId]
       );
     }
     // Audit: registramos sempre que houver divergência real ou decisão não-trivial
@@ -1065,7 +959,7 @@ async function projectAppointmentToLocal(pool, a, cpApptId, tenantId = null) {
         ? (await pool.query(`SELECT id FROM crm_leads WHERE (paciente_id=$1 OR clinicorp_patient_id=$2) AND tenant_id=$3 LIMIT 1`, [pacienteId, cpPatientId, tId])).rows[0]
         : null;
       await logConflict(pool, {
-        entity: 'appointment', clinicorp_id: cpApptId, local_id: agendamentoId,
+        entity: 'appointment', clinicorp_id: cpApptId, local_id: agendamentoId, tenant_id: tId,
         decision: decision.decision, strategy: policy.strategy,
         scope_type: policy.scopeType, scope_id: policy.scopeId,
         local_updated_at: localRow.updated_at,
@@ -1103,13 +997,13 @@ async function projectAppointmentToLocal(pool, a, cpApptId, tenantId = null) {
       if (status === 'cancelado' || status === 'faltou') {
         await pool.query(
           `UPDATE crm_leads SET kanban_stage='reativacao', status='reativacao', updated_at=NOW()
-           WHERE id=$1 AND kanban_stage IN ('paciente_agendado','novo','followup')`,
-          [leadId]
+           WHERE id=$1 AND tenant_id=$2 AND kanban_stage IN ('paciente_agendado','novo','followup')`,
+          [leadId, tId]
         );
       } else if (status === 'em_atendimento') {
-        await pool.query(`UPDATE crm_leads SET kanban_stage='em_atendimento', status='em_atendimento', updated_at=NOW() WHERE id=$1`, [leadId]);
+        await pool.query(`UPDATE crm_leads SET kanban_stage='em_atendimento', status='em_atendimento', updated_at=NOW() WHERE id=$1 AND tenant_id=$2`, [leadId, tId]);
       } else if (status === 'finalizado') {
-        await pool.query(`UPDATE crm_leads SET kanban_stage='pos_consulta', status='pos_consulta', updated_at=NOW() WHERE id=$1`, [leadId]);
+        await pool.query(`UPDATE crm_leads SET kanban_stage='pos_consulta', status='pos_consulta', updated_at=NOW() WHERE id=$1 AND tenant_id=$2`, [leadId, tId]);
       }
     }
   }
@@ -1128,14 +1022,18 @@ async function projectPatientToLocal(pool, p, tenantId = null) {
        FROM pacientes WHERE clinicorp_patient_id=$1 AND tenant_id=$2 LIMIT 1`,
     [String(cpId), tId]
   );
+  // pickFirst é case-insensitive: cobre o formato da API (Name) e o do
+  // espelho derivado da agenda (name, mobile_phone).
   const incoming = {
-    nome: p.Name || null,
-    telefone: p.MobilePhone || null,
-    email: p.Email || null,
-    data_nascimento: p.BirthDate || null,
-    sexo: p.Sex || null,
-    cpf: p.DocumentId || null,
+    nome: pickFirst(p, 'Name') || null,
+    telefone: pickFirst(p, 'MobilePhone', 'mobile_phone') || null,
+    email: pickFirst(p, 'Email') || null,
+    data_nascimento: pickFirst(p, 'BirthDate', 'birth_date') || null,
+    sexo: pickFirst(p, 'Sex') || null,
+    cpf: pickFirst(p, 'DocumentId', 'document_id') || null,
   };
+  // Campo ausente na Clinicorp não é divergência.
+  for (const k of Object.keys(incoming)) if (incoming[k] === null) delete incoming[k];
   if (existing.rows[0]) {
     const localRow = existing.rows[0];
     const decision = decideOverwrite({
@@ -1148,14 +1046,15 @@ async function projectPatientToLocal(pool, p, tenantId = null) {
       nome: localRow.nome, telefone: localRow.telefone, email: localRow.email,
       data_nascimento: localRow.data_nascimento, sexo: localRow.sexo, cpf: localRow.cpf,
     };
-    const { changed, beforeOut, afterOut } = diffFields(beforeSnap, incoming);
+    const { changed, beforeOut, afterOut } = diffFields(
+      Object.fromEntries(Object.keys(incoming).map((k) => [k, beforeSnap[k]])), incoming);
     if (changed.length > 0 || decision.decision !== 'overwritten_by_clinicorp') {
       const leadRow = (await pool.query(
         `SELECT id FROM crm_leads WHERE (paciente_id=$1 OR clinicorp_patient_id=$2) AND tenant_id=$3 LIMIT 1`,
         [localRow.id, String(cpId), tId]
       )).rows[0];
       await logConflict(pool, {
-        entity: 'patient', clinicorp_id: cpId, local_id: localRow.id,
+        entity: 'patient', clinicorp_id: cpId, local_id: localRow.id, tenant_id: tId,
         decision: decision.decision, strategy: policy.strategy,
         scope_type: policy.scopeType, scope_id: policy.scopeId,
         local_updated_at: localRow.updated_at,
@@ -1171,18 +1070,21 @@ async function projectPatientToLocal(pool, p, tenantId = null) {
     }
     if (!decision.write) return localRow.id;
   }
-  const pacienteId = await ensureLocalPatient(pool, cpId, { name: p.Name, phone: p.MobilePhone, email: p.Email }, tenantId);
+  const pacienteId = await ensureLocalPatient(pool, cpId, { name: incoming.nome, phone: incoming.telefone, email: incoming.email }, tId);
   if (pacienteId) {
-    await pool.query(`UPDATE pacientes SET last_clinicorp_sync_at=NOW(), updated_at=NOW() WHERE id=$1`, [pacienteId]);
+    await pool.query(`UPDATE pacientes SET last_clinicorp_sync_at=NOW(), updated_at=NOW() WHERE id=$1 AND tenant_id=$2`, [pacienteId, tId]);
   }
   await ensureLeadForPatient(pool, pacienteId, cpId, {
-    nome: p.Name, telefone: onlyDigits(p.MobilePhone), email: p.Email,
+    nome: incoming.nome, telefone: onlyDigits(incoming.telefone), email: incoming.email,
   }, tenantId);
   return pacienteId;
 }
 
-async function upsertEstimate(pool, e, tenantId = null) {
+async function upsertEstimate(pool, e, tenantId = null, businessId = null) {
   const tId = await resolveTenantId(pool, tenantId);
+  const estId = pickFirst(e, 'id', 'Id', 'TreatmentId', 'treatment_id', 'EstimateId');
+  if (!estId) return;
+  e = { ...e, id: estId };
   await pool.query(
     `INSERT INTO clinicorp_estimates
        (id, tenant_id, treatment_id, patient_id, patient_name, professional_id, professional_name,
@@ -1205,7 +1107,7 @@ async function upsertEstimate(pool, e, tenantId = null) {
     [
       e.id, tId, e.TreatmentId ?? null, e.PatientId ?? e.Patient_PersonId ?? null,
       e.PatientName ?? e.Patient_FullName ?? e.Patient?.Name ?? null, e.ProfessionalId ?? e.Dentist_PersonId ?? e.ScheduleToId ?? null,
-      e.ProfessionalName ?? e.Dentist_FullName ?? e.Dentist_Name ?? e.DentistName ?? e.ScheduleToName ?? e.Dentist?.Name ?? e.Dentist?.FullName ?? null, e.BusinessId ?? null,
+      e.ProfessionalName ?? e.Dentist_FullName ?? e.Dentist_Name ?? e.DentistName ?? e.ScheduleToName ?? e.Dentist?.Name ?? e.Dentist?.FullName ?? null, e.BusinessId ?? e.Clinic_BusinessId ?? businessId ?? null,
       e.Amount ?? null, e.Status ?? null,
       e.Date || null, e.CreateDate || null,
       e.ProcedureList ? JSON.stringify(e.ProcedureList) : null,
@@ -1245,7 +1147,7 @@ async function projectEstimateToLocal(pool, e, tenantId = null) {
   }
 }
 
-async function upsertFinancial(pool, source, item, tenantId = null) {
+async function upsertFinancial(pool, source, item, tenantId = null, businessId = null) {
   const externalId = String(item.id ?? item.Id ?? item.InvoiceId ?? item.PaymentId ?? '') || null;
   if (!externalId) return;
   const tId = await resolveTenantId(pool, tenantId);
@@ -1264,7 +1166,7 @@ async function upsertFinancial(pool, source, item, tenantId = null) {
        synced_at = NOW()`,
     [
       source, externalId, tId,
-      item.BusinessId ?? null,
+      item.BusinessId ?? item.Clinic_BusinessId ?? businessId ?? null,
       item.PatientId ?? null,
       item.Amount ?? item.Value ?? null,
       item.Date || item.PaymentDate || item.DueDate || null,
@@ -1272,7 +1174,7 @@ async function upsertFinancial(pool, source, item, tenantId = null) {
       JSON.stringify(item),
     ]
   );
-  try { await projectFinanceToLocal(pool, source, item, tenantId); }
+  try { await projectFinanceToLocal(pool, source, item, tId); }
   catch (e) { console.error('[clinicorp] projectFinanceToLocal:', e.message); }
 }
 
@@ -1380,290 +1282,201 @@ async function projectFinanceToLocal(pool, source, item, tenantId = null) {
 }
 
 // ─── Sync orchestration ───────────────────────────────────────
+// Única sincronização da integração (o caminho via Supabase foi removido).
+// Tudo é gravado no tenant informado; com user_id, o progresso e o resultado
+// final ficam em clinicorp_user_settings (sync_progress / last_sync_*), que a
+// tela consulta enquanto a sincronização roda.
 export async function runFullSync(pool, { from, to, api_token, subscriber_id, base_url, tenant_id, force_metadata = false, user_id = null, apptFrom = null, apptTo = null, estFrom = null, estTo = null } = {}) {
-  console.log(`[clinicorp sync] STARTING for tenant_id=${tenant_id} subscriber_id=${subscriber_id}`);
-  const tId = await resolveTenantId(pool, tenant_id);
-  const syncKey = `${subscriber_id || 'global'}:${tId}`;
-
-  if (_activeSyncs.has(syncKey)) {
-    const startTime = _activeSyncs.get(syncKey);
-    // Se a sync está rodando há mais de 30 minutos, consideramos que travou e permitimos outra
-    if (Date.now() - startTime < 30 * 60_000) {
-      throw new Error('Já existe uma sincronização em andamento para esta conta. Por favor, aguarde alguns minutos.');
-    }
-  }
-
-  _activeSyncs.set(syncKey, Date.now());
-
-  try {
-    // Se passarmos credenciais explícitas (ex: manual sync com per-user settings), as usamos.
-    // Caso contrário, tenta carregar as do usuário específico ou as globais.
-    let settings;
-    if (api_token && subscriber_id) {
-      settings = { api_token, subscriber_id, base_url, enabled: true };
-    } else if (user_id) {
-      const { rows: userRows } = await pool.query(
-        `SELECT enabled, api_token, subscriber_id, base_url FROM clinicorp_user_settings WHERE user_id = $1`,
-        [user_id]
-      );
-      if (userRows[0]?.enabled && userRows[0]?.api_token && userRows[0]?.subscriber_id) {
-        settings = userRows[0];
-      }
-    }
-
-    if (!settings) {
-      settings = await loadSettings(pool, true);
-      if (!settings?.enabled) throw new Error('Clinicorp desabilitado');
-      if (!settings.api_token || !settings.subscriber_id) {
-        throw new Error('Clinicorp: api_token e subscriber_id são obrigatórios');
-      }
-    }
-
-    const today = new Date();
-    const fromDate = from || new Date(today.getTime() - 15 * 86400_000).toISOString().slice(0, 10);
-    const toDate = to || new Date(today.getTime() + 30 * 86400_000).toISOString().slice(0, 10);
-    
-    // AGENDA: Janela de 368 dias (3 dias atrás até 1 ano no futuro)
-    const apptFromDate = apptFrom || from || new Date(today.getTime() - 3 * 86400_000).toISOString().slice(0, 10);
-    const apptToDate = apptTo || to || new Date(today.getTime() + 365 * 86400_000).toISOString().slice(0, 10);
-    
-    // ORÇAMENTOS: janela de 90 dias por padrão
-    const estFromDate = estFrom || from || new Date(today.getTime() - 45 * 86400_000).toISOString().slice(0, 10);
-    const estToDate = estTo || to || new Date(today.getTime() + 45 * 86400_000).toISOString().slice(0, 10);
-
-    const summary = { clinics: 0, professionals: 0, patients: 0, chairs: 0, categories: 0, specialties: 0, appointments: 0, estimates: 0, invoices: 0, payments: 0, cashflow: 0, evolutions: 0, documents: 0 };
-
-  const errors = [];
-
-  // Backfill tenant_id em registros antigos vindos do Clinicorp (criados antes do fix)
-  try {
-    const tId = await resolveTenantId(pool, tenant_id);
-    if (tId) {
-      await pool.query(`UPDATE dentistas SET tenant_id=$1 WHERE tenant_id IS NULL AND clinicorp_professional_id IS NOT NULL`, [tId]);
-      await pool.query(`UPDATE pacientes SET tenant_id=$1 WHERE tenant_id IS NULL AND clinicorp_patient_id IS NOT NULL`, [tId]);
-      await pool.query(`UPDATE agendamentos SET tenant_id=$1 WHERE tenant_id IS NULL AND clinicorp_appointment_id IS NOT NULL`, [tId]);
-      await pool.query(`UPDATE crm_leads SET tenant_id=$1 WHERE tenant_id IS NULL AND (clinicorp_patient_id IS NOT NULL OR origem='clinicorp')`, [tId]);
-      await pool.query(`UPDATE orcamentos SET tenant_id=$1 WHERE tenant_id IS NULL AND clinicorp_estimate_id IS NOT NULL`, [tId]);
-    }
-  } catch (e) { console.error('[clinicorp sync] tenant backfill', e.message); }
-
-  // Garante que os registros recentes sejam projetados (espelhamento forçado)
-  try {
-    const tId = await resolveTenantId(pool, tenant_id);
-    const { rows: appts } = await pool.query(
-      `SELECT raw, id FROM clinicorp_appointments WHERE tenant_id=$3 AND date >= $1 AND date <= $2`,
-      [apptFromDate, apptToDate, tId]
+  let settings = null;
+  if (api_token && subscriber_id) {
+    settings = { api_token, subscriber_id, base_url: base_url || DEFAULT_BASE_URL, enabled: true };
+  } else if (user_id) {
+    const { rows } = await pool.query(
+      `SELECT enabled, api_token, subscriber_id, base_url FROM clinicorp_user_settings WHERE user_id = $1`,
+      [user_id]
     );
-    for (const r of appts) { 
-      const rawData = typeof r.raw === 'string' ? JSON.parse(r.raw) : r.raw;
-      await projectAppointmentToLocal(pool, rawData, r.id, tId); 
-    }
-  } catch (e) { console.error('[clinicorp sync] forced projection', e.message); }
+    const r = rows[0];
+    if (r?.enabled && r.api_token && r.subscriber_id) settings = { ...r, base_url: r.base_url || DEFAULT_BASE_URL };
+  }
+  if (!settings) throw new Error('Clinicorp: credenciais não configuradas ou integração desativada');
+  const tId = await resolveTenantId(pool, tenant_id);
 
+  const syncKey = `${settings.subscriber_id}:${tId}`;
+  if (_activeSyncs.has(syncKey) && Date.now() - _activeSyncs.get(syncKey) < 30 * 60_000) {
+    throw new Error('Já existe uma sincronização em andamento para esta conta. Por favor, aguarde alguns minutos.');
+  }
+  _activeSyncs.set(syncKey, Date.now());
+  console.log(`[clinicorp sync] START tenant=${tId} subscriber=${settings.subscriber_id}`);
 
+  const today = new Date();
+  const ymdOffset = (days) => new Date(today.getTime() + days * 86400_000).toISOString().slice(0, 10);
+  const fromDate = from || ymdOffset(-15);
+  const toDate = to || ymdOffset(30);
+  // Agenda: 3 dias atrás até 1 ano à frente por padrão
+  const apptFromDate = apptFrom || from || ymdOffset(-3);
+  const apptToDate = apptTo || to || ymdOffset(365);
+  // Orçamentos: ±45 dias por padrão
+  const estFromDate = estFrom || from || ymdOffset(-45);
+  const estToDate = estTo || to || ymdOffset(45);
 
-
-  const safe = async (label, fn) => {
-    try { 
-      if (_globalPauseUntil > Date.now()) {
-        const retryAfter = Math.ceil((_globalPauseUntil - Date.now()) / 1000);
-        const err = new Error(`Clinicorp em rate limit — aguardando ${retryAfter}s antes de novas chamadas`);
-        err.status = 429;
-        err.retry_after_seconds = retryAfter;
-        throw err;
-      }
-      if (user_id) {
-        await pool.query(
-          `UPDATE clinicorp_user_settings SET last_sync_status = 'syncing', last_sync_error = $2, updated_at = NOW() WHERE user_id = $1`,
-          [user_id, `Processando: ${label}...`]
-        ).catch(() => {});
-      }
-      console.log(`[clinicorp sync] processing ${label}...`);
-      await fn(); 
-    } catch (e) { 
-      errors.push(`${label}: ${e.message}`); 
-      console.error(`[clinicorp sync] ${label} ERROR:`, e.message, e.stack); 
-      if (isClinicorpRateLimitError(e)) throw e;
-    }
+  const summary = { clinics: 0, professionals: 0, patients: 0, chairs: 0, categories: 0, specialties: 0, appointments: 0, estimates: 0, invoices: 0, payments: 0, cashflow: 0 };
+  const errors = [];
+  const MAX_ERRORS = 50;
+  // Erros não-fatais ficam no resultado (e na tela); credencial inválida e
+  // rate limit interrompem a sincronização inteira.
+  const recordError = (label, e) => {
+    if (isClinicorpFatalError(e)) throw e;
+    if (errors.length < MAX_ERRORS) errors.push(`${label}: ${e?.message || e}`);
+    console.error(`[clinicorp sync] ${label}:`, e?.message || e);
   };
 
-  // Helper para fatiar períodos em janelas menores para evitar erro 400 ou timeouts da Clinicorp
+  const progress = async (step, extra = {}) => {
+    if (!user_id) return;
+    await pool.query(
+      `UPDATE clinicorp_user_settings
+          SET last_sync_status = 'syncing', last_sync_error = NULL,
+              sync_progress = $2::jsonb, updated_at = NOW()
+        WHERE user_id = $1`,
+      [user_id, JSON.stringify({ step, summary, errors: errors.slice(0, 5), timestamp: new Date().toISOString(), ...extra })]
+    ).catch((e) => console.warn('[clinicorp sync] progress', e.message));
+  };
+
+  const step = async (label, fn) => {
+    if (_globalPauseUntil > Date.now()) {
+      const retryAfter = Math.ceil((_globalPauseUntil - Date.now()) / 1000);
+      const err = new Error(`Clinicorp em rate limit — aguardando ${retryAfter}s antes de novas chamadas`);
+      err.status = 429;
+      err.retry_after_seconds = retryAfter;
+      throw err;
+    }
+    await progress(`Sincronizando ${label}...`);
+    try { await fn(); }
+    catch (e) { recordError(label, e); }
+  };
+
+  // Janelas de 7 dias (a Clinicorp responde 400/timeout em faixas grandes)
   const sliceRange = (startStr, endStr) => {
     const dates = [];
-    let current = new Date(startStr);
-    const end = new Date(endStr);
-    // Janelas de 7 dias para reduzir o volume de dados por chamada e evitar erro 400 da Clinicorp
+    let current = new Date(startStr + 'T00:00:00Z');
+    const end = new Date(endStr + 'T00:00:00Z');
     while (current <= end) {
-      const next = new Date(current.getTime() + 7 * 86400_000);
-      const to = next < end ? next : end;
-      dates.push({
-        from: current.toISOString().slice(0, 10),
-        to: to.toISOString().slice(0, 10)
-      });
-      current = new Date(to.getTime() + 86400_000);
+      const next = new Date(current.getTime() + 6 * 86400_000);
+      const rangeTo = next < end ? next : end;
+      dates.push({ from: current.toISOString().slice(0, 10), to: rangeTo.toISOString().slice(0, 10) });
+      current = new Date(rangeTo.getTime() + 86400_000);
     }
     return dates;
   };
+  const clinicIdsOf = async () => {
+    const { rows } = await pool.query('SELECT id FROM clinicorp_clinics WHERE tenant_id=$1', [tId]);
+    return rows.map((r) => r.id).filter(Boolean);
+  };
 
+  try {
+    await progress('Iniciando sincronização...');
 
-  // Metadata (clínicas, profissionais, cadeiras, categorias, especialidades) raramente muda.
-  // Para reduzir drasticamente o número de chamadas (Clinicorp aplica limites por hora),
-  // só atualizamos esses endpoints se a última sincronização foi há mais de 24h
-  // (ou se force_metadata=true via /sync com flag explícita).
-  let metadataFresh = false;
-  if (!force_metadata) {
-    try {
-      const tIdMeta = await resolveTenantId(pool, tenant_id);
-      const { rows } = await pool.query(
-        `SELECT MAX(synced_at) AS last FROM clinicorp_clinics WHERE tenant_id=$1`,
-        [tIdMeta]
-      );
+    // Metadados (clínicas, profissionais, cadeiras, categorias, especialidades)
+    // mudam pouco: só são buscados a cada 24h, salvo force_metadata.
+    let metadataFresh = false;
+    if (!force_metadata) {
+      const { rows } = await pool.query(`SELECT MAX(synced_at) AS last FROM clinicorp_clinics WHERE tenant_id=$1`, [tId]);
       const last = rows[0]?.last ? new Date(rows[0].last).getTime() : 0;
-      if (last && (Date.now() - last) < 24 * 3600_000) metadataFresh = true;
-    } catch { /* ignore */ }
-  }
-
-  if (!metadataFresh) {
-    await safe('clinics', async () => {
-      const list = await clinicorpApi.listClinics(settings);
-      for (const c of (Array.isArray(list) ? list : [])) { await upsertClinic(pool, c, tenant_id); summary.clinics++; }
-    });
-
-    await safe('professionals', async () => {
-      const list = await clinicorpApi.listUsers(settings);
-      for (const u of (Array.isArray(list) ? list : [])) { await upsertProfessional(pool, u, tenant_id); summary.professionals++; }
-
-      try {
-        const tId = await resolveTenantId(pool, tenant_id);
-        const { rows } = await pool.query('SELECT id, full_name FROM clinicorp_professionals WHERE tenant_id=$1', [tId]);
-        for (const p of rows) {
-          await ensureLocalProfessional(pool, String(p.id), p.full_name, tId);
-        }
-      } catch (e) { console.error('[clinicorp sync] dentists backfill', e.message); }
-    });
-
-    // Chairs por clínica
-    await safe('chairs', async () => {
-      const tId = await resolveTenantId(pool, tenant_id);
-      const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics WHERE tenant_id=$1', [tId]);
-      for (const { id } of clinics) {
-        if (!id) continue;
-        try {
-          const list = await clinicorpApi.listChairs(settings, id);
-          for (const ch of (Array.isArray(list) ? list : [])) { await upsertChair(pool, ch, tenant_id); summary.chairs++; }
-        } catch (e) { /* silencia 400 sem chairs */ }
-      }
-    });
-
-    await safe('categories', async () => {
-      const list = await clinicorpApi.listAppointmentCategories(settings);
-      for (const c of (Array.isArray(list) ? list : [])) { await upsertCategory(pool, c, tenant_id); summary.categories++; }
-    });
-
-    await safe('specialties', async () => {
-      const list = await clinicorpApi.listSpecialties(settings);
-      for (const s of (Array.isArray(list) ? list : [])) { await upsertSpecialty(pool, s, tenant_id); summary.specialties++; }
-    });
-  } else {
-    console.log('[clinicorp sync] metadata recente (<24h) — pulando clinics/professionals/chairs/categories/specialties');
-  }
-
-  // PATIENTS: /patient/list não é exposto pela Clinicorp (404).
-  // Sincronizamos os pacientes individualmente se houverem agendamentos.
-  await safe('patients', async () => {
-    const tId = await resolveTenantId(pool, tenant_id);
-    try {
-      const list = await clinicorpApi.listPatients(settings);
-      for (const p of (Array.isArray(list) ? list : [])) {
-        await upsertPatient(pool, p, tenant_id);
-        summary.patients++;
-      }
-    } catch (e) {
-      console.warn('[clinicorp sync] /patient/list failed, will backfill via appointments');
+      if (last && Date.now() - last < 24 * 3600_000) metadataFresh = true;
     }
-  });
 
-
-  await safe('appointments', async () => {
-    const tId = await resolveTenantId(pool, tenant_id);
-    const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics WHERE tenant_id=$1', [tId]);
-    const apiIds = new Set();
-    console.log(`[clinicorp sync] agenda range: ${apptFromDate} to ${apptToDate}`);
-    const ranges = sliceRange(apptFromDate, apptToDate);
-
-    let projectionFailed = 0;
-    let sampleLogged = false;
-    // Cache em memória das appointments brutas para backfill posterior de dentista_id
-    const rawByApptId = new Map();
-    const processAppts = async (list) => {
-      for (const a of (Array.isArray(list) ? list : [])) {
-        const id = getAppointmentId(a);
-        if (!id || apiIds.has(String(id))) continue;
-        apiIds.add(String(id));
-        rawByApptId.set(String(id), a);
-        if (!sampleLogged) {
-          sampleLogged = true;
-          console.log('[clinicorp sync] sample appointment keys:', Object.keys(a || {}).slice(0, 80));
-          console.log('[clinicorp sync] sample picked ids:', {
-            id,
-            Dentist_PersonId: a.Dentist_PersonId,
-            ScheduleToId: a.ScheduleToId,
-            Patient_PersonId: a.Patient_PersonId,
-            Clinic_BusinessId: a.Clinic_BusinessId,
-          });
+    if (!metadataFresh) {
+      await step('clínicas', async () => {
+        const list = await clinicorpApi.listClinics(settings);
+        for (const c of list) {
+          try { await upsertClinic(pool, c, tId); summary.clinics++; }
+          catch (e) { recordError('clínica', e); }
         }
-        try { await upsertAppointment(pool, a, tenant_id); }
-        catch (e) { console.error('[clinicorp sync] upsertAppointment FAIL id=', id, '→', e.message, e.code || '', e.detail || ''); }
-        try { await projectAppointmentToLocal(pool, a, id, tenant_id); }
-        catch (e) { projectionFailed++; if (projectionFailed <= 3) console.error('[clinicorp sync] projectAppointmentToLocal fail', id, e.message); }
-        summary.appointments++;
-      }
-    };
+      });
 
-    // Quando temos clínicas, iteramos apenas por clínica para evitar
-    // duplicar todas as chamadas com a versão "global" (que ANTES rodava
-    // antes do loop por clínica e dobrava o consumo da API).
-    if (clinics.length === 0) {
-      console.warn('[clinicorp sync] nenhuma clínica encontrada localmente, tentando busca global de agendamentos');
-      for (const r of ranges) {
+      await step('profissionais', async () => {
+        const list = await clinicorpApi.listUsers(settings);
+        for (const u of list) {
+          try { await upsertProfessional(pool, u, tId); summary.professionals++; }
+          catch (e) { recordError('profissional', e); }
+        }
+      });
 
-        try {
-          const list = await clinicorpApi.listAppointments(settings, r.from, r.to);
-          await processAppts(list);
-        } catch (e) { console.error(`[clinicorp sync] appointments ${r.from}..${r.to}`, e.message); }
-      }
-    } else {
-      for (const { id: clinicId } of clinics) {
-        if (!clinicId) continue;
-        for (const r of ranges) {
+      await step('cadeiras', async () => {
+        for (const clinicId of await clinicIdsOf()) {
           try {
-            const list = await clinicorpApi.listAppointments(settings, r.from, r.to, clinicId);
-            await processAppts(list);
-          } catch (e) { console.error(`[clinicorp sync] appointments clinic ${clinicId} ${r.from}..${r.to}`, e.message); }
+            const list = await clinicorpApi.listChairs(settings, clinicId);
+            for (const ch of list) { await upsertChair(pool, ch, tId, clinicId); summary.chairs++; }
+          } catch (e) {
+            // Clínica sem cadeiras cadastradas responde 400 — não é erro da sincronização.
+            if (e?.status === 400 || e?.status === 404) continue;
+            recordError(`cadeiras (clínica ${clinicId})`, e);
+          }
+        }
+      });
+
+      await step('categorias', async () => {
+        const list = await clinicorpApi.listAppointmentCategories(settings);
+        for (const c of list) { await upsertCategory(pool, c, tId); summary.categories++; }
+      });
+
+      await step('especialidades', async () => {
+        const list = await clinicorpApi.listSpecialties(settings);
+        for (const sp of list) { await upsertSpecialty(pool, sp, tId); summary.specialties++; }
+      });
+    } else {
+      console.log('[clinicorp sync] metadados recentes (<24h) — pulando clínicas/profissionais/cadeiras/categorias/especialidades');
+    }
+
+    // Agenda (pacientes são derivados dela: a Clinicorp não lista pacientes)
+    await step('agenda', async () => {
+      const clinics = await clinicIdsOf();
+      const ranges = sliceRange(apptFromDate, apptToDate);
+      const apiIds = new Set();
+      const rawByApptId = new Map();
+      let failedRanges = 0;
+      const targets = clinics.length ? clinics : [null];
+      const total = targets.length * ranges.length;
+      let done = 0;
+      console.log(`[clinicorp sync] agenda ${apptFromDate} → ${apptToDate} (${ranges.length} janelas × ${targets.length} clínica(s))`);
+
+      for (const clinicId of targets) {
+        for (const r of ranges) {
+          let list = [];
+          try {
+            list = await clinicorpApi.listAppointments(settings, r.from, r.to, clinicId);
+          } catch (e) {
+            failedRanges++;
+            recordError(`agenda ${r.from}..${r.to}${clinicId ? ` (clínica ${clinicId})` : ''}`, e);
+            continue;
+          }
+          for (const a of list) {
+            const id = String(getAppointmentId(a));
+            if (apiIds.has(id)) continue;
+            apiIds.add(id);
+            rawByApptId.set(id, a);
+            try { await upsertAppointment(pool, a, tId); summary.appointments++; }
+            catch (e) { recordError(`agendamento ${id}`, e); }
+          }
+          done++;
+          if (done % 5 === 0 || done === total) {
+            await progress(`Agenda: ${done}/${total} janelas (${summary.appointments} agendamentos)`);
+          }
         }
       }
-    }
-    console.log(`[clinicorp sync] appointments processed: ${summary.appointments}, projection failed: ${projectionFailed}`);
 
-    // ─── BACKFILL DIRETO em agendamentos a partir do cache em memória ───
-    // Garante que `dentista_id` seja preenchido mesmo se upsertAppointment falhar
-    // (caso em que clinicorp_appointments fica vazio e o backfill baseado nele não roda).
-    try {
-      const tId = await resolveTenantId(pool, tenant_id);
-      const { rows: orphans } = await pool.query(
-        `SELECT id, clinicorp_appointment_id FROM agendamentos
-          WHERE tenant_id=$1 AND dentista_id IS NULL AND clinicorp_appointment_id IS NOT NULL`,
-        [tId]
-      );
-      let fixed = 0;
-      for (const row of orphans) {
-        const raw = rawByApptId.get(String(row.clinicorp_appointment_id));
-        if (!raw) continue;
-        const cpProfId = pickFirst(raw, 'ProfessionalId', 'Dentist_PersonId', 'DentistPersonId', 'Professional_PersonId', 'ScheduleToId', 'ScheduleTo_PersonId', 'DentistId', 'Dentist_Id', 'professional_id', 'dentist_id') ?? raw.Dentist?.Id ?? raw.Professional?.Id ?? null;
-        if (!cpProfId) continue;
-        const profName = pickFirst(raw, 'ProfessionalName', 'Dentist_FullName', 'Dentist_Name', 'DentistName', 'ScheduleToName', 'Professional_Name', 'professional_name', 'dentist_name') ?? raw.Dentist?.Name ?? raw.Dentist?.FullName ?? null;
-        try {
-          // Garante registro em clinicorp_professionals (espelho)
+      // Agendamentos sem dentista: resolve a partir do bruto recebido agora.
+      try {
+        const { rows: orphans } = await pool.query(
+          `SELECT id, clinicorp_appointment_id FROM agendamentos
+            WHERE tenant_id=$1 AND dentista_id IS NULL AND clinicorp_appointment_id IS NOT NULL`,
+          [tId]
+        );
+        for (const row of orphans) {
+          const raw = rawByApptId.get(String(row.clinicorp_appointment_id));
+          if (!raw) continue;
+          const cpProfId = pickFirst(raw, 'ProfessionalId', 'Dentist_PersonId', 'DentistPersonId', 'Professional_PersonId', 'ScheduleToId', 'ScheduleTo_PersonId', 'DentistId', 'Dentist_Id', 'professional_id', 'dentist_id') ?? raw.Dentist?.Id ?? raw.Professional?.Id ?? null;
+          if (!cpProfId) continue;
+          const profName = pickFirst(raw, 'ProfessionalName', 'Dentist_FullName', 'Dentist_Name', 'DentistName', 'ScheduleToName', 'Professional_Name', 'professional_name', 'dentist_name') ?? raw.Dentist?.Name ?? raw.Dentist?.FullName ?? null;
           await pool.query(
             `INSERT INTO clinicorp_professionals (id, tenant_id, full_name, user_name, raw, synced_at)
              VALUES ($1,$2,$3,NULL,$4,NOW())
@@ -1673,38 +1486,29 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
             [String(cpProfId), tId, String(profName || `Profissional ${cpProfId}`).trim(), JSON.stringify({ derived_from: 'agendamento_backfill', id: cpProfId, name: profName })]
           );
           const dId = await ensureLocalProfessional(pool, String(cpProfId), profName, tId);
-          if (dId) {
-            await pool.query(`UPDATE agendamentos SET dentista_id=$1, updated_at=NOW() WHERE id=$2`, [dId, row.id]);
-            fixed++;
+          if (dId) await pool.query(`UPDATE agendamentos SET dentista_id=$1, updated_at=NOW() WHERE id=$2 AND tenant_id=$3`, [dId, row.id, tId]);
+        }
+      } catch (e) { recordError('agenda → dentista', e); }
+
+      // Espelho fiel: some da Clinicorp → cancelado aqui. Só quando TODAS as
+      // janelas responderam; senão um erro de rede cancelaria a agenda local.
+      if (failedRanges === 0) {
+        try {
+          const { rows: localRows } = await pool.query(
+            `SELECT id FROM clinicorp_appointments WHERE tenant_id=$3 AND date >= $1 AND date <= $2
+               AND COALESCE(status,'') <> 'DELETED_IN_CLINICORP'`,
+            [apptFromDate, apptToDate, tId]
+          );
+          for (const local of localRows) {
+            if (apiIds.has(String(local.id))) continue;
+            await pool.query(`UPDATE clinicorp_appointments SET status = 'DELETED_IN_CLINICORP', synced_at = NOW() WHERE id = $1 AND tenant_id=$2`, [local.id, tId]);
+            await pool.query(`UPDATE agendamentos SET status = 'cancelado', updated_at = NOW() WHERE clinicorp_appointment_id = $1 AND tenant_id=$2`, [String(local.id), tId]);
           }
-        } catch (e) {
-          console.error('[clinicorp sync] backfill dentista agendamento', row.id, e.message);
-        }
+        } catch (e) { recordError('remoção de agendamentos excluídos', e); }
+      } else {
+        console.warn(`[clinicorp sync] ${failedRanges} janela(s) da agenda falharam — detecção de exclusões pulada`);
       }
-      console.log(`[clinicorp sync] backfill dentista_id em agendamentos: ${fixed}/${orphans.length}`);
-      const { rows: pcount } = await pool.query(`SELECT COUNT(*)::int AS c FROM clinicorp_professionals WHERE tenant_id=$1`, [tId]);
-      summary.professionals = pcount[0]?.c || summary.professionals;
-    } catch (e) { console.error('[clinicorp sync] backfill agendamentos→dentista', e.message); }
 
-
-
-
-
-    
-    // Deletion detection (faithfull mirror) — escopo por tenant
-    try {
-      const { rows: localRows } = await pool.query(
-        `SELECT id FROM clinicorp_appointments WHERE tenant_id=$3 AND date >= $1 AND date <= $2`,
-        [apptFromDate, apptToDate, tId]
-      );
-      for (const local of localRows) {
-        if (!apiIds.has(String(local.id))) {
-          await pool.query(`UPDATE clinicorp_appointments SET status = 'DELETED_IN_CLINICORP', synced_at = NOW() WHERE id = $1 AND tenant_id=$2`, [local.id, tId]);
-          await pool.query(`UPDATE agendamentos SET status = 'cancelado', updated_at = NOW() WHERE clinicorp_appointment_id = $1 AND tenant_id=$2`, [local.id, tId]);
-        }
-      }
-    } catch (e) { console.error('[clinicorp sync] pruning appointments', e.message); }
-    
     // Backfill de profissionais a partir dos agendamentos DESTE tenant
     try {
       const { rows: distinctProfs } = await pool.query(
@@ -1803,442 +1607,428 @@ export async function runFullSync(pool, { from, to, api_token, subscriber_id, ba
         console.log(`[clinicorp sync] backfill scan: criou ${found.size} profissionais via raw scan`);
       }
 
-
-      // Fallback final: para qualquer profissional ainda com nome genérico
-      // ("Profissional <id>") OU NULL/vazio, tenta resolver via API individual.
-      try {
-        const { rows: generics } = await pool.query(
-          `SELECT id FROM clinicorp_professionals
-            WHERE tenant_id=$1
-              AND (full_name IS NULL OR full_name='' OR full_name ~ '^Profissional\\s+\\d+$')`,
-          [tId]
-        );
-        let resolved = 0;
-        for (const g of generics) {
-          try {
-            const obj = await clinicorpApi.getProfessional(settings, g.id);
-            if (!obj) continue;
-            const realName = (obj.FullName || obj.Full_Name || obj.Name || obj.PersonName || obj.ProfessionalName || '').toString().trim();
-            if (!realName) continue;
-            await pool.query(
-              `UPDATE clinicorp_professionals
-                  SET full_name=$1, raw=$2, synced_at=NOW()
-                WHERE id=$3 AND tenant_id=$4`,
-              [realName, JSON.stringify(obj), g.id, tId]
-            );
-            await ensureLocalProfessional(pool, String(g.id), realName, tId);
-            resolved++;
-          } catch (e) {
-            console.warn('[clinicorp sync] getProfessional fallback', g.id, e.message);
-          }
-        }
-        if (generics.length) console.log(`[clinicorp sync] resolveu ${resolved}/${generics.length} nomes genéricos via API individual`);
-      } catch (e) { console.error('[clinicorp sync] fallback getProfessional', e.message); }
-
       const { rows: pcount } = await pool.query(`SELECT COUNT(*)::int AS c FROM clinicorp_professionals WHERE tenant_id=$1`, [tId]);
       summary.professionals = pcount[0]?.c || summary.professionals;
-    } catch (e) { console.error('[clinicorp sync] backfill professionals', e.message); }
-    
-    // Conta pacientes únicos sincronizados DESTE tenant
-    try {
-      const { rows } = await pool.query(`SELECT COUNT(*)::int AS c FROM clinicorp_patients WHERE tenant_id=$1`, [tId]);
-      summary.patients = rows[0]?.c || 0;
-    } catch { /* ignore */ }
-  });
+    } catch (e) { recordError('profissionais derivados da agenda', e); }
 
-  await safe('estimates', async () => {
-    const tId = await resolveTenantId(pool, tenant_id);
-    const ranges = sliceRange(estFromDate, estToDate);
-    const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics WHERE tenant_id=$1', [tId]);
-    
-    for (const r of ranges) {
-      if (clinics.length > 0) {
-        for (const { id: clinicId } of clinics) {
+      const { rows: pc } = await pool.query(`SELECT COUNT(*)::int AS c FROM clinicorp_patients WHERE tenant_id=$1`, [tId]);
+      summary.patients = pc[0]?.c || 0;
+    });
+
+    await step('orçamentos', async () => {
+      const clinics = await clinicIdsOf();
+      const targets = clinics.length ? clinics : [null];
+      for (const r of sliceRange(estFromDate, estToDate)) {
+        for (const clinicId of targets) {
           try {
-            const list = await clinicorpApi.listEstimates(settings, r.from, r.to, clinicId);
-            for (const e of (Array.isArray(list) ? list : [])) { await upsertEstimate(pool, e, tenant_id); summary.estimates++; }
-          } catch (e) { console.error('[clinicorp sync] estimates clinic range:', e.message); }
+            const list = await clinicorpApi.listEstimates(settings, r.from, r.to, clinicId || undefined);
+            for (const e of list) { await upsertEstimate(pool, e, tId, clinicId); summary.estimates++; }
+          } catch (e) { recordError(`orçamentos ${r.from}..${r.to}${clinicId ? ` (clínica ${clinicId})` : ''}`, e); }
         }
-      } else {
-        const list = await clinicorpApi.listEstimates(settings, r.from, r.to);
-        for (const e of (Array.isArray(list) ? list : [])) { await upsertEstimate(pool, e, tenant_id); summary.estimates++; }
       }
-    }
-  });
+    });
 
-  await safe('invoices', async () => {
-    const ranges = sliceRange(fromDate, toDate);
-    const tId_loc = await resolveTenantId(pool, tenant_id);
-    const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics WHERE tenant_id=$1', [tId_loc]);
-    for (const r of ranges) {
-      if (clinics.length > 0) {
-        for (const { id: clinicId } of clinics) {
+    await step('faturas', async () => {
+      const clinics = await clinicIdsOf();
+      const targets = clinics.length ? clinics : [null];
+      for (const r of sliceRange(fromDate, toDate)) {
+        for (const clinicId of targets) {
           try {
-            const list = await clinicorpApi.listInvoices(settings, { from: r.from, to: r.to, clinic_id: clinicId });
-            for (const i of (Array.isArray(list) ? list : [])) { await upsertFinancial(pool, 'invoice', i, tenant_id); summary.invoices++; }
-          } catch (e) { console.error('[clinicorp sync] financial:', e.message); }
-        }
-      } else {
-        const list = await clinicorpApi.listInvoices(settings, { from: r.from, to: r.to });
-        for (const i of (Array.isArray(list) ? list : [])) { await upsertFinancial(pool, 'invoice', i, tenant_id); summary.invoices++; }
-      }
-    }
-  });
-
-  await safe('payments', async () => {
-    const ranges = sliceRange(fromDate, toDate);
-    const tId_loc = await resolveTenantId(pool, tenant_id);
-    const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics WHERE tenant_id=$1', [tId_loc]);
-    const processPayment = async (item, clinicId = null) => {
-      if (isMonthlyFinancialSummary(item)) {
-        if (await upsertMonthlySummary(pool, 'payment', item, clinicId, tenant_id)) summary.payments++;
-        return;
-      }
-      await upsertFinancial(pool, 'payment', item, tenant_id);
-      summary.payments++;
-    };
-    if (clinics.length === 0) {
-      console.warn('[clinicorp sync] payments: nenhuma clínica espelhada para este tenant — pulando');
-      return;
-    }
-    for (const r of ranges) {
-      for (const { id: clinicId } of clinics) {
-        try {
-          const list = await clinicorpApi.listPayments(settings, { from: r.from, to: r.to, clinic_id: clinicId });
-          for (const p of (Array.isArray(list) ? list : [])) { await processPayment(p, clinicId); }
-        } catch (e) { console.error('[clinicorp sync] financial:', e.message); }
-      }
-    }
-  });
-
-  await safe('cashflow', async () => {
-    const ranges = sliceRange(fromDate, toDate);
-    const tId_loc = await resolveTenantId(pool, tenant_id);
-    const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics WHERE tenant_id=$1', [tId_loc]);
-    const processCashflow = async (item, clinicId = null) => {
-      if (isMonthlyFinancialSummary(item)) {
-        if (await upsertMonthlySummary(pool, 'cashflow', item, clinicId, tenant_id)) summary.cashflow++;
-        return;
-      }
-      await upsertFinancial(pool, 'cashflow', item, tenant_id);
-      summary.cashflow++;
-    };
-    if (clinics.length === 0) {
-      console.warn('[clinicorp sync] cashflow: nenhuma clínica espelhada para este tenant — pulando');
-      return;
-    }
-    for (const r of ranges) {
-      for (const { id: clinicId } of clinics) {
-        try {
-          const list = await clinicorpApi.listCashFlow(settings, { from: r.from, to: r.to, clinic_id: clinicId });
-          for (const c of (Array.isArray(list) ? list : [])) { await processCashflow(c, clinicId); }
-        } catch (e) { console.error('[clinicorp sync] financial:', e.message); }
-      }
-    }
-  });
-
-  await safe('evolutions', async () => {
-    // Evoluções geralmente são buscadas por paciente ou período se a API suportar
-    // Como estamos espelhando tudo, tentamos buscar por período
-    try {
-      const list = await clinicorpFetch(settings, '/treatment/evolution/list', { query: { from: fromDate, to: toDate } });
-      for (const e of (Array.isArray(list) ? list : [])) { await upsertEvolution(pool, e, tenant_id); summary.evolutions++; }
-    } catch (e) { /* skip se endpoint não existir */ }
-  });
-
-  await safe('documents', async () => {
-    try {
-      const list = await clinicorpFetch(settings, '/patient/document/list', { query: { from: fromDate, to: toDate } });
-      for (const d of (Array.isArray(list) ? list : [])) { await upsertDocument(pool, d, tenant_id); summary.documents++; }
-    } catch (e) { /* skip */ }
-  });
-
-  // ─── BACKFILL SQL universal: re-extrai colunas a partir do raw JSONB ───
-  // Necessário porque rows antigas foram inseridas com upserts anteriores que
-  // não populavam todos os campos. Roda em todos os tenants.
-  try {
-    console.log('[clinicorp sync] backfill SQL: re-extraindo colunas a partir de raw...');
-    await pool.query(`
-      UPDATE clinicorp_appointments SET
-        patient_name = COALESCE(NULLIF(patient_name,''), raw->>'PatientName', raw->>'Patient_FullName', raw->>'Patient_Name', raw->'Patient'->>'Name', raw->'Patient'->>'FullName'),
-        patient_id = COALESCE(patient_id, NULLIF(regexp_replace(COALESCE(raw->>'Patient_PersonId', raw->>'PatientId', raw->>'PatientPersonId', raw->'Patient'->>'Id', ''), '\\D', '', 'g'), '')::bigint),
-        professional_id = COALESCE(professional_id, NULLIF(regexp_replace(COALESCE(raw->>'Dentist_PersonId', raw->>'ProfessionalId', raw->>'ScheduleToId', raw->'Dentist'->>'Id', ''), '\\D', '', 'g'), '')::bigint),
-        professional_name = COALESCE(NULLIF(professional_name,''), raw->>'Dentist_FullName', raw->>'Dentist_Name', raw->>'ScheduleToName', raw->>'ProfessionalName', raw->'Dentist'->>'FullName', raw->'Dentist'->>'Name'),
-        category_id = COALESCE(category_id, NULLIF(regexp_replace(COALESCE(raw->>'CategoryId', ''), '\\D', '', 'g'), '')::bigint),
-        category_description = COALESCE(NULLIF(category_description,''), raw->>'CategoryDescription', raw->>'Category'),
-        category_color = COALESCE(NULLIF(category_color,''), raw->>'CategoryColor', raw->>'Color'),
-        business_id = COALESCE(business_id, NULLIF(regexp_replace(COALESCE(raw->>'Clinic_BusinessId', raw->>'BusinessId', ''), '\\D', '', 'g'), '')::bigint),
-        date = COALESCE(date, (raw->>'date')::date, (raw->>'Date')::date),
-        from_time = COALESCE(NULLIF(from_time,''), raw->>'fromTime', raw->>'FromTime'),
-        to_time = COALESCE(NULLIF(to_time,''), raw->>'toTime', raw->>'ToTime'),
-        status = COALESCE(NULLIF(status,''), raw->>'StatusId', raw->>'Status'),
-        notes = COALESCE(NULLIF(notes,''), raw->>'Notes', raw->>'notes')
-      WHERE raw IS NOT NULL
-        AND (patient_name IS NULL OR patient_name='' OR patient_id IS NULL OR from_time IS NULL OR date IS NULL OR professional_id IS NULL);
-    `).catch(e => console.error('[clinicorp sync] backfill appointments cols:', e.message));
-
-    // Deriva clinicorp_patients a partir dos raws de agendamentos (Clinicorp não tem /patient/list)
-    await pool.query(`
-      INSERT INTO clinicorp_patients (id, tenant_id, name, mobile_phone, raw, synced_at)
-      SELECT DISTINCT ON (pid, tenant_id)
-        pid::bigint AS id,
-        tenant_id,
-        NULLIF(raw->>'PatientName',''),
-        NULLIF(raw->>'MobilePhone',''),
-        jsonb_build_object('derived_from','appointment_backfill','id',pid,'name',raw->>'PatientName','mobile_phone',raw->>'MobilePhone'),
-        NOW()
-      FROM (
-        SELECT tenant_id, raw,
-               NULLIF(regexp_replace(COALESCE(raw->>'Patient_PersonId', raw->>'PatientId',''), '\\D', '', 'g'), '') AS pid
-        FROM clinicorp_appointments
-        WHERE raw IS NOT NULL
-      ) s
-      WHERE pid IS NOT NULL AND pid ~ '^\\d+$'
-      ON CONFLICT (id, tenant_id) DO UPDATE SET
-        name = COALESCE(NULLIF(EXCLUDED.name,''), clinicorp_patients.name),
-        mobile_phone = COALESCE(NULLIF(EXCLUDED.mobile_phone,''), clinicorp_patients.mobile_phone),
-        synced_at = NOW();
-    `).catch(e => console.error('[clinicorp sync] backfill patients from appts:', e.message));
-
-    // Mapeia status numérico (StatusId) para texto legível usando heurística do raw
-    await pool.query(`
-      UPDATE clinicorp_appointments SET status =
-        CASE
-          WHEN raw->>'CheckinTime' IS NOT NULL AND raw->>'CheckinTime' <> '' AND raw->>'WaitEnds' IS NOT NULL AND raw->>'WaitEnds' <> '' THEN 'em_atendimento'
-          WHEN (raw->>'StatusColor') ILIKE '%66bb6a%' THEN 'confirmado'
-          WHEN (raw->>'StatusColor') ILIKE '%f44%' OR (raw->>'StatusColor') ILIKE '%e53%' THEN 'cancelado'
-          WHEN (raw->>'StatusColor') ILIKE '%ffa%' OR (raw->>'StatusColor') ILIKE '%ff9%' THEN 'faltou'
-          ELSE 'agendado'
-        END
-      WHERE status IS NULL OR status ~ '^\\d+$';
-    `).catch(e => console.error('[clinicorp sync] map status:', e.message));
-
-    console.log('[clinicorp sync] backfill SQL concluído');
-  } catch (e) {
-    console.error('[clinicorp sync] backfill SQL block:', e.message);
-  }
-
-  // Força re-projeção final para garantir que dados espelhados apareçam nos módulos locais
-  try {
-    const tId = await resolveTenantId(pool, tenant_id);
-    console.log(`[clinicorp sync] forçando projeção local para tenant ${tId}...`);
-
-
-
-    // 1. Pacientes (todos do tenant)
-    const { rows: pats } = await pool.query(`SELECT raw FROM clinicorp_patients WHERE tenant_id=$1`, [tId]);
-    for (const p of pats) {
-      const raw = typeof p.raw === 'string' ? JSON.parse(p.raw) : p.raw;
-      await projectPatientToLocal(pool, raw, tId).catch(() => {});
-    }
-
-    // 2. Agendamentos (somente futuros)
-    const { rows: appts } = await pool.query(
-      `SELECT raw, id FROM clinicorp_appointments WHERE tenant_id=$3 AND date >= $1 AND date <= $2`,
-      [apptFromDate, apptToDate, tId]
-    );
-    for (const r of appts) { 
-      const raw = typeof r.raw === 'string' ? JSON.parse(r.raw) : r.raw;
-      await projectAppointmentToLocal(pool, raw, r.id, tId).catch(() => {}); 
-    }
-
-    // 3. Orçamentos (janela ampla)
-    const { rows: ests } = await pool.query(
-      `SELECT raw FROM clinicorp_estimates WHERE tenant_id=$3 AND date >= $1 AND date <= $2`,
-      [estFromDate, estToDate, tId]
-    );
-    for (const r of ests) {
-      const raw = typeof r.raw === 'string' ? JSON.parse(r.raw) : r.raw;
-      await projectEstimateToLocal(pool, raw, tId).catch(() => {});
-    }
-
-    // 4. Financeiro (Receitas e Despesas)
-    const { rows: fin } = await pool.query(
-      `SELECT raw, source FROM clinicorp_financial_entries WHERE tenant_id=$3 AND date >= $1 AND date <= $2`,
-      [fromDate, toDate, tId]
-    );
-    for (const f of fin) {
-      const raw = typeof f.raw === 'string' ? JSON.parse(f.raw) : f.raw;
-      await projectFinanceToLocal(pool, f.source, raw, tId).catch(() => {});
-    }
-
-  } catch (e) { console.error('[clinicorp sync] final mirroring projection', e.message); }
-
-
-  const status = errors.length === 0 ? 'success' : (Object.values(summary).some(Boolean) ? 'partial' : 'error');
-  
-  // Se forem as globais (carregadas via id=1), atualiza o status na tabela.
-  if (settings.id === 1 || (!api_token && settings.id === undefined)) {
-    // Verificação de integridade multi-tenant após o sync
-    try {
-      // Verifica quais tabelas possuem PK simples (id) em vez de composta (id, tenant_id)
-      const { rows: pkStatus } = await pool.query(`
-        SELECT 
-          relname as table_name,
-          (SELECT count(*) FROM pg_constraint c 
-           WHERE c.conrelid = cl.oid AND c.contype = 'p' 
-           AND (SELECT count(*) FROM unnest(c.conkey)) = 1
-          ) as has_simple_pk
-        FROM pg_class cl
-        WHERE relname IN (
-          'clinicorp_clinics', 'clinicorp_professionals', 'clinicorp_chairs',
-          'clinicorp_appointment_categories', 'clinicorp_specialties', 'clinicorp_patients',
-          'clinicorp_appointments', 'clinicorp_estimates', 'clinicorp_evolutions', 'clinicorp_documents'
-        )
-      `);
-
-      const tablesWithSimplePk = pkStatus.filter(r => r.has_simple_pk > 0).map(r => r.table_name);
-      
-      if (tablesWithSimplePk.length > 0) {
-        errors.push(`PK Integrity: ${tablesWithSimplePk.join(', ')} still using single-column PK`);
-        console.error(`[clinicorp sync] Tables still using single-column PK: ${tablesWithSimplePk.join(', ')}`);
-      }
-
-      // Verifica se há tenant_id NULL em qualquer uma das tabelas
-      const tableList = [
-        'clinicorp_clinics', 'clinicorp_professionals', 'clinicorp_chairs',
-        'clinicorp_appointment_categories', 'clinicorp_specialties', 'clinicorp_patients',
-        'clinicorp_appointments', 'clinicorp_estimates', 'clinicorp_evolutions', 'clinicorp_documents'
-      ];
-      
-      for (const table of tableList) {
-        const { rows: nullCount } = await pool.query(`SELECT count(*) as count FROM ${table} WHERE tenant_id IS NULL`);
-        if (parseInt(nullCount[0].count) > 0) {
-          errors.push(`Data Integrity: ${table} has ${nullCount[0].count} NULL tenant_ids`);
-          console.error(`[clinicorp sync] Table ${table} has ${nullCount[0].count} records with NULL tenant_id`);
+            const list = await clinicorpApi.listInvoices(settings, { from: r.from, to: r.to, clinic_id: clinicId || undefined });
+            for (const i of list) { await upsertFinancial(pool, 'invoice', i, tId, clinicId); summary.invoices++; }
+          } catch (e) { recordError(`faturas ${r.from}..${r.to}`, e); }
         }
       }
-    } catch (e) {
-      console.error('[clinicorp sync] Integrity check failed:', e.message);
+    });
+
+    // list_payments e list_cash_flow exigem business_id: só rodam por clínica.
+    for (const [key, label, fetcher] of [
+      ['payments', 'pagamentos', clinicorpApi.listPayments],
+      ['cashflow', 'fluxo de caixa', clinicorpApi.listCashFlow],
+    ]) {
+      const source = key === 'payments' ? 'payment' : 'cashflow';
+      await step(label, async () => {
+        const clinics = await clinicIdsOf();
+        if (!clinics.length) {
+          console.warn(`[clinicorp sync] ${label}: nenhuma clínica espelhada para este tenant — pulando`);
+          return;
+        }
+        for (const r of sliceRange(fromDate, toDate)) {
+          for (const clinicId of clinics) {
+            try {
+              const list = await fetcher(settings, { from: r.from, to: r.to, clinic_id: clinicId });
+              for (const item of list) {
+                if (isMonthlyFinancialSummary(item)) {
+                  if (await upsertMonthlySummary(pool, source, item, clinicId, tId)) summary[key]++;
+                } else {
+                  await upsertFinancial(pool, source, item, tId, clinicId);
+                  summary[key]++;
+                }
+              }
+            } catch (e) { recordError(`${label} ${r.from}..${r.to} (clínica ${clinicId})`, e); }
+          }
+        }
+      });
     }
 
+    // Re-extrai colunas a partir do raw JSONB (linhas antigas) — só deste tenant.
+    await progress('Consolidando dados...');
+    try {
+      await pool.query(`
+        UPDATE clinicorp_appointments SET
+          patient_name = COALESCE(NULLIF(patient_name,''), raw->>'PatientName', raw->>'Patient_FullName', raw->>'Patient_Name', raw->'Patient'->>'Name', raw->'Patient'->>'FullName'),
+          patient_id = COALESCE(patient_id, NULLIF(regexp_replace(COALESCE(raw->>'Patient_PersonId', raw->>'PatientId', raw->>'PatientPersonId', raw->'Patient'->>'Id', ''), '\\D', '', 'g'), '')::bigint),
+          professional_id = COALESCE(professional_id, NULLIF(regexp_replace(COALESCE(raw->>'Dentist_PersonId', raw->>'ProfessionalId', raw->>'ScheduleToId', raw->'Dentist'->>'Id', ''), '\\D', '', 'g'), '')::bigint),
+          professional_name = COALESCE(NULLIF(professional_name,''), raw->>'Dentist_FullName', raw->>'Dentist_Name', raw->>'ScheduleToName', raw->>'ProfessionalName', raw->'Dentist'->>'FullName', raw->'Dentist'->>'Name'),
+          category_id = COALESCE(category_id, NULLIF(regexp_replace(COALESCE(raw->>'CategoryId', ''), '\\D', '', 'g'), '')::bigint),
+          category_description = COALESCE(NULLIF(category_description,''), raw->>'CategoryDescription', raw->>'Category'),
+          category_color = COALESCE(NULLIF(category_color,''), raw->>'CategoryColor', raw->>'Color'),
+          business_id = COALESCE(business_id, NULLIF(regexp_replace(COALESCE(raw->>'Clinic_BusinessId', raw->>'BusinessId', ''), '\\D', '', 'g'), '')::bigint),
+          from_time = COALESCE(NULLIF(from_time,''), raw->>'fromTime', raw->>'FromTime'),
+          to_time = COALESCE(NULLIF(to_time,''), raw->>'toTime', raw->>'ToTime'),
+          notes = COALESCE(NULLIF(notes,''), raw->>'Notes', raw->>'notes')
+        WHERE tenant_id = $1 AND raw IS NOT NULL
+          AND (patient_name IS NULL OR patient_name='' OR patient_id IS NULL OR from_time IS NULL OR professional_id IS NULL)
+      `, [tId]);
+
+      // Deriva clinicorp_patients a partir dos agendamentos deste tenant
+      await pool.query(`
+        INSERT INTO clinicorp_patients (id, tenant_id, name, mobile_phone, raw, synced_at)
+        SELECT DISTINCT ON (pid)
+          pid::bigint AS id, $1::uuid,
+          NULLIF(raw->>'PatientName',''),
+          NULLIF(raw->>'MobilePhone',''),
+          jsonb_build_object('derived_from','appointment_backfill','id',pid,'name',raw->>'PatientName','mobile_phone',raw->>'MobilePhone'),
+          NOW()
+        FROM (
+          SELECT raw, NULLIF(regexp_replace(COALESCE(raw->>'Patient_PersonId', raw->>'PatientId',''), '\\D', '', 'g'), '') AS pid
+            FROM clinicorp_appointments
+           WHERE tenant_id = $1 AND raw IS NOT NULL
+        ) s
+        WHERE pid IS NOT NULL AND pid ~ '^\\d+$'
+        ON CONFLICT (id, tenant_id) DO UPDATE SET
+          name = COALESCE(NULLIF(EXCLUDED.name,''), clinicorp_patients.name),
+          mobile_phone = COALESCE(NULLIF(EXCLUDED.mobile_phone,''), clinicorp_patients.mobile_phone),
+          synced_at = NOW()
+      `, [tId]);
+
+      // StatusId numérico → texto legível (heurística sobre o raw)
+      await pool.query(`
+        UPDATE clinicorp_appointments SET status =
+          CASE
+            WHEN raw->>'CheckinTime' IS NOT NULL AND raw->>'CheckinTime' <> '' AND raw->>'WaitEnds' IS NOT NULL AND raw->>'WaitEnds' <> '' THEN 'em_atendimento'
+            WHEN (raw->>'StatusColor') ILIKE '%66bb6a%' THEN 'confirmado'
+            WHEN (raw->>'StatusColor') ILIKE '%f44%' OR (raw->>'StatusColor') ILIKE '%e53%' THEN 'cancelado'
+            WHEN (raw->>'StatusColor') ILIKE '%ffa%' OR (raw->>'StatusColor') ILIKE '%ff9%' THEN 'faltou'
+            ELSE 'agendado'
+          END
+        WHERE tenant_id = $1 AND (status IS NULL OR status ~ '^\\d+$')
+      `, [tId]);
+    } catch (e) { recordError('consolidação SQL', e); }
+
+    // Projeção final nas tabelas que o app lê (pacientes, agendamentos, dentistas, orçamentos, financeiro)
+    await progress('Atualizando agenda e pacientes do sistema...');
+    try {
+      const counts = await reprojectTenant(pool, tId, { apptFrom: apptFromDate, apptTo: apptToDate, estFrom: estFromDate, estTo: estToDate, finFrom: fromDate, finTo: toDate });
+      summary.patients = Math.max(summary.patients, counts.patients);
+    } catch (e) { recordError('projeção local', e); }
+
+    const status = errors.length === 0 ? 'success' : (Object.values(summary).some(Boolean) ? 'partial' : 'error');
+    const result = { status, summary, errors, from: fromDate, to: toDate };
     if (user_id) {
       await pool.query(
-        `UPDATE clinicorp_user_settings SET last_sync_at = NOW(), last_sync_status = $1, last_sync_error = $2, updated_at = NOW() WHERE user_id = $3`,
-        [status, errors.length ? errors.join(' | ') : null, user_id]
+        `UPDATE clinicorp_user_settings
+            SET last_sync_at = NOW(), last_sync_status = $2, last_sync_error = $3,
+                sync_progress = $4::jsonb, updated_at = NOW()
+          WHERE user_id = $1`,
+        [user_id, status, errors.length ? errors.slice(0, 3).join(' | ') : null,
+         JSON.stringify({ step: 'Concluído', completed: true, timestamp: new Date().toISOString(), summary, result })]
       );
     }
-
-  }
-
-  try {
-    // Desativado re-projeção final forçada em massa
-  } catch (e) { console.error('[clinicorp sync] final forced projection', e.message); }
-
-    return { status, summary, errors, from: fromDate, to: toDate };
+    console.log(`[clinicorp sync] END tenant=${tId} status=${status}`, summary);
+    return result;
+  } catch (err) {
+    if (user_id) {
+      const rateLimited = isClinicorpRateLimitError(err);
+      await pool.query(
+        `UPDATE clinicorp_user_settings
+            SET last_sync_at = NOW(), last_sync_status = $2, last_sync_error = $3,
+                sync_progress = $4::jsonb, updated_at = NOW()
+          WHERE user_id = $1`,
+        [user_id, rateLimited ? 'rate_limited' : 'error', err.message,
+         JSON.stringify({ step: `Erro: ${err.message}`, failed: true, timestamp: new Date().toISOString(), summary, errors: errors.slice(0, 5) })]
+      ).catch(() => {});
+    }
+    throw err;
   } finally {
     _activeSyncs.delete(syncKey);
   }
 }
 
+// Re-projeta o espelho (clinicorp_*) do tenant nas tabelas do app.
+// Sem janelas, reprocessa tudo (usado por POST /api/clinicorp/reproject).
+export async function reprojectTenant(pool, tenantId, { apptFrom = null, apptTo = null, estFrom = null, estTo = null, finFrom = null, finTo = null } = {}) {
+  const tId = await resolveTenantId(pool, tenantId);
+  const counts = { professionals: 0, patients: 0, appointments: 0, estimates: 0, financial: 0, errors: 0 };
+  const parse = (raw) => (typeof raw === 'string' ? JSON.parse(raw) : raw);
+  const range = (col, a, b, params) => {
+    const where = [];
+    if (a) { params.push(a); where.push(`${col} >= $${params.length}`); }
+    if (b) { params.push(b); where.push(`${col} <= $${params.length}`); }
+    return where.length ? ` AND ${where.join(' AND ')}` : '';
+  };
 
+  const { rows: profs } = await pool.query('SELECT id, full_name FROM clinicorp_professionals WHERE tenant_id = $1', [tId]);
+  for (const p of profs) {
+    try { if (await ensureLocalProfessional(pool, String(p.id), p.full_name, tId)) counts.professionals++; }
+    catch (e) { counts.errors++; console.error('[clinicorp reproject] professional', p.id, e.message); }
+  }
+
+  const { rows: pats } = await pool.query('SELECT id, raw FROM clinicorp_patients WHERE tenant_id = $1', [tId]);
+  for (const r of pats) {
+    try { if (await projectPatientToLocal(pool, { ...(parse(r.raw) || {}), id: r.id }, tId)) counts.patients++; }
+    catch (e) { counts.errors++; console.error('[clinicorp reproject] patient', r.id, e.message); }
+  }
+
+  let params = [tId];
+  const { rows: aps } = await pool.query(
+    `SELECT id, raw FROM clinicorp_appointments WHERE tenant_id = $1 AND raw IS NOT NULL${range('date', apptFrom, apptTo, params)}`,
+    params
+  );
+  for (const r of aps) {
+    try { if (await projectAppointmentToLocal(pool, parse(r.raw), String(r.id), tId)) counts.appointments++; }
+    catch (e) { counts.errors++; console.error('[clinicorp reproject] appointment', r.id, e.message); }
+  }
+
+  params = [tId];
+  const { rows: ests } = await pool.query(
+    `SELECT id, raw FROM clinicorp_estimates WHERE tenant_id = $1 AND raw IS NOT NULL${range('date', estFrom, estTo, params)}`,
+    params
+  );
+  for (const r of ests) {
+    try { await projectEstimateToLocal(pool, { ...(parse(r.raw) || {}), id: r.id }, tId); counts.estimates++; }
+    catch (e) { counts.errors++; console.error('[clinicorp reproject] estimate', r.id, e.message); }
+  }
+
+  params = [tId];
+  const { rows: fin } = await pool.query(
+    `SELECT source, raw FROM clinicorp_financial_entries WHERE tenant_id = $1 AND raw IS NOT NULL${range('date', finFrom, finTo, params)}`,
+    params
+  );
+  for (const f of fin) {
+    try { await projectFinanceToLocal(pool, f.source, parse(f.raw), tId); counts.financial++; }
+    catch (e) { counts.errors++; console.error('[clinicorp reproject] financial', e.message); }
+  }
+  return counts;
+}
 
 /**
  * Bidirectional Mirroring (Push to Clinicorp)
+ *
+ * As credenciais vêm do tenant do registro (clinicorp_user_settings de um
+ * usuário daquele tenant com a integração ativa). A spec oficial só oferece:
+ *   - POST /patient/create
+ *   - POST /appointment/create_appointment_by_api
+ *   - POST /appointment/cancel_appointment {subscriber_id, id}
+ * Não existe atualização de paciente nem de agendamento: essas operações são
+ * puladas e registradas em clinicorp_push_log com status 'skipped'.
  */
+function addMinutesToTime(hhmm, minutes) {
+  const [h, m] = String(hhmm || '00:00').split(':').map(Number);
+  const total = Math.max(0, (h || 0) * 60 + (m || 0) + (Number(minutes) || 0));
+  const capped = Math.min(total, 23 * 60 + 59);
+  return `${String(Math.floor(capped / 60)).padStart(2, '0')}:${String(capped % 60).padStart(2, '0')}`;
+}
+
+function toYmd(v) {
+  if (!v) return null;
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  return normalizeClinicorpDate(v);
+}
+
+function firstCreatedId(res) {
+  const obj = Array.isArray(res) ? res[0] : res;
+  if (!obj || typeof obj !== 'object') return null;
+  const id = pickFirst(obj, 'id', 'Id', 'PersonId', 'Patient_PersonId', 'PatientId', 'AppointmentId');
+  return id != null ? String(id) : null;
+}
+
 export const clinicorpPush = {
   log: async (pool, data) => {
     try {
-      const tId = data.tenant_id || await resolveTenantId(pool, null);
       await pool.query(
         `INSERT INTO clinicorp_push_log (entity_type, local_id, clinicorp_id, action, status, payload, response, error_message, tenant_id)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-        [data.entity, data.local_id, data.clinicorp_id, data.action, data.status,
+        [data.entity, String(data.local_id ?? ''), data.clinicorp_id != null ? String(data.clinicorp_id) : null,
+         data.action, data.status,
          data.payload ? JSON.stringify(data.payload) : null,
          data.response ? JSON.stringify(data.response) : null,
-         data.error, tId]
+         data.error || null, data.tenant_id || null]
       );
     } catch (e) { console.error('[clinicorp push log]', e.message); }
   },
 
-  pushPatient: async (pool, patientId, tenantId = null) => {
+  skip: async (pool, data, reason) => {
+    console.log(`[clinicorp push] ${data.entity} ${data.local_id} ${data.action} pulado: ${reason}`);
+    await clinicorpPush.log(pool, { ...data, status: 'skipped', error: reason });
+  },
+
+  pushPatient: async (pool, patientId) => {
+    let tenantId = null;
     try {
-      const s = await loadSettings(pool);
-      if (!s?.enabled) return;
       const { rows } = await pool.query('SELECT * FROM pacientes WHERE id = $1', [patientId]);
       const p = rows[0];
-      if (!p) return;
-
-      const body = {
-        Name: p.nome,
-        MobilePhone: p.telefone,
-        Email: p.email,
-        BirthDate: p.data_nascimento,
-        Sex: p.sexo,
-        DocumentId: p.cpf,
-      };
+      if (!p?.tenant_id) return;
+      tenantId = p.tenant_id;
+      const s = await loadSettingsForTenant(pool, tenantId);
+      if (!s) return; // tenant sem integração Clinicorp ativa
 
       if (p.clinicorp_patient_id) {
-        const res = await clinicorpApi.updatePatient(s, p.clinicorp_patient_id, body);
-        await clinicorpPush.log(pool, { entity: 'patient', local_id: patientId, clinicorp_id: p.clinicorp_patient_id, action: 'update', status: 'success', payload: body, response: res });
-      } else {
-        const res = await clinicorpApi.createPatient(s, body);
-        const cpId = res.id ?? res.Patient_PersonId;
-        if (cpId) {
-          await pool.query('UPDATE pacientes SET clinicorp_patient_id = $1 WHERE id = $2', [cpId, patientId]);
-          await clinicorpPush.log(pool, { entity: 'patient', local_id: patientId, clinicorp_id: cpId, action: 'create', status: 'success', payload: body, response: res });
-        }
+        await clinicorpPush.skip(pool, {
+          entity: 'patient', local_id: patientId, clinicorp_id: p.clinicorp_patient_id, action: 'update', tenant_id: tenantId,
+        }, 'A API da Clinicorp não tem endpoint de atualização de paciente');
+        return;
       }
+      if (!p.nome) return;
+
+      const sexo = String(p.sexo || '').toUpperCase();
+      const body = {
+        Name: p.nome,
+        ...(toYmd(p.data_nascimento) ? { BirthDate: toYmd(p.data_nascimento) } : {}),
+        ...(sexo.startsWith('M') ? { Sex: 'M' } : sexo.startsWith('F') ? { Sex: 'F' } : {}),
+        ...(p.email ? { Email: p.email } : {}),
+        ...(onlyDigits(p.telefone) ? { MobilePhone: onlyDigits(p.telefone) } : {}),
+        ...(onlyDigits(p.cpf) ? { OtherDocumentId: onlyDigits(p.cpf) } : {}),
+      };
+      const res = await clinicorpApi.createPatient(s, body);
+      const cpId = firstCreatedId(res);
+      if (cpId) {
+        await pool.query(
+          'UPDATE pacientes SET clinicorp_patient_id = $1, last_clinicorp_sync_at = NOW() WHERE id = $2 AND tenant_id = $3',
+          [cpId, patientId, tenantId]
+        );
+      }
+      await clinicorpPush.log(pool, { entity: 'patient', local_id: patientId, clinicorp_id: cpId, action: 'create', status: 'success', payload: body, response: res, tenant_id: tenantId });
     } catch (e) {
-      await clinicorpPush.log(pool, { entity: 'patient', local_id: patientId, action: 'error', error: e.message });
+      await clinicorpPush.log(pool, { entity: 'patient', local_id: patientId, action: 'create', status: 'error', error: e.message, tenant_id: tenantId });
       console.error('[clinicorp push patient]', e.message);
     }
   },
 
-  pushAppointment: async (pool, appointmentId, tenantId = null) => {
+  pushAppointment: async (pool, appointmentId) => {
+    let tenantId = null;
     try {
-      const s = await loadSettings(pool);
-      if (!s?.enabled) return;
       const { rows } = await pool.query(`
-        SELECT a.*, p.clinicorp_patient_id, d.clinicorp_professional_id
-        FROM agendamentos a
-        LEFT JOIN pacientes p ON a.paciente_id = p.id
-        LEFT JOIN dentistas d ON a.dentista_id = d.id
-        WHERE a.id = $1
+        SELECT a.*, p.clinicorp_patient_id, p.nome AS paciente_nome, p.telefone AS paciente_telefone,
+               p.email AS paciente_email, d.clinicorp_professional_id
+          FROM agendamentos a
+          LEFT JOIN pacientes p ON p.id = a.paciente_id AND p.tenant_id = a.tenant_id
+          LEFT JOIN dentistas d ON d.id = a.dentista_id AND d.tenant_id = a.tenant_id
+         WHERE a.id = $1
       `, [appointmentId]);
       const a = rows[0];
-      if (!a) return;
-
-      const body = {
-        PatientId: a.clinicorp_patient_id,
-        ProfessionalId: a.clinicorp_professional_id,
-        Date: a.data,
-        FromTime: a.hora,
-        Notes: a.observacoes,
-        Status: a.status,
-      };
+      if (!a?.tenant_id) return;
+      tenantId = a.tenant_id;
+      const s = await loadSettingsForTenant(pool, tenantId);
+      if (!s) return;
+      const base = { entity: 'appointment', local_id: appointmentId, tenant_id: tenantId };
 
       if (a.clinicorp_appointment_id) {
-        const res = await clinicorpApi.updateAppointment(s, a.clinicorp_appointment_id, body);
-        await clinicorpPush.log(pool, { entity: 'appointment', local_id: appointmentId, clinicorp_id: a.clinicorp_appointment_id, action: 'update', status: 'success', payload: body, response: res });
-      } else {
-        const res = await clinicorpApi.createAppointment(s, body);
-        const cpId = res.id ?? res.AppointmentId;
-        if (cpId) {
-          await pool.query('UPDATE agendamentos SET clinicorp_appointment_id = $1 WHERE id = $2', [cpId, appointmentId]);
-          await clinicorpPush.log(pool, { entity: 'appointment', local_id: appointmentId, clinicorp_id: cpId, action: 'create', status: 'success', payload: body, response: res });
+        if (a.status === 'cancelado') {
+          const res = await clinicorpApi.cancelAppointment(s, a.clinicorp_appointment_id);
+          await clinicorpPush.log(pool, { ...base, clinicorp_id: a.clinicorp_appointment_id, action: 'cancel', status: 'success', response: res });
+          return;
         }
+        await clinicorpPush.skip(pool, { ...base, clinicorp_id: a.clinicorp_appointment_id, action: 'update' },
+          'A API da Clinicorp não tem endpoint de atualização de agendamento (apenas cancelamento)');
+        return;
       }
+      if (a.status === 'cancelado') return;
+
+      if (!a.clinicorp_professional_id) {
+        await clinicorpPush.skip(pool, { ...base, action: 'create' }, 'Dentista sem vínculo com a Clinicorp (clinicorp_professional_id)');
+        return;
+      }
+      // Clínica: a mais usada por esse profissional no espelho; senão a única do tenant.
+      const { rows: biz } = await pool.query(
+        `SELECT business_id FROM (
+           SELECT business_id, COUNT(*) AS n FROM clinicorp_appointments
+            WHERE tenant_id = $1 AND professional_id::text = $2 AND business_id IS NOT NULL
+            GROUP BY business_id
+         ) x ORDER BY n DESC LIMIT 1`,
+        [tenantId, String(a.clinicorp_professional_id)]
+      );
+      let businessId = biz[0]?.business_id ?? null;
+      if (!businessId) {
+        const { rows: clinics } = await pool.query('SELECT id FROM clinicorp_clinics WHERE tenant_id = $1', [tenantId]);
+        if (clinics.length === 1) businessId = clinics[0].id;
+      }
+      if (!businessId) {
+        await clinicorpPush.skip(pool, { ...base, action: 'create' }, 'Não foi possível determinar a clínica (Clinic_BusinessId) do agendamento');
+        return;
+      }
+      const date = toYmd(a.data);
+      const fromTime = normalizeClinicorpTime(a.hora);
+      if (!date || !fromTime) {
+        await clinicorpPush.skip(pool, { ...base, action: 'create' }, 'Agendamento sem data/hora válida');
+        return;
+      }
+
+      const body = {
+        ...(toBigIntOrNull(a.clinicorp_patient_id) ? { Patient_PersonId: Number(a.clinicorp_patient_id) } : {}),
+        ...(a.paciente_nome ? { PatientName: a.paciente_nome } : {}),
+        ...(a.paciente_telefone ? { MobilePhone: a.paciente_telefone } : {}),
+        ...(a.paciente_email ? { Email: a.paciente_email } : {}),
+        // Data à meia-noite de Brasília (formato do exemplo da spec)
+        date: new Date(`${date}T00:00:00-03:00`).toISOString(),
+        fromTime,
+        toTime: addMinutesToTime(fromTime, a.duracao || 30),
+        Clinic_BusinessId: Number(businessId),
+        Dentist_PersonId: Number(a.clinicorp_professional_id),
+        ...(a.procedimento ? { Procedures: a.procedimento } : {}),
+        ...(a.categoria ? { CategoryDescription: a.categoria } : {}),
+      };
+      if (!body.Patient_PersonId && !body.PatientName) {
+        await clinicorpPush.skip(pool, { ...base, action: 'create' }, 'Agendamento sem paciente');
+        return;
+      }
+      const res = await clinicorpApi.createAppointment(s, body);
+      const cpId = firstCreatedId(res);
+      if (cpId) {
+        await pool.query(
+          'UPDATE agendamentos SET clinicorp_appointment_id = $1, last_clinicorp_sync_at = NOW() WHERE id = $2 AND tenant_id = $3',
+          [cpId, appointmentId, tenantId]
+        );
+      }
+      await clinicorpPush.log(pool, { ...base, clinicorp_id: cpId, action: 'create', status: 'success', payload: body, response: res });
     } catch (e) {
-      await clinicorpPush.log(pool, { entity: 'appointment', local_id: appointmentId, action: 'error', error: e.message });
+      await clinicorpPush.log(pool, { entity: 'appointment', local_id: appointmentId, action: 'push', status: 'error', error: e.message, tenant_id: tenantId });
       console.error('[clinicorp push appointment]', e.message);
     }
   },
 
-  deleteAppointment: async (pool, appointmentId) => {
+  // Exclusão local → cancelamento na Clinicorp (a spec não tem delete).
+  // `snapshot` ({ clinicorp_appointment_id, tenant_id }) deve ser lido ANTES
+  // do DELETE local; sem ele tentamos ler a linha (se ainda existir).
+  deleteAppointment: async (pool, appointmentId, snapshot = null) => {
+    let tenantId = snapshot?.tenant_id || null;
     try {
-      const s = await loadSettings(pool);
-      if (!s?.enabled) return;
-      const { rows } = await pool.query('SELECT clinicorp_appointment_id FROM agendamentos WHERE id = $1', [appointmentId]);
-      const cpId = rows[0]?.clinicorp_appointment_id;
-      if (cpId) {
-        await clinicorpApi.deleteAppointment(s, cpId);
-        await clinicorpPush.log(pool, { entity: 'appointment', local_id: appointmentId, clinicorp_id: cpId, action: 'delete', status: 'success' });
+      let cpId = snapshot?.clinicorp_appointment_id || null;
+      if (!snapshot) {
+        const { rows } = await pool.query('SELECT clinicorp_appointment_id, tenant_id FROM agendamentos WHERE id = $1', [appointmentId]);
+        cpId = rows[0]?.clinicorp_appointment_id || null;
+        tenantId = rows[0]?.tenant_id || null;
       }
+      if (!cpId || !tenantId) return;
+      const s = await loadSettingsForTenant(pool, tenantId);
+      if (!s) return;
+      const res = await clinicorpApi.cancelAppointment(s, cpId);
+      await clinicorpPush.log(pool, { entity: 'appointment', local_id: appointmentId, clinicorp_id: cpId, action: 'cancel', status: 'success', response: res, tenant_id: tenantId });
     } catch (e) {
+      await clinicorpPush.log(pool, { entity: 'appointment', local_id: appointmentId, action: 'cancel', status: 'error', error: e.message, tenant_id: tenantId });
       console.error('[clinicorp delete appointment]', e.message);
     }
-  }
+  },
 };
 
 /**
@@ -2260,9 +2050,11 @@ export async function reconciliationTick(pool) {
     `SELECT s.user_id, p.tenant_id
      FROM clinicorp_user_settings s
      JOIN profiles p ON p.id = s.user_id
-     WHERE s.enabled = true 
-       AND s.api_token IS NOT NULL 
+     WHERE s.enabled = true
+       AND s.api_token IS NOT NULL
        AND s.subscriber_id IS NOT NULL
+       AND p.tenant_id IS NOT NULL
+       AND (COALESCE(s.last_sync_status, '') <> 'syncing' OR s.updated_at < NOW() - INTERVAL '30 minutes')
        AND (s.last_sync_at IS NULL OR s.last_sync_at < NOW() - INTERVAL '30 minutes')
      LIMIT 5` // Sincroniza até 5 usuários por tick para evitar sobrecarga
   );
@@ -2273,8 +2065,8 @@ export async function reconciliationTick(pool) {
     const to   = new Date(today.getTime() + 14 * 86400_000).toISOString().slice(0, 10);
     console.log(`[clinicorp] auto-reconcile user ${u.user_id} rodando ${from} → ${to}`);
     try {
+      // runFullSync grava last_sync_* / sync_progress do usuário.
       const r = await runFullSync(pool, { from, to, user_id: u.user_id, tenant_id: u.tenant_id });
-      await pool.query(`UPDATE clinicorp_user_settings SET last_sync_at = NOW(), last_sync_status = 'success' WHERE user_id = $1`, [u.user_id]);
       results.push({ type: 'user', user_id: u.user_id, ...r });
     } catch (e) {
       console.error(`[clinicorp] user ${u.user_id} tick error:`, e.message);
@@ -2350,7 +2142,10 @@ async function runFinancialReconciliation(pool) {
 }
 
 // ─── Webhook event processor ──────────────────────────────────
-async function processWebhookEvent(pool, event) {
+// tenantId vem do webhook_secret (clinicorp_user_settings → profiles) e é
+// repassado a TODAS as gravações.
+async function processWebhookEvent(pool, event, tenantId) {
+  const tId = await resolveTenantId(pool, tenantId);
   // Clinicorp envia eventos heterogêneos. Tentamos inferir o tipo.
   const type = (event?.event || event?.Event || event?.type || event?.action || '').toString().toLowerCase();
   const data = event?.data || event?.Data || event?.payload || event;
@@ -2359,46 +2154,53 @@ async function processWebhookEvent(pool, event) {
 
   // Agendamento
   if (type.includes('appointment') || data.AppointmentId || data.Patient_PersonId && (data.FromTime || data.Date)) {
-    if (type.includes('deleted') || type.includes('cancel')) {
-      const id = data.id ?? data.AppointmentId;
+    const deleted = type.includes('deleted') || type.includes('cancel') || data.Deleted === 'X';
+    if (deleted) {
+      const id = getAppointmentId(data) ?? data.AppointmentId;
       if (id) {
-        await pool.query(`UPDATE clinicorp_appointments SET status = 'DELETED_IN_CLINICORP', synced_at = NOW() WHERE id = $1`, [id]);
-        await pool.query(`UPDATE agendamentos SET status = 'cancelado', updated_at = NOW() WHERE clinicorp_appointment_id = $1`, [String(id)]);
+        await pool.query(
+          `UPDATE clinicorp_appointments SET status = 'DELETED_IN_CLINICORP', synced_at = NOW() WHERE id = $1 AND tenant_id = $2`,
+          [String(id), tId]
+        );
+        await pool.query(
+          `UPDATE agendamentos SET status = 'cancelado', updated_at = NOW() WHERE clinicorp_appointment_id = $1 AND tenant_id = $2`,
+          [String(id), tId]
+        );
         return { handled: true, target: 'appointment_deleted' };
       }
     }
-    await upsertAppointment(pool, data);
+    await upsertAppointment(pool, data, tId);
     return { handled: true, target: 'appointment' };
   }
 
   // Paciente
   if (type.includes('patient') || (data.Patient_PersonId && data.Name && !data.FromTime)) {
-    await upsertPatient(pool, data);
+    await upsertPatient(pool, data, tId);
     return { handled: true, target: 'patient' };
   }
 
   // Evolução / Prontuário
   if (type.includes('evolution') || data.EvolutionId) {
-    await upsertEvolution(pool, data);
+    await upsertEvolution(pool, data, tId);
     return { handled: true, target: 'evolution' };
   }
 
   // Documento / Anexo
   if (type.includes('document') || data.DocumentId || data.FileUrl) {
-    await upsertDocument(pool, data);
+    await upsertDocument(pool, data, tId);
     return { handled: true, target: 'document' };
   }
 
   // Orçamento / tratamento
   if (type.includes('estimate') || type.includes('treatment') || data.TreatmentId) {
-    await upsertEstimate(pool, data);
+    await upsertEstimate(pool, data, tId);
     return { handled: true, target: 'estimate' };
   }
 
   // Financeiro
   if (type.includes('payment') || type.includes('invoice') || type.includes('cashflow')) {
     const src = type.includes('invoice') ? 'invoice' : type.includes('cashflow') ? 'cashflow' : 'payment';
-    await upsertFinancial(pool, src, data);
+    await upsertFinancial(pool, src, data, tId);
     return { handled: true, target: src };
   }
 
@@ -2407,6 +2209,21 @@ async function processWebhookEvent(pool, event) {
 
 // ─── Express routes ───────────────────────────────────────────
 export function registerClinicorp(app, pool, { verifyUser } = {}) {
+  // Colunas usadas pela integração na VPS (idempotente; antes ficavam só no
+  // schema do Supabase).
+  (async () => {
+    for (const sql of [
+      `ALTER TABLE clinicorp_user_settings ADD COLUMN IF NOT EXISTS sync_progress JSONB`,
+      `ALTER TABLE clinicorp_push_log ADD COLUMN IF NOT EXISTS tenant_id UUID`,
+      `ALTER TABLE clinicorp_webhook_events ADD COLUMN IF NOT EXISTS tenant_id UUID`,
+      `ALTER TABLE clinicorp_conflicts ADD COLUMN IF NOT EXISTS tenant_id UUID`,
+      `CREATE INDEX IF NOT EXISTS idx_clinicorp_push_log_tenant ON clinicorp_push_log(tenant_id, created_at DESC)`,
+    ]) {
+      try { await pool.query(sql); }
+      catch (e) { console.warn('[clinicorp] schema:', e.message); }
+    }
+  })();
+
   // ── Webhook receiver (público; protegido por ?user_api=<webhook_secret>) ──
   app.post('/api/webhook/clinicorp', async (req, res) => {
     const startedAt = Date.now();
@@ -2448,7 +2265,7 @@ export function registerClinicorp(app, pool, { verifyUser } = {}) {
 
       let result;
       try {
-        result = await processWebhookEvent(pool, event);
+        result = await processWebhookEvent(pool, event, webhookTenantId);
         await pool.query(
           `UPDATE clinicorp_webhook_events SET status = $1, processed_at = NOW() WHERE id = $2`,
           [result.handled ? 'processed' : 'ignored', eventId]
@@ -2504,14 +2321,28 @@ export function registerClinicorp(app, pool, { verifyUser } = {}) {
     return false;
   };
 
-  // ── Local read-only data (espelho) — escopo por tenant ───────
-  app.get('/api/clinicorp/clinics', async (req, res) => {
+  // Express 4 não captura rejeições de handlers async: sem isto um erro do
+  // Postgres deixava a requisição pendurada.
+  const route = (fn) => async (req, res) => {
+    try { await fn(req, res); }
+    catch (e) {
+      console.error(`[clinicorp] ${req.method} ${req.path}:`, e.message);
+      if (!res.headersSent) res.status(500).json({ error: e.message });
+    }
+  };
+  // Leituras do espelho exigem tenant; sem ele, lista vazia (nunca global).
+  const tenantList = (fn) => route(async (req, res) => {
     const tId = await tenantOf(req);
+    if (!tId) return res.json([]);
+    await fn(req, res, tId);
+  });
+
+  // ── Local read-only data (espelho) — escopo por tenant ───────
+  app.get('/api/clinicorp/clinics', tenantList(async (req, res, tId) => {
     const { rows } = await pool.query('SELECT * FROM clinicorp_clinics WHERE tenant_id=$1 ORDER BY name', [tId]);
     res.json(rows);
-  });
-  app.get('/api/clinicorp/professionals', async (req, res) => {
-    const tId = await tenantOf(req);
+  }));
+  app.get('/api/clinicorp/professionals', tenantList(async (req, res, tId) => {
     const { rows } = await pool.query(`
       SELECT cp.*, d.id as local_id, d.ativo as local_ativo, d.cor_agenda as local_cor
       FROM clinicorp_professionals cp
@@ -2520,20 +2351,17 @@ export function registerClinicorp(app, pool, { verifyUser } = {}) {
       ORDER BY cp.full_name
     `, [tId]);
     res.json(rows);
-  });
-  app.get('/api/clinicorp/categories', async (req, res) => {
-    const tId = await tenantOf(req);
+  }));
+  app.get('/api/clinicorp/categories', tenantList(async (req, res, tId) => {
     const { rows } = await pool.query('SELECT * FROM clinicorp_appointment_categories WHERE tenant_id=$1 ORDER BY description', [tId]);
     res.json(rows);
-  });
-  app.get('/api/clinicorp/specialties', async (req, res) => {
-    const tId = await tenantOf(req);
+  }));
+  app.get('/api/clinicorp/specialties', tenantList(async (req, res, tId) => {
     const { rows } = await pool.query('SELECT * FROM clinicorp_specialties WHERE tenant_id=$1 ORDER BY description', [tId]);
     res.json(rows);
-  });
-  app.get('/api/clinicorp/patients', async (req, res) => {
-    const tId = await tenantOf(req);
-    const limit = Math.min(Number(req.query.limit) || 100, 500);
+  }));
+  app.get('/api/clinicorp/patients', tenantList(async (req, res, tId) => {
+    const limit = Math.min(Number(req.query.limit) || 1000, 5000);
     const search = req.query.search ? `%${req.query.search}%` : null;
     const { rows } = search
       ? await pool.query(
@@ -2544,48 +2372,44 @@ export function registerClinicorp(app, pool, { verifyUser } = {}) {
         )
       : await pool.query('SELECT * FROM clinicorp_patients WHERE tenant_id=$2 ORDER BY synced_at DESC LIMIT $1', [limit, tId]);
     res.json(rows);
-  });
-  app.get('/api/clinicorp/appointments', async (req, res) => {
-    const tId = await tenantOf(req);
+  }));
+  app.get('/api/clinicorp/appointments', tenantList(async (req, res, tId) => {
     const { from, to, professional_id, business_id } = req.query;
     const where = ['tenant_id = $1'];
     const params = [tId];
     if (from) { params.push(from); where.push(`date >= $${params.length}`); }
     if (to)   { params.push(to);   where.push(`date <= $${params.length}`); }
-    if (professional_id) { params.push(professional_id); where.push(`professional_id = $${params.length}`); }
-    if (business_id) { params.push(business_id); where.push(`business_id = $${params.length}`); }
-    const sql = `SELECT * FROM clinicorp_appointments WHERE ${where.join(' AND ')} ORDER BY date, from_time LIMIT 2000`;
+    if (professional_id && professional_id !== 'all') { params.push(String(professional_id)); where.push(`professional_id::text = $${params.length}`); }
+    if (business_id) { params.push(String(business_id)); where.push(`business_id::text = $${params.length}`); }
+    const limit = Math.min(Number(req.query.limit) || 5000, 10000);
+    params.push(limit);
+    const sql = `SELECT * FROM clinicorp_appointments WHERE ${where.join(' AND ')} ORDER BY date, from_time LIMIT $${params.length}`;
     const { rows } = await pool.query(sql, params);
     res.json(rows);
-  });
-  app.get('/api/clinicorp/estimates', async (req, res) => {
-    const tId = await tenantOf(req);
-    const { rows } = await pool.query('SELECT * FROM clinicorp_estimates WHERE tenant_id=$1 ORDER BY date DESC LIMIT 500', [tId]);
+  }));
+  app.get('/api/clinicorp/estimates', tenantList(async (req, res, tId) => {
+    const limit = Math.min(Number(req.query.limit) || 1000, 5000);
+    const { rows } = await pool.query('SELECT * FROM clinicorp_estimates WHERE tenant_id=$1 ORDER BY date DESC NULLS LAST LIMIT $2', [tId, limit]);
     res.json(rows);
-  });
-  app.get('/api/clinicorp/financial', async (req, res) => {
-    const tId = await tenantOf(req);
+  }));
+  app.get('/api/clinicorp/financial', tenantList(async (req, res, tId) => {
     const limit = Math.min(Number(req.query.limit) || 200, 1000);
-    const { rows } = await pool.query('SELECT * FROM clinicorp_financial_entries WHERE tenant_id = $2 ORDER BY date DESC LIMIT $1', [limit, tId]);
+    const { rows } = await pool.query('SELECT * FROM clinicorp_financial_entries WHERE tenant_id = $2 ORDER BY date DESC NULLS LAST LIMIT $1', [limit, tId]);
     res.json(rows);
-  });
-  app.get('/api/clinicorp/financial/monthly-summary', async (req, res) => {
-    const tId = await tenantOf(req);
+  }));
+  app.get('/api/clinicorp/financial/monthly-summary', tenantList(async (req, res, tId) => {
     const limit = Math.min(Number(req.query.limit) || 200, 1000);
     const { rows } = await pool.query('SELECT * FROM clinicorp_monthly_summary WHERE tenant_id = $2 ORDER BY period_month DESC, source LIMIT $1', [limit, tId]);
     res.json(rows);
-  });
-  app.get('/api/clinicorp/chairs', async (req, res) => {
-    const tId = await tenantOf(req);
+  }));
+  app.get('/api/clinicorp/chairs', tenantList(async (req, res, tId) => {
     const { rows } = await pool.query('SELECT * FROM clinicorp_chairs WHERE tenant_id=$1 ORDER BY name', [tId]);
     res.json(rows);
-  });
+  }));
 
   // ── Webhook events log ───────────────────────────────────────
-  app.get('/api/clinicorp/webhook-events', async (req, res) => {
+  app.get('/api/clinicorp/webhook-events', tenantList(async (req, res, tId) => {
     const limit = Math.min(Number(req.query.limit) || 50, 200);
-    const tId = await tenantOf(req);
-    if (!tId) return res.json([]);
     const { rows } = await pool.query(
       `SELECT id, event_type, external_id, status, error_message, received_at, processed_at
          FROM clinicorp_webhook_events
@@ -2594,109 +2418,44 @@ export function registerClinicorp(app, pool, { verifyUser } = {}) {
       [limit, tId]
     );
     res.json(rows);
-  });
+  }));
 
-  app.get('/api/clinicorp/webhook-events/:id', async (req, res) => {
+  app.get('/api/clinicorp/webhook-events/:id', route(async (req, res) => {
     const tId = await tenantOf(req);
     if (!tId) return res.status(404).json({ error: 'not found' });
     const { rows } = await pool.query('SELECT * FROM clinicorp_webhook_events WHERE id = $1 AND tenant_id = $2', [req.params.id, tId]);
     if (!rows[0]) return res.status(404).json({ error: 'not found' });
     res.json(rows[0]);
-  });
+  }));
 
-  // ── Live API passthrough (sem persistir) ─────────────────────
-  app.get('/api/clinicorp/live/available-times', async (req, res) => {
+  // ── Live API passthrough (sem persistir) — credenciais do tenant ──
+  const liveSettings = async (req, res) => {
+    const s = await loadSettingsForTenant(pool, await tenantOf(req));
+    if (!s) res.status(400).json({ error: 'Integração Clinicorp não configurada ou desativada para esta clínica' });
+    return s;
+  };
+  app.get('/api/clinicorp/live/available-times', route(async (req, res) => {
+    const s = await liveSettings(req, res);
+    if (!s) return;
+    const { professionalId, clinicId, fromDate, toDate } = req.query;
+    res.json(await clinicorpApi.listAvailableTimes(s, professionalId, clinicId, fromDate, toDate));
+  }));
+
+  app.post('/api/clinicorp/live/create-appointment', route(async (req, res) => {
+    const s = await liveSettings(req, res);
+    if (!s) return;
     try {
-      const s = await loadSettings(pool);
-      if (!s?.enabled) return res.status(400).json({ error: 'Clinicorp desabilitado' });
-      const { professionalId, clinicId, fromDate, toDate } = req.query;
-      const data = await clinicorpApi.listAvailableTimes(s, professionalId, clinicId, fromDate, toDate);
-      res.json(data);
-    } catch (e) { res.status(500).json({ error: e.message }); }
-  });
+      res.json(await clinicorpApi.createAppointment(s, req.body || {}));
+    } catch (e) { res.status(e.status === 400 ? 400 : 502).json({ error: e.message, details: e.body }); }
+  }));
 
-  // ── Debug: probe /appointment/list with arbitrary params ──
-  app.get('/api/clinicorp/debug/probe-appointments', async (req, res) => {
-    try {
-      const s = await loadSettings(pool);
-      if (!s?.enabled) return res.status(400).json({ error: 'Clinicorp desabilitado' });
-      const { from = '2026-05-19', to = '2026-05-19' } = req.query;
-      const variants = [
-        { label: 'no_params', q: {} },
-        { label: 'fromDate_toDate', q: { fromDate: from, toDate: to } },
-        { label: 'from_to', q: { from, to } },
-        { label: 'date_from_date_to', q: { date_from: from, date_to: to } },
-        { label: 'startDate_endDate', q: { startDate: from, endDate: to } },
-        { label: 'start_date_end_date', q: { start_date: from, end_date: to } },
-        { label: 'initialDate_finalDate', q: { initialDate: from, finalDate: to } },
-        { label: 'dateStart_dateEnd', q: { dateStart: from, dateEnd: to } },
-        { label: 'date_eq', q: { date: from } },
-        { label: 'AtomicDate', q: { AtomicDate: from.replace(/-/g,'') } },
-        { label: 'SK_DateFirstTime', q: { SK_DateFirstTime: from.replace(/-/g,'') } },
-      ];
-      const results = [];
-      for (const v of variants) {
-        try {
-          const data = await clinicorpFetch(s, '/appointment/list', { query: v.q });
-          const arr = Array.isArray(data) ? data : (data?.appointments || data?.data || data?.result || data?.items || []);
-          const dates = [...new Set(arr.map(a => a.date || a.Date).filter(Boolean))].sort();
-          results.push({ label: v.label, q: v.q, count: arr.length, dates: dates.slice(0, 10), hasTarget: dates.includes(from) });
-        } catch (e) {
-          results.push({ label: v.label, q: v.q, error: e.message });
-        }
-      }
-      res.json({ from, to, results });
-    } catch (e) { res.status(500).json({ error: e.message }); }
-  });
-
-  app.post('/api/clinicorp/live/create-appointment', async (req, res) => {
-    try {
-      const s = await loadSettings(pool);
-      if (!s?.enabled) return res.status(400).json({ error: 'Clinicorp desabilitado' });
-      const data = await clinicorpApi.createAppointment(s, { subscriber_id: s.subscriber_id, ...(req.body || {}) });
-      res.json(data);
-    } catch (e) { res.status(500).json({ error: e.message, details: e.body }); }
-  });
-
-  // ── Re-projeta espelho atual nas tabelas locais (pacientes/dentistas/agendamentos/crm_leads) ──
-  app.post('/api/clinicorp/reproject', async (req, res) => {
-    try {
-      const tId = await tenantOf(req);
-      let patients = 0, appts = 0, professionals = 0;
-
-      // 1. Profissionais
-      const { rows: profs } = await pool.query('SELECT raw FROM clinicorp_professionals WHERE tenant_id = $1', [tId]);
-      for (const r of profs) { 
-        try { 
-          const raw = typeof r.raw === 'string' ? JSON.parse(r.raw) : r.raw;
-          await upsertProfessional(pool, raw, tId); 
-          professionals++; 
-        } catch (e) { console.error('[reproject] professional', e.message); } 
-      }
-
-      // 2. Pacientes
-      const { rows: pats } = await pool.query('SELECT raw FROM clinicorp_patients WHERE tenant_id = $1', [tId]);
-      for (const r of pats) { 
-        try { 
-          const raw = typeof r.raw === 'string' ? JSON.parse(r.raw) : r.raw;
-          await projectPatientToLocal(pool, raw, tId); 
-          patients++; 
-        } catch (e) { console.error('[reproject] patient', e.message); } 
-      }
-
-      // 3. Agendamentos
-      const { rows: aps } = await pool.query('SELECT id, raw FROM clinicorp_appointments WHERE tenant_id = $1', [tId]);
-      for (const r of aps) { 
-        try { 
-          const raw = typeof r.raw === 'string' ? JSON.parse(r.raw) : r.raw;
-          await projectAppointmentToLocal(pool, raw, r.id, tId); 
-          appts++; 
-        } catch (e) { console.error('[reproject] appt', e.message); } 
-      }
-
-      res.json({ ok: true, patients, appointments: appts, professionals });
-    } catch (e) { res.status(500).json({ error: e.message }); }
-  });
+  // ── Re-projeta o espelho do tenant nas tabelas do app (pacientes/dentistas/agendamentos/orçamentos/financeiro) ──
+  app.post('/api/clinicorp/reproject', route(async (req, res) => {
+    const tId = await tenantOf(req);
+    if (!tId) return res.status(403).json({ error: 'Usuário sem clínica (tenant) associada' });
+    const counts = await reprojectTenant(pool, tId);
+    res.json({ ok: true, ...counts });
+  }));
 
   // ── Conflict overrides (global / clinic / professional) ─────
   app.get('/api/clinicorp/overrides', async (req, res) => {
@@ -2764,7 +2523,7 @@ export function registerClinicorp(app, pool, { verifyUser } = {}) {
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
           [next.id, action, scope_type, sid, scope_label || null,
            prev ? JSON.stringify(prev) : null, JSON.stringify(next),
-           changed.length ? changed : null, req.user?.email || req.user?.id || 'system', note || null]
+           changed.length ? changed : null, req.clinicorpUser?.email || req.clinicorpUser?.id || 'system', note || null]
         );
       }
 
@@ -2784,7 +2543,7 @@ export function registerClinicorp(app, pool, { verifyUser } = {}) {
           `INSERT INTO clinicorp_override_history
              (override_id, action, scope_type, scope_id, before_data, after_data, changed_by)
            VALUES ($1,'delete',$2,$3,$4,NULL,$5)`,
-          [prev.id, prev.scope_type, prev.scope_id, JSON.stringify(prev), req.user?.email || req.user?.id || 'system']
+          [prev.id, prev.scope_type, prev.scope_id, JSON.stringify(prev), req.clinicorpUser?.email || req.clinicorpUser?.id || 'system']
         );
       }
       res.json({ ok: true });
@@ -2822,7 +2581,7 @@ export function registerClinicorp(app, pool, { verifyUser } = {}) {
       if (!req.clinicorpUser?.is_super_admin) {
         const tId = await tenantOf(req);
         if (!tId) return res.json([]);
-        params.push(tId); where.push(`p.tenant_id=$${params.length}`);
+        params.push(tId); where.push(`COALESCE(c.tenant_id, p.tenant_id)=$${params.length}`);
       }
       if (entity)   { params.push(entity);   where.push(`c.entity=$${params.length}`); }
       if (decision) { params.push(decision); where.push(`c.decision=$${params.length}`); }
@@ -2868,7 +2627,7 @@ export function registerClinicorp(app, pool, { verifyUser } = {}) {
   // ── Unified Audit Log (Webhook + Push) — escopo por tenant ──
   app.get('/api/clinicorp/audit-log', async (req, res) => {
     try {
-      const limit = parseInt(req.query.limit) || 100;
+      const limit = Math.min(parseInt(req.query.limit) || 100, 500);
       const tId = await tenantOf(req);
       if (!tId) return res.json([]);
       const { rows } = await pool.query(`

@@ -18,8 +18,6 @@ import {
   Activity,
   RefreshCw
 } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
-
 import { clinicorpApi, type ClinicorpAuditEntry } from "@/lib/clinicorpApi";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -107,39 +105,10 @@ export function ClinicorpAuditLog() {
   async function loadLogs() {
     try {
       setLoading(true);
-      // Combinar logs de webhook com logs de push/sync para uma visão completa
-      const [webhookEvents, pushLogs] = await Promise.all([
-        clinicorpApi.listWebhookEvents(100).catch(() => []),
-        supabase.from('clinicorp_push_log').select('*').order('created_at', { ascending: false }).limit(100)
-      ]);
-
-      const formattedPushLogs: ClinicorpAuditEntry[] = (pushLogs.data || []).map((l: any) => ({
-        id: l.id,
-        source: 'odonto_connect',
-        event: l.action || l.entity_type,
-        status: l.status,
-        target_id: l.clinicorp_id || l.local_id,
-        timestamp: l.created_at,
-        payload: l.payload,
-        error_message: l.error_message
-      }));
-
-      const formattedWebhookLogs: ClinicorpAuditEntry[] = (webhookEvents || []).map((e: any) => ({
-        id: e.id,
-        source: 'clinicorp',
-        event: e.event_type || 'webhook_received',
-        status: e.status,
-        target_id: e.external_id,
-        timestamp: e.received_at,
-        payload: null,
-        error_message: e.error_message
-      }));
-
-      const allLogs = [...formattedPushLogs, ...formattedWebhookLogs].sort((a, b) => 
-        new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-      );
-
-      setLogs(allLogs);
+      // Log unificado da VPS: webhooks recebidos (clinicorp) + push/sync/testes
+      // (odonto_connect), já filtrado pela clínica do usuário.
+      const entries = await clinicorpApi.listAuditLogs(200);
+      setLogs((entries || []).map((e) => ({ ...e, event: e.event || 'evento' })));
     } catch (err) {
       console.error("Failed to load audit logs", err);
     } finally {
