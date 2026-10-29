@@ -4,7 +4,6 @@ import { useAuth } from "@/hooks/useAuth";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { KpiCard } from "@/components/KpiCard";
 import { ActiveAttendanceCard } from "@/components/ActiveAttendanceCard";
-import { GhostModePanel } from "@/components/GhostModePanel";
 import { dashboardApi, sessionsApi } from "@/lib/vpsApi";
 import { OrcamentoConversaoChart } from "@/components/charts/OrcamentoConversaoChart";
 import { OrigemLeadsChart } from "@/components/charts/OrigemLeadsChart";
@@ -237,7 +236,6 @@ function DashboardPage() {
               <h2 className="text-base font-bold text-foreground">Atendimentos Ativos</h2>
               <p className="text-[11px] text-muted-foreground mt-0.5">Conversas em andamento agora</p>
             </div>
-            <GhostModePanel />
           </div>
           {sessions.length === 0 ? (
             <div className="rounded-xl border border-border/60 bg-muted/30 p-8 text-center text-sm text-muted-foreground">

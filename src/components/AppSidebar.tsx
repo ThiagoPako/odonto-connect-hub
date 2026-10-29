@@ -325,8 +325,9 @@ function SidebarUserFooter({ expanded }: { expanded: boolean }) {
     ? user.name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase()
     : "??";
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    // Espera a sessão sair; senão /login ainda vê o usuário e volta ao dashboard
+    await logout();
     navigate({ to: "/login" });
   };
 

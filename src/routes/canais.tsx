@@ -91,7 +91,7 @@ function CanaisPage() {
       syncedChatInstances.add(inst.instanceName);
       void whatsappApi.syncChat(inst.instanceName, 30).then(({ data, error }) => {
         if (error) {
-          syncedChatInstances.delete(inst.instanceName);
+          toast.error(`Não foi possível importar as conversas de ${inst.instanceName}: ${error}`);
           return;
         }
         const imported = data?.imported ?? 0;

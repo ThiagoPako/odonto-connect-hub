@@ -34,7 +34,17 @@ export const routeRoleMap: Record<string, AppRole[]> = {
   "/agenda": ["admin", "dentista", "recepcionista", "comercial"],
   "/exames": ["admin", "dentista", "recepcionista"],
   "/pedido-exame": ["admin", "dentista", "recepcionista"],
+  "/relatorios-clinicos": ["admin", "dentista"],
 };
+
+/** Regra da rota ou da rota-pai mais próxima (/configuracoes/agenda herda /configuracoes). */
+function rolesFor(path: string): AppRole[] | undefined {
+  if (routeRoleMap[path]) return routeRoleMap[path];
+  const parent = Object.keys(routeRoleMap)
+    .filter((k) => path.startsWith(k + "/"))
+    .sort((a, b) => b.length - a.length)[0];
+  return parent ? routeRoleMap[parent] : undefined;
+}
 
 export function canAccessRoute(
   path: string, 
@@ -45,7 +55,7 @@ export function canAccessRoute(
   // Super Admin can access everything
   if (isSuperAdmin) return true;
 
-  const allowedRoles = routeRoleMap[path];
+  const allowedRoles = rolesFor(path);
   
   // Specific check for /super-admin: MUST be isSuperAdmin (handled above)
   if (path === "/super-admin") return false;
@@ -56,7 +66,7 @@ export function canAccessRoute(
     if (path === "/comissoes" && tenantFeatures.mod_financeiro === false) return false;
     if (path === "/automacoes" && tenantFeatures.mod_marketing === false) return false;
     if (path === "/campanhas" && tenantFeatures.mod_marketing === false) return false;
-    if (path === "/whatsapp" && tenantFeatures.mod_whatsapp === false) return false;
+    if ((path === "/chat" || path === "/canais") && tenantFeatures.mod_whatsapp === false) return false;
     if (path === "/disparos" && tenantFeatures.mod_whatsapp === false) return false;
     if (path === "/estoque" && tenantFeatures.mod_estoque === false) return false;
     if (path === "/crm" && tenantFeatures.mod_crm === false) return false;

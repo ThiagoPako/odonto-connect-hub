@@ -6,6 +6,7 @@
  * Phase 1: Pacientes, Dentistas, Agenda.
  */
 import { supabase } from '@/integrations/supabase/client';
+import { localDateISO } from '@/lib/utils';
 
 type Result<T = any> = { data: T | null; error: string | null };
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -284,7 +285,7 @@ export const agendaApi = {
         tenant_id,
         paciente_id: body.paciente_id,
         dentista_id: body.dentista_id,
-        data: d.toISOString().slice(0, 10),
+        data: localDateISO(d),
         hora: body.hora,
         duracao: body.duracao ?? 30,
         procedimento: body.procedimento ?? null,
@@ -718,7 +719,7 @@ export const painelDentistaApi = {
     if (dErr || !dentistaRow) return { data: null, error: dErr ? err(dErr) : 'Dentista não encontrado' };
     const d = dentistaRow as any;
 
-    const hoje = new Date().toISOString().slice(0, 10);
+    const hoje = localDateISO();
 
     const [agRes, orcRes, prntRes, comRes, tratRes] = await Promise.all([
       supabase
@@ -2022,7 +2023,7 @@ export const comercialApi = {
       // Parallel queries for dashboard components
       const [leadsRes, agendamentosRes, followUpsRes] = await Promise.all([
         supabase.from('leads').select('*').eq('tenant_id', tenant_id),
-        supabase.from('agendamentos').select('*').eq('tenant_id', tenant_id).gte('data', new Date().toISOString().split('T')[0]),
+        supabase.from('agendamentos').select('*').eq('tenant_id', tenant_id).gte('data', localDateISO()),
         supabase.from('follow_ups').select('*, leads(nome)').eq('tenant_id', tenant_id).eq('status', 'pendente').order('data_agendada', { ascending: true })
       ]);
 
@@ -2226,8 +2227,8 @@ export const sbDashboardApi = {
       if (!tenant_id) return { data: null, error: 'Sem tenant' };
 
       const now = new Date();
-      const todayStr = now.toISOString().split('T')[0];
-      const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+      const todayStr = localDateISO(now);
+      const firstDayOfMonth = localDateISO(new Date(now.getFullYear(), now.getMonth(), 1));
 
       // Parallel queries for dashboard components
       const [

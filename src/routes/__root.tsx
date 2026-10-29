@@ -127,7 +127,7 @@ function AuthGate() {
     location.pathname === "/login" ||
     location.pathname === "/" ||
     location.pathname === "/signup" ||
-    location.pathname.startsWith("/sb-");
+    location.pathname === "/reset-password";
 
   // Public pages — no sidebar, no auth required
   if (isPublicPage) {

@@ -38,18 +38,24 @@ function SignupPage() {
     }
 
     setLoading(true);
-    const { error } = await supabase.auth.signUp({
-      email: form.email,
-      password: form.password,
-      options: {
-        emailRedirectTo: `${window.location.origin}/dashboard`,
-        data: {
-          nome: form.nome,
-          clinic_name: form.clinic_name || `Clínica ${form.nome}`,
+    let error: { message: string } | null = null;
+    try {
+      ({ error } = await supabase.auth.signUp({
+        email: form.email,
+        password: form.password,
+        options: {
+          emailRedirectTo: `${window.location.origin}/dashboard`,
+          data: {
+            nome: form.nome,
+            clinic_name: form.clinic_name || `Clínica ${form.nome}`,
+          },
         },
-      },
-    });
-    setLoading(false);
+      }));
+    } catch (e) {
+      error = { message: (e as Error).message || "Falha de conexão. Tente novamente." };
+    } finally {
+      setLoading(false);
+    }
 
     if (error) {
       toast.error(error.message);

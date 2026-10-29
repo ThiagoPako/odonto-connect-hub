@@ -1,4 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { localDateISO } from "@/lib/utils";
+import { supabase } from "@/integrations/supabase/client";
 import { useState, useCallback, useEffect, useRef } from "react";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import {
@@ -155,7 +157,7 @@ function ConsultaPage() {
   // Fetch today's agenda from VPS
   const fetchAgenda = useCallback(async () => {
     setLoadingAgenda(true);
-    const today = new Date().toISOString().split("T")[0];
+    const today = localDateISO();
     const { data, error } = await agendaApi.list({ data: today });
     if (!error && data && Array.isArray(data)) {
       const converted = data.map(vpsToAppointment);
@@ -211,7 +213,7 @@ function ConsultaPage() {
     } else {
       // Create a temporary patient object from appointment data
       setPacienteSelecionado({
-        id: apt.id,
+        id: apt.pacienteId || apt.id,
         nome: apt.patientName,
         telefone: apt.phone,
         email: "",
@@ -428,22 +430,29 @@ function ConsultaPage() {
     setPrescricoes(prev => prev.filter(p => p.id !== id));
   }, []);
 
-  const imprimirPrescricao = useCallback(() => {
+  const imprimirPrescricao = useCallback(async () => {
     if (!pacienteSelecionado || prescricoes.length === 0) {
       toast.error("Adicione ao menos uma prescrição antes de imprimir");
       return;
+    }
+    // Dentista do agendamento; o CRO vem do cadastro (nome é único por clínica).
+    const profissional = appointmentSelecionado?.professional || "";
+    let croProfissional: string | undefined;
+    if (profissional) {
+      const { data: dent } = await supabase.from("dentistas").select("cro").eq("nome", profissional).maybeSingle();
+      croProfissional = dent?.cro || undefined;
     }
     exportarPrescricaoPdf({
       pacienteNome: pacienteSelecionado.nome,
       pacienteTelefone: pacienteSelecionado.telefone,
       pacienteIdade: getPacienteIdade(pacienteSelecionado),
-      profissional: "Dr. Ricardo Mendes",
-      croProfissional: "CRO-SP 12345",
+      profissional,
+      croProfissional,
       prescricoes,
       observacoes: notas || undefined,
     });
     toast.success("Prescrição gerada para impressão");
-  }, [pacienteSelecionado, prescricoes, notas]);
+  }, [pacienteSelecionado, prescricoes, notas, appointmentSelecionado]);
 
   const formatTime = (s: number) =>
     `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;

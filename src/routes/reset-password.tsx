@@ -39,9 +39,14 @@ function ResetPasswordPage() {
     if (password !== confirm) return setError("Senhas não conferem");
 
     setLoading(true);
-    const { error: err } = await supabase.auth.updateUser({ password });
-    setLoading(false);
-    if (err) return setError(err.message);
+    try {
+      const { error: err } = await supabase.auth.updateUser({ password });
+      if (err) return setError(err.message);
+    } catch (e) {
+      return setError((e as Error).message || "Falha de conexão. Tente novamente.");
+    } finally {
+      setLoading(false);
+    }
     setDone(true);
     setTimeout(() => navigate({ to: "/login" }), 2000);
   };

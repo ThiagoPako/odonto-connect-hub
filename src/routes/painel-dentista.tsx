@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { localDateISO } from "@/lib/utils";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { useEffect, useState, useCallback } from "react";
 import { useAuth } from "@/hooks/useAuth";
@@ -445,7 +446,7 @@ function AgendaTab({
   dentistaId: string;
   onChanged: () => void;
 }) {
-  const today = new Date().toISOString().split("T")[0];
+  const today = localDateISO();
   const sameDay = (d: string) => String(d).slice(0, 10) === today;
   const agendaHoje = agenda.filter((a) => sameDay(a.data));
   const agendaFutura = agenda.filter((a) => !sameDay(a.data));

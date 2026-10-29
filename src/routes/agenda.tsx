@@ -1,11 +1,11 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, ChevronLeft, ChevronRight, Settings, RefreshCw, Clock, Database, Send } from "lucide-react";
 import { toast } from "sonner";
-import { agendaApi, dentistasApi, clinicaApi, type AgendamentoVPS, type ClinicaConfig, VPS_API_BASE } from "@/lib/vpsApi";
+import { agendaApi, dentistasApi, clinicaApi, type AgendamentoVPS, type ClinicaConfig } from "@/lib/vpsApi";
 import { clinicorpApi } from "@/lib/clinicorpApi";
 import { supabase } from "@/integrations/supabase/client";
 import { AgendaMiniCalendar } from "@/components/agenda/AgendaMiniCalendar";
@@ -59,7 +59,7 @@ function AgendaPage() {
         if (Array.isArray(data)) {
           const list = (data as Prof[]).filter((p) => p?.id);
           setProfs(list);
-          setSelectedProfs(list.map((p) => p.id));
+          setSelectedProfs((prev) => Array.from(new Set([...prev, ...list.map((p) => p.id)])));
         }
       })
       .catch((err) => console.error("[agenda] dentistas:", err));
@@ -70,10 +70,14 @@ function AgendaPage() {
 
   // Load appointments for current date
   const dateStr = toISO(currentDate);
+  const currentDateRef = useRef(dateStr);
+  currentDateRef.current = dateStr;
   const loadAppointments = () => {
+    const requested = dateStr;
     setLoading(true);
-    agendaApi.list({ data_inicio: dateStr, data_fim: dateStr })
+    agendaApi.list({ data_inicio: requested, data_fim: requested })
       .then(({ data, error }) => {
+        if (requested !== currentDateRef.current) return;
         if (error) toast.error("Erro ao carregar agenda: " + error);
         else if (Array.isArray(data)) {
           setAppointments(data);
@@ -96,9 +100,9 @@ function AgendaPage() {
             if (hasUnassigned && !merged.has("__sem_dentista__")) {
               merged.set("__sem_dentista__", { id: "__sem_dentista__", nome: "Sem profissional" });
             }
-            const list = Array.from(merged.values());
-            setSelectedProfs((prev) => (prev.length ? prev : list.map((p) => p.id)));
-            return list;
+            const added = Array.from(merged.keys()).filter((id) => !current.some((p) => p.id === id));
+            if (added.length) setSelectedProfs((prev) => Array.from(new Set([...prev, ...added])));
+            return Array.from(merged.values());
           });
           // Normaliza appointments sem dentista_id para a coluna "Sem profissional"
           setAppointments(data.map((a) => a.dentista_id ? a : { ...a, dentista_id: "__sem_dentista__" }));
@@ -108,46 +112,19 @@ function AgendaPage() {
   };
   useEffect(loadAppointments, [dateStr]);
   
-  // Real-time synchronization
+  // Tempo real via Supabase Realtime na tabela agendamentos (RLS limita à clínica)
+  const loadRef = useRef(loadAppointments);
+  loadRef.current = loadAppointments;
   useEffect(() => {
-    let es: EventSource | null = null;
-    let retryTimeout: ReturnType<typeof setTimeout>;
-
-    async function connect() {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData.session?.access_token ?? null;
-      if (!token) return;
-
-      try {
-        const base = VPS_API_BASE.startsWith("http")
-          ? VPS_API_BASE
-          : `${window.location.origin}${VPS_API_BASE}`;
-        const url = new URL(`${base}/events`);
-        url.searchParams.set("token", token);
-
-        es = new EventSource(url.toString());
-      } catch (err) {
-        console.error("[agenda] SSE connect failed:", err);
-        return;
-      }
-
-      
-      es.addEventListener("agendamento_changed", () => {
-        loadAppointments();
-      });
-
-      es.onerror = () => {
-        es?.close();
-        retryTimeout = setTimeout(connect, 5000);
-      };
-    }
-
-    connect();
-    return () => {
-      es?.close();
-      clearTimeout(retryTimeout);
-    };
-  }, [dateStr]); // Re-connect if needed, or just stay connected
+    const channel = supabase
+      .channel("agenda-agendamentos")
+      .on("postgres_changes", { event: "*", schema: "public", table: "agendamentos" }, (payload) => {
+        const row = (payload.new ?? payload.old) as { data?: string } | null;
+        if (!row?.data || row.data === currentDateRef.current) loadRef.current();
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, []);
 
 
   // Horário do dia atual com base na config
@@ -207,7 +184,13 @@ function AgendaPage() {
       toast.success(`Dados enviados! ${result.appointments} agendamentos, ${result.patients} pacientes e ${result.professionals} profissionais sincronizados.`, { id: toastId });
       loadAppointments();
       const { data } = await dentistasApi.list();
-      if (Array.isArray(data)) setProfs(data.filter(p => p.id));
+      if (Array.isArray(data)) {
+        setProfs((current) => {
+          const merged = new Map(current.map((p) => [p.id, p] as const));
+          for (const p of data) if (p.id) merged.set(p.id, p);
+          return Array.from(merged.values());
+        });
+      }
     } catch (err: any) {
       toast.error("Erro ao enviar dados: " + err.message, { id: toastId });
     } finally {
