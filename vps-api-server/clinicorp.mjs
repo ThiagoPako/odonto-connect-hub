@@ -2406,7 +2406,7 @@ async function processWebhookEvent(pool, event) {
 }
 
 // ─── Express routes ───────────────────────────────────────────
-export function registerClinicorp(app, pool) {
+export function registerClinicorp(app, pool, { verifyUser } = {}) {
   // ── Webhook receiver (público; protegido por ?user_api=<webhook_secret>) ──
   app.post('/api/webhook/clinicorp', async (req, res) => {
     const startedAt = Date.now();
@@ -2478,30 +2478,30 @@ export function registerClinicorp(app, pool) {
   // Se não houver usuário válido ou tenant, retornamos null — o caller deve
   // responder com lista vazia (NUNCA cair em fallback global, que vaza dados
   // do tenant do admin original para todos os usuários novos).
-  const _tenantByUserCache = new Map(); // user_id -> { tId, at }
-  const tenantOf = async (req) => {
+  // Todas as rotas /api/clinicorp/* exigem um token verificado (assinatura
+  // checada por verifyUser). O webhook usa outro prefixo e continua público,
+  // protegido pelo user_api.
+  app.use('/api/clinicorp', async (req, res, next) => {
+    if (typeof verifyUser !== 'function') {
+      return res.status(503).json({ error: 'Autenticação indisponível' });
+    }
     try {
-      const auth = req.headers.authorization || '';
-      if (!auth.startsWith('Bearer ')) return null;
-      const token = auth.slice(7);
-      const part = token.split('.')[1];
-      if (!part) return null;
-      const payload = JSON.parse(Buffer.from(part, 'base64').toString('utf8'));
-      // 1) Se o JWT já trouxer tenant_id (custom claim), usa direto.
-      if (payload.tenant_id) return payload.tenant_id;
-      // 2) Caso contrário, resolve via profiles a partir do sub (user_id).
-      const userId = payload.sub;
-      if (!userId) return null;
-      const cached = _tenantByUserCache.get(userId);
-      if (cached && (Date.now() - cached.at) < 30_000) return cached.tId;
-      const { rows } = await pool.query(
-        'SELECT tenant_id FROM profiles WHERE id = $1 LIMIT 1',
-        [userId]
-      );
-      const tId = rows[0]?.tenant_id || null;
-      _tenantByUserCache.set(userId, { tId, at: Date.now() });
-      return tId;
-    } catch { return null; }
+      const { user } = await verifyUser(req);
+      req.clinicorpUser = user;
+      next();
+    } catch {
+      res.status(401).json({ error: 'Unauthorized' });
+    }
+  });
+
+  const tenantOf = async (req) => req.clinicorpUser?.tenant_id || null;
+
+  // Overrides, histórico e reconciliação financeira são globais (não têm
+  // tenant_id), então só o super admin pode lê-los ou alterá-los.
+  const requireSuperAdmin = (req, res) => {
+    if (req.clinicorpUser?.is_super_admin) return true;
+    res.status(403).json({ error: 'Apenas super admin' });
+    return false;
   };
 
   // ── Local read-only data (espelho) — escopo por tenant ───────
@@ -2699,7 +2699,8 @@ export function registerClinicorp(app, pool) {
   });
 
   // ── Conflict overrides (global / clinic / professional) ─────
-  app.get('/api/clinicorp/overrides', async (_req, res) => {
+  app.get('/api/clinicorp/overrides', async (req, res) => {
+    if (!requireSuperAdmin(req, res)) return;
     try {
       const { rows } = await pool.query(
         `SELECT id, scope_type, scope_id, keep_local, conflict_strategy, note, updated_at
@@ -2710,6 +2711,7 @@ export function registerClinicorp(app, pool) {
   });
 
   app.put('/api/clinicorp/overrides', async (req, res) => {
+    if (!requireSuperAdmin(req, res)) return;
     try {
       const { scope_type, scope_id, keep_local, conflict_strategy, note, scope_label } = req.body || {};
       if (!['global','clinic','professional'].includes(scope_type))
@@ -2771,6 +2773,7 @@ export function registerClinicorp(app, pool) {
   });
 
   app.delete('/api/clinicorp/overrides/:id', async (req, res) => {
+    if (!requireSuperAdmin(req, res)) return;
     try {
       const prev = (await pool.query(
         `SELECT * FROM clinicorp_local_overrides WHERE id=$1`, [req.params.id]
@@ -2790,6 +2793,7 @@ export function registerClinicorp(app, pool) {
 
   // Histórico de alterações dos overrides
   app.get('/api/clinicorp/overrides/history', async (req, res) => {
+    if (!requireSuperAdmin(req, res)) return;
     try {
       const limit = Math.min(Number(req.query.limit) || 100, 500);
       const scope_type = req.query.scope_type ? String(req.query.scope_type) : null;
@@ -2815,6 +2819,11 @@ export function registerClinicorp(app, pool) {
       const entity = req.query.entity ? String(req.query.entity) : null;
       const decision = req.query.decision ? String(req.query.decision) : null;
       const where = []; const params = [];
+      if (!req.clinicorpUser?.is_super_admin) {
+        const tId = await tenantOf(req);
+        if (!tId) return res.json([]);
+        params.push(tId); where.push(`p.tenant_id=$${params.length}`);
+      }
       if (entity)   { params.push(entity);   where.push(`c.entity=$${params.length}`); }
       if (decision) { params.push(decision); where.push(`c.decision=$${params.length}`); }
       params.push(limit);
@@ -2843,8 +2852,12 @@ export function registerClinicorp(app, pool) {
       const table = entity === 'appointment' ? 'agendamentos'
                   : entity === 'patient'    ? 'pacientes' : null;
       if (!table || !id) return res.status(400).json({ error: 'entity ou id inválido' });
-      await pool.query(`UPDATE ${table} SET keep_local=$1, updated_at=NOW() WHERE id=$2`,
-        [Boolean(keep_local), id]);
+      const tId = await tenantOf(req);
+      if (!tId) return res.status(403).json({ error: 'Sem tenant' });
+      const { rowCount } = await pool.query(
+        `UPDATE ${table} SET keep_local=$1, updated_at=NOW() WHERE id=$2 AND tenant_id=$3`,
+        [Boolean(keep_local), id, tId]);
+      if (!rowCount) return res.status(404).json({ error: 'not found' });
       res.json({ ok: true });
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
@@ -2886,7 +2899,8 @@ export function registerClinicorp(app, pool) {
   });
 
   // ── Rodar SÓ a reconciliação financeira (sem refazer sync) ──
-  app.post('/api/clinicorp/reconcile-financial', async (_req, res) => {
+  app.post('/api/clinicorp/reconcile-financial', async (req, res) => {
+    if (!requireSuperAdmin(req, res)) return;
     try {
       const result = await runFinancialReconciliation(pool);
       res.json(result);

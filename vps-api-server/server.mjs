@@ -13597,7 +13597,7 @@ app.get('/api/ai/meta-ads/insight', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════
 // CLINICORP INTEGRATION
 import { registerClinicorp, reconciliationTick } from './clinicorp.mjs';
-registerClinicorp(app, pool);
+registerClinicorp(app, pool, { verifyUser });
 
 // ── Per-user Clinicorp credentials (SaaS multi-tenant) ─────────
 // Each authenticated user has their own row in clinicorp_user_settings.
