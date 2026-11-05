@@ -124,6 +124,10 @@ jobs:
             cat /root/odonto-connect/vps-api-server/migration-whatsapp-fase1.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             cat /root/odonto-connect/vps-api-server/migration-seguranca-p0.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             cat /root/odonto-connect/vps-api-server/migration-contatos-recuperacao.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
+            # Histórico de 'retornar à fila'/'reabrir' do chat (#65). O boot também cria a tabela; falha não derruba o deploy.
+            if ! cat /root/odonto-connect/vps-api-server/migration-attendance-session-events.sql | sudo -u postgres psql -v ON_ERROR_STOP=1 -p 5433 -d odonto_db 2>&1; then
+              echo "::warning title=Migração attendance_session_events não aplicada::migration-attendance-session-events.sql falhou. A API sobe e o boot tenta criar a tabela; ver log acima."
+            fi
             echo "=== Migrations applied ==="
 
             # ─── Pre-flight syntax check on server.mjs ─────────────────────
