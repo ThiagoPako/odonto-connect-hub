@@ -1,51 +1,67 @@
 import type { LucideIcon } from "lucide-react";
-import { ArrowUpRight, ArrowDownRight, Minus } from "lucide-react";
+import { ArrowUpRight, ArrowDownRight, Minus, AlertTriangle } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
 
 interface KpiCardProps {
   title: string;
   value: string;
   change?: string;
-  changeType?: "positive" | "negative" | "neutral";
+  /**
+   * positive = ganho · negative = perda/erro real · warning = pede atenção
+   * (ex.: faltas, leads sem resposta) · neutral = informação.
+   */
+  changeType?: "positive" | "negative" | "warning" | "neutral";
   icon: LucideIcon;
+  /** Primeira carga: mostra esqueleto no lugar do número (não exibe "0" falso). */
+  loading?: boolean;
 }
 
-export function KpiCard({ title, value, change, changeType = "neutral", icon: Icon }: KpiCardProps) {
-  const changeColor =
-    changeType === "positive"
-      ? "text-success"
-      : changeType === "negative"
-        ? "text-destructive"
-        : "text-muted-foreground";
+/**
+ * Indicador único. Superfície chapada, ícone neutro (a cor fica para estado),
+ * rótulo em caixa normal que quebra linha no celular, número tabular.
+ * Ver DESIGN.md › Componentes › KpiCard e › Princípios.
+ */
+export function KpiCard({ title, value, change, changeType = "neutral", icon: Icon, loading = false }: KpiCardProps) {
+  const changeColor = {
+    positive: "text-success",
+    negative: "text-destructive",
+    warning: "text-warning-text",
+    neutral: "text-muted-foreground",
+  }[changeType];
 
-  const ChangeIcon =
-    changeType === "positive"
-      ? ArrowUpRight
-      : changeType === "negative"
-        ? ArrowDownRight
-        : Minus;
+  const ChangeIcon = {
+    positive: ArrowUpRight,
+    negative: ArrowDownRight,
+    warning: AlertTriangle,
+    neutral: Minus,
+  }[changeType];
 
   return (
-    <div className="group bg-card rounded-2xl border border-border/60 p-5 shadow-card hover:shadow-glow-primary hover-lift transition-all duration-300 relative overflow-hidden">
-      {/* Subtle gradient accent */}
-      <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl from-primary/5 to-transparent rounded-bl-full pointer-events-none" />
-      {/* Hover glow */}
-      <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-primary/0 to-primary/0 group-hover:from-primary/[0.03] group-hover:to-transparent transition-all duration-500 pointer-events-none" />
-
-      <div className="flex items-start justify-between relative z-10">
-        <div className="flex-1 min-w-0">
-          <p className="text-xs uppercase tracking-wider text-muted-foreground font-medium">{title}</p>
-          <p className="text-2xl font-bold text-card-foreground mt-1.5 tracking-tight font-heading">{value}</p>
+    <div className="bg-card rounded-lg border border-border p-4" aria-busy={loading || undefined}>
+      <div className="flex items-start gap-2">
+        <p className="flex-1 min-w-0 text-[0.8125rem] font-medium leading-snug text-muted-foreground break-words">
+          {title}
+        </p>
+        <Icon className="h-4 w-4 shrink-0 text-muted-foreground mt-0.5" aria-hidden="true" />
+      </div>
+      {loading ? (
+        <>
+          <Skeleton className="mt-2 h-8 w-20" />
+          <span className="sr-only">Carregando</span>
+        </>
+      ) : (
+        <>
+          <p className="mt-2 text-2xl font-semibold tracking-tight text-card-foreground font-heading tabular-nums break-words">
+            {value}
+          </p>
           {change && (
-            <div className={`flex items-center gap-1 mt-2 ${changeColor}`}>
-              <ChangeIcon className="h-3 w-3" />
-              <span className="text-[11px] font-medium">{change}</span>
+            <div className={`flex items-start gap-1 mt-1.5 ${changeColor}`}>
+              <ChangeIcon className="h-3.5 w-3.5 shrink-0 mt-px" aria-hidden="true" />
+              <span className="text-xs font-medium leading-snug">{change}</span>
             </div>
           )}
-        </div>
-        <div className="h-11 w-11 rounded-xl bg-primary/8 flex items-center justify-center shrink-0 group-hover:bg-primary/15 group-hover:shadow-[0_0_12px_-2px_hsl(var(--primary)/0.3)] transition-all duration-300 icon-bounce">
-          <Icon className="h-5 w-5 text-primary" />
-        </div>
-      </div>
+        </>
+      )}
     </div>
   );
 }

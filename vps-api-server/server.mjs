@@ -8583,6 +8583,57 @@ app.put('/api/attendance-settings', async (req, res) => {
   }
 });
 
+// Localização da clínica (aba Configurações → Clínica). Antes ficava só no navegador de quem
+// salvou; agora é da clínica (tenant_settings), e todo atendente vê o mesmo endereço no chat.
+const CLINIC_LOCATION_FIELDS = { name: 100, address: 200, city: 100, state: 2, zip: 10, phone: 20, googleMapsUrl: 500 };
+
+function sanitizeClinicLocation(body) {
+  const src = body && typeof body === 'object' ? body : {};
+  const out = {};
+  for (const [field, max] of Object.entries(CLINIC_LOCATION_FIELDS)) {
+    out[field] = typeof src[field] === 'string' ? src[field].trim().slice(0, max) : '';
+  }
+  out.state = out.state.toUpperCase();
+  return out;
+}
+
+// 401/403/503 dizem o motivo; 500 é genérico (detalhe só no log do servidor).
+function sendClinicLocationError(res, error) {
+  const status = tenantSettingsErrorStatus(error);
+  if (status !== 500) return res.status(status).json({ error: error.message });
+  console.error('❌ clinic-location:', error.message);
+  return res.status(500).json({ error: 'Não foi possível salvar ou ler a localização agora' });
+}
+
+app.get('/api/clinic-location', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!isValidTenantId(user.tenant_id)) return res.json(null);
+    const value = await getTenantSetting(user.tenant_id, 'clinic_location');
+    res.json(value && typeof value === 'object' ? sanitizeClinicLocation(value) : null);
+  } catch (error) {
+    sendClinicLocationError(res, error);
+  }
+});
+
+app.put('/api/clinic-location', async (req, res) => {
+  try {
+    const { user } = await verifyAdmin(req);
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const location = sanitizeClinicLocation(req.body);
+    if (!location.name || !location.address) {
+      return res.status(400).json({ error: 'Nome e endereço são obrigatórios' });
+    }
+    if (location.googleMapsUrl && !/^https:\/\/[^\s]+$/i.test(location.googleMapsUrl)) {
+      return res.status(400).json({ error: 'O link do mapa precisa começar com https://' });
+    }
+    await setTenantSetting(user.tenant_id, 'clinic_location', location);
+    res.json({ success: true, location });
+  } catch (error) {
+    sendClinicLocationError(res, error);
+  }
+});
+
 // Helper: send WhatsApp button menu with active queues
 async function sendQueueMenu(instance, phone, tenantId) {
   const { rows: queues } = await pool.query(
@@ -13374,11 +13425,12 @@ app.get('/api/sessions/active', async (req, res) => {
         s.assigned_at AS started_at,
         (
           SELECT m.content FROM chat_messages m
-          WHERE m.lead_id = s.lead_id
+          WHERE m.lead_id = s.lead_id AND m.tenant_id = s.tenant_id
           ORDER BY m.timestamp DESC LIMIT 1
         ) AS last_message
       FROM attendance_sessions s
-      LEFT JOIN crm_leads l ON l.id = s.lead_id
+      -- attendance_sessions.lead_id é text e crm_leads.id é uuid: sem o ::text dá 500 (uuid = text).
+      LEFT JOIN crm_leads l ON l.id::text = s.lead_id AND l.tenant_id = s.tenant_id
       WHERE s.status = 'active' AND s.tenant_id = $1
       ORDER BY s.assigned_at DESC
       LIMIT 30
@@ -14127,16 +14179,20 @@ app.get('/api/messages/unread', async (req, res) => {
 });
 
 // Search messages globally or within a lead
+// Escapa os curingas do LIKE/ILIKE (\\, % e _) para o texto digitado ser buscado literalmente.
+const escapeLike = (text) => String(text).replace(/[\\%_]/g, (c) => `\\${c}`);
+
 app.get('/api/messages/search', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
-    const q = req.query.q;
-    const leadId = req.query.lead_id;
-    if (!q || q.length < 2) return res.status(400).json({ error: 'Query mínima 2 caracteres' });
+    const q = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 80) : '';
+    const leadId = typeof req.query.lead_id === 'string' ? req.query.lead_id : '';
+    if (q.length < 2) return res.status(400).json({ error: 'Query mínima 2 caracteres' });
 
-    let query = "SELECT m.*, l.nome as lead_name FROM chat_messages m LEFT JOIN crm_leads l ON l.id = m.lead_id AND l.tenant_id = m.tenant_id WHERE m.content ILIKE $1 AND m.tenant_id = $2";
-    const values = [`%${q}%`, user.tenant_id];
+    let query = "SELECT m.*, l.nome as lead_name FROM chat_messages m LEFT JOIN crm_leads l ON l.id::text = m.lead_id AND l.tenant_id = m.tenant_id WHERE m.content ILIKE $1 AND m.tenant_id = $2";
+    // chat_messages.lead_id é text e crm_leads.id é uuid: sem o ::text o Postgres dá 500 (uuid = text).
+    const values = [`%${escapeLike(q)}%`, user.tenant_id];
 
     if (leadId) {
       query += ' AND m.lead_id = $3';
@@ -14148,7 +14204,65 @@ app.get('/api/messages/search', async (req, res) => {
     const { rows } = await pool.query(query, values);
     res.json(rows);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('❌ busca de mensagens:', error.message);
+    res.status(500).json({ error: 'Não foi possível buscar as mensagens agora' });
+  }
+});
+
+// Busca global (Ctrl+K): pacientes, leads e agendamentos da própria clínica.
+// Até 20 resultados no total e só dados de identificação (nome, telefone, data/hora):
+// nada de procedimento, observação, convênio, CPF ou anamnese (LGPD art. 11).
+app.get('/api/search', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const q = String(req.query.q || '').trim().slice(0, 80);
+    if (q.length < 2) return res.status(400).json({ error: 'Digite pelo menos 2 caracteres' });
+
+    const like = `%${escapeLike(q)}%`;
+    const digits = q.replace(/\D/g, '');
+    // Só busca por número quando há dígitos suficientes ('' casaria com tudo).
+    const digitsLike = digits.length >= 3 ? `%${digits}%` : null;
+    // CPF parcial só para admin; os demais acham paciente por CPF só com os 11 dígitos exatos.
+    const isAdmin = user.role === 'admin' || !!user.is_super_admin;
+    const cpfParam = isAdmin ? digitsLike : (digits.length === 11 ? digits : null);
+    const tId = user.tenant_id;
+
+    const [pacientes, leads, agendamentos] = await Promise.all([
+      pool.query(
+        `SELECT id, nome, telefone FROM pacientes
+          WHERE tenant_id = $1
+            AND (nome ILIKE $2
+                 OR ($3::text IS NOT NULL AND regexp_replace(COALESCE(telefone, ''), '\\D', '', 'g') LIKE $3)
+                 OR ($4::text IS NOT NULL AND regexp_replace(COALESCE(cpf, ''), '\\D', '', 'g') ${isAdmin ? 'LIKE' : '='} $4))
+          ORDER BY nome LIMIT 8`,
+        [tId, like, digitsLike, cpfParam]
+      ),
+      pool.query(
+        `SELECT id, nome, telefone, kanban_stage FROM crm_leads
+          WHERE tenant_id = $1
+            AND (nome ILIKE $2 OR ($3::text IS NOT NULL
+                 AND regexp_replace(COALESCE(telefone, ''), '\\D', '', 'g') LIKE $3))
+          ORDER BY updated_at DESC NULLS LAST LIMIT 6`,
+        [tId, like, digitsLike]
+      ),
+      pool.query(
+        `SELECT a.id, a.data, a.hora, a.status, a.paciente_id, p.nome AS paciente_nome, d.nome AS dentista_nome
+           FROM agendamentos a
+           JOIN pacientes p ON p.id = a.paciente_id AND p.tenant_id = a.tenant_id
+           LEFT JOIN dentistas d ON d.id = a.dentista_id AND d.tenant_id = a.tenant_id
+          WHERE a.tenant_id = $1 AND p.nome ILIKE $2 AND a.data >= CURRENT_DATE - INTERVAL '30 days'
+          ORDER BY a.data, a.hora LIMIT 6`,
+        [tId, like]
+      ),
+    ]);
+
+    res.json({ pacientes: pacientes.rows, leads: leads.rows, agendamentos: agendamentos.rows });
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('❌ busca global:', error.message);
+    res.status(500).json({ error: 'Não foi possível buscar agora' });
   }
 });
 

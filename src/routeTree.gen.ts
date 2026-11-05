@@ -25,6 +25,7 @@ import { Route as PainelDentistaRouteImport } from './routes/painel-dentista'
 import { Route as PainelComercialRouteImport } from './routes/painel-comercial'
 import { Route as PacientesRouteImport } from './routes/pacientes'
 import { Route as OrcamentosRouteImport } from './routes/orcamentos'
+import { Route as ModeloPoliticaClinicaRouteImport } from './routes/modelo-politica-clinica'
 import { Route as MinhaAssinaturaRouteImport } from './routes/minha-assinatura'
 import { Route as MetricasRouteImport } from './routes/metricas'
 import { Route as LoginRouteImport } from './routes/login'
@@ -128,6 +129,11 @@ const PacientesRoute = PacientesRouteImport.update({
 const OrcamentosRoute = OrcamentosRouteImport.update({
   id: '/orcamentos',
   path: '/orcamentos',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ModeloPoliticaClinicaRoute = ModeloPoliticaClinicaRouteImport.update({
+  id: '/modelo-politica-clinica',
+  path: '/modelo-politica-clinica',
   getParentRoute: () => rootRouteImport,
 } as any)
 const MinhaAssinaturaRoute = MinhaAssinaturaRouteImport.update({
@@ -275,6 +281,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/metricas': typeof MetricasRoute
   '/minha-assinatura': typeof MinhaAssinaturaRoute
+  '/modelo-politica-clinica': typeof ModeloPoliticaClinicaRoute
   '/orcamentos': typeof OrcamentosRoute
   '/pacientes': typeof PacientesRoute
   '/painel-comercial': typeof PainelComercialRoute
@@ -317,6 +324,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/metricas': typeof MetricasRoute
   '/minha-assinatura': typeof MinhaAssinaturaRoute
+  '/modelo-politica-clinica': typeof ModeloPoliticaClinicaRoute
   '/orcamentos': typeof OrcamentosRoute
   '/pacientes': typeof PacientesRoute
   '/painel-comercial': typeof PainelComercialRoute
@@ -360,6 +368,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/metricas': typeof MetricasRoute
   '/minha-assinatura': typeof MinhaAssinaturaRoute
+  '/modelo-politica-clinica': typeof ModeloPoliticaClinicaRoute
   '/orcamentos': typeof OrcamentosRoute
   '/pacientes': typeof PacientesRoute
   '/painel-comercial': typeof PainelComercialRoute
@@ -404,6 +413,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/metricas'
     | '/minha-assinatura'
+    | '/modelo-politica-clinica'
     | '/orcamentos'
     | '/pacientes'
     | '/painel-comercial'
@@ -446,6 +456,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/metricas'
     | '/minha-assinatura'
+    | '/modelo-politica-clinica'
     | '/orcamentos'
     | '/pacientes'
     | '/painel-comercial'
@@ -488,6 +499,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/metricas'
     | '/minha-assinatura'
+    | '/modelo-politica-clinica'
     | '/orcamentos'
     | '/pacientes'
     | '/painel-comercial'
@@ -531,6 +543,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   MetricasRoute: typeof MetricasRoute
   MinhaAssinaturaRoute: typeof MinhaAssinaturaRoute
+  ModeloPoliticaClinicaRoute: typeof ModeloPoliticaClinicaRoute
   OrcamentosRoute: typeof OrcamentosRoute
   PacientesRoute: typeof PacientesRoute
   PainelComercialRoute: typeof PainelComercialRoute
@@ -661,6 +674,13 @@ declare module '@tanstack/react-router' {
       path: '/orcamentos'
       fullPath: '/orcamentos'
       preLoaderRoute: typeof OrcamentosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/modelo-politica-clinica': {
+      id: '/modelo-politica-clinica'
+      path: '/modelo-politica-clinica'
+      fullPath: '/modelo-politica-clinica'
+      preLoaderRoute: typeof ModeloPoliticaClinicaRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/minha-assinatura': {
@@ -870,6 +890,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   MetricasRoute: MetricasRoute,
   MinhaAssinaturaRoute: MinhaAssinaturaRoute,
+  ModeloPoliticaClinicaRoute: ModeloPoliticaClinicaRoute,
   OrcamentosRoute: OrcamentosRoute,
   PacientesRoute: PacientesRoute,
   PainelComercialRoute: PainelComercialRoute,

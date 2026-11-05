@@ -2,6 +2,7 @@ import { Outlet, Link, createRootRoute, HeadContent, Scripts, useLocation, useNa
 import { useEffect } from "react";
 import { AppSidebar } from "@/components/AppSidebar";
 import { WhatsAppConnectionBanner } from "@/components/WhatsAppConnectionBanner";
+import { AceiteDocumentosGate } from "@/components/legal/AceiteDocumentosGate";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import { useGlobalChatNotifier } from "@/hooks/useGlobalChatNotifier";
 import { canAccessRoute } from "@/lib/routeAccess";
@@ -128,7 +129,8 @@ function AuthGate() {
     location.pathname === "/" ||
     location.pathname === "/signup" ||
     location.pathname === "/termos" ||
-    location.pathname === "/privacidade";
+    location.pathname === "/privacidade" ||
+    location.pathname === "/modelo-politica-clinica";
 
   // Public pages — no sidebar, no auth required
   if (isPublicPage) {
@@ -146,14 +148,23 @@ function AuthGate() {
 
   // Authenticated — show sidebar + content (or unauthorized)
   return (
-    <div className="flex h-screen w-full overflow-hidden">
+    <div className="flex flex-col md:flex-row h-dvh w-full overflow-hidden">
       <GlobalChatNotifierMount />
+      {/* Primeiro item focável: pula a sidebar (WCAG 2.4.1) */}
+      <a
+        href="#conteudo"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-[60] focus:rounded-md focus:bg-card focus:px-4 focus:py-3 focus:text-sm focus:font-semibold focus:text-foreground focus:shadow-lg"
+      >
+        Pular para o conteúdo
+      </a>
       <AppSidebar />
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden">
         <WhatsAppConnectionBanner />
-        <main className="flex-1 overflow-y-auto">
+        <AceiteDocumentosGate />
+        {/* div, não main: cada tela já tem o próprio <main> (antes ficavam dois, um dentro do outro) */}
+        <div id="conteudo" tabIndex={-1} className="flex-1 overflow-y-auto focus:outline-none">
           {hasAccess ? <Outlet /> : <UnauthorizedComponent />}
-        </main>
+        </div>
       </div>
     </div>
   );

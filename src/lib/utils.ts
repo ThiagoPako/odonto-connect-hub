@@ -1,5 +1,18 @@
 import { clsx, type ClassValue } from "clsx"
-import { twMerge } from "tailwind-merge"
+import { extendTailwindMerge } from "tailwind-merge"
+
+// Ensina ao cn() os tokens próprios de src/styles.css. Sem isso, `cn("text-caption", "text-primary")`
+// trataria text-caption como cor e descartaria um dos dois.
+const twMerge = extendTailwindMerge({
+  extend: {
+    theme: {
+      text: ["caption", "footnote", "body", "callout", "title-1", "title-2", "title-3"],
+      spacing: ["touch"],
+      shadow: ["raised", "overlay"],
+      ease: ["out-soft"],
+    },
+  },
+})
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))

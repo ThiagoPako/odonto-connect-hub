@@ -4,11 +4,11 @@ import { chartTooltipStyle, chartTickFill } from "@/lib/chartTheme";
 
 
 const COLORS = [
-  "hsl(187, 85%, 43%)",  // primary
-  "hsl(217, 91%, 60%)",  // chart-2
-  "hsl(152, 60%, 42%)",  // chart-3
-  "hsl(38, 92%, 50%)",   // chart-4
-  "hsl(0, 72%, 51%)",    // chart-5
+  "var(--color-chart-1)",  // primary
+  "var(--color-chart-2)",  // chart-2
+  "var(--color-success)",  // chart-3
+  "var(--color-chart-4)",   // chart-4
+  "var(--color-destructive)",    // chart-5
 ];
 
 export function OrigemLeadsChart({ data: propData }: { data?: any[] }) {
@@ -17,14 +17,14 @@ export function OrigemLeadsChart({ data: propData }: { data?: any[] }) {
   const total = data.reduce((acc, d) => acc + d.count, 0);
 
   return (
-    <div className="bg-card rounded-2xl border border-border/60 p-6 shadow-card hover:shadow-card-hover transition-all">
+    <div className="bg-card rounded-lg border border-border p-5">
       <div className="flex items-center justify-between mb-2">
-        <h3 className="text-sm font-bold text-card-foreground">Origem dos Leads</h3>
-        <span className="text-[10px] font-medium text-muted-foreground bg-muted px-2.5 py-1 rounded-full">
+        <h3 className="text-sm font-semibold text-card-foreground">Origem dos Leads</h3>
+        <span className="text-xs font-medium text-muted-foreground bg-muted px-2.5 py-1 rounded-full">
           {total} total
         </span>
       </div>
-      <p className="text-[11px] text-muted-foreground mb-4">Pacientes por canal de aquisição</p>
+      <p className="text-xs text-muted-foreground mb-4">Pacientes por canal de aquisição</p>
       <div className="h-[220px]">
         <ClientOnly fallback={<div className="h-full w-full animate-pulse bg-muted/30 rounded-lg" />}>
         <ResponsiveContainer width="100%" height="100%">
@@ -41,7 +41,7 @@ export function OrigemLeadsChart({ data: propData }: { data?: any[] }) {
             <Tooltip
               contentStyle={chartTooltipStyle}
               formatter={(value: number) => [`${value} paciente(s)`, "Quantidade"]}
-              cursor={{ fill: "hsl(187, 85%, 43%, 0.08)" }}
+              cursor={{ fill: "color-mix(in srgb, var(--color-primary) 8%, transparent)" }}
             />
             <Bar dataKey="count" radius={[0, 8, 8, 0]} barSize={24}>
               {data.map((_, index) => (

@@ -4,9 +4,9 @@ import { chartTooltipStyle } from "@/lib/chartTheme";
 import { getOrcamentoKpis } from "@/data/dashboardKpis";
 
 const COLORS = [
-  "hsl(152, 60%, 42%)",  // success - aprovados
-  "hsl(38, 92%, 50%)",   // warning - pendentes
-  "hsl(0, 72%, 51%)",    // destructive - reprovados
+  "var(--color-success)",  // success - aprovados
+  "var(--color-chart-4)",   // warning - pendentes
+  "var(--color-destructive)",    // destructive - reprovados
 ];
 
 export function OrcamentoConversaoChart({ kpis: propKpis }: { kpis?: any }) {
@@ -19,14 +19,14 @@ export function OrcamentoConversaoChart({ kpis: propKpis }: { kpis?: any }) {
   ].filter((d) => d.value > 0);
 
   return (
-    <div className="bg-card rounded-2xl border border-border/60 p-6 shadow-card hover:shadow-card-hover transition-all">
+    <div className="bg-card rounded-lg border border-border p-5">
       <div className="flex items-center justify-between mb-2">
-        <h3 className="text-sm font-bold text-card-foreground">Conversão de Orçamentos</h3>
-        <span className="text-[10px] font-medium text-muted-foreground bg-muted px-2.5 py-1 rounded-full">
+        <h3 className="text-sm font-semibold text-card-foreground">Conversão de Orçamentos</h3>
+        <span className="text-xs font-medium text-muted-foreground bg-muted px-2.5 py-1 rounded-full">
           {kpis.taxaConversao}% taxa
         </span>
       </div>
-      <p className="text-[11px] text-muted-foreground mb-4">Distribuição por status</p>
+      <p className="text-xs text-muted-foreground mb-4">Distribuição por status</p>
       <div className="h-[220px]">
         <ClientOnly fallback={<div className="h-full w-full animate-pulse bg-muted/30 rounded-lg" />}>
         <ResponsiveContainer width="100%" height="100%">
@@ -63,9 +63,13 @@ export function OrcamentoConversaoChart({ kpis: propKpis }: { kpis?: any }) {
       </div>
       <div className="mt-3 grid grid-cols-3 gap-2 text-center">
         {data.map((d, i) => (
-          <div key={d.name} className="px-2 py-2 rounded-xl bg-muted/40">
-            <p className="text-lg font-bold" style={{ color: COLORS[i] }}>{d.value}</p>
-            <p className="text-[10px] text-muted-foreground">{d.name}</p>
+          <div key={d.name} className="px-2 py-2 rounded-md bg-muted">
+            <p className="text-lg font-semibold text-foreground tabular-nums">{d.value}</p>
+            <p className="text-xs text-muted-foreground inline-flex items-center gap-1.5">
+              {/* cor só como marcador ao lado do texto (âmbar como texto não passa 4,5:1) */}
+              <span className="size-2 rounded-full" style={{ background: COLORS[i] }} aria-hidden="true" />
+              {d.name}
+            </p>
           </div>
         ))}
       </div>
