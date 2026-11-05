@@ -114,6 +114,17 @@ describe('laudo do exame', () => {
     expect((await chamar('post', `/api/exames/${exameB}/laudo/reabrir`)).status).toBe(404);
   });
 
+  test('"Concluído" sem laudo finalizado → 409', async () => {
+    const res = await chamar('patch', `/api/exames/${exameA}`, { status: 'concluido' });
+    expect(res.status).toBe(409);
+  });
+
+  test('reabrir não tira o status Entregue', async () => {
+    estado.laudado_em = '2026-11-05T10:00:00.000Z';
+    await chamar('post', `/api/exames/${exameA}/laudo/reabrir`);
+    expect(sqlLog.find(q => /laudado_por = NULL/.test(q.text)).text).toMatch(/WHEN status = 'concluido' THEN 'aguardando_laudo'/);
+  });
+
   test('PATCH com texto de laudo sem versão → 400', async () => {
     const res = await chamar('patch', `/api/exames/${exameA}`, { laudo_texto: 'novo' });
     expect(res.status).toBe(400);

@@ -205,7 +205,13 @@ function ExamesPage() {
                 <Select value={e.status} onValueChange={(v) => changeStatus(e.id, v as ExameStatus)}>
                   <SelectTrigger className="w-[170px]"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {STATUS_ORDER.map(s => <SelectItem key={s} value={s}>{STATUS_LABELS[s]}</SelectItem>)}
+                    {STATUS_ORDER.map(s => (
+                      // Concluído só pelo "Finalizar laudo"; com laudo finalizado, só Entregue
+                      <SelectItem key={s} value={s}
+                        disabled={s !== e.status && ((s === "concluido" && !e.laudado_em) || (!!e.laudado_em && s !== "entregue"))}>
+                        {STATUS_LABELS[s]}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
                 <Button size="sm" variant="outline" className="gap-1" onClick={() => setLaudoExame(e)}>

@@ -43,15 +43,21 @@ export function ExameLaudoDialog({ exame: exameProp, onOpenChange, onSaved }: Pr
 
   const exameId = exameProp?.id ?? null;
 
-  const carregarArquivos = useCallback(async () => {
-    if (!exameId) return;
+  // Quando os links assinados (1 h) foram emitidos: renovados antes de imprimir se estiverem velhos
+  const linksEmitidosEm = useRef(0);
+  const carregarArquivos = useCallback(async (): Promise<ExameArquivo[] | null> => {
+    if (!exameId) return null;
     setArquivosEstado("carregando");
     try {
-      setArquivos(await exameArquivosApi.list(exameId));
+      const lista = await exameArquivosApi.list(exameId);
+      setArquivos(lista);
+      linksEmitidosEm.current = Date.now();
       setArquivosEstado("ok");
+      return lista;
     } catch (e: unknown) {
       setArquivosErro((e as Error).message || "erro");
       setArquivosEstado("erro");
+      return null;
     }
   }, [exameId]);
 
@@ -172,7 +178,7 @@ export function ExameLaudoDialog({ exame: exameProp, onOpenChange, onSaved }: Pr
 
   async function reabrir() {
     if (!exame) return;
-    if (!confirm("Reabrir o laudo para correção? A assinatura atual é retirada e o exame volta para Aguardando laudo até ser finalizado de novo.")) return;
+    if (!confirm("Reabrir o laudo para correção? A finalização atual é retirada (o texto fica no histórico) e o exame volta para Aguardando laudo até ser finalizado de novo.")) return;
     setAcao("reabrir");
     try {
       await examesApi.reabrirLaudo(exame.id);
@@ -187,9 +193,14 @@ export function ExameLaudoDialog({ exame: exameProp, onOpenChange, onSaved }: Pr
     }
   }
 
-  function imprimir() {
+  async function imprimir() {
     if (!exame) return;
-    const ok = imprimirLaudo({ ...exame, laudo_texto: finalizado ? exame.laudo_texto : laudo }, imagens);
+    let imgs = imagens;
+    if (Date.now() - linksEmitidosEm.current > 50 * 60 * 1000) {
+      const novas = await carregarArquivos();
+      if (novas) imgs = novas.filter((a) => a.imagem);
+    }
+    const ok = imprimirLaudo({ ...exame, laudo_texto: finalizado ? exame.laudo_texto : laudo }, imgs);
     if (!ok) toast.error("Não foi possível preparar a impressão neste navegador.");
   }
 
@@ -263,7 +274,8 @@ export function ExameLaudoDialog({ exame: exameProp, onOpenChange, onSaved }: Pr
             <section className="space-y-2" aria-labelledby="exame-arquivos-titulo">
               <div className="flex items-center justify-between gap-2">
                 <h3 id="exame-arquivos-titulo" className="text-sm font-medium">Imagens e arquivos</h3>
-                <Button size="sm" variant="outline" className="gap-1" onClick={() => fileRef.current?.click()} disabled={uploading > 0}>
+                <Button size="sm" variant="outline" className="gap-1" onClick={() => fileRef.current?.click()} disabled={uploading > 0 || finalizado}
+                  title={finalizado ? "Laudo finalizado: reabra o laudo para alterar as imagens" : undefined}>
                   {uploading > 0 ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
                   {uploading > 0 ? `Enviando (${uploading})...` : "Anexar"}
                 </Button>
@@ -282,7 +294,7 @@ export function ExameLaudoDialog({ exame: exameProp, onOpenChange, onSaved }: Pr
                   <Button size="sm" variant="outline" onClick={carregarArquivos}>Tentar de novo</Button>
                 </div>
               )}
-              {arquivosEstado === "ok" && arquivos.length === 0 && !legadoUrl && (
+              {arquivosEstado === "ok" && arquivos.length === 0 && !legadoUrl && !finalizado && (
                 <button
                   type="button"
                   onClick={() => fileRef.current?.click()}
@@ -320,9 +332,9 @@ export function ExameLaudoDialog({ exame: exameProp, onOpenChange, onSaved }: Pr
                             <Download className="h-3.5 w-3.5" />
                           </a>
                         </Button>
-                        <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => removerArquivo(a)} aria-label={`Tirar ${a.nome_original || "arquivo"} do exame`}>
+                        {!finalizado && <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => removerArquivo(a)} aria-label={`Tirar ${a.nome_original || "arquivo"} do exame`}>
                           <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                        </Button>
+                        </Button>}
                       </div>
                     </li>
                   ))}
