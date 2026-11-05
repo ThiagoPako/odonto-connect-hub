@@ -16170,7 +16170,8 @@ app.delete('/api/exames/:id', async (req, res) => {
     // não é apagado; a clínica cancela o exame. Só pedidos sem resultado podem ser excluídos.
     const { rows } = await pool.query(
       `SELECT (COALESCE(btrim(e.laudo_texto), '') <> '' OR e.arquivo_url IS NOT NULL
-               OR EXISTS (SELECT 1 FROM exame_arquivos a WHERE a.exame_id = e.id AND a.tenant_id = e.tenant_id)) AS tem_resultado
+               OR EXISTS (SELECT 1 FROM exame_arquivos a WHERE a.exame_id = e.id AND a.tenant_id = e.tenant_id)
+               OR EXISTS (SELECT 1 FROM exame_laudo_historico h WHERE h.exame_id = e.id AND h.tenant_id = e.tenant_id)) AS tem_resultado
          FROM exames e WHERE e.id=$1 AND e.tenant_id=$2`,
       [req.params.id, user.tenant_id]
     );
@@ -16182,7 +16183,8 @@ app.delete('/api/exames/:id', async (req, res) => {
     const { rowCount } = await pool.query(
       `DELETE FROM exames e WHERE e.id=$1 AND e.tenant_id=$2
           AND COALESCE(btrim(e.laudo_texto), '') = '' AND e.arquivo_url IS NULL
-          AND NOT EXISTS (SELECT 1 FROM exame_arquivos a WHERE a.exame_id = e.id AND a.tenant_id = e.tenant_id)`,
+          AND NOT EXISTS (SELECT 1 FROM exame_arquivos a WHERE a.exame_id = e.id AND a.tenant_id = e.tenant_id)
+          AND NOT EXISTS (SELECT 1 FROM exame_laudo_historico h WHERE h.exame_id = e.id AND h.tenant_id = e.tenant_id)`,
       [req.params.id, user.tenant_id]
     );
     // Recebeu laudo/imagem entre a leitura e a exclusão: nada foi apagado
@@ -16307,9 +16309,11 @@ app.post('/api/exames/:id/arquivos', express.raw({ type: '*/*', limit: '64mb' })
     let rows;
     try {
       ({ rows } = await pool.query(
+        // Só grava se o laudo continuar aberto (alguém pode ter finalizado durante o envio)
         `INSERT INTO exame_arquivos
            (id, tenant_id, exame_id, paciente_id, caminho, nome_original, mime_type, tamanho_bytes, descricao, enviado_por)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+         SELECT $1,$2,e.id,$4,$5,$6,$7,$8,$9,$10 FROM exames e
+          WHERE e.id = $3 AND e.tenant_id = $2 AND e.laudado_em IS NULL
          RETURNING *`,
         [id, user.tenant_id, exame.id, exame.paciente_id || null, caminho, nomeOriginal, tipo.mime, buf.length, descricao, user.id]
       ));
@@ -16317,6 +16321,10 @@ app.post('/api/exames/:id/arquivos', express.raw({ type: '*/*', limit: '64mb' })
       // Sem registro o arquivo nunca seria servido: não deixa órfão no disco
       await rm(absArquivo, { force: true }).catch(() => {});
       throw insErr;
+    }
+    if (!rows.length) {
+      await rm(absArquivo, { force: true }).catch(() => {});
+      return res.status(409).json({ error: 'Laudo finalizado. Reabra o laudo para alterar as imagens.' });
     }
     // Chegou imagem: o exame foi realizado e passa a aguardar laudo
     await pool.query(
@@ -16390,8 +16398,9 @@ app.get('/api/exame-arquivos/:arquivoId/conteudo', async (req, res) => {
     res.setHeader('Cache-Control', 'private, max-age=300');
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="${nomeAscii}"; filename*=UTF-8''${encodeURIComponent(nomeSeguro)}`);
-    // PDF pode ter JavaScript embutido: abre isolado, sem acesso à origem da API
-    if (!/^image\//.test(mime_type)) res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+    // PDF pode ter JavaScript embutido: sem scripts nem conexões. Sem "sandbox" (o Chrome bloquearia
+    // o visualizador de PDF); outros tipos não imagem já saem como download.
+    if (!/^image\//.test(mime_type)) res.setHeader('Content-Security-Policy', "default-src 'none'");
     res.sendFile(abs, { headers: { 'Content-Type': mime_type } }, (err) => {
       if (err && !res.headersSent) res.status(404).json({ error: 'Arquivo não encontrado' });
     });

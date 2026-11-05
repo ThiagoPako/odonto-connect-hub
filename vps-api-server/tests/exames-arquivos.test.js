@@ -146,6 +146,18 @@ describe('arquivos de exame', () => {
     expect((await readdir(dir).catch(() => [])).length).toBe(antes.length);
   });
 
+  test('laudo finalizado durante o envio: INSERT não grava → 409 e arquivo apagado', async () => {
+    const dir = path.join(__dirname, '..', '..', 'uploads', 'exames', tenantA);
+    const antes = await readdir(dir).catch(() => []);
+    const original = querySpy.getMockImplementation();
+    querySpy.mockImplementation((sql, params) => (/INSERT INTO exame_arquivos/.test(String(sql))
+      ? Promise.resolve({ rows: [], rowCount: 0 })
+      : original(sql, params)));
+    const res = await enviar(exameA, PNG);
+    expect(res.status).toBe(409);
+    expect((await readdir(dir).catch(() => [])).length).toBe(antes.length);
+  });
+
   test('laudo finalizado: anexar ou tirar imagem → 409 sem gravar', async () => {
     exameLaudado = true;
     expect((await enviar(exameA, PNG)).status).toBe(409);
