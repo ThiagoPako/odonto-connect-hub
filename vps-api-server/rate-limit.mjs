@@ -19,7 +19,7 @@ function envInt(name, fallback) {
 
 const limiters = new Set();
 
-export function createLimiter(name, { windowMs, max }) {
+export function createLimiter(name, { windowMs, max, maxKeys = MAX_KEYS }) {
   const envName = name.toUpperCase().replace(/[^A-Z0-9]+/g, '_');
   const cfg = {
     name,
@@ -31,16 +31,25 @@ export function createLimiter(name, { windowMs, max }) {
   const bucketOf = (key, now) => {
     let b = buckets.get(key);
     if (!b || b.resetAt <= now) {
-      if (buckets.size >= MAX_KEYS) sweep(now);
+      if (b) buckets.delete(key); // reinsere no fim: o Map fica em ordem de início da janela
+      else if (buckets.size >= maxKeys) sweep(now);
       b = { count: 0, resetAt: now + cfg.windowMs };
       buckets.set(key, b);
     }
     return b;
   };
 
+  // Tira as janelas vencidas; se ainda estiver no máximo de chaves, descarta as mais
+  // antigas (o Map guarda a ordem de inserção) até 90% do máximo, sem zerar as outras.
   function sweep(now = Date.now()) {
     for (const [k, b] of buckets) if (b.resetAt <= now) buckets.delete(k);
-    if (buckets.size >= MAX_KEYS) buckets.clear(); // proteção contra estouro de memória
+    if (buckets.size >= maxKeys) {
+      const alvo = Math.floor(maxKeys * 0.9);
+      for (const k of buckets.keys()) {
+        if (buckets.size <= alvo) break;
+        buckets.delete(k);
+      }
+    }
   }
 
   const retryAfter = (b, now) => Math.max(1, Math.ceil((b.resetAt - now) / 1000));
