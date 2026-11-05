@@ -60,7 +60,7 @@ describe('Envios automáticos pela fila central', () => {
     agendaBefore = { data: new Date(2099, 0, 10), hora: '09:00' };
     agendaAfter = {
       id: agendamento, paciente_id: pacienteA, paciente_nome: 'Maria Souza', data: new Date(2099, 0, 12),
-      hora: '14:30', dentista_nome: 'Dra. Ana', status: 'agendado', tenant_id: tenantA,
+      hora: '14:30:00', dentista_nome: 'Dra. Ana', status: 'agendado', tenant_id: tenantA,
     };
     querySpy = jest.spyOn(pool, 'query').mockImplementation((sql, params = []) => {
       const text = String(sql);
@@ -127,6 +127,7 @@ describe('Envios automáticos pela fila central', () => {
       expect(jobCol(ins, 'trigger_event')).toBe('reschedule_notice');
       expect(String(jobCol(ins, 'patient_phone'))).toMatch(/988887777$/);
       expect(jobCol(ins, 'message')).toMatch(/12\/01\/2099/);
+      expect(jobCol(ins, 'message')).toMatch(/⏰ 14:30\n/); // hora sem segundos (parecer T14)
       expect(jobCol(ins, 'message')).toMatch(/Clínica A/);
       // Validade: até o horário da consulta.
       expect(new Date(jobCol(ins, 'expires_at')).toISOString()).toBe('2099-01-12T17:30:00.000Z');

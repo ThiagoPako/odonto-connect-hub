@@ -5347,7 +5347,7 @@ async function enqueueRescheduleNotice(tenantId, appt) {
   ).catch(e => console.error('[reschedule] cancelar aviso anterior falhou:', e.message));
   const firstName = String(appt.paciente_nome || pac?.nome || '').trim().split(/\s+/)[0] || 'Paciente';
   const clinica = await getTenantClinicName(tenantId);
-  const msg = `📋 *Consulta reagendada — ${clinica}*\n\nOlá, ${firstName}!\n\nSua consulta foi reagendada:\n📅 ${formatAgendaDateBR(appt.data)}\n⏰ ${appt.hora || '—'}\n👩‍⚕️ ${appt.dentista_nome || 'Equipe da clínica'}\n\nSe precisar remarcar de novo, é só mandar uma mensagem aqui.`;
+  const msg = `📋 *Consulta reagendada — ${clinica}*\n\nOlá, ${firstName}!\n\nSua consulta foi reagendada:\n📅 ${formatAgendaDateBR(appt.data)}\n⏰ ${String(appt.hora || '').slice(0, 5) || '—'}\n👩‍⚕️ ${appt.dentista_nome || 'Equipe da clínica'}\n\nSe precisar remarcar de novo, é só mandar uma mensagem aqui.`;
   return enqueueWhatsAppJob({
     tenantId, phone, message: msg, category: 'transactional',
     patientName: pac?.nome || appt.paciente_nome || '', triggerEvent: 'reschedule_notice',
