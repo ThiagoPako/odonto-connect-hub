@@ -50,6 +50,14 @@ jobs:
                 npm ci 2>/dev/null || npm install
               fi
 
+              echo "Restoring backend dependencies for rollback commit..."
+              if [ -d vps-api-server/node_modules.prev ]; then
+                rm -rf vps-api-server/node_modules && mv vps-api-server/node_modules.prev vps-api-server/node_modules \
+                  && echo "Backend node_modules restaurado da cópia anterior"
+              else
+                (cd vps-api-server && { npm ci --omit=dev || npm install --omit=dev; }) || echo "WARNING: backend deps reinstall failed on rollback"
+              fi
+
               echo "Rebuilding frontend for rollback commit..."
               npm run build || echo "WARNING: rollback build failed — keeping previous dist if present"
 
@@ -85,6 +93,13 @@ jobs:
             else
               npm ci 2>/dev/null || npm install
             fi
+
+            # ─── Dependências do backend (vps-api-server tem package.json próprio) ──
+            # Cópia do node_modules atual: se o npm ci falhar (rede, binário nativo), o rollback
+            # restaura esta cópia em vez de depender de uma nova instalação.
+            rm -rf vps-api-server/node_modules.prev
+            if [ -d vps-api-server/node_modules ]; then cp -a vps-api-server/node_modules vps-api-server/node_modules.prev; fi
+            (cd vps-api-server && npm ci --omit=dev)
 
             # ─── Build frontend ────────────────────────────────────────────
             npm run build
@@ -124,6 +139,34 @@ jobs:
             cat /root/odonto-connect/vps-api-server/migration-whatsapp-fase1.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             cat /root/odonto-connect/vps-api-server/migration-seguranca-p0.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             cat /root/odonto-connect/vps-api-server/migration-contatos-recuperacao.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
+            # Colunas usadas por agendamentos (idempotente; ausentes em produção)
+            sudo -u postgres psql -p 5433 -d odonto_db -c "SET lock_timeout = '5s'; ALTER TABLE IF EXISTS agendamentos ADD COLUMN IF NOT EXISTS paciente_nome TEXT, ADD COLUMN IF NOT EXISTS dentista_nome TEXT;" 2>&1 || true
+            # Colunas/tabelas que o código usa e faltam no banco (docs/banco/drift-schema-2026-11-05.md).
+            # Transação única com lock_timeout: tenta até 3 vezes antes de avisar.
+            ALINHAMENTO_OK=0
+            for TENTATIVA in 1 2 3; do
+              if cat /root/odonto-connect/vps-api-server/migration-schema-alinhamento.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1; then
+                ALINHAMENTO_OK=1; break
+              fi
+              echo "Alinhamento de schema: tentativa $TENTATIVA falhou; aguardando 10s..."
+              sleep 10
+            done
+            if [ "$ALINHAMENTO_OK" != "1" ]; then
+              echo "::warning title=Alinhamento de schema não aplicado::migration-schema-alinhamento.sql falhou 3x (lock ou erro). O deploy segue; ver log acima."
+              echo "!!! ATENÇÃO: migration-schema-alinhamento.sql NÃO foi aplicada — cadastro de clínica, exames, lembrete 24h e PUT da agenda continuam quebrados."
+            fi
+            # Chaves únicas POR CLÍNICA (CPF do paciente, CRO do dentista, nome do marcador da agenda).
+            # Antes eram globais: revelavam cadastro de outra clínica e bloqueavam a mesma pessoa em duas.
+            # Sem BEGIN: CREATE UNIQUE INDEX CONCURRENTLY não trava a escrita.
+            if ! cat /root/odonto-connect/vps-api-server/migration-unicos-por-clinica.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1; then
+              echo "::warning title=Únicos por clínica não aplicados::migration-unicos-por-clinica.sql falhou (repetido na mesma clínica, lock ou erro). As chaves globais que não foram trocadas continuam; o deploy segue. Ver log acima."
+              echo "!!! ATENÇÃO: alguma chave única GLOBAL (cpf/cro/marcador) continua ativa: revisar o log acima."
+            fi
+            # Clinicorp com mais de uma clínica: chaves únicas por clínica (sem BEGIN: CONCURRENTLY).
+            if ! cat /root/odonto-connect/vps-api-server/migration-clinicorp-multi-clinica.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1; then
+              echo "::warning title=Clinicorp multi-clínica não aplicado::migration-clinicorp-multi-clinica.sql falhou (repetido na mesma clínica, lock ou erro). Chaves globais mantidas; o deploy segue. Ver log acima."
+              echo "!!! ATENÇÃO: Clinicorp ainda com chaves únicas globais: a segunda clínica com Clinicorp colide."
+            fi
             echo "=== Migrations applied ==="
 
             # ─── Pre-flight syntax check on server.mjs ─────────────────────
@@ -231,4 +274,5 @@ jobs:
             pm2 save
             echo "$NEW_COMMIT" > /root/odonto-connect/.last-good-commit
             rm -f /root/odonto-connect/.last-good-commit.tmp
+            rm -rf /root/odonto-connect/vps-api-server/node_modules.prev
             echo "=== Deploy complete $(date) — commit $NEW_COMMIT ==="
