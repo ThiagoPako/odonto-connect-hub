@@ -43,10 +43,11 @@ describe('candidatosFone', () => {
     expect(candidatosFone('1187654321', { semDdd: true })).toEqual(expect.arrayContaining(['1187654321', '11987654321']));
     expect(candidatosFone('551187654321', { semDdd: true })).toEqual(expect.arrayContaining(['51187654321', '1187654321', '11987654321']));
   });
-  test('semDdd: 11 dígitos com 9 seguido de 2–5 não volta para um fixo de 10 dígitos', () => {
-    const c = candidatosFone('(11) 93333-4444', { semDdd: true });
-    expect(c).not.toContain('1133334444');
-    expect(c).not.toContain('51133334444');
+  test('semDdd: celular com 9 seguido de 2–5 também volta para 10 dígitos (paridade com o LIKE antigo)', () => {
+    // Em produção há celulares assim (9 + 2..5). Exigir 6–9 aqui faria esses perderem o
+    // cadastro antigo sem o 9. O casamento com o fixo de outro paciente com os mesmos
+    // 8 últimos dígitos já existia no LIKE antigo.
+    expect(candidatosFone('(11) 93333-4444', { semDdd: true })).toEqual(expect.arrayContaining(['1133334444', '51133334444']));
   });
 });
 
@@ -122,8 +123,14 @@ describe('Postgres: resultado igual ao LIKE antigo e uso do índice', () => {
     expect(await novo('1187654321', '5511987654321')).toBe(true);
     // Fixo (começa em 2 a 5) não ganha o 9; outro DDD continua não casando.
     expect(await novo('11933334444', '1133334444')).toBe(false);
-    expect(await novo('1133334444', '(11) 93333-4444')).toBe(false); // celular não casa com fixo de outro paciente
-    expect(await novo('551133334444', '11933334444')).toBe(false);
+    // Celular 9 + 2..5 contra o cadastro de 10 dígitos: casa, como o LIKE antigo (8 últimos).
+    const likeAntigo = async (paciente, lead) => (await client.query(
+      `SELECT REPLACE(REPLACE(REPLACE($1::text, ' ', ''), '-', ''), '+', '') LIKE '%' || $2 AS ok`,
+      [paciente, String(lead).replace(/\D/g, '').slice(-8)])).rows[0].ok;
+    for (const [paciente, lead] of [['1133334444', '(11) 93333-4444'], ['551133334444', '11933334444']]) {
+      expect(await novo(paciente, lead)).toBe(true);
+      expect(await likeAntigo(paciente, lead)).toBe(true);
+    }
     expect(await novo('551187654321', '(21) 98765-4321')).toBe(false);
     // Outro DDD com os mesmos 8 últimos dígitos: o antigo dava conflito falso; o novo não.
     expect(await novo('21987654321', '11987654321')).toBe(false);
