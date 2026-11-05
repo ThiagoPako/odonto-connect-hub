@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Key, Loader2, Plug, RefreshCw, Check, Wifi, WifiOff, ExternalLink } from "lucide-react";
+import { Key, Loader2, Plug, RefreshCw, Check, Wifi, WifiOff, ExternalLink, AlertTriangle } from "lucide-react";
 import { vpsApiFetch } from "@/lib/vpsApi";
 
 interface AISetting {
@@ -27,6 +27,7 @@ export function MetaAdsConnectPanel({ onSynced }: { onSynced?: () => void }) {
   const [connected, setConnected] = useState(false);
   const [lastSync, setLastSync] = useState<string | undefined>();
   const [campaignsCount, setCampaignsCount] = useState(0);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     void loadCurrent();
@@ -34,16 +35,24 @@ export function MetaAdsConnectPanel({ onSynced }: { onSynced?: () => void }) {
 
   async function loadCurrent() {
     setLoading(true);
-    const [{ data: settings }, { data: overview }] = await Promise.all([
+    const [{ data: settings, error: settingsError }, { data: overview, error: overviewError }] = await Promise.all([
       vpsApiFetch<AISetting[]>("/ai/settings"),
       vpsApiFetch<OverviewMini>("/ai/meta-ads/overview"),
     ]);
+
+    const erro = settingsError || overviewError;
+    setLoadError(erro ? String(erro) : null);
+    if (erro) {
+      setLoading(false);
+      return;
+    }
 
     if (Array.isArray(settings)) {
       const manus = settings.find((s) => s.provider === "manus");
       if (manus) {
         setToken(manus.api_key || "");
-        setAdAccountId(manus.config?.ad_account_id || "");
+        // O servidor ainda não devolve o ID da conta: não apagar o que o gestor acabou de digitar
+        if (manus.config?.ad_account_id) setAdAccountId(manus.config.ad_account_id);
       }
     }
     if (overview) {
@@ -59,14 +68,11 @@ export function MetaAdsConnectPanel({ onSynced }: { onSynced?: () => void }) {
       toast.error("Cole o token de acesso do Meta Ads");
       return;
     }
-    if (!adAccountId.trim()) {
-      toast.error("Informe o ID da conta de anúncios (ex: act_1234567890)");
-      return;
-    }
-
-    // 1. Salvar token + ad_account_id em ai_settings
+    // O servidor ainda não usa o ID digitado: o campo é opcional até o backend gravar o config
+    // 1. Salvar token (+ ad_account_id, se preenchido) em ai_settings
     setSaving(true);
-    const normalizedId = adAccountId.startsWith("act_") ? adAccountId : `act_${adAccountId}`;
+    const idDigitado = adAccountId.trim();
+    const normalizedId = !idDigitado ? "" : idDigitado.startsWith("act_") ? idDigitado : `act_${idDigitado}`;
     const { error: saveError } = await vpsApiFetch("/ai/settings", {
       method: "POST",
       body: {
@@ -74,7 +80,7 @@ export function MetaAdsConnectPanel({ onSynced }: { onSynced?: () => void }) {
         api_key: token.trim(),
         model: "",
         enabled: true,
-        config: { ad_account_id: normalizedId },
+        ...(normalizedId ? { config: { ad_account_id: normalizedId } } : {}),
       },
     });
     setSaving(false);
@@ -97,7 +103,7 @@ export function MetaAdsConnectPanel({ onSynced }: { onSynced?: () => void }) {
       return;
     }
     toast.success("Campanhas sincronizadas com sucesso!");
-    setAdAccountId(normalizedId);
+    if (normalizedId) setAdAccountId(normalizedId);
     await loadCurrent();
     onSynced?.();
   }
@@ -124,9 +130,33 @@ export function MetaAdsConnectPanel({ onSynced }: { onSynced?: () => void }) {
     );
   }
 
+  if (loadError) {
+    return (
+      <div
+        role="alert"
+        className="bg-card rounded-2xl border border-destructive/40 p-6 shadow-card flex flex-wrap items-center justify-between gap-3"
+      >
+        <div className="flex items-start gap-3">
+          <AlertTriangle className="h-5 w-5 mt-0.5 shrink-0 text-destructive" />
+          <div>
+            <p className="text-sm font-semibold text-foreground">Não foi possível verificar a conexão com o Meta Ads</p>
+            <p className="text-xs text-muted-foreground">{loadError}</p>
+          </div>
+        </div>
+        <button
+          onClick={() => void loadCurrent()}
+          className="flex items-center gap-1.5 h-8 px-3 rounded-lg border border-border text-xs font-medium hover:bg-muted transition-colors"
+        >
+          <RefreshCw className="h-3.5 w-3.5" />
+          Tentar de novo
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="bg-card rounded-2xl border border-border/60 p-6 shadow-card space-y-5">
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex items-center gap-3">
           <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center">
             <Plug className="h-5 w-5 text-primary" />
@@ -145,7 +175,7 @@ export function MetaAdsConnectPanel({ onSynced }: { onSynced?: () => void }) {
               )}
             </h3>
             <p className="text-xs text-muted-foreground">
-              Cole o token e o ID da conta — Manus AI puxa as campanhas automaticamente
+              Cole o token de acesso para puxar as campanhas automaticamente
             </p>
           </div>
         </div>
@@ -205,7 +235,9 @@ export function MetaAdsConnectPanel({ onSynced }: { onSynced?: () => void }) {
       </div>
 
       <div className="space-y-2">
-        <label className="text-xs font-medium text-foreground">ID da Conta de Anúncios</label>
+        <label className="text-xs font-medium text-foreground">
+          ID da Conta de Anúncios <span className="font-normal text-muted-foreground">(opcional, ainda não é usado)</span>
+        </label>
         <input
           type="text"
           value={adAccountId}
@@ -216,6 +248,15 @@ export function MetaAdsConnectPanel({ onSynced }: { onSynced?: () => void }) {
         <p className="text-[11px] text-muted-foreground">
           Encontre em: Gerenciador de Anúncios → menu superior → o ID começa com <code className="px-1 rounded bg-muted">act_</code>
         </p>
+        <div className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 p-2.5 text-[11px] text-foreground">
+          <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0 text-warning" />
+          <p>
+            <strong>Atenção:</strong> por enquanto o ID digitado não é usado. Na primeira sincronização o sistema fixa
+            a primeira conta de anúncios que o token acessa e continua usando essa conta, mesmo se você colar outro
+            token depois. Esta conexão ainda é única para todo o sistema: o token vale para todas as clínicas, e as
+            campanhas e os gastos ficam visíveis para os usuários de todas elas.
+          </p>
+        </div>
       </div>
 
       <button
@@ -238,9 +279,8 @@ export function MetaAdsConnectPanel({ onSynced }: { onSynced?: () => void }) {
 
       <div className="bg-muted/30 rounded-lg p-3 border border-border/30">
         <p className="text-[11px] text-muted-foreground leading-relaxed">
-          <strong>Como funciona:</strong> ao clicar em "Conectar", o token é salvo no servidor (criptografado),
-          a Manus AI valida o acesso à conta <code className="px-1 rounded bg-background">{adAccountId || "act_..."}</code> e
-          puxa todas as campanhas + métricas dos últimos 30 dias via Meta Graph API v19.0.
+          <strong>Como funciona:</strong> ao clicar em "Conectar", o token é salvo no servidor do Odonto Connect
+          e usado para puxar as campanhas e as métricas dos últimos 30 dias pela API do Meta.
         </p>
       </div>
     </div>

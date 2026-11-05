@@ -519,7 +519,7 @@ async function getFallbackTenantIdForIncomingMessage({ instanceName, phoneSuffix
       );
       if (rows[0]?.tenant_id && isValidTenantId(rows[0].tenant_id)) return rows[0].tenant_id;
     } catch (err) {
-      console.error(`Tenant fallback by phone failed (${suffix}):`, err.message);
+      console.error(`Tenant fallback by phone failed (${maskPhone(suffix)}):`, err.message);
     }
   }
 
@@ -704,6 +704,12 @@ const WEBHOOK_URL = WEBHOOK_PUBLIC_URL || (isLocalAppUrl ? `${APP_URL.replace(/:
 
 // Metadados de credencial para logs/diagnóstico: só diz se existe e o tamanho,
 // nunca trechos do valor. Usado em sendEvolutionTextMessage e /api/debug/config.
+// Logs: telefone só com os 4 últimos dígitos; nunca nome, e-mail ou corpo de mensagem (LGPD).
+function maskPhone(value) {
+  const digits = String(value || '').replace(/\D/g, '');
+  return digits ? `***${digits.slice(-4)}` : '-';
+}
+
 function getCredentialDebugMeta(value) {
   const raw = String(value || '');
   return { present: raw.length > 0, length: raw.length };
@@ -962,7 +968,7 @@ async function getProfileDisplayName(userId, fallback = 'Atendente') {
 async function verifySuperAdmin(req) {
   const { user } = await verifyUser(req);
   if (!user.is_super_admin) {
-    console.warn(`[SECURITY] Unprivileged super-admin access attempt: ${user.email}`);
+    console.warn(`[SECURITY] Unprivileged super-admin access attempt: user=${user.id}`);
     throw new Error('Super admin access required');
   }
   return { user };
@@ -980,7 +986,7 @@ async function verifyAdmin(req) {
     [user.id, 'admin']
   );
   if (rows.length === 0) {
-    console.warn(`[SECURITY] Access denied: User ${user.email} is not an admin`);
+    console.warn(`[SECURITY] Access denied: user=${user.id} is not an admin`);
     throw new Error('Admin access required');
   }
   return { user };
@@ -1025,7 +1031,7 @@ async function assertCanManageUser(actor, targetUserId) {
   if (actor?.is_super_admin) return target;
   const sameTenant = actor?.tenant_id && target.tenant_id && String(actor.tenant_id) === String(target.tenant_id);
   if (!sameTenant || target.is_super_admin) {
-    console.warn(`[SECURITY] Bloqueado: ${actor?.email} tentou alterar o usuário ${targetUserId} de outra clínica/super-admin`);
+    console.warn(`[SECURITY] Bloqueado: user=${actor?.id} tentou alterar o usuário ${targetUserId} de outra clínica/super-admin`);
     const e = new Error('Usuário não encontrado'); e.status = 404; throw e;
   }
   return target;
@@ -3076,7 +3082,7 @@ function rememberLidMappingFromMessage(msg, resolvedRemoteJid) {
   const phoneNumber = normalizeWhatsappNumber(resolvedRemoteJid);
   if (lidNumber && phoneNumber && lidNumber !== phoneNumber) {
     registerLidMapping(lidNumber, phoneNumber);
-    console.log(`🔗 LID mapped from message: ${lidNumber} → ${phoneNumber}`);
+    console.log(`🔗 LID mapped from message → ${maskPhone(phoneNumber)}`);
   }
 }
 
@@ -3192,7 +3198,7 @@ async function resolveLidForPhone(instance, phone) {
       method: 'POST',
       body: JSON.stringify({ numbers: [phone] }),
     });
-    console.log(`🔍 whatsappNumbers response for ${phone}:`, JSON.stringify(result.data).slice(0, 500));
+    console.log(`🔍 whatsappNumbers response for ${maskPhone(phone)}: status=${result.status}`);
     if (result.ok && Array.isArray(result.data)) {
       for (const entry of result.data) {
         const jid = entry?.jid || entry?.id || '';
@@ -3201,7 +3207,7 @@ async function resolveLidForPhone(instance, phone) {
         const lidNum = normalizeWhatsappNumber(lid) || (jid.includes('@lid') ? normalizeWhatsappNumber(jid) : '');
         if (lidNum && lidNum.length >= 10) {
           registerLidMapping(lidNum, phone);
-          console.log(`🔗 LID mapped: ${lidNum} → ${phone}`);
+          console.log(`🔗 LID mapped → ${maskPhone(phone)}`);
           return lidNum;
         }
       }
@@ -3218,14 +3224,14 @@ async function resolveLidForPhone(instance, phone) {
           const lidNum = normalizeWhatsappNumber(cLid);
           if (lidNum && lidNum.length >= 10) {
             registerLidMapping(lidNum, phone);
-            console.log(`🔗 LID mapped (findContacts): ${lidNum} → ${phone}`);
+            console.log(`🔗 LID mapped (findContacts) → ${maskPhone(phone)}`);
             return lidNum;
           }
         }
       }
     } catch (e2) { /* ignore findContacts fallback error */ }
   } catch (err) {
-    console.error(`LID resolve error for ${phone}:`, err.message);
+    console.error(`LID resolve error for ${maskPhone(phone)}:`, err.message);
   }
   return null;
 }
@@ -3305,7 +3311,7 @@ async function resolveValidWhatsAppNumber(instance, cleanNumber) {
       return { exists: false, canonical: cleanNumber };
     }
   } catch (err) {
-    console.warn(`⚠️ whatsappNumbers check failed for ${cleanNumber}:`, err.message);
+    console.warn(`⚠️ whatsappNumbers check failed for ${maskPhone(cleanNumber)}:`, err.message);
   }
 
   // Failure to validate → don't block, but do not invent a destination number.
@@ -3952,11 +3958,11 @@ app.post('/api/whatsapp/subscribe-presence', async (req, res) => {
             presence: 'composing',
           }),
         });
-        console.log(`👁️ Presence subscribe attempt for ${cleanNumber} on ${instance}: status=${subResult.status}, data=${JSON.stringify(subResult.data).slice(0, 200)}`);
+        console.log(`👁️ Presence subscribe attempt for ${maskPhone(cleanNumber)} on ${instance}: status=${subResult.status}`);
         if (subResult.ok || subResult.status === 201) {
           presenceSubscribed.add(subKey);
           didSubscribe = true;
-          console.log(`✅ Presence subscribed for ${cleanNumber} on ${instance}`);
+          console.log(`✅ Presence subscribed for ${maskPhone(cleanNumber)} on ${instance}`);
 
           // Track subscribed phone for this instance (for LID resolution fallback)
           if (!instanceSubscribedPhones.has(instance)) instanceSubscribedPhones.set(instance, new Set());
@@ -3969,14 +3975,14 @@ app.post('/api/whatsapp/subscribe-presence', async (req, res) => {
             if (!resolveLidWarned) resolveLidWarned = new Set();
             if (!resolveLidWarned.has(cleanNumber)) {
               resolveLidWarned.add(cleanNumber);
-              console.warn(`⚠️ Could not resolve LID for ${cleanNumber} — presence updates may not match (suppressing future warnings for this number)`);
+              console.warn(`⚠️ Could not resolve LID for ${maskPhone(cleanNumber)} — presence updates may not match (suppressing future warnings for this number)`);
             }
           }
         } else {
-          console.warn(`⚠️ Presence subscribe failed for ${cleanNumber}:`, JSON.stringify(subResult.data).slice(0, 300));
+          console.warn(`⚠️ Presence subscribe failed for ${maskPhone(cleanNumber)}: status=${subResult.status}`);
         }
       } catch (subErr) {
-        console.error(`❌ Presence subscribe error for ${cleanNumber}:`, subErr.message);
+        console.error(`❌ Presence subscribe error for ${maskPhone(cleanNumber)}:`, subErr.message);
       }
     }
 
@@ -4167,7 +4173,7 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
 
     if (!result.ok) {
       const errMsg = getEvolutionErrorMessage(result);
-      console.error(`❌ send-text failed for ${instance} → ${sentNumber}: ${errMsg}`, result.data);
+      console.error(`❌ send-text failed for ${instance} → ${maskPhone(sentNumber)}: ${errMsg} (status=${result.status})`);
       const httpStatus = result.status === 401 || result.status === 403 ? 502 : (result.status || 502);
       return res.status(httpStatus).json({ error: errMsg, details: result.data });
     }
@@ -4177,7 +4183,7 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
       // Sem key.id/messageId real não há como correlacionar ACK, persistir status
       // ou garantir entrega. Retornar sucesso aqui gera exatamente o falso
       // positivo visto na UI: "enviado", mas nada chega ao WhatsApp.
-      console.error(`❌ send-text sem message id real para ${instance} → ${sentNumber}:`, result.data);
+      console.error(`❌ send-text sem message id real para ${instance} → ${maskPhone(sentNumber)} (status=${result.status})`);
       return res.status(502).json({
         error: 'Evolution aceitou a requisição, mas não retornou confirmação real da mensagem. Envio não confirmado.',
         details: result.data,
@@ -4256,7 +4262,7 @@ app.post('/api/whatsapp/send-media', async (req, res) => {
     const cleanedBase64 = media.base64 ? cleanBase64Media(media.base64) : null;
     const mimeType = media.mimeType || 'application/octet-stream';
 
-    console.log(`📤 sendMedia [${mediaType}] to ${cleanNumber}, base64 len: ${cleanedBase64 ? cleanedBase64.length : 0}, url: ${media.url || 'none'}, mime: ${mimeType}`);
+    console.log(`📤 sendMedia [${mediaType}] to ${maskPhone(cleanNumber)}, base64 len: ${cleanedBase64 ? cleanedBase64.length : 0}, url: ${media.url || 'none'}, mime: ${mimeType}`);
 
     const payload = {
       number: cleanNumber,
@@ -4279,7 +4285,7 @@ app.post('/api/whatsapp/send-media', async (req, res) => {
       return res.status(400).json({ error: 'Nenhuma mídia válida fornecida (base64 vazio ou URL ausente)' });
     }
 
-    console.log(`📤 sendMedia payload size: ${JSON.stringify(payload).length} bytes, media field starts with: ${String(payload.media).substring(0, 50)}`);
+    console.log(`📤 sendMedia payload size: ${JSON.stringify(payload).length} bytes`);
 
     const result = await evolutionFetch(`/message/sendMedia/${instance}`, {
       method: 'POST',
@@ -4344,7 +4350,7 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '6
       : `upload.${resolvedMimeType.split('/')[1] || 'bin'}`;
     const mediaCaption = caption && String(caption).trim() ? String(caption).trim() : undefined;
 
-    console.log(`📤 send-media-upload jobId=${jobId} [${String(mediaType)}] to ${cleanNumber}, binary size: ${rawBody.length}, base64 len: ${base64Data.length}, mime: ${resolvedMimeType}`);
+    console.log(`📤 send-media-upload jobId=${jobId} [${String(mediaType)}] to ${maskPhone(cleanNumber)}, binary size: ${rawBody.length}, base64 len: ${base64Data.length}, mime: ${resolvedMimeType}`);
 
     if (String(mediaType) === 'audio') {
       const result = await sendWhatsAppAudioWithFallback(
@@ -4725,7 +4731,7 @@ app.post('/api/whatsapp/profile-picture', async (req, res) => {
     const cleanNumber = number.replace(/\D/g, '');
 
     // Fetch profile picture URL via Evolution API
-    console.log(`📸 Fetching profile picture for ${cleanNumber} on instance ${instance}`);
+    console.log(`📸 Fetching profile picture for ${maskPhone(cleanNumber)} on instance ${instance}`);
     const result = await evolutionFetch(`/chat/fetchProfilePictureUrl/${instance}`, {
       method: 'POST',
       body: JSON.stringify({ number: cleanNumber }),
@@ -4770,7 +4776,7 @@ app.post('/api/whatsapp/sync-profile-pictures', async (req, res) => {
     const { instance } = req.body;
     if (!instance) return res.status(400).json({ error: 'instance é obrigatório' });
 
-    console.log(`🔄 Syncing profile pictures for tenant ${user.tenant_id} on instance ${instance} (User: ${user.email}, SuperAdmin: ${user.is_super_admin})`);
+    console.log(`🔄 Syncing profile pictures for tenant ${user.tenant_id} on instance ${instance} (user=${user.id}, SuperAdmin: ${user.is_super_admin})`);
 
     // Get leads (scoped to tenant when available) without avatar
     const tenantId = user.tenant_id || null;
@@ -4838,7 +4844,7 @@ app.post('/api/whatsapp/call', async (req, res) => {
     }
 
     const cleanNumber = number.replace(/\D/g, '');
-    console.log(`📞 Initiating ${isVideo ? 'video' : 'voice'} call to ${cleanNumber} on instance ${instance}`);
+    console.log(`📞 Initiating ${isVideo ? 'video' : 'voice'} call to ${maskPhone(cleanNumber)} on instance ${instance}`);
 
     const result = await evolutionFetch(`/call/offer/${instance}`, {
       method: 'POST',
@@ -4854,7 +4860,7 @@ app.post('/api/whatsapp/call', async (req, res) => {
       return res.status(result.status).json({ error: 'Não foi possível iniciar a ligação', details: result.data });
     }
 
-    console.log(`📞 Call offered successfully to ${cleanNumber}`);
+    console.log(`📞 Call offered successfully to ${maskPhone(cleanNumber)}`);
     res.json({ success: true, data: result.data });
   } catch (error) {
     console.error('Call error:', error);
@@ -4865,6 +4871,22 @@ app.post('/api/whatsapp/call', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════
 
 const PACIENTE_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Ids de paciente/dentista recebidos no corpo precisam ser da clínica do usuário.
+// Devolve a mensagem para responder 400, ou null se estiver tudo certo.
+async function validarReferenciasDoTenant(tenantId, { pacienteId, dentistaId } = {}) {
+  const checks = [
+    ['pacientes', pacienteId, 'Paciente não encontrado'],
+    ['dentistas', dentistaId, 'Dentista não encontrado'],
+  ];
+  for (const [tabela, id, msg] of checks) {
+    if (id === undefined || id === null || id === '') continue;
+    if (!tenantId || !PACIENTE_UUID_RE.test(String(id))) return msg;
+    const { rows } = await pool.query(`SELECT 1 FROM ${tabela} WHERE id = $1 AND tenant_id = $2 LIMIT 1`, [id, tenantId]);
+    if (!rows.length) return msg;
+  }
+  return null;
+}
 
 // Todas as rotas /api/pacientes/:id/* recebem um UUID; qualquer outro valor é
 // "não encontrado" (sem chegar ao banco, que responderia 500 por cast inválido).
@@ -5147,6 +5169,8 @@ app.post('/api/agenda', async (req, res) => {
       confirmacao_canal, confirmacao_quando, alerta_retorno_canal, alerta_retorno_quando,
       evento_titulo, sala, serie_id, marcadores, como_conheceu,
     } = req.body;
+    const refErro = await validarReferenciasDoTenant(user.tenant_id, { pacienteId: paciente_id, dentistaId: dentista_id });
+    if (refErro) return res.status(400).json({ error: refErro });
     const id = crypto.randomUUID();
     await pool.query(
       `INSERT INTO agendamentos (
@@ -5210,6 +5234,8 @@ app.post('/api/agenda/serie', async (req, res) => {
     if (!dentista_id || !paciente_id) {
       return res.status(400).json({ error: 'paciente_id e dentista_id são obrigatórios' });
     }
+    const refErroSerie = await validarReferenciasDoTenant(user.tenant_id, { pacienteId: paciente_id, dentistaId: dentista_id });
+    if (refErroSerie) return res.status(400).json({ error: refErroSerie });
     const serie_id = crypto.randomUUID();
     const created = [];
     const start = new Date(data_inicio + 'T12:00:00Z');
@@ -5288,6 +5314,8 @@ app.put('/api/agenda/:id', async (req, res) => {
     if (!user.tenant_id) return res.status(403).json({ error: 'Sem clínica vinculada' });
     const { id } = req.params;
     const { status, hora, duracao, procedimento, observacoes, sala, data, dentista_id, dentista_nome, marcadores, como_conheceu } = req.body;
+    const refErro = await validarReferenciasDoTenant(user.tenant_id, { dentistaId: dentista_id });
+    if (refErro) return res.status(400).json({ error: refErro });
     const sets = [];
     const params = [];
     if (status) { params.push(status); sets.push(`status = $${params.length}`); }
@@ -5356,7 +5384,7 @@ app.put('/api/agenda/:id', async (req, res) => {
             method: 'POST',
             body: JSON.stringify({ number: phone, text: msg }),
           });
-          console.log(`📲 Reschedule notification sent to ${phone}`);
+          console.log(`📲 Reschedule notification sent to ${maskPhone(phone)}`);
         } catch (err) {
           console.error('⚠️ Failed to send reschedule notification:', err.message);
         }
@@ -6096,6 +6124,8 @@ app.post('/api/tratamentos', async (req, res) => {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { paciente_id, dentista_id, descricao, dente, valor, status, plano, observacoes } = req.body;
+    const refErro = await validarReferenciasDoTenant(user.tenant_id, { pacienteId: paciente_id, dentistaId: dentista_id });
+    if (refErro) return res.status(400).json({ error: refErro });
     const id = crypto.randomUUID();
     await pool.query(
       'INSERT INTO tratamentos (id, paciente_id, dentista_id, descricao, dente, valor, status, plano, observacoes, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
@@ -6118,6 +6148,8 @@ app.put('/api/tratamentos/:id', async (req, res) => {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { descricao, dente, valor, status, plano, observacoes, dentista_id } = req.body;
+    const refErro = await validarReferenciasDoTenant(user.tenant_id, { dentistaId: dentista_id });
+    if (refErro) return res.status(400).json({ error: refErro });
     const sets = []; const params = [];
     if (descricao !== undefined) { params.push(descricao); sets.push(`descricao=$${params.length}`); }
     if (dente !== undefined) { params.push(dente); sets.push(`dente=$${params.length}`); }
@@ -7254,13 +7286,14 @@ app.get('/api/comercial/painel', async (req, res) => {
         `SELECT id, nome AS lead_name, kanban_stage, follow_up_at, last_message, updated_at
            FROM crm_leads
           WHERE assigned_to = $1
+            AND tenant_id = $2
             AND (
               (follow_up_at IS NOT NULL AND follow_up_at <= NOW() + INTERVAL '2 days')
               OR kanban_stage IN ('sem_resposta','primeiro_contato')
             )
           ORDER BY COALESCE(follow_up_at, updated_at) ASC
           LIMIT 12`,
-        [attendantId]
+        [attendantId, user.tenant_id]
       ),
     ]);
 
@@ -8044,11 +8077,10 @@ app.patch('/api/orcamentos/:id/status', async (req, res) => {
 app.get('/api/queues', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (!isValidTenantId(user.tenant_id)) return res.json([]);
     const { rows } = await pool.query(
-      `SELECT * FROM attendance_queues
-        WHERE $1::uuid IS NULL OR tenant_id = $1 OR tenant_id IS NULL
-        ORDER BY name ASC`,
-      [isValidTenantId(user.tenant_id) ? user.tenant_id : null]
+      `SELECT * FROM attendance_queues WHERE tenant_id = $1 ORDER BY name ASC`,
+      [user.tenant_id]
     );
     res.json(rows);
   } catch (error) {
@@ -8060,6 +8092,7 @@ app.post('/api/queues', async (req, res) => {
   try {
     const { user } = await verifyAdmin(req);
     const { name, color, icon, description, whatsapp_button_label, contact_numbers, team_member_ids } = req.body;
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
     if (!name) return res.status(400).json({ error: 'Nome é obrigatório' });
     const id = crypto.randomUUID();
     await pool.query(
@@ -8077,14 +8110,16 @@ app.put('/api/queues/:id', async (req, res) => {
   try {
     const { user } = await verifyAdmin(req);
     const { name, color, icon, description, whatsapp_button_label, contact_numbers, team_member_ids, active } = req.body;
-    await pool.query(
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rowCount } = await pool.query(
       `UPDATE attendance_queues SET name=COALESCE($1,name), color=COALESCE($2,color), icon=COALESCE($3,icon),
        description=COALESCE($4,description), whatsapp_button_label=COALESCE($5,whatsapp_button_label),
        contact_numbers=COALESCE($6,contact_numbers), team_member_ids=COALESCE($7,team_member_ids),
        active=COALESCE($8,active), updated_at=NOW()
-       WHERE id=$9 AND ($10::uuid IS NULL OR tenant_id = $10 OR tenant_id IS NULL)`,
-      [name, color, icon, description, whatsapp_button_label, contact_numbers ? JSON.stringify(contact_numbers) : null, team_member_ids ? JSON.stringify(team_member_ids) : null, active, req.params.id, isValidTenantId(user.tenant_id) ? user.tenant_id : null]
+       WHERE id=$9 AND tenant_id = $10`,
+      [name, color, icon, description, whatsapp_button_label, contact_numbers ? JSON.stringify(contact_numbers) : null, team_member_ids ? JSON.stringify(team_member_ids) : null, active, req.params.id, user.tenant_id]
     );
+    if (!rowCount) return res.status(404).json({ error: 'Fila não encontrada' });
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -8094,10 +8129,12 @@ app.put('/api/queues/:id', async (req, res) => {
 app.delete('/api/queues/:id', async (req, res) => {
   try {
     const { user } = await verifyAdmin(req);
-    await pool.query(
-      'DELETE FROM attendance_queues WHERE id = $1 AND ($2::uuid IS NULL OR tenant_id = $2 OR tenant_id IS NULL)',
-      [req.params.id, isValidTenantId(user.tenant_id) ? user.tenant_id : null]
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rowCount } = await pool.query(
+      'DELETE FROM attendance_queues WHERE id = $1 AND tenant_id = $2',
+      [req.params.id, user.tenant_id]
     );
+    if (!rowCount) return res.status(404).json({ error: 'Fila não encontrada' });
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -8447,60 +8484,93 @@ app.get('/api/events', async (req, res) => {
 // WEBHOOK — Evolution API (queue routing + real-time)
 // ═══════════════════════════════════════════════════════════════
 
-// Helper: check if currently within business hours
+// Helper: check if currently within business hours (relógio de São Paulo, não o do servidor)
 function isWithinBusinessHours(settings) {
   if (!settings?.businessHours) return true; // default: always open
-  const now = new Date();
+  const clock = spClock();
   const dayKeys = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
-  const dayKey = dayKeys[now.getDay()];
+  const dayKey = dayKeys[clock.weekday];
   const schedule = settings.businessHours[dayKey];
   if (!schedule?.enabled) return false;
 
-  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  const currentMinutes = clock.minutes;
   const [openH, openM] = schedule.openTime.split(':').map(Number);
   const [closeH, closeM] = schedule.closeTime.split(':').map(Number);
   return currentMinutes >= (openH * 60 + openM) && currentMinutes <= (closeH * 60 + closeM);
 }
 
-// ─── Attendance Settings (persisted in PostgreSQL) ──────────
-let attendanceSettingsCache = null;
+// ─── Configurações por clínica (tabela tenant_settings, criada no boot e pela migration-tenant-m0.sql) ───
+// Antes ficavam numa linha única global (app_settings/system_settings): a configuração
+// de uma clínica valia para todas. Sem registro da clínica, vale o padrão do sistema
+// (nunca o valor de outra clínica).
+const tenantSettingsCache = new Map(); // `${tenantId}:${key}` -> { value, at }
+const TENANT_SETTINGS_TTL_MS = 60_000;
 
-async function loadAttendanceSettings() {
+// throwOnError: para envios automáticos — na falha de leitura lança em vez de devolver o
+// padrão, para o chamador pular o envio (o padrão pode ser "ligado" quando a clínica desligou).
+async function getTenantSetting(tenantId, key, { throwOnError = false } = {}) {
+  if (!isValidTenantId(tenantId)) return null;
+  const cacheKey = `${tenantId}:${key}`;
+  const hit = tenantSettingsCache.get(cacheKey);
+  if (hit && Date.now() - hit.at < TENANT_SETTINGS_TTL_MS) return hit.value;
+  let value = null;
   try {
-    const { rows } = await pool.query("SELECT value FROM app_settings WHERE key = 'attendance_settings'");
-    attendanceSettingsCache = rows.length > 0 ? rows[0].value : null;
+    const { rows } = await pool.query(
+      'SELECT value FROM tenant_settings WHERE tenant_id = $1 AND key = $2 LIMIT 1', [tenantId, key]
+    );
+    value = rows[0]?.value ?? null;
+    if (typeof value === 'string') { try { value = JSON.parse(value); } catch { /* texto simples */ } }
   } catch (err) {
-    console.error('⚠️ Could not load attendance settings from DB:', err.message);
+    // 42P01: tabela ainda não criada (migração M0 não rodou) → padrão do sistema.
+    // Outra falha (conexão, timeout): usa o padrão só nesta leitura, sem guardar no cache,
+    // para não fixar por 60 s um valor que não é o da clínica (ex.: follow-up desligado).
+    if (err.code !== '42P01') {
+      console.error(`⚠️ tenant_settings ${key}:`, err.message);
+      if (throwOnError) throw err;
+      return null;
+    }
   }
+  tenantSettingsCache.set(cacheKey, { value, at: Date.now() });
+  return value;
 }
 
-// Load on startup
-loadAttendanceSettings();
+async function setTenantSetting(tenantId, key, value) {
+  if (!isValidTenantId(tenantId)) throw new Error('Usuário sem clínica');
+  await pool.query(
+    `INSERT INTO tenant_settings (tenant_id, key, value, updated_at) VALUES ($1, $2, $3, NOW())
+     ON CONFLICT (tenant_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+    [tenantId, key, JSON.stringify(value)]
+  );
+  tenantSettingsCache.set(`${tenantId}:${key}`, { value, at: Date.now() });
+}
+
+function tenantSettingsErrorStatus(error) {
+  if (error.message === 'Unauthorized') return 401;
+  if (error.message === 'Admin access required') return 403;
+  if (error.code === '42P01') return 503; // migração M0 ainda não aplicada
+  return 500;
+}
 
 app.get('/api/attendance-settings', async (req, res) => {
   try {
-    await verifyUser(req);
-    if (!attendanceSettingsCache) await loadAttendanceSettings();
-    res.json(attendanceSettingsCache || {});
+    const { user } = await verifyUser(req);
+    if (!isValidTenantId(user.tenant_id)) return res.json({});
+    res.json((await getTenantSetting(user.tenant_id, 'attendance_settings')) || {});
   } catch (error) {
-    res.status(401).json({ error: error.message });
+    res.status(tenantSettingsErrorStatus(error)).json({ error: error.message });
   }
 });
 
 app.put('/api/attendance-settings', async (req, res) => {
   try {
-    await verifyAdmin(req);
-    const settings = req.body;
-    await pool.query(
-      `INSERT INTO app_settings (key, value, updated_at) VALUES ('attendance_settings', $1, NOW())
-       ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()`,
-      [JSON.stringify(settings)]
-    );
-    attendanceSettingsCache = settings;
-    console.log('⚙️ Attendance settings saved to database');
+    const { user } = await verifyAdmin(req);
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const settings = req.body && typeof req.body === 'object' ? req.body : {};
+    await setTenantSetting(user.tenant_id, 'attendance_settings', settings);
+    console.log(`⚙️ Attendance settings salvas (clínica ${String(user.tenant_id).slice(0, 8)})`);
     res.json({ success: true });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(tenantSettingsErrorStatus(error)).json({ error: error.message });
   }
 });
 
@@ -8509,8 +8579,7 @@ async function sendQueueMenu(instance, phone, tenantId) {
   const { rows: queues } = await pool.query(
     `SELECT id, name, icon, whatsapp_button_label
        FROM attendance_queues
-      WHERE active = true
-        AND ($1::uuid IS NULL OR tenant_id = $1 OR tenant_id IS NULL)
+      WHERE active = true AND tenant_id = $1
       ORDER BY name ASC`,
     [isValidTenantId(tenantId) ? tenantId : null]
   );
@@ -8561,7 +8630,7 @@ async function sendQueueMenu(instance, phone, tenantId) {
     [phone.slice(-11), tenantId]
   );
 
-  console.log(`📋 Queue menu sent to ${phone} (${queues.length} options)`);
+  console.log(`📋 Queue menu sent to ${maskPhone(phone)} (${queues.length} options)`);
 }
 
 // Helper: match queue from button response or number
@@ -8569,6 +8638,7 @@ async function matchQueue(content, tenantId) {
   if (!content) return null;
   const trimmed = content.trim();
   const tenantParam = isValidTenantId(tenantId) ? tenantId : null;
+  if (!tenantParam) return null;
 
   // Match by button ID (queue_UUID)
   if (trimmed.startsWith('queue_')) {
@@ -8577,7 +8647,7 @@ async function matchQueue(content, tenantId) {
       `SELECT * FROM attendance_queues
         WHERE id = $1
           AND active = true
-          AND ($2::uuid IS NULL OR tenant_id = $2 OR tenant_id IS NULL)`,
+          AND tenant_id = $2`,
       [queueId, tenantParam]
     );
     return rows[0] || null;
@@ -8588,8 +8658,7 @@ async function matchQueue(content, tenantId) {
   if (!isNaN(num) && num > 0) {
     const { rows } = await pool.query(
       `SELECT * FROM attendance_queues
-        WHERE active = true
-          AND ($1::uuid IS NULL OR tenant_id = $1 OR tenant_id IS NULL)
+        WHERE active = true AND tenant_id = $1
         ORDER BY name ASC`,
       [tenantParam]
     );
@@ -8599,8 +8668,7 @@ async function matchQueue(content, tenantId) {
   // Match by name (fuzzy)
   const { rows } = await pool.query(
     `SELECT * FROM attendance_queues
-      WHERE active = true
-        AND ($1::uuid IS NULL OR tenant_id = $1 OR tenant_id IS NULL)`,
+      WHERE active = true AND tenant_id = $1`,
     [tenantParam]
   );
   const lower = trimmed.toLowerCase();
@@ -8765,7 +8833,7 @@ async function ensureWaitingSessionForIncomingLead({ lead, phone, queueId = null
               AND tenant_id = $6`,
           [existing[0].id, lead.name || null, phone || null, queueId || null, queueName || null, tenantId]
         );
-        console.log(`📥 Stale active session returned to queue for ${lead.name || phone} (session=${existing[0].id})`);
+        console.log(`📥 Stale active session returned to queue for ${maskPhone(phone)} (session=${existing[0].id})`);
       }
       return existing[0].id;
     }
@@ -8790,7 +8858,7 @@ async function ensureWaitingSessionForIncomingLead({ lead, phone, queueId = null
        VALUES ($1, $2, $3, $4, $5, $6, NOW(), 'waiting', $7)`,
       [sessionId, lead.id.toString(), lead.name || null, phone || null, queueId || null, queueName || null, tenantId]
     );
-    console.log(`📥 Lead ${lead.name || phone} entrou na fila de espera (session=${sessionId})`);
+    console.log(`📥 Lead ${maskPhone(phone)} entrou na fila de espera (session=${sessionId})`);
     return sessionId;
   } catch (err) {
     console.error('Failed to ensure waiting session:', err.message);
@@ -8821,10 +8889,6 @@ app.post('/api/webhook/evolution', async (req, res) => {
     let tenantId = await getTenantIdByInstance(instance);
     
     console.log(`📩 Webhook event: ${event} from ${instance} (tenant: ${tenantId})`);
-    if (event !== 'presence.update') {
-      console.log(`📦 Webhook Body:`, JSON.stringify(body).slice(0, 1000));
-    }
-
     // ─── Presence updates (typing, recording, online) ───
     if (isEvolutionEvent(event, 'presence.update', 'presence_update')) {
       const presenceData = body.data;
@@ -8945,7 +9009,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
             || globalStatus
             || 'unavailable';
 
-          console.log(`👁️ PRESENCE resolved: phone=${resolvedPhone} status=${status}${participantPhone !== resolvedPhone ? ` (LID fallback from ${chatJid})` : ''}`);
+          console.log(`👁️ PRESENCE resolved: phone=${maskPhone(resolvedPhone)} status=${status}`);
           // Cache under both the resolved phone AND the raw LID for future lookups
           const cacheEntry = {
             status,
@@ -8962,7 +9026,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
       } else if (fallbackPhone && globalStatus) {
         const resolvedFallback = resolvePhoneFromLid(fallbackPhone);
         const finalPhone = resolvedFallback !== fallbackPhone ? resolvedFallback : fallbackPhone;
-        console.log(`👁️ PRESENCE fallback: phone=${finalPhone} status=${globalStatus}${finalPhone !== fallbackPhone ? ` (resolved from LID ${fallbackPhone})` : ''}`);
+        console.log(`👁️ PRESENCE fallback: phone=${maskPhone(finalPhone)} status=${globalStatus}`);
         presenceStateCache.set(finalPhone, {
           status: globalStatus,
           instance,
@@ -8974,7 +9038,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
           instance,
         }, tenantId);
       } else {
-        console.log(`⚠️ PRESENCE_UPDATE: could not extract phone or status from:`, JSON.stringify(presenceData).slice(0, 300));
+        console.log(`⚠️ PRESENCE_UPDATE: could not extract phone or status`);
       }
       return res.json({ processed: true, event: 'presence' });
     }
@@ -8983,7 +9047,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
     const isSendMessageEvent = isEvolutionEvent(event, 'send.message', 'send_message');
     if (isEvolutionEvent(event, 'messages.update', 'messages_update', 'send.message.update', 'send_message_update', 'message.update', 'message_update', 'send.message', 'send_message')) {
       const updates = extractStatusUpdates(body.data || body);
-      console.log(`📩 MESSAGES_UPDATE: ${updates.length} updates, raw:`, JSON.stringify(body.data || body).slice(0, 500));
+      console.log(`📩 MESSAGES_UPDATE: ${updates.length} updates`);
       for (const update of updates) {
         const lookupIds = extractStatusLookupIds(update);
         const primaryMessageId = lookupIds[0];
@@ -9009,7 +9073,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
               );
               if (msgRows[0]?.phone) {
                 registerLidMapping(lidNum, msgRows[0].phone);
-                console.log(`🔗 LID mapped from ACK: ${lidNum} → ${msgRows[0].phone}`);
+                console.log(`🔗 LID mapped from ACK → ${maskPhone(msgRows[0].phone)}`);
               }
             } catch (e) { /* ignore */ }
           }
@@ -9046,7 +9110,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
             phoneSuffix: phone.slice(-11),
           });
           if (!tenantId) {
-            console.warn(`⚠️ ACK ignored without tenant: instance=${instance || 'unknown'} phone=${phone.slice(-11)} ids=${lookupIds.join(',')}`);
+            console.warn(`⚠️ ACK ignored without tenant: instance=${instance || 'unknown'} phone=${maskPhone(phone)} ids=${lookupIds.join(',')}`);
             // Do not lose this ACK. It can arrive before the instance→tenant
             // mapping is warm or before /api/messages persists the outgoing row.
             // Store it globally by message id; /api/messages will consume it once
@@ -9056,7 +9120,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
           }
         }
 
-        console.log(`✅ ACK: ${lookupIds.join(',')} → ${newStatus} (ack=${ack}, phone=${phone || messageContext?.phone || 'unknown'})`);
+        console.log(`✅ ACK: ${lookupIds.join(',')} → ${newStatus} (ack=${ack}, phone=${maskPhone(phone || messageContext?.phone)})`);
 
         let updatedRows = [];
         try {
@@ -9112,9 +9176,9 @@ app.post('/api/webhook/evolution', async (req, res) => {
     if (!tenantId) {
       tenantId = await getFallbackTenantIdForIncomingMessage({ instanceName: instance, phoneSuffix });
       if (tenantId) {
-        console.log(`🔐 Tenant resolved by fallback for ${instance || 'unknown-instance'} / ${phoneSuffix}: ${tenantId}`);
+        console.log(`🔐 Tenant resolved by fallback for ${instance || 'unknown-instance'} / ${maskPhone(phoneSuffix)}: ${tenantId}`);
       } else {
-        console.warn(`⚠️ Webhook message without tenant_id: instance=${instance || 'unknown'} phone=${phoneSuffix}. Message will be ignored to avoid cross-clinic leakage.`);
+        console.warn(`⚠️ Webhook message without tenant_id: instance=${instance || 'unknown'} phone=${maskPhone(phoneSuffix)}. Message will be ignored to avoid cross-clinic leakage.`);
         return res.status(202).json({ ignored: true, reason: 'tenant_not_resolved' });
       }
     }
@@ -9205,7 +9269,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
     // não disparam automações e não geram notificação de entrada.
     if (isFromMe) {
       if (!lead) {
-        console.log(`↪️ Outgoing webhook ignored without existing lead: ${resolvedPhone} (${msgId})`);
+        console.log(`↪️ Outgoing webhook ignored without existing lead: ${maskPhone(resolvedPhone)} (${msgId})`);
         return res.json({ processed: true, fromMe: true, ignored: 'lead_not_found' });
       }
 
@@ -9246,7 +9310,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
         sender: 'attendant',
       });
 
-      console.log(`↪️ Outgoing webhook synced: ${resolvedPhone} (${msgId})`);
+      console.log(`↪️ Outgoing webhook synced: ${maskPhone(resolvedPhone)} (${msgId})`);
       return res.json({ processed: true, fromMe: true, leadId: lead.id });
     }
 
@@ -9282,6 +9346,8 @@ app.post('/api/webhook/evolution', async (req, res) => {
 
     // ─── New contact: create lead + contato + check hours + send menu ───
     if (!lead) {
+      // Boas-vindas e fora de horário da clínica dona do número (não de outra clínica).
+      const attendanceSettingsCache = await getTenantSetting(tenantId, 'attendance_settings');
       const newId = crypto.randomUUID();
       await pool.query(
         `INSERT INTO crm_leads (id, nome, telefone, origem, status, kanban_stage, awaiting_queue_selection, tenant_id)
@@ -9289,7 +9355,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
         [newId, pushName, resolvedPhone, tenantId]
       );
       lead = { id: newId, name: pushName, phone: resolvedPhone, queue_id: null, queue_name: null, awaiting_queue_selection: true, avatar_url: null };
-      console.log(`🆕 New lead created: ${pushName} (${resolvedPhone})`);
+      console.log(`🆕 New lead created: ${maskPhone(resolvedPhone)}`);
 
       // 🤖 Trigger "Lead entrou no CRM" automation
       triggerAutomationFlows('Lead entrou no CRM', { name: pushName, phone, tenantId }).catch(() => {});
@@ -9302,7 +9368,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
             'INSERT INTO contatos (id, nome, telefone, tipo, tenant_id) VALUES ($1, $2, $3, $4, $5)',
             [crypto.randomUUID(), pushName, resolvedPhone, 'pessoal', tenantId]
           );
-          console.log(`📇 Auto-saved contact: ${pushName} (${resolvedPhone})`);
+          console.log(`📇 Auto-saved contact: ${maskPhone(resolvedPhone)}`);
         }
       } catch (contatoErr) {
         console.error('Failed to auto-save contato:', contatoErr.message);
@@ -9316,7 +9382,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
           method: 'POST',
           body: JSON.stringify({ number: resolvedPhone, text: offMsg }),
         });
-        console.log(`🕐 Off-hours message sent to ${resolvedPhone}`);
+        console.log(`🕐 Off-hours message sent to ${maskPhone(resolvedPhone)}`);
         if (!isFromMe) {
           await ensureWaitingSessionForIncomingLead({
             lead,
@@ -9419,7 +9485,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
           }),
         });
 
-        console.log(`📌 Lead ${lead.name} routed to queue: ${selectedQueue.name}`);
+        console.log(`📌 Lead ${lead.id} routed to queue: ${selectedQueue.name}`);
 
         // Broadcast queue assignment to SSE
         broadcastSSE('queue_assigned', {
@@ -9510,13 +9576,14 @@ app.post('/api/webhook/evolution', async (req, res) => {
         // block message delivery/realtime if Evolution is slow.
         sendQueueMenu(instance, resolvedPhone, tenantId)
           .catch((err) => console.warn('Queue menu resend failed:', err.message));
-        console.log(`💬 Incoming message from ${pushName} (${resolvedPhone}) awaiting queue selection → saved + broadcast to ${sseClients.size} clients`);
+        console.log(`💬 Incoming message from ${maskPhone(resolvedPhone)} awaiting queue selection → saved + broadcast to ${sseClients.size} clients`);
         return res.json({ processed: true, resent_menu: true, leadId: lead.id });
       }
     }
 
     // ─── Check for satisfaction rating response ───
-    const ratingKey = `awaiting_rating_${phone}`;
+    // Chave com a clínica: o mesmo paciente pode ser atendido por duas clínicas.
+    const ratingKey = `awaiting_rating_${tenantId}_${phone}`;
     const { rows: ratingCheck } = await pool.query("SELECT value FROM app_settings WHERE key = $1", [ratingKey]);
     if (ratingCheck.length > 0 && (msgType === 'text' || msgType === 'button_response')) {
       let rating = null;
@@ -9552,13 +9619,13 @@ app.post('/api/webhook/evolution', async (req, res) => {
           body: JSON.stringify({ number: phone, text: thanks }),
         });
 
-        console.log(`⭐ Rating ${rating}/5 received from ${phone}`);
+        console.log(`⭐ Rating ${rating}/5 received from ${maskPhone(phone)}`);
         return res.json({ processed: true, rating, leadId: ratingData.leadId });
       }
     }
 
     // ─── Auto-return from recovery stage to queue with priority ───
-    if (followupAutomationConfig.returnToQueueOnReply) {
+    if ((await getFollowupConfig(tenantId)).returnToQueueOnReply) {
       try {
         const { rows: leadStage } = await pool.query('SELECT kanban_stage FROM crm_leads WHERE id = $1', [lead.id]);
         const currentStage = leadStage[0]?.kanban_stage;
@@ -9609,7 +9676,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
             [sessionId, lead.id.toString(), phone, tenantId]
           ).catch(() => {});
 
-          console.log(`🔄 Lead ${lead.name} (${phone}) replied from recovery stage ${currentStage} → returned to queue with priority`);
+          console.log(`🔄 Lead ${lead.id} (${maskPhone(phone)}) replied from recovery stage ${currentStage} → returned to queue with priority`);
           broadcastSSE('lead_returned_from_recovery', {
             leadId: lead.id,
             leadName: lead.name || pushName,
@@ -9661,7 +9728,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
       sender: senderRole,
     });
 
-    console.log(`💬 New message from ${pushName} (${phone}) → saved + broadcast to ${sseClients.size} clients`);
+    console.log(`💬 New message from ${maskPhone(phone)} → saved + broadcast to ${sseClients.size} clients`);
 
     // Send Web Push notification to all subscribed attendants
     sendPushToAll({
@@ -9683,7 +9750,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
           const pictureUrl = result.data?.profilePictureUrl || result.data?.picture || result.data?.url || null;
           if (pictureUrl) {
             await pool.query('UPDATE crm_leads SET avatar_url = $1, updated_at = NOW() WHERE id = $2', [pictureUrl, lead.id]);
-            console.log(`📸 Auto-synced avatar for lead ${lead.id} (${phone})`);
+            console.log(`📸 Auto-synced avatar for lead ${lead.id}`);
           }
         } catch (fetchErr) {
           console.error('Webhook profile fetch error:', fetchErr.message);
@@ -9735,7 +9802,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
               body: JSON.stringify({ number: `${phone}@s.whatsapp.net`, text: confirmMsg }),
             }).catch(err => console.error('Failed to send confirm reply:', err.message));
 
-            console.log(`✅ Auto-confirmed appointment ${reminderId} via WhatsApp reply from ${phone}`);
+            console.log(`✅ Auto-confirmed appointment ${reminderId} via WhatsApp reply from ${maskPhone(phone)}`);
           }
         }
       }
@@ -9990,7 +10057,7 @@ const RECOVERY_STAGES = ['followup', 'followup_2', 'followup_3', 'sem_resposta',
 const ALL_KANBAN_STAGES = [...SALES_STAGES, ...RECOVERY_STAGES];
 const VALID_CONSCIOUSNESS = ['inconsciente', 'consciente_problema', 'consciente_solucao', 'consciente_produto', 'consciente_total'];
 
-// ─── Follow-up Automation Config (in-memory, persisted to DB) ───
+// ─── Follow-up Automation: padrão do sistema; cada clínica sobrescreve em tenant_settings ───
 let followupAutomationConfig = {
   enabled: true,
   stages: ['followup', 'followup_2', 'followup_3'],
@@ -10004,26 +10071,18 @@ let followupAutomationConfig = {
   returnToQueueOnReply: true, // when client replies from recovery, return to queue with priority
 };
 
-// Load config from DB on startup
-(async () => {
-  try {
-    const { rows } = await pool.query(
-      `SELECT value FROM system_settings WHERE key = 'followup_automation' LIMIT 1`
-    );
-    if (rows.length > 0) {
-      followupAutomationConfig = { ...followupAutomationConfig, ...JSON.parse(rows[0].value) };
-      console.log('✅ Follow-up automation config loaded from DB');
-    }
-  } catch {
-    console.log('ℹ️ No follow-up automation config in DB, using defaults');
-  }
-})();
+async function getFollowupConfig(tenantId, opts) {
+  const saved = (await getTenantSetting(tenantId, 'followup_automation', opts)) || {};
+  const base = followupAutomationConfig;
+  return {
+    ...base, ...saved,
+    messages: { ...base.messages, ...(saved.messages || {}) },
+    delayDays: { ...base.delayDays, ...(saved.delayDays || {}) },
+  };
+}
 
 // Helper: send follow-up WhatsApp message when lead enters a follow-up stage
 async function triggerFollowupAutomation(leadId, toStage) {
-  if (!followupAutomationConfig.enabled) return;
-  if (!followupAutomationConfig.stages.includes(toStage)) return;
-
   try {
     const { rows: leads } = await pool.query(
       'SELECT id, nome, telefone, tenant_id FROM crm_leads WHERE id = $1', [leadId]
@@ -10038,6 +10097,10 @@ async function triggerFollowupAutomation(leadId, toStage) {
       console.warn(`⚠️ Follow-up automation: lead ${leadId} sem clínica, envio ignorado`);
       return;
     }
+    // Configuração da clínica do lead (o nome local sobrepõe o padrão do módulo).
+    // Falha ao ler a configuração: não envia (o padrão é "ligado"); cai no catch abaixo.
+    const followupAutomationConfig = await getFollowupConfig(lead.tenant_id, { throwOnError: true });
+    if (!followupAutomationConfig.enabled || !followupAutomationConfig.stages.includes(toStage)) return;
 
     const template = followupAutomationConfig.messages[toStage];
     if (!template) return;
@@ -10068,38 +10131,35 @@ async function triggerFollowupAutomation(leadId, toStage) {
 // GET/PUT follow-up automation settings
 app.get('/api/automations/followup', async (req, res) => {
   try {
-    await verifyUser(req);
-    res.json(followupAutomationConfig);
+    const { user } = await verifyUser(req);
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
+    res.json(await getFollowupConfig(user.tenant_id));
   } catch (error) {
-    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+    res.status(tenantSettingsErrorStatus(error)).json({ error: error.message });
   }
 });
 
 app.put('/api/automations/followup', async (req, res) => {
   try {
-    await verifyAdmin(req);
+    const { user } = await verifyAdmin(req);
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { enabled, messages, stages, delaySeconds, delayDays, returnToQueueOnReply } = req.body;
-    if (typeof enabled === 'boolean') followupAutomationConfig.enabled = enabled;
-    if (messages && typeof messages === 'object') {
-      followupAutomationConfig.messages = { ...followupAutomationConfig.messages, ...messages };
+    if (delaySeconds !== undefined
+      && (typeof delaySeconds !== 'number' || !Number.isFinite(delaySeconds) || delaySeconds < 0 || delaySeconds > 86400)) {
+      return res.status(400).json({ error: 'delaySeconds deve ser um número entre 0 e 86400' });
     }
-    if (Array.isArray(stages)) followupAutomationConfig.stages = stages;
-    if (typeof delaySeconds === 'number') followupAutomationConfig.delaySeconds = delaySeconds;
-    if (delayDays && typeof delayDays === 'object') {
-      followupAutomationConfig.delayDays = { ...followupAutomationConfig.delayDays, ...delayDays };
-    }
-    if (typeof returnToQueueOnReply === 'boolean') followupAutomationConfig.returnToQueueOnReply = returnToQueueOnReply;
+    const cfg = await getFollowupConfig(user.tenant_id);
+    if (typeof enabled === 'boolean') cfg.enabled = enabled;
+    if (messages && typeof messages === 'object') cfg.messages = { ...cfg.messages, ...messages };
+    if (Array.isArray(stages)) cfg.stages = stages.filter(st => RECOVERY_STAGES.includes(st));
+    if (typeof delaySeconds === 'number') cfg.delaySeconds = delaySeconds;
+    if (delayDays && typeof delayDays === 'object') cfg.delayDays = { ...cfg.delayDays, ...delayDays };
+    if (typeof returnToQueueOnReply === 'boolean') cfg.returnToQueueOnReply = returnToQueueOnReply;
 
-    // Persist to DB
-    await pool.query(
-      `INSERT INTO system_settings (key, value) VALUES ('followup_automation', $1)
-       ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()`,
-      [JSON.stringify(followupAutomationConfig)]
-    ).catch(err => console.error('Failed to persist followup automation config:', err.message));
-
-    res.json(followupAutomationConfig);
+    await setTenantSetting(user.tenant_id, 'followup_automation', cfg);
+    res.json(cfg);
   } catch (error) {
-    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+    res.status(tenantSettingsErrorStatus(error)).json({ error: error.message });
   }
 });
 
@@ -10324,30 +10384,51 @@ app.get('/api/automations/solution-counts', async (req, res) => {
 // AUTOMATION SOLUTION HOURS CONFIG
 // ═══════════════════════════════════════════════════════════════
 
+const SOLUTION_HOURS_DEFAULT = { inicio: '08:00', fim: '18:00', diasSemana: ['SEG','TER','QUA','QUI','SEX'] };
+const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+const SOLUTION_DAYS = ['DOM','SEG','TER','QUA','QUI','SEX','SAB'];
+
+async function getSolutionHours(tenantId, opts) {
+  return (await getTenantSetting(tenantId, 'solution_hours', opts)) || SOLUTION_HOURS_DEFAULT;
+}
+
+// Horário em que os gatilhos automáticos podem enfileirar (relógio de São Paulo).
+function isWithinSolutionHours(cfg, date = new Date()) {
+  const clock = spClock(date);
+  const hhmm = `${String(Math.floor(clock.minutes / 60)).padStart(2, '0')}:${String(clock.minutes % 60).padStart(2, '0')}`;
+  if (cfg?.inicio && hhmm < cfg.inicio) return false;
+  if (cfg?.fim && hhmm > cfg.fim) return false;
+  if (Array.isArray(cfg?.diasSemana) && cfg.diasSemana.length > 0 && !cfg.diasSemana.includes(SOLUTION_DAYS[clock.weekday])) return false;
+  return true;
+}
+
 app.get('/api/automations/solution-hours', async (req, res) => {
   try {
-    await verifyUser(req);
-    const { rows } = await pool.query(`SELECT value FROM app_settings WHERE key = 'solution_hours'`);
-    const defaults = { inicio: '08:00', fim: '18:00', diasSemana: ['SEG','TER','QUA','QUI','SEX'] };
-    res.json(rows.length > 0 ? rows[0].value : defaults);
+    const { user } = await verifyUser(req);
+    if (!isValidTenantId(user.tenant_id)) return res.json(SOLUTION_HOURS_DEFAULT);
+    res.json(await getSolutionHours(user.tenant_id));
   } catch (error) {
-    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+    res.status(tenantSettingsErrorStatus(error)).json({ error: error.message });
   }
 });
 
 app.put('/api/automations/solution-hours', async (req, res) => {
   try {
-    await verifyUser(req);
-    const { inicio, fim, diasSemana } = req.body;
-    const config = { inicio: inicio || '08:00', fim: fim || '18:00', diasSemana: diasSemana || ['SEG','TER','QUA','QUI','SEX'] };
-    await pool.query(
-      `INSERT INTO app_settings (key, value, updated_at) VALUES ('solution_hours', $1, NOW())
-       ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()`,
-      [JSON.stringify(config)]
-    );
+    const { user } = await verifyAdmin(req);
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { inicio, fim, diasSemana } = req.body || {};
+    if ((inicio && !HHMM_RE.test(inicio)) || (fim && !HHMM_RE.test(fim))) {
+      return res.status(400).json({ error: 'Horário inválido (use HH:MM)' });
+    }
+    const config = {
+      inicio: inicio || SOLUTION_HOURS_DEFAULT.inicio,
+      fim: fim || SOLUTION_HOURS_DEFAULT.fim,
+      diasSemana: Array.isArray(diasSemana) ? diasSemana.filter(d => SOLUTION_DAYS.includes(d)) : SOLUTION_HOURS_DEFAULT.diasSemana,
+    };
+    await setTenantSetting(user.tenant_id, 'solution_hours', config);
     res.json(config);
   } catch (error) {
-    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+    res.status(tenantSettingsErrorStatus(error)).json({ error: error.message });
   }
 });
 
@@ -10912,9 +10993,84 @@ async function ensureTenantConfigSchema() {
       WHERE tenant_id IS NULL AND (SELECT COUNT(*) FROM tenants) = 1`,
     `UPDATE procedimentos_catalogo SET tenant_id = (SELECT id FROM tenants LIMIT 1)
       WHERE tenant_id IS NULL AND (SELECT COUNT(*) FROM tenants) = 1`,
+    // Filas sem clínica deixam de aparecer no menu de todas as clínicas.
+    `UPDATE attendance_queues SET tenant_id = (SELECT id FROM tenants LIMIT 1)
+      WHERE tenant_id IS NULL AND (SELECT COUNT(*) FROM tenants) = 1`,
   ];
   for (const sql of statements) {
     await pool.query(sql).catch(e => console.error('[tenant-schema]', e.message, '→', sql.split('\n')[0].slice(0, 90)));
+  }
+  // tenant_settings também no boot (mesma definição da migration-tenant-m0.sql), para a
+  // configuração por clínica não depender da M0. Sem permissão de DDL só registra o erro.
+  try {
+    await pool.query(`CREATE TABLE IF NOT EXISTS tenant_settings (
+      tenant_id UUID NOT NULL DEFAULT get_current_tenant_id() REFERENCES tenants(id) ON DELETE CASCADE,
+      key TEXT NOT NULL,
+      value JSONB NOT NULL DEFAULT '{}',
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (tenant_id, key)
+    )`);
+  } catch (e) {
+    console.error('[tenant-schema] tenant_settings:', e.message);
+  }
+  await copyGlobalSettingsToTenants();
+}
+
+// A configuração global antiga (app_settings/system_settings) valia para todas as clínicas:
+// vira o ponto de partida de cada clínica existente, para nada mudar de comportamento na troca
+// (ex.: follow-up desligado não religa). Só campos sem texto livre: mensagens podem ter nome
+// ou endereço de uma clínica e não podem ir para as outras. Roda uma única vez por chave
+// (marcador em app_settings, gravado na mesma instrução); não sobrescreve o que a clínica já
+// gravou; clínicas criadas depois começam no padrão do sistema.
+const jsonbPick = (fields) =>
+  `jsonb_strip_nulls(jsonb_build_object(${fields.map(f => `'${f}', s.value -> '${f}'`).join(', ')}))`;
+const REAL_TENANTS_COUNT_SQL = '(SELECT COUNT(*) FROM tenants WHERE id::text <> ALL($3::text[]))';
+const ATTENDANCE_SAFE_FIELDS = [
+  'businessHours', 'autoGreetingEnabled', 'signatureEnabled', 'closingMessageEnabled',
+  'inactivityTimeout', 'inactivityMessageEnabled',
+];
+const GLOBAL_SETTINGS_TO_TENANTS = [
+  { table: 'app_settings', key: 'solution_hours', value: 's.value' },
+  {
+    // Com uma única clínica real o objeto inteiro era dela; com várias, só os campos seguros.
+    table: 'app_settings', key: 'attendance_settings',
+    value: `CASE WHEN ${REAL_TENANTS_COUNT_SQL} = 1 THEN s.value ELSE ${jsonbPick(ATTENDANCE_SAFE_FIELDS)} END`,
+  },
+  {
+    // Sem messages: a linha global nunca foi aplicada e o seed tem texto promocional.
+    table: 'system_settings', key: 'followup_automation',
+    value: jsonbPick(['enabled', 'stages', 'delaySeconds', 'delayDays']),
+  },
+];
+
+async function copyGlobalSettingsToTenants() {
+  for (const { table, key, value } of GLOBAL_SETTINGS_TO_TENANTS) {
+    try {
+      const { rowCount } = await pool.query(
+        `WITH marcador AS (
+           INSERT INTO app_settings (key, value, updated_at) VALUES ($1, '{"feito": true}'::jsonb, NOW())
+           ON CONFLICT (key) DO NOTHING
+           RETURNING key
+         ),
+         origem AS (
+           SELECT ${value} AS value FROM ${table} s
+            WHERE s.key = $2 AND jsonb_typeof(s.value) = 'object'
+         )
+         INSERT INTO tenant_settings (tenant_id, key, value, updated_at)
+         SELECT t.id, $2, o.value, NOW()
+           FROM tenants t CROSS JOIN origem o
+          WHERE EXISTS (SELECT 1 FROM marcador)
+            AND t.id::text <> ALL($3::text[])
+            AND o.value <> '{}'::jsonb
+         ON CONFLICT (tenant_id, key) DO NOTHING`,
+        [`tenant_settings_copia_${key}`, key, [...PLACEHOLDER_TENANT_IDS]]
+      );
+      if (rowCount) console.log(`   ⚙️ Configuração global ${key} copiada para as clínicas: ${rowCount} registro(s)`);
+    } catch (e) {
+      // Tabela de origem/destino ausente: a instrução inteira é desfeita (marcador incluso)
+      // e a cópia é tentada de novo no próximo boot.
+      console.error(`[tenant-schema] cópia de ${key} para tenant_settings:`, e.message);
+    }
   }
 }
 
@@ -11032,7 +11188,7 @@ async function triggerAutomationFlows(triggerEvent, patientData) {
     }
 
     if (totalJobs > 0) {
-      console.log(`🤖 Automation: ${totalJobs} jobs enqueued for trigger "${triggerEvent}" → ${phone} (${flows.length} flows)`);
+      console.log(`🤖 Automation: ${totalJobs} jobs enqueued for trigger "${triggerEvent}" → ${maskPhone(phone)} (${flows.length} flows)`);
     }
   } catch (err) {
     console.error('❌ triggerAutomationFlows error:', err.message);
@@ -11089,7 +11245,7 @@ app.post('/api/automations/enqueue', async (req, res) => {
       [steps.length, flow.id]
     ).catch(() => {});
 
-    console.log(`🤖 Manual enqueue: ${steps.length} jobs for flow "${flow.name}" → ${phone}`);
+    console.log(`🤖 Manual enqueue: ${steps.length} jobs for flow "${flow.name}" → ${maskPhone(phone)}`);
     res.json({ success: true, jobsCreated: jobIds.length, jobIds });
   } catch (error) {
     res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
@@ -11729,26 +11885,7 @@ let solutionCronInterval = null;
 
 async function processSolutionTriggers() {
   try {
-    // Check business hours config
-    const { rows: settingsRows } = await pool.query(
-      `SELECT value FROM app_settings WHERE key = 'solution_hours'`
-    );
-    const hoursConfig = settingsRows.length > 0 ? settingsRows[0].value : { inicio: '08:00', fim: '18:00', diasSemana: ['SEG','TER','QUA','QUI','SEX'] };
-
     const now = new Date();
-    const currentTime = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/Sao_Paulo' });
-    const currentDay = ['DOM','SEG','TER','QUA','QUI','SEX','SAB'][now.getDay()];
-
-    if (hoursConfig.inicio && currentTime < hoursConfig.inicio) {
-      return; // Before business hours
-    }
-    if (hoursConfig.fim && currentTime > hoursConfig.fim) {
-      return; // After business hours
-    }
-    if (hoursConfig.diasSemana && hoursConfig.diasSemana.length > 0 && !hoursConfig.diasSemana.includes(currentDay)) {
-      return; // Not a business day
-    }
-
     const today = now.toISOString().slice(0, 10);
 
     // Cada gatilho roda separado por clínica: $1 é sempre o tenant_id. Antes a
@@ -11879,6 +12016,10 @@ async function processSolutionTriggers() {
       );
       for (const { tenant_id: solTenantId } of tenantRows) {
       if (!isValidTenantId(solTenantId)) continue;
+      // Horário de gatilhos da própria clínica; sem conseguir ler, pula a clínica neste ciclo.
+      let solHours;
+      try { solHours = await getSolutionHours(solTenantId, { throwOnError: true }); } catch { continue; }
+      if (!isWithinSolutionHours(solHours, now)) continue;
       const { rows: patients } = await pool.query(sol.query, [solTenantId, ...sol.params]);
       if (patients.length === 0) continue;
       let tenantTriggered = 0;
@@ -12349,7 +12490,7 @@ app.post('/api/sessions/close', async (req, res) => {
             ],
           }),
         });
-        console.log(`📊 Satisfaction survey sent to ${phone}`);
+        console.log(`📊 Satisfaction survey sent to ${maskPhone(phone)}`);
       } catch (btnErr) {
         // Fallback: text-based survey
         await evolutionFetch(`/message/sendText/${instance}`, {
@@ -12359,14 +12500,14 @@ app.post('/api/sessions/close', async (req, res) => {
             text: `⭐ *Avalie nosso atendimento!*\n\nComo você avalia o atendimento que recebeu?\n\n5️⃣ Excelente\n4️⃣ Bom\n3️⃣ Regular\n2️⃣ Ruim\n1️⃣ Péssimo\n\nResponda com o número da sua avaliação.`,
           }),
         });
-        console.log(`📊 Satisfaction survey (text fallback) sent to ${phone}`);
+        console.log(`📊 Satisfaction survey (text fallback) sent to ${maskPhone(phone)}`);
       }
 
       // Mark lead as awaiting rating
       await pool.query(
         `INSERT INTO app_settings (key, value, updated_at) 
          VALUES ($1, $2, NOW()) ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
-        [`awaiting_rating_${phone}`, JSON.stringify({ leadId, sessionId: session?.id, attendantId: session?.attendant_id, attendantName: session?.attendant_name })]
+        [`awaiting_rating_${user.tenant_id}_${phone}`, JSON.stringify({ leadId, sessionId: session?.id, attendantId: session?.attendant_id, attendantName: session?.attendant_name })]
       );
     }
 
@@ -12888,7 +13029,7 @@ app.post('/api/contatos/sync/now', async (req, res) => {
         if (cRes.ok) {
           const contacts = await cRes.json();
           const rawList = Array.isArray(contacts) ? contacts : Array.isArray(contacts?.data) ? contacts.data : Array.isArray(contacts?.contacts) ? contacts.contacts : Array.isArray(contacts?.result) ? contacts.result : [];
-          console.log(`[sync][${name}] findContacts retornou ${rawList.length} items. Amostra:`, JSON.stringify(rawList.slice(0, 3)).substring(0, 500));
+          console.log(`[sync][${name}] findContacts retornou ${rawList.length} items.`);
           waContacts = normalizeEvolutionContacts(contacts);
           console.log(`[sync][${name}] Após normalização: ${waContacts.length} contatos`);
         } else {
@@ -12908,7 +13049,7 @@ app.post('/api/contatos/sync/now', async (req, res) => {
             if (altRes.ok) {
               const altContacts = await altRes.json();
               const rawAltList = Array.isArray(altContacts) ? altContacts : Array.isArray(altContacts?.data) ? altContacts.data : Array.isArray(altContacts?.contacts) ? altContacts.contacts : Array.isArray(altContacts?.result) ? altContacts.result : [];
-              console.log(`[sync][${name}] contact/find retornou ${rawAltList.length} items. Amostra:`, JSON.stringify(rawAltList.slice(0, 3)).substring(0, 500));
+              console.log(`[sync][${name}] contact/find retornou ${rawAltList.length} items.`);
               waContacts = normalizeEvolutionContacts(altContacts);
               console.log(`[sync][${name}] Após normalização fallback: ${waContacts.length} contatos`);
             } else {
@@ -13160,7 +13301,7 @@ app.post('/api/messages/import-whatsapp', async (req, res) => {
     const { user } = await verifyUser(req);
     const { startDate, endDate, instances: allowedInstances, stream } = req.body;
 
-    console.log(`📥 Importing WhatsApp messages for tenant ${user.tenant_id} (User: ${user.email}, SuperAdmin: ${user.is_super_admin})`);
+    console.log(`📥 Importing WhatsApp messages for tenant ${user.tenant_id} (user=${user.id}, SuperAdmin: ${user.is_super_admin})`);
 
     if (!startDate || !endDate) return res.status(400).json({ error: 'startDate e endDate obrigatórios' });
 
@@ -13622,7 +13763,7 @@ app.get('/api/queue/leads', async (req, res) => {
     const { user } = await verifyUser(req);
 
     if (!isValidTenantId(user.tenant_id)) {
-      console.warn(`[queue/leads] user ${user.id || user.email || 'unknown'} has no valid tenant_id; returning explicit empty queue`);
+      console.warn(`[queue/leads] user ${user.id || 'unknown'} has no valid tenant_id; returning explicit empty queue`);
       return res.json({ queue: [], active: [], _warn: 'tenant_not_resolved' });
     }
 
@@ -13857,10 +13998,10 @@ app.get('/api/queue/leads', async (req, res) => {
             const pictureUrl = picResult.data?.profilePictureUrl || picResult.data?.picture || picResult.data?.url || null;
             if (pictureUrl) {
               await pool.query('UPDATE crm_leads SET avatar_url = $1, updated_at = NOW() WHERE id = $2', [pictureUrl, r.id]);
-              console.log(`📸 Background avatar sync: ${r.name || r.phone} → OK`);
+              console.log(`📸 Background avatar sync: ${maskPhone(r.phone)} → OK`);
             }
           } catch (err) {
-            console.error(`📸 Avatar sync error for ${r.phone}:`, err.message);
+            console.error(`📸 Avatar sync error for ${maskPhone(r.phone)}:`, err.message);
           }
         }
       }
@@ -14874,7 +15015,7 @@ app.post('/api/ai/schedule-followup', async (req, res) => {
       WHERE id = $2
     `, [JSON.stringify(flowId), reportId]);
 
-    console.log(`🤖 Follow-up IA agendado: ${jobIds.length} mensagens para ${patientName} (${formattedPhone})`);
+    console.log(`🤖 Follow-up IA agendado: ${jobIds.length} mensagens para ${maskPhone(formattedPhone)}`);
     res.json({ success: true, flowId, jobs: jobIds });
   } catch (err) {
     if (err.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
@@ -15662,8 +15803,8 @@ app.get('/api/exames', async (req, res) => {
               p.nome AS paciente_nome,
               d.nome AS dentista_nome
          FROM exames e
-         LEFT JOIN pacientes p ON p.id = e.paciente_id
-         LEFT JOIN dentistas d ON d.id = e.dentista_solicitante_id
+         LEFT JOIN pacientes p ON p.id = e.paciente_id AND p.tenant_id = e.tenant_id
+         LEFT JOIN dentistas d ON d.id = e.dentista_solicitante_id AND d.tenant_id = e.tenant_id
         WHERE ${where.join(' AND ')}
         ORDER BY e.data_solicitacao DESC
         LIMIT 500`,
@@ -15703,6 +15844,8 @@ app.post('/api/exames', async (req, res) => {
       observacoes, terceirizado, fornecedor_terc, status
     } = req.body || {};
     if (!tipo_nome?.trim()) return res.status(400).json({ error: 'tipo_nome obrigatório' });
+    const refErro = await validarReferenciasDoTenant(user.tenant_id, { pacienteId: paciente_id, dentistaId: dentista_solicitante_id });
+    if (refErro) return res.status(400).json({ error: refErro });
 
     // Gera código sequencial simples por tenant
     const { rows: [{ next_code }] } = await pool.query(
@@ -15746,6 +15889,10 @@ app.patch('/api/exames/:id', async (req, res) => {
       if (req.body[k] !== undefined) { params.push(req.body[k]); sets.push(`${k}=$${params.length}`); }
     }
     if (!sets.length) return res.status(400).json({ error: 'Nada a atualizar' });
+    const refErro = await validarReferenciasDoTenant(user.tenant_id, {
+      pacienteId: req.body.paciente_id, dentistaId: req.body.dentista_solicitante_id,
+    });
+    if (refErro) return res.status(400).json({ error: refErro });
     params.push(req.params.id, user.tenant_id);
     const { rows } = await pool.query(
       `UPDATE exames SET ${sets.join(', ')}
@@ -16207,5 +16354,6 @@ if (process.env.NODE_ENV !== 'test') {
 
 export { app, pool };
 // Exportados só para os testes de jobs (tests/jobs-metricas-isolamento.test.js).
-export { processSolutionTriggers, runWhatsAppJobHooks };
+export { processSolutionTriggers, runWhatsAppJobHooks, ensureTenantConfigSchema, triggerFollowupAutomation };
+export function clearTenantSettingsCacheForTests() { tenantSettingsCache.clear(); }
 

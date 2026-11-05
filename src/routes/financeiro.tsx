@@ -10,8 +10,8 @@ import {
 import {
   type FinanceCategory, categoryLabels,
 } from "@/data/financeiroMockData";
-import { FluxoCaixaChart } from "@/components/charts/FluxoCaixaChart";
-import { ReceitaDespesaChart } from "@/components/charts/ReceitaDespesaChart";
+import { FluxoCaixaChart, type FluxoMesPonto } from "@/components/charts/FluxoCaixaChart";
+import { ReceitaDespesaChart, type EvolucaoMesPonto } from "@/components/charts/ReceitaDespesaChart";
 import { DespesasCategoriaChart } from "@/components/charts/DespesasCategoriaChart";
 import {
   finBanksApi, finEmployeesApi, finPayrollsApi, finBillsApi, finMovementsApi, finOverdueApi,
@@ -37,6 +37,55 @@ const tabs: { id: Tab; label: string; icon: typeof DollarSign }[] = [
   { id: "dre", label: "DRE", icon: FileText },
 ];
 
+// ===== Datas =====
+// O servidor guarda as datas do financeiro como texto "dd/mm/aaaa" (toLocaleDateString pt-BR).
+// Aceita também "aaaa-mm-dd" por segurança. Devolve null se não der para ler.
+function parseBrDate(value: string | undefined | null): Date | null {
+  if (!value) return null;
+  const br = /^(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(value.trim());
+  if (br) return new Date(Number(br[3]), Number(br[2]) - 1, Number(br[1]));
+  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(value.trim());
+  if (iso) return new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]));
+  return null;
+}
+/** Chave "aaaa-mm" do mês; offset negativo = meses anteriores ao atual. */
+function monthKey(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+function monthKeyOffset(offset: number): string {
+  const now = new Date();
+  return monthKey(new Date(now.getFullYear(), now.getMonth() + offset, 1));
+}
+function movementsInMonth(movements: FinanceMovement[], key: string): FinanceMovement[] {
+  return movements.filter((m) => {
+    const d = parseBrDate(m.date);
+    return d !== null && monthKey(d) === key;
+  });
+}
+const MESES_CURTOS = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+/** Entradas e saídas somadas por mês, dos últimos `n` meses (o atual incluso). */
+function monthlyTotals(movements: FinanceMovement[], n = 7): { mes: string; entradas: number; saidas: number }[] {
+  const now = new Date();
+  const out: { key: string; mes: string; entradas: number; saidas: number }[] = [];
+  for (let i = n - 1; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    out.push({ key: monthKey(d), mes: `${MESES_CURTOS[d.getMonth()]}/${String(d.getFullYear()).slice(2)}`, entradas: 0, saidas: 0 });
+  }
+  const byKey = new Map(out.map((o) => [o.key, o]));
+  for (const m of movements) {
+    const d = parseBrDate(m.date);
+    const slot = d ? byKey.get(monthKey(d)) : undefined;
+    if (!slot) continue;
+    if (m.type === "entrada") slot.entradas += m.value;
+    else slot.saidas += m.value;
+  }
+  return out.map(({ mes, entradas, saidas }) => ({ mes, entradas, saidas }));
+}
+function startOfToday(): Date {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+}
+
 // Map API row to frontend types
 function mapBank(r: any): BankAccount {
   return { id: r.id, name: r.name, bank: r.bank, agency: r.agency || '', account: r.account || '', type: r.type || 'corrente', balance: Number(r.balance) || 0, color: r.color || 'hsl(217,91%,60%)' };
@@ -48,7 +97,11 @@ function mapPayroll(r: any): Payroll {
   return { id: r.id, employeeId: r.employee_id, employeeName: r.employee_name, month: r.month, grossSalary: Number(r.gross_salary) || 0, benefits: Number(r.benefits) || 0, deductions: Number(r.deductions) || 0, netSalary: Number(r.net_salary) || 0, status: r.status || 'pendente', paymentDate: r.payment_date || undefined, bankAccountId: r.bank_account_id || undefined };
 }
 function mapBill(r: any): Bill {
-  return { id: r.id, description: r.description, category: r.category, value: Number(r.value) || 0, dueDate: r.due_date, status: r.status || 'pendente', supplier: r.supplier || undefined, bankAccountId: r.bank_account_id || undefined, paymentDate: r.payment_date || undefined, recurrent: r.recurrent || false };
+  // O servidor não marca "vencido": calculamos aqui, a partir do vencimento (dd/mm/aaaa).
+  const due = parseBrDate(r.due_date);
+  const rawStatus: Bill["status"] = r.status || 'pendente';
+  const status: Bill["status"] = rawStatus === 'pendente' && due !== null && due < startOfToday() ? 'vencido' : rawStatus;
+  return { id: r.id, description: r.description, category: r.category, value: Number(r.value) || 0, dueDate: r.due_date, status, supplier: r.supplier || undefined, bankAccountId: r.bank_account_id || undefined, paymentDate: r.payment_date || undefined, recurrent: r.recurrent || false };
 }
 function mapMovement(r: any): FinanceMovement {
   return { id: r.id, type: r.type, description: r.description, category: r.category, value: Number(r.value) || 0, date: r.date, bankAccountId: r.bank_account_id || '', bankName: r.bank_name || '', patient: r.patient || undefined, billId: r.bill_id || undefined, payrollId: r.payroll_id || undefined };
@@ -108,9 +161,10 @@ function FinanceiroPage() {
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
-  // KPIs
-  const totalEntradas = movements.filter((m) => m.type === "entrada").reduce((s, m) => s + m.value, 0);
-  const totalSaidas = movements.filter((m) => m.type === "saida").reduce((s, m) => s + m.value, 0);
+  // KPIs — só as movimentações do mês corrente (a data vem como dd/mm/aaaa)
+  const movimentosMes = movementsInMonth(movements, monthKeyOffset(0));
+  const totalEntradas = movimentosMes.filter((m) => m.type === "entrada").reduce((s, m) => s + m.value, 0);
+  const totalSaidas = movimentosMes.filter((m) => m.type === "saida").reduce((s, m) => s + m.value, 0);
   const contasPendentes = bills.filter((b) => b.status === "pendente" || b.status === "vencido");
   const totalPendente = contasPendentes.reduce((s, b) => s + b.value, 0);
   const folhaPendente = payrolls.filter((p) => p.status === "pendente");
@@ -183,7 +237,7 @@ function FinanceiroPage() {
   };
 
   // Adicionar funcionário
-  const handleAddEmployee = async (emp: Omit<Employee, "id">): Promise<boolean> => {
+  const handleAddEmployee = async (emp: Omit<Employee, "id">, deductions: number): Promise<boolean> => {
     const created = await finEmployeesApi.create({
       name: emp.name, role: emp.role, cpf: emp.cpf,
       admission_date: new Date().toLocaleDateString("pt-BR"),
@@ -191,8 +245,7 @@ function FinanceiroPage() {
       bank_account_id: banks[0]?.id || null,
     });
     if (created.error) { toast.error("Erro ao cadastrar funcionário: " + created.error); return false; }
-    // Criar folha pendente do mês atual
-    const deductions = Math.round(emp.salary * 0.15);
+    // Criar folha pendente do mês atual — descontos informados no cadastro (padrão 0)
     const folha = await finPayrollsApi.create({
       employee_id: (created.data as any)?.id ?? null, employee_name: emp.name,
       month: `${String(new Date().getMonth() + 1).padStart(2, '0')}/${new Date().getFullYear()}`,
@@ -282,6 +335,7 @@ function FinanceiroPage() {
               banks={banks}
               overdue={overdue}
               movements={movements}
+              movimentosMes={movimentosMes}
             />
           )}
           {activeTab === "movimentacoes" && (
@@ -333,12 +387,16 @@ function FinanceiroPage() {
 // ==================== TAB: VISÃO GERAL ====================
 
 function TabVisaoGeral({
-  totalEntradas, totalSaidas, totalPendente, totalFolhaPendente, banks, overdue, movements,
+  totalEntradas, totalSaidas, totalPendente, totalFolhaPendente, banks, overdue, movements, movimentosMes,
 }: {
   totalEntradas: number; totalSaidas: number; totalPendente: number; totalFolhaPendente: number;
   banks: BankAccount[]; overdue: { patient: string; value: number; daysLate: number; procedure: string }[]; movements: FinanceMovement[];
+  movimentosMes: FinanceMovement[];
 }) {
   const saldoTotal = banks.reduce((s, b) => s + b.balance, 0);
+  const porMes = monthlyTotals(movements, 7);
+  const fluxoData: FluxoMesPonto[] = porMes;
+  const evolucaoData: EvolucaoMesPonto[] = porMes.map((p) => ({ mes: p.mes, receita: p.entradas, despesa: p.saidas, saldo: p.entradas - p.saidas }));
 
   return (
     <>
@@ -352,9 +410,9 @@ function TabVisaoGeral({
 
       {/* Gráficos */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <FluxoCaixaChart />
-        <ReceitaDespesaChart />
-        <DespesasCategoriaChart movements={movements} />
+        <FluxoCaixaChart data={fluxoData} />
+        <ReceitaDespesaChart data={evolucaoData} />
+        <DespesasCategoriaChart movements={movimentosMes} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -520,7 +578,8 @@ function TabMovimentacoes({
       )}
 
       <div className="bg-card rounded-xl border border-border overflow-hidden">
-        <table className="w-full">
+        <div className="overflow-x-auto">
+        <table className="w-full min-w-[640px]">
           <thead>
             <tr className="border-b border-border/50 text-left">
               <th className="px-5 py-2.5 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Tipo</th>
@@ -562,6 +621,7 @@ function TabMovimentacoes({
             )}
           </tbody>
         </table>
+        </div>
       </div>
     </>
   );
@@ -582,14 +642,21 @@ function TabContasPagar({
   const [payingId, setPayingId] = useState<string | null>(null);
   const [payBankId, setPayBankId] = useState(banks[0]?.id ?? "");
 
-  const pendentes = bills.filter((b) => b.status === "pendente" || b.status === "vencido");
+  // Vencidas primeiro, depois por vencimento mais próximo (o texto dd/mm/aaaa não ordena sozinho)
+  const dueTime = (b: Bill) => parseBrDate(b.dueDate)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+  const pendentes = bills
+    .filter((b) => b.status === "pendente" || b.status === "vencido")
+    .sort((a, b) => dueTime(a) - dueTime(b));
+  const vencidas = pendentes.filter((b) => b.status === "vencido").length;
   const pagos = bills.filter((b) => b.status === "pago");
 
   const handleSubmit = async () => {
     if (!form.description || !form.value || !form.dueDate) { toast.error("Preencha descrição, valor e vencimento."); return; }
+    // O input de data devolve aaaa-mm-dd; o servidor guarda dd/mm/aaaa como as demais contas.
+    const [yy, mm, dd] = form.dueDate.split("-");
     const ok = await onAdd({
       description: form.description, category: form.category, value: parseFloat(form.value),
-      dueDate: form.dueDate, status: "pendente", supplier: form.supplier || undefined,
+      dueDate: `${dd}/${mm}/${yy}`, status: "pendente", supplier: form.supplier || undefined,
       recurrent: form.recurrent,
     });
     if (ok) setForm({ description: "", category: "aluguel", value: "", dueDate: "", supplier: "", recurrent: false });
@@ -627,8 +694,8 @@ function TabContasPagar({
             </div>
             <div>
               <label className="text-[11px] text-muted-foreground font-medium mb-1 block">Vencimento</label>
-              <input value={form.dueDate} onChange={(e) => setForm({ ...form, dueDate: e.target.value })}
-                className="w-full h-9 rounded-lg border border-border bg-background px-3 text-xs text-foreground" placeholder="DD/MM/AAAA" />
+              <input type="date" value={form.dueDate} onChange={(e) => setForm({ ...form, dueDate: e.target.value })}
+                className="w-full h-9 rounded-lg border border-border bg-background px-3 text-xs text-foreground" />
             </div>
             <div>
               <label className="text-[11px] text-muted-foreground font-medium mb-1 block">Fornecedor</label>
@@ -656,17 +723,24 @@ function TabContasPagar({
         <div className="px-5 py-3 border-b border-border flex items-center gap-2">
           <Clock className="h-4 w-4 text-warning" />
           <h3 className="text-sm font-semibold text-card-foreground">Pendentes ({pendentes.length})</h3>
+          {vencidas > 0 && (
+            <span className="text-[10px] font-bold text-destructive bg-destructive/10 px-2 py-0.5 rounded-full">
+              {vencidas} vencida(s)
+            </span>
+          )}
         </div>
         <div className="divide-y divide-border/50">
           {pendentes.map((b) => (
-            <div key={b.id} className="flex items-center justify-between px-5 py-3 hover:bg-muted/30 transition-colors">
-              <div className="flex-1">
+            <div key={b.id} className="flex flex-wrap items-center justify-between gap-2 px-5 py-3 hover:bg-muted/30 transition-colors">
+              <div className="flex-1 min-w-[160px]">
                 <div className="flex items-center gap-2">
-                  {b.status === "vencido" && <AlertTriangle className="h-3.5 w-3.5 text-destructive" />}
+                  {b.status === "vencido" && <AlertTriangle className="h-3.5 w-3.5 text-destructive" aria-label="Vencida" />}
                   <p className="text-xs font-medium text-foreground">{b.description}</p>
                   {b.recurrent && <span className="text-[9px] bg-primary/10 text-primary px-1.5 py-0.5 rounded-full font-bold">Recorrente</span>}
                 </div>
-                <p className="text-[10px] text-muted-foreground">{b.supplier ?? "—"} • Venc: {b.dueDate}</p>
+                <p className={`text-[10px] ${b.status === "vencido" ? "text-destructive font-semibold" : "text-muted-foreground"}`}>
+                  {b.supplier ?? "—"} • {b.status === "vencido" ? "Venceu em" : "Venc:"} {b.dueDate}
+                </p>
               </div>
               <div className="flex items-center gap-3">
                 <span className="text-sm font-bold text-foreground">R$ {b.value.toLocaleString("pt-BR")}</span>
@@ -680,7 +754,7 @@ function TabContasPagar({
                       className="h-8 px-3 rounded-lg bg-success text-success-foreground text-[10px] font-bold hover:bg-success/90 transition-colors">
                       Confirmar
                     </button>
-                    <button onClick={() => setPayingId(null)} className="text-[10px] text-muted-foreground hover:text-foreground">✕</button>
+                    <button onClick={() => setPayingId(null)} aria-label="Cancelar pagamento" className="h-8 w-8 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-muted">✕</button>
                   </div>
                 ) : (
                   <button onClick={() => { setPayingId(b.id); setPayBankId(banks[0]?.id ?? ""); }}
@@ -729,10 +803,10 @@ function TabFuncionarios({
 }: {
   employees: Employee[]; payrolls: Payroll[];
   showAdd: boolean; setShowAdd: (v: boolean) => void;
-  onAdd: (e: Omit<Employee, "id">) => Promise<boolean>;
+  onAdd: (e: Omit<Employee, "id">, deductions: number) => Promise<boolean>;
   onPayPayroll: (id: string, bankId: string) => void; banks: BankAccount[];
 }) {
-  const [form, setForm] = useState({ name: "", role: "", cpf: "", salary: "", benefits: "" });
+  const [form, setForm] = useState({ name: "", role: "", cpf: "", salary: "", benefits: "", deductions: "" });
   const [payingId, setPayingId] = useState<string | null>(null);
   const [payBankId, setPayBankId] = useState(banks[0]?.id ?? "");
 
@@ -741,13 +815,18 @@ function TabFuncionarios({
 
   const handleSubmit = async () => {
     if (!form.name || !form.role || !form.salary) { toast.error("Preencha nome, cargo e salário."); return; }
+    const salary = parseFloat(form.salary);
+    const benefits = parseFloat(form.benefits || "0") || 0;
+    const deductions = parseFloat(form.deductions || "0") || 0;
+    if (deductions < 0) { toast.error("Descontos não podem ser negativos."); return; }
+    if (deductions > salary + benefits) { toast.error("Descontos não podem passar de salário + benefícios."); return; }
     const ok = await onAdd({
       name: form.name, role: form.role, cpf: form.cpf,
       admissionDate: new Date().toLocaleDateString("pt-BR"),
-      salary: parseFloat(form.salary), benefits: parseFloat(form.benefits || "0"),
+      salary, benefits,
       bankAccountId: banks[0]?.id ?? "", active: true,
-    });
-    if (ok) setForm({ name: "", role: "", cpf: "", salary: "", benefits: "" });
+    }, deductions);
+    if (ok) setForm({ name: "", role: "", cpf: "", salary: "", benefits: "", deductions: "" });
   };
 
   return (
@@ -762,7 +841,7 @@ function TabFuncionarios({
       {showAdd && (
         <div className="bg-card rounded-xl border border-border p-5 space-y-4 animate-fade-in">
           <h3 className="text-sm font-semibold text-card-foreground">Cadastrar Funcionário</h3>
-          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
             <div>
               <label className="text-[11px] text-muted-foreground font-medium mb-1 block">Nome</label>
               <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
@@ -783,17 +862,25 @@ function TabFuncionarios({
               <input type="number" value={form.salary} onChange={(e) => setForm({ ...form, salary: e.target.value })}
                 className="w-full h-9 rounded-lg border border-border bg-background px-3 text-xs text-foreground" />
             </div>
-            <div className="flex items-end gap-2">
-              <div className="flex-1">
-                <label className="text-[11px] text-muted-foreground font-medium mb-1 block">Benefícios</label>
-                <input type="number" value={form.benefits} onChange={(e) => setForm({ ...form, benefits: e.target.value })}
-                  className="w-full h-9 rounded-lg border border-border bg-background px-3 text-xs text-foreground" />
-              </div>
-              <button onClick={handleSubmit} className="h-9 px-4 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors shrink-0">
-                Salvar
-              </button>
+            <div>
+              <label className="text-[11px] text-muted-foreground font-medium mb-1 block">Benefícios (R$)</label>
+              <input type="number" value={form.benefits} onChange={(e) => setForm({ ...form, benefits: e.target.value })}
+                className="w-full h-9 rounded-lg border border-border bg-background px-3 text-xs text-foreground" placeholder="0" />
+            </div>
+            <div>
+              <label className="text-[11px] text-muted-foreground font-medium mb-1 block">Descontos (R$)</label>
+              <input type="number" min="0" value={form.deductions} onChange={(e) => setForm({ ...form, deductions: e.target.value })}
+                className="w-full h-9 rounded-lg border border-border bg-background px-3 text-xs text-foreground" placeholder="0" />
             </div>
           </div>
+          <div className="flex justify-end">
+            <button onClick={handleSubmit} className="h-9 px-4 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors">
+              Salvar
+            </button>
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            A folha deste mês é criada com o valor líquido = salário + benefícios − descontos. Informe INSS, IRRF e outros descontos no campo "Descontos".
+          </p>
         </div>
       )}
 
@@ -802,7 +889,8 @@ function TabFuncionarios({
         <div className="px-5 py-3 border-b border-border">
           <h3 className="text-sm font-semibold text-card-foreground">Equipe ({employees.length})</h3>
         </div>
-        <table className="w-full">
+        <div className="overflow-x-auto">
+        <table className="w-full min-w-[640px]">
           <thead>
             <tr className="border-b border-border/50 text-left">
               <th className="px-5 py-2 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Nome</th>
@@ -829,6 +917,7 @@ function TabFuncionarios({
             )}
           </tbody>
         </table>
+        </div>
       </div>
 
       {/* Folha de pagamento do mês */}
@@ -841,8 +930,8 @@ function TabFuncionarios({
         </div>
         <div className="divide-y divide-border/50">
           {folhaMesAtual.map((pr) => (
-            <div key={pr.id} className="flex items-center justify-between px-5 py-3 hover:bg-muted/30 transition-colors">
-              <div className="flex-1">
+            <div key={pr.id} className="flex flex-wrap items-center justify-between gap-2 px-5 py-3 hover:bg-muted/30 transition-colors">
+              <div className="flex-1 min-w-[160px]">
                 <p className="text-xs font-medium text-foreground">{pr.employeeName}</p>
                 <p className="text-[10px] text-muted-foreground">
                   Bruto: R$ {pr.grossSalary.toLocaleString("pt-BR")} + Benef: R$ {pr.benefits.toLocaleString("pt-BR")} - Desc: R$ {pr.deductions.toLocaleString("pt-BR")}
@@ -862,7 +951,7 @@ function TabFuncionarios({
                     </select>
                     <button onClick={() => { onPayPayroll(pr.id, payBankId); setPayingId(null); }}
                       className="h-8 px-3 rounded-lg bg-success text-success-foreground text-[10px] font-bold hover:bg-success/90">Confirmar</button>
-                    <button onClick={() => setPayingId(null)} className="text-[10px] text-muted-foreground hover:text-foreground">✕</button>
+                    <button onClick={() => setPayingId(null)} aria-label="Cancelar pagamento" className="h-8 w-8 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-muted">✕</button>
                   </div>
                 ) : (
                   <button onClick={() => { setPayingId(pr.id); setPayBankId(banks[0]?.id ?? ""); }}
@@ -1007,40 +1096,59 @@ function TabBancos({
 
 // ==================== TAB: DRE ====================
 
+function dreTotals(movs: FinanceMovement[]) {
+  const entradas = movs.filter((m) => m.type === "entrada");
+  const saidas = movs.filter((m) => m.type === "saida");
+  const sum = (list: FinanceMovement[], cats?: string[]) =>
+    list.filter((e) => !cats || cats.includes(e.category)).reduce((s, e) => s + e.value, 0);
+  const receitaTotal = sum(entradas);
+  const despTotal = sum(saidas);
+  return {
+    hasData: movs.length > 0,
+    receitaTotal,
+    receitaConsultas: sum(entradas, ["consulta"]),
+    receitaProcedimentos: sum(entradas, ["procedimento", "implante", "ortodontia", "protese"]),
+    despTotal,
+    despPessoal: sum(saidas, ["salario", "comissao"]),
+    despMarketing: sum(saidas, ["marketing"]),
+    despOcupacao: sum(saidas, ["aluguel", "energia", "agua", "internet"]),
+    despMaterial: sum(saidas, ["material", "laboratorio"]),
+    // "impostos" fica só aqui (não há linha de deduções separada, para não contar duas vezes)
+    despAdmin: sum(saidas, ["software", "manutencao", "impostos"]),
+    lucro: receitaTotal - despTotal,
+    margem: receitaTotal > 0 ? Math.round(((receitaTotal - despTotal) / receitaTotal) * 100) : null,
+  };
+}
+
+const NOMES_MESES = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
+
 function TabDRE({ movements }: { movements: FinanceMovement[] }) {
-  const entradas = movements.filter((m) => m.type === "entrada");
-  const saidas = movements.filter((m) => m.type === "saida");
+  const atualKey = monthKeyOffset(0);
+  const anteriorKey = monthKeyOffset(-1);
+  const atual = dreTotals(movementsInMonth(movements, atualKey));
+  const anterior = dreTotals(movementsInMonth(movements, anteriorKey));
+  const nomeMes = (key: string) => {
+    const [y, m] = key.split("-");
+    return `${NOMES_MESES[Number(m) - 1]}/${y}`;
+  };
 
-  const receitaConsultas = entradas.filter((e) => e.category === "consulta").reduce((s, e) => s + e.value, 0);
-  const receitaProcedimentos = entradas.filter((e) => ["procedimento", "implante", "ortodontia", "protese"].includes(e.category)).reduce((s, e) => s + e.value, 0);
-  const receitaTotal = entradas.reduce((s, e) => s + e.value, 0);
-
-  const despPessoal = saidas.filter((e) => ["salario", "comissao"].includes(e.category)).reduce((s, e) => s + e.value, 0);
-  const despMarketing = saidas.filter((e) => e.category === "marketing").reduce((s, e) => s + e.value, 0);
-  const despOcupacao = saidas.filter((e) => ["aluguel", "energia", "agua", "internet"].includes(e.category)).reduce((s, e) => s + e.value, 0);
-  const despMaterial = saidas.filter((e) => ["material", "laboratorio"].includes(e.category)).reduce((s, e) => s + e.value, 0);
-  const despAdmin = saidas.filter((e) => ["software", "manutencao", "impostos"].includes(e.category)).reduce((s, e) => s + e.value, 0);
-  const despTotal = saidas.reduce((s, e) => s + e.value, 0);
-  const lucro = receitaTotal - despTotal;
-  const mult = 0.88;
-
-  const dreLines = [
-    { label: "RECEITA OPERACIONAL BRUTA", currentMonth: receitaTotal, previousMonth: Math.round(receitaTotal * mult), isBold: true, isTotal: true },
-    { label: "Consultas e Avaliações", currentMonth: receitaConsultas, previousMonth: Math.round(receitaConsultas * 0.9), indent: 1 },
-    { label: "Procedimentos e Tratamentos", currentMonth: receitaProcedimentos, previousMonth: Math.round(receitaProcedimentos * mult), indent: 1 },
+  type DreLine = { label: string; currentMonth: number; previousMonth: number | null; isBold?: boolean; isTotal?: boolean; indent?: number; isPercent?: boolean; isExpense?: boolean };
+  // Sem lançamentos no mês anterior, a coluna mostra "—" (não inventamos comparação).
+  const prev = (v: number) => (anterior.hasData ? v : null);
+  const dreLines: DreLine[] = [
+    { label: "RECEITA OPERACIONAL BRUTA", currentMonth: atual.receitaTotal, previousMonth: prev(anterior.receitaTotal), isBold: true, isTotal: true },
+    { label: "Consultas e Avaliações", currentMonth: atual.receitaConsultas, previousMonth: prev(anterior.receitaConsultas), indent: 1 },
+    { label: "Procedimentos e Tratamentos", currentMonth: atual.receitaProcedimentos, previousMonth: prev(anterior.receitaProcedimentos), indent: 1 },
     { label: "", currentMonth: 0, previousMonth: 0 },
-    { label: "(-) DEDUÇÕES E IMPOSTOS", currentMonth: Math.round(receitaTotal * 0.08), previousMonth: Math.round(receitaTotal * mult * 0.08) },
-    { label: "RECEITA OPERACIONAL LÍQUIDA", currentMonth: Math.round(receitaTotal * 0.92), previousMonth: Math.round(receitaTotal * mult * 0.92), isBold: true, isTotal: true },
+    { label: "DESPESAS OPERACIONAIS", currentMonth: atual.despTotal, previousMonth: prev(anterior.despTotal), isBold: true, isTotal: true, isExpense: true },
+    { label: "Pessoal (Salários + Comissões)", currentMonth: atual.despPessoal, previousMonth: prev(anterior.despPessoal), indent: 1, isExpense: true },
+    { label: "Marketing e Publicidade", currentMonth: atual.despMarketing, previousMonth: prev(anterior.despMarketing), indent: 1, isExpense: true },
+    { label: "Ocupação (Aluguel, Energia, Internet)", currentMonth: atual.despOcupacao, previousMonth: prev(anterior.despOcupacao), indent: 1, isExpense: true },
+    { label: "Materiais e Laboratório", currentMonth: atual.despMaterial, previousMonth: prev(anterior.despMaterial), indent: 1, isExpense: true },
+    { label: "Administrativas (Software, Manutenção, Impostos)", currentMonth: atual.despAdmin, previousMonth: prev(anterior.despAdmin), indent: 1, isExpense: true },
     { label: "", currentMonth: 0, previousMonth: 0 },
-    { label: "DESPESAS OPERACIONAIS", currentMonth: despTotal, previousMonth: Math.round(despTotal * 0.95), isBold: true, isTotal: true },
-    { label: "Pessoal (Salários + Comissões)", currentMonth: despPessoal, previousMonth: Math.round(despPessoal * 0.95), indent: 1 },
-    { label: "Marketing e Publicidade", currentMonth: despMarketing, previousMonth: Math.round(despMarketing * 1.1), indent: 1 },
-    { label: "Ocupação (Aluguel, Energia, Internet)", currentMonth: despOcupacao, previousMonth: Math.round(despOcupacao * 0.98), indent: 1 },
-    { label: "Materiais e Laboratório", currentMonth: despMaterial, previousMonth: Math.round(despMaterial * 0.85), indent: 1 },
-    { label: "Administrativas (Software, Manutenção, Impostos)", currentMonth: despAdmin, previousMonth: Math.round(despAdmin * 1.05), indent: 1 },
-    { label: "", currentMonth: 0, previousMonth: 0 },
-    { label: "RESULTADO OPERACIONAL (EBITDA)", currentMonth: lucro, previousMonth: Math.round((receitaTotal * mult * 0.92) - (despTotal * 0.95)), isBold: true, isTotal: true },
-    { label: "Margem Operacional", currentMonth: receitaTotal > 0 ? Math.round((lucro / receitaTotal) * 100) : 0, previousMonth: 0, isBold: true },
+    { label: "RESULTADO OPERACIONAL", currentMonth: atual.lucro, previousMonth: prev(anterior.lucro), isBold: true, isTotal: true },
+    { label: "Margem Operacional", currentMonth: atual.margem ?? 0, previousMonth: anterior.hasData ? anterior.margem : null, isBold: true, isPercent: true },
   ];
 
   return (
@@ -1048,12 +1156,17 @@ function TabDRE({ movements }: { movements: FinanceMovement[] }) {
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-bold text-foreground uppercase tracking-wider">DRE — Demonstração do Resultado</h2>
         <span className="text-[10px] font-medium text-muted-foreground bg-muted px-3 py-1 rounded-full">
-          Comparativo mês atual vs anterior
+          {nomeMes(atualKey)} vs {nomeMes(anteriorKey)}
         </span>
       </div>
+      <p className="text-[11px] text-muted-foreground -mt-3">
+        Calculado a partir das movimentações lançadas em cada mês. Impostos entram em despesas administrativas.
+        {!anterior.hasData && " Não há lançamentos no mês anterior, por isso a comparação aparece como \u201c—\u201d."}
+      </p>
 
       <div className="bg-card rounded-xl border border-border overflow-hidden">
-        <table className="w-full">
+        <div className="overflow-x-auto">
+        <table className="w-full min-w-[560px]">
           <thead>
             <tr className="border-b border-border bg-muted/30">
               <th className="px-6 py-3 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Descrição</th>
@@ -1066,10 +1179,12 @@ function TabDRE({ movements }: { movements: FinanceMovement[] }) {
             {dreLines.map((line, i) => {
               if (!line.label) return <tr key={i}><td colSpan={4} className="h-3" /></tr>;
 
-              const isMargin = line.label.includes("Margem");
-              const variation = line.previousMonth > 0
-                ? Math.round(((line.currentMonth - line.previousMonth) / line.previousMonth) * 100)
-                : 0;
+              const isMargin = !!line.isPercent;
+              const hasPrev = line.previousMonth !== null;
+              // Var % só faz sentido com base positiva no mês anterior
+              const variation = hasPrev && line.previousMonth! > 0
+                ? Math.round(((line.currentMonth - line.previousMonth!) / line.previousMonth!) * 100)
+                : null;
 
               return (
                 <tr key={i} className={`border-b border-border/30 ${line.isTotal ? "bg-muted/20" : ""} hover:bg-muted/30 transition-colors`}>
@@ -1078,22 +1193,25 @@ function TabDRE({ movements }: { movements: FinanceMovement[] }) {
                     {line.label}
                   </td>
                   <td className={`px-4 py-3 text-xs text-right ${line.isBold ? "font-bold" : ""} text-foreground`}>
-                    {isMargin ? `${line.currentMonth}%` : `R$ ${line.currentMonth.toLocaleString("pt-BR")}`}
+                    {isMargin ? (atual.margem === null ? "—" : `${line.currentMonth}%`) : `R$ ${line.currentMonth.toLocaleString("pt-BR")}`}
                   </td>
                   <td className="px-4 py-3 text-xs text-right text-muted-foreground">
-                    {isMargin ? "—" : `R$ ${line.previousMonth.toLocaleString("pt-BR")}`}
+                    {!hasPrev ? "—" : isMargin ? `${line.previousMonth}%` : `R$ ${line.previousMonth!.toLocaleString("pt-BR")}`}
                   </td>
                   <td className={`px-4 py-3 text-xs text-right font-bold ${
-                    isMargin ? "text-muted-foreground" :
-                    variation > 0 ? "text-success" : variation < 0 ? "text-destructive" : "text-muted-foreground"
+                    isMargin || variation === null ? "text-muted-foreground" :
+                    // Em despesa, subir é ruim (vermelho) e cair é bom (verde)
+                    variation === 0 ? "text-muted-foreground" :
+                    (variation > 0) !== !!line.isExpense ? "text-success" : "text-destructive"
                   }`}>
-                    {isMargin ? "—" : variation > 0 ? `+${variation}%` : `${variation}%`}
+                    {isMargin || variation === null ? "—" : variation > 0 ? `+${variation}%` : `${variation}%`}
                   </td>
                 </tr>
               );
             })}
           </tbody>
         </table>
+        </div>
       </div>
     </>
   );
