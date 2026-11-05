@@ -24,6 +24,7 @@ import { promisify } from 'util';
 import { existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { AsyncLocalStorage } from 'async_hooks';
+import { papelAtual as papelAtualDoBanco, exigePapel, limparCachePapel, PERMISSOES, PAPEIS } from './papeis.mjs';
 
 // Compatibilidade para trechos legados deste arquivo que ainda chamam
 // crypto.randomUUID(). O módulo importa randomUUID de forma nomeada; sem este
@@ -978,14 +979,8 @@ async function verifyAdmin(req) {
   const { user } = await verifyUser(req);
   // Super Admins bypass normal admin checks for maintenance
   if (user.is_super_admin) return { user };
-  
-  if (user.role === 'admin') return { user };
-  
-  const { rows } = await pool.query(
-    'SELECT role FROM user_roles WHERE user_id = $1 AND role = $2',
-    [user.id, 'admin']
-  );
-  if (rows.length === 0) {
+  // Papel atual do banco (não o do JWT): rebaixamento/desativação vale na hora.
+  if ((await papelAtual(user)) !== 'admin') {
     console.warn(`[SECURITY] Access denied: user=${user.id} is not an admin`);
     throw new Error('Admin access required');
   }
@@ -1016,7 +1011,13 @@ async function getProfileByEmail(email) {
 }
 
 // Papéis que um admin de clínica pode atribuir (my-tenant e /api/auth/users).
-const TENANT_ASSIGNABLE_ROLES = ['admin', 'dentista', 'recepcionista', 'comercial', 'user'];
+// Só os papéis do enum app_role ('comercial' não existe em produção: decisão do dono).
+const TENANT_ASSIGNABLE_ROLES = PAPEIS;
+const PERFIL_INVALIDO_MSG = `Perfil inválido. Use: ${PAPEIS.join(', ')}`;
+
+// Papel atual (banco, cache 60 s) e middleware de rota: so('admin', 'dentista').
+const papelAtual = (user) => papelAtualDoBanco(pool, user);
+const so = (...permitidos) => exigePapel({ pool, verifyUser }, ...permitidos);
 
 // Um admin de clínica só pode mexer em usuários da própria clínica, e nunca
 // em um super-admin. Super-admin pode tudo. Lança erro com status HTTP.
@@ -1272,7 +1273,7 @@ app.get('/api/my-tenant', async (req, res) => {
 app.get('/api/my-tenant/users', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
-    if (user.role !== 'admin') return res.status(403).json({ error: 'Apenas admin do tenant' });
+    if ((await papelAtual(user)) !== 'admin') return res.status(403).json({ error: 'Apenas admin do tenant' });
     if (!user.tenant_id) return res.status(404).json({ error: 'Usuário sem tenant' });
     const { rows } = await pool.query(
       `SELECT p.id, p.name, p.email, p.avatar_url, p.created_at, p.updated_at,
@@ -1294,13 +1295,14 @@ app.get('/api/my-tenant/users', async (req, res) => {
 app.post('/api/my-tenant/users', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
-    if (user.role !== 'admin') return res.status(403).json({ error: 'Apenas admin do tenant' });
+    if ((await papelAtual(user)) !== 'admin') return res.status(403).json({ error: 'Apenas admin do tenant' });
     if (!user.tenant_id) return res.status(404).json({ error: 'Usuário sem tenant' });
     const { name, email, password, role } = req.body || {};
     if (!name || !email || !password) return res.status(400).json({ error: 'Nome, email e senha obrigatórios' });
     if (password.length < 8) return res.status(400).json({ error: 'Senha mínima de 8 caracteres' });
 
-    const userRole = TENANT_ASSIGNABLE_ROLES.includes(role) ? role : 'user';
+    if (role && !TENANT_ASSIGNABLE_ROLES.includes(role)) return res.status(400).json({ error: PERFIL_INVALIDO_MSG });
+    const userRole = role || 'user';
 
     const normalizedEmail = email.toLowerCase().trim();
     const { rows: existing } = await pool.query('SELECT id FROM profiles WHERE email = $1', [normalizedEmail]);
@@ -1341,7 +1343,7 @@ app.post('/api/my-tenant/users', async (req, res) => {
 app.patch('/api/my-tenant/users/:id', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
-    if (user.role !== 'admin') return res.status(403).json({ error: 'Apenas admin do tenant' });
+    if ((await papelAtual(user)) !== 'admin') return res.status(403).json({ error: 'Apenas admin do tenant' });
     if (!user.tenant_id) return res.status(404).json({ error: 'Usuário sem tenant' });
     const { id } = req.params;
     const { name, email, role, active } = req.body || {};
@@ -1375,11 +1377,12 @@ app.patch('/api/my-tenant/users/:id', async (req, res) => {
       await pool.query(`UPDATE profiles SET ${updates.join(', ')} WHERE id = $${idx}`, values);
     }
     if (role !== undefined) {
-      if (!TENANT_ASSIGNABLE_ROLES.includes(role)) return res.status(400).json({ error: 'Perfil inválido' });
+      if (!TENANT_ASSIGNABLE_ROLES.includes(role)) return res.status(400).json({ error: PERFIL_INVALIDO_MSG });
       await pool.query('DELETE FROM user_roles WHERE user_id = $1', [id]);
       await pool.query('INSERT INTO user_roles (user_id, role) VALUES ($1, $2)', [id, role]);
       await pool.query('UPDATE profiles SET role = $1, updated_at = NOW() WHERE id = $2', [role, id]);
     }
+    limparCachePapel(id);
     res.json({ success: true });
   } catch (e) {
     console.error('Tenant update user error:', e.message);
@@ -1391,7 +1394,7 @@ app.patch('/api/my-tenant/users/:id', async (req, res) => {
 app.post('/api/my-tenant/users/:id/reset-password', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
-    if (user.role !== 'admin') return res.status(403).json({ error: 'Apenas admin do tenant' });
+    if ((await papelAtual(user)) !== 'admin') return res.status(403).json({ error: 'Apenas admin do tenant' });
     if (!user.tenant_id) return res.status(404).json({ error: 'Usuário sem tenant' });
     const { id } = req.params;
     const { password } = req.body || {};
@@ -1417,7 +1420,7 @@ app.post('/api/my-tenant/users/:id/reset-password', async (req, res) => {
 app.post('/api/my-tenant/change-plan', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
-    if (user.role !== 'admin') return res.status(403).json({ error: 'Apenas admin do tenant' });
+    if ((await papelAtual(user)) !== 'admin') return res.status(403).json({ error: 'Apenas admin do tenant' });
     const { plan_slug } = req.body || {};
     const { rows } = await pool.query('SELECT * FROM plans WHERE slug = $1 AND ativo = true', [plan_slug]);
     if (!rows[0]) return res.status(400).json({ error: 'Plano inválido' });
@@ -2109,7 +2112,7 @@ app.post('/api/auth/create-user', async (req, res) => {
     const id = crypto.randomUUID();
     const hash = await bcrypt.hash(password, 12);
     if (role !== undefined && role !== null && role !== '' && !TENANT_ASSIGNABLE_ROLES.includes(role)) {
-      return res.status(400).json({ error: 'Perfil inválido' });
+      return res.status(400).json({ error: PERFIL_INVALIDO_MSG });
     }
     const userRole = role || 'user';
 
@@ -2339,7 +2342,7 @@ app.put('/api/auth/users/:id', async (req, res) => {
     const { name, email, role, active } = req.body;
     await assertCanManageUser(actor, id);
     if (role !== undefined && !TENANT_ASSIGNABLE_ROLES.includes(role)) {
-      return res.status(400).json({ error: 'Perfil inválido' });
+      return res.status(400).json({ error: PERFIL_INVALIDO_MSG });
     }
     if (email !== undefined) {
       const { rows: taken } = await pool.query(
@@ -2366,6 +2369,7 @@ app.put('/api/auth/users/:id', async (req, res) => {
       await pool.query('UPDATE profiles SET role = $1 WHERE id = $2', [role, id]);
     }
 
+    limparCachePapel(id);
     res.json({ success: true });
   } catch (error) {
     res.status(httpStatusOf(error)).json({ error: error.message });
@@ -4958,7 +4962,7 @@ app.delete('/api/pacientes/:id', async (req, res) => {
 // ANAMNESE
 // ═══════════════════════════════════════════════════════════════
 
-app.get('/api/pacientes/:id/anamnese', async (req, res) => {
+app.get('/api/pacientes/:id/anamnese', so(PERMISSOES.EQUIPE), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -4971,7 +4975,7 @@ app.get('/api/pacientes/:id/anamnese', async (req, res) => {
   }
 });
 
-app.put('/api/pacientes/:id/anamnese', async (req, res) => {
+app.put('/api/pacientes/:id/anamnese', so(PERMISSOES.EQUIPE), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -5026,7 +5030,7 @@ app.put('/api/pacientes/:id/anamnese', async (req, res) => {
 // ODONTOGRAMA
 // ═══════════════════════════════════════════════════════════════
 
-app.get('/api/pacientes/:id/odontograma', async (req, res) => {
+app.get('/api/pacientes/:id/odontograma', so(PERMISSOES.EQUIPE), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -5040,7 +5044,7 @@ app.get('/api/pacientes/:id/odontograma', async (req, res) => {
   }
 });
 
-app.put('/api/pacientes/:id/odontograma', async (req, res) => {
+app.put('/api/pacientes/:id/odontograma', so(PERMISSOES.CLINICO), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -5401,7 +5405,7 @@ app.put('/api/agenda/:id', async (req, res) => {
 // FINANCEIRO
 // ═══════════════════════════════════════════════════════════════
 
-app.get('/api/financeiro', async (req, res) => {
+app.get('/api/financeiro', so(PERMISSOES.ADMIN), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -5418,7 +5422,7 @@ app.get('/api/financeiro', async (req, res) => {
   }
 });
 
-app.post('/api/financeiro', async (req, res) => {
+app.post('/api/financeiro', so(PERMISSOES.ADMIN), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -5670,7 +5674,7 @@ app.put('/api/dentistas/:id/horarios', async (req, res) => {
 
 // ═══════════════════════════════════════════════════════════════
 
-app.put('/api/financeiro/:id', async (req, res) => {
+app.put('/api/financeiro/:id', so(PERMISSOES.ADMIN), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -5697,7 +5701,7 @@ app.put('/api/financeiro/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/financeiro/:id', async (req, res) => {
+app.delete('/api/financeiro/:id', so(PERMISSOES.ADMIN), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -5713,7 +5717,7 @@ app.delete('/api/financeiro/:id', async (req, res) => {
 // FINANCEIRO — BANK ACCOUNTS
 // ═══════════════════════════════════════════════════════════════
 
-app.get('/api/fin/banks', async (req, res) => {
+app.get('/api/fin/banks', so(PERMISSOES.ADMIN), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -5722,7 +5726,7 @@ app.get('/api/fin/banks', async (req, res) => {
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-app.post('/api/fin/banks', async (req, res) => {
+app.post('/api/fin/banks', so(PERMISSOES.ADMIN), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -5737,7 +5741,7 @@ app.post('/api/fin/banks', async (req, res) => {
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-app.put('/api/fin/banks/:id', async (req, res) => {
+app.put('/api/fin/banks/:id', so(PERMISSOES.ADMIN), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -5753,7 +5757,7 @@ app.put('/api/fin/banks/:id', async (req, res) => {
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-app.delete('/api/fin/banks/:id', async (req, res) => {
+app.delete('/api/fin/banks/:id', so(PERMISSOES.ADMIN), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -5767,7 +5771,7 @@ app.delete('/api/fin/banks/:id', async (req, res) => {
 // FINANCEIRO — EMPLOYEES
 // ═══════════════════════════════════════════════════════════════
 
-app.get('/api/fin/employees', async (req, res) => {
+app.get('/api/fin/employees', so(PERMISSOES.ADMIN), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -5776,7 +5780,7 @@ app.get('/api/fin/employees', async (req, res) => {
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-app.post('/api/fin/employees', async (req, res) => {
+app.post('/api/fin/employees', so(PERMISSOES.ADMIN), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -5791,7 +5795,7 @@ app.post('/api/fin/employees', async (req, res) => {
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-app.delete('/api/fin/employees/:id', async (req, res) => {
+app.delete('/api/fin/employees/:id', so(PERMISSOES.ADMIN), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -5805,7 +5809,7 @@ app.delete('/api/fin/employees/:id', async (req, res) => {
 // FINANCEIRO — PAYROLLS
 // ═══════════════════════════════════════════════════════════════
 
-app.get('/api/fin/payrolls', async (req, res) => {
+app.get('/api/fin/payrolls', so(PERMISSOES.ADMIN), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -5819,7 +5823,7 @@ app.get('/api/fin/payrolls', async (req, res) => {
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-app.post('/api/fin/payrolls', async (req, res) => {
+app.post('/api/fin/payrolls', so(PERMISSOES.ADMIN), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -5834,7 +5838,7 @@ app.post('/api/fin/payrolls', async (req, res) => {
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-app.put('/api/fin/payrolls/:id', async (req, res) => {
+app.put('/api/fin/payrolls/:id', so(PERMISSOES.ADMIN), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -5854,7 +5858,7 @@ app.put('/api/fin/payrolls/:id', async (req, res) => {
 // FINANCEIRO — BILLS (Contas a Pagar)
 // ═══════════════════════════════════════════════════════════════
 
-app.get('/api/fin/bills', async (req, res) => {
+app.get('/api/fin/bills', so(PERMISSOES.ADMIN), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -5863,7 +5867,7 @@ app.get('/api/fin/bills', async (req, res) => {
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-app.post('/api/fin/bills', async (req, res) => {
+app.post('/api/fin/bills', so(PERMISSOES.ADMIN), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -5878,7 +5882,7 @@ app.post('/api/fin/bills', async (req, res) => {
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-app.put('/api/fin/bills/:id', async (req, res) => {
+app.put('/api/fin/bills/:id', so(PERMISSOES.ADMIN), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -5894,7 +5898,7 @@ app.put('/api/fin/bills/:id', async (req, res) => {
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-app.delete('/api/fin/bills/:id', async (req, res) => {
+app.delete('/api/fin/bills/:id', so(PERMISSOES.ADMIN), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -5908,7 +5912,7 @@ app.delete('/api/fin/bills/:id', async (req, res) => {
 // FINANCEIRO — MOVEMENTS
 // ═══════════════════════════════════════════════════════════════
 
-app.get('/api/fin/movements', async (req, res) => {
+app.get('/api/fin/movements', so(PERMISSOES.ADMIN), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -5917,7 +5921,7 @@ app.get('/api/fin/movements', async (req, res) => {
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-app.post('/api/fin/movements', async (req, res) => {
+app.post('/api/fin/movements', so(PERMISSOES.ADMIN), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -5945,7 +5949,7 @@ app.post('/api/fin/movements', async (req, res) => {
 // FINANCEIRO — OVERDUE (Inadimplentes)
 // ═══════════════════════════════════════════════════════════════
 
-app.get('/api/fin/overdue', async (req, res) => {
+app.get('/api/fin/overdue', so(PERMISSOES.ADMIN), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -5954,7 +5958,7 @@ app.get('/api/fin/overdue', async (req, res) => {
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-app.post('/api/fin/overdue', async (req, res) => {
+app.post('/api/fin/overdue', so(PERMISSOES.ADMIN), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -5966,7 +5970,7 @@ app.post('/api/fin/overdue', async (req, res) => {
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-app.delete('/api/fin/overdue/:id', async (req, res) => {
+app.delete('/api/fin/overdue/:id', so(PERMISSOES.ADMIN), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -6100,7 +6104,7 @@ app.post('/api/estoque/:id/movimentos', async (req, res) => {
 // TRATAMENTOS — FULL CRUD + ETAPAS
 // ═══════════════════════════════════════════════════════════════
 
-app.get('/api/tratamentos', async (req, res) => {
+app.get('/api/tratamentos', so(PERMISSOES.EQUIPE), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -6127,7 +6131,7 @@ function normalizarStatusTratamento(valor, padrao) {
   return TRATAMENTO_STATUS.includes(v) ? v : null;
 }
 
-app.post('/api/tratamentos', async (req, res) => {
+app.post('/api/tratamentos', so(PERMISSOES.CLINICO), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -6153,7 +6157,7 @@ app.post('/api/tratamentos', async (req, res) => {
   }
 });
 
-app.put('/api/tratamentos/:id', async (req, res) => {
+app.put('/api/tratamentos/:id', so(PERMISSOES.CLINICO), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -6193,7 +6197,7 @@ app.put('/api/tratamentos/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/tratamentos/:id', async (req, res) => {
+app.delete('/api/tratamentos/:id', so(PERMISSOES.ADMIN), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -6214,7 +6218,7 @@ app.delete('/api/tratamentos/:id', async (req, res) => {
 });
 
 // Etapas de tratamento
-app.get('/api/tratamentos/:id/etapas', async (req, res) => {
+app.get('/api/tratamentos/:id/etapas', so(PERMISSOES.EQUIPE), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -6232,7 +6236,7 @@ app.get('/api/tratamentos/:id/etapas', async (req, res) => {
   }
 });
 
-app.post('/api/tratamentos/:id/etapas', async (req, res) => {
+app.post('/api/tratamentos/:id/etapas', so(PERMISSOES.CLINICO), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -6250,7 +6254,7 @@ app.post('/api/tratamentos/:id/etapas', async (req, res) => {
   }
 });
 
-app.put('/api/tratamentos/etapas/:id', async (req, res) => {
+app.put('/api/tratamentos/etapas/:id', so(PERMISSOES.CLINICO), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -6275,7 +6279,7 @@ app.put('/api/tratamentos/etapas/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/tratamentos/etapas/:id', async (req, res) => {
+app.delete('/api/tratamentos/etapas/:id', so(PERMISSOES.ADMIN), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -6291,7 +6295,7 @@ app.delete('/api/tratamentos/etapas/:id', async (req, res) => {
 // COMISSÕES — FULL CRUD
 // ═══════════════════════════════════════════════════════════════
 
-app.get('/api/comissoes', async (req, res) => {
+app.get('/api/comissoes', so(PERMISSOES.CLINICO), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -6301,6 +6305,11 @@ app.get('/api/comissoes', async (req, res) => {
       LEFT JOIN dentistas d ON c.dentista_id = d.id AND d.tenant_id = c.tenant_id
       LEFT JOIN pacientes p ON c.paciente_id = p.id AND p.tenant_id = c.tenant_id WHERE c.tenant_id = $1`;
     const params = [user.tenant_id];
+    // Dentista vê só as próprias comissões (cadastro de dentista com o e-mail do usuário).
+    if (req.papel !== 'admin') {
+      params.push(String(user.email || '').toLowerCase());
+      query += ` AND LOWER(d.email) = $${params.length}`;
+    }
     if (dentista_id) { params.push(dentista_id); query += ` AND c.dentista_id=$${params.length}`; }
     if (statusFilter) { params.push(statusFilter); query += ` AND c.status=$${params.length}`; }
     if (mes && ano) { params.push(mes, ano); query += ` AND EXTRACT(MONTH FROM c.data)=$${params.length - 1} AND EXTRACT(YEAR FROM c.data)=$${params.length}`; }
@@ -6312,7 +6321,7 @@ app.get('/api/comissoes', async (req, res) => {
   }
 });
 
-app.post('/api/comissoes', async (req, res) => {
+app.post('/api/comissoes', so(PERMISSOES.ADMIN), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -6328,7 +6337,7 @@ app.post('/api/comissoes', async (req, res) => {
   }
 });
 
-app.put('/api/comissoes/:id', async (req, res) => {
+app.put('/api/comissoes/:id', so(PERMISSOES.ADMIN), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -6350,7 +6359,7 @@ app.put('/api/comissoes/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/comissoes/:id', async (req, res) => {
+app.delete('/api/comissoes/:id', so(PERMISSOES.ADMIN), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -6380,7 +6389,7 @@ function prontuarioErroStatus(error) {
   return 500;
 }
 
-app.get('/api/prontuarios', async (req, res) => {
+app.get('/api/prontuarios', so(PERMISSOES.CLINICO), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -6401,7 +6410,7 @@ app.get('/api/prontuarios', async (req, res) => {
   }
 });
 
-app.post('/api/prontuarios', async (req, res) => {
+app.post('/api/prontuarios', so(PERMISSOES.CLINICO), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -6424,7 +6433,7 @@ app.post('/api/prontuarios', async (req, res) => {
 });
 
 // Edição: numa única instrução, guarda a versão atual no histórico e grava a nova.
-app.put('/api/prontuarios/:id', async (req, res) => {
+app.put('/api/prontuarios/:id', so(PERMISSOES.CLINICO), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -6463,7 +6472,7 @@ app.put('/api/prontuarios/:id', async (req, res) => {
 });
 
 // Versões anteriores de um registro (mais nova primeiro).
-app.get('/api/prontuarios/:id/versoes', async (req, res) => {
+app.get('/api/prontuarios/:id/versoes', so(PERMISSOES.CLINICO), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -6483,7 +6492,7 @@ app.get('/api/prontuarios/:id/versoes', async (req, res) => {
 });
 
 // "Excluir" = inativar (o registro continua guardado e aparece com ?incluir_inativos=1).
-app.delete('/api/prontuarios/:id', async (req, res) => {
+app.delete('/api/prontuarios/:id', so(PERMISSOES.CLINICO), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -6496,7 +6505,7 @@ app.delete('/api/prontuarios/:id', async (req, res) => {
     if (!reg) return res.status(404).json({ error: 'Prontuário não encontrado' });
     if (reg.inativo_em) return res.status(409).json({ error: 'Registro já inativado' });
     const ehAutor = reg.criado_por && String(reg.criado_por) === String(user.id);
-    if (!ehAutor && user.role !== 'admin') return res.status(403).json({ error: 'Só o autor do registro ou um administrador pode inativar' });
+    if (!ehAutor && (await papelAtual(user)) !== 'admin') return res.status(403).json({ error: 'Só o autor do registro ou um administrador pode inativar' });
     const { rowCount } = await pool.query(
       `UPDATE prontuarios SET inativo_em = NOW(), inativo_por = $3, inativo_por_nome = $4, inativo_motivo = $5, updated_at = NOW()
         WHERE id = $1 AND tenant_id = $2 AND inativo_em IS NULL`,
@@ -6541,7 +6550,7 @@ async function congelarVersoesItens(itens, tenantId) {
   return out;
 }
 
-app.post('/api/orcamentos', async (req, res) => {
+app.post('/api/orcamentos', so(PERMISSOES.EQUIPE), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -6573,7 +6582,7 @@ app.post('/api/orcamentos', async (req, res) => {
   }
 });
 
-app.put('/api/orcamentos/:id', async (req, res) => {
+app.put('/api/orcamentos/:id', so(PERMISSOES.EQUIPE), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -6607,7 +6616,7 @@ app.put('/api/orcamentos/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/orcamentos/:id', async (req, res) => {
+app.delete('/api/orcamentos/:id', so(PERMISSOES.ADMIN), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -6694,7 +6703,7 @@ function alteracaoExigeVersao(antes, depois) {
   });
 }
 
-app.get('/api/procedimentos-catalogo', async (req, res) => {
+app.get('/api/procedimentos-catalogo', so(PERMISSOES.EQUIPE), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -6708,7 +6717,7 @@ app.get('/api/procedimentos-catalogo', async (req, res) => {
   }
 });
 
-app.post('/api/procedimentos-catalogo', async (req, res) => {
+app.post('/api/procedimentos-catalogo', so(PERMISSOES.ADMIN), async (req, res) => {
   const client = await pool.connect();
   try {
     const { user } = await verifyUser(req);
@@ -6743,7 +6752,7 @@ app.post('/api/procedimentos-catalogo', async (req, res) => {
   }
 });
 
-app.put('/api/procedimentos-catalogo/:id', async (req, res) => {
+app.put('/api/procedimentos-catalogo/:id', so(PERMISSOES.ADMIN), async (req, res) => {
   const client = await pool.connect();
   try {
     const { user } = await verifyUser(req);
@@ -6788,7 +6797,7 @@ app.put('/api/procedimentos-catalogo/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/procedimentos-catalogo/:id', async (req, res) => {
+app.delete('/api/procedimentos-catalogo/:id', so(PERMISSOES.ADMIN), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -6801,7 +6810,7 @@ app.delete('/api/procedimentos-catalogo/:id', async (req, res) => {
 });
 
 // Histórico completo de versões de um procedimento
-app.get('/api/procedimentos-catalogo/:id/versoes', async (req, res) => {
+app.get('/api/procedimentos-catalogo/:id/versoes', so(PERMISSOES.EQUIPE), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -6820,7 +6829,7 @@ app.get('/api/procedimentos-catalogo/:id/versoes', async (req, res) => {
 });
 
 // Resolve a versão vigente em uma data específica (para reabrir orçamentos antigos)
-app.get('/api/procedimentos-catalogo/:id/versao-em', async (req, res) => {
+app.get('/api/procedimentos-catalogo/:id/versao-em', so(PERMISSOES.EQUIPE), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -6847,7 +6856,7 @@ app.get('/api/procedimentos-catalogo/:id/versao-em', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════
 
 // Lista execuções de um orçamento
-app.get('/api/orcamentos/:id/execucoes', async (req, res) => {
+app.get('/api/orcamentos/:id/execucoes', so(PERMISSOES.EQUIPE), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -6870,7 +6879,7 @@ app.get('/api/orcamentos/:id/execucoes', async (req, res) => {
 });
 
 // Lista execuções de um paciente (histórico clínico-financeiro)
-app.get('/api/pacientes/:id/execucoes', async (req, res) => {
+app.get('/api/pacientes/:id/execucoes', so(PERMISSOES.EQUIPE), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -6891,7 +6900,7 @@ app.get('/api/pacientes/:id/execucoes', async (req, res) => {
 });
 
 // Cria uma execução (com ou sem assinatura)
-app.post('/api/execucoes', async (req, res) => {
+app.post('/api/execucoes', so(PERMISSOES.CLINICO), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -7010,7 +7019,7 @@ app.post('/api/execucoes', async (req, res) => {
 });
 
 // Remove uma execução (apenas se não tiver assinatura — segurança LGPD/MP 2200-2)
-app.delete('/api/execucoes/:id', async (req, res) => {
+app.delete('/api/execucoes/:id', so(PERMISSOES.ADMIN), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -7047,9 +7056,32 @@ app.get('/api/assinaturas/:id', async (req, res) => {
   }
 });
 
+// Receita/despesa do dashboard só para admin (matriz de papéis): para os demais papéis os
+// campos financeiros saem como null. Middleware para não mexer no handler.
+async function ocultarFinanceiroDoDashboard(req, res, next) {
+  try {
+    const { user } = await verifyUser(req);
+    if ((await papelAtual(user)) === 'admin') return next();
+    const json = res.json.bind(res);
+    res.json = (body) => {
+      if (body && typeof body === 'object' && res.statusCode < 400) {
+        for (const k of ['receitaMensal', 'despesaMensal']) if (k in body) body[k] = null;
+        if (body.crm && 'receitaTotal' in body.crm) body.crm.receitaTotal = null;
+        if (body.orcamentos) for (const k of ['valorAprovado', 'ticketMedio']) if (k in body.orcamentos) body.orcamentos[k] = null;
+        if (body.estoque && 'valorTotalEstoque' in body.estoque) body.estoque.valorTotalEstoque = null;
+      }
+      return json(body);
+    };
+    return next();
+  } catch (err) {
+    if (err?.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    return next(err);
+  }
+}
+
 // Dashboard agregado — KPIs gerais
 // Dashboard KPIs (handler compartilhado: /api/dashboard e /api/dashboard/kpis)
-app.get(['/api/dashboard', '/api/dashboard/kpis'], async (req, res) => {
+app.get(['/api/dashboard', '/api/dashboard/kpis'], ocultarFinanceiroDoDashboard, async (req, res) => {
   try {
     await verifyUser(req);
     const today = new Date().toISOString().split('T')[0];
@@ -8064,7 +8096,7 @@ app.get('/api/generic/:tableName', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════
 
 // List budgets
-app.get('/api/orcamentos', async (req, res) => {
+app.get('/api/orcamentos', so(PERMISSOES.EQUIPE), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -8083,7 +8115,7 @@ app.get('/api/orcamentos', async (req, res) => {
 });
 
 // Update budget status (approve/reject) — auto-moves CRM lead
-app.patch('/api/orcamentos/:id/status', async (req, res) => {
+app.patch('/api/orcamentos/:id/status', so(PERMISSOES.EQUIPE), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -14633,7 +14665,7 @@ app.post('/api/ai/transcribe', express.raw({ type: ['audio/*', 'application/octe
 });
 
 // ─── Generate clinical report via OpenAI GPT ────────────────
-app.post('/api/ai/clinical-report', async (req, res) => {
+app.post('/api/ai/clinical-report', so(PERMISSOES.CLINICO), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     const { transcription, queixaPrincipal, procedimento, dente, prescricoes, patientId, patientName, durationSeconds } = req.body;
@@ -14713,7 +14745,7 @@ ${transcription}`;
 });
 
 // ─── Get clinical reports for a patient ─────────────────────
-app.get('/api/ai/reports/:patientId', async (req, res, next) => {
+app.get('/api/ai/reports/:patientId', so(PERMISSOES.CLINICO), async (req, res, next) => {
   // export.csv tem rota própria (registrada depois); sem isto ela nunca era alcançada
   if (req.params.patientId === 'export.csv') return next();
   try {
@@ -14733,7 +14765,7 @@ app.get('/api/ai/reports/:patientId', async (req, res, next) => {
 
 // ─── List clinical reports with filters (period, status, patient, dentist) ──
 // GET /api/ai/reports?from=YYYY-MM-DD&to=YYYY-MM-DD&status=com_prescricao|sem_prescricao|todos&patientId=&attendantId=&q=
-app.get('/api/ai/reports', async (req, res) => {
+app.get('/api/ai/reports', so(PERMISSOES.CLINICO), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -14798,7 +14830,7 @@ app.get('/api/ai/reports', async (req, res) => {
 
 // ─── Export clinical reports as CSV ─────────────────────────
 // GET /api/ai/reports/export.csv?from=&to=&status=&patientId=&attendantId=&token=<JWT>
-app.get('/api/ai/reports/export.csv', async (req, res) => {
+app.get('/api/ai/reports/export.csv', so(PERMISSOES.CLINICO), async (req, res) => {
   try {
     // Allow token via query string for direct browser download links
     if (req.query.token && !req.headers.authorization) {
@@ -14872,7 +14904,7 @@ app.get('/api/ai/reports/export.csv', async (req, res) => {
 // ─── Consultations — finalize & history ─────────────────────
 
 // POST /api/consultations — save a finalized consultation
-app.post('/api/consultations', async (req, res) => {
+app.post('/api/consultations', so(PERMISSOES.CLINICO), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -14912,7 +14944,7 @@ app.post('/api/consultations', async (req, res) => {
 });
 
 // GET /api/consultations/:patientId — consultation history for a patient
-app.get('/api/consultations/:patientId', async (req, res) => {
+app.get('/api/consultations/:patientId', so(PERMISSOES.CLINICO), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -14935,7 +14967,7 @@ app.get('/api/consultations/:patientId', async (req, res) => {
 });
 
 // ─── Generate AI follow-up messages based on clinical report ─
-app.post('/api/ai/followup-messages', async (req, res) => {
+app.post('/api/ai/followup-messages', so(PERMISSOES.CLINICO), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -15029,7 +15061,7 @@ Gere as mensagens de follow-up personalizadas. Use {{nome}} como variável para 
 });
 
 // ─── Schedule follow-up from clinical report ────────────────
-app.post('/api/ai/schedule-followup', async (req, res) => {
+app.post('/api/ai/schedule-followup', so(PERMISSOES.CLINICO), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     const { reportId, patientName, patientPhone, messages, instance } = req.body;

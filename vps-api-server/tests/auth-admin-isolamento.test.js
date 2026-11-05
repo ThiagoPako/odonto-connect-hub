@@ -9,6 +9,7 @@
 // - pool.query é mockado: nenhuma query chega ao Postgres.
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
+import { limparCachePapel, _definirPapelParaTestes } from '../papeis.mjs';
 import { jest } from '@jest/globals';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -60,6 +61,9 @@ describe('Isolamento entre clínicas — rotas administrativas legadas', () => {
 
   beforeEach(() => {
     sqlLog = [];
+    // Papel lido do banco (papeis.mjs): fixa no cache para o pool mockado.
+    limparCachePapel();
+    _definirPapelParaTestes(adminA, 'admin');
     querySpy = jest.spyOn(pool, 'query').mockImplementation((sql, params = []) => {
       const text = String(sql);
       sqlLog.push({ text, params });

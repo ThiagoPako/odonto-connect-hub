@@ -3,6 +3,7 @@
 // pool.query mockado (nenhuma query chega ao Postgres).
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
+import { limparCachePapel, _definirPapelParaTestes } from '../papeis.mjs';
 import { jest } from '@jest/globals';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -40,6 +41,10 @@ beforeAll(() => {
 beforeEach(() => {
   sqlLog = [];
   registro = { criado_por: autor, inativo_em: null };
+  // Papel lido do banco (papeis.mjs): fixa no cache para o pool mockado.
+  limparCachePapel();
+  _definirPapelParaTestes(autor, 'dentista');
+  _definirPapelParaTestes(outro, 'dentista');
   querySpy = jest.spyOn(pool, 'query').mockImplementation((sql, params = []) => {
     const text = String(sql);
     sqlLog.push({ text, params });
@@ -86,6 +91,7 @@ describe('nada de DELETE físico no prontuário', () => {
   });
 
   test('admin da clínica pode inativar', async () => {
+    _definirPapelParaTestes(outro, 'admin');
     const res = await chamar('delete', `/api/prontuarios/${prA}`, token(tenantA, outro, 'admin'), { motivo: 'Duplicado por engano' });
     expect(res.status).toBe(200);
   });
