@@ -128,7 +128,8 @@ function AuthGate() {
     location.pathname === "/" ||
     location.pathname === "/signup" ||
     location.pathname === "/termos" ||
-    location.pathname === "/privacidade";
+    location.pathname === "/privacidade" ||
+    location.pathname === "/modelo-politica-clinica";
 
   // Public pages — no sidebar, no auth required
   if (isPublicPage) {

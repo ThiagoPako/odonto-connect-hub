@@ -1,4 +1,4 @@
-import { LEGAL_INFO } from "@/lib/legal";
+import { LEGAL_INFO, pendente } from "@/lib/legal";
 
 /**
  * Dados da oferta mostrados nas páginas públicas (landing e cadastro).
@@ -19,4 +19,6 @@ export const TESTE_GRATIS_TEXTO = `${TESTE_GRATIS_DIAS} dias grátis`;
  */
 export const WHATSAPP_CONSULTOR: string | null = null;
 
-export const EMAIL_CONTATO = LEGAL_INFO.emailContato;
+/** E-mail de contato da landing. `null` enquanto o dono não confirmar o domínio (P7 em legal.ts):
+ * os links de e-mail ficam escondidos em vez de apontar para "[PREENCHER…]". */
+export const EMAIL_CONTATO: string | null = pendente(LEGAL_INFO.emailContato) ? null : LEGAL_INFO.emailContato;
