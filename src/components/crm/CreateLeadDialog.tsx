@@ -8,7 +8,7 @@ import { useEffect, useState } from "react";
 import { crmApi } from "@/lib/vpsApi";
 import { CANAIS, getCampanhas, getPendingUtm, linkLeadToCampaign } from "@/data/campanhasStore";
 import { toast } from "sonner";
-import { mascaraTelefoneBR, erroTelefoneBR } from "@/lib/mascaraTelefone";
+import { mascaraTelefoneBR, erroTelefoneBR, telefoneParaServidor } from "@/lib/mascaraTelefone";
 
 interface Props {
   open: boolean;
@@ -51,7 +51,8 @@ export function CreateLeadDialog({ open, onOpenChange, onCreated }: Props) {
     setError(null);
     const { data, error: apiError } = await crmApi.create({
       nome: form.nome.trim(),
-      telefone: form.telefone.trim() || undefined,
+      // Máscara só na tela: o servidor recebe 55 + DDD + número, só dígitos.
+      telefone: telefoneParaServidor(form.telefone) || undefined,
       email: form.email.trim() || undefined,
       origem: form.origem,
       value: form.value ? Number(form.value) : undefined,
