@@ -124,6 +124,12 @@ jobs:
             cat /root/odonto-connect/vps-api-server/migration-whatsapp-fase1.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             cat /root/odonto-connect/vps-api-server/migration-seguranca-p0.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             cat /root/odonto-connect/vps-api-server/migration-contatos-recuperacao.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
+            # CPF único por clínica (antes era global e revelava paciente de outra clínica).
+            # Sem BEGIN: CREATE UNIQUE INDEX CONCURRENTLY não trava a escrita em pacientes.
+            if ! cat /root/odonto-connect/vps-api-server/migration-cpf-por-clinica.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1; then
+              echo "::warning title=CPF por clínica não aplicado::migration-cpf-por-clinica.sql falhou (CPF repetido na mesma clínica, lock ou erro). A chave global continua; o deploy segue. Ver log acima."
+              echo "!!! ATENÇÃO: pacientes_cpf_key (CPF único GLOBAL) continua ativa: revisar o log acima."
+            fi
             echo "=== Migrations applied ==="
 
             # ─── Pre-flight syntax check on server.mjs ─────────────────────

@@ -4906,11 +4906,34 @@ app.get('/api/pacientes', async (req, res) => {
   }
 });
 
+// CPF gravado só com dígitos; vazio vira NULL (o índice único por clínica ignora NULL).
+function normalizarCpf(cpf) {
+  const d = String(cpf ?? '').replace(/\D/g, '');
+  return d || null;
+}
+
+// Erro ao gravar paciente: nunca devolve error.message (o nome da constraint e o detalhe do
+// Postgres revelariam se o CPF é paciente de outra clínica — LGPD art. 11).
+const PACIENTE_CPF_DUPLICADO = 'Já existe um paciente com este CPF nesta clínica';
+function responderErroPaciente(res, error, tag) {
+  if (error?.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+  if (error?.code === '23505') {
+    if (error.constraint === 'uq_pacientes_tenant_cpf') return res.status(409).json({ error: PACIENTE_CPF_DUPLICADO });
+    // Chave global antiga (antes de migration-cpf-por-clinica.sql): não dizer de onde vem o conflito.
+    console.error(`[${tag}] conflito de chave única (${error.constraint || 'sem nome'})`);
+    return res.status(409).json({ error: 'Não foi possível salvar o paciente com este CPF. Fale com o suporte.' });
+  }
+  // Só o código: a mensagem do Postgres pode trazer o valor enviado (ex.: data inválida).
+  console.error(`[${tag}] erro ao gravar paciente`, error?.code || '');
+  return res.status(500).json({ error: 'Erro interno' });
+}
+
 app.post('/api/pacientes', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
-    const { nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes } = req.body;
+    const { nome, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes } = req.body;
+    const cpf = normalizarCpf(req.body.cpf);
     const id = crypto.randomUUID();
     await pool.query(
       'INSERT INTO pacientes (id, nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
@@ -4920,7 +4943,7 @@ app.post('/api/pacientes', async (req, res) => {
     // Push to Clinicorp
     import('./clinicorp.mjs').then(m => m.clinicorpPush.pushPatient(pool, id)).catch(e => console.error('Clinicorp push failed:', e.message));
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    responderErroPaciente(res, error, 'pacientes:create');
   }
 });
 
@@ -4928,7 +4951,8 @@ app.put('/api/pacientes/:id', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
-    const { nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes } = req.body;
+    const { nome, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes } = req.body;
+    const cpf = normalizarCpf(req.body.cpf);
     const { rowCount } = await pool.query(
       'UPDATE pacientes SET nome=$1, cpf=$2, telefone=$3, email=$4, data_nascimento=$5, sexo=$6, convenio=$7, endereco=$8, observacoes=$9, updated_at=NOW() WHERE id=$10 AND tenant_id=$11',
       [nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes, req.params.id, user.tenant_id]
@@ -4938,7 +4962,7 @@ app.put('/api/pacientes/:id', async (req, res) => {
     // Push to Clinicorp
     import('./clinicorp.mjs').then(m => m.clinicorpPush.pushPatient(pool, req.params.id)).catch(e => console.error('Clinicorp push failed:', e.message));
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    responderErroPaciente(res, error, 'pacientes:update');
   }
 });
 
@@ -12193,7 +12217,7 @@ app.post('/api/crm/leads/:id/convert-to-patient', async (req, res) => {
     const pacienteId = crypto.randomUUID();
     await pool.query(
       'INSERT INTO pacientes (id, nome, cpf, telefone, email, observacoes, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7)',
-      [pacienteId, lead.nome, lead.cpf || null, lead.telefone || null, lead.email || null, `Origem CRM: ${lead.origem || '—'}. ${lead.observacoes || ''}`, user.tenant_id]
+      [pacienteId, lead.nome, normalizarCpf(lead.cpf), lead.telefone || null, lead.email || null, `Origem CRM: ${lead.origem || '—'}. ${lead.observacoes || ''}`, user.tenant_id]
     );
 
     // Update lead status to 'paciente' and link paciente_id
@@ -12201,9 +12225,7 @@ app.post('/api/crm/leads/:id/convert-to-patient', async (req, res) => {
 
     res.json({ success: true, paciente_id: pacienteId, nome: lead.nome });
   } catch (error) {
-    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
-    console.error('❌ Error converting lead to patient:', error.message);
-    res.status(500).json({ error: error.message });
+    responderErroPaciente(res, error, 'crm:convert-to-patient');
   }
 });
 

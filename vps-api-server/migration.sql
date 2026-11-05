@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS user_roles (
 CREATE TABLE IF NOT EXISTS pacientes (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   nome TEXT NOT NULL,
-  cpf TEXT UNIQUE,
+  cpf TEXT,  -- único POR CLÍNICA: uq_pacientes_tenant_cpf (migration-cpf-por-clinica.sql)
   telefone TEXT,
   email TEXT,
   data_nascimento DATE,
