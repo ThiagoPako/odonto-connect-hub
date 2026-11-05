@@ -15,6 +15,20 @@ jobs:
     name: Run Jest Security Tests
     runs-on: ubuntu-latest
 
+    # Os testes importam server.mjs, que abre conexão com o Postgres.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -23,16 +37,15 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: npm
+          cache-dependency-path: vps-api-server/package-lock.json
 
-      - name: Install Bun
-        uses: oven-sh/setup-bun@v1
-        with:
-          bun-version: latest
-
+      # npm ci (e não bun install): o bcrypt precisa rodar o script de instalação para gerar o
+      # binário nativo; o Bun pula esse script e os testes caíam em "Cannot find module bcrypt_lib.node".
       - name: Install dependencies
         run: |
           cd vps-api-server
-          bun install
+          npm ci
 
       - name: Run Tests
         run: |
