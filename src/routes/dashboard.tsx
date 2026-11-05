@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
+import { canAccessRoute } from "@/lib/routeAccess";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { KpiCard } from "@/components/KpiCard";
 import { ActiveAttendanceCard } from "@/components/ActiveAttendanceCard";
@@ -60,16 +61,17 @@ function saudacao(): string {
   return "Boa noite";
 }
 
-function SectionHeader({ icon: Icon, title, to, linkLabel }: { icon: LucideIcon; title: string; to: string; linkLabel: string }) {
+/** Cabeçalho de seção. O atalho só aparece se o perfil pode abrir a tela (mesma regra do menu). */
+function SectionHeader({ icon: Icon, title, to, linkLabel, podeAbrir }: { icon: LucideIcon; title: string; to: string; linkLabel: string; podeAbrir: boolean }) {
   return (
     <div className="flex items-center justify-between gap-3 mb-3 md:mb-4">
       <div className="flex items-center gap-2 min-w-0">
         <Icon className="h-[18px] w-[18px] shrink-0 text-muted-foreground" aria-hidden="true" />
         <h2 className="text-[0.9375rem] font-semibold text-foreground truncate">{title}</h2>
       </div>
-      <Link to={to} className="group inline-flex items-center gap-1 shrink-0 min-h-11 -my-3 md:min-h-0 md:my-0 text-[0.8125rem] font-medium text-primary hover:underline underline-offset-4">
+      {podeAbrir && <Link to={to} className="group inline-flex items-center gap-1 shrink-0 min-h-11 -my-3 md:min-h-0 md:my-0 text-[0.8125rem] font-medium text-primary hover:underline underline-offset-4">
         {linkLabel} <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
-      </Link>
+      </Link>}
     </div>
   );
 }
@@ -77,6 +79,8 @@ function SectionHeader({ icon: Icon, title, to, linkLabel }: { icon: LucideIcon;
 function DashboardPage() {
   const { user, isLoading: authLoading } = useAuth();
   const primeiroNome = user?.name?.trim().split(/\s+/)[0] ?? "";
+  // Dentista não abre /crm nem /estoque: sem atalho, para não cair em "Acesso negado"
+  const pode = (rota: string) => canAccessRoute(rota, user?.role ?? "user", !!user?.is_super_admin, user?.tenant_features);
   const [kpis, setKpis] = useState<any>(EMPTY_KPIS);
 
   const [sessions, setSessions] = useState<ActiveSession[]>([]);
@@ -176,7 +180,7 @@ function DashboardPage() {
 
         {/* === AGENDA DO DIA === */}
         <section>
-          <SectionHeader icon={CalendarCheck} title="Agenda de hoje" to="/agenda" linkLabel="Ver agenda" />
+          <SectionHeader icon={CalendarCheck} title="Agenda de hoje" to="/agenda" linkLabel="Ver agenda" podeAbrir={pode("/agenda")} />
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 md:gap-4">
             <KpiCard loading={firstLoad} title="Total Consultas" value={fmt(agenda.total)} icon={CalendarCheck} />
             <KpiCard loading={firstLoad} title="Finalizados" value={fmt(agenda.finalizados)} change={`${agenda.taxaPresenca}% presença`} changeType="positive" icon={CheckCircle} />
@@ -189,7 +193,7 @@ function DashboardPage() {
 
         {/* === FINANCEIRO / ORÇAMENTOS === */}
         <section>
-          <SectionHeader icon={FileText} title="Orçamentos" to="/orcamentos" linkLabel="Ver orçamentos" />
+          <SectionHeader icon={FileText} title="Orçamentos" to="/orcamentos" linkLabel="Ver orçamentos" podeAbrir={pode("/orcamentos")} />
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4">
             <KpiCard loading={firstLoad} title="Total Orçamentos" value={fmt(orcamento.total)} icon={FileText} />
             <KpiCard loading={firstLoad} title="Valor Aprovado" value={`R$ ${orcamento.valorAprovado.toLocaleString("pt-BR")}`} change={`${orcamento.taxaConversao}% conversão`} changeType="positive" icon={DollarSign} />
@@ -201,7 +205,7 @@ function DashboardPage() {
 
         {/* === CRM / PACIENTES === */}
         <section>
-          <SectionHeader icon={Users} title="Pacientes e CRM" to="/crm" linkLabel="Ver CRM" />
+          <SectionHeader icon={Users} title="Pacientes e CRM" to="/crm" linkLabel="Ver CRM" podeAbrir={pode("/crm")} />
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4">
             <KpiCard loading={firstLoad} title="Pacientes Cadastrados" value={fmt(pacientes.totalCadastrados)} icon={Users} />
             <KpiCard loading={firstLoad} title="Pacientes Ativos" value={fmt(crm.ativos)} icon={UserCheck} />
@@ -222,7 +226,7 @@ function DashboardPage() {
         </section>
 
         <section>
-          <SectionHeader icon={Package} title="Estoque" to="/estoque" linkLabel="Ver estoque" />
+          <SectionHeader icon={Package} title="Estoque" to="/estoque" linkLabel="Ver estoque" podeAbrir={pode("/estoque")} />
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 md:gap-4">
             <KpiCard loading={firstLoad} title="Total Itens" value={fmt(estoque.totalItens)} icon={Package} />
             <KpiCard loading={firstLoad}
@@ -245,7 +249,7 @@ function DashboardPage() {
 
         {/* === ATENDIMENTOS ATIVOS (CHAT) === */}
         <section>
-          <SectionHeader icon={MessageSquare} title="Atendimentos ativos" to="/chat" linkLabel="Abrir chat" />
+          <SectionHeader icon={MessageSquare} title="Atendimentos ativos" to="/chat" linkLabel="Abrir chat" podeAbrir={pode("/chat")} />
           {sessionsError ? (
             <div role="alert" className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-lg bg-destructive/10 px-4 py-3 text-sm">
               <span className="flex flex-1 items-start gap-2 text-foreground">
