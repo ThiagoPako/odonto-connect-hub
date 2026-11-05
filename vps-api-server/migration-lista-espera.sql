@@ -1,6 +1,7 @@
 -- Lista de espera e ofertas de encaixe (B8) — paciente aguardando horário e a oferta
 -- de um horário liberado, um paciente por vez, com prazo de resposta pelo WhatsApp.
--- Idempotente: pode rodar N vezes. O server.mjs cria o mesmo no boot (ensureWaitlistSchema).
+-- Idempotente: pode rodar N vezes. Política no mesmo formato do apply_tenant_rls do boot
+-- (current_setting), sem depender de is_super_admin(), que não existe em todo banco. O server.mjs cria o mesmo no boot (ensureWaitlistSchema).
 -- Rollback: DROP TABLE lista_espera_ofertas; DROP TABLE lista_espera; (perde a lista e o histórico de ofertas).
 CREATE TABLE IF NOT EXISTS lista_espera (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -44,10 +45,10 @@ ALTER TABLE IF EXISTS agendamentos ADD COLUMN IF NOT EXISTS liberado_em TIMESTAM
 ALTER TABLE lista_espera ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS tenant_isolation_policy ON lista_espera;
 CREATE POLICY tenant_isolation_policy ON lista_espera FOR ALL
-  USING (is_super_admin() OR tenant_id = get_current_tenant_id())
-  WITH CHECK (is_super_admin() OR tenant_id = get_current_tenant_id());
+  USING ((current_setting('app.is_super_admin', true) = 'true') OR tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)
+  WITH CHECK ((current_setting('app.is_super_admin', true) = 'true') OR tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
 ALTER TABLE lista_espera_ofertas ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS tenant_isolation_policy ON lista_espera_ofertas;
 CREATE POLICY tenant_isolation_policy ON lista_espera_ofertas FOR ALL
-  USING (is_super_admin() OR tenant_id = get_current_tenant_id())
-  WITH CHECK (is_super_admin() OR tenant_id = get_current_tenant_id());
+  USING ((current_setting('app.is_super_admin', true) = 'true') OR tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid)
+  WITH CHECK ((current_setting('app.is_super_admin', true) = 'true') OR tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::uuid);
