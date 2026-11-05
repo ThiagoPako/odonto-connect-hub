@@ -33,6 +33,7 @@ const dentistaSaiu = 'aaaaaaaa-2222-4000-8000-0000000000d0';
 const agendamentoA = 'aaaaaaaa-3333-4000-8000-0000000000ac';
 const relatorioOutroDentista = 'aaaaaaaa-1111-4000-8000-0000000000a2';
 const relatorioDentistaSaiu = 'aaaaaaaa-1111-4000-8000-0000000000a0';
+const relatorioAprovadoA = 'aaaaaaaa-1111-4000-8000-0000000000a9';
 // Cadastro de dentistas da clínica A, por e-mail do usuário (ativo = ainda na clínica)
 const dentistasPorEmail = {
   'dentista@clinica-a.com': { id: dentistaA, nome: 'Ana Lima', cro: 'SP-1234', tenant: tenantA },
@@ -49,6 +50,7 @@ const relatorios = {
   [relatorioB]: { tenant: tenantB, patient_id: pacienteB, attendant_id: userId, dentista_id: null, status: 'rascunho' },
   [relatorioOutroDentista]: { tenant: tenantA, patient_id: pacienteA, attendant_id: 'x', dentista_id: dentistaA2, status: 'rascunho' },
   [relatorioDentistaSaiu]: { tenant: tenantA, patient_id: pacienteA, attendant_id: 'x', dentista_id: dentistaSaiu, status: 'rascunho' },
+  [relatorioAprovadoA]: { tenant: tenantA, patient_id: pacienteA, attendant_id: userId, dentista_id: dentistaA, status: 'aprovado' },
 };
 
 let sqlLog;
@@ -119,9 +121,9 @@ beforeEach(() => {
       const p = pacientes[params[0]];
       return Promise.resolve(p && p.tenant === params[1] ? { rows: [{ id: params[0], nome: p.nome, telefone: p.telefone }], rowCount: 1 } : vazio);
     }
-    if (/SELECT (id|id, patient_id) FROM clinical_reports WHERE id = \$1 AND tenant_id = \$2/.test(text)) {
+    if (/SELECT (id|id, patient_id|id, patient_id, status) FROM clinical_reports WHERE id = \$1 AND tenant_id = \$2/.test(text)) {
       const r = relatorios[params[0]];
-      return Promise.resolve(r && r.tenant === params[1] ? { rows: [{ id: params[0], patient_id: r.patient_id }], rowCount: 1 } : vazio);
+      return Promise.resolve(r && r.tenant === params[1] ? { rows: [{ id: params[0], patient_id: r.patient_id, status: r.status }], rowCount: 1 } : vazio);
     }
     if (/^\s*UPDATE clinical_reports\s+SET report = \$1, status = 'aprovado'/.test(text)) {
       const r = relatorios[params[7]];
@@ -169,6 +171,16 @@ describe('R2 — relatório clínico nasce como rascunho', () => {
       token({ role: 'admin', email: 'admin@clinica-a.com' }));
     expect(res.status).toBe(200);
     expect(achar(/INSERT INTO clinical_reports/).params[13]).toBe(dentistaA2);
+  });
+
+  test('com agendamento, o dono do rascunho é o dentista do agendamento, mesmo que outro dentista gere', async () => {
+    const res = await chamar('post', '/api/ai/clinical-report', corpoRelatorio({ appointmentId: agendamentoA }));
+    expect(res.status).toBe(200);
+    expect(achar(/INSERT INTO clinical_reports/).params[13]).toBe(dentistaA2);
+    const ordem = sqlLog.findIndex(q => /FROM agendamentos WHERE id/.test(q.text));
+    const dentistaDoUsuario = sqlLog.findIndex(q => /FROM dentistas\s+WHERE tenant_id = \$1 AND LOWER\(email\)/.test(q.text));
+    expect(ordem).toBeGreaterThanOrEqual(0);
+    expect(dentistaDoUsuario === -1 || ordem < dentistaDoUsuario).toBe(true);
   });
 
   test('admin sem agendamento com dentista não gera (400), nada vai à OpenAI', async () => {
@@ -330,13 +342,13 @@ describe('R3 — mensagens de acompanhamento sem IA', () => {
 });
 
 describe('R4 — agendamento do acompanhamento', () => {
-  const modelos = async () => (await chamar('post', '/api/ai/followup-messages', { reportId: relatorioA })).body.messages;
+  const modelos = async () => (await chamar('post', '/api/ai/followup-messages', { reportId: relatorioAprovadoA })).body.messages;
 
   test('telefone e nome vêm do cadastro do paciente, nunca do corpo; envio pela fila como transacional', async () => {
     const messages = await modelos();
     sqlLog = [];
     const res = await chamar('post', '/api/ai/schedule-followup', {
-      reportId: relatorioA, messages, revisado: true,
+      reportId: relatorioAprovadoA, messages, revisado: true,
       patientPhone: '5599900000000', patientName: 'Outro Nome',
     });
     expect(res.status).toBe(200);
@@ -358,6 +370,14 @@ describe('R4 — agendamento do acompanhamento', () => {
     expect(up.params[2]).toBe(tenantA);
   });
 
+  test('relatório ainda em rascunho → 409 sem enfileirar', async () => {
+    const res = await chamar('post', '/api/ai/schedule-followup', {
+      reportId: relatorioA, messages: [{ delay_days: 1, text: 'Olá, {{nome}}!' }], revisado: true,
+    });
+    expect(res.status).toBe(409);
+    expect(gravou(/INSERT INTO automation_jobs/)).toBe(false);
+  });
+
   test('relatório de outra clínica → 404 sem enfileirar', async () => {
     const res = await chamar('post', '/api/ai/schedule-followup', {
       reportId: relatorioB, messages: [{ delay_days: 1, text: 'Olá, {{nome}}!' }], revisado: true,
@@ -368,7 +388,7 @@ describe('R4 — agendamento do acompanhamento', () => {
 
   test('sem a caixa "Revisei as mensagens" → 400', async () => {
     const res = await chamar('post', '/api/ai/schedule-followup', {
-      reportId: relatorioA, messages: [{ delay_days: 1, text: 'Olá, {{nome}}!' }],
+      reportId: relatorioAprovadoA, messages: [{ delay_days: 1, text: 'Olá, {{nome}}!' }],
     });
     expect(res.status).toBe(400);
     expect(gravou(/INSERT INTO automation_jobs/)).toBe(false);
@@ -376,7 +396,7 @@ describe('R4 — agendamento do acompanhamento', () => {
 
   test('recepção não agenda', async () => {
     const res = await chamar('post', '/api/ai/schedule-followup', {
-      reportId: relatorioA, messages: [{ delay_days: 1, text: 'Olá, {{nome}}!' }], revisado: true,
+      reportId: relatorioAprovadoA, messages: [{ delay_days: 1, text: 'Olá, {{nome}}!' }], revisado: true,
     }, token({ role: 'recepcionista' }));
     expect(res.status).toBe(403);
   });
@@ -384,7 +404,7 @@ describe('R4 — agendamento do acompanhamento', () => {
   test('dentista pelo user_roles (papel no token diferente) agenda', async () => {
     opcoes.papeisExtras = ['dentista'];
     const res = await chamar('post', '/api/ai/schedule-followup', {
-      reportId: relatorioA, messages: [{ delay_days: 1, text: 'Olá, {{nome}}!' }], revisado: true,
+      reportId: relatorioAprovadoA, messages: [{ delay_days: 1, text: 'Olá, {{nome}}!' }], revisado: true,
     }, token({ role: 'user' }));
     expect(res.status).toBe(200);
   });
@@ -403,7 +423,7 @@ describe('R4 — agendamento do acompanhamento', () => {
     'Como foi o procedimento?',
   ])('filtro de termos recusa: %s', async (text) => {
     const res = await chamar('post', '/api/ai/schedule-followup', {
-      reportId: relatorioA, messages: [{ delay_days: 1, text }], revisado: true,
+      reportId: relatorioAprovadoA, messages: [{ delay_days: 1, text }], revisado: true,
     });
     expect(res.status).toBe(400);
     expect(gravou(/INSERT INTO automation_jobs/)).toBe(false);
@@ -411,9 +431,42 @@ describe('R4 — agendamento do acompanhamento', () => {
 
   test.each([0, 31, 1.5, 'x'])('dias fora de 1 a 30 (%p) → 400', async (delay_days) => {
     const res = await chamar('post', '/api/ai/schedule-followup', {
-      reportId: relatorioA, messages: [{ delay_days, text: 'Olá, {{nome}}!' }], revisado: true,
+      reportId: relatorioAprovadoA, messages: [{ delay_days, text: 'Olá, {{nome}}!' }], revisado: true,
     });
     expect(res.status).toBe(400);
+  });
+});
+
+describe('prescricoes JSONB que não é lista (proteção do #44)', () => {
+  test.each([
+    ['/api/ai/reports?status=com_prescricao', {}, token()],
+    ['/api/ai/reports/export.csv?status=sem_prescricao', {}, token({ role: 'admin', email: 'admin@clinica-a.com' })],
+    ['/api/ai/reports/export-pdf?status=com_prescricao', {}, token({ role: 'admin', email: 'admin@clinica-a.com' })],
+  ])('%s filtra com jsonb_typeof, sem jsonb_array_length direto', async (url, body, tk) => {
+    const res = await chamar('get', url, body, tk);
+    expect(res.status).toBe(200);
+    const q = sqlLog.find(x => /FROM clinical_reports/.test(x.text) && /jsonb_/.test(x.text));
+    expect(q.text).toMatch(/CASE WHEN jsonb_typeof\(prescricoes\) = 'array' THEN jsonb_array_length\(prescricoes\) ELSE 0 END/);
+    expect(q.text).not.toMatch(/jsonb_array_length\(COALESCE/);
+  });
+
+  test('lista com prescricoes em objeto ou texto inválido não derruba a rota', async () => {
+    const base = querySpy.getMockImplementation();
+    querySpy.mockImplementation((sql, params) => {
+      if (/FROM clinical_reports\s+WHERE tenant_id = \$1/.test(String(sql))) {
+        sqlLog.push({ text: String(sql), params });
+        return Promise.resolve({ rows: [
+          { id: 'r1', patient_id: pacienteA, prescricoes: { medicamento: 'x' }, status: 'aprovado', created_at: '2026-11-01T10:00:00Z' },
+          { id: 'r2', patient_id: pacienteA, prescricoes: 'não é json', status: 'rascunho', created_at: '2026-11-01T10:00:00Z' },
+          { id: 'r3', patient_id: pacienteA, prescricoes: [{ medicamento: 'y' }], status: 'aprovado', created_at: '2026-11-01T10:00:00Z' },
+        ], rowCount: 3 });
+      }
+      return base(sql, params);
+    });
+    const res = await chamar('get', '/api/ai/reports');
+    expect(res.status).toBe(200);
+    expect(res.body.stats.com_prescricao).toBe(1);
+    expect(res.body.stats.pendentes_revisao).toBe(1);
   });
 });
 
