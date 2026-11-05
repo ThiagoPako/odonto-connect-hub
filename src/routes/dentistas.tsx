@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
+import { EstadoVazio } from "@/components/EstadoVazio";
 import { useState, useEffect, useCallback } from "react";
 import {
   especialidades,
@@ -18,6 +19,7 @@ import {
   Percent,
   X,
   Loader2,
+  Stethoscope,
 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import { dentistasApi } from "@/lib/vpsApi";
@@ -268,13 +270,18 @@ function DentistasPage() {
             </table>
           </div>
           {filtered.length === 0 && !loadError && (
-            <div className="text-center py-12">
-              <p className="text-muted-foreground text-sm">
-                {dentistas.length === 0
-                  ? "Nenhum dentista cadastrado ainda. Clique em \"Novo Dentista\" para começar."
-                  : "Nenhum dentista encontrado para essa busca."}
-              </p>
-            </div>
+            dentistas.length === 0 ? (
+              <EstadoVazio
+                icon={Stethoscope}
+                titulo="Cadastre o primeiro dentista"
+                descricao="Cada dentista vira uma coluna na agenda e tem o próprio painel. Use o mesmo e-mail do login dele para o painel aparecer."
+                acao={{ label: "Novo dentista", icon: UserPlus, onClick: () => { setEditingDentista(null); setShowForm(true); } }}
+              />
+            ) : (
+              <div className="text-center py-12">
+                <p className="text-muted-foreground text-sm">Nenhum dentista encontrado para essa busca.</p>
+              </div>
+            )
           )}
         </div>
 

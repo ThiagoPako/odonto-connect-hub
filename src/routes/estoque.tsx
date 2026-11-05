@@ -1,9 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
-import {
-  Search, Plus, AlertTriangle, Package, ArrowDownCircle, ArrowUpCircle,
-  Loader2, X,
-} from "lucide-react";
+import { EstadoVazio } from "@/components/EstadoVazio";
+import { Search, Plus, AlertTriangle, Package, ArrowDownCircle, ArrowUpCircle, Loader2, X } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -237,7 +235,17 @@ function EstoquePage() {
                     </tr>
                   ))}
                   {filteredItems.length === 0 && (
-                    <tr><td colSpan={7} className="px-4 py-8 text-center text-xs text-muted-foreground">Nenhum item encontrado</td></tr>
+                    <tr><td colSpan={7} className="px-4 py-8 text-center text-xs text-muted-foreground">
+                      {items.length === 0 && loadErrors.length === 0 ? (
+                        <EstadoVazio
+                          compacto
+                          icon={Package}
+                          titulo="Nenhum item no estoque"
+                          descricao="Cadastre materiais, medicamentos e descartáveis com a quantidade mínima: o sistema avisa quando um item estiver acabando."
+                          acao={{ label: "Novo item", icon: Plus, onClick: () => setShowAddItem(true) }}
+                        />
+                      ) : "Nenhum item encontrado"}
+                    </td></tr>
                   )}
                 </tbody>
               </table>

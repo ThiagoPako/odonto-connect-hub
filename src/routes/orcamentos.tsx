@@ -1,10 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
-import {
-  Plus, Search, DollarSign, CheckCircle2, XCircle, Clock, TrendingUp,
-  FileText, CreditCard, ExternalLink, Loader2, Printer, Pencil, Trash2,
-  PlayCircle,
-} from "lucide-react";
+import { EstadoVazio } from "@/components/EstadoVazio";
+import { Plus, Search, DollarSign, CheckCircle2, XCircle, Clock, TrendingUp, FileText, CreditCard, ExternalLink, Loader2, Printer, Pencil, Trash2, PlayCircle } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import { orcamentosApi, pacientesApi, dentistasApi } from "@/lib/vpsApi";
 import { toast } from "sonner";
@@ -245,7 +242,16 @@ function OrcamentosPage() {
                 <Button size="sm" variant="outline" onClick={loadAll}>Tentar de novo</Button>
               </div>
             )}
-            {!loadError && filtered.length === 0 && <p className="text-xs text-muted-foreground text-center py-8">Nenhum orçamento encontrado</p>}
+            {!loadError && filtered.length === 0 && (orcamentos.length === 0 ? (
+              <EstadoVazio
+                compacto
+                icon={FileText}
+                titulo="Nenhum orçamento ainda"
+                descricao="Monte o orçamento do paciente com os procedimentos do catálogo. Ao aprovar, ele vira tratamento."
+                acao={{ label: "Novo orçamento", icon: Plus, onClick: () => setNovoOpen(true) }}
+                acaoSecundaria={{ label: "Ver catálogo", to: "/procedimentos" }}
+              />
+            ) : <p className="text-xs text-muted-foreground text-center py-8">Nenhum orçamento com esse filtro</p>)}
           </div>
 
           {/* Budget detail */}

@@ -5558,6 +5558,40 @@ async function getClinicaConfigRows(tenantId) {
   return legacy;
 }
 
+// Primeiros passos (checklist do dashboard): só contagens da própria clínica, sem dado de paciente.
+// O WhatsApp conectado vem do estado ao vivo da Evolution, no frontend (useWhatsAppInstances).
+app.get('/api/onboarding/status', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const tId = user.tenant_id;
+    // Tabela ausente em instalação antiga conta como zero, não como erro.
+    const count = async (sql) => {
+      try { return Number((await pool.query(sql, [tId])).rows[0]?.n || 0); }
+      catch (err) { if (err.code === '42P01' || err.code === '42703') return 0; throw err; }
+    };
+    const [dentistas, pacientes, agendamentos, horarios, instancias] = await Promise.all([
+      count('SELECT COUNT(*)::int AS n FROM dentistas WHERE tenant_id = $1'),
+      count('SELECT COUNT(*)::int AS n FROM pacientes WHERE tenant_id = $1'),
+      count('SELECT COUNT(*)::int AS n FROM agendamentos WHERE tenant_id = $1'),
+      // Horário "configurado" = a clínica salvou a própria linha (a id=1 legada é só padrão).
+      count('SELECT COUNT(*)::int AS n FROM clinica_config WHERE tenant_id = $1'),
+      count('SELECT COUNT(*)::int AS n FROM whatsapp_instances WHERE tenant_id = $1'),
+    ]);
+    res.json({
+      dentistas,
+      pacientes,
+      agendamentos,
+      horarios_configurados: horarios > 0,
+      whatsapp_instancias: instancias,
+    });
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('❌ onboarding/status:', error.message);
+    res.status(500).json({ error: 'Não foi possível ler o progresso agora' });
+  }
+});
+
 app.get('/api/clinica/config', async (req, res) => {
   try {
     const { user } = await verifyUser(req);

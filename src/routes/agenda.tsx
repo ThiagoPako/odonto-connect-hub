@@ -4,13 +4,14 @@ import { useVpsEvent } from "@/hooks/useVpsEvent";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, ChevronLeft, ChevronRight, Settings, RefreshCw, Clock, Database, Send, SlidersHorizontal } from "lucide-react";
+import { Plus, ChevronLeft, ChevronRight, Settings, RefreshCw, Clock, Database, Send, SlidersHorizontal, Stethoscope } from "lucide-react";
 import { toast } from "sonner";
 import { agendaApi, dentistasApi, clinicaApi, type AgendamentoVPS, type ClinicaConfig } from "@/lib/vpsApi";
 import { clinicorpApi } from "@/lib/clinicorpApi";
 import { AgendaMiniCalendar } from "@/components/agenda/AgendaMiniCalendar";
 import { AgendaProfessionalsList } from "@/components/agenda/AgendaProfessionalsList";
 import { AgendaGrid } from "@/components/agenda/AgendaGrid";
+import { EstadoVazio } from "@/components/EstadoVazio";
 import { NovoAgendamentoModal } from "@/components/agenda/NovoAgendamentoModal";
 import { AgendamentoPopover } from "@/components/agenda/AgendamentoPopover";
 import { AgendaStatusFilter } from "@/components/agenda/AgendaStatusFilter";
@@ -65,6 +66,8 @@ function clinicorpErrorMessage(err: unknown): string {
 function AgendaPage() {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [profs, setProfs] = useState<Prof[]>([]);
+  // true depois que a lista de dentistas carregou sem erro (para o estado vazio não piscar).
+  const [profsLoaded, setProfsLoaded] = useState(false);
   const [selectedProfs, setSelectedProfs] = useState<string[]>([]);
   const [selectedStatuses, setSelectedStatuses] = useState<string[]>(["agendado", "confirmado", "em_atendimento", "finalizado", "faltou", "cancelado"]);
   const [appointments, setAppointments] = useState<AgendamentoVPS[]>([]);
@@ -103,6 +106,7 @@ function AgendaPage() {
           setProfs(list);
           setSelectedProfs((prev) => Array.from(new Set([...prev, ...list.map((p) => p.id)])));
         }
+        setProfsLoaded(true);
       })
     clinicaApi.getConfig()
       .then(({ data, error }) => {
@@ -400,6 +404,16 @@ function AgendaPage() {
           </aside>
 
           <div className="flex min-h-0 h-[70vh] lg:h-auto">
+          {profsLoaded && profs.length === 0 ? (
+            <EstadoVazio
+              icon={Stethoscope}
+              titulo="Cadastre um dentista para abrir a agenda"
+              descricao="A agenda mostra uma coluna por dentista. Depois de cadastrar, volte aqui e clique em um horário para marcar a consulta."
+              acao={{ label: "Cadastrar dentista", to: "/dentistas" }}
+              acaoSecundaria={{ label: "Horários da clínica", to: "/configuracoes/agenda" }}
+              className="flex-1 self-center"
+            />
+          ) : (
           <AgendaGrid
             professionals={visibleProfs}
             appointments={visibleApts}
@@ -409,6 +423,7 @@ function AgendaPage() {
             onCellClick={handleCellClick}
             onAppointmentClick={(a) => setPopoverApt(a)}
           />
+          )}
           </div>
         </div>
       </main>

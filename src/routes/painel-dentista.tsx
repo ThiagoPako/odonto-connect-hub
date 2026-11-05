@@ -1,5 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { localDateISO } from "@/lib/utils";
+import { EstadoVazio } from "@/components/EstadoVazio";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { useEffect, useState, useCallback } from "react";
 import { useAuth } from "@/hooks/useAuth";
@@ -84,6 +85,24 @@ function PainelDentistaPage() {
             <Loader2 className="h-5 w-5 animate-spin" />
             Carregando painel…
           </div>
+        </main>
+      </div>
+    );
+  }
+
+  // Clínica sem dentista, ou usuário cujo e-mail não está em nenhum dentista: não é erro,
+  // é um passo de configuração. "Tentar novamente" não resolveria.
+  if (error && /Dentista não encontrado/i.test(error)) {
+    return (
+      <div className="flex-1 flex flex-col min-h-screen">
+        <DashboardHeader title="Painel — Dentista" />
+        <main className="flex-1 flex items-center justify-center p-6">
+          <EstadoVazio
+            icon={Stethoscope}
+            titulo="Ainda não há dentista ligado a este usuário"
+            descricao="Este painel mostra a agenda, os pacientes e as comissões de um dentista. Cadastre o dentista com o mesmo e-mail do login dele para o painel aparecer."
+            acao={{ label: "Cadastrar dentista", to: "/dentistas" }}
+          />
         </main>
       </div>
     );

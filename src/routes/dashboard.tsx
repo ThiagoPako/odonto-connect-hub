@@ -4,6 +4,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { KpiCard } from "@/components/KpiCard";
 import { ActiveAttendanceCard } from "@/components/ActiveAttendanceCard";
+import { PrimeirosPassos } from "@/components/PrimeirosPassos";
 import { dashboardApi, sessionsApi } from "@/lib/vpsApi";
 import { OrcamentoConversaoChart } from "@/components/charts/OrcamentoConversaoChart";
 import { OrigemLeadsChart } from "@/components/charts/OrigemLeadsChart";
@@ -114,6 +115,8 @@ function DashboardPage() {
             <span>Erro ao carregar dashboard: {error}</span>
           </div>
         )}
+
+        <PrimeirosPassos />
 
         {isEmpty && (
           <div className="rounded-xl border border-warning/40 bg-warning/5 px-4 py-3 text-sm text-warning-foreground flex items-start gap-3">

@@ -1,9 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
-import {
-  Search, FileText, Camera, FlaskConical, Upload, ChevronRight,
-  AlertCircle, Pill, Heart, User, Calendar, Phone, Loader2, Plus, X,
-} from "lucide-react";
+import { EstadoVazio } from "@/components/EstadoVazio";
+import { Search, FileText, Camera, FlaskConical, Upload, ChevronRight, AlertCircle, Pill, Heart, User, Calendar, Phone, Loader2, Plus, X, FileHeart } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import { prontuariosApi, pacientesApi } from "@/lib/vpsApi";
 import { toast } from "sonner";
@@ -142,7 +140,15 @@ function ProntuarioPage() {
                   </button>
                 );
               })}
-              {allFiltered.length === 0 && <p className="text-xs text-muted-foreground text-center py-4">Nenhum paciente encontrado</p>}
+              {allFiltered.length === 0 && (!loading && pacientes.length === 0 ? (
+                <EstadoVazio
+                  compacto
+                  icon={FileHeart}
+                  titulo="Nenhum paciente ainda"
+                  descricao="O prontuário reúne as consultas e documentos de cada paciente. Cadastre o primeiro paciente para começar."
+                  acao={{ label: "Cadastrar paciente", to: "/pacientes" }}
+                />
+              ) : <p className="text-xs text-muted-foreground text-center py-4">Nenhum paciente encontrado</p>)}
             </div>
           </div>
 
