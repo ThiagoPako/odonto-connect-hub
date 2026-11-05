@@ -519,7 +519,7 @@ async function getFallbackTenantIdForIncomingMessage({ instanceName, phoneSuffix
       );
       if (rows[0]?.tenant_id && isValidTenantId(rows[0].tenant_id)) return rows[0].tenant_id;
     } catch (err) {
-      console.error(`Tenant fallback by phone failed (${suffix}):`, err.message);
+      console.error(`Tenant fallback by phone failed (${maskPhone(suffix)}):`, err.message);
     }
   }
 
@@ -8849,9 +8849,6 @@ app.post('/api/webhook/evolution', async (req, res) => {
     let tenantId = await getTenantIdByInstance(instance);
     
     console.log(`📩 Webhook event: ${event} from ${instance} (tenant: ${tenantId})`);
-    if (event !== 'presence.update') {
-    }
-
     // ─── Presence updates (typing, recording, online) ───
     if (isEvolutionEvent(event, 'presence.update', 'presence_update')) {
       const presenceData = body.data;
@@ -9232,7 +9229,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
     // não disparam automações e não geram notificação de entrada.
     if (isFromMe) {
       if (!lead) {
-        console.log(`↪️ Outgoing webhook ignored without existing lead: ${resolvedPhone} (${msgId})`);
+        console.log(`↪️ Outgoing webhook ignored without existing lead: ${maskPhone(resolvedPhone)} (${msgId})`);
         return res.json({ processed: true, fromMe: true, ignored: 'lead_not_found' });
       }
 
@@ -9273,7 +9270,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
         sender: 'attendant',
       });
 
-      console.log(`↪️ Outgoing webhook synced: ${resolvedPhone} (${msgId})`);
+      console.log(`↪️ Outgoing webhook synced: ${maskPhone(resolvedPhone)} (${msgId})`);
       return res.json({ processed: true, fromMe: true, leadId: lead.id });
     }
 
@@ -9343,7 +9340,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
           method: 'POST',
           body: JSON.stringify({ number: resolvedPhone, text: offMsg }),
         });
-        console.log(`🕐 Off-hours message sent to ${resolvedPhone}`);
+        console.log(`🕐 Off-hours message sent to ${maskPhone(resolvedPhone)}`);
         if (!isFromMe) {
           await ensureWaitingSessionForIncomingLead({
             lead,
@@ -13754,7 +13751,7 @@ app.get('/api/queue/leads', async (req, res) => {
               console.log(`📸 Background avatar sync: ${maskPhone(r.phone)} → OK`);
             }
           } catch (err) {
-            console.error(`📸 Avatar sync error for ${r.phone}:`, err.message);
+            console.error(`📸 Avatar sync error for ${maskPhone(r.phone)}:`, err.message);
           }
         }
       }
@@ -14762,7 +14759,7 @@ app.post('/api/ai/schedule-followup', async (req, res) => {
       WHERE id = $2
     `, [JSON.stringify(flowId), reportId]);
 
-    console.log(`🤖 Follow-up IA agendado: ${jobIds.length} mensagens para ${patientName} (${formattedPhone})`);
+    console.log(`🤖 Follow-up IA agendado: ${jobIds.length} mensagens para ${maskPhone(formattedPhone)}`);
     res.json({ success: true, flowId, jobs: jobIds });
   } catch (err) {
     if (err.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });

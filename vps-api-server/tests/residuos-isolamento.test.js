@@ -120,6 +120,16 @@ describe('Clinicorp', () => {
     expect(q.text).toMatch(/p\.tenant_id = c\.tenant_id/);
   });
 
+  test('falha nos conflitos devolve 500 genérico, sem detalhe do banco', async () => {
+    querySpy.mockImplementation((sql) => {
+      if (/FROM clinicorp_conflicts c/.test(String(sql))) return Promise.reject(new Error('relation "x" does not exist'));
+      return Promise.resolve({ rows: [], rowCount: 0 });
+    });
+    const res = await chamar('get', '/api/clinicorp/conflicts');
+    expect(res.status).toBe(500);
+    expect(res.body).toEqual({ error: 'Erro interno' });
+  });
+
   test('webhook não grava o segredo nem credenciais nos cabeçalhos', async () => {
     const res = await request(app)
       .post('/api/webhook/clinicorp')

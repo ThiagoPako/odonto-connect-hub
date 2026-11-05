@@ -2609,7 +2609,10 @@ export function registerClinicorp(app, pool, { verifyUser } = {}) {
         params
       );
       res.json(rows);
-    } catch (e) { res.status(500).json({ error: e.message }); }
+    } catch (e) {
+      console.error('[clinicorp:conflicts]', e.message);
+      res.status(500).json({ error: 'Erro interno' });
+    }
   });
 
   // ── Per-record keep_local lock ──────────────────────────────
