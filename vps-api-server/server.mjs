@@ -15852,6 +15852,22 @@ app.get('/api/exames', async (req, res) => {
         LIMIT 500`,
       params
     );
+    // Contagem de imagens por exame em consulta separada: se a tabela ainda não existir
+    // (primeiros segundos do boot, antes da auto-migração), a lista continua funcionando.
+    if (rows.length) {
+      try {
+        const { rows: cont } = await pool.query(
+          `SELECT exame_id, COUNT(*)::int AS total FROM exame_arquivos
+            WHERE tenant_id = $1 AND exame_id = ANY($2::uuid[]) AND removido_em IS NULL
+            GROUP BY exame_id`,
+          [user.tenant_id, rows.map(r => r.id)]
+        );
+        const porExame = new Map(cont.map(c => [c.exame_id, c.total]));
+        for (const r of rows) r.arquivos_count = porExame.get(r.id) || 0;
+      } catch (e) {
+        console.warn('[exames:list] contagem de arquivos indisponível:', e.message);
+      }
+    }
     res.json(rows);
   } catch (err) {
     responderErroExame(res, err, 'exames:list');
@@ -15941,6 +15957,11 @@ app.patch('/api/exames/:id', async (req, res) => {
       }
     }
     if (!sets.length) return res.status(400).json({ error: 'Nada a atualizar' });
+    // arquivo_url é o link antigo (público). Só pode ser desvinculado; arquivo novo vai
+    // por POST /api/exames/:id/arquivos (com dono e acesso autenticado).
+    if (body.arquivo_url !== undefined && body.arquivo_url !== null && body.arquivo_url !== '') {
+      return res.status(400).json({ error: 'Envie a imagem pelo botão de arquivos do exame' });
+    }
     for (const k of ['status', 'prioridade', 'terceirizado']) {
       if (body[k] === null || body[k] === '') return res.status(400).json({ error: `${k} não pode ficar vazio` });
     }
@@ -15968,8 +15989,9 @@ app.delete('/api/exames/:id', async (req, res) => {
     // Exame com laudo ou imagem é parte do prontuário (guarda mínima de 20 anos, Lei 13.787/2018):
     // não é apagado; a clínica cancela o exame. Só pedidos sem resultado podem ser excluídos.
     const { rows } = await pool.query(
-      `SELECT (COALESCE(btrim(laudo_texto), '') <> '' OR arquivo_url IS NOT NULL) AS tem_resultado
-         FROM exames WHERE id=$1 AND tenant_id=$2`,
+      `SELECT (COALESCE(btrim(e.laudo_texto), '') <> '' OR e.arquivo_url IS NOT NULL
+               OR EXISTS (SELECT 1 FROM exame_arquivos a WHERE a.exame_id = e.id AND a.tenant_id = e.tenant_id)) AS tem_resultado
+         FROM exames e WHERE e.id=$1 AND e.tenant_id=$2`,
       [req.params.id, user.tenant_id]
     );
     if (!rows.length) return res.status(404).json({ error: 'Exame não encontrado' });
@@ -15977,8 +15999,9 @@ app.delete('/api/exames/:id', async (req, res) => {
       return res.status(409).json({ error: 'Este exame já tem laudo ou imagem e faz parte do prontuário. Em vez de excluir, mude o status para Cancelado.' });
     }
     await pool.query(
-      `DELETE FROM exames WHERE id=$1 AND tenant_id=$2
-          AND COALESCE(btrim(laudo_texto), '') = '' AND arquivo_url IS NULL`,
+      `DELETE FROM exames e WHERE e.id=$1 AND e.tenant_id=$2
+          AND COALESCE(btrim(e.laudo_texto), '') = '' AND e.arquivo_url IS NULL
+          AND NOT EXISTS (SELECT 1 FROM exame_arquivos a WHERE a.exame_id = e.id AND a.tenant_id = e.tenant_id)`,
       [req.params.id, user.tenant_id]
     );
     res.json({ success: true });
@@ -15987,6 +16010,191 @@ app.delete('/api/exames/:id', async (req, res) => {
   }
 });
 
+
+// ─── Imagens e arquivos do exame (raio-x, tomografia, PDF do laudo) ───────────
+// Dado de saúde (LGPD art. 11): ficam FORA de /uploads/media (que é público) e só
+// são entregues a quem é da clínica — por Bearer ou por link assinado de vida curta
+// (o <img> do navegador não manda Authorization). O banco guarda o dono (tenant_id).
+const EXAMES_UPLOADS_DIR = path.join(__dirname, '..', 'uploads', 'exames');
+const EXAME_ARQUIVO_MAX_BYTES = 64 * 1024 * 1024;
+const EXAME_ARQUIVO_LINK_TTL_S = 60 * 60; // 1 h
+const EXAME_ARQUIVO_SECRET = process.env.MEDIA_SIGNING_SECRET
+  || createHmac('sha256', String(JWT_SECRET || randomUUID())).update('exame-arquivos-v1').digest('hex');
+
+// Tipo real pelo conteúdo (não confia no nome nem no Content-Type do cliente).
+function detectarTipoArquivoExame(buf) {
+  if (!Buffer.isBuffer(buf) || buf.length < 4) return null;
+  const hex = buf.subarray(0, 12).toString('hex');
+  if (hex.startsWith('ffd8ff')) return { mime: 'image/jpeg', ext: 'jpg', imagem: true };
+  if (hex.startsWith('89504e470d0a1a0a')) return { mime: 'image/png', ext: 'png', imagem: true };
+  if (hex.startsWith('47494638')) return { mime: 'image/gif', ext: 'gif', imagem: true };
+  if (hex.startsWith('52494646') && buf.subarray(8, 12).toString('latin1') === 'WEBP') return { mime: 'image/webp', ext: 'webp', imagem: true };
+  if (hex.startsWith('424d')) return { mime: 'image/bmp', ext: 'bmp', imagem: true };
+  if (hex.startsWith('25504446')) return { mime: 'application/pdf', ext: 'pdf', imagem: false };
+  if (hex.startsWith('504b0304')) return { mime: 'application/zip', ext: 'zip', imagem: false };
+  if (buf.length >= 132 && buf.subarray(128, 132).toString('latin1') === 'DICM') return { mime: 'application/dicom', ext: 'dcm', imagem: false };
+  return null;
+}
+
+function assinarArquivoExame(arquivoId, tenantId, download = false) {
+  const exp = Math.floor(Date.now() / 1000) + EXAME_ARQUIVO_LINK_TTL_S;
+  const sig = createHmac('sha256', EXAME_ARQUIVO_SECRET).update(`${arquivoId}|${tenantId}|${exp}`).digest('hex');
+  const base = `/api/exame-arquivos/${arquivoId}/conteudo?t=${tenantId}&exp=${exp}&sig=${sig}`;
+  return download ? `${base}&download=1` : base;
+}
+
+function assinaturaArquivoExameValida(arquivoId, tenantId, exp, sig) {
+  if (!EXAME_UUID_RE.test(String(tenantId || '')) || !/^\d{1,12}$/.test(String(exp || '')) || !/^[0-9a-f]{64}$/.test(String(sig || ''))) return false;
+  if (Number(exp) < Math.floor(Date.now() / 1000)) return false;
+  const esperado = createHmac('sha256', EXAME_ARQUIVO_SECRET).update(`${arquivoId}|${tenantId}|${exp}`).digest();
+  return timingSafeEqual(esperado, Buffer.from(String(sig), 'hex'));
+}
+
+function arquivoExameParaResposta(row) {
+  return {
+    id: row.id,
+    exame_id: row.exame_id,
+    nome_original: row.nome_original,
+    mime_type: row.mime_type,
+    tamanho_bytes: Number(row.tamanho_bytes) || 0,
+    descricao: row.descricao ?? null,
+    created_at: row.created_at,
+    enviado_por_nome: row.enviado_por_nome ?? null,
+    imagem: /^image\//.test(row.mime_type || ''),
+    url: assinarArquivoExame(row.id, row.tenant_id),
+    url_download: assinarArquivoExame(row.id, row.tenant_id, true),
+  };
+}
+
+async function exameDaClinica(exameId, tenantId) {
+  if (!EXAME_UUID_RE.test(String(exameId))) return null;
+  const { rows } = await pool.query('SELECT id, paciente_id, status FROM exames WHERE id = $1 AND tenant_id = $2', [exameId, tenantId]);
+  return rows[0] || null;
+}
+
+// Listar imagens/arquivos de um exame (com links assinados)
+app.get('/api/exames/:id/arquivos', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
+    const exame = await exameDaClinica(req.params.id, user.tenant_id);
+    if (!exame) return res.status(404).json({ error: 'Exame não encontrado' });
+    const { rows } = await pool.query(
+      `SELECT a.*, pr.name AS enviado_por_nome
+         FROM exame_arquivos a
+         LEFT JOIN profiles pr ON pr.id = a.enviado_por AND pr.tenant_id = a.tenant_id
+        WHERE a.exame_id = $1 AND a.tenant_id = $2 AND a.removido_em IS NULL
+        ORDER BY a.created_at`,
+      [exame.id, user.tenant_id]
+    );
+    res.json(rows.map(arquivoExameParaResposta));
+  } catch (err) {
+    responderErroExame(res, err, 'exames:arquivos:list');
+  }
+});
+
+// Enviar imagem/arquivo para o exame. Corpo = bytes do arquivo; nome em X-Nome-Arquivo
+// (codificado, fora da URL: o nome pode conter o nome do paciente).
+app.post('/api/exames/:id/arquivos', express.raw({ type: '*/*', limit: '64mb' }), async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
+    const exame = await exameDaClinica(req.params.id, user.tenant_id);
+    if (!exame) return res.status(404).json({ error: 'Exame não encontrado' });
+    const buf = req.body;
+    if (!Buffer.isBuffer(buf) || buf.length === 0) return res.status(400).json({ error: 'Arquivo não enviado' });
+    if (buf.length > EXAME_ARQUIVO_MAX_BYTES) return res.status(413).json({ error: 'Arquivo maior que 64 MB' });
+    const tipo = detectarTipoArquivoExame(buf);
+    if (!tipo) return res.status(415).json({ error: 'Formato não aceito. Envie JPG, PNG, WEBP, GIF, BMP, PDF, DICOM (.dcm) ou ZIP.' });
+
+    let nomeOriginal = '';
+    try { nomeOriginal = decodeURIComponent(String(req.headers['x-nome-arquivo'] || '')); } catch { nomeOriginal = ''; }
+    nomeOriginal = nomeOriginal.replace(/[\u0000-\u001f\u007f/\\]/g, '').trim().slice(0, 200) || `arquivo.${tipo.ext}`;
+    const descricao = String(req.headers['x-descricao'] ? decodeURIComponent(String(req.headers['x-descricao'])) : '').trim().slice(0, 300) || null;
+
+    const id = randomUUID();
+    const subDir = user.tenant_id;
+    const caminho = `${subDir}/${id}.${tipo.ext}`;
+    const dir = path.join(EXAMES_UPLOADS_DIR, subDir);
+    if (!existsSync(dir)) await mkdir(dir, { recursive: true });
+    await writeFile(path.join(EXAMES_UPLOADS_DIR, caminho), buf);
+
+    const { rows } = await pool.query(
+      `INSERT INTO exame_arquivos
+         (id, tenant_id, exame_id, paciente_id, caminho, nome_original, mime_type, tamanho_bytes, descricao, enviado_por)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       RETURNING *`,
+      [id, user.tenant_id, exame.id, exame.paciente_id || null, caminho, nomeOriginal, tipo.mime, buf.length, descricao, user.id]
+    );
+    res.json(arquivoExameParaResposta(rows[0]));
+  } catch (err) {
+    responderErroExame(res, err, 'exames:arquivos:upload');
+  }
+});
+
+// Tirar o arquivo do exame. Não apaga do disco nem do banco: é prontuário
+// (guarda de 20 anos); só some da tela. Fica registrado quem tirou e quando.
+app.delete('/api/exames/:id/arquivos/:arquivoId', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
+    if (!EXAME_UUID_RE.test(String(req.params.id)) || !EXAME_UUID_RE.test(String(req.params.arquivoId))) {
+      return res.status(404).json({ error: 'Arquivo não encontrado' });
+    }
+    const { rowCount } = await pool.query(
+      `UPDATE exame_arquivos SET removido_em = NOW(), removido_por = $4
+        WHERE id = $1 AND exame_id = $2 AND tenant_id = $3 AND removido_em IS NULL`,
+      [req.params.arquivoId, req.params.id, user.tenant_id, user.id]
+    );
+    if (!rowCount) return res.status(404).json({ error: 'Arquivo não encontrado' });
+    res.json({ success: true });
+  } catch (err) {
+    responderErroExame(res, err, 'exames:arquivos:delete');
+  }
+});
+
+// Entregar o conteúdo: link assinado (t/exp/sig) OU Bearer da mesma clínica.
+app.get('/api/exame-arquivos/:arquivoId/conteudo', async (req, res) => {
+  try {
+    const arquivoId = String(req.params.arquivoId);
+    if (!EXAME_UUID_RE.test(arquivoId)) return res.status(404).json({ error: 'Arquivo não encontrado' });
+    let tenantId = null;
+    if (req.query.sig) {
+      if (!assinaturaArquivoExameValida(arquivoId, req.query.t, req.query.exp, req.query.sig)) {
+        return res.status(403).json({ error: 'Link expirado ou inválido. Abra o exame de novo.' });
+      }
+      tenantId = String(req.query.t);
+    } else {
+      const { user } = await verifyUser(req);
+      if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
+      tenantId = user.tenant_id;
+    }
+    const { rows } = await pool.query(
+      `SELECT caminho, nome_original, mime_type FROM exame_arquivos
+        WHERE id = $1 AND tenant_id = $2 AND removido_em IS NULL`,
+      [arquivoId, tenantId]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Arquivo não encontrado' });
+    const { caminho, nome_original, mime_type } = rows[0];
+    if (!/^[0-9a-f-]{36}\/[0-9a-f-]{36}\.[a-z0-9]{2,5}$/.test(caminho)) return res.status(404).json({ error: 'Arquivo não encontrado' });
+    const abs = path.join(EXAMES_UPLOADS_DIR, caminho);
+    if (!existsSync(abs)) return res.status(404).json({ error: 'Arquivo não encontrado' });
+
+    const inline = req.query.download !== '1' && (/^image\//.test(mime_type) || mime_type === 'application/pdf');
+    const nomeSeguro = String(nome_original || 'arquivo').replace(/["\\\r\n]/g, '');
+    const nomeAscii = nomeSeguro.normalize('NFD').replace(/[^\x20-\x7e]/g, '') || 'arquivo';
+    res.setHeader('Content-Type', mime_type);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="${nomeAscii}"; filename*=UTF-8''${encodeURIComponent(nomeSeguro)}`);
+    res.sendFile(abs, { headers: { 'Content-Type': mime_type } }, (err) => {
+      if (err && !res.headersSent) res.status(404).json({ error: 'Arquivo não encontrado' });
+    });
+  } catch (err) {
+    responderErroExame(res, err, 'exames:arquivos:conteudo');
+  }
+});
 
 // ═══════════════════════════════════════════════════════════════
 // START SERVER
@@ -16002,6 +16210,25 @@ if (process.env.NODE_ENV !== 'test') {
   let checkedStatements = 0;
   try {
     const migrations = [
+      // ─── Exames: imagens/arquivos com dono (migration-exame-arquivos.sql) ───
+      `CREATE TABLE IF NOT EXISTS exame_arquivos (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        exame_id UUID NOT NULL REFERENCES exames(id) ON DELETE CASCADE,
+        paciente_id UUID,
+        caminho TEXT NOT NULL UNIQUE,
+        nome_original TEXT,
+        mime_type TEXT NOT NULL,
+        tamanho_bytes BIGINT NOT NULL DEFAULT 0,
+        descricao TEXT,
+        enviado_por UUID,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        removido_em TIMESTAMPTZ,
+        removido_por UUID
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_exame_arquivos_tenant_exame ON exame_arquivos (tenant_id, exame_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_exame_arquivos_tenant_paciente ON exame_arquivos (tenant_id, paciente_id)`,
+
       // ─── 0. Enable RLS and tenant session support ───
       `CREATE OR REPLACE FUNCTION set_tenant(t_id UUID) RETURNS VOID AS $$
        BEGIN

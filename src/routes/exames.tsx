@@ -183,7 +183,12 @@ function ExamesPage() {
                     {e.terceirizado && <Badge variant="outline" className="text-xs">Terceirizado</Badge>}
                     {e.prioridade !== "normal" && <Badge variant="outline" className="text-xs capitalize">{e.prioridade}</Badge>}
                     {e.laudo_texto && <Badge variant="outline" className="text-xs gap-1"><FileSignature className="h-3 w-3" />Laudo</Badge>}
-                    {e.arquivo_url && <Badge variant="outline" className="text-xs gap-1"><Paperclip className="h-3 w-3" />Arquivo</Badge>}
+                    {((e.arquivos_count ?? 0) > 0 || e.arquivo_url) && (
+                      <Badge variant="outline" className="text-xs gap-1">
+                        <Paperclip className="h-3 w-3" />
+                        {(e.arquivos_count ?? 0) > 1 ? `${e.arquivos_count} arquivos` : "Arquivo"}
+                      </Badge>
+                    )}
                   </div>
                   <div className="font-medium text-sm text-foreground">{e.tipo_nome}</div>
                   <div className="text-xs text-muted-foreground">
