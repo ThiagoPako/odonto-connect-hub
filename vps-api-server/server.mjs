@@ -1502,11 +1502,14 @@ app.post('/api/super-admin/plans', async (req, res) => {
   }
 });
 
+const PLANO_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 app.patch('/api/super-admin/plans/:id', async (req, res) => {
   let client;
   try {
     await verifySuperAdmin(req);
     const { id } = req.params;
+    if (!PLANO_UUID_RE.test(String(id))) return res.status(404).json({ error: 'Plano não encontrado' });
     const b = req.body || {};
     const fields = ['nome','descricao','preco_mensal','preco_anual','trial_days',
       'max_usuarios','max_dentistas','max_pacientes','max_whatsapp_instances','features','ativo','display_order'];
@@ -1553,7 +1556,8 @@ app.patch('/api/super-admin/plans/:id', async (req, res) => {
     if (client) await client.query('ROLLBACK').catch(() => {});
     if (e.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
     if (e.message === 'Super admin access required') return res.status(403).json({ error: e.message });
-    if (e.code === '22P02') return res.status(404).json({ error: 'Plano não encontrado' }); // id que não é UUID
+    // id já validado acima: 22P02 aqui é valor inválido no corpo (ex.: preco_mensal "12,90").
+    if (e.code === '22P02') return res.status(400).json({ error: 'Dados inválidos' });
     console.error('Plan update sync error:', e.message);
     res.status(500).json({ error: 'Erro ao atualizar o plano' });
   } finally {

@@ -17,6 +17,7 @@ const JWT_SECRET = process.env.JWT_SECRET;
 const tenantA = '11111111-1111-1111-1111-111111111111';
 const leadA = 'aaaaaaaa-0000-0000-0000-0000000000c1';
 const procA = 'aaaaaaaa-0000-0000-0000-0000000000d1';
+const planoId = '11111111-2222-3333-4444-555555555555';
 const token = (extra = {}) => jwt.sign({
   sub: '44444444-4444-4444-4444-444444444444', email: 'admin@clinica.com', role: 'admin',
   tenant_id: tenantA, is_super_admin: false, ...extra,
@@ -46,7 +47,7 @@ describe('banco fora do ar no connect: 500 genérico, sem pendurar e sem vazar o
     ['post', '/api/procedimentos-catalogo', { nome: 'Profilaxia' }],
     ['put', `/api/procedimentos-catalogo/${procA}`, { nome: 'Profilaxia' }],
     ['post', '/api/auth/signup-clinic', { clinic_name: 'C', admin_name: 'A', email: 'novo@c.com', password: 'senha-12345' }],
-    ['patch', '/api/super-admin/plans/p1', { nome: 'Plano' }, { is_super_admin: true, tenant_id: null }],
+    ['patch', `/api/super-admin/plans/${planoId}`, { nome: 'Plano' }, { is_super_admin: true, tenant_id: null }],
   ])('%s %s', async (m, url, body, extra = {}) => {
     const res = await request(app)[m](url).set(auth(token(extra))).send(body);
     expect(res.status).toBe(500);
@@ -57,12 +58,12 @@ describe('banco fora do ar no connect: 500 genérico, sem pendurar e sem vazar o
 
 describe('permissão e validação antes de pegar conexão', () => {
   test('super-admin/plans sem super-admin → 403 sem chamar pool.connect', async () => {
-    const res = await request(app).patch('/api/super-admin/plans/p1').set(auth(token())).send({ nome: 'X' });
+    const res = await request(app).patch(`/api/super-admin/plans/${planoId}`).set(auth(token())).send({ nome: 'X' });
     expect(res.status).toBe(403);
     expect(connectSpy).not.toHaveBeenCalled();
   });
   test('super-admin/plans sem campos → 400 sem conexão', async () => {
-    const res = await request(app).patch('/api/super-admin/plans/p1').set(auth(token({ is_super_admin: true, tenant_id: null }))).send({});
+    const res = await request(app).patch(`/api/super-admin/plans/${planoId}`).set(auth(token({ is_super_admin: true, tenant_id: null }))).send({});
     expect(res.status).toBe(400);
     expect(connectSpy).not.toHaveBeenCalled();
   });
@@ -119,18 +120,27 @@ describe('PATCH /api/super-admin/plans/:id com plano inexistente', () => {
     expect(client.release).toHaveBeenCalled();
   });
 
-  test('id que não é UUID (22P02): 404, não 500', async () => {
-    const { client } = clienteFalso(async () => { const e = new Error('invalid input syntax for type uuid'); e.code = '22P02'; throw e; });
-    connectSpy.mockResolvedValue(client);
+  test('id que não é UUID: 404 antes de pegar conexão', async () => {
     const res = await request(app).patch('/api/super-admin/plans/nao-existe').set(superAdmin()).send({ nome: 'X' });
     expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: 'Plano não encontrado' });
+    expect(connectSpy).not.toHaveBeenCalled();
+  });
+
+  test('valor inválido no corpo (22P02, ex.: preco_mensal "12,90"): 400 "Dados inválidos"', async () => {
+    const { client, chamadas } = clienteFalso(async () => { const e = new Error('invalid input syntax for type numeric: "12,90"'); e.code = '22P02'; throw e; });
+    connectSpy.mockResolvedValue(client);
+    const res = await request(app).patch(`/api/super-admin/plans/${planoId}`).set(superAdmin()).send({ preco_mensal: '12,90' });
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'Dados inválidos' });
+    expect(chamadas).toContain('ROLLBACK');
     expect(client.release).toHaveBeenCalled();
   });
 
   test('plano existente continua 200', async () => {
     const { client, chamadas } = clienteFalso(async () => ({ rows: [{ id: 'p1', nome: 'X' }], rowCount: 1 }));
     connectSpy.mockResolvedValue(client);
-    const res = await request(app).patch('/api/super-admin/plans/p1').set(superAdmin()).send({ nome: 'X' });
+    const res = await request(app).patch(`/api/super-admin/plans/${planoId}`).set(superAdmin()).send({ nome: 'X' });
     expect(res.status).toBe(200);
     expect(chamadas).toContain('COMMIT');
   });
