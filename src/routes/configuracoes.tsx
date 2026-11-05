@@ -49,12 +49,12 @@ interface TabDef {
 }
 
 const TABS: TabDef[] = [
-  { id: "clinica", label: "Clínica", description: "Endereço e dados da unidade", icon: Building2 },
+  { id: "clinica", label: "Clínica", description: "Endereço enviado no chat (fica salvo só neste aparelho)", icon: Building2 },
   { id: "agenda", label: "Agenda", description: "Horários de funcionamento e regras de agendamento", icon: CalendarClock },
   { id: "atendimento", label: "Atendimento", description: "Fila, regras e tempo de atendimento", icon: Headphones },
-  { id: "ia", label: "Inteligência Artificial", description: "Provedor, chave e modelos da IA", icon: Bot },
+  { id: "ia", label: "Inteligência Artificial", description: "Chave e modelo da IA (transcrição e relatórios)", icon: Bot },
   { id: "integracoes", label: "Integrações", description: "Clinicorp e outras integrações externas", icon: Plug },
-  { id: "tags", label: "Tags", description: "Etiquetas usadas em leads e contatos", icon: Tag },
+  { id: "tags", label: "Etiquetas", description: "Etiquetas usadas em leads e contatos", icon: Tag },
   { id: "notificacoes", label: "Notificações", description: "Som, push e alertas do sistema", icon: Bell },
   { id: "usuarios", label: "Usuários", description: "Equipe e permissões de acesso", icon: Users },
   { id: "avancado", label: "Avançado", description: "Reset e operações administrativas", icon: ShieldAlert },
