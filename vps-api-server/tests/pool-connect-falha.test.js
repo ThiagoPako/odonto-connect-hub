@@ -91,3 +91,47 @@ describe('ROLLBACK que falha não mascara o erro original', () => {
     expect(release).toHaveBeenCalled();
   }, 4000);
 });
+
+describe('PATCH /api/super-admin/plans/:id com plano inexistente', () => {
+  const superAdmin = () => auth(token({ is_super_admin: true, tenant_id: null }));
+  const clienteFalso = (onUpdate) => {
+    const chamadas = [];
+    const client = {
+      query: jest.fn(async (sql) => {
+        const text = String(sql);
+        chamadas.push(text);
+        if (/^UPDATE plans/.test(text)) return onUpdate();
+        return { rows: [], rowCount: 0 };
+      }),
+      release: jest.fn(),
+    };
+    return { client, chamadas };
+  };
+
+  test('UPDATE sem linha: 404, com ROLLBACK e cliente liberado', async () => {
+    const { client, chamadas } = clienteFalso(async () => ({ rows: [], rowCount: 0 }));
+    connectSpy.mockResolvedValue(client);
+    const res = await request(app).patch('/api/super-admin/plans/99999999-9999-9999-9999-999999999999').set(superAdmin()).send({ nome: 'X' });
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: 'Plano não encontrado' });
+    expect(chamadas).toContain('ROLLBACK');
+    expect(chamadas).not.toContain('COMMIT');
+    expect(client.release).toHaveBeenCalled();
+  });
+
+  test('id que não é UUID (22P02): 404, não 500', async () => {
+    const { client } = clienteFalso(async () => { const e = new Error('invalid input syntax for type uuid'); e.code = '22P02'; throw e; });
+    connectSpy.mockResolvedValue(client);
+    const res = await request(app).patch('/api/super-admin/plans/nao-existe').set(superAdmin()).send({ nome: 'X' });
+    expect(res.status).toBe(404);
+    expect(client.release).toHaveBeenCalled();
+  });
+
+  test('plano existente continua 200', async () => {
+    const { client, chamadas } = clienteFalso(async () => ({ rows: [{ id: 'p1', nome: 'X' }], rowCount: 1 }));
+    connectSpy.mockResolvedValue(client);
+    const res = await request(app).patch('/api/super-admin/plans/p1').set(superAdmin()).send({ nome: 'X' });
+    expect(res.status).toBe(200);
+    expect(chamadas).toContain('COMMIT');
+  });
+});

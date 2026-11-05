@@ -1527,6 +1527,10 @@ app.patch('/api/super-admin/plans/:id', async (req, res) => {
       vals
     );
     const updatedPlan = rows[0];
+    if (!updatedPlan) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Plano não encontrado' });
+    }
 
     // Synchronization logic: Notify or log the change for affected tenants
     // In this architecture, limits are checked against the current plan in real-time.
@@ -1549,6 +1553,7 @@ app.patch('/api/super-admin/plans/:id', async (req, res) => {
     if (client) await client.query('ROLLBACK').catch(() => {});
     if (e.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
     if (e.message === 'Super admin access required') return res.status(403).json({ error: e.message });
+    if (e.code === '22P02') return res.status(404).json({ error: 'Plano não encontrado' }); // id que não é UUID
     console.error('Plan update sync error:', e.message);
     res.status(500).json({ error: 'Erro ao atualizar o plano' });
   } finally {
