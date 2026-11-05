@@ -13,6 +13,8 @@ interface ReportRow {
   duration_seconds?: number;
   prescricoes?: Array<{ medicamento: string; dosagem: string; posologia: string; duracao: string }> | string;
   created_at: string;
+  /** "Aprovado por Dr(a). X (CRO …) em …" — o PDF só recebe relatórios aprovados */
+  rotulo_aprovacao?: string;
 }
 
 interface ExportFilters {
@@ -53,7 +55,7 @@ export function exportarRelatoriosClinicosPdf(reports: ReportRow[], filters: Exp
       <tr style="border-bottom:1px solid #e2e8f0;${i % 2 === 1 ? 'background:#f8fafb;' : ''}">
         <td style="padding:8px 10px;font-size:11px;color:#444;">${data}<br/><span style="color:#888;">${hora}</span></td>
         <td style="padding:8px 10px;font-size:11px;font-weight:600;color:#1a1a2e;">${escapeHtml(r.patient_name || '-')}</td>
-        <td style="padding:8px 10px;font-size:11px;color:#444;">${escapeHtml(r.attendant_name || '-')}</td>
+        <td style="padding:8px 10px;font-size:11px;color:#444;">${escapeHtml(r.attendant_name || '-')}${r.rotulo_aprovacao ? `<br/><span style="color:#0d9488;font-size:10px;">${escapeHtml(r.rotulo_aprovacao)}</span>` : ''}</td>
         <td style="padding:8px 10px;font-size:11px;color:#444;">${escapeHtml(r.queixa_principal || '-')}</td>
         <td style="padding:8px 10px;font-size:11px;color:#444;">${escapeHtml(r.procedimento || '-')}</td>
         <td style="padding:8px 10px;font-size:11px;color:#444;text-align:center;">${escapeHtml(r.dente_regiao || '-')}</td>

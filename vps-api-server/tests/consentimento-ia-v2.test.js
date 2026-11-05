@@ -54,6 +54,11 @@ beforeEach(() => {
       return ok([tenantA, tenantC].includes(params[1]) && params[0] === pacId && db.paciente ? [db.paciente] : []);
     }
     if (/FROM agendamentos WHERE id::text/.test(t)) return ok([]);
+    // #79: o relatório exige paciente da clínica e o dentista do atendimento
+    if (/SELECT 1 FROM pacientes WHERE id = \$1::uuid AND tenant_id = \$2/.test(t)) {
+      return ok(params[0] === pacId && params[1] === tenantA ? [{ '?column?': 1 }] : []);
+    }
+    if (/FROM dentistas\s+WHERE tenant_id = \$1 AND LOWER\(email\)/.test(t)) return ok([{ id: 'd1', nome: 'Dra', cro: 'CRO 1' }]);
     if (/SELECT nome, cnpj FROM tenants/.test(t)) return ok([{ nome: 'Clínica Sorriso', cnpj: '12.345.678/0001-90' }]);
     if (/FROM tenant_settings/.test(t)) {
       if (params[1] === 'lgpd_encarregado') return ok(params[0] === tenantA && db.encarregado ? [{ value: db.encarregado }] : []);
@@ -91,8 +96,9 @@ describe('catálogo e regras (consentimento-ia.mjs)', () => {
     expect(a.hash).toBe(ci.sha256(a.texto));
     expect(a.texto).toContain('Clínica X');
     expect(a.texto).toContain('consultas de Ana');
-    expect(a.texto).toContain('orientações pós-consulta');
-    expect(a.texto).toContain('(e) se a clínica usar');
+    // Sem o item 3(e): o follow-up pós-consulta usa modelos fixos, sem IA (#79).
+    expect(a.texto).not.toContain('orientações pós-consulta');
+    expect(a.texto).not.toContain('(e) se a clínica usar');
     expect(a.texto).not.toMatch(/\{(clinica|cnpj|endereco|contato_encarregado|retencao|paciente)\}/);
   });
 
@@ -144,6 +150,12 @@ describe('POST /api/pacientes/:id/consentimentos', () => {
     expect(ins.params[5]).toBe(ci.sha256(ins.params[4]));
     expect(ins.params[6]).toBe('autorizo');
     expect(sqlLog.some((q) => /INSERT INTO assinaturas_eletronicas/.test(q.text))).toBe(true);
+  });
+
+  test('sem encarregado, a recusa é registrada (só a autorização exige encarregado)', async () => {
+    const res = await registrar({ decisao: 'nao_autorizo', assinante_tipo: 'paciente', assinante_nome: 'Ana Souza' }, token({ tenant_id: tenantC }));
+    expect(res.status).toBe(200);
+    expect(insert().params[6]).toBe('nao_autorizo');
   });
 
   test('sem encarregado cadastrado → 409 e nada gravado', async () => {
@@ -204,22 +216,21 @@ describe('rotas que mandam dado do paciente à IA exigem consentimento v2.0', ()
   const transcrever = () => auth(request(app).post(`/api/ai/transcribe?paciente_id=${pacId}`))
     .set('Content-Type', 'audio/webm').send(Buffer.from('x'));
   const relatorio = () => auth(request(app).post('/api/ai/clinical-report')).send({ transcription: 'oi', patientId: pacId });
-  const followup = () => auth(request(app).post('/api/ai/followup-messages')).send({ reportId: 'r1' });
 
-  test.each([['transcribe', transcrever], ['clinical-report', relatorio], ['followup-messages', followup]])(
+  test.each([['transcribe', transcrever], ['clinical-report', relatorio]])(
     '%s: sem consentimento → 403 CONSENT_REQUIRED', async (_n, call) => {
       const res = await call();
       expect(res.status).toBe(403);
       expect(res.body.code).toBe('CONSENT_REQUIRED');
     });
 
-  test.each([['transcribe', transcrever], ['clinical-report', relatorio], ['followup-messages', followup]])(
+  test.each([['transcribe', transcrever], ['clinical-report', relatorio]])(
     '%s: consentimento v1.0 não vale', async (_n, call) => {
       db.consents = [{ versao: '1.0', decisao: null, aceito_em: new Date('2026-01-01') }];
       expect((await call()).status).toBe(403);
     });
 
-  test.each([['transcribe', transcrever], ['clinical-report', relatorio], ['followup-messages', followup]])(
+  test.each([['transcribe', transcrever], ['clinical-report', relatorio]])(
     '%s: com v2.0 "autorizo" passa do consentimento', async (_n, call) => {
       db.consents = [{ versao: '2.0', decisao: 'autorizo', aceito_em: new Date('2026-11-01') }];
       const res = await call();
@@ -234,9 +245,22 @@ describe('rotas que mandam dado do paciente à IA exigem consentimento v2.0', ()
     expect((await relatorio()).status).toBe(403);
   });
 
-  test('clinical-report sem paciente → 403', async () => {
+  test('clinical-report sem paciente → 404 (#79: paciente da clínica é obrigatório)', async () => {
     const res = await auth(request(app).post('/api/ai/clinical-report')).send({ transcription: 'oi' });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(404);
+  });
+
+  test('followup-messages não usa IA (#79): não exige consentimento', async () => {
+    await auth(request(app).post('/api/ai/followup-messages')).send({ reportId: '66666666-6666-6666-6666-666666666666' });
+    expect(sqlLog.some((q) => /FROM consentimentos_pacientes/.test(q.text))).toBe(false);
+  });
+
+  test('revogar desativa todas as linhas ativas do paciente e tipo', async () => {
+    await auth(request(app).post('/api/consentimentos/c0/revogar')).send({ canal: 'recepcao' });
+    const up = sqlLog.find((q) => /UPDATE consentimentos_pacientes c SET revogado_em/.test(q.text));
+    expect(up.text).toMatch(/c\.paciente_id = alvo\.paciente_id AND c\.tipo = alvo\.tipo/);
+    expect(up.text).toMatch(/alvo\.tenant_id = \$2/);
+    expect(up.params).toEqual(['c0', tenantA, '44444444-4444-4444-4444-444444444444', 'recepcao']);
   });
 });
 

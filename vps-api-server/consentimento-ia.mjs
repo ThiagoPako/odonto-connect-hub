@@ -1,5 +1,6 @@
 // Catálogo de versões do consentimento de gravação e transcrição por IA.
-// Fonte: docs/juridico/consentimento-transcricao-ia.md (Helena, v2.0, com o item 3(e)).
+// Fonte: docs/juridico/consentimento-transcricao-ia.md (Helena, v2.0). Sem o item 3(e): o follow-up
+// pós-consulta passou a usar modelos fixos, sem IA (#79). Redação final pendente da Helena.
 //
 // O servidor monta o texto a partir daqui e grava o SHA-256 do texto que ELE montou:
 // nunca confia no texto que vem do navegador (LGPD art. 8º §2º — o ônus da prova é da clínica).
@@ -18,7 +19,7 @@ export function retencaoProvedor(env = process.env) {
 
 const CURTA_2_0 = `Gravação da consulta e transcrição por inteligência artificial
 
-Para ajudar o dentista a registrar sua consulta, a {clinica} pode gravar o áudio do atendimento. O áudio é transformado em texto e organizado em um rascunho de relatório e de orientações pós-consulta por um serviço de inteligência artificial da OpenAI, com servidores nos Estados Unidos.
+Para ajudar o dentista a registrar sua consulta, a {clinica} pode gravar o áudio do atendimento. O áudio é transformado em texto e organizado em um rascunho de relatório por um serviço de inteligência artificial da OpenAI, com servidores nos Estados Unidos.
 
 - Para quê: só para o registro clínico. O dentista revisa o texto antes de salvar no seu prontuário.
 - O que fica guardado: o áudio é apagado logo depois da transcrição. O texto revisado faz parte do prontuário. A OpenAI {retencao} mantém registros para segurança e não usa seus dados para treinar a IA.
@@ -38,7 +39,6 @@ const COMPLETA_2_0 = `Autorização para gravação e transcrição por intelig�
 (b) o áudio é enviado à OpenAI, que o transforma em texto;
 (c) o texto é enviado novamente à OpenAI para ser organizado em um rascunho de relatório clínico;
 (d) o cirurgião-dentista lê, corrige e decide o que entra no seu prontuário.
-(e) se a clínica usar, o relatório também pode ser enviado à OpenAI para sugerir mensagens de orientação depois da consulta, que a equipe revisa antes de enviar.
 A finalidade é exclusivamente o registro clínico do seu atendimento. Nada disso é usado para propaganda, venda de dados ou qualquer outro fim. Nenhuma decisão sobre você é tomada pela IA, porque o dentista revisa tudo.
 
 4. Transferência para fora do Brasil. Os servidores da OpenAI ficam nos Estados Unidos. A transferência é feita com base nesta autorização específica (Lei nº 13.709/2018, art. 33, VIII) e nas garantias contratuais firmadas com o provedor.

@@ -24,6 +24,9 @@ import { aiApi, consultationsApi, agendaApi, dentistasApi, consentimentosApi, pa
 import { toast } from "sonner";
 import { AlertasMedicosBanner, type EstadoAnamnese } from "@/components/AlertasMedicosBanner";
 import { extrairAlertasMedicos, type AnamneseVPS } from "@/lib/alertasMedicos";
+import { AprovarRelatorioIA, AvisoDecisaoClinica, RotuloRelatorioIA } from "@/components/RelatorioIaRevisao";
+import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 
 type SearchParams = { appointmentId?: string };
 
@@ -58,6 +61,13 @@ interface TranscriptionState {
   report: string;
   reportId: string;
   error: string;
+  /** rascunho até o dentista do atendimento clicar em "Revisei e aprovo o relatório" */
+  reportStatus: 'rascunho' | 'aprovado' | 'nao_aprovado';
+  aprovadoPorNome: string;
+  aprovadoPorCro: string;
+  aprovadoPorOutroDentista: boolean;
+  aprovadoEm: string;
+  transcricaoApagada: boolean;
 }
 
 interface FollowupState {
@@ -66,6 +76,8 @@ interface FollowupState {
   summary: string;
   jobs: Array<{ id: string; scheduled_at: string; delay_days: number; message: string }>;
   error: string;
+  /** caixa "Revisei as mensagens" (o servidor também exige) */
+  revisado: boolean;
 }
 
 function ConsultaPage() {
@@ -88,9 +100,10 @@ function ConsultaPage() {
   const timerRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const [aiState, setAiState] = useState<TranscriptionState>({
     status: 'idle', transcription: '', report: '', reportId: '', error: '',
+    reportStatus: 'rascunho', aprovadoPorNome: '', aprovadoPorCro: '', aprovadoPorOutroDentista: false, aprovadoEm: '', transcricaoApagada: false,
   });
   const [followupState, setFollowupState] = useState<FollowupState>({
-    status: 'idle', messages: [], summary: '', jobs: [], error: '',
+    status: 'idle', messages: [], summary: '', jobs: [], error: '', revisado: false,
   });
 
   // VPS agenda state
@@ -493,6 +506,7 @@ function ConsultaPage() {
         patientId: pacienteSelecionado?.id,
         patientName: pacienteSelecionado?.nome,
         durationSeconds: tempoAtendimento,
+        appointmentId: appointmentSelecionado?.id,
       });
 
       if (reportError || !reportData) {
@@ -507,65 +521,70 @@ function ConsultaPage() {
         report: reportData.report,
         reportId: reportData.id,
         error: '',
+        reportStatus: 'rascunho',
+        aprovadoPorNome: '',
+        aprovadoPorCro: '',
+        aprovadoPorOutroDentista: false,
+        aprovadoEm: '',
+        transcricaoApagada: false,
       });
-      toast.success("Relatório clínico gerado e salvo no prontuário!");
+      toast.success("Rascunho do relatório gerado. Revise antes de aprovar.");
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Erro desconhecido';
       setAiState(prev => ({ ...prev, status: 'error', error: msg }));
       toast.error(msg);
     }
-  }, [gravacoes, queixaPrincipal, procedimentoRealizado, dente, prescricoes, pacienteSelecionado, tempoAtendimento]);
+  }, [gravacoes, queixaPrincipal, procedimentoRealizado, dente, prescricoes, pacienteSelecionado, appointmentSelecionado, tempoAtendimento]);
 
   const handleGerarFollowup = useCallback(async () => {
     if (!aiState.reportId || !pacienteSelecionado) return;
-    if (!consentGravacao) {
-      toast.error('O paciente precisa autorizar o uso de IA (versão 2.0) antes do follow-up.');
-      return;
-    }
     setFollowupState(prev => ({ ...prev, status: 'generating', error: '' }));
     try {
-      const { data, error } = await aiApi.generateFollowupMessages({
-        reportId: aiState.reportId,
-        patientName: pacienteSelecionado.nome,
-        patientPhone: pacienteSelecionado.telefone,
-      });
+      const { data, error } = await aiApi.generateFollowupMessages({ reportId: aiState.reportId });
       if (error || !data) {
-        setFollowupState(prev => ({ ...prev, status: 'error', error: error || 'Erro ao gerar mensagens' }));
-        toast.error(error || 'Erro ao gerar follow-up');
+        setFollowupState(prev => ({ ...prev, status: 'error', error: error || 'Erro ao montar as mensagens' }));
+        toast.error(error || 'Erro ao montar as mensagens');
         return;
       }
-      setFollowupState(prev => ({ ...prev, status: 'ready', messages: data.messages || [], summary: data.summary || '' }));
-      toast.success('Mensagens de follow-up geradas!');
+      setFollowupState(prev => ({ ...prev, status: 'ready', messages: data.messages || [], summary: data.summary || '', revisado: false }));
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Erro desconhecido';
       setFollowupState(prev => ({ ...prev, status: 'error', error: msg }));
       toast.error(msg);
     }
-  }, [aiState.reportId, pacienteSelecionado, consentGravacao]);
+  }, [aiState.reportId, pacienteSelecionado]);
 
   const handleAgendarFollowup = useCallback(async () => {
-    if (!aiState.reportId || !pacienteSelecionado || followupState.messages.length === 0) return;
-    setFollowupState(prev => ({ ...prev, status: 'scheduling' }));
+    if (!aiState.reportId || !pacienteSelecionado || followupState.messages.length === 0 || !followupState.revisado) return;
+    setFollowupState(prev => ({ ...prev, status: 'scheduling', error: '' }));
     try {
       const { data, error } = await aiApi.scheduleFollowup({
         reportId: aiState.reportId,
-        patientName: pacienteSelecionado.nome,
-        patientPhone: pacienteSelecionado.telefone,
         messages: followupState.messages,
+        revisado: followupState.revisado,
       });
       if (error || !data) {
-        setFollowupState(prev => ({ ...prev, status: 'error', error: error || 'Erro ao agendar' }));
-        toast.error(error || 'Erro ao agendar follow-up');
+        // Volta para a edição: o erro (ex.: termo proibido) aparece junto das mensagens
+        setFollowupState(prev => ({ ...prev, status: 'ready', error: error || 'Erro ao agendar' }));
+        toast.error(error || 'Erro ao agendar o acompanhamento');
         return;
       }
-      setFollowupState(prev => ({ ...prev, status: 'scheduled', jobs: data.jobs || [] }));
-      toast.success(`${data.jobs?.length || 0} mensagens de follow-up agendadas!`);
+      setFollowupState(prev => ({ ...prev, status: 'scheduled', jobs: data.jobs || [], error: '' }));
+      toast.success(`${data.jobs?.length || 0} mensagens de acompanhamento agendadas`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Erro desconhecido';
-      setFollowupState(prev => ({ ...prev, status: 'error', error: msg }));
+      setFollowupState(prev => ({ ...prev, status: 'ready', error: msg }));
       toast.error(msg);
     }
-  }, [aiState.reportId, pacienteSelecionado, followupState.messages]);
+  }, [aiState.reportId, pacienteSelecionado, followupState.messages, followupState.revisado]);
+
+  const editarMensagemFollowup = useCallback((indice: number, texto: string) => {
+    setFollowupState(prev => ({
+      ...prev,
+      revisado: false,
+      messages: prev.messages.map((m, i) => (i === indice ? { ...m, text: texto } : m)),
+    }));
+  }, []);
 
   const adicionarPrescricao = useCallback(() => {
     if (!novaPrescricao.medicamento) return;
@@ -1161,62 +1180,94 @@ function ConsultaPage() {
                             </div>
                           )}
 
-                          {/* Status: Done — show full report */}
+                          {/* Status: Done — rascunho para revisão ou relatório aprovado */}
                           {aiState.status === 'done' && (
                             <div className="space-y-4">
-                              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-success/10 text-success text-xs font-medium">
-                                <Sparkles className="h-3 w-3" /> Relatório gerado e salvo no prontuário
-                              </div>
+                              <RotuloRelatorioIA
+                                report={{
+                                  status: aiState.reportStatus,
+                                  aprovado_por_nome: aiState.aprovadoPorNome,
+                                  aprovado_por_cro: aiState.aprovadoPorCro,
+                                  aprovado_por_outro_dentista: aiState.aprovadoPorOutroDentista,
+                                  aprovado_em: aiState.aprovadoEm,
+                                }}
+                              />
 
                               {/* Transcription */}
-                              <details className="group">
-                                <summary className="cursor-pointer text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1.5">
-                                  <Mic className="h-3 w-3" /> Ver transcrição completa
-                                </summary>
-                                <div className="mt-2 bg-muted/30 rounded-xl p-4 text-xs text-foreground whitespace-pre-wrap max-h-48 overflow-y-auto">
-                                  {aiState.transcription}
-                                </div>
-                              </details>
+                              {aiState.transcricaoApagada ? (
+                                <p className="text-[11px] text-muted-foreground flex items-center gap-1.5">
+                                  <Mic className="h-3 w-3" /> A transcrição bruta foi apagada após a aprovação, como a clínica configurou.
+                                </p>
+                              ) : aiState.transcription ? (
+                                <details className="group">
+                                  <summary className="cursor-pointer text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1.5">
+                                    <Mic className="h-3 w-3" /> Ver transcrição completa
+                                  </summary>
+                                  <div className="mt-2 bg-muted/30 rounded-xl p-4 text-xs text-foreground whitespace-pre-wrap max-h-48 overflow-y-auto">
+                                    {aiState.transcription}
+                                  </div>
+                                </details>
+                              ) : null}
 
-                              {/* Report */}
-                              <div className="bg-card border border-primary/20 rounded-xl p-5">
-                                <div className="prose prose-sm max-w-none text-foreground text-xs leading-relaxed"
-                                     dangerouslySetInnerHTML={{
-                                       __html: simpleMarkdownToHtml(aiState.report)
-                                     }}
+                              {/* Report: editável até a aprovação; depois, somente leitura */}
+                              {aiState.reportStatus === 'rascunho' ? (
+                                <AprovarRelatorioIA
+                                  key={aiState.reportId}
+                                  reportId={aiState.reportId}
+                                  textoInicial={aiState.report}
+                                  onAprovado={(aprovacao, textoAprovado) => setAiState(prev => ({
+                                    ...prev,
+                                    report: textoAprovado,
+                                    reportStatus: 'aprovado',
+                                    aprovadoPorNome: aprovacao.aprovado_por_nome,
+                                    aprovadoPorCro: aprovacao.aprovado_por_cro || '',
+                                    aprovadoPorOutroDentista: aprovacao.aprovado_por_outro_dentista,
+                                    aprovadoEm: aprovacao.aprovado_em,
+                                    transcricaoApagada: !aprovacao.transcricao_mantida,
+                                    transcription: aprovacao.transcricao_mantida ? prev.transcription : '',
+                                  }))}
+                                  onNaoAprovado={(decisao) => setAiState(prev => ({
+                                    ...prev,
+                                    reportStatus: 'nao_aprovado',
+                                    transcricaoApagada: !decisao.transcricao_mantida,
+                                    transcription: decisao.transcricao_mantida ? prev.transcription : '',
+                                  }))}
                                 />
-                              </div>
+                              ) : aiState.reportStatus === 'nao_aprovado' ? (
+                                <p className="text-xs text-muted-foreground">
+                                  O rascunho foi guardado só para auditoria e não entra no prontuário.
+                                </p>
+                              ) : (
+                                <div className="bg-card border border-primary/20 rounded-xl p-5">
+                                  <div className="prose prose-sm max-w-none text-foreground text-xs leading-relaxed"
+                                       dangerouslySetInnerHTML={{
+                                         __html: simpleMarkdownToHtml(aiState.report)
+                                       }}
+                                  />
+                                </div>
+                              )}
 
-                              {/* Follow-up AI Section */}
+                              {/* Mensagens de acompanhamento: só depois da aprovação do relatório */}
+                              {aiState.reportStatus === 'aprovado' && (
                               <div className="bg-card border border-border/60 rounded-xl p-4 space-y-3">
                                 <div className="flex items-center justify-between">
                                   <h4 className="text-sm font-semibold text-foreground flex items-center gap-2">
-                                    <CalendarCheck className="h-4 w-4 text-primary" /> Follow-up Automático com IA
+                                    <CalendarCheck className="h-4 w-4 text-primary" /> Mensagens de acompanhamento
                                   </h4>
                                   {followupState.status === 'idle' && (
                                     <button
                                       onClick={handleGerarFollowup}
-                                      disabled={!consentGravacao}
-                                      aria-describedby={!consentGravacao ? "followup-sem-consentimento" : undefined}
-                                      className="h-8 px-4 rounded-lg gradient-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition-all inline-flex items-center gap-1.5 shadow-glow-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                                      className="h-8 px-4 rounded-lg gradient-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition-all inline-flex items-center gap-1.5 shadow-glow-primary"
                                     >
-                                      <Sparkles className="h-3 w-3" /> Gerar Follow-up
+                                      <MessageSquare className="h-3 w-3" /> Preparar mensagens
                                     </button>
                                   )}
                                 </div>
-                                {!consentGravacao && (
-                                  <p id="followup-sem-consentimento" className="text-xs text-muted-foreground">
-                                    O follow-up com IA envia o relatório à OpenAI e precisa da autorização do paciente (versão 2.0).{" "}
-                                    <button type="button" onClick={() => void garantirConsentGravacao()} className="font-medium text-primary hover:underline">
-                                      Coletar autorização
-                                    </button>
-                                  </p>
-                                )}
 
                                 {followupState.status === 'generating' && (
                                   <div className="flex items-center gap-3 p-4 rounded-xl bg-primary/5 border border-primary/10">
                                     <Loader2 className="h-5 w-5 text-primary animate-spin" />
-                                    <p className="text-xs text-foreground">Gerando mensagens personalizadas com base no relatório...</p>
+                                    <p className="text-xs text-foreground">Carregando os modelos de mensagem...</p>
                                   </div>
                                 )}
 
@@ -1229,31 +1280,55 @@ function ConsultaPage() {
 
                                 {(followupState.status === 'ready' || followupState.status === 'scheduling') && (
                                   <div className="space-y-3">
-                                    {followupState.summary && (
-                                      <p className="text-xs text-muted-foreground italic">{followupState.summary}</p>
-                                    )}
+                                    <div className="rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-foreground">
+                                      <p className="font-semibold">Revise e edite antes de agendar.</p>
+                                      <p className="text-muted-foreground">
+                                        Não inclua procedimento, medicamento, diagnóstico, preço ou promoção: a mensagem
+                                        aparece na tela do celular do paciente. Use {"{{nome}}"} e {"{{clinica}}"} para o nome do paciente e da clínica.
+                                        O envio vai para o telefone do cadastro do paciente.
+                                      </p>
+                                    </div>
                                     <div className="space-y-2">
                                       {followupState.messages.map((msg, i) => (
                                         <div key={i} className="flex items-start gap-3 p-3 rounded-xl bg-muted/30 border border-border/40">
                                           <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
                                             <MessageSquare className="h-4 w-4 text-primary" />
                                           </div>
-                                          <div className="flex-1 min-w-0">
-                                            <div className="flex items-center gap-2 mb-1">
-                                              <span className="text-[10px] font-semibold text-primary bg-primary/10 px-2 py-0.5 rounded-full">
+                                          <div className="flex-1 min-w-0 space-y-1">
+                                            <div className="flex items-center gap-2">
+                                              <label htmlFor={`followup-msg-${i}`} className="text-[10px] font-semibold text-primary bg-primary/10 px-2 py-0.5 rounded-full">
                                                 Dia {msg.delay_days}
-                                              </span>
+                                              </label>
                                               <span className="text-[10px] text-muted-foreground">via WhatsApp</span>
                                             </div>
-                                            <p className="text-xs text-foreground">{msg.text}</p>
+                                            <Textarea
+                                              id={`followup-msg-${i}`}
+                                              value={msg.text}
+                                              onChange={(e) => editarMensagemFollowup(i, e.target.value)}
+                                              rows={3}
+                                              maxLength={500}
+                                              className="text-xs"
+                                              disabled={followupState.status === 'scheduling'}
+                                            />
                                           </div>
                                         </div>
                                       ))}
                                     </div>
+                                    {followupState.error && (
+                                      <p role="alert" className="text-xs text-destructive">{followupState.error}</p>
+                                    )}
+                                    <label className="flex items-center gap-2 text-xs text-foreground cursor-pointer">
+                                      <Checkbox
+                                        checked={followupState.revisado}
+                                        onCheckedChange={(v) => setFollowupState(prev => ({ ...prev, revisado: v === true }))}
+                                        disabled={followupState.status === 'scheduling'}
+                                      />
+                                      Revisei as mensagens
+                                    </label>
                                     <div className="flex items-center gap-2 pt-1">
                                       <button
                                         onClick={handleAgendarFollowup}
-                                        disabled={followupState.status === 'scheduling'}
+                                        disabled={followupState.status === 'scheduling' || !followupState.revisado}
                                         className="h-9 px-5 rounded-lg gradient-primary text-primary-foreground text-xs font-semibold hover:opacity-90 transition-all inline-flex items-center gap-2 shadow-glow-primary disabled:opacity-50"
                                       >
                                         {followupState.status === 'scheduling' ? (
@@ -1261,14 +1336,14 @@ function ConsultaPage() {
                                         ) : (
                                           <Send className="h-3.5 w-3.5" />
                                         )}
-                                        Agendar Follow-up
+                                        Agendar mensagens
                                       </button>
                                       <button
                                         onClick={handleGerarFollowup}
-                                        disabled={!consentGravacao}
-                                        className="h-9 px-4 rounded-lg border border-border text-foreground text-xs font-medium hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                        disabled={followupState.status === 'scheduling'}
+                                        className="h-9 px-4 rounded-lg border border-border text-foreground text-xs font-medium hover:bg-muted transition-colors disabled:opacity-50"
                                       >
-                                        Regenerar
+                                        Restaurar modelos
                                       </button>
                                     </div>
                                   </div>
@@ -1280,7 +1355,7 @@ function ConsultaPage() {
                                       <CalendarCheck className="h-3 w-3" /> {followupState.jobs.length} mensagens agendadas com sucesso
                                     </div>
                                     <div className="space-y-1.5">
-                                      {followupState.jobs.map((job, i) => (
+                                      {followupState.jobs.map((job) => (
                                         <div key={job.id} className="flex items-center gap-3 p-2.5 rounded-lg bg-success/5 border border-success/10 text-xs">
                                           <div className="h-6 w-6 rounded-md bg-success/10 flex items-center justify-center text-success font-bold text-[10px]">
                                             D{job.delay_days}
@@ -1299,11 +1374,14 @@ function ConsultaPage() {
 
                                 {followupState.status === 'idle' && (
                                   <p className="text-xs text-muted-foreground">
-                                    Gere mensagens de follow-up personalizadas baseadas no relatório clínico.
-                                    A IA criará mensagens empáticas considerando o procedimento, orientações e plano de tratamento.
+                                    Prepare até três mensagens de acompanhamento a partir dos modelos da clínica.
+                                    Você revisa e edita cada uma antes de agendar.
                                   </p>
                                 )}
                               </div>
+                              )}
+
+                              <AvisoDecisaoClinica />
                             </div>
                           )}
 
@@ -1313,9 +1391,9 @@ function ConsultaPage() {
                               <Activity className="h-10 w-10 text-primary/30 mx-auto mb-3" />
                               <p className="text-sm font-medium text-foreground mb-1">Transcrição e Análise por IA</p>
                               <p className="text-xs text-muted-foreground max-w-md mx-auto mb-4">
-                                Grave a consulta e clique em "Transcrever com IA" para gerar automaticamente
-                                o relatório clínico. O relatório será salvo no prontuário do paciente e usado
-                                para follow-ups automáticos pelo agente de IA.
+                                Grave a consulta e clique em "Transcrever com IA" para gerar um rascunho
+                                do relatório clínico. Você revisa, edita e aprova: só o texto aprovado entra
+                                no prontuário do paciente.
                               </p>
                               {gravacoes.length > 0 ? (
                                 <div className="space-y-3">
