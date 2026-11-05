@@ -12,7 +12,6 @@ import {
   Monitor,
   Users,
   Megaphone,
-  BarChart3,
   UserCog,
   RefreshCcw,
   Plug,
@@ -48,6 +47,8 @@ interface NavItem {
   url: string;
   icon: typeof LayoutDashboard;
   badge?: number;
+  /** Tela funcional, mas ainda com limitações (ex.: dados só neste navegador). */
+  beta?: boolean;
 }
 
 interface NavSection {
@@ -95,9 +96,9 @@ const navSections: NavSection[] = [
   {
     label: "Marketing",
     items: [
-      { title: "Campanhas", url: "/campanhas", icon: Megaphone },
+      { title: "Campanhas", url: "/campanhas", icon: Megaphone, beta: true },
       { title: "Integrações & Clinicorp", url: "/integracoes", icon: Plug },
-      { title: "ROI & Analytics", url: "/analytics", icon: BarChart3 },
+      // "ROI & Analytics" (/analytics) fica fora do menu enquanto a tela for "em breve".
     ],
   },
   {
@@ -107,7 +108,7 @@ const navSections: NavSection[] = [
       { title: "Comissões", url: "/comissoes", icon: Percent },
       { title: "Estoque", url: "/estoque", icon: Package },
       { title: "Canais", url: "/canais", icon: Radio },
-      { title: "Equipe", url: "/equipe", icon: UserCog },
+      // "Equipe" (/equipe) fica fora do menu enquanto a tela for "em breve".
       { title: "Usuários", url: "/usuarios", icon: UserCog },
       { title: "Minha Assinatura", url: "/minha-assinatura", icon: Settings },
       { title: "Super Admin", url: "/super-admin", icon: Settings },
@@ -122,7 +123,6 @@ const superAdminSections: NavSection[] = [
     label: "SaaS Management",
     items: [
       { title: "Painel Global", url: "/super-admin", icon: LayoutDashboard },
-      { title: "Configurações SaaS", url: "/super-admin", icon: Settings },
     ],
   },
 ];
@@ -287,8 +287,8 @@ function CollapsibleSection({
                   ? "bg-sidebar-accent text-sidebar-primary"
                   : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
               }`}
-              title={item.title}
-              aria-label={item.title}
+              title={item.beta ? `${item.title} (beta)` : item.title}
+              aria-label={item.beta ? `${item.title} (beta)` : item.title}
               aria-current={isActive ? "page" : undefined}
             >
               <item.icon className="h-[18px] w-[18px]" />
@@ -331,6 +331,14 @@ function CollapsibleSection({
               >
                 <item.icon className={`h-[18px] w-[18px] shrink-0 ${isActive ? "text-sidebar-primary" : "text-muted-foreground"}`} />
                 <span className="flex-1 truncate">{item.title}</span>
+                {item.beta && (
+                  <span
+                    className="shrink-0 rounded px-1.5 min-h-5 inline-flex items-center bg-sidebar-accent text-sidebar-accent-foreground text-xs font-semibold"
+                    title="Funciona, mas ainda tem limitações"
+                  >
+                    Beta
+                  </span>
+                )}
                 {item.badge ? (
                   <span className={`h-5 min-w-5 px-1.5 rounded-full text-xs font-semibold leading-5 text-center tabular-nums ${
                     isActive
