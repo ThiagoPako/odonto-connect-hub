@@ -274,6 +274,8 @@ export async function adminUploadUserAvatar(userId: string, file: File) {
 
 export const pacientesApi = {
   list: () => vpsApiFetch('/pacientes'),
+  /** Um paciente da clínica do usuário (erro "Paciente não encontrado" se for de outra). */
+  get: (id: string) => vpsApiFetch(`/pacientes/${encodeURIComponent(id)}`),
   create: (body: unknown) => vpsApiFetch('/pacientes', { method: 'POST', body }),
   update: (id: string, body: unknown) => vpsApiFetch(`/pacientes/${id}`, { method: 'PUT', body }),
   delete: (id: string) => vpsApiFetch(`/pacientes/${id}`, { method: 'DELETE' }),
