@@ -3983,17 +3983,34 @@ app.post('/api/whatsapp/opt-out/revogar', async (req, res) => {
     const phone = await getLeadPhoneForTenant(user.tenant_id, leadId);
     if (!phone) return res.status(404).json({ error: 'Conversa não encontrada' });
     const key = waPhoneKey(phone);
-    const { rows: [removed] } = await pool.query(
-      'DELETE FROM whatsapp_opt_outs WHERE tenant_id = $1 AND phone_key = $2 RETURNING phone, keyword, created_at',
-      [user.tenant_id, key]
-    );
-    if (!removed) return res.status(409).json({ error: 'Este paciente não está descadastrado' });
-    await pool.query(
-      `INSERT INTO whatsapp_opt_out_reversals (tenant_id, phone_key, phone, opted_out_at, keyword, lead_id, requested_via, reverted_by, reverted_by_email)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-      [user.tenant_id, key, removed.phone || null, removed.created_at || null, removed.keyword || null, String(leadId),
-        requestedVia.slice(0, 300), isValidTenantId(user.id) ? user.id : null, user.email || null]
-    );
+    // Registro e remoção na mesma transação: se o registro falhar, o descadastro fica
+    // (sem prova de que o paciente pediu para voltar, ele continua valendo).
+    // pool.connect já aplica o contexto da clínica na conexão (TENANT_SET_SQL).
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows: [current] } = await client.query(
+        'SELECT phone, keyword, created_at FROM whatsapp_opt_outs WHERE tenant_id = $1 AND phone_key = $2 FOR UPDATE',
+        [user.tenant_id, key]
+      );
+      if (!current) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: 'Este paciente não está descadastrado' });
+      }
+      await client.query(
+        `INSERT INTO whatsapp_opt_out_reversals (tenant_id, phone_key, phone, opted_out_at, keyword, lead_id, requested_via, reverted_by, reverted_by_email)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [user.tenant_id, key, current.phone || null, current.created_at || null, current.keyword || null, String(leadId),
+          requestedVia.slice(0, 300), isValidTenantId(user.id) ? user.id : null, user.email || null]
+      );
+      await client.query('DELETE FROM whatsapp_opt_outs WHERE tenant_id = $1 AND phone_key = $2', [user.tenant_id, key]);
+      await client.query('COMMIT');
+    } catch (txError) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw txError;
+    } finally {
+      client.release();
+    }
     console.log(`↩️ Opt-out desfeito a pedido do paciente (tenant ${user.tenant_id}, final ${maskPhone(phone)})`);
     res.json({ success: true });
   } catch (error) {
@@ -5531,9 +5548,18 @@ app.get('/api/agenda', async (req, res) => {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.json([]);
     const { data_inicio, data_fim, dentista_id } = req.query;
+    // lembrete_status: 'na_fila' | 'aguardando' (enviado, sem resposta) | 'confirmado' | 'remarcar' | 'falhou' | null
     let query = `SELECT a.*,
       COALESCE(NULLIF(TRIM(p.nome), ''), a.paciente_nome) AS paciente_nome,
-      COALESCE(NULLIF(TRIM(d.nome), ''), a.dentista_nome) AS dentista_nome
+      COALESCE(NULLIF(TRIM(d.nome), ''), a.dentista_nome) AS dentista_nome,
+      (SELECT CASE
+                WHEN aj.status = 'pending' THEN 'na_fila'
+                WHEN aj.status = 'sent' THEN COALESCE(NULLIF(aj.variables::jsonb->>'confirmationReply', ''), 'aguardando')
+                WHEN aj.status = 'failed' THEN 'falhou'
+                ELSE NULL END
+         FROM automation_jobs aj
+        WHERE aj.tenant_id = a.tenant_id AND aj.trigger_event = 'appointment_reminder' AND aj.flow_id = 'reminder_' || a.id::text
+        ORDER BY aj.scheduled_at DESC NULLS LAST LIMIT 1) AS lembrete_status
       FROM agendamentos a LEFT JOIN pacientes p ON a.paciente_id = p.id AND p.tenant_id = a.tenant_id LEFT JOIN dentistas d ON a.dentista_id = d.id AND d.tenant_id = a.tenant_id WHERE a.tenant_id = $1`;
     const params = [user.tenant_id];
     if (data_inicio) { params.push(data_inicio); query += ` AND a.data >= $${params.length}`; }
@@ -5822,6 +5848,11 @@ app.put('/api/agenda/:id', async (req, res) => {
     }
     if (Array.isArray(marcadores)) { params.push(JSON.stringify(marcadores)); sets.push(`marcadores = $${params.length}::jsonb`); }
     if (como_conheceu !== undefined) { params.push(como_conheceu || null); sets.push(`como_conheceu = $${params.length}`); }
+    // Horário liberado pela recepção (cancelado/desmarcado): registra quem e quando.
+    if (status === 'cancelado' || status === 'desmarcado') {
+      params.push(PACIENTE_UUID_RE.test(String(user.id || '')) ? user.id : null);
+      sets.push(`liberado_por = $${params.length}`, 'liberado_em = NOW()');
+    }
     if (sets.length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
     params.push(id);
     params.push(user.tenant_id);
@@ -5870,6 +5901,447 @@ app.put('/api/agenda/:id', async (req, res) => {
     res.status(500).json({ error: 'Erro interno' });
   }
 });
+
+
+// ═══════════════════════════════════════════════════════════════
+// LISTA DE ESPERA E ENCAIXE (B8)
+// Horário liberado (paciente pediu remarcar ou cancelou) → a recepção vê quantos
+// pacientes da lista servem e clica "Oferecer horário": a oferta sai pela fila para
+// UM paciente por vez, com prazo. Nunca há oferta automática sem esse clique.
+// ═══════════════════════════════════════════════════════════════
+const WAITLIST_PERIODOS = new Set(['manha', 'tarde', 'noite', 'qualquer']);
+// "remarcar" NÃO libera: o paciente ouviu que o horário continua reservado (parecer T5).
+// O horário só fica livre quando a recepção desmarca/cancela, com registro de quem e quando
+// (agendamentos.liberado_por / liberado_em).
+const WAITLIST_FREED_STATUSES = ['cancelado', 'desmarcado'];
+const WAITLIST_OFFER_TTL_MS = 2 * 60 * 60_000;      // prazo de resposta: 2 h
+const WAITLIST_MIN_LEAD_MS = 30 * 60_000;           // não oferece horário a menos de 30 min
+
+function waitlistPeriodoDaHora(hora) {
+  const h = parseInt(String(hora || '').slice(0, 2), 10);
+  if (!Number.isFinite(h)) return 'qualquer';
+  return h < 12 ? 'manha' : h < 18 ? 'tarde' : 'noite';
+}
+function agendaYmd(value) {
+  if (value instanceof Date) {
+    return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
+  }
+  return String(value || '').slice(0, 10);
+}
+function agendaSlotStart(slot) {
+  const hhmm = /^\d{2}:\d{2}/.test(String(slot.hora || '')) ? String(slot.hora).slice(0, 5) : '00:00';
+  return new Date(`${agendaYmd(slot.data)}T${hhmm}:00-03:00`);
+}
+
+async function ensureWaitlistSchema() {
+  let sql;
+  try { sql = readFileSync(path.join(__dirname, 'migration-lista-espera.sql'), 'utf8'); }
+  catch (e) { console.error('[lista-espera] migração não encontrada:', e.message); return; }
+  const statements = sql.split(/;\s*\n/).map(t => t.replace(/^\s*--.*$/gm, '').trim()).filter(Boolean);
+  for (const st of statements) {
+    await pool.query(st).catch(e => console.error('[lista-espera]', e.message, '→', st.split('\n')[0].slice(0, 90)));
+  }
+}
+
+// Ofertas vencidas voltam o paciente para a fila de espera.
+async function expireWaitlistOffers(tenantId) {
+  const { rows } = await pool.query(
+    `UPDATE lista_espera_ofertas SET status = 'expirada', answered_at = NOW()
+      WHERE tenant_id = $1 AND status = 'enviada' AND expires_at <= NOW() RETURNING lista_espera_id`,
+    [tenantId]
+  ).catch(() => ({ rows: [] }));
+  for (const r of rows) {
+    await pool.query(
+      `UPDATE lista_espera SET status = 'aguardando', updated_at = NOW() WHERE id = $1 AND tenant_id = $2 AND status = 'oferecido'`,
+      [r.lista_espera_id, tenantId]
+    ).catch(() => {});
+  }
+}
+
+async function getWaitlistSlot(tenantId, agendamentoId) {
+  if (!PACIENTE_UUID_RE.test(String(agendamentoId))) return null;
+  const { rows: [slot] } = await pool.query(
+    `SELECT a.id, a.data, a.hora, a.duracao, a.dentista_id, a.paciente_id, a.status, d.nome AS dentista_nome
+       FROM agendamentos a LEFT JOIN dentistas d ON d.id = a.dentista_id AND d.tenant_id = a.tenant_id
+      WHERE a.id = $1 AND a.tenant_id = $2 LIMIT 1`,
+    [agendamentoId, tenantId]
+  );
+  return slot || null;
+}
+
+// Candidatos da lista para o horário: mesma clínica, profissional (ou qualquer),
+// período compatível, com telefone, sem opt-out e que ainda não receberam oferta
+// deste horário. Ordem de chegada.
+async function findWaitlistCandidates(tenantId, slot) {
+  const { rows } = await pool.query(
+    `SELECT le.id, le.paciente_id, p.nome AS paciente_nome, p.telefone
+       FROM lista_espera le
+       JOIN pacientes p ON p.id = le.paciente_id AND p.tenant_id = le.tenant_id
+      WHERE le.tenant_id = $1 AND le.status = 'aguardando'
+        AND (le.dentista_id IS NULL OR le.dentista_id = $2)
+        AND (le.periodo = 'qualquer' OR le.periodo = $3)
+        AND le.paciente_id IS DISTINCT FROM $4
+        AND COALESCE(regexp_replace(p.telefone, '\\D', '', 'g'), '') <> ''
+        AND NOT EXISTS (
+          SELECT 1 FROM whatsapp_opt_outs o
+           WHERE o.tenant_id = le.tenant_id
+             AND RIGHT(o.phone_key, 8) = RIGHT(regexp_replace(p.telefone, '\\D', '', 'g'), 8))
+        AND NOT EXISTS (
+          SELECT 1 FROM lista_espera_ofertas f
+           WHERE f.tenant_id = le.tenant_id AND f.lista_espera_id = le.id AND f.agendamento_origem_id = $5)
+      ORDER BY le.created_at ASC`,
+    [tenantId, slot.dentista_id || null, waitlistPeriodoDaHora(slot.hora), slot.paciente_id || null, slot.id]
+  );
+  return rows;
+}
+
+app.get('/api/lista-espera', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    await expireWaitlistOffers(user.tenant_id);
+    const { rows } = await pool.query(
+      `SELECT le.id, le.paciente_id, le.dentista_id, le.periodo, le.observacao, le.status, le.created_at,
+              p.nome AS paciente_nome, d.nome AS dentista_nome
+         FROM lista_espera le
+         JOIN pacientes p ON p.id = le.paciente_id AND p.tenant_id = le.tenant_id
+         LEFT JOIN dentistas d ON d.id = le.dentista_id AND d.tenant_id = le.tenant_id
+        WHERE le.tenant_id = $1 AND le.status IN ('aguardando', 'oferecido')
+        ORDER BY le.created_at ASC`,
+      [user.tenant_id]
+    );
+    res.json(rows);
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('❌ lista de espera:', error.message);
+    res.status(500).json({ error: 'Erro ao carregar a lista de espera' });
+  }
+});
+
+app.post('/api/lista-espera', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { paciente_id, dentista_id, periodo, observacao } = req.body || {};
+    if (!paciente_id) return res.status(400).json({ error: 'Selecione o paciente' });
+    const per = periodo || 'qualquer';
+    if (!WAITLIST_PERIODOS.has(per)) return res.status(400).json({ error: 'Período inválido' });
+    const refErro = await validarReferenciasDoTenant(user.tenant_id, { pacienteId: paciente_id, dentistaId: dentista_id || null });
+    if (refErro) return res.status(400).json({ error: refErro });
+    const { rows: dup } = await pool.query(
+      `SELECT 1 FROM lista_espera WHERE tenant_id = $1 AND paciente_id = $2 AND dentista_id IS NOT DISTINCT FROM $3
+          AND status IN ('aguardando', 'oferecido') LIMIT 1`,
+      [user.tenant_id, paciente_id, dentista_id || null]
+    );
+    if (dup.length) return res.status(409).json({ error: 'Este paciente já está na lista de espera' });
+    const id = crypto.randomUUID();
+    await pool.query(
+      `INSERT INTO lista_espera (id, tenant_id, paciente_id, dentista_id, periodo, observacao) VALUES ($1, $2, $3, $4, $5, $6)`,
+      [id, user.tenant_id, paciente_id, dentista_id || null, per, observacao ? String(observacao).slice(0, 500) : null]
+    );
+    res.json({ id, success: true });
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('❌ lista de espera (incluir):', error.message);
+    res.status(500).json({ error: 'Erro ao incluir na lista de espera' });
+  }
+});
+
+app.delete('/api/lista-espera/:id', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    if (!PACIENTE_UUID_RE.test(String(req.params.id))) return res.status(404).json({ error: 'Registro não encontrado' });
+    const { rowCount } = await pool.query(
+      `UPDATE lista_espera SET status = 'removido', updated_at = NOW() WHERE id = $1 AND tenant_id = $2 AND status <> 'removido'`,
+      [req.params.id, user.tenant_id]
+    );
+    if (!rowCount) return res.status(404).json({ error: 'Registro não encontrado' });
+    res.json({ success: true });
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    res.status(500).json({ error: 'Erro ao remover da lista de espera' });
+  }
+});
+
+// Recepção libera o horário de quem pediu para remarcar, depois de falar com o paciente.
+app.post('/api/agenda/:id/liberar-horario', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    if (!PACIENTE_UUID_RE.test(String(req.params.id))) return res.status(404).json({ error: 'Agendamento não encontrado' });
+    const { rows } = await pool.query(
+      `UPDATE agendamentos SET status = 'desmarcado', liberado_por = $3, liberado_em = NOW(), updated_at = NOW()
+        WHERE id = $1 AND tenant_id = $2 AND status = 'remarcar' RETURNING id, data`,
+      [req.params.id, user.tenant_id, PACIENTE_UUID_RE.test(String(user.id || '')) ? user.id : null]
+    );
+    if (!rows.length) return res.status(409).json({ error: 'Só dá para liberar um horário cujo paciente pediu para remarcar' });
+    broadcastSSE('agendamento_changed', { action: 'updated', id: rows[0].id, data: rows[0].data }, user.tenant_id);
+    res.json({ success: true });
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('❌ liberar horário:', error.message);
+    res.status(500).json({ error: 'Erro ao liberar o horário' });
+  }
+});
+
+// Sugestão de encaixe para um horário liberado.
+app.get('/api/agenda/:id/encaixe', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const slot = await getWaitlistSlot(user.tenant_id, req.params.id);
+    if (!slot) return res.status(404).json({ error: 'Agendamento não encontrado' });
+    const liberado = WAITLIST_FREED_STATUSES.includes(String(slot.status || ''));
+    const futuro = agendaSlotStart(slot).getTime() > Date.now() + WAITLIST_MIN_LEAD_MS;
+    if (!liberado || !futuro) return res.json({ disponivel: false, liberado, futuro, candidatos: 0, oferta: null });
+    await expireWaitlistOffers(user.tenant_id);
+    const { rows: [oferta] } = await pool.query(
+      `SELECT o.id, o.status, o.expires_at, p.nome AS paciente_nome
+         FROM lista_espera_ofertas o JOIN pacientes p ON p.id = o.paciente_id AND p.tenant_id = o.tenant_id
+        WHERE o.tenant_id = $1 AND o.agendamento_origem_id = $2 AND o.status IN ('enviada', 'aceita')
+        ORDER BY o.created_at DESC LIMIT 1`,
+      [user.tenant_id, slot.id]
+    );
+    const candidatos = oferta?.status === 'aceita' ? [] : await findWaitlistCandidates(user.tenant_id, slot);
+    res.json({
+      disponivel: !oferta, liberado, futuro, candidatos: candidatos.length,
+      oferta: oferta ? { id: oferta.id, status: oferta.status, expires_at: oferta.expires_at, paciente_nome: oferta.paciente_nome } : null,
+      dentroDaJanela: isWithinWhatsAppSendWindow(),
+    });
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('❌ encaixe:', error.message);
+    res.status(500).json({ error: 'Erro ao consultar a lista de espera' });
+  }
+});
+
+// TEXTO PARA PACIENTE: revisão da Helena (helena-juridico) antes do merge.
+// Só clínica, profissional, data, hora e prazo: nada de procedimento.
+function buildWaitlistOfferMessage({ clinica, firstName, profissional, weekday, dataBR, hora, prazo }) {
+  const base = `📅 *Horário disponível — ${clinica}*\n\nOlá${firstName ? `, ${firstName}` : ''}! Você está na nossa lista de espera e abriu um horário:\n📅 ${weekday ? `${weekday}, ` : ''}${dataBR}\n⏰ ${hora}\n👩‍⚕️ ${profissional || 'Equipe da clínica'}\n\nA oferta vale até ${prazo}. Se não responder até lá, o horário vai para a próxima pessoa da lista e você continua na lista.`;
+  // SAIR vira descadastro completo (WA_OPT_OUT_PHRASES): o texto diz exatamente isso
+  // e fica por último nas duas versões (botões e alternativo).
+  const sair = '\n\nSe não quiser mais mensagens automáticas da clínica, responda SAIR.';
+  return { body: `${base}${sair}`, fallbackText: `${base}\n\nResponda *QUERO* para ficar com o horário ou *NÃO* se não puder.${sair}` };
+}
+
+// Clique da recepção: oferta para UM paciente (o primeiro da lista que serve).
+app.post('/api/agenda/:id/oferecer-horario', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const tenantId = String(user.tenant_id);
+    const slot = await getWaitlistSlot(tenantId, req.params.id);
+    if (!slot) return res.status(404).json({ error: 'Agendamento não encontrado' });
+    if (!WAITLIST_FREED_STATUSES.includes(String(slot.status || ''))) {
+      return res.status(409).json({ error: 'Este horário não foi liberado pela recepção' });
+    }
+    const start = agendaSlotStart(slot);
+    if (Number.isNaN(start.getTime()) || start.getTime() <= Date.now() + WAITLIST_MIN_LEAD_MS) {
+      return res.status(409).json({ error: 'Horário muito próximo ou já passou' });
+    }
+    if (!isWithinWhatsAppSendWindow()) {
+      return res.status(409).json({ error: 'Fora do horário de envio do WhatsApp (seg a sex 8h–20h, sáb 8h–13h). Tente de novo nesse período.' });
+    }
+    await expireWaitlistOffers(tenantId);
+    const { rows: ativa } = await pool.query(
+      `SELECT status FROM lista_espera_ofertas WHERE tenant_id = $1 AND agendamento_origem_id = $2 AND status IN ('enviada', 'aceita') LIMIT 1`,
+      [tenantId, slot.id]
+    );
+    if (ativa.length) {
+      return res.status(409).json({ error: ativa[0].status === 'aceita' ? 'Este horário já foi preenchido pela lista de espera' : 'Já há uma oferta aguardando resposta para este horário' });
+    }
+    const [cand] = await findWaitlistCandidates(tenantId, slot);
+    if (!cand) return res.status(404).json({ error: 'Ninguém na lista de espera serve para este horário' });
+    const phone = normalizeWhatsappNumber(cand.telefone || '');
+    if (!phone || await isWhatsAppOptedOut(tenantId, phone)) return res.status(409).json({ error: 'O próximo paciente da lista não pode receber WhatsApp' });
+
+    const expiresAt = new Date(Math.min(Date.now() + WAITLIST_OFFER_TTL_MS, start.getTime()));
+    const ofertaId = crypto.randomUUID();
+    try {
+      await pool.query(
+        `INSERT INTO lista_espera_ofertas (id, tenant_id, lista_espera_id, paciente_id, agendamento_origem_id, data, hora, duracao, dentista_id, status, expires_at, oferecido_por)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'enviada', $10, $11)`,
+        [ofertaId, tenantId, cand.id, cand.paciente_id, slot.id, agendaYmd(slot.data), String(slot.hora).slice(0, 5), slot.duracao || 30,
+          slot.dentista_id || null, expiresAt, PACIENTE_UUID_RE.test(String(user.id || '')) ? user.id : null]
+      );
+    } catch (e) {
+      if (e.code === '23505') return res.status(409).json({ error: 'Já há uma oferta aguardando resposta para este horário' });
+      throw e;
+    }
+    await pool.query(`UPDATE lista_espera SET status = 'oferecido', updated_at = NOW() WHERE id = $1 AND tenant_id = $2`, [cand.id, tenantId]);
+
+    const ymd = agendaYmd(slot.data);
+    const [y, m, d] = ymd.split('-');
+    const WEEKDAYS = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
+    const prazo = expiresAt.toLocaleString('pt-BR', { timeZone: WA_TZ, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(',', ' às');
+    const clinica = await getTenantClinicName(tenantId);
+    const hora = String(slot.hora).slice(0, 5);
+    const { body, fallbackText } = buildWaitlistOfferMessage({
+      clinica, firstName: String(cand.paciente_nome || '').trim().split(/\s+/)[0] || '',
+      profissional: slot.dentista_nome, weekday: WEEKDAYS[new Date(`${ymd}T12:00:00Z`).getUTCDay()] || '',
+      dataBR: `${d}/${m}/${y}`, hora, prazo,
+    });
+    const jobId = await enqueueWhatsAppJob({
+      tenantId, phone, message: fallbackText, category: 'transactional',
+      flowId: `waitlist_${ofertaId}`, flowName: 'Oferta de encaixe', patientName: cand.paciente_nome || '',
+      triggerEvent: 'waitlist_offer', expiresAt,
+      variables: {
+        ofertaId,
+        interactive: {
+          endpoint: 'sendButtons',
+          payload: {
+            title: '', description: body, footer: clinica,
+            buttons: [
+              { buttonId: `oferta_aceitar_${ofertaId}`, buttonText: { displayText: 'Quero este horário' }, type: 1 },
+              { buttonId: `oferta_recusar_${ofertaId}`, buttonText: { displayText: 'Não posso' }, type: 1 },
+            ],
+          },
+        },
+      },
+    });
+    await pool.query(`UPDATE lista_espera_ofertas SET job_id = $3 WHERE id = $1 AND tenant_id = $2`, [ofertaId, tenantId, jobId ? String(jobId) : null]).catch(() => {});
+    broadcastSSE('waitlist_offer_changed', { agendamentoId: slot.id, status: 'enviada' }, tenantId);
+    res.json({ success: true, oferta: { id: ofertaId, paciente_nome: cand.paciente_nome, expires_at: expiresAt } });
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('❌ oferecer horário:', error.message);
+    res.status(500).json({ error: 'Erro ao oferecer o horário' });
+  }
+});
+
+// ─── Resposta do paciente à oferta (botão, QUERO / NÃO) ───
+const WAITLIST_ACCEPT_WORDS = new Set(['quero', 'quero sim', 'eu quero', 'aceito', 'quero este horario', 'quero esse horario']);
+const WAITLIST_DECLINE_WORDS = new Set(['nao', 'nao posso', 'nao consigo', 'recuso']);
+
+function parseWaitlistOfferReply(msgContent) {
+  const raw = String(msgContent || '').trim();
+  const btn = raw.match(/^oferta_(aceitar|recusar)_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+  if (btn) return { accept: btn[1] === 'aceitar', ofertaId: btn[2].toLowerCase() };
+  const t = raw.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[!.\s]+$/g, '').replace(/\s+/g, ' ');
+  if (!t || t.length > 40) return null;
+  if (WAITLIST_ACCEPT_WORDS.has(t)) return { accept: true, ofertaId: null };
+  if (WAITLIST_DECLINE_WORDS.has(t)) return { accept: false, ofertaId: null };
+  return null;
+}
+
+async function handleWaitlistOfferReply({ tenantId, phone, msgType, msgContent, instance }) {
+  if (!isValidTenantId(tenantId) || !phone) return null;
+  if (!['text', 'button_response', 'list_response'].includes(msgType)) return null;
+  const parsed = parseWaitlistOfferReply(msgContent);
+  if (!parsed) return null;
+  const params = [tenantId, String(phone).replace(/\D/g, '')];
+  if (parsed.ofertaId) params.push(parsed.ofertaId);
+  // Oferta desta clínica, ainda aguardando, para o telefone do cadastro do paciente ofertado.
+  const { rows: [oferta] } = await pool.query(
+    `SELECT o.id, o.lista_espera_id, o.paciente_id, o.agendamento_origem_id, o.data, o.hora, o.duracao, o.dentista_id, o.expires_at
+       FROM lista_espera_ofertas o JOIN pacientes p ON p.id = o.paciente_id AND p.tenant_id = o.tenant_id
+      WHERE o.tenant_id = $1 AND o.status = 'enviada'
+        AND RIGHT(regexp_replace(p.telefone, '\\D', '', 'g'), 8) = RIGHT($2, 8)
+        ${parsed.ofertaId ? 'AND o.id = $3' : ''}
+      ORDER BY o.created_at DESC LIMIT 1`,
+    params
+  );
+  if (!oferta) return null;
+  const clinica = await getTenantClinicName(tenantId);
+  const dataBR = formatAgendaDateBR(oferta.data);
+  const hora = String(oferta.hora || '').slice(0, 5);
+  const backToWaitlist = () => pool.query(
+    `UPDATE lista_espera SET status = 'aguardando', updated_at = NOW() WHERE id = $1 AND tenant_id = $2 AND status = 'oferecido'`,
+    [oferta.lista_espera_id, tenantId]
+  ).catch(() => {});
+  const reply = (message, kind) => enqueueWhatsAppAutoReply({
+    tenantId, instance, phone, message, kind, category: 'service', dedupeMinutes: 10,
+  }).catch(e => console.error('[lista-espera] resposta não enfileirada:', e.message));
+  // TEXTOS PARA PACIENTE: revisão da Helena (helena-juridico) antes do merge.
+  const UNAVAILABLE = `Que pena, esse horário não está mais disponível. Você continua na lista de espera da ${clinica}.`;
+
+  if (!parsed.accept) {
+    await pool.query(
+      `UPDATE lista_espera_ofertas SET status = 'recusada', answered_at = NOW() WHERE id = $1 AND tenant_id = $2 AND status = 'enviada'`,
+      [oferta.id, tenantId]
+    );
+    await backToWaitlist();
+    await reply(`Tudo bem! Você continua na lista de espera da ${clinica}.`, 'waitlist_declined');
+    broadcastSSE('waitlist_offer_changed', { agendamentoId: oferta.agendamento_origem_id, status: 'recusada' }, tenantId);
+    return { handled: true, accepted: false, ofertaId: oferta.id };
+  }
+
+  // Aceite: reserva da oferta, conferência do horário e criação do encaixe numa única
+  // transação. Qualquer erro no meio desfaz tudo: a oferta continua 'enviada' (o paciente
+  // pode responder de novo) e a entrada da lista não muda.
+  const novoId = crypto.randomUUID();
+  let outcome;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // Reserva atômica (só uma oferta ativa por horário).
+    const { rows: [claimed] } = await client.query(
+      `UPDATE lista_espera_ofertas SET status = 'aceita', answered_at = NOW()
+        WHERE id = $1 AND tenant_id = $2 AND status = 'enviada' AND expires_at > NOW() RETURNING id`,
+      [oferta.id, tenantId]
+    );
+    if (!claimed) {
+      // Reserva vazia: expirou ou outra mensagem do MESMO telefone (a oferta foi achada pelo
+      // telefone) já ganhou o aceite, ex.: "SIM" repetido/reentregue. Já aceita → não diz "Que pena".
+      const { rows: [atual] } = await client.query(
+        `SELECT status FROM lista_espera_ofertas WHERE id = $1 AND tenant_id = $2`,
+        [oferta.id, tenantId]
+      );
+      outcome = atual?.status === 'aceita' ? 'ja_aceita' : 'expirada';
+    } else {
+      // Horário ainda livre? (a recepção pode ter marcado alguém por fora). hora é TIME em
+      // produção; LEFT(hora::text, 5) funciona com TIME e com TEXT ('09:00:00' → '09:00').
+      const { rows: ocupado } = await client.query(
+        `SELECT 1 FROM agendamentos
+          WHERE tenant_id = $1 AND data = $2 AND LEFT(hora::text, 5) = $3 AND dentista_id IS NOT DISTINCT FROM $4 AND id <> $5
+            AND COALESCE(status, 'agendado') NOT IN ('cancelado', 'desmarcado', 'faltou') LIMIT 1`,
+        [tenantId, agendaYmd(oferta.data), hora, oferta.dentista_id || null, oferta.agendamento_origem_id]
+      );
+      if (ocupado.length) {
+        await client.query(`UPDATE lista_espera_ofertas SET status = 'indisponivel' WHERE id = $1 AND tenant_id = $2`, [oferta.id, tenantId]);
+        outcome = 'indisponivel';
+      } else {
+        await client.query(
+          `INSERT INTO agendamentos (id, paciente_id, dentista_id, data, hora, duracao, status, observacoes, tipo, tenant_id)
+           VALUES ($1, $2, $3, $4, $5, $6, 'confirmado', 'Encaixe pela lista de espera (aceito pelo WhatsApp)', 'consulta', $7)`,
+          [novoId, oferta.paciente_id, oferta.dentista_id || null, agendaYmd(oferta.data), hora, oferta.duracao || 30, tenantId]
+        );
+        await client.query(`UPDATE lista_espera_ofertas SET agendamento_novo_id = $3 WHERE id = $1 AND tenant_id = $2`, [oferta.id, tenantId, novoId]);
+        await client.query(`UPDATE lista_espera SET status = 'encaixado', updated_at = NOW() WHERE id = $1 AND tenant_id = $2`, [oferta.lista_espera_id, tenantId]);
+        outcome = 'aceita';
+      }
+    }
+    await client.query(outcome === 'expirada' || outcome === 'ja_aceita' ? 'ROLLBACK' : 'COMMIT');
+  } catch (txError) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw txError;
+  } finally {
+    client.release();
+  }
+  if (outcome === 'ja_aceita') {
+    // O encaixe e a confirmação ficaram com a mensagem que ganhou; nada a responder aqui.
+    return { handled: true, accepted: true, duplicate: true, ofertaId: oferta.id };
+  }
+  if (outcome === 'expirada') {
+    await pool.query(`UPDATE lista_espera_ofertas SET status = 'expirada', answered_at = NOW() WHERE id = $1 AND tenant_id = $2 AND status = 'enviada'`, [oferta.id, tenantId]).catch(() => {});
+    await backToWaitlist();
+    await reply(UNAVAILABLE, 'waitlist_unavailable');
+    return { handled: true, accepted: false, ofertaId: oferta.id };
+  }
+  if (outcome === 'indisponivel') {
+    await backToWaitlist();
+    await reply(UNAVAILABLE, 'waitlist_unavailable');
+    broadcastSSE('waitlist_offer_changed', { agendamentoId: oferta.agendamento_origem_id, status: 'indisponivel' }, tenantId);
+    return { handled: true, accepted: false, ofertaId: oferta.id };
+  }
+  await reply(`✅ Pronto! O horário de ${dataBR} às ${hora} é seu. A ${clinica} aguarda você.`, 'waitlist_accepted');
+  broadcastSSE('agendamento_changed', { action: 'created', id: novoId, data: agendaYmd(oferta.data) }, tenantId);
+  broadcastSSE('waitlist_offer_changed', { agendamentoId: oferta.agendamento_origem_id, status: 'aceita', novoAgendamentoId: novoId }, tenantId);
+  console.log(`📅 Encaixe aceito pela lista de espera (oferta ${oferta.id}, novo agendamento ${novoId})`);
+  return { handled: true, accepted: true, ofertaId: oferta.id, agendamentoId: novoId };
+}
 
 // ═══════════════════════════════════════════════════════════════
 // FINANCEIRO
@@ -8969,6 +9441,33 @@ app.put('/api/attendance-settings', async (req, res) => {
   }
 });
 
+// Lembrete/pedido de confirmação de consulta por clínica (tenant_settings
+// 'appointment_reminder' = { enabled }). Sem registro: ligado, como sempre foi.
+app.get('/api/appointment-reminder-settings', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!isValidTenantId(user.tenant_id)) return res.json({ enabled: true });
+    const saved = await getTenantSetting(user.tenant_id, 'appointment_reminder');
+    res.json({ enabled: saved?.enabled !== false });
+  } catch (error) {
+    res.status(tenantSettingsErrorStatus(error)).json({ error: error.message });
+  }
+});
+
+app.put('/api/appointment-reminder-settings', async (req, res) => {
+  try {
+    const { user } = await verifyAdmin(req);
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const enabled = req.body?.enabled;
+    if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'Informe enabled (true ou false)' });
+    await setTenantSetting(user.tenant_id, 'appointment_reminder', { enabled });
+    console.log(`⚙️ Lembrete de consulta ${enabled ? 'ligado' : 'desligado'} (clínica ${String(user.tenant_id).slice(0, 8)})`);
+    res.json({ success: true, enabled });
+  } catch (error) {
+    res.status(tenantSettingsErrorStatus(error)).json({ error: error.message });
+  }
+});
+
 // Localização da clínica (aba Configurações → Clínica). Antes ficava só no navegador de quem
 // salvou; agora é da clínica (tenant_settings), e todo atendente vê o mesmo endereço no chat.
 const CLINIC_LOCATION_FIELDS = { name: 100, address: 200, city: 100, state: 2, zip: 10, phone: 20, googleMapsUrl: 500 };
@@ -9804,6 +10303,20 @@ app.post('/api/webhook/evolution', async (req, res) => {
       return res.json({ processed: true, optOut: true, leadId: lead?.id || null });
     }
 
+    // ─── Resposta ao pedido de confirmação de consulta (botão, 1/2 ou SIM) ───
+    // Antes do lead novo, do menu de filas e da avaliação: "1"/"2" aqui é a resposta
+    // ao lembrete, não escolha de setor nem nota.
+    // Resposta a oferta de encaixe (lista de espera) primeiro: palavras e botões próprios.
+    const waitlistReply = !isFromMe
+      ? await handleWaitlistOfferReply({ tenantId, phone: resolvedPhone, msgType, msgContent, instance })
+          .catch(e => { console.error('[lista-espera] erro:', e.message); return null; })
+      : null;
+    const reminderReply = !isFromMe && !waitlistReply?.handled
+      ? await handleAppointmentReminderReply({ tenantId, phone: resolvedPhone, msgType, msgContent, instance })
+          .catch(e => { console.error('[confirmação] erro:', e.message); return null; })
+      : null;
+    const isReminderReply = !!reminderReply?.handled || !!waitlistReply?.handled;
+
     // ─── New contact: create lead + contato + check hours + send menu ───
     if (!lead) {
       // Boas-vindas e fora de horário da clínica dona do número (não de outra clínica).
@@ -9811,10 +10324,10 @@ app.post('/api/webhook/evolution', async (req, res) => {
       const newId = crypto.randomUUID();
       await pool.query(
         `INSERT INTO crm_leads (id, nome, telefone, origem, status, kanban_stage, awaiting_queue_selection, tenant_id)
-         VALUES ($1, $2, $3, 'whatsapp', 'novo', 'lead', true, $4)`,
-        [newId, pushName, resolvedPhone, tenantId]
+         VALUES ($1, $2, $3, 'whatsapp', 'novo', 'lead', $5, $4)`,
+        [newId, pushName, resolvedPhone, tenantId, !isReminderReply]
       );
-      lead = { id: newId, name: pushName, phone: resolvedPhone, queue_id: null, queue_name: null, awaiting_queue_selection: true, avatar_url: null };
+      lead = { id: newId, name: pushName, phone: resolvedPhone, queue_id: null, queue_name: null, awaiting_queue_selection: !isReminderReply, avatar_url: null };
       console.log(`🆕 New lead created: ${maskPhone(resolvedPhone)}`);
 
       // 🤖 Trigger "Lead entrou no CRM" automation
@@ -9835,7 +10348,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
       }
 
       // Check business hours
-      if (!isFromMe && !isWithinBusinessHours(attendanceSettingsCache)) {
+      if (!isFromMe && !isReminderReply && !isWithinBusinessHours(attendanceSettingsCache)) {
         const offMsg = attendanceSettingsCache?.offHoursMessage ||
           `Olá! Aqui é da ${await getTenantClinicName(tenantId)}. Nosso atendimento está fechado agora. Deixe sua mensagem que respondemos assim que abrirmos. 😊`;
         // Pela fila (categoria 'service': é resposta à mensagem do paciente e só existe
@@ -9892,7 +10405,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
       // Boas-vindas pela fila; o menu de filas é enfileirado depois dela (hook do job)
       // para manter a ordem. Sem boas-vindas enfileirada, o menu entra na fila já.
       let welcomeJob = null;
-      if (!isFromMe && attendanceSettingsCache?.autoGreetingEnabled && attendanceSettingsCache?.welcomeMessage) {
+      if (!isFromMe && !isReminderReply && attendanceSettingsCache?.autoGreetingEnabled && attendanceSettingsCache?.welcomeMessage) {
         welcomeJob = await enqueueWhatsAppAutoReply({
           tenantId, instance, phone: resolvedPhone, message: attendanceSettingsCache.welcomeMessage,
           kind: 'welcome', category: 'transactional', thenQueueMenu: true,
@@ -9900,7 +10413,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
       }
 
       // Send queue menu
-      if (!isFromMe && !welcomeJob) {
+      if (!isFromMe && !isReminderReply && !welcomeJob) {
         enqueueQueueMenu({ tenantId, instance, phone: resolvedPhone })
           .catch((err) => console.warn('Queue menu not queued:', err.message));
       }
@@ -9917,7 +10430,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
     }
 
     // ─── Lead is awaiting queue selection ───
-    if (!isFromMe && lead.awaiting_queue_selection && (msgType === 'text' || msgType === 'button_response' || msgType === 'list_response')) {
+    if (!isFromMe && !isReminderReply && lead.awaiting_queue_selection && (msgType === 'text' || msgType === 'button_response' || msgType === 'list_response')) {
       const selectedQueue = await matchQueue(msgContent, tenantId);
 
       if (selectedQueue) {
@@ -10045,7 +10558,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
     // Chave com a clínica: o mesmo paciente pode ser atendido por duas clínicas.
     const ratingKey = `awaiting_rating_${tenantId}_${phone}`;
     const { rows: ratingCheck } = await pool.query("SELECT value FROM app_settings WHERE key = $1", [ratingKey]);
-    if (ratingCheck.length > 0 && (msgType === 'text' || msgType === 'button_response')) {
+    if (!isReminderReply && ratingCheck.length > 0 && (msgType === 'text' || msgType === 'button_response')) {
       let rating = null;
       // Button response: rating_leadId_N
       const btnMatch = msgContent.match(/rating_[^_]+_(\d)/);
@@ -10214,57 +10727,6 @@ app.post('/api/webhook/evolution', async (req, res) => {
           console.error('Webhook profile fetch error:', fetchErr.message);
         }
       })();
-    }
-
-    // ─── Auto-confirm appointment when patient replies SIM to reminder ───
-    try {
-      const normalizedReply = (resolvedContent || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-      const isConfirmation = ['sim', 'confirmo', 'confirmado', 'ok', 'yes', 'vou', 'estarei', 'pode confirmar', 'confirmada'].some(
-        kw => normalizedReply === kw || normalizedReply.startsWith(kw + ' ') || normalizedReply.startsWith(kw + '!')
-      );
-
-      if (isConfirmation) {
-        // Check if there's a recent reminder sent to this phone
-        const { rows: reminderJobs } = await pool.query(
-          `SELECT aj.id, aj.flow_id FROM automation_jobs aj
-           WHERE aj.trigger_event = 'appointment_reminder'
-             AND aj.status = 'sent'
-             AND aj.tenant_id = $2
-             AND aj.patient_phone LIKE $1
-             AND aj.sent_at >= NOW() - INTERVAL '48 hours'
-           ORDER BY aj.sent_at DESC LIMIT 1`,
-          [`%${phoneSuffix}`, tenantId]
-        );
-
-        if (reminderJobs.length > 0) {
-          const reminderId = reminderJobs[0].flow_id.replace('reminder_', '');
-          // Só confirma consulta da mesma clínica que recebeu a resposta
-          const { rowCount } = await pool.query(
-            `UPDATE agendamentos SET status = 'confirmado', updated_at = NOW()
-             WHERE id::text = $1 AND tenant_id = $2 AND status NOT IN ('finalizado', 'realizado', 'cancelado')`,
-            [reminderId, tenantId]
-          );
-
-          if (rowCount > 0) {
-            // Mark reminder as confirmed
-            await pool.query(
-              `UPDATE automation_jobs SET variables = jsonb_set(COALESCE(variables::jsonb, '{}'), '{confirmed}', 'true')
-               WHERE id = $1`,
-              [reminderJobs[0].id]
-            ).catch(() => {});
-
-            // Send confirmation reply
-            const confirmMsg = `✅ *Presença confirmada!*\n\nObrigado por confirmar. A ${await getTenantClinicName(tenantId)} aguarda você na data agendada. 😊`;
-            await enqueueWhatsAppAutoReply({
-              tenantId, instance, phone, message: confirmMsg, kind: 'appointment_confirmed', category: 'service', dedupeMinutes: 10,
-            }).catch(err => console.error('Failed to queue confirm reply:', err.message));
-
-            console.log(`✅ Auto-confirmed appointment ${reminderId} via WhatsApp reply from ${maskPhone(phone)}`);
-          }
-        }
-      }
-    } catch (confirmErr) {
-      console.error('Auto-confirm error:', confirmErr.message);
     }
 
     res.json({ processed: true, leadId: lead.id });
@@ -11173,7 +11635,7 @@ const WA_DEFAULT_DEDUPE_MINUTES = 24 * 60;
 // menu após boas-vindas) só valem em jobs criados pelo próprio servidor. Em job
 // manual/de fluxo, o cliente poderia furar o dedupe de 24 h ou mandar um conteúdo
 // diferente do job.message auditado.
-const WA_INTERNAL_TRIGGERS = new Set(['auto_reply', 'satisfaction_survey']);
+const WA_INTERNAL_TRIGGERS = new Set(['auto_reply', 'satisfaction_survey', 'appointment_reminder', 'waitlist_offer']);
 const WA_CONTROL_VAR_KEYS = ['dedupeMinutes', 'interactive', 'kind', 'thenQueueMenu', 'enqueuedAt'];
 function stripWhatsAppControlVars(vars) {
   if (!vars || typeof vars !== 'object' || Array.isArray(vars)) return {};
@@ -12393,12 +12855,31 @@ function saudacaoPaciente(nome) {
   return primeiro ? `Olá, ${primeiro}!` : 'Olá!';
 }
 
+// Antecedência do pedido de confirmação (coluna confirmacao_quando do agendamento).
+// 'nao' = confirmação desligada (agendamento salvo sem telefone do paciente).
+// Sem valor, ou valor antigo ('_none', 'agora', '1d'), vale a véspera: o lembrete
+// sempre existiu para toda consulta e não deve sumir de agendamentos antigos.
+const APPT_CONFIRMATION_LEAD_DAYS_SQL = `CASE a.confirmacao_quando WHEN '2d' THEN 2 WHEN '3d' THEN 3 WHEN '7d' THEN 7 ELSE 1 END`;
+const APPT_REMINDER_SKIP_STATUSES = ['cancelado', 'desmarcado', 'faltou', 'finalizado', 'realizado', 'confirmado', 'remarcar', 'em_atendimento'];
+
+// Texto do pedido de confirmação. Só clínica, data, hora e profissional: nada de
+// procedimento ou diagnóstico (a mensagem aparece na tela bloqueada — LGPD art. 6º III e 11).
+// TEXTO PARA PACIENTE: revisão da Helena (helena-juridico) antes do merge.
+function buildAppointmentReminderMessage({ clinica, pacienteNome, weekday, dataBR, hora, profissional }) {
+  const body = `🔔 *Lembrete de consulta — ${clinica}*\n\n${saudacaoPaciente(pacienteNome)}\n\nVocê tem uma consulta marcada:\n📅 ${weekday ? `${weekday}, ` : ''}${dataBR}\n⏰ ${hora}\n👩‍⚕️ ${profissional || 'Equipe da clínica'}`;
+  return {
+    body,
+    fallbackText: `${body}\n\nResponda *1* para confirmar ou *2* para remarcar.`,
+  };
+}
+
 async function processAppointmentReminders() {
   try {
-    // Consultas de amanhã (dia de Brasília) ainda sem lembrete. Cada lembrete
-    // sai pelo WhatsApp da própria clínica; a fila segura até o horário de envio.
+    // Consultas que chegaram à antecedência escolhida (dia de Brasília) e ainda sem
+    // pedido de confirmação para ESTA data. Cada lembrete sai pelo WhatsApp da própria
+    // clínica; a fila segura até a janela de envio. Nomes vêm dos cadastros da clínica.
     const { rows: appointments } = await pool.query(`
-      SELECT a.id, a.tenant_id, a.paciente_id, a.data, a.hora, a.procedimento, a.duracao,
+      SELECT a.id, a.tenant_id, a.paciente_id, a.data, a.hora, a.confirmacao_quando,
              COALESCE(NULLIF(TRIM(p.nome), ''), NULLIF(TRIM(a.paciente_nome), '')) AS paciente_nome,
              COALESCE(NULLIF(TRIM(d.nome), ''), NULLIF(TRIM(a.dentista_nome), '')) AS dentista_nome,
              p.telefone
@@ -12407,48 +12888,81 @@ async function processAppointmentReminders() {
       LEFT JOIN dentistas d ON d.id = a.dentista_id AND d.tenant_id = a.tenant_id
       WHERE a.tenant_id IS NOT NULL
         AND a.tenant_id <> '00000000-0000-0000-0000-000000000001'
-        AND a.data = ((NOW() AT TIME ZONE '${WA_TZ}')::date + 1)
-        AND a.status NOT IN ('cancelado', 'desmarcado', 'faltou', 'finalizado', 'realizado')
+        AND a.data = ((NOW() AT TIME ZONE '${WA_TZ}')::date + ${APPT_CONFIRMATION_LEAD_DAYS_SQL})
+        AND COALESCE(a.status, 'agendado') <> ALL($1::text[])
+        AND COALESCE(a.confirmacao_quando, '') <> 'nao'
         AND NOT EXISTS (
           SELECT 1 FROM automation_jobs aj
-           WHERE aj.trigger_event = 'appointment_reminder'
+           WHERE aj.tenant_id = a.tenant_id
+             AND aj.trigger_event = 'appointment_reminder'
              AND aj.flow_id = 'reminder_' || a.id::text
-             AND aj.created_at > NOW() - INTERVAL '3 days'
+             AND (aj.variables::jsonb->>'apptDate' = a.data::text OR aj.created_at > NOW() - INTERVAL '3 days')
         )
-    `);
+    `, [APPT_REMINDER_SKIP_STATUSES]);
 
     if (appointments.length === 0) return;
-    console.log(`🔔 Reminder: ${appointments.length} consultas amanhã para lembrar`);
+    console.log(`🔔 Reminder: ${appointments.length} consultas para pedir confirmação`);
 
     const WEEKDAYS = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
+    // Clínica que desligou o lembrete não recebe pedido. Se a leitura falhar, pula a
+    // clínica nesta rodada (o padrão "ligado" poderia contrariar quem desligou).
+    const reminderEnabled = new Map();
+    const isReminderEnabled = async (tenantId) => {
+      if (!reminderEnabled.has(tenantId)) {
+        const saved = await getTenantSetting(tenantId, 'appointment_reminder', { throwOnError: true }).catch(() => ({ enabled: false }));
+        reminderEnabled.set(tenantId, saved?.enabled !== false);
+      }
+      return reminderEnabled.get(tenantId);
+    };
     for (const appt of appointments) {
       try {
+        const tenantId = String(appt.tenant_id);
+        if (!(await isReminderEnabled(tenantId))) continue;
         const phone = normalizeWhatsappNumber(appt.telefone || '');
         if (!phone) continue;
+        if (await isWhatsAppOptedOut(tenantId, phone)) continue;
 
-        const isoDate = appt.data instanceof Date ? appt.data.toISOString().split('T')[0] : String(appt.data).slice(0, 10);
+        const isoDate = appt.data instanceof Date
+          ? `${appt.data.getFullYear()}-${String(appt.data.getMonth() + 1).padStart(2, '0')}-${String(appt.data.getDate()).padStart(2, '0')}`
+          : String(appt.data).slice(0, 10);
         const [y, m, d] = isoDate.split('-');
-        const dataBR = `${d}/${m}/${y}`;
-        const weekday = WEEKDAYS[new Date(`${isoDate}T12:00:00Z`).getUTCDay()] || '';
-        const saudacao = saudacaoPaciente(appt.paciente_nome);
         const hora = String(appt.hora || '').slice(0, 5);
+        const clinica = await getTenantClinicName(tenantId);
+        const { body, fallbackText } = buildAppointmentReminderMessage({
+          clinica,
+          pacienteNome: appt.paciente_nome,
+          weekday: WEEKDAYS[new Date(`${isoDate}T12:00:00Z`).getUTCDay()] || '',
+          dataBR: `${d}/${m}/${y}`,
+          hora: hora || appt.hora || '—',
+          profissional: appt.dentista_nome,
+        });
 
-        // Data explícita em vez de "amanhã": o lembrete pode sair só no dia
-        // seguinte à criação (fila fora do horário de envio).
-        // Sem o procedimento: a mensagem aparece na tela bloqueada (LGPD art. 6º III e 46).
-        const clinica = await getTenantClinicName(appt.tenant_id);
-        const message = `🔔 *Lembrete de consulta — ${clinica}*\n\n${saudacao}\n\nVocê tem uma consulta marcada:\n📅 ${weekday}, ${dataBR}\n⏰ ${hora || appt.hora}\n👩‍⚕️ ${appt.dentista_nome || 'Equipe da clínica'}\n\nResponda *SIM* para confirmar ou mande uma mensagem aqui para remarcar.`;
-
-        // Validade: até o horário da consulta (horário de Brasília).
+        // Validade do pedido e da resposta: até o horário da consulta (Brasília, -03:00).
         let expiresAt = new Date(`${isoDate}T${/^\d{2}:\d{2}$/.test(hora) ? hora : '23:59'}:00-03:00`);
         if (Number.isNaN(expiresAt.getTime())) expiresAt = null;
+        if (expiresAt && expiresAt.getTime() <= Date.now()) continue;
 
         await enqueueWhatsAppJob({
-          tenantId: String(appt.tenant_id), phone, message, category: 'transactional',
-          flowId: `reminder_${appt.id}`, flowName: 'Lembrete 24h', patientName: appt.paciente_nome,
-          triggerEvent: 'appointment_reminder', expiresAt,
+          tenantId, phone, message: fallbackText, category: 'transactional',
+          flowId: `reminder_${appt.id}`, flowName: 'Confirmação de consulta', patientName: appt.paciente_nome || '',
+          triggerEvent: 'appointment_reminder', ...(expiresAt ? { expiresAt } : {}),
+          variables: {
+            agendamentoId: String(appt.id), apptDate: isoDate, apptHora: hora,
+            interactive: {
+              endpoint: 'sendButtons',
+              payload: {
+                title: '',
+                description: body,
+                footer: clinica,
+                buttons: [
+                  { buttonId: `appt_confirm_${appt.id}`, buttonText: { displayText: 'Confirmar' }, type: 1 },
+                  { buttonId: `appt_reschedule_${appt.id}`, buttonText: { displayText: 'Preciso remarcar' }, type: 1 },
+                ],
+              },
+            },
+          },
         });
-        console.log(`   📩 Lembrete enfileirado (consulta ${appt.id})`);
+        console.log(`   📩 Pedido de confirmação enfileirado (consulta ${appt.id})`);
       } catch (apptErr) {
         console.error(`   ❌ Lembrete da consulta ${appt.id}:`, apptErr.message);
       }
@@ -12456,6 +12970,98 @@ async function processAppointmentReminders() {
   } catch (err) {
     console.error('❌ Appointment reminder cron error:', err.message);
   }
+}
+
+// ─── Resposta ao pedido de confirmação (botão ou 1/2, SIM legado) ───
+// Sem "ok": muitas vezes é só "recebi" e confirmaria presença sem intenção (parecer T3).
+const APPT_CONFIRM_WORDS = new Set(['1', 'sim', 'confirmo', 'confirmar', 'confirmado', 'confirmada', 'yes', 'vou', 'estarei', 'pode confirmar']);
+const APPT_RESCHEDULE_WORDS = new Set(['2', 'remarcar', 'preciso remarcar', 'quero remarcar', 'reagendar']);
+
+function parseAppointmentReminderReply(msgContent) {
+  const raw = String(msgContent || '').trim();
+  const btn = raw.match(/^appt_(confirm|reschedule)_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+  if (btn) return { action: btn[1] === 'confirm' ? 'confirmado' : 'remarcar', agendamentoId: btn[2].toLowerCase() };
+  const t = raw.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[!.\s]+$/g, '').replace(/\s+/g, ' ');
+  if (!t || t.length > 40) return null;
+  if (APPT_CONFIRM_WORDS.has(t)) return { action: 'confirmado', agendamentoId: null };
+  if (APPT_RESCHEDULE_WORDS.has(t)) return { action: 'remarcar', agendamentoId: null };
+  return null;
+}
+
+// Só vale se: houver pedido ENVIADO por esta clínica a este telefone, ainda no prazo
+// (até o horário da consulta), sem resposta anterior; o agendamento é da clínica e o
+// telefone é o do cadastro do paciente daquele agendamento.
+async function handleAppointmentReminderReply({ tenantId, phone, msgType, msgContent, instance }) {
+  if (!isValidTenantId(tenantId) || !phone) return null;
+  if (!['text', 'button_response', 'list_response'].includes(msgType)) return null;
+  const parsed = parseAppointmentReminderReply(msgContent);
+  if (!parsed) return null;
+  const key = waPhoneKey(phone);
+  const params = [tenantId, key];
+  if (parsed.agendamentoId) params.push(`reminder_${parsed.agendamentoId}`);
+  const { rows: [job] } = await pool.query(
+    `SELECT aj.id, aj.flow_id, aj.variables FROM automation_jobs aj
+      WHERE aj.tenant_id = $1 AND aj.trigger_event = 'appointment_reminder' AND aj.status = 'sent'
+        AND RIGHT(regexp_replace(aj.patient_phone, '\\D', '', 'g'), 8) = RIGHT($2, 8)
+        AND (aj.expires_at IS NULL OR aj.expires_at > NOW())
+        AND aj.sent_at > NOW() - INTERVAL '8 days'
+        AND COALESCE(aj.variables::jsonb->>'confirmationReply', '') = ''
+        ${parsed.agendamentoId ? 'AND aj.flow_id = $3' : ''}
+      ORDER BY aj.sent_at DESC LIMIT 1`,
+    params
+  );
+  if (!job) return null;
+  const agendamentoId = String(job.flow_id || '').replace(/^reminder_/, '');
+  const { rows: [appt] } = await pool.query(
+    `SELECT a.id, a.status, a.data, a.hora, p.telefone
+       FROM agendamentos a JOIN pacientes p ON p.id = a.paciente_id AND p.tenant_id = a.tenant_id
+      WHERE a.id::text = $1 AND a.tenant_id = $2 LIMIT 1`,
+    [agendamentoId, tenantId]
+  );
+  // Mesmo critério da fila (8 últimos dígitos): o cadastro costuma vir sem o 55.
+  const last8 = (v) => String(v || '').replace(/\D/g, '').slice(-8);
+  if (!appt || !last8(appt.telefone) || last8(appt.telefone) !== last8(phone)) return null;
+  if (['cancelado', 'desmarcado', 'faltou', 'finalizado', 'realizado', 'em_atendimento'].includes(String(appt.status || ''))) return null;
+
+  const { rowCount } = await pool.query(
+    `UPDATE agendamentos SET status = $3, updated_at = NOW()
+      WHERE id::text = $1 AND tenant_id = $2 AND status NOT IN ('cancelado', 'desmarcado', 'faltou', 'finalizado', 'realizado', 'em_atendimento')`,
+    [agendamentoId, tenantId, parsed.action]
+  );
+  if (!rowCount) return null;
+  await pool.query(
+    `UPDATE automation_jobs SET variables = jsonb_set(jsonb_set(COALESCE(variables::jsonb, '{}'), '{confirmationReply}', to_jsonb($2::text)), '{answeredAt}', to_jsonb(NOW()::text))
+      WHERE id = $1 AND tenant_id = $3`,
+    [job.id, parsed.action, tenantId]
+  ).catch(e => console.error('[confirmação] marcar resposta falhou:', e.message));
+
+  const clinica = await getTenantClinicName(tenantId);
+  // TEXTO PARA PACIENTE: revisão da Helena (helena-juridico) antes do merge.
+  const reply = parsed.action === 'confirmado'
+    ? `✅ *Presença confirmada!*\n\nObrigado por confirmar. A ${clinica} aguarda você na data agendada. 😊`
+    // Parecer T5: diz qual consulta, que o retorno vem no horário de atendimento e que o
+    // horário atual segue reservado (o status "remarcar" não libera o horário sozinho; só
+    // a recepção decide oferecê-lo a outro paciente depois de falar com este).
+    : `📅 Recebemos seu pedido para remarcar a consulta de ${formatAgendaDateBR(appt.data)} às ${String(appt.hora || '').slice(0, 5)}. A equipe da ${clinica} vai falar com você por aqui, no horário de atendimento, para combinar um novo horário. Até lá, seu horário atual continua reservado.`;
+  await enqueueWhatsAppAutoReply({
+    tenantId, instance, phone, message: reply, category: 'service', dedupeMinutes: 10,
+    kind: parsed.action === 'confirmado' ? 'appointment_confirmed' : 'appointment_reschedule',
+  }).catch(e => console.error('[confirmação] resposta não enfileirada:', e.message));
+
+  broadcastSSE('agendamento_changed', { action: 'updated', id: agendamentoId, data: appt.data }, tenantId);
+  if (parsed.action === 'remarcar') {
+    // Aviso à recepção: evento na tela (agenda/chat) e notificação; a conversa entra na fila de atendimento.
+    const dataBR = formatAgendaDateBR(appt.data);
+    broadcastSSE('appointment_reschedule_requested', { agendamentoId, data: appt.data, hora: appt.hora }, tenantId);
+    sendPushToAll({
+      title: '📅 Pedido de remarcação',
+      body: `Um paciente pediu para remarcar a consulta de ${dataBR} às ${String(appt.hora || '').slice(0, 5)}.`,
+      tag: `remarcar-${agendamentoId}`,
+      url: '/agenda',
+    }, tenantId);
+  }
+  console.log(`📅 Resposta ao pedido de confirmação: ${parsed.action} (consulta ${agendamentoId}, final ${maskPhone(phone)})`);
+  return { handled: true, action: parsed.action, agendamentoId };
 }
 
 // ─── Cron: inactive patients & birthdays (runs every 6h) ────
@@ -17045,6 +17651,7 @@ if (process.env.NODE_ENV !== 'test') {
   // (o intervalo real entre mensagens é controlado por número dentro da fila)
   await asSystemJob(ensureWhatsAppQueueSchema)();
   await asSystemJob(ensureTenantConfigSchema)();
+  await asSystemJob(ensureWaitlistSchema)();
   await asSystemJob(ensureWhatsAppHealthSchema)();
   asSystemJob(checkWhatsAppHealth)();
   setInterval(asSystemJob(checkWhatsAppHealth), WA_HEALTH_INTERVAL_MS);
@@ -17094,4 +17701,6 @@ export { processAutomationJobs };
 export function resetWhatsAppQueueStateForTests() {
   waPacing.clear(); waOutcomes.clear(); waOpenInstancesCache = { at: 0, names: new Set() };
 }
+export { parseAppointmentReminderReply };
+export { parseWaitlistOfferReply };
 export { isWhatsAppOptOutText };

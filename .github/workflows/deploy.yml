@@ -162,14 +162,18 @@ jobs:
               echo "::warning title=Únicos por clínica não aplicados::migration-unicos-por-clinica.sql falhou (repetido na mesma clínica, lock ou erro). As chaves globais que não foram trocadas continuam; o deploy segue. Ver log acima."
               echo "!!! ATENÇÃO: alguma chave única GLOBAL (cpf/cro/marcador) continua ativa: revisar o log acima."
             fi
+            # Lista de espera (depois do alinhamento: altera agendamentos)
             # lock_timeout via PGOPTIONS (não no .sql: o boot roda o arquivo no pool)
+            cat /root/odonto-connect/vps-api-server/migration-lista-espera.sql | sudo -u postgres env PGOPTIONS='-c lock_timeout=5s' psql -p 5433 -d odonto_db -v ON_ERROR_STOP=1 2>&1 \
+              || echo "::warning::migration-lista-espera.sql falhou: confira as tabelas lista_espera/lista_espera_ofertas e as colunas liberado_por/liberado_em de agendamentos"
+            # Saúde dos números de WhatsApp (mesmo lock_timeout via PGOPTIONS)
             cat /root/odonto-connect/vps-api-server/migration-whatsapp-saude.sql | sudo -u postgres env PGOPTIONS='-c lock_timeout=5s' psql -p 5433 -d odonto_db -v ON_ERROR_STOP=1 2>&1 \
               || echo "::warning::migration-whatsapp-saude.sql falhou: confira whatsapp_instance_health_log e as colunas connection_state/state_since de whatsapp_instances"
             # Dono das tabelas criadas acima pelo deploy (postgres) → dono das tabelas da API; senão a
-            # RLS vale para o odonto_app e o job de saúde (sem contexto de clínica) não grava o log.
-            # Arquivo vem do #67 (lista de espera); roda DEPOIS de migration-whatsapp-saude.sql.
+            # RLS vale para o odonto_app e jobs sem contexto de clínica são bloqueados em silêncio.
+            # Só de deploy (bloco DO; o boot não roda). Fica DEPOIS de lista de espera e saúde do WhatsApp.
             cat /root/odonto-connect/vps-api-server/migration-dono-tabelas-deploy.sql | sudo -u postgres env PGOPTIONS='-c lock_timeout=5s' psql -p 5433 -d odonto_db -v ON_ERROR_STOP=1 2>&1 \
-              || echo "::warning::migration-dono-tabelas-deploy.sql falhou: confira o dono (pg_tables.tableowner) de whatsapp_instance_health_log, lista_espera e whatsapp_opt_outs"
+              || echo "::warning::migration-dono-tabelas-deploy.sql falhou: confira o dono (pg_tables.tableowner) de lista_espera, lista_espera_ofertas, whatsapp_instance_health_log e whatsapp_opt_outs"
             echo "=== Migrations applied ==="
 
             # ─── Pre-flight syntax check on server.mjs ─────────────────────

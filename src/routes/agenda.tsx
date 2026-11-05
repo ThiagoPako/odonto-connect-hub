@@ -4,7 +4,7 @@ import { useVpsEvent } from "@/hooks/useVpsEvent";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, ChevronLeft, ChevronRight, Settings, RefreshCw, Clock, Database, Send, SlidersHorizontal } from "lucide-react";
+import { Plus, ChevronLeft, ChevronRight, Settings, RefreshCw, Clock, Database, Send, SlidersHorizontal, Users } from "lucide-react";
 import { toast } from "sonner";
 import { agendaApi, dentistasApi, clinicaApi, type AgendamentoVPS, type ClinicaConfig } from "@/lib/vpsApi";
 import { clinicorpApi } from "@/lib/clinicorpApi";
@@ -14,6 +14,8 @@ import { AgendaGrid } from "@/components/agenda/AgendaGrid";
 import { NovoAgendamentoModal } from "@/components/agenda/NovoAgendamentoModal";
 import { AgendamentoPopover } from "@/components/agenda/AgendamentoPopover";
 import { AgendaStatusFilter } from "@/components/agenda/AgendaStatusFilter";
+import { ListaEsperaDialog } from "@/components/agenda/ListaEsperaDialog";
+import { STATUS_OPTIONS as AGENDA_STATUS_OPTIONS, UNCONFIRMED_STATUSES } from "@/components/agenda/agendaStatus";
 import { cn } from "@/lib/utils";
 import { Calendar as CalendarIcon } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -65,8 +67,9 @@ function clinicorpErrorMessage(err: unknown): string {
 function AgendaPage() {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [profs, setProfs] = useState<Prof[]>([]);
+  const [listaEsperaOpen, setListaEsperaOpen] = useState(false);
   const [selectedProfs, setSelectedProfs] = useState<string[]>([]);
-  const [selectedStatuses, setSelectedStatuses] = useState<string[]>(["agendado", "confirmado", "em_atendimento", "finalizado", "faltou", "cancelado"]);
+  const [selectedStatuses, setSelectedStatuses] = useState<string[]>(AGENDA_STATUS_OPTIONS.map((s) => s.id));
   const [appointments, setAppointments] = useState<AgendamentoVPS[]>([]);
   const [config, setConfig] = useState<ClinicaConfig | null>(null);
   const [loading, setLoading] = useState(false);
@@ -322,6 +325,16 @@ function AgendaPage() {
                 </SelectContent>
               </Select>
             </div>
+            <Button
+              size="sm"
+              variant="outline"
+              className="rounded-xl glass-card text-[11px] font-bold uppercase tracking-wider"
+              onClick={() => setListaEsperaOpen(true)}
+            >
+              <Users className="h-4 w-4 mr-2 text-primary" />
+              Lista de espera
+            </Button>
+            <ListaEsperaDialog open={listaEsperaOpen} onOpenChange={setListaEsperaOpen} professionals={profs} />
             {clinicorpAtivo && (
                 <Button
                   size="sm"
@@ -385,7 +398,8 @@ function AgendaPage() {
             <AgendaStatusFilter 
               selected={selectedStatuses}
               onToggle={(id) => setSelectedStatuses(prev => prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id])}
-              onSelectAll={() => setSelectedStatuses(prev => prev.length === 6 ? [] : ["agendado", "confirmado", "em_atendimento", "finalizado", "faltou", "cancelado"])}
+              onSelectAll={() => setSelectedStatuses(prev => prev.length === AGENDA_STATUS_OPTIONS.length ? [] : AGENDA_STATUS_OPTIONS.map((s) => s.id))}
+              onOnlyUnconfirmed={() => setSelectedStatuses(UNCONFIRMED_STATUSES)}
             />
             <AgendaProfessionalsList
               professionals={profs}
