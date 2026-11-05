@@ -10652,6 +10652,22 @@ async function runWhatsAppJobHooks(job, ok, errorMessage) {
       ).catch(() => {});
     }
   }
+  // Estatísticas contam o resultado real do envio, não o enfileiramento.
+  if (job.trigger_event === 'campaign' && job.flow_id) {
+    const key = ok ? 'enviadas' : 'erros';
+    await pool.query(
+      `UPDATE broadcast_campaigns SET
+         stats = jsonb_set(COALESCE(stats, '{}'::jsonb), ARRAY[$3::text], to_jsonb(COALESCE((stats->>$3)::int, 0) + 1))
+       WHERE id::text = $1 AND tenant_id = $2`,
+      [String(job.flow_id), job.tenant_id, key]
+    ).catch(e => console.error('[campaign stats]', e.message));
+  } else if (ok && job.flow_id) {
+    await pool.query(
+      `UPDATE automation_flows SET stats = jsonb_set(COALESCE(stats, '{}'::jsonb), '{sent}', to_jsonb(COALESCE((stats->>'sent')::int, 0) + 1))
+        WHERE id = $1 AND tenant_id = $2`,
+      [String(job.flow_id), job.tenant_id]
+    ).catch(e => console.error('[flow stats]', e.message));
+  }
   if (job.trigger_event === 'followup_stage' && ok && vars.leadId) {
     await pool.query(
       `INSERT INTO kanban_movements (lead_id, from_stage, to_stage, moved_by_name, reason, tenant_id)
@@ -11012,11 +11028,7 @@ async function triggerAutomationFlows(triggerEvent, patientData) {
         totalJobs++;
       }
 
-      // Update flow stats
-      await pool.query(
-        `UPDATE automation_flows SET stats = jsonb_set(stats, '{sent}', to_jsonb(COALESCE((stats->>'sent')::int, 0) + $1)) WHERE id = $2`,
-        [steps.length, flow.id]
-      ).catch(() => {});
+      // "sent" do fluxo é somado em runWhatsAppJobHooks, quando a mensagem sai de fato.
     }
 
     if (totalJobs > 0) {
@@ -11491,7 +11503,7 @@ async function enqueueCampaignForTenant(camp, tenantId) {
   if (enqueued > 0) {
     await pool.query(
       `UPDATE broadcast_campaigns SET
-         stats = jsonb_set(COALESCE(stats, '{}'::jsonb), '{enviadas}', to_jsonb(COALESCE((stats->>'enviadas')::int, 0) + $1)),
+         stats = jsonb_set(COALESCE(stats, '{}'::jsonb), '{enfileiradas}', to_jsonb(COALESCE((stats->>'enfileiradas')::int, 0) + $1)),
          contatos_alcancaveis = $2, updated_at = NOW()
        WHERE id = $3 AND tenant_id = $4`,
       [enqueued, contacts.length, camp.id, tenantId]
@@ -11739,16 +11751,19 @@ async function processSolutionTriggers() {
 
     const today = now.toISOString().slice(0, 10);
 
-    // Map each solution trigger to its query
+    // Cada gatilho roda separado por clínica: $1 é sempre o tenant_id. Antes a
+    // query era global (LIMIT 100 dividido entre todas as clínicas) e o JOIN não
+    // exigia que agendamento e paciente fossem da mesma clínica.
     const solutionQueries = [
       {
         trigger: 'Agendamento criado sem confirmação',
         query: `SELECT DISTINCT p.id, p.tenant_id, p.nome, p.telefone, a.procedimento, a.data::text, a.hora::text as horario,
                   d.nome as dentista
                 FROM agendamentos a
-                JOIN pacientes p ON a.paciente_id = p.id
+                JOIN pacientes p ON a.paciente_id = p.id AND p.tenant_id = a.tenant_id
                 LEFT JOIN dentistas d ON a.dentista_id = d.id
-                WHERE a.data >= $1 AND a.data <= ($1::date + INTERVAL '2 days')
+                WHERE a.tenant_id = $1
+                AND a.data >= $2 AND a.data <= ($2::date + INTERVAL '2 days')
                 AND a.status = 'agendado'
                 AND p.telefone IS NOT NULL AND p.telefone != ''
                 LIMIT 100`,
@@ -11756,8 +11771,9 @@ async function processSolutionTriggers() {
       },
       {
         trigger: 'Data de aniversário do paciente',
-        query: `SELECT id, nome, telefone FROM pacientes
-                WHERE EXTRACT(MONTH FROM data_nascimento) = EXTRACT(MONTH FROM CURRENT_DATE)
+        query: `SELECT id, tenant_id, nome, telefone FROM pacientes
+                WHERE tenant_id = $1
+                AND EXTRACT(MONTH FROM data_nascimento) = EXTRACT(MONTH FROM CURRENT_DATE)
                 AND EXTRACT(DAY FROM data_nascimento) = EXTRACT(DAY FROM CURRENT_DATE)
                 AND telefone IS NOT NULL AND telefone != ''
                 LIMIT 100`,
@@ -11767,8 +11783,9 @@ async function processSolutionTriggers() {
         trigger: 'Consulta desmarcada pelo paciente',
         query: `SELECT DISTINCT p.id, p.tenant_id, p.nome, p.telefone, a.procedimento
                 FROM agendamentos a
-                JOIN pacientes p ON a.paciente_id = p.id
-                WHERE a.status IN ('desmarcado','cancelado')
+                JOIN pacientes p ON a.paciente_id = p.id AND p.tenant_id = a.tenant_id
+                WHERE a.tenant_id = $1
+                AND a.status IN ('desmarcado','cancelado')
                 AND a.updated_at >= NOW() - INTERVAL '24 hours'
                 AND p.telefone IS NOT NULL AND p.telefone != ''
                 LIMIT 100`,
@@ -11778,8 +11795,9 @@ async function processSolutionTriggers() {
         trigger: 'Paciente não compareceu à consulta',
         query: `SELECT DISTINCT p.id, p.tenant_id, p.nome, p.telefone, a.procedimento
                 FROM agendamentos a
-                JOIN pacientes p ON a.paciente_id = p.id
-                WHERE a.status = 'faltou'
+                JOIN pacientes p ON a.paciente_id = p.id AND p.tenant_id = a.tenant_id
+                WHERE a.tenant_id = $1
+                AND a.status = 'faltou'
                 AND a.data >= CURRENT_DATE - INTERVAL '1 day'
                 AND p.telefone IS NOT NULL AND p.telefone != ''
                 LIMIT 100`,
@@ -11789,13 +11807,14 @@ async function processSolutionTriggers() {
         trigger: 'Paciente faltou à primeira consulta',
         query: `SELECT DISTINCT p.id, p.tenant_id, p.nome, p.telefone, a.procedimento
                 FROM agendamentos a
-                JOIN pacientes p ON a.paciente_id = p.id
-                WHERE a.status = 'faltou'
+                JOIN pacientes p ON a.paciente_id = p.id AND p.tenant_id = a.tenant_id
+                WHERE a.tenant_id = $1
+                AND a.status = 'faltou'
                 AND a.data >= CURRENT_DATE - INTERVAL '1 day'
                 AND p.telefone IS NOT NULL AND p.telefone != ''
                 AND NOT EXISTS (
                   SELECT 1 FROM agendamentos b
-                  WHERE b.paciente_id = a.paciente_id
+                  WHERE b.paciente_id = a.paciente_id AND b.tenant_id = a.tenant_id
                   AND b.status IN ('realizado','confirmado','atendido')
                 )
                 LIMIT 100`,
@@ -11806,7 +11825,8 @@ async function processSolutionTriggers() {
         query: `SELECT DISTINCT p.id, p.tenant_id, p.nome, p.telefone, o.valor_total::text as valor
                 FROM orcamentos o
                 JOIN pacientes p ON o.paciente_id = p.id
-                WHERE o.status = 'aprovado'
+                WHERE p.tenant_id = $1
+                AND o.status = 'aprovado'
                 AND p.telefone IS NOT NULL AND p.telefone != ''
                 AND NOT EXISTS (
                   SELECT 1 FROM financeiro f
@@ -11822,7 +11842,8 @@ async function processSolutionTriggers() {
                   ('R$ ' || o.valor_total::text) as valor
                 FROM orcamentos o
                 JOIN pacientes p ON o.paciente_id = p.id
-                WHERE o.status = 'pendente'
+                WHERE p.tenant_id = $1
+                AND o.status = 'pendente'
                 AND o.created_at >= NOW() - INTERVAL '30 days'
                 AND p.telefone IS NOT NULL AND p.telefone != ''
                 LIMIT 100`,
@@ -11833,12 +11854,13 @@ async function processSolutionTriggers() {
         query: `SELECT DISTINCT p.id, p.tenant_id, p.nome, p.telefone, t.descricao as procedimento
                 FROM tratamentos t
                 JOIN pacientes p ON t.paciente_id = p.id
-                WHERE t.status IN ('planejado','em_andamento','ativo')
+                WHERE p.tenant_id = $1
+                AND t.status IN ('planejado','em_andamento','ativo')
                 AND p.telefone IS NOT NULL AND p.telefone != ''
                 AND NOT EXISTS (
                   SELECT 1 FROM agendamentos a
-                  WHERE a.paciente_id = t.paciente_id
-                  AND a.data >= $1
+                  WHERE a.paciente_id = t.paciente_id AND a.tenant_id = p.tenant_id
+                  AND a.data >= $2
                   AND a.status NOT IN ('cancelado','desmarcado','faltou')
                 )
                 LIMIT 100`,
@@ -11849,18 +11871,20 @@ async function processSolutionTriggers() {
     let totalTriggered = 0;
 
     for (const sol of solutionQueries) {
-      // Check if there's an active flow using this trigger
-      const { rows: activeFlows } = await pool.query(
-        `SELECT 1 FROM automation_flows WHERE active = true AND trigger_event = $1 LIMIT 1`,
+      // Só as clínicas que têm fluxo ativo com este gatilho.
+      const { rows: tenantRows } = await pool.query(
+        `SELECT DISTINCT tenant_id FROM automation_flows
+          WHERE active = true AND trigger_event = $1 AND tenant_id IS NOT NULL`,
         [sol.trigger]
       );
-      if (activeFlows.length === 0) continue;
-
-      // Run the query to find matching patients
-      const { rows: patients } = await pool.query(sol.query, sol.params);
+      for (const { tenant_id: solTenantId } of tenantRows) {
+      if (!isValidTenantId(solTenantId)) continue;
+      const { rows: patients } = await pool.query(sol.query, [solTenantId, ...sol.params]);
       if (patients.length === 0) continue;
+      let tenantTriggered = 0;
 
       for (const patient of patients) {
+        if (String(patient.tenant_id) !== String(solTenantId)) continue;
         // Check cooldown: don't re-trigger same patient+trigger within 24h
         const { rows: recent } = await pool.query(
           `SELECT 1 FROM automation_jobs
@@ -11884,10 +11908,10 @@ async function processSolutionTriggers() {
           dentista: patient.dentista || '',
         });
         totalTriggered++;
+        tenantTriggered++;
       }
 
-      if (patients.length > 0) {
-        console.log(`🤖 Solution "${sol.trigger}": ${patients.length} pacientes encontrados, ${totalTriggered} triggered`);
+      console.log(`🤖 Solution "${sol.trigger}" (clínica ${String(solTenantId).slice(0, 8)}): ${patients.length} pacientes, ${tenantTriggered} enfileirados`);
       }
     }
 
@@ -16127,4 +16151,6 @@ if (process.env.NODE_ENV !== 'test') {
 
 
 export { app, pool };
+// Exportados só para os testes de jobs (tests/jobs-metricas-isolamento.test.js).
+export { processSolutionTriggers, runWhatsAppJobHooks };
 
