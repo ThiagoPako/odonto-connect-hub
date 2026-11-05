@@ -4864,9 +4864,19 @@ app.post('/api/whatsapp/call', async (req, res) => {
 
 // ═══════════════════════════════════════════════════════════════
 
+const PACIENTE_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Todas as rotas /api/pacientes/:id/* recebem um UUID; qualquer outro valor é
+// "não encontrado" (sem chegar ao banco, que responderia 500 por cast inválido).
+app.use('/api/pacientes/:id', (req, res, next) => {
+  if (!PACIENTE_UUID_RE.test(String(req.params.id))) return res.status(404).json({ error: 'Paciente não encontrado' });
+  next();
+});
+
 app.get('/api/pacientes', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { rows } = await pool.query('SELECT * FROM pacientes WHERE tenant_id = $1 ORDER BY nome ASC', [user.tenant_id]);
     res.json(rows);
   } catch (error) {
@@ -4877,6 +4887,7 @@ app.get('/api/pacientes', async (req, res) => {
 app.post('/api/pacientes', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes } = req.body;
     const id = crypto.randomUUID();
     await pool.query(
@@ -14141,6 +14152,17 @@ app.post('/api/pacientes/:id/consentimentos', async (req, res) => {
     if (!CONSENT_TIPOS.has(tipo) || !versao || !texto) {
       return res.status(400).json({ error: 'tipo, versao e texto são obrigatórios' });
     }
+    // atendimento.tsx usa o id do agendamento quando o agendamento não tem paciente
+    // vinculado; aceita os dois, desde que sejam desta clínica.
+    const { rows: pac } = await pool.query(
+      'SELECT 1 FROM pacientes WHERE id = $1 AND tenant_id = $2 LIMIT 1', [req.params.id, user.tenant_id]);
+    let donoOk = pac.length > 0;
+    if (!donoOk) {
+      const { rows: apt } = await pool.query(
+        'SELECT 1 FROM agendamentos WHERE id = $1 AND tenant_id = $2 LIMIT 1', [req.params.id, user.tenant_id]);
+      donoOk = apt.length > 0;
+    }
+    if (!donoOk) return res.status(404).json({ error: 'Paciente não encontrado' });
     const { rows } = await pool.query(
       `INSERT INTO consentimentos_pacientes
          (tenant_id, paciente_id, tipo, versao, texto, registrado_por, registrado_por_email, ip_address, user_agent)
