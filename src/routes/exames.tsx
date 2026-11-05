@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { Plus, Search, FileText, Loader2, Trash2, Filter, FileSignature, Paperclip } from "lucide-react";
+import { Plus, Search, FileText, Loader2, Trash2, Filter, FileSignature, Paperclip, AlertCircle } from "lucide-react";
 import {
   examesApi, exameTiposApi, STATUS_LABELS, STATUS_COLORS,
   type Exame, type ExameStatus, type ExameStats, type ExameTipo, type ExamePrioridade,
@@ -16,10 +16,27 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { ExameLaudoDialog } from "@/components/ExameLaudoDialog";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 export const Route = createFileRoute("/exames")({ component: ExamesPage });
 
 const STATUS_ORDER: ExameStatus[] = ["novo","em_andamento","aguardando_laudo","concluido","entregue","cancelado"];
+
+// Catálogo inicial sugerido (sem preço: cada clínica define o seu)
+const TIPOS_PADRAO: Array<{ nome: string; categoria: string }> = [
+  { nome: "Radiografia Periapical", categoria: "Radiografia" },
+  { nome: "Radiografia Interproximal (bite-wing)", categoria: "Radiografia" },
+  { nome: "Radiografia Panorâmica", categoria: "Radiografia" },
+  { nome: "Telerradiografia Lateral", categoria: "Radiografia" },
+  { nome: "Tomografia Computadorizada", categoria: "Tomografia" },
+  { nome: "Documentação Ortodôntica", categoria: "Documentação" },
+  { nome: "Modelo Digital", categoria: "Modelo" },
+  { nome: "Fotografias Intra e Extrabucais", categoria: "Fotografia" },
+  { nome: "Laudo Descritivo", categoria: "Laudo" },
+];
 
 function ExamesPage() {
   const [exames, setExames] = useState<Exame[]>([]);
@@ -29,6 +46,10 @@ function ExamesPage() {
   const [pacientes, setPacientes] = useState<Array<{ id: string; nome: string }>>([]);
   const [stats, setStats] = useState<ExameStats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [erro, setErro] = useState<string | null>(null);
+  const [excluir, setExcluir] = useState<Exame | null>(null);
+  const [criandoTipos, setCriandoTipos] = useState(false);
+  const [buscaPaciente, setBuscaPaciente] = useState("");
   const [statusFilter, setStatusFilter] = useState<ExameStatus | "">("");
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
@@ -54,8 +75,11 @@ function ExamesPage() {
         examesApi.list({ status: statusFilter || undefined, q: q || undefined }),
         examesApi.stats(),
       ]);
-      setExames(list); setStats(st);
-    } catch (e) { toast.error("Erro ao carregar exames"); }
+      setExames(list); setStats(st); setErro(null);
+    } catch (e: unknown) {
+      // Lista vazia aqui seria enganosa ("nenhum exame"): mostra o erro com "Tentar de novo"
+      setErro((e as Error)?.message || "erro de conexão");
+    }
     finally { setLoading(false); }
   }
 
@@ -115,14 +139,35 @@ function ExamesPage() {
   }
 
   async function remove(id: string) {
-    if (!confirm("Excluir este pedido de exame? Exames com laudo ou imagem não podem ser excluídos, só cancelados.")) return;
     try { await examesApi.remove(id); toast.success("Pedido de exame excluído"); load(); }
     catch (e: unknown) { toast.error((e as Error).message || "Erro ao excluir"); }
   }
 
+  async function criarTiposPadrao() {
+    setCriandoTipos(true);
+    let falhas = 0;
+    for (const t of TIPOS_PADRAO) {
+      try { await exameTiposApi.upsert({ ...t, preco: 0, ativo: true }); } catch { falhas++; }
+    }
+    setCriandoTipos(false);
+    if (falhas) toast.error(`${falhas} tipo(s) não foram criados. Tente de novo.`);
+    else toast.success("Tipos de exame criados. Ajuste os preços quando quiser.");
+    carregarTipos();
+  }
+
+  const temFiltro = !!statusFilter || !!q.trim();
+  const termoPaciente = buscaPaciente.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+  const pacientesFiltrados = (termoPaciente
+    ? pacientes.filter((p) => (p.nome || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes(termoPaciente))
+    : pacientes
+  ).slice(0, 200);
+  // O paciente escolhido continua na lista (senão o campo aparece vazio ao mudar o filtro)
+  const escolhido = pacientes.find((p) => p.id === form.paciente_id);
+  if (escolhido && !pacientesFiltrados.some((p) => p.id === escolhido.id)) pacientesFiltrados.unshift(escolhido);
+
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="p-4 sm:p-6 space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-heading font-bold text-foreground">Exames</h1>
           <p className="text-sm text-muted-foreground">Gestão de pedidos de exames de imagem odontológica</p>
@@ -133,7 +178,7 @@ function ExamesPage() {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-7 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 sm:gap-3" role="group" aria-label="Filtrar por status">
         <StatCard label="Total" value={stats?.total ?? 0} active={!statusFilter} onClick={() => setStatusFilter("")} />
         {STATUS_ORDER.map(s => (
           <StatCard
@@ -148,9 +193,11 @@ function ExamesPage() {
 
       {/* Search */}
       <div className="flex gap-2 items-center">
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <div className="relative flex-1 min-w-0 max-w-md">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" aria-hidden />
           <Input
+            type="search"
+            aria-label="Buscar exames por código, tipo ou paciente"
             placeholder="Buscar por código, tipo, paciente..."
             value={q}
             onChange={(e) => setQ(e.target.value)}
@@ -166,18 +213,37 @@ function ExamesPage() {
       {/* List */}
       <Card className="overflow-hidden">
         {loading ? (
-          <div className="p-12 flex justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+          <div className="p-12 flex justify-center" role="status" aria-label="Carregando exames">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          </div>
+        ) : erro ? (
+          <div className="p-10 text-center space-y-3" role="alert">
+            <AlertCircle className="h-8 w-8 mx-auto text-destructive" aria-hidden />
+            <p className="text-sm text-foreground">Não foi possível carregar os exames.</p>
+            <p className="text-xs text-muted-foreground">{erro}</p>
+            <Button variant="outline" size="sm" onClick={load}>Tentar de novo</Button>
+          </div>
         ) : exames.length === 0 ? (
-          <div className="p-12 text-center text-muted-foreground">
-            <FileText className="h-10 w-10 mx-auto mb-2 opacity-40" />
-            Nenhum exame encontrado
+          <div className="p-12 text-center text-muted-foreground space-y-3">
+            <FileText className="h-10 w-10 mx-auto opacity-40" aria-hidden />
+            {temFiltro ? (
+              <>
+                <p>Nenhum exame com esse filtro.</p>
+                <Button variant="outline" size="sm" onClick={() => { setQ(""); if (statusFilter) setStatusFilter(""); else load(); }}>Limpar filtros</Button>
+              </>
+            ) : (
+              <>
+                <p>Nenhum exame ainda. Crie um aqui ou pelo Pedido de Exame.</p>
+                <Button size="sm" onClick={() => setOpen(true)} className="gap-1"><Plus className="h-4 w-4" /> Novo exame</Button>
+              </>
+            )}
           </div>
         ) : (
           <div className="divide-y divide-border">
             {exames.map((e) => (
-              <div key={e.id} className="p-4 flex items-center gap-4 hover:bg-muted/40 transition-colors">
+              <div key={e.id} className="p-4 flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 hover:bg-muted/40 transition-colors">
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
+                  <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 mb-1">
                     <span className="font-mono text-xs text-muted-foreground">{e.codigo}</span>
                     <Badge variant="outline" className={STATUS_COLORS[e.status]}>{STATUS_LABELS[e.status]}</Badge>
                     {e.terceirizado && <Badge variant="outline" className="text-xs">Terceirizado</Badge>}
@@ -202,18 +268,20 @@ function ExamesPage() {
                     {e.valor > 0 && ` · R$ ${Number(e.valor).toFixed(2)}`}
                   </div>
                 </div>
+                <div className="flex items-center gap-2">
                 <Select value={e.status} onValueChange={(v) => changeStatus(e.id, v as ExameStatus)}>
-                  <SelectTrigger className="w-[170px]"><SelectValue /></SelectTrigger>
+                  <SelectTrigger className="flex-1 sm:flex-none sm:w-[170px]" aria-label={`Status do exame ${e.codigo ?? ""}`}><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {STATUS_ORDER.map(s => <SelectItem key={s} value={s}>{STATUS_LABELS[s]}</SelectItem>)}
                   </SelectContent>
                 </Select>
-                <Button size="sm" variant="outline" className="gap-1" onClick={() => setLaudoExame(e)}>
+                <Button size="sm" variant="outline" className="gap-1 h-9" onClick={() => setLaudoExame(e)} aria-label={`Laudo e imagens do exame ${e.codigo ?? ""}`}>
                   <FileSignature className="h-4 w-4" /> Laudo
                 </Button>
-                <Button size="icon" variant="ghost" onClick={() => remove(e.id)} aria-label="Excluir exame">
+                <Button size="icon" variant="ghost" className="h-9 w-9 shrink-0" onClick={() => setExcluir(e)} aria-label={`Excluir exame ${e.codigo ?? ""}`}>
                   <Trash2 className="h-4 w-4 text-destructive" />
                 </Button>
+                </div>
               </div>
             ))}
           </div>
@@ -226,13 +294,34 @@ function ExamesPage() {
         onSaved={load}
       />
 
+      <AlertDialog open={!!excluir} onOpenChange={(o) => { if (!o) setExcluir(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir o pedido {excluir?.codigo}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Só pedidos sem laudo e sem imagem podem ser excluídos. Exame com resultado faz parte do prontuário:
+              nesse caso, mude o status para Cancelado.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Voltar</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => { if (excluir) remove(excluir.id); setExcluir(null); }}
+            >
+              Excluir pedido
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {/* New Exame Dialog */}
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl max-h-[92vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Novo exame</DialogTitle></DialogHeader>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="col-span-2">
-              <Label htmlFor={tipos.length === 0 ? "novo-exame-tipo-livre" : undefined}>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="sm:col-span-2">
+              <Label htmlFor={tipos.length === 0 ? "novo-exame-tipo-livre" : "novo-exame-tipo"}>
                 {tipos.length === 0 ? "Nome do exame *" : "Tipo de exame *"}
               </Label>
               {tipos.length === 0 && tiposCarregados ? (
@@ -253,9 +342,14 @@ function ExamesPage() {
                       </Button>
                     </div>
                   ) : (
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Esta clínica ainda não tem tipos de exame cadastrados. Digite o nome do exame.
-                    </p>
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                      <p className="text-xs text-muted-foreground">
+                        Esta clínica ainda não tem tipos de exame cadastrados. Digite o nome do exame ou crie a lista básica.
+                      </p>
+                      <Button type="button" variant="outline" size="sm" className="h-8" onClick={criarTiposPadrao} disabled={criandoTipos}>
+                        {criandoTipos && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}Criar tipos básicos
+                      </Button>
+                    </div>
                   )}
                 </>
               ) : (
@@ -266,30 +360,42 @@ function ExamesPage() {
                   setForm(f => ({ ...f, tipo_exame_id: v, tipo_nome: t?.nome || "", valor: Number(t?.preco) || 0 }));
                 }}
               >
-                <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                <SelectTrigger id="novo-exame-tipo"><SelectValue placeholder="Selecione..." /></SelectTrigger>
                 <SelectContent>
                   {tipos.map(t => <SelectItem key={t.id} value={t.id}>{t.nome}{t.categoria ? ` · ${t.categoria}` : ""}</SelectItem>)}
                 </SelectContent>
               </Select>
               )}
             </div>
-            <div className="col-span-2">
-              <Label>Paciente</Label>
+            <div className="sm:col-span-2">
+              <Label htmlFor="novo-exame-paciente">Paciente</Label>
+              {pacientes.length > 20 && (
+                <Input
+                  className="mb-2"
+                  placeholder="Digite parte do nome para filtrar a lista"
+                  aria-label="Filtrar pacientes pelo nome"
+                  value={buscaPaciente}
+                  onChange={(e) => setBuscaPaciente(e.target.value)}
+                />
+              )}
               <Select value={form.paciente_id} onValueChange={(v) => setForm(f => ({ ...f, paciente_id: v }))}>
-                <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                <SelectTrigger id="novo-exame-paciente"><SelectValue placeholder="Selecione..." /></SelectTrigger>
                 <SelectContent>
-                  {pacientes.map(p => <SelectItem key={p.id} value={p.id}>{p.nome}</SelectItem>)}
+                  {pacientesFiltrados.map(p => <SelectItem key={p.id} value={p.id}>{p.nome}</SelectItem>)}
+                  {pacientesFiltrados.length === 0 && (
+                    <div className="px-2 py-1.5 text-sm text-muted-foreground">Nenhum paciente com esse nome.</div>
+                  )}
                 </SelectContent>
               </Select>
             </div>
             <div>
-              <Label>Clínica de origem</Label>
-              <Input value={form.clinica_origem} onChange={(e) => setForm(f => ({ ...f, clinica_origem: e.target.value }))} />
+              <Label htmlFor="novo-exame-origem">Clínica de origem</Label>
+              <Input id="novo-exame-origem" value={form.clinica_origem} onChange={(e) => setForm(f => ({ ...f, clinica_origem: e.target.value }))} />
             </div>
             <div>
-              <Label>Prioridade</Label>
+              <Label htmlFor="novo-exame-prioridade">Prioridade</Label>
               <Select value={form.prioridade} onValueChange={(v) => setForm(f => ({ ...f, prioridade: v as ExamePrioridade }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger id="novo-exame-prioridade"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="baixa">Baixa</SelectItem>
                   <SelectItem value="normal">Normal</SelectItem>
@@ -299,13 +405,13 @@ function ExamesPage() {
               </Select>
             </div>
             <div>
-              <Label>Valor (R$)</Label>
-              <Input type="number" step="0.01" value={form.valor} onChange={(e) => setForm(f => ({ ...f, valor: Number(e.target.value) }))} />
+              <Label htmlFor="novo-exame-valor">Valor (R$)</Label>
+              <Input id="novo-exame-valor" type="number" min={0} step="0.01" value={form.valor} onChange={(e) => setForm(f => ({ ...f, valor: Number(e.target.value) }))} />
             </div>
             <div>
-              <Label>Modo de entrega</Label>
+              <Label htmlFor="novo-exame-entrega">Modo de entrega</Label>
               <Select value={form.modo_entrega} onValueChange={(v) => setForm(f => ({ ...f, modo_entrega: v }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger id="novo-exame-entrega"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="digital">Digital</SelectItem>
                   <SelectItem value="impresso">Impresso</SelectItem>
@@ -313,18 +419,18 @@ function ExamesPage() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="col-span-2">
-              <Label>Observações</Label>
-              <Textarea rows={3} value={form.observacoes} onChange={(e) => setForm(f => ({ ...f, observacoes: e.target.value }))} />
+            <div className="sm:col-span-2">
+              <Label htmlFor="novo-exame-obs">Observações</Label>
+              <Textarea id="novo-exame-obs" rows={3} value={form.observacoes} onChange={(e) => setForm(f => ({ ...f, observacoes: e.target.value }))} />
             </div>
-            <label className="col-span-2 flex items-center gap-2 text-sm">
+            <label className="sm:col-span-2 flex items-center gap-2 text-sm">
               <input type="checkbox" checked={form.terceirizado} onChange={(e) => setForm(f => ({ ...f, terceirizado: e.target.checked }))} />
               Exame terceirizado
             </label>
             {form.terceirizado && (
-              <div className="col-span-2">
-                <Label>Fornecedor terceirizado</Label>
-                <Input value={form.fornecedor_terc} onChange={(e) => setForm(f => ({ ...f, fornecedor_terc: e.target.value }))} />
+              <div className="sm:col-span-2">
+                <Label htmlFor="novo-exame-fornecedor">Fornecedor terceirizado</Label>
+                <Input id="novo-exame-fornecedor" value={form.fornecedor_terc} onChange={(e) => setForm(f => ({ ...f, fornecedor_terc: e.target.value }))} />
               </div>
             )}
           </div>
@@ -343,10 +449,12 @@ function ExamesPage() {
 function StatCard({ label, value, active, onClick }: { label: string; value: number; active: boolean; onClick: () => void }) {
   return (
     <button
+      type="button"
       onClick={onClick}
-      className={`p-3 rounded-lg border text-left transition-all ${active ? "border-primary bg-primary/5" : "border-border hover:border-primary/40"}`}
+      aria-pressed={active}
+      className={`p-2.5 sm:p-3 rounded-lg border text-left transition-all ${active ? "border-primary bg-primary/5" : "border-border hover:border-primary/40"}`}
     >
-      <div className="text-2xl font-bold text-foreground">{value}</div>
+      <div className="text-xl sm:text-2xl font-bold text-foreground">{value}</div>
       <div className="text-[11px] text-muted-foreground uppercase tracking-wide">{label}</div>
     </button>
   );
