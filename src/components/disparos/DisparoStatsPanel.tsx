@@ -1,51 +1,13 @@
 import { X, Send, CheckCircle2, Eye, MessageSquare, AlertTriangle, TrendingUp, BarChart3 } from "lucide-react";
 import { type DisparoProgramado } from "@/data/disparosMockData";
 import {
-  AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
+  
   Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend,
 } from "recharts";
 
 interface DisparoStatsPanelProps {
   disparo: DisparoProgramado;
   onClose: () => void;
-}
-
-// Generate mock time-series data based on disparo stats
-function generateTimeSeriesData(disparo: DisparoProgramado) {
-  const days = 14;
-  const data = [];
-  const totalEnviadas = disparo.stats.enviadas;
-  const totalEntregues = disparo.stats.entregues;
-  const totalLidas = disparo.stats.lidas;
-  const totalRespondidas = disparo.stats.respondidas;
-
-  for (let i = days; i >= 0; i--) {
-    const date = new Date();
-    date.setDate(date.getDate() - i);
-    const label = `${date.getDate().toString().padStart(2, "0")}/${(date.getMonth() + 1).toString().padStart(2, "0")}`;
-    const factor = Math.random() * 0.15 + 0.03;
-    const enviadas = Math.round(totalEnviadas * factor);
-    const entregues = Math.round(enviadas * (totalEntregues / Math.max(totalEnviadas, 1)));
-    const lidas = Math.round(enviadas * (totalLidas / Math.max(totalEnviadas, 1)));
-    const respondidas = Math.round(enviadas * (totalRespondidas / Math.max(totalEnviadas, 1)));
-
-    data.push({ date: label, enviadas, entregues, lidas, respondidas });
-  }
-  return data;
-}
-
-function generateHourlyData(disparo: DisparoProgramado) {
-  const hours = [];
-  const startH = parseInt(disparo.horarioInicio?.split(":")[0] || "8");
-  const endH = parseInt(disparo.horarioFim?.split(":")[0] || "18");
-  for (let h = startH; h <= endH; h++) {
-    const peak = h >= 10 && h <= 14 ? 1.5 : 1;
-    hours.push({
-      hora: `${h.toString().padStart(2, "0")}:00`,
-      mensagens: Math.round((Math.random() * 15 + 5) * peak),
-    });
-  }
-  return hours;
 }
 
 const COLORS = {
@@ -65,8 +27,6 @@ const PIE_COLORS = [
 ];
 
 export function DisparoStatsPanel({ disparo, onClose }: DisparoStatsPanelProps) {
-  const timeData = generateTimeSeriesData(disparo);
-  const hourlyData = generateHourlyData(disparo);
 
   const { enviadas, entregues, lidas, respondidas, erros } = disparo.stats;
   const taxaEntrega = enviadas > 0 ? ((entregues / enviadas) * 100).toFixed(1) : "0";
@@ -96,7 +56,7 @@ export function DisparoStatsPanel({ disparo, onClose }: DisparoStatsPanelProps) 
               <p className="text-xs text-muted-foreground">Estatísticas detalhadas · Criado em {disparo.criadoEm}</p>
             </div>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted transition-colors">
+          <button onClick={onClose} aria-label="Fechar" className="p-1.5 rounded-lg hover:bg-muted transition-colors">
             <X className="h-4 w-4 text-muted-foreground" />
           </button>
         </div>
@@ -120,67 +80,9 @@ export function DisparoStatsPanel({ disparo, onClose }: DisparoStatsPanelProps) 
             </div>
           ) : (
             <>
-              {/* Area chart: time series */}
-              <div className="bg-muted/30 rounded-xl border border-border p-5">
-                <h3 className="text-sm font-semibold text-foreground mb-1">Evolução dos Envios</h3>
-                <p className="text-xs text-muted-foreground mb-4">Últimos 15 dias</p>
-                <ResponsiveContainer width="100%" height={260}>
-                  <AreaChart data={timeData}>
-                    <defs>
-                      <linearGradient id="gradEnviadas" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor={COLORS.enviadas} stopOpacity={0.3} />
-                        <stop offset="95%" stopColor={COLORS.enviadas} stopOpacity={0} />
-                      </linearGradient>
-                      <linearGradient id="gradLidas" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor={COLORS.lidas} stopOpacity={0.3} />
-                        <stop offset="95%" stopColor={COLORS.lidas} stopOpacity={0} />
-                      </linearGradient>
-                      <linearGradient id="gradRespondidas" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor={COLORS.respondidas} stopOpacity={0.3} />
-                        <stop offset="95%" stopColor={COLORS.respondidas} stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                    <XAxis dataKey="date" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} />
-                    <YAxis tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} />
-                    <Tooltip
-                      contentStyle={{
-                        backgroundColor: "hsl(var(--card))",
-                        border: "1px solid hsl(var(--border))",
-                        borderRadius: "8px",
-                        fontSize: "11px",
-                      }}
-                    />
-                    <Area type="monotone" dataKey="enviadas" stroke={COLORS.enviadas} fill="url(#gradEnviadas)" strokeWidth={2} name="Enviadas" />
-                    <Area type="monotone" dataKey="lidas" stroke={COLORS.lidas} fill="url(#gradLidas)" strokeWidth={2} name="Lidas" />
-                    <Area type="monotone" dataKey="respondidas" stroke={COLORS.respondidas} fill="url(#gradRespondidas)" strokeWidth={2} name="Respondidas" />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-                {/* Bar chart: hourly distribution */}
-                <div className="bg-muted/30 rounded-xl border border-border p-5">
-                  <h3 className="text-sm font-semibold text-foreground mb-1">Distribuição por Horário</h3>
-                  <p className="text-xs text-muted-foreground mb-4">Mensagens por hora do dia</p>
-                  <ResponsiveContainer width="100%" height={200}>
-                    <BarChart data={hourlyData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                      <XAxis dataKey="hora" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} />
-                      <YAxis tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} />
-                      <Tooltip
-                        contentStyle={{
-                          backgroundColor: "hsl(var(--card))",
-                          border: "1px solid hsl(var(--border))",
-                          borderRadius: "8px",
-                          fontSize: "11px",
-                        }}
-                      />
-                      <Bar dataKey="mensagens" fill={COLORS.enviadas} radius={[4, 4, 0, 0]} name="Mensagens" />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-
+              {/* Os gráficos "Evolução dos envios" e "Distribuição por horário" eram gerados com
+                  Math.random() e mudavam a cada abertura. Saem até existir série real do servidor. */}
+              <div className="grid grid-cols-1 gap-5">
                 {/* Pie chart: breakdown */}
                 <div className="bg-muted/30 rounded-xl border border-border p-5">
                   <h3 className="text-sm font-semibold text-foreground mb-1">Distribuição de Status</h3>
