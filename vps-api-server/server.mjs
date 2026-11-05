@@ -24,6 +24,7 @@ import { promisify } from 'util';
 import { existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { AsyncLocalStorage } from 'async_hooks';
+import { createLimiter, rateLimitMiddleware, sendTooMany, clientIp, ipKey, sleep } from './rate-limit.mjs';
 
 // Compatibilidade para trechos legados deste arquivo que ainda chamam
 // crypto.randomUUID(). O módulo importa randomUUID de forma nomeada; sem este
@@ -42,9 +43,77 @@ const { Pool } = pg;
 const app = express();
 const PORT = process.env.API_PORT || 3002;
 
+// A API fica atrás do nginx na mesma máquina: só confia em X-Forwarded-For vindo
+// do loopback (nunca de sub-rede maior; ver GHSA-jqcg-44mw-7w3h do proxy-addr).
+// Para o IP do cliente use clientIp(req) (prefere o X-Real-IP do nginx).
+app.set('trust proxy', 'loopback');
+
 // ─── Middleware ──────────────────────────────────────────────
 app.use(cors());
 app.use(express.json({ limit: '64mb' }));
+
+// ─── Limites de taxa (rate-limit.mjs, memória do processo) ──
+// Login e reset contam por IP e por e-mail; signup por IP; busca, upload e envio
+// manual de WhatsApp por usuário; webhooks por instância/segredo (ver as rotas).
+const RL = {
+  loginFalhaEmail: createLimiter('login_email', { windowMs: 15 * 60_000, max: 5 }),
+  loginFalhaIp: createLimiter('login_ip', { windowMs: 15 * 60_000, max: 20 }),
+  resetEmail: createLimiter('reset_email', { windowMs: 15 * 60_000, max: 3 }),
+  resetIp: createLimiter('reset_ip', { windowMs: 15 * 60_000, max: 10 }),
+  signupIp: createLimiter('signup_ip', { windowMs: 60 * 60_000, max: 5 }),
+  busca: createLimiter('busca_usuario', { windowMs: 60_000, max: 30 }),
+  upload: createLimiter('upload_usuario', { windowMs: 60_000, max: 30 }),
+  envioManual: createLimiter('envio_usuario', { windowMs: 60_000, max: 60 }),
+  // Evolution: um evento de mensagem gera vários webhooks (upsert, update de status,
+  // presença, chats). Teto alto por instância para não perder tráfego legítimo.
+  evolutionInstancia: createLimiter('evolution_instancia', { windowMs: 60_000, max: 3000 }),
+  evolutionFalhaIp: createLimiter('evolution_falha_ip', { windowMs: 15 * 60_000, max: 30 }),
+  // Clinicorp: eventos de agenda/paciente de uma clínica, bem abaixo disto.
+  clinicorpSegredo: createLimiter('clinicorp_segredo', { windowMs: 60_000, max: 600 }),
+  clinicorpFalhaIp: createLimiter('clinicorp_falha_ip', { windowMs: 15 * 60_000, max: 30 }),
+};
+const LOGIN_DELAY_BASE_MS = Number(process.env.RATE_LIMIT_LOGIN_DELAY_MS) >= 0 && process.env.RATE_LIMIT_LOGIN_DELAY_MS !== undefined
+  ? Number(process.env.RATE_LIMIT_LOGIN_DELAY_MS) : 500;
+
+// Chave por usuário: o `sub` do JWT (a assinatura é conferida depois, no handler;
+// token forjado recebe 401 lá). Sem token, cai no IP.
+function userRateKey(req) {
+  const h = req.headers.authorization || '';
+  if (h.startsWith('Bearer ')) {
+    const decoded = jwt.decode(h.slice(7));
+    if (decoded && typeof decoded === 'object' && decoded.sub) return `u:${decoded.sub}`;
+  }
+  const ip = ipKey(req);
+  return ip ? `ip:${ip}` : null;
+}
+
+const MSG_LIMITE_USO = 'Muitas requisições em pouco tempo. Aguarde um instante e tente de novo.';
+const limiteBusca = rateLimitMiddleware(RL.busca, userRateKey, { message: MSG_LIMITE_USO });
+const limiteUpload = rateLimitMiddleware(RL.upload, userRateKey, { message: MSG_LIMITE_USO });
+const limiteSignup = rateLimitMiddleware(RL.signupIp, ipKey);
+
+// Webhook da Clinicorp (rota em clinicorp.mjs): teto por segredo (pelo hash, nunca o
+// valor) e bloqueio do IP depois de muitas respostas 401.
+app.use('/api/webhook/clinicorp', (req, res, next) => {
+  const ip = ipKey(req);
+  const bloqueio = RL.clinicorpFalhaIp.blocked(ip);
+  if (bloqueio.blocked) return sendTooMany(res, bloqueio.retryAfterSec, 'Too many requests');
+  const h = req.headers['x-user-api'];
+  const secret = typeof h === 'string' && h ? h : (typeof req.query?.user_api === 'string' ? req.query.user_api : '');
+  if (secret) {
+    const r = RL.clinicorpSegredo.hit(createHash('sha256').update(secret).digest('hex'));
+    if (!r.allowed) return sendTooMany(res, r.retryAfterSec, 'Too many requests');
+  }
+  res.on('finish', () => { if (res.statusCode === 401) RL.clinicorpFalhaIp.hit(ip); });
+  next();
+});
+
+// Envio manual de WhatsApp (send-text, send-media, ...): proteção extra além da fila.
+// send-presence (digitando) e send-media-status (consulta) ficam de fora.
+// (A regex casa o segmento inteiro: o Express pula o app.use se o próximo caractere
+// depois do trecho casado não for '/' ou fim.)
+app.use(/^\/api\/whatsapp\/send-(?!presence(?:\/|$)|media-status(?:\/|$))[^/]+/,
+  rateLimitMiddleware(RL.envioManual, userRateKey, { message: MSG_LIMITE_USO }));
 
 // Contexto de clínica por requisição. verifyUser/webhook preenchem o store e
 // pool.query (abaixo) aplica o tenant dentro da mesma transação da consulta.
@@ -1085,16 +1154,30 @@ async function listProfilesWithRoles(tenantId = null) {
 
 app.post('/api/auth/login', async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password } = req.body || {};
     if (!email || !password) return res.status(400).json({ error: 'Email e senha são obrigatórios' });
 
+    // Limite: falhas por e-mail e por IP (login certo não conta). Depois da 3ª falha
+    // do e-mail, a resposta demora cada vez mais (atraso progressivo).
+    const emailKey = typeof email === 'string' ? email.toLowerCase().trim() : null;
+    const ipK = ipKey(req);
+    const bloqueio = [RL.loginFalhaEmail.blocked(emailKey), RL.loginFalhaIp.blocked(ipK)].find(b => b.blocked);
+    if (bloqueio) return sendTooMany(res, bloqueio.retryAfterSec);
+    const falhou = async (status, error) => {
+      const { count } = RL.loginFalhaEmail.hit(emailKey);
+      RL.loginFalhaIp.hit(ipK);
+      if (count >= 3 && LOGIN_DELAY_BASE_MS > 0) await sleep(Math.min(LOGIN_DELAY_BASE_MS * 2 ** (count - 3), 4000));
+      return res.status(status).json({ error });
+    };
+
     const profile = await getProfileByEmail(email);
-    if (!profile) return res.status(401).json({ error: 'Email ou senha inválidos' });
-    if (!profile.active) return res.status(403).json({ error: 'Conta desativada. Entre em contato com o administrador.' });
-    if (!profile.password_hash) return res.status(401).json({ error: 'Senha não configurada' });
+    if (!profile) return falhou(401, 'Email ou senha inválidos');
+    if (!profile.active) return falhou(403, 'Conta desativada. Entre em contato com o administrador.');
+    if (!profile.password_hash) return falhou(401, 'Senha não configurada');
 
     const valid = await bcrypt.compare(password, profile.password_hash);
-    if (!valid) return res.status(401).json({ error: 'Email ou senha inválidos' });
+    if (!valid) return falhou(401, 'Email ou senha inválidos');
+    RL.loginFalhaEmail.reset(emailKey);
 
     const { rows: roles } = await pool.query(
       'SELECT role FROM user_roles WHERE user_id = $1 LIMIT 1',
@@ -1158,7 +1241,7 @@ app.get('/api/plans', async (_req, res) => {
   }
 });
 
-app.post('/api/auth/signup-clinic', async (req, res) => {
+app.post('/api/auth/signup-clinic', limiteSignup, async (req, res) => {
   const client = await pool.connect();
   try {
     const { clinic_name, admin_name, email, password, plan_slug, telefone, cnpj, termos_versao, politica_versao } = req.body || {};
@@ -1194,7 +1277,7 @@ app.post('/api/auth/signup-clinic', async (req, res) => {
        VALUES ($1,$2,$3,$4,$5,'trial', NOW() + ($6 || ' days')::interval, $7, $8, $9, NOW(), $10) RETURNING *`,
       [clinic_name, slug, cnpj || null, telefone || null, normalizedEmail, String(trialDays), plan.id,
        termos_versao ? String(termos_versao) : null, politica_versao ? String(politica_versao) : null,
-       req.headers['x-forwarded-for'] || req.ip || null]
+       clientIp(req)]
     );
     const tenant = tRows[0];
 
@@ -2223,8 +2306,12 @@ app.post('/api/auth/avatar', async (req, res) => {
 // ─── Forgot Password (notifica admin) ───────────────────────
 app.post('/api/auth/forgot-password', async (req, res) => {
   try {
-    const { email } = req.body;
-    if (!email) return res.status(400).json({ error: 'Email obrigatório' });
+    const { email } = req.body || {};
+    if (!email || typeof email !== 'string') return res.status(400).json({ error: 'Email obrigatório' });
+    // Mesma resposta 429 exista ou não o e-mail (não revela cadastro).
+    const porIp = RL.resetIp.hit(ipKey(req));
+    const porEmail = RL.resetEmail.hit(email.toLowerCase().trim());
+    if (!porIp.allowed || !porEmail.allowed) return sendTooMany(res, Math.max(porIp.retryAfterSec, porEmail.retryAfterSec));
 
     const { rows } = await pool.query(
       'SELECT id, name FROM profiles WHERE email = $1 LIMIT 1',
@@ -4307,7 +4394,7 @@ app.post('/api/whatsapp/send-media', async (req, res) => {
   }
 });
 
-app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '64mb' }), async (req, res) => {
+app.post('/api/whatsapp/send-media-upload', limiteUpload, express.raw({ type: '*/*', limit: '64mb' }), async (req, res) => {
   let jobId;
   try {
     const { user: jobUser } = await verifyUser(req);
@@ -6849,7 +6936,7 @@ app.post('/api/execucoes', async (req, res) => {
       const assinaturaParams = [
           aId, paciente_id, dentista_id || null, assinatura.base64,
           assinatura.lat ?? null, assinatura.lng ?? null, assinatura.accuracy ?? null,
-          req.ip || req.headers['x-forwarded-for'] || null,
+          clientIp(req),
           req.headers['user-agent'] || null,
           assinatura.canal || 'none',
           assinatura.codigo || null,
@@ -8870,9 +8957,24 @@ app.post('/api/webhook/evolution', async (req, res) => {
   const authBody = Array.isArray(req.body) ? req.body[0] : req.body;
   let authInstance = null;
   try { authInstance = extractEvolutionInstanceName(authBody || {}); } catch { authInstance = null; }
+  // Muitas falhas de token do mesmo IP: bloqueia por um tempo (tentativa de adivinhar).
+  const evoIp = ipKey(req);
+  const evoBloqueio = RL.evolutionFalhaIp.blocked(evoIp);
+  if (evoBloqueio.blocked) return sendTooMany(res, evoBloqueio.retryAfterSec, 'Too many requests');
   if (!isValidEvolutionWebhookRequest(req, authInstance)) {
-    console.warn(`[webhook] chamada rejeitada (token inválido) de ${req.ip}`);
+    RL.evolutionFalhaIp.hit(evoIp);
+    console.warn(`[webhook] chamada rejeitada (token inválido) de ${clientIp(req)}`);
     return res.status(401).json({ error: 'Unauthorized' });
+  }
+  // Teto por instância, bem acima do volume normal (não derrubar tráfego legítimo).
+  if (authInstance) {
+    const porInstancia = RL.evolutionInstancia.hit(authInstance);
+    if (!porInstancia.allowed) {
+      if (porInstancia.count === RL.evolutionInstancia.max + 1) {
+        console.warn(`[webhook] limite por instância atingido (${RL.evolutionInstancia.max}/min): ${authInstance}`);
+      }
+      return sendTooMany(res, porInstancia.retryAfterSec, 'Too many requests');
+    }
   }
   try {
     // Evolution must receive a response quickly. Some message paths do extra
@@ -13680,7 +13782,7 @@ app.post('/api/messages', async (req, res) => {
 });
 
 // POST /api/media/upload — upload media file and return persistent URL
-app.post('/api/media/upload', express.raw({ type: '*/*', limit: '64mb' }), async (req, res) => {
+app.post('/api/media/upload', limiteUpload, express.raw({ type: '*/*', limit: '64mb' }), async (req, res) => {
   try {
     await verifyUser(req);
     const { fileName, mimeType } = req.query;
@@ -14118,7 +14220,7 @@ app.get('/api/messages/unread', async (req, res) => {
 });
 
 // Search messages globally or within a lead
-app.get('/api/messages/search', async (req, res) => {
+app.get('/api/messages/search', limiteBusca, async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -14450,7 +14552,7 @@ app.post('/api/pacientes/:id/consentimentos', async (req, res) => {
       [
         user.tenant_id, String(req.params.id), tipo, String(versao), String(texto).slice(0, 5000),
         user.id || null, user.email || null,
-        req.headers['x-forwarded-for'] || req.ip || null,
+        clientIp(req),
         req.headers['user-agent'] || null,
       ]
     );
@@ -14478,7 +14580,7 @@ app.post('/api/consentimentos/:id/revogar', async (req, res) => {
 // ─── Transcribe audio via OpenAI Whisper ────────────────────
 // O áudio fica só num arquivo temporário durante a chamada e é apagado em seguida
 // (LGPD art. 16). Exige consentimento ativo do paciente para gravação/transcrição por IA.
-app.post('/api/ai/transcribe', express.raw({ type: ['audio/*', 'application/octet-stream'], limit: '50mb' }), async (req, res) => {
+app.post('/api/ai/transcribe', limiteUpload, express.raw({ type: ['audio/*', 'application/octet-stream'], limit: '50mb' }), async (req, res) => {
   let tmpDir = null;
   try {
     const { user } = await verifyUser(req);
