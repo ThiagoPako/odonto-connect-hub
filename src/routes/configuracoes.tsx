@@ -49,7 +49,7 @@ interface TabDef {
 }
 
 const TABS: TabDef[] = [
-  { id: "clinica", label: "Clínica", description: "Endereço enviado no chat (fica salvo só neste aparelho)", icon: Building2 },
+  { id: "clinica", label: "Clínica", description: "Endereço e localização enviados no chat", icon: Building2 },
   { id: "agenda", label: "Agenda", description: "Horários de funcionamento e regras de agendamento", icon: CalendarClock },
   { id: "atendimento", label: "Atendimento", description: "Fila, regras e tempo de atendimento", icon: Headphones },
   { id: "ia", label: "Inteligência Artificial", description: "Chave e modelo da IA (transcrição e relatórios)", icon: Bot },
