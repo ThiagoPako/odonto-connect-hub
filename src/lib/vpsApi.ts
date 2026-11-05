@@ -768,7 +768,7 @@ export interface WhatsAppHealthInstance {
 }
 
 export const whatsappApi = {
-  health: () => vpsApiFetch<{ instances: WhatsAppHealthInstance[]; anyDown: boolean }>('/whatsapp/health', { background: true }),
+  health: () => vpsApiFetch<{ instances: WhatsAppHealthInstance[]; anyDown: boolean; pendingJobsWithoutInstance?: number; alertAfterMinutes?: number }>('/whatsapp/health', { background: true }),
   instances: () => vpsApiFetch('/whatsapp/instances'),
   create: (instanceName: string) => vpsApiFetch('/whatsapp/instances', { method: 'POST', body: { instanceName } }),
   connect: (instance: string) => vpsApiFetch(`/whatsapp/connect/${instance}`),

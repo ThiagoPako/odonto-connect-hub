@@ -58,6 +58,7 @@ describe('Saúde do WhatsApp', () => {
           last_checked_at: new Date(), changes_last_hour: x.changes || 0, pending_jobs: 3,
         })));
       }
+      if (/status = 'pending' AND instance IS NULL/.test(text)) return ok([{ n: 7 }]);
       if (/SELECT DISTINCT ON/.test(text)) return ok(queueJob ? [queueJob] : []);
       if (/UPDATE automation_jobs SET claimed_at = NOW\(\)/.test(text)) return ok(queueJob ? [queueJob] : []);
       return ok([]);
@@ -107,10 +108,49 @@ describe('Saúde do WhatsApp', () => {
     expect(q(/SET last_alert_at = NOW\(\)/)).toHaveLength(0); // dentro do intervalo de 6 h
   });
 
-  test('número sumiu da Evolution vira "ausente"', async () => {
+  test('número sumiu da Evolution vira "ausente" e não gera alerta', async () => {
     evolution = [{ name: instB, connectionStatus: 'open' }];
     await checkWhatsAppHealth();
     expect(q(/SET connection_state = \$3/)[0].params).toEqual([instA, tenantA, 'ausente']);
+    sqlLog = [];
+    stored[0].connection_state = 'ausente';
+    stored[0].state_since = new Date(Date.now() - 3 * 86_400_000);
+    await checkWhatsAppHealth();
+    expect(q(/SET last_alert_at = NOW\(\)/)).toHaveLength(0);
+  });
+
+  test('"ausente" fica fora do anyDown (selo)', async () => {
+    stored[0].connection_state = 'ausente';
+    stored[0].state_since = new Date(Date.now() - 3 * 86_400_000);
+    const res = await request(app).get('/api/whatsapp/health').set(auth());
+    expect(res.body.anyDown).toBe(false);
+    expect(res.body.instances[0].downForMinutes).toBe(0);
+  });
+
+  test('selo espera os mesmos 10 min do push durante connecting', async () => {
+    stored[0].connection_state = 'connecting';
+    stored[0].state_since = new Date(Date.now() - 3 * 60_000);
+    let res = await request(app).get('/api/whatsapp/health').set(auth());
+    expect(res.body.anyDown).toBe(false);
+    stored[0].state_since = new Date(Date.now() - 11 * 60_000);
+    res = await request(app).get('/api/whatsapp/health').set(auth());
+    expect(res.body.anyDown).toBe(true);
+  });
+
+  test('jobs sem número contam uma vez por clínica, não em cada número', async () => {
+    const res = await request(app).get('/api/whatsapp/health').set(auth());
+    const sel = q(/FROM whatsapp_instances w\s+WHERE w.tenant_id = \$1/)[0];
+    expect(sel.text).not.toMatch(/instance IS NULL/);
+    const semNumero = q(/status = 'pending' AND instance IS NULL/)[0];
+    expect(semNumero.params).toEqual([tenantA]);
+    expect(res.body.pendingJobsWithoutInstance).toBe(7);
+  });
+
+  test('apagar o número tira a linha da clínica (só da própria clínica)', async () => {
+    await request(app).delete(`/api/whatsapp/instances/${instA}`).set(auth());
+    const del = q(/DELETE FROM whatsapp_instances WHERE instance_name = \$1 AND tenant_id = \$2/);
+    expect(del).toHaveLength(1);
+    expect(del[0].params).toEqual([instA, tenantA]);
   });
 
   test('Evolution sem resposta: não marca nenhuma clínica como desconectada', async () => {

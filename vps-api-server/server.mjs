@@ -3723,7 +3723,8 @@ async function checkWhatsAppHealth() {
           [row.instance_name, tenantId]
         ).catch(() => {});
       }
-      if (state === 'open') continue;
+      // "ausente" = o nome não existe mais na Evolution (apagado): não é queda, não alerta.
+      if (state === 'open' || state === 'ausente') continue;
       const since = changed || !row.state_since ? now : new Date(row.state_since).getTime();
       const lastAlert = row.last_alert_at ? new Date(row.last_alert_at).getTime() : 0;
       const newOutage = lastAlert < since;
@@ -3755,17 +3756,22 @@ app.get('/api/whatsapp/health', async (req, res) => {
                   AND l.changed_at > NOW() - INTERVAL '1 hour') AS changes_last_hour,
               (SELECT COUNT(*)::int FROM automation_jobs j
                 WHERE j.tenant_id = w.tenant_id AND j.status = 'pending'
-                  AND (j.instance = w.instance_name OR j.instance IS NULL)) AS pending_jobs
+                  AND j.instance = w.instance_name) AS pending_jobs
          FROM whatsapp_instances w
         WHERE w.tenant_id = $1
         ORDER BY w.created_at ASC NULLS LAST`,
+      [user.tenant_id]
+    );
+    // Jobs ainda sem número definido: contados uma vez por clínica (não em cada número).
+    const { rows: [semNumero] } = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM automation_jobs WHERE tenant_id = $1 AND status = 'pending' AND instance IS NULL`,
       [user.tenant_id]
     );
     const now = Date.now();
     const instances = rows.map(r => {
       const state = r.connection_state || 'desconhecido';
       const since = r.state_since ? new Date(r.state_since).toISOString() : null;
-      const down = state !== 'open' && state !== 'desconhecido';
+      const down = state === 'close' || state === 'connecting';
       return {
         instance: r.instance_name, state, since,
         downForMinutes: down && since ? Math.max(0, Math.round((now - new Date(since).getTime()) / 60_000)) : 0,
@@ -3774,7 +3780,14 @@ app.get('/api/whatsapp/health', async (req, res) => {
         lastCheckedAt: r.last_checked_at ? new Date(r.last_checked_at).toISOString() : null,
       };
     });
-    res.json({ instances, anyDown: instances.some(i => i.state !== 'open' && i.state !== 'desconhecido') });
+    // anyDown (selo do dashboard): só queda real e com a mesma carência do push (10 min).
+    const alertAfterMin = WA_HEALTH_ALERT_AFTER_MS / 60_000;
+    res.json({
+      instances,
+      pendingJobsWithoutInstance: Number(semNumero?.n || 0),
+      anyDown: instances.some(i => (i.state === 'close' || i.state === 'connecting') && i.downForMinutes >= alertAfterMin),
+      alertAfterMinutes: alertAfterMin,
+    });
   } catch (error) {
     if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
     console.error('❌ wa health:', error.message);
@@ -4040,8 +4053,13 @@ app.delete('/api/whatsapp/logout/:instance', async (req, res) => {
 // Delete instance
 app.delete('/api/whatsapp/instances/:instance', async (req, res) => {
   try {
-    await verifyAdmin(req);
+    const { user } = await verifyAdmin(req);
     const result = await evolutionFetch(`/instance/delete/${req.params.instance}`, { method: 'DELETE' });
+    // Número apagado sai do mapa da clínica: sem isso a saúde o veria como "ausente" para sempre.
+    if (result.ok && isValidTenantId(user.tenant_id)) {
+      await pool.query('DELETE FROM whatsapp_instances WHERE instance_name = $1 AND tenant_id = $2', [req.params.instance, user.tenant_id])
+        .catch(e => console.error('[wa-delete] mapa local:', e.message));
+    }
     res.json(result.data);
   } catch (error) {
     res.status(500).json({ error: error.message });
