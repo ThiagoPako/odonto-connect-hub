@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { exportarPrescricaoPdf } from "@/lib/prescricaoPdfExport";
 import { ClinicalAudioRecorder } from "@/components/ClinicalAudioRecorder";
+import { GravacaoConsentDialog, GRAVACAO_CONSENT_TEXT, GRAVACAO_CONSENT_VERSION } from "@/components/GravacaoConsentDialog";
 import { OdontogramaEditor } from "@/components/OdontogramaChart";
 import {
   getPacienteById, getPacienteIniciais, getPacienteIdade,
@@ -18,7 +19,7 @@ import {
   type Paciente
 } from "@/data/registroCentral";
 import { type Appointment } from "@/data/agendaMockData";
-import { aiApi, consultationsApi, agendaApi, dentistasApi, type AgendamentoVPS, type ConsultationRecord } from "@/lib/vpsApi";
+import { aiApi, consultationsApi, agendaApi, dentistasApi, consentimentosApi, type AgendamentoVPS, type ConsultationRecord, type ConsentimentoPaciente } from "@/lib/vpsApi";
 import { toast } from "sonner";
 
 type SearchParams = { appointmentId?: string };
@@ -96,6 +97,68 @@ function ConsultaPage() {
   // Consultation history
   const [historicoConsultas, setHistoricoConsultas] = useState<ConsultationRecord[]>([]);
   const [loadingHistorico, setLoadingHistorico] = useState(false);
+
+  // Consentimento de gravação/transcrição por IA — pedido uma vez por paciente (LGPD art. 11, I)
+  const [consentGravacao, setConsentGravacao] = useState<ConsentimentoPaciente | null>(null);
+  const [consentDialogOpen, setConsentDialogOpen] = useState(false);
+  const [consentSaving, setConsentSaving] = useState(false);
+  const consentResolverRef = useRef<((ok: boolean) => void) | null>(null);
+
+  useEffect(() => {
+    // Áudio é de um único paciente: ao trocar de paciente, descarta o que estava em memória.
+    setGravacoes([]);
+    setConsentGravacao(null);
+    if (!pacienteSelecionado) return;
+    let cancelled = false;
+    consentimentosApi.getAtivo(pacienteSelecionado.id, 'gravacao_transcricao_ia').then(({ data }) => {
+      if (!cancelled) setConsentGravacao(data?.consent ?? null);
+    });
+    return () => { cancelled = true; };
+  }, [pacienteSelecionado?.id]);
+
+  const garantirConsentGravacao = useCallback(async (): Promise<boolean> => {
+    if (!pacienteSelecionado) return false;
+    if (consentGravacao) return true;
+    // Revalida no servidor (pode ter sido registrado em outro dispositivo)
+    const { data } = await consentimentosApi.getAtivo(pacienteSelecionado.id, 'gravacao_transcricao_ia');
+    if (data?.consent) { setConsentGravacao(data.consent); return true; }
+    return new Promise<boolean>((resolve) => {
+      consentResolverRef.current = resolve;
+      setConsentDialogOpen(true);
+    });
+  }, [pacienteSelecionado, consentGravacao]);
+
+  const fecharConsentDialog = useCallback((ok: boolean) => {
+    setConsentDialogOpen(false);
+    consentResolverRef.current?.(ok);
+    consentResolverRef.current = null;
+  }, []);
+
+  const confirmarConsentGravacao = useCallback(async () => {
+    if (!pacienteSelecionado) return fecharConsentDialog(false);
+    setConsentSaving(true);
+    const { data, error } = await consentimentosApi.registrar(pacienteSelecionado.id, {
+      tipo: 'gravacao_transcricao_ia',
+      versao: GRAVACAO_CONSENT_VERSION,
+      texto: GRAVACAO_CONSENT_TEXT,
+    });
+    setConsentSaving(false);
+    if (error || !data?.consent) {
+      toast.error(error || 'Não foi possível registrar a autorização.');
+      return fecharConsentDialog(false);
+    }
+    setConsentGravacao(data.consent);
+    fecharConsentDialog(true);
+  }, [pacienteSelecionado, fecharConsentDialog]);
+
+  const revogarConsentGravacao = useCallback(async () => {
+    if (!consentGravacao) return;
+    const { error } = await consentimentosApi.revogar(consentGravacao.id);
+    if (error) { toast.error(error); return; }
+    setConsentGravacao(null);
+    setGravacoes([]);
+    toast.success('Autorização revogada. As gravações desta consulta foram descartadas.');
+  }, [consentGravacao]);
 
   // Fetch history when patient changes
   useEffect(() => {
@@ -272,6 +335,9 @@ function ConsultaPage() {
       started_at: startedAt,
     });
 
+    // O áudio nunca é persistido: ao finalizar, descarta as gravações da memória (LGPD art. 16).
+    setGravacoes([]);
+
     // Update appointment status to "finalizado" on VPS
     if (appointmentSelecionado) {
       agendaApi.update(appointmentSelecionado.id, { status: "finalizado" }).then(() => {
@@ -321,6 +387,10 @@ function ConsultaPage() {
       toast.error("Grave a consulta primeiro");
       return;
     }
+    if (!pacienteSelecionado) {
+      toast.error("Selecione o paciente");
+      return;
+    }
     setAiState(prev => ({ ...prev, status: 'transcribing', error: '' }));
     setTabAtiva("relatorio");
 
@@ -329,7 +399,7 @@ function ConsultaPage() {
       const combinedBlob = new Blob(gravacoes.map(g => g.blob), { type: 'audio/webm' });
 
       // Step 1: Transcribe
-      const { data: transData, error: transError } = await aiApi.transcribe(combinedBlob);
+      const { data: transData, error: transError } = await aiApi.transcribe(combinedBlob, pacienteSelecionado.id);
       if (transError || !transData) {
         setAiState(prev => ({ ...prev, status: 'error', error: transError || 'Erro na transcrição' }));
         toast.error(transError || 'Erro na transcrição');
@@ -794,7 +864,29 @@ function ConsultaPage() {
 
                             {mostrarGravacao && (
                               <div className="px-4 pb-4 pt-1 border-t border-border/30 space-y-3">
-                                <ClinicalAudioRecorder onRecordingComplete={handleGravacaoCompleta} />
+                                <ClinicalAudioRecorder
+                                  onRecordingComplete={handleGravacaoCompleta}
+                                  beforeStart={garantirConsentGravacao}
+                                  consentNote={consentGravacao
+                                    ? `Paciente autorizou em ${new Date(consentGravacao.aceito_em).toLocaleDateString("pt-BR")}`
+                                    : undefined}
+                                />
+                                {consentGravacao && (
+                                  <button
+                                    type="button"
+                                    onClick={revogarConsentGravacao}
+                                    className="text-[10px] text-muted-foreground hover:text-destructive underline-offset-2 hover:underline"
+                                  >
+                                    Paciente pediu para revogar a autorização
+                                  </button>
+                                )}
+                                <GravacaoConsentDialog
+                                  open={consentDialogOpen}
+                                  pacienteNome={pacienteSelecionado?.nome}
+                                  saving={consentSaving}
+                                  onConfirm={confirmarConsentGravacao}
+                                  onCancel={() => fecharConsentDialog(false)}
+                                />
 
                                 {gravacoes.length > 0 && (
                                   <div className="space-y-1.5">

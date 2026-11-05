@@ -457,8 +457,8 @@ function LandingPage() {
             <div>
               <h4 className="font-semibold text-foreground mb-4 text-sm">Legal</h4>
               <ul className="space-y-2 text-sm text-muted-foreground">
-                <li><a href="#" className="hover:text-foreground transition-colors">Termos de Uso</a></li>
-                <li><a href="#" className="hover:text-foreground transition-colors">Privacidade</a></li>
+                <li><Link to="/termos" className="hover:text-foreground transition-colors">Termos de Uso</Link></li>
+                <li><Link to="/privacidade" className="hover:text-foreground transition-colors">Política de Privacidade</Link></li>
               </ul>
             </div>
           </div>

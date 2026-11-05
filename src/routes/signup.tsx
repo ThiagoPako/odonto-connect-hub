@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { Loader2, Sparkles } from "lucide-react";
+import { TERMOS_VERSAO, POLITICA_VERSAO } from "@/lib/legal";
 
 export const Route = createFileRoute("/signup")({
   ssr: false,
@@ -47,6 +48,8 @@ function SignupPage() {
       email: form.email,
       password: form.password,
       ...(plan ? { plan_slug: plan } : {}),
+      termos_versao: TERMOS_VERSAO,
+      politica_versao: POLITICA_VERSAO,
     });
     if (error) {
       setLoading(false);
@@ -120,6 +123,11 @@ function SignupPage() {
               {loading ? <Loader2 className="h-5 w-5 mr-2 animate-spin" /> : <Sparkles className="h-5 w-5 mr-2" />}
               Criar conta
             </Button>
+            <p className="text-center text-[11px] leading-relaxed text-muted-foreground">
+              Ao criar a conta, você concorda com os{" "}
+              <Link to="/termos" target="_blank" className="text-primary hover:underline">Termos de Uso</Link> e a{" "}
+              <Link to="/privacidade" target="_blank" className="text-primary hover:underline">Política de Privacidade</Link>.
+            </p>
             <p className="text-center text-xs text-muted-foreground">
               Já tem conta? <Link to="/login" className="text-primary font-bold hover:underline">Entrar</Link>
             </p>
