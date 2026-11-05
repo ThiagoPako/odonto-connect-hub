@@ -1,149 +1,221 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { LegalPageLayout } from "@/components/LegalPageLayout";
-import { LEGAL_INFO, POLITICA_VERSAO } from "@/lib/legal";
+import { LegalPageLayout, Campo } from "@/components/LegalPageLayout";
+import { LEGAL_INFO, POLITICA_VERSAO, DOCUMENTOS_ATUALIZADOS_EM, pendente } from "@/lib/legal";
 
 export const Route = createFileRoute("/privacidade")({
   head: () => ({ meta: [{ title: "Política de Privacidade — Odonto Connect" }] }),
   component: PrivacidadePage,
 });
 
+/** Redação v2 da Helena: docs/juridico/politica-e-termos-v2.md §3. */
 function PrivacidadePage() {
   const L = LEGAL_INFO;
   return (
-    <LegalPageLayout titulo="Política de Privacidade" versao={POLITICA_VERSAO}>
+    <LegalPageLayout titulo={`Política de Privacidade do ${L.marca}`} versao={POLITICA_VERSAO}>
       <p>
-        Esta Política explica como o {L.marca} trata dados pessoais, em conformidade com a Lei Geral de
-        Proteção de Dados Pessoais (Lei nº 13.709/2018 — LGPD), o Marco Civil da Internet (Lei nº 12.965/2014)
-        e a Lei nº 13.787/2018 (prontuário eletrônico).
+        Esta Política explica como o {L.marca}, fornecido por <Campo v={L.razaoSocial} />, CNPJ <Campo v={L.cnpj} />,
+        com sede em <Campo v={L.endereco} />, trata dados pessoais, de acordo com a Lei Geral de Proteção de Dados
+        Pessoais (Lei nº 13.709/2018, LGPD), o Marco Civil da Internet (Lei nº 12.965/2014) e a Lei nº 13.787/2018.
       </p>
 
-      <h2>1. Quem somos e qual é o nosso papel</h2>
-      <p>
-        O {L.marca} é operado por {L.razaoSocial}, CNPJ {L.cnpj}, com sede em {L.endereco}.
-      </p>
+      <aside className="rounded-lg border border-primary/30 bg-accent px-5 py-4 text-accent-foreground" aria-label="Aviso para pacientes">
+        <p className="font-semibold">É paciente de uma clínica?</p>
+        <p className="mt-1">
+          Quem decide como seus dados de saúde são usados é a <strong>sua clínica</strong>, e a política que vale
+          para você é a dela. Nós somos o sistema que a clínica usa. Para pedir acesso, correção ou exclusão dos
+          seus dados, fale com a clínica. Se o pedido chegar a nós, encaminhamos a ela em até 2 dias úteis.
+        </p>
+      </aside>
+
+      <h2>Parte A: quando somos controladores</h2>
+
+      <h3>1. De quem são os dados</h3>
+      <p>Das clínicas clientes e de seus usuários (dentistas, recepção e administradores) e dos visitantes do nosso site.</p>
+
+      <h3>2. Quais dados</h3>
       <ul>
+        <li>Cadastro: nome, e-mail, telefone, cargo ou perfil de acesso, nome e CNPJ da clínica.</li>
+        <li>Acesso e segurança: IP, data e hora, navegador e ações na plataforma.</li>
         <li>
-          <strong>Somos controladores</strong> dos dados das clínicas clientes e de seus usuários (nome, e-mail,
-          telefone, dados de cobrança e de uso da plataforma) e dos visitantes do nosso site.
+          Assinatura: plano, histórico de pagamentos e dados de faturamento.
+          {pendente(L.pagamentos) ? (
+            <> <Campo v={L.pagamentos} /></>
+          ) : L.pagamentos ? (
+            <> O pagamento é processado por {L.pagamentos}; não guardamos o número do cartão.</>
+          ) : null}
+        </li>
+        <li>Site: páginas visitadas e origem da visita (parâmetros UTM).</li>
+      </ul>
+
+      <h3>3. Para quê e com qual base legal</h3>
+      <ul>
+        <li>Prestar o serviço e administrar a conta: execução de contrato (art. 7º, V).</li>
+        <li>Cobrança e obrigações fiscais: execução de contrato e obrigação legal (art. 7º, II e V).</li>
+        <li>
+          Segurança, prevenção a fraude e guarda dos registros de acesso: obrigação legal (Marco Civil, art. 15) e
+          legítimo interesse (art. 7º, IX).
+        </li>
+        <li>Avisos sobre o serviço, como mudanças, incidentes e cobrança: execução de contrato.</li>
+        <li>
+          Comunicações comerciais do {L.marca} para as clínicas: legítimo interesse, com opção de descadastro em
+          toda mensagem.
+        </li>
+      </ul>
+
+      <h3>4. Por quanto tempo</h3>
+      <ul>
+        <li>Registros de acesso à aplicação: 6 meses (Marco Civil, art. 15) ou mais, se houver ordem ou processo.</li>
+        <li>Dados da conta: enquanto o contrato durar.</li>
+        <li>
+          Dados fiscais: pelo prazo da legislação tributária, que é de 5 anos contados do ano seguinte ao do
+          lançamento (CTN, arts. 173 e 195).
+        </li>
+      </ul>
+
+      <h2>Parte B: quando somos operadores (dados de pacientes)</h2>
+
+      <h3>5. Nosso papel</h3>
+      <p>
+        Os dados de pacientes e contatos que a clínica cadastra pertencem à relação entre a clínica e o paciente.
+        A <strong>clínica é a controladora</strong>, e nós tratamos esses dados <strong>apenas para prestar o
+        serviço e conforme as instruções dela</strong> (LGPD, arts. 5º, VI e VII, e 39). As regras completas estão
+        no Acordo de Tratamento de Dados (<Link to="/termos" hash="anexo-i">Anexo I dos Termos de Uso</Link>).
+      </p>
+
+      <h3>6. Quais dados passam pelo sistema</h3>
+      <ul>
+        <li>Identificação e contato do paciente.</li>
+        <li>
+          <strong>Dados de saúde (dados sensíveis):</strong> prontuário, anamnese, odontograma, exames, laudos,
+          imagens, prescrições, planos de tratamento e orçamentos.
+        </li>
+        <li>Mensagens trocadas com a clínica pelo WhatsApp.</li>
+        <li>
+          Assinatura eletrônica, com data, hora, IP e, quando a clínica usa, a localização no momento da assinatura.
         </li>
         <li>
-          <strong>Somos operadores</strong> dos dados dos pacientes e contatos que cada clínica cadastra na
-          plataforma. Nesse caso, a <strong>clínica é a controladora</strong>: ela decide para que os dados são
-          usados, e nós os tratamos apenas para prestar o serviço, conforme as instruções dela (LGPD, arts. 5º,
-          VI e VII, e 39). Pedidos de pacientes sobre seus dados devem ser feitos à clínica; se chegarem a nós,
-          encaminharemos a ela.
+          Áudio da consulta, <strong>só com a autorização do paciente</strong>. O áudio é apagado logo depois da
+          transcrição.
         </li>
       </ul>
 
-      <h2>2. Dados que tratamos</h2>
-      <h3>Clínicas e usuários</h3>
+      <h3>7. Recursos de inteligência artificial</h3>
+      <p>Eles só funcionam quando a clínica os liga:</p>
       <ul>
-        <li>Cadastro: nome, e-mail, telefone, nome e CNPJ da clínica, cargo/perfil de acesso.</li>
-        <li>Acesso: endereço IP, data e hora, navegador e registros de uso, para segurança e para cumprir o Marco Civil da Internet.</li>
-        <li>Cobrança: plano contratado e histórico de pagamentos.</li>
-      </ul>
-      <h3>Pacientes e contatos (em nome da clínica)</h3>
-      <ul>
-        <li>Identificação e contato: nome, telefone, e-mail, documento, endereço.</li>
         <li>
-          <strong>Dados de saúde (dados sensíveis)</strong>: prontuário, anamnese, odontograma, exames, laudos,
-          imagens clínicas, prescrições, orçamentos e tratamentos.
+          <strong>Transcrição de consulta:</strong> o áudio vai para a OpenAI (EUA) e volta como texto. Exige a
+          autorização do paciente.
         </li>
-        <li>Mensagens trocadas com a clínica pelo WhatsApp e pelos canais integrados.</li>
-        <li>Assinatura eletrônica, com data, hora, IP e geolocalização no momento da assinatura.</li>
         <li>
-          Áudio da consulta, <strong>somente</strong> quando a clínica registra a autorização do paciente. O áudio é
-          enviado para transcrição e descartado; apenas o texto revisado pelo dentista fica no prontuário.
+          <strong>Relatório clínico:</strong> o texto transcrito vai para a OpenAI, que monta um rascunho. O
+          dentista revisa antes de salvar.
         </li>
-      </ul>
-
-      <h2>3. Para que usamos os dados e com qual base legal</h2>
-      <ul>
-        <li>Prestar o serviço contratado pela clínica — execução de contrato (art. 7º, V).</li>
         <li>
-          Prontuário e atendimento odontológico — tutela da saúde por profissionais de saúde (art. 11, II, "f") e
-          cumprimento de obrigação legal (art. 11, II, "a"), sob responsabilidade da clínica.
+          <strong>Sugestão de mensagens de acompanhamento:</strong> usa o relatório clínico (dado de saúde),
+          envia-o à OpenAI e devolve sugestões de texto. A equipe revisa antes de qualquer envio.
         </li>
-        <li>Gravação e transcrição de consultas por IA — consentimento específico do paciente (art. 11, I).</li>
-        <li>Mensagens de marketing e campanhas da clínica — consentimento ou legítimo interesse da clínica, sempre com opção de descadastro (arts. 7º, I e IX, e 18).</li>
-        <li>Segurança, prevenção a fraude e guarda de registros de acesso — obrigação legal (Marco Civil, art. 15) e legítimo interesse.</li>
-        <li>Cobrança e obrigações fiscais — execução de contrato e obrigação legal.</li>
+        <li>
+          <strong>Análise de campanhas de anúncios:</strong> envia à OpenAI só números agregados das campanhas
+          (gasto, cliques, leads), <strong>sem dado de paciente</strong>.
+        </li>
       </ul>
       <p>
-        Não vendemos dados pessoais e não usamos dados de pacientes para fins próprios, publicidade ou
-        treinamento de modelos de IA.
+        A IA não toma decisões sobre ninguém: tudo é revisado por uma pessoa da clínica. A OpenAI não usa os dados
+        para treinar modelos.{" "}
+        {L.iaRetencao === "30 dias" ? (
+          "Ela mantém registros técnicos de segurança por até 30 dias e depois os apaga."
+        ) : L.iaRetencao === "zero" ? (
+          "Contratamos retenção zero: a OpenAI não guarda o conteúdo."
+        ) : (
+          <Campo v={L.iaRetencao} />
+        )}
       </p>
 
-      <h2>4. Com quem compartilhamos</h2>
-      <p>Apenas com fornecedores necessários para o funcionamento da plataforma (suboperadores):</p>
+      <h3>8. Com quem os dados são compartilhados (suboperadores)</h3>
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-sm border-collapse [&_th]:py-2 [&_th]:pr-4 [&_th]:font-semibold [&_th]:border-b [&_th]:border-border [&_td]:py-2 [&_td]:pr-4 [&_td]:align-top [&_td]:border-b [&_td]:border-border">
+          <thead>
+            <tr><th>Fornecedor</th><th>Para quê</th><th>País</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><Campo v={L.hospedagem} /></td><td>Servidores e banco de dados</td><td><Campo v={L.hospedagemPais} /></td></tr>
+            <tr><td><Campo v={L.backups} /></td><td>Cópias de segurança</td><td><Campo v={L.backupsPais} /></td></tr>
+            <tr><td>OpenAI</td><td>Recursos de IA do item 7</td><td>Estados Unidos</td></tr>
+            <tr><td>WhatsApp / Meta</td><td>Envio e recebimento de mensagens, quando a clínica conecta o número</td><td>Estados Unidos</td></tr>
+            <tr><td>Meta (anúncios)</td><td>Métricas de campanhas, quando a clínica conecta a conta</td><td>Estados Unidos</td></tr>
+            <tr><td>Clinicorp</td><td>Sincronização de cadastro e agenda, quando a clínica ativa a integração</td><td>Brasil</td></tr>
+            <tr><td>Serviços de notificação dos navegadores (Google, Apple, Mozilla)</td><td>Avisos na tela da equipe da clínica</td><td>Variável</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        Também compartilhamos com autoridades públicas quando houver obrigação legal ou ordem judicial. Não vendemos
+        dados. Não usamos dados de pacientes para fins próprios, publicidade ou treino de IA.
+      </p>
+
+      <h3>9. Transferência internacional</h3>
+      <p>
+        Os fornecedores fora do Brasil recebem dados com base no art. 33 da LGPD: cláusulas contratuais (inciso II)
+        e, na gravação de consultas, também a autorização específica do paciente (inciso VIII).
+      </p>
+
+      <h3>10. Por quanto tempo, em nome da clínica</h3>
+      <p>Quem define os prazos é a clínica, respeitando a lei:</p>
       <ul>
-        <li>Provedores de hospedagem, banco de dados e entrega de conteúdo (infraestrutura da plataforma).</li>
-        <li>OpenAI (Estados Unidos) — transcrição de áudio e recursos de inteligência artificial, sem uso dos dados para treinamento.</li>
-        <li>WhatsApp/Meta — envio e recebimento de mensagens, quando a clínica conecta o seu número.</li>
-        <li>Meta Ads — métricas de campanhas, quando a clínica conecta a sua conta de anúncios.</li>
-        <li>Clinicorp e outros sistemas que a própria clínica decide integrar.</li>
-        <li>Autoridades públicas, quando houver obrigação legal ou ordem judicial.</li>
+        <li>Prontuário: <strong>no mínimo 20 anos</strong> a partir do último registro (Lei nº 13.787/2018, art. 6º).</li>
+        <li>Registro de quem abriu cada prontuário: 5 anos.</li>
+        {/* Depois do merge do PR #59: "conversas 5 anos; leads e contatos 2 anos sem interação; fila de envios 1 ano". */}
+        <li>Conversas, leads e fila de mensagens: conforme a configuração de retenção da clínica.</li>
+        <li>Áudio: não é guardado.</li>
       </ul>
 
-      <h2>5. Transferência internacional</h2>
+      <h3>11. Quando a clínica deixa de usar o {L.marca}</h3>
       <p>
-        Alguns fornecedores (como OpenAI e Meta) processam dados fora do Brasil. Essas transferências ocorrem com
-        base no art. 33 da LGPD, com fornecedores que adotam garantias contratuais e de segurança compatíveis com
-        a lei.
+        A clínica tem 30 dias para exportar os dados. Depois disso, e de lembretes enviados a ela, eliminamos os
+        dados em até <Campo v={L.prazoEliminacaoPosCancelamentoDias} /> dias. A guarda do prontuário continua sendo
+        dever da clínica.
       </p>
 
-      <h2>6. Por quanto tempo guardamos</h2>
-      <ul>
-        <li>Prontuário do paciente: no mínimo 20 anos a partir do último registro (Lei nº 13.787/2018, art. 6º), ou o prazo definido pela clínica, se maior.</li>
-        <li>Registros de acesso à aplicação: 6 meses (Marco Civil da Internet, art. 15).</li>
-        <li>Áudio de consultas: não é armazenado; é descartado depois da transcrição.</li>
-        <li>Dados da conta da clínica: enquanto o contrato durar e, depois, pelo prazo necessário para obrigações legais e para o exercício de direitos.</li>
-      </ul>
+      <h2>Para todos</h2>
+
+      <h3>12. Segurança</h3>
       <p>
-        Ao fim do contrato, a clínica pode solicitar a exportação dos seus dados. Depois do prazo de exportação, eliminamos ou anonimizamos os
-        dados, salvo os que a lei manda guardar.
+        Usamos conexão criptografada, isolamento dos dados de cada clínica, controle de acesso por perfil, senhas
+        guardadas com hash (bcrypt), registro de acesso ao prontuário e logs sem dados de pacientes. Se houver um
+        incidente com risco relevante, avisamos a clínica em até <Campo v={L.prazoIncidenteHoras} /> horas e a
+        apoiamos na comunicação à ANPD e aos titulares (LGPD, art. 48).
       </p>
 
-      <h2>7. Segurança</h2>
+      <h3>13. Seus direitos</h3>
       <p>
-        Usamos conexão criptografada (HTTPS), isolamento dos dados de cada clínica, controle de acesso por perfil,
-        senhas protegidas por hash e registros de auditoria. Se ocorrer um incidente de segurança com risco
-        relevante, comunicaremos a clínica, a Autoridade Nacional de Proteção de Dados (ANPD) e os titulares
-        afetados, conforme o art. 48 da LGPD.
+        Pela LGPD (art. 18), você pode: confirmar se tratamos seus dados e acessá-los; corrigi-los; pedir
+        anonimização, bloqueio ou eliminação do que for desnecessário; pedir portabilidade; saber com quem
+        compartilhamos; revogar consentimentos e saber as consequências; e reclamar à ANPD ou aos órgãos de defesa
+        do consumidor. <strong>Pacientes:</strong> façam o pedido à clínica (ver o aviso no topo).
       </p>
 
-      <h2>8. Seus direitos</h2>
-      <p>Conforme o art. 18 da LGPD, você pode, a qualquer momento:</p>
-      <ul>
-        <li>confirmar se tratamos seus dados e acessá-los;</li>
-        <li>corrigir dados incompletos, inexatos ou desatualizados;</li>
-        <li>pedir anonimização, bloqueio ou eliminação de dados desnecessários ou tratados em desconformidade;</li>
-        <li>pedir a portabilidade dos dados;</li>
-        <li>saber com quem compartilhamos seus dados;</li>
-        <li>revogar o consentimento e saber as consequências de não consentir;</li>
-        <li>apresentar reclamação à ANPD.</li>
-      </ul>
+      <h3>14. Cookies e recursos de terceiros</h3>
       <p>
-        Se você é paciente de uma clínica, faça o pedido diretamente a ela, que é a controladora. Nós a apoiamos
-        para responder.
+        Usamos apenas o armazenamento local necessário para manter você conectado e guardar preferências. As
+        fontes do site são carregadas do Google Fonts, o que envia seu endereço IP ao Google. Se você ativar as
+        notificações, o navegador usa o serviço de notificação do fabricante.
       </p>
 
-      <h2>9. Cookies</h2>
+      <h3>15. Encarregado (DPO) e contato</h3>
       <p>
-        Usamos apenas o armazenamento local necessário para manter você conectado e guardar suas preferências.
-        No site público, podemos registrar a origem da visita (parâmetros UTM) para medir campanhas.
+        Encarregado: <Campo v={L.encarregadoNome} />, <Campo v={L.emailPrivacidade} mailto />. Outros assuntos:{" "}
+        <Campo v={L.emailContato} mailto />.
       </p>
 
-      <h2>10. Encarregado (DPO) e contato</h2>
+      <h3>16. Alterações</h3>
       <p>
-        Encarregado pelo tratamento de dados: {L.encarregadoNome} — {L.emailPrivacidade}. Outros assuntos:{" "}
-        <a href={`mailto:${L.emailContato}`}>{L.emailContato}</a>.
+        Mudanças relevantes são avisadas na plataforma e por e-mail com antecedência. Versão {POLITICA_VERSAO}, de{" "}
+        <Campo v={DOCUMENTOS_ATUALIZADOS_EM} />.
       </p>
 
-      <h2>11. Alterações</h2>
-      <p>
-        Podemos atualizar esta Política. Mudanças relevantes serão avisadas na plataforma ou por e-mail. Veja
-        também os <Link to="/termos">Termos de Uso</Link>.
+      <p className="text-sm text-muted-foreground">
+        Clínicas: o modelo de política de privacidade para os seus pacientes está em{" "}
+        <Link to="/modelo-politica-clinica">modelo de política para a clínica</Link>.
       </p>
     </LegalPageLayout>
   );
