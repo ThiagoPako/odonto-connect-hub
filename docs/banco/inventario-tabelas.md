@@ -16,7 +16,7 @@ na VPS e compare com esta tabela.
 - **Política hoje:** `boot-apply` = `tenant_isolation_policy` do `apply_tenant_rls` (com `NO FORCE`
   e `current_setting(...)::uuid`, **que dá erro com valor vazio**; a migração nova remove essa política).
   Hoje **nenhuma política tem efeito**: a API é dona e nenhuma tabela tem `FORCE`.
-- **Na migração:** o que `migration-force-rls.sql` faz. "FORCE" = política `rls_clinica_v1` + ENABLE +
+- **Na migração:** o que P0 (`migration-seguranca-p0.sql`, PR #12), M0 (`migration-tenant-m0.sql`) e FORCE (`migration-force-rls.sql`) fazem juntos. Colunas e preenchimento ficam no P0 e no M0; a FORCE só aplica a RLS e aborta se faltar `tenant_id`. Divisão completa no relatório do ensaio. "FORCE" = política `rls_clinica_v1` + ENABLE +
   FORCE. Toda tabela que tiver `tenant_id` no banco recebe isso, inclusive as que não estão aqui.
 
 ## 1. Dados da clínica com `tenant_id` no código

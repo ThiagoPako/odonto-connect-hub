@@ -3,29 +3,48 @@
 Autora: **Renata** (banco) · 2026-11-05 · Arquivos: `vps-api-server/migration-force-rls.sql`,
 `docs/banco/diagnostico-rls.sql`, `docs/banco/inventario-tabelas.md`.
 
-Nada disto foi rodado em produção. A migração foi testada num Postgres 16 local (PGlite) com um
-esquema que imita o da VPS: rodou 3 vezes sem erro, isolou a clínica A da B, e o rollback funcionou.
+Nada disto foi rodado em produção. Ensaio completo num Postgres 16 local com dados fictícios
+(base igual à de produção, dono `odonto_user`, 4.300 pacientes, 100 mil mensagens): sequência do
+deploy + P0 + M0 + FORCE duas vezes sem erro, API subindo como `odonto_app` e isolando A de B,
+rollback testado. Detalhes e números: relatório do ensaio (`ensaio-migracoes.md`, entregue
+fora do git, com os scripts para repetir).
+
+## Ordem obrigatória das migrações
+1. `migration-seguranca-p0.sql` (PR #12): `tenant_id` + preenchimento nas 32 tabelas que as rotas novas filtram.
+2. `migration-tenant-m0.sql` (este PR): complemento do P0 (outras tabelas, `tenant_settings`, índices e
+   DEFAULT em todas, correção do Legado).
+3. `migration-force-rls.sql` (este PR, **fora do deploy até a virada**): role, políticas, FORCE.
+   **Aborta sozinha** se o P0 ou o M0 não tiverem rodado (lista as tabelas sem `tenant_id`).
 
 ## Resumo em 5 linhas
 1. Hoje a API conecta como **dona** das tabelas, e as tabelas estão com `NO FORCE` → nenhuma política vale.
-2. A migração cria o role **`odonto_app`** (não é dono, sem `BYPASSRLS`), põe `tenant_id` onde falta,
-   cria a política `rls_clinica_v1`, faz `FORCE` em toda tabela com `tenant_id` e dá os GRANTs.
+2. A migração de FORCE cria o role **`odonto_app`** (não é dono, sem `BYPASSRLS`), a política
+   `rls_clinica_v1`, faz `FORCE` em toda tabela com `tenant_id` e dá os GRANTs.
 3. Começa no **modo transição**: requisição com clínica só enxerga a própria clínica (+ registros antigos
    sem clínica). Login, webhook e boot (sem contexto) continuam como hoje. Jobs veem tudo.
 4. A virada é: rodar a migração → definir a senha do `odonto_app` → trocar `PG_USER`/`PG_PASSWORD` no
    `.env` → rodar a migração de novo → `pm2 restart`. Fica fora do ar só o tempo do restart, igual a um deploy.
-5. Voltar: `PG_USER` antigo + restart (1 minuto). Voltar 100%: bloco de rollback do topo da migração.
+5. Voltar: `PG_USER` antigo + restart (1 minuto). Voltar 100%: `docs/banco/rollback-force-rls.sql` (testado).
 
 ## O que este PR faz sozinho ao entrar em main (deploy automático)
-- Roda **`migration-tenant-m0.sql`** (já está no `deploy.yml`). Ela é só aditiva:
-  - põe `tenant_id`, índice e DEFAULT nas tabelas da clínica;
-  - preenche o `tenant_id` NULL só quando o pai aponta para uma única clínica;
-  - cria `tenant_settings` e `password_reset_requests`;
-  - lista o que ficou sem clínica (`NOTICE [M0 revisar]`).
-  Não liga RLS e não muda o que a API lê. Destrava os lotes L1–L6 da varredura.
+- Roda **`migration-tenant-m0.sql`** (já está no `deploy.yml`, depois de `migration-whatsapp-fase1.sql`):
+  - cria `tenant_settings`, `password_reset_requests` e `consentimentos_pacientes`, com o mesmo dono das
+    tabelas da API;
+  - põe `tenant_id` nas tabelas da clínica que o P0 não cobre;
+  - cria índice e DEFAULT em toda tabela que tem `tenant_id`;
+  - preenche o NULL pela tabela-pai, só quando o pai é de uma única clínica;
+  - **corrige o Legado**: a `migration-saas.sql` (já no deploy) põe em todo deploy os NULL de
+    pacientes/dentistas/agendamentos/financeiro/tratamentos na clínica placeholder `…0001`, que o
+    `server.mjs` trata como inválida. O M0 devolve a filha à clínica do pai quando o pai é de uma
+    clínica real. No ensaio, voltaram 1.000 agendamentos, 3.000 tratamentos e 1.715 lançamentos;
+  - lista o que ficou sem clínica ou no Legado (`NOTICE [M0 revisar]`).
+  Não liga RLS e não muda o que a API lê.
 - **Não** roda `migration-force-rls.sql`: ela não está no `deploy.yml` de propósito, porque muda o
   comportamento da produção. O Otávio inclui a linha dela na janela da virada (passo 2 abaixo).
 - Entra a mudança no `forgot-password` (abaixo). A tabela que a rota usa passa a vir do M0.
+- **Recomendado à parte:** tirar os `UPDATE ... SET tenant_id = '…0001' WHERE tenant_id IS NULL` da
+  `migration-saas.sql`. Hoje eles mandam para o Legado, a cada deploy, todo registro novo sem clínica,
+  inclusive o perfil do super-admin.
 
 ## Mudança no server.mjs (já feita nesta branch)
 Só uma, e indispensável: a rota `POST /api/auth/forgot-password` rodava `CREATE TABLE IF NOT EXISTS
@@ -154,8 +173,9 @@ Janela de pouco movimento (ex.: 22h). Uma pessoa acompanhando o log.
   `pm2 restart odonto-api --update-env`. A API volta a ser dona. **Atenção:** com o `FORCE`, o dono também
   passa pela política (modo transição). Então isso volta o "dono", mas não volta 100% ao comportamento de hoje.
   O boot desfaz o `FORCE` só nas 13 tabelas citadas.
-- **Completo:** depois do rápido, rodar o bloco **ROLLBACK** do topo da `migration-force-rls.sql` (tira `FORCE`
-  de todas as tabelas e apaga `rls_clinica_v1`/`rls_global_escrita_v1`) e **tirar a linha do `deploy.yml`**
+- **Completo:** depois do rápido, `sudo -u postgres psql -p 5433 -d odonto_db -f docs/banco/rollback-force-rls.sql`.
+  Ele tira o `FORCE` de todas as tabelas, apaga `rls_clinica_v1`/`rls_global_escrita_v1` e deixa o `odonto_app`
+  sem login. No ensaio: 0,05 s, pode rodar duas vezes, e a API volta a funcionar como antes. Depois, **tirar a linha do `deploy.yml`**
   (senão o próximo deploy reaplica). Colunas `tenant_id` criadas e preenchidas podem ficar. Nenhum dado se perde.
 - **Restaurar o backup** só em último caso (perde o que entrou depois).
 

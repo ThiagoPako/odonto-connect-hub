@@ -10,11 +10,9 @@
 --   1. Funções: get_current_tenant_id(), is_super_admin() e rls_modo_transicao().
 --   2. Cria o role de aplicação odonto_app: LOGIN, sem superusuário, sem BYPASSRLS,
 --      dono de nada. A senha NÃO fica aqui (é definida à mão pelo Otávio; ver plano).
---   3. Garante tabelas que só o boot do server.mjs criava (o odonto_app não pode criar).
---   4. Adiciona tenant_id (nulo, DEFAULT get_current_tenant_id()) nas tabelas da
---      clínica que não têm. Ex.: procedimento_execucoes, assinaturas_eletronicas.
---   5. Preenche tenant_id NULL só a partir da tabela-pai (paciente, orçamento, lead,
---      usuário...). Nunca usa "primeiro admin" nem "clínica única".
+--   3. Confere que migration-seguranca-p0.sql e migration-tenant-m0.sql já rodaram
+--      (elas criam tenant_id, índice e DEFAULT e fazem o preenchimento); se não, aborta.
+--   (4 e 5 saíram daqui: colunas, índices e preenchimento ficam no P0 e no M0, sem duplicar.)
 --   6. Cria a política rls_clinica_v1, faz ENABLE e FORCE ROW LEVEL SECURITY em toda
 --      tabela que tem tenant_id, e em tenants (por id).
 --   7. Libera escrita nas tabelas globais que já tinham RLS só de leitura (plans,
@@ -149,174 +147,43 @@ BEGIN
   END IF;
 END $$;
 
--- ─── 3. Tabelas que só o boot criava ─────────────────────────────────────────
--- Depois da virada o boot roda como odonto_app e não consegue mais criar tabela
--- (nem CREATE TABLE IF NOT EXISTS: Postgres 15+ exige CREATE no schema).
-CREATE TABLE IF NOT EXISTS password_reset_requests (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID REFERENCES profiles(id) ON DELETE CASCADE NOT NULL,
-  email TEXT NOT NULL,
-  status TEXT DEFAULT 'pending',
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS consentimentos_pacientes (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id UUID NOT NULL DEFAULT get_current_tenant_id(),
-  paciente_id TEXT NOT NULL,
-  tipo TEXT NOT NULL,
-  versao TEXT NOT NULL,
-  texto TEXT NOT NULL,
-  registrado_por UUID,
-  registrado_por_email TEXT,
-  ip_address TEXT,
-  user_agent TEXT,
-  aceito_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  revogado_em TIMESTAMPTZ,
-  revogado_por UUID
-);
-CREATE INDEX IF NOT EXISTS idx_consentimentos_pacientes_lookup
-  ON consentimentos_pacientes (tenant_id, paciente_id, tipo);
-
--- ─── 4. tenant_id nas tabelas da clínica que não têm ─────────────────────────
--- Só altera a tabela se precisar (ALTER TABLE trava a tabela mesmo com IF NOT EXISTS).
+-- ─── 3. Pré-condição: P0 e M0 já rodaram ────────────────────────────────────
+-- As colunas tenant_id e o preenchimento vêm de migration-seguranca-p0.sql (P0) e
+-- migration-tenant-m0.sql (M0), que rodam no deploy antes deste arquivo. Se faltar
+-- tenant_id numa tabela da clínica que existe, a tabela ficaria sem RLS sem ninguém
+-- perceber: aborta e desfaz tudo.
 DO $$
-DECLARE
-  t TEXT;
-  tabelas_da_clinica TEXT[] := ARRAY[
-    -- já estavam em migration-rls-enforcement.sql (que não está no deploy.yml)
-    'pacientes', 'dentistas', 'agendamentos', 'financeiro', 'tratamentos',
-    'orcamentos', 'crm_leads', 'estoque', 'comissoes', 'prontuarios',
-    'anamneses', 'attendance_queues', 'attendance_sessions', 'satisfaction_ratings',
-    'lead_tags', 'lead_tag_assignments', 'contatos', 'odontogramas',
-    'transfer_logs', 'estoque_movimentos', 'tratamento_etapas', 'chat_messages',
-    'chat_read_status', 'kanban_movements', 'consultations', 'clinical_reports',
-    'push_subscriptions', 'reactivation_rules', 'reactivation_sends',
-    'meta_ads_accounts', 'meta_ads_campaigns', 'meta_ads_insights',
-    'user_preferences', 'fin_bank_accounts', 'fin_employees', 'fin_payrolls',
-    'fin_bills', 'fin_movements', 'fin_overdue',
-    -- novas aqui: criadas pelo boot antigo, sem tenant_id
-    'procedimento_execucoes', 'assinaturas_eletronicas',
-    'procedimentos_catalogo', 'procedimentos_catalogo_versoes', 'agenda_marcadores',
-    'automation_flows', 'automation_jobs', 'broadcast_campaigns',
-    'clinicorp_user_settings', 'clinicorp_push_log', 'clinicorp_webhook_events',
-    'clinicorp_conflicts', 'password_reset_requests',
-    'user_roles', 'profiles', 'whatsapp_instances'
-  ];
+DECLARE faltando TEXT;
 BEGIN
-  FOREACH t IN ARRAY tabelas_da_clinica LOOP
-    IF to_regclass(format('public.%I', t)) IS NULL THEN
-      RAISE NOTICE '[tenant_id] % não existe neste banco: ignorada', t;
-      CONTINUE;
-    END IF;
-
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_schema = 'public' AND table_name = t AND column_name = 'tenant_id') THEN
-      EXECUTE format('ALTER TABLE public.%I ADD COLUMN tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE', t);
-      RAISE NOTICE '[tenant_id] coluna criada em %', t;
-    END IF;
-
-    -- INSERT sem tenant_id numa requisição autenticada grava a clínica do contexto.
-    IF EXISTS (SELECT 1 FROM information_schema.columns
-                WHERE table_schema = 'public' AND table_name = t AND column_name = 'tenant_id'
-                  AND data_type = 'uuid' AND column_default IS NULL) THEN
-      EXECUTE format('ALTER TABLE public.%I ALTER COLUMN tenant_id SET DEFAULT get_current_tenant_id()', t);
-    END IF;
-
-    -- Índice começando por tenant_id (a política e as rotas filtram por ele).
-    IF NOT EXISTS (
-      SELECT 1
-        FROM pg_index i
-        JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = i.indkey[0]
-       WHERE i.indrelid = format('public.%I', t)::regclass
-         AND a.attname = 'tenant_id'
-    ) THEN
-      EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON public.%I (tenant_id)', 'idx_' || t || '_tenant_rls', t);
-    END IF;
-  END LOOP;
-END $$;
-
--- ─── 5. Preenche tenant_id NULL a partir da tabela-pai ───────────────────────
--- Mesma regra da migration-tenant-m0.sql: só mexe em linha com tenant_id NULL e só
--- copia a clínica quando todos os registros do pai com aquela chave são da MESMA
--- clínica. Pai ambíguo ou sem clínica: continua NULL e aparece no relatório do fim
--- (resolver à mão antes do modo estrito). Rollback: não precisa (o valor era NULL).
-CREATE OR REPLACE FUNCTION pg_temp.rls_preencher(filha TEXT, col_filha TEXT, pai TEXT, col_pai TEXT, col_tenant_pai TEXT DEFAULT 'tenant_id')
-RETURNS VOID AS $$
-DECLARE n INT;
-BEGIN
-  IF to_regclass(format('public.%I', filha)) IS NULL OR to_regclass(format('public.%I', pai)) IS NULL THEN RETURN; END IF;
-  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name=filha AND column_name=col_filha)
-     OR NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name=filha AND column_name='tenant_id')
-     OR NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name=pai AND column_name=col_pai)
-     OR NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name=pai AND column_name=col_tenant_pai) THEN
-    RETURN;
+  SELECT string_agg(t, ', ' ORDER BY t) INTO faltando
+    FROM unnest(ARRAY[
+      -- P0
+      'anamneses', 'odontogramas', 'estoque_movimentos', 'tratamento_etapas', 'comissoes',
+      'prontuarios', 'lead_tags', 'lead_tag_assignments', 'transfer_logs', 'satisfaction_ratings',
+      'consultations', 'clinical_reports', 'fin_employees', 'fin_bills', 'fin_overdue',
+      'fin_bank_accounts', 'fin_movements', 'fin_payrolls', 'agenda_marcadores',
+      'procedimentos_catalogo', 'contatos', 'dentistas', 'estoque', 'tratamentos',
+      'orcamentos', 'financeiro', 'procedimento_execucoes', 'assinaturas_eletronicas',
+      'meta_ads_accounts', 'meta_ads_campaigns', 'meta_ads_insights', 'clinica_config',
+      -- M0
+      'procedimentos_catalogo_versoes', 'kanban_movements', 'user_preferences', 'push_subscriptions',
+      'password_reset_requests', 'user_roles', 'reactivation_rules', 'reactivation_sends',
+      'chat_read_status', 'attendance_queues', 'whatsapp_instances', 'automation_flows',
+      'automation_jobs', 'broadcast_campaigns', 'clinicorp_user_settings', 'clinicorp_push_log',
+      'clinicorp_webhook_events', 'clinicorp_conflicts', 'tenant_settings', 'consentimentos_pacientes',
+      -- já existentes
+      'pacientes', 'agendamentos', 'crm_leads', 'chat_messages', 'attendance_sessions', 'profiles'
+    ]) AS t
+   WHERE to_regclass(format('public.%I', t)) IS NOT NULL
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns
+                      WHERE table_schema = 'public' AND table_name = t AND column_name = 'tenant_id');
+  IF to_regclass('public.tenant_settings') IS NULL THEN
+    faltando := concat_ws(', ', faltando, 'tenant_settings (tabela)');
   END IF;
-  EXECUTE format(
-    'UPDATE public.%1$I f SET tenant_id = p.tenant_id
-       FROM (SELECT %4$I::text AS chave, (array_agg(DISTINCT %5$I::text))[1]::uuid AS tenant_id
-               FROM public.%3$I
-              WHERE %4$I IS NOT NULL AND %5$I IS NOT NULL
-              GROUP BY %4$I::text
-             HAVING count(DISTINCT %5$I) = 1) p
-      WHERE f.tenant_id IS NULL
-        AND f.%2$I IS NOT NULL
-        AND p.chave = f.%2$I::text',
-    filha, col_filha, pai, col_pai, col_tenant_pai);
-  GET DIAGNOSTICS n = ROW_COUNT;
-  IF n > 0 THEN RAISE NOTICE '[preencher] %: % linha(s) com a clínica de %.%', filha, n, pai, col_pai; END IF;
-END $$ LANGUAGE plpgsql;
-
--- Ordem: pais primeiro.
--- Por usuário
-SELECT pg_temp.rls_preencher('user_roles',              'user_id',      'profiles', 'id');
-SELECT pg_temp.rls_preencher('user_preferences',        'user_id',      'profiles', 'id');
-SELECT pg_temp.rls_preencher('push_subscriptions',      'user_id',      'profiles', 'id');
-SELECT pg_temp.rls_preencher('clinicorp_user_settings', 'user_id',      'profiles', 'id');
-SELECT pg_temp.rls_preencher('password_reset_requests', 'user_id',      'profiles', 'id');
-SELECT pg_temp.rls_preencher('chat_read_status',        'user_id',      'profiles', 'id');
-SELECT pg_temp.rls_preencher('reactivation_rules',      'created_by',   'profiles', 'id');
-SELECT pg_temp.rls_preencher('automation_flows',        'created_by',   'profiles', 'id');
-SELECT pg_temp.rls_preencher('broadcast_campaigns',     'created_by',   'profiles', 'id');
--- Por instância do WhatsApp
-SELECT pg_temp.rls_preencher('automation_jobs',         'instance',     'whatsapp_instances', 'instance_name');
--- Por paciente
-SELECT pg_temp.rls_preencher('anamneses',               'paciente_id',  'pacientes', 'id');
-SELECT pg_temp.rls_preencher('odontogramas',            'paciente_id',  'pacientes', 'id');
-SELECT pg_temp.rls_preencher('prontuarios',             'paciente_id',  'pacientes', 'id');
-SELECT pg_temp.rls_preencher('orcamentos',              'paciente_id',  'pacientes', 'id');
-SELECT pg_temp.rls_preencher('tratamentos',             'paciente_id',  'pacientes', 'id');
-SELECT pg_temp.rls_preencher('agendamentos',            'paciente_id',  'pacientes', 'id');
-SELECT pg_temp.rls_preencher('clinical_reports',        'patient_id',   'pacientes', 'id');
-SELECT pg_temp.rls_preencher('consultations',           'patient_id',   'pacientes', 'id');
-SELECT pg_temp.rls_preencher('consultations',           'clinical_report_id', 'clinical_reports', 'id');
-SELECT pg_temp.rls_preencher('reactivation_sends',      'paciente_id',  'pacientes', 'id');
-SELECT pg_temp.rls_preencher('reactivation_sends',      'rule_id',      'reactivation_rules', 'id');
--- Orçamento → execução → assinatura
-SELECT pg_temp.rls_preencher('procedimento_execucoes',  'orcamento_id', 'orcamentos', 'id');
-SELECT pg_temp.rls_preencher('procedimento_execucoes',  'paciente_id',  'pacientes', 'id');
-SELECT pg_temp.rls_preencher('assinaturas_eletronicas', 'paciente_id',  'pacientes', 'id');
-SELECT pg_temp.rls_preencher('assinaturas_eletronicas', 'id',           'procedimento_execucoes', 'assinatura_id');
-SELECT pg_temp.rls_preencher('procedimentos_catalogo_versoes', 'procedimento_id', 'procedimentos_catalogo', 'id');
--- Tratamento / estoque / dentista
-SELECT pg_temp.rls_preencher('tratamento_etapas',       'tratamento_id', 'tratamentos', 'id');
-SELECT pg_temp.rls_preencher('comissoes',               'tratamento_id', 'tratamentos', 'id');
-SELECT pg_temp.rls_preencher('comissoes',               'dentista_id',   'dentistas', 'id');
-SELECT pg_temp.rls_preencher('estoque_movimentos',      'item_id',       'estoque', 'id');
--- Lead / atendimento
-SELECT pg_temp.rls_preencher('kanban_movements',        'lead_id',      'crm_leads', 'id');
-SELECT pg_temp.rls_preencher('lead_tag_assignments',    'lead_id',      'crm_leads', 'id');
-SELECT pg_temp.rls_preencher('transfer_logs',           'lead_id',      'crm_leads', 'id');
-SELECT pg_temp.rls_preencher('chat_read_status',        'lead_id',      'crm_leads', 'id');
-SELECT pg_temp.rls_preencher('satisfaction_ratings',    'session_id',   'attendance_sessions', 'id');
--- Meta Ads
-SELECT pg_temp.rls_preencher('meta_ads_campaigns',      'account_id',   'meta_ads_accounts', 'account_id');
-SELECT pg_temp.rls_preencher('meta_ads_insights',       'campaign_id',  'meta_ads_campaigns', 'campaign_id');
--- Financeiro
-SELECT pg_temp.rls_preencher('fin_bills',               'bank_account_id', 'fin_bank_accounts', 'id');
-SELECT pg_temp.rls_preencher('fin_payrolls',            'employee_id',  'fin_employees', 'id');
-SELECT pg_temp.rls_preencher('fin_movements',           'bank_account_id', 'fin_bank_accounts', 'id');
-SELECT pg_temp.rls_preencher('fin_movements',           'bill_id',      'fin_bills', 'id');
+  IF faltando IS NOT NULL THEN
+    RAISE EXCEPTION 'Rode migration-seguranca-p0.sql e migration-tenant-m0.sql antes. Sem tenant_id: %', faltando;
+  END IF;
+END $$;
 
 -- ─── 6. Política + ENABLE + FORCE em toda tabela com tenant_id ───────────────
 -- Dinâmico: pega também tabelas que existem só no banco da VPS (ex.: financeiro_despesas).
