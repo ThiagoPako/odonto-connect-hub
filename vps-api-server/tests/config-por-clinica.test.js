@@ -15,7 +15,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.join(__dirname, '../.env') });
 
-const { app, pool, processSolutionTriggers, clearTenantSettingsCacheForTests } = await import('../server.mjs');
+const { app, pool, processSolutionTriggers, clearTenantSettingsCacheForTests, ensureTenantConfigSchema } = await import('../server.mjs');
 const JWT_SECRET = process.env.JWT_SECRET;
 
 const tenantA = '11111111-1111-1111-1111-111111111111';
@@ -116,6 +116,92 @@ describe('Configurações por clínica (L4)', () => {
       expect(getB.body.enabled).toBe(true); // padrão do sistema
       expect(getB.body.messages).toHaveProperty('followup');
       noGlobalSettingsWrite();
+    });
+
+    test.each([-1, 86401, '30', Infinity, null])('delaySeconds fora de 0–86400 (%p) → 400 sem gravar', async (delaySeconds) => {
+      const res = await request(app).put('/api/automations/followup').set(auth()).send({ delaySeconds });
+      expect(res.status).toBe(400);
+      expect(settings.has(`${tenantA}:followup_automation`)).toBe(false);
+    });
+
+    test.each([0, 86400, 45])('delaySeconds válido (%p) é gravado', async (delaySeconds) => {
+      const res = await request(app).put('/api/automations/followup').set(auth()).send({ delaySeconds });
+      expect(res.status).toBe(200);
+      expect(settings.get(`${tenantA}:followup_automation`).delaySeconds).toBe(delaySeconds);
+    });
+  });
+
+  describe('cache de getTenantSetting', () => {
+    test('falha de leitura (não 42P01) não fica no cache', async () => {
+      settings.set(`${tenantA}:followup_automation`, { enabled: false });
+      let falhar = true;
+      querySpy.mockImplementation((sql, params = []) => {
+        const text = String(sql);
+        if (/SELECT value FROM tenant_settings/.test(text)) {
+          if (falhar) return Promise.reject(Object.assign(new Error('timeout'), { code: '57014' }));
+          const v = settings.get(`${params[0]}:${params[1]}`);
+          return Promise.resolve({ rows: v === undefined ? [] : [{ value: v }], rowCount: v === undefined ? 0 : 1 });
+        }
+        return Promise.resolve({ rows: [], rowCount: 0 });
+      });
+      const durante = await request(app).get('/api/automations/followup').set(auth());
+      expect(durante.body.enabled).toBe(true); // padrão só nesta leitura
+      falhar = false;
+      const depois = await request(app).get('/api/automations/followup').set(auth());
+      expect(depois.body.enabled).toBe(false); // relê do banco, não do cache
+    });
+
+    test('tabela ausente (42P01) fica no cache como padrão', async () => {
+      missingTable = true;
+      await request(app).get('/api/automations/followup').set(auth());
+      const leituras = () => sqlLog.filter(q => /SELECT value FROM tenant_settings/.test(q.text)).length;
+      const antes = leituras();
+      await request(app).get('/api/automations/followup').set(auth());
+      expect(leituras()).toBe(antes);
+    });
+  });
+
+  describe('boot: tenant_settings e cópia da configuração global', () => {
+    const queries = () => sqlLog.map(q => q.text);
+
+    test('cria tenant_settings com a definição da M0', async () => {
+      await ensureTenantConfigSchema();
+      const create = queries().find(t => /CREATE TABLE IF NOT EXISTS tenant_settings/.test(t));
+      expect(create).toBeDefined();
+      expect(create).toMatch(/PRIMARY KEY \(tenant_id, key\)/);
+      expect(create).toMatch(/REFERENCES tenants\(id\) ON DELETE CASCADE/);
+    });
+
+    test('copia app_settings e system_settings para todas as clínicas, uma vez, sem sobrescrever', async () => {
+      await ensureTenantConfigSchema();
+      const copias = sqlLog.filter(q => /INSERT INTO tenant_settings/.test(q.text) && /FROM tenants t/.test(q.text));
+      expect(copias).toHaveLength(2);
+      const porTabela = Object.fromEntries(copias.map(q => [q.text.match(/JOIN (\w+) s/)[1], q]));
+      expect(porTabela.app_settings.params[1]).toEqual(['attendance_settings', 'solution_hours']);
+      expect(porTabela.system_settings.params[1]).toEqual(['followup_automation']);
+      for (const q of copias) {
+        expect(q.text).toMatch(/ON CONFLICT \(tenant_id, key\) DO NOTHING/); // não sobrescreve
+        expect(q.text).toMatch(/INSERT INTO app_settings[\s\S]*ON CONFLICT \(key\) DO NOTHING[\s\S]*RETURNING/); // marcador
+        expect(q.text).toMatch(/WHERE EXISTS \(SELECT 1 FROM marcador\)/); // só na primeira vez
+        expect(q.text).not.toMatch(/tenant_id\s*=/); // todas as clínicas, não só uma
+        expect(q.params[2]).toEqual(expect.arrayContaining(['00000000-0000-0000-0000-000000000001']));
+      }
+    });
+
+    test('sem permissão de DDL ou sem tabela de origem: o boot segue', async () => {
+      querySpy.mockImplementation((sql) => {
+        const text = String(sql);
+        sqlLog.push({ text, params: [] });
+        if (/CREATE TABLE IF NOT EXISTS tenant_settings/.test(text)) {
+          return Promise.reject(Object.assign(new Error('permission denied for schema public'), { code: '42501' }));
+        }
+        if (/INSERT INTO tenant_settings/.test(text)) {
+          return Promise.reject(Object.assign(new Error('relation "system_settings" does not exist'), { code: '42P01' }));
+        }
+        return Promise.resolve({ rows: [], rowCount: 0 });
+      });
+      await expect(ensureTenantConfigSchema()).resolves.toBeUndefined();
+      expect(sqlLog.filter(q => /INSERT INTO tenant_settings/.test(q.text))).toHaveLength(2);
     });
   });
 

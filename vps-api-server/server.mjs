@@ -8462,7 +8462,7 @@ function isWithinBusinessHours(settings) {
   return currentMinutes >= (openH * 60 + openM) && currentMinutes <= (closeH * 60 + closeM);
 }
 
-// ─── Configurações por clínica (tabela tenant_settings, criada pela migration-tenant-m0.sql) ───
+// ─── Configurações por clínica (tabela tenant_settings, criada no boot e pela migration-tenant-m0.sql) ───
 // Antes ficavam numa linha única global (app_settings/system_settings): a configuração
 // de uma clínica valia para todas. Sem registro da clínica, vale o padrão do sistema
 // (nunca o valor de outra clínica).
@@ -8483,7 +8483,12 @@ async function getTenantSetting(tenantId, key) {
     if (typeof value === 'string') { try { value = JSON.parse(value); } catch { /* texto simples */ } }
   } catch (err) {
     // 42P01: tabela ainda não criada (migração M0 não rodou) → padrão do sistema.
-    if (err.code !== '42P01') console.error(`⚠️ tenant_settings ${key}:`, err.message);
+    // Outra falha (conexão, timeout): usa o padrão só nesta leitura, sem guardar no cache,
+    // para não fixar por 60 s um valor que não é o da clínica (ex.: follow-up desligado).
+    if (err.code !== '42P01') {
+      console.error(`⚠️ tenant_settings ${key}:`, err.message);
+      return null;
+    }
   }
   tenantSettingsCache.set(cacheKey, { value, at: Date.now() });
   return value;
@@ -10097,6 +10102,10 @@ app.put('/api/automations/followup', async (req, res) => {
     const { user } = await verifyAdmin(req);
     if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { enabled, messages, stages, delaySeconds, delayDays, returnToQueueOnReply } = req.body;
+    if (delaySeconds !== undefined
+      && (typeof delaySeconds !== 'number' || !Number.isFinite(delaySeconds) || delaySeconds < 0 || delaySeconds > 86400)) {
+      return res.status(400).json({ error: 'delaySeconds deve ser um número entre 0 e 86400' });
+    }
     const cfg = await getFollowupConfig(user.tenant_id);
     if (typeof enabled === 'boolean') cfg.enabled = enabled;
     if (messages && typeof messages === 'object') cfg.messages = { ...cfg.messages, ...messages };
@@ -10905,6 +10914,57 @@ async function ensureTenantConfigSchema() {
   ];
   for (const sql of statements) {
     await pool.query(sql).catch(e => console.error('[tenant-schema]', e.message, '→', sql.split('\n')[0].slice(0, 90)));
+  }
+  // tenant_settings também no boot (mesma definição da migration-tenant-m0.sql), para a
+  // configuração por clínica não depender da M0. Sem permissão de DDL só registra o erro.
+  try {
+    await pool.query(`CREATE TABLE IF NOT EXISTS tenant_settings (
+      tenant_id UUID NOT NULL DEFAULT get_current_tenant_id() REFERENCES tenants(id) ON DELETE CASCADE,
+      key TEXT NOT NULL,
+      value JSONB NOT NULL DEFAULT '{}',
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (tenant_id, key)
+    )`);
+  } catch (e) {
+    console.error('[tenant-schema] tenant_settings:', e.message);
+  }
+  await copyGlobalSettingsToTenants();
+}
+
+// A configuração global antiga (app_settings/system_settings) valia para todas as clínicas:
+// vira o ponto de partida de cada clínica existente, para nada mudar de comportamento na troca
+// (ex.: follow-up desligado não religa). Roda uma única vez (marcador em app_settings, gravado
+// na mesma instrução); não sobrescreve o que a clínica já gravou; clínicas criadas depois
+// começam no padrão do sistema, nunca na configuração de outra clínica.
+const GLOBAL_SETTINGS_TO_TENANTS = [
+  { table: 'app_settings', keys: ['attendance_settings', 'solution_hours'], marker: 'tenant_settings_copia_app_settings' },
+  { table: 'system_settings', keys: ['followup_automation'], marker: 'tenant_settings_copia_system_settings' },
+];
+
+async function copyGlobalSettingsToTenants() {
+  for (const { table, keys, marker } of GLOBAL_SETTINGS_TO_TENANTS) {
+    try {
+      const { rowCount } = await pool.query(
+        `WITH marcador AS (
+           INSERT INTO app_settings (key, value, updated_at) VALUES ($1, '{"feito": true}'::jsonb, NOW())
+           ON CONFLICT (key) DO NOTHING
+           RETURNING key
+         )
+         INSERT INTO tenant_settings (tenant_id, key, value, updated_at)
+         SELECT t.id, s.key, s.value, NOW()
+           FROM tenants t
+           JOIN ${table} s ON s.key = ANY($2::text[])
+          WHERE EXISTS (SELECT 1 FROM marcador)
+            AND t.id::text <> ALL($3::text[])
+         ON CONFLICT (tenant_id, key) DO NOTHING`,
+        [marker, keys, [...PLACEHOLDER_TENANT_IDS]]
+      );
+      if (rowCount) console.log(`   ⚙️ Configuração global (${table}) copiada para as clínicas: ${rowCount} registro(s)`);
+    } catch (e) {
+      // Tabela de origem/destino ausente: a instrução inteira é desfeita (marcador incluso)
+      // e a cópia é tentada de novo no próximo boot.
+      console.error(`[tenant-schema] cópia de ${table} para tenant_settings:`, e.message);
+    }
   }
 }
 
@@ -16112,6 +16172,6 @@ if (process.env.NODE_ENV !== 'test') {
 
 export { app, pool };
 // Exportados só para os testes de jobs (tests/jobs-metricas-isolamento.test.js).
-export { processSolutionTriggers, runWhatsAppJobHooks };
+export { processSolutionTriggers, runWhatsAppJobHooks, ensureTenantConfigSchema };
 export function clearTenantSettingsCacheForTests() { tenantSettingsCache.clear(); }
 
