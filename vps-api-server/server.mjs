@@ -5690,6 +5690,10 @@ app.put('/api/financeiro/:id', async (req, res) => {
     params.push(req.params.id, user.tenant_id);
     const { rowCount } = await pool.query(`UPDATE financeiro SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length - 1} AND tenant_id=$${params.length}`, params);
     if (rowCount === 0) return res.status(404).json({ error: 'Lançamento não encontrado' });
+    // Conta paga/cancelada ou com novo vencimento: tira da fila a cobrança pendente.
+    if ((status !== undefined && !BILLING_OPEN_STATUSES.includes(String(status || '').toLowerCase())) || vencimento !== undefined) {
+      await cancelPendingBillingJobs(user.tenant_id, req.params.id, 'Cancelado: conta paga, cancelada ou com novo vencimento');
+    }
     const { rows } = await pool.query('SELECT * FROM financeiro WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
     res.json(rows[0]);
   } catch (error) {
@@ -5703,6 +5707,7 @@ app.delete('/api/financeiro/:id', async (req, res) => {
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { rowCount } = await pool.query('DELETE FROM financeiro WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
     if (rowCount === 0) return res.status(404).json({ error: 'Lançamento não encontrado' });
+    await cancelPendingBillingJobs(user.tenant_id, req.params.id, 'Cancelado: conta excluída');
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -10871,6 +10876,12 @@ async function processOneWhatsAppJob(candidate, openInstances, usedInstances) {
     }
   }
 
+  if (job.trigger_event === 'billing_reminder') {
+    const bloqueio = await billingReminderBlockReason(tenantId, vars);
+    if (bloqueio?.acao === 'release') return release(new Date(Date.now() + 15 * 60_000), bloqueio.motivo);
+    if (bloqueio) return fail(bloqueio.motivo);
+  }
+
   // 7) Envio com "digitando..."
   scheduleNextWhatsAppSend(instance);
   const phone = normalizeWhatsappNumber(job.patient_phone);
@@ -11814,6 +11825,223 @@ async function processAppointmentReminders() {
     }
   } catch (err) {
     console.error('❌ Appointment reminder cron error:', err.message);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// RÉGUA DE COBRANÇA (lembrete de pagamento pelo WhatsApp)
+// Configuração por clínica em tenant_settings ('billing_reminder'); padrão DESLIGADO.
+// Contas a receber: tabela financeiro (tipo 'receita', paciente_id, vencimento DATE).
+// Texto só fala de valor e vencimento: nada de procedimento/diagnóstico (LGPD art. 11)
+// nem termos que constranjam ou ameacem (CDC art. 42).
+// ═══════════════════════════════════════════════════════════════
+const BILLING_REMINDER_KEY = 'billing_reminder';
+const BILLING_OPEN_STATUSES = ['pendente', 'atrasado', 'vencido'];
+const BILLING_ALLOWED_VARS = new Set(['nome', 'clinica', 'valor', 'vencimento']);
+const BILLING_MAX_ETAPAS = 6;
+const BILLING_MAX_TEXTO = 600;
+const BILLING_DEFAULT_ETAPAS = [
+  { dias: -2, texto: 'Olá, {nome}! Passando para lembrar que a parcela de {valor} com a {clinica} vence em {vencimento}. Se já pagou, por favor desconsidere esta mensagem.' },
+  { dias: 0, texto: 'Olá, {nome}! A parcela de {valor} com a {clinica} vence hoje ({vencimento}). Se já pagou, por favor desconsidere esta mensagem.' },
+  { dias: 3, texto: 'Olá, {nome}! Não localizamos o pagamento da parcela de {valor} com vencimento em {vencimento}. Se precisar de ajuda ou de outra forma de pagamento, é só responder aqui. Se já pagou, desconsidere.' },
+  { dias: 7, texto: 'Olá, {nome}! A parcela de {valor} com vencimento em {vencimento} continua em aberto aqui na {clinica}. Podemos ajudar a encontrar a melhor forma de pagamento? É só responder esta mensagem.' },
+];
+
+// Termos proibidos no texto (comparados sem acento e em minúsculas).
+const BILLING_FORBIDDEN_TERMS = /\b(procediment\w*|tratament\w*|diagnostic\w*|canal|extrac\w*|implante\w*|cirurgi\w*|ortodon\w*|aparelho\w*|protese\w*|clareament\w*|restaurac\w*|carie\w*|faceta\w*|enxerto\w*|periodont\w*|endodont\w*|limpeza|dente\w*|inadimplen\w*|divida\w*|devedor\w*|calote\w*|protest\w*|spc|serasa|negativ\w*|judicial\w*|processo\w*|advogad\w*|juridic\w*)\b/;
+
+function billingTextNormalize(text) {
+  return String(text || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+}
+
+function defaultBillingReminderConfig() {
+  return { enabled: false, etapas: BILLING_DEFAULT_ETAPAS.map(e => ({ ...e })) };
+}
+
+// Valida a configuração recebida. Devolve { config } ou { erro }.
+function validateBillingReminderConfig(body) {
+  if (!body || typeof body !== 'object') return { erro: 'Configuração inválida' };
+  const etapasIn = Array.isArray(body.etapas) ? body.etapas : [];
+  if (body.enabled && etapasIn.length === 0) return { erro: 'Inclua pelo menos uma etapa para ligar a régua' };
+  if (etapasIn.length > BILLING_MAX_ETAPAS) return { erro: `No máximo ${BILLING_MAX_ETAPAS} etapas` };
+  const vistos = new Set();
+  const etapas = [];
+  for (const e of etapasIn) {
+    const dias = Number(e?.dias);
+    if (!Number.isInteger(dias) || dias < -15 || dias > 30) return { erro: 'Dias de cada etapa: número inteiro entre -15 e 30' };
+    if (vistos.has(dias)) return { erro: `Etapa repetida: ${dias} dia(s)` };
+    vistos.add(dias);
+    const texto = String(e?.texto || '').trim();
+    if (!texto) return { erro: `Texto vazio na etapa de ${dias} dia(s)` };
+    if (texto.length > BILLING_MAX_TEXTO) return { erro: `Texto da etapa de ${dias} dia(s) passa de ${BILLING_MAX_TEXTO} caracteres` };
+    for (const m of texto.matchAll(/\{([^{}]*)\}/g)) {
+      if (!BILLING_ALLOWED_VARS.has(m[1].trim())) return { erro: `Variável não permitida: {${m[1]}}. Use {nome}, {clinica}, {valor} ou {vencimento}` };
+    }
+    const termo = billingTextNormalize(texto).match(BILLING_FORBIDDEN_TERMS);
+    if (termo) return { erro: `O texto não pode citar "${termo[0]}": fale só de valor e vencimento, sem dado de saúde nem termo de cobrança constrangedor` };
+    if (/https?:\/\/|www\./i.test(texto)) return { erro: 'Não use links no texto da cobrança' };
+    etapas.push({ dias, texto });
+  }
+  etapas.sort((a, b) => a.dias - b.dias);
+  return { config: { enabled: !!body.enabled, etapas } };
+}
+
+// Lê a configuração salva; qualquer coisa inválida vira "desligado".
+function normalizeBillingReminderConfig(raw) {
+  if (!raw || typeof raw !== 'object') return defaultBillingReminderConfig();
+  const { config, erro } = validateBillingReminderConfig(raw);
+  if (erro) return { ...defaultBillingReminderConfig(), enabled: false };
+  return config;
+}
+
+function formatBRL(valor) {
+  return Number(valor || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
+
+// Vencimento: DATE do Postgres (Date ou 'aaaa-mm-dd'); aceita também dd/mm/aaaa.
+function billingDateIso(v) {
+  if (v instanceof Date && !Number.isNaN(v.getTime())) return v.toISOString().slice(0, 10);
+  const s = String(v || '').trim();
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+  if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+  return null;
+}
+
+function renderBillingMessage(texto, { nome, clinica, valor, vencimento }) {
+  const iso = billingDateIso(vencimento);
+  const vencBR = iso ? iso.split('-').reverse().join('/') : '';
+  const primeiroNome = String(nome || '').trim().split(/\s+/)[0] || '';
+  return String(texto)
+    .replace(/\{\s*nome\s*\}/g, primeiroNome)
+    .replace(/\{\s*clinica\s*\}/g, clinica || 'nossa clínica')
+    .replace(/\{\s*valor\s*\}/g, formatBRL(valor))
+    .replace(/\{\s*vencimento\s*\}/g, vencBR)
+    .replace(/Olá,\s*!/g, 'Olá!');
+}
+
+async function cancelPendingBillingJobs(tenantId, contaId = null, motivo = 'Cancelado: régua de cobrança') {
+  const params = [tenantId, motivo];
+  let sql = `UPDATE automation_jobs SET status = 'cancelled', error = $2, claimed_at = NULL
+              WHERE tenant_id = $1 AND trigger_event = 'billing_reminder' AND status = 'pending'`;
+  if (contaId) { params.push(String(contaId)); sql += ` AND variables->>'contaId' = $3`; }
+  return pool.query(sql, params).catch(e => console.error('[cobrança] cancelar jobs:', e.message));
+}
+
+app.get('/api/billing-reminder/settings', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const raw = await getTenantSetting(user.tenant_id, BILLING_REMINDER_KEY);
+    res.json({ ...normalizeBillingReminderConfig(raw), padrao: BILLING_DEFAULT_ETAPAS });
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('[cobrança] GET settings:', error.message);
+    res.status(500).json({ error: 'Erro interno' });
+  }
+});
+
+app.put('/api/billing-reminder/settings', async (req, res) => {
+  try {
+    const { user } = await verifyAdmin(req);
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { config, erro } = validateBillingReminderConfig(req.body);
+    if (erro) return res.status(400).json({ error: erro });
+    await setTenantSetting(user.tenant_id, BILLING_REMINDER_KEY, config);
+    // Desligar (ou trocar as etapas) não deixa mensagem antiga na fila.
+    await cancelPendingBillingJobs(user.tenant_id, null, 'Cancelado: régua de cobrança alterada ou desligada');
+    res.json({ success: true, ...config });
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    if (error.message === 'Admin access required') return res.status(403).json({ error: 'Apenas administradores' });
+    console.error('[cobrança] PUT settings:', error.message);
+    res.status(500).json({ error: 'Erro interno' });
+  }
+});
+
+// Antes de enviar: régua ainda ligada, conta da clínica ainda em aberto e com o mesmo vencimento.
+// Devolve null (pode enviar) ou { acao: 'fail' | 'release', motivo }.
+async function billingReminderBlockReason(tenantId, vars) {
+  let cfg;
+  try {
+    cfg = normalizeBillingReminderConfig(await getTenantSetting(tenantId, BILLING_REMINDER_KEY, { throwOnError: true }));
+  } catch {
+    return { acao: 'release', motivo: 'Não foi possível ler a régua de cobrança; nova tentativa' };
+  }
+  if (!cfg.enabled) return { acao: 'fail', motivo: 'Cancelado: régua de cobrança desligada' };
+  if (!vars?.contaId) return { acao: 'fail', motivo: 'Cancelado: cobrança sem conta vinculada' };
+  const { rows } = await pool.query(
+    `SELECT status, to_char(vencimento, 'YYYY-MM-DD') AS vencimento FROM financeiro WHERE id::text = $1 AND tenant_id = $2 AND tipo = 'receita' LIMIT 1`,
+    [String(vars.contaId), tenantId]
+  );
+  if (!rows.length) return { acao: 'fail', motivo: 'Cancelado: conta não encontrada' };
+  if (!BILLING_OPEN_STATUSES.includes(String(rows[0].status || '').toLowerCase())) {
+    return { acao: 'fail', motivo: 'Cancelado: conta paga ou cancelada' };
+  }
+  if (vars.vencimento && billingDateIso(rows[0].vencimento) !== vars.vencimento) {
+    return { acao: 'fail', motivo: 'Cancelado: vencimento da conta mudou' };
+  }
+  return null;
+}
+
+// Job (a cada 1h, asSystemJob): para cada clínica com a régua ligada, enfileira as etapas do dia.
+let billingReminderInterval = null;
+async function processBillingReminders() {
+  try {
+    const { rows: configs } = await pool.query(
+      `SELECT tenant_id, value FROM tenant_settings WHERE key = $1 AND tenant_id IS NOT NULL`, [BILLING_REMINDER_KEY]
+    );
+    const hoje = spClock().day; // aaaa-mm-dd em Brasília
+    for (const row of configs) {
+      const tenantId = String(row.tenant_id);
+      if (!isValidTenantId(tenantId)) continue;
+      let raw = row.value;
+      if (typeof raw === 'string') { try { raw = JSON.parse(raw); } catch { raw = null; } }
+      const cfg = normalizeBillingReminderConfig(raw);
+      if (!cfg.enabled) continue;
+      try {
+        const clinica = await getTenantClinicName(tenantId);
+        for (const etapa of cfg.etapas) {
+          // Etapa de +3 dias hoje = contas que venceram há 3 dias.
+          const { rows: contas } = await pool.query(
+            `SELECT f.id, f.valor, to_char(f.vencimento, 'YYYY-MM-DD') AS vencimento, p.nome, p.telefone
+               FROM financeiro f
+               JOIN pacientes p ON p.id = f.paciente_id AND p.tenant_id = f.tenant_id
+              WHERE f.tenant_id = $1
+                AND f.tipo = 'receita'
+                AND LOWER(COALESCE(f.status, '')) = ANY($4::text[])
+                AND f.vencimento = ($2::date - $3::int)
+                AND COALESCE(f.valor, 0) > 0
+                AND NOT EXISTS (
+                  SELECT 1 FROM automation_jobs aj
+                   WHERE aj.tenant_id = f.tenant_id AND aj.trigger_event = 'billing_reminder'
+                     AND aj.flow_id = 'billing_' || f.id::text || '_' || to_char(f.vencimento, 'YYYY-MM-DD') || '_' || $3::text)
+              LIMIT 300`,
+            [tenantId, hoje, etapa.dias, BILLING_OPEN_STATUSES]
+          );
+          for (const conta of contas) {
+            const phone = normalizeWhatsappNumber(conta.telefone || '');
+            if (!phone) continue;
+            if (await isWhatsAppOptedOut(tenantId, phone)) continue;
+            const vencimento = billingDateIso(conta.vencimento);
+            if (!vencimento) continue;
+            const message = renderBillingMessage(etapa.texto, { nome: conta.nome, clinica, valor: conta.valor, vencimento });
+            await enqueueWhatsAppJob({
+              tenantId, phone, message, category: 'transactional',
+              flowId: `billing_${conta.id}_${vencimento}_${etapa.dias}`, flowName: 'Régua de cobrança',
+              patientName: conta.nome || '', triggerEvent: 'billing_reminder',
+              variables: { contaId: String(conta.id), etapa: etapa.dias, vencimento },
+              expiresAt: new Date(Date.now() + 2 * 86_400_000),
+            });
+          }
+        }
+      } catch (tenantErr) {
+        console.error(`❌ Régua de cobrança (clínica ${tenantId.slice(0, 8)}):`, tenantErr.message);
+      }
+    }
+  } catch (err) {
+    console.error('❌ Régua de cobrança:', err.message);
   }
 }
 
@@ -16341,6 +16569,10 @@ if (process.env.NODE_ENV !== 'test') {
   appointmentReminderInterval = setInterval(asSystemJob(processAppointmentReminders), 60 * 60 * 1000);
   console.log('   🔔 Lembrete de consulta 24h ativo (a cada 1h)');
 
+  // Régua de cobrança (a cada 1h; só clínicas que ligaram; a fila segura até a janela de envio)
+  billingReminderInterval = setInterval(asSystemJob(processBillingReminders), 60 * 60 * 1000);
+  console.log('   💳 Régua de cobrança ativa (a cada 1h, só clínicas que ligaram)');
+
   // Clinicorp auto-reconciliation: tick a cada 60s, decide via DB se executa
   // (lock + next_sync_at em clinicorp_settings garantem idempotência e catch-up
   // automático após reinício/interrupção do servidor)
@@ -16355,5 +16587,6 @@ if (process.env.NODE_ENV !== 'test') {
 export { app, pool };
 // Exportados só para os testes de jobs (tests/jobs-metricas-isolamento.test.js).
 export { processSolutionTriggers, runWhatsAppJobHooks, ensureTenantConfigSchema, triggerFollowupAutomation };
+export { processBillingReminders, billingReminderBlockReason, validateBillingReminderConfig, renderBillingMessage };
 export function clearTenantSettingsCacheForTests() { tenantSettingsCache.clear(); }
 

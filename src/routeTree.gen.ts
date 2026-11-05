@@ -48,6 +48,7 @@ import { Route as AtendimentoRouteImport } from './routes/atendimento'
 import { Route as AnalyticsRouteImport } from './routes/analytics'
 import { Route as AgendaRouteImport } from './routes/agenda'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ConfiguracoesCobrancaRouteImport } from './routes/configuracoes.cobranca'
 import { Route as ConfiguracoesAgendaRouteImport } from './routes/configuracoes.agenda'
 
 const UsuariosRoute = UsuariosRouteImport.update({
@@ -245,6 +246,11 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ConfiguracoesCobrancaRoute = ConfiguracoesCobrancaRouteImport.update({
+  id: '/cobranca',
+  path: '/cobranca',
+  getParentRoute: () => ConfiguracoesRoute,
+} as any)
 const ConfiguracoesAgendaRoute = ConfiguracoesAgendaRouteImport.update({
   id: '/agenda',
   path: '/agenda',
@@ -292,6 +298,7 @@ export interface FileRoutesByFullPath {
   '/tratamentos': typeof TratamentosRoute
   '/usuarios': typeof UsuariosRoute
   '/configuracoes/agenda': typeof ConfiguracoesAgendaRoute
+  '/configuracoes/cobranca': typeof ConfiguracoesCobrancaRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -334,6 +341,7 @@ export interface FileRoutesByTo {
   '/tratamentos': typeof TratamentosRoute
   '/usuarios': typeof UsuariosRoute
   '/configuracoes/agenda': typeof ConfiguracoesAgendaRoute
+  '/configuracoes/cobranca': typeof ConfiguracoesCobrancaRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -377,6 +385,7 @@ export interface FileRoutesById {
   '/tratamentos': typeof TratamentosRoute
   '/usuarios': typeof UsuariosRoute
   '/configuracoes/agenda': typeof ConfiguracoesAgendaRoute
+  '/configuracoes/cobranca': typeof ConfiguracoesCobrancaRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -421,6 +430,7 @@ export interface FileRouteTypes {
     | '/tratamentos'
     | '/usuarios'
     | '/configuracoes/agenda'
+    | '/configuracoes/cobranca'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -463,6 +473,7 @@ export interface FileRouteTypes {
     | '/tratamentos'
     | '/usuarios'
     | '/configuracoes/agenda'
+    | '/configuracoes/cobranca'
   id:
     | '__root__'
     | '/'
@@ -505,6 +516,7 @@ export interface FileRouteTypes {
     | '/tratamentos'
     | '/usuarios'
     | '/configuracoes/agenda'
+    | '/configuracoes/cobranca'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -824,6 +836,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/configuracoes/cobranca': {
+      id: '/configuracoes/cobranca'
+      path: '/cobranca'
+      fullPath: '/configuracoes/cobranca'
+      preLoaderRoute: typeof ConfiguracoesCobrancaRouteImport
+      parentRoute: typeof ConfiguracoesRoute
+    }
     '/configuracoes/agenda': {
       id: '/configuracoes/agenda'
       path: '/agenda'
@@ -836,10 +855,12 @@ declare module '@tanstack/react-router' {
 
 interface ConfiguracoesRouteChildren {
   ConfiguracoesAgendaRoute: typeof ConfiguracoesAgendaRoute
+  ConfiguracoesCobrancaRoute: typeof ConfiguracoesCobrancaRoute
 }
 
 const ConfiguracoesRouteChildren: ConfiguracoesRouteChildren = {
   ConfiguracoesAgendaRoute: ConfiguracoesAgendaRoute,
+  ConfiguracoesCobrancaRoute: ConfiguracoesCobrancaRoute,
 }
 
 const ConfiguracoesRouteWithChildren = ConfiguracoesRoute._addFileChildren(

@@ -891,6 +891,16 @@ export const whatsappApi = {
 
 // ─── Attendance Settings ────────────────────────────────────
 
+// Régua de cobrança pelo WhatsApp (configuração por clínica; padrão desligado)
+export interface BillingReminderEtapa { dias: number; texto: string }
+export interface BillingReminderConfig { enabled: boolean; etapas: BillingReminderEtapa[]; padrao?: BillingReminderEtapa[] }
+
+export const billingReminderApi = {
+  get: () => vpsApiFetch<BillingReminderConfig>('/billing-reminder/settings'),
+  update: (body: { enabled: boolean; etapas: BillingReminderEtapa[] }) =>
+    vpsApiFetch<BillingReminderConfig>('/billing-reminder/settings', { method: 'PUT', body }),
+};
+
 export const attendanceSettingsApi = {
   get: () => vpsApiFetch('/attendance-settings', { background: true }),
   update: (body: unknown) => vpsApiFetch('/attendance-settings', { method: 'PUT', body }),
