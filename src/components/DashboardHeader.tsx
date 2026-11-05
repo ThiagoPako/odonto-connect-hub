@@ -1,21 +1,28 @@
-import { Bell, Search, CalendarDays, LucideIcon } from "lucide-react";
+import { Search, LucideIcon } from "lucide-react";
 import { useState, useEffect } from "react";
+import { Link } from "@tanstack/react-router";
 import { useAuth } from "@/hooks/useAuth";
 import { GlobalSearchDialog } from "@/components/GlobalSearchDialog";
 
+/**
+ * Cabeçalho das telas internas. No computador: título + data, busca larga,
+ * notificações e avatar. No celular (< 768 px): título e ícones, sem a data
+ * nem a busca larga (que transbordavam a tela). Ver DESIGN.md › Layout.
+ * O sino de notificações saiu: não tinha função (botão sem resposta). Volta quando existir a central.
+ */
 export function DashboardHeader({ title, icon: Icon }: { title: string; icon?: LucideIcon }) {
   const { user } = useAuth();
   const [today, setToday] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
 
   useEffect(() => {
-    setToday(
-      new Date().toLocaleDateString("pt-BR", {
-        weekday: "long",
-        day: "numeric",
-        month: "long",
-      })
-    );
+    const d = new Date().toLocaleDateString("pt-BR", {
+      weekday: "long",
+      day: "numeric",
+      month: "long",
+    });
+    // "quinta-feira, 5 de novembro" → "Quinta-feira, 5 de novembro"
+    setToday(d.charAt(0).toUpperCase() + d.slice(1));
   }, []);
 
   const initials = user?.name
@@ -24,48 +31,43 @@ export function DashboardHeader({ title, icon: Icon }: { title: string; icon?: L
 
   return (
     <>
-      <header className="h-[72px] flex items-center justify-between px-8 border-b border-border bg-card/80 backdrop-blur-md sticky top-0 z-20">
-        <div className="flex items-center gap-3">
-          {Icon && (
-            <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center">
-              <Icon className="h-5 w-5 text-primary" />
-            </div>
-          )}
-          <div>
-            <h1 className="text-lg font-bold text-foreground tracking-tight">{title}</h1>
+      <header className="h-14 md:h-16 flex items-center justify-between gap-3 px-4 md:px-8 border-b border-border surface-glass sticky top-0 z-20">
+        <div className="flex items-center gap-3 min-w-0">
+          {Icon && <Icon className="hidden sm:block h-5 w-5 shrink-0 text-muted-foreground" aria-hidden="true" />}
+          <div className="min-w-0">
+            <h1 className="text-base md:text-lg font-semibold text-foreground tracking-tight truncate">{title}</h1>
             {today && (
-              <p className="text-[11px] text-muted-foreground flex items-center gap-1.5 mt-0.5">
-                <CalendarDays className="h-3 w-3" />
-                <span className="capitalize">{today}</span>
-              </p>
+              <p className="hidden md:block text-xs text-muted-foreground leading-tight">{today}</p>
             )}
           </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-1.5 md:gap-3 shrink-0">
           <button
             onClick={() => setSearchOpen(true)}
-            className="relative group flex items-center h-10 pl-10 pr-4 rounded-xl bg-muted/60 border border-border/50 text-sm text-muted-foreground hover:bg-muted/80 hover:border-primary/30 focus:outline-none focus:ring-2 focus:ring-primary/30 w-72 transition-all cursor-pointer"
+            className="hidden lg:flex items-center gap-2.5 h-10 w-72 pl-3 pr-2 rounded-md bg-muted border border-transparent text-sm text-muted-foreground hover:border-border transition-colors"
             aria-label="Buscar no sistema"
           >
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors" />
-            <span>Buscar paciente, orçamento...</span>
-            <kbd className="ml-auto pointer-events-none hidden sm:inline-flex h-5 select-none items-center gap-1 rounded border border-border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground">
+            <Search className="h-4 w-4 shrink-0" />
+            <span className="flex-1 text-left truncate">Buscar paciente, orçamento…</span>
+            <kbd className="pointer-events-none inline-flex h-6 items-center rounded border border-border bg-card px-1.5 text-xs font-medium text-muted-foreground">
               ⌘K
             </kbd>
           </button>
           <button
-            className="relative p-2.5 rounded-xl hover:bg-muted/80 transition-all group"
-            aria-label="Notificações"
+            onClick={() => setSearchOpen(true)}
+            className="lg:hidden flex items-center justify-center size-11 rounded-md active:bg-muted text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+            aria-label="Buscar no sistema"
           >
-            <Bell className="h-5 w-5 text-muted-foreground group-hover:text-foreground transition-colors" />
-            <span className="absolute top-2 right-2 h-2 w-2 rounded-full bg-destructive ring-2 ring-card" />
+            <Search className="h-5 w-5" />
           </button>
-          <div
-            className="h-10 w-10 rounded-xl gradient-primary flex items-center justify-center text-primary-foreground text-sm font-bold shadow-sm cursor-pointer hover:scale-105 transition-transform"
-            title={user?.name || "Usuário"}
+          <Link
+            to="/perfil"
+            className="size-11 md:size-9 rounded-full bg-accent flex items-center justify-center text-accent-foreground text-xs font-semibold"
+            title={user?.name || "Meu perfil"}
+            aria-label="Meu perfil"
           >
             {initials}
-          </div>
+          </Link>
         </div>
       </header>
       <GlobalSearchDialog open={searchOpen} onOpenChange={setSearchOpen} />
