@@ -2238,10 +2238,13 @@ export function registerClinicorp(app, pool, { verifyUser } = {}) {
       `ALTER TABLE clinicorp_conflicts ADD COLUMN IF NOT EXISTS tenant_id UUID`,
       `ALTER TABLE clinicorp_local_overrides ADD COLUMN IF NOT EXISTS tenant_id UUID`,
       `ALTER TABLE clinicorp_override_history ADD COLUMN IF NOT EXISTS tenant_id UUID`,
+      // Mesmo índice da migration-clinicorp-multi-clinica.sql (o upsert de override depende dele).
+      // Tabela pequena: sem CONCURRENTLY. Sem permissão de DDL (42501) fica para o deploy.
+      `CREATE UNIQUE INDEX IF NOT EXISTS uq_cc_overrides_tenant_scope ON clinicorp_local_overrides ((COALESCE(tenant_id, '00000000-0000-0000-0000-000000000000'::uuid)), scope_type, (COALESCE(scope_id, '')))`,
       `CREATE INDEX IF NOT EXISTS idx_clinicorp_push_log_tenant ON clinicorp_push_log(tenant_id, created_at DESC)`,
     ]) {
       try { await pool.query(sql); }
-      catch (e) { console.warn('[clinicorp] schema:', e.message); }
+      catch (e) { if (e.code !== '42501') console.warn('[clinicorp] schema:', e.message); } // 42501: sem permissão de DDL, vem do deploy
     }
   })();
 
@@ -2535,10 +2538,10 @@ export function registerClinicorp(app, pool, { verifyUser } = {}) {
         [scope_type, sid, tid]
       )).rows[0] || null;
 
-      const result = await pool.query(
+      const upsertOverride = (alvo) => pool.query(
         `INSERT INTO clinicorp_local_overrides (scope_type, scope_id, keep_local, conflict_strategy, note, tenant_id)
          VALUES ($1,$2,COALESCE($3,FALSE),$4,$5,$6)
-         ON CONFLICT ((COALESCE(tenant_id, '00000000-0000-0000-0000-000000000000'::uuid)), scope_type, (COALESCE(scope_id,''))) DO UPDATE SET
+         ON CONFLICT ${alvo} DO UPDATE SET
            keep_local = COALESCE(EXCLUDED.keep_local, clinicorp_local_overrides.keep_local),
            conflict_strategy = COALESCE(EXCLUDED.conflict_strategy, clinicorp_local_overrides.conflict_strategy),
            note = COALESCE(EXCLUDED.note, clinicorp_local_overrides.note),
@@ -2546,6 +2549,16 @@ export function registerClinicorp(app, pool, { verifyUser } = {}) {
          RETURNING *`,
         [scope_type, sid, typeof keep_local === 'boolean' ? keep_local : null, conflict_strategy ?? null, note ?? null, tid]
       );
+      let result;
+      try {
+        result = await upsertOverride(`((COALESCE(tenant_id, '00000000-0000-0000-0000-000000000000'::uuid)), scope_type, (COALESCE(scope_id,'')))`);
+      } catch (e) {
+        if (e.code !== '42P10') throw e;
+        // Índice por clínica ainda não existe (migração/boot sem permissão). Regra da plataforma
+        // usa o índice antigo, como antes; regra de clínica não pode, senão sobrescreveria a da plataforma.
+        if (tid) return res.status(503).json({ error: 'Regra por clínica indisponível até a migração do Clinicorp (migration-clinicorp-multi-clinica.sql)' });
+        result = await upsertOverride(`(scope_type, COALESCE(scope_id,''))`);
+      }
       const next = result.rows[0];
 
       const action = prev ? 'update' : 'create';

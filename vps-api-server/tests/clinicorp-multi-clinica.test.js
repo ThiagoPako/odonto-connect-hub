@@ -113,6 +113,29 @@ describe('PUT /api/clinicorp/overrides', () => {
     expect(sqlLog.some(q => /INSERT INTO clinicorp_local_overrides/.test(q.text))).toBe(false);
   });
 
+  test('sem o índice por clínica (42P10): regra da plataforma usa o ON CONFLICT antigo; regra de clínica dá 503', async () => {
+    spy.mockImplementation(async (sql, params = []) => {
+      const text = String(sql);
+      sqlLog.push({ text, params });
+      if (/SELECT 1 FROM tenants WHERE id = \$1/.test(text)) return { rows: [{ '?column?': 1 }] };
+      if (/INSERT INTO clinicorp_local_overrides/.test(text)) {
+        if (/COALESCE\(tenant_id/.test(text)) throw Object.assign(new Error('there is no unique or exclusion constraint matching the ON CONFLICT specification'), { code: '42P10' });
+        return { rows: [{ id: 1, tenant_id: null, scope_type: params[0] }] };
+      }
+      return { rows: [] };
+    });
+    const plat = await request(app).put('/api/clinicorp/overrides').set('Authorization', `Bearer ${tokenSuper()}`)
+      .send({ scope_type: 'global', conflict_strategy: 'newest_wins' });
+    expect(plat.status).toBe(200);
+    const ins = sqlLog.filter(q => /INSERT INTO clinicorp_local_overrides/.test(q.text));
+    expect(ins[1].text).toMatch(/ON CONFLICT \(scope_type, COALESCE\(scope_id,''\)\)/);
+    sqlLog = [];
+    const cli = await request(app).put('/api/clinicorp/overrides').set('Authorization', `Bearer ${tokenSuper()}`)
+      .send({ scope_type: 'global', conflict_strategy: 'local_wins', tenant_id: tenantB });
+    expect(cli.status).toBe(503);
+    expect(sqlLog.filter(q => /INSERT INTO clinicorp_local_overrides/.test(q.text))).toHaveLength(1);
+  });
+
   test('admin de clínica não altera regras (403)', async () => {
     const res = await request(app).put('/api/clinicorp/overrides').set('Authorization', `Bearer ${tokenAdminA()}`)
       .send({ scope_type: 'global', conflict_strategy: 'local_wins', tenant_id: tenantA });
