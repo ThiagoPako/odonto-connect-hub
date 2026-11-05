@@ -163,7 +163,8 @@ jobs:
               echo "!!! ATENÇÃO: alguma chave única GLOBAL (cpf/cro/marcador) continua ativa: revisar o log acima."
             fi
             # Lista de espera (depois do alinhamento: altera agendamentos)
-            cat /root/odonto-connect/vps-api-server/migration-lista-espera.sql | sudo -u postgres psql -p 5433 -d odonto_db -v ON_ERROR_STOP=1 2>&1 \
+            # lock_timeout via PGOPTIONS (não no .sql: o boot roda o arquivo no pool)
+            cat /root/odonto-connect/vps-api-server/migration-lista-espera.sql | sudo -u postgres env PGOPTIONS='-c lock_timeout=5s' psql -p 5433 -d odonto_db -v ON_ERROR_STOP=1 2>&1 \
               || echo "::warning::migration-lista-espera.sql falhou: confira as tabelas lista_espera/lista_espera_ofertas e as colunas liberado_por/liberado_em de agendamentos"
             echo "=== Migrations applied ==="
 

@@ -45,7 +45,7 @@ async function waitFor(fn, ms = 2000) {
 }
 
 describe('Lista de espera e encaixe', () => {
-  let querySpy, fetchSpy, sqlLog, fetchLog, slot, candidatos, ofertaAtiva, ofertaPendente, claimOk, ocupado, existingLead;
+  let querySpy, connectSpy, fetchSpy, failAgendamentoInsert, released, sqlLog, fetchLog, slot, candidatos, ofertaAtiva, ofertaPendente, claimOk, ocupado, existingLead;
 
   beforeAll(() => {
     jest.spyOn(console, 'log').mockImplementation(() => {});
@@ -59,15 +59,16 @@ describe('Lista de espera e encaixe', () => {
     sqlLog = []; fetchLog = [];
     slot = { id: slotA, data: '2026-11-06', hora: '09:00', duracao: 30, dentista_id: dentA, paciente_id: pacA, status: 'desmarcado', dentista_nome: 'Dra. Ana' };
     candidatos = [{ id: leA, paciente_id: pacB, paciente_nome: 'João Silva', telefone: telEspera }];
-    ofertaAtiva = []; claimOk = true; ocupado = false;
+    ofertaAtiva = []; claimOk = true; ocupado = false; failAgendamentoInsert = false; released = 0;
     existingLead = { id: 'lead-1', name: 'João', phone: telEspera, awaiting_queue_selection: false };
     ofertaPendente = {
       id: ofertaA, lista_espera_id: leA, paciente_id: pacB, agendamento_origem_id: slotA,
       data: '2026-11-06', hora: '09:00', duracao: 30, dentista_id: dentA, expires_at: new Date(Date.now() + 3600_000),
     };
-    querySpy = jest.spyOn(pool, 'query').mockImplementation((sql, params = []) => {
+    const handler = (via) => (sql, params = []) => {
       const text = String(sql);
-      sqlLog.push({ text, params });
+      sqlLog.push({ text, params, via });
+      if (failAgendamentoInsert && /INSERT INTO agendamentos/.test(text)) return Promise.reject(new Error('falha no insert'));
       const ok = (rows, rowCount = rows.length) => Promise.resolve({ rows, rowCount });
       if (/SELECT tenant_id FROM whatsapp_instances WHERE instance_name = \$1/.test(text)) {
         const t = instanceOwner[params[0]]; return ok(t ? [{ tenant_id: t }] : []);
@@ -94,11 +95,13 @@ describe('Lista de espera e encaixe', () => {
         return ok(params[0] === tenantA && okTel && ofertaPendente && (!params[2] || params[2] === ofertaPendente.id) ? [ofertaPendente] : []);
       }
       if (/SET status = 'aceita'/.test(text)) return ok(claimOk ? [{ id: ofertaA }] : []);
-      if (/FROM agendamentos\s+WHERE tenant_id = \$1 AND data = \$2 AND LEFT\(hora, 5\) = \$3/.test(text)) return ok(ocupado ? [{ x: 1 }] : []);
+      if (/FROM agendamentos\s+WHERE tenant_id = \$1 AND data = \$2 AND to_char\(hora, 'HH24:MI'\) = \$3/.test(text)) return ok(ocupado ? [{ x: 1 }] : []);
       if (/SELECT id, nome as name, avatar_url, telefone as phone/.test(text)) return ok(existingLead ? [existingLead] : []);
       if (/INSERT INTO automation_jobs/.test(text)) return ok([{ id: `job-${sqlLog.length}` }]);
       return ok([]);
-    });
+    };
+    querySpy = jest.spyOn(pool, 'query').mockImplementation(handler('pool'));
+    connectSpy = jest.spyOn(pool, 'connect').mockImplementation(async () => ({ query: handler('client'), release: () => { released++; } }));
     fetchSpy = jest.spyOn(globalThis, 'fetch').mockImplementation(async (url, opts) => {
       fetchLog.push({ url: String(url), body: opts?.body ? JSON.parse(opts.body) : null });
       if (/fetchInstances/.test(String(url))) return { ok: true, status: 200, json: async () => [{ name: instB, connectionStatus: 'open' }, { name: instA, connectionStatus: 'open' }] };
@@ -106,7 +109,7 @@ describe('Lista de espera e encaixe', () => {
     });
   });
 
-  afterEach(() => { querySpy.mockRestore(); fetchSpy.mockRestore(); jest.useRealTimers(); });
+  afterEach(() => { querySpy.mockRestore(); connectSpy.mockRestore(); fetchSpy.mockRestore(); jest.useRealTimers(); });
   afterAll(async () => { await pool.end(); });
 
   const q = (re) => sqlLog.filter(s => re.test(s.text));
@@ -206,6 +209,7 @@ describe('Lista de espera e encaixe', () => {
       expect(jobCol(ins[0], 'message')).toMatch(/Responda \*QUERO\*/);
       expect(jobCol(ins[0], 'message')).toMatch(/06\/11\/2026/);
       expect(jobCol(ins[0], 'message')).toMatch(/Se não responder até lá, o horário vai para a próxima pessoa da lista e você continua na lista\./); // L1
+      expect(jobCol(ins[0], 'message')).toMatch(/Se não quiser mais ofertas, responda SAIR DA LISTA\.$/);
       const v = jobVars(ins[0]);
       expect(v.interactive.payload.buttons.map(b => b.buttonId)).toEqual([`oferta_aceitar_${of.params[0]}`, `oferta_recusar_${of.params[0]}`]);
       expect(sends()).toHaveLength(0);
@@ -277,6 +281,24 @@ describe('Lista de espera e encaixe', () => {
       expect(jobCol(replies[0], 'message')).toMatch(/é seu/);
       expect(q(/UPDATE lista_espera SET status = 'encaixado'/)[0].params).toEqual([leA, tenantA]);
       expect(sends()).toHaveLength(0);
+      // Reserva, conferência e encaixe na mesma transação.
+      const tx = sqlLog.filter(s => s.via === 'client').map(s => s.text.trim().split(/\s+/)[0]);
+      expect(tx).toEqual(['BEGIN', 'UPDATE', 'SELECT', 'INSERT', 'UPDATE', 'UPDATE', 'COMMIT']);
+      expect(released).toBe(1);
+    });
+
+    test('erro depois da reserva: ROLLBACK, a oferta continua "enviada" e a lista não muda', async () => {
+      failAgendamentoInsert = true;
+      await webhook('QUERO');
+      await waitFor(() => released);
+      const tx = sqlLog.filter(s => s.via === 'client').map(s => s.text.trim().split(/\s+/)[0]);
+      expect(tx[0]).toBe('BEGIN');
+      expect(tx).toContain('ROLLBACK');
+      expect(tx).not.toContain('COMMIT');
+      // Nada de encaixe nem mudança na lista fora da transação desfeita.
+      expect(q(/UPDATE lista_espera SET status = 'encaixado'/).filter(s => s.via === 'pool')).toHaveLength(0);
+      expect(q(/UPDATE lista_espera SET status = 'aguardando'/)).toHaveLength(0);
+      expect(q(/SET status = 'aceita'/).every(s => s.via === 'client')).toBe(true);
     });
 
     test('botão aceitar usa o id da oferta', async () => {
@@ -311,7 +333,7 @@ describe('Lista de espera e encaixe', () => {
 
     test('no aceite, "remarcar" conta como ocupado (não cria encaixe por cima do horário prometido)', async () => {
       await webhook('QUERO');
-      const conf = await waitFor(() => q(/FROM agendamentos\s+WHERE tenant_id = \$1 AND data = \$2 AND LEFT\(hora, 5\) = \$3/)[0]);
+      const conf = await waitFor(() => q(/FROM agendamentos\s+WHERE tenant_id = \$1 AND data = \$2 AND to_char\(hora, 'HH24:MI'\) = \$3/)[0]);
       expect(conf.text).toMatch(/NOT IN \('cancelado', 'desmarcado', 'faltou'\)/);
       expect(conf.text).not.toMatch(/remarcar/);
     });

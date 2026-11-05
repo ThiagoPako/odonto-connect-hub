@@ -5803,8 +5803,10 @@ app.get('/api/agenda/:id/encaixe', async (req, res) => {
 // TEXTO PARA PACIENTE: revisão da Helena (helena-juridico) antes do merge.
 // Só clínica, profissional, data, hora e prazo: nada de procedimento.
 function buildWaitlistOfferMessage({ clinica, firstName, profissional, weekday, dataBR, hora, prazo }) {
-  const body = `📅 *Horário disponível — ${clinica}*\n\nOlá${firstName ? `, ${firstName}` : ''}! Você está na nossa lista de espera e abriu um horário:\n📅 ${weekday ? `${weekday}, ` : ''}${dataBR}\n⏰ ${hora}\n👩‍⚕️ ${profissional || 'Equipe da clínica'}\n\nA oferta vale até ${prazo}. Se não responder até lá, o horário vai para a próxima pessoa da lista e você continua na lista.`;
-  return { body, fallbackText: `${body}\n\nResponda *QUERO* para ficar com o horário ou *NÃO* se não puder.` };
+  const base = `📅 *Horário disponível — ${clinica}*\n\nOlá${firstName ? `, ${firstName}` : ''}! Você está na nossa lista de espera e abriu um horário:\n📅 ${weekday ? `${weekday}, ` : ''}${dataBR}\n⏰ ${hora}\n👩‍⚕️ ${profissional || 'Equipe da clínica'}\n\nA oferta vale até ${prazo}. Se não responder até lá, o horário vai para a próxima pessoa da lista e você continua na lista.`;
+  // "sair da lista" está em WA_OPT_OUT_PHRASES: vira descadastro e fica por último nas duas versões.
+  const sair = '\n\nSe não quiser mais ofertas, responda SAIR DA LISTA.';
+  return { body: `${base}${sair}`, fallbackText: `${base}\n\nResponda *QUERO* para ficar com o horário ou *NÃO* se não puder.${sair}` };
 }
 
 // Clique da recepção: oferta para UM paciente (o primeiro da lista que serve).
@@ -5816,7 +5818,7 @@ app.post('/api/agenda/:id/oferecer-horario', async (req, res) => {
     const slot = await getWaitlistSlot(tenantId, req.params.id);
     if (!slot) return res.status(404).json({ error: 'Agendamento não encontrado' });
     if (!WAITLIST_FREED_STATUSES.includes(String(slot.status || ''))) {
-      return res.status(409).json({ error: 'Este horário não está liberado (o paciente não pediu remarcação nem cancelou)' });
+      return res.status(409).json({ error: 'Este horário não foi liberado pela recepção' });
     }
     const start = agendaSlotStart(slot);
     if (Number.isNaN(start.getTime()) || start.getTime() <= Date.now() + WAITLIST_MIN_LEAD_MS) {
@@ -5949,40 +5951,63 @@ async function handleWaitlistOfferReply({ tenantId, phone, msgType, msgContent, 
     return { handled: true, accepted: false, ofertaId: oferta.id };
   }
 
-  // Aceite: reserva atômica da oferta (só uma oferta ativa por horário).
-  const { rows: [claimed] } = await pool.query(
-    `UPDATE lista_espera_ofertas SET status = 'aceita', answered_at = NOW()
-      WHERE id = $1 AND tenant_id = $2 AND status = 'enviada' AND expires_at > NOW() RETURNING id`,
-    [oferta.id, tenantId]
-  );
-  if (!claimed) {
+  // Aceite: reserva da oferta, conferência do horário e criação do encaixe numa única
+  // transação. Qualquer erro no meio desfaz tudo: a oferta continua 'enviada' (o paciente
+  // pode responder de novo) e a entrada da lista não muda.
+  const novoId = crypto.randomUUID();
+  let outcome;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // Reserva atômica (só uma oferta ativa por horário).
+    const { rows: [claimed] } = await client.query(
+      `UPDATE lista_espera_ofertas SET status = 'aceita', answered_at = NOW()
+        WHERE id = $1 AND tenant_id = $2 AND status = 'enviada' AND expires_at > NOW() RETURNING id`,
+      [oferta.id, tenantId]
+    );
+    if (!claimed) {
+      outcome = 'expirada';
+    } else {
+      // Horário ainda livre? (a recepção pode ter marcado alguém por fora). hora é TIME.
+      const { rows: ocupado } = await client.query(
+        `SELECT 1 FROM agendamentos
+          WHERE tenant_id = $1 AND data = $2 AND to_char(hora, 'HH24:MI') = $3 AND dentista_id IS NOT DISTINCT FROM $4 AND id <> $5
+            AND COALESCE(status, 'agendado') NOT IN ('cancelado', 'desmarcado', 'faltou') LIMIT 1`,
+        [tenantId, agendaYmd(oferta.data), hora, oferta.dentista_id || null, oferta.agendamento_origem_id]
+      );
+      if (ocupado.length) {
+        await client.query(`UPDATE lista_espera_ofertas SET status = 'indisponivel' WHERE id = $1 AND tenant_id = $2`, [oferta.id, tenantId]);
+        outcome = 'indisponivel';
+      } else {
+        await client.query(
+          `INSERT INTO agendamentos (id, paciente_id, dentista_id, data, hora, duracao, status, observacoes, tipo, tenant_id)
+           VALUES ($1, $2, $3, $4, $5, $6, 'confirmado', 'Encaixe pela lista de espera (aceito pelo WhatsApp)', 'consulta', $7)`,
+          [novoId, oferta.paciente_id, oferta.dentista_id || null, agendaYmd(oferta.data), hora, oferta.duracao || 30, tenantId]
+        );
+        await client.query(`UPDATE lista_espera_ofertas SET agendamento_novo_id = $3 WHERE id = $1 AND tenant_id = $2`, [oferta.id, tenantId, novoId]);
+        await client.query(`UPDATE lista_espera SET status = 'encaixado', updated_at = NOW() WHERE id = $1 AND tenant_id = $2`, [oferta.lista_espera_id, tenantId]);
+        outcome = 'aceita';
+      }
+    }
+    await client.query(outcome === 'expirada' ? 'ROLLBACK' : 'COMMIT');
+  } catch (txError) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw txError;
+  } finally {
+    client.release();
+  }
+  if (outcome === 'expirada') {
     await pool.query(`UPDATE lista_espera_ofertas SET status = 'expirada', answered_at = NOW() WHERE id = $1 AND tenant_id = $2 AND status = 'enviada'`, [oferta.id, tenantId]).catch(() => {});
     await backToWaitlist();
     await reply(UNAVAILABLE, 'waitlist_unavailable');
     return { handled: true, accepted: false, ofertaId: oferta.id };
   }
-  // Horário ainda livre? (a recepção pode ter marcado alguém por fora)
-  const { rows: ocupado } = await pool.query(
-    `SELECT 1 FROM agendamentos
-      WHERE tenant_id = $1 AND data = $2 AND LEFT(hora, 5) = $3 AND dentista_id IS NOT DISTINCT FROM $4 AND id <> $5
-        AND COALESCE(status, 'agendado') NOT IN ('cancelado', 'desmarcado', 'faltou') LIMIT 1`,
-    [tenantId, agendaYmd(oferta.data), hora, oferta.dentista_id || null, oferta.agendamento_origem_id]
-  );
-  if (ocupado.length) {
-    await pool.query(`UPDATE lista_espera_ofertas SET status = 'indisponivel' WHERE id = $1 AND tenant_id = $2`, [oferta.id, tenantId]);
+  if (outcome === 'indisponivel') {
     await backToWaitlist();
     await reply(UNAVAILABLE, 'waitlist_unavailable');
     broadcastSSE('waitlist_offer_changed', { agendamentoId: oferta.agendamento_origem_id, status: 'indisponivel' }, tenantId);
     return { handled: true, accepted: false, ofertaId: oferta.id };
   }
-  const novoId = crypto.randomUUID();
-  await pool.query(
-    `INSERT INTO agendamentos (id, paciente_id, dentista_id, data, hora, duracao, status, observacoes, tipo, tenant_id)
-     VALUES ($1, $2, $3, $4, $5, $6, 'confirmado', 'Encaixe pela lista de espera (aceito pelo WhatsApp)', 'consulta', $7)`,
-    [novoId, oferta.paciente_id, oferta.dentista_id || null, agendaYmd(oferta.data), hora, oferta.duracao || 30, tenantId]
-  );
-  await pool.query(`UPDATE lista_espera_ofertas SET agendamento_novo_id = $3 WHERE id = $1 AND tenant_id = $2`, [oferta.id, tenantId, novoId]);
-  await pool.query(`UPDATE lista_espera SET status = 'encaixado', updated_at = NOW() WHERE id = $1 AND tenant_id = $2`, [oferta.lista_espera_id, tenantId]);
   await reply(`✅ Pronto! O horário de ${dataBR} às ${hora} é seu. A ${clinica} aguarda você.`, 'waitlist_accepted');
   broadcastSSE('agendamento_changed', { action: 'created', id: novoId, data: agendaYmd(oferta.data) }, tenantId);
   broadcastSSE('waitlist_offer_changed', { agendamentoId: oferta.agendamento_origem_id, status: 'aceita', novoAgendamentoId: novoId }, tenantId);
