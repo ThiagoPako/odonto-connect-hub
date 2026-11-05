@@ -3,7 +3,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import {
   CalendarCheck, Users, MessageSquare, DollarSign, Bot,
   BarChart3, CheckCircle, ArrowRight, Star, Phone, Mail,
-  RefreshCcw, Brain, Flame, Clock, Target, TrendingUp, Plus, Wifi,
+  RefreshCcw, Brain, Clock, Target, TrendingUp, Plus,
 } from "lucide-react";
 import logoHorizontal from "@/assets/logo-horizontal.png";
 import drLuisGustavo from "@/assets/dr-luis-gustavo.jpg";
@@ -11,15 +11,16 @@ import { ScrollReveal } from "@/components/ScrollReveal";
 import { AnimatedCounter } from "@/components/AnimatedCounter";
 import { AgendaFragment } from "@/components/marketing/AgendaFragment";
 import { useForceLightTheme } from "@/hooks/useForceLightTheme";
+import { TESTE_GRATIS_DIAS, TESTE_GRATIS_TEXTO, WHATSAPP_CONSULTOR, EMAIL_CONTATO } from "@/lib/oferta";
 
 export const Route = createFileRoute("/")({
   component: LandingPage,
   head: () => ({
     meta: [
       { title: "Odonto Connect — Sistema Completo para Clínicas Odontológicas" },
-      { name: "description", content: "SaaS completo de A a Z para clínicas odontológicas. CRM, agendamento com IA, WhatsApp, financeiro e muito mais. De dono de clínica para dono." },
+      { name: "description", content: "Sistema de gestão para clínicas odontológicas: CRM, agenda, WhatsApp, prontuário e financeiro. De dono de clínica para dono." },
       { property: "og:title", content: "Odonto Connect — Sistema Completo para Clínicas Odontológicas" },
-      { property: "og:description", content: "De dono de clínica para dono. Sistema completo de gestão odontológica com IA, CRM, WhatsApp e financeiro integrado." },
+      { property: "og:description", content: "De dono de clínica para dono. Gestão odontológica com CRM, agenda, WhatsApp, prontuário e financeiro." },
       { property: "og:image", content: "/images/logo-horizontal.png" },
     ],
   }),
@@ -33,29 +34,36 @@ export const Route = createFileRoute("/")({
  */
 const PROVA_SOCIAL_CONFIRMADA = false;
 
-// Número de WhatsApp do consultor (⚠️ parece provisório — confirmar antes do lançamento)
-const WHATSAPP_CONSULTOR = "https://wa.me/5511999990001";
+/**
+ * Textos de venda revisados pela Helena (docs/juridico/revisao-prs-lote-1.md, PR #19): cada
+ * frase descreve o que o sistema faz hoje (CDC arts. 30, 31 e 37). Recurso novo só entra aqui
+ * depois de existir no produto.
+ */
 
 const features = [
   { icon: RefreshCcw, title: "Reativação CRM Inteligente", desc: "Recupere pacientes inativos automaticamente com funil de follow-up inteligente. Kanban duplo de vendas e recuperação com níveis de consciência.", highlight: true },
   { icon: CalendarCheck, title: "Agenda Clínica Completa", desc: "Gestão completa de consultas, encaixes, confirmações automáticas e controle de faltas. Visão por dentista, sala e procedimento.", highlight: true },
-  { icon: Bot, title: "IA Agente Autônomo", desc: "Inteligência artificial que realiza atendimentos e agendamentos de forma autônoma via WhatsApp. Transcrição de áudio e relatórios clínicos com IA.", highlight: true },
-  { icon: Flame, title: "Sistema Fênix WhatsApp", desc: "Tecnologia exclusiva de contingência que mantém sua operação ativa 24/7. Múltiplas instâncias e failover automático. Nunca fique sem WhatsApp.", highlight: true },
+  { icon: MessageSquare, title: "WhatsApp da clínica", desc: "Conversas da recepção em um só lugar, com fila de envio que respeita horário, ritmo e pedidos de SAIR.", highlight: true },
   { icon: DollarSign, title: "Financeiro Integrado", desc: "Fluxo de caixa, contas a pagar/receber, comissões, faturamento e relatórios financeiros diretamente integrados com agendamentos e orçamentos.", highlight: true },
   { icon: Users, title: "CRM & Funil de Vendas", desc: "Kanban completo com funil de vendas e recuperação. Acompanhe cada lead do primeiro contato até a conversão em paciente." },
-  { icon: MessageSquare, title: "Chat Multi-Atendente", desc: "Central de atendimento via WhatsApp com fila inteligente, atribuição automática, modo fantasma e pesquisa de satisfação." },
-  { icon: BarChart3, title: "Dashboard & Analytics", desc: "Métricas em tempo real, KPIs de atendimento, taxa de conversão, ticket médio e relatórios gerenciais completos." },
+  { icon: MessageSquare, title: "Chat Multi-Atendente", desc: "Central de atendimento via WhatsApp com fila, atribuição de conversas, supervisão de conversas pelo gestor e pesquisa de satisfação." },
+  { icon: Bot, title: "Relatórios clínicos com IA", desc: "Transcrição da consulta, com autorização do paciente, e relatório revisado pelo dentista." },
+  { icon: BarChart3, title: "Painel do dia", desc: "Painel com a agenda e os atendimentos do dia." },
   { icon: Target, title: "Disparos em Massa", desc: "Campanhas recorrentes ou únicas com templates, segmentação de público, controle anti-spam e métricas de entrega." },
   { icon: Brain, title: "Meta Ads + IA", desc: "Integração com Meta Ads para análise de campanhas com insights gerados por inteligência artificial." },
   { icon: Clock, title: "Prontuário Digital", desc: "Odontograma interativo, histórico clínico, prescrições, relatórios IA e gestão completa do paciente." },
   { icon: TrendingUp, title: "Orçamentos & Tratamentos", desc: "Criação de orçamentos, acompanhamento de aprovação, controle de tratamentos em andamento e pagamentos." },
 ];
 
-// ⚠️ Preços, nomes e itens dos planos: sem alteração (mudança só com a Helena).
+/**
+ * Planos: slugs, nomes e limites iguais aos da tabela `plans` (vps-api-server/migration-saas.sql).
+ * ⚠️ PENDENTE (decisão do dono): preço. A landing anunciava 297/597/997 e o banco tem 197/397/897.
+ * Até haver uma fonte só (de preferência `GET /api/plans`), a página não mostra preço.
+ */
 const plans = [
-  { slug: "starter", name: "Starter", price: "297", desc: "Para clínicas iniciando a transformação digital", features: ["1 instância WhatsApp", "Até 500 pacientes", "CRM básico", "Agenda clínica", "Financeiro básico", "Suporte por e-mail"], popular: false },
-  { slug: "professional", name: "Professional", price: "597", desc: "Para clínicas que querem crescer com inteligência", features: ["3 instâncias WhatsApp", "Pacientes ilimitados", "CRM completo + Reativação", "IA Agente Autônomo", "Sistema Fênix", "Financeiro completo", "Disparos em massa", "Dashboard analytics", "Suporte prioritário"], popular: true },
-  { slug: "enterprise", name: "Enterprise", price: "997", desc: "Para redes e clínicas de alto volume", features: ["Instâncias ilimitadas", "Multi-unidade", "Tudo do Professional", "Meta Ads + IA Insights", "API personalizada", "Onboarding dedicado", "Gerente de conta", "SLA garantido"], popular: false },
+  { slug: "starter", name: "Starter", desc: "Para clínicas pequenas começando agora", features: ["1 número de WhatsApp", "Até 3 usuários e 2 dentistas", "Até 500 pacientes", "CRM e agenda clínica", "Financeiro", "Suporte por e-mail"], popular: false },
+  { slug: "pro", name: "Profissional", desc: "Para clínicas em crescimento", features: ["3 números de WhatsApp", "Até 10 usuários e 8 dentistas", "Até 5.000 pacientes", "CRM com reativação de pacientes", "Disparos com fila e opção de SAIR", "Integração Clinicorp", "Meta Ads"], popular: true },
+  { slug: "enterprise", name: "Enterprise", desc: "Para grandes clínicas e redes", features: ["Tudo do Profissional", "Sem limite de usuários, dentistas e pacientes", "Sem limite de números de WhatsApp", "Relatórios clínicos com IA"], popular: false },
 ];
 
 const testimonials = [
@@ -65,14 +73,12 @@ const testimonials = [
 ];
 
 const faqs = [
-  { q: "Preciso instalar algum software no computador?", a: "Não! O Odonto Connect é 100% online (SaaS). Basta acessar pelo navegador de qualquer computador, tablet ou celular. Não precisa instalar nada." },
-  { q: "Como funciona a IA Agente Autônomo?", a: "A IA atende seus pacientes via WhatsApp de forma autônoma: responde dúvidas, agenda consultas, envia lembretes e faz follow-up. Você configura as regras e a IA cuida do resto 24 horas por dia." },
-  { q: "O que é o Sistema Fênix de WhatsApp?", a: "É nossa tecnologia exclusiva de contingência. Se uma instância do WhatsApp cair, o sistema automaticamente redireciona para outra instância ativa, garantindo que sua clínica nunca fique sem atendimento." },
-  { q: "Como funciona a reativação de pacientes pelo CRM?", a: "O CRM possui um funil de recuperação com follow-ups automáticos. Pacientes inativos ou que não responderam entram em uma sequência inteligente de contato via WhatsApp, aumentando significativamente a taxa de retorno." },
-  { q: "Posso migrar meus dados de outro sistema?", a: "Sim! Nossa equipe auxilia na migração completa dos dados de pacientes, agenda e financeiro. O processo é rápido e sem perda de informações." },
-  { q: "Quantas pessoas podem usar o sistema ao mesmo tempo?", a: "Não há limite de usuários simultâneos. Toda a equipe — recepcionistas, dentistas, gestores — pode acessar ao mesmo tempo com permissões personalizadas por função." },
-  { q: "O sistema emite relatórios financeiros?", a: "Sim! O módulo financeiro integrado gera relatórios de faturamento, fluxo de caixa, contas a pagar/receber, comissões por dentista e muito mais. Tudo atualizado em tempo real." },
-  { q: "Existe período de teste gratuito?", a: "Sim! Oferecemos 7 dias grátis com acesso completo a todas as funcionalidades. Sem necessidade de cartão de crédito e sem compromisso." },
+  { q: "Preciso instalar algum software no computador?", a: "Não! O Odonto Connect é 100% online (SaaS). Funciona no navegador, sem instalar nada." },
+  { q: "Como funciona a reativação de pacientes pelo CRM?", a: "O CRM possui um funil de recuperação com follow-ups automáticos. Pacientes inativos ou que não responderam entram em uma sequência inteligente de contato via WhatsApp, para trazer de volta quem não voltou." },
+  { q: "Posso migrar meus dados de outro sistema?", a: "Sim. Nossa equipe ajuda a trazer seus dados e confere tudo com você." },
+  { q: "Quantas pessoas podem usar o sistema ao mesmo tempo?", a: "Cada plano tem um número de usuários; toda a equipe pode acessar ao mesmo tempo, com permissões por função." },
+  { q: "O sistema emite relatórios financeiros?", a: "Sim! O módulo financeiro integrado gera relatórios de faturamento, fluxo de caixa, contas a pagar/receber, comissões por dentista e muito mais." },
+  { q: "Existe período de teste gratuito?", a: `Sim! Você testa por ${TESTE_GRATIS_DIAS} dias, sem cartão de crédito. Nada é cobrado sem a sua aprovação.` },
 ];
 
 /* Medidas da página: uma margem, uma largura, um raio. Ver DESIGN.md › Landing. */
@@ -115,9 +121,10 @@ function SiteNav() {
   }, []);
   return (
     <header className={`sticky top-0 z-50 surface-glass border-b transition-colors ${rolou ? "border-border" : "border-transparent"}`}>
-      <nav className={`${WRAP} h-16 flex items-center justify-between gap-4`} aria-label="Principal">
-        <Link to="/" className="shrink-0" aria-label="Odonto Connect — início">
-          <img src={logoHorizontal} alt="Odonto Connect" className="h-5 sm:h-7 w-auto" width={1920} height={194} />
+      <nav className={`${WRAP} h-16 flex items-center justify-between gap-3 sm:gap-4`} aria-label="Principal">
+        {/* No celular o logo encolhe para caber com os dois botões (a 375 px passava 8 px da tela) */}
+        <Link to="/" className="min-w-0 shrink" aria-label="Odonto Connect — início">
+          <img src={logoHorizontal} alt="Odonto Connect" className="block w-full max-w-[198px] h-auto sm:max-w-none sm:w-auto sm:h-7" width={1920} height={194} />
         </Link>
         <div className="hidden lg:flex items-center gap-8 text-[0.9375rem] font-medium text-muted-foreground">
           <a href="#funcionalidades" className="hover:text-foreground transition-colors">Funcionalidades</a>
@@ -152,20 +159,23 @@ function Hero() {
             <span className="hero-line"><span style={{ animationDelay: "110ms" }}>de A a Z</span></span>
           </h1>
           <p className="hero-fade mt-6 text-lg leading-relaxed text-foreground/80 max-w-[34rem]">
-            CRM inteligente, agendamento com IA autônoma, WhatsApp com contingência Fênix, financeiro integrado e muito mais.
-            Tudo que sua clínica precisa em uma única plataforma.
+            CRM, agenda, WhatsApp da recepção, prontuário e financeiro em uma única plataforma,
+            feita por quem tem clínica.
           </p>
           <div className="hero-fade mt-8 flex flex-col sm:flex-row gap-3">
             <Link to="/signup" search={{}} className={BTN_PRIMARY}>
               Iniciar teste grátis <ArrowRight className="h-4 w-4" />
             </Link>
-            <a href={WHATSAPP_CONSULTOR} target="_blank" rel="noopener noreferrer" className={BTN_SECONDARY}>
-              <Phone className="h-4 w-4" /> Falar com consultor
-            </a>
+            {WHATSAPP_CONSULTOR ? (
+              <a href={WHATSAPP_CONSULTOR} target="_blank" rel="noopener noreferrer" className={BTN_SECONDARY}>
+                <Phone className="h-4 w-4" /> Falar com consultor
+              </a>
+            ) : (
+              <a href="#funcionalidades" className={BTN_SECONDARY}>Ver funcionalidades</a>
+            )}
           </div>
-          {/* ⚠️ Helena: "7 dias grátis" aqui × "14 dias" no /signup — não decidido. */}
           <ul className="hero-fade mt-6 flex flex-wrap gap-x-5 gap-y-2 text-[0.9375rem] text-muted-foreground">
-            {["7 dias grátis", "Sem fidelidade", "Suporte humano"].map((t) => (
+            {[TESTE_GRATIS_TEXTO, "Sem fidelidade", "Suporte humano"].map((t) => (
               <li key={t} className="flex items-center gap-1.5">
                 <CheckCircle className="h-4 w-4 text-success" aria-hidden="true" /> {t}
               </li>
@@ -208,8 +218,7 @@ function Features() {
   const provas: Record<string, ReactNode> = {
     "Reativação CRM Inteligente": <ProofReativacao />,
     "Agenda Clínica Completa": <ProofSemana />,
-    "IA Agente Autônomo": <ProofConversa />,
-    "Sistema Fênix WhatsApp": <ProofFenix />,
+    "WhatsApp da clínica": <ProofConversa />,
     "Financeiro Integrado": <ProofCaixa />,
   };
 
@@ -345,7 +354,7 @@ function ProofConversa() {
         <span className="h-8 w-8 rounded-full bg-success/15 text-success text-xs font-semibold flex items-center justify-center" aria-hidden="true">PM</span>
         <div>
           <p className="text-[0.875rem] font-semibold leading-tight">Paulo Martins</p>
-          <p className="text-xs text-muted-foreground">WhatsApp · atendido pela IA</p>
+          <p className="text-xs text-muted-foreground">WhatsApp · atendido pela recepção</p>
         </div>
       </div>
       <div className="chat-bg-pattern px-4 py-4 space-y-2.5 text-[0.875rem]">
@@ -358,42 +367,6 @@ function ProofConversa() {
           Marcado: sexta, 9h30. Envio um lembrete na véspera.
         </p>
       </div>
-    </ProofPanel>
-  );
-}
-
-function ProofFenix() {
-  const [principalOn, setPrincipalOn] = useState(true);
-  const linhas = [
-    { nome: "Número principal", fone: "(11) 9····-0001", on: principalOn, uso: principalOn ? "Atendendo" : "Desconectado" },
-    { nome: "Número reserva", fone: "(11) 9····-0002", on: true, uso: principalOn ? "Pronto" : "Atendendo" },
-  ];
-  return (
-    <ProofPanel className="max-w-[520px]">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-        <p className="text-[0.875rem] font-semibold">Canais de WhatsApp</p>
-        <button
-          type="button"
-          onClick={() => setPrincipalOn((v) => !v)}
-          className="h-9 px-3 rounded text-xs font-semibold bg-secondary hover:bg-muted transition-colors"
-        >
-          {principalOn ? "Simular queda" : "Reconectar"}
-        </button>
-      </div>
-      <ul>
-        {linhas.map((l) => (
-          <li key={l.nome} className="flex items-center gap-3 px-4 py-3.5 border-b border-border last:border-0">
-            <Wifi className={`h-4 w-4 shrink-0 ${l.on ? "text-success" : "text-destructive"}`} aria-hidden="true" />
-            <span className="flex-1 min-w-0">
-              <span className="block text-[0.875rem] font-medium">{l.nome}</span>
-              <span className="block text-xs text-muted-foreground tabular-nums">{l.fone}</span>
-            </span>
-            <span className={`min-h-6 py-0.5 px-2 inline-flex items-center rounded text-xs font-semibold ${
-              l.uso === "Atendendo" ? "bg-success/12 text-success" : l.on ? "bg-muted text-muted-foreground" : "bg-destructive/10 text-destructive"
-            }`}>{l.uso}</span>
-          </li>
-        ))}
-      </ul>
     </ProofPanel>
   );
 }
@@ -495,10 +468,10 @@ function Pricing() {
       <div className={WRAP}>
         <div className="max-w-[44rem]">
           <h2 className="font-heading font-semibold tracking-[-0.02em] leading-[1.1] text-[1.625rem] sm:text-[2.125rem] lg:text-[2.5rem]">
-            Planos que cabem no seu bolso
+            Planos
           </h2>
           <p className="mt-4 text-lg text-stage-muted">
-            Comece gratuitamente por 7 dias. Sem compromisso, sem cartão de crédito.
+            Teste por {TESTE_GRATIS_DIAS} dias, sem cartão de crédito. Para saber o valor de cada plano, fale com a nossa equipe.
           </p>
         </div>
 
@@ -521,7 +494,7 @@ function Pricing() {
                 <span className={`h-3 w-3 rounded-full bg-[var(--color-dental-cyan)] transition-opacity ${i === sel ? "opacity-100" : "opacity-0"}`} aria-hidden="true" />
                 {p.name}
                 {p.popular && (
-                  <span className="whitespace-nowrap text-[0.9375rem] font-medium tracking-normal text-stage-muted">· Mais popular</span>
+                  <span className="whitespace-nowrap text-[0.9375rem] font-medium tracking-normal text-stage-muted">· Recomendado</span>
                 )}
               </button>
             ))}
@@ -537,7 +510,7 @@ function Pricing() {
             <div key={p.slug} className="rounded-lg bg-white/[0.06] p-6">
               <h3 className="font-heading text-[1.875rem] font-semibold tracking-[-0.02em] leading-tight">
                 {p.name}
-                {p.popular && <span className="ml-2 text-[0.9375rem] font-medium tracking-normal text-stage-muted">· Mais popular</span>}
+                {p.popular && <span className="ml-2 text-[0.9375rem] font-medium tracking-normal text-stage-muted">· Recomendado</span>}
               </h3>
               <PlanStage plan={p} compact />
             </div>
@@ -551,13 +524,7 @@ function Pricing() {
 function PlanStage({ plan, compact = false }: { plan: (typeof plans)[number]; compact?: boolean }) {
   return (
     <div className={compact ? "mt-3" : "animate-fade-in"}>
-      <p className="flex items-baseline gap-2">
-        <span className={`font-heading font-semibold tracking-[-0.03em] tabular-nums leading-none ${compact ? "text-[3rem]" : "text-[6rem]"}`}>
-          R$ {plan.price}
-        </span>
-        <span className="text-[1.125rem] text-stage-muted">/mês</span>
-      </p>
-      <p className={`text-stage-muted ${compact ? "mt-3 text-[1rem]" : "mt-5 text-[1.125rem]"}`}>{plan.desc}</p>
+      <p className={compact ? "mt-1 text-[1rem] text-stage-muted" : "font-heading text-[1.75rem] font-semibold tracking-[-0.02em] leading-tight"}>{plan.desc}</p>
       <ul className={`grid gap-x-8 gap-y-2.5 ${compact ? "mt-5" : "mt-8 sm:grid-cols-2"}`}>
         {plan.features.map((f) => (
           <li key={f} className="flex items-start gap-2.5 text-[1rem]">
@@ -566,13 +533,21 @@ function PlanStage({ plan, compact = false }: { plan: (typeof plans)[number]; co
           </li>
         ))}
       </ul>
+      <div className={`mt-8 flex gap-x-6 gap-y-3 ${compact ? "flex-col" : "flex-wrap items-center"}`}>
       <Link
         to="/signup"
         search={{ plan: plan.slug }}
-        className={`mt-8 inline-flex items-center justify-center gap-2 h-12 px-6 rounded-md bg-stage-foreground text-stage text-[0.9375rem] font-semibold hover:bg-white active:translate-y-px transition-[background-color,transform] ${compact ? "w-full" : ""}`}
+        className={`inline-flex items-center justify-center gap-2 h-12 px-6 rounded-md bg-stage-foreground text-stage text-[0.9375rem] font-semibold hover:bg-white active:translate-y-px transition-[background-color,transform] ${compact ? "w-full" : ""}`}
       >
         Testar o {plan.name} grátis <ArrowRight className="h-4 w-4" />
       </Link>
+      <a
+        href={`mailto:${EMAIL_CONTATO}?subject=${encodeURIComponent(`Valores do plano ${plan.name}`)}`}
+        className="inline-flex items-center justify-center gap-2 min-h-11 text-[0.9375rem] font-semibold text-stage-foreground underline-offset-4 hover:underline"
+      >
+        <Mail className="h-4 w-4" aria-hidden="true" /> Consultar valores
+      </a>
+      </div>
     </div>
   );
 }
@@ -616,8 +591,8 @@ function Faq() {
               Perguntas frequentes
             </h2>
             <p className="mt-4 text-lg text-foreground/80">Tire suas dúvidas sobre o Odonto Connect.</p>
-            <a href={WHATSAPP_CONSULTOR} target="_blank" rel="noopener noreferrer" className="mt-6 inline-flex items-center gap-2 text-[0.9375rem] font-semibold text-primary hover:underline underline-offset-4">
-              Outra dúvida? Fale com um consultor <ArrowRight className="h-4 w-4" />
+            <a href={WHATSAPP_CONSULTOR ?? `mailto:${EMAIL_CONTATO}`} {...(WHATSAPP_CONSULTOR ? { target: "_blank", rel: "noopener noreferrer" } : {})} className="mt-6 inline-flex items-center gap-2 text-[0.9375rem] font-semibold text-primary hover:underline underline-offset-4">
+              Outra dúvida? Fale com a nossa equipe <ArrowRight className="h-4 w-4" />
             </a>
           </div>
         </div>
@@ -646,12 +621,11 @@ function FinalCta() {
         <div className="rounded-lg bg-primary text-primary-foreground px-6 py-14 sm:px-12 lg:px-16 lg:py-20 grid lg:grid-cols-12 gap-8 items-end">
           <div className="lg:col-span-8">
             <h2 className="font-heading font-semibold tracking-[-0.02em] leading-[1.1] text-[1.625rem] sm:text-[2.125rem] lg:text-[3rem]">
-              Pronto para transformar sua clínica?
+              Veja a sua clínica no Odonto Connect
             </h2>
             <p className="mt-4 text-lg text-primary-foreground/85 max-w-[40rem]">
-              {PROVA_SOCIAL_CONFIRMADA
-                ? "Junte-se a centenas de clínicas que já estão crescendo com o Odonto Connect. Comece seu teste gratuito de 7 dias agora."
-                : "Comece seu teste gratuito de 7 dias agora."}
+              {PROVA_SOCIAL_CONFIRMADA && "Junte-se a centenas de clínicas que já estão crescendo com o Odonto Connect. "}
+              Comece seu teste gratuito de {TESTE_GRATIS_DIAS} dias agora.
             </p>
           </div>
           <div className="lg:col-span-4 lg:justify-self-end">
@@ -660,7 +634,7 @@ function FinalCta() {
               search={{}}
               className="inline-flex w-full sm:w-auto items-center justify-center gap-2 h-12 px-6 rounded-md bg-white text-accent-foreground text-[0.9375rem] font-semibold hover:bg-white/90 active:translate-y-px transition-[background-color,transform]"
             >
-              Começar agora grátis <ArrowRight className="h-4 w-4" />
+              Criar conta de teste <ArrowRight className="h-4 w-4" />
             </Link>
           </div>
         </div>
@@ -681,13 +655,15 @@ function SiteFooter() {
           <ul className="flex flex-wrap gap-x-6 gap-y-2 font-medium">
             <li><a href="#funcionalidades" className="hover:text-primary transition-colors">Funcionalidades</a></li>
             <li><a href="#planos" className="hover:text-primary transition-colors">Planos</a></li>
+            {WHATSAPP_CONSULTOR && (
+              <li>
+                <a href={WHATSAPP_CONSULTOR} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 hover:text-primary transition-colors">
+                  <Phone className="h-4 w-4" aria-hidden="true" /> WhatsApp
+                </a>
+              </li>
+            )}
             <li>
-              <a href={WHATSAPP_CONSULTOR} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 hover:text-primary transition-colors">
-                <Phone className="h-4 w-4" aria-hidden="true" /> WhatsApp
-              </a>
-            </li>
-            <li>
-              <a href="mailto:contato@odontoconnect.com" className="inline-flex items-center gap-1.5 hover:text-primary transition-colors">
+              <a href={`mailto:${EMAIL_CONTATO}`} className="inline-flex items-center gap-1.5 hover:text-primary transition-colors">
                 <Mail className="h-4 w-4" aria-hidden="true" /> E-mail
               </a>
             </li>
