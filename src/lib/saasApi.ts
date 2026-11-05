@@ -20,6 +20,9 @@ export interface Plan {
   ativo?: boolean;
 }
 
+/** Plano como o GET /api/plans público devolve (fonte única de nome, preço e teste grátis). */
+export type PublicPlan = Omit<Plan, "id" | "ativo">;
+
 export interface Tenant {
   id: string;
   nome: string;
@@ -59,7 +62,8 @@ export interface Invoice {
 }
 
 export const saasApi = {
-  listPlans: () => vpsApiFetch<{ data: Plan[] }>("/plans"),
+  /** Público (sem login): só planos ativos, sem id nem dados internos. */
+  listPlans: () => vpsApiFetch<{ data: PublicPlan[] }>("/plans"),
 
   signupClinic: async (payload: {
     clinic_name: string;

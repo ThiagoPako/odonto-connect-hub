@@ -1143,15 +1143,34 @@ function slugify(s) {
     .slice(0, 60);
 }
 
+// Público (landing, cadastro, minha-assinatura): fonte única de nome, preço, prazo de teste,
+// limites e recursos. Só planos ativos e sem dado interno (id, datas, flag ativo).
+// NUMERIC do Postgres chega como texto: vira número aqui para o front não somar string.
+const toNumOrNull = (v) => (v === null || v === undefined || v === '' ? null : Number(v));
 app.get('/api/plans', async (_req, res) => {
   try {
     const { rows } = await pool.query(
-      `SELECT id, slug, nome, descricao, preco_mensal, preco_anual, trial_days,
+      `SELECT slug, nome, descricao, preco_mensal, preco_anual, trial_days,
               max_usuarios, max_dentistas, max_pacientes, max_whatsapp_instances,
               features, display_order
          FROM plans WHERE ativo = true ORDER BY display_order, preco_mensal`
     );
-    res.json({ data: rows });
+    const data = rows.map((r) => ({
+      slug: r.slug,
+      nome: r.nome,
+      descricao: r.descricao ?? null,
+      preco_mensal: Number(r.preco_mensal ?? 0),
+      preco_anual: toNumOrNull(r.preco_anual),
+      trial_days: Number(r.trial_days ?? 14),
+      max_usuarios: toNumOrNull(r.max_usuarios),
+      max_dentistas: toNumOrNull(r.max_dentistas),
+      max_pacientes: toNumOrNull(r.max_pacientes),
+      max_whatsapp_instances: toNumOrNull(r.max_whatsapp_instances),
+      features: r.features && typeof r.features === 'object' ? r.features : {},
+      display_order: Number(r.display_order ?? 0),
+    }));
+    res.set('Cache-Control', 'public, max-age=300');
+    res.json({ data });
   } catch (error) {
     console.error('GET /api/plans error:', error);
     res.status(500).json({ error: 'Erro ao listar planos' });

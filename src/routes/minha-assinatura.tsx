@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { saasApi, type Tenant, type Subscription, type Invoice, type Plan } from "@/lib/saasApi";
+import { saasApi, type Tenant, type Subscription, type Invoice, type PublicPlan as Plan } from "@/lib/saasApi";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -136,7 +136,7 @@ function MinhaAssinaturaPage() {
             {tenant.status === "trial" ? (
               <p>
                 Seu teste termina em <strong>{trialDaysLeft} dia{trialDaysLeft !== 1 ? "s" : ""}</strong>.
-                Escolha um plano abaixo para continuar usando após o trial.
+                Escolha um plano abaixo para continuar usando depois do teste.
               </p>
             ) : sub?.current_period_end ? (
               <p>Próxima renovação: {new Date(sub.current_period_end).toLocaleDateString("pt-BR")}</p>
@@ -158,7 +158,7 @@ function MinhaAssinaturaPage() {
             {plans.map((p) => {
               const isCurrent = p.slug === tenant.plan_slug;
               return (
-                <Card key={p.id} className={isCurrent ? "border-primary ring-2 ring-primary/30" : ""}>
+                <Card key={p.slug} className={isCurrent ? "border-primary ring-2 ring-primary/30" : ""}>
                   <CardHeader>
                     <CardTitle className="text-base">{p.nome}</CardTitle>
                     <CardDescription>{p.descricao}</CardDescription>
