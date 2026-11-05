@@ -54,13 +54,18 @@ function ProntuarioPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [showAdd, setShowAdd] = useState(false);
 
+  const [loadError, setLoadError] = useState<string | null>(null);
+
   const loadAll = useCallback(async () => {
     try {
       const [pRes, prRes] = await Promise.all([pacientesApi.list(), prontuariosApi.list()]);
-      const pData = (pRes as any).data || pRes || [];
-      const prData = (prRes as any).data || prRes || [];
-      setPacientes(Array.isArray(pData) ? pData : []);
-      setProntuarios(Array.isArray(prData) ? prData.map((r: any) => ({
+      const erro = pRes.error || prRes.error;
+      setLoadError(erro);
+      if (erro) toast.error("Não foi possível carregar o prontuário: " + erro);
+      const pData: any = pRes.data || [];
+      const prData: any = prRes.data || [];
+      if (!pRes.error) setPacientes(Array.isArray(pData) ? pData : []);
+      if (!prRes.error) setProntuarios(Array.isArray(prData) ? prData.map((r: any) => ({
         id: r.id,
         paciente_id: r.paciente_id,
         paciente_nome: r.paciente_nome || '',
@@ -188,7 +193,12 @@ function ProntuarioPage() {
                         </div>
                       );
                     })}
-                    {selectedEntries.length === 0 && (
+                    {loadError ? (
+                      <div role="alert" className="text-center py-8 space-y-2">
+                        <p className="text-xs text-destructive">Não foi possível carregar os registros clínicos. Não conclua que o paciente não tem histórico. {loadError}</p>
+                        <button type="button" onClick={loadAll} className="text-xs font-semibold underline">Tentar de novo</button>
+                      </div>
+                    ) : selectedEntries.length === 0 && (
                       <p className="text-xs text-muted-foreground text-center py-8">Nenhum registro clínico para este paciente.</p>
                     )}
                   </div>

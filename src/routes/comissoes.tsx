@@ -53,12 +53,17 @@ function ComissoesPage() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
+  const [loadError, setLoadError] = useState<string | null>(null);
+
   const loadAll = useCallback(async () => {
     try {
       const [dRes, cRes, pRes] = await Promise.all([dentistasApi.list(), comissoesApi.list(), pacientesApi.list()]);
-      const dData = (dRes as any).data || dRes || [];
-      const cData = (cRes as any).data || cRes || [];
-      const pData = (pRes as any).data || pRes || [];
+      const erro = cRes.error || dRes.error || pRes.error;
+      setLoadError(erro);
+      if (erro) toast.error("Não foi possível carregar as comissões: " + erro);
+      const dData: any = dRes.data || [];
+      const cData: any = cRes.data || [];
+      const pData: any = pRes.data || [];
       setDentistas(Array.isArray(dData) ? dData : []);
       setPacientes(Array.isArray(pData) ? pData.map((p: any) => ({ id: p.id, nome: p.nome })) : []);
       setComissoes(Array.isArray(cData) ? cData.map((r: any) => ({
@@ -257,7 +262,14 @@ function ComissoesPage() {
                       );
                     })}
                     {filteredEntries.length === 0 && (
-                      <tr><td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">Nenhuma comissão encontrada.</td></tr>
+                      <tr><td colSpan={8} className="px-4 py-8 text-center text-muted-foreground">
+                        {loadError ? (
+                          <span role="alert" className="text-destructive">
+                            Não foi possível carregar as comissões. {loadError}{" "}
+                            <button type="button" onClick={loadAll} className="underline font-semibold">Tentar de novo</button>
+                          </span>
+                        ) : "Nenhuma comissão encontrada."}
+                      </td></tr>
                     )}
                   </tbody>
                 </table>
