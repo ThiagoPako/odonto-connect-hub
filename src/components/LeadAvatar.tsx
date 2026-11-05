@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMidiaAssinada } from "@/lib/midiaAssinada";
 
 interface LeadAvatarProps {
   initials: string;
@@ -16,13 +16,14 @@ const sizeClasses = {
 
 
 export function LeadAvatar({ initials, avatarUrl, avatarColor = "bg-primary/20", size = "md", className = "" }: LeadAvatarProps) {
-  const [imgError, setImgError] = useState(false);
+  // Foto salva no servidor usa link assinado (L7): renova uma vez; se não der, mostra as iniciais.
+  const { src, onError, indisponivel } = useMidiaAssinada(avatarUrl);
 
-  const avatar = avatarUrl && !imgError ? (
+  const avatar = src && !indisponivel ? (
     <img
-      src={avatarUrl}
+      src={src}
       alt={initials}
-      onError={() => setImgError(true)}
+      onError={onError}
       className={`${sizeClasses[size]} rounded-full object-cover shrink-0`}
     />
   ) : (
