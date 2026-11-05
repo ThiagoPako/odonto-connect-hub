@@ -12,6 +12,9 @@ import { toast } from "sonner";
 
 export const Route = createFileRoute("/prontuario")({
   ssr: false,
+  // /prontuario?id=<paciente> (botão "Abrir prontuário" da agenda) já abre o paciente
+  validateSearch: (search: Record<string, unknown>): { id?: string } =>
+    typeof search.id === "string" && search.id ? { id: search.id } : {},
   component: ProntuarioPage,
 });
 
@@ -53,7 +56,8 @@ function ProntuarioPage() {
   const [pacientes, setPacientes] = useState<PacienteRow[]>([]);
   const [prontuarios, setProntuarios] = useState<ProntuarioRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedPacienteId, setSelectedPacienteId] = useState<string | null>(null);
+  const { id: pacienteDaUrl } = Route.useSearch();
+  const [selectedPacienteId, setSelectedPacienteId] = useState<string | null>(pacienteDaUrl ?? null);
   const [searchTerm, setSearchTerm] = useState("");
   const [showAdd, setShowAdd] = useState(false);
   const detailRef = useRef<HTMLDivElement>(null);
