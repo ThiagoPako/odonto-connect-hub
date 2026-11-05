@@ -39,7 +39,7 @@ for (const r of routes) {
     const t = m[1].toLowerCase();
     if (!GLOBAL.has(t) && !['select', 'set', 'values', 'lateral'].includes(t)) tables.add(t);
   }
-  const usaTenant = /tenant_id/.test(b);
+  const usaTenant = /tenant_id|assertCanManageUser\(/.test(b);
   if (tables.size && !usaTenant) flags.push('SQL-SEM-tenant_id');
 
   // Recurso por id na URL sem filtro de tenant na mesma query.

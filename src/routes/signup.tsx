@@ -35,8 +35,8 @@ function SignupPage() {
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!form.email || form.password.length < 6) {
-      toast.error("Preencha o email e uma senha de no mínimo 6 caracteres");
+    if (!form.email || form.password.length < 8) {
+      toast.error("Preencha o email e uma senha de no mínimo 8 caracteres");
       return;
     }
     if (!form.nome.trim()) {
@@ -131,7 +131,7 @@ function SignupPage() {
             type="password"
             value={form.password}
             onChange={(e) => setForm({ ...form, password: e.target.value })}
-            placeholder="Mínimo 6 caracteres"
+            placeholder="Mínimo 8 caracteres"
             required
             autoComplete="new-password"
             className={field}
