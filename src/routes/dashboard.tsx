@@ -82,6 +82,8 @@ function DashboardPage() {
   const [sessions, setSessions] = useState<ActiveSession[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Erro da lista de atendimentos ativos: antes era ignorado e a tela dizia "nenhuma conversa"
+  const [sessionsError, setSessionsError] = useState<string | null>(null);
   // Só depois da primeira resposta os números são reais; antes, esqueleto (nada de "0" falso)
   const [hasLoaded, setHasLoaded] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
@@ -97,7 +99,7 @@ function DashboardPage() {
     async function load() {
       setLoading(true);
       setError(null);
-      const [{ data, error: kpiErr }, { data: sess }] = await Promise.all([
+      const [{ data, error: kpiErr }, { data: sess, error: sessErr }] = await Promise.all([
         dashboardApi.getKpis(),
         sessionsApi.list({ active: true }),
       ]);
@@ -115,6 +117,7 @@ function DashboardPage() {
           estoque: { ...EMPTY_KPIS.estoque, ...(d.estoque || {}) },
         });
       }
+      setSessionsError(sessErr ?? null);
       if (Array.isArray(sess)) setSessions(sess);
       setHasLoaded(true);
       setLoading(false);
@@ -126,7 +129,6 @@ function DashboardPage() {
 
   const { agenda, orcamentos: orcamento, crm, estoque, pacientes } = kpis;
   const firstLoad = loading && !hasLoaded;
-  const isEmpty = !loading && !error && pacientes.totalCadastrados === 0 && agenda.total === 0;
 
   return (
     <div className="flex-1 flex flex-col min-h-screen">
@@ -169,24 +171,8 @@ function DashboardPage() {
           </div>
         )}
 
-        {isEmpty && (
-          <div className="rounded-lg bg-accent px-5 py-4 flex flex-col sm:flex-row sm:items-center gap-4">
-            <div className="flex-1">
-              <p className="text-[0.9375rem] font-semibold text-foreground">Sua clínica ainda não tem dados</p>
-              <p className="text-sm text-muted-foreground mt-0.5">
-                Cadastre pacientes e marque consultas para os indicadores aparecerem aqui.
-              </p>
-            </div>
-            <div className="flex gap-2 shrink-0">
-              <Link to="/pacientes" className="inline-flex items-center h-10 px-4 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors">
-                Cadastrar paciente
-              </Link>
-              <Link to="/agenda" className="inline-flex items-center h-10 px-4 rounded-md bg-card text-foreground text-sm font-medium border border-input hover:bg-muted transition-colors">
-                Abrir agenda
-              </Link>
-            </div>
-          </div>
-        )}
+        {/* Estado vazio: o checklist de primeiros passos (#61) entra aqui. O aviso "sua clínica ainda
+            não tem dados" saiu para não repetir o checklist. */}
 
         {/* === AGENDA DO DIA === */}
         <section>
@@ -221,7 +207,7 @@ function DashboardPage() {
             <KpiCard loading={firstLoad} title="Pacientes Ativos" value={fmt(crm.ativos)} icon={UserCheck} />
             <KpiCard loading={firstLoad} title="Leads no Funil" value={fmt(crm.totalLeadsKanban)} change={`${crm.semResposta} sem resposta`} changeType={crm.semResposta > 0 ? "warning" : "neutral"} icon={TrendingUp} />
             <KpiCard loading={firstLoad} title="Inativos" value={fmt(crm.inativos)} change={crm.inativos > 0 ? "Reativar" : ""} changeType="warning" icon={UserX} />
-            <KpiCard loading={firstLoad} title="Receita Mensal" value={`R$ ${crm.receitaTotal.toLocaleString("pt-BR")}`} icon={DollarSign} />
+            <KpiCard loading={firstLoad} title="Receita Mensal" value={`R$ ${Number(kpis.receitaMensal ?? 0).toLocaleString("pt-BR")}`} icon={DollarSign} />
           </div>
         </section>
 
@@ -260,7 +246,22 @@ function DashboardPage() {
         {/* === ATENDIMENTOS ATIVOS (CHAT) === */}
         <section>
           <SectionHeader icon={MessageSquare} title="Atendimentos ativos" to="/chat" linkLabel="Abrir chat" />
-          {sessions.length === 0 ? (
+          {sessionsError ? (
+            <div role="alert" className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-lg bg-destructive/10 px-4 py-3 text-sm">
+              <span className="flex flex-1 items-start gap-2 text-foreground">
+                <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-destructive" aria-hidden="true" />
+                <span>Não foi possível carregar os atendimentos ativos. {sessionsError}</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setReloadKey((k) => k + 1)}
+                disabled={loading}
+                className="inline-flex items-center justify-center h-10 px-4 rounded-md bg-card text-foreground text-sm font-medium border border-input hover:bg-muted active:translate-y-px transition-[background-color,transform] disabled:opacity-50 shrink-0"
+              >
+                {loading ? "Tentando…" : "Tentar de novo"}
+              </button>
+            </div>
+          ) : sessions.length === 0 ? (
             <div className="rounded-lg bg-muted px-5 py-6 text-sm text-muted-foreground">
               Nenhuma conversa em andamento agora.
             </div>
