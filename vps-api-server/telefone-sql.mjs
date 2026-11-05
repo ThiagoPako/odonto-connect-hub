@@ -42,7 +42,8 @@ export function candidatosFone(telefone, { semDdd = false } = {}) {
     if (nacional !== d) c.push(nacional);
     if (nacional.length === 10 && /^[6-9]$/.test(nacional[2])) {
       c.push(`${nacional.slice(0, 2)}9${nacional.slice(2)}`);
-    } else if (nacional.length === 11 && nacional[2] === '9') {
+    } else if (nacional.length === 11 && nacional[2] === '9' && /^[6-9]$/.test(nacional[3])) {
+      // Só volta para DDD + 8 se o resto parecer celular (6–9): senão casaria com um fixo.
       const semNove = `${nacional.slice(0, 2)}${nacional.slice(3)}`;
       c.push(semNove, `5${semNove}`);
     }
