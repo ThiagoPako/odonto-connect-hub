@@ -162,7 +162,8 @@ jobs:
               echo "::warning title=Únicos por clínica não aplicados::migration-unicos-por-clinica.sql falhou (repetido na mesma clínica, lock ou erro). As chaves globais que não foram trocadas continuam; o deploy segue. Ver log acima."
               echo "!!! ATENÇÃO: alguma chave única GLOBAL (cpf/cro/marcador) continua ativa: revisar o log acima."
             fi
-            cat /root/odonto-connect/vps-api-server/migration-whatsapp-saude.sql | sudo -u postgres psql -p 5433 -d odonto_db -v ON_ERROR_STOP=1 2>&1 \
+            # lock_timeout via PGOPTIONS (não no .sql: o boot roda o arquivo no pool)
+            cat /root/odonto-connect/vps-api-server/migration-whatsapp-saude.sql | sudo -u postgres env PGOPTIONS='-c lock_timeout=5s' psql -p 5433 -d odonto_db -v ON_ERROR_STOP=1 2>&1 \
               || echo "::warning::migration-whatsapp-saude.sql falhou: confira whatsapp_instance_health_log e as colunas connection_state/state_since de whatsapp_instances"
             echo "=== Migrations applied ==="
 
