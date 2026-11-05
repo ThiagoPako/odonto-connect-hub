@@ -760,6 +760,13 @@ export const execucoesApi = {
 
 // ─── WhatsApp (via proxy) ───────────────────────────────────
 
+export const optOutApi = {
+  status: (leadId: string) =>
+    vpsApiFetch<{ optedOut: boolean; since?: string; keyword?: string | null }>('/whatsapp/opt-out', { params: { leadId }, background: true }),
+  revogar: (leadId: string, solicitacao: string) =>
+    vpsApiFetch<{ success: boolean }>('/whatsapp/opt-out/revogar', { method: 'POST', body: { leadId, solicitacao } }),
+};
+
 export const whatsappApi = {
   instances: () => vpsApiFetch('/whatsapp/instances'),
   create: (instanceName: string) => vpsApiFetch('/whatsapp/instances', { method: 'POST', body: { instanceName } }),
