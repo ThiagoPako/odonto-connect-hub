@@ -30,7 +30,7 @@ test.describe("Fluxos críticos", () => {
     await page.goto("/agenda");
     await page.getByRole("button", { name: "NOVO" }).click();
     await page.getByPlaceholder("Buscar paciente por nome...").fill("Lúcia");
-    await page.getByText("Lúcia Gomes (Alfa)").first().click();
+    await page.getByRole("dialog").getByText("Lúcia Gomes (Alfa)").first().click(); // escopo no dialog: o grid da agenda atrás também mostra o nome
     const dialog = page.getByRole("dialog");
     // Profissional é obrigatório (sem ele o botão "Agendar" não dispara a requisição).
     await dialog.locator("button", { hasText: "Selecione" }).click();
