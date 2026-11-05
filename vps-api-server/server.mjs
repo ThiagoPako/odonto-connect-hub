@@ -4906,6 +4906,21 @@ app.get('/api/pacientes', async (req, res) => {
   }
 });
 
+// GET /api/pacientes/:id — um paciente da própria clínica (404 se for de outra).
+app.get('/api/pacientes/:id', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rows } = await pool.query('SELECT * FROM pacientes WHERE id = $1 AND tenant_id = $2', [req.params.id, user.tenant_id]);
+    if (!rows.length) return res.status(404).json({ error: 'Paciente não encontrado' });
+    res.json(rows[0]);
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('[pacientes:get]', error.message);
+    res.status(500).json({ error: 'Erro interno' });
+  }
+});
+
 app.post('/api/pacientes', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
@@ -5109,7 +5124,9 @@ app.get('/api/agenda', async (req, res) => {
     if (!user.tenant_id) return res.json([]);
     const { data_inicio, data_fim, dentista_id } = req.query;
     // lembrete_status: 'na_fila' | 'aguardando' (enviado, sem resposta) | 'confirmado' | 'remarcar' | 'falhou' | null
-    let query = `SELECT a.*, p.nome as paciente_nome, d.nome as dentista_nome,
+    let query = `SELECT a.*,
+      COALESCE(NULLIF(TRIM(p.nome), ''), a.paciente_nome) AS paciente_nome,
+      COALESCE(NULLIF(TRIM(d.nome), ''), a.dentista_nome) AS dentista_nome,
       (SELECT CASE
                 WHEN aj.status = 'pending' THEN 'na_fila'
                 WHEN aj.status = 'sent' THEN COALESCE(NULLIF(aj.variables::jsonb->>'confirmationReply', ''), 'aguardando')
@@ -5169,6 +5186,18 @@ app.delete('/api/agenda/marcadores/:id', async (req, res) => {
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
+// Nomes do paciente e do profissional lidos do cadastro da própria clínica (nunca do
+// corpo da requisição). Chamar depois de validarReferenciasDoTenant: aqui id ausente
+// ou não encontrado na clínica vira nome null.
+async function resolverNomesAgenda(tenantId, pacienteId, dentistaId) {
+  const buscar = async (tabela, id) => {
+    if (!id || !tenantId || !PACIENTE_UUID_RE.test(String(id))) return null;
+    const { rows } = await pool.query(`SELECT nome FROM ${tabela} WHERE id = $1 AND tenant_id = $2`, [id, tenantId]);
+    return rows[0]?.nome || null;
+  };
+  return { pacienteNome: await buscar('pacientes', pacienteId), dentistaNome: await buscar('dentistas', dentistaId) };
+}
+
 app.post('/api/agenda', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
@@ -5181,14 +5210,16 @@ app.post('/api/agenda', async (req, res) => {
     } = req.body;
     const refErro = await validarReferenciasDoTenant(user.tenant_id, { pacienteId: paciente_id, dentistaId: dentista_id });
     if (refErro) return res.status(400).json({ error: refErro });
+    const nomes = await resolverNomesAgenda(user.tenant_id, paciente_id, dentista_id);
     const id = crypto.randomUUID();
     await pool.query(
       `INSERT INTO agendamentos (
         id, paciente_id, dentista_id, data, hora, duracao, procedimento, status, observacoes,
         tipo, primeira_consulta, dia_inteiro, escopo, categoria, categoria_cor,
         confirmacao_canal, confirmacao_quando, alerta_retorno_canal, alerta_retorno_quando,
-        evento_titulo, sala, serie_id, marcadores, como_conheceu, tenant_id
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23::jsonb,$24,$25)`,
+        evento_titulo, sala, serie_id, marcadores, como_conheceu, tenant_id,
+        paciente_nome, dentista_nome
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23::jsonb,$24,$25,$26,$27)`,
       [
         id, paciente_id || null, dentista_id || null, data, hora, duracao || 30,
         procedimento || null, status || 'agendado', observacoes || null,
@@ -5200,6 +5231,7 @@ app.post('/api/agenda', async (req, res) => {
         JSON.stringify(Array.isArray(marcadores) ? marcadores : []),
         como_conheceu || null,
         user.tenant_id,
+        nomes.pacienteNome, nomes.dentistaNome,
       ]
     );
     broadcastSSE('agendamento_changed', { action: 'created', id, data }, user.tenant_id);
@@ -5246,6 +5278,7 @@ app.post('/api/agenda/serie', async (req, res) => {
     }
     const refErroSerie = await validarReferenciasDoTenant(user.tenant_id, { pacienteId: paciente_id, dentistaId: dentista_id });
     if (refErroSerie) return res.status(400).json({ error: refErroSerie });
+    const nomes = await resolverNomesAgenda(user.tenant_id, paciente_id, dentista_id);
     const serie_id = crypto.randomUUID();
     const created = [];
     const start = new Date(data_inicio + 'T12:00:00Z');
@@ -5258,8 +5291,9 @@ app.post('/api/agenda/serie', async (req, res) => {
         `INSERT INTO agendamentos (
           id, paciente_id, dentista_id, data, hora, duracao, procedimento, status, observacoes,
           tipo, primeira_consulta, escopo, categoria, categoria_cor,
-          confirmacao_canal, confirmacao_quando, sala, serie_id, tenant_id
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,'agendado',$8,'consulta',$9,'dentista',$10,$11,$12,$13,$14,$15,$16)`,
+          confirmacao_canal, confirmacao_quando, sala, serie_id, tenant_id,
+          paciente_nome, dentista_nome
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,'agendado',$8,'consulta',$9,'dentista',$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
         [
           id, paciente_id, dentista_id, dataStr, hora, duracao || 30,
           procedimento || null, observacoes || null,
@@ -5268,6 +5302,7 @@ app.post('/api/agenda/serie', async (req, res) => {
           categoria || null, categoria_cor || null,
           confirmacao_canal || null, confirmacao_quando || null,
           sala || null, serie_id, user.tenant_id,
+          nomes.pacienteNome, nomes.dentistaNome,
         ]
       );
       created.push({ id, data: dataStr });
@@ -5371,9 +5406,11 @@ app.put('/api/agenda/:id', async (req, res) => {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Sem clínica vinculada' });
     const { id } = req.params;
-    const { status, hora, duracao, procedimento, observacoes, sala, data, dentista_id, dentista_nome, marcadores, como_conheceu } = req.body;
+    const { status, hora, duracao, procedimento, observacoes, sala, data, dentista_id, marcadores, como_conheceu } = req.body;
     const refErro = await validarReferenciasDoTenant(user.tenant_id, { dentistaId: dentista_id });
     if (refErro) return res.status(400).json({ error: refErro });
+    // dentista_nome vem do cadastro da clínica, não do corpo da requisição.
+    const dentistaNome = dentista_id ? (await resolverNomesAgenda(user.tenant_id, null, dentista_id)).dentistaNome : null;
     const sets = [];
     const params = [];
     if (status) { params.push(status); sets.push(`status = $${params.length}`); }
@@ -5383,8 +5420,10 @@ app.put('/api/agenda/:id', async (req, res) => {
     if (procedimento) { params.push(procedimento); sets.push(`procedimento = $${params.length}`); }
     if (observacoes !== undefined) { params.push(observacoes); sets.push(`observacoes = $${params.length}`); }
     if (sala) { params.push(sala); sets.push(`sala = $${params.length}`); }
-    if (dentista_id) { params.push(dentista_id); sets.push(`dentista_id = $${params.length}`); }
-    if (dentista_nome) { params.push(dentista_nome); sets.push(`dentista_nome = $${params.length}`); }
+    if (dentista_id) {
+      params.push(dentista_id); sets.push(`dentista_id = $${params.length}`);
+      params.push(dentistaNome); sets.push(`dentista_nome = $${params.length}`);
+    }
     if (Array.isArray(marcadores)) { params.push(JSON.stringify(marcadores)); sets.push(`marcadores = $${params.length}::jsonb`); }
     if (como_conheceu !== undefined) { params.push(como_conheceu || null); sets.push(`como_conheceu = $${params.length}`); }
     if (sets.length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
@@ -5405,15 +5444,15 @@ app.put('/api/agenda/:id', async (req, res) => {
     // If status changed to 'em_atendimento', update CRM lead
     if (status === 'em_atendimento' && rows[0].paciente_id) {
       pool.query(
-        `UPDATE crm_leads SET kanban_stage = 'em_atendimento', status = 'em_atendimento', updated_at = NOW() WHERE id = $1`,
-        [rows[0].paciente_id]
+        `UPDATE crm_leads SET kanban_stage = 'em_atendimento', status = 'em_atendimento', updated_at = NOW() WHERE id = $1 AND tenant_id = $2`,
+        [rows[0].paciente_id, user.tenant_id]
       ).catch(err => console.error('Failed to update lead status:', err.message));
     }
     // If status changed to 'finalizado' or 'realizado', update CRM lead
     if ((status === 'finalizado' || status === 'realizado') && rows[0].paciente_id) {
       pool.query(
-        `UPDATE crm_leads SET kanban_stage = 'pos_consulta', status = 'pos_consulta', updated_at = NOW() WHERE id = $1`,
-        [rows[0].paciente_id]
+        `UPDATE crm_leads SET kanban_stage = 'pos_consulta', status = 'pos_consulta', updated_at = NOW() WHERE id = $1 AND tenant_id = $2`,
+        [rows[0].paciente_id, user.tenant_id]
       ).catch(err => console.error('Failed to update lead status:', err.message));
     }
 
@@ -5432,7 +5471,7 @@ app.put('/api/agenda/:id', async (req, res) => {
   } catch (error) {
     if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
     console.error('❌ Error updating appointment:', error.message);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Erro interno' });
   }
 });
 
@@ -11876,6 +11915,12 @@ let automationSchedulerInterval = null;
 // ─── Cron: Appointment Reminders 24h (runs every 1h) ────────
 let appointmentReminderInterval = null;
 
+// "Olá, Maria!" — ou "Olá!" quando o nome está vazio (nunca "Olá, !").
+function saudacaoPaciente(nome) {
+  const primeiro = String(nome || '').trim().split(/\s+/)[0];
+  return primeiro ? `Olá, ${primeiro}!` : 'Olá!';
+}
+
 // Antecedência do pedido de confirmação (coluna confirmacao_quando do agendamento).
 // 'nao' = confirmação desligada (agendamento salvo sem telefone do paciente).
 // Sem valor, ou valor antigo ('_none', 'agora', '1d'), vale a véspera: o lembrete
@@ -11886,8 +11931,8 @@ const APPT_REMINDER_SKIP_STATUSES = ['cancelado', 'desmarcado', 'faltou', 'final
 // Texto do pedido de confirmação. Só clínica, data, hora e profissional: nada de
 // procedimento ou diagnóstico (a mensagem aparece na tela bloqueada — LGPD art. 6º III e 11).
 // TEXTO PARA PACIENTE: revisão da Helena (helena-juridico) antes do merge.
-function buildAppointmentReminderMessage({ clinica, firstName, weekday, dataBR, hora, profissional }) {
-  const body = `🔔 *Lembrete de consulta — ${clinica}*\n\nOlá${firstName ? `, ${firstName}` : ''}!\n\nVocê tem uma consulta marcada:\n📅 ${weekday ? `${weekday}, ` : ''}${dataBR}\n⏰ ${hora}\n👩‍⚕️ ${profissional || 'Equipe da clínica'}`;
+function buildAppointmentReminderMessage({ clinica, pacienteNome, weekday, dataBR, hora, profissional }) {
+  const body = `🔔 *Lembrete de consulta — ${clinica}*\n\n${saudacaoPaciente(pacienteNome)}\n\nVocê tem uma consulta marcada:\n📅 ${weekday ? `${weekday}, ` : ''}${dataBR}\n⏰ ${hora}\n👩‍⚕️ ${profissional || 'Equipe da clínica'}`;
   return {
     body,
     fallbackText: `${body}\n\nResponda *1* para confirmar ou *2* para remarcar.`,
@@ -11901,9 +11946,11 @@ async function processAppointmentReminders() {
     // clínica; a fila segura até a janela de envio. Nomes vêm dos cadastros da clínica.
     const { rows: appointments } = await pool.query(`
       SELECT a.id, a.tenant_id, a.paciente_id, a.data, a.hora, a.confirmacao_quando,
-             p.nome AS paciente_nome, p.telefone, d.nome AS dentista_nome
+             COALESCE(NULLIF(TRIM(p.nome), ''), NULLIF(TRIM(a.paciente_nome), '')) AS paciente_nome,
+             COALESCE(NULLIF(TRIM(d.nome), ''), NULLIF(TRIM(a.dentista_nome), '')) AS dentista_nome,
+             p.telefone
       FROM agendamentos a
-      JOIN pacientes p ON p.id = a.paciente_id AND p.tenant_id = a.tenant_id
+      LEFT JOIN pacientes p ON p.id = a.paciente_id AND p.tenant_id = a.tenant_id
       LEFT JOIN dentistas d ON d.id = a.dentista_id AND d.tenant_id = a.tenant_id
       WHERE a.tenant_id IS NOT NULL
         AND a.tenant_id <> '00000000-0000-0000-0000-000000000001'
@@ -11938,7 +11985,7 @@ async function processAppointmentReminders() {
         const clinica = await getTenantClinicName(tenantId);
         const { body, fallbackText } = buildAppointmentReminderMessage({
           clinica,
-          firstName: String(appt.paciente_nome || '').trim().split(/\s+/)[0] || '',
+          pacienteNome: appt.paciente_nome,
           weekday: WEEKDAYS[new Date(`${isoDate}T12:00:00Z`).getUTCDay()] || '',
           dataBR: `${d}/${m}/${y}`,
           hora: hora || appt.hora || '—',
@@ -16484,6 +16531,8 @@ if (process.env.NODE_ENV !== 'test') {
       `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS clinicorp_appointment_id TEXT`,
       `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS last_clinicorp_sync_at TIMESTAMPTZ`,
       `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS keep_local BOOLEAN DEFAULT false`,
+      `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS paciente_nome TEXT`,
+      `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS dentista_nome TEXT`,
       `CREATE TABLE IF NOT EXISTS orcamentos (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         tenant_id UUID,
@@ -16541,7 +16590,9 @@ if (process.env.NODE_ENV !== 'test') {
       } catch (migErr) {
         // 42701 = column already exists, 42P07 = relation already exists — both are fine
         if (!['42701', '42P07', '42723'].includes(migErr?.code)) {
-          console.warn(`⚠️ Auto-migration warning on statement ${checkedStatements}: ${migErr.message.slice(0, 120)}`);
+          // Coluna que não foi criada quebra as rotas que a usam (ex.: INSERT da agenda): é erro, não aviso.
+          const log = /\bADD COLUMN\b/i.test(sql) ? console.error : console.warn;
+          log(`⚠️ Auto-migration ${log === console.error ? 'error' : 'warning'} on statement ${checkedStatements}: ${migErr.message.slice(0, 120)}`);
         }
       }
     }
@@ -16614,11 +16665,11 @@ if (process.env.NODE_ENV !== 'test') {
 
 export { app, pool };
 // Exportados só para os testes de jobs (tests/jobs-metricas-isolamento.test.js).
-export { processSolutionTriggers, runWhatsAppJobHooks, ensureTenantConfigSchema, triggerFollowupAutomation };
+export { processSolutionTriggers, runWhatsAppJobHooks, ensureTenantConfigSchema, triggerFollowupAutomation, processAppointmentReminders };
 export function clearTenantSettingsCacheForTests() { tenantSettingsCache.clear(); }
 
 export { processAutomationJobs };
 export function resetWhatsAppQueueStateForTests() {
   waPacing.clear(); waOutcomes.clear(); waOpenInstancesCache = { at: 0, names: new Set() };
 }
-export { processAppointmentReminders, parseAppointmentReminderReply };
+export { parseAppointmentReminderReply };

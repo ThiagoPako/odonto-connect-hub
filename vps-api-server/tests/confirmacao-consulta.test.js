@@ -69,7 +69,7 @@ describe('Confirmação de consulta pelo WhatsApp', () => {
       }
       if (/FROM whatsapp_opt_outs/.test(text)) return ok(optedOut ? [{ x: 1 }] : []);
       if (/SELECT nome FROM tenants WHERE id = \$1/.test(text)) return ok([{ nome: params[0] === tenantA ? 'Clínica A' : 'Clínica B' }]);
-      if (/FROM agendamentos a\s+JOIN pacientes p ON p.id = a.paciente_id AND p.tenant_id = a.tenant_id\s+LEFT JOIN dentistas/.test(text)) return ok(reminderRows);
+      if (/FROM agendamentos a\s+(LEFT )?JOIN pacientes p ON p.id = a.paciente_id AND p.tenant_id = a.tenant_id\s+LEFT JOIN dentistas/.test(text)) return ok(reminderRows);
       if (/trigger_event = 'appointment_reminder' AND aj.status = 'sent'/.test(text)) {
         // Pedido enviado pela clínica A a este telefone.
         if (params[0] !== tenantA || !String(telefoneA).endsWith(String(params[1]).slice(-8))) return ok([]);
@@ -133,13 +133,23 @@ describe('Confirmação de consulta pelo WhatsApp', () => {
 
     test('consulta e dedupe filtram tenant e status; nomes vêm dos cadastros da clínica', async () => {
       await processAppointmentReminders();
-      const q = sqlLog.find(s => /FROM agendamentos a\s+JOIN pacientes p/.test(s.text));
+      const q = sqlLog.find(s => /FROM agendamentos a\s+(LEFT )?JOIN pacientes p/.test(s.text));
       expect(q.text).toMatch(/p\.tenant_id = a\.tenant_id/);
       expect(q.text).toMatch(/d\.tenant_id = a\.tenant_id/);
       expect(q.text).toMatch(/aj\.tenant_id = a\.tenant_id/);
       expect(q.text).toMatch(/apptDate/);
       expect(q.text).toMatch(/COALESCE\(a\.confirmacao_quando, ''\) <> 'nao'/); // salvo sem telefone: desligada
       expect(q.params[0]).toEqual(expect.arrayContaining(['confirmado', 'remarcar', 'cancelado']));
+    });
+
+    test('sem nome no cadastro: saudação "Olá!" (nunca "Olá, !")', async () => {
+      reminderRows[0].paciente_nome = null;
+      await processAppointmentReminders();
+      const [ins] = jobInserts();
+      expect(jobCol(ins, 'message')).toMatch(/\n\nOlá!\n\n/);
+      expect(jobCol(ins, 'message')).not.toMatch(/Olá, !/);
+      expect(jobCol(ins, 'message')).toMatch(/Olá!\n\nVocê tem uma consulta/);
+      expect(jobVars(ins).interactive.payload.description).toMatch(/Olá!/);
     });
 
     test('paciente em opt-out não recebe pedido', async () => {
