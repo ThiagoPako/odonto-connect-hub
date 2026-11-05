@@ -123,6 +123,7 @@ jobs:
             cat /root/odonto-connect/vps-api-server/migration-tenant-defaults.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             cat /root/odonto-connect/vps-api-server/migration-whatsapp-fase1.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             cat /root/odonto-connect/vps-api-server/migration-seguranca-p0.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
+            cat /root/odonto-connect/vps-api-server/migration-contatos-recuperacao.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             # M0: complemento do seguranca-p0 (precisa rodar depois dele). Só aditivo + correção do Legado.
             # migration-force-rls.sql NÃO entra aqui ainda: é incluída na janela da virada (docs/banco/plano-virada-rls.md).
             cat /root/odonto-connect/vps-api-server/migration-tenant-m0.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true

@@ -22,6 +22,7 @@ import {
 import { cn } from "@/lib/utils";
 import { contatosApi, whatsappApi } from "@/lib/vpsApi";
 import { fetchWhatsAppContacts } from "@/lib/evolutionApi";
+import { toast } from "sonner";
 
 interface InstanceResult {
   name: string;
@@ -65,7 +66,8 @@ export function ImportWhatsAppDialog({
 
   const loadInstances = useCallback(async () => {
     setLoadingInstances(true);
-    const { data } = await whatsappApi.instances();
+    const { data, error } = await whatsappApi.instances();
+    if (error) toast.error("Não foi possível carregar os números de WhatsApp: " + error);
     const list: WaInstance[] = Array.isArray(data)
       ? data.map((i: any) => ({
           name: i.name || i.instanceName || i.instance?.instanceName,

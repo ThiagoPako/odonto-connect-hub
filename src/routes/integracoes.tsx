@@ -106,6 +106,10 @@ function IntegracoesPage() {
         ) : (
           <div className="bg-card rounded-xl border border-dashed border-border p-8 text-center">
             <p className="text-sm text-muted-foreground">Nenhuma conta de anúncios conectada ainda. Conecte sua conta Meta Ads acima para começar.</p>
+            <p className="mt-2 text-xs text-muted-foreground">
+              <span className="mr-1 inline-block rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-primary">Em breve</span>
+              Conexão com Google Ads.
+            </p>
           </div>
         )}
 
@@ -127,7 +131,7 @@ function IntegracoesPage() {
                 onClick={() => setPlatformFilter(p)}
                 className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${platformFilter === p ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
               >
-                {p === "all" ? "Todas" : p === "google" ? "Google Ads" : "Meta Ads"}
+                {p === "all" ? "Todas" : p === "google" ? "Google Ads (em breve)" : "Meta Ads"}
               </button>
             ))}
           </div>

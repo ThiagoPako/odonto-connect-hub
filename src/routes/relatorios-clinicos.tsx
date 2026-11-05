@@ -14,6 +14,7 @@ import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { exportarRelatoriosClinicosPdf } from "@/lib/relatoriosClinicosPdfExport";
 import { toast } from "sonner";
+import { simpleMarkdownToHtml } from "@/lib/safeHtml";
 
 export const Route = createFileRoute("/relatorios-clinicos")({
   ssr: false,
@@ -412,14 +413,7 @@ function RelatoriosClinicosPage() {
                             <div
                               className="prose prose-sm max-w-none text-foreground text-xs leading-relaxed"
                               dangerouslySetInnerHTML={{
-                                __html: (r.report || "")
-                                  .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
-                                  .replace(/^### (.*$)/gm, '<h4 class="text-sm font-semibold text-foreground mt-3 mb-1">$1</h4>')
-                                  .replace(/^## (.*$)/gm, '<h3 class="text-sm font-bold text-foreground mt-4 mb-2">$1</h3>')
-                                  .replace(/^# (.*$)/gm, '<h2 class="text-base font-bold text-foreground mt-4 mb-2">$1</h2>')
-                                  .replace(/^- (.*$)/gm, '<li class="ml-4 list-disc text-muted-foreground">$1</li>')
-                                  .replace(/\n\n/g, "<br/><br/>")
-                                  .replace(/\n/g, "<br/>"),
+                                __html: simpleMarkdownToHtml(r.report || ""),
                               }}
                             />
                           </div>

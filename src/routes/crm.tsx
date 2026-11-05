@@ -377,7 +377,8 @@ function KanbanCard({ lead, stageId, onDragStart, onLeadAssigned }: { lead: Kanb
     setAssuming(true);
     try {
       // Check again server-side to prevent race condition
-      const { data: check } = await sessionsApi.checkActive(lead.id);
+      const { data: check, error: checkError } = await sessionsApi.checkActive(lead.id);
+      if (checkError) throw new Error(checkError);
       if (check?.active && !check?.isCurrentUser) {
         toast.error(`${lead.name} já está sendo atendido por ${check.attendantName}`);
         setActiveSession(check);
@@ -385,22 +386,25 @@ function KanbanCard({ lead, stageId, onDragStart, onLeadAssigned }: { lead: Kanb
       }
 
       // 1. Assign attendance session
-      await sessionsApi.assign({ leadId: lead.id });
-      // 2. Move to "em_atendimento" stage
-      await crmApi.updateStage(lead.id, "em_atendimento", "Assumiu atendimento via Kanban");
+      const assignRes = await sessionsApi.assign({ leadId: lead.id });
+      if (assignRes.error) throw new Error(assignRes.error);
+      // 2. Move to "em_atendimento" stage (falha aqui não impede o atendimento, mas avisa)
+      const stageRes = await crmApi.updateStage(lead.id, "em_atendimento", "Assumiu atendimento via Kanban");
+      if (stageRes.error) toast.error("Atendimento assumido, mas o card não mudou de etapa: " + stageRes.error);
       // 3. Assign lead to current user
       const userInitials = user.name.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase();
-      await crmApi.assign(lead.id, user.id, user.name);
+      const ownerRes = await crmApi.assign(lead.id, user.id, user.name);
+      if (ownerRes.error) toast.error("Atendimento assumido, mas o lead não foi atribuído a você: " + ownerRes.error);
       // Notify parent to update the kanban state
       onLeadAssigned?.(lead.id, user.name, userInitials, user.avatar_url);
       toast.success(`Atendimento de ${lead.name} iniciado`);
-    } catch {
-      toast.error("Erro ao assumir atendimento");
+      // Só abre o chat se o atendimento foi de fato assumido
+      navigate({ to: "/chat", search: { lead: lead.name } });
+    } catch (err) {
+      toast.error("Erro ao assumir atendimento: " + (err instanceof Error ? err.message : String(err)));
     } finally {
       setAssuming(false);
     }
-    // Navigate to chat
-    navigate({ to: "/chat", search: { lead: lead.name } });
   };
 
   const handleCall = (e: React.MouseEvent) => {
@@ -584,8 +588,9 @@ function KanbanCard({ lead, stageId, onDragStart, onLeadAssigned }: { lead: Kanb
             e.stopPropagation();
             if (!showHistory && historyData === null) {
               setLoadingHistory(true);
-              crmApi.history(lead.id).then(({ data }) => {
-                setHistoryData(data || []);
+              crmApi.history(lead.id).then(({ data, error }) => {
+                if (error) toast.error("Não foi possível carregar o histórico: " + error);
+                setHistoryData(error ? null : data || []);
                 setLoadingHistory(false);
               });
             }
@@ -714,6 +719,7 @@ function PatientTableView() {
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [sortBy, setSortBy] = useState<string>("updated_at");
@@ -744,7 +750,12 @@ function PatientTableView() {
       if (originFilter !== "Todos") params.origin = originFilter;
       params.sort_by = sortBy;
       params.sort_dir = sortDir;
-      const { data } = await crmApi.list(params);
+      const { data, error } = await crmApi.list(params);
+      setListError(error);
+      if (error) {
+        toast.error("Não foi possível carregar a lista: " + error);
+        return;
+      }
       if (data && data.rows && Array.isArray(data.rows)) {
         setTotal(data.total);
         setPatients(data.rows.map((r: any) => ({
@@ -837,7 +848,13 @@ function PatientTableView() {
               <span className="ml-2 text-sm text-muted-foreground">Carregando pacientes...</span>
             </div>
           )}
-          {!loading && patients.length === 0 && (
+          {!loading && listError && (
+            <div role="alert" className="text-center py-8 space-y-2">
+              <p className="text-sm text-destructive">Não foi possível carregar a lista. {listError}</p>
+              <button type="button" onClick={() => loadPatients()} className="text-xs font-semibold underline">Tentar de novo</button>
+            </div>
+          )}
+          {!loading && !listError && patients.length === 0 && (
             <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
               Nenhum paciente encontrado
             </div>

@@ -11,6 +11,8 @@ import {
   type InventoryItem, type StockMovement,
 } from "@/data/estoqueMockData";
 import { estoqueApi, vpsApiFetch } from "@/lib/vpsApi";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
 
 export const Route = createFileRoute("/estoque")({
   ssr: false,
@@ -55,21 +57,22 @@ function EstoquePage() {
   const [showAddItem, setShowAddItem] = useState(false);
   const [showAddMov, setShowAddMov] = useState(false);
 
+  const [loadErrors, setLoadErrors] = useState<string[]>([]);
+
   const loadAll = useCallback(async () => {
-    try {
-      const [itemsRes, movsRes] = await Promise.all([
-        estoqueApi.list(),
-        vpsApiFetch('/estoque-movimentos'),
-      ]);
-      const itemsData = (itemsRes as any).data || itemsRes || [];
-      const movsData = (movsRes as any).data || movsRes || [];
-      setItems(Array.isArray(itemsData) ? itemsData.map(mapItem) : []);
-      setMovements(Array.isArray(movsData) ? movsData.map(mapMovement) : []);
-    } catch (err) {
-      console.error('Erro ao carregar estoque:', err);
-    } finally {
-      setLoading(false);
-    }
+    const [itemsRes, movsRes] = await Promise.all([
+      estoqueApi.list(),
+      vpsApiFetch<any[]>('/estoque-movimentos'),
+    ]);
+    // vpsApiFetch não lança: a parte que falhar vira aviso e mantém o que já estava na tela
+    const errors: string[] = [];
+    if (itemsRes.error) errors.push(`Itens: ${itemsRes.error}`);
+    else setItems(Array.isArray(itemsRes.data) ? itemsRes.data.map(mapItem) : []);
+    if (movsRes.error) errors.push(`Movimentações: ${movsRes.error}`);
+    else setMovements(Array.isArray(movsRes.data) ? movsRes.data.map(mapMovement) : []);
+    setLoadErrors(errors);
+    if (errors.length) toast.error("Parte do estoque não carregou.");
+    setLoading(false);
   }, []);
 
   useEffect(() => { loadAll(); }, [loadAll]);
@@ -83,22 +86,22 @@ function EstoquePage() {
   const totalValue = items.reduce((a, i) => a + i.currentStock * i.unitCost, 0);
 
   const handleAddItem = async (data: { nome: string; categoria: string; unidade: string; quantidade: number; quantidade_minima: number; valor_unitario: number; fornecedor: string; validade?: string }) => {
-    try {
-      await estoqueApi.create(data);
-      await loadAll();
-      setShowAddItem(false);
-    } catch (err) { console.error('Erro ao adicionar item:', err); }
+    const { error } = await estoqueApi.create(data);
+    if (error) { toast.error("Erro ao cadastrar item: " + error); return; }
+    toast.success("Item cadastrado");
+    setShowAddItem(false);
+    await loadAll();
   };
 
   const handleAddMovement = async (data: { item_id: string; tipo: string; quantidade: number; motivo: string; usuario_nome: string }) => {
-    try {
-      await estoqueApi.addMovimento(data.item_id, {
-        tipo: data.tipo, quantidade: data.quantidade,
-        motivo: data.motivo, usuario_nome: data.usuario_nome,
-      });
-      await loadAll();
-      setShowAddMov(false);
-    } catch (err) { console.error('Erro ao registrar movimentação:', err); }
+    const { error } = await estoqueApi.addMovimento(data.item_id, {
+      tipo: data.tipo, quantidade: data.quantidade,
+      motivo: data.motivo, usuario_nome: data.usuario_nome,
+    });
+    if (error) { toast.error("Erro ao registrar movimentação: " + error); return; }
+    toast.success("Movimentação registrada");
+    setShowAddMov(false);
+    await loadAll();
   };
 
   if (loading) {
@@ -116,6 +119,15 @@ function EstoquePage() {
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Controle de Estoque" />
       <main className="flex-1 p-6 space-y-5 overflow-auto">
+        {loadErrors.length > 0 && (
+          <div role="alert" className="flex items-start justify-between gap-3 rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+            <div>
+              <p className="font-semibold">Parte do estoque não carregou — saldos e alertas podem estar incompletos.</p>
+              <ul className="mt-1 list-disc pl-5 text-xs">{loadErrors.map((e) => <li key={e}>{e}</li>)}</ul>
+            </div>
+            <Button size="sm" variant="outline" onClick={loadAll}>Tentar de novo</Button>
+          </div>
+        )}
         {/* KPIs */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 animate-slide-up" style={{ animationFillMode: 'both' }}>
           <KpiMini icon={Package} label="Itens Cadastrados" value={items.length.toString()} />

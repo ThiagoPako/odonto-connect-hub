@@ -61,8 +61,8 @@ export const preConfiguredSolutions: PreConfiguredSolution[] = [
     trigger: "Agendamento criado sem confirmação",
     totalPacientes: 57,
     defaultSteps: [
-      { id: "sc1", delay: "1 dia antes", delayMinutes: 1440, channel: "whatsapp", message: "Olá {{nome}}! 😊 Lembrete: sua consulta está agendada para amanhã, {{data}}, às {{horario}} com {{dentista}}. Confirme respondendo ✅ ou ligue para reagendar.", variables: ["nome", "data", "horario", "dentista"] },
-      { id: "sc2", delay: "3 horas antes", delayMinutes: 180, channel: "whatsapp", message: "{{primeiro_nome}}, sua consulta é HOJE às {{horario}}. Estamos te esperando! 🦷 Caso precise reagendar, avise-nos.", variables: ["primeiro_nome", "horario"] },
+      { id: "sc1", delay: "1 dia antes", delayMinutes: 1440, channel: "whatsapp", message: "Olá, {{nome}}! Aqui é da {{clinica}}. Sua consulta está marcada para amanhã, {{data}}, às {{horario}}, com {{dentista}}. Responda SIM para confirmar ou mande uma mensagem para remarcar.", variables: ["nome", "clinica", "data", "horario", "dentista"] },
+      { id: "sc2", delay: "3 horas antes", delayMinutes: 180, channel: "whatsapp", message: "{{primeiro_nome}}, sua consulta na {{clinica}} é hoje às {{horario}}. Se precisar remarcar, é só avisar por aqui.", variables: ["primeiro_nome", "clinica", "horario"] },
     ],
   },
   {
@@ -74,7 +74,7 @@ export const preConfiguredSolutions: PreConfiguredSolution[] = [
     trigger: "Data de aniversário do paciente",
     totalPacientes: 0,
     defaultSteps: [
-      { id: "sa1", delay: "Imediato", delayMinutes: 0, channel: "whatsapp", message: "🎂 Feliz aniversário, {{nome}}! A equipe da {{clinica}} deseja um dia maravilhoso cheio de sorrisos! Como presente, preparamos uma condição especial para você. Fale conosco! 🎁", variables: ["nome", "clinica"] },
+      { id: "sa1", delay: "Imediato", delayMinutes: 0, channel: "whatsapp", message: "Feliz aniversário, {{nome}}! 🎂 A equipe da {{clinica}} deseja um dia muito especial para você. Responda SAIR para não receber mais.", variables: ["nome", "clinica"] },
     ],
   },
   {
@@ -101,8 +101,8 @@ export const preConfiguredSolutions: PreConfiguredSolution[] = [
     hasDelay: true,
     defaultSteps: [
       { id: "sf1", delay: "2 horas", delayMinutes: 120, channel: "whatsapp", message: "Olá {{nome}}, sentimos sua falta hoje! 😊 Sabemos que imprevistos acontecem. Vamos reagendar sua consulta para o mais breve possível?", variables: ["nome"] },
-      { id: "sf2", delay: "2 dias", delayMinutes: 2880, channel: "whatsapp", message: "{{primeiro_nome}}, lembramos que sua consulta de {{procedimento}} precisa ser realizada. Posso verificar os melhores horários para você?", variables: ["primeiro_nome", "procedimento"] },
-      { id: "sf3", delay: "7 dias", delayMinutes: 10080, channel: "whatsapp", message: "{{nome}}, não queremos que seu tratamento fique pendente! 🦷 Temos condições especiais para reagendamento. Responda e agendamos para você.", variables: ["nome"] },
+      { id: "sf2", delay: "2 dias", delayMinutes: 2880, channel: "whatsapp", message: "{{primeiro_nome}}, aqui é da {{clinica}}. Vamos remarcar sua consulta? Posso verificar os melhores horários para você.", variables: ["primeiro_nome", "clinica"] },
+      { id: "sf3", delay: "7 dias", delayMinutes: 10080, channel: "whatsapp", message: "{{nome}}, não queremos que seu atendimento fique pendente. Responda esta mensagem e a {{clinica}} reagenda para você.", variables: ["nome", "clinica"] },
     ],
   },
   {
@@ -127,8 +127,8 @@ export const preConfiguredSolutions: PreConfiguredSolution[] = [
     trigger: "Parcela ou pagamento em atraso",
     totalPacientes: 0,
     defaultSteps: [
-      { id: "si1", delay: "1 dia", delayMinutes: 1440, channel: "whatsapp", message: "Olá {{nome}}, tudo bem? Notamos que existe uma pendência financeira em seu cadastro. 😊 Gostaríamos de ajudar! Entre em contato para verificarmos as melhores condições de pagamento.", variables: ["nome"] },
-      { id: "si2", delay: "7 dias", delayMinutes: 10080, channel: "whatsapp", message: "{{primeiro_nome}}, lembramos que sua pendência na {{clinica}} ainda está em aberto. Temos opções de parcelamento e desconto para pagamento à vista. Vamos resolver juntos?", variables: ["primeiro_nome", "clinica"] },
+      { id: "si1", delay: "1 dia", delayMinutes: 1440, channel: "whatsapp", message: "Olá, {{nome}}. Aqui é do financeiro da {{clinica}}. Há um assunto administrativo no seu cadastro e gostaríamos de ajudar. Pode responder esta mensagem ou falar com a recepção?", variables: ["nome", "clinica"] },
+      { id: "si2", delay: "7 dias", delayMinutes: 10080, channel: "whatsapp", message: "{{primeiro_nome}}, aqui é do financeiro da {{clinica}}. Ainda não conseguimos falar com você sobre seu cadastro. Responda esta mensagem para combinarmos a melhor forma de resolver.", variables: ["primeiro_nome", "clinica"] },
     ],
   },
   {
@@ -140,9 +140,9 @@ export const preConfiguredSolutions: PreConfiguredSolution[] = [
     trigger: "Orçamento criado e não aprovado",
     totalPacientes: 596,
     defaultSteps: [
-      { id: "so1", delay: "2 dias", delayMinutes: 2880, channel: "whatsapp", message: "Olá {{nome}}! 😊 Vi que você recebeu um orçamento para {{procedimento}} no valor de {{valor}}. Ficou com alguma dúvida? Estou à disposição para esclarecer!", variables: ["nome", "procedimento", "valor"] },
-      { id: "so2", delay: "5 dias", delayMinutes: 7200, channel: "whatsapp", message: "{{nome}}, temos condições especiais de pagamento para o {{procedimento}}. Que tal parcelar em até 12x? Fale conosco! 💳", variables: ["nome", "procedimento"] },
-      { id: "so3", delay: "15 dias", delayMinutes: 21600, channel: "whatsapp", message: "{{primeiro_nome}}, seu orçamento para {{procedimento}} ainda está disponível! 🦷 Não deixe sua saúde bucal esperar. Agende agora com condições especiais.", variables: ["primeiro_nome", "procedimento"] },
+      { id: "so1", delay: "2 dias", delayMinutes: 2880, channel: "whatsapp", message: "Olá, {{nome}}! Aqui é da {{clinica}}. Ficou alguma dúvida sobre o orçamento que preparamos? Podemos explicar tudo por aqui. Responda SAIR para não receber mais.", variables: ["nome", "clinica"] },
+      { id: "so2", delay: "5 dias", delayMinutes: 7200, channel: "whatsapp", message: "{{nome}}, se quiser conversar sobre as formas de pagamento do seu orçamento, a {{clinica}} está à disposição. É só responder. Responda SAIR para não receber mais.", variables: ["nome", "clinica"] },
+      { id: "so3", delay: "15 dias", delayMinutes: 21600, channel: "whatsapp", message: "{{primeiro_nome}}, esta é a nossa última mensagem sobre o orçamento. Quando quiser agendar, é só chamar a {{clinica}} por aqui. Responda SAIR para não receber mais.", variables: ["primeiro_nome", "clinica"] },
     ],
   },
   {
@@ -154,8 +154,8 @@ export const preConfiguredSolutions: PreConfiguredSolution[] = [
     trigger: "Tratamento ativo sem agendamento futuro",
     totalPacientes: 0,
     defaultSteps: [
-      { id: "st1", delay: "Imediato", delayMinutes: 0, channel: "whatsapp", message: "Olá {{nome}}! Notamos que seu tratamento de {{procedimento}} está em andamento, mas ainda não temos a próxima sessão agendada. Vamos marcar? 📅", variables: ["nome", "procedimento"] },
-      { id: "st2", delay: "5 dias", delayMinutes: 7200, channel: "whatsapp", message: "{{primeiro_nome}}, é importante manter a regularidade do tratamento de {{procedimento}} para melhores resultados! 🦷 Posso verificar os horários disponíveis para você.", variables: ["primeiro_nome", "procedimento"] },
+      { id: "st1", delay: "Imediato", delayMinutes: 0, channel: "whatsapp", message: "Olá, {{nome}}! Aqui é da {{clinica}}. A próxima sessão do seu tratamento ainda não foi marcada. Vamos agendar? É só responder esta mensagem.", variables: ["nome", "clinica"] },
+      { id: "st2", delay: "5 dias", delayMinutes: 7200, channel: "whatsapp", message: "{{primeiro_nome}}, manter a regularidade das sessões é importante. Posso verificar os horários disponíveis na {{clinica}} para você?", variables: ["primeiro_nome", "clinica"] },
     ],
   },
 ];
@@ -211,15 +211,15 @@ export const availableVariables = [
 ];
 
 export const messageTemplates: { name: string; type: AutomationType; message: string; variables: string[] }[] = [
-  { name: "Agradecimento pós-consulta", type: "pos_consulta", message: "Olá {{nome}}, obrigado por sua visita! Como você está se sentindo após o procedimento de {{procedimento}}?", variables: ["nome", "procedimento"] },
-  { name: "Check-up pós-procedimento", type: "pos_consulta", message: "Oi {{primeiro_nome}}, tudo bem? Passando para saber se está tudo certo com o {{procedimento}}. Qualquer dúvida, estamos à disposição! 😊", variables: ["primeiro_nome", "procedimento"] },
+  { name: "Agradecimento pós-consulta", type: "pos_consulta", message: "Olá, {{nome}}! Aqui é da {{clinica}}. Obrigado pela visita! Como você está se sentindo após o atendimento? Qualquer dúvida, é só responder.", variables: ["nome", "clinica"] },
+  { name: "Check-up pós-procedimento", type: "pos_consulta", message: "Oi, {{primeiro_nome}}, tudo bem? Passando para saber se está tudo certo desde o seu atendimento na {{clinica}}. Estamos à disposição.", variables: ["primeiro_nome", "clinica"] },
   { name: "Lembrete de retorno", type: "lembrete_retorno", message: "Olá {{nome}}! Seu retorno está se aproximando. Vamos agendar? 📅 Acesse: {{link_agendamento}}", variables: ["nome", "link_agendamento"] },
   { name: "Confirmação de consulta", type: "lembrete_retorno", message: "{{nome}}, lembrete: sua consulta é amanhã às {{horario}} com {{dentista}}. Confirme respondendo ✅", variables: ["nome", "horario", "dentista"] },
-  { name: "Reativação gentil", type: "reativacao", message: "Olá {{nome}}! Sentimos sua falta 😊 Já faz um tempo desde sua última visita. Que tal agendar um check-up?", variables: ["nome"] },
-  { name: "Última chamada reativação", type: "reativacao", message: "{{primeiro_nome}}, sua saúde bucal é importante! 🦷 Agende sua avaliação gratuita e cuide do seu sorriso.", variables: ["primeiro_nome"] },
-  { name: "Follow-up orçamento", type: "followup_orcamento", message: "Oi {{nome}}! Vi que você recebeu um orçamento para {{procedimento}} no valor de {{valor}}. Posso esclarecer alguma dúvida?", variables: ["nome", "procedimento", "valor"] },
-  { name: "Condições especiais", type: "followup_orcamento", message: "{{nome}}, temos condições especiais de pagamento para o {{procedimento}}. Quer saber mais?", variables: ["nome", "procedimento"] },
-  { name: "Feliz aniversário", type: "aniversario", message: "🎂 Feliz aniversário, {{nome}}! A equipe {{clinica}} deseja muitas felicidades! Como presente, temos uma surpresa especial para você.", variables: ["nome", "clinica"] },
+  { name: "Reativação gentil", type: "reativacao", message: "Olá {{nome}}! Sentimos sua falta 😊 Já faz um tempo desde sua última visita. Que tal agendar um check-up? Responda SAIR para não receber mais.", variables: ["nome"] },
+  { name: "Última chamada reativação", type: "reativacao", message: "{{primeiro_nome}}, esta é a nossa última mensagem por enquanto. Quando quiser agendar uma avaliação, a {{clinica}} está à disposição. Responda SAIR para não receber mais.", variables: ["primeiro_nome", "clinica"] },
+  { name: "Follow-up orçamento", type: "followup_orcamento", message: "Olá, {{nome}}! Aqui é da {{clinica}}. Ficou alguma dúvida sobre o orçamento que preparamos? Podemos explicar tudo por aqui. Responda SAIR para não receber mais.", variables: ["nome", "clinica"] },
+  { name: "Condições especiais", type: "followup_orcamento", message: "{{nome}}, se quiser conversar sobre as formas de pagamento do seu orçamento, a {{clinica}} está à disposição. É só responder. Responda SAIR para não receber mais.", variables: ["nome", "clinica"] },
+  { name: "Feliz aniversário", type: "aniversario", message: "Feliz aniversário, {{nome}}! 🎂 A equipe da {{clinica}} deseja um dia muito especial para você. Responda SAIR para não receber mais.", variables: ["nome", "clinica"] },
 ];
 
 export const mockAutomationFlows: AutomationFlow[] = [
@@ -231,8 +231,8 @@ export const mockAutomationFlows: AutomationFlow[] = [
     active: true,
     trigger: "Após consulta finalizada",
     steps: [
-      { id: "s1", delay: "2 horas", delayMinutes: 120, channel: "whatsapp", message: "Olá {{nome}}, obrigado por sua visita! Como você está se sentindo após o procedimento de {{procedimento}}?", variables: ["nome", "procedimento"] },
-      { id: "s2", delay: "3 dias", delayMinutes: 4320, channel: "whatsapp", message: "Oi {{nome}}, tudo bem? Passando para saber se está tudo certo com o {{procedimento}}. Qualquer dúvida, estamos à disposição! 😊", variables: ["nome", "procedimento"] },
+      { id: "s1", delay: "2 horas", delayMinutes: 120, channel: "whatsapp", message: "Olá, {{nome}}! Aqui é da {{clinica}}. Obrigado pela visita! Como você está se sentindo após o atendimento? Qualquer dúvida, é só responder.", variables: ["nome", "clinica"] },
+      { id: "s2", delay: "3 dias", delayMinutes: 4320, channel: "whatsapp", message: "Oi, {{primeiro_nome}}, tudo bem? Passando para saber se está tudo certo desde o seu atendimento na {{clinica}}. Estamos à disposição.", variables: ["primeiro_nome", "clinica"] },
     ],
     stats: { sent: 342, responded: 187, converted: 0 },
     createdAt: "15/01/2026",
@@ -245,9 +245,9 @@ export const mockAutomationFlows: AutomationFlow[] = [
     active: true,
     trigger: "30 dias antes do retorno",
     steps: [
-      { id: "s3", delay: "30 dias antes", delayMinutes: 43200, channel: "whatsapp", message: "Olá {{nome}}! Seu retorno para {{procedimento}} está se aproximando. Vamos agendar? 📅", variables: ["nome", "procedimento"] },
+      { id: "s3", delay: "30 dias antes", delayMinutes: 43200, channel: "whatsapp", message: "Olá, {{nome}}! Seu retorno na {{clinica}} está se aproximando. Vamos agendar? 📅", variables: ["nome", "clinica"] },
       { id: "s4", delay: "7 dias antes", delayMinutes: 10080, channel: "whatsapp", message: "{{nome}}, lembrete: seu retorno é em 7 dias. Confirme respondendo esta mensagem ✅", variables: ["nome"] },
-      { id: "s5", delay: "1 dia antes", delayMinutes: 1440, channel: "sms", message: "Lembrete: Consulta amanhã às {{horario}}. Clínica Odonto Connect.", variables: ["horario"] },
+      { id: "s5", delay: "1 dia antes", delayMinutes: 1440, channel: "sms", message: "Lembrete: consulta amanhã às {{horario}}. {{clinica}}.", variables: ["horario", "clinica"] },
     ],
     stats: { sent: 156, responded: 98, converted: 72 },
     createdAt: "10/02/2026",
@@ -260,9 +260,9 @@ export const mockAutomationFlows: AutomationFlow[] = [
     active: true,
     trigger: "Paciente inativo há 90+ dias",
     steps: [
-      { id: "s6", delay: "Imediato", delayMinutes: 0, channel: "whatsapp", message: "Olá {{nome}}! Sentimos sua falta 😊 Já faz um tempo desde sua última visita. Que tal agendar um check-up?", variables: ["nome"] },
-      { id: "s7", delay: "7 dias", delayMinutes: 10080, channel: "whatsapp", message: "{{nome}}, sua saúde bucal é importante! Temos horários disponíveis esta semana. Posso agendar para você?", variables: ["nome"] },
-      { id: "s8", delay: "15 dias", delayMinutes: 21600, channel: "whatsapp", message: "Última chamada, {{nome}}! 🦷 Agende sua avaliação gratuita e cuide do seu sorriso.", variables: ["nome"] },
+      { id: "s6", delay: "Imediato", delayMinutes: 0, channel: "whatsapp", message: "Olá {{nome}}! Sentimos sua falta 😊 Já faz um tempo desde sua última visita. Que tal agendar um check-up? Responda SAIR para não receber mais.", variables: ["nome"] },
+      { id: "s7", delay: "7 dias", delayMinutes: 10080, channel: "whatsapp", message: "{{nome}}, sua saúde bucal é importante! Temos horários disponíveis esta semana. Posso agendar para você? Responda SAIR para não receber mais.", variables: ["nome"] },
+      { id: "s8", delay: "15 dias", delayMinutes: 21600, channel: "whatsapp", message: "{{primeiro_nome}}, esta é a nossa última mensagem por enquanto. Quando quiser agendar uma avaliação, a {{clinica}} está à disposição. Responda SAIR para não receber mais.", variables: ["primeiro_nome", "clinica"] },
     ],
     stats: { sent: 89, responded: 34, converted: 18 },
     createdAt: "01/03/2026",
@@ -275,9 +275,9 @@ export const mockAutomationFlows: AutomationFlow[] = [
     active: false,
     trigger: "Orçamento criado e não fechado",
     steps: [
-      { id: "s9", delay: "2 dias", delayMinutes: 2880, channel: "whatsapp", message: "Oi {{nome}}! Vi que você recebeu um orçamento para {{procedimento}}. Posso esclarecer alguma dúvida?", variables: ["nome", "procedimento"] },
-      { id: "s10", delay: "5 dias", delayMinutes: 7200, channel: "whatsapp", message: "{{nome}}, temos condições especiais de pagamento para o {{procedimento}}. Quer saber mais?", variables: ["nome", "procedimento"] },
-      { id: "s11", delay: "10 dias", delayMinutes: 14400, channel: "whatsapp", message: "{{nome}}, seu orçamento para {{procedimento}} ainda está disponível. Valor: R$ {{valor}}. Vamos agendar?", variables: ["nome", "procedimento", "valor"] },
+      { id: "s9", delay: "2 dias", delayMinutes: 2880, channel: "whatsapp", message: "Olá, {{nome}}! Aqui é da {{clinica}}. Ficou alguma dúvida sobre o orçamento que preparamos? Podemos explicar tudo por aqui. Responda SAIR para não receber mais.", variables: ["nome", "clinica"] },
+      { id: "s10", delay: "5 dias", delayMinutes: 7200, channel: "whatsapp", message: "{{nome}}, se quiser conversar sobre as formas de pagamento do seu orçamento, a {{clinica}} está à disposição. É só responder. Responda SAIR para não receber mais.", variables: ["nome", "clinica"] },
+      { id: "s11", delay: "10 dias", delayMinutes: 14400, channel: "whatsapp", message: "{{primeiro_nome}}, esta é a nossa última mensagem sobre o orçamento. Quando quiser agendar, é só chamar a {{clinica}} por aqui. Responda SAIR para não receber mais.", variables: ["primeiro_nome", "clinica"] },
     ],
     stats: { sent: 45, responded: 22, converted: 11 },
     createdAt: "20/03/2026",
