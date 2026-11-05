@@ -176,6 +176,30 @@ Regras que **não** trazemos da Apple para a web: Liquid Glass e efeitos de bord
 de fundo por espelhamento, classes de tamanho por aparelho (usamos breakpoints), áreas seguras de
 hardware (só `env(safe-area-inset-*)` se virar PWA), SF Pro/SF Symbols.
 
+### Chat (`src/routes/chat.tsx`, `src/components/chat/*`), aplicado em 5 nov 2026
+- **Mestre-detalhe:** no celular (< 768 px), lista **ou** conversa. "Voltar" (44 px) fica no `ChatHeader`;
+  no computador, lado a lado (lista de 340/360 px).
+- **Lista:**
+  - Ações separadas das abas ("Nova conversa" + menu ⋯).
+  - Abas "Fila de espera" e "Meus atendimentos" com `aria-pressed`; contadores com texto `sr-only`.
+  - Filtros de situação, fila e etapa sem emoji e sem hex; a etapa só aparece onde filtra (Meus atendimentos).
+  - Item da lista focável por teclado; selos de etapa com token.
+- **Conversa:**
+  - Balão enviado em `--primary` com texto `--primary-foreground` (antes, texto escuro ≈ 3,4:1).
+  - Falha de envio virou o selo "Não enviada".
+  - Ações da mensagem (responder, reagir, copiar, apagar) num botão ⋯ visível no toque, com alvo de 44 px.
+  - Horários e citações com pelo menos 12 px; separador de dia legível; sem cascata ao trocar de conversa.
+- **Entrada:**
+  - Botões de 44 px no celular; emoji e etapa ficam só no computador (no celular, a etapa está no menu do cabeçalho).
+  - Avisos "Nenhum WhatsApp conectado" e "Assumir atendimento" dentro da conversa.
+  - Gravação de áudio com descartar e enviar em 44 px; erros de microfone em pt-BR.
+- **Cabeçalho:** nome do paciente sempre visível; no celular, só ligar, "Finalizar" com rótulo e o menu ⋯
+  (PDF, fase no CRM, transferir, vídeo).
+- **Diálogos:** finalizar e pesquisa no `Dialog` do shadcn (foco preso, Esc, título anunciado); um botão
+  primário por passo.
+- **Textos:** toasts em pt-BR sem emoji e sem "instância"; avisos internos da conversa sem emoji.
+  **Não mudou** o conteúdo enviado ao paciente (pesquisa, despedidas, figurinhas).
+
 ## 9. Pendências (para depois)
 
 1. **115 cores quebradas** `hsl(var(--x) / a)` em `.tsx` (A4). Trocar por `color-mix(in srgb, var(--color-x) N%, transparent)`
@@ -187,4 +211,7 @@ hardware (só `env(safe-area-inset-*)` se virar PWA), SF Pro/SF Symbols.
 6. Telas mais usadas (agenda, chat, pacientes, atendimento) — próxima rodada, com as frentes donas.
 7. Imagens reais do mundo da clínica (além da foto do fundador) na landing — hoje só fragmentos de interface.
 8. Levar os princípios do HIG às telas das outras frentes: botões de ação a 44 px no celular, erros por campo, esqueleto no lugar de "0" e cores de estado com texto/ícone (agenda, pacientes, chat, financeiro).
+10. Chat: esqueleto e erro da fila (precisa mexer no carregamento, que é lógica); estado de erro no
+   "Nova conversa"; diálogos como folha de baixo no celular; botão "X" do `Dialog` diz "Close" em
+   inglês (`ui/dialog.tsx`). Spec de agenda e pacientes: `docs/design/spec-agenda-pacientes.md`.
 9. Escala tipográfica como tokens no `@theme` (`caption`, `footnote`, `title-1…3`) para trocar os `text-[…rem]` soltos.

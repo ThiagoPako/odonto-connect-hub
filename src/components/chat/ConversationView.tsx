@@ -1,6 +1,6 @@
 import type { ChatMessage } from "@/data/chatMockData";
 import { useEffect, useRef, useState, useCallback } from "react";
-import { CheckCheck, Check, MapPin, Phone, Mail, Globe, Building2, BarChart3, Reply, SmilePlus, ExternalLink, List, ChevronDown, Forward, Trash2, Search, Loader2, Upload, Copy, Clock, Mic, Download, X, ZoomIn, ZoomOut } from "lucide-react";
+import { CheckCheck, Check, MapPin, Phone, Mail, Globe, Building2, BarChart3, Reply, SmilePlus, ExternalLink, List, ChevronDown, Forward, Trash2, Search, Loader2, Upload, Copy, Clock, Mic, Download, X, ZoomIn, ZoomOut, AlertCircle, ImageOff, VideoOff, FileText, MoreVertical, ChevronUp } from "lucide-react";
 import { TypingIndicator } from "./TypingIndicator";
 
 interface ServerSearchResult {
@@ -136,8 +136,8 @@ function AudioPlayer({ fileUrl, duration, isLead, status }: { fileUrl?: string; 
   if (!fileUrl) {
     return (
       <div className="flex items-center gap-2 p-2 rounded-xl bg-background/15 mb-1.5">
-        <span className="text-lg">🎤</span>
-        <span className="text-xs opacity-70">{duration ? fmtTime(duration) : "Áudio"}</span>
+        <Mic className="size-4 shrink-0 opacity-75" aria-hidden="true" />
+        <span className="text-xs opacity-75 tabular-nums">{duration ? fmtTime(duration) : "Áudio"}</span>
       </div>
     );
   }
@@ -147,10 +147,15 @@ function AudioPlayer({ fileUrl, duration, isLead, status }: { fileUrl?: string; 
   const unplayedColor = isLead ? "bg-muted-foreground/30" : "bg-primary-foreground/30";
 
   return (
-    <div className="flex items-center gap-2.5 mb-1.5 min-w-[240px]">
+    <div className="flex items-center gap-2.5 mb-1.5 w-[16rem] max-w-full">
       {/* Play button with mic badge */}
       <div className="relative shrink-0">
-        <button onClick={togglePlay} className={`h-10 w-10 rounded-full flex items-center justify-center shrink-0 transition-colors ${isLead ? "bg-primary/15 hover:bg-primary/25" : "bg-primary-foreground/15 hover:bg-primary-foreground/25"}`}>
+        <button
+          type="button"
+          onClick={togglePlay}
+          aria-label={`${playing ? "Pausar áudio" : "Ouvir áudio"}${listened ? " (já ouvido)" : ""}`}
+          className={`size-11 rounded-full flex items-center justify-center shrink-0 transition-colors ${isLead ? "bg-primary/15 hover:bg-primary/25" : "bg-primary-foreground/15 hover:bg-primary-foreground/25"}`}
+        >
           {playing ? (
             <div className="flex gap-[2px]">
               <div className={`w-[3px] h-3.5 rounded-sm ${isLead ? "bg-primary" : "bg-primary-foreground"}`} />
@@ -160,16 +165,16 @@ function AudioPlayer({ fileUrl, duration, isLead, status }: { fileUrl?: string; 
             <div className={`w-0 h-0 border-l-[9px] border-y-[6px] border-y-transparent ml-0.5 ${isLead ? "border-l-primary" : "border-l-primary-foreground"}`} />
           )}
         </button>
-        <div className={`absolute -bottom-0.5 -right-0.5 h-4 w-4 rounded-full flex items-center justify-center ${listened ? "bg-[#53bdeb]" : isLead ? "bg-muted" : "bg-primary-foreground/30"}`}>
-          <Mic className={`h-2.5 w-2.5 ${listened ? "text-white" : isLead ? "text-muted-foreground" : "text-primary-foreground"}`} />
+        <div className={`absolute -bottom-0.5 -right-0.5 h-4 w-4 rounded-full flex items-center justify-center ${listened ? "bg-info" : isLead ? "bg-muted" : "bg-primary-foreground/30"}`}>
+          <Mic aria-hidden="true" className={`h-2.5 w-2.5 ${listened ? "text-info-foreground" : isLead ? "text-muted-foreground" : "text-primary-foreground"}`} />
         </div>
       </div>
 
       {/* Waveform + time */}
-      <div className="flex-1 flex flex-col gap-1">
+      <div className="flex-1 min-w-0 flex flex-col gap-1">
         <div
           ref={waveformRef}
-          className="flex items-center gap-[1.5px] h-7 cursor-pointer select-none"
+          className="flex items-center gap-px h-7 overflow-hidden cursor-pointer select-none"
           onMouseDown={(e) => {
             draggingRef.current = true;
             seekFromEvent(e.clientX);
@@ -202,15 +207,17 @@ function AudioPlayer({ fileUrl, duration, isLead, status }: { fileUrl?: string; 
             );
           })}
         </div>
-        <span className="text-[10px] opacity-60 font-mono">
+        <span className="text-xs tabular-nums opacity-75">
           {playing || currentTime > 0 ? fmtTime(currentTime) : fmtTime(totalDuration)}
         </span>
       </div>
 
       {/* Speed button */}
       <button
+        type="button"
         onClick={cycleSpeed}
-        className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md transition-colors shrink-0 ${isLead ? "bg-primary/15 hover:bg-primary/25 text-primary" : "bg-primary-foreground/15 hover:bg-primary-foreground/25 text-primary-foreground"}`}
+        aria-label={`Velocidade de reprodução ${playbackRate}x`}
+        className={`min-h-11 min-w-11 md:min-h-9 md:min-w-9 px-2 text-xs font-semibold tabular-nums rounded-md transition-colors shrink-0 ${isLead ? "bg-primary/15 hover:bg-primary/25 text-primary" : "bg-primary-foreground/15 hover:bg-primary-foreground/25 text-primary-foreground"}`}
       >
         {playbackRate}x
       </button>
@@ -219,6 +226,21 @@ function AudioPlayer({ fileUrl, duration, isLead, status }: { fileUrl?: string; 
 }
 
 
+
+// ─── Rótulo curto do tipo de documento (só exibição) ────────
+function documentTypeLabel(mimeType?: string, fileName?: string): string {
+  const mime = (mimeType || "").toLowerCase();
+  if (mime === "application/pdf") return "PDF";
+  if (mime.includes("word") || mime.includes("wordprocessingml")) return "Word";
+  if (mime.includes("sheet") || mime.includes("excel") || mime.includes("csv")) return "Planilha";
+  if (mime.includes("presentation") || mime.includes("powerpoint")) return "Apresentação";
+  if (mime.startsWith("image/")) return "Imagem";
+  if (mime.startsWith("audio/")) return "Áudio";
+  if (mime.startsWith("video/")) return "Vídeo";
+  const ext = fileName && fileName.includes(".") ? fileName.split(".").pop() : "";
+  if (ext && ext.length <= 5) return ext.toUpperCase();
+  return "Documento";
+}
 
 // ─── Date helpers ───────────────────────────────────────────
 function formatDateDivider(date: Date): string {
@@ -453,13 +475,13 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
     if (!msg.linkPreview) return null;
     const lp = msg.linkPreview;
     return (
-      <div className="mt-2 rounded-xl border border-border/30 overflow-hidden bg-background/20 backdrop-blur-sm">
-        {lp.image && <div className="h-28 bg-muted/50 flex items-center justify-center text-muted-foreground text-xs">🖼️ Preview</div>}
+      <div className="mt-2 rounded-xl border border-border/30 overflow-hidden bg-background/20">
+        {lp.image && <div className="h-28 bg-muted/50 flex items-center justify-center text-muted-foreground text-xs">Prévia do link</div>}
         <div className="p-2.5">
           <p className="text-xs font-semibold leading-tight">{lp.title}</p>
-          {lp.description && <p className="text-[11px] opacity-70 mt-0.5 line-clamp-2">{lp.description}</p>}
-          <div className="flex items-center gap-1 mt-1.5 text-[10px] opacity-50">
-            <ExternalLink className="h-3 w-3" />
+          {lp.description && <p className="text-xs opacity-80 mt-0.5 line-clamp-2">{lp.description}</p>}
+          <div className="flex items-center gap-1 mt-1.5 text-xs opacity-75">
+            <ExternalLink className="h-3 w-3 shrink-0" aria-hidden="true" />
             <span className="truncate">{lp.url}</span>
           </div>
         </div>
@@ -472,17 +494,17 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
     const loc = msg.location;
     return (
       <div className="rounded-xl overflow-hidden">
-        <div className="h-32 bg-gradient-to-br from-primary/10 to-primary/5 flex items-center justify-center relative">
+        <div className="h-32 bg-primary/10 flex items-center justify-center relative">
           <div className="h-12 w-12 rounded-full bg-destructive/10 flex items-center justify-center animate-pop-in">
-            <MapPin className="h-6 w-6 text-destructive" />
+            <MapPin className="h-6 w-6 text-destructive" aria-hidden="true" />
           </div>
-          <div className="absolute bottom-1.5 right-1.5 text-[9px] bg-background/90 backdrop-blur-sm px-2 py-1 rounded-lg font-mono">
+          <div className="absolute bottom-1.5 right-1.5 text-xs text-foreground bg-background px-2 py-1 rounded-md tabular-nums">
             {loc.latitude.toFixed(4)}, {loc.longitude.toFixed(4)}
           </div>
         </div>
         <div className="p-2.5">
           {loc.name && <p className="text-xs font-semibold">{loc.name}</p>}
-          {loc.address && <p className="text-[11px] opacity-70 mt-0.5">{loc.address}</p>}
+          {loc.address && <p className="text-xs opacity-80 mt-0.5">{loc.address}</p>}
         </div>
       </div>
     );
@@ -494,15 +516,15 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
     return (
       <div className="space-y-2">
         <div className="flex items-center gap-3">
-          <div className="h-11 w-11 rounded-full bg-gradient-to-br from-primary/30 to-primary/10 flex items-center justify-center text-sm font-bold text-primary shadow-sm">
+          <div className={`h-11 w-11 rounded-full flex items-center justify-center text-sm font-bold shrink-0 ${msg.sender === "lead" ? "bg-primary/15 text-primary" : "bg-primary-foreground/20 text-primary-foreground"}`}>
             {ct.fullName.split(" ").map(n => n[0]).join("").slice(0, 2)}
           </div>
           <div>
             <p className="text-sm font-semibold">{ct.fullName}</p>
-            {ct.company && <p className="text-[11px] opacity-70 flex items-center gap-1"><Building2 className="h-3 w-3" />{ct.company}</p>}
+            {ct.company && <p className="text-xs opacity-80 flex items-center gap-1"><Building2 className="h-3 w-3" aria-hidden="true" />{ct.company}</p>}
           </div>
         </div>
-        <div className="space-y-1 text-[11px]">
+        <div className="space-y-1 text-xs">
           <p className="flex items-center gap-1.5 opacity-80"><Phone className="h-3 w-3" />{ct.phone}</p>
           {ct.email && <p className="flex items-center gap-1.5 opacity-80"><Mail className="h-3 w-3" />{ct.email}</p>}
           {ct.url && <p className="flex items-center gap-1.5 opacity-80"><Globe className="h-3 w-3" />{ct.url}</p>}
@@ -529,13 +551,13 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
                 <div className="absolute inset-0 bg-primary/10 transition-all duration-500 ease-out" style={{ width: `${pct}%` }} />
                 <div className="relative px-3 py-2 flex items-center justify-between">
                   <span className="text-xs font-medium">{opt.text}</span>
-                  <span className="text-[10px] font-bold opacity-60">{pct}%</span>
+                  <span className="text-xs font-semibold tabular-nums opacity-80">{pct}%</span>
                 </div>
               </div>
             );
           })}
         </div>
-        <p className="text-[10px] opacity-50">{totalVotes} voto{totalVotes !== 1 ? "s" : ""}</p>
+        <p className="text-xs opacity-75">{totalVotes} voto{totalVotes !== 1 ? "s" : ""}</p>
       </div>
     );
   };
@@ -554,13 +576,13 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
             section.rows.map((row, ri) => (
               <div key={`${si}-${ri}`} className="px-3 py-2 rounded-xl bg-background/20 border border-border/20 transition-all hover:bg-background/30">
                 <p className="text-xs font-medium">{row.title}</p>
-                {row.description && <p className="text-[10px] opacity-60">{row.description}</p>}
+                {row.description && <p className="text-xs opacity-75">{row.description}</p>}
               </div>
             ))
           )}
         </div>
         <div className="text-center">
-          <span className="text-xs text-primary font-medium">{list.buttonText}</span>
+          <span className={`text-xs font-medium ${msg.sender === "lead" ? "text-primary" : "text-primary-foreground"}`}>{list.buttonText}</span>
         </div>
       </div>
     );
@@ -578,18 +600,23 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
     const s = (msg as any).status as string | undefined;
     switch (s) {
       case "sending":
-        return <Clock className="h-3 w-3 opacity-60" />;
+        return <Clock role="img" aria-label="Enviando" className="h-3 w-3 opacity-70" />;
       case "sent":
-        return <Check className="h-3.5 w-3.5 opacity-70" />;
+        return <Check role="img" aria-label="Enviada" className="h-3.5 w-3.5 opacity-70" />;
       case "delivered":
-        return <CheckCheck className="h-3.5 w-3.5 opacity-70" />;
+        return <CheckCheck role="img" aria-label="Entregue" className="h-3.5 w-3.5 opacity-70" />;
       case "read":
-        return <CheckCheck className="h-3.5 w-3.5 text-info drop-shadow-[0_0_4px_hsl(var(--info))]" />;
+        return <CheckCheck role="img" aria-label="Lida" strokeWidth={2.5} className="h-3.5 w-3.5 text-primary-foreground" />;
       case "failed":
-        return <span className="text-[10px] text-destructive font-medium">!</span>;
+        return (
+          <span className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded bg-destructive px-1.5 text-xs font-semibold text-destructive-foreground">
+            <AlertCircle className="size-3.5" aria-hidden="true" />
+            Não enviada
+          </span>
+        );
       default:
         // Default to "sent" (single check)
-        return <Check className="h-3.5 w-3.5 opacity-70" />;
+        return <Check role="img" aria-label="Enviada" className="h-3.5 w-3.5 opacity-70" />;
     }
   };
 
@@ -656,23 +683,35 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
       {/* Message search bar */}
       {searchOpen && (
         <div className="flex items-center gap-2 px-4 py-2 bg-card border-b border-border shrink-0 animate-fade-in">
-          <Search className="h-4 w-4 text-muted-foreground shrink-0" />
+          <Search className="h-4 w-4 text-muted-foreground shrink-0" aria-hidden="true" />
           <input
             autoFocus
+            type="search"
+            aria-label="Buscar na conversa"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Buscar na conversa..."
-            className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
+            placeholder="Buscar na conversa…"
+            className="flex-1 min-w-0 h-11 md:h-9 bg-transparent text-base md:text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
           />
-          {searching ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground shrink-0" />
-          ) : (
-            <span className="text-[11px] text-muted-foreground shrink-0">
-              {searchResults.length} resultado{searchResults.length !== 1 ? "s" : ""}
-            </span>
-          )}
-          <button onClick={() => { setSearchOpen(false); setSearchQuery(""); setServerSearchResults([]); }} className="p-1 rounded hover:bg-muted">
-            <span className="text-xs text-muted-foreground">✕</span>
+          <span aria-live="polite" className="inline-flex items-center text-xs tabular-nums text-muted-foreground shrink-0">
+            {searching ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                <span className="sr-only">Buscando…</span>
+              </>
+            ) : searchQuery.trim() ? (
+              searchResults.length === 0
+                ? "Nenhum resultado"
+                : `${searchResults.length} resultado${searchResults.length !== 1 ? "s" : ""}`
+            ) : null}
+          </span>
+          <button
+            type="button"
+            onClick={() => { setSearchOpen(false); setSearchQuery(""); setServerSearchResults([]); }}
+            aria-label="Fechar busca"
+            className="size-11 md:size-9 shrink-0 inline-flex items-center justify-center rounded-md hover:bg-muted transition-colors focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <X className="size-4 text-muted-foreground" aria-hidden="true" />
           </button>
         </div>
       )}
@@ -683,8 +722,9 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
           {searchResults.slice(0, 15).map((m) => (
             <button
               key={m.id}
+              type="button"
               onClick={() => jumpToMessage(m.id)}
-              className={`px-2 py-1 rounded-lg border text-[11px] text-foreground truncate max-w-[200px] hover:bg-primary/10 transition-colors shrink-0 ${
+              className={`min-h-11 md:min-h-9 px-3 py-1.5 rounded-md border text-xs text-foreground truncate max-w-[200px] hover:bg-primary/10 transition-colors shrink-0 ${
                 (m as any).isServerOnly
                   ? "bg-primary/5 border-primary/30 italic"
                   : "bg-card border-border/50"
@@ -701,22 +741,26 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
         ref={containerRef}
         onScroll={handleScroll}
         className="flex-1 overflow-y-auto chat-bg-pattern"
+        role="region"
+        aria-label={`Conversa com ${leadName}`}
       >
         <div className="min-h-full flex flex-col justify-end px-4 py-6 space-y-1">
         {/* Infinite scroll: loading older messages indicator */}
         {loadingMore && (
-          <div className="flex items-center justify-center py-3 animate-fade-in">
-            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-            <span className="ml-2 text-xs text-muted-foreground">Carregando mensagens anteriores...</span>
+          <div role="status" className="flex items-center justify-center py-3">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" aria-hidden="true" />
+            <span className="ml-2 text-xs text-muted-foreground">Carregando mensagens anteriores…</span>
           </div>
         )}
         {hasMore && !loadingMore && (
           <div className="flex items-center justify-center py-2">
             <button
+              type="button"
               onClick={() => onLoadMore?.()}
-              className="text-xs text-primary hover:underline font-medium"
+              className="inline-flex items-center gap-1.5 min-h-11 md:min-h-9 px-4 rounded-full border border-input bg-card text-sm font-medium text-foreground hover:bg-muted transition-colors focus-visible:ring-2 focus-visible:ring-ring"
             >
-              ↑ Carregar mensagens anteriores
+              <ChevronUp className="size-4" aria-hidden="true" />
+              Carregar mensagens anteriores
             </button>
           </div>
         )}
@@ -739,8 +783,12 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
             <div key={msg.id}>
               {/* Date divider */}
               {showDate && (
-                <div className="flex items-center justify-center my-4 animate-fade-in">
-                  <span className="text-[11px] text-muted-foreground bg-card/80 backdrop-blur-sm px-4 py-1.5 rounded-full shadow-sm border border-border/30 font-medium">
+                <div
+                  role="separator"
+                  aria-label={formatDateDivider(new Date(msg.timestamp))}
+                  className="flex items-center justify-center my-4"
+                >
+                  <span className="text-xs font-medium text-muted-foreground bg-card px-3 py-1 rounded-full border border-border">
                     {formatDateDivider(new Date(msg.timestamp))}
                   </span>
                 </div>
@@ -748,12 +796,16 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
 
               {/* Unread messages divider */}
               {showUnreadDivider && (
-                <div className="flex items-center gap-3 my-3 animate-fade-in">
-                  <div className="flex-1 h-px bg-primary/40" />
-                  <span className="text-[11px] font-semibold text-primary bg-primary/10 px-3 py-1 rounded-full">
+                <div
+                  role="separator"
+                  aria-label={`${unreadCount} mensage${unreadCount === 1 ? "m" : "ns"} não lida${unreadCount === 1 ? "" : "s"}`}
+                  className="flex items-center gap-3 my-3 animate-fade-in"
+                >
+                  <div className="flex-1 h-px bg-primary/40" aria-hidden="true" />
+                  <span className="text-xs font-semibold text-primary bg-primary/10 px-3 py-1 rounded-full">
                     {unreadCount} mensage{unreadCount === 1 ? "m" : "ns"} não lida{unreadCount === 1 ? "" : "s"}
                   </span>
-                  <div className="flex-1 h-px bg-primary/40" />
+                  <div className="flex-1 h-px bg-primary/40" aria-hidden="true" />
                 </div>
               )}
 
@@ -761,16 +813,15 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
                 id={`msg-${msg.id}`}
                 onContextMenu={(e) => handleContextMenu(e, msg)}
                 className={`flex ${isLead ? "justify-start" : "justify-end"} group ${
-                  isLead ? "animate-chat-bubble-left" : "animate-chat-bubble-right"
-                } ${first ? "mt-3" : "mt-0.5"} ${highlightedMsgId === msg.id ? "ring-2 ring-primary/40 rounded-2xl" : ""}`}
-                style={{ animationDelay: `${Math.min(idx * 30, 200)}ms`, animationFillMode: "both" }}
+                  idx === messages.length - 1 ? (isLead ? "animate-chat-bubble-left" : "animate-chat-bubble-right") : ""
+                } ${first ? "mt-4" : "mt-1"} ${highlightedMsgId === msg.id ? "ring-2 ring-primary/40 rounded-2xl" : ""}`}
               >
-                <div className="relative max-w-[70%]">
+                <div className="relative max-w-[85%] sm:max-w-[75%] lg:max-w-[65%] min-w-0">
                   {/* Reply preview */}
                   {msg.replyTo && (
-                    <div className="rounded-t-2xl px-4 py-2 text-[11px] border-l-2 border-primary/70 bg-primary/5 backdrop-blur-sm animate-fade-in">
-                      <p className="font-semibold text-primary text-[10px]">{msg.replyTo.sender}</p>
-                      <p className="opacity-70 truncate">{msg.replyTo.content}</p>
+                    <div className="rounded-t-2xl px-4 py-2 border-l-4 border-primary bg-muted animate-fade-in">
+                      <p className="text-xs font-semibold text-primary">{msg.replyTo.sender}</p>
+                      <p className="text-xs text-muted-foreground line-clamp-2 break-words">{msg.replyTo.content}</p>
                     </div>
                   )}
 
@@ -782,7 +833,7 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
                         ? "bg-transparent p-0"
                     : isLead
                           ? "bg-card border border-border/50 msg-bubble-lead shadow-sm"
-                          : "bg-gradient-to-br from-primary to-primary/90 text-foreground msg-bubble-agent shadow-md"
+                          : "bg-primary text-primary-foreground msg-bubble-agent shadow-sm"
                     } ${last && isLead ? "msg-tail-left" : ""} ${last && !isLead ? "msg-tail-right" : ""}`}
                     style={msg.type !== "sticker" ? { borderRadius: bubbleRadius } : undefined}
                   >
@@ -811,13 +862,13 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
                         />
                         {(msg as any).status === "sending" && (
                           <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/30 rounded-xl backdrop-blur-[1px]">
-                            <Loader2 className="h-8 w-8 text-white animate-spin mb-1.5" />
-                            <span className="text-[11px] text-white/90 font-medium">Enviando...</span>
+                            <Loader2 className="h-8 w-8 text-white animate-spin mb-1.5" aria-hidden="true" />
+                            <span className="text-xs text-white font-medium">Enviando…</span>
                           </div>
                         )}
                         {(msg as any).status !== "sending" && (
                           <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/20 rounded-xl">
-                            <ZoomIn className="h-8 w-8 text-white drop-shadow-lg" />
+                            <ZoomIn className="h-8 w-8 text-white drop-shadow-lg" aria-hidden="true" />
                           </div>
                         )}
                       </div>
@@ -825,11 +876,11 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
                     {msg.type === "image" && !msg.fileUrl && (
                       <div className="flex items-center gap-3 p-4 rounded-xl bg-background/15 mb-1.5 border border-border/20">
                         <div className="h-10 w-10 rounded-full bg-muted/30 flex items-center justify-center shrink-0">
-                          <Download className="h-5 w-5 text-muted-foreground" />
+                          <ImageOff className={`size-5 ${isLead ? "text-muted-foreground" : "text-primary-foreground/80"}`} aria-hidden="true" />
                         </div>
                         <div className="flex-1 min-w-0">
-                          <p className="text-xs font-medium">📷 Imagem</p>
-                          <p className="text-[10px] text-muted-foreground">Mídia não disponível</p>
+                          <p className="text-xs font-medium">Imagem</p>
+                          <p className={`text-xs ${isLead ? "text-muted-foreground" : "text-primary-foreground/80"}`}>Mídia não disponível</p>
                         </div>
                       </div>
                     )}
@@ -851,8 +902,8 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
                         />
                         {(msg as any).status === "sending" && (
                           <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/30 rounded-xl backdrop-blur-[1px]">
-                            <Loader2 className="h-8 w-8 text-white animate-spin mb-1.5" />
-                            <span className="text-[11px] text-white/90 font-medium">Enviando...</span>
+                            <Loader2 className="h-8 w-8 text-white animate-spin mb-1.5" aria-hidden="true" />
+                            <span className="text-xs text-white font-medium">Enviando…</span>
                           </div>
                         )}
                       </div>
@@ -862,11 +913,11 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
                         className="flex items-center gap-3 p-4 rounded-xl bg-background/15 mb-1.5 cursor-pointer hover:bg-background/25 transition-colors border border-border/20"
                       >
                         <div className="h-10 w-10 rounded-full bg-muted/30 flex items-center justify-center shrink-0">
-                          <Download className="h-5 w-5 text-muted-foreground" />
+                          <VideoOff className={`size-5 ${isLead ? "text-muted-foreground" : "text-primary-foreground/80"}`} aria-hidden="true" />
                         </div>
                         <div className="flex-1 min-w-0">
-                          <p className="text-xs font-medium">🎬 Vídeo</p>
-                          <p className="text-[10px] text-muted-foreground">Mídia não disponível</p>
+                          <p className="text-xs font-medium">Vídeo</p>
+                          <p className={`text-xs ${isLead ? "text-muted-foreground" : "text-primary-foreground/80"}`}>Mídia não disponível</p>
                         </div>
                       </div>
                     )}
@@ -878,30 +929,30 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
                     )}
                     {msg.type === "document" && (
                       <div className="flex items-center gap-3 p-2.5 rounded-xl bg-background/15 mb-1.5 border border-border/20 cursor-pointer hover:bg-background/25 transition-colors" onClick={() => (msg as any).status !== "sending" && msg.fileUrl && window.open(msg.fileUrl, "_blank")}>
-                        <div className="h-11 w-11 rounded-xl bg-primary/20 flex items-center justify-center text-lg shrink-0 shadow-sm">
-                          {(msg as any).status === "sending" ? <Loader2 className="h-5 w-5 animate-spin text-primary" /> : "📄"}
+                        <div className={`h-11 w-11 rounded-xl flex items-center justify-center shrink-0 ${isLead ? "bg-primary/15 text-primary" : "bg-primary-foreground/20 text-primary-foreground"}`}>
+                          {(msg as any).status === "sending" ? <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" /> : <FileText className="size-5" aria-hidden="true" />}
                         </div>
                         <div className="min-w-0">
                           <p className="text-xs font-semibold truncate">{msg.fileName || "Documento"}</p>
-                          <p className="text-[10px] opacity-60 mt-0.5">{(msg as any).status === "sending" ? "Enviando..." : (msg.mimeType || "application/pdf")}</p>
+                          <p className="text-xs opacity-80 mt-0.5">{(msg as any).status === "sending" ? "Enviando…" : documentTypeLabel(msg.mimeType, msg.fileName)}</p>
                         </div>
                       </div>
                     )}
 
                     {(msg.type === "text" || (msg.content && !["location", "contact", "poll", "sticker", "list", "image", "video", "audio", "document"].includes(msg.type))) && msg.content && (
-                      <p className="text-[14px] leading-relaxed whitespace-pre-wrap font-medium">{renderFormattedText(msg.content)}</p>
+                      <p className="text-[0.9375rem] leading-relaxed whitespace-pre-wrap break-words">{renderFormattedText(msg.content)}</p>
                     )}
                     {/* Caption for media messages */}
                     {["image", "video"].includes(msg.type) && msg.content && !msg.content.startsWith("🖼️") && !msg.content.startsWith("🎬") && !msg.content.startsWith("📎") && !/^\[(image|video|audio|document|sticker)\]$/i.test(msg.content) && (
-                      <p className="text-[13px] leading-relaxed whitespace-pre-wrap mt-1 font-medium">{renderFormattedText(msg.content)}</p>
+                      <p className="text-sm leading-relaxed whitespace-pre-wrap break-words mt-1">{renderFormattedText(msg.content)}</p>
                     )}
 
                     {msg.type !== "sticker" && renderLinkPreview(msg)}
 
                     {/* Timestamp + status — always show on every message (WhatsApp pattern) */}
                     {msg.type !== "sticker" && (
-                      <div className={`flex items-center justify-end gap-1 mt-1 ${isLead ? "text-muted-foreground/60" : "text-foreground/50"}`}>
-                        <span className="text-[10px] font-medium">{formatTime(new Date(msg.timestamp))}</span>
+                      <div className={`flex items-center justify-end gap-1 mt-1 ${isLead ? "text-muted-foreground" : "text-primary-foreground/90"}`}>
+                        <span className="text-xs font-medium tabular-nums">{formatTime(new Date(msg.timestamp))}</span>
                         {renderStatus(msg)}
                       </div>
                     )}
@@ -917,53 +968,82 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
                     </div>
                   )}
 
-                  {/* Message actions (hover) */}
-                  <div className={`absolute top-1/2 -translate-y-1/2 ${isLead ? "-right-20" : "-left-20"} hidden group-hover:flex items-center gap-0.5 bg-card/90 backdrop-blur-sm border border-border/50 rounded-xl shadow-lg p-0.5 animate-pop-in`}>
+                  {/* Botão de ações: sempre visível no toque; no computador aparece no hover ou no foco do teclado */}
+                  {!msg.id.startsWith("sys-") && (
+                    <button
+                      type="button"
+                      aria-label="Ações da mensagem"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (e.detail === 0) {
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          setContextMenu({ x: rect.left, y: rect.bottom, msg });
+                        } else {
+                          handleContextMenu(e, msg);
+                        }
+                      }}
+                      className={`absolute top-1/2 -translate-y-1/2 ${isLead ? "left-full ml-1" : "right-full mr-1"} size-11 md:size-9 inline-flex items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground transition-opacity focus-visible:ring-2 focus-visible:ring-ring pointer-fine:opacity-0 pointer-fine:group-hover:opacity-100 pointer-fine:focus-visible:opacity-100`}
+                    >
+                      <MoreVertical className="size-4" aria-hidden="true" />
+                    </button>
+                  )}
+
+                  {/* Message actions (hover, só com mouse) */}
+                  <div className={`absolute top-1/2 -translate-y-1/2 ${isLead ? "left-full ml-1" : "right-full mr-1"} hidden pointer-fine:group-hover:flex items-center gap-1 bg-popover border border-border rounded-lg shadow-lg p-1 z-10 animate-pop-in`}>
                     {onReaction && !msg.id.match(/^[0-9a-f]{8}-[0-9a-f]{4}-/) && (
                       <button
+                        type="button"
                         onClick={() => setShowReactionPicker(showReactionPicker === msg.id ? null : msg.id)}
-                        className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                        className="inline-flex size-9 items-center justify-center rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors focus-visible:ring-2 focus-visible:ring-ring"
+                        aria-label="Reagir"
                         title="Reagir"
                       >
-                        <SmilePlus className="h-3.5 w-3.5" />
+                        <SmilePlus className="size-4" aria-hidden="true" />
                       </button>
                     )}
                     <button
+                      type="button"
                       onClick={() => onReply?.(msg)}
-                      className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                      className="inline-flex size-9 items-center justify-center rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors focus-visible:ring-2 focus-visible:ring-ring"
+                      aria-label="Responder"
                       title="Responder"
                     >
-                      <Reply className="h-3.5 w-3.5" />
+                      <Reply className="size-4" aria-hidden="true" />
                     </button>
                     {onForward && (
                       <button
+                        type="button"
                         onClick={() => onForward(msg)}
-                        className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                        className="inline-flex size-9 items-center justify-center rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors focus-visible:ring-2 focus-visible:ring-ring"
+                        aria-label="Encaminhar"
                         title="Encaminhar"
                       >
-                        <Forward className="h-3.5 w-3.5" />
+                        <Forward className="size-4" aria-hidden="true" />
                       </button>
                     )}
                     {onDelete && msg.sender === "attendant" && (
                       <button
+                        type="button"
                         onClick={() => onDelete(msg)}
-                        className="p-1.5 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+                        className="inline-flex size-9 items-center justify-center rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors focus-visible:ring-2 focus-visible:ring-ring"
+                        aria-label="Apagar mensagem"
                         title="Apagar"
                       >
-                        <Trash2 className="h-3.5 w-3.5" />
+                        <Trash2 className="size-4" aria-hidden="true" />
                       </button>
                     )}
                   </div>
 
                   {/* Reaction picker */}
                   {showReactionPicker === msg.id && (
-                    <div className={`absolute ${isLead ? "left-0" : "right-0"} -top-11 flex items-center gap-0.5 bg-card/95 backdrop-blur-md border border-border/50 rounded-2xl shadow-xl px-2 py-1.5 z-10 animate-pop-in`}>
-                      {REACTION_EMOJIS.map((emoji, i) => (
+                    <div className={`absolute ${isLead ? "left-0" : "right-0"} bottom-full mb-1 flex w-max max-w-[calc(100vw-2rem)] flex-wrap items-center gap-0.5 bg-popover border border-border rounded-2xl shadow-xl px-2 py-1.5 z-20 animate-pop-in`}>
+                      {REACTION_EMOJIS.map((emoji) => (
                         <button
                           key={emoji}
+                          type="button"
+                          aria-label={`Reagir com ${emoji}`}
                           onClick={() => { onReaction?.(msg.id, emoji); setShowReactionPicker(null); }}
-                          className="text-lg hover:scale-[1.3] transition-all p-0.5 hover:bg-muted/50 rounded-lg"
-                          style={{ animationDelay: `${i * 40}ms` }}
+                          className="size-10 md:size-9 inline-flex items-center justify-center text-xl rounded-md hover:bg-muted transition-colors focus-visible:ring-2 focus-visible:ring-ring"
                         >
                           {emoji}
                         </button>
@@ -986,52 +1066,66 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
       {/* Scroll-to-bottom FAB */}
       {showScrollButton && (
         <button
+          type="button"
           onClick={() => scrollToBottom()}
-          className="absolute bottom-4 right-4 h-10 w-10 rounded-full bg-card border border-border shadow-lg flex items-center justify-center hover:bg-muted transition-all animate-fade-in z-10"
+          aria-label="Ir para a última mensagem"
+          title="Ir para a última mensagem"
+          className="absolute bottom-4 right-4 size-11 md:size-10 rounded-full bg-card border border-border shadow-lg inline-flex items-center justify-center hover:bg-muted transition-colors animate-fade-in z-10 focus-visible:ring-2 focus-visible:ring-ring"
         >
-          <ChevronDown className="h-5 w-5 text-foreground" />
+          <ChevronDown className="h-5 w-5 text-foreground" aria-hidden="true" />
         </button>
       )}
 
       {/* Search toggle */}
       {!searchOpen && (
         <button
+          type="button"
           onClick={() => setSearchOpen(true)}
-          className="absolute top-3 right-3 h-8 w-8 rounded-full bg-card/80 backdrop-blur-sm border border-border/50 shadow-sm flex items-center justify-center hover:bg-muted transition-all z-10 opacity-0 hover:opacity-100 focus:opacity-100"
+          aria-label="Buscar na conversa"
           title="Buscar na conversa"
+          className="absolute top-3 right-3 size-11 md:size-9 rounded-full bg-card/90 backdrop-blur-sm border border-border shadow-sm inline-flex items-center justify-center hover:bg-muted transition-colors z-10 focus-visible:ring-2 focus-visible:ring-ring"
         >
-          <Search className="h-3.5 w-3.5 text-muted-foreground" />
+          <Search className="size-4 text-muted-foreground" aria-hidden="true" />
         </button>
       )}
 
       {/* Context menu */}
       {contextMenu && (
         <div
-          className="fixed z-[100] min-w-[180px] bg-card/95 backdrop-blur-md border border-border/60 rounded-xl shadow-2xl py-1.5 animate-pop-in"
+          className="fixed z-[100] min-w-[180px] bg-popover text-popover-foreground border border-border rounded-lg shadow-xl py-1 animate-pop-in"
           style={{
             left: Math.min(contextMenu.x, window.innerWidth - 200),
-            top: Math.min(contextMenu.y, window.innerHeight - 220),
+            top: Math.min(contextMenu.y, window.innerHeight - 280),
           }}
           onClick={(e) => e.stopPropagation()}
         >
           <button
             onClick={() => { handleCopyMessage(contextMenu.msg); }}
-            className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-foreground hover:bg-muted/60 transition-colors"
+            className="w-full flex items-center gap-2.5 min-h-11 md:min-h-9 px-3.5 py-2 text-sm text-foreground hover:bg-muted transition-colors"
           >
-            <Copy className="h-4 w-4 text-muted-foreground" /> Copiar
+            <Copy className="h-4 w-4 text-muted-foreground" aria-hidden="true" /> Copiar
           </button>
           <button
             onClick={() => { onReply?.(contextMenu.msg); setContextMenu(null); }}
-            className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-foreground hover:bg-muted/60 transition-colors"
+            className="w-full flex items-center gap-2.5 min-h-11 md:min-h-9 px-3.5 py-2 text-sm text-foreground hover:bg-muted transition-colors"
           >
-            <Reply className="h-4 w-4 text-muted-foreground" /> Responder
+            <Reply className="h-4 w-4 text-muted-foreground" aria-hidden="true" /> Responder
           </button>
+          {onReaction && !contextMenu.msg.id.match(/^[0-9a-f]{8}-[0-9a-f]{4}-/) && (
+            <button
+              type="button"
+              onClick={() => { setShowReactionPicker(contextMenu.msg.id); setContextMenu(null); }}
+              className="w-full flex items-center gap-2.5 min-h-11 md:min-h-9 px-3.5 py-2 text-sm text-foreground hover:bg-muted transition-colors"
+            >
+              <SmilePlus className="h-4 w-4 text-muted-foreground" aria-hidden="true" /> Reagir
+            </button>
+          )}
           {onForward && (
             <button
               onClick={() => { onForward(contextMenu.msg); setContextMenu(null); }}
-              className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-foreground hover:bg-muted/60 transition-colors"
+              className="w-full flex items-center gap-2.5 min-h-11 md:min-h-9 px-3.5 py-2 text-sm text-foreground hover:bg-muted transition-colors"
             >
-              <Forward className="h-4 w-4 text-muted-foreground" /> Encaminhar
+              <Forward className="h-4 w-4 text-muted-foreground" aria-hidden="true" /> Encaminhar
             </button>
           )}
           {onDelete && contextMenu.msg.sender === "attendant" && (
@@ -1039,9 +1133,9 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
               <div className="h-px bg-border/40 my-1" />
               <button
                 onClick={() => { onDelete(contextMenu.msg); setContextMenu(null); }}
-                className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-destructive hover:bg-destructive/10 transition-colors"
+                className="w-full flex items-center gap-2.5 min-h-11 md:min-h-9 px-3.5 py-2 text-sm text-destructive hover:bg-destructive/10 transition-colors"
               >
-                <Trash2 className="h-4 w-4" /> Apagar
+                <Trash2 className="h-4 w-4" aria-hidden="true" /> Apagar
               </button>
             </>
           )}
@@ -1056,33 +1150,40 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
         >
           {/* Top bar */}
           <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-4 py-3 bg-gradient-to-b from-black/60 to-transparent z-10">
-            <span className="text-white text-sm font-medium truncate max-w-[60%]">{lightbox.name}</span>
-            <div className="flex items-center gap-2">
+            <span className="text-white text-sm font-medium truncate min-w-0 flex-1">{lightbox.name}</span>
+            <div className="flex items-center gap-2 shrink-0">
               <button
+                type="button"
+                aria-label="Aproximar"
                 onClick={(e) => { e.stopPropagation(); setLightboxZoom((z) => Math.min(z + 0.5, 5)); }}
-                className="h-9 w-9 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center text-white transition-colors"
+                className="size-11 md:size-9 rounded-full bg-white/15 hover:bg-white/25 inline-flex items-center justify-center text-white transition-colors focus-visible:ring-2 focus-visible:ring-ring"
               >
-                <ZoomIn className="h-5 w-5" />
+                <ZoomIn className="h-5 w-5" aria-hidden="true" />
               </button>
               <button
+                type="button"
+                aria-label="Afastar"
                 onClick={(e) => { e.stopPropagation(); setLightboxZoom((z) => { const nz = Math.max(z - 0.5, 1); if (nz === 1) setLightboxPos({ x: 0, y: 0 }); return nz; }); }}
-                className="h-9 w-9 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center text-white transition-colors"
+                className="size-11 md:size-9 rounded-full bg-white/15 hover:bg-white/25 inline-flex items-center justify-center text-white transition-colors focus-visible:ring-2 focus-visible:ring-ring"
               >
-                <ZoomOut className="h-5 w-5" />
+                <ZoomOut className="h-5 w-5" aria-hidden="true" />
               </button>
               <a
                 href={lightbox.url}
                 download={lightbox.name}
                 onClick={(e) => e.stopPropagation()}
-                className="h-9 w-9 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center text-white transition-colors"
+                aria-label="Baixar imagem"
+                className="size-11 md:size-9 rounded-full bg-white/15 hover:bg-white/25 inline-flex items-center justify-center text-white transition-colors focus-visible:ring-2 focus-visible:ring-ring"
               >
-                <Download className="h-5 w-5" />
+                <Download className="h-5 w-5" aria-hidden="true" />
               </a>
               <button
+                type="button"
+                aria-label="Fechar"
                 onClick={() => setLightbox(null)}
-                className="h-9 w-9 rounded-full bg-white/15 hover:bg-white/25 flex items-center justify-center text-white transition-colors"
+                className="size-11 md:size-9 rounded-full bg-white/15 hover:bg-white/25 inline-flex items-center justify-center text-white transition-colors focus-visible:ring-2 focus-visible:ring-ring"
               >
-                <X className="h-5 w-5" />
+                <X className="h-5 w-5" aria-hidden="true" />
               </button>
             </div>
           </div>

@@ -1,6 +1,8 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import type { Lead, ChatMessage } from "@/data/chatMockData";
-import { Phone, Video, X, ArrowRightLeft, Loader2, ArrowLeft, Check, CheckCircle2, Download, Kanban } from "lucide-react";
+import { Phone, Video, X, ArrowRightLeft, Loader2, ArrowLeft, Check, CheckCircle2, Download, Kanban, ChevronLeft, MoreVertical } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { LeadAvatar } from "@/components/LeadAvatar";
 import { toast } from "sonner";
 import { adminListUsers, crmApi, whatsappApi } from "@/lib/vpsApi";
@@ -54,10 +56,10 @@ type PresenceDisplay = "online" | "offline" | "typing" | "recording";
 
 // CRM stages available for quick-marking from chat
 const CRM_QUICK_STAGES = [
-  { id: "orcamento", label: "Orçamento", emoji: "📋", color: "#3b82f6", description: "Marcar que quer orçamento" },
-  { id: "followup", label: "Follow-up", emoji: "🔄", color: "#f59e0b", description: "Precisa de acompanhamento" },
-  { id: "orcamento_enviado", label: "Orçamento Enviado", emoji: "📨", color: "#8b5cf6", description: "Orçamento já foi enviado" },
-  { id: "orcamento_aprovado", label: "Orçamento Aprovado", emoji: "✅", color: "#22c55e", description: "Orçamento foi aprovado" },
+  { id: "orcamento", label: "Orçamento", color: "#3b82f6", description: "Marcar que quer orçamento" },
+  { id: "followup", label: "Follow-up", color: "#f59e0b", description: "Precisa de acompanhamento" },
+  { id: "orcamento_enviado", label: "Orçamento Enviado", color: "#8b5cf6", description: "Orçamento já foi enviado" },
+  { id: "orcamento_aprovado", label: "Orçamento Aprovado", color: "#22c55e", description: "Orçamento foi aprovado" },
 ];
 
 interface ChatHeaderProps {
@@ -86,6 +88,10 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onRe
   const [reason, setReason] = useState("");
   const [currentStage, setCurrentStage] = useState<string | null>(crmStage || null);
   const [updatingStage, setUpdatingStage] = useState(false);
+  const panelIdBase = useId();
+  const stagePanelId = `${panelIdBase}-fase`;
+  const transferPanelId = `${panelIdBase}-transferir`;
+  const reasonCountId = `${panelIdBase}-motivo-contador`;
 
   const handleClose = () => {
     setShowTransfer(false);
@@ -135,7 +141,7 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onRe
       const stageInfo = CRM_QUICK_STAGES.find((s) => s.id === stageId);
       setCurrentStage(stageId);
       onStageChange?.(lead.id, stageId);
-      toast.success(`${stageInfo?.emoji} Lead marcado como "${stageInfo?.label}" no CRM`);
+      toast.success(`Paciente marcado como "${stageInfo?.label}" no CRM`);
     }
     setUpdatingStage(false);
     setShowStageMenu(false);
@@ -179,29 +185,41 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onRe
     }
   };
 
+  const currentStageInfo = CRM_QUICK_STAGES.find((s) => s.id === currentStage);
+  const iconBtn = "size-11 md:size-9 items-center justify-center rounded-md transition-colors disabled:opacity-50";
+
   return (
     <>
-      <div className="h-[68px] flex items-center justify-between px-5 border-b border-border/50 bg-card/80 backdrop-blur-sm shrink-0 relative z-30 isolate shadow-sm">
-        <div className="flex items-center gap-3.5 animate-fade-in">
-          <div className="relative">
+      <div className="min-h-16 py-2 flex items-center justify-between gap-2 px-2 md:px-5 border-b border-border bg-card shrink-0 relative z-30 isolate">
+        <div className="flex items-center gap-2 md:gap-3.5 min-w-0 flex-1 animate-fade-in">
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Voltar para a lista"
+            className={`inline-flex md:hidden -ml-1 shrink-0 ${iconBtn} text-muted-foreground hover:bg-muted hover:text-foreground`}
+          >
+            <ChevronLeft className="h-5 w-5" />
+          </button>
+          <div className="relative shrink-0">
             <LeadAvatar initials={lead.initials} avatarUrl={lead.avatarUrl} avatarColor={lead.avatarColor || "bg-primary/20"} size="md" />
             {(presence === "online" || presence === "typing" || presence === "recording") && (
-              <div className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-card shadow-sm bg-success" />
+              <div className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-card bg-success" />
             )}
           </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <p className="text-sm font-semibold text-foreground">{getDisplayName(lead)}</p>
-              {currentStage && (
-                <span className="inline-flex items-center gap-0.5 px-1.5 py-0 rounded-full text-[9px] font-semibold text-white shadow-sm" style={{ backgroundColor: CRM_QUICK_STAGES.find((s) => s.id === currentStage)?.color || "#6b7280" }}>
-                  {CRM_QUICK_STAGES.find((s) => s.id === currentStage)?.emoji} {CRM_QUICK_STAGES.find((s) => s.id === currentStage)?.label}
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <p className="text-sm font-semibold text-foreground truncate min-w-0">{getDisplayName(lead)}</p>
+              {currentStageInfo && (
+                <span className="inline-flex shrink-0 max-w-[40vw] min-h-6 items-center gap-1.5 rounded-md border border-border bg-muted px-2 text-xs font-medium text-foreground">
+                  <span aria-hidden="true" className="size-2 shrink-0 rounded-full" style={{ backgroundColor: currentStageInfo.color }} />
+                  <span className="truncate">{currentStageInfo.label}</span>
                 </span>
               )}
             </div>
-            {lead.phone && <p className="text-[11px] text-muted-foreground font-mono">{formatPhoneDisplay(lead.phone)}</p>}
+            {lead.phone && <p className="text-xs text-muted-foreground font-mono truncate">{formatPhoneDisplay(lead.phone)}</p>}
             {presence === "typing" ? (
-              <div className="flex items-center gap-1.5 h-4">
-                <div className="flex items-center gap-[3px]">
+              <div className="flex items-center gap-1.5 min-h-4">
+                <div className="flex items-center gap-[3px]" aria-hidden="true">
                   {[0, 1, 2].map((i) => (
                     <span
                       key={i}
@@ -210,11 +228,11 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onRe
                     />
                   ))}
                 </div>
-                <span className="text-xs text-primary font-medium">digitando...</span>
+                <span className="text-xs text-primary font-medium">digitando…</span>
               </div>
             ) : presence === "recording" ? (
-              <div className="flex items-center gap-1.5 h-4">
-                <div className="flex items-end gap-[2px] h-3.5">
+              <div className="flex items-center gap-1.5 min-h-4">
+                <div className="flex items-end gap-[2px] h-3.5" aria-hidden="true">
                   {[0, 1, 2, 3, 4].map((i) => (
                     <span
                       key={i}
@@ -223,49 +241,61 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onRe
                     />
                   ))}
                 </div>
-                <span className="text-xs text-destructive font-medium">gravando áudio...</span>
+                <span className="text-xs text-destructive font-medium">gravando áudio…</span>
               </div>
             ) : presence === "online" ? (
               <p className="text-xs text-success flex items-center gap-1.5 font-medium">
-                <span className="relative flex h-2 w-2">
+                <span className="relative flex h-2 w-2" aria-hidden="true">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-success/60"></span>
                   <span className="relative inline-flex rounded-full h-2 w-2 bg-success"></span>
                 </span>
                 Online
               </p>
             ) : lastSeen ? (
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-muted-foreground truncate">
                 Visto por último {formatLastSeen(lastSeen)}
               </p>
             ) : null}
           </div>
         </div>
 
-        <div className="relative z-10 flex items-center gap-0.5">
+        <div className="relative z-10 flex items-center gap-1 shrink-0">
           <button
+            type="button"
             onClick={handleDownloadPdf}
-            className="p-2.5 rounded-xl hover:bg-muted transition-all text-muted-foreground hover:text-foreground"
-            title="Baixar conversa em PDF"
+            className={`hidden md:inline-flex ${iconBtn} text-muted-foreground hover:bg-muted hover:text-foreground`}
+            aria-label="Baixar conversa (PDF)"
+            title="Baixar conversa (PDF)"
           >
             <Download className="h-4 w-4" />
           </button>
           <button
+            type="button"
             onClick={() => { setShowStageMenu(!showStageMenu); setShowTransfer(false); }}
-            className={`p-2.5 rounded-xl transition-all ${showStageMenu ? "bg-primary/10 text-primary shadow-sm" : "hover:bg-muted text-muted-foreground hover:text-foreground"}`}
-            title="Fase do CRM"
+            className={`hidden md:inline-flex ${iconBtn} ${showStageMenu ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+            aria-label="Fase no CRM"
+            aria-expanded={showStageMenu}
+            aria-controls={stagePanelId}
+            title="Fase no CRM"
           >
             <Kanban className="h-4 w-4" />
           </button>
           <button
+            type="button"
             onClick={handleOpenTransfer}
-            className={`p-2.5 rounded-xl transition-all ${showTransfer ? "bg-primary/10 text-primary shadow-sm" : "hover:bg-muted text-muted-foreground hover:text-foreground"}`}
+            className={`hidden md:inline-flex ${iconBtn} ${showTransfer ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+            aria-label="Transferir atendimento"
+            aria-expanded={showTransfer}
+            aria-controls={transferPanelId}
             title="Transferir atendimento"
           >
             <ArrowRightLeft className="h-4 w-4" />
           </button>
           <button
-            className="p-2.5 rounded-xl hover:bg-success/10 transition-all text-muted-foreground hover:text-success disabled:opacity-50"
-            aria-label="Ligar"
+            type="button"
+            className={`inline-flex ${iconBtn} text-muted-foreground hover:bg-success/10 hover:text-success`}
+            aria-label="Ligar via WhatsApp"
+            aria-busy={calling}
             title="Ligar via WhatsApp"
             onClick={() => handleCall(false)}
             disabled={calling}
@@ -273,8 +303,10 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onRe
             <Phone className={`h-4 w-4 ${calling ? "animate-pulse" : ""}`} />
           </button>
           <button
-            className="p-2.5 rounded-xl hover:bg-primary/10 transition-all text-muted-foreground hover:text-primary disabled:opacity-50"
-            aria-label="Chamada de vídeo"
+            type="button"
+            className={`hidden md:inline-flex ${iconBtn} text-muted-foreground hover:bg-primary/10 hover:text-primary`}
+            aria-label="Chamada de vídeo via WhatsApp"
+            aria-busy={calling}
             title="Chamada de vídeo via WhatsApp"
             onClick={() => handleCall(true)}
             disabled={calling}
@@ -282,42 +314,83 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onRe
             <Video className={`h-4 w-4 ${calling ? "animate-pulse" : ""}`} />
           </button>
           {lead.status === "active" && onFinishAttendance && (
-            <button
+            <Button
+              type="button"
+              variant="outline"
               onClick={() => setShowFinishDialog(true)}
-              className="p-2.5 rounded-xl hover:bg-success/10 transition-all text-success hover:shadow-sm"
+              aria-label="Finalizar atendimento"
               title="Finalizar atendimento"
+              className="h-11 min-w-11 md:h-9 md:min-w-9 gap-1.5 px-2 sm:px-3 bg-transparent text-success hover:text-success border-success/40 hover:bg-success/10"
             >
-              <CheckCircle2 className="h-4 w-4" />
-            </button>
+              <CheckCircle2 />
+              <span className="hidden sm:inline">Finalizar</span>
+            </Button>
           )}
-          <button onClick={onClose} className="p-2.5 rounded-xl hover:bg-muted transition-all text-muted-foreground hover:text-foreground ml-1">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                aria-label="Mais ações"
+                className={`inline-flex md:hidden ${iconBtn} text-muted-foreground hover:bg-muted hover:text-foreground`}
+              >
+                <MoreVertical className="h-5 w-5" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-60" onCloseAutoFocus={(e) => e.preventDefault()}>
+              <DropdownMenuItem className="h-11 md:h-9" onSelect={() => { handleDownloadPdf(); }}>
+                <Download />
+                Baixar conversa (PDF)
+              </DropdownMenuItem>
+              <DropdownMenuItem className="h-11 md:h-9" onSelect={() => { setShowStageMenu(!showStageMenu); setShowTransfer(false); }}>
+                <Kanban />
+                Fase no CRM
+              </DropdownMenuItem>
+              <DropdownMenuItem className="h-11 md:h-9" onSelect={handleOpenTransfer}>
+                <ArrowRightLeft />
+                Transferir atendimento
+              </DropdownMenuItem>
+              <DropdownMenuItem className="h-11 md:h-9" disabled={calling} onSelect={() => { handleCall(true); }}>
+                <Video />
+                Chamada de vídeo
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Fechar conversa"
+            title="Fechar conversa"
+            className={`hidden md:inline-flex ml-1 ${iconBtn} text-muted-foreground hover:bg-muted hover:text-foreground`}
+          >
             <X className="h-4 w-4" />
           </button>
         </div>
 
         {showTransfer && (
-          <div className="absolute top-full right-4 mt-1 w-72 bg-card border border-border rounded-xl shadow-lg z-[80] overflow-hidden">
+          <div id={transferPanelId} className="absolute top-full left-2 right-2 sm:left-auto sm:right-4 mt-1 sm:w-72 bg-card border border-border rounded-xl shadow-lg z-[80] overflow-hidden">
             {!selectedAtt ? (
               <>
                 <div className="px-3 py-2 border-b border-border/50">
                   <p className="text-xs font-semibold text-foreground">Transferir para</p>
-                  <p className="text-[11px] text-muted-foreground">Selecione o atendente</p>
+                  <p className="text-xs text-muted-foreground">Selecione o atendente</p>
                 </div>
                 <div className="py-1 max-h-48 overflow-y-auto">
                   {loading ? (
                     <div className="flex items-center justify-center py-4">
-                      <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                      <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" aria-hidden="true" />
+                      <span className="sr-only">Carregando atendentes</span>
                     </div>
                   ) : attendants.length === 0 ? (
                     <p className="text-xs text-muted-foreground text-center py-4">Nenhum atendente disponível</p>
                   ) : (
                     attendants.map((att) => (
                       <button
+                        type="button"
                         key={att.id}
                         onClick={() => setSelectedAtt(att)}
-                        className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-muted/50 transition-colors text-left"
+                        className="w-full min-h-11 md:min-h-9 flex items-center gap-3 px-3 py-2 hover:bg-muted transition-colors text-left"
                       >
-                        <div className="h-8 w-8 rounded-full bg-primary/15 flex items-center justify-center text-[10px] font-bold text-primary shrink-0">
+                        <div aria-hidden="true" className="h-8 w-8 rounded-full bg-primary/15 flex items-center justify-center text-xs font-bold text-primary shrink-0">
                           {att.initials}
                         </div>
                         <span className="text-sm text-foreground">{att.name}</span>
@@ -328,16 +401,18 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onRe
               </>
             ) : (
               <>
-                <div className="px-3 py-2 border-b border-border/50 flex items-center gap-2">
+                <div className="px-3 py-1 md:py-2 border-b border-border/50 flex items-center gap-2">
                   <button
+                    type="button"
                     onClick={() => { setSelectedAtt(null); setReason(""); }}
-                    className="p-1 rounded hover:bg-muted transition-colors text-muted-foreground"
+                    aria-label="Voltar para a lista de atendentes"
+                    className="-ml-2 inline-flex size-11 md:size-8 shrink-0 items-center justify-center rounded-md hover:bg-muted transition-colors text-muted-foreground"
                   >
-                    <ArrowLeft className="h-3.5 w-3.5" />
+                    <ArrowLeft className="h-4 w-4" />
                   </button>
-                  <div>
+                  <div className="min-w-0">
                     <p className="text-xs font-semibold text-foreground">Transferir para {selectedAtt.name}</p>
-                    <p className="text-[11px] text-muted-foreground">Informe o motivo da transferência</p>
+                    <p className="text-xs text-muted-foreground">Informe o motivo da transferência</p>
                   </div>
                 </div>
                 <div className="p-3 space-y-3">
@@ -345,15 +420,18 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onRe
                     value={reason}
                     onChange={(e) => setReason(e.target.value.slice(0, 500))}
                     placeholder="Ex: Paciente precisa de avaliação ortodôntica..."
+                    aria-label="Motivo da transferência"
+                    aria-describedby={reasonCountId}
                     className="w-full h-20 px-3 py-2 rounded-lg bg-muted border-0 text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-ring"
                     autoFocus
                   />
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] text-muted-foreground">{reason.trim().length}/500</span>
+                  <div className="flex items-center justify-between gap-2">
+                    <span id={reasonCountId} className="text-xs text-muted-foreground tabular-nums">{reason.trim().length}/500</span>
                     <button
+                      type="button"
                       onClick={handleConfirmTransfer}
                       disabled={!reason.trim()}
-                      className="px-4 py-1.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="h-11 md:h-9 px-4 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       Transferir
                     </button>
@@ -365,27 +443,37 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onRe
         )}
 
         {showStageMenu && (
-          <div className="absolute top-full right-4 mt-1 w-64 bg-card border border-border rounded-xl shadow-lg z-[80] overflow-hidden">
-            <div className="px-3 py-2 border-b border-border/50">
-              <p className="text-xs font-semibold text-foreground">Fase do Lead no CRM</p>
-              <p className="text-[11px] text-muted-foreground">Marcar sem finalizar o atendimento</p>
+          <div id={stagePanelId} className="absolute top-full left-2 right-2 sm:left-auto sm:right-4 mt-1 sm:w-72 bg-card border border-border rounded-xl shadow-lg z-[80] overflow-hidden">
+            <div className="px-3 py-2 border-b border-border/50 flex items-start justify-between gap-2">
+              <div>
+                <p className="text-xs font-semibold text-foreground">Fase do paciente no CRM</p>
+                <p className="text-xs text-muted-foreground">Marcar sem finalizar o atendimento</p>
+              </div>
+              {updatingStage && (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground shrink-0" aria-hidden="true" />
+                  <span className="sr-only" role="status">Atualizando fase…</span>
+                </>
+              )}
             </div>
             <div className="py-1">
               {CRM_QUICK_STAGES.map((stage) => {
                 const isActive = currentStage === stage.id;
                 return (
                   <button
+                    type="button"
                     key={stage.id}
                     onClick={() => handleSetStage(stage.id)}
                     disabled={updatingStage}
-                    className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-muted/50 transition-colors text-left disabled:opacity-50"
+                    aria-pressed={isActive}
+                    className="w-full min-h-11 md:min-h-9 flex items-center gap-3 px-3 py-2 hover:bg-muted transition-colors text-left disabled:opacity-50"
                   >
-                    <span className="text-base">{stage.emoji}</span>
+                    <span aria-hidden="true" className="size-2.5 rounded-full shrink-0" style={{ backgroundColor: stage.color }} />
                     <div className="flex-1 min-w-0">
-                      <p className="text-xs font-medium text-foreground">{stage.label}</p>
-                      <p className="text-[10px] text-muted-foreground truncate">{stage.description}</p>
+                      <p className="text-sm font-medium text-foreground">{stage.label}</p>
+                      <p className="text-xs text-muted-foreground">{stage.description}</p>
                     </div>
-                    {isActive && <Check className="h-3.5 w-3.5 text-primary shrink-0" />}
+                    {isActive && <Check className="h-3.5 w-3.5 text-primary shrink-0" aria-hidden="true" />}
                   </button>
                 );
               })}

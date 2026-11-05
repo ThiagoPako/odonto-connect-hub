@@ -1,21 +1,22 @@
 import type { Lead } from "@/data/chatMockData";
-import { Clock, UserPlus, CheckCircle2, Flame } from "lucide-react";
+import { Clock, UserPlus, CheckCircle2, Flame, AlertCircle } from "lucide-react";
 import { LeadAvatar } from "@/components/LeadAvatar";
+import { Button } from "@/components/ui/button";
 
 type PresenceStatus = "online" | "offline" | "typing" | "recording";
 
-const CRM_STAGE_LABELS: Record<string, { label: string; emoji: string; color: string }> = {
-  lead: { label: "Lead", emoji: "📥", color: "#6b7280" },
-  em_atendimento: { label: "Atendimento", emoji: "💬", color: "#3b82f6" },
-  orcamento: { label: "Orçamento", emoji: "📋", color: "#3b82f6" },
-  orcamento_enviado: { label: "Orç. Enviado", emoji: "📨", color: "#8b5cf6" },
-  orcamento_aprovado: { label: "Aprovado", emoji: "✅", color: "#22c55e" },
-  followup: { label: "Follow-up", emoji: "🔄", color: "#f59e0b" },
-  followup_2: { label: "Follow-up 2", emoji: "🔄", color: "#f59e0b" },
-  followup_3: { label: "Follow-up 3", emoji: "🔄", color: "#ef4444" },
-  sem_resposta: { label: "Sem Resposta", emoji: "⏳", color: "#6b7280" },
-  orcamento_reprovado: { label: "Orç. Reprovado", emoji: "❌", color: "#ef4444" },
-  desqualificado: { label: "Desqualificado", emoji: "🚫", color: "#6b7280" },
+const CRM_STAGE_LABELS: Record<string, { label: string; color: string }> = {
+  lead: { label: "Lead", color: "#6b7280" },
+  em_atendimento: { label: "Atendimento", color: "#3b82f6" },
+  orcamento: { label: "Orçamento", color: "#3b82f6" },
+  orcamento_enviado: { label: "Orç. Enviado", color: "#8b5cf6" },
+  orcamento_aprovado: { label: "Aprovado", color: "#22c55e" },
+  followup: { label: "Follow-up", color: "#f59e0b" },
+  followup_2: { label: "Follow-up 2", color: "#f59e0b" },
+  followup_3: { label: "Follow-up 3", color: "#ef4444" },
+  sem_resposta: { label: "Sem Resposta", color: "#6b7280" },
+  orcamento_reprovado: { label: "Orç. Reprovado", color: "#ef4444" },
+  desqualificado: { label: "Desqualificado", color: "#6b7280" },
 };
 
 interface LeadListItemProps {
@@ -30,6 +31,11 @@ interface LeadListItemProps {
 
 export function LeadListItem({ lead, isSelected, onSelect, showAssignButton, onAssign, presence = "offline", crmStage }: LeadListItemProps) {
   const timeAgo = getTimeAgo(lead.lastMessageTime);
+  const isWaiting = lead.status === "waiting";
+  const longWait = isWaiting && isLongWait(lead.lastMessageTime);
+  const showStageChip = !!(crmStage && CRM_STAGE_LABELS[crmStage] && crmStage !== "lead");
+  const showMetaRow = !!(lead.priority || showStageChip || lead.queueName);
+  const showAssign = !!(showAssignButton && onAssign);
 
   return (
     <div
@@ -37,58 +43,74 @@ export function LeadListItem({ lead, isSelected, onSelect, showAssignButton, onA
       className={`lead-list-item flex items-start gap-3 px-4 py-3.5 cursor-pointer border-b border-border/30 relative overflow-hidden ${
         lead.priority
           ? isSelected
-            ? "bg-warning/10 border-l-[3px] border-l-warning shadow-sm"
+            ? "bg-warning/10 border-l-[3px] border-l-warning"
             : "bg-warning/5 border-l-[3px] border-l-warning hover:bg-warning/10"
           : isSelected
-            ? "bg-primary/5 border-l-[3px] border-l-primary shadow-sm"
+            ? "bg-primary/10 border-l-[3px] border-l-primary"
             : "hover:bg-muted/40 border-l-[3px] border-l-transparent"
       }`}
     >
-      {/* Subtle gradient overlay on selected */}
-      {isSelected && (
-        <div className="absolute inset-0 bg-gradient-to-r from-primary/5 to-transparent pointer-events-none" />
-      )}
-
-      <div className="relative">
+      {/* Botão que cobre o item: dá foco e Enter/Espaço sem aninhar o botão Assumir dentro de outro botão */}
+      <button
+        type="button"
+        aria-current={isSelected ? "true" : undefined}
+        onClick={(e) => {
+          e.stopPropagation();
+          onSelect(lead);
+        }}
+        className="absolute inset-0 z-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+      >
+        <span className="sr-only">Abrir conversa com {lead.name}</span>
+      </button>
+      <div className="relative shrink-0">
         <LeadAvatar initials={lead.initials} avatarUrl={lead.avatarUrl} avatarColor={lead.avatarColor || "bg-primary/20"} size="md" />
         {lead.status === "finished" ? (
           <div className="absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full bg-muted border-2 border-card flex items-center justify-center">
-            <CheckCircle2 className="h-2.5 w-2.5 text-muted-foreground" />
+            <CheckCircle2 className="h-2.5 w-2.5 text-muted-foreground" aria-hidden="true" />
+            <span className="sr-only">Atendimento finalizado</span>
           </div>
         ) : (presence === "online" || presence === "typing" || presence === "recording") ? (
-          <div className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full bg-success border-2 border-card shadow-sm" />
+          <div className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full bg-success border-2 border-card">
+            <span className="sr-only">Online</span>
+          </div>
         ) : null}
       </div>
 
       <div className="flex-1 min-w-0 relative z-10">
-        <div className="flex items-center justify-between mb-0.5">
-          <div className="flex items-center gap-1.5 min-w-0">
-            {lead.priority && (
-              <span className="inline-flex items-center gap-0.5 px-1.5 py-0 rounded-full text-[8px] font-bold bg-warning/20 text-warning leading-4 shrink-0 animate-pulse">
-                <Flame className="h-2.5 w-2.5" /> Recuperação
+        <div className="flex items-start justify-between gap-2 mb-0.5">
+          <span className="text-sm font-semibold truncate text-foreground min-w-0">
+            {lead.name}
+          </span>
+          <div className="flex flex-col items-end gap-1 shrink-0">
+            <div className={`flex items-center gap-1 text-xs font-medium tabular-nums ${getWaitUrgencyClass(lead)}`}>
+              {isWaiting ? (
+                <>
+                  {longWait ? (
+                    <AlertCircle className="h-3.5 w-3.5" aria-hidden="true" />
+                  ) : (
+                    <Clock className="h-3.5 w-3.5" aria-hidden="true" />
+                  )}
+                  <span>
+                    <span className="sr-only">{longWait ? "Espera longa: aguardando há " : "Aguardando há "}</span>
+                    {getDetailedWaitTime(lead.lastMessageTime)}
+                  </span>
+                </>
+              ) : (
+                <span>{timeAgo}</span>
+              )}
+            </div>
+            {lead.unreadCount > 0 && (
+              <span className="min-h-5 min-w-5 px-1.5 rounded-full bg-primary text-primary-foreground text-xs font-semibold tabular-nums flex items-center justify-center">
+                <span aria-hidden="true">{lead.unreadCount > 99 ? "99+" : lead.unreadCount}</span>
+                <span className="sr-only">{lead.unreadCount} mensagens não lidas</span>
               </span>
             )}
-            <span className={`text-sm font-semibold truncate transition-colors ${isSelected ? "text-primary" : "text-foreground"}`}>
-              {lead.name}
-            </span>
-            {crmStage && CRM_STAGE_LABELS[crmStage] && crmStage !== "lead" && (
-              <span
-                className="inline-flex items-center gap-0.5 px-1.5 py-0 rounded-full text-[8px] font-bold text-white leading-4 shadow-sm shrink-0"
-                style={{ backgroundColor: CRM_STAGE_LABELS[crmStage].color }}
-              >
-                {CRM_STAGE_LABELS[crmStage].emoji} {CRM_STAGE_LABELS[crmStage].label}
-              </span>
-            )}
-          </div>
-          <div className={`flex items-center gap-1 shrink-0 ml-1 ${getWaitUrgencyClass(lead)}`}>
-            <Clock className="h-3 w-3" />
-            <span className="text-[11px] font-medium">{lead.status === "waiting" ? `⏳ ${getDetailedWaitTime(lead.lastMessageTime)}` : timeAgo}</span>
           </div>
         </div>
 
         {presence === "typing" ? (
-          <div className="flex items-center gap-1.5 h-5">
-            <div className="flex items-center gap-[3px]">
+          <div className="flex items-center gap-1.5 min-h-5">
+            <div className="flex items-center gap-[3px]" aria-hidden="true">
               {[0, 1, 2].map((i) => (
                 <span
                   key={i}
@@ -99,11 +121,11 @@ export function LeadListItem({ lead, isSelected, onSelect, showAssignButton, onA
                 />
               ))}
             </div>
-            <span className="text-xs text-primary font-medium">digitando...</span>
+            <span className="text-xs text-primary font-medium">digitando…</span>
           </div>
         ) : presence === "recording" ? (
-          <div className="flex items-center gap-1.5 h-5">
-            <div className="flex items-end gap-[2px] h-3.5">
+          <div className="flex items-center gap-1.5 min-h-5">
+            <div className="flex items-end gap-[2px] h-3.5" aria-hidden="true">
               {[0, 1, 2, 3, 4].map((i) => (
                 <span
                   key={i}
@@ -114,43 +136,51 @@ export function LeadListItem({ lead, isSelected, onSelect, showAssignButton, onA
                 />
               ))}
             </div>
-            <span className="text-xs text-destructive font-medium">gravando áudio...</span>
+            <span className="text-xs text-destructive font-medium">gravando áudio…</span>
           </div>
         ) : (
           <p className="text-xs text-muted-foreground truncate leading-relaxed">{lead.lastMessage}</p>
         )}
 
-        {lead.queueName && (
-          <span
-            className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-semibold text-white mt-1 shadow-sm"
-            style={{ backgroundColor: lead.queueColor || "hsl(var(--primary))" }}
-          >
-            {lead.queueName}
-          </span>
+        {showMetaRow && (
+          <div className="flex flex-wrap items-center gap-1.5 mt-1">
+            {lead.priority && (
+              <span className="inline-flex min-h-6 items-center gap-1 rounded-md bg-warning/15 px-2 text-xs font-semibold text-warning-text">
+                <Flame className="h-3.5 w-3.5" aria-hidden="true" /> Recuperação
+              </span>
+            )}
+            {showStageChip && crmStage && (
+              <span className="inline-flex min-h-6 items-center gap-1.5 rounded-md border border-border bg-muted/60 px-2 text-xs font-medium text-foreground">
+                <span aria-hidden="true" className="size-2 shrink-0 rounded-full" style={{ backgroundColor: CRM_STAGE_LABELS[crmStage].color }} />
+                {CRM_STAGE_LABELS[crmStage].label}
+              </span>
+            )}
+            {lead.queueName && (
+              <span className="inline-flex min-h-6 items-center gap-1.5 rounded-md bg-muted px-2 text-xs font-medium text-foreground">
+                <span aria-hidden="true" className="size-2 shrink-0 rounded-full" style={{ backgroundColor: lead.queueColor || "var(--color-primary)" }} />
+                {lead.queueName}
+              </span>
+            )}
+          </div>
         )}
 
-        <div className="flex items-center justify-between mt-2">
-          {lead.unreadCount > 0 ? (
-            <span className="h-5 min-w-[20px] px-1.5 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center shadow-sm animate-badge-pulse">
-              {lead.unreadCount}
-            </span>
-          ) : (
-            <span />
-          )}
-
-          {showAssignButton && onAssign && (
-            <button
+        {showAssign && (
+          <div className="flex items-center justify-end mt-2">
+            <Button
+              type="button"
+              size="sm"
+              aria-label={`Assumir conversa com ${lead.name}`}
               onClick={(e) => {
                 e.stopPropagation();
-                onAssign(lead);
+                onAssign?.(lead);
               }}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold bg-primary text-primary-foreground hover:bg-primary/90 transition-all hover:shadow-md active:scale-95"
+              className="h-11 md:h-9 gap-1.5 px-3 text-sm"
             >
-              <UserPlus className="h-3 w-3" />
+              <UserPlus />
               Assumir
-            </button>
-          )}
-        </div>
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -185,6 +215,10 @@ function getWaitUrgencyClass(lead: { status: string; lastMessageTime: Date }): s
   if (lead.status !== "waiting") return "text-muted-foreground";
   const diff = Math.floor((Date.now() - lead.lastMessageTime.getTime()) / 1000);
   if (diff < 300) return "text-success";        // < 5min — green
-  if (diff < 900) return "text-warning";         // 5-15min — yellow
-  return "text-destructive animate-pulse";       // > 15min — red pulsing
+  if (diff < 900) return "text-warning-text";    // 5-15min — aviso
+  return "text-destructive font-semibold";       // > 15min — espera longa (ícone muda também)
+}
+
+function isLongWait(date: Date): boolean {
+  return Math.floor((Date.now() - date.getTime()) / 1000) >= 900;
 }

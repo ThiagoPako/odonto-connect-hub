@@ -1,12 +1,20 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { LeadListItem } from "@/components/chat/LeadListItem";
 import { ConversationView } from "@/components/chat/ConversationView";
 import { MessageInput } from "@/components/chat/MessageInput";
 import { ChatHeader } from "@/components/chat/ChatHeader";
-import { Users, MessageSquare, Inbox, Filter, Kanban, UserPlus, Wifi, RefreshCw } from "lucide-react";
+import { Users, MessageSquare, UserPlus, WifiOff, RefreshCw, MoreVertical } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { cn } from "@/lib/utils";
+import { canAccessRoute } from "@/lib/routeAccess";
 import { NewChatFromContactDialog } from "@/components/chat/NewChatFromContactDialog";
 import { SatisfactionSurveyDialog } from "@/components/chat/SatisfactionSurveyDialog";
 import { ImportMessagesDialog } from "@/components/contatos/ImportMessagesDialog";
@@ -69,6 +77,24 @@ function getMessagePreview(msg: IncomingMessage): string {
     document: "📄 Documento",
     sticker: "🏷️ Sticker",
   } as Record<string, string>)[msg.type] || msg.content || "";
+}
+
+/** Rótulos de tipo de mensagem só para exibição (sem emoji). */
+const MESSAGE_TYPE_LABEL: Record<string, string> = {
+  image: "Imagem",
+  video: "Vídeo",
+  audio: "Áudio",
+  document: "Documento",
+  location: "Localização",
+  sticker: "Figurinha",
+};
+
+/** Mostra o motivo do erro só quando ele é texto para pessoas; senão, uma frase neutra. */
+function friendlySendError(message?: string): string {
+  const fallbackText = "Não foi possível enviar agora. Confira se o WhatsApp está conectado em Canais e tente de novo.";
+  if (!message) return fallbackText;
+  const looksTechnical = message.length > 140 || /error|status|\{|undefined|null|fetch|timeout|jobId/i.test(message);
+  return looksTechnical ? fallbackText : message;
 }
 
 function getEvolutionMessageId(data: unknown): string | null {
@@ -448,16 +474,17 @@ function ChatPage() {
     // Play sound + show toast + browser push notification
     playNotificationSound();
     const name = msg.leadName || msg.pushName;
-    const body = msg.content?.slice(0, 80) || `[${msg.type}]`;
-    toast.info(`💬 ${name}`, {
+    const displayName = name || msg.phone || "paciente";
+    const body = getMessagePreview(msg).slice(0, 80) || "Nova mensagem";
+    toast.info(`Nova mensagem de ${displayName}`, {
       description: body,
       duration: 5000,
       action: {
-        label: "Abrir",
+        label: "Abrir conversa",
           onClick: () => navigate({ to: "/chat", search: { lead: msg.leadId || msg.phone || name } }),
       },
     });
-    showBrowserNotification(`💬 ${name}`, body, name);
+    showBrowserNotification(`Nova mensagem de ${displayName}`, body, name);
   }, [navigate, reloadQueueLeads]);
 
   const handlePresenceUpdate = useCallback((update: import("@/hooks/useRealtimeChat").PresenceUpdate) => {
@@ -614,15 +641,15 @@ function ChatPage() {
       l.id === data.leadId ? { ...l, priority: true } : l;
     setQueue((prev) => prev.map(setPriority));
     setMyLeads((prev) => prev.map(setPriority));
-    toast.info(`🔥 ${data.leadName} respondeu do follow-up e voltou à fila com prioridade!`, { duration: 6000 });
+    toast.info(`${data.leadName} respondeu ao follow-up`, { description: "Voltou para o topo da fila de espera.", duration: 6000 });
 
     // Play special recovery sound (urgent double-ding)
     playRecoverySound();
 
     // Send browser push notification
     showBrowserNotification(
-      "🔥 Lead de Recuperação!",
-      `${data.leadName} respondeu do follow-up e voltou à fila com prioridade!`,
+      "Paciente voltou à fila",
+      `${data.leadName} respondeu ao follow-up e está no topo da fila.`,
       data.leadName,
     );
   }, []);
@@ -957,7 +984,7 @@ function ChatPage() {
             {
               id: `sys-reassign-${Date.now()}`,
               leadId: lead.id,
-              content: "── Atendimento retomado ──",
+              content: "Atendimento retomado",
               sender: "attendant" as const,
               type: "text" as const,
               timestamp: new Date(),
@@ -1026,10 +1053,12 @@ function ChatPage() {
     const connected = resolveConnectedInstance(connectedInstances, preferredInstanceName);
     
     if (!connected) {
-      toast.error(preferredInstanceName ? "WhatsApp da conversa não conectado" : "Selecione a conversa com origem WhatsApp", {
+      toast.error("Mensagem não enviada", {
         description: preferredInstanceName
-          ? `A instância ${preferredInstanceName} precisa estar conectada para responder esta conversa.`
-          : "Há mais de um número conectado e esta conversa não tem instância definida. Aguarde uma mensagem do cliente ou reabra pela fila."
+          ? `O WhatsApp ${preferredInstanceName} não está conectado a este chat. Confira em Canais e envie de novo.`
+          : connectedInstances.length === 0
+            ? "Nenhum WhatsApp conectado. Conecte em Canais e envie de novo."
+            : "Não deu para saber por qual WhatsApp responder esta conversa. Abra a conversa pela fila ou espere o paciente escrever de novo."
       });
       setMessages((prev) => ({
         ...prev,
@@ -1110,7 +1139,7 @@ function ChatPage() {
           if (uploadResult.error) throw new Error(uploadResult.error);
 
           const jobId = (uploadResult.data as any)?.jobId as string | undefined;
-          if (!jobId) throw new Error("Upload de mídia não retornou jobId");
+          if (!jobId) throw new Error("O envio do arquivo não começou");
 
           const startedAt = Date.now();
           while (Date.now() - startedAt < 120000) {
@@ -1124,12 +1153,12 @@ function ChatPage() {
               break;
             }
             if (job?.status === "failed") {
-              throw new Error(job?.error || "Falha ao enviar mídia");
+              throw new Error(job?.error || "Não foi possível enviar o arquivo");
             }
           }
 
           if (!evolutionMsgId) {
-            throw new Error("Tempo limite ao aguardar confirmação do envio da mídia");
+            throw new Error("O WhatsApp demorou demais para confirmar o arquivo");
           }
         } else if (mediaBase64) {
           const result = await whatsappApi.sendMedia(connected.instanceName, selectedLead.phone, type, {
@@ -1259,7 +1288,8 @@ function ChatPage() {
         }));
       }
     } catch (err: any) {
-      toast.error("Erro ao enviar: " + (err?.message || "Falha no envio"));
+      console.error("Falha no envio:", err);
+      toast.error("Mensagem não enviada", { description: friendlySendError(err?.message) });
       updateStatus("failed");
     }
   };
@@ -1291,20 +1321,24 @@ function ChatPage() {
       instance: instanceName,
     }).then(({ data, error }) => {
       if (error) {
-        toast.error("Erro ao finalizar atendimento");
+        toast.error(`Não foi possível finalizar o atendimento de ${lead.name}`, {
+          description: "O atendimento pode ter ficado aberto. Atualize a lista para conferir antes de finalizar de novo.",
+        });
         return;
       }
       const durationMin = data?.duration ? Math.floor(data.duration / 60) : 0;
 
       const outcomeLabels: Record<string, string> = {
-        atendido: "Atendido ✅",
-        followup: "Movido para Follow-up 🔄",
-        orcamento: "Encaminhado para Orçamento 📋",
+        atendido: "paciente atendido",
+        followup: "movido para follow-up",
+        orcamento: "enviado para orçamento",
       };
-      const outcomeLabel = outcomeLabels[outcome || "atendido"] || "Finalizado";
+      const outcomeLabel = outcomeLabels[outcome || "atendido"] || "finalizado";
 
       toast.success(`Atendimento finalizado — ${outcomeLabel}`, {
-        description: `${lead.name} — Duração: ${durationMin}min`,
+        description: data?.duration
+          ? `${lead.name} · ${durationMin < 1 ? "menos de 1 min" : `${durationMin} min`}`
+          : lead.name,
       });
     });
 
@@ -1322,7 +1356,7 @@ function ChatPage() {
         } else {
           setCrmStages((prev) => ({ ...prev, [lead.id]: targetStage }));
           const destLabel = outcome === "followup" ? "Follow-up (Recuperação)" : "Orçamento (Funil de Vendas)";
-          toast.info(`Lead movido para "${destLabel}" no CRM`, { duration: 4000 });
+          toast.info(`Paciente movido para "${destLabel}" no CRM`, { duration: 4000 });
         }
       });
     }
@@ -1336,11 +1370,11 @@ function ChatPage() {
 
     // System message
     const outcomeMessages: Record<string, string> = {
-      atendido: "✅ Atendimento finalizado — Cliente atendido.",
-      followup: "🔄 Atendimento finalizado — Movido para follow-up de recuperação.",
-      orcamento: "📋 Atendimento finalizado — Encaminhado para orçamento.",
+      atendido: "Atendimento finalizado · paciente atendido",
+      followup: "Atendimento finalizado · movido para follow-up",
+      orcamento: "Atendimento finalizado · enviado para orçamento",
     };
-    const sysContent = outcomeMessages[outcome || "atendido"] || "✅ Atendimento finalizado.";
+    const sysContent = outcomeMessages[outcome || "atendido"] || "Atendimento finalizado";
 
     setMessages((prev) => {
       const updated = {
@@ -1401,7 +1435,7 @@ function ChatPage() {
           {
             id: `sys-nps-${Date.now()}`,
             leadId: lead.id,
-            content: `📊 Pesquisa de satisfação enviada (${stars} ${labels[rating - 1]})`,
+            content: `Pesquisa de satisfação enviada (${rating} de 5 · ${labels[rating - 1]})`,
             sender: "attendant" as const,
             type: "text" as const,
             timestamp: new Date(),
@@ -1412,8 +1446,8 @@ function ChatPage() {
       return updated;
     });
 
-    toast.success("Pesquisa de satisfação enviada!", {
-      description: `${lead.name} — ${stars}`,
+    toast.success("Pesquisa de satisfação enviada", {
+      description: `${lead.name} · ${rating} de 5`,
     });
     setSurveyLead(null);
   };
@@ -1433,7 +1467,7 @@ function ChatPage() {
         {
           id: `sys-return-${Date.now()}`,
           leadId: lead.id,
-          content: "🔄 Paciente retornado à fila de espera.",
+          content: "Paciente devolvido à fila de espera",
           sender: "attendant" as const,
           type: "text" as const,
           timestamp: new Date(),
@@ -1446,7 +1480,14 @@ function ChatPage() {
   const handleReaction = (messageId: string, emoji: string) => {
     if (!selectedLead) return;
     const connected = connectedInstances[0];
-    if (!connected || !selectedLead.phone) return;
+    if (!connected) {
+      toast.error("Reação não enviada", { description: "Nenhum WhatsApp conectado." });
+      return;
+    }
+    if (!selectedLead.phone) {
+      toast.error("Reação não enviada", { description: "Este contato não tem telefone." });
+      return;
+    }
 
     whatsappApi.sendReaction(connected.instanceName, selectedLead.phone, messageId, emoji)
       .then(({ error }) => {
@@ -1459,11 +1500,10 @@ function ChatPage() {
               : m
           ),
         }));
-        toast.success("Reação enviada");
       })
       .catch((err: any) => {
         console.error("Failed to send reaction:", err);
-        toast.error(err?.message || "Erro ao enviar reação");
+        toast.error("Reação não enviada", { description: err?.message || "Tente de novo em alguns segundos." });
       });
   };
 
@@ -1472,7 +1512,7 @@ function ChatPage() {
     setReplyingTo({
       messageId: msg.id,
       content: msg.content || (msg.type === "image" ? "📷 Imagem" : msg.type === "location" ? "📍 Localização" : msg.type),
-      sender: msg.sender === "lead" ? selectedLead?.name || "Lead" : "Você",
+      sender: msg.sender === "lead" ? selectedLead?.name || "Paciente" : "Você",
     });
   };
 
@@ -1481,7 +1521,7 @@ function ChatPage() {
     const MAX_SIZE = 16 * 1024 * 1024;
     for (const file of files) {
       if (file.size > MAX_SIZE) {
-        toast.error(`${file.name} é muito grande`, { description: "Máximo: 16MB" });
+        toast.error(`Arquivo grande demais: ${file.name}`, { description: "O WhatsApp aceita arquivos de até 16 MB." });
         continue;
       }
       const type: MessageType = file.type.startsWith("image/") ? "image"
@@ -1506,9 +1546,11 @@ function ChatPage() {
   }, [selectedLead, handleSendMessage]);
 
   const handleForward = (msg: ChatMessage) => {
-    const text = msg.content || `[${msg.type}]`;
+    const text = msg.content || `[${MESSAGE_TYPE_LABEL[msg.type] ?? "Mensagem"}]`;
     navigator.clipboard.writeText(text).then(() => {
-      toast.success("Mensagem copiada para encaminhar");
+      toast.success("Texto copiado", { description: "Cole na conversa para onde quer encaminhar." });
+    }).catch(() => {
+      toast.error("Não foi possível copiar o texto");
     });
   };
 
@@ -1590,20 +1632,20 @@ function ChatPage() {
   const handleSyncPhotos = useCallback(async () => {
     const instanceName = connectedInstances[0]?.instanceName;
     if (!instanceName) {
-      toast.error("Nenhuma instância WhatsApp conectada");
+      toast.error("Nenhum WhatsApp conectado", { description: "Conecte um número em Canais para buscar as fotos." });
       return;
     }
     setSyncingPhotos(true);
-    toast.info("Sincronizando fotos de perfil...");
+    const syncToast = toast.loading("Buscando fotos de perfil…");
     try {
       const { data, error } = await whatsappApi.syncProfilePictures(instanceName);
       if (error) {
         const friendly = /unauthorized/i.test(error)
           ? "Sessão expirada. Saia e entre novamente para sincronizar."
-          : error;
-        toast.error("Erro ao sincronizar: " + friendly);
+          : "Verifique a conexão do WhatsApp e tente de novo.";
+        toast.error("Não foi possível buscar as fotos", { id: syncToast, description: friendly });
       } else {
-        toast.success(`Fotos sincronizadas: ${data?.updated || 0} atualizadas de ${data?.total || 0}`);
+        toast.success(`${data?.updated || 0} de ${data?.total || 0} fotos atualizadas`, { id: syncToast });
         // Reload leads to show updated avatars
         const res = await queueLeadsApi.list();
         if (res.data) {
@@ -1626,7 +1668,8 @@ function ChatPage() {
         }
       }
     } catch (err: any) {
-      toast.error("Falha na sincronização: " + (err.message || "erro desconhecido"));
+      console.error("Falha ao buscar fotos de perfil:", err);
+      toast.error("Não foi possível buscar as fotos", { id: syncToast, description: "Verifique a conexão e tente de novo." });
     } finally {
       setSyncingPhotos(false);
     }
@@ -1663,116 +1706,171 @@ function ChatPage() {
     setActiveTab("mine");
   };
 
+  const hasActiveFilters = !!filterQueue || (activeTab === "mine" && (!!filterStage || filterStatus !== "all"));
+  const canOpenChannels = canAccessRoute("/canais", currentUser?.role ?? "user", !!currentUser?.is_super_admin, currentUser?.tenant_features);
+  const chipBase =
+    "inline-flex items-center gap-1.5 min-h-11 md:min-h-8 px-3 rounded-full text-xs font-medium tabular-nums shrink-0 border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+  const chipOn = "bg-primary text-primary-foreground border-primary";
+  const chipOff = "bg-background text-muted-foreground border-border hover:bg-muted hover:text-foreground";
+  const tabBase =
+    "flex-1 min-w-0 min-h-11 flex items-center justify-center gap-1.5 px-2 text-sm transition-colors border-b-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
+
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden">
-      <DashboardHeader title="Chat" />
+      <div className={selectedLead ? "hidden md:block" : undefined}>
+        <DashboardHeader title="Chat" />
+      </div>
 
       {/* WhatsApp Connection Status Bar */}
+      {/* Aparece já no carregamento: se a checagem das instâncias demorar (Evolution fora do ar),
+          a recepção precisa do aviso mesmo assim. */}
       {connectedInstances.length === 0 && (
-        <div className="flex items-center gap-2 px-4 py-2 bg-destructive/10 border-b border-destructive/20 text-destructive text-xs font-medium animate-fade-in">
-          <Wifi className="h-3.5 w-3.5" />
-          Nenhuma instância WhatsApp conectada — mensagens não serão enviadas.
+        <div
+          role="status"
+          className={cn(
+            "flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 bg-destructive/10 border-b border-destructive/20 text-sm text-destructive",
+            selectedLead ? "hidden md:flex" : "flex",
+          )}
+        >
+          <WifiOff className="size-4 shrink-0" aria-hidden="true" />
+          <span className="flex-1 min-w-[12rem]">
+            <strong className="font-semibold">WhatsApp desconectado.</strong> As mensagens não serão enviadas até reconectar.
+          </span>
+          {canOpenChannels ? (
+            <Link
+              to="/canais"
+              className="inline-flex min-h-11 md:min-h-8 items-center pl-7 sm:pl-0 font-semibold underline underline-offset-2"
+            >
+              Conectar WhatsApp
+            </Link>
+          ) : (
+            <span className="pl-7 sm:pl-0 font-medium">Avise o administrador da clínica.</span>
+          )}
         </div>
       )}
       {connectedInstances.length > 0 && (
-        <div className="flex items-center gap-2 px-4 py-1.5 bg-success/5 border-b border-success/10 text-success text-[11px] font-medium">
-          <Wifi className="h-3 w-3" />
-          {connectedInstances.length === 1
-            ? `Conectado: ${connectedInstances[0].instanceName}`
-            : `${connectedInstances.length} instâncias conectadas`}
+        <div role="status" className="hidden md:flex items-center gap-2 px-4 py-1.5 border-b border-border text-xs text-muted-foreground">
+          <span className="size-2 rounded-full bg-success shrink-0" aria-hidden="true" />
+          <span className="truncate">
+            {connectedInstances.length === 1
+              ? `WhatsApp conectado: ${connectedInstances[0].instanceName}`
+              : `${connectedInstances.length} números de WhatsApp conectados`}
+          </span>
         </div>
       )}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex min-w-0 overflow-hidden">
         {/* Left Panel - Lead List */}
-        <div className="w-[360px] flex flex-col border-r border-border bg-card shrink-0">
-          {/* New Chat + Tabs */}
-          <div className="flex items-center border-b border-border shrink-0">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-10 w-10 shrink-0 ml-1"
-              title="Novo chat com contato"
-              onClick={() => setNewChatOpen(true)}
-            >
-              <UserPlus className="h-4 w-4 text-primary" />
+        <section
+          aria-label="Lista de atendimentos"
+          className={cn(
+            "w-full md:w-[340px] lg:w-[360px] flex-col bg-card shrink-0 md:border-r md:border-border",
+            selectedLead ? "hidden md:flex" : "flex",
+          )}
+        >
+          {/* Ações */}
+          <div className="flex items-center gap-2 px-3 py-2 border-b border-border shrink-0">
+            <Button className="h-11 md:h-9 gap-2" onClick={() => setNewChatOpen(true)}>
+              <UserPlus className="size-4" aria-hidden="true" />
+              Nova conversa
             </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-10 w-10 shrink-0"
-              title="Sincronizar fotos de perfil"
-              onClick={handleSyncPhotos}
-              disabled={syncingPhotos}
-            >
-              <RefreshCw className={`h-4 w-4 text-muted-foreground ${syncingPhotos ? "animate-spin" : ""}`} />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-10 w-10 shrink-0"
-              title="Importar contatos do WhatsApp"
-              onClick={() => setImportContactsOpen(true)}
-            >
-              <Users className="h-4 w-4 text-primary" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-10 w-10 shrink-0"
-              title="Importar conversas do WhatsApp"
-              onClick={() => setImportMessagesOpen(true)}
-            >
-              <MessageSquare className="h-4 w-4 text-primary" />
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-11 md:size-9 ml-auto text-muted-foreground"
+                  aria-label="Mais ações do WhatsApp"
+                >
+                  <MoreVertical className="size-4" aria-hidden="true" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem className="min-h-11 md:min-h-9" onSelect={() => setImportContactsOpen(true)}>
+                  <Users aria-hidden="true" />
+                  Importar contatos do WhatsApp
+                </DropdownMenuItem>
+                <DropdownMenuItem className="min-h-11 md:min-h-9" onSelect={() => setImportMessagesOpen(true)}>
+                  <MessageSquare aria-hidden="true" />
+                  Importar conversas do WhatsApp
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="min-h-11 md:min-h-9"
+                  disabled={syncingPhotos}
+                  aria-busy={syncingPhotos}
+                  onSelect={() => void handleSyncPhotos()}
+                >
+                  <RefreshCw className={syncingPhotos ? "animate-spin" : undefined} aria-hidden="true" />
+                  {syncingPhotos ? "Buscando fotos de perfil…" : "Atualizar fotos de perfil"}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+
+          {/* Abas */}
+          <div className="flex items-stretch border-b border-border shrink-0">
             <button
+              type="button"
+              aria-pressed={activeTab === "queue"}
               onClick={() => setActiveTab("queue")}
-              className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-colors border-b-2 ${
+              className={cn(
+                tabBase,
                 activeTab === "queue"
-                  ? "border-primary text-primary"
-                  : "border-transparent text-muted-foreground hover:text-foreground"
-              }`}
+                  ? "border-primary text-primary font-semibold"
+                  : "border-transparent text-muted-foreground font-medium hover:text-foreground",
+              )}
             >
-              <Inbox className="h-4 w-4" />
-              Fila de Espera
+              <span className="truncate">Fila de espera</span>
               {queue.length > 0 && (
-                <span className="h-5 min-w-[20px] px-1.5 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold flex items-center justify-center">
-                  {queue.length}
-                </span>
+                <>
+                  <span
+                    aria-hidden="true"
+                    className="min-h-5 min-w-5 px-1.5 rounded-full bg-warning text-warning-foreground text-xs font-semibold tabular-nums inline-flex items-center justify-center shrink-0"
+                  >
+                    {queue.length}
+                  </span>
+                  <span className="sr-only">, {queue.length} aguardando</span>
+                </>
               )}
             </button>
             <button
+              type="button"
+              aria-pressed={activeTab === "mine"}
               onClick={() => setActiveTab("mine")}
-              className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-colors border-b-2 ${
+              className={cn(
+                tabBase,
                 activeTab === "mine"
-                  ? "border-primary text-primary"
-                  : "border-transparent text-muted-foreground hover:text-foreground"
-              }`}
+                  ? "border-primary text-primary font-semibold"
+                  : "border-transparent text-muted-foreground font-medium hover:text-foreground",
+              )}
             >
-              <MessageSquare className="h-4 w-4" />
-              Meus Atendimentos
+              <span className="truncate">Meus atendimentos</span>
               {myLeads.length > 0 && (
-                <span className="h-5 min-w-[20px] px-1.5 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center">
-                  {myLeads.length}
-                </span>
+                <>
+                  <span
+                    aria-hidden="true"
+                    className="min-h-5 min-w-5 px-1.5 rounded-full bg-muted text-foreground text-xs font-semibold tabular-nums inline-flex items-center justify-center shrink-0"
+                  >
+                    {myLeads.length}
+                  </span>
+                  <span className="sr-only">, {myLeads.length} em atendimento</span>
+                </>
               )}
             </button>
           </div>
 
           {/* Status Filter (mine tab only) */}
           {activeTab === "mine" && myLeads.length > 0 && (
-            <div className="flex items-center gap-1.5 px-3 py-2 border-b border-border shrink-0">
+            <div role="group" aria-label="Filtrar por situação" className="flex items-center gap-2 px-3 py-2 border-b border-border shrink-0 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               {(["all", "active", "finished"] as const).map((s) => {
                 const labels = { all: "Todos", active: "Ativos", finished: "Finalizados" };
                 const count = s === "all" ? myLeads.length : myLeads.filter((l) => l.status === s).length;
                 return (
                   <button
                     key={s}
+                    type="button"
+                    aria-pressed={filterStatus === s}
                     onClick={() => setFilterStatus(s)}
-                    className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors ${
-                      filterStatus === s
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-muted text-muted-foreground hover:bg-muted/80"
-                    }`}
+                    className={cn(chipBase, filterStatus === s ? chipOn : chipOff)}
                   >
                     {labels[s]} ({count})
                   </button>
@@ -1783,64 +1881,93 @@ function ChatPage() {
 
           {/* Queue Filter */}
           {availableQueues.length > 0 && (
-            <div className="flex items-center gap-1.5 px-3 py-2 border-b border-border shrink-0 overflow-x-auto">
-              <Filter className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            <div role="group" aria-labelledby="filtro-fila" className="flex items-center gap-2 px-3 py-2 border-b border-border shrink-0 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              <span id="filtro-fila" className="text-xs text-muted-foreground shrink-0">Fila</span>
               <button
+                type="button"
+                aria-pressed={!filterQueue}
                 onClick={() => setFilterQueue(null)}
-                className={`px-2 py-1 rounded-full text-[11px] font-medium transition-colors shrink-0 ${
-                  !filterQueue ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/80"
-                }`}
+                className={cn(chipBase, !filterQueue ? chipOn : chipOff)}
               >
                 Todas
               </button>
               {availableQueues.map((q) => (
                 <button
                   key={q.id}
+                  type="button"
+                  aria-pressed={filterQueue === q.id}
                   onClick={() => setFilterQueue(filterQueue === q.id ? null : q.id)}
-                  className={`px-2 py-1 rounded-full text-[11px] font-medium transition-colors shrink-0 ${
-                    filterQueue === q.id ? "text-white" : "text-muted-foreground hover:opacity-80"
-                  }`}
-                  style={filterQueue === q.id ? { backgroundColor: q.color } : { backgroundColor: q.color + "20", color: q.color }}
+                  className={cn(chipBase, filterQueue === q.id ? chipOn : chipOff)}
                 >
-                  {q.icon} {q.name}
+                  <span className="size-2 rounded-full shrink-0" style={{ backgroundColor: q.color }} aria-hidden="true" />
+                  {q.name}
                 </button>
               ))}
             </div>
           )}
 
-          {/* CRM Stage Filter */}
-          <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-border shrink-0 overflow-x-auto">
-            <Kanban className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-            {[
-              { id: "lead", label: "Lead", emoji: "📥", color: "#6b7280" },
-              { id: "em_atendimento", label: "Atendimento", emoji: "💬", color: "#3b82f6" },
-              { id: "orcamento", label: "Orçamento", emoji: "📋", color: "#3b82f6" },
-              { id: "orcamento_enviado", label: "Orç. Enviado", emoji: "📨", color: "#8b5cf6" },
-              { id: "orcamento_aprovado", label: "Aprovado", emoji: "✅", color: "#22c55e" },
-              { id: "followup", label: "Follow-up", emoji: "🔄", color: "#f59e0b" },
-            ].map((stage) => (
-              <button
-                key={stage.id}
-                onClick={() => setFilterStage(filterStage === stage.id ? null : stage.id)}
-                className={`px-2 py-0.5 rounded-full text-[11px] font-medium transition-colors shrink-0 ${
-                  filterStage === stage.id ? "text-white" : "text-muted-foreground hover:opacity-80"
-                }`}
-                style={filterStage === stage.id ? { backgroundColor: stage.color } : { backgroundColor: stage.color + "20", color: stage.color }}
-              >
-                {stage.emoji} {stage.label}
-              </button>
-            ))}
-          </div>
+          {/* CRM Stage Filter (só filtra em "Meus atendimentos") */}
+          {activeTab === "mine" && (
+            <div role="group" aria-labelledby="filtro-etapa" className="flex items-center gap-2 px-3 py-2 border-b border-border shrink-0 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              <span id="filtro-etapa" className="text-xs text-muted-foreground shrink-0">Etapa</span>
+              {[
+                { id: "lead", label: "Lead" },
+                { id: "em_atendimento", label: "Em atendimento" },
+                { id: "orcamento", label: "Orçamento" },
+                { id: "orcamento_enviado", label: "Orçamento enviado" },
+                { id: "orcamento_aprovado", label: "Aprovado" },
+                { id: "followup", label: "Follow-up" },
+              ].map((stage) => (
+                <button
+                  key={stage.id}
+                  type="button"
+                  aria-pressed={filterStage === stage.id}
+                  onClick={() => setFilterStage(filterStage === stage.id ? null : stage.id)}
+                  className={cn(chipBase, filterStage === stage.id ? chipOn : chipOff)}
+                >
+                  {stage.label}
+                </button>
+              ))}
+            </div>
+          )}
           {/* Lead List */}
           <div className="flex-1 overflow-y-auto">
             {currentList.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-full text-center px-6">
-                <Users className="h-12 w-12 text-muted-foreground/30 mb-3" />
-                <p className="text-sm text-muted-foreground">
-                  {activeTab === "queue"
-                    ? "Nenhum lead na fila de espera"
-                    : "Nenhum atendimento ativo"}
+              <div className="flex flex-col items-center justify-center h-full text-center gap-3 px-6">
+                <Users className="size-10 text-muted-foreground" aria-hidden="true" />
+                <p className="text-sm font-medium text-foreground">
+                  {hasActiveFilters
+                    ? "Nenhuma conversa com esses filtros"
+                    : activeTab === "queue"
+                      ? "Ninguém aguardando na fila"
+                      : "Você não tem atendimentos abertos"}
                 </p>
+                <p className="text-sm text-muted-foreground">
+                  {hasActiveFilters
+                    ? "Limpe os filtros para ver todas."
+                    : activeTab === "queue"
+                      ? "Novas mensagens do WhatsApp aparecem aqui."
+                      : "Assuma alguém da fila ou inicie uma nova conversa."}
+                </p>
+                {hasActiveFilters ? (
+                  <Button
+                    variant="outline"
+                    className="h-11 md:h-9"
+                    onClick={() => {
+                      setFilterStage(null);
+                      setFilterQueue(null);
+                      setFilterStatus("all");
+                    }}
+                  >
+                    Limpar filtros
+                  </Button>
+                ) : (
+                  activeTab === "mine" && (
+                    <Button variant="outline" className="h-11 md:h-9" onClick={() => setActiveTab("queue")}>
+                      Ver fila
+                    </Button>
+                  )
+                )}
               </div>
             ) : (
               currentList.map((lead) => (
@@ -1857,10 +1984,10 @@ function ChatPage() {
               ))
             )}
           </div>
-        </div>
+        </section>
 
         {/* Right Panel - Conversation */}
-        <div className="flex-1 flex flex-col bg-background">
+        <div className={cn("flex-1 min-w-0 flex-col bg-background", selectedLead ? "flex" : "hidden md:flex")}>
           {selectedLead ? (
             <>
               <ChatHeader lead={selectedLead} onClose={() => setSelectedLead(null)} onTransfer={handleTransfer} onFinishAttendance={handleFinishAttendance} onReturnToQueue={handleReturnToQueue} messages={currentMessages} presence={presenceMap[selectedLead.id]?.status ?? "offline"} lastSeen={presenceMap[selectedLead.id]?.lastSeen ?? null} crmStage={crmStages[selectedLead.id]} onStageChange={(leadId, stage) => setCrmStages((prev) => ({ ...prev, [leadId]: stage }))} />
@@ -1890,9 +2017,11 @@ function ChatPage() {
                 }}
               />
               {selectedLead.status === "finished" ? (
-                <div className="px-4 py-3 border-t border-border/50 bg-muted/30 flex items-center justify-center gap-3">
+                <div className="px-4 py-3 border-t border-border bg-muted/40 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                   <p className="text-sm text-muted-foreground">Atendimento finalizado</p>
-                  <button
+                  <Button
+                    variant="outline"
+                    className="h-11 md:h-9 w-full sm:w-auto"
                     onClick={() => {
                       setMyLeads((prev) =>
                         prev.map((l) => l.id === selectedLead.id ? { ...l, status: "active" as const } : l)
@@ -1900,16 +2029,17 @@ function ChatPage() {
                       setSelectedLead({ ...selectedLead, status: "active" });
                       toast.success("Atendimento reaberto");
                     }}
-                    className="px-4 py-1.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
                   >
                     Reabrir atendimento
-                  </button>
+                  </Button>
                 </div>
               ) : (
                 <MessageInput
                   onSendMessage={handleSendMessage}
                   onPresenceChange={handleAttendantPresenceChange}
                   disabled={selectedLead.status === "waiting"}
+                  notice={connectedInstances.length === 0 ? "no-whatsapp" : null}
+                  onAssign={selectedLead.status === "waiting" ? () => void handleAssign(selectedLead) : undefined}
                   replyingTo={replyingTo}
                   onCancelReply={() => setReplyingTo(null)}
                   attendantName={currentUser?.name}
@@ -1920,17 +2050,15 @@ function ChatPage() {
               )}
             </>
           ) : (
-            <div className="flex-1 flex items-center justify-center chat-bg-pattern">
-              <div className="text-center space-y-4 animate-fade-in">
-                <div className="h-24 w-24 rounded-3xl bg-gradient-to-br from-primary/10 to-primary/5 flex items-center justify-center mx-auto shadow-sm border border-primary/10">
-                  <MessageSquare className="h-10 w-10 text-primary/30" />
-                </div>
-                <div className="space-y-1.5">
-                  <p className="text-foreground/60 text-sm font-medium">
+            <div className="flex-1 flex items-center justify-center chat-bg-pattern px-6">
+              <div className="text-center space-y-3">
+                <MessageSquare className="size-10 text-muted-foreground mx-auto" aria-hidden="true" />
+                <div className="space-y-1">
+                  <p className="text-foreground text-sm font-medium">
                     Selecione um atendimento
                   </p>
-                  <p className="text-muted-foreground text-xs">
-                    Escolha uma conversa ao lado ou inicie um novo chat
+                  <p className="text-muted-foreground text-sm">
+                    Escolha uma conversa na lista ou inicie uma nova
                   </p>
                 </div>
               </div>
