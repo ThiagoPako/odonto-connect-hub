@@ -35,6 +35,7 @@ const token = (tenant_id) => jwt.sign({
 let sqlLog;
 let reminderRows;
 let querySpy;
+let failUpdate;
 
 beforeAll(() => {
   jest.spyOn(console, 'log').mockImplementation(() => {});
@@ -45,6 +46,7 @@ beforeAll(() => {
 beforeEach(() => {
   sqlLog = [];
   reminderRows = [];
+  failUpdate = false;
   querySpy = jest.spyOn(pool, 'query').mockImplementation((sql, params = []) => {
     const text = String(sql);
     sqlLog.push({ text, params });
@@ -53,6 +55,10 @@ beforeEach(() => {
       const ok = daB(pacienteDaB) || daB(dentistaDaB);
       return Promise.resolve({ rows: ok ? [{ '?column?': 1 }] : [] });
     }
+    if (failUpdate && /^\s*UPDATE agendamentos SET/.test(text)) {
+      return Promise.reject(new Error('relation "agendamentos" detalhe interno do banco'));
+    }
+    if (/^\s*UPDATE crm_leads/.test(text)) return Promise.resolve({ rows: [], rowCount: 1 });
     if (/SELECT \* FROM pacientes WHERE id = \$1 AND tenant_id = \$2/.test(text)) {
       return Promise.resolve({ rows: daB(pacienteDaB) ? [{ id: pacienteDaB, nome: 'Maria Silva' }] : [] });
     }
@@ -65,6 +71,9 @@ beforeEach(() => {
     if (/^\s*UPDATE agendamentos SET/.test(text)) {
       const ok = params.includes(agendamentoDaB) && params.includes(tenantB);
       return Promise.resolve({ rows: ok ? [{ id: agendamentoDaB, data: '2026-11-10', paciente_id: pacienteDaB }] : [] });
+    }
+    if (/FROM agendamentos a/.test(text) && /WHERE a\.tenant_id = \$1/.test(text)) {
+      return Promise.resolve({ rows: [] });
     }
     if (/trigger_event = 'appointment_reminder'/.test(text) && /FROM agendamentos a/.test(text)) {
       return Promise.resolve({ rows: reminderRows });
@@ -172,6 +181,35 @@ describe('PUT /api/agenda/:id', () => {
     const res = await chamar('put', `/api/agenda/${agendamentoDaB}`, token(tenantA), { dentista_id: dentistaDaB });
     expect(res.status).toBe(400);
     expect(sqlLog.some(q => /^\s*UPDATE agendamentos SET/.test(q.text))).toBe(false);
+  });
+
+  test.each(['em_atendimento', 'realizado'])('status %s atualiza o lead só da própria clínica', async (status) => {
+    const res = await chamar('put', `/api/agenda/${agendamentoDaB}`, token(tenantB), { status });
+    expect(res.status).toBe(200);
+    await new Promise(r => setImmediate(r));
+    const upd = sqlLog.find(q => /^\s*UPDATE crm_leads/.test(q.text));
+    expect(upd.text).toMatch(/WHERE id = \$1 AND tenant_id = \$2/);
+    expect(upd.params).toEqual([pacienteDaB, tenantB]);
+  });
+
+  test('erro interno devolve 500 genérico, sem a mensagem do banco', async () => {
+    failUpdate = true;
+    const res = await chamar('put', `/api/agenda/${agendamentoDaB}`, token(tenantB), { status: 'confirmado' });
+    expect(res.status).toBe(500);
+    expect(res.body).toEqual({ error: 'Erro interno' });
+  });
+});
+
+describe('GET /api/agenda', () => {
+  test('paciente_nome/dentista_nome: cadastro primeiro, coluna como fallback', async () => {
+    const res = await chamar('get', '/api/agenda', token(tenantB));
+    expect(res.status).toBe(200);
+    const q = sqlLog.find(x => /FROM agendamentos a/.test(x.text));
+    expect(q.text).toMatch(/COALESCE\(NULLIF\(TRIM\(p\.nome\), ''\), a\.paciente_nome\) AS paciente_nome/);
+    expect(q.text).toMatch(/COALESCE\(NULLIF\(TRIM\(d\.nome\), ''\), a\.dentista_nome\) AS dentista_nome/);
+    // a última coluna com o mesmo nome é a que vale no objeto do node-pg
+    expect(q.text.lastIndexOf('AS paciente_nome')).toBeGreaterThan(q.text.indexOf('a.*'));
+    expect(q.params).toEqual([tenantB]);
   });
 });
 

@@ -5123,7 +5123,10 @@ app.get('/api/agenda', async (req, res) => {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.json([]);
     const { data_inicio, data_fim, dentista_id } = req.query;
-    let query = 'SELECT a.*, p.nome as paciente_nome, d.nome as dentista_nome FROM agendamentos a LEFT JOIN pacientes p ON a.paciente_id = p.id AND p.tenant_id = a.tenant_id LEFT JOIN dentistas d ON a.dentista_id = d.id AND d.tenant_id = a.tenant_id WHERE a.tenant_id = $1';
+    let query = `SELECT a.*,
+      COALESCE(NULLIF(TRIM(p.nome), ''), a.paciente_nome) AS paciente_nome,
+      COALESCE(NULLIF(TRIM(d.nome), ''), a.dentista_nome) AS dentista_nome
+      FROM agendamentos a LEFT JOIN pacientes p ON a.paciente_id = p.id AND p.tenant_id = a.tenant_id LEFT JOIN dentistas d ON a.dentista_id = d.id AND d.tenant_id = a.tenant_id WHERE a.tenant_id = $1`;
     const params = [user.tenant_id];
     if (data_inicio) { params.push(data_inicio); query += ` AND a.data >= $${params.length}`; }
     if (data_fim) { params.push(data_fim); query += ` AND a.data <= $${params.length}`; }
@@ -5380,15 +5383,15 @@ app.put('/api/agenda/:id', async (req, res) => {
     // If status changed to 'em_atendimento', update CRM lead
     if (status === 'em_atendimento' && rows[0].paciente_id) {
       pool.query(
-        `UPDATE crm_leads SET kanban_stage = 'em_atendimento', status = 'em_atendimento', updated_at = NOW() WHERE id = $1`,
-        [rows[0].paciente_id]
+        `UPDATE crm_leads SET kanban_stage = 'em_atendimento', status = 'em_atendimento', updated_at = NOW() WHERE id = $1 AND tenant_id = $2`,
+        [rows[0].paciente_id, user.tenant_id]
       ).catch(err => console.error('Failed to update lead status:', err.message));
     }
     // If status changed to 'finalizado' or 'realizado', update CRM lead
     if ((status === 'finalizado' || status === 'realizado') && rows[0].paciente_id) {
       pool.query(
-        `UPDATE crm_leads SET kanban_stage = 'pos_consulta', status = 'pos_consulta', updated_at = NOW() WHERE id = $1`,
-        [rows[0].paciente_id]
+        `UPDATE crm_leads SET kanban_stage = 'pos_consulta', status = 'pos_consulta', updated_at = NOW() WHERE id = $1 AND tenant_id = $2`,
+        [rows[0].paciente_id, user.tenant_id]
       ).catch(err => console.error('Failed to update lead status:', err.message));
     }
 
@@ -5430,7 +5433,7 @@ app.put('/api/agenda/:id', async (req, res) => {
   } catch (error) {
     if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
     console.error('❌ Error updating appointment:', error.message);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Erro interno' });
   }
 });
 
@@ -16329,7 +16332,9 @@ if (process.env.NODE_ENV !== 'test') {
       } catch (migErr) {
         // 42701 = column already exists, 42P07 = relation already exists — both are fine
         if (!['42701', '42P07', '42723'].includes(migErr?.code)) {
-          console.warn(`⚠️ Auto-migration warning on statement ${checkedStatements}: ${migErr.message.slice(0, 120)}`);
+          // Coluna que não foi criada quebra as rotas que a usam (ex.: INSERT da agenda): é erro, não aviso.
+          const log = /\bADD COLUMN\b/i.test(sql) ? console.error : console.warn;
+          log(`⚠️ Auto-migration ${log === console.error ? 'error' : 'warning'} on statement ${checkedStatements}: ${migErr.message.slice(0, 120)}`);
         }
       }
     }
