@@ -155,6 +155,13 @@ jobs:
               echo "::warning title=Alinhamento de schema não aplicado::migration-schema-alinhamento.sql falhou 3x (lock ou erro). O deploy segue; ver log acima."
               echo "!!! ATENÇÃO: migration-schema-alinhamento.sql NÃO foi aplicada — cadastro de clínica, exames, lembrete 24h e PUT da agenda continuam quebrados."
             fi
+            # Chaves únicas POR CLÍNICA (CPF do paciente, CRO do dentista, nome do marcador da agenda).
+            # Antes eram globais: revelavam cadastro de outra clínica e bloqueavam a mesma pessoa em duas.
+            # Sem BEGIN: CREATE UNIQUE INDEX CONCURRENTLY não trava a escrita.
+            if ! cat /root/odonto-connect/vps-api-server/migration-unicos-por-clinica.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1; then
+              echo "::warning title=Únicos por clínica não aplicados::migration-unicos-por-clinica.sql falhou (repetido na mesma clínica, lock ou erro). As chaves globais que não foram trocadas continuam; o deploy segue. Ver log acima."
+              echo "!!! ATENÇÃO: alguma chave única GLOBAL (cpf/cro/marcador) continua ativa: revisar o log acima."
+            fi
             echo "=== Migrations applied ==="
 
             # ─── Pre-flight syntax check on server.mjs ─────────────────────

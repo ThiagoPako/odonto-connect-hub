@@ -4917,6 +4917,44 @@ app.get('/api/pacientes', async (req, res) => {
   }
 });
 
+// CRO gravado como digitado (ex.: "CRO-SP 12345"), sem espaços nas pontas; vazio vira NULL.
+// A unicidade compara só letras e dígitos, em maiúsculas (uq_dentistas_tenant_cro).
+function normalizarCro(cro) {
+  const t = String(cro ?? '').trim();
+  return /[0-9A-Za-z]/.test(t) ? t : null;
+}
+
+// CPF gravado só com dígitos; vazio vira NULL (o índice único por clínica ignora NULL).
+function normalizarCpf(cpf) {
+  const d = String(cpf ?? '').replace(/\D/g, '');
+  return d || null;
+}
+
+// Erro de gravação com chave única: nunca devolve error.message (o nome da constraint e o
+// detalhe do Postgres revelariam cadastro de outra clínica — paciente é dado de saúde, LGPD art. 11).
+// Índices por clínica (migration-unicos-por-clinica.sql) → mensagem neutra "nesta clínica".
+const MENSAGEM_UNICO_POR_CLINICA = {
+  uq_pacientes_tenant_cpf: 'Já existe um paciente com este CPF nesta clínica',
+  uq_dentistas_tenant_cro: 'Já existe um profissional com este CRO nesta clínica',
+  uq_agenda_marcadores_tenant_nome: 'Já existe um marcador com este nome nesta clínica',
+};
+function responderErroGravacao(res, error, tag, generico = 'Não foi possível salvar com este valor. Fale com o suporte.') {
+  if (error?.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+  if (error?.message === 'Admin access required') return res.status(403).json({ error: 'Admin access required' });
+  if (error?.code === '23505') {
+    const msg = MENSAGEM_UNICO_POR_CLINICA[error.constraint];
+    if (msg) return res.status(409).json({ error: msg });
+    // Chave global antiga (antes da migração): não dizer de onde vem o conflito.
+    console.error(`[${tag}] conflito de chave única (${error.constraint || 'sem nome'})`);
+    return res.status(409).json({ error: generico });
+  }
+  // Só o código: a mensagem do Postgres pode trazer o valor enviado (ex.: data inválida).
+  console.error(`[${tag}] erro ao gravar`, error?.code || '');
+  return res.status(500).json({ error: 'Erro interno' });
+}
+const responderErroPaciente = (res, error, tag) =>
+  responderErroGravacao(res, error, tag, 'Não foi possível salvar o paciente com este CPF. Fale com o suporte.');
+
 // GET /api/pacientes/:id — um paciente da própria clínica (404 se for de outra).
 app.get('/api/pacientes/:id', async (req, res) => {
   try {
@@ -4936,7 +4974,8 @@ app.post('/api/pacientes', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
-    const { nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes } = req.body;
+    const { nome, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes } = req.body;
+    const cpf = normalizarCpf(req.body.cpf);
     const id = crypto.randomUUID();
     await pool.query(
       'INSERT INTO pacientes (id, nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
@@ -4946,7 +4985,7 @@ app.post('/api/pacientes', async (req, res) => {
     // Push to Clinicorp
     import('./clinicorp.mjs').then(m => m.clinicorpPush.pushPatient(pool, id)).catch(e => console.error('Clinicorp push failed:', e.message));
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    responderErroPaciente(res, error, 'pacientes:create');
   }
 });
 
@@ -4954,7 +4993,8 @@ app.put('/api/pacientes/:id', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
-    const { nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes } = req.body;
+    const { nome, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes } = req.body;
+    const cpf = normalizarCpf(req.body.cpf);
     const { rowCount } = await pool.query(
       'UPDATE pacientes SET nome=$1, cpf=$2, telefone=$3, email=$4, data_nascimento=$5, sexo=$6, convenio=$7, endereco=$8, observacoes=$9, updated_at=NOW() WHERE id=$10 AND tenant_id=$11',
       [nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes, req.params.id, user.tenant_id]
@@ -4964,7 +5004,7 @@ app.put('/api/pacientes/:id', async (req, res) => {
     // Push to Clinicorp
     import('./clinicorp.mjs').then(m => m.clinicorpPush.pushPatient(pool, req.params.id)).catch(e => console.error('Clinicorp push failed:', e.message));
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    responderErroPaciente(res, error, 'pacientes:update');
   }
 });
 
@@ -5168,14 +5208,11 @@ app.post('/api/agenda/marcadores', async (req, res) => {
     if (!nome || !nome.trim()) return res.status(400).json({ error: 'Nome obrigatório' });
     const id = crypto.randomUUID();
     const corFinal = (cor || '#06b6d4').slice(0, 9);
-    try {
-      await pool.query('INSERT INTO agenda_marcadores (id, nome, cor, tenant_id) VALUES ($1,$2,$3,$4)', [id, nome.trim(), corFinal, user.tenant_id]);
-      res.json({ id, nome: nome.trim(), cor: corFinal });
-    } catch (err) {
-      if (err.code === '23505') return res.status(409).json({ error: 'Marcador com este nome já existe' });
-      throw err;
-    }
-  } catch (error) { res.status(500).json({ error: error.message }); }
+    await pool.query('INSERT INTO agenda_marcadores (id, nome, cor, tenant_id) VALUES ($1,$2,$3,$4)', [id, nome.trim(), corFinal, user.tenant_id]);
+    res.json({ id, nome: nome.trim(), cor: corFinal });
+  } catch (error) {
+    responderErroGravacao(res, error, 'agenda:marcadores', 'Não foi possível salvar o marcador com este nome. Fale com o suporte.');
+  }
 });
 
 app.delete('/api/agenda/marcadores/:id', async (req, res) => {
@@ -5515,7 +5552,9 @@ app.get('/api/dentistas', async (req, res) => {
 app.post('/api/dentistas', async (req, res) => {
   try {
     const { user } = await verifyAdmin(req);
-    const { nome, cro, especialidade, telefone, email, comissao_percentual } = req.body;
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { nome, especialidade, telefone, email, comissao_percentual } = req.body;
+    const cro = normalizarCro(req.body.cro);
     const id = crypto.randomUUID();
     await pool.query(
       'INSERT INTO dentistas (id, nome, cro, especialidade, telefone, email, comissao_percentual, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
@@ -5523,7 +5562,7 @@ app.post('/api/dentistas', async (req, res) => {
     );
     res.json({ id, success: true });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    responderErroGravacao(res, error, 'dentistas:create', 'Não foi possível salvar o profissional com este CRO. Fale com o suporte.');
   }
 });
 
@@ -5538,7 +5577,7 @@ app.put('/api/dentistas/:id', async (req, res) => {
     const { nome, cro, especialidade, telefone, email, comissao_percentual, ativo, cor_agenda, sala } = req.body;
     const sets = []; const params = [];
     if (nome !== undefined) { params.push(nome); sets.push(`nome=$${params.length}`); }
-    if (cro !== undefined) { params.push(cro); sets.push(`cro=$${params.length}`); }
+    if (cro !== undefined) { params.push(normalizarCro(cro)); sets.push(`cro=$${params.length}`); }
     if (especialidade !== undefined) { params.push(especialidade); sets.push(`especialidade=$${params.length}`); }
     if (telefone !== undefined) { params.push(telefone); sets.push(`telefone=$${params.length}`); }
     if (email !== undefined) { params.push(email); sets.push(`email=$${params.length}`); }
@@ -5553,9 +5592,7 @@ app.put('/api/dentistas/:id', async (req, res) => {
     const { rows } = await pool.query('SELECT * FROM dentistas WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
     res.json(rows[0]);
   } catch (error) {
-    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
-    if (error.message === 'Admin only') return res.status(403).json({ error: 'Admin only' });
-    res.status(500).json({ error: error.message });
+    responderErroGravacao(res, error, 'dentistas:update', 'Não foi possível salvar o profissional com este CRO. Fale com o suporte.');
   }
 });
 
@@ -12206,7 +12243,7 @@ app.post('/api/crm/leads/:id/convert-to-patient', async (req, res) => {
     if (cpfBody !== undefined && cpfBody !== null && (typeof cpfBody !== 'string' || !/^(\d{11})?$/.test(cpfBody.trim()))) {
       return res.status(400).json({ error: 'CPF inválido: informe 11 dígitos, sem pontos ou traço' });
     }
-    const cpf = typeof cpfBody === 'string' && cpfBody.trim() ? cpfBody.trim() : null;
+    const cpf = normalizarCpf(req.body?.cpf);
 
     // Fetch lead data
     const { rows: leadRows } = await pool.query(
@@ -12244,9 +12281,7 @@ app.post('/api/crm/leads/:id/convert-to-patient', async (req, res) => {
 
     res.json({ success: true, paciente_id: pacienteId, nome: lead.nome });
   } catch (error) {
-    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
-    console.error('❌ Error converting lead to patient:', error.message);
-    res.status(500).json({ error: 'Erro interno' });
+    responderErroPaciente(res, error, 'crm:convert-to-patient');
   }
 });
 
