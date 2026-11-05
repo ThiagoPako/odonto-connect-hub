@@ -155,7 +155,8 @@ export function useRealtimeChat(options: RealtimeChatOptions) {
         return;
       }
 
-      const url = new URL(`${VPS_API_BASE}/events`);
+      // Em localhost VPS_API_BASE é relativo ("/api"): resolve contra a origem da página
+      const url = new URL(`${VPS_API_BASE}/events`, window.location.origin);
       url.searchParams.set("token", token);
       url.searchParams.set("tenantId", tenantId);
       eventSource = new EventSource(url.toString());

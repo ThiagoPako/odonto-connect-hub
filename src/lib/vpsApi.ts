@@ -88,6 +88,34 @@ export function isAuthenticated(): boolean {
 
 // ─── Generic fetch ──────────────────────────────────────────
 
+/**
+ * O backend costuma devolver `error.message` do Postgres/Node (ex.: "column r.tenant_id
+ * does not exist"). Isso não ajuda a recepção e pode revelar detalhes internos (ex.: que
+ * um CPF já existe em outra clínica). Troca mensagens técnicas por texto claro e deixa o
+ * original no console para quem for depurar.
+ */
+const SERVER_ERROR_MSG = 'Erro no servidor ao processar o pedido. Tente de novo em instantes; se continuar, fale com o suporte.';
+export function friendlyApiError(raw: unknown, status: number): string {
+  const msg = typeof raw === 'string' ? raw : '';
+  if (!msg) return status >= 500 ? SERVER_ERROR_MSG : `Não foi possível concluir o pedido (código ${status}).`;
+  if (/duplicate key|unique constraint|already exists/i.test(msg)) {
+    console.warn(`[api] erro ${status}:`, msg);
+    return 'Já existe um cadastro com esses dados. Confira e tente de novo.';
+  }
+  const technical = /\b(column|relation|operator|syntax error|does not exist|violates|constraint|null value|invalid input syntax|ECONN\w*|ETIMEDOUT|socket hang up|TypeError|ReferenceError|Cannot read|is not a function|is not defined|SQLSTATE)\b/i;
+  // 5xx com texto só em inglês (sem acento) quase sempre é mensagem interna do servidor
+  // 5xx em inglês (palavras típicas de mensagem interna) quase sempre é erro do servidor;
+  // mensagens em português, mesmo sem acento ("Erro ao salvar"), passam direto.
+  const englishOnly = status >= 500 && !/^(Unauthorized|Admin only)$/.test(msg)
+    && /\b(the|is|not|of|cannot|failed|error|invalid|missing|required|unexpected|unknown|denied|timeout)\b/i.test(msg)
+    && !/\b(erro|falha|não|nao|inválid|invalid[oa]|obrigat)/i.test(msg);
+  if (technical.test(msg) || englishOnly) {
+    console.warn(`[api] erro ${status}:`, msg);
+    return status >= 500 ? SERVER_ERROR_MSG : 'Não foi possível concluir o pedido. Confira os dados e tente de novo.';
+  }
+  return msg;
+}
+
 export async function vpsApiFetch<T = unknown>(
   path: string,
   options?: { method?: string; body?: unknown; params?: Record<string, string>; background?: boolean }
@@ -111,7 +139,7 @@ export async function vpsApiFetch<T = unknown>(
     const contentType = response.headers.get('content-type') || '';
     if (!contentType.includes('application/json')) {
       // Server returned HTML instead of JSON — API is unreachable
-      return { data: null, error: 'Servidor indisponível. Verifique se a API está rodando no VPS (pm2 status).' };
+      return { data: null, error: 'Servidor indisponível no momento. Verifique sua internet e tente de novo em instantes.' };
     }
 
     const data = await response.json();
@@ -122,14 +150,18 @@ export async function vpsApiFetch<T = unknown>(
         return { data: null, error: data?.error || 'Sessão expirada. Faça login novamente.' };
       }
 
-      return { data: null, error: data.error || `HTTP ${response.status}` };
+      return { data: null, error: friendlyApiError(data?.error, response.status) };
     }
 
     return { data, error: null };
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Erro de rede';
     if (message.includes('is not valid JSON') || message.includes('Unexpected token')) {
-      return { data: null, error: 'Servidor indisponível. Verifique se a API está rodando no VPS (pm2 status).' };
+      return { data: null, error: 'Servidor indisponível no momento. Verifique sua internet e tente de novo em instantes.' };
+    }
+    // "Failed to fetch"/"Load failed" = sem conexão com o servidor
+    if (/Failed to fetch|Load failed|NetworkError/i.test(message)) {
+      return { data: null, error: 'Sem conexão com o servidor. Verifique sua internet e tente de novo.' };
     }
     return { data: null, error: message };
   }
@@ -778,7 +810,7 @@ export const whatsappApi = {
           handleAuthFailure(false);
           return { data: null, error: data?.error || 'Sessão expirada. Faça login novamente.' };
         }
-        return { data: null, error: data.error || `HTTP ${response.status}` };
+        return { data: null, error: friendlyApiError(data?.error, response.status) };
       }
 
       return { data, error: null };
@@ -1241,7 +1273,7 @@ export const aiApi = {
         body: audioBlob,
       });
       const data = await response.json();
-      if (!response.ok) return { data: null, error: data.error || `HTTP ${response.status}` };
+      if (!response.ok) return { data: null, error: friendlyApiError(data?.error, response.status) };
       return { data, error: null };
     } catch (err: unknown) {
       return { data: null, error: err instanceof Error ? err.message : 'Erro de rede' };

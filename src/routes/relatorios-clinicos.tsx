@@ -23,17 +23,29 @@ export const Route = createFileRoute("/relatorios-clinicos")({
 
 type StatusFilter = 'todos' | 'com_prescricao' | 'sem_prescricao';
 
+// Teto do servidor em GET /api/ai/reports.
+// TODO(minimização): a lista de pacientes do filtro vem de até 1000 relatórios completos; o
+// ideal é um endpoint que devolva só patient_id/patient_name distintos (não existe hoje).
+const LIMITE_PACIENTES = 1000;
+
 function RelatoriosClinicosPage() {
   const [busca, setBusca] = useState("");
   const [reports, setReports] = useState<ClinicalReportApi[]>([]);
   const [stats, setStats] = useState({ total: 0, com_prescricao: 0, sem_prescricao: 0, pacientes_unicos: 0, duracao_total_min: 0 });
-  const [loading, setLoading] = useState(false);
+  // Começa em true para não piscar "Nenhum relatório" antes da primeira carga
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [relatorioAberto, setRelatorioAberto] = useState<string | null>(null);
   const [dateFrom, setDateFrom] = useState<Date | undefined>(undefined);
   const [dateTo, setDateTo] = useState<Date | undefined>(undefined);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('todos');
   const [pacienteFilter, setPacienteFilter] = useState<string | null>(null);
+  const [buscaPaciente, setBuscaPaciente] = useState("");
+  const [pacientesBase, setPacientesBase] = useState<ClinicalReportApi[]>([]);
+  const [loadingPacientes, setLoadingPacientes] = useState(true);
+  const [erroPacientes, setErroPacientes] = useState<string | null>(null);
+  const [tentativaPacientes, setTentativaPacientes] = useState(0);
+  const [pacientesTruncados, setPacientesTruncados] = useState(false);
 
   const buildFilters = useCallback(() => ({
     from: dateFrom ? format(dateFrom, 'yyyy-MM-dd') : undefined,
@@ -67,12 +79,39 @@ function RelatoriosClinicosPage() {
     return () => clearTimeout(t);
   }, [carregar]);
 
+  // Lista de pacientes do filtro lateral: depende só do período, para que
+  // escolher um paciente ou um status não esconda os outros pacientes.
+  // O servidor devolve no máximo LIMITE_PACIENTES relatórios; acima disso a lista sai incompleta.
+  const fromStr = dateFrom ? format(dateFrom, 'yyyy-MM-dd') : undefined;
+  const toStr = dateTo ? format(dateTo, 'yyyy-MM-dd') : undefined;
+  useEffect(() => {
+    let ativo = true;
+    setLoadingPacientes(true);
+    setErroPacientes(null);
+    aiApi.listReports({ from: fromStr, to: toStr, limit: LIMITE_PACIENTES }).then(({ data, error: err }) => {
+      if (!ativo) return;
+      if (err) {
+        setErroPacientes(err);
+        setPacientesBase([]);
+        setPacientesTruncados(false);
+      } else if (data) {
+        setPacientesBase(data.reports);
+        setPacientesTruncados(data.reports.length >= LIMITE_PACIENTES);
+      }
+      setLoadingPacientes(false);
+    });
+    return () => { ativo = false; };
+  }, [fromStr, toStr, tentativaPacientes]);
+
+  const recarregarPacientes = () => setTentativaPacientes(n => n + 1);
+
   const limparFiltros = () => {
     setDateFrom(undefined);
     setDateTo(undefined);
     setStatusFilter('todos');
     setPacienteFilter(null);
     setBusca("");
+    setBuscaPaciente("");
   };
 
   const hasFilters = !!dateFrom || !!dateTo || statusFilter !== 'todos' || !!pacienteFilter || !!busca.trim();
@@ -80,7 +119,7 @@ function RelatoriosClinicosPage() {
   // Lista de pacientes únicos a partir dos relatórios para filtro lateral
   const pacientesDisponiveis = useMemo(() => {
     const map = new Map<string, { id: string; nome: string; count: number }>();
-    reports.forEach(r => {
+    pacientesBase.forEach(r => {
       if (!r.patient_id) return;
       const existing = map.get(r.patient_id);
       if (existing) {
@@ -90,7 +129,13 @@ function RelatoriosClinicosPage() {
       }
     });
     return Array.from(map.values()).sort((a, b) => b.count - a.count);
-  }, [reports]);
+  }, [pacientesBase]);
+
+  const pacientesVisiveis = useMemo(() => {
+    const termo = buscaPaciente.trim().toLowerCase();
+    if (!termo) return pacientesDisponiveis;
+    return pacientesDisponiveis.filter(p => p.nome.toLowerCase().includes(termo));
+  }, [pacientesDisponiveis, buscaPaciente]);
 
   const exportarPdf = () => {
     if (reports.length === 0) {
@@ -118,7 +163,7 @@ function RelatoriosClinicosPage() {
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Relatórios Clínicos IA" />
-      <main className="flex-1 p-6 overflow-auto">
+      <main className="flex-1 p-4 sm:p-6 overflow-auto">
         <div className="max-w-[1400px] mx-auto">
           {/* Hero */}
           <div className="relative overflow-hidden rounded-2xl gradient-primary p-6 shadow-glow-primary mb-6">
@@ -139,7 +184,7 @@ function RelatoriosClinicosPage() {
                   Filtre por período, status e paciente. Exporte em PDF ou CSV.
                 </p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   onClick={exportarPdf}
                   className="h-9 px-3 rounded-lg bg-white/15 hover:bg-white/25 text-primary-foreground text-xs font-semibold inline-flex items-center gap-1.5 transition-colors backdrop-blur"
@@ -165,9 +210,9 @@ function RelatoriosClinicosPage() {
             <KpiBox label="Min totais" value={stats.duracao_total_min} />
           </div>
 
-          <div className="grid grid-cols-12 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-6">
             {/* Sidebar: filtros + pacientes */}
-            <div className="col-span-3 space-y-3">
+            <div className="lg:col-span-3 space-y-3">
               {/* Filtros */}
               <div className="bg-card rounded-2xl border border-border/60 p-4 shadow-card space-y-3">
                 <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
@@ -246,9 +291,10 @@ function RelatoriosClinicosPage() {
                   <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
                   <input
                     type="text"
-                    placeholder="Buscar..."
-                    value={busca}
-                    onChange={e => setBusca(e.target.value)}
+                    placeholder="Filtrar pacientes por nome..."
+                    aria-label="Filtrar pacientes por nome"
+                    value={buscaPaciente}
+                    onChange={e => setBuscaPaciente(e.target.value)}
                     className="w-full h-9 pl-8 pr-3 rounded-lg border border-border bg-muted/40 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
                   />
                 </div>
@@ -262,7 +308,7 @@ function RelatoriosClinicosPage() {
                   >
                     Todos os pacientes
                   </button>
-                  {pacientesDisponiveis.map(p => {
+                  {pacientesVisiveis.map(p => {
                     const sel = pacienteFilter === p.id;
                     return (
                       <button
@@ -278,18 +324,56 @@ function RelatoriosClinicosPage() {
                       </button>
                     );
                   })}
-                  {pacientesDisponiveis.length === 0 && !loading && (
-                    <p className="text-xs text-muted-foreground text-center py-4">Nenhum paciente</p>
+                  {loadingPacientes ? (
+                    <p className="text-xs text-muted-foreground text-center py-4">Carregando pacientes...</p>
+                  ) : erroPacientes ? (
+                    <div role="alert" className="text-xs text-destructive text-center py-3 space-y-2">
+                      <p>Não foi possível carregar a lista de pacientes: {erroPacientes}</p>
+                      <button
+                        onClick={recarregarPacientes}
+                        className="h-8 px-3 rounded-lg border border-destructive/30 font-medium hover:bg-destructive/10 transition-colors"
+                      >
+                        Tentar novamente
+                      </button>
+                    </div>
+                  ) : pacientesVisiveis.length === 0 && (
+                    <p className="text-xs text-muted-foreground text-center py-4">
+                      {buscaPaciente.trim() ? "Nenhum paciente com esse nome" : "Nenhum paciente"}
+                    </p>
+                  )}
+                  {!loadingPacientes && !erroPacientes && pacientesTruncados && (
+                    <p className="text-[11px] text-muted-foreground px-2.5 py-2">
+                      Lista incompleta: o período tem mais de {LIMITE_PACIENTES} relatórios. Escolha um período menor para ver todos os pacientes.
+                    </p>
                   )}
                 </div>
               </div>
             </div>
 
             {/* Conteúdo principal */}
-            <div className="col-span-9 space-y-3">
+            <div className="lg:col-span-9 space-y-3">
+              {/* Busca geral: o servidor procura no nome do paciente, na queixa e no procedimento (não no texto do relatório) */}
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <input
+                  type="text"
+                  placeholder="Buscar por paciente, queixa ou procedimento..."
+                  aria-label="Buscar por paciente, queixa ou procedimento"
+                  value={busca}
+                  onChange={e => setBusca(e.target.value)}
+                  className="w-full h-10 pl-9 pr-3 rounded-xl border border-border bg-card text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
+                />
+              </div>
+
               {error && (
-                <div className="bg-destructive/5 border border-destructive/20 rounded-xl p-4 text-sm text-destructive">
-                  Erro ao carregar relatórios: {error}
+                <div role="alert" className="bg-destructive/5 border border-destructive/20 rounded-xl p-4 text-sm text-destructive">
+                  <p>Erro ao carregar relatórios: {error}</p>
+                  <button
+                    onClick={() => { carregar(); if (erroPacientes) recarregarPacientes(); }}
+                    className="mt-2 h-8 px-3 rounded-lg border border-destructive/30 text-xs font-medium hover:bg-destructive/10 transition-colors"
+                  >
+                    Tentar novamente
+                  </button>
                 </div>
               )}
 
@@ -300,7 +384,7 @@ function RelatoriosClinicosPage() {
                   </div>
                   <p className="text-sm text-muted-foreground">Carregando relatórios...</p>
                 </div>
-              ) : reports.length === 0 ? (
+              ) : error ? null : reports.length === 0 ? (
                 <div className="bg-card rounded-2xl border-2 border-dashed border-border p-12 text-center">
                   <Stethoscope className="h-10 w-10 text-muted-foreground/30 mx-auto mb-3" />
                   <p className="text-sm font-medium text-muted-foreground mb-1">Nenhum relatório encontrado</p>

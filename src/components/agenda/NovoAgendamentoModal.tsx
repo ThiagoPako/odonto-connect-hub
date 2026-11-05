@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Calendar, Stethoscope, MapPin, Phone, Mail, MessageSquare, BellRing, Repeat, Search, Sparkles, Check, User } from "lucide-react";
+import { AlertTriangle, Loader2, Calendar, Stethoscope, MapPin, Phone, Mail, MessageSquare, BellRing, Repeat, Search, Sparkles, Check, User } from "lucide-react";
 import { toast } from "sonner";
 import { agendaApi, pacientesApi, dentistasApi, type AgendamentoVPS, type MarcadorAgenda } from "@/lib/vpsApi";
 import { AnalogTimePicker } from "./AnalogTimePicker";
@@ -79,7 +79,8 @@ export function NovoAgendamentoModal({
 
   // Confirmação
   const [confirmacaoCanal, setConfirmacaoCanal] = useState<string>("whatsapp");
-  const [confirmacaoQuando, setConfirmacaoQuando] = useState("agora");
+  // Padrão "Não enviar": marcar consulta não deve disparar mensagem ao paciente sem a recepção escolher
+  const [confirmacaoQuando, setConfirmacaoQuando] = useState("");
 
   // Alerta de retorno
   const [retornoCanal, setRetornoCanal] = useState<string>("whatsapp");
@@ -131,7 +132,7 @@ export function NovoAgendamentoModal({
         setPacienteId(""); setPacienteNome(""); setTelefone(""); setEmail("");
         setProcedimento(""); setObservacoes(""); setSala("Sala 1");
         setPrimeiraConsulta(false); setMultiplo(false); setQtdSessoes(4); setIntervaloDias(7);
-        setRetornoQuando(""); setSearch("");
+        setRetornoQuando(""); setConfirmacaoQuando(""); setSearch("");
         setMarcadores([]); setComoConheceu("");
         setEventoTitulo(""); setDiaInteiro(false); setEscopo("dentista");
         setSelectedDentistasIds(defaultDentistaId ? [defaultDentistaId] : []);
@@ -177,15 +178,41 @@ export function NovoAgendamentoModal({
     await Promise.resolve(onCreated());
   };
 
+  // Conflito de horário: mesmo profissional, mesmo dia, intervalos sobrepostos
+  const [dayAppts, setDayAppts] = useState<AgendamentoVPS[]>([]);
+  useEffect(() => {
+    if (!open || tab !== "consulta" || !data || !dentistaId) { setDayAppts([]); return; }
+    let vivo = true;
+    agendaApi.list({ data_inicio: data, data_fim: data, dentista_id: dentistaId }).then(({ data: list, error }) => {
+      if (!vivo) return;
+      // Falha aqui só tira o aviso de conflito; o servidor continua sendo a fonte da verdade
+      setDayAppts(!error && Array.isArray(list) ? list : []);
+    });
+    return () => { vivo = false; };
+  }, [open, tab, data, dentistaId]);
+  const conflitos = useMemo(() => {
+    if (!hora || !duracao) return [];
+    const toMin = (t: string) => { const [h, m] = (t || "00:00").split(":").map(Number); return (h || 0) * 60 + (m || 0); };
+    const ini = toMin(hora), fim = ini + duracao;
+    return dayAppts.filter((a) => {
+      if (a.dentista_id !== dentistaId || ["cancelado", "faltou"].includes(a.status || "")) return false;
+      const s = toMin(a.hora || "00:00");
+      return ini < s + (a.duracao || 30) && s < fim;
+    });
+  }, [dayAppts, hora, duracao, dentistaId]);
+
   const handleSubmitConsulta = async (e?: FormEvent<HTMLFormElement>) => {
     e?.preventDefault();
-    console.log("[Agenda] Submit consulta", { pacienteId, dentistaId, data, hora, duracao });
     const err = validateConsulta();
     if (err) {
       toast.error(err, { duration: 5000 });
       if (!pacienteId) setShowSugg(true);
       return;
     }
+    // Confirma conflito só depois de o formulário estar válido
+    if (conflitos.length > 0 && !window.confirm(
+      `Este profissional já tem ${conflitos.length === 1 ? "um agendamento" : `${conflitos.length} agendamentos`} nesse horário (${conflitos.map((c) => `${(c.hora || "").slice(0, 5)} ${c.paciente_nome || ""}`.trim()).join(", ")})${multiplo ? " na primeira sessão (as outras sessões não foram verificadas)" : ""}. Agendar mesmo assim?`
+    )) return;
     setSaving(true);
     const profName = dentistas.find((d) => d.id === dentistaId)?.nome || "";
     const cat = CATEGORIAS.find((c) => c.value === categoria);
@@ -409,7 +436,7 @@ export function NovoAgendamentoModal({
             </div>
 
             {/* Data / Hora / Duração */}
-            <div className="grid grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div>
                 <Label className="mb-1 block">Data</Label>
                 <Input type="date" value={data} onChange={(e) => setData(e.target.value)} />
@@ -427,6 +454,17 @@ export function NovoAgendamentoModal({
                 <Input value={sala} onChange={(e) => setSala(e.target.value)} />
               </div>
             </div>
+            {conflitos.length > 0 && (
+              <div role="alert" className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-foreground">
+                <AlertTriangle className="h-4 w-4 text-warning shrink-0 mt-0.5" />
+                <span>
+                  Horário ocupado: este profissional já tem{" "}
+                  {conflitos.slice(0, 3).map((c) => `${(c.hora || "").slice(0, 5)} · ${c.paciente_nome || c.procedimento || "agendamento"}`).join("; ")}
+                  {conflitos.length > 3 ? ` e mais ${conflitos.length - 3}` : ""}.
+                  {multiplo && " Só a primeira sessão foi verificada."}
+                </span>
+              </div>
+            )}
 
             <div>
               <Label className="mb-1 block">Procedimento</Label>
@@ -488,35 +526,40 @@ export function NovoAgendamentoModal({
               )}
             </div>
 
-            {/* Confirmação + Alerta de retorno */}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="rounded-lg border border-border/60 p-3">
-                <div className="flex items-center gap-2 mb-2 text-sm font-medium">
-                  <MessageSquare className="h-4 w-4 text-primary" /> Confirmação
-                </div>
-                <Select value={confirmacaoQuando || "_none"} onValueChange={(v) => setConfirmacaoQuando(v === "_none" ? "" : v)}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {QUANDO_OPCOES.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-                {confirmacaoQuando && (
-                  <Badge variant="secondary" className="mt-2">WhatsApp</Badge>
-                )}
+            {/* Confirmação + Alerta de retorno.
+                Hoje o servidor não usa confirmacao_quando nem alerta_retorno_* para enviar nada:
+                o único envio é o lembrete automático da véspera, que vale para toda consulta.
+                Por isso as escolhas ficam desabilitadas ("em breve") e o aviso diz o que de fato acontece. */}
+            <div className="rounded-lg border border-border/60 p-3 space-y-3">
+              <div className="flex items-start gap-2 text-[12px]">
+                <MessageSquare className="h-4 w-4 text-primary shrink-0 mt-0.5" />
+                <p className="text-foreground">
+                  <span className="font-medium">Lembrete automático:</span> na véspera da consulta, o paciente recebe uma mensagem no WhatsApp da clínica pedindo confirmação (quando o WhatsApp está conectado e o paciente tem telefone).
+                </p>
               </div>
-              <div className="rounded-lg border border-border/60 p-3">
-                <div className="flex items-center gap-2 mb-2 text-sm font-medium">
-                  <BellRing className="h-4 w-4 text-warning" /> Alerta de retorno
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <Label className="mb-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+                    Confirmação extra <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[9px] font-bold uppercase text-primary">em breve</span>
+                  </Label>
+                  <Select value="_none" disabled>
+                    <SelectTrigger aria-label="Confirmação extra (em breve)"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {QUANDO_OPCOES.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
                 </div>
-                <Select value={retornoQuando || "_none"} onValueChange={(v) => setRetornoQuando(v === "_none" ? "" : v)}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {QUANDO_OPCOES.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-                {retornoQuando && (
-                  <Badge variant="secondary" className="mt-2">WhatsApp</Badge>
-                )}
+                <div>
+                  <Label className="mb-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <BellRing className="h-3.5 w-3.5 text-warning" /> Alerta de retorno <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[9px] font-bold uppercase text-primary">em breve</span>
+                  </Label>
+                  <Select value="_none" disabled>
+                    <SelectTrigger aria-label="Alerta de retorno (em breve)"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {QUANDO_OPCOES.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
             </div>
 

@@ -12,7 +12,7 @@ export interface Appointment {
   date: string;
   time: string;
   duration: number;
-  status: "confirmado" | "aguardando" | "em_atendimento" | "finalizado" | "faltou" | "encaixe";
+  status: "agendado" | "confirmado" | "aguardando" | "em_atendimento" | "finalizado" | "faltou" | "encaixe";
   phone: string;
   confirmed: boolean;
 }

@@ -49,6 +49,10 @@ beforeEach(() => {
     const text = String(sql);
     sqlLog.push({ text, params });
     const daB = (id) => params[0] === id && params[1] === tenantB;
+    if (/SELECT 1 FROM (pacientes|dentistas) WHERE id = \$1 AND tenant_id = \$2 LIMIT 1/.test(text)) {
+      const ok = daB(pacienteDaB) || daB(dentistaDaB);
+      return Promise.resolve({ rows: ok ? [{ '?column?': 1 }] : [] });
+    }
     if (/SELECT \* FROM pacientes WHERE id = \$1 AND tenant_id = \$2/.test(text)) {
       return Promise.resolve({ rows: daB(pacienteDaB) ? [{ id: pacienteDaB, nome: 'Maria Silva' }] : [] });
     }
@@ -120,11 +124,11 @@ describe('POST /api/agenda e /api/agenda/serie', () => {
     expect(ins.params.slice(-3)).toEqual([tenantB, 'Maria Silva', 'Dra. Ana']);
   });
 
-  test('clínica A recebe 404 com paciente ou profissional da clínica B, sem INSERT', async () => {
+  test('clínica A recebe 400 com paciente ou profissional da clínica B, sem INSERT', async () => {
     let res = await chamar('post', '/api/agenda', token(tenantA), corpo);
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(400);
     res = await chamar('post', '/api/agenda', token(tenantA), { ...corpo, paciente_id: undefined });
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(400);
     expect(inserts()).toHaveLength(0);
   });
 
@@ -145,11 +149,11 @@ describe('POST /api/agenda e /api/agenda/serie', () => {
     for (const ins of inserts()) expect(ins.params.slice(-2)).toEqual(['Maria Silva', 'Dra. Ana']);
   });
 
-  test('série: clínica A recebe 404 com paciente da clínica B, sem INSERT', async () => {
+  test('série: clínica A recebe 400 com paciente da clínica B, sem INSERT', async () => {
     const res = await chamar('post', '/api/agenda/serie', token(tenantA), {
       paciente_id: pacienteDaB, dentista_id: dentistaDaB, data_inicio: '2026-11-10', hora: '09:00', quantidade: 2,
     });
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(400);
     expect(inserts()).toHaveLength(0);
   });
 });
@@ -166,7 +170,7 @@ describe('PUT /api/agenda/:id', () => {
 
   test('clínica A não consegue apontar profissional da clínica B', async () => {
     const res = await chamar('put', `/api/agenda/${agendamentoDaB}`, token(tenantA), { dentista_id: dentistaDaB });
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(400);
     expect(sqlLog.some(q => /^\s*UPDATE agendamentos SET/.test(q.text))).toBe(false);
   });
 });
