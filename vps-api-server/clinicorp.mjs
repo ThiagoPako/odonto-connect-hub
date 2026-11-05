@@ -2230,22 +2230,25 @@ export const WEBHOOK_LEGACY_GRACE_DAYS = 30;
 // Tamanho do segredo gerado (32 bytes em base64url).
 export const WEBHOOK_SECRET_MIN_LENGTH = 43;
 
-// ─── Express routes ───────────────────────────────────────────
-export function registerClinicorp(app, pool, { verifyUser } = {}) {
-  // Colunas usadas pela integração na VPS (idempotente; antes ficavam só no
-  // schema do Supabase).
-  (async () => {
-    for (const sql of [
-      `ALTER TABLE clinicorp_user_settings ADD COLUMN IF NOT EXISTS sync_progress JSONB`,
-      `ALTER TABLE clinicorp_push_log ADD COLUMN IF NOT EXISTS tenant_id UUID`,
-      `ALTER TABLE clinicorp_webhook_events ADD COLUMN IF NOT EXISTS tenant_id UUID`,
-      `ALTER TABLE clinicorp_conflicts ADD COLUMN IF NOT EXISTS tenant_id UUID`,
-      `CREATE INDEX IF NOT EXISTS idx_clinicorp_push_log_tenant ON clinicorp_push_log(tenant_id, created_at DESC)`,
-      // Segredo do webhook só como hash (mesma definição da migration-clinicorp-segredo.sql)
+// Segredo do webhook só como hash: mesma definição da migration-clinicorp-segredo.sql,
+// aplicada também no boot (registerClinicorp). Exportada para o teste com Postgres.
+export const CLINICORP_SEGREDO_SQL = [
       `ALTER TABLE clinicorp_user_settings ADD COLUMN IF NOT EXISTS webhook_secret_hash TEXT`,
       `ALTER TABLE clinicorp_user_settings ADD COLUMN IF NOT EXISTS webhook_secret_anterior_hash TEXT`,
       `ALTER TABLE clinicorp_user_settings ADD COLUMN IF NOT EXISTS anterior_expira_em TIMESTAMPTZ`,
       `ALTER TABLE clinicorp_user_settings ADD COLUMN IF NOT EXISTS webhook_secret_legado_ate TIMESTAMPTZ`,
+      // Segredo em claro repetido entre usuários: apaga o claro (e o hash derivado dele)
+      // antes de calcular hashes, para que nenhum dos dois volte a valer depois que o
+      // outro gerar segredo novo. As clínicas afetadas precisam gerar segredo novo.
+      `UPDATE clinicorp_user_settings
+          SET webhook_secret_hash = CASE
+                WHEN webhook_secret_hash = encode(sha256(convert_to(webhook_secret, 'UTF8')), 'hex') THEN NULL
+                ELSE webhook_secret_hash END,
+              webhook_secret = NULL
+        WHERE webhook_secret IN (
+          SELECT webhook_secret FROM clinicorp_user_settings
+           WHERE webhook_secret IS NOT NULL AND webhook_secret <> ''
+           GROUP BY webhook_secret HAVING COUNT(*) > 1)`,
       `UPDATE clinicorp_user_settings
           SET webhook_secret_hash = encode(sha256(convert_to(webhook_secret, 'UTF8')), 'hex')
         WHERE webhook_secret_hash IS NULL AND webhook_secret IS NOT NULL AND webhook_secret <> ''
@@ -2263,6 +2266,20 @@ export function registerClinicorp(app, pool, { verifyUser } = {}) {
            WHERE webhook_secret_hash IS NOT NULL GROUP BY webhook_secret_hash HAVING COUNT(*) > 1)`,
       `CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS uq_clinicorp_user_settings_webhook_secret_hash
          ON clinicorp_user_settings (webhook_secret_hash) WHERE webhook_secret_hash IS NOT NULL`,
+];
+
+// ─── Express routes ───────────────────────────────────────────
+export function registerClinicorp(app, pool, { verifyUser } = {}) {
+  // Colunas usadas pela integração na VPS (idempotente; antes ficavam só no
+  // schema do Supabase).
+  (async () => {
+    for (const sql of [
+      `ALTER TABLE clinicorp_user_settings ADD COLUMN IF NOT EXISTS sync_progress JSONB`,
+      `ALTER TABLE clinicorp_push_log ADD COLUMN IF NOT EXISTS tenant_id UUID`,
+      `ALTER TABLE clinicorp_webhook_events ADD COLUMN IF NOT EXISTS tenant_id UUID`,
+      `ALTER TABLE clinicorp_conflicts ADD COLUMN IF NOT EXISTS tenant_id UUID`,
+      `CREATE INDEX IF NOT EXISTS idx_clinicorp_push_log_tenant ON clinicorp_push_log(tenant_id, created_at DESC)`,
+      ...CLINICORP_SEGREDO_SQL,
     ]) {
       try { await pool.query(sql); }
       catch (e) { console.warn('[clinicorp] schema:', e.message); }

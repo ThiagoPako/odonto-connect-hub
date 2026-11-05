@@ -22,6 +22,19 @@ ALTER TABLE IF EXISTS clinicorp_user_settings ADD COLUMN IF NOT EXISTS anterior_
 -- Até quando o segredo legado (escolhido pelo usuário) ainda é aceito.
 ALTER TABLE IF EXISTS clinicorp_user_settings ADD COLUMN IF NOT EXISTS webhook_secret_legado_ate TIMESTAMPTZ;
 
+-- Segredo em claro repetido entre usuários: apaga o claro (e o hash derivado dele)
+-- antes de calcular hashes. Sem isso, quando um dos dois gerasse segredo novo, o
+-- segredo antigo voltaria a valer para o outro. As clínicas afetadas geram segredo novo.
+UPDATE clinicorp_user_settings
+   SET webhook_secret_hash = CASE
+         WHEN webhook_secret_hash = encode(sha256(convert_to(webhook_secret, 'UTF8')), 'hex') THEN NULL
+         ELSE webhook_secret_hash END,
+       webhook_secret = NULL
+ WHERE webhook_secret IN (
+   SELECT webhook_secret FROM clinicorp_user_settings
+    WHERE webhook_secret IS NOT NULL AND webhook_secret <> ''
+    GROUP BY webhook_secret HAVING COUNT(*) > 1);
+
 -- Preenche o hash a partir do segredo atual (só linhas ainda sem hash e só segredo que
 -- não se repete entre usuários: segredo repetido fica sem hash e a clínica gera um novo).
 UPDATE clinicorp_user_settings
