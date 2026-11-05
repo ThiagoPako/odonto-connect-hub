@@ -333,7 +333,7 @@ function CollapsibleSection({
                 <span className="flex-1 truncate">{item.title}</span>
                 {item.beta && (
                   <span
-                    className="shrink-0 rounded px-1.5 min-h-5 inline-flex items-center bg-sidebar-accent text-sidebar-accent-foreground text-xs font-semibold"
+                    className="shrink-0 rounded px-1.5 min-h-5 inline-flex items-center bg-sidebar-accent text-sidebar-accent-foreground text-caption font-semibold"
                     title="Funciona, mas ainda tem limitações"
                   >
                     Beta
