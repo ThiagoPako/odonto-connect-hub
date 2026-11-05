@@ -2,6 +2,8 @@ import { Button } from "@/components/ui/button";
 import { Smartphone, Wifi, WifiOff, QrCode, Trash2, RotateCcw, Loader2, LogOut, Star, StarOff } from "lucide-react";
 import { useState } from "react";
 import { whatsappApi } from "@/lib/vpsApi";
+import { toast } from "sonner";
+import { useConfirm } from "@/hooks/useConfirm";
 
 interface InstanceCardProps {
   instanceName: string;
@@ -15,17 +17,50 @@ interface InstanceCardProps {
 
 export function InstanceCard({ instanceName, instanceId, status, isPrimary, onConnect, onRefresh, onSetPrimary }: InstanceCardProps) {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [confirm, confirmDialog] = useConfirm();
 
-  const handleAction = async (action: string, fn: () => Promise<unknown>) => {
+  // Antes a falha só ia para o console: a recepção clicava e não sabia se tinha funcionado.
+  const handleAction = async (action: string, fn: () => Promise<unknown>, okMsg: string, errMsg: string) => {
     setActionLoading(action);
     try {
       await fn();
+      toast.success(okMsg);
       onRefresh();
     } catch (err) {
-      console.error(`Erro ao ${action}:`, err);
+      toast.error(`${errMsg}: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setActionLoading(null);
     }
+  };
+
+  const handleLogout = async () => {
+    const ok = await confirm({
+      title: `Desconectar "${instanceName}"?`,
+      description: "Este número para de enviar e receber mensagens pelo sistema até alguém ler o QR Code de novo no celular da clínica. Lembretes e disparos que usam este número ficam parados.",
+      confirmLabel: "Desconectar",
+      destructive: true,
+    });
+    if (!ok) return;
+    void handleAction("logout", async () => {
+      const { error } = await whatsappApi.logout(instanceName);
+      if (error) throw new Error(error);
+    }, `"${instanceName}" desconectado`, "Não foi possível desconectar");
+  };
+
+  const handleDelete = async () => {
+    const ok = await confirm({
+      title: `Excluir o número "${instanceName}"?`,
+      description: isPrimary
+        ? "Esta é a conexão PRINCIPAL da clínica. Ao excluir, mensagens automáticas param até outro número ser definido como principal. Para usar este número de novo será preciso cadastrá-lo e ler o QR Code."
+        : "O número sai do sistema e para de enviar e receber mensagens. Para usá-lo de novo será preciso cadastrá-lo e ler o QR Code.",
+      confirmLabel: "Excluir número",
+      destructive: true,
+    });
+    if (!ok) return;
+    void handleAction("delete", async () => {
+      const { error } = await whatsappApi.delete(instanceName);
+      if (error) throw new Error(error);
+    }, `"${instanceName}" excluído`, "Não foi possível excluir");
   };
 
   const isConnected = status === "open";
@@ -122,10 +157,9 @@ export function InstanceCard({ instanceName, instanceId, status, isPrimary, onCo
               variant="outline"
               size="sm"
               disabled={actionLoading === "logout"}
-              onClick={() => handleAction("logout", async () => {
-                const { error } = await whatsappApi.logout(instanceName);
-                if (error) throw new Error(error);
-              })}
+              onClick={handleLogout}
+              aria-label={`Desconectar ${instanceName}`}
+              title="Desconectar"
             >
               {actionLoading === "logout" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <LogOut className="h-3.5 w-3.5" />}
             </Button>
@@ -139,7 +173,9 @@ export function InstanceCard({ instanceName, instanceId, status, isPrimary, onCo
           onClick={() => handleAction("restart", async () => {
             const { error } = await whatsappApi.restart(instanceName);
             if (error) throw new Error(error);
-          })}
+          }, `"${instanceName}" reiniciado`, "Não foi possível reiniciar")}
+          aria-label={`Reiniciar conexão ${instanceName}`}
+          title="Reiniciar conexão"
         >
           {actionLoading === "restart" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
         </Button>
@@ -149,18 +185,14 @@ export function InstanceCard({ instanceName, instanceId, status, isPrimary, onCo
           size="sm"
           className="text-destructive hover:text-destructive"
           disabled={actionLoading === "delete"}
-          onClick={() => {
-            if (confirm(`Tem certeza que deseja excluir "${instanceName}"?`)) {
-              handleAction("delete", async () => {
-                const { error } = await whatsappApi.delete(instanceName);
-                if (error) throw new Error(error);
-              });
-            }
-          }}
+          onClick={handleDelete}
+          aria-label={`Excluir número ${instanceName}`}
+          title="Excluir número"
         >
           {actionLoading === "delete" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
         </Button>
       </div>
+      {confirmDialog}
     </div>
   );
 }

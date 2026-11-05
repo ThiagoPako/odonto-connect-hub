@@ -29,6 +29,9 @@ function normalizeConnectionState(value: unknown): ConnectionState {
 }
 
 let cachedInstances: ConnectedInstance[] = [];
+// Último erro ao listar (null = última leitura deu certo). Exposto para a tela não mostrar
+// "nenhum número conectado" quando na verdade a API falhou.
+let lastError: string | null = null;
 let lastFetchTime = 0;
 const CACHE_TTL = 30_000; // 30 seconds
 const POLL_INTERVAL_IDLE = 15_000; // background polling
@@ -91,8 +94,10 @@ async function refreshInstances(): Promise<ConnectedInstance[]> {
       if (!/unauthorized|sessão expirada/i.test(vpsError)) {
         console.warn("Failed to load WhatsApp instances via backend:", vpsError);
       }
+      if (lastError !== vpsError) { lastError = vpsError; notifyListeners(); }
       return cachedInstances;
     }
+    lastError = null;
 
     const rawList = Array.isArray(vpsInstances) ? vpsInstances : [];
     const list: EvolutionInstance[] = rawList.map((inst: any) => ({
@@ -119,6 +124,7 @@ async function refreshInstances(): Promise<ConnectedInstance[]> {
     notifyListeners();
     return cachedInstances;
   } catch {
+    if (lastError === null) { lastError = "Erro de conexão."; notifyListeners(); }
     return cachedInstances;
   }
 }
@@ -158,10 +164,13 @@ function syncPollingRate() {
 export function useWhatsAppInstances(options?: { active?: boolean }) {
   const active = options?.active ?? false;
   const [instances, setInstances] = useState<ConnectedInstance[]>(cachedInstances);
-  const [loading, setLoading] = useState(cachedInstances.length === 0);
+  // Antes: "carregando" enquanto a lista estivesse vazia. Se outra tela já tinha lido a lista
+  // (vazia) há menos de 30 s, nada mais desligava o loading e /canais girava para sempre.
+  const [loading, setLoading] = useState(lastFetchTime === 0 && cachedInstances.length === 0);
+  const [error, setError] = useState<string | null>(lastError);
 
   useEffect(() => {
-    const handler = () => setInstances([...cachedInstances]);
+    const handler = () => { setInstances([...cachedInstances]); setError(lastError); };
     listeners.add(handler);
 
     if (listeners.size === 1) startPolling();
@@ -201,7 +210,7 @@ export function useWhatsAppInstances(options?: { active?: boolean }) {
 
   const connected = instances.filter((i) => i.connectionState === "open");
 
-  return { instances, connected, loading, refresh };
+  return { instances, connected, loading, error, refresh };
 }
 
 /** Get the connected instances synchronously (from cache) */

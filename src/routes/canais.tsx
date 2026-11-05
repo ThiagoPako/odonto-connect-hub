@@ -23,8 +23,7 @@ const DEFAULT_SWITCH_MSG = `Olá! A partir de agora, nosso atendimento pelo What
 const syncedChatInstances = new Set<string>();
 
 function CanaisPage() {
-  const { instances, loading, refresh: loadInstances } = useWhatsAppInstances({ active: true });
-  const [error, setError] = useState<string | null>(null);
+  const { instances, loading, error, refresh: loadInstances } = useWhatsAppInstances({ active: true });
   const [createOpen, setCreateOpen] = useState(false);
   const [qrInstance, setQrInstance] = useState<string | null>(null);
   const [primaryInstance, setPrimaryInstance] = useState<string | null>(() => {
@@ -105,7 +104,7 @@ function CanaisPage() {
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Canais WhatsApp" />
-      <main className="flex-1 p-6 space-y-6 overflow-auto">
+      <main className="flex-1 p-4 sm:p-6 space-y-6 overflow-auto">
 
         {/* Stats bar */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -139,14 +138,14 @@ function CanaisPage() {
         </div>
 
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <h2 className="text-lg font-semibold text-foreground">Números Conectados</h2>
             <p className="text-sm text-muted-foreground">
-              Gerencie múltiplos números WhatsApp via Evolution API
+              Gerencie os números de WhatsApp da clínica
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button variant="outline" size="sm" onClick={() => setImportContactsOpen(true)}>
               <RefreshCw className="h-4 w-4 mr-2" />
               Sincronizar Contatos
@@ -161,6 +160,12 @@ function CanaisPage() {
             </Button>
           </div>
         </div>
+
+        {error && instances.length > 0 && (
+          <div role="alert" className="rounded-xl border border-warning/30 bg-warning/10 px-4 py-2 text-xs text-foreground">
+            Não foi possível atualizar o status agora ({error}). Mostrando a última leitura.
+          </div>
+        )}
 
         {/* Primary instance banner */}
         {primaryInstance && (
@@ -177,10 +182,11 @@ function CanaisPage() {
           <div className="flex items-center justify-center py-16">
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
           </div>
-        ) : error ? (
-          <div className="flex flex-col items-center justify-center py-16 gap-3">
+        ) : error && instances.length === 0 ? (
+          <div role="alert" className="flex flex-col items-center justify-center py-16 gap-3">
             <WifiOff className="h-10 w-10 text-destructive" />
-            <p className="text-sm text-destructive text-center max-w-md">{error}</p>
+            <p className="text-sm text-destructive text-center max-w-md">Não foi possível carregar os números de WhatsApp. {error}</p>
+            <p className="text-xs text-muted-foreground text-center max-w-md">Seus números não foram apagados. Tente de novo antes de adicionar outro.</p>
             <Button variant="outline" size="sm" onClick={() => void loadInstances()}>
               Tentar novamente
             </Button>
