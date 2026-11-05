@@ -11,6 +11,7 @@ import { ScrollReveal } from "@/components/ScrollReveal";
 import { AnimatedCounter } from "@/components/AnimatedCounter";
 import { AgendaFragment } from "@/components/marketing/AgendaFragment";
 import { useForceLightTheme } from "@/hooks/useForceLightTheme";
+import { OG_IMAGE_META } from "@/lib/site";
 import { TESTE_GRATIS_DIAS, TESTE_GRATIS_TEXTO, WHATSAPP_CONSULTOR, EMAIL_CONTATO } from "@/lib/oferta";
 
 export const Route = createFileRoute("/")({
@@ -21,7 +22,7 @@ export const Route = createFileRoute("/")({
       { name: "description", content: "Sistema de gestão para clínicas odontológicas: CRM, agenda, WhatsApp, prontuário e financeiro. De dono de clínica para dono." },
       { property: "og:title", content: "Odonto Connect — Sistema Completo para Clínicas Odontológicas" },
       { property: "og:description", content: "De dono de clínica para dono. Gestão odontológica com CRM, agenda, WhatsApp, prontuário e financeiro." },
-      { property: "og:image", content: "/images/logo-horizontal.png" },
+      ...OG_IMAGE_META,
     ],
   }),
 });
