@@ -7,6 +7,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { agendaApi, type AgendamentoVPS } from "@/lib/vpsApi";
 import { EditarAgendamentoModal } from "./EditarAgendamentoModal";
+import { EncaixeListaEspera } from "./EncaixeListaEspera";
 
 interface Props {
   appointment: AgendamentoVPS | null;
@@ -111,6 +112,8 @@ export function AgendamentoPopover({ appointment, open, onOpenChange, onChanged 
             })}
           </div>
         </div>
+
+        <EncaixeListaEspera agendamentoId={appointment.id} status={appointment.status} onChanged={onChanged} />
 
         <div className="p-3 border-t border-border/60 space-y-1.5">
           {appointment.telefone && (
