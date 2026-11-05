@@ -21,7 +21,7 @@ import { execFile } from 'child_process';
 import { mkdtemp, writeFile, readFile, rm, mkdir } from 'fs/promises';
 import { tmpdir } from 'os';
 import { promisify } from 'util';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { AsyncLocalStorage } from 'async_hooks';
 
@@ -5436,6 +5436,386 @@ app.put('/api/agenda/:id', async (req, res) => {
   }
 });
 
+
+// ═══════════════════════════════════════════════════════════════
+// LISTA DE ESPERA E ENCAIXE (B8)
+// Horário liberado (paciente pediu remarcar ou cancelou) → a recepção vê quantos
+// pacientes da lista servem e clica "Oferecer horário": a oferta sai pela fila para
+// UM paciente por vez, com prazo. Nunca há oferta automática sem esse clique.
+// ═══════════════════════════════════════════════════════════════
+const WAITLIST_PERIODOS = new Set(['manha', 'tarde', 'noite', 'qualquer']);
+const WAITLIST_FREED_STATUSES = ['remarcar', 'cancelado', 'desmarcado'];
+const WAITLIST_OFFER_TTL_MS = 2 * 60 * 60_000;      // prazo de resposta: 2 h
+const WAITLIST_MIN_LEAD_MS = 30 * 60_000;           // não oferece horário a menos de 30 min
+
+function waitlistPeriodoDaHora(hora) {
+  const h = parseInt(String(hora || '').slice(0, 2), 10);
+  if (!Number.isFinite(h)) return 'qualquer';
+  return h < 12 ? 'manha' : h < 18 ? 'tarde' : 'noite';
+}
+function agendaYmd(value) {
+  if (value instanceof Date) {
+    return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
+  }
+  return String(value || '').slice(0, 10);
+}
+function agendaSlotStart(slot) {
+  const hhmm = /^\d{2}:\d{2}/.test(String(slot.hora || '')) ? String(slot.hora).slice(0, 5) : '00:00';
+  return new Date(`${agendaYmd(slot.data)}T${hhmm}:00-03:00`);
+}
+
+async function ensureWaitlistSchema() {
+  let sql;
+  try { sql = readFileSync(path.join(__dirname, 'migration-lista-espera.sql'), 'utf8'); }
+  catch (e) { console.error('[lista-espera] migração não encontrada:', e.message); return; }
+  const statements = sql.split(/;\s*\n/).map(t => t.replace(/^\s*--.*$/gm, '').trim()).filter(Boolean);
+  for (const st of statements) {
+    await pool.query(st).catch(e => console.error('[lista-espera]', e.message, '→', st.split('\n')[0].slice(0, 90)));
+  }
+}
+
+// Ofertas vencidas voltam o paciente para a fila de espera.
+async function expireWaitlistOffers(tenantId) {
+  const { rows } = await pool.query(
+    `UPDATE lista_espera_ofertas SET status = 'expirada', answered_at = NOW()
+      WHERE tenant_id = $1 AND status = 'enviada' AND expires_at <= NOW() RETURNING lista_espera_id`,
+    [tenantId]
+  ).catch(() => ({ rows: [] }));
+  for (const r of rows) {
+    await pool.query(
+      `UPDATE lista_espera SET status = 'aguardando', updated_at = NOW() WHERE id = $1 AND tenant_id = $2 AND status = 'oferecido'`,
+      [r.lista_espera_id, tenantId]
+    ).catch(() => {});
+  }
+}
+
+async function getWaitlistSlot(tenantId, agendamentoId) {
+  if (!PACIENTE_UUID_RE.test(String(agendamentoId))) return null;
+  const { rows: [slot] } = await pool.query(
+    `SELECT a.id, a.data, a.hora, a.duracao, a.dentista_id, a.paciente_id, a.status, d.nome AS dentista_nome
+       FROM agendamentos a LEFT JOIN dentistas d ON d.id = a.dentista_id AND d.tenant_id = a.tenant_id
+      WHERE a.id = $1 AND a.tenant_id = $2 LIMIT 1`,
+    [agendamentoId, tenantId]
+  );
+  return slot || null;
+}
+
+// Candidatos da lista para o horário: mesma clínica, profissional (ou qualquer),
+// período compatível, com telefone, sem opt-out e que ainda não receberam oferta
+// deste horário. Ordem de chegada.
+async function findWaitlistCandidates(tenantId, slot) {
+  const { rows } = await pool.query(
+    `SELECT le.id, le.paciente_id, p.nome AS paciente_nome, p.telefone
+       FROM lista_espera le
+       JOIN pacientes p ON p.id = le.paciente_id AND p.tenant_id = le.tenant_id
+      WHERE le.tenant_id = $1 AND le.status = 'aguardando'
+        AND (le.dentista_id IS NULL OR le.dentista_id = $2)
+        AND (le.periodo = 'qualquer' OR le.periodo = $3)
+        AND le.paciente_id IS DISTINCT FROM $4
+        AND COALESCE(regexp_replace(p.telefone, '\\D', '', 'g'), '') <> ''
+        AND NOT EXISTS (
+          SELECT 1 FROM whatsapp_opt_outs o
+           WHERE o.tenant_id = le.tenant_id
+             AND RIGHT(o.phone_key, 8) = RIGHT(regexp_replace(p.telefone, '\\D', '', 'g'), 8))
+        AND NOT EXISTS (
+          SELECT 1 FROM lista_espera_ofertas f
+           WHERE f.tenant_id = le.tenant_id AND f.lista_espera_id = le.id AND f.agendamento_origem_id = $5)
+      ORDER BY le.created_at ASC`,
+    [tenantId, slot.dentista_id || null, waitlistPeriodoDaHora(slot.hora), slot.paciente_id || null, slot.id]
+  );
+  return rows;
+}
+
+app.get('/api/lista-espera', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    await expireWaitlistOffers(user.tenant_id);
+    const { rows } = await pool.query(
+      `SELECT le.id, le.paciente_id, le.dentista_id, le.periodo, le.observacao, le.status, le.created_at,
+              p.nome AS paciente_nome, d.nome AS dentista_nome
+         FROM lista_espera le
+         JOIN pacientes p ON p.id = le.paciente_id AND p.tenant_id = le.tenant_id
+         LEFT JOIN dentistas d ON d.id = le.dentista_id AND d.tenant_id = le.tenant_id
+        WHERE le.tenant_id = $1 AND le.status IN ('aguardando', 'oferecido')
+        ORDER BY le.created_at ASC`,
+      [user.tenant_id]
+    );
+    res.json(rows);
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('❌ lista de espera:', error.message);
+    res.status(500).json({ error: 'Erro ao carregar a lista de espera' });
+  }
+});
+
+app.post('/api/lista-espera', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { paciente_id, dentista_id, periodo, observacao } = req.body || {};
+    if (!paciente_id) return res.status(400).json({ error: 'Selecione o paciente' });
+    const per = periodo || 'qualquer';
+    if (!WAITLIST_PERIODOS.has(per)) return res.status(400).json({ error: 'Período inválido' });
+    const refErro = await validarReferenciasDoTenant(user.tenant_id, { pacienteId: paciente_id, dentistaId: dentista_id || null });
+    if (refErro) return res.status(400).json({ error: refErro });
+    const { rows: dup } = await pool.query(
+      `SELECT 1 FROM lista_espera WHERE tenant_id = $1 AND paciente_id = $2 AND dentista_id IS NOT DISTINCT FROM $3
+          AND status IN ('aguardando', 'oferecido') LIMIT 1`,
+      [user.tenant_id, paciente_id, dentista_id || null]
+    );
+    if (dup.length) return res.status(409).json({ error: 'Este paciente já está na lista de espera' });
+    const id = crypto.randomUUID();
+    await pool.query(
+      `INSERT INTO lista_espera (id, tenant_id, paciente_id, dentista_id, periodo, observacao) VALUES ($1, $2, $3, $4, $5, $6)`,
+      [id, user.tenant_id, paciente_id, dentista_id || null, per, observacao ? String(observacao).slice(0, 500) : null]
+    );
+    res.json({ id, success: true });
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('❌ lista de espera (incluir):', error.message);
+    res.status(500).json({ error: 'Erro ao incluir na lista de espera' });
+  }
+});
+
+app.delete('/api/lista-espera/:id', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    if (!PACIENTE_UUID_RE.test(String(req.params.id))) return res.status(404).json({ error: 'Registro não encontrado' });
+    const { rowCount } = await pool.query(
+      `UPDATE lista_espera SET status = 'removido', updated_at = NOW() WHERE id = $1 AND tenant_id = $2 AND status <> 'removido'`,
+      [req.params.id, user.tenant_id]
+    );
+    if (!rowCount) return res.status(404).json({ error: 'Registro não encontrado' });
+    res.json({ success: true });
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    res.status(500).json({ error: 'Erro ao remover da lista de espera' });
+  }
+});
+
+// Sugestão de encaixe para um horário liberado.
+app.get('/api/agenda/:id/encaixe', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const slot = await getWaitlistSlot(user.tenant_id, req.params.id);
+    if (!slot) return res.status(404).json({ error: 'Agendamento não encontrado' });
+    const liberado = WAITLIST_FREED_STATUSES.includes(String(slot.status || ''));
+    const futuro = agendaSlotStart(slot).getTime() > Date.now() + WAITLIST_MIN_LEAD_MS;
+    if (!liberado || !futuro) return res.json({ disponivel: false, liberado, futuro, candidatos: 0, oferta: null });
+    await expireWaitlistOffers(user.tenant_id);
+    const { rows: [oferta] } = await pool.query(
+      `SELECT o.id, o.status, o.expires_at, p.nome AS paciente_nome
+         FROM lista_espera_ofertas o JOIN pacientes p ON p.id = o.paciente_id AND p.tenant_id = o.tenant_id
+        WHERE o.tenant_id = $1 AND o.agendamento_origem_id = $2 AND o.status IN ('enviada', 'aceita')
+        ORDER BY o.created_at DESC LIMIT 1`,
+      [user.tenant_id, slot.id]
+    );
+    const candidatos = oferta?.status === 'aceita' ? [] : await findWaitlistCandidates(user.tenant_id, slot);
+    res.json({
+      disponivel: !oferta, liberado, futuro, candidatos: candidatos.length,
+      oferta: oferta ? { id: oferta.id, status: oferta.status, expires_at: oferta.expires_at, paciente_nome: oferta.paciente_nome } : null,
+      dentroDaJanela: isWithinWhatsAppSendWindow(),
+    });
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('❌ encaixe:', error.message);
+    res.status(500).json({ error: 'Erro ao consultar a lista de espera' });
+  }
+});
+
+// TEXTO PARA PACIENTE: revisão da Helena (helena-juridico) antes do merge.
+// Só clínica, profissional, data, hora e prazo: nada de procedimento.
+function buildWaitlistOfferMessage({ clinica, firstName, profissional, weekday, dataBR, hora, prazo }) {
+  const body = `📅 *Horário disponível — ${clinica}*\n\nOlá${firstName ? `, ${firstName}` : ''}! Você está na nossa lista de espera e abriu um horário:\n📅 ${weekday ? `${weekday}, ` : ''}${dataBR}\n⏰ ${hora}\n👩‍⚕️ ${profissional || 'Equipe da clínica'}\n\nA oferta vale até ${prazo}.`;
+  return { body, fallbackText: `${body}\n\nResponda *QUERO* para ficar com o horário ou *NÃO* se não puder.` };
+}
+
+// Clique da recepção: oferta para UM paciente (o primeiro da lista que serve).
+app.post('/api/agenda/:id/oferecer-horario', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const tenantId = String(user.tenant_id);
+    const slot = await getWaitlistSlot(tenantId, req.params.id);
+    if (!slot) return res.status(404).json({ error: 'Agendamento não encontrado' });
+    if (!WAITLIST_FREED_STATUSES.includes(String(slot.status || ''))) {
+      return res.status(409).json({ error: 'Este horário não está liberado (o paciente não pediu remarcação nem cancelou)' });
+    }
+    const start = agendaSlotStart(slot);
+    if (Number.isNaN(start.getTime()) || start.getTime() <= Date.now() + WAITLIST_MIN_LEAD_MS) {
+      return res.status(409).json({ error: 'Horário muito próximo ou já passou' });
+    }
+    if (!isWithinWhatsAppSendWindow()) {
+      return res.status(409).json({ error: 'Fora do horário de envio do WhatsApp (seg a sex 8h–20h, sáb 8h–13h). Tente de novo nesse período.' });
+    }
+    await expireWaitlistOffers(tenantId);
+    const { rows: ativa } = await pool.query(
+      `SELECT status FROM lista_espera_ofertas WHERE tenant_id = $1 AND agendamento_origem_id = $2 AND status IN ('enviada', 'aceita') LIMIT 1`,
+      [tenantId, slot.id]
+    );
+    if (ativa.length) {
+      return res.status(409).json({ error: ativa[0].status === 'aceita' ? 'Este horário já foi preenchido pela lista de espera' : 'Já há uma oferta aguardando resposta para este horário' });
+    }
+    const [cand] = await findWaitlistCandidates(tenantId, slot);
+    if (!cand) return res.status(404).json({ error: 'Ninguém na lista de espera serve para este horário' });
+    const phone = normalizeWhatsappNumber(cand.telefone || '');
+    if (!phone || await isWhatsAppOptedOut(tenantId, phone)) return res.status(409).json({ error: 'O próximo paciente da lista não pode receber WhatsApp' });
+
+    const expiresAt = new Date(Math.min(Date.now() + WAITLIST_OFFER_TTL_MS, start.getTime()));
+    const ofertaId = crypto.randomUUID();
+    try {
+      await pool.query(
+        `INSERT INTO lista_espera_ofertas (id, tenant_id, lista_espera_id, paciente_id, agendamento_origem_id, data, hora, duracao, dentista_id, status, expires_at, oferecido_por)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'enviada', $10, $11)`,
+        [ofertaId, tenantId, cand.id, cand.paciente_id, slot.id, agendaYmd(slot.data), String(slot.hora).slice(0, 5), slot.duracao || 30,
+          slot.dentista_id || null, expiresAt, PACIENTE_UUID_RE.test(String(user.id || '')) ? user.id : null]
+      );
+    } catch (e) {
+      if (e.code === '23505') return res.status(409).json({ error: 'Já há uma oferta aguardando resposta para este horário' });
+      throw e;
+    }
+    await pool.query(`UPDATE lista_espera SET status = 'oferecido', updated_at = NOW() WHERE id = $1 AND tenant_id = $2`, [cand.id, tenantId]);
+
+    const ymd = agendaYmd(slot.data);
+    const [y, m, d] = ymd.split('-');
+    const WEEKDAYS = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
+    const prazo = expiresAt.toLocaleString('pt-BR', { timeZone: WA_TZ, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(',', ' às');
+    const clinica = await getTenantClinicName(tenantId);
+    const hora = String(slot.hora).slice(0, 5);
+    const { body, fallbackText } = buildWaitlistOfferMessage({
+      clinica, firstName: String(cand.paciente_nome || '').trim().split(/\s+/)[0] || '',
+      profissional: slot.dentista_nome, weekday: WEEKDAYS[new Date(`${ymd}T12:00:00Z`).getUTCDay()] || '',
+      dataBR: `${d}/${m}/${y}`, hora, prazo,
+    });
+    const jobId = await enqueueWhatsAppJob({
+      tenantId, phone, message: fallbackText, category: 'transactional',
+      flowId: `waitlist_${ofertaId}`, flowName: 'Oferta de encaixe', patientName: cand.paciente_nome || '',
+      triggerEvent: 'waitlist_offer', expiresAt,
+      variables: {
+        ofertaId,
+        interactive: {
+          endpoint: 'sendButtons',
+          payload: {
+            title: '', description: body, footer: clinica,
+            buttons: [
+              { buttonId: `oferta_aceitar_${ofertaId}`, buttonText: { displayText: 'Quero este horário' }, type: 1 },
+              { buttonId: `oferta_recusar_${ofertaId}`, buttonText: { displayText: 'Não posso' }, type: 1 },
+            ],
+          },
+        },
+      },
+    });
+    await pool.query(`UPDATE lista_espera_ofertas SET job_id = $3 WHERE id = $1 AND tenant_id = $2`, [ofertaId, tenantId, jobId ? String(jobId) : null]).catch(() => {});
+    broadcastSSE('waitlist_offer_changed', { agendamentoId: slot.id, status: 'enviada' }, tenantId);
+    res.json({ success: true, oferta: { id: ofertaId, paciente_nome: cand.paciente_nome, expires_at: expiresAt } });
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('❌ oferecer horário:', error.message);
+    res.status(500).json({ error: 'Erro ao oferecer o horário' });
+  }
+});
+
+// ─── Resposta do paciente à oferta (botão, QUERO / NÃO) ───
+const WAITLIST_ACCEPT_WORDS = new Set(['quero', 'quero sim', 'eu quero', 'aceito', 'quero este horario', 'quero esse horario']);
+const WAITLIST_DECLINE_WORDS = new Set(['nao', 'nao posso', 'nao consigo', 'recuso']);
+
+function parseWaitlistOfferReply(msgContent) {
+  const raw = String(msgContent || '').trim();
+  const btn = raw.match(/^oferta_(aceitar|recusar)_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+  if (btn) return { accept: btn[1] === 'aceitar', ofertaId: btn[2].toLowerCase() };
+  const t = raw.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[!.\s]+$/g, '').replace(/\s+/g, ' ');
+  if (!t || t.length > 40) return null;
+  if (WAITLIST_ACCEPT_WORDS.has(t)) return { accept: true, ofertaId: null };
+  if (WAITLIST_DECLINE_WORDS.has(t)) return { accept: false, ofertaId: null };
+  return null;
+}
+
+async function handleWaitlistOfferReply({ tenantId, phone, msgType, msgContent, instance }) {
+  if (!isValidTenantId(tenantId) || !phone) return null;
+  if (!['text', 'button_response', 'list_response'].includes(msgType)) return null;
+  const parsed = parseWaitlistOfferReply(msgContent);
+  if (!parsed) return null;
+  const params = [tenantId, String(phone).replace(/\D/g, '')];
+  if (parsed.ofertaId) params.push(parsed.ofertaId);
+  // Oferta desta clínica, ainda aguardando, para o telefone do cadastro do paciente ofertado.
+  const { rows: [oferta] } = await pool.query(
+    `SELECT o.id, o.lista_espera_id, o.paciente_id, o.agendamento_origem_id, o.data, o.hora, o.duracao, o.dentista_id, o.expires_at
+       FROM lista_espera_ofertas o JOIN pacientes p ON p.id = o.paciente_id AND p.tenant_id = o.tenant_id
+      WHERE o.tenant_id = $1 AND o.status = 'enviada'
+        AND RIGHT(regexp_replace(p.telefone, '\\D', '', 'g'), 8) = RIGHT($2, 8)
+        ${parsed.ofertaId ? 'AND o.id = $3' : ''}
+      ORDER BY o.created_at DESC LIMIT 1`,
+    params
+  );
+  if (!oferta) return null;
+  const clinica = await getTenantClinicName(tenantId);
+  const dataBR = formatAgendaDateBR(oferta.data);
+  const hora = String(oferta.hora || '').slice(0, 5);
+  const backToWaitlist = () => pool.query(
+    `UPDATE lista_espera SET status = 'aguardando', updated_at = NOW() WHERE id = $1 AND tenant_id = $2 AND status = 'oferecido'`,
+    [oferta.lista_espera_id, tenantId]
+  ).catch(() => {});
+  const reply = (message, kind) => enqueueWhatsAppAutoReply({
+    tenantId, instance, phone, message, kind, category: 'service', dedupeMinutes: 10,
+  }).catch(e => console.error('[lista-espera] resposta não enfileirada:', e.message));
+  // TEXTOS PARA PACIENTE: revisão da Helena (helena-juridico) antes do merge.
+  const UNAVAILABLE = `Que pena, esse horário não está mais disponível. Você continua na lista de espera da ${clinica}.`;
+
+  if (!parsed.accept) {
+    await pool.query(
+      `UPDATE lista_espera_ofertas SET status = 'recusada', answered_at = NOW() WHERE id = $1 AND tenant_id = $2 AND status = 'enviada'`,
+      [oferta.id, tenantId]
+    );
+    await backToWaitlist();
+    await reply(`Tudo bem! Você continua na lista de espera da ${clinica}.`, 'waitlist_declined');
+    broadcastSSE('waitlist_offer_changed', { agendamentoId: oferta.agendamento_origem_id, status: 'recusada' }, tenantId);
+    return { handled: true, accepted: false, ofertaId: oferta.id };
+  }
+
+  // Aceite: reserva atômica da oferta (só uma oferta ativa por horário).
+  const { rows: [claimed] } = await pool.query(
+    `UPDATE lista_espera_ofertas SET status = 'aceita', answered_at = NOW()
+      WHERE id = $1 AND tenant_id = $2 AND status = 'enviada' AND expires_at > NOW() RETURNING id`,
+    [oferta.id, tenantId]
+  );
+  if (!claimed) {
+    await pool.query(`UPDATE lista_espera_ofertas SET status = 'expirada', answered_at = NOW() WHERE id = $1 AND tenant_id = $2 AND status = 'enviada'`, [oferta.id, tenantId]).catch(() => {});
+    await backToWaitlist();
+    await reply(UNAVAILABLE, 'waitlist_unavailable');
+    return { handled: true, accepted: false, ofertaId: oferta.id };
+  }
+  // Horário ainda livre? (a recepção pode ter marcado alguém por fora)
+  const { rows: ocupado } = await pool.query(
+    `SELECT 1 FROM agendamentos
+      WHERE tenant_id = $1 AND data = $2 AND LEFT(hora, 5) = $3 AND dentista_id IS NOT DISTINCT FROM $4 AND id <> $5
+        AND COALESCE(status, 'agendado') NOT IN ('cancelado', 'desmarcado', 'remarcar', 'faltou') LIMIT 1`,
+    [tenantId, agendaYmd(oferta.data), hora, oferta.dentista_id || null, oferta.agendamento_origem_id]
+  );
+  if (ocupado.length) {
+    await pool.query(`UPDATE lista_espera_ofertas SET status = 'indisponivel' WHERE id = $1 AND tenant_id = $2`, [oferta.id, tenantId]);
+    await backToWaitlist();
+    await reply(UNAVAILABLE, 'waitlist_unavailable');
+    broadcastSSE('waitlist_offer_changed', { agendamentoId: oferta.agendamento_origem_id, status: 'indisponivel' }, tenantId);
+    return { handled: true, accepted: false, ofertaId: oferta.id };
+  }
+  const novoId = crypto.randomUUID();
+  await pool.query(
+    `INSERT INTO agendamentos (id, paciente_id, dentista_id, data, hora, duracao, status, observacoes, tipo, tenant_id)
+     VALUES ($1, $2, $3, $4, $5, $6, 'confirmado', 'Encaixe pela lista de espera (aceito pelo WhatsApp)', 'consulta', $7)`,
+    [novoId, oferta.paciente_id, oferta.dentista_id || null, agendaYmd(oferta.data), hora, oferta.duracao || 30, tenantId]
+  );
+  await pool.query(`UPDATE lista_espera_ofertas SET agendamento_novo_id = $3 WHERE id = $1 AND tenant_id = $2`, [oferta.id, tenantId, novoId]);
+  await pool.query(`UPDATE lista_espera SET status = 'encaixado', updated_at = NOW() WHERE id = $1 AND tenant_id = $2`, [oferta.lista_espera_id, tenantId]);
+  await reply(`✅ Pronto! O horário de ${dataBR} às ${hora} é seu. A ${clinica} aguarda você.`, 'waitlist_accepted');
+  broadcastSSE('agendamento_changed', { action: 'created', id: novoId, data: agendaYmd(oferta.data) }, tenantId);
+  broadcastSSE('waitlist_offer_changed', { agendamentoId: oferta.agendamento_origem_id, status: 'aceita', novoAgendamentoId: novoId }, tenantId);
+  console.log(`📅 Encaixe aceito pela lista de espera (oferta ${oferta.id}, novo agendamento ${novoId})`);
+  return { handled: true, accepted: true, ofertaId: oferta.id, agendamentoId: novoId };
+}
+
 // ═══════════════════════════════════════════════════════════════
 // FINANCEIRO
 // ═══════════════════════════════════════════════════════════════
@@ -9381,11 +9761,16 @@ app.post('/api/webhook/evolution', async (req, res) => {
     // ─── Resposta ao pedido de confirmação de consulta (botão, 1/2 ou SIM) ───
     // Antes do lead novo, do menu de filas e da avaliação: "1"/"2" aqui é a resposta
     // ao lembrete, não escolha de setor nem nota.
-    const reminderReply = !isFromMe
+    // Resposta a oferta de encaixe (lista de espera) primeiro: palavras e botões próprios.
+    const waitlistReply = !isFromMe
+      ? await handleWaitlistOfferReply({ tenantId, phone: resolvedPhone, msgType, msgContent, instance })
+          .catch(e => { console.error('[lista-espera] erro:', e.message); return null; })
+      : null;
+    const reminderReply = !isFromMe && !waitlistReply?.handled
       ? await handleAppointmentReminderReply({ tenantId, phone: resolvedPhone, msgType, msgContent, instance })
           .catch(e => { console.error('[confirmação] erro:', e.message); return null; })
       : null;
-    const isReminderReply = !!reminderReply?.handled;
+    const isReminderReply = !!reminderReply?.handled || !!waitlistReply?.handled;
 
     // ─── New contact: create lead + contato + check hours + send menu ───
     if (!lead) {
@@ -10680,7 +11065,7 @@ const WA_DEFAULT_DEDUPE_MINUTES = 24 * 60;
 // menu após boas-vindas) só valem em jobs criados pelo próprio servidor. Em job
 // manual/de fluxo, o cliente poderia furar o dedupe de 24 h ou mandar um conteúdo
 // diferente do job.message auditado.
-const WA_INTERNAL_TRIGGERS = new Set(['auto_reply', 'satisfaction_survey', 'appointment_reminder']);
+const WA_INTERNAL_TRIGGERS = new Set(['auto_reply', 'satisfaction_survey', 'appointment_reminder', 'waitlist_offer']);
 const WA_CONTROL_VAR_KEYS = ['dedupeMinutes', 'interactive', 'kind', 'thenQueueMenu', 'enqueuedAt'];
 function stripWhatsAppControlVars(vars) {
   if (!vars || typeof vars !== 'object' || Array.isArray(vars)) return {};
@@ -16573,6 +16958,7 @@ if (process.env.NODE_ENV !== 'test') {
   // (o intervalo real entre mensagens é controlado por número dentro da fila)
   await asSystemJob(ensureWhatsAppQueueSchema)();
   await asSystemJob(ensureTenantConfigSchema)();
+  await asSystemJob(ensureWaitlistSchema)();
   asSystemJob(processAutomationJobs)();
   automationSchedulerInterval = setInterval(asSystemJob(processAutomationJobs), 5 * 1000);
   console.log('   🤖 Fila anti-bloqueio do WhatsApp ativa (ciclo de 5s)');
@@ -16618,3 +17004,4 @@ export function resetWhatsAppQueueStateForTests() {
   waPacing.clear(); waOutcomes.clear(); waOpenInstancesCache = { at: 0, names: new Set() };
 }
 export { processAppointmentReminders, parseAppointmentReminderReply };
+export { parseWaitlistOfferReply };
