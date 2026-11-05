@@ -15,7 +15,8 @@
 --      mostra o ::warning);
 --   2. CREATE UNIQUE INDEX CONCURRENTLY (não trava escrita; por isso este arquivo não usa BEGIN).
 --      Índice inválido de tentativa anterior é apagado e refeito;
---   3. ALTER TABLE ... DROP CONSTRAINT IF EXISTS <global>.
+--   3. remove TODA unique global da tabela cuja única coluna é cpf / cro / nome (constraint ou
+--      índice, qualquer nome; em produção hoje são os *_key acima).
 -- Não altera nenhum valor gravado (a normalização do CPF é feita pelo backend ao gravar).
 -- lock_timeout de 5 s: sem o lock, falha; no máximo fica um índice inválido, refeito na próxima.
 --
@@ -60,7 +61,15 @@ SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pu
     SELECT EXISTS (SELECT 1 FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
                     WHERE c.relname = 'uq_pacientes_tenant_cpf' AND i.indisvalid AND i.indisready) AS ok \gset
     \if :ok
-      ALTER TABLE pacientes DROP CONSTRAINT IF EXISTS pacientes_cpf_key;
+      -- Toda unique global cuja ÚNICA coluna é cpf (constraint ou índice solto, qualquer nome).
+      SELECT CASE WHEN con.oid IS NOT NULL THEN format('ALTER TABLE public.%I DROP CONSTRAINT %I', t.relname, con.conname)
+                  ELSE format('DROP INDEX CONCURRENTLY IF EXISTS public.%I', ic.relname) END
+        FROM pg_index i JOIN pg_class ic ON ic.oid = i.indexrelid JOIN pg_class t ON t.oid = i.indrelid
+        LEFT JOIN pg_constraint con ON con.conindid = i.indexrelid AND con.contype = 'u'
+       WHERE t.relname = 'pacientes' AND t.relnamespace = 'public'::regnamespace
+         AND i.indisunique AND NOT i.indisprimary AND ic.relname <> 'uq_pacientes_tenant_cpf'
+         AND i.indnatts = 1 AND i.indkey[0] <> 0
+         AND (SELECT a.attname FROM pg_attribute a WHERE a.attrelid = t.oid AND a.attnum = i.indkey[0]) = 'cpf' \gexec
       \echo '[unicos-por-clinica] pacientes: CPF único por clínica ativo.'
     \else
       \echo '!!! [unicos-por-clinica] pacientes: índice por clínica inválido; chave global mantida.'
@@ -92,7 +101,15 @@ SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pu
     SELECT EXISTS (SELECT 1 FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
                     WHERE c.relname = 'uq_dentistas_tenant_cro' AND i.indisvalid AND i.indisready) AS ok \gset
     \if :ok
-      ALTER TABLE dentistas DROP CONSTRAINT IF EXISTS dentistas_cro_key;
+      -- Toda unique global cuja ÚNICA coluna é cro (constraint ou índice solto, qualquer nome).
+      SELECT CASE WHEN con.oid IS NOT NULL THEN format('ALTER TABLE public.%I DROP CONSTRAINT %I', t.relname, con.conname)
+                  ELSE format('DROP INDEX CONCURRENTLY IF EXISTS public.%I', ic.relname) END
+        FROM pg_index i JOIN pg_class ic ON ic.oid = i.indexrelid JOIN pg_class t ON t.oid = i.indrelid
+        LEFT JOIN pg_constraint con ON con.conindid = i.indexrelid AND con.contype = 'u'
+       WHERE t.relname = 'dentistas' AND t.relnamespace = 'public'::regnamespace
+         AND i.indisunique AND NOT i.indisprimary AND ic.relname <> 'uq_dentistas_tenant_cro'
+         AND i.indnatts = 1 AND i.indkey[0] <> 0
+         AND (SELECT a.attname FROM pg_attribute a WHERE a.attrelid = t.oid AND a.attnum = i.indkey[0]) = 'cro' \gexec
       \echo '[unicos-por-clinica] dentistas: CRO único por clínica ativo.'
     \else
       \echo '!!! [unicos-por-clinica] dentistas: índice por clínica inválido; chave global mantida.'
@@ -122,7 +139,15 @@ SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pu
     SELECT EXISTS (SELECT 1 FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
                     WHERE c.relname = 'uq_agenda_marcadores_tenant_nome' AND i.indisvalid AND i.indisready) AS ok \gset
     \if :ok
-      ALTER TABLE agenda_marcadores DROP CONSTRAINT IF EXISTS agenda_marcadores_nome_key;
+      -- Toda unique global cuja ÚNICA coluna é nome (constraint ou índice solto, qualquer nome).
+      SELECT CASE WHEN con.oid IS NOT NULL THEN format('ALTER TABLE public.%I DROP CONSTRAINT %I', t.relname, con.conname)
+                  ELSE format('DROP INDEX CONCURRENTLY IF EXISTS public.%I', ic.relname) END
+        FROM pg_index i JOIN pg_class ic ON ic.oid = i.indexrelid JOIN pg_class t ON t.oid = i.indrelid
+        LEFT JOIN pg_constraint con ON con.conindid = i.indexrelid AND con.contype = 'u'
+       WHERE t.relname = 'agenda_marcadores' AND t.relnamespace = 'public'::regnamespace
+         AND i.indisunique AND NOT i.indisprimary AND ic.relname <> 'uq_agenda_marcadores_tenant_nome'
+         AND i.indnatts = 1 AND i.indkey[0] <> 0
+         AND (SELECT a.attname FROM pg_attribute a WHERE a.attrelid = t.oid AND a.attnum = i.indkey[0]) = 'nome' \gexec
       \echo '[unicos-por-clinica] agenda_marcadores: nome único por clínica ativo.'
     \else
       \echo '!!! [unicos-por-clinica] agenda_marcadores: índice por clínica inválido; chave global mantida.'

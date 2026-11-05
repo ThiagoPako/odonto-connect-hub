@@ -104,13 +104,21 @@ describe('CPF por clínica', () => {
     expect(res.body).toEqual({ error: 'Erro interno' });
   });
 
-  test('convert-to-patient normaliza o CPF do lead e trata 23505 sem vazar', async () => {
-    const ok = await request(app).post(`/api/crm/leads/${leadDaA}/convert-to-patient`).set('Authorization', `Bearer ${token()}`);
+  test('convert-to-patient normaliza o CPF do corpo, exige 11 dígitos e trata 23505 sem vazar', async () => {
+    const url = `/api/crm/leads/${leadDaA}/convert-to-patient`;
+    const ok = await request(app).post(url).set('Authorization', `Bearer ${token()}`).send({ cpf: '123.456.789-00' });
     expect(ok.status).toBe(200);
     expect(gravacao().params[2]).toBe('12345678900');
     sqlLog = [];
+    const curto = await request(app).post(url).set('Authorization', `Bearer ${token()}`).send({ cpf: '123.456' });
+    expect(curto.status).toBe(400);
+    expect(gravacao()).toBeUndefined();
+    const sem = await request(app).post(url).set('Authorization', `Bearer ${token()}`).send({});
+    expect(sem.status).toBe(200);
+    expect(gravacao().params[2]).toBeNull();
+    sqlLog = [];
     falhaNoInsert = erroUnico('uq_pacientes_tenant_cpf');
-    const dup = await request(app).post(`/api/crm/leads/${leadDaA}/convert-to-patient`).set('Authorization', `Bearer ${token()}`);
+    const dup = await request(app).post(url).set('Authorization', `Bearer ${token()}`).send({ cpf: '12345678900' });
     expect(dup.status).toBe(409);
     expect(dup.body.error).toBe('Já existe um paciente com este CPF nesta clínica');
     naoVaza(dup.body);
