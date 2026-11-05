@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { Plus, Search, FileText, Loader2, Trash2, Filter } from "lucide-react";
+import { Plus, Search, FileText, Loader2, Trash2, Filter, FileSignature, Paperclip } from "lucide-react";
 import {
   examesApi, exameTiposApi, STATUS_LABELS, STATUS_COLORS,
   type Exame, type ExameStatus, type ExameStats, type ExameTipo, type ExamePrioridade,
@@ -15,6 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
+import { ExameLaudoDialog } from "@/components/ExameLaudoDialog";
 
 export const Route = createFileRoute("/exames")({ component: ExamesPage });
 
@@ -30,6 +31,7 @@ function ExamesPage() {
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [laudoExame, setLaudoExame] = useState<Exame | null>(null);
   const [form, setForm] = useState({
     tipo_exame_id: "",
     tipo_nome: "",
@@ -162,6 +164,8 @@ function ExamesPage() {
                     <Badge variant="outline" className={STATUS_COLORS[e.status]}>{STATUS_LABELS[e.status]}</Badge>
                     {e.terceirizado && <Badge variant="outline" className="text-xs">Terceirizado</Badge>}
                     {e.prioridade !== "normal" && <Badge variant="outline" className="text-xs capitalize">{e.prioridade}</Badge>}
+                    {e.laudo_texto && <Badge variant="outline" className="text-xs gap-1"><FileSignature className="h-3 w-3" />Laudo</Badge>}
+                    {e.arquivo_url && <Badge variant="outline" className="text-xs gap-1"><Paperclip className="h-3 w-3" />Arquivo</Badge>}
                   </div>
                   <div className="font-medium text-sm text-foreground">{e.tipo_nome}</div>
                   <div className="text-xs text-muted-foreground">
@@ -175,7 +179,10 @@ function ExamesPage() {
                     {STATUS_ORDER.map(s => <SelectItem key={s} value={s}>{STATUS_LABELS[s]}</SelectItem>)}
                   </SelectContent>
                 </Select>
-                <Button size="icon" variant="ghost" onClick={() => remove(e.id)}>
+                <Button size="sm" variant="outline" className="gap-1" onClick={() => setLaudoExame(e)}>
+                  <FileSignature className="h-4 w-4" /> Laudo
+                </Button>
+                <Button size="icon" variant="ghost" onClick={() => remove(e.id)} aria-label="Excluir exame">
                   <Trash2 className="h-4 w-4 text-destructive" />
                 </Button>
               </div>
@@ -183,6 +190,12 @@ function ExamesPage() {
           </div>
         )}
       </Card>
+
+      <ExameLaudoDialog
+        exame={laudoExame}
+        onOpenChange={(o) => { if (!o) setLaudoExame(null); }}
+        onSaved={load}
+      />
 
       {/* New Exame Dialog */}
       <Dialog open={open} onOpenChange={setOpen}>

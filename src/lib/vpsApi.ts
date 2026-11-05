@@ -10,6 +10,18 @@ export const VPS_API_BASE = (() => {
   if (host === 'localhost' || host === '127.0.0.1') return '/api';
   return 'https://backend.odontoconnect.tech/api';
 })();
+// Resolve relative media URLs (e.g. /uploads/media/...) against the backend origin.
+export function resolveMediaUrl(url?: string | null): string | undefined {
+  if (!url) return undefined;
+  if (/^(https?:|data:|blob:)/i.test(url)) return url;
+  try {
+    const origin = new URL(VPS_API_BASE).origin;
+    return `${origin}${url.startsWith("/") ? "" : "/"}${url}`;
+  } catch {
+    return url;
+  }
+}
+
 const TOKEN_KEY = 'odonto_jwt';
 const TENANT_KEY = 'odonto_active_tenant_id';
 
