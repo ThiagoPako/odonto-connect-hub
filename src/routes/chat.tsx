@@ -826,6 +826,23 @@ function ChatPage() {
     };
   }, [selectedLead?.id]);
 
+  // Busca no histórico do servidor. Memorizada: antes era uma função nova a cada render e,
+  // por estar nas dependências do efeito da busca, disparava a requisição em dobro.
+  // O erro é lançado para a conversa avisar (antes virava "0 resultados").
+  const selectedLeadIdForSearch = selectedLead?.id;
+  const handleServerSearch = useCallback(async (q: string) => {
+    if (!selectedLeadIdForSearch) return [];
+    const { data, error } = await messagesApi.search(q, selectedLeadIdForSearch);
+    if (error) throw new Error(error);
+    if (!data || !Array.isArray(data)) return [];
+    return data.map((m: any) => ({
+      id: m.id,
+      content: m.content || "",
+      sender: m.sender,
+      timestamp: m.timestamp,
+    }));
+  }, [selectedLeadIdForSearch]);
+
   const handleLoadMore = async () => {
     if (!selectedLead || historyLoading) return;
     const currentMessages = messages[selectedLead.id] || [];
@@ -1376,20 +1393,27 @@ function ChatPage() {
     }
   };
 
-  const handleSendSurvey = (lead: Lead, rating: number, comment: string) => {
+  const handleSendSurvey = async (lead: Lead, rating: number, comment: string) => {
     const stars = "⭐".repeat(rating);
     const labels = ["Péssimo", "Ruim", "Regular", "Bom", "Excelente"];
-    let surveyMsg = `Olá ${lead.name}! 😊\n\nGostaríamos de saber como foi seu atendimento.\n\nSua avaliação: ${stars} (${labels[rating - 1]})\n\nPor favor, responda com uma nota de 1 a 5 para avaliar nosso atendimento.\n\n1 ⭐ Péssimo\n2 ⭐⭐ Ruim\n3 ⭐⭐⭐ Regular\n4 ⭐⭐⭐⭐ Bom\n5 ⭐⭐⭐⭐⭐ Excelente`;
+    // Antes a mensagem dizia ao paciente "Sua avaliação: ⭐⭐⭐" (nota escolhida pela recepção)
+    // antes de ele avaliar. A nota interna continua só no registro da conversa.
+    let surveyMsg = `Olá ${lead.name}! 😊\n\nGostaríamos de saber como foi seu atendimento.\n\nPor favor, responda com uma nota de 1 a 5 para avaliar nosso atendimento.\n\n1 ⭐ Péssimo\n2 ⭐⭐ Ruim\n3 ⭐⭐⭐ Regular\n4 ⭐⭐⭐⭐ Bom\n5 ⭐⭐⭐⭐⭐ Excelente`;
     if (comment) {
       surveyMsg += `\n\n${comment}`;
     }
 
-    // Send via WhatsApp
-    if (connectedInstances.length > 0 && lead.phone) {
-      const instanceName = connectedInstances[0].instanceName;
-      whatsappApi.sendText(instanceName, lead.phone, surveyMsg).catch(() => {
-        toast.error("Erro ao enviar pesquisa de satisfação");
-      });
+    // Send via WhatsApp — sucesso só depois que o envio foi aceito (vpsApiFetch não lança)
+    if (connectedInstances.length === 0 || !lead.phone) {
+      toast.error("Pesquisa não enviada: não há número de WhatsApp conectado ou o paciente não tem telefone.");
+      setSurveyLead(null);
+      return;
+    }
+    const instanceName = (resolveConnectedInstance(connectedInstances, lead.instance) ?? connectedInstances[0]).instanceName;
+    const { error: surveyError } = await whatsappApi.sendText(instanceName, lead.phone, surveyMsg);
+    if (surveyError) {
+      toast.error("Não foi possível enviar a pesquisa de satisfação: " + surveyError);
+      return;
     }
 
     // Add system message to archived conversation
@@ -1512,30 +1536,40 @@ function ChatPage() {
     });
   };
 
-  const handleDeleteMessage = (msg: ChatMessage) => {
+  // Só marca como apagada depois que o servidor confirmou (antes o .catch nunca disparava:
+  // vpsApiFetch não lança, e a tela dizia "apagada" mesmo com falha).
+  const handleDeleteMessage = async (msg: ChatMessage) => {
     if (!selectedLead) return;
+    const lead = selectedLead;
+    const { error: delError } = await messagesApi.delete(msg.id);
+    if (delError) {
+      toast.error("Não foi possível apagar a mensagem: " + delError);
+      return;
+    }
     setMessages((prev) => ({
       ...prev,
-      [selectedLead.id]: (prev[selectedLead.id] || []).map((m) =>
+      [lead.id]: (prev[lead.id] || []).map((m) =>
         m.id === msg.id ? { ...m, content: "🚫 Mensagem apagada", type: "text" as const } : m
       ),
     }));
-    // Persist soft-delete to backend
-    messagesApi.delete(msg.id).catch((err) => console.error("Failed to delete message:", err));
 
     // Delete on WhatsApp for everyone (only works for messages we sent)
     const connected = connectedInstances[0];
-    if (connected && selectedLead.phone && msg.sender === "attendant") {
-      whatsappApi.deleteMessage(connected.instanceName, selectedLead.phone, msg.id, true)
-        .catch((err: any) => console.error("Failed to delete on WhatsApp:", err));
+    if (connected && lead.phone && msg.sender === "attendant") {
+      const { error: waError } = await whatsappApi.deleteMessage(connected.instanceName, lead.phone, msg.id, true);
+      if (waError) {
+        toast.warning("Apagada no sistema, mas pode continuar no WhatsApp do paciente.", { description: waError });
+        return;
+      }
     }
 
-    toast.info("Mensagem apagada");
+    toast.success("Mensagem apagada");
   };
 
-  const handleTransfer = (lead: Lead, toAttendantId: string, toAttendantName: string, reason: string) => {
-    // Save to VPS database for auditing
-    transferApi.create({
+  // A conversa só sai da lista depois que o servidor registrou a transferência;
+  // antes, com erro, o paciente ficava sem dono e só o console sabia.
+  const handleTransfer = async (lead: Lead, toAttendantId: string, toAttendantName: string, reason: string) => {
+    const { error: transferError } = await transferApi.create({
       leadId: lead.id,
       leadName: lead.name,
       leadPhone: lead.phone,
@@ -1544,9 +1578,12 @@ function ChatPage() {
       reason,
       queueId: lead.queueId,
       queueName: lead.queueName,
-    }).then(({ error }) => {
-      if (error) console.error("Erro ao salvar log de transferência:", error);
     });
+    if (transferError) {
+      toast.error(`Não foi possível transferir para ${toAttendantName}: ${transferError}. O atendimento continua com você.`);
+      return;
+    }
+    toast.success(`Atendimento transferido para ${toAttendantName}`);
 
     setMyLeads((prev) => prev.filter((l) => l.id !== lead.id));
     if (selectedLead?.id === lead.id) {
@@ -1878,16 +1915,7 @@ function ChatPage() {
                 loadingMore={historyLoading}
                 onFileDrop={handleFileDrop}
                 unreadCount={selectedLead.unreadCount}
-                onServerSearch={async (q) => {
-                  const { data } = await messagesApi.search(q, selectedLead.id);
-                  if (!data || !Array.isArray(data)) return [];
-                  return data.map((m: any) => ({
-                    id: m.id,
-                    content: m.content || "",
-                    sender: m.sender,
-                    timestamp: m.timestamp,
-                  }));
-                }}
+                onServerSearch={handleServerSearch}
               />
               {selectedLead.status === "finished" ? (
                 <div className="px-4 py-3 border-t border-border/50 bg-muted/30 flex items-center justify-center gap-3">

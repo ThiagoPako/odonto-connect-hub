@@ -354,25 +354,50 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
   // Search results — hybrid: server search with local fallback
   const [serverSearchResults, setServerSearchResults] = useState<ServerSearchResult[]>([]);
   const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState(false);
+  const [searchNotice, setSearchNotice] = useState<string | null>(null);
+  const [locating, setLocating] = useState(false);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  // Ref para a função de busca: mesmo que o pai passe uma função nova a cada render,
+  // o efeito só roda quando o texto muda (antes a mesma busca ia ao servidor em dobro).
+  const onServerSearchRef = useRef(onServerSearch);
+  onServerSearchRef.current = onServerSearch;
+  const hasMoreRef = useRef(hasMore);
+  hasMoreRef.current = hasMore;
+  const hasServerSearch = !!onServerSearch;
+
+  const closeSearch = () => {
+    setSearchOpen(false);
+    setSearchQuery("");
+    setServerSearchResults([]);
+    setSearchError(false);
+    setSearchNotice(null);
+  };
 
   // Debounced server search
   useEffect(() => {
+    setSearchNotice(null);
     if (!searchQuery.trim() || searchQuery.trim().length < 2) {
       setServerSearchResults([]);
+      setSearchError(false);
       return;
     }
 
     // Always show local results immediately
-    if (onServerSearch) {
+    if (hasServerSearch) {
       clearTimeout(searchTimerRef.current);
       searchTimerRef.current = setTimeout(async () => {
+        const search = onServerSearchRef.current;
+        if (!search) return;
         setSearching(true);
         try {
-          const results = await onServerSearch(searchQuery.trim());
+          const results = await search(searchQuery.trim());
           setServerSearchResults(results);
+          setSearchError(false);
         } catch {
-          // Fall back to local only
+          // Fica só com as mensagens já carregadas, mas avisa
+          setServerSearchResults([]);
+          setSearchError(true);
         } finally {
           setSearching(false);
         }
@@ -380,7 +405,7 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
     }
 
     return () => clearTimeout(searchTimerRef.current);
-  }, [searchQuery, onServerSearch]);
+  }, [searchQuery, hasServerSearch]);
 
   // Merge local + server results, dedup by id
   const localResults = searchQuery.trim()
@@ -406,11 +431,30 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
     ];
   })();
 
-  const jumpToMessage = (msgId: string) => {
-    setHighlightedMsgId(msgId);
-    const el = document.getElementById(`msg-${msgId}`);
-    el?.scrollIntoView({ behavior: "smooth", block: "center" });
-    setTimeout(() => setHighlightedMsgId(null), 2000);
+  // Resultado que só existe no servidor: carrega mensagens antigas até achar (no máximo 10 páginas);
+  // se não achar, avisa a data em vez de não fazer nada.
+  const jumpToMessage = async (msgId: string, timestamp?: string) => {
+    setSearchNotice(null);
+    const tryJump = () => {
+      const el = document.getElementById(`msg-${msgId}`);
+      if (!el) return false;
+      setHighlightedMsgId(msgId);
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      setTimeout(() => setHighlightedMsgId(null), 2000);
+      return true;
+    };
+    if (tryJump()) return;
+    if (onLoadMore && !locating) {
+      setLocating(true);
+      for (let i = 0; i < 10 && hasMoreRef.current; i++) {
+        await onLoadMore();
+        await new Promise((r) => setTimeout(r, 200));
+        if (tryJump()) { setLocating(false); return; }
+      }
+      setLocating(false);
+    }
+    const quando = timestamp ? new Date(timestamp).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }) : null;
+    setSearchNotice(`Não foi possível abrir esta mensagem aqui${quando ? ` (enviada em ${quando})` : ""}. Ela está no histórico do servidor, mais antiga que as mensagens carregadas.`);
   };
 
   // Close context menu on click anywhere or scroll
@@ -658,20 +702,29 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
             autoFocus
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); closeSearch(); } }}
+            aria-label="Buscar na conversa"
             placeholder="Buscar na conversa..."
             className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
           />
-          {searching ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground shrink-0" />
-          ) : (
-            <span className="text-[11px] text-muted-foreground shrink-0">
-              {searchResults.length} resultado{searchResults.length !== 1 ? "s" : ""}
+          {searching || locating ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground shrink-0" aria-label={locating ? "Procurando a mensagem" : "Buscando"} />
+          ) : searchQuery.trim() ? (
+            <span className="text-[11px] text-muted-foreground shrink-0" aria-live="polite">
+              {searchResults.length === 0
+                ? "Nada encontrado nesta conversa"
+                : `${searchResults.length} resultado${searchResults.length !== 1 ? "s" : ""}`}
             </span>
-          )}
-          <button onClick={() => { setSearchOpen(false); setSearchQuery(""); setServerSearchResults([]); }} className="p-1 rounded hover:bg-muted">
-            <span className="text-xs text-muted-foreground">✕</span>
+          ) : null}
+          <button onClick={closeSearch} aria-label="Fechar busca" title="Fechar busca (Esc)" className="p-1 rounded hover:bg-muted">
+            <span className="text-xs text-muted-foreground" aria-hidden="true">✕</span>
           </button>
         </div>
+      )}
+      {searchOpen && (searchError || searchNotice) && (
+        <p role="status" className="px-4 py-1.5 text-[11px] text-warning bg-warning/10 border-b border-border shrink-0">
+          {searchNotice ?? "Busca no histórico falhou — mostrando só as mensagens carregadas."}
+        </p>
       )}
 
       {/* Search results strip */}
@@ -680,13 +733,13 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
           {searchResults.slice(0, 15).map((m) => (
             <button
               key={m.id}
-              onClick={() => jumpToMessage(m.id)}
+              onClick={() => void jumpToMessage(m.id, m.timestamp)}
               className={`px-2 py-1 rounded-lg border text-[11px] text-foreground truncate max-w-[200px] hover:bg-primary/10 transition-colors shrink-0 ${
                 (m as any).isServerOnly
                   ? "bg-primary/5 border-primary/30 italic"
                   : "bg-card border-border/50"
               }`}
-              title={(m as any).isServerOnly ? "Resultado do servidor (não carregado localmente)" : undefined}
+              title={(m as any).isServerOnly ? "Mensagem antiga: ao clicar, o sistema carrega o histórico até ela" : undefined}
             >
               {m.content?.slice(0, 40)}
             </button>
@@ -994,8 +1047,9 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
       {!searchOpen && (
         <button
           onClick={() => setSearchOpen(true)}
-          className="absolute top-3 right-3 h-8 w-8 rounded-full bg-card/80 backdrop-blur-sm border border-border/50 shadow-sm flex items-center justify-center hover:bg-muted transition-all z-10 opacity-0 hover:opacity-100 focus:opacity-100"
+          className="absolute top-3 right-3 h-8 w-8 rounded-full bg-card/80 backdrop-blur-sm border border-border/50 shadow-sm flex items-center justify-center hover:bg-muted transition-all z-10 md:opacity-0 md:hover:opacity-100 focus:opacity-100"
           title="Buscar na conversa"
+          aria-label="Buscar na conversa"
         >
           <Search className="h-3.5 w-3.5 text-muted-foreground" />
         </button>
