@@ -14,12 +14,12 @@ import { ClinicalAudioRecorder } from "@/components/ClinicalAudioRecorder";
 import { GravacaoConsentDialog, GRAVACAO_CONSENT_TEXT, GRAVACAO_CONSENT_VERSION } from "@/components/GravacaoConsentDialog";
 import { OdontogramaEditor } from "@/components/OdontogramaChart";
 import {
-  getPacienteById, getPacienteIniciais, getPacienteIdade,
+  getPacienteById, getPacienteIniciais, getPacienteIdade, getPacienteIdadeTexto,
   getAlergias, getCondicoesCriticas, getAnamnese, getOdontograma, temAlertasMedicos,
   type Paciente
 } from "@/data/registroCentral";
 import { type Appointment } from "@/data/agendaMockData";
-import { aiApi, consultationsApi, agendaApi, dentistasApi, consentimentosApi, type AgendamentoVPS, type ConsultationRecord, type ConsentimentoPaciente } from "@/lib/vpsApi";
+import { aiApi, consultationsApi, agendaApi, dentistasApi, consentimentosApi, pacientesApi, type AgendamentoVPS, type ConsultationRecord, type ConsentimentoPaciente } from "@/lib/vpsApi";
 import { toast } from "sonner";
 
 type SearchParams = { appointmentId?: string };
@@ -193,7 +193,7 @@ function ConsultaPage() {
     const profName = a.dentista_nome || "Dr. Não atribuído";
     const profInitials = profName.split(" ").filter((_: string, i: number, arr: string[]) => i === 0 || i === arr.length - 1).map((n: string) => n[0]).join("").toUpperCase();
     const statusMap: Record<string, Appointment["status"]> = {
-      agendado: "confirmado", confirmado: "confirmado", aguardando: "aguardando",
+      agendado: "agendado", confirmado: "confirmado", aguardando: "aguardando",
       em_atendimento: "em_atendimento", finalizado: "finalizado", realizado: "finalizado",
       faltou: "faltou", cancelado: "faltou", desmarcado: "faltou", encaixe: "encaixe",
     };
@@ -205,12 +205,12 @@ function ConsultaPage() {
       avatarColor: colors[colorIdx],
       professional: profName,
       professionalInitials: profInitials,
-      room: a.sala || "Sala 1",
+      room: a.sala || "",
       procedure: a.procedimento || "Consulta",
       date: a.data,
       time: a.hora || "08:00",
       duration: a.duracao || 30,
-      status: statusMap[a.status] || "confirmado",
+      status: statusMap[a.status] || "agendado",
       phone: "",
       confirmed: a.status === "confirmado",
     };
@@ -220,7 +220,8 @@ function ConsultaPage() {
   const fetchAgenda = useCallback(async () => {
     setLoadingAgenda(true);
     const today = localDateISO();
-    const { data, error } = await agendaApi.list({ data: today });
+    // O servidor filtra por data_inicio/data_fim; com `data` vinham agendamentos de todos os dias
+    const { data, error } = await agendaApi.list({ data_inicio: today, data_fim: today });
     if (!error && data && Array.isArray(data)) {
       const converted = data.map(vpsToAppointment);
       setAgendaHoje(converted);
@@ -239,7 +240,7 @@ function ConsultaPage() {
               nome: target.patientName,
               telefone: target.phone || "",
               email: "",
-              dataNascimento: new Date(),
+              dataNascimento: new Date(NaN), // desconhecida até carregar o cadastro
               cpf: "",
               endereco: "",
               sexo: "masculino",
@@ -257,7 +258,52 @@ function ConsultaPage() {
 
   useEffect(() => { fetchAgenda(); }, [fetchAgenda]);
 
-  const statusOrder: Record<string, number> = { em_atendimento: 0, aguardando: 1, confirmado: 2, encaixe: 3, finalizado: 4, faltou: 5 };
+  // O paciente selecionado começa como rascunho montado do agendamento (sem nascimento,
+  // telefone, CPF). Completa com o cadastro real para não mostrar "0 anos" nem campos vazios.
+  // Cache por id: o rascunho é recriado a cada seleção, então reaplica o cadastro já carregado
+  const pacientesCacheRef = useRef<Map<string, Partial<Paciente>>>(new Map());
+  const pacienteBuscandoRef = useRef<string | null>(null);
+  useEffect(() => {
+    const p = pacienteSelecionado;
+    if (!p?.id || !Number.isNaN(p.dataNascimento?.getTime?.() ?? NaN)) return;
+    // Só troca o estado se algo mudar; senão um paciente sem nascimento (data inválida) reaplicaria em loop
+    const igual = (a: unknown, b: unknown) =>
+      a instanceof Date && b instanceof Date ? (Number.isNaN(a.getTime()) && Number.isNaN(b.getTime())) || a.getTime() === b.getTime() : a === b;
+    const aplicar = (extra: Partial<Paciente>) =>
+      setPacienteSelecionado((cur) => {
+        if (!cur || cur.id !== p.id) return cur;
+        const mudou = (Object.keys(extra) as Array<keyof Paciente>).some((k) => !igual(cur[k], extra[k]));
+        return mudou ? { ...cur, ...extra } : cur;
+      });
+    const cached = pacientesCacheRef.current.get(p.id);
+    if (cached) { aplicar(cached); return; }
+    if (pacienteBuscandoRef.current === p.id) return;
+    pacienteBuscandoRef.current = p.id;
+    let vivo = true;
+    pacientesApi.list().then(({ data, error }) => {
+      pacienteBuscandoRef.current = null;
+      if (!vivo) return;
+      if (error) { toast.error("Não foi possível carregar o cadastro do paciente: " + error); return; }
+      const rows = Array.isArray(data) ? (data as Array<{ id: string; nome?: string; telefone?: string; email?: string; cpf?: string; sexo?: string; convenio?: string; data_nascimento?: string }>) : [];
+      const row = rows.find((r) => r.id === p.id);
+      if (!row) return;
+      const extra: Partial<Paciente> = {
+        ...(row.nome ? { nome: row.nome } : {}),
+        ...(row.telefone ? { telefone: row.telefone } : {}),
+        ...(row.email ? { email: row.email } : {}),
+        ...(row.cpf ? { cpf: row.cpf } : {}),
+        ...(row.sexo === "feminino" || row.sexo === "outro" || row.sexo === "masculino" ? { sexo: row.sexo } : {}),
+        ...(row.convenio ? { convenio: row.convenio } : {}),
+        // sem nascimento no cadastro: data inválida explícita evita nova busca e mostra "Idade não informada"
+        dataNascimento: row.data_nascimento ? new Date(String(row.data_nascimento).slice(0, 10) + "T12:00:00") : new Date(NaN),
+      };
+      pacientesCacheRef.current.set(p.id, extra);
+      aplicar(extra);
+    });
+    return () => { vivo = false; };
+  }, [pacienteSelecionado]);
+
+  const statusOrder: Record<string, number> = { em_atendimento: 0, aguardando: 1, confirmado: 2, agendado: 3, encaixe: 4, finalizado: 5, faltou: 6 };
   const agendaOrdenada = [...agendaHoje].sort((a, b) => {
     const sa = statusOrder[a.status] ?? 99;
     const sb = statusOrder[b.status] ?? 99;
@@ -279,7 +325,7 @@ function ConsultaPage() {
         nome: apt.patientName,
         telefone: apt.phone,
         email: "",
-        dataNascimento: new Date(),
+        dataNascimento: new Date(NaN), // desconhecida até carregar o cadastro
         cpf: "",
         endereco: "",
         sexo: "masculino",
@@ -589,6 +635,7 @@ function ConsultaPage() {
                           em_atendimento: "border-primary bg-primary/5 ring-1 ring-primary/20",
                           aguardando: "border-warning/40 bg-warning/5",
                           confirmado: "border-success/30 bg-success/5",
+                          agendado: "border-border/60",
                           encaixe: "border-accent bg-accent/5",
                           finalizado: "border-border/40 bg-muted/30 opacity-60",
                           faltou: "border-destructive/20 bg-destructive/5 opacity-50",
@@ -597,6 +644,7 @@ function ConsultaPage() {
                           em_atendimento: "Em atendimento",
                           aguardando: "Aguardando",
                           confirmado: "Confirmado",
+                          agendado: "Agendado",
                           encaixe: "Encaixe",
                           finalizado: "Finalizado",
                           faltou: "Faltou",
@@ -605,6 +653,7 @@ function ConsultaPage() {
                           em_atendimento: "bg-primary",
                           aguardando: "bg-warning",
                           confirmado: "bg-success",
+                          agendado: "bg-muted-foreground/60",
                           encaixe: "bg-accent-foreground",
                           finalizado: "bg-muted-foreground",
                           faltou: "bg-destructive",
@@ -678,7 +727,7 @@ function ConsultaPage() {
                     <div className="space-y-2 text-xs text-muted-foreground">
                       <p className="flex items-center gap-2"><Phone className="h-3 w-3" /> {pacienteSelecionado.telefone}</p>
                       <p className="flex items-center gap-2"><Mail className="h-3 w-3" /> {pacienteSelecionado.email}</p>
-                      <p className="flex items-center gap-2"><Heart className="h-3 w-3" /> {getPacienteIdade(pacienteSelecionado)} anos</p>
+                      <p className="flex items-center gap-2"><Heart className="h-3 w-3" /> {getPacienteIdadeTexto(pacienteSelecionado)}</p>
                       {pacienteSelecionado.convenio && (
                         <p className="flex items-center gap-2"><ClipboardList className="h-3 w-3" /> {pacienteSelecionado.convenio}</p>
                       )}
@@ -1300,10 +1349,10 @@ function ConsultaPage() {
                       {getPacienteIniciais(pacienteSelecionado)}
                     </div>
                     <h3 className="text-lg font-semibold text-foreground mb-1">{pacienteSelecionado.nome}</h3>
-                    <p className="text-sm text-muted-foreground mb-1">{getPacienteIdade(pacienteSelecionado)} anos • {pacienteSelecionado.telefone}</p>
+                    <p className="text-sm text-muted-foreground mb-1">{getPacienteIdadeTexto(pacienteSelecionado)}{pacienteSelecionado.telefone ? ` • ${pacienteSelecionado.telefone}` : ""}</p>
                     {appointmentSelecionado && (
                       <p className="text-xs text-primary font-medium mb-4">
-                        {appointmentSelecionado.procedure} • {appointmentSelecionado.time} • {appointmentSelecionado.room}
+                        {appointmentSelecionado.procedure} • {appointmentSelecionado.time}{appointmentSelecionado.room ? ` • ${appointmentSelecionado.room}` : ""}
                       </p>
                     )}
                     <button

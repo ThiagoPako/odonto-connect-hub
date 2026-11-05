@@ -127,8 +127,10 @@ export function UserProfilePanel() {
                 </div>
               )}
               <button
+                type="button"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={uploadingAvatar}
+                aria-label="Alterar foto"
                 className="absolute inset-0 rounded-2xl bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
               >
                 {uploadingAvatar ? (
@@ -149,6 +151,21 @@ export function UserProfilePanel() {
               <p className="text-sm font-medium text-foreground">{user?.name}</p>
               <p className="text-xs text-muted-foreground">{user?.email}</p>
               <p className="text-xs text-muted-foreground capitalize mt-0.5">{user?.role}</p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-2 h-9"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploadingAvatar}
+              >
+                {uploadingAvatar ? (
+                  <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+                ) : (
+                  <Camera className="h-4 w-4 mr-1.5" />
+                )}
+                {uploadingAvatar ? "Enviando..." : "Alterar foto"}
+              </Button>
             </div>
           </div>
 

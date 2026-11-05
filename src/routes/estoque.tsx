@@ -26,7 +26,7 @@ function mapItem(r: any): InventoryItem {
     category: r.categoria || 'material',
     unit: r.unidade || 'un',
     currentStock: Number(r.quantidade) || 0,
-    minStock: Number(r.quantidade_minima) || 5,
+    minStock: r.quantidade_minima != null && r.quantidade_minima !== "" ? Number(r.quantidade_minima) || 0 : 5,
     maxStock: Number(r.quantidade_maxima) || 50,
     unitCost: Number(r.valor_unitario) || 0,
     supplier: r.fornecedor || '',
@@ -86,9 +86,17 @@ function EstoquePage() {
   const totalValue = items.reduce((a, i) => a + i.currentStock * i.unitCost, 0);
 
   const handleAddItem = async (data: { nome: string; categoria: string; unidade: string; quantidade: number; quantidade_minima: number; valor_unitario: number; fornecedor: string; validade?: string }) => {
-    const { error } = await estoqueApi.create(data);
+    const { data: created, error } = await estoqueApi.create(data);
     if (error) { toast.error("Erro ao cadastrar item: " + error); return; }
-    toast.success("Item cadastrado");
+    // O cadastro no servidor troca mínimo 0 por 5; a edição aceita 0, então gravamos o 0 logo depois.
+    const createdId = (created as { id?: string } | null)?.id;
+    if (data.quantidade_minima === 0 && createdId) {
+      const { error: minError } = await estoqueApi.update(createdId, { quantidade_minima: 0 });
+      if (minError) toast.error("Item cadastrado, mas o estoque mínimo ficou 5. Edite o item para zerar.");
+      else toast.success("Item cadastrado");
+    } else {
+      toast.success("Item cadastrado");
+    }
     setShowAddItem(false);
     await loadAll();
   };
@@ -154,13 +162,15 @@ function EstoquePage() {
         )}
 
         <Tabs defaultValue="inventory" className="space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <TabsList>
               <TabsTrigger value="inventory">Inventário</TabsTrigger>
               <TabsTrigger value="movements">Movimentações</TabsTrigger>
             </TabsList>
             <div className="flex gap-2">
-              <button onClick={() => setShowAddMov(true)} className="flex items-center gap-1.5 h-8 px-4 rounded-lg bg-muted text-foreground text-xs font-medium hover:bg-muted/80">
+              <button onClick={() => setShowAddMov(true)} disabled={items.length === 0}
+                title={items.length === 0 ? "Cadastre um item primeiro" : undefined}
+                className="flex items-center gap-1.5 h-8 px-4 rounded-lg bg-muted text-foreground text-xs font-medium hover:bg-muted/80 disabled:opacity-50 disabled:cursor-not-allowed">
                 <ArrowDownCircle className="h-3.5 w-3.5" /> Registrar Mov.
               </button>
               <button onClick={() => setShowAddItem(true)} className="flex items-center gap-1.5 h-8 px-4 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90">
@@ -171,26 +181,26 @@ function EstoquePage() {
 
           <TabsContent value="inventory">
             {/* Filters */}
-            <div className="flex items-center gap-2 mb-4">
-              <div className="relative">
+            <div className="flex flex-wrap items-center gap-2 mb-4">
+              <div className="relative w-full sm:w-auto">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
                 <input type="text" placeholder="Buscar item..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
-                  className="h-8 pl-8 pr-3 rounded-lg bg-muted border-0 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary w-48" />
+                  className="h-8 pl-8 pr-3 rounded-lg bg-muted border-0 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary w-full sm:w-48" />
               </div>
-              <div className="inline-flex h-8 items-center rounded-lg bg-muted p-0.5">
-                <button onClick={() => setCategoryFilter("all")} className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors ${categoryFilter === "all" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground"}`}>
+              <div className="inline-flex h-9 items-center rounded-lg bg-muted p-0.5 max-w-full overflow-x-auto">
+                <button onClick={() => setCategoryFilter("all")} className={`shrink-0 h-8 px-2.5 rounded-md text-[11px] font-medium transition-colors ${categoryFilter === "all" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground"}`}>
                   Todos
                 </button>
                 {inventoryCategories.map((c) => (
-                  <button key={c.id} onClick={() => setCategoryFilter(c.id)} className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors ${categoryFilter === c.id ? "bg-background text-foreground shadow-sm" : "text-muted-foreground"}`}>
+                  <button key={c.id} onClick={() => setCategoryFilter(c.id)} className={`shrink-0 h-8 px-2.5 rounded-md text-[11px] font-medium transition-colors ${categoryFilter === c.id ? "bg-background text-foreground shadow-sm" : "text-muted-foreground"}`}>
                     {c.label}
                   </button>
                 ))}
               </div>
             </div>
 
-            <div className="bg-card rounded-xl border border-border overflow-hidden">
-              <table className="w-full">
+            <div className="bg-card rounded-xl border border-border overflow-x-auto">
+              <table className="w-full min-w-[720px]">
                 <thead>
                   <tr className="border-b border-border text-left">
                     <th className="px-4 py-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Item</th>
@@ -235,8 +245,8 @@ function EstoquePage() {
           </TabsContent>
 
           <TabsContent value="movements">
-            <div className="bg-card rounded-xl border border-border overflow-hidden">
-              <table className="w-full">
+            <div className="bg-card rounded-xl border border-border overflow-x-auto">
+              <table className="w-full min-w-[720px]">
                 <thead>
                   <tr className="border-b border-border text-left">
                     <th className="px-4 py-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Tipo</th>
@@ -290,7 +300,7 @@ function AddItemModal({ onSave, onClose }: { onSave: (d: any) => void; onClose: 
     e.preventDefault();
     if (!form.nome) return;
     setSaving(true);
-    await onSave({ ...form, quantidade: Number(form.quantidade) || 0, quantidade_minima: Number(form.quantidade_minima) || 5, valor_unitario: Number(form.valor_unitario) || 0, validade: form.validade || null });
+    await onSave({ ...form, quantidade: Number(form.quantidade) || 0, quantidade_minima: form.quantidade_minima === "" ? 5 : Number(form.quantidade_minima) || 0, valor_unitario: Number(form.valor_unitario) || 0, validade: form.validade || null });
     setSaving(false);
   };
 
@@ -359,7 +369,8 @@ function AddMovementModal({ items, onSave, onClose }: { items: InventoryItem[]; 
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.item_id || !form.quantidade) return;
+    if (!form.item_id) { toast.error("Escolha um item. Se a lista estiver vazia, cadastre um item primeiro."); return; }
+    if (!form.quantidade) { toast.error("Informe a quantidade."); return; }
     setSaving(true);
     await onSave({ ...form, quantidade: Number(form.quantidade) });
     setSaving(false);
@@ -377,6 +388,7 @@ function AddMovementModal({ items, onSave, onClose }: { items: InventoryItem[]; 
             <label className="text-xs font-medium text-muted-foreground mb-1 block">Item</label>
             <select value={form.item_id} onChange={(e) => setForm({ ...form, item_id: e.target.value })}
               className="w-full h-10 px-4 rounded-xl bg-background border border-border/60 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30">
+              {items.length === 0 && <option value="">Nenhum item cadastrado</option>}
               {items.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
             </select>
           </div>

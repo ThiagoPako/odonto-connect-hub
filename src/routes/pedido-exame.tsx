@@ -24,6 +24,77 @@ export const Route = createFileRoute("/pedido-exame")({
   component: PedidoExamePage,
 });
 
+// Rótulos dos checkboxes que detalham o pedido; vão para as observações do exame salvo
+const DETALHES_PEDIDO: Array<{ secao: string; itens: Array<[string, string]> }> = [
+  { secao: "Periapical", itens: [["peri_total", "Total (checkup)"], ["peri_indicados", "Dentes indicados"], ["peri_impresso", "Exame impresso"], ["peri_email", "Exame via e-mail"]] },
+  { secao: "Interproximais", itens: [["int_pre_d", "Pré-molares D"], ["int_pre_e", "Pré-molares E"], ["int_mol_d", "Molares D"], ["int_mol_e", "Molares E"], ["int_impresso", "Exame impresso"], ["int_email", "Exame via e-mail"]] },
+  { secao: "Panorâmica", itens: [["pan_conv", "Convencional"], ["pan_tracado", "Com traçado para implante"], ["pan_laudo", "Com laudo"], ["pan_carpal", "Carpal"], ["pan_impresso", "Exame impresso"], ["pan_email", "Exame via e-mail"]] },
+  { secao: "Telerradiografia", itens: [["tele_lateral", "Lateral"], ["tele_frontal", "Frontal"], ["tele_s_analise", "Sem análise"], ["tele_c_analise", "Com análise"]] },
+  { secao: "Tomografia", itens: [["tomo_implante", "Implante"], ["tomo_fratura", "Fratura radicular"], ["tomo_perf", "Perfuração / trepanação"], ["tomo_retido", "Dente retido"], ["tomo_supra", "Supranumerário"], ["tomo_patolog", "Área patológica"], ["tomo_enxerto", "Área doadora para enxerto"], ["tomo_regiao", "Região assinalada"], ["tomo_maxila", "Maxila total"], ["tomo_mandibula", "Mandíbula total"], ["tomo_seios", "Seios maxilares"], ["tomo_atm", "ATM bilateral"], ["tomo_impresso", "Exame impresso"], ["tomo_email", "Exame via e-mail"]] },
+  { secao: "Documentação ortodôntica", itens: [["doc_t1", "Tipo I"], ["doc_t2", "Tipo II"], ["doc_t3", "Tipo III"], ["doc_t4", "Tipo IV"], ["doc_t5", "Tipo V"]] },
+  { secao: "Modelo", itens: [["mod_estudo", "Estudo"], ["mod_trabalho", "Trabalho"]] },
+  { secao: "Fotografias", itens: [["foto_extra", "Extrabucal"], ["foto_intra", "Intrabucal"], ["foto_outros", "Outros"]] },
+  { secao: "Análises", itens: [["an_dent", "Análise dentária"], ["an_facial", "Análise facial"], ["an_modelo", "Análise de modelo"]] },
+];
+
+/**
+ * Seleção de dentes por número, usada quando o desenho do odontograma não carrega.
+ * Cada linha é uma fileira de dentes (lado direito do paciente | lado esquerdo).
+ */
+function DentesPorNumero({
+  linhas,
+  selecionados,
+  onToggle,
+}: {
+  linhas: Array<{ titulo: string; dir: number[]; esq: number[] }>;
+  selecionados: Set<number>;
+  onToggle: (n: number) => void;
+}) {
+  const botao = (n: number) => {
+    const checked = selecionados.has(n);
+    return (
+      <button
+        key={n}
+        type="button"
+        onClick={() => onToggle(n)}
+        aria-pressed={checked}
+        aria-label={`Dente ${n}`}
+        className={cn(
+          "min-w-[2rem] h-8 px-1 rounded border text-xs font-mono transition-colors",
+          checked ? "bg-orange-500 border-orange-600 text-white" : "bg-white border-slate-300 text-slate-700 hover:border-orange-500",
+        )}
+      >
+        {n}
+      </button>
+    );
+  };
+  return (
+    <div className="space-y-2">
+      <p className="text-xs text-slate-500">Desenho do odontograma indisponível. Marque os dentes pelo número.</p>
+      {linhas.map((l) => (
+        <div key={l.titulo}>
+          <div className="text-[11px] font-semibold text-slate-500 uppercase mb-1">{l.titulo}</div>
+          <div className="flex flex-wrap items-center gap-1">
+            {l.dir.map(botao)}
+            <span className="mx-1 h-6 w-px bg-orange-300" aria-hidden />
+            {l.esq.map(botao)}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+const LINHAS_PERMANENTES_SUP = { titulo: "Superiores", dir: [18, 17, 16, 15, 14, 13, 12, 11], esq: [21, 22, 23, 24, 25, 26, 27, 28] };
+const LINHAS_PERMANENTES_INF = { titulo: "Inferiores", dir: [48, 47, 46, 45, 44, 43, 42, 41], esq: [31, 32, 33, 34, 35, 36, 37, 38] };
+const LINHAS_ODONTOGRAMA_FULL = [
+  LINHAS_PERMANENTES_SUP,
+  { titulo: "Decíduos superiores", dir: [55, 54, 53, 52, 51], esq: [61, 62, 63, 64, 65] },
+  { titulo: "Decíduos inferiores", dir: [85, 84, 83, 82, 81], esq: [71, 72, 73, 74, 75] },
+  LINHAS_PERMANENTES_INF,
+];
+const LINHAS_ODONTOGRAMA_ADULTO = [LINHAS_PERMANENTES_SUP, LINHAS_PERMANENTES_INF];
+
 function SectionHeader({ children }: { children: React.ReactNode }) {
   return (
     <div className="bg-orange-600 text-white px-3 py-1.5 text-xs font-bold uppercase tracking-wide rounded-t-sm inline-flex items-center gap-2">
@@ -117,6 +188,9 @@ function PedidoExamePage() {
 
   const [obs, setObs] = useState("");
   const [analise, setAnalise] = useState("");
+  const [fotoOutros, setFotoOutros] = useState("");
+  const [imgFullFalhou, setImgFullFalhou] = useState(false);
+  const [imgAdultoFalhou, setImgAdultoFalhou] = useState(false);
 
   const [saving, setSaving] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -248,39 +322,92 @@ function PedidoExamePage() {
     setSaving(true);
     try {
       let pacienteId: string | null = null;
+      let pacienteNovo = false;
       const cpfTrim = cpf.trim();
+      const { data: lista, error: listaError } = await pacientesApi.list();
+      // Sem a lista, não dá para saber se o paciente já existe: parar evita cadastro duplicado
+      if (listaError) throw new Error("Não foi possível verificar se o paciente já está cadastrado: " + listaError);
+      type PacienteLista = { id: string; nome?: string | null; cpf?: string | null; telefone?: string | null };
+      const pacientesLista: PacienteLista[] = Array.isArray(lista) ? (lista as PacienteLista[]) : [];
+      const soDigitos = (v?: string | null) => (v || "").replace(/\D/g, "");
+      const normalizaNome = (v?: string | null) =>
+        (v || "").normalize("NFD").replace(/[̀-ͯ]/g, "").trim().toLowerCase().replace(/\s+/g, " ");
+
+      // Mesmo telefone em formatos diferentes (com/sem DDI 55, com/sem DDD) conta como igual:
+      // compara só os últimos 8 dígitos, como o servidor faz
+      const mesmoTelefone = (a?: string | null, b?: string | null) => {
+        const da = soDigitos(a);
+        const db = soDigitos(b);
+        if (!da || !db) return true;
+        return da.slice(-8) === db.slice(-8);
+      };
+
       if (cpfTrim) {
-        const { data: lista, error: listaError } = await pacientesApi.list();
-        // Sem a lista, não dá para saber se o paciente já existe: parar evita cadastro duplicado
-        if (listaError) throw new Error("Não foi possível verificar se o paciente já está cadastrado: " + listaError);
-        const existente = Array.isArray(lista) ? (lista as Array<{ id: string; cpf?: string | null }>).find((p) => p.cpf === cpfTrim) : undefined;
+        const existente = pacientesLista.find(
+          (p) => p.cpf === cpfTrim || (soDigitos(p.cpf) !== "" && soDigitos(p.cpf) === soDigitos(cpfTrim)),
+        );
+        // Paciente já cadastrado: só vincula o pedido. Não atualiza a ficha, para não apagar
+        // e-mail, convênio, observações etc. que o pedido de exame não tem.
         if (existente?.id) pacienteId = existente.id;
       }
 
-      const pacientePayload: any = {
-        nome: paciente.trim(),
-        cpf: cpfTrim || null,
-        telefone: fone.trim() || null,
-        endereco: endereco.trim() || null,
-        data_nascimento: dataNasc || null,
-      };
+      if (!pacienteId) {
+        // Sem CPF, ou CPF não encontrado: procura pelo nome (e telefone, se informado) antes de
+        // criar outro cadastro. Com CPF informado, só entram fichas que ainda não têm CPF
+        // (comum em quem veio do WhatsApp/CRM).
+        const nomeBusca = normalizaNome(paciente);
+        const candidatos = pacientesLista.filter((p) => {
+          if (normalizaNome(p.nome) !== nomeBusca) return false;
+          if (cpfTrim && soDigitos(p.cpf) !== "") return false;
+          if (fone.trim() && !mesmoTelefone(p.telefone, fone)) return false;
+          return true;
+        });
+        if (candidatos.length > 0) {
+          const c = candidatos[0];
+          const extra = candidatos.length > 1 ? ` (há ${candidatos.length} cadastros com esse nome)` : "";
+          const semCpf = cpfTrim ? ", sem CPF na ficha" : "";
+          const usar = window.confirm(
+            `Já existe um paciente chamado "${c.nome}"${c.telefone ? `, telefone ${c.telefone}` : ""}${semCpf}${extra}.\n\n` +
+              "OK: vincular o pedido a esse paciente.\nCancelar: cadastrar um paciente novo.",
+          );
+          if (usar) pacienteId = c.id;
+        }
+      }
 
-      if (pacienteId) {
-        const { error: errUpd } = await pacientesApi.update(pacienteId, pacientePayload);
-        if (errUpd) throw new Error(errUpd);
-      } else {
+      if (!pacienteId) {
+        const pacientePayload = {
+          nome: paciente.trim(),
+          cpf: cpfTrim || null,
+          telefone: fone.trim() || null,
+          endereco: endereco.trim() || null,
+          data_nascimento: dataNasc || null,
+        };
         const { data: novo, error: errPac } = await pacientesApi.create(pacientePayload);
         if (errPac) throw new Error(errPac);
         pacienteId = (novo as { id?: string } | null)?.id ?? null;
+        pacienteNovo = true;
       }
 
+      // Detalhes marcados no pedido (laudo, e-mail, finalidade etc.), por seção
+      const detalhes = DETALHES_PEDIDO.map(({ secao, itens }) => {
+        const marcados = itens.filter(([k]) => get(k)).map(([, l]) => l);
+        return marcados.length ? `${secao}: ${marcados.join(", ")}` : null;
+      }).filter(Boolean);
+      if (fotoOutros.trim() && get("foto_outros")) detalhes.push(`Fotos (outros): ${fotoOutros.trim()}`);
+
+      // Ficha já existente não é alterada: CPF e endereço digitados vão junto no pedido,
+      // para não se perderem.
       const obsResumo = [
+        !pacienteNovo && cpfTrim && `CPF: ${cpfTrim}`,
+        !pacienteNovo && endereco.trim() && `End: ${endereco.trim()}`,
         fone && `Fone: ${fone}`,
         dataNasc && `Nasc: ${dataNasc}`,
         doutor && `Dr(a): ${doutor}`,
         cro && `CRO: ${cro}`,
         teethSel.size > 0 && `Dentes: ${Array.from(teethSel).sort((a,b)=>a-b).join(", ")}`,
         tomoSel.size > 0 && `Tomo: ${Array.from(tomoSel).sort((a,b)=>a-b).join(", ")}`,
+        ...detalhes,
+        analise.trim() && `Análise (tele): ${analise.trim()}`,
         obs && `Obs: ${obs}`,
       ].filter(Boolean).join(" | ");
 
@@ -291,7 +418,15 @@ function PedidoExamePage() {
       }));
       for (const row of rows) await examesApi.create(row);
 
-      toast.success(`Paciente cadastrado e pedido salvo (${rows.length} ${rows.length === 1 ? "exame" : "exames"})`);
+      const qtd = `${rows.length} ${rows.length === 1 ? "exame" : "exames"}`;
+      toast.success(
+        pacienteNovo
+          ? `Paciente cadastrado e pedido salvo (${qtd})`
+          : `Pedido salvo na ficha do paciente já cadastrado (${qtd})`,
+        pacienteNovo
+          ? undefined
+          : { description: "O cadastro do paciente não foi alterado. Os dados digitados (CPF, telefone, endereço, nascimento) ficaram só nas observações do pedido." },
+      );
     } catch (e: any) {
       toast.error(e?.message || "Erro ao cadastrar paciente / salvar pedido");
     } finally {
@@ -344,7 +479,7 @@ function PedidoExamePage() {
   const tomoSorted = Array.from(tomoSel).sort((a, b) => a - b);
 
   return (
-    <div className="bg-slate-100 min-h-full p-4">
+    <div className="bg-slate-100 min-h-full p-2 sm:p-4">
       <style>{`
         @media print {
           @page { size: 210mm 297mm; margin: 0; }
@@ -358,9 +493,9 @@ function PedidoExamePage() {
         }
       `}</style>
       <div ref={printAreaRef} id="print-area" className="max-w-[1100px] mx-auto bg-white shadow-xl rounded-md overflow-hidden border border-slate-200">
-        <div className="no-print flex items-center justify-between px-4 py-2 bg-slate-50 border-b">
+        <div className="no-print flex flex-wrap items-center justify-between gap-2 px-4 py-2 bg-slate-50 border-b">
           <h1 className="text-sm font-bold text-slate-700 uppercase tracking-wide">Pedido de Exame</h1>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleUpload} accept="image/*,application/pdf" />
             <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
               <Upload className="size-4 mr-1" /> {uploading ? "Enviando..." : "Upload"}
@@ -395,8 +530,8 @@ function PedidoExamePage() {
                     <FileDown className="size-3 shrink-0" />
                     <span className="truncate">{u.name}</span>
                   </button>
-                  <button type="button" onClick={() => removeUpload(u.path)} className="ml-1 text-slate-400 hover:text-red-500">
-                    <X className="size-3" />
+                  <button type="button" onClick={() => removeUpload(u.path)} aria-label={`Remover ${u.name}`} className="ml-1 -my-1 inline-flex size-7 items-center justify-center rounded text-slate-400 hover:text-red-500">
+                    <X className="size-3.5" />
                   </button>
                 </div>
               );
@@ -407,23 +542,23 @@ function PedidoExamePage() {
         <div id="print-content">
           {/* Patient header */}
           <div className="bg-gradient-to-b from-orange-50 to-orange-100/60 p-4 space-y-2 border-b-2 border-orange-300">
-            <div className="grid grid-cols-[110px_1fr_110px_220px] gap-2 items-center">
+            <div className="grid grid-cols-1 sm:grid-cols-[110px_1fr_110px_220px] gap-2 sm:items-center">
               <FieldLabel>Paciente:</FieldLabel>
               <Input value={paciente} onChange={(e) => setPaciente(e.target.value)} className="h-7 bg-white border-orange-200" />
               <FieldLabel>CPF:</FieldLabel>
               <Input value={cpf} onChange={(e) => setCpf(e.target.value)} className="h-7 bg-white border-orange-200" />
             </div>
-            <div className="grid grid-cols-[110px_1fr] gap-2 items-center">
+            <div className="grid grid-cols-1 sm:grid-cols-[110px_1fr] gap-2 sm:items-center">
               <FieldLabel>Endereço:</FieldLabel>
               <Input value={endereco} onChange={(e) => setEndereco(e.target.value)} className="h-7 bg-white border-orange-200" />
             </div>
-            <div className="grid grid-cols-[110px_1fr_140px_1fr] gap-2 items-center">
+            <div className="grid grid-cols-1 sm:grid-cols-[110px_1fr_140px_1fr] gap-2 sm:items-center">
               <FieldLabel>Fone:</FieldLabel>
               <Input value={fone} onChange={(e) => setFone(e.target.value)} className="h-7 bg-white border-orange-200" />
               <FieldLabel>Data de Nasc.:</FieldLabel>
               <Input type="date" value={dataNasc} onChange={(e) => setDataNasc(e.target.value)} className="h-7 bg-white border-orange-200" />
             </div>
-            <div className="grid grid-cols-[110px_1fr_110px_220px] gap-2 items-center">
+            <div className="grid grid-cols-1 sm:grid-cols-[110px_1fr_110px_220px] gap-2 sm:items-center">
               <FieldLabel>Dr(a):</FieldLabel>
               <Input value={doutor} onChange={(e) => setDoutor(e.target.value)} className="h-7 bg-white border-orange-200" />
               <FieldLabel>CRO:</FieldLabel>
@@ -432,8 +567,8 @@ function PedidoExamePage() {
           </div>
 
           {/* PERIAPICAL + INTERPROXIMAIS + Odontograma */}
-          <div className="grid grid-cols-[260px_1fr] border-b-2 border-orange-300">
-            <div className="p-3 border-r border-orange-200 space-y-3 bg-orange-50/40">
+          <div className="grid grid-cols-1 sm:grid-cols-[260px_1fr] border-b-2 border-orange-300">
+            <div className="p-3 border-b sm:border-b-0 sm:border-r border-orange-200 space-y-3 bg-orange-50/40">
               <div>
                 <SectionHeader>Periapical</SectionHeader>
                 <div className="pl-2 pt-2 space-y-1">
@@ -463,20 +598,31 @@ function PedidoExamePage() {
             </div>
 
             <div className="p-3 relative">
-              <div className="relative w-full">
-                <img src={odontogramaFullAsset.url} alt="Odontograma" className="w-full h-auto select-none pointer-events-none" draggable={false} />
-                {allTeeth.map(({ n, x, y }) => {
-                  const checked = teethSel.has(n);
-                  return (
-                    <button key={n} type="button" onClick={() => toggleTooth(n)} title={`Dente ${n}`}
-                      className={cn(
-                        "absolute w-3 h-3 -translate-x-1/2 -translate-y-1/2 rounded-[2px] border transition-colors",
-                        checked ? "bg-orange-500 border-orange-600" : "bg-white/90 border-slate-400 hover:border-orange-500"
-                      )}
-                      style={{ left: `${x}%`, top: `${y}%` }} />
-                  );
-                })}
-              </div>
+              {imgFullFalhou ? (
+                <DentesPorNumero linhas={LINHAS_ODONTOGRAMA_FULL} selecionados={teethSel} onToggle={toggleTooth} />
+              ) : (
+                <div className="relative w-full">
+                  <img
+                    src={odontogramaFullAsset.url}
+                    alt="Odontograma"
+                    className="w-full h-auto select-none pointer-events-none"
+                    draggable={false}
+                    onError={() => setImgFullFalhou(true)}
+                    ref={(el) => { if (el && el.complete && el.naturalWidth === 0) setImgFullFalhou(true); }}
+                  />
+                  {allTeeth.map(({ n, x, y }) => {
+                    const checked = teethSel.has(n);
+                    return (
+                      <button key={n} type="button" onClick={() => toggleTooth(n)} title={`Dente ${n}`} aria-label={`Dente ${n}`} aria-pressed={checked}
+                        className={cn(
+                          "absolute w-3 h-3 -translate-x-1/2 -translate-y-1/2 rounded-[2px] border transition-colors",
+                          checked ? "bg-orange-500 border-orange-600" : "bg-white/90 border-slate-400 hover:border-orange-500"
+                        )}
+                        style={{ left: `${x}%`, top: `${y}%` }} />
+                    );
+                  })}
+                </div>
+              )}
               <div className="mt-2 min-h-[28px] text-xs text-slate-700">
                 <span className="font-semibold text-slate-600">Dentes selecionados: </span>
                 {selectedSorted.length === 0 ? (
@@ -489,14 +635,14 @@ function PedidoExamePage() {
           </div>
 
           {/* PANORÂMICA + TELERRADIOGRAFIA */}
-          <div className="grid grid-cols-2 border-b-2 border-orange-300">
-            <div className="p-3 border-r border-orange-200">
+          <div className="grid grid-cols-1 sm:grid-cols-2 border-b-2 border-orange-300">
+            <div className="p-3 border-b sm:border-b-0 sm:border-r border-orange-200">
               <div className="flex items-center gap-3 mb-2 flex-wrap">
                 <SectionHeader>Panorâmica</SectionHeader>
                 <CheckRow checked={get("pan_laudo")} onChange={set("pan_laudo")} label="COM LAUDO" />
                 <CheckRow checked={get("pan_carpal")} onChange={set("pan_carpal")} label="Carpal" />
               </div>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-1 pl-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 pl-2">
                 <CheckRow checked={get("pan_conv")} onChange={set("pan_conv")} label="Panorâmica Convencional" />
                 <CheckRow checked={get("pan_impresso")} onChange={set("pan_impresso")} label="Exame Impresso" />
                 <CheckRow checked={get("pan_tracado")} onChange={set("pan_tracado")} label="Panorâmica com Traçado para Implante" />
@@ -521,7 +667,7 @@ function PedidoExamePage() {
 
           {/* TOMOGRAFIA */}
           <div className="border-b-2 border-orange-300">
-            <div className="p-3 grid grid-cols-[1fr_2fr] gap-4">
+            <div className="p-3 grid grid-cols-1 sm:grid-cols-[1fr_2fr] gap-4">
               <div>
                 <SectionHeader>Tomografia Computadorizada</SectionHeader>
                 <div className="mt-2 bg-orange-500 text-white px-3 py-1 text-xs font-bold uppercase rounded-sm inline-block">Finalidade do Exame</div>
@@ -541,28 +687,39 @@ function PedidoExamePage() {
                 </div>
               </div>
               <div>
-                <div className="relative w-full select-none">
-                  <img src={odontogramaAdultoAsset.url} alt="Odontograma adulto" className="w-full h-auto block pointer-events-none" draggable={false} />
-                  {tomoTeeth.map(({ n, x, y }) => {
-                    const checked = tomoSel.has(n);
-                    return (
-                      <button key={n} type="button" onClick={() => toggleTomo(n)}
-                        className={cn(
-                          "absolute -translate-x-1/2 -translate-y-1/2 size-3 rounded-[2px] border-2 transition-colors",
-                          checked ? "bg-orange-500 border-orange-600" : "bg-white border-orange-400 hover:border-orange-600"
-                        )}
-                        style={{ left: `${x}%`, top: `${y}%` }}
-                        aria-label={`Dente ${n}`} title={`Dente ${n}`} />
-                    );
-                  })}
-                </div>
+                {imgAdultoFalhou ? (
+                  <DentesPorNumero linhas={LINHAS_ODONTOGRAMA_ADULTO} selecionados={tomoSel} onToggle={toggleTomo} />
+                ) : (
+                  <div className="relative w-full select-none">
+                    <img
+                      src={odontogramaAdultoAsset.url}
+                      alt="Odontograma adulto"
+                      className="w-full h-auto block pointer-events-none"
+                      draggable={false}
+                      onError={() => setImgAdultoFalhou(true)}
+                      ref={(el) => { if (el && el.complete && el.naturalWidth === 0) setImgAdultoFalhou(true); }}
+                    />
+                    {tomoTeeth.map(({ n, x, y }) => {
+                      const checked = tomoSel.has(n);
+                      return (
+                        <button key={n} type="button" onClick={() => toggleTomo(n)}
+                          className={cn(
+                            "absolute -translate-x-1/2 -translate-y-1/2 size-3 rounded-[2px] border-2 transition-colors",
+                            checked ? "bg-orange-500 border-orange-600" : "bg-white border-orange-400 hover:border-orange-600"
+                          )}
+                          style={{ left: `${x}%`, top: `${y}%` }}
+                          aria-label={`Dente ${n}`} aria-pressed={checked} title={`Dente ${n}`} />
+                      );
+                    })}
+                  </div>
+                )}
                 <div className="mt-2 text-xs text-slate-700">
                   <span className="font-semibold">Dentes selecionados: </span>
                   {tomoSorted.length > 0 ? tomoSorted.join(", ") : "—"}
                 </div>
               </div>
             </div>
-            <div className="grid grid-cols-3 gap-2 px-3 pb-3 pt-1 border-t border-orange-200">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 px-3 pb-3 pt-1 border-t border-orange-200">
               <div className="space-y-1">
                 <CheckRow checked={get("tomo_maxila")} onChange={set("tomo_maxila")} label="Maxila Total" />
                 <CheckRow checked={get("tomo_mandibula")} onChange={set("tomo_mandibula")} label="Mandíbula Total" />
@@ -579,8 +736,8 @@ function PedidoExamePage() {
           </div>
 
           {/* DOCUMENTAÇÃO ORTODÔNTICA + MODELO */}
-          <div className="grid grid-cols-[1.6fr_1fr] border-b-2 border-orange-300">
-            <div className="p-3 border-r border-orange-200">
+          <div className="grid grid-cols-1 sm:grid-cols-[1.6fr_1fr] border-b-2 border-orange-300">
+            <div className="p-3 border-b sm:border-b-0 sm:border-r border-orange-200">
               <SectionHeader>Documentação Ortodôntica</SectionHeader>
               <div className="pl-2 pt-2 space-y-1">
                 <CheckRow checked={get("doc_t1")} onChange={set("doc_t1")} label="Tipo I - Pan + Tele + Fotos + Periapicais Incisivos" />
@@ -600,19 +757,19 @@ function PedidoExamePage() {
           </div>
 
           {/* FOTOGRAFIAS + ANÁLISES */}
-          <div className="grid grid-cols-[1fr_1.6fr] border-b-2 border-orange-300">
-            <div className="p-3 border-r border-orange-200">
+          <div className="grid grid-cols-1 sm:grid-cols-[1fr_1.6fr] border-b-2 border-orange-300">
+            <div className="p-3 border-b sm:border-b-0 sm:border-r border-orange-200">
               <SectionHeader>Fotografias</SectionHeader>
               <div className="pl-2 pt-2 space-y-1">
                 <CheckRow checked={get("foto_extra")} onChange={set("foto_extra")} label="Extrabucal" />
                 <CheckRow checked={get("foto_intra")} onChange={set("foto_intra")} label="Intrabucal" />
                 <div className="flex items-center gap-2">
                   <CheckRow checked={get("foto_outros")} onChange={set("foto_outros")} label="Outros" />
-                  <Input className="h-7 bg-white border-orange-200 flex-1" />
+                  <Input value={fotoOutros} onChange={(e) => setFotoOutros(e.target.value)} aria-label="Outras fotografias" className="h-7 bg-white border-orange-200 flex-1" />
                 </div>
               </div>
             </div>
-            <div className="p-3 grid grid-cols-[1fr_1.2fr] gap-4">
+            <div className="p-3 grid grid-cols-1 sm:grid-cols-[1fr_1.2fr] gap-4">
               <div>
                 <SectionHeader>Análises</SectionHeader>
                 <div className="pl-2 pt-2 space-y-1">
@@ -622,7 +779,7 @@ function PedidoExamePage() {
                 </div>
               </div>
               <div className="flex flex-col">
-                <div className="flex-1 border border-slate-300 rounded-sm bg-slate-50" />
+                <div className="flex-1 min-h-[80px] border border-slate-300 rounded-sm bg-slate-50" />
                 <span className="text-[10px] text-slate-500 text-center mt-1">Carimbo / assinatura</span>
               </div>
             </div>

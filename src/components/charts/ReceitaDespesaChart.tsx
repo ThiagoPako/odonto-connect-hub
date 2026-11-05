@@ -3,9 +3,14 @@ import { AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts"
 import { ClientOnly } from "@/components/ClientOnly";
 import { chartTooltipStyle, chartTickFill, chartGridStroke } from "@/lib/chartTheme";
 
-const evolucaoData: any[] = [];
+export interface EvolucaoMesPonto {
+  mes: string;
+  receita: number;
+  despesa: number;
+  saldo: number;
+}
 
-function ReceitaDespesaChartInner() {
+function ReceitaDespesaChartInner({ data }: { data: EvolucaoMesPonto[] }) {
   const ref = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
 
@@ -27,7 +32,7 @@ function ReceitaDespesaChartInner() {
   return (
     <div ref={ref} style={{ width: "100%", height: 220 }}>
       {size && (
-        <AreaChart width={size.w} height={size.h} data={evolucaoData} margin={{ left: 0, right: 8, top: 4, bottom: 0 }}>
+        <AreaChart width={size.w} height={size.h} data={data} margin={{ left: 0, right: 8, top: 4, bottom: 0 }}>
           <defs>
             <linearGradient id="gradReceitaFin" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor="hsl(152, 60%, 42%)" stopOpacity={0.25} />
@@ -40,7 +45,7 @@ function ReceitaDespesaChartInner() {
           </defs>
           <CartesianGrid strokeDasharray="3 3" stroke={chartGridStroke} strokeOpacity={0.5} />
           <XAxis dataKey="mes" tick={{ fontSize: 11, fill: chartTickFill }} axisLine={false} tickLine={false} />
-          <YAxis tick={{ fontSize: 10, fill: chartTickFill }} axisLine={false} tickLine={false} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} width={40} />
+          <YAxis tick={{ fontSize: 10, fill: chartTickFill }} axisLine={false} tickLine={false} tickFormatter={(v: number) => (Math.abs(v) >= 1000 ? `${(v / 1000).toFixed(0)}k` : `${v}`)} width={40} />
           <Tooltip
             contentStyle={chartTooltipStyle}
             formatter={(value: number, name: string) => {
@@ -57,14 +62,21 @@ function ReceitaDespesaChartInner() {
   );
 }
 
-export function ReceitaDespesaChart() {
+export function ReceitaDespesaChart({ data }: { data: EvolucaoMesPonto[] }) {
+  const vazio = data.every((d) => d.receita === 0 && d.despesa === 0);
   return (
     <div className="bg-card rounded-xl border border-border p-5">
       <h3 className="text-sm font-semibold text-card-foreground mb-1">Evolução Receita vs Despesa</h3>
-      <p className="text-[11px] text-muted-foreground mb-4">Tendência de crescimento — últimos 7 meses</p>
-      <ClientOnly fallback={<div style={{ width: "100%", height: 220 }} className="animate-pulse bg-muted/30 rounded-lg" />}>
-        <ReceitaDespesaChartInner />
-      </ClientOnly>
+      <p className="text-[11px] text-muted-foreground mb-4">Receita, despesa e saldo por mês — últimos 7 meses</p>
+      {vazio ? (
+        <div className="h-[220px] flex items-center justify-center text-xs text-muted-foreground text-center">
+          Nenhuma movimentação nos últimos meses
+        </div>
+      ) : (
+        <ClientOnly fallback={<div style={{ width: "100%", height: 220 }} className="animate-pulse bg-muted/30 rounded-lg" />}>
+          <ReceitaDespesaChartInner data={data} />
+        </ClientOnly>
+      )}
       <div className="flex items-center gap-4 mt-3 text-[11px] text-muted-foreground">
         <div className="flex items-center gap-1.5">
           <span className="h-2 w-2 rounded-full bg-success" />

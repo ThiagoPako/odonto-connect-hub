@@ -9,8 +9,18 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
-import { Users, UserPlus, Pencil, UserX, UserCheck, KeyRound, RefreshCcw, Search } from "lucide-react";
+import { Users, UserPlus, Pencil, UserX, UserCheck, KeyRound, RefreshCcw, Search, AlertTriangle } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 
 export const Route = createFileRoute("/usuarios")({
@@ -43,6 +53,8 @@ function UsuariosPage() {
   const [users, setUsers] = useState<TenantUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [deactivating, setDeactivating] = useState<TenantUser | null>(null);
 
   // create dialog
   const [createOpen, setCreateOpen] = useState(false);
@@ -67,8 +79,13 @@ function UsuariosPage() {
   const fetchUsers = async () => {
     setLoading(true);
     const { data, error } = await saasApi.listTenantUsers();
-    if (error) toast.error("Erro ao carregar usuários: " + error);
-    else if (data) setUsers(data.data);
+    if (error) {
+      setLoadError(error);
+      toast.error("Erro ao carregar usuários: " + error);
+    } else if (data) {
+      setLoadError(null);
+      setUsers(data.data);
+    }
     setLoading(false);
   };
 
@@ -163,7 +180,9 @@ function UsuariosPage() {
             <div className="flex items-center justify-between flex-wrap gap-3">
               <div>
                 <CardTitle className="text-lg">Equipe</CardTitle>
-                <CardDescription>{users.length} usuário(s) no tenant</CardDescription>
+                <CardDescription>
+                  {loadError ? "Lista não carregada" : `${users.length} usuário(s) na clínica`}
+                </CardDescription>
               </div>
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" onClick={fetchUsers} disabled={loading}>
@@ -229,6 +248,15 @@ function UsuariosPage() {
 
             {loading ? (
               <p className="text-sm text-muted-foreground text-center py-8">Carregando...</p>
+            ) : loadError ? (
+              <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-6 text-center space-y-3">
+                <AlertTriangle className="h-6 w-6 text-destructive mx-auto" />
+                <p className="text-sm font-medium text-foreground">Não foi possível carregar a equipe</p>
+                <p className="text-xs text-muted-foreground">{loadError}</p>
+                <Button variant="outline" size="sm" onClick={fetchUsers}>
+                  <RefreshCcw className="h-4 w-4 mr-1" /> Tentar de novo
+                </Button>
+              </div>
             ) : filtered.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-8">Nenhum usuário encontrado</p>
             ) : (
@@ -254,19 +282,20 @@ function UsuariosPage() {
                       <Badge variant="outline" className="text-[11px] shrink-0">{roleLabel(u.role)}</Badge>
                       {!u.active && <Badge variant="destructive" className="text-[10px] shrink-0">Inativo</Badge>}
                       <div className="flex gap-1 shrink-0">
-                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(u)} title="Editar">
+                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(u)} title="Editar" aria-label={`Editar ${u.name}`}>
                           <Pencil className="h-3.5 w-3.5" />
                         </Button>
-                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setPwUser(u)} title="Redefinir senha">
+                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setPwUser(u)} title="Redefinir senha" aria-label={`Redefinir senha de ${u.name}`}>
                           <KeyRound className="h-3.5 w-3.5" />
                         </Button>
                         <Button
                           variant="ghost"
                           size="icon"
                           className="h-8 w-8"
-                          onClick={() => toggleActive(u)}
+                          onClick={() => (u.active ? setDeactivating(u) : toggleActive(u))}
                           disabled={isSelf}
                           title={u.active ? "Desativar" : "Reativar"}
+                          aria-label={u.active ? `Desativar ${u.name}` : `Reativar ${u.name}`}
                         >
                           {u.active ? <UserX className="h-3.5 w-3.5 text-destructive" /> : <UserCheck className="h-3.5 w-3.5 text-primary" />}
                         </Button>
@@ -279,6 +308,31 @@ function UsuariosPage() {
           </CardContent>
         </Card>
       </main>
+
+      {/* Confirmar desativação */}
+      <AlertDialog open={!!deactivating} onOpenChange={(o) => { if (!o) setDeactivating(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Desativar {deactivating?.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Essa pessoa não conseguirá fazer um novo login. Se ela já estiver conectada, a sessão aberta pode continuar funcionando por até 7 dias. Você pode reativar o acesso depois.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                const u = deactivating;
+                setDeactivating(null);
+                if (u) toggleActive(u);
+              }}
+            >
+              Desativar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Edit */}
       <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>

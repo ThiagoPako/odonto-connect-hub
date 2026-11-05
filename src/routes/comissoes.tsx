@@ -6,6 +6,12 @@ import {
 import { useState, useEffect, useCallback } from "react";
 import { comissoesApi, dentistasApi, pacientesApi } from "@/lib/vpsApi";
 import { toast } from "sonner";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+
+const brl = (v: number) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
 export const Route = createFileRoute("/comissoes")({
   ssr: false,
@@ -52,6 +58,7 @@ function ComissoesPage() {
   const [statusFilter, setStatusFilter] = useState<string>("todos");
   const [showAddModal, setShowAddModal] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [statusTarget, setStatusTarget] = useState<{ entry: ComissaoRow; status: "aprovado" | "pago" } | null>(null);
 
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -142,10 +149,10 @@ function ComissoesPage() {
       <main className="flex-1 p-6 overflow-auto space-y-5">
         {/* KPIs */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 animate-slide-up" style={{ animationFillMode: 'both' }}>
-          <KpiBox icon={DollarSign} label="Total Comissões" value={`R$ ${(totalAll / 1000).toFixed(1)}k`} color="text-primary" />
-          <KpiBox icon={Clock} label="Pendente" value={`R$ ${totalPending.toFixed(0)}`} color="text-warning" />
-          <KpiBox icon={CheckCircle2} label="Aprovado" value={`R$ ${totalApproved.toFixed(0)}`} color="text-chart-1" />
-          <KpiBox icon={CreditCard} label="Pago" value={`R$ ${totalPaid.toFixed(0)}`} color="text-success" />
+          <KpiBox icon={DollarSign} label="Total Comissões" value={brl(totalAll)} color="text-primary" />
+          <KpiBox icon={Clock} label="Pendente" value={brl(totalPending)} color="text-warning" />
+          <KpiBox icon={CheckCircle2} label="Aprovado" value={brl(totalApproved)} color="text-chart-1" />
+          <KpiBox icon={CreditCard} label="Pago" value={brl(totalPaid)} color="text-success" />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
@@ -186,27 +193,27 @@ function ComissoesPage() {
 
           {/* Entries table */}
           <div className="lg:col-span-8 space-y-3">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-sm font-semibold text-foreground">
                 {selectedDentista ? `Comissões — ${dentistas.find(d => d.id === selectedDentista)?.nome}` : "Todas as Comissões"}
               </h3>
-              <div className="flex items-center gap-1.5">
+              <button onClick={() => setShowAddModal(true)}
+                className="flex items-center gap-1 h-8 px-3 rounded-lg text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90">
+                <Plus className="h-3.5 w-3.5" /> Nova comissão
+              </button>
+              <div className="flex flex-wrap items-center gap-1.5 w-full">
                 {["todos", "pendente", "aprovado", "pago"].map(s => (
                   <button key={s} onClick={() => setStatusFilter(s)}
-                    className={`px-2.5 py-1 rounded-full text-[10px] font-medium transition-colors ${statusFilter === s ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:text-foreground"}`}>
+                    className={`h-8 px-3 rounded-full text-xs font-medium transition-colors ${statusFilter === s ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:text-foreground"}`}>
                     {s === "todos" ? "Todos" : statusCfg[s]?.label || s}
                   </button>
                 ))}
-                <button onClick={() => setShowAddModal(true)}
-                  className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-medium bg-primary text-primary-foreground hover:bg-primary/90 ml-2">
-                  <Plus className="h-3 w-3" /> Nova
-                </button>
               </div>
             </div>
 
             <div className="bg-card rounded-xl border border-border overflow-hidden">
               <div className="overflow-x-auto">
-                <table className="w-full text-xs">
+                <table className="w-full min-w-[760px] text-xs">
                   <thead>
                     <tr className="border-b border-border bg-muted/30">
                       <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Profissional</th>
@@ -240,20 +247,20 @@ function ComissoesPage() {
                           <td className="px-4 py-2.5 text-center">
                             <div className="flex items-center justify-center gap-1">
                               {entry.status === "pendente" && (
-                                <button onClick={() => handleStatusChange(entry.id, "aprovado")}
-                                  className="px-2 py-0.5 rounded text-[10px] font-medium bg-chart-1/15 text-chart-1 hover:bg-chart-1/25">
+                                <button onClick={() => setStatusTarget({ entry, status: "aprovado" })}
+                                  className="h-8 px-3 rounded-lg text-xs font-medium bg-chart-1/15 text-chart-1 hover:bg-chart-1/25 whitespace-nowrap">
                                   Aprovar
                                 </button>
                               )}
                               {entry.status === "aprovado" && (
-                                <button onClick={() => handleStatusChange(entry.id, "pago")}
-                                  className="px-2 py-0.5 rounded text-[10px] font-medium bg-success/15 text-success hover:bg-success/25">
-                                  Pagar
+                                <button onClick={() => setStatusTarget({ entry, status: "pago" })}
+                                  className="h-8 px-3 rounded-lg text-xs font-medium bg-success/15 text-success hover:bg-success/25 whitespace-nowrap">
+                                  Marcar como paga
                                 </button>
                               )}
                               <button onClick={() => setDeleteTarget(entry.id)}
-                                className="p-1 rounded hover:bg-destructive/15 text-muted-foreground hover:text-destructive transition-colors"
-                                title="Excluir comissão">
+                                className="h-8 w-8 flex items-center justify-center rounded-lg hover:bg-destructive/15 text-muted-foreground hover:text-destructive transition-colors"
+                                aria-label="Excluir comissão" title="Excluir comissão">
                                 <Trash2 className="h-3.5 w-3.5" />
                               </button>
                             </div>
@@ -286,6 +293,25 @@ function ComissoesPage() {
             onClose={() => setShowAddModal(false)}
           />
         )}
+
+        <AlertDialog open={!!statusTarget} onOpenChange={(open) => { if (!open) setStatusTarget(null); }}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>{statusTarget?.status === "pago" ? "Marcar comissão como paga?" : "Aprovar comissão?"}</AlertDialogTitle>
+              <AlertDialogDescription>
+                {statusTarget && (statusTarget.status === "pago"
+                  ? `Marcar ${brl(statusTarget.entry.valor)} de ${statusTarget.entry.dentista_nome || "o profissional"} (paciente ${statusTarget.entry.paciente_nome || "-"}) como pago? Isto só muda o status: a saída não é lançada no Financeiro automaticamente.`
+                  : `Aprovar ${brl(statusTarget.entry.valor)} de ${statusTarget.entry.dentista_nome || "o profissional"} (paciente ${statusTarget.entry.paciente_nome || "-"})?`)}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancelar</AlertDialogCancel>
+              <AlertDialogAction onClick={() => { if (statusTarget) handleStatusChange(statusTarget.entry.id, statusTarget.status); setStatusTarget(null); }}>
+                {statusTarget?.status === "pago" ? "Marcar como paga" : "Aprovar"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         {deleteTarget && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
@@ -328,7 +354,7 @@ function KpiBox({ icon: Icon, label, value, color }: { icon: React.ElementType; 
         </div>
         <span className="text-[10px] text-muted-foreground">{label}</span>
       </div>
-      <p className="text-lg font-bold text-foreground relative z-10">{value}</p>
+      <p className="text-base sm:text-lg font-bold tabular-nums leading-tight break-words text-foreground relative z-10" title={value}>{value}</p>
     </div>
   );
 }
@@ -352,7 +378,7 @@ function AddComissaoModal({
 }) {
   const [form, setForm] = useState({
     dentista_id: dentistas[0]?.id ?? '',
-    paciente_id: pacientes[0]?.id ?? '',
+    paciente_id: '', // começa vazio: a pessoa escolhe o paciente de propósito
     procedimento: '',
     valor: '',
     percentual: dentistas[0]?.comissao_percentual?.toString() || '30',
@@ -368,6 +394,18 @@ function AddComissaoModal({
     !pacienteSearch || p.nome.toLowerCase().includes(pacienteSearch.toLowerCase())
   ).slice(0, 50);
 
+  const pacienteSelecionado = pacientes.find(p => p.id === form.paciente_id) || null;
+
+  // Se o paciente escolhido sair do filtro da busca, limpa a seleção
+  // para não gravar a comissão em outro paciente sem a pessoa ver.
+  const handlePacienteSearch = (value: string) => {
+    setPacienteSearch(value);
+    const termo = value.toLowerCase();
+    if (pacienteSelecionado && termo && !pacienteSelecionado.nome.toLowerCase().includes(termo)) {
+      setForm(f => ({ ...f, paciente_id: '' }));
+    }
+  };
+
   const handleDentistaChange = (id: string) => {
     const d = dentistas.find(d => d.id === id);
     setForm({ ...form, dentista_id: id, percentual: d?.comissao_percentual?.toString() || form.percentual });
@@ -375,7 +413,8 @@ function AddComissaoModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.dentista_id || !form.paciente_id || !form.procedimento || !form.valor) return;
+    if (!form.dentista_id || !form.paciente_id) { toast.error("Escolha o paciente e o profissional."); return; }
+    if (!form.procedimento || !form.valor) { toast.error("Preencha o procedimento e o valor."); return; }
     setSaving(true);
     await onSave({
       dentista_id: form.dentista_id,
@@ -405,12 +444,18 @@ function AddComissaoModal({
           <div>
             <label className="text-xs font-medium text-muted-foreground mb-1 block">Paciente</label>
             <input type="text" placeholder="Buscar paciente..." value={pacienteSearch}
-              onChange={(e) => setPacienteSearch(e.target.value)}
+              onChange={(e) => handlePacienteSearch(e.target.value)}
               className="w-full h-8 px-3 rounded-lg bg-muted border-0 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary mb-1" />
             <select value={form.paciente_id} onChange={(e) => setForm({ ...form, paciente_id: e.target.value })} size={4}
+              aria-label="Paciente"
               className="w-full px-4 py-1 rounded-xl bg-background border border-border/60 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30">
               {filteredPacientes.map(p => <option key={p.id} value={p.id}>{p.nome}</option>)}
             </select>
+            <p className="text-[11px] mt-1 text-muted-foreground">
+              {pacienteSelecionado
+                ? <>Paciente selecionado: <span className="font-medium text-foreground">{pacienteSelecionado.nome}</span></>
+                : filteredPacientes.length === 0 ? "Nenhum paciente encontrado." : "Toque no nome do paciente para selecionar."}
+            </p>
           </div>
           <div>
             <label className="text-xs font-medium text-muted-foreground mb-1 block">Procedimento</label>

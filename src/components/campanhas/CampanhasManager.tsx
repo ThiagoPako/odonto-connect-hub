@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Megaphone, MousePointerClick, Users, DollarSign, Trash2, Edit } from "lucide-react";
+import { Plus, Megaphone, MousePointerClick, Users, DollarSign, Trash2, Edit, Info } from "lucide-react";
 import { CANAIS, computeMetrics, deleteCampanha, getCampanhas, type Campaign } from "@/data/campanhasStore";
 import { CreateCampanhaDialog } from "./CreateCampanhaDialog";
 import { CampanhaDetailsDialog } from "./CampanhaDetailsDialog";
@@ -49,7 +49,7 @@ export function CampanhasManager() {
         <div>
           <h2 className="text-xl font-semibold tracking-tight">Campanhas com tracking</h2>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Gere links únicos por canal e identifique automaticamente a origem dos leads no CRM.
+            Gere links únicos por canal para suas campanhas.
           </p>
         </div>
         <Button
@@ -60,6 +60,21 @@ export function CampanhasManager() {
           <Plus className="h-4 w-4 mr-2" />
           Nova campanha
         </Button>
+      </div>
+
+      {/* Campanhas ainda ficam só neste navegador (campanhasStore usa localStorage).
+          Aviso honesto até existir tabela/endpoints por clínica no servidor. */}
+      <div className="flex items-start gap-3 rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm">
+        <Info className="h-4 w-4 mt-0.5 shrink-0 text-warning" />
+        <div className="space-y-0.5">
+          <p className="font-medium text-foreground">
+            Modo demonstração — contagem de cliques, leads e vendas em breve
+          </p>
+          <p className="text-muted-foreground">
+            As campanhas criadas aqui ficam salvas só neste navegador: outros computadores e celulares
+            da clínica não as veem. Os números de cliques, leads e vendas ainda não são medidos de verdade.
+          </p>
+        </div>
       </div>
 
       {campanhas.length === 0 ? (
@@ -138,8 +153,8 @@ export function CampanhasManager() {
                   <Stat icon={DollarSign} value={m.conversoes} label="vendas" />
                 </div>
 
-                {/* Actions — slide up on hover */}
-                <div className="flex gap-2 mt-4 opacity-0 translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-200">
+                {/* Ações — sempre visíveis no celular; no desktop sobem com hover */}
+                <div className="flex gap-2 mt-4 opacity-100 translate-y-0 md:opacity-0 md:translate-y-1 md:group-hover:opacity-100 md:group-hover:translate-y-0 md:group-focus-within:opacity-100 md:group-focus-within:translate-y-0 transition-all duration-200">
                   <Button
                     size="sm"
                     variant="secondary"
@@ -155,6 +170,7 @@ export function CampanhasManager() {
                     className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
                     onClick={(e) => { e.stopPropagation(); setDeleteId(c.id); }}
                     aria-label="Excluir campanha"
+                    title="Excluir campanha"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </Button>

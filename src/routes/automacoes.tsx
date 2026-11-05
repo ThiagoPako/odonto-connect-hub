@@ -10,7 +10,7 @@ import {
   Workflow, Target, ShieldCheck,
 } from "lucide-react";
 import { AutomationReportPanel } from "@/components/AutomationReportPanel";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   mockAutomationFlows, automationTypes, triggerOptions, delayOptions,
   availableVariables, messageTemplates, preConfiguredSolutions,
@@ -49,6 +49,20 @@ function AutomacoesPage() {
   const [followupConfig, setFollowupConfig] = useState<FollowupAutomationConfig | null>(null);
   const [loadingConfig, setLoadingConfig] = useState(true);
   const [solutionCounts, setSolutionCounts] = useState<Record<string, number>>({});
+  // Trava contra clique duplo: o fluxo só entra na lista depois que o servidor responde,
+  // então sem isso dois cliques rápidos criariam dois fluxos iguais.
+  const creatingRef = useRef(false);
+  const [creating, setCreating] = useState(false);
+  const beginCreate = () => {
+    if (creatingRef.current) return false;
+    creatingRef.current = true;
+    setCreating(true);
+    return true;
+  };
+  const endCreate = () => {
+    creatingRef.current = false;
+    setCreating(false);
+  };
 
   // Load flows from API
   useEffect(() => {
@@ -111,6 +125,7 @@ function AutomacoesPage() {
   };
 
   const duplicateFlow = (flow: AutomationFlow) => {
+    if (!beginCreate()) return;
     const newFlow: AutomationFlow = {
       ...flow,
       id: `af${Date.now()}`,
@@ -120,13 +135,18 @@ function AutomacoesPage() {
       createdAt: new Date().toLocaleDateString("pt-BR"),
       steps: flow.steps.map(s => ({ ...s, id: `s${Date.now()}-${Math.random().toString(36).slice(2, 6)}` })),
     };
-    setFlows((prev) => [newFlow, ...prev]);
-    setSelectedFlow(newFlow);
-    toast.success(`Fluxo duplicado: "${newFlow.name}"`);
-    automationsApi.createFlow(newFlow).then(({ error }) => { if (error) toast.error("A cópia não foi salva no servidor: " + error); });
+    // Só entra na lista depois que o servidor salvou
+    automationsApi.createFlow(newFlow).then(({ error }) => {
+      endCreate();
+      if (error) { toast.error("Não foi possível duplicar o fluxo: " + error); return; }
+      setFlows((prev) => [newFlow, ...prev]);
+      setSelectedFlow(newFlow);
+      toast.success(`Fluxo duplicado: "${newFlow.name}" (desligado)`);
+    });
   };
 
   const createNewFlow = () => {
+    if (!beginCreate()) return;
     const newFlow: AutomationFlow = {
       id: `af${Date.now()}`,
       name: "Novo Fluxo",
@@ -140,11 +160,14 @@ function AutomacoesPage() {
       stats: { sent: 0, responded: 0, converted: 0 },
       createdAt: new Date().toLocaleDateString("pt-BR"),
     };
-    setFlows((prev) => [newFlow, ...prev]);
-    setEditingFlow(newFlow);
-    setSelectedFlow(newFlow);
-    toast.success("Novo fluxo criado! Edite os detalhes.");
-    automationsApi.createFlow(newFlow).then(({ error }) => { if (error) toast.error("O fluxo não foi salvo no servidor: " + error); });
+    automationsApi.createFlow(newFlow).then(({ error }) => {
+      endCreate();
+      if (error) { toast.error("Não foi possível criar o fluxo: " + error); return; }
+      setFlows((prev) => [newFlow, ...prev]);
+      setEditingFlow(newFlow);
+      setSelectedFlow(newFlow);
+      toast.success("Fluxo criado (desligado). Edite os detalhes e ligue quando quiser começar a enviar.");
+    });
   };
 
   const activateSolution = (solution: PreConfiguredSolution) => {
@@ -157,6 +180,7 @@ function AutomacoesPage() {
       toast.info(`Fluxo "${existing.name}" já existe. Abrindo para edição.`);
       return;
     }
+    if (!beginCreate()) return;
     const newFlow: AutomationFlow = {
       id: `af${Date.now()}`,
       name: solution.name,
@@ -168,12 +192,15 @@ function AutomacoesPage() {
       stats: { sent: 0, responded: 0, converted: 0 },
       createdAt: new Date().toLocaleDateString("pt-BR"),
     };
-    setFlows((prev) => [newFlow, ...prev]);
-    setActiveTab("flows");
-    setSelectedFlow(newFlow);
-    setEditingFlow(newFlow);
-    toast.success(`Solução "${solution.name}" ativada! Personalize as mensagens.`);
-    automationsApi.createFlow(newFlow).then(({ error }) => { if (error) toast.error("O fluxo não foi salvo no servidor: " + error); });
+    automationsApi.createFlow(newFlow).then(({ error }) => {
+      endCreate();
+      if (error) { toast.error(`Não foi possível criar o fluxo "${solution.name}": ` + error); return; }
+      setFlows((prev) => [newFlow, ...prev]);
+      setActiveTab("flows");
+      setSelectedFlow(newFlow);
+      setEditingFlow(newFlow);
+      toast.success(`Fluxo "${solution.name}" criado (desligado). Revise as mensagens e ligue para começar a enviar.`);
+    });
   };
 
   const saveEditedFlow = (updated: AutomationFlow) => {
@@ -219,13 +246,13 @@ function AutomacoesPage() {
           <div className="relative z-10">
             <h1 className="text-xl font-bold text-primary-foreground font-heading mb-1">Automação Inteligente</h1>
             <p className="text-sm text-primary-foreground/80 max-w-md">
-              Engaje pacientes automaticamente com fluxos personalizados de WhatsApp, SMS e e-mail.
+              Engaje pacientes automaticamente com fluxos personalizados de WhatsApp. SMS e e-mail em breve.
             </p>
           </div>
         </div>
 
         {/* Tab switcher — pill style */}
-        <div className="flex items-center gap-1.5 bg-card rounded-2xl p-1.5 w-fit border border-border shadow-card">
+        <div className="flex items-center gap-1.5 bg-card rounded-2xl p-1.5 w-fit max-w-full overflow-x-auto border border-border shadow-card">
           {([
             { key: "solutions" as const, label: "Soluções", icon: Rocket, count: preConfiguredSolutions.length },
             { key: "flows" as const, label: "Fluxos", icon: Zap, count: flows.length },
@@ -336,9 +363,10 @@ function AutomacoesPage() {
             </div>
             <button
               onClick={createNewFlow}
-              className="flex items-center gap-2 h-9 px-5 rounded-xl gradient-primary text-primary-foreground text-xs font-semibold hover:opacity-90 transition-all shadow-glow-primary hover-lift"
+              disabled={creating}
+              className="flex items-center gap-2 h-9 px-5 rounded-xl gradient-primary text-primary-foreground text-xs font-semibold hover:opacity-90 transition-all shadow-glow-primary hover-lift disabled:opacity-60 disabled:pointer-events-none"
             >
-              <Plus className="h-4 w-4" /> Novo Fluxo
+              <Plus className="h-4 w-4" /> {creating ? "Criando..." : "Novo Fluxo"}
             </button>
           </div>
         </div>
@@ -352,7 +380,7 @@ function AutomacoesPage() {
                   <Zap className="h-7 w-7 text-muted-foreground/40" />
                 </div>
                 <p className="text-sm font-medium text-muted-foreground mb-3">Nenhum fluxo encontrado</p>
-                <button onClick={createNewFlow} className="text-xs text-primary hover:underline font-semibold">
+                <button onClick={createNewFlow} disabled={creating} className="text-xs text-primary hover:underline font-semibold disabled:opacity-60">
                   + Criar primeiro fluxo
                 </button>
               </div>
@@ -396,7 +424,7 @@ function AutomacoesPage() {
                 <p className="text-xs text-muted-foreground max-w-xs mb-5">
                   Clique em um fluxo ao lado para visualizar detalhes, métricas e editar mensagens.
                 </p>
-                <button onClick={createNewFlow} className="flex items-center gap-2 h-9 px-5 rounded-xl gradient-primary text-primary-foreground text-xs font-semibold hover:opacity-90 transition-all shadow-glow-primary hover-lift">
+                <button onClick={createNewFlow} disabled={creating} className="flex items-center gap-2 h-9 px-5 rounded-xl gradient-primary text-primary-foreground text-xs font-semibold hover:opacity-90 transition-all shadow-glow-primary hover-lift disabled:opacity-60 disabled:pointer-events-none">
                   <Plus className="h-4 w-4" /> Criar Novo Fluxo
                 </button>
               </div>
@@ -1051,8 +1079,9 @@ function FlowEditor({
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="whatsapp">📱 WhatsApp</SelectItem>
-                          <SelectItem value="sms">💬 SMS</SelectItem>
-                          <SelectItem value="email">📧 E-mail</SelectItem>
+                          {/* O servidor só envia por WhatsApp; SMS/e-mail ficam visíveis mas bloqueados */}
+                          <SelectItem value="sms" disabled>💬 SMS (em breve)</SelectItem>
+                          <SelectItem value="email" disabled>📧 E-mail (em breve)</SelectItem>
                         </SelectContent>
                       </Select>
 
@@ -1164,7 +1193,7 @@ function FlowEditor({
 
 function StepItem({ step, isLast, index }: { step: AutomationStep; isLast: boolean; index: number }) {
   const channelIcon = step.channel === "whatsapp" ? MessageSquare : step.channel === "sms" ? Smartphone : Mail;
-  const channelLabel = step.channel === "whatsapp" ? "WhatsApp" : step.channel === "sms" ? "SMS" : "E-mail";
+  const channelLabel = step.channel === "whatsapp" ? "WhatsApp" : step.channel === "sms" ? "SMS (em breve, não envia)" : "E-mail (em breve, não envia)";
   const channelColor = step.channel === "whatsapp" ? "text-success" : step.channel === "sms" ? "text-chart-2" : "text-chart-4";
 
   return (
@@ -1352,7 +1381,7 @@ function SolutionsGrid({
           const isConfigured = !!existingFlow;
           const iconData = solutionIconMap[sol.type] || { icon: Zap, gradient: "from-primary to-primary-glow", bg: "bg-primary/10" };
           const IconComp = iconData.icon;
-          const patientCount = counts[sol.type] ?? sol.totalPacientes ?? 0;
+          const patientCount: number | string = counts[sol.type] ?? "—";
 
           const handleToggle = () => {
             if (!isConfigured) {
