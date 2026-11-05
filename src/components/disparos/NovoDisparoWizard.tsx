@@ -18,6 +18,9 @@ interface NovoDisparoWizardProps {
   editData?: DisparoProgramado | null;
 }
 
+/** Limite por envio usado pelo servidor (capacidade_diaria padrão; teto 500 em resolveCampaignAudience). */
+const CAPACIDADE_POR_ENVIO = 232;
+
 const steps = [
   { id: 1, label: "Público", icon: Users },
   { id: 2, label: "Conteúdo", icon: FileText },
@@ -86,9 +89,13 @@ export function NovoDisparoWizard({ open, onClose, onSave, editData }: NovoDispa
   // A contagem real de contatos só é conhecida no envio (o servidor grava em contatos_alcancaveis).
   // Antes havia números fixos (255/156/89/12) que também limitavam o envio via capacidade diária.
   const contatosAlcancaveis = editData?.contatosAlcancaveis ?? 0;
-  const capacidadeDiaria = 232;
+  const capacidadeDiaria = CAPACIDADE_POR_ENVIO;
 
-  const hoje = new Date().toISOString().slice(0, 10);
+  // Data local (toISOString é UTC: depois das 21h em Brasília já seria "amanhã").
+  const agora = new Date();
+  const hoje = `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, "0")}-${String(agora.getDate()).padStart(2, "0")}`;
+  // Editar uma campanha única já vencida (ex.: só o nome) continua possível se a data não mudou.
+  const dataPassadaInalterada = isEditing && !!editData?.dataInicio && dataInicio === editData.dataInicio;
   const stepErrors: Record<number, string[]> = {
     1: [
       ...(!numeroEnvio ? ["Escolha o número de WhatsApp que vai enviar."] : []),
@@ -104,7 +111,7 @@ export function NovoDisparoWizard({ open, onClose, onSave, editData }: NovoDispa
           ...(!campanhaPerpetua && dataInicio && dataFim && dataFim < dataInicio ? ["A data de término deve ser depois da data de início."] : []),
         ]
       : [
-          ...(!dataInicio ? ["Escolha a data do envio."] : dataInicio < hoje ? ["A data do envio já passou."] : []),
+          ...(!dataInicio ? ["Escolha a data do envio."] : dataInicio < hoje && !dataPassadaInalterada ? ["A data do envio já passou."] : []),
           ...(horarioFim <= horarioInicio ? ["O horário de término deve ser depois do início."] : []),
         ],
     4: [],
@@ -301,7 +308,7 @@ function StepPublico({
         <span>
           {contatosAlcancaveis > 0
             ? <>No último envio, <strong>{contatosAlcancaveis}</strong> contatos se encaixaram neste público.</>
-            : "O número exato de contatos é calculado na hora do envio, com a base atual da clínica."}
+            : `O número exato de contatos é calculado na hora do envio, com a base atual da clínica: até ${CAPACIDADE_POR_ENVIO} contatos deste público por envio.`}
         </span>
       </div>
 
@@ -678,7 +685,7 @@ function StepRevisao({
       <div className="bg-muted/50 rounded-xl p-4 space-y-3">
         <ReviewRow label="Nome" value={nomeDisparo || "Sem nome"} />
         <ReviewRow label="Público" value={publicoLabel} />
-        <ReviewRow label="Contatos" value={contatosAlcancaveis > 0 ? `${contatosAlcancaveis} no último envio` : "calculado no envio"} />
+        <ReviewRow label="Contatos" value={contatosAlcancaveis > 0 ? `${contatosAlcancaveis} no último envio` : `até ${CAPACIDADE_POR_ENVIO} por envio`} />
         <ReviewRow label="Tipo" value={tipo === "recorrente" ? "Campanha Recorrente" : "Campanha Única"} />
         {tipo === "recorrente" && <ReviewRow label="Dias" value={diasSemana.join(", ") || "Nenhum"} />}
         <ReviewRow label="Horário" value={`${horarioInicio} — ${horarioFim}`} />

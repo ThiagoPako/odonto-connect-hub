@@ -110,7 +110,7 @@ function DisparosPage() {
     if (executingId) return;
     const ok = await confirm({
       title: `Enviar "${disparo.nome}" agora?`,
-      description: `A mensagem entra na fila do WhatsApp${disparo.numeroEnvio ? ` (número ${disparo.numeroEnvio})` : ""} para todo o público "${publicoLabelOf(disparo.publico)}". Quem já recebeu ou pediu para sair é ignorado. O envio é gradual, em horário comercial, e o disparo fica ativo.`,
+      description: `A mensagem entra na fila do WhatsApp${disparo.numeroEnvio ? ` (número ${disparo.numeroEnvio})` : ""} para até ${Math.min(disparo.capacidadeDiaria || 232, 500)} contatos deste público ("${publicoLabelOf(disparo.publico)}") por envio. Quem já recebeu ou pediu para sair é ignorado. O envio é gradual, em horário comercial, e o disparo fica ativo.`,
       confirmLabel: "Enviar agora",
       destructive: true,
     });
