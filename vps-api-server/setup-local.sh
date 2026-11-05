@@ -4,6 +4,13 @@
 # Uso: bash vps-api-server/setup-local.sh [--recriar]   — NUNCA aponte para produção.
 set -euo pipefail
 cd "$(dirname "$0")"
+# TRAVA: o server.mjs faz dotenv.config({ path: .env, override: true }); um .env copiado da VPS
+# sobrescreveria PG_*/EVOLUTION_* daqui e o setup falaria com o banco/WhatsApp de PRODUÇÃO.
+if [[ -f .env ]]; then
+  echo "ABORTADO: existe vps-api-server/.env (pode ser da produção) e o server.mjs o carrega com override." >&2
+  echo "Mova-o para fora (ex.: mv .env ~/env-vps.bak), rode o setup e só depois restaure." >&2
+  exit 1
+fi
 export PATH="/opt/homebrew/opt/postgresql@16/bin:$PATH"
 DB="${ODONTO_LOCAL_DB:-odonto_local}"
 [[ "${1:-}" == "--recriar" ]] && dropdb --if-exists "$DB"
@@ -20,7 +27,7 @@ ORDEM=(migration.sql migration-chat-messages.sql migration-push-subscriptions.sq
   migration-whatsapp-fase1.sql migration-attendance-sessions.sql migration-clinicorp-multitenant.sql migration-seguranca-p0.sql)
 for f in "${ORDEM[@]}"; do [[ -f "$f" ]] && psql -q -d "$DB" -f "$f" >/dev/null 2>&1 || true; done
 # O servidor também migra no boot (ex.: adiciona tenant_id em crm_leads): sobe uma vez numa porta de descarte.
-if [[ -f .env ]] || true; then
+if true; then
   PG_DATABASE="$DB" PG_USER=odonto_user PG_PASSWORD=local_test_pw PG_HOST=localhost JWT_SECRET=local-setup API_PORT=3099 EVOLUTION_API_URL=http://127.0.0.1:9 \
     node server.mjs >/dev/null 2>&1 & SRV=$!
   sleep 14; kill "$SRV" 2>/dev/null || true; wait "$SRV" 2>/dev/null || true
