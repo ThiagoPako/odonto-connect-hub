@@ -16338,6 +16338,63 @@ if (process.env.NODE_ENV !== 'test') {
   let checkedStatements = 0;
   try {
     const migrations = [
+      // ─── Exames (radiologia): tabelas base. Mesmo desenho de migration-exames.sql, sem o
+      // catálogo de exemplo. Sem elas o módulo inteiro responde 500. ───
+      `CREATE TABLE IF NOT EXISTS exame_tipos (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        tenant_id uuid REFERENCES tenants(id) ON DELETE CASCADE,
+        nome text NOT NULL,
+        categoria text,
+        codigo_tiss text,
+        preco numeric(10,2) DEFAULT 0,
+        ativo boolean NOT NULL DEFAULT true,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now(),
+        UNIQUE (tenant_id, nome)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_exame_tipos_tenant ON exame_tipos(tenant_id)`,
+      `CREATE TABLE IF NOT EXISTS exames (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        tenant_id uuid REFERENCES tenants(id) ON DELETE CASCADE,
+        codigo text,
+        paciente_id uuid REFERENCES pacientes(id) ON DELETE SET NULL,
+        dentista_solicitante_id uuid REFERENCES dentistas(id) ON DELETE SET NULL,
+        clinica_origem text,
+        tipo_exame_id uuid REFERENCES exame_tipos(id) ON DELETE SET NULL,
+        tipo_nome text NOT NULL,
+        status text NOT NULL DEFAULT 'novo'
+          CHECK (status IN ('novo','em_andamento','aguardando_laudo','concluido','entregue','cancelado')),
+        prioridade text NOT NULL DEFAULT 'normal'
+          CHECK (prioridade IN ('baixa','normal','alta','urgente')),
+        data_solicitacao timestamptz NOT NULL DEFAULT now(),
+        data_realizacao timestamptz,
+        data_entrega timestamptz,
+        valor numeric(10,2) DEFAULT 0,
+        modo_entrega text,
+        laudo_texto text,
+        arquivo_url text,
+        observacoes text,
+        terceirizado boolean NOT NULL DEFAULT false,
+        fornecedor_terc text,
+        created_by uuid REFERENCES profiles(id) ON DELETE SET NULL,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now()
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_exames_tenant ON exames(tenant_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_exames_status ON exames(tenant_id, status)`,
+      `CREATE INDEX IF NOT EXISTS idx_exames_paciente ON exames(paciente_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_exames_data_solic ON exames(tenant_id, data_solicitacao DESC)`,
+      `CREATE OR REPLACE FUNCTION exames_touch_updated_at() RETURNS trigger AS $$
+       BEGIN NEW.updated_at = now(); RETURN NEW; END;
+       $$ LANGUAGE plpgsql`,
+      `DO $$ BEGIN
+         IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_exames_updated') THEN
+           CREATE TRIGGER trg_exames_updated BEFORE UPDATE ON exames FOR EACH ROW EXECUTE FUNCTION exames_touch_updated_at();
+         END IF;
+         IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_exame_tipos_updated') THEN
+           CREATE TRIGGER trg_exame_tipos_updated BEFORE UPDATE ON exame_tipos FOR EACH ROW EXECUTE FUNCTION exames_touch_updated_at();
+         END IF;
+       END $$`,
       // ─── Exames: imagens/arquivos com dono (migration-exame-arquivos.sql) ───
       `CREATE TABLE IF NOT EXISTS exame_arquivos (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
