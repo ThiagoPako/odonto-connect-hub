@@ -27,6 +27,11 @@ jobs:
             echo "Previous commit (rollback target): $PREVIOUS_COMMIT"
             echo "$PREVIOUS_COMMIT" > /root/odonto-connect/.last-good-commit.tmp
 
+            # Frontend estático servido pelo nginx: pasta atual (link simbólico) = alvo de rollback
+            FE_ROOT=/var/www/odonto-frontend
+            PREVIOUS_RELEASE=$(readlink -f "$FE_ROOT/current" 2>/dev/null || true)
+            echo "Previous frontend release: ${PREVIOUS_RELEASE:-nenhum}"
+
             git fetch origin main
             NEW_COMMIT=$(git rev-parse origin/main)
             echo "New commit: $NEW_COMMIT"
@@ -50,12 +55,16 @@ jobs:
                 npm ci 2>/dev/null || npm install
               fi
 
-              echo "Rebuilding frontend for rollback commit..."
-              npm run build || echo "WARNING: rollback build failed — keeping previous dist if present"
+              echo "Restoring previous frontend release..."
+              if [ -n "$PREVIOUS_RELEASE" ] && [ -d "$PREVIOUS_RELEASE" ]; then
+                ln -sfn "$PREVIOUS_RELEASE" "$FE_ROOT/current.new" && mv -T "$FE_ROOT/current.new" "$FE_ROOT/current"
+              else
+                echo "WARNING: sem release anterior do frontend — mantendo a atual"
+              fi
 
               echo "Restarting services with rollback code..."
               pm2 delete odonto-connect odonto-api 2>/dev/null || true
-              pm2 start /root/odonto-connect/ecosystem.config.cjs --update-env
+              pm2 start /root/odonto-connect/ecosystem.config.cjs --only odonto-api --update-env
               sleep 3
 
               # Verify rollback brought API back
@@ -86,8 +95,9 @@ jobs:
               npm ci 2>/dev/null || npm install
             fi
 
-            # ─── Build frontend ────────────────────────────────────────────
-            npm run build
+            # ─── Build frontend (SPA estático: dist/client com _shell.html; sem Worker/SSR) ───
+            VITE_STATIC_SPA=1 npm run build
+            test -f dist/client/_shell.html
 
             # ─── Variáveis do backend (automático, sem copiar/colar) ──────
             # Gera o segredo do webhook do WhatsApp uma única vez, direto na
@@ -133,9 +143,20 @@ jobs:
               false
             }
 
-            # ─── Restart services ──────────────────────────────────────────
+            # ─── Publicar o frontend: pasta nova + troca atômica do link "current" ─────
+            REL="$FE_ROOT/releases/$(date +%Y%m%d-%H%M%S)-${NEW_COMMIT:0:7}"
+            mkdir -p "$FE_ROOT/releases"
+            cp -a dist/client/. "$REL"
+            test -f "$REL/_shell.html"
+            ln -sfn "$REL" "$FE_ROOT/current.new"
+            mv -T "$FE_ROOT/current.new" "$FE_ROOT/current"
+            echo "Frontend publicado em $REL"
+            # mantém as 5 releases mais recentes (a atual e a anterior sempre ficam)
+            ls -1dt "$FE_ROOT"/releases/* | tail -n +6 | xargs -r rm -rf
+
+            # ─── Restart services (só a API; o frontend é estático no nginx) ─────
             pm2 delete odonto-connect odonto-api 2>/dev/null || true
-            pm2 start /root/odonto-connect/ecosystem.config.cjs --update-env
+            pm2 start /root/odonto-connect/ecosystem.config.cjs --only odonto-api --update-env
 
             # ─── Wait for API to be ready (up to 30s) ──────────────────────
             echo "Waiting for API healthcheck (/api/health)..."
@@ -206,23 +227,23 @@ jobs:
               false
             fi
 
-            # ─── Wait for frontend to be ready (up to 20s) ─────────────────
-            echo "Waiting for frontend healthcheck..."
+            # ─── Frontend via nginx (não depende da porta 3000) ─────────────────
+            echo "Waiting for frontend via nginx..."
             FE_READY=0
             for i in $(seq 1 10); do
-              FE_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3000/login 2>/dev/null || echo "000")
-              if [ "$FE_STATUS" = "200" ]; then
-                echo "Frontend ready (HTTP $FE_STATUS) after ${i}x2s"
+              FE_STATUS=$(curl -s -o /tmp/fe-check.html -w "%{http_code}" --resolve odontoconnect.tech:443:127.0.0.1 https://odontoconnect.tech/login 2>/dev/null || echo "000")
+              if [ "$FE_STATUS" = "200" ] && grep -q '/assets/' /tmp/fe-check.html; then
+                echo "Frontend ready via nginx (HTTP $FE_STATUS) after ${i}x2s"
                 FE_READY=1
                 break
               fi
               echo "  attempt $i: HTTP $FE_STATUS — retrying in 2s..."
               sleep 2
             done
+            rm -f /tmp/fe-check.html
 
             if [ "$FE_READY" != "1" ]; then
-              echo "ERROR: Frontend not responding"
-              pm2 logs odonto-connect --lines 20 --nostream 2>/dev/null || true
+              echo "ERROR: Frontend not served by nginx"
               false
             fi
 

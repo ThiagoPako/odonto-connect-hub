@@ -162,7 +162,9 @@ function devServerFnErrorLogger() {
 
 export default defineConfig(({ command, mode }) => {
   // Cloudflare Workers plugin needed for Lovable published deploys (SSR runs on Workers)
-  const useCloudflare = true;
+  // VITE_STATIC_SPA=1 (VPS/nginx): build 100% estático em dist/client, sem Worker. Padrão (Lovable): Cloudflare + SSR.
+  const staticSpa = process.env.VITE_STATIC_SPA === "1";
+  const useCloudflare = !staticSpa;
 
   const env = loadEnv(mode, process.cwd(), "VITE_");
   const envDefine: Record<string, string> = {};
@@ -202,7 +204,7 @@ export default defineConfig(({ command, mode }) => {
       devClientErrorLogger(),
       devServerFnErrorLogger(),
       ...(useCloudflare ? [cloudflare({ viteEnvironment: { name: "ssr" } })] : []),
-      tanstackStart(),
+      tanstackStart(staticSpa ? { spa: { enabled: true } } : undefined),
       viteReact(),
       mode === "development" && componentTagger(),
     ].filter(Boolean),

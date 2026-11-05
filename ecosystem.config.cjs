@@ -1,18 +1,6 @@
 module.exports = {
   apps: [
-    {
-      name: 'odonto-connect',
-      script: 'npm',
-      args: 'run preview -- --host 127.0.0.1 --port 3000',
-      cwd: '/root/odonto-connect',
-      restart_delay: 3000,
-      max_restarts: 10,
-      autorestart: true,
-      watch: false,
-      env: {
-        NODE_ENV: 'production',
-      },
-    },
+    // odonto-connect (vite preview, porta 3000) removido: o nginx serve o frontend estático (docs/operacao/frontend-nginx.md).
     {
       name: 'odonto-api',
       script: './vps-api-server/server.mjs',
