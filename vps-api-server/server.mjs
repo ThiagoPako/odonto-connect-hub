@@ -8473,7 +8473,9 @@ function isWithinBusinessHours(settings) {
 const tenantSettingsCache = new Map(); // `${tenantId}:${key}` -> { value, at }
 const TENANT_SETTINGS_TTL_MS = 60_000;
 
-async function getTenantSetting(tenantId, key) {
+// throwOnError: para envios automáticos — na falha de leitura lança em vez de devolver o
+// padrão, para o chamador pular o envio (o padrão pode ser "ligado" quando a clínica desligou).
+async function getTenantSetting(tenantId, key, { throwOnError = false } = {}) {
   if (!isValidTenantId(tenantId)) return null;
   const cacheKey = `${tenantId}:${key}`;
   const hit = tenantSettingsCache.get(cacheKey);
@@ -8491,6 +8493,7 @@ async function getTenantSetting(tenantId, key) {
     // para não fixar por 60 s um valor que não é o da clínica (ex.: follow-up desligado).
     if (err.code !== '42P01') {
       console.error(`⚠️ tenant_settings ${key}:`, err.message);
+      if (throwOnError) throw err;
       return null;
     }
   }
@@ -10039,8 +10042,8 @@ let followupAutomationConfig = {
   returnToQueueOnReply: true, // when client replies from recovery, return to queue with priority
 };
 
-async function getFollowupConfig(tenantId) {
-  const saved = (await getTenantSetting(tenantId, 'followup_automation')) || {};
+async function getFollowupConfig(tenantId, opts) {
+  const saved = (await getTenantSetting(tenantId, 'followup_automation', opts)) || {};
   const base = followupAutomationConfig;
   return {
     ...base, ...saved,
@@ -10066,7 +10069,8 @@ async function triggerFollowupAutomation(leadId, toStage) {
       return;
     }
     // Configuração da clínica do lead (o nome local sobrepõe o padrão do módulo).
-    const followupAutomationConfig = await getFollowupConfig(lead.tenant_id);
+    // Falha ao ler a configuração: não envia (o padrão é "ligado"); cai no catch abaixo.
+    const followupAutomationConfig = await getFollowupConfig(lead.tenant_id, { throwOnError: true });
     if (!followupAutomationConfig.enabled || !followupAutomationConfig.stages.includes(toStage)) return;
 
     const template = followupAutomationConfig.messages[toStage];
@@ -10355,8 +10359,8 @@ const SOLUTION_HOURS_DEFAULT = { inicio: '08:00', fim: '18:00', diasSemana: ['SE
 const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 const SOLUTION_DAYS = ['DOM','SEG','TER','QUA','QUI','SEX','SAB'];
 
-async function getSolutionHours(tenantId) {
-  return (await getTenantSetting(tenantId, 'solution_hours')) || SOLUTION_HOURS_DEFAULT;
+async function getSolutionHours(tenantId, opts) {
+  return (await getTenantSetting(tenantId, 'solution_hours', opts)) || SOLUTION_HOURS_DEFAULT;
 }
 
 // Horário em que os gatilhos automáticos podem enfileirar (relógio de São Paulo).
@@ -10985,37 +10989,58 @@ async function ensureTenantConfigSchema() {
 
 // A configuração global antiga (app_settings/system_settings) valia para todas as clínicas:
 // vira o ponto de partida de cada clínica existente, para nada mudar de comportamento na troca
-// (ex.: follow-up desligado não religa). Roda uma única vez (marcador em app_settings, gravado
-// na mesma instrução); não sobrescreve o que a clínica já gravou; clínicas criadas depois
-// começam no padrão do sistema, nunca na configuração de outra clínica.
+// (ex.: follow-up desligado não religa). Só campos sem texto livre: mensagens podem ter nome
+// ou endereço de uma clínica e não podem ir para as outras. Roda uma única vez por chave
+// (marcador em app_settings, gravado na mesma instrução); não sobrescreve o que a clínica já
+// gravou; clínicas criadas depois começam no padrão do sistema.
+const jsonbPick = (fields) =>
+  `jsonb_strip_nulls(jsonb_build_object(${fields.map(f => `'${f}', s.value -> '${f}'`).join(', ')}))`;
+const REAL_TENANTS_COUNT_SQL = '(SELECT COUNT(*) FROM tenants WHERE id::text <> ALL($3::text[]))';
+const ATTENDANCE_SAFE_FIELDS = [
+  'businessHours', 'autoGreetingEnabled', 'signatureEnabled', 'closingMessageEnabled',
+  'inactivityTimeout', 'inactivityMessageEnabled',
+];
 const GLOBAL_SETTINGS_TO_TENANTS = [
-  { table: 'app_settings', keys: ['attendance_settings', 'solution_hours'], marker: 'tenant_settings_copia_app_settings' },
-  { table: 'system_settings', keys: ['followup_automation'], marker: 'tenant_settings_copia_system_settings' },
+  { table: 'app_settings', key: 'solution_hours', value: 's.value' },
+  {
+    // Com uma única clínica real o objeto inteiro era dela; com várias, só os campos seguros.
+    table: 'app_settings', key: 'attendance_settings',
+    value: `CASE WHEN ${REAL_TENANTS_COUNT_SQL} = 1 THEN s.value ELSE ${jsonbPick(ATTENDANCE_SAFE_FIELDS)} END`,
+  },
+  {
+    // Sem messages: a linha global nunca foi aplicada e o seed tem texto promocional.
+    table: 'system_settings', key: 'followup_automation',
+    value: jsonbPick(['enabled', 'stages', 'delaySeconds', 'delayDays']),
+  },
 ];
 
 async function copyGlobalSettingsToTenants() {
-  for (const { table, keys, marker } of GLOBAL_SETTINGS_TO_TENANTS) {
+  for (const { table, key, value } of GLOBAL_SETTINGS_TO_TENANTS) {
     try {
       const { rowCount } = await pool.query(
         `WITH marcador AS (
            INSERT INTO app_settings (key, value, updated_at) VALUES ($1, '{"feito": true}'::jsonb, NOW())
            ON CONFLICT (key) DO NOTHING
            RETURNING key
+         ),
+         origem AS (
+           SELECT ${value} AS value FROM ${table} s
+            WHERE s.key = $2 AND jsonb_typeof(s.value) = 'object'
          )
          INSERT INTO tenant_settings (tenant_id, key, value, updated_at)
-         SELECT t.id, s.key, s.value, NOW()
-           FROM tenants t
-           JOIN ${table} s ON s.key = ANY($2::text[])
+         SELECT t.id, $2, o.value, NOW()
+           FROM tenants t CROSS JOIN origem o
           WHERE EXISTS (SELECT 1 FROM marcador)
             AND t.id::text <> ALL($3::text[])
+            AND o.value <> '{}'::jsonb
          ON CONFLICT (tenant_id, key) DO NOTHING`,
-        [marker, keys, [...PLACEHOLDER_TENANT_IDS]]
+        [`tenant_settings_copia_${key}`, key, [...PLACEHOLDER_TENANT_IDS]]
       );
-      if (rowCount) console.log(`   ⚙️ Configuração global (${table}) copiada para as clínicas: ${rowCount} registro(s)`);
+      if (rowCount) console.log(`   ⚙️ Configuração global ${key} copiada para as clínicas: ${rowCount} registro(s)`);
     } catch (e) {
       // Tabela de origem/destino ausente: a instrução inteira é desfeita (marcador incluso)
       // e a cópia é tentada de novo no próximo boot.
-      console.error(`[tenant-schema] cópia de ${table} para tenant_settings:`, e.message);
+      console.error(`[tenant-schema] cópia de ${key} para tenant_settings:`, e.message);
     }
   }
 }
@@ -11962,8 +11987,10 @@ async function processSolutionTriggers() {
       );
       for (const { tenant_id: solTenantId } of tenantRows) {
       if (!isValidTenantId(solTenantId)) continue;
-      // Horário de gatilhos da própria clínica.
-      if (!isWithinSolutionHours(await getSolutionHours(solTenantId), now)) continue;
+      // Horário de gatilhos da própria clínica; sem conseguir ler, pula a clínica neste ciclo.
+      let solHours;
+      try { solHours = await getSolutionHours(solTenantId, { throwOnError: true }); } catch { continue; }
+      if (!isWithinSolutionHours(solHours, now)) continue;
       const { rows: patients } = await pool.query(sol.query, [solTenantId, ...sol.params]);
       if (patients.length === 0) continue;
       let tenantTriggered = 0;
@@ -16292,6 +16319,6 @@ if (process.env.NODE_ENV !== 'test') {
 
 export { app, pool };
 // Exportados só para os testes de jobs (tests/jobs-metricas-isolamento.test.js).
-export { processSolutionTriggers, runWhatsAppJobHooks, ensureTenantConfigSchema };
+export { processSolutionTriggers, runWhatsAppJobHooks, ensureTenantConfigSchema, triggerFollowupAutomation };
 export function clearTenantSettingsCacheForTests() { tenantSettingsCache.clear(); }
 

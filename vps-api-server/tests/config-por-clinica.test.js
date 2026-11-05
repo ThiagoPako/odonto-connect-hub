@@ -15,7 +15,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.join(__dirname, '../.env') });
 
-const { app, pool, processSolutionTriggers, clearTenantSettingsCacheForTests, ensureTenantConfigSchema } = await import('../server.mjs');
+const { app, pool, processSolutionTriggers, clearTenantSettingsCacheForTests, ensureTenantConfigSchema, triggerFollowupAutomation } = await import('../server.mjs');
 const JWT_SECRET = process.env.JWT_SECRET;
 
 const tenantA = '11111111-1111-1111-1111-111111111111';
@@ -161,6 +161,45 @@ describe('Configurações por clínica (L4)', () => {
     });
   });
 
+  describe('envios automáticos com falha ao ler a configuração', () => {
+    const leadId = '77777777-7777-4777-8777-777777777777';
+    const mockLeitura = (falhar) => querySpy.mockImplementation((sql, params = []) => {
+      const text = String(sql);
+      sqlLog.push({ text, params });
+      if (/SELECT value FROM tenant_settings/.test(text)) {
+        if (falhar) return Promise.reject(Object.assign(new Error('timeout'), { code: '57014' }));
+        return Promise.resolve({ rows: [], rowCount: 0 });
+      }
+      if (/FROM crm_leads WHERE id = \$1/.test(text)) {
+        return Promise.resolve({ rows: [{ id: leadId, nome: 'Ana', telefone: '5511999990000', tenant_id: tenantA }], rowCount: 1 });
+      }
+      if (/SELECT DISTINCT tenant_id FROM automation_flows/.test(text)) {
+        return Promise.resolve({ rows: [{ tenant_id: tenantA }], rowCount: 1 });
+      }
+      if (/INSERT INTO automation_jobs/.test(text)) return Promise.resolve({ rows: [{ id: 'job1' }], rowCount: 1 });
+      return Promise.resolve({ rows: [], rowCount: 0 });
+    });
+    const enfileirou = () => sqlLog.some(q => /INSERT INTO automation_jobs/.test(q.text));
+
+    test('follow-up não é enfileirado quando a leitura falha (não cai no padrão ligado)', async () => {
+      mockLeitura(true);
+      await triggerFollowupAutomation(leadId, 'followup');
+      expect(enfileirou()).toBe(false);
+    });
+
+    test('controle: leitura ok sem registro usa o padrão e enfileira', async () => {
+      mockLeitura(false);
+      await triggerFollowupAutomation(leadId, 'followup');
+      expect(enfileirou()).toBe(true);
+    });
+
+    test('gatilhos de horário pulam a clínica quando a leitura falha', async () => {
+      mockLeitura(true);
+      await processSolutionTriggers();
+      expect(sqlLog.filter(q => /LIMIT 100/.test(q.text))).toHaveLength(0);
+    });
+  });
+
   describe('boot: tenant_settings e cópia da configuração global', () => {
     const queries = () => sqlLog.map(q => q.text);
 
@@ -172,20 +211,52 @@ describe('Configurações por clínica (L4)', () => {
       expect(create).toMatch(/REFERENCES tenants\(id\) ON DELETE CASCADE/);
     });
 
-    test('copia app_settings e system_settings para todas as clínicas, uma vez, sem sobrescrever', async () => {
+    const copias = () => {
+      const lista = sqlLog.filter(q => /INSERT INTO tenant_settings/.test(q.text) && /FROM tenants t/.test(q.text));
+      return Object.fromEntries(lista.map(q => [q.params[1], q]));
+    };
+
+    test('copia cada chave uma vez, para todas as clínicas reais, sem sobrescrever', async () => {
       await ensureTenantConfigSchema();
-      const copias = sqlLog.filter(q => /INSERT INTO tenant_settings/.test(q.text) && /FROM tenants t/.test(q.text));
-      expect(copias).toHaveLength(2);
-      const porTabela = Object.fromEntries(copias.map(q => [q.text.match(/JOIN (\w+) s/)[1], q]));
-      expect(porTabela.app_settings.params[1]).toEqual(['attendance_settings', 'solution_hours']);
-      expect(porTabela.system_settings.params[1]).toEqual(['followup_automation']);
-      for (const q of copias) {
+      const c = copias();
+      expect(Object.keys(c).sort()).toEqual(['attendance_settings', 'followup_automation', 'solution_hours']);
+      expect(c.solution_hours.text).toMatch(/FROM app_settings s/);
+      expect(c.attendance_settings.text).toMatch(/FROM app_settings s/);
+      expect(c.followup_automation.text).toMatch(/FROM system_settings s/);
+      for (const q of Object.values(c)) {
         expect(q.text).toMatch(/ON CONFLICT \(tenant_id, key\) DO NOTHING/); // não sobrescreve
         expect(q.text).toMatch(/INSERT INTO app_settings[\s\S]*ON CONFLICT \(key\) DO NOTHING[\s\S]*RETURNING/); // marcador
         expect(q.text).toMatch(/WHERE EXISTS \(SELECT 1 FROM marcador\)/); // só na primeira vez
-        expect(q.text).not.toMatch(/tenant_id\s*=/); // todas as clínicas, não só uma
+        expect(q.text).toMatch(/jsonb_typeof\(s\.value\) = 'object'/); // lê como objeto JSONB
+        expect(q.params[0]).toBe(`tenant_settings_copia_${q.params[1]}`);
         expect(q.params[2]).toEqual(expect.arrayContaining(['00000000-0000-0000-0000-000000000001']));
       }
+    });
+
+    test('follow-up: copia só enabled, stages, delaySeconds e delayDays (nunca messages)', async () => {
+      await ensureTenantConfigSchema();
+      const { text } = copias().followup_automation;
+      for (const campo of ['enabled', 'stages', 'delaySeconds', 'delayDays']) {
+        expect(text).toContain(`'${campo}', s.value -> '${campo}'`);
+      }
+      expect(text).not.toMatch(/messages/);
+      expect(text).not.toMatch(/SELECT s\.value AS value/);
+    });
+
+    test('atendimento: com várias clínicas só campos sem texto livre; com uma, o objeto inteiro', async () => {
+      await ensureTenantConfigSchema();
+      const { text } = copias().attendance_settings;
+      expect(text).toMatch(/CASE WHEN \(SELECT COUNT\(\*\) FROM tenants WHERE id::text <> ALL\(\$3::text\[\]\)\) = 1 THEN s\.value ELSE/);
+      const ramoVarias = text.slice(text.indexOf(' ELSE '));
+      for (const campo of ['businessHours', 'autoGreetingEnabled', 'signatureEnabled']) expect(ramoVarias).toContain(`'${campo}'`);
+      for (const campo of ['welcomeMessage', 'offHoursMessage', 'quickReplies', 'signatureTemplate', 'closingMessage', 'inactivityMessage']) {
+        expect(ramoVarias).not.toContain(`'${campo}'`);
+      }
+    });
+
+    test('horário dos gatilhos: copia o valor inteiro', async () => {
+      await ensureTenantConfigSchema();
+      expect(copias().solution_hours.text).toMatch(/SELECT s\.value AS value FROM app_settings s/);
     });
 
     test('sem permissão de DDL ou sem tabela de origem: o boot segue', async () => {
@@ -201,7 +272,7 @@ describe('Configurações por clínica (L4)', () => {
         return Promise.resolve({ rows: [], rowCount: 0 });
       });
       await expect(ensureTenantConfigSchema()).resolves.toBeUndefined();
-      expect(sqlLog.filter(q => /INSERT INTO tenant_settings/.test(q.text))).toHaveLength(2);
+      expect(sqlLog.filter(q => /INSERT INTO tenant_settings/.test(q.text))).toHaveLength(3);
     });
   });
 
