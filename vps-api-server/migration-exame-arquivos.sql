@@ -21,14 +21,16 @@ CREATE TABLE IF NOT EXISTS exame_arquivos (
 CREATE INDEX IF NOT EXISTS idx_exame_arquivos_tenant_exame ON exame_arquivos (tenant_id, exame_id);
 CREATE INDEX IF NOT EXISTS idx_exame_arquivos_tenant_paciente ON exame_arquivos (tenant_id, paciente_id);
 
-ALTER TABLE exame_arquivos ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS exame_arquivos_tenant_isolation ON exame_arquivos;
-CREATE POLICY exame_arquivos_tenant_isolation ON exame_arquivos
-  USING (
-    current_setting('app.is_super_admin', true) = 'true'
-    OR tenant_id::text = current_setting('app.current_tenant_id', true)
-  )
-  WITH CHECK (
-    current_setting('app.is_super_admin', true) = 'true'
-    OR tenant_id::text = current_setting('app.current_tenant_id', true)
-  );
+-- Quem cria a tabela é a própria API no boot (dona = usuário da API). Este arquivo NÃO está
+-- no deploy.yml; se for rodado à mão como postgres, a tabela passa para o dono de pacientes,
+-- para a API não receber "permissão negada".
+-- RLS fica DESLIGADA por enquanto: a rota de link assinado roda sem contexto de clínica e a
+-- RLS entra junto com a virada do FORCE (migration-force-rls.sql). O filtro por tenant_id
+-- está em todas as queries da API.
+DO $$
+DECLARE dono TEXT := (SELECT tableowner FROM pg_tables WHERE schemaname = 'public' AND tablename = 'pacientes');
+BEGIN
+  IF dono IS NOT NULL AND (SELECT tableowner FROM pg_tables WHERE schemaname = 'public' AND tablename = 'exame_arquivos') <> dono THEN
+    EXECUTE format('ALTER TABLE public.exame_arquivos OWNER TO %I', dono);
+  END IF;
+END $$;

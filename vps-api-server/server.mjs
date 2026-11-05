@@ -15990,7 +15990,7 @@ app.delete('/api/exames/:id', async (req, res) => {
     // não é apagado; a clínica cancela o exame. Só pedidos sem resultado podem ser excluídos.
     const { rows } = await pool.query(
       `SELECT (COALESCE(btrim(e.laudo_texto), '') <> '' OR e.arquivo_url IS NOT NULL
-               OR EXISTS (SELECT 1 FROM exame_arquivos a WHERE a.exame_id = e.id AND a.tenant_id = e.tenant_id)) AS tem_resultado
+               OR EXISTS (SELECT 1 FROM exame_arquivos a WHERE a.exame_id = e.id AND a.tenant_id = e.tenant_id AND a.removido_em IS NULL)) AS tem_resultado
          FROM exames e WHERE e.id=$1 AND e.tenant_id=$2`,
       [req.params.id, user.tenant_id]
     );
@@ -16001,7 +16001,7 @@ app.delete('/api/exames/:id', async (req, res) => {
     await pool.query(
       `DELETE FROM exames e WHERE e.id=$1 AND e.tenant_id=$2
           AND COALESCE(btrim(e.laudo_texto), '') = '' AND e.arquivo_url IS NULL
-          AND NOT EXISTS (SELECT 1 FROM exame_arquivos a WHERE a.exame_id = e.id AND a.tenant_id = e.tenant_id)`,
+          AND NOT EXISTS (SELECT 1 FROM exame_arquivos a WHERE a.exame_id = e.id AND a.tenant_id = e.tenant_id AND a.removido_em IS NULL)`,
       [req.params.id, user.tenant_id]
     );
     res.json({ success: true });
@@ -16117,15 +16117,22 @@ app.post('/api/exames/:id/arquivos', express.raw({ type: '*/*', limit: '64mb' })
     const caminho = `${subDir}/${id}.${tipo.ext}`;
     const dir = path.join(EXAMES_UPLOADS_DIR, subDir);
     if (!existsSync(dir)) await mkdir(dir, { recursive: true });
-    await writeFile(path.join(EXAMES_UPLOADS_DIR, caminho), buf);
-
-    const { rows } = await pool.query(
-      `INSERT INTO exame_arquivos
-         (id, tenant_id, exame_id, paciente_id, caminho, nome_original, mime_type, tamanho_bytes, descricao, enviado_por)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-       RETURNING *`,
-      [id, user.tenant_id, exame.id, exame.paciente_id || null, caminho, nomeOriginal, tipo.mime, buf.length, descricao, user.id]
-    );
+    const absArquivo = path.join(EXAMES_UPLOADS_DIR, caminho);
+    await writeFile(absArquivo, buf);
+    let rows;
+    try {
+      ({ rows } = await pool.query(
+        `INSERT INTO exame_arquivos
+           (id, tenant_id, exame_id, paciente_id, caminho, nome_original, mime_type, tamanho_bytes, descricao, enviado_por)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+         RETURNING *`,
+        [id, user.tenant_id, exame.id, exame.paciente_id || null, caminho, nomeOriginal, tipo.mime, buf.length, descricao, user.id]
+      ));
+    } catch (insErr) {
+      // Sem registro o arquivo nunca seria servido: não deixa órfão no disco
+      await rm(absArquivo, { force: true }).catch(() => {});
+      throw insErr;
+    }
     res.json(arquivoExameParaResposta(rows[0]));
   } catch (err) {
     responderErroExame(res, err, 'exames:arquivos:upload');
@@ -16210,82 +16217,6 @@ if (process.env.NODE_ENV !== 'test') {
   let checkedStatements = 0;
   try {
     const migrations = [
-      // ─── Exames (radiologia): tabelas base. Mesmo desenho de migration-exames.sql, sem o
-      // catálogo de exemplo. Sem elas o módulo inteiro responde 500. ───
-      `CREATE TABLE IF NOT EXISTS exame_tipos (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        tenant_id uuid REFERENCES tenants(id) ON DELETE CASCADE,
-        nome text NOT NULL,
-        categoria text,
-        codigo_tiss text,
-        preco numeric(10,2) DEFAULT 0,
-        ativo boolean NOT NULL DEFAULT true,
-        created_at timestamptz NOT NULL DEFAULT now(),
-        updated_at timestamptz NOT NULL DEFAULT now(),
-        UNIQUE (tenant_id, nome)
-      )`,
-      `CREATE INDEX IF NOT EXISTS idx_exame_tipos_tenant ON exame_tipos(tenant_id)`,
-      `CREATE TABLE IF NOT EXISTS exames (
-        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        tenant_id uuid REFERENCES tenants(id) ON DELETE CASCADE,
-        codigo text,
-        paciente_id uuid REFERENCES pacientes(id) ON DELETE SET NULL,
-        dentista_solicitante_id uuid REFERENCES dentistas(id) ON DELETE SET NULL,
-        clinica_origem text,
-        tipo_exame_id uuid REFERENCES exame_tipos(id) ON DELETE SET NULL,
-        tipo_nome text NOT NULL,
-        status text NOT NULL DEFAULT 'novo'
-          CHECK (status IN ('novo','em_andamento','aguardando_laudo','concluido','entregue','cancelado')),
-        prioridade text NOT NULL DEFAULT 'normal'
-          CHECK (prioridade IN ('baixa','normal','alta','urgente')),
-        data_solicitacao timestamptz NOT NULL DEFAULT now(),
-        data_realizacao timestamptz,
-        data_entrega timestamptz,
-        valor numeric(10,2) DEFAULT 0,
-        modo_entrega text,
-        laudo_texto text,
-        arquivo_url text,
-        observacoes text,
-        terceirizado boolean NOT NULL DEFAULT false,
-        fornecedor_terc text,
-        created_by uuid REFERENCES profiles(id) ON DELETE SET NULL,
-        created_at timestamptz NOT NULL DEFAULT now(),
-        updated_at timestamptz NOT NULL DEFAULT now()
-      )`,
-      `CREATE INDEX IF NOT EXISTS idx_exames_tenant ON exames(tenant_id)`,
-      `CREATE INDEX IF NOT EXISTS idx_exames_status ON exames(tenant_id, status)`,
-      `CREATE INDEX IF NOT EXISTS idx_exames_paciente ON exames(paciente_id)`,
-      `CREATE INDEX IF NOT EXISTS idx_exames_data_solic ON exames(tenant_id, data_solicitacao DESC)`,
-      `CREATE OR REPLACE FUNCTION exames_touch_updated_at() RETURNS trigger AS $$
-       BEGIN NEW.updated_at = now(); RETURN NEW; END;
-       $$ LANGUAGE plpgsql`,
-      `DO $$ BEGIN
-         IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_exames_updated') THEN
-           CREATE TRIGGER trg_exames_updated BEFORE UPDATE ON exames FOR EACH ROW EXECUTE FUNCTION exames_touch_updated_at();
-         END IF;
-         IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_exame_tipos_updated') THEN
-           CREATE TRIGGER trg_exame_tipos_updated BEFORE UPDATE ON exame_tipos FOR EACH ROW EXECUTE FUNCTION exames_touch_updated_at();
-         END IF;
-       END $$`,
-      // ─── Exames: imagens/arquivos com dono (migration-exame-arquivos.sql) ───
-      `CREATE TABLE IF NOT EXISTS exame_arquivos (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-        exame_id UUID NOT NULL REFERENCES exames(id) ON DELETE CASCADE,
-        paciente_id UUID,
-        caminho TEXT NOT NULL UNIQUE,
-        nome_original TEXT,
-        mime_type TEXT NOT NULL,
-        tamanho_bytes BIGINT NOT NULL DEFAULT 0,
-        descricao TEXT,
-        enviado_por UUID,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        removido_em TIMESTAMPTZ,
-        removido_por UUID
-      )`,
-      `CREATE INDEX IF NOT EXISTS idx_exame_arquivos_tenant_exame ON exame_arquivos (tenant_id, exame_id)`,
-      `CREATE INDEX IF NOT EXISTS idx_exame_arquivos_tenant_paciente ON exame_arquivos (tenant_id, paciente_id)`,
-
       // ─── 0. Enable RLS and tenant session support ───
       `CREATE OR REPLACE FUNCTION set_tenant(t_id UUID) RETURNS VOID AS $$
        BEGIN
@@ -16463,6 +16394,85 @@ if (process.env.NODE_ENV !== 'test') {
         created_at TIMESTAMPTZ DEFAULT NOW(),
         updated_at TIMESTAMPTZ DEFAULT NOW()
       )`,
+
+      // ─── Exames (radiologia): tabelas base, depois de pacientes/dentistas (FKs). DDL igual ao de
+      // migration-schema-alinhamento.sql (#39): quem rodar primeiro cria, o outro vira no-op. ───
+      `CREATE TABLE IF NOT EXISTS exame_tipos (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        tenant_id uuid NOT NULL DEFAULT get_current_tenant_id() REFERENCES tenants(id) ON DELETE CASCADE,
+        nome text NOT NULL,
+        categoria text,
+        codigo_tiss text,
+        preco numeric(10,2) DEFAULT 0,
+        ativo boolean NOT NULL DEFAULT true,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now(),
+        UNIQUE (tenant_id, nome)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_exame_tipos_tenant ON exame_tipos (tenant_id)`,
+      `CREATE TABLE IF NOT EXISTS exames (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        tenant_id uuid NOT NULL DEFAULT get_current_tenant_id() REFERENCES tenants(id) ON DELETE CASCADE,
+        codigo text,
+        paciente_id uuid REFERENCES pacientes(id) ON DELETE SET NULL,
+        dentista_solicitante_id uuid REFERENCES dentistas(id) ON DELETE SET NULL,
+        clinica_origem text,
+        tipo_exame_id uuid REFERENCES exame_tipos(id) ON DELETE SET NULL,
+        tipo_nome text NOT NULL,
+        status text NOT NULL DEFAULT 'novo'
+          CHECK (status IN ('novo','em_andamento','aguardando_laudo','concluido','entregue','cancelado')),
+        prioridade text NOT NULL DEFAULT 'normal'
+          CHECK (prioridade IN ('baixa','normal','alta','urgente')),
+        data_solicitacao timestamptz NOT NULL DEFAULT now(),
+        data_realizacao timestamptz,
+        data_entrega timestamptz,
+        valor numeric(10,2) DEFAULT 0,
+        modo_entrega text,
+        laudo_texto text,
+        arquivo_url text,
+        observacoes text,
+        terceirizado boolean NOT NULL DEFAULT false,
+        fornecedor_terc text,
+        created_by uuid REFERENCES profiles(id) ON DELETE SET NULL,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now()
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_exames_tenant ON exames (tenant_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_exames_status ON exames (tenant_id, status)`,
+      `CREATE INDEX IF NOT EXISTS idx_exames_paciente ON exames (tenant_id, paciente_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_exames_data_solic ON exames (tenant_id, data_solicitacao DESC)`,
+      // Função só é criada se faltar: se o deploy (postgres) já a criou, CREATE OR REPLACE
+      // pela API falharia ("must be owner") e geraria aviso em todo boot
+      `DO $$ BEGIN
+         IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'exames_touch_updated_at') THEN
+           EXECUTE 'CREATE FUNCTION exames_touch_updated_at() RETURNS trigger AS $f$ BEGIN NEW.updated_at = now(); RETURN NEW; END; $f$ LANGUAGE plpgsql';
+         END IF;
+         IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_exames_updated' AND tgrelid = 'public.exames'::regclass) THEN
+           CREATE TRIGGER trg_exames_updated BEFORE UPDATE ON exames FOR EACH ROW EXECUTE FUNCTION exames_touch_updated_at();
+         END IF;
+         IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_exame_tipos_updated' AND tgrelid = 'public.exame_tipos'::regclass) THEN
+           CREATE TRIGGER trg_exame_tipos_updated BEFORE UPDATE ON exame_tipos FOR EACH ROW EXECUTE FUNCTION exames_touch_updated_at();
+         END IF;
+       END $$`,
+
+      // ─── Exames: imagens/arquivos com dono (migration-exame-arquivos.sql) ───
+      `CREATE TABLE IF NOT EXISTS exame_arquivos (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        exame_id UUID NOT NULL REFERENCES exames(id) ON DELETE CASCADE,
+        paciente_id UUID,
+        caminho TEXT NOT NULL UNIQUE,
+        nome_original TEXT,
+        mime_type TEXT NOT NULL,
+        tamanho_bytes BIGINT NOT NULL DEFAULT 0,
+        descricao TEXT,
+        enviado_por UUID,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        removido_em TIMESTAMPTZ,
+        removido_por UUID
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_exame_arquivos_tenant_exame ON exame_arquivos (tenant_id, exame_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_exame_arquivos_tenant_paciente ON exame_arquivos (tenant_id, paciente_id)`,
 
       `CREATE TABLE IF NOT EXISTS agendamentos (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

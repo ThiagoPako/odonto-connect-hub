@@ -8,7 +8,7 @@ import { jest } from '@jest/globals';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { rm } from 'fs/promises';
+import { rm, readdir } from 'fs/promises';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '../.env') });
@@ -129,6 +129,19 @@ describe('arquivos de exame', () => {
     // Bearer da própria clínica → 200
     const mesma = await request(app).get(res.body.url.split('?')[0]).set('Authorization', `Bearer ${token()}`);
     expect(mesma.status).toBe(200);
+  });
+
+  test('INSERT falhou → arquivo não fica no disco', async () => {
+    const dir = path.join(__dirname, '..', '..', 'uploads', 'exames', tenantA);
+    const antes = await readdir(dir).catch(() => []);
+    const original = querySpy.getMockImplementation();
+    querySpy.mockImplementation((sql, params) => (/INSERT INTO exame_arquivos/.test(String(sql))
+      ? Promise.reject(new Error('permission denied for table exame_arquivos'))
+      : original(sql, params)));
+    const res = await enviar(exameA, PNG);
+    expect(res.status).toBe(500);
+    expect(JSON.stringify(res.body)).not.toMatch(/permission/);
+    expect((await readdir(dir).catch(() => [])).length).toBe(antes.length);
   });
 
   test('tirar arquivo do exame só marca removido_em (não apaga) e filtra a clínica', async () => {
