@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { NovoOrcamentoModal } from "@/components/orcamentos/NovoOrcamentoModal";
 import { ExecucaoModal } from "@/components/orcamentos/ExecucaoModal";
+import { GerarParcelasButton } from "@/components/financeiro/GerarParcelasDialog";
 import { OrcamentoPrintPreview } from "@/components/orcamentos/OrcamentoPrintPreview";
 import { DEFAULT_PRINT_CONFIG } from "@/components/orcamentos/types";
 
@@ -535,6 +536,9 @@ function BudgetDetail({ budget: b, onStatusChange, onExecute, onPrint, onEdit, o
           <div className="mt-3 p-2 rounded-lg bg-success/10 text-success text-xs">
             ✅ Orçamento aprovado
           </div>
+        )}
+        {["aprovado", "em_tratamento", "finalizado"].includes(b.status) && (
+          <GerarParcelasButton orcamentoId={b.id} total={finalValue} />
         )}
       </div>
     </div>

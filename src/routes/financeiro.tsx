@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { KpiCard } from "@/components/KpiCard";
 import { useState, useEffect, useCallback } from "react";
@@ -308,6 +308,12 @@ function FinanceiroPage() {
                 </button>
               );
             })}
+            <Link
+              to="/financeiro/receber"
+              className="flex items-center gap-2 px-4 py-3 text-xs font-medium border-b-2 border-transparent text-muted-foreground hover:text-foreground hover:border-border whitespace-nowrap"
+            >
+              Contas a receber
+            </Link>
           </div>
         </div>
 
