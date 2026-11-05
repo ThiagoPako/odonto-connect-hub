@@ -162,6 +162,9 @@ describe('Envios automáticos pela fila central', () => {
       await request(app).put(`/api/agenda/${agendamento}`).set(auth()).send({ hora: '14:30' });
       await sleep(150);
       expect(jobInserts()).toHaveLength(0);
+      const warns = console.warn.mock.calls.map(c => c.join(' ')).filter(t => /\[reschedule\]/.test(t));
+      expect(warns.some(t => t.includes(agendamento))).toBe(true);
+      expect(warns.join(' ')).not.toMatch(/Maria|João|977776666|988887777/);
     });
   });
 

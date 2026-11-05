@@ -5323,6 +5323,11 @@ async function enqueueRescheduleNotice(tenantId, appt) {
     'SELECT nome, telefone FROM pacientes WHERE id = $1 AND tenant_id = $2 LIMIT 1',
     [appt.paciente_id, tenantId]
   );
+  if (!pac) {
+    // Agendamento aponta para um lead (ou paciente de outra clínica): sem aviso. Só o id no log.
+    console.warn(`[reschedule] paciente não encontrado para o agendamento ${appt.id}; aviso não enfileirado`);
+    return null;
+  }
   const phone = normalizeWhatsappNumber(pac?.telefone || '');
   if (!phone) return null;
   if (await isWhatsAppOptedOut(tenantId, phone)) return null;
