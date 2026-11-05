@@ -50,8 +50,13 @@ jobs:
                 npm ci 2>/dev/null || npm install
               fi
 
-              echo "Reinstalling backend dependencies for rollback commit..."
-              (cd vps-api-server && { npm ci --omit=dev || npm install --omit=dev; }) || echo "WARNING: backend deps reinstall failed on rollback"
+              echo "Restoring backend dependencies for rollback commit..."
+              if [ -d vps-api-server/node_modules.prev ]; then
+                rm -rf vps-api-server/node_modules && mv vps-api-server/node_modules.prev vps-api-server/node_modules \
+                  && echo "Backend node_modules restaurado da cópia anterior"
+              else
+                (cd vps-api-server && { npm ci --omit=dev || npm install --omit=dev; }) || echo "WARNING: backend deps reinstall failed on rollback"
+              fi
 
               echo "Rebuilding frontend for rollback commit..."
               npm run build || echo "WARNING: rollback build failed — keeping previous dist if present"
@@ -90,6 +95,10 @@ jobs:
             fi
 
             # ─── Dependências do backend (vps-api-server tem package.json próprio) ──
+            # Cópia do node_modules atual: se o npm ci falhar (rede, binário nativo), o rollback
+            # restaura esta cópia em vez de depender de uma nova instalação.
+            rm -rf vps-api-server/node_modules.prev
+            if [ -d vps-api-server/node_modules ]; then cp -a vps-api-server/node_modules vps-api-server/node_modules.prev; fi
             (cd vps-api-server && npm ci --omit=dev)
 
             # ─── Build frontend ────────────────────────────────────────────
@@ -131,7 +140,7 @@ jobs:
             cat /root/odonto-connect/vps-api-server/migration-seguranca-p0.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             cat /root/odonto-connect/vps-api-server/migration-contatos-recuperacao.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             # Colunas usadas por agendamentos (idempotente; ausentes em produção)
-            sudo -u postgres psql -p 5433 -d odonto_db -c "ALTER TABLE IF EXISTS agendamentos ADD COLUMN IF NOT EXISTS paciente_nome TEXT, ADD COLUMN IF NOT EXISTS dentista_nome TEXT;" 2>&1 || true
+            sudo -u postgres psql -p 5433 -d odonto_db -c "SET lock_timeout = '5s'; ALTER TABLE IF EXISTS agendamentos ADD COLUMN IF NOT EXISTS paciente_nome TEXT, ADD COLUMN IF NOT EXISTS dentista_nome TEXT;" 2>&1 || true
             echo "=== Migrations applied ==="
 
             # ─── Pre-flight syntax check on server.mjs ─────────────────────
@@ -239,4 +248,5 @@ jobs:
             pm2 save
             echo "$NEW_COMMIT" > /root/odonto-connect/.last-good-commit
             rm -f /root/odonto-connect/.last-good-commit.tmp
+            rm -rf /root/odonto-connect/vps-api-server/node_modules.prev
             echo "=== Deploy complete $(date) — commit $NEW_COMMIT ==="
