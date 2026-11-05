@@ -42,9 +42,9 @@ INSERT INTO pacientes (id, nome, cpf, telefone, email, data_nascimento, sexo, te
  ('bb100000-0000-0000-0000-000000000002','Renata Dias (Beta)','000.000.102-41','5521900000002',NULL,'1995-12-25','F','bbbbbbbb-0000-0000-0000-00000000000b'),
  ('bb100000-0000-0000-0000-000000000003','Sérgio Melo (Beta)','000.000.103-22','5521900000003','sergio@teste.local','1970-04-14','M','bbbbbbbb-0000-0000-0000-00000000000b')
 ON CONFLICT DO NOTHING;
-INSERT INTO anamneses (paciente_id, alergias, medicamentos, fumante, diabetes, observacoes) VALUES
- ('aa100000-0000-0000-0000-000000000001', ARRAY['penicilina'], ARRAY['losartana'], false, false, 'Paciente fictícia — alérgica a penicilina'),
- ('bb100000-0000-0000-0000-000000000001', ARRAY[]::text[], ARRAY[]::text[], true, false, 'Fictício')
+INSERT INTO anamneses (paciente_id, alergias, medicamentos, fumante, diabetes, observacoes, tenant_id) VALUES
+ ('aa100000-0000-0000-0000-000000000001', ARRAY['penicilina'], ARRAY['losartana'], false, false, 'Paciente fictícia — alérgica a penicilina','aaaaaaaa-0000-0000-0000-00000000000a'),
+ ('bb100000-0000-0000-0000-000000000001', ARRAY[]::text[], ARRAY[]::text[], true, false, 'Fictício','bbbbbbbb-0000-0000-0000-00000000000b')
 ON CONFLICT DO NOTHING;
 
 -- Agenda: hoje e amanhã (relativo à data em que o seed rodar)
