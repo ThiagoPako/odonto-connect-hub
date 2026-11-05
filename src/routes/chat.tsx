@@ -16,19 +16,7 @@ import type { AttendanceQueue } from "@/data/queueData";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { useRealtimeChat, type IncomingMessage } from "@/hooks/useRealtimeChat";
-import { whatsappApi, transferApi, sessionsApi, queuesApi, messagesApi, queueLeadsApi, mediaApi, crmApi, contatosApi, VPS_API_BASE, getCachedTenantId, type ChatMessageApi } from "@/lib/vpsApi";
-
-// Resolve relative media URLs (e.g. /uploads/media/...) against the backend origin.
-function resolveMediaUrl(url?: string | null): string | undefined {
-  if (!url) return undefined;
-  if (/^(https?:|data:|blob:)/i.test(url)) return url;
-  try {
-    const origin = new URL(VPS_API_BASE).origin;
-    return `${origin}${url.startsWith("/") ? "" : "/"}${url}`;
-  } catch {
-    return url;
-  }
-}
+import { whatsappApi, transferApi, sessionsApi, queuesApi, messagesApi, queueLeadsApi, mediaApi, crmApi, contatosApi, getCachedTenantId, resolveMediaUrl, type ChatMessageApi } from "@/lib/vpsApi";
 import { useWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
 import { playNotificationSound, playRecoverySound } from "@/lib/notificationSound";
 import { showBrowserNotification, requestNotificationPermission } from "@/lib/browserNotification";
