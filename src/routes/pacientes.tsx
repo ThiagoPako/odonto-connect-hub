@@ -6,6 +6,9 @@ import { OdontogramaChart, OdontogramaEditor } from "@/components/OdontogramaCha
 import { toast } from "sonner";
 import { type KanbanLead } from "@/data/crmMockData";
 import { crmApi } from "@/lib/vpsApi";
+import { AlertasMedicosBanner } from "@/components/AlertasMedicosBanner";
+import { useAuth } from "@/hooks/useAuth";
+import { extrairAlertasMedicos, type AnamneseVPS } from "@/lib/alertasMedicos";
 import {
   Search,
   Users,
@@ -753,7 +756,15 @@ function PacienteDetailModal({
   onClose: () => void;
   onUpdated?: () => void;
 }) {
+  const { user: usuario } = useAuth();
+  // DELETE /api/pacientes/:id exige admin (verifyAdmin): para os outros perfis o botão só dava erro
+  const podeExcluir = usuario?.role === "admin" || !!usuario?.is_super_admin;
   const [activeTab, setActiveTab] = useState<DetailTab>("dados");
+  // Abas já abertas continuam montadas (escondidas): trocar de aba não apaga o que foi digitado
+  const [abasVisitadas, setAbasVisitadas] = useState<Set<DetailTab>>(() => new Set<DetailTab>(["dados"]));
+  const [naoSalvo, setNaoSalvo] = useState<{ anamnese: boolean; odontograma: boolean }>({ anamnese: false, odontograma: false });
+  const marcarAnamnese = useCallback((d: boolean) => setNaoSalvo((x) => (x.anamnese === d ? x : { ...x, anamnese: d })), []);
+  const marcarOdontograma = useCallback((d: boolean) => setNaoSalvo((x) => (x.odontograma === d ? x : { ...x, odontograma: d })), []);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -852,6 +863,7 @@ function PacienteDetailModal({
           <div className="flex items-center gap-2">
             {activeTab === "dados" && !editing && (
               <>
+                {podeExcluir && (
                 <button
                   onClick={() => setShowDeleteConfirm(true)}
                   className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-destructive/10 text-destructive text-xs font-semibold hover:bg-destructive/20 transition-colors"
@@ -859,6 +871,7 @@ function PacienteDetailModal({
                   <Trash2 className="h-3.5 w-3.5" />
                   Excluir
                 </button>
+                )}
                 <button
                   onClick={() => setEditing(true)}
                   className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary/10 text-primary text-xs font-semibold hover:bg-primary/20 transition-colors"
@@ -883,32 +896,57 @@ function PacienteDetailModal({
                 </button>
               </>
             )}
-            <button onClick={onClose} className="p-2 rounded-lg hover:bg-muted/60 transition-colors">
+            <button
+              onClick={() => {
+                const pendencias = [
+                  editing && "dados",
+                  naoSalvo.anamnese && "anamnese",
+                  naoSalvo.odontograma && "odontograma",
+                ].filter(Boolean);
+                if (pendencias.length && !window.confirm(`Há alterações não salvas (${pendencias.join(", ")}). Fechar e descartar?`)) return;
+                onClose();
+              }}
+              aria-label="Fechar ficha"
+              className="p-2 rounded-lg hover:bg-muted/60 transition-colors"
+            >
               <X className="h-4 w-4 text-muted-foreground" />
             </button>
           </div>
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-1 px-6 pt-3 border-b border-border/60 shrink-0">
-          {tabs.map((tab) => (
-            <button
-              key={tab.key}
-              onClick={() => { setActiveTab(tab.key); if (tab.key !== "dados") setEditing(false); }}
-              className={`flex items-center gap-2 px-4 py-3 text-sm font-medium transition-all border-b-2 -mb-[1px] ${
-                activeTab === tab.key
-                  ? "border-primary text-primary"
-                  : "border-transparent text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              <tab.icon className="h-4 w-4" />
-              {tab.label}
-            </button>
-          ))}
+        <div role="tablist" aria-label="Seções da ficha" className="flex gap-1 px-2 sm:px-6 pt-3 border-b border-border/60 shrink-0 overflow-x-auto">
+          {tabs.map((tab) => {
+            const pendente = (tab.key === "dados" && editing) || (tab.key === "anamnese" && naoSalvo.anamnese) || (tab.key === "odontograma" && naoSalvo.odontograma);
+            return (
+              <button
+                key={tab.key}
+                role="tab"
+                aria-selected={activeTab === tab.key}
+                onClick={() => {
+                  setActiveTab(tab.key);
+                  setAbasVisitadas((v) => (v.has(tab.key) ? v : new Set(v).add(tab.key)));
+                }}
+                className={`flex shrink-0 items-center gap-2 px-3 sm:px-4 py-3 text-sm font-medium transition-all border-b-2 -mb-[1px] ${
+                  activeTab === tab.key
+                    ? "border-primary text-primary"
+                    : "border-transparent text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <tab.icon className="h-4 w-4" />
+                {tab.label}
+                {pendente && (
+                  <span className="h-2 w-2 rounded-full bg-warning" title="Alterações não salvas">
+                    <span className="sr-only"> (não salvo)</span>
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto p-6">
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6">
           {activeTab === "dados" && (
             <div className="space-y-4 animate-fade-in">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -973,12 +1011,16 @@ function PacienteDetailModal({
             </div>
           )}
 
-          {activeTab === "anamnese" && (
-            <AnamneseTab pacienteId={paciente.id} />
+          {abasVisitadas.has("anamnese") && (
+            <div hidden={activeTab !== "anamnese"}>
+              <AnamneseTab pacienteId={paciente.id} onNaoSalvoChange={marcarAnamnese} />
+            </div>
           )}
 
-          {activeTab === "odontograma" && (
-            <OdontogramaTab pacienteId={paciente.id} />
+          {abasVisitadas.has("odontograma") && (
+            <div hidden={activeTab !== "odontograma"}>
+              <OdontogramaTab pacienteId={paciente.id} onNaoSalvoChange={marcarOdontograma} />
+            </div>
           )}
 
           {activeTab === "historico" && (
@@ -1044,7 +1086,7 @@ function PacienteDetailModal({
 }
 
 /* ─── Anamnese Tab ─── */
-function AnamneseTab({ pacienteId }: { pacienteId: string }) {
+function AnamneseTab({ pacienteId, onNaoSalvoChange }: { pacienteId: string; onNaoSalvoChange?: (naoSalvo: boolean) => void }) {
   const [anamnese, setAnamnese] = useState<AnamneseData | null>(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
@@ -1120,22 +1162,38 @@ function AnamneseTab({ pacienteId }: { pacienteId: string }) {
 
   const parseList = (text: string) => text.split(",").map((s) => s.trim()).filter(Boolean);
 
+  // O que está no formulário × o que está salvo: avisa a ficha (bolinha na aba, confirmar ao fechar)
+  const montarPayload = () => ({
+    ...form,
+    alergias: parseList(alergiasText),
+    medicamentos: parseList(medicamentosText),
+    doencas_preexistentes: parseList(doencasText),
+    cirurgias_anteriores: parseList(cirurgiasText),
+  });
+  const chave = (a: Partial<AnamneseData>) => JSON.stringify([
+    a.alergias ?? [], a.medicamentos ?? [], a.doencas_preexistentes ?? [], a.cirurgias_anteriores ?? [],
+    a.fumante, a.etilista, a.gestante, a.diabetes, a.cardiopatia, a.hepatite, a.hiv, a.hemofilia, a.epilepsia,
+    a.pressao_arterial || "", a.observacoes || "",
+  ]);
+  const alterado = editing && chave(montarPayload()) !== chave(anamnese ?? emptyAnamnese);
+  useEffect(() => { onNaoSalvoChange?.(alterado); }, [alterado, onNaoSalvoChange]);
+
+  const cancelar = () => {
+    if (alterado && !window.confirm("Descartar as alterações da anamnese?")) return;
+    setEditing(false);
+  };
+
   const handleSave = async () => {
     setSaving(true);
     try {
-      const payload = {
-        ...form,
-        alergias: parseList(alergiasText),
-        medicamentos: parseList(medicamentosText),
-        doencas_preexistentes: parseList(doencasText),
-        cirurgias_anteriores: parseList(cirurgiasText),
-      };
+      const payload = montarPayload();
       const { data, error } = await pacientesApi.saveAnamnese(pacienteId, payload);
       if (error) {
         toast.error("Erro ao salvar: " + error);
       } else {
         toast.success("Anamnese salva com sucesso!");
-        setAnamnese(data as AnamneseData);
+        // Se o servidor não devolver o registro, mostra o que foi enviado (já confirmado)
+        setAnamnese((data as AnamneseData) || { ...payload, updated_at: new Date().toISOString() } as AnamneseData);
         setEditing(false);
       }
     } catch {
@@ -1202,21 +1260,8 @@ function AnamneseTab({ pacienteId }: { pacienteId: string }) {
           </button>
         </div>
 
-        {/* Alertas */}
-        {((anamnese.alergias?.length ?? 0) > 0 || anamnese.cardiopatia) && (
-          <div className="bg-destructive/5 border border-destructive/20 rounded-xl p-4 flex items-start gap-3">
-            <AlertTriangle className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
-            <div>
-              <p className="text-sm font-semibold text-destructive">Atenção</p>
-              {(anamnese.alergias?.length ?? 0) > 0 && (
-                <p className="text-xs text-destructive/80 mt-1">Alergias: <strong>{anamnese.alergias.join(", ")}</strong></p>
-              )}
-              {anamnese.cardiopatia && (
-                <p className="text-xs text-destructive/80 mt-1">Paciente cardiopata — verificar liberação do cardiologista.</p>
-              )}
-            </div>
-          </div>
-        )}
+        {/* Alertas: mesma faixa da consulta e do prontuário (antes só alergia e cardiopatia) */}
+        <AlertasMedicosBanner estado={{ status: "ok", alertas: extrairAlertasMedicos(anamnese as unknown as AnamneseVPS) }} />
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <ListCard label="Alergias" icon={AlertTriangle} items={anamnese.alergias} color="destructive" />
@@ -1227,13 +1272,13 @@ function AnamneseTab({ pacienteId }: { pacienteId: string }) {
 
         <div>
           <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-3">Condições</p>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
             {boolFields.map((f) => {
               const val = anamnese[f.key] as boolean;
               return (
                 <div key={f.key} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs ${val ? "bg-destructive/10 text-destructive" : "bg-muted/30 text-muted-foreground"}`}>
-                  {val ? <CheckCircle2 className="h-3.5 w-3.5" /> : <XCircle className="h-3.5 w-3.5" />}
-                  <span className={val ? "font-semibold" : ""}>{f.label}</span>
+                  {val ? <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" /> : <XCircle className="h-3.5 w-3.5" aria-hidden="true" />}
+                  <span className={val ? "font-semibold" : ""}>{f.label}<span className="sr-only">: {val ? "sim" : "não"}</span></span>
                 </div>
               );
             })}
@@ -1256,7 +1301,7 @@ function AnamneseTab({ pacienteId }: { pacienteId: string }) {
         {anamnese.observacoes && (
           <div className="bg-warning/5 border border-warning/20 rounded-xl p-4">
             <p className="text-[10px] uppercase tracking-wider text-warning font-semibold mb-1">Observações</p>
-            <p className="text-xs text-foreground">{anamnese.observacoes}</p>
+            <p className="text-xs text-foreground whitespace-pre-wrap">{anamnese.observacoes}</p>
           </div>
         )}
       </div>
@@ -1267,7 +1312,7 @@ function AnamneseTab({ pacienteId }: { pacienteId: string }) {
   return (
     <div className="space-y-5 animate-fade-in">
       <div className="flex justify-end gap-2">
-        <button onClick={() => setEditing(false)} className="px-4 py-2 rounded-xl text-xs font-medium text-muted-foreground hover:bg-muted/60 transition-colors">
+        <button onClick={cancelar} disabled={saving} className="px-4 py-2 rounded-xl text-xs font-medium text-muted-foreground hover:bg-muted/60 transition-colors">
           Cancelar
         </button>
         <button
@@ -1276,32 +1321,33 @@ function AnamneseTab({ pacienteId }: { pacienteId: string }) {
           className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors shadow-sm disabled:opacity-50"
         >
           {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-          Salvar Anamnese
+          {saving ? "Salvando…" : "Salvar Anamnese"}
         </button>
       </div>
 
+      {/* col-span-2 sem md: criava uma 2ª coluna implícita e alargava a ficha no celular */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="col-span-2">
-          <label className="text-xs font-medium text-muted-foreground mb-1 block">Alergias (separar por vírgula)</label>
-          <input value={alergiasText} onChange={(e) => setAlergiasText(e.target.value)} placeholder="Ex: Dipirona, Amoxicilina" className={inputClass} />
+        <div className="md:col-span-2">
+          <label htmlFor="anam-alergias" className="text-xs font-medium text-muted-foreground mb-1 block">Alergias (separar por vírgula)</label>
+          <input id="anam-alergias" value={alergiasText} onChange={(e) => setAlergiasText(e.target.value)} placeholder="Ex: Dipirona, Amoxicilina" className={inputClass} />
         </div>
-        <div className="col-span-2">
-          <label className="text-xs font-medium text-muted-foreground mb-1 block">Medicamentos em uso (separar por vírgula)</label>
-          <input value={medicamentosText} onChange={(e) => setMedicamentosText(e.target.value)} placeholder="Ex: Losartana, Metformina" className={inputClass} />
+        <div className="md:col-span-2">
+          <label htmlFor="anam-medicamentos" className="text-xs font-medium text-muted-foreground mb-1 block">Medicamentos em uso (separar por vírgula)</label>
+          <input id="anam-medicamentos" value={medicamentosText} onChange={(e) => setMedicamentosText(e.target.value)} placeholder="Ex: Losartana, Metformina" className={inputClass} />
         </div>
-        <div className="col-span-2">
-          <label className="text-xs font-medium text-muted-foreground mb-1 block">Doenças preexistentes (separar por vírgula)</label>
-          <input value={doencasText} onChange={(e) => setDoencasText(e.target.value)} placeholder="Ex: Hipertensão, Diabetes" className={inputClass} />
+        <div className="md:col-span-2">
+          <label htmlFor="anam-doencas" className="text-xs font-medium text-muted-foreground mb-1 block">Doenças preexistentes (separar por vírgula)</label>
+          <input id="anam-doencas" value={doencasText} onChange={(e) => setDoencasText(e.target.value)} placeholder="Ex: Hipertensão, Diabetes" className={inputClass} />
         </div>
-        <div className="col-span-2">
-          <label className="text-xs font-medium text-muted-foreground mb-1 block">Cirurgias anteriores (separar por vírgula)</label>
-          <input value={cirurgiasText} onChange={(e) => setCirurgiasText(e.target.value)} placeholder="Ex: Apendicectomia, Cesariana" className={inputClass} />
+        <div className="md:col-span-2">
+          <label htmlFor="anam-cirurgias" className="text-xs font-medium text-muted-foreground mb-1 block">Cirurgias anteriores (separar por vírgula)</label>
+          <input id="anam-cirurgias" value={cirurgiasText} onChange={(e) => setCirurgiasText(e.target.value)} placeholder="Ex: Apendicectomia, Cesariana" className={inputClass} />
         </div>
       </div>
 
       <div>
         <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-3">Condições</p>
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           {boolFields.map((f) => (
             <label key={f.key} className="flex items-center gap-2 text-xs text-foreground cursor-pointer bg-muted/30 rounded-lg px-3 py-2.5 hover:bg-muted/50 transition-colors">
               <input
@@ -1318,8 +1364,10 @@ function AnamneseTab({ pacienteId }: { pacienteId: string }) {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
-          <label className="text-xs font-medium text-muted-foreground mb-1 block">Pressão Arterial</label>
+          <label htmlFor="anam-pa" className="text-xs font-medium text-muted-foreground mb-1 block">Pressão arterial (mmHg)</label>
           <input
+            id="anam-pa"
+            inputMode="numeric"
             value={form.pressao_arterial || ""}
             onChange={(e) => setForm((prev) => ({ ...prev, pressao_arterial: e.target.value }))}
             placeholder="Ex: 120/80"
@@ -1329,8 +1377,9 @@ function AnamneseTab({ pacienteId }: { pacienteId: string }) {
       </div>
 
       <div>
-        <label className="text-xs font-medium text-muted-foreground mb-1 block">Observações</label>
+        <label htmlFor="anam-obs" className="text-xs font-medium text-muted-foreground mb-1 block">Observações</label>
         <textarea
+          id="anam-obs"
           rows={3}
           value={form.observacoes || ""}
           onChange={(e) => setForm((prev) => ({ ...prev, observacoes: e.target.value }))}
@@ -1351,7 +1400,10 @@ interface OdontogramaDBData {
   updated_at?: string;
 }
 
-function OdontogramaTab({ pacienteId }: { pacienteId: string }) {
+function OdontogramaTab({ pacienteId, onNaoSalvoChange }: { pacienteId: string; onNaoSalvoChange?: (naoSalvo: boolean) => void }) {
+  // Odontograma é registro clínico: edição só para dentista e admin (a recepção consulta)
+  const { user: usuario } = useAuth();
+  const podeEditar = usuario?.role === "admin" || usuario?.role === "dentista" || !!usuario?.is_super_admin;
   const [data, setData] = useState<OdontogramaDBData | null>(null);
   const [loading, setLoading] = useState(true);
   const [editingOdonto, setEditingOdonto] = useState(false);
@@ -1365,6 +1417,17 @@ function OdontogramaTab({ pacienteId }: { pacienteId: string }) {
 
   const [dentes, setDentes] = useState(allTeeth);
   const [obs, setObs] = useState("");
+  // Último estado confirmado pelo servidor: o Cancelar volta para ele (antes a tela
+  // continuava mostrando as marcações não salvas como se estivessem gravadas)
+  const [salvo, setSalvo] = useState<{ dentes: typeof allTeeth; obs: string }>({ dentes: allTeeth, obs: "" });
+  const alterado = editingOdonto && JSON.stringify({ d: dentes.map((t) => t.status), o: obs }) !== JSON.stringify({ d: salvo.dentes.map((t) => t.status), o: salvo.obs });
+  useEffect(() => { onNaoSalvoChange?.(alterado); }, [alterado, onNaoSalvoChange]);
+  const cancelarOdonto = () => {
+    if (alterado && !window.confirm("Descartar as marcações do odontograma?")) return;
+    setDentes(salvo.dentes);
+    setObs(salvo.obs);
+    setEditingOdonto(false);
+  };
 
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -1382,7 +1445,11 @@ function OdontogramaTab({ pacienteId }: { pacienteId: string }) {
         if (Array.isArray(parsedDentes) && parsedDentes.length > 0) {
           // Merge with allTeeth to ensure all 32 teeth exist
           const map = new Map(parsedDentes.map((t: import("@/data/pacientesMockData").DenteInfo) => [t.numero, t]));
-          setDentes(allTeeth.map(t => (map.get(t.numero) as import("@/data/pacientesMockData").DenteInfo) || t));
+          const mesclados = allTeeth.map(t => (map.get(t.numero) as import("@/data/pacientesMockData").DenteInfo) || t);
+          setDentes(mesclados);
+          setSalvo({ dentes: mesclados, obs: d.observacoes || "" });
+        } else {
+          setSalvo({ dentes: allTeeth, obs: d.observacoes || "" });
         }
         setObs(d.observacoes || "");
       }
@@ -1406,7 +1473,8 @@ function OdontogramaTab({ pacienteId }: { pacienteId: string }) {
         toast.error("Erro ao salvar: " + error);
       } else {
         toast.success("Odontograma salvo!");
-        setData(result as OdontogramaDBData);
+        setData((result as OdontogramaDBData) || { paciente_id: pacienteId, dentes, observacoes: obs.trim() || null, updated_at: new Date().toISOString() });
+        setSalvo({ dentes, obs: obs.trim() });
         setEditingOdonto(false);
       }
     } catch {
@@ -1438,12 +1506,16 @@ function OdontogramaTab({ pacienteId }: { pacienteId: string }) {
         <div className="text-center py-16 animate-fade-in">
           <Smile className="h-10 w-10 text-muted-foreground/30 mx-auto" />
           <p className="text-sm text-muted-foreground mt-3">Odontograma não preenchido.</p>
-          <button
-            onClick={() => setEditingOdonto(true)}
-            className="mt-4 px-5 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors"
-          >
-            Preencher Odontograma
-          </button>
+          {podeEditar ? (
+            <button
+              onClick={() => setEditingOdonto(true)}
+              className="mt-4 px-5 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors"
+            >
+              Preencher Odontograma
+            </button>
+          ) : (
+            <p className="mt-2 text-xs text-muted-foreground">O odontograma é preenchido pelo dentista.</p>
+          )}
         </div>
       );
     }
@@ -1454,13 +1526,17 @@ function OdontogramaTab({ pacienteId }: { pacienteId: string }) {
           {data?.updated_at && (
             <p className="text-[10px] text-muted-foreground">Atualizado em {new Date(data.updated_at).toLocaleDateString("pt-BR")}</p>
           )}
-          <button
-            onClick={() => setEditingOdonto(true)}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary/10 text-primary text-xs font-semibold hover:bg-primary/20 transition-colors"
-          >
-            <Edit className="h-3.5 w-3.5" />
-            Editar Odontograma
-          </button>
+          {podeEditar ? (
+            <button
+              onClick={() => setEditingOdonto(true)}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary/10 text-primary text-xs font-semibold hover:bg-primary/20 transition-colors"
+            >
+              <Edit className="h-3.5 w-3.5" />
+              Editar Odontograma
+            </button>
+          ) : (
+            <span className="text-[11px] text-muted-foreground">Somente leitura: o dentista edita o odontograma.</span>
+          )}
         </div>
         <OdontogramaChart dentes={dentes} />
         {obs && (
@@ -1477,7 +1553,7 @@ function OdontogramaTab({ pacienteId }: { pacienteId: string }) {
   return (
     <div className="space-y-4 animate-fade-in">
       <div className="flex justify-end gap-2">
-        <button onClick={() => setEditingOdonto(false)} className="px-4 py-2 rounded-xl text-xs font-medium text-muted-foreground hover:bg-muted/60 transition-colors">
+        <button onClick={cancelarOdonto} disabled={saving} className="px-4 py-2 rounded-xl text-xs font-medium text-muted-foreground hover:bg-muted/60 transition-colors">
           Cancelar
         </button>
         <button
@@ -1486,13 +1562,14 @@ function OdontogramaTab({ pacienteId }: { pacienteId: string }) {
           className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors shadow-sm disabled:opacity-50"
         >
           {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-          Salvar Odontograma
+          {saving ? "Salvando…" : "Salvar Odontograma"}
         </button>
       </div>
       <OdontogramaEditor dentes={dentes} onChange={setDentes} />
       <div>
-        <label className="text-xs font-medium text-muted-foreground mb-1 block">Observações</label>
+        <label htmlFor="odonto-obs" className="text-xs font-medium text-muted-foreground mb-1 block">Observações</label>
         <textarea
+          id="odonto-obs"
           rows={3}
           value={obs}
           onChange={(e) => setObs(e.target.value)}
