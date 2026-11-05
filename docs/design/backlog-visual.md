@@ -126,12 +126,21 @@ Contagem por categoria: **quebr.** = `hsl(var())` · **paleta** = Tailwind solto
 
 ## Capturas "antes"
 
-⚠️ **Pendente.** As 10 telas exigem login, e eu não tenho credenciais de teste. Assim que o usuário
-passar uma conta de teste do ambiente local (backend do Caio, porta 3002), as capturas vão para
-`docs/design/capturas/antes-<tela>-375.png` e `-1280.png`, em claro e escuro.
+Ambiente local do #21 (banco fictício, clínica Alfa, usuário `admin.alfa`), em 5 nov 2026, tema claro, sem
+nenhuma chamada à produção. Base: #19 + #46. Em todas, `scrollWidth` = largura da tela, a 375 e a 1280 px.
 
-Já feitas, das telas públicas: landing, login, cadastro, termos e privacidade, a 375 e 1280 px. Estão
-na descrição do PR desta mudança.
+| Tela | Celular | Computador |
+|---|---|---|
+| Dashboard | [375 px](capturas/antes-dashboard-375.jpg) | [1280 px](capturas/antes-dashboard-1280.jpg) |
+| Agenda | [375 px](capturas/antes-agenda-375.jpg) | [1280 px](capturas/antes-agenda-1280.jpg) |
+| Pacientes | [375 px](capturas/antes-pacientes-375.jpg) | [1280 px](capturas/antes-pacientes-1280.jpg) |
+| Chat | [375 px](capturas/antes-chat-375.jpg) | [1280 px](capturas/antes-chat-1280.jpg) |
+| CRM | [375 px](capturas/antes-crm-375.jpg) | [1280 px](capturas/antes-crm-1280.jpg) |
+| Consulta (atendimento) | [375 px](capturas/antes-consulta-375.jpg) | [1280 px](capturas/antes-consulta-1280.jpg) |
+| Financeiro | [375 px](capturas/antes-financeiro-375.jpg) | [1280 px](capturas/antes-financeiro-1280.jpg) |
+| Orçamentos | [375 px](capturas/antes-orcamentos-375.jpg) | [1280 px](capturas/antes-orcamentos-1280.jpg) |
+| Configurações | [375 px](capturas/antes-configuracoes-375.jpg) | [1280 px](capturas/antes-configuracoes-1280.jpg) |
+| Exames | [375 px](capturas/antes-exames-375.jpg) | [1280 px](capturas/antes-exames-1280.jpg) |
 
 ## Já aplicado (PR "telas da Lara", empilhado no #46)
 Landing, login, cadastro, termos, privacidade, `AuthShell`, `AgendaFragment`, `LegalPageLayout`,
