@@ -124,6 +124,11 @@ jobs:
             cat /root/odonto-connect/vps-api-server/migration-whatsapp-fase1.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             cat /root/odonto-connect/vps-api-server/migration-seguranca-p0.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             cat /root/odonto-connect/vps-api-server/migration-contatos-recuperacao.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
+            # LGPD: pedidos do titular e registro de acesso ao prontuário (lgpd.mjs).
+            if ! cat /root/odonto-connect/vps-api-server/migration-lgpd-titular.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1; then
+              echo "::warning title=LGPD não aplicada::migration-lgpd-titular.sql falhou (lock ou erro). O boot tenta criar as tabelas; ver log acima."
+              echo "!!! ATENÇÃO: migration-lgpd-titular.sql NÃO foi aplicada."
+            fi
             echo "=== Migrations applied ==="
 
             # ─── Pre-flight syntax check on server.mjs ─────────────────────

@@ -4965,6 +4965,7 @@ app.get('/api/pacientes/:id/anamnese', async (req, res) => {
     const { rows: pac } = await pool.query('SELECT 1 FROM pacientes WHERE id = $1 AND tenant_id = $2', [req.params.id, user.tenant_id]);
     if (pac.length === 0) return res.status(404).json({ error: 'Paciente não encontrado' });
     const { rows } = await pool.query('SELECT * FROM anamneses WHERE paciente_id = $1 AND tenant_id = $2', [req.params.id, user.tenant_id]);
+    registrarAcessoProntuario(pool, user, req.params.id, 'anamnese');
     res.json(rows[0] || null);
   } catch (error) {
     res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
@@ -5033,6 +5034,7 @@ app.get('/api/pacientes/:id/odontograma', async (req, res) => {
     const { rows: pac } = await pool.query('SELECT 1 FROM pacientes WHERE id = $1 AND tenant_id = $2', [req.params.id, user.tenant_id]);
     if (pac.length === 0) return res.status(404).json({ error: 'Paciente não encontrado' });
     const { rows } = await pool.query('SELECT * FROM odontogramas WHERE paciente_id = $1 AND tenant_id = $2', [req.params.id, user.tenant_id]);
+    registrarAcessoProntuario(pool, user, req.params.id, 'odontograma');
     res.json(rows[0] || null);
   } catch (error) {
     if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
@@ -6364,6 +6366,7 @@ app.get('/api/prontuarios', async (req, res) => {
     if (paciente_id) { params.push(paciente_id); query += ` AND pr.paciente_id=$${params.length}`; }
     query += ' ORDER BY pr.created_at DESC';
     const { rows } = await pool.query(query, params);
+    registrarAcessoProntuario(pool, user, rows.map(r => r.paciente_id), 'prontuario');
     res.json(rows);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -15359,7 +15362,10 @@ app.get('/api/ai/meta-ads/insight', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════
 // CLINICORP INTEGRATION
 import { registerClinicorp, reconciliationTick } from './clinicorp.mjs';
+import { registerLgpd, registrarAcessoProntuario } from './lgpd.mjs';
 registerClinicorp(app, pool, { verifyUser });
+// Direitos do titular (LGPD art. 18): exportar, excluir, anonimizar; log de acesso ao prontuário.
+registerLgpd(app, { pool, verifyAdmin, optOutKey: waPhoneKey });
 
 // ── Per-user Clinicorp credentials (SaaS multi-tenant) ─────────
 // Each authenticated user has their own row in clinicorp_user_settings.
@@ -15810,6 +15816,7 @@ app.get('/api/exames', async (req, res) => {
         LIMIT 500`,
       params
     );
+    registrarAcessoProntuario(pool, user, rows.map(r => r.paciente_id), 'exame');
     res.json(rows);
   } catch (err) {
     console.error('[exames:list]', err.message);
