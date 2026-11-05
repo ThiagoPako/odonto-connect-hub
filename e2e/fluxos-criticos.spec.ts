@@ -5,7 +5,7 @@ import { login, USUARIOS } from "./helpers";
 test.describe("Fluxos críticos", () => {
   test("1. login: credencial inválida é recusada e a válida entra no dashboard", async ({ page }) => {
     await page.goto("/login");
-    await page.getByPlaceholder("admin@odontoconnect.tech").fill(USUARIOS.admin);
+    await page.locator("#email").fill(USUARIOS.admin);
     await page.locator("input[type=password]").fill("senha-errada");
     await page.getByRole("button", { name: "Entrar" }).click();
     await expect(page).toHaveURL(/login/);
@@ -31,7 +31,13 @@ test.describe("Fluxos críticos", () => {
     await page.getByRole("button", { name: "NOVO" }).click();
     await page.getByPlaceholder("Buscar paciente por nome...").fill("Lúcia");
     await page.getByText("Lúcia Gomes (Alfa)").first().click();
-    // Atenção: "Confirmação" vem como "Enviar agora" por padrão — aqui o WhatsApp é só enfileirado (sem Evolution local).
+    const dialog = page.getByRole("dialog");
+    // Profissional é obrigatório (sem ele o botão "Agendar" não dispara a requisição).
+    await dialog.locator("button", { hasText: "Selecione" }).click();
+    await page.getByRole("option", { name: "Dr. Davi Dentista" }).click();
+    // "Confirmação" vem como "Enviar agora" por padrão: desligamos para o teste não enfileirar WhatsApp.
+    await dialog.locator("button", { hasText: "Enviar agora" }).first().click();
+    await page.getByRole("option", { name: "Não enviar" }).first().click();
     const resp = page.waitForResponse((r) => r.url().endsWith("/api/agenda") && r.request().method() === "POST");
     await page.getByRole("button", { name: "Agendar", exact: true }).click();
     expect((await resp).status()).toBe(200);

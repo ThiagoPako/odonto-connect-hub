@@ -5,7 +5,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 export PATH="/opt/homebrew/opt/postgresql@16/bin:$PATH"
-DB=odonto_local
+DB="${ODONTO_LOCAL_DB:-odonto_local}"
 [[ "${1:-}" == "--recriar" ]] && dropdb --if-exists "$DB"
 createdb "$DB" 2>/dev/null || true
 psql -q -d postgres -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='odonto_user') THEN CREATE ROLE odonto_user LOGIN PASSWORD 'local_test_pw' SUPERUSER; END IF; END \$\$;"

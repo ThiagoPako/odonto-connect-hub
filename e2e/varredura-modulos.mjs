@@ -25,7 +25,7 @@ for (const [perfil, email] of PERFIS) {
   page.on('pageerror', (e) => { if (atual) atual.pageerror.push(String(e).slice(0, 200)); });
   page.on('response', (r) => { if (atual && r.url().includes('/api/') && r.status() >= 400) atual.api.push(`${r.status()} ${r.request().method()} ${new URL(r.url()).pathname}`); });
   await page.goto(`${BASE}/login`);
-  await page.getByPlaceholder('admin@odontoconnect.tech').fill(email);
+  await page.locator('#email').fill(email);
   await page.locator('input[type=password]').fill('Teste@123');
   await page.getByRole('button', { name: 'Entrar' }).click();
   await page.waitForURL((u) => !u.pathname.startsWith('/login'), { timeout: 15000 }).catch(() => {});

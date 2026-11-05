@@ -9,7 +9,7 @@ export const USUARIOS = {
 
 export async function login(page: Page, email: string = USUARIOS.admin) {
   await page.goto("/login");
-  await page.getByPlaceholder("admin@odontoconnect.tech").fill(email);
+  await page.locator("#email").fill(email);
   await page.locator("input[type=password]").fill(SENHA_TESTE);
   await page.getByRole("button", { name: "Entrar" }).click();
   await expect(page).toHaveURL(/dashboard/);
