@@ -17,28 +17,44 @@
 --     5. CORREÇÃO DO LEGADO: a migration-saas.sql (no deploy) põe em todo deploy os NULL
 --        de pacientes/dentistas/agendamentos/financeiro/tratamentos (e profiles) na
 --        clínica placeholder 00000000-…-0001. O server.mjs trata esse id como inválido, então
---        esses registros somem para a clínica dona. Aqui a filha volta para a clínica
---        do pai quando o pai é de UMA clínica real (diferente do Legado);
+--        esses registros somem para a clínica dona. A correção (filha volta para a clínica
+--        do pai quando o pai é de UMA clínica real) fica em migration-tenant-m0-legado.sql,
+--        rodada À MÃO pelo Otávio depois do dry-run — não neste arquivo;
 --     6. lista o que ficou sem clínica ou no Legado, para revisão.
 --
--- Idempotente e só aditivo, a não ser pelo item 5 (que só troca o placeholder pela clínica
--- do pai). Roda no deploy depois do P0 e de migration-whatsapp-fase1.sql. Também roda sozinho:
--- regra cujas tabela ou coluna ainda não existem é pulada.
+-- Idempotente. Roda no deploy depois do P0 e de migration-whatsapp-fase1.sql. Também roda
+-- sozinho: regra cuja tabela ou coluna ainda não existe é pulada.
+-- O item 5 (Legado → clínica real) NÃO roda aqui: está em migration-tenant-m0-legado.sql,
+-- script MANUAL com dry-run (troca de dono de dado de saúde entre clínicas não é automática).
 -- NÃO faz: RLS/FORCE/políticas (migration-force-rls.sql), NOT NULL, DROP.
+--
+-- Transações (para não segurar lock de dezenas de tabelas com a API no ar):
+--   A. itens 1 e 2 numa transação curta (CREATE TABLE IF NOT EXISTS e ADD COLUMN sem DEFAULT
+--      são só catálogo);
+--   B. item 3 com COMMIT a cada tabela (o CREATE INDEX trava escrita só daquela tabela);
+--   C. item 4: cada regra é uma transação (auditoria + UPDATE juntos).
+--   lock_timeout de 5 s em tudo: sem o lock, o comando falha, o que já foi confirmado fica,
+--   o resto não roda, o deploy mostra o alerta e o próximo deploy continua de onde parou.
+--
+-- Auditoria: toda linha cujo tenant_id o item 4 altera vai antes para
+-- migracao.tenant_m0_auditoria (tabela, pk, tenant_antigo, tenant_novo, em), na mesma
+-- transação do UPDATE. Schema separado: o odonto_app não recebe acesso (a FORCE só dá GRANT
+-- no public).
 --
 -- Rollback: colunas, índices e DEFAULT são opcionais e podem ficar. Para desfazer de vez:
 --   ALTER TABLE <tabela> DROP COLUMN IF EXISTS tenant_id;   -- só onde o M0 criou a coluna
 --   DROP TABLE IF EXISTS tenant_settings;                    -- perde a configuração por clínica
---   O item 5 não tem desfazer automático: guarde antes a saída da seção 6 do
---   docs/banco/diagnostico-rls.sql (e o NOTICE "[M0 legado]" informa cada troca).
+--   Preenchimentos (item 4): docs/banco/rollback-tenant-m0.sql (dry-run por padrão; volta cada
+--   linha ao tenant_antigo registrado, só se ninguém a mudou depois).
 -- ═══════════════════════════════════════════════════════════════════════════
 
 \set ON_ERROR_STOP on
 
-BEGIN;
+-- Vale para todas as transações desta sessão.
+SET lock_timeout = '5s';
 
--- Se não conseguir o lock em 5 s, desfaz tudo e o próximo deploy tenta de novo.
-SET LOCAL lock_timeout = '5s';
+-- ═══ A. Itens 1 e 2 (transação curta) ══════════════════════════════════════
+BEGIN;
 
 -- Mesma definição de migration-tenant-defaults.sql ('' vira NULL).
 CREATE OR REPLACE FUNCTION get_current_tenant_id() RETURNS UUID AS $$
@@ -159,19 +175,41 @@ BEGIN
   END LOOP;
 END $$;
 
+-- Auditoria das trocas de tenant_id (itens 4 e 5). Fora do public: a API não lê nem grava.
+CREATE SCHEMA IF NOT EXISTS migracao AUTHORIZATION postgres;
+REVOKE ALL ON SCHEMA migracao FROM PUBLIC;
+CREATE TABLE IF NOT EXISTS migracao.tenant_m0_auditoria (
+  id BIGSERIAL PRIMARY KEY,
+  lote BIGINT NOT NULL,               -- txid da transação que trocou
+  regra TEXT NOT NULL,                -- 'preencher' (item 4) ou 'legado' (item 5) + pai.coluna
+  tabela TEXT NOT NULL,
+  pk TEXT NOT NULL,                   -- chave primária da linha, como texto
+  tenant_antigo UUID,                 -- NULL (item 4) ou o placeholder Legado (item 5)
+  tenant_novo UUID NOT NULL,
+  em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  desfeito_em TIMESTAMPTZ             -- preenchido pelo docs/banco/rollback-tenant-m0.sql
+);
+CREATE INDEX IF NOT EXISTS idx_tenant_m0_auditoria_lote ON migracao.tenant_m0_auditoria (lote, tabela);
+CREATE INDEX IF NOT EXISTS idx_tenant_m0_auditoria_linha ON migracao.tenant_m0_auditoria (tabela, pk);
+
+COMMIT;
+
+-- ═══ B. Item 3 (COMMIT a cada tabela) ══════════════════════════════════════
 -- ─── 3. Índice e DEFAULT em toda tabela com tenant_id ───────────────────────
 -- Inclui as do P0 e as antigas: só cria o que falta (índice que comece por tenant_id;
--- DEFAULT só em coluna uuid sem DEFAULT).
+-- DEFAULT só em coluna uuid sem DEFAULT). Tabela que já tem os dois não é tocada.
+-- Catálogo direto (pg_attribute.atthasdef), sem information_schema: ler column_default
+-- deparseia o DEFAULT e pede lock em toda tabela, até nas que não precisam de nada.
 DO $$
 DECLARE r record;
 BEGIN
   FOR r IN
-    SELECT c.oid, c.relname, col.data_type, col.column_default
+    SELECT c.oid, c.relname, format_type(a.atttypid, a.atttypmod) AS data_type, a.atthasdef
       FROM pg_class c
       JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public'
-      JOIN information_schema.columns col
-        ON col.table_schema = 'public' AND col.table_name = c.relname AND col.column_name = 'tenant_id'
+      JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'tenant_id' AND NOT a.attisdropped
      WHERE c.relkind = 'r'
+     ORDER BY c.relname
   LOOP
     IF NOT EXISTS (
       SELECT 1 FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = i.indkey[0]
@@ -179,21 +217,32 @@ BEGIN
     ) THEN
       EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON public.%I (tenant_id)', left('idx_' || r.relname || '_tenant', 63), r.relname);
     END IF;
-    IF r.data_type = 'uuid' AND r.column_default IS NULL THEN
+    IF r.data_type = 'uuid' AND NOT r.atthasdef THEN
       EXECUTE format('ALTER TABLE public.%I ALTER COLUMN tenant_id SET DEFAULT get_current_tenant_id()', r.relname);
     END IF;
+    COMMIT;  -- solta o lock desta tabela antes da próxima
   END LOOP;
 END $$;
 
--- ─── 4 e 5. Preenchimento pelo pai (e correção do Legado) ───────────────────
+-- ─── Função de preenchimento pelo pai (itens 4 e 5) ─────────────────────────
 -- Copia a clínica do pai para a filha só quando todos os registros do pai com aquela chave
 -- são da MESMA clínica real (pai no Legado não conta como clínica). Por padrão só mexe em
--- filha com tenant_id NULL. Com corrige_legado = true, também na filha que está no Legado.
-CREATE OR REPLACE FUNCTION pg_temp.m0_preencher(filha TEXT, col_filha TEXT, pai TEXT, col_pai TEXT, corrige_legado BOOLEAN DEFAULT false)
+-- filha com tenant_id NULL; com corrige_legado = true, só na filha que está no Legado.
+-- aplicar = false: só conta (dry-run, sem lock de linha). filtro: condição SQL extra sobre f.
+-- Cada troca é gravada em migracao.tenant_m0_auditoria ANTES do UPDATE, na mesma transação;
+-- o UPDATE só muda as linhas auditadas naquele lote. Filha sem chave primária de uma coluna
+-- é pulada (não daria para desfazer).
+-- (Mesma função em migration-tenant-m0.sql e migration-tenant-m0-legado.sql.)
+CREATE OR REPLACE FUNCTION pg_temp.m0_preencher(filha TEXT, col_filha TEXT, pai TEXT, col_pai TEXT,
+  corrige_legado BOOLEAN DEFAULT false, aplicar BOOLEAN DEFAULT true, filtro TEXT DEFAULT NULL)
 RETURNS VOID AS $$
 DECLARE
-  n INT;
+  n BIGINT;
   legado CONSTANT TEXT := '00000000-0000-0000-0000-000000000001';
+  regra TEXT := CASE WHEN corrige_legado THEN 'legado' ELSE 'preencher' END || ':' || pai || '.' || col_pai;
+  pk_col TEXT;
+  pk_tipo TEXT;
+  origem TEXT;
 BEGIN
   IF to_regclass(format('public.%I', filha)) IS NULL OR to_regclass(format('public.%I', pai)) IS NULL THEN RETURN; END IF;
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name=filha AND column_name=col_filha)
@@ -202,39 +251,60 @@ BEGIN
      OR NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name=pai AND column_name='tenant_id') THEN
     RETURN;
   END IF;
-  EXECUTE format(
-    'UPDATE public.%1$I f SET tenant_id = p.tenant_id
-       FROM (SELECT %4$I::text AS chave, (array_agg(DISTINCT tenant_id::text))[1]::uuid AS tenant_id
+  SELECT min(a.attname), min(format_type(a.atttypid, a.atttypmod))
+    INTO pk_col, pk_tipo
+    FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY (i.indkey)
+   WHERE i.indrelid = format('public.%I', filha)::regclass AND i.indisprimary
+  HAVING count(*) = 1;
+  IF pk_col IS NULL THEN
+    RAISE NOTICE '[M0 %] %: sem chave primária de uma coluna, pulada', regra, filha;
+    RETURN;
+  END IF;
+
+  -- Linhas candidatas: f = filha, p = clínica única (real) do pai.
+  origem := format(
+    'FROM public.%1$I f
+       JOIN (SELECT %4$I::text AS chave, (array_agg(DISTINCT tenant_id::text))[1]::uuid AS tenant_id
                FROM public.%3$I
               WHERE %4$I IS NOT NULL AND tenant_id IS NOT NULL
               GROUP BY %4$I::text
              HAVING count(DISTINCT tenant_id) = 1
                 AND (array_agg(DISTINCT tenant_id::text))[1] <> %5$L) p
-      WHERE (f.tenant_id IS NULL OR (%6$L AND f.tenant_id::text = %5$L))
+         ON p.chave = f.%2$I::text
+      WHERE %6$s
         AND f.%2$I IS NOT NULL
-        AND p.chave = f.%2$I::text',
-    filha, col_filha, pai, col_pai, legado, corrige_legado);
+        AND (%7$s)',
+    filha, col_filha, pai, col_pai, legado,
+    CASE WHEN corrige_legado THEN format('f.tenant_id::text = %L', legado) ELSE 'f.tenant_id IS NULL' END,
+    COALESCE(filtro, 'true'));
+
+  IF NOT aplicar THEN
+    EXECUTE 'SELECT count(*) ' || origem INTO n;
+    IF n > 0 THEN
+      RAISE NOTICE '[M0 dry-run %] %: % linha(s) iriam para a clínica de %.%', regra, filha, n, pai, col_pai;
+    END IF;
+    RETURN;
+  END IF;
+
+  EXECUTE format(
+    'INSERT INTO migracao.tenant_m0_auditoria (lote, regra, tabela, pk, tenant_antigo, tenant_novo)
+     SELECT txid_current(), %1$L, %2$L, f.%3$I::text, f.tenant_id, p.tenant_id %4$s
+        FOR UPDATE OF f', regra, filha, pk_col, origem);
+  EXECUTE format(
+    'UPDATE public.%1$I f SET tenant_id = a.tenant_novo
+       FROM migracao.tenant_m0_auditoria a
+      WHERE a.lote = txid_current() AND a.tabela = %2$L AND a.regra = %3$L
+        AND f.%4$I = a.pk::%5$s',
+    filha, filha, regra, pk_col, pk_tipo);
   GET DIAGNOSTICS n = ROW_COUNT;
   IF n > 0 THEN
-    RAISE NOTICE '[M0 %] %: % linha(s) com a clínica de %.%',
-      CASE WHEN corrige_legado THEN 'legado' ELSE 'preencher' END, filha, n, pai, col_pai;
+    RAISE NOTICE '[M0 %] %: % linha(s) com a clínica de %.% (auditadas, lote %)',
+      regra, filha, n, pai, col_pai, txid_current();
   END IF;
 END $$ LANGUAGE plpgsql;
 
--- 5. Correção do Legado (pais primeiro). Pacientes no Legado sem pai continuam lá (revisão).
-SELECT pg_temp.m0_preencher('agendamentos',           'paciente_id',   'pacientes',    'id', true);
-SELECT pg_temp.m0_preencher('financeiro',             'paciente_id',   'pacientes',    'id', true);
-SELECT pg_temp.m0_preencher('tratamentos',            'paciente_id',   'pacientes',    'id', true);
-SELECT pg_temp.m0_preencher('dentistas',              'id',            'agendamentos', 'dentista_id', true);
-SELECT pg_temp.m0_preencher('tratamento_etapas',      'tratamento_id', 'tratamentos',  'id', true);
-SELECT pg_temp.m0_preencher('comissoes',              'tratamento_id', 'tratamentos',  'id', true);
-SELECT pg_temp.m0_preencher('procedimento_execucoes', 'paciente_id',   'pacientes',    'id', true);
-SELECT pg_temp.m0_preencher('prontuarios',            'paciente_id',   'pacientes',    'id', true);
-SELECT pg_temp.m0_preencher('anamneses',              'paciente_id',   'pacientes',    'id', true);
-SELECT pg_temp.m0_preencher('odontogramas',           'paciente_id',   'pacientes',    'id', true);
-SELECT pg_temp.m0_preencher('orcamentos',             'paciente_id',   'pacientes',    'id', true);
-SELECT pg_temp.m0_preencher('user_roles',             'user_id',       'profiles',     'id', true);
-
+-- ═══ C. Item 4 (cada SELECT é uma transação: auditoria + UPDATE) ═══════════
+-- Item 5 (Legado → clínica real): migration-tenant-m0-legado.sql (manual, dry-run por padrão).
 -- 4. Regras que o P0 não tem (só NULL).
 -- Por usuário
 SELECT pg_temp.m0_preencher('user_roles',              'user_id',      'profiles', 'id');
@@ -267,9 +337,9 @@ SELECT pg_temp.m0_preencher('fin_bills',               'bank_account_id', 'fin_b
 SELECT pg_temp.m0_preencher('fin_movements',           'bill_id',      'fin_bills',          'id');
 
 -- ─── 6. Lista para revisão ──────────────────────────────────────────────────
--- Sem clínica: não tem pai identificável. No Legado: a migration-saas.sql pôs lá e não há
--- pai para corrigir (ex.: paciente que nunca teve clínica). Revisar com a clínica dona;
--- nunca atribuir a "primeiro admin".
+-- Sem clínica: não tem pai identificável. No Legado: a migration-saas.sql pôs lá; o que tem
+-- pai de clínica real sai com migration-tenant-m0-legado.sql (manual), o resto (ex.: paciente
+-- que nunca teve clínica) é revisado com a clínica dona; nunca atribuir a "primeiro admin".
 DO $$
 DECLARE r record; nulo BIGINT; leg BIGINT; total INT := 0;
 BEGIN
@@ -289,5 +359,3 @@ BEGIN
   END LOOP;
   IF total = 0 THEN RAISE NOTICE '[M0 revisar] nada pendente'; END IF;
 END $$;
-
-COMMIT;

@@ -124,9 +124,18 @@ jobs:
             cat /root/odonto-connect/vps-api-server/migration-whatsapp-fase1.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             cat /root/odonto-connect/vps-api-server/migration-seguranca-p0.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             cat /root/odonto-connect/vps-api-server/migration-contatos-recuperacao.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
-            # M0: complemento do seguranca-p0 (precisa rodar depois dele). Só aditivo + correção do Legado.
+            # M0: complemento do seguranca-p0 (precisa rodar depois dele). Aditivo + preenchimento auditado.
+            # A correção do Legado (migration-tenant-m0-legado.sql) é MANUAL, com dry-run: não entra aqui.
             # migration-force-rls.sql NÃO entra aqui ainda: é incluída na janela da virada (docs/banco/plano-virada-rls.md).
-            cat /root/odonto-connect/vps-api-server/migration-tenant-m0.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
+            # Falha da M0 (lock de 5 s, erro) não derruba o deploy (a API não depende dela), mas fica visível.
+            M0_STATUS=ok
+            if ! cat /root/odonto-connect/vps-api-server/migration-tenant-m0.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1; then
+              M0_STATUS=falhou
+              echo "::warning title=Migração M0 não aplicada::migration-tenant-m0.sql falhou (lock ocupado ou erro). O deploy segue; o próximo deploy tenta de novo. Ver log acima."
+              echo "!!! ATENÇÃO: migration-tenant-m0.sql NÃO foi aplicada por completo (ver o ERROR acima)."
+              echo "!!! A API sobe normalmente. Repetir: sudo -u postgres psql -p 5433 -d odonto_db -f vps-api-server/migration-tenant-m0.sql"
+              echo "!!! Não rodar migration-force-rls.sql enquanto a M0 não passar."
+            fi
             echo "=== Migrations applied ==="
 
             # ─── Pre-flight syntax check on server.mjs ─────────────────────
@@ -235,3 +244,7 @@ jobs:
             echo "$NEW_COMMIT" > /root/odonto-connect/.last-good-commit
             rm -f /root/odonto-connect/.last-good-commit.tmp
             echo "=== Deploy complete $(date) — commit $NEW_COMMIT ==="
+            if [ "$M0_STATUS" != "ok" ]; then
+              echo "::warning title=Migração M0 pendente::Deploy concluído, mas migration-tenant-m0.sql não foi aplicada (ver alerta nas migrações)."
+              echo "!!! LEMBRETE: migration-tenant-m0.sql não foi aplicada neste deploy."
+            fi

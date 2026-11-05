@@ -32,13 +32,26 @@ fora do git, com os scripts para repetir).
     tabelas da API;
   - põe `tenant_id` nas tabelas da clínica que o P0 não cobre;
   - cria índice e DEFAULT em toda tabela que tem `tenant_id`;
-  - preenche o NULL pela tabela-pai, só quando o pai é de uma única clínica;
-  - **corrige o Legado**: a `migration-saas.sql` (já no deploy) põe em todo deploy os NULL de
-    pacientes/dentistas/agendamentos/financeiro/tratamentos na clínica placeholder `…0001`, que o
-    `server.mjs` trata como inválida. O M0 devolve a filha à clínica do pai quando o pai é de uma
-    clínica real. No ensaio, voltaram 1.000 agendamentos, 3.000 tratamentos e 1.715 lançamentos;
+  - preenche o NULL pela tabela-pai, só quando o pai é de uma única clínica, gravando cada linha
+    alterada antes em `migracao.tenant_m0_auditoria` (tabela, pk, tenant antigo/novo, quando), na
+    mesma transação. Desfazer: `docs/banco/rollback-tenant-m0.sql` (dry-run por padrão);
+  - transações curtas: itens 1-2 numa só, índice/DEFAULT com COMMIT por tabela, cada regra de
+    preenchimento numa transação; `lock_timeout` de 5 s. Se falhar, o deploy segue e mostra
+    `::warning` + `!!! ATENÇÃO` no log do Actions (e repete o aviso no fim); o próximo deploy continua;
   - lista o que ficou sem clínica ou no Legado (`NOTICE [M0 revisar]`).
   Não liga RLS e não muda o que a API lê.
+- **Não** corrige o Legado sozinho. A `migration-saas.sql` (já no deploy) põe em todo deploy os NULL
+  de pacientes/dentistas/agendamentos/financeiro/tratamentos na clínica placeholder `…0001`, que o
+  `server.mjs` trata como inválida. A correção (filha volta à clínica do pai quando o pai é de uma
+  clínica real) é o script **manual** `vps-api-server/migration-tenant-m0-legado.sql`:
+  1. dry-run (padrão, só conta): `sudo -u postgres psql -p 5433 -d odonto_db -f vps-api-server/migration-tenant-m0-legado.sql`
+  2. `pg_dump -Fc` de backup;
+  3. aplicar: mesmo comando com `-v aplicar=1`. Tudo auditado; desfazer com
+     `docs/banco/rollback-tenant-m0.sql -v regra=legado` (dry-run, depois `-v aplicar=1`).
+  Agendamento com data entre hoje-2 e hoje+2 ou alterado nas últimas 48 h fica no Legado na rodada
+  (não dispara lembrete de véspera nem gatilho de confirmação/falta por causa da troca); sai numa
+  próxima rodada. No ensaio: 809 agendamentos, 1.715 lançamentos e 3.000 tratamentos voltaram,
+  191 agendamentos seguraram, lembretes de amanhã iguais antes/depois (167).
 - **Não** roda `migration-force-rls.sql`: ela não está no `deploy.yml` de propósito, porque muda o
   comportamento da produção. O Otávio inclui a linha dela na janela da virada (passo 2 abaixo).
 - Entra a mudança no `forgot-password` (abaixo). A tabela que a rota usa passa a vir do M0.
