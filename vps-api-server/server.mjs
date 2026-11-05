@@ -5357,7 +5357,7 @@ async function enqueueRescheduleNotice(tenantId, appt) {
   ).catch(e => console.error('[reschedule] cancelar aviso anterior falhou:', e.message));
   const firstName = String(appt.paciente_nome || pac?.nome || '').trim().split(/\s+/)[0] || 'Paciente';
   const clinica = await getTenantClinicName(tenantId);
-  const msg = `📋 *Consulta reagendada — ${clinica}*\n\nOlá, ${firstName}!\n\nSua consulta foi reagendada:\n📅 ${formatAgendaDateBR(appt.data)}\n⏰ ${appt.hora || '—'}\n👩‍⚕️ ${appt.dentista_nome || 'Equipe da clínica'}\n\nSe precisar remarcar de novo, é só mandar uma mensagem aqui.`;
+  const msg = `📋 *Consulta reagendada — ${clinica}*\n\nOlá, ${firstName}!\n\nSua consulta foi reagendada:\n📅 ${formatAgendaDateBR(appt.data)}\n⏰ ${String(appt.hora || '').slice(0, 5) || '—'}\n👩‍⚕️ ${appt.dentista_nome || 'Equipe da clínica'}\n\nSe precisar remarcar de novo, é só mandar uma mensagem aqui.`;
   return enqueueWhatsAppJob({
     tenantId, phone, message: msg, category: 'transactional',
     patientName: pac?.nome || appt.paciente_nome || '', triggerEvent: 'reschedule_notice',
@@ -9371,7 +9371,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
         // ÚNICA mensagem que passa pelo filtro de opt-out (isOptOutConfirmationJob).
         await enqueueWhatsAppAutoReply({
           tenantId, instance, phone: resolvedPhone, kind: WA_OPT_OUT_CONFIRMATION_KIND, category: 'service',
-          message: `Pronto! A ${await getTenantClinicName(tenantId)} não vai mais enviar mensagens automáticas para este número, inclusive lembretes de consulta. Se precisar falar com a gente, é só mandar uma mensagem por aqui.`,
+          message: `Pronto! A ${await getTenantClinicName(tenantId)} não vai mais enviar mensagens automáticas para este número, inclusive lembretes de consulta. Se quiser voltar a receber, é só pedir para a nossa equipe. Para falar com a gente, mande uma mensagem por aqui.`,
         }).catch(e => console.error('[opt-out] confirmação não enfileirada:', e.message));
       }
       console.log(`🚫 Opt-out registrado (tenant ${tenantId}, final ${String(resolvedPhone).slice(-4)})`);
@@ -9650,12 +9650,11 @@ app.post('/api/webhook/evolution', async (req, res) => {
         // Remove awaiting flag
         await pool.query("DELETE FROM app_settings WHERE key = $1", [ratingKey]);
 
+        // Parecer T11: linguagem neutra; nota até 3 oferece canal para contar o que houve.
         const stars = '⭐'.repeat(rating);
         const thanks = rating >= 4
-          ? `${stars}\n\nMuito obrigado pela avaliação! Ficamos felizes em atendê-lo! 😊`
-          : rating === 3
-          ? `${stars}\n\nObrigado pela avaliação! Vamos trabalhar para melhorar. 🙏`
-          : `${stars}\n\nObrigado pelo feedback. Vamos analisar e melhorar nosso atendimento. 🙏`;
+          ? `${stars}\n\nMuito obrigado pela avaliação! Ficamos felizes em atender você. 😊`
+          : `${stars}\n\nObrigado pela avaliação. Se quiser, conte por aqui o que podemos melhorar: nossa equipe vai ler.`;
 
         await enqueueWhatsAppAutoReply({
           tenantId, instance, phone, message: thanks, kind: 'rating_thanks', category: 'service', dedupeMinutes: 10,
@@ -10698,7 +10697,7 @@ function waDedupeMinutes(vars) {
 }
 
 // EXCEÇÃO ÚNICA ao opt-out: a confirmação de que o descadastro foi registrado
-// (LGPD art. 18 §2º e política do WhatsApp: confirmar o pedido de saída). Só ela
+// (transparência e revogação facilitada — LGPD art. 6º VI e 8º §5º). Só ela
 // passa pelo filtro de opt-out, e só quando enfileirada como auto_reply com esse kind.
 const WA_OPT_OUT_CONFIRMATION_KIND = 'opt_out_confirmation';
 function isOptOutConfirmationJob(job, vars) {
@@ -12746,19 +12745,20 @@ app.post('/api/sessions/close', async (req, res) => {
         tenantId: user.tenant_id, instance, phone, category: 'transactional',
         triggerEvent: 'satisfaction_survey', patientName: leadRow?.nome || '',
         expiresAt: new Date(Date.now() + 24 * 60 * 60_000),
-        message: `⭐ *Avalie nosso atendimento!*\n\nComo você avalia o atendimento que recebeu?\n\n5️⃣ Excelente\n4️⃣ Bom\n3️⃣ Regular\n2️⃣ Ruim\n1️⃣ Péssimo\n\nResponda com o número da sua avaliação.`,
+        // Parecer T10: opções equilibradas (há opção negativa) e nenhuma estrela antes de o paciente avaliar.
+        message: `*Avalie nosso atendimento*\n\nComo foi o atendimento que você recebeu? Responda com um número de 1 a 5:\n\n1 - Ruim\n2 - Abaixo do esperado\n3 - Regular\n4 - Bom\n5 - Ótimo`,
         variables: {
           leadId: String(leadId),
           sessionId: session.id || null, attendantId: session.attendant_id || null, attendantName: session.attendant_name || null,
           interactive: {
             endpoint: 'sendButtons',
             payload: {
-              title: '⭐ Avalie nosso atendimento',
-              description: 'Como você avalia o atendimento que recebeu?',
+              title: 'Avalie nosso atendimento',
+              description: 'Como foi o atendimento que você recebeu?',
               buttons: [
-                { buttonId: `rating_${leadId}_5`, buttonText: { displayText: '⭐⭐⭐⭐⭐ Excelente' } },
-                { buttonId: `rating_${leadId}_4`, buttonText: { displayText: '⭐⭐⭐⭐ Bom' } },
-                { buttonId: `rating_${leadId}_3`, buttonText: { displayText: '⭐⭐⭐ Regular' } },
+                { buttonId: `rating_${leadId}_5`, buttonText: { displayText: 'Ótimo (5)' } },
+                { buttonId: `rating_${leadId}_3`, buttonText: { displayText: 'Regular (3)' } },
+                { buttonId: `rating_${leadId}_1`, buttonText: { displayText: 'Ruim (1)' } },
               ],
             },
           },
