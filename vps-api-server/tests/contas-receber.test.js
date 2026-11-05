@@ -178,6 +178,7 @@ describe('GET /api/contas-receber', () => {
     const q = sqlLog.find(x => /FROM financeiro f/.test(x.text));
     expect(q.text).toMatch(/WHERE f\.tenant_id = \$1 AND f\.tipo = 'receita'/);
     expect(q.text).toMatch(/p\.tenant_id = f\.tenant_id/);
+    expect(q.text).toMatch(/f\.cobranca_pausada_em, p\.responsavel_nome, p\.responsavel_telefone/);
     expect(q.params[0]).toBe(tenantA);
     expect(res.body.totais).toEqual({ aVencer: 10, vencido: 5, recebidoMes: 1 });
   });

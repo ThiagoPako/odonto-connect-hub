@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { AlertTriangle, ArrowLeft, CalendarClock, CheckCircle2, Loader2, Wallet } from "lucide-react";
+import { AlertTriangle, ArrowLeft, CalendarClock, CheckCircle2, Loader2, PauseCircle, PlayCircle, UserRound, Wallet } from "lucide-react";
 import { toast } from "sonner";
 import {
   contasReceberApi,
@@ -63,6 +63,10 @@ function ContasReceberPage() {
   const [forma, setForma] = useState<FormaRecebimento>("pix");
   const [salvando, setSalvando] = useState(false);
   const [erroBaixa, setErroBaixa] = useState<string | null>(null);
+  const [resp, setResp] = useState<ContaReceber | null>(null);
+  const [respNome, setRespNome] = useState("");
+  const [respTel, setRespTel] = useState("");
+  const [erroResp, setErroResp] = useState<string | null>(null);
 
   const carregar = useCallback(async () => {
     setCarregando(true);
@@ -85,6 +89,28 @@ function ContasReceberPage() {
     if (error) { setErroBaixa(error); return; }
     toast.success("Pagamento registrado. Lembretes de cobrança desta conta foram cancelados.");
     setBaixa(null);
+    void carregar();
+  };
+
+  const abrirResponsavel = (c: ContaReceber) => {
+    setResp(c); setRespNome(c.responsavel_nome || ""); setRespTel(c.responsavel_telefone || ""); setErroResp(null);
+  };
+
+  const salvarResponsavel = async () => {
+    if (!resp?.paciente_id) return;
+    setSalvando(true);
+    const { error } = await contasReceberApi.salvarResponsavel(resp.paciente_id, { nome: respNome, telefone: respTel });
+    setSalvando(false);
+    if (error) { setErroResp(error); return; }
+    toast.success(respTel ? "Responsável financeiro salvo" : "Responsável financeiro removido");
+    setResp(null);
+    void carregar();
+  };
+
+  const retomar = async (c: ContaReceber) => {
+    const { error } = await contasReceberApi.retomarCobranca(c.id);
+    if (error) { toast.error(error); return; }
+    toast.success("Lembretes de pagamento retomados para esta conta");
     void carregar();
   };
 
@@ -150,12 +176,34 @@ function ContasReceberPage() {
                   const emAberto = c.status !== "pago" && c.status !== "cancelado";
                   return (
                     <tr key={c.id} className="border-b border-border last:border-0">
-                      <td className="px-4 py-2">{c.paciente_nome || "—"}</td>
+                      <td className="px-4 py-2">
+                        <div>{c.paciente_nome || "—"}</div>
+                        {c.responsavel_nome && (
+                          <div className="text-xs text-muted-foreground">Responsável: {c.responsavel_nome}</div>
+                        )}
+                      </td>
                       <td className="px-4 py-2">{rotuloParcela(c)}</td>
                       <td className="px-4 py-2 tabular-nums">{isoParaBR(c.vencimento)}</td>
                       <td className="px-4 py-2 text-right tabular-nums">{formatBRL(c.valor)}</td>
-                      <td className={`px-4 py-2 ${sit.classe}`}>{sit.texto}</td>
-                      <td className="px-4 py-2 text-right">
+                      <td className={`px-4 py-2 ${sit.classe}`}>
+                        {sit.texto}
+                        {emAberto && c.cobranca_pausada_em && (
+                          <div className="text-xs text-warning inline-flex items-center gap-1">
+                            <PauseCircle className="h-3 w-3" /> Cobrança pausada: paciente respondeu, verificar
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-4 py-2 text-right whitespace-nowrap space-x-1">
+                        {c.paciente_id && (
+                          <Button size="sm" variant="ghost" onClick={() => abrirResponsavel(c)} aria-label="Responsável financeiro">
+                            <UserRound className="h-4 w-4" />
+                          </Button>
+                        )}
+                        {emAberto && c.cobranca_pausada_em && (
+                          <Button size="sm" variant="ghost" onClick={() => void retomar(c)}>
+                            <PlayCircle className="h-4 w-4 mr-1" /> Retomar cobrança
+                          </Button>
+                        )}
                         {emAberto && (
                           <Button size="sm" variant="outline" onClick={() => abrirBaixa(c)}>
                             <CheckCircle2 className="h-4 w-4 mr-1" /> Dar baixa
@@ -197,6 +245,35 @@ function ContasReceberPage() {
             <Button variant="ghost" onClick={() => setBaixa(null)}>Cancelar</Button>
             <Button onClick={confirmarBaixa} disabled={salvando || !pagoEm}>
               {salvando && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Confirmar pagamento
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!resp} onOpenChange={(o) => { if (!o) setResp(null); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Responsável financeiro</DialogTitle>
+            <DialogDescription>
+              Quem recebe os lembretes de pagamento de {resp?.paciente_nome || "este paciente"}. Obrigatório para paciente
+              menor de idade receber lembretes. Deixe em branco para enviar ao próprio paciente.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <Label htmlFor="resp-nome">Nome</Label>
+              <Input id="resp-nome" value={respNome} maxLength={120} onChange={(e) => setRespNome(e.target.value)} />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="resp-tel">WhatsApp (com DDD)</Label>
+              <Input id="resp-tel" inputMode="tel" placeholder="(11) 91234-5678" value={respTel} onChange={(e) => setRespTel(e.target.value)} />
+            </div>
+            {erroResp && <p className="text-xs text-destructive" role="alert">{erroResp}</p>}
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setResp(null)}>Cancelar</Button>
+            <Button onClick={salvarResponsavel} disabled={salvando}>
+              {salvando && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Salvar
             </Button>
           </DialogFooter>
         </DialogContent>
