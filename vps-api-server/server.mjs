@@ -6119,22 +6119,32 @@ app.get('/api/tratamentos', async (req, res) => {
   }
 });
 
+// Status aceitos para tratamento (os mesmos da tela). Vazio/ausente → padrão; fora da lista → null.
+const TRATAMENTO_STATUS = ['planejado', 'em_andamento', 'pausado', 'finalizado'];
+function normalizarStatusTratamento(valor, padrao) {
+  const v = String(valor ?? '').trim().toLowerCase();
+  if (!v) return padrao;
+  return TRATAMENTO_STATUS.includes(v) ? v : null;
+}
+
 app.post('/api/tratamentos', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
-    const { paciente_id, dentista_id, descricao, dente, valor, status, plano, observacoes } = req.body;
+    const { paciente_id, dentista_id, descricao, dente, valor, plano, observacoes } = req.body;
+    const status = normalizarStatusTratamento(req.body.status, 'planejado');
+    if (!status) return res.status(400).json({ error: `Status inválido. Use: ${TRATAMENTO_STATUS.join(', ')}` });
     const refErro = await validarReferenciasDoTenant(user.tenant_id, { pacienteId: paciente_id, dentistaId: dentista_id });
     if (refErro) return res.status(400).json({ error: refErro });
     const id = crypto.randomUUID();
     await pool.query(
       'INSERT INTO tratamentos (id, paciente_id, dentista_id, descricao, dente, valor, status, plano, observacoes, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
-      [id, paciente_id, dentista_id, descricao, dente, valor, status || 'planejado', plano, observacoes, user.tenant_id]
+      [id, paciente_id, dentista_id, descricao, dente, valor, status, plano, observacoes, user.tenant_id]
     );
     try {
       broadcastSSE('tratamento_changed', {
         action: 'created', id, paciente_id, dentista_id, descricao, dente, valor,
-        status: status || 'planejado', plano, observacoes, ts: Date.now(),
+        status, plano, observacoes, ts: Date.now(),
       }, user.tenant_id);
     } catch (e) { console.error('SSE tratamento_changed error:', e); }
     res.json({ id, success: true });
@@ -6147,7 +6157,12 @@ app.put('/api/tratamentos/:id', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
-    const { descricao, dente, valor, status, plano, observacoes, dentista_id } = req.body;
+    const { descricao, dente, valor, plano, observacoes, dentista_id } = req.body;
+    // Status vazio não apaga o status atual; valor fora da lista é recusado.
+    const status = req.body.status === undefined ? undefined : normalizarStatusTratamento(req.body.status, undefined);
+    if (req.body.status !== undefined && String(req.body.status).trim() && !status) {
+      return res.status(400).json({ error: `Status inválido. Use: ${TRATAMENTO_STATUS.join(', ')}` });
+    }
     const refErro = await validarReferenciasDoTenant(user.tenant_id, { dentistaId: dentista_id });
     if (refErro) return res.status(400).json({ error: refErro });
     const sets = []; const params = [];
@@ -6351,6 +6366,20 @@ app.delete('/api/comissoes/:id', async (req, res) => {
 // PRONTUÁRIOS — FULL CRUD
 // ═══════════════════════════════════════════════════════════════
 
+// Integridade do prontuário (Lei 13.787/2018; CFO): registro clínico não é apagado nem
+// reescrito em silêncio. Editar guarda a versão anterior em prontuario_versoes; "excluir"
+// vira inativação com motivo e autor (só o autor do registro ou admin).
+async function nomeDoUsuario(user) {
+  const { rows } = await pool.query('SELECT name FROM profiles WHERE id = $1 LIMIT 1', [user.id]).catch(() => ({ rows: [] }));
+  return String(rows[0]?.name || user.email || 'Usuário').slice(0, 120);
+}
+
+function prontuarioErroStatus(error) {
+  if (error.message === 'Unauthorized') return 401;
+  if (error.code === '42703' || error.code === '42P01') return 503; // migração do boot ainda não aplicada
+  return 500;
+}
+
 app.get('/api/prontuarios', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
@@ -6361,12 +6390,14 @@ app.get('/api/prontuarios', async (req, res) => {
       LEFT JOIN pacientes p ON pr.paciente_id = p.id AND p.tenant_id = pr.tenant_id
       LEFT JOIN dentistas d ON pr.dentista_id = d.id AND d.tenant_id = pr.tenant_id WHERE pr.tenant_id = $1`;
     const params = [user.tenant_id];
+    if (req.query.incluir_inativos !== '1') query += ' AND pr.inativo_em IS NULL';
     if (paciente_id) { params.push(paciente_id); query += ` AND pr.paciente_id=$${params.length}`; }
     query += ' ORDER BY pr.created_at DESC';
     const { rows } = await pool.query(query, params);
     res.json(rows);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('[prontuario] GET:', error.message);
+    res.status(prontuarioErroStatus(error)).json({ error: error.message === 'Unauthorized' ? 'Unauthorized' : 'Erro ao carregar prontuário' });
   }
 });
 
@@ -6381,46 +6412,101 @@ app.post('/api/prontuarios', async (req, res) => {
     }
     const id = crypto.randomUUID();
     await pool.query(
-      'INSERT INTO prontuarios (id, paciente_id, dentista_id, descricao, tipo, titulo, odontograma, anexos, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
-      [id, paciente_id, dentista_id, descricao, tipo || 'evolucao', titulo, odontograma ? JSON.stringify(odontograma) : '{}', anexos ? JSON.stringify(anexos) : '[]', user.tenant_id]
+      `INSERT INTO prontuarios (id, paciente_id, dentista_id, descricao, tipo, titulo, odontograma, anexos, tenant_id, criado_por, criado_por_nome, versao)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,1)`,
+      [id, paciente_id, dentista_id, descricao, tipo || 'evolucao', titulo, odontograma ? JSON.stringify(odontograma) : '{}', anexos ? JSON.stringify(anexos) : '[]', user.tenant_id, user.id, await nomeDoUsuario(user)]
     );
     res.json({ id, success: true });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('[prontuario] POST:', error.message);
+    res.status(prontuarioErroStatus(error)).json({ error: error.message === 'Unauthorized' ? 'Unauthorized' : 'Erro ao salvar registro' });
   }
 });
 
+// Edição: numa única instrução, guarda a versão atual no histórico e grava a nova.
 app.put('/api/prontuarios/:id', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    if (!PACIENTE_UUID_RE.test(String(req.params.id))) return res.status(404).json({ error: 'Prontuário não encontrado' });
     const { descricao, tipo, titulo, odontograma, anexos } = req.body;
-    const sets = []; const params = [];
+    const sets = []; const params = [req.params.id, user.tenant_id, user.id, await nomeDoUsuario(user)];
     if (descricao !== undefined) { params.push(descricao); sets.push(`descricao=$${params.length}`); }
     if (tipo !== undefined) { params.push(tipo); sets.push(`tipo=$${params.length}`); }
     if (titulo !== undefined) { params.push(titulo); sets.push(`titulo=$${params.length}`); }
     if (odontograma !== undefined) { params.push(JSON.stringify(odontograma)); sets.push(`odontograma=$${params.length}`); }
     if (anexos !== undefined) { params.push(JSON.stringify(anexos)); sets.push(`anexos=$${params.length}`); }
     if (sets.length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
-    params.push(req.params.id, user.tenant_id);
-    const { rowCount } = await pool.query(`UPDATE prontuarios SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length - 1} AND tenant_id=$${params.length}`, params);
-    if (rowCount === 0) return res.status(404).json({ error: 'Prontuário não encontrado' });
-    const { rows } = await pool.query('SELECT * FROM prontuarios WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
+    const { rows } = await pool.query(
+      `WITH atual AS (
+         SELECT * FROM prontuarios WHERE id = $1 AND tenant_id = $2 AND inativo_em IS NULL FOR UPDATE
+       ), historico AS (
+         INSERT INTO prontuario_versoes (prontuario_id, tenant_id, versao, titulo, descricao, tipo, odontograma, anexos,
+                                         autor_id, autor_nome, registrado_em, substituida_por, substituida_por_nome)
+         SELECT id, tenant_id, COALESCE(versao, 1), titulo, descricao, tipo, odontograma, anexos,
+                COALESCE(editado_por, criado_por), COALESCE(editado_por_nome, criado_por_nome), COALESCE(editado_em, created_at), $3, $4
+           FROM atual
+         RETURNING prontuario_id
+       )
+       UPDATE prontuarios pr SET ${sets.join(', ')}, versao = COALESCE(pr.versao, 1) + 1,
+              editado_em = NOW(), editado_por = $3, editado_por_nome = $4, updated_at = NOW()
+         FROM atual WHERE pr.id = atual.id AND pr.tenant_id = $2
+       RETURNING pr.*`,
+      params
+    );
+    if (rows.length === 0) return res.status(404).json({ error: 'Prontuário não encontrado' });
     res.json(rows[0]);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('[prontuario] PUT:', error.message);
+    res.status(prontuarioErroStatus(error)).json({ error: error.message === 'Unauthorized' ? 'Unauthorized' : 'Erro ao salvar registro' });
   }
 });
 
+// Versões anteriores de um registro (mais nova primeiro).
+app.get('/api/prontuarios/:id/versoes', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    if (!PACIENTE_UUID_RE.test(String(req.params.id))) return res.status(404).json({ error: 'Prontuário não encontrado' });
+    const { rows: dono } = await pool.query('SELECT 1 FROM prontuarios WHERE id = $1 AND tenant_id = $2', [req.params.id, user.tenant_id]);
+    if (!dono.length) return res.status(404).json({ error: 'Prontuário não encontrado' });
+    const { rows } = await pool.query(
+      `SELECT versao, titulo, descricao, tipo, autor_nome, registrado_em, substituida_por_nome, created_at AS substituida_em
+         FROM prontuario_versoes WHERE prontuario_id = $1 AND tenant_id = $2 ORDER BY versao DESC`,
+      [req.params.id, user.tenant_id]
+    );
+    res.json(rows);
+  } catch (error) {
+    console.error('[prontuario] versões:', error.message);
+    res.status(prontuarioErroStatus(error)).json({ error: error.message === 'Unauthorized' ? 'Unauthorized' : 'Erro ao carregar versões' });
+  }
+});
+
+// "Excluir" = inativar (o registro continua guardado e aparece com ?incluir_inativos=1).
 app.delete('/api/prontuarios/:id', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
-    const { rowCount } = await pool.query('DELETE FROM prontuarios WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
+    if (!PACIENTE_UUID_RE.test(String(req.params.id))) return res.status(404).json({ error: 'Prontuário não encontrado' });
+    const motivo = String(req.body?.motivo || req.query?.motivo || '').trim();
+    if (motivo.length < 5) return res.status(400).json({ error: 'Informe o motivo da inativação (mínimo 5 caracteres)' });
+    const { rows: [reg] } = await pool.query(
+      'SELECT criado_por, inativo_em FROM prontuarios WHERE id = $1 AND tenant_id = $2', [req.params.id, user.tenant_id]
+    );
+    if (!reg) return res.status(404).json({ error: 'Prontuário não encontrado' });
+    if (reg.inativo_em) return res.status(409).json({ error: 'Registro já inativado' });
+    const ehAutor = reg.criado_por && String(reg.criado_por) === String(user.id);
+    if (!ehAutor && user.role !== 'admin') return res.status(403).json({ error: 'Só o autor do registro ou um administrador pode inativar' });
+    const { rowCount } = await pool.query(
+      `UPDATE prontuarios SET inativo_em = NOW(), inativo_por = $3, inativo_por_nome = $4, inativo_motivo = $5, updated_at = NOW()
+        WHERE id = $1 AND tenant_id = $2 AND inativo_em IS NULL`,
+      [req.params.id, user.tenant_id, user.id, await nomeDoUsuario(user), motivo.slice(0, 500)]
+    );
     if (rowCount === 0) return res.status(404).json({ error: 'Prontuário não encontrado' });
-    res.json({ success: true });
+    res.json({ success: true, inativado: true });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('[prontuario] inativar:', error.message);
+    res.status(prontuarioErroStatus(error)).json({ error: error.message === 'Unauthorized' ? 'Unauthorized' : 'Erro ao inativar registro' });
   }
 });
 
@@ -7426,7 +7512,7 @@ app.get('/api/dentista/painel/:id?', async (req, res) => {
                 p.alergias
            FROM prontuarios pr
            LEFT JOIN pacientes p ON p.id = pr.paciente_id
-          WHERE pr.dentista_id = $1
+          WHERE pr.dentista_id = $1 AND pr.inativo_em IS NULL
           ORDER BY pr.created_at DESC
           LIMIT 50`,
         [dentistaId]
@@ -16224,6 +16310,33 @@ if (process.env.NODE_ENV !== 'test') {
       `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS clinicorp_appointment_id TEXT`,
       `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS last_clinicorp_sync_at TIMESTAMPTZ`,
       `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS keep_local BOOLEAN DEFAULT false`,
+      // Integridade do prontuário (migration-prontuario-integridade.sql)
+      `ALTER TABLE prontuarios ADD COLUMN IF NOT EXISTS criado_por UUID`,
+      `ALTER TABLE prontuarios ADD COLUMN IF NOT EXISTS criado_por_nome TEXT`,
+      `ALTER TABLE prontuarios ADD COLUMN IF NOT EXISTS versao INTEGER NOT NULL DEFAULT 1`,
+      `ALTER TABLE prontuarios ADD COLUMN IF NOT EXISTS editado_em TIMESTAMPTZ`,
+      `ALTER TABLE prontuarios ADD COLUMN IF NOT EXISTS editado_por UUID`,
+      `ALTER TABLE prontuarios ADD COLUMN IF NOT EXISTS editado_por_nome TEXT`,
+      `ALTER TABLE prontuarios ADD COLUMN IF NOT EXISTS inativo_em TIMESTAMPTZ`,
+      `ALTER TABLE prontuarios ADD COLUMN IF NOT EXISTS inativo_por UUID`,
+      `ALTER TABLE prontuarios ADD COLUMN IF NOT EXISTS inativo_por_nome TEXT`,
+      `ALTER TABLE prontuarios ADD COLUMN IF NOT EXISTS inativo_motivo TEXT`,
+      `CREATE TABLE IF NOT EXISTS prontuario_versoes (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        prontuario_id UUID NOT NULL REFERENCES prontuarios(id) ON DELETE CASCADE,
+        tenant_id UUID NOT NULL,
+        versao INTEGER NOT NULL,
+        titulo TEXT, descricao TEXT, tipo TEXT, odontograma JSONB, anexos JSONB,
+        autor_id UUID, autor_nome TEXT, registrado_em TIMESTAMPTZ,
+        substituida_por UUID, substituida_por_nome TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_prontuario_versoes_tenant ON prontuario_versoes (tenant_id, prontuario_id, versao)`,
+      `ALTER TABLE prontuario_versoes ENABLE ROW LEVEL SECURITY`,
+      `DROP POLICY IF EXISTS tenant_isolation_policy ON prontuario_versoes`,
+      `CREATE POLICY tenant_isolation_policy ON prontuario_versoes FOR ALL
+         USING (is_super_admin() OR tenant_id = get_current_tenant_id())
+         WITH CHECK (is_super_admin() OR tenant_id = get_current_tenant_id())`,
       `CREATE TABLE IF NOT EXISTS orcamentos (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         tenant_id UUID,

@@ -5,7 +5,7 @@ import {
   AlertCircle, Pill, Heart, User, Calendar, Phone, Loader2, Plus, X,
 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
-import { prontuariosApi, pacientesApi } from "@/lib/vpsApi";
+import { prontuariosApi, pacientesApi, type ProntuarioVersao } from "@/lib/vpsApi";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/prontuario")({
@@ -30,6 +30,10 @@ interface ProntuarioRow {
   tipo: string;
   titulo: string;
   created_at: string;
+  versao: number;
+  editado_em: string | null;
+  editado_por_nome: string | null;
+  criado_por_nome: string | null;
 }
 
 const entryTypeConfig: Record<string, { label: string; color: string }> = {
@@ -74,6 +78,10 @@ function ProntuarioPage() {
         tipo: r.tipo || 'evolucao',
         titulo: r.titulo || '',
         created_at: r.created_at || '',
+        versao: Number(r.versao || 1),
+        editado_em: r.editado_em || null,
+        editado_por_nome: r.editado_por_nome || null,
+        criado_por_nome: r.criado_por_nome || null,
       })) : []);
     } catch (err) { console.error(err); }
     finally { setLoading(false); }
@@ -190,6 +198,7 @@ function ProntuarioPage() {
                           {entry.dentista_nome && (
                             <div className="text-[10px] text-muted-foreground">{entry.dentista_nome}</div>
                           )}
+                          <HistoricoDoRegistro entry={entry} />
                         </div>
                       );
                     })}
@@ -272,6 +281,55 @@ function AddEntryModal({ pacienteId, onSave, onClose }: { pacienteId: string; on
           </div>
         </form>
       </div>
+    </div>
+  );
+}
+
+// "Editado em … por …" e as versões anteriores (o registro original continua visível).
+function HistoricoDoRegistro({ entry }: { entry: ProntuarioRow }) {
+  const [aberto, setAberto] = useState(false);
+  const [versoes, setVersoes] = useState<ProntuarioVersao[] | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  const fmt = (d: string | null) => (d ? new Date(d).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }) : "—");
+
+  if (!entry.editado_em && !entry.criado_por_nome) return null;
+
+  const alternar = async () => {
+    const abrir = !aberto;
+    setAberto(abrir);
+    if (abrir && versoes === null) {
+      const { data, error } = await prontuariosApi.versoes(entry.id);
+      if (error) setErro(error); else setVersoes(data || []);
+    }
+  };
+
+  return (
+    <div className="text-[10px] text-muted-foreground space-y-1">
+      {entry.criado_por_nome && <div>Registrado por {entry.criado_por_nome}</div>}
+      {entry.editado_em && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span>Editado em {fmt(entry.editado_em)} por {entry.editado_por_nome || "—"} (versão {entry.versao})</span>
+          <button type="button" onClick={() => void alternar()} className="underline font-medium" aria-expanded={aberto}>
+            {aberto ? "Ocultar versões anteriores" : "Ver versões anteriores"}
+          </button>
+        </div>
+      )}
+      {aberto && (
+        <div className="mt-1 space-y-2 border-l-2 border-border pl-3">
+          {erro && <p className="text-destructive" role="alert">{erro}</p>}
+          {versoes === null && !erro && <p>Carregando…</p>}
+          {versoes?.map((v) => (
+            <div key={v.versao}>
+              <p className="font-medium">
+                Versão {v.versao} · {v.autor_nome || "—"} · {fmt(v.registrado_em)}
+                {v.substituida_por_nome ? ` · substituída por ${v.substituida_por_nome} em ${fmt(v.substituida_em)}` : ""}
+              </p>
+              {v.titulo && <p>{v.titulo}</p>}
+              <p className="whitespace-pre-wrap">{v.descricao}</p>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
