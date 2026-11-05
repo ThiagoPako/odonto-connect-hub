@@ -712,7 +712,7 @@ async function ensureLocalPatient(pool, cpId, fallback = {}, tenantId = null) {
       );
       if (r.rows[0]) return r.rows[0].id;
       // CPF já cadastrado nesta clínica com outro vínculo Clinicorp, ou chave global antiga
-      // (antes de migration-cpf-por-clinica.sql): não cria duplicado nem diz de onde vem.
+      // (antes de migration-unicos-por-clinica.sql): não cria duplicado nem diz de onde vem.
       console.warn(`[clinicorp] paciente Clinicorp ${cpId}: conflito de chave única (${e.constraint || 'sem nome'}), ignorado para ${tId}`);
       return null;
     }
@@ -2691,5 +2691,5 @@ export function registerClinicorp(app, pool, { verifyUser } = {}) {
   console.log('🦷 Clinicorp routes registered');
 }
 
-// Só para testes (tests/cpf-por-clinica.test.js).
+// Só para testes (tests/unicos-por-clinica.test.js).
 export const __paraTestes = { ensureLocalPatient };

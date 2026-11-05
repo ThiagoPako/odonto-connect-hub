@@ -1,4 +1,5 @@
-// CPF único por clínica: normalização na gravação e erro neutro (sem revelar outra clínica).
+// Chaves únicas por clínica (CPF, CRO, nome de marcador): normalização e erro neutro, sem revelar
+// cadastro de outra clínica.
 // pool.query é mockado; nenhuma query chega ao Postgres.
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
@@ -39,7 +40,7 @@ beforeEach(() => {
   spy = jest.spyOn(pool, 'query').mockImplementation(async (sql, params = []) => {
     const text = String(sql);
     sqlLog.push({ text, params });
-    if (/^(INSERT INTO|UPDATE) pacientes/.test(text.trim())) {
+    if (/^(INSERT INTO|UPDATE) (pacientes|dentistas|agenda_marcadores)/.test(text.trim())) {
       if (falhaNoInsert) throw falhaNoInsert;
       return { rows: [], rowCount: 1 };
     }
@@ -57,7 +58,7 @@ afterAll(async () => { await pool.end(); });
 const gravacao = () => sqlLog.find(q => /^(INSERT INTO|UPDATE) pacientes/.test(q.text.trim()));
 const naoVaza = (body) => {
   const s = JSON.stringify(body);
-  expect(s).not.toMatch(/pacientes_cpf_key|uq_pacientes|duplicate|Key \(|12345678900/);
+  expect(s).not.toMatch(/_key|uq_|duplicate|Key \(|12345678900|constraint/);
 };
 
 describe('CPF por clínica', () => {
@@ -154,5 +155,66 @@ describe('importação do Clinicorp', () => {
     expect(updates).toHaveLength(2);
     expect(updates[1].sql).not.toMatch(/cpf=/);
     expect(updates[1].params.at(-1)).toBe(tenantA);
+  });
+});
+
+describe('CRO do profissional e nome do marcador', () => {
+  const dentistaDaA = '77777777-7777-7777-7777-777777777777';
+  const gravou = (tabela) => sqlLog.find(q => new RegExp(`^(INSERT INTO|UPDATE) ${tabela}`).test(q.text.trim()));
+
+  test('POST /api/dentistas grava o CRO sem espaços nas pontas e na clínica do usuário', async () => {
+    const res = await request(app).post('/api/dentistas').set('Authorization', `Bearer ${token()}`)
+      .send({ nome: 'Dra. X', cro: '  CRO-SP 12345 ' });
+    expect(res.status).toBe(200);
+    const ins = gravou('dentistas');
+    expect(ins.params[2]).toBe('CRO-SP 12345');
+    expect(ins.params[7]).toBe(tenantA);
+  });
+
+  test.each([
+    ['post', '/api/dentistas'],
+    ['put', `/api/dentistas/${dentistaDaA}`],
+  ])('%s %s: CRO repetido na clínica → 409 neutro', async (method, url) => {
+    falhaNoInsert = erroUnico('uq_dentistas_tenant_cro');
+    const res = await request(app)[method](url).set('Authorization', `Bearer ${token()}`)
+      .send({ nome: 'Dra. X', cro: 'CRO-SP 12345' });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe('Já existe um profissional com este CRO nesta clínica');
+    naoVaza(res.body);
+  });
+
+  test('chave global antiga do CRO: 409 sem citar outra clínica', async () => {
+    falhaNoInsert = erroUnico('dentistas_cro_key');
+    const res = await request(app).post('/api/dentistas').set('Authorization', `Bearer ${token()}`)
+      .send({ nome: 'Dra. X', cro: 'CRO-SP 12345' });
+    expect(res.status).toBe(409);
+    expect(res.body.error).not.toMatch(/nesta clínica|outra clínica/);
+    naoVaza(res.body);
+  });
+
+  test('POST /api/dentistas sem clínica: 403 sem gravar', async () => {
+    const semClinica = jwt.sign({ sub: '44444444-4444-4444-4444-444444444444', email: 'a@b.test', role: 'admin', tenant_id: null }, JWT_SECRET);
+    const res = await request(app).post('/api/dentistas').set('Authorization', `Bearer ${semClinica}`).send({ nome: 'X' });
+    expect(res.status).toBe(403);
+    expect(gravou('dentistas')).toBeUndefined();
+  });
+
+  test('marcador repetido na clínica → 409 neutro; chave antiga → genérico', async () => {
+    falhaNoInsert = erroUnico('uq_agenda_marcadores_tenant_nome');
+    const a = await request(app).post('/api/agenda/marcadores').set('Authorization', `Bearer ${token()}`).send({ nome: 'Urgente' });
+    expect(a.status).toBe(409);
+    expect(a.body.error).toBe('Já existe um marcador com este nome nesta clínica');
+    falhaNoInsert = erroUnico('agenda_marcadores_nome_key');
+    const b = await request(app).post('/api/agenda/marcadores').set('Authorization', `Bearer ${token()}`).send({ nome: 'Urgente' });
+    expect(b.status).toBe(409);
+    expect(b.body.error).not.toMatch(/nesta clínica/);
+    naoVaza(a.body); naoVaza(b.body);
+  });
+
+  test('erro inesperado no marcador: 500 genérico', async () => {
+    falhaNoInsert = Object.assign(new Error('value too long for type character varying(9)'), { code: '22001' });
+    const res = await request(app).post('/api/agenda/marcadores').set('Authorization', `Bearer ${token()}`).send({ nome: 'X' });
+    expect(res.status).toBe(500);
+    expect(res.body).toEqual({ error: 'Erro interno' });
   });
 });
