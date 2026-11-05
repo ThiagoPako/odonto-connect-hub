@@ -9,7 +9,8 @@ import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { Loader2, AlertCircle } from "lucide-react";
 import { TERMOS_VERSAO, POLITICA_VERSAO } from "@/lib/legal";
-import { TESTE_GRATIS_TEXTO } from "@/lib/oferta";
+import { diasTesteDe, textoTesteGratis, usePlanosPublicos } from "@/lib/oferta";
+import type { PublicPlan as Plan } from "@/lib/saasApi";
 
 export const Route = createFileRoute("/signup")({
   ssr: false,
@@ -20,23 +21,33 @@ export const Route = createFileRoute("/signup")({
   component: SignupPage,
 });
 
-// Nomes exibidos dos planos (slugs da tabela `plans`). "professional" era o slug antigo da landing,
+// Nomes de reserva dos planos (slugs da tabela `plans`), usados só se GET /api/plans falhar. "professional" era o slug antigo da landing,
 // que não existe no banco ("Plano inválido"): links antigos passam a usar "pro".
 const PLANOS: Record<string, string> = { starter: "Starter", pro: "Profissional", enterprise: "Enterprise" };
 const SLUG_ANTIGO: Record<string, string> = { professional: "pro" };
 
 /** Slug válido do `?plan=` ou `undefined` (plano padrão). Usa Object.hasOwn: `?plan=toString`
  * não pode casar com propriedades herdadas do objeto. Slug desconhecido nunca vai à API. */
-function planoValido(param: string | undefined): string | undefined {
+function planoValido(param: string | undefined, planos: Plan[] | null): string | undefined {
   if (!param) return undefined;
   const slug = Object.hasOwn(SLUG_ANTIGO, param) ? SLUG_ANTIGO[param] : param;
+  // Com a lista da API, só vale plano ativo de verdade; sem ela, a lista de reserva.
+  if (planos?.length) return planos.some((p) => p.slug === slug) ? slug : undefined;
   return Object.hasOwn(PLANOS, slug) ? slug : undefined;
 }
+
+const brl = (v: number | string) =>
+  Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
 function SignupPage() {
   const navigate = useNavigate();
   const { plan: planParam } = Route.useSearch();
-  const plan = planoValido(planParam);
+  // Nome, preço e prazo de teste vêm de GET /api/plans (fonte única); fallback se a API falhar.
+  const { planos } = usePlanosPublicos();
+  const plan = planoValido(planParam, planos);
+  const planoApi = plan ? planos?.find((p) => p.slug === plan) : undefined;
+  const nomePlano = planoApi?.nome ?? (plan ? PLANOS[plan] : undefined);
+  const testeTexto = textoTesteGratis(diasTesteDe(planos, plan));
   const { refreshUser } = useAuth();
   const [loading, setLoading] = useState(false);
   // Erros mostrados junto do campo (mesmas regras de antes; o toast ficava longe do campo)
@@ -102,8 +113,8 @@ function SignupPage() {
       title="Cadastre sua clínica"
       description={
         plan
-          ? `Plano ${PLANOS[plan]} · ${TESTE_GRATIS_TEXTO}, sem cartão de crédito.`
-          : `${TESTE_GRATIS_TEXTO}, sem cartão de crédito.`
+          ? `Plano ${nomePlano} · ${testeTexto}, sem cartão de crédito.${planoApi ? ` Depois do teste: ${brl(planoApi.preco_mensal)}/mês.` : ""}`
+          : `${testeTexto}, sem cartão de crédito.`
       }
       footer={
         <p>

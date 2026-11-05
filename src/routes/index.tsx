@@ -11,7 +11,8 @@ import { ScrollReveal } from "@/components/ScrollReveal";
 import { AnimatedCounter } from "@/components/AnimatedCounter";
 import { AgendaFragment } from "@/components/marketing/AgendaFragment";
 import { useForceLightTheme } from "@/hooks/useForceLightTheme";
-import { TESTE_GRATIS_DIAS, TESTE_GRATIS_TEXTO, WHATSAPP_CONSULTOR, EMAIL_CONTATO } from "@/lib/oferta";
+import { textoTesteGratis, useTesteGratisDias, usePlanosPublicos, WHATSAPP_CONSULTOR, EMAIL_CONTATO } from "@/lib/oferta";
+import type { PublicPlan as Plan } from "@/lib/saasApi";
 
 export const Route = createFileRoute("/")({
   component: LandingPage,
@@ -56,9 +57,9 @@ const features = [
 ];
 
 /**
- * Planos: slugs, nomes e limites iguais aos da tabela `plans` (vps-api-server/migration-saas.sql).
- * ⚠️ PENDENTE (decisão do dono): preço. A landing anunciava 297/597/997 e o banco tem 197/397/897.
- * Até haver uma fonte só (de preferência `GET /api/plans`), a página não mostra preço.
+ * Planos: nome, descrição e limites vêm de `GET /api/plans` (tabela `plans`, só ativos).
+ * A lista abaixo é só o fallback (API fora do ar). Preço NÃO aparece na landing (decisão
+ * jurídica; o valor final é do dono) — só no cadastro e em Minha assinatura, lidos da mesma API.
  */
 const plans = [
   { slug: "starter", name: "Starter", desc: "Para clínicas pequenas começando agora", features: ["1 número de WhatsApp", "Até 3 usuários e 2 dentistas", "Até 500 pacientes", "CRM e agenda clínica", "Financeiro", "Suporte por e-mail"], popular: false },
@@ -72,13 +73,14 @@ const testimonials = [
   { name: "Dra. Juliana Santos", clinic: "Dental Premium", text: "O sistema Fênix nos salvou várias vezes. Nunca mais ficamos sem WhatsApp.", stars: 5 },
 ];
 
-const faqs = [
+// Prazo do teste vem de plans.trial_days (GET /api/plans), com fallback em oferta.ts.
+const faqsCom = (diasTeste: number) => [
   { q: "Preciso instalar algum software no computador?", a: "Não! O Odonto Connect é 100% online (SaaS). Funciona no navegador, sem instalar nada." },
   { q: "Como funciona a reativação de pacientes pelo CRM?", a: "O CRM possui um funil de recuperação com follow-ups automáticos. Pacientes inativos ou que não responderam entram em uma sequência inteligente de contato via WhatsApp, para trazer de volta quem não voltou." },
   { q: "Posso migrar meus dados de outro sistema?", a: "Sim. Nossa equipe ajuda a trazer seus dados e confere tudo com você." },
   { q: "Quantas pessoas podem usar o sistema ao mesmo tempo?", a: "Cada plano tem um número de usuários; toda a equipe pode acessar ao mesmo tempo, com permissões por função." },
   { q: "O sistema emite relatórios financeiros?", a: "Sim! O módulo financeiro integrado gera relatórios de faturamento, fluxo de caixa, contas a pagar/receber, comissões por dentista e muito mais." },
-  { q: "Existe período de teste gratuito?", a: `Sim! Você testa por ${TESTE_GRATIS_DIAS} dias, sem cartão de crédito. Nada é cobrado sem a sua aprovação.` },
+  { q: "Existe período de teste gratuito?", a: `Sim! Você testa por ${diasTeste} dias, sem cartão de crédito. Nada é cobrado sem a sua aprovação.` },
 ];
 
 /* Medidas da página: uma margem, uma largura, um raio. Ver DESIGN.md › Landing. */
@@ -150,6 +152,7 @@ function SiteNav() {
 /* ─── Hero: o produto trabalhando ────────────────────────── */
 
 function Hero() {
+  const diasTeste = useTesteGratisDias();
   return (
     <section className="pt-10 pb-16 sm:pt-16 lg:pt-20 lg:pb-24">
       <div className={`${WRAP} grid lg:grid-cols-12 gap-10 lg:gap-12 items-center`}>
@@ -175,7 +178,7 @@ function Hero() {
             )}
           </div>
           <ul className="hero-fade mt-6 flex flex-wrap gap-x-5 gap-y-2 text-[0.9375rem] text-muted-foreground">
-            {[TESTE_GRATIS_TEXTO, "Sem fidelidade", "Suporte humano"].map((t) => (
+            {[textoTesteGratis(diasTeste), "Sem fidelidade", "Suporte humano"].map((t) => (
               <li key={t} className="flex items-center gap-1.5">
                 <CheckCircle className="h-4 w-4 text-success" aria-hidden="true" /> {t}
               </li>
@@ -459,9 +462,53 @@ function About() {
 
 /* ─── Planos: nomes à esquerda, um palco de preço ────────── */
 
+// Recursos que não são limite numérico (por plano). Os limites vêm da API.
+const EXTRAS_PLANO: Record<string, string[]> = {
+  starter: ["CRM e agenda clínica", "Financeiro", "Suporte por e-mail"],
+  pro: ["CRM com reativação de pacientes", "Disparos com fila e opção de SAIR", "Integração Clinicorp", "Meta Ads"],
+  enterprise: ["Tudo do Profissional", "Relatórios clínicos com IA"],
+};
+
+const fmtN = (n: number) => n.toLocaleString("pt-BR");
+function limitesDoPlano(p: Plan): string[] {
+  const wa = p.max_whatsapp_instances;
+  const u = p.max_usuarios;
+  const d = p.max_dentistas;
+  const pac = p.max_pacientes;
+  return [
+    wa == null ? "Sem limite de números de WhatsApp" : `${fmtN(wa)} ${wa === 1 ? "número" : "números"} de WhatsApp`,
+    u == null && d == null
+      ? "Sem limite de usuários e dentistas"
+      : `${u == null ? "Usuários ilimitados" : `Até ${fmtN(u)} ${u === 1 ? "usuário" : "usuários"}`} e ${d == null ? "dentistas ilimitados" : `${fmtN(d)} ${d === 1 ? "dentista" : "dentistas"}`}`,
+    pac == null ? "Sem limite de pacientes" : `Até ${fmtN(pac)} pacientes`,
+  ];
+}
+
+function recursosPorFlag(p: Plan): string[] {
+  const f = (p.features || {}) as Record<string, unknown>;
+  return [f.clinicorp && "Integração Clinicorp", f.meta_ads && "Meta Ads", f.ia_avancada && "Relatórios clínicos com IA"].filter(Boolean) as string[];
+}
+
+/** Planos ativos da API no formato da landing; sem API, a lista de reserva. */
+function planosDaLanding(api: Plan[] | null): typeof plans {
+  if (!api?.length) return plans;
+  return api.map((p) => ({
+    slug: p.slug,
+    name: p.nome,
+    desc: p.descricao || "",
+    features: [...limitesDoPlano(p), ...(EXTRAS_PLANO[p.slug] ?? recursosPorFlag(p))],
+    popular: p.slug === "pro",
+  }));
+}
+
 function Pricing() {
-  const [sel, setSel] = useState(plans.findIndex((p) => p.popular));
-  const plan = plans[sel];
+  const diasTeste = useTesteGratisDias();
+  const { planos: planosApi } = usePlanosPublicos();
+  const lista = planosDaLanding(planosApi);
+  const [selSlug, setSelSlug] = useState<string>(plans.find((p) => p.popular)?.slug ?? plans[0].slug);
+  const sel = Math.max(0, lista.findIndex((p) => p.slug === selSlug));
+  const setSel = (i: number) => setSelSlug(lista[i]?.slug ?? selSlug);
+  const plan = lista[sel];
 
   return (
     <section id="planos" className="scroll-mt-20 py-24 lg:py-36 bg-stage text-stage-foreground">
@@ -471,14 +518,14 @@ function Pricing() {
             Planos
           </h2>
           <p className="mt-4 text-lg text-stage-muted">
-            Teste por {TESTE_GRATIS_DIAS} dias, sem cartão de crédito. Para saber o valor de cada plano, fale com a nossa equipe.
+            Teste por {diasTeste} dias, sem cartão de crédito. Para saber o valor de cada plano, fale com a nossa equipe.
           </p>
         </div>
 
         {/* Computador: seletor + palco fixo */}
         <div className="hidden lg:grid grid-cols-12 gap-12 mt-20">
           <div className="col-span-5" role="tablist" aria-label="Planos" aria-orientation="vertical">
-            {plans.map((p, i) => (
+            {lista.map((p, i) => (
               <button
                 key={p.slug}
                 role="tab"
@@ -506,7 +553,7 @@ function Pricing() {
 
         {/* Celular e tablet: os três planos completos, um abaixo do outro */}
         <div className="lg:hidden mt-12 space-y-12">
-          {plans.map((p) => (
+          {lista.map((p) => (
             <div key={p.slug} className="rounded-lg bg-white/[0.06] p-6">
               <h3 className="font-heading text-[1.875rem] font-semibold tracking-[-0.02em] leading-tight">
                 {p.name}
@@ -582,6 +629,7 @@ function Testimonials() {
 /* ─── Dúvidas ────────────────────────────────────────────── */
 
 function Faq() {
+  const faqs = faqsCom(useTesteGratisDias());
   return (
     <section id="faq" className="scroll-mt-20 py-24 lg:py-36">
       <div className={`${WRAP} grid lg:grid-cols-12 gap-10 lg:gap-12`}>
@@ -615,6 +663,7 @@ function Faq() {
 /* ─── Chamada final ──────────────────────────────────────── */
 
 function FinalCta() {
+  const diasTeste = useTesteGratisDias();
   return (
     <section className="pb-24 lg:pb-36">
       <div className={WRAP}>
@@ -625,7 +674,7 @@ function FinalCta() {
             </h2>
             <p className="mt-4 text-lg text-primary-foreground/85 max-w-[40rem]">
               {PROVA_SOCIAL_CONFIRMADA && "Junte-se a centenas de clínicas que já estão crescendo com o Odonto Connect. "}
-              Comece seu teste gratuito de {TESTE_GRATIS_DIAS} dias agora.
+              Comece seu teste gratuito de {diasTeste} dias agora.
             </p>
           </div>
           <div className="lg:col-span-4 lg:justify-self-end">
