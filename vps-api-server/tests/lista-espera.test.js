@@ -209,8 +209,9 @@ describe('Lista de espera e encaixe', () => {
       expect(jobCol(ins[0], 'message')).toMatch(/Responda \*QUERO\*/);
       expect(jobCol(ins[0], 'message')).toMatch(/06\/11\/2026/);
       expect(jobCol(ins[0], 'message')).toMatch(/Se não responder até lá, o horário vai para a próxima pessoa da lista e você continua na lista\./); // L1
-      expect(jobCol(ins[0], 'message')).toMatch(/Se não quiser mais ofertas, responda SAIR DA LISTA\.$/);
+      expect(jobCol(ins[0], 'message')).toMatch(/Se não quiser mais mensagens automáticas da clínica, responda SAIR\.$/);
       const v = jobVars(ins[0]);
+      expect(v.interactive.payload.description).toMatch(/Se não quiser mais mensagens automáticas da clínica, responda SAIR\.$/);
       expect(v.interactive.payload.buttons.map(b => b.buttonId)).toEqual([`oferta_aceitar_${of.params[0]}`, `oferta_recusar_${of.params[0]}`]);
       expect(sends()).toHaveLength(0);
     });

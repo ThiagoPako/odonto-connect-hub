@@ -5928,8 +5928,9 @@ app.get('/api/agenda/:id/encaixe', async (req, res) => {
 // Só clínica, profissional, data, hora e prazo: nada de procedimento.
 function buildWaitlistOfferMessage({ clinica, firstName, profissional, weekday, dataBR, hora, prazo }) {
   const base = `📅 *Horário disponível — ${clinica}*\n\nOlá${firstName ? `, ${firstName}` : ''}! Você está na nossa lista de espera e abriu um horário:\n📅 ${weekday ? `${weekday}, ` : ''}${dataBR}\n⏰ ${hora}\n👩‍⚕️ ${profissional || 'Equipe da clínica'}\n\nA oferta vale até ${prazo}. Se não responder até lá, o horário vai para a próxima pessoa da lista e você continua na lista.`;
-  // "sair da lista" está em WA_OPT_OUT_PHRASES: vira descadastro e fica por último nas duas versões.
-  const sair = '\n\nSe não quiser mais ofertas, responda SAIR DA LISTA.';
+  // SAIR vira descadastro completo (WA_OPT_OUT_PHRASES): o texto diz exatamente isso
+  // e fica por último nas duas versões (botões e alternativo).
+  const sair = '\n\nSe não quiser mais mensagens automáticas da clínica, responda SAIR.';
   return { body: `${base}${sair}`, fallbackText: `${base}\n\nResponda *QUERO* para ficar com o horário ou *NÃO* se não puder.${sair}` };
 }
 
