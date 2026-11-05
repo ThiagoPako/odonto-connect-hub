@@ -12156,6 +12156,61 @@ app.get('/api/crm/leads/:id/movements', async (req, res) => {
 });
 
 // List all CRM leads (with optional kanban grouping + server-side pagination)
+// Cadastro manual de lead (botão "Novo lead" do CRM). Sempre na clínica do usuário.
+app.post('/api/crm/leads', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { nome, telefone, email, origem, stage, value } = req.body || {};
+
+    const nomeLimpo = typeof nome === 'string' ? nome.trim() : '';
+    if (!nomeLimpo) return res.status(400).json({ error: 'Nome é obrigatório' });
+    if (nomeLimpo.length > 200) return res.status(400).json({ error: 'Nome muito longo' });
+
+    const telefoneLimpo = typeof telefone === 'string' && telefone.trim() ? telefone.trim() : null;
+    const digitos = telefoneLimpo ? telefoneLimpo.replace(/\D/g, '') : '';
+    if (telefoneLimpo && (digitos.length < 8 || digitos.length > 15)) {
+      return res.status(400).json({ error: 'Telefone inválido' });
+    }
+    const emailLimpo = typeof email === 'string' && email.trim() ? email.trim().toLowerCase() : null;
+    if (emailLimpo && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailLimpo)) {
+      return res.status(400).json({ error: 'E-mail inválido' });
+    }
+    const etapa = stage === undefined || stage === null || stage === '' ? 'lead' : stage;
+    if (!ALL_KANBAN_STAGES.includes(etapa)) return res.status(400).json({ error: 'Etapa inválida' });
+    const valor = value === undefined || value === null || value === '' ? 0 : Number(value);
+    if (!Number.isFinite(valor) || valor < 0) return res.status(400).json({ error: 'Valor inválido' });
+    const origemLimpa = typeof origem === 'string' && origem.trim() ? origem.trim().slice(0, 60) : 'Manual';
+
+    // O WhatsApp associa conversas ao lead pelo final do telefone: evita duplicar na mesma clínica.
+    if (digitos) {
+      const { rows: existente } = await pool.query(
+        `SELECT id FROM crm_leads
+          WHERE tenant_id = $1
+            AND REGEXP_REPLACE(COALESCE(telefone, ''), '\\D', '', 'g') LIKE '%' || $2
+          LIMIT 1`,
+        [user.tenant_id, digitos.slice(-11)]
+      );
+      if (existente[0]) {
+        return res.status(409).json({ error: 'Já existe um lead com este telefone', id: existente[0].id });
+      }
+    }
+
+    const id = randomUUID();
+    const { rows } = await pool.query(
+      `INSERT INTO crm_leads (id, nome, telefone, email, origem, status, kanban_stage, valor, awaiting_queue_selection, tenant_id)
+       VALUES ($1, $2, $3, $4, $5, 'novo', $6, $7, false, $8)
+       RETURNING id, nome, telefone, email, origem, status, kanban_stage, valor, created_at`,
+      [id, nomeLimpo, telefoneLimpo, emailLimpo, origemLimpa, etapa, valor, user.tenant_id]
+    );
+    res.status(201).json(rows[0] || { id });
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('[crm:leads:create]', error.message);
+    res.status(500).json({ error: 'Erro ao criar lead' });
+  }
+});
+
 app.get('/api/crm/leads', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
