@@ -41,6 +41,8 @@ dotenv.config({
 const { Pool } = pg;
 const app = express();
 const PORT = process.env.API_PORT || 3002;
+// Escuta só no loopback: o acesso externo passa pelo nginx (HTTPS). Sobrescreva com API_HOST se precisar.
+const LISTEN_HOST = process.env.API_HOST || '127.0.0.1';
 
 // ─── Middleware ──────────────────────────────────────────────
 app.use(cors());
@@ -152,7 +154,11 @@ const pool = new Pool({
   password: process.env.PG_PASSWORD,
 });
 
-// RLS da VPS lê app.tenant_id / app.is_super_admin. set_config de sessão num
+// RLS da VPS lê app.tenant_id / app.is_super_admin. Parte das políticas (tabelas
+// cujo dono é o postgres: tenants, plans, fin_*, anamneses, odontogramas, ...) usa a
+// função is_super_admin(), que lê app.jwt_payload — por isso o contexto de sistema e
+// de super-admin também grava esse payload; sem ele essas tabelas aparecem vazias.
+// set_config de sessão num
 // pool vaza entre requisições (cada query pode cair noutra conexão), então,
 // dentro de uma requisição autenticada, cada query roda numa transação curta
 // com o contexto local (is_local=true) na mesma conexão.
@@ -160,7 +166,8 @@ const rawPoolQuery = pool.query.bind(pool);
 const rawPoolConnect = pool.connect.bind(pool);
 const TENANT_SET_SQL = `SELECT set_config('app.tenant_id', $1, $3),
               set_config('app.current_tenant_id', $1, $3),
-              set_config('app.is_super_admin', $2, $3)`;
+              set_config('app.is_super_admin', $2, $3),
+              set_config('app.jwt_payload', CASE WHEN $2 = 'true' THEN '{"is_super_admin":true}' ELSE '' END, $3)`;
 const activeTenantCtx = () => {
   const ctx = tenantContext.getStore();
   return ctx && (ctx.tenantId || ctx.isSuperAdmin) ? ctx : null;
@@ -177,7 +184,11 @@ pool.connect = async (...args) => {
   const release = client.release;
   client.release = (err) => {
     client.release = release;
-    client.query(TENANT_SET_SQL, ['', 'false', false]).catch(() => {}).finally(() => release.call(client, err));
+    // Transação abortada impede o reset do contexto: desfaz antes e, se o reset ainda
+    // falhar, descarta a conexão em vez de devolvê-la ao pool com super-admin na sessão.
+    client.query('ROLLBACK').catch(() => {})
+      .then(() => client.query(TENANT_SET_SQL, ['', 'false', false]))
+      .then(() => release.call(client, err), () => release.call(client, true));
   };
   return client;
 };
@@ -4964,6 +4975,44 @@ app.get('/api/pacientes', async (req, res) => {
   }
 });
 
+// CRO gravado como digitado (ex.: "CRO-SP 12345"), sem espaços nas pontas; vazio vira NULL.
+// A unicidade compara só letras e dígitos, em maiúsculas (uq_dentistas_tenant_cro).
+function normalizarCro(cro) {
+  const t = String(cro ?? '').trim();
+  return /[0-9A-Za-z]/.test(t) ? t : null;
+}
+
+// CPF gravado só com dígitos; vazio vira NULL (o índice único por clínica ignora NULL).
+function normalizarCpf(cpf) {
+  const d = String(cpf ?? '').replace(/\D/g, '');
+  return d || null;
+}
+
+// Erro de gravação com chave única: nunca devolve error.message (o nome da constraint e o
+// detalhe do Postgres revelariam cadastro de outra clínica — paciente é dado de saúde, LGPD art. 11).
+// Índices por clínica (migration-unicos-por-clinica.sql) → mensagem neutra "nesta clínica".
+const MENSAGEM_UNICO_POR_CLINICA = {
+  uq_pacientes_tenant_cpf: 'Já existe um paciente com este CPF nesta clínica',
+  uq_dentistas_tenant_cro: 'Já existe um profissional com este CRO nesta clínica',
+  uq_agenda_marcadores_tenant_nome: 'Já existe um marcador com este nome nesta clínica',
+};
+function responderErroGravacao(res, error, tag, generico = 'Não foi possível salvar com este valor. Fale com o suporte.') {
+  if (error?.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+  if (error?.message === 'Admin access required') return res.status(403).json({ error: 'Admin access required' });
+  if (error?.code === '23505') {
+    const msg = MENSAGEM_UNICO_POR_CLINICA[error.constraint];
+    if (msg) return res.status(409).json({ error: msg });
+    // Chave global antiga (antes da migração): não dizer de onde vem o conflito.
+    console.error(`[${tag}] conflito de chave única (${error.constraint || 'sem nome'})`);
+    return res.status(409).json({ error: generico });
+  }
+  // Só o código: a mensagem do Postgres pode trazer o valor enviado (ex.: data inválida).
+  console.error(`[${tag}] erro ao gravar`, error?.code || '');
+  return res.status(500).json({ error: 'Erro interno' });
+}
+const responderErroPaciente = (res, error, tag) =>
+  responderErroGravacao(res, error, tag, 'Não foi possível salvar o paciente com este CPF. Fale com o suporte.');
+
 // GET /api/pacientes/:id — um paciente da própria clínica (404 se for de outra).
 app.get('/api/pacientes/:id', async (req, res) => {
   try {
@@ -4983,7 +5032,8 @@ app.post('/api/pacientes', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
-    const { nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes } = req.body;
+    const { nome, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes } = req.body;
+    const cpf = normalizarCpf(req.body.cpf);
     const id = crypto.randomUUID();
     await pool.query(
       'INSERT INTO pacientes (id, nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
@@ -4993,7 +5043,7 @@ app.post('/api/pacientes', async (req, res) => {
     // Push to Clinicorp
     import('./clinicorp.mjs').then(m => m.clinicorpPush.pushPatient(pool, id)).catch(e => console.error('Clinicorp push failed:', e.message));
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    responderErroPaciente(res, error, 'pacientes:create');
   }
 });
 
@@ -5001,7 +5051,8 @@ app.put('/api/pacientes/:id', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
-    const { nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes } = req.body;
+    const { nome, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes } = req.body;
+    const cpf = normalizarCpf(req.body.cpf);
     const { rowCount } = await pool.query(
       'UPDATE pacientes SET nome=$1, cpf=$2, telefone=$3, email=$4, data_nascimento=$5, sexo=$6, convenio=$7, endereco=$8, observacoes=$9, updated_at=NOW() WHERE id=$10 AND tenant_id=$11',
       [nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes, req.params.id, user.tenant_id]
@@ -5011,7 +5062,7 @@ app.put('/api/pacientes/:id', async (req, res) => {
     // Push to Clinicorp
     import('./clinicorp.mjs').then(m => m.clinicorpPush.pushPatient(pool, req.params.id)).catch(e => console.error('Clinicorp push failed:', e.message));
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    responderErroPaciente(res, error, 'pacientes:update');
   }
 });
 
@@ -5224,14 +5275,11 @@ app.post('/api/agenda/marcadores', async (req, res) => {
     if (!nome || !nome.trim()) return res.status(400).json({ error: 'Nome obrigatório' });
     const id = crypto.randomUUID();
     const corFinal = (cor || '#06b6d4').slice(0, 9);
-    try {
-      await pool.query('INSERT INTO agenda_marcadores (id, nome, cor, tenant_id) VALUES ($1,$2,$3,$4)', [id, nome.trim(), corFinal, user.tenant_id]);
-      res.json({ id, nome: nome.trim(), cor: corFinal });
-    } catch (err) {
-      if (err.code === '23505') return res.status(409).json({ error: 'Marcador com este nome já existe' });
-      throw err;
-    }
-  } catch (error) { res.status(500).json({ error: error.message }); }
+    await pool.query('INSERT INTO agenda_marcadores (id, nome, cor, tenant_id) VALUES ($1,$2,$3,$4)', [id, nome.trim(), corFinal, user.tenant_id]);
+    res.json({ id, nome: nome.trim(), cor: corFinal });
+  } catch (error) {
+    responderErroGravacao(res, error, 'agenda:marcadores', 'Não foi possível salvar o marcador com este nome. Fale com o suporte.');
+  }
 });
 
 app.delete('/api/agenda/marcadores/:id', async (req, res) => {
@@ -6009,7 +6057,9 @@ app.get('/api/dentistas', async (req, res) => {
 app.post('/api/dentistas', async (req, res) => {
   try {
     const { user } = await verifyAdmin(req);
-    const { nome, cro, especialidade, telefone, email, comissao_percentual } = req.body;
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { nome, especialidade, telefone, email, comissao_percentual } = req.body;
+    const cro = normalizarCro(req.body.cro);
     const id = crypto.randomUUID();
     await pool.query(
       'INSERT INTO dentistas (id, nome, cro, especialidade, telefone, email, comissao_percentual, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
@@ -6017,7 +6067,7 @@ app.post('/api/dentistas', async (req, res) => {
     );
     res.json({ id, success: true });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    responderErroGravacao(res, error, 'dentistas:create', 'Não foi possível salvar o profissional com este CRO. Fale com o suporte.');
   }
 });
 
@@ -6032,7 +6082,7 @@ app.put('/api/dentistas/:id', async (req, res) => {
     const { nome, cro, especialidade, telefone, email, comissao_percentual, ativo, cor_agenda, sala } = req.body;
     const sets = []; const params = [];
     if (nome !== undefined) { params.push(nome); sets.push(`nome=$${params.length}`); }
-    if (cro !== undefined) { params.push(cro); sets.push(`cro=$${params.length}`); }
+    if (cro !== undefined) { params.push(normalizarCro(cro)); sets.push(`cro=$${params.length}`); }
     if (especialidade !== undefined) { params.push(especialidade); sets.push(`especialidade=$${params.length}`); }
     if (telefone !== undefined) { params.push(telefone); sets.push(`telefone=$${params.length}`); }
     if (email !== undefined) { params.push(email); sets.push(`email=$${params.length}`); }
@@ -6047,9 +6097,7 @@ app.put('/api/dentistas/:id', async (req, res) => {
     const { rows } = await pool.query('SELECT * FROM dentistas WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
     res.json(rows[0]);
   } catch (error) {
-    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
-    if (error.message === 'Admin only') return res.status(403).json({ error: 'Admin only' });
-    res.status(500).json({ error: error.message });
+    responderErroGravacao(res, error, 'dentistas:update', 'Não foi possível salvar o profissional com este CRO. Fale com o suporte.');
   }
 });
 
@@ -7510,9 +7558,16 @@ app.get('/api/assinaturas/:id', async (req, res) => {
 // Dashboard KPIs (handler compartilhado: /api/dashboard e /api/dashboard/kpis)
 app.get(['/api/dashboard', '/api/dashboard/kpis'], async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Sem clínica vinculada' });
     const today = new Date().toISOString().split('T')[0];
-    const firstDayOfMonth = `${today.substring(0, 7)}-01`;
+    // fin_movements.date é VARCHAR: a tela Financeiro grava dd/mm/aaaa (toLocaleDateString pt-BR),
+    // registros antigos podem estar em aaaa-mm-dd. Casa o mês nos dois formatos sem converter
+    // (texto fora do padrão simplesmente não entra, em vez de derrubar a consulta com erro de cast).
+    const [anoAtual, mesAtual] = today.split('-');
+    const mesIso = `${anoAtual}-${mesAtual}-%`;
+    const mesBr = `__/${mesAtual}/${anoAtual}%`;
+    const FIN_MES_SQL = 'SELECT COALESCE(SUM(value), 0)::numeric AS total FROM fin_movements WHERE type = $1 AND tenant_id = $2 AND (date LIKE $3 OR date LIKE $4)';
 
     // Helper: silencia erro se a tabela ainda não existe (migration pendente)
     const safe = async (sql, params = []) => {
@@ -7524,7 +7579,6 @@ app.get(['/api/dashboard', '/api/dashboard/kpis'], async (req, res) => {
       }
     };
 
-    const { user } = await verifyUser(req);
     const [
       pacientesTotal,
       agendaHojeRows,
@@ -7538,15 +7592,21 @@ app.get(['/api/dashboard', '/api/dashboard/kpis'], async (req, res) => {
     ] = await Promise.all([
       safe('SELECT COUNT(*)::int AS total FROM pacientes WHERE tenant_id = $1', [user.tenant_id]),
       safe('SELECT status, COUNT(*)::int AS qtd FROM agendamentos WHERE data = $1 AND tenant_id = $2 GROUP BY status', [today, user.tenant_id]),
-      safe('SELECT COALESCE(SUM(valor), 0)::numeric AS total FROM financeiro WHERE tipo = $1 AND data >= $2 AND tenant_id = $3', ['receita', firstDayOfMonth, user.tenant_id]),
-      safe('SELECT COALESCE(SUM(valor), 0)::numeric AS total FROM financeiro WHERE tipo = $1 AND data >= $2 AND tenant_id = $3', ['despesa', firstDayOfMonth, user.tenant_id]),
-      safe(`SELECT status, COUNT(*)::int AS qtd, COALESCE(SUM(valor_final), 0)::numeric AS soma
+      // Recebimentos/pagamentos reais do mês: movimentações da tela Financeiro.
+      safe(FIN_MES_SQL, ['entrada', user.tenant_id, mesIso, mesBr]),
+      safe(FIN_MES_SQL, ['saida', user.tenant_id, mesIso, mesBr]),
+      safe(`SELECT status, COUNT(*)::int AS qtd, COALESCE(SUM(valor_total), 0)::numeric AS soma
             FROM orcamentos WHERE tenant_id = $1 GROUP BY status`, [user.tenant_id]),
-      safe(`SELECT stage, COUNT(*)::int AS qtd FROM crm_leads WHERE tenant_id = $1 GROUP BY stage`, [user.tenant_id]),
-      safe("SELECT COUNT(*)::int AS total FROM pacientes WHERE (status = 'ativo' OR status IS NULL) AND tenant_id = $1", [user.tenant_id]),
-      safe("SELECT COUNT(*)::int AS total FROM pacientes WHERE status = 'inativo' AND tenant_id = $1", [user.tenant_id]),
-      safe(`SELECT id, nome AS name, quantidade_atual AS current_stock,
-                   quantidade_minima AS min_stock, custo_unitario AS unit_cost
+      safe(`SELECT kanban_stage AS stage, COUNT(*)::int AS qtd FROM crm_leads WHERE tenant_id = $1 GROUP BY kanban_stage`, [user.tenant_id]),
+      // pacientes não tem coluna status: ativo = teve agendamento nos últimos 12 meses.
+      safe(`SELECT COUNT(*)::int AS total FROM pacientes p WHERE p.tenant_id = $1 AND EXISTS (
+              SELECT 1 FROM agendamentos a WHERE a.paciente_id = p.id AND a.tenant_id = p.tenant_id
+                 AND a.data >= (CURRENT_DATE - INTERVAL '12 months'))`, [user.tenant_id]),
+      safe(`SELECT COUNT(*)::int AS total FROM pacientes p WHERE p.tenant_id = $1 AND NOT EXISTS (
+              SELECT 1 FROM agendamentos a WHERE a.paciente_id = p.id AND a.tenant_id = p.tenant_id
+                 AND a.data >= (CURRENT_DATE - INTERVAL '12 months'))`, [user.tenant_id]),
+      safe(`SELECT id, nome AS name, quantidade AS current_stock,
+                   quantidade_minima AS min_stock, valor_unitario AS unit_cost
             FROM estoque WHERE tenant_id = $1`, [user.tenant_id]),
     ]);
 
@@ -7642,8 +7702,9 @@ app.get(['/api/dashboard', '/api/dashboard/kpis'], async (req, res) => {
       },
     });
   } catch (error) {
-    const status = error.message === 'Unauthorized' ? 401 : 500;
-    res.status(status).json({ error: error.message });
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('GET /api/dashboard error:', error.message);
+    res.status(500).json({ error: 'Erro interno' });
   }
 });
 
@@ -7653,114 +7714,6 @@ app.get(['/api/dashboard', '/api/dashboard/kpis'], async (req, res) => {
 // GET /api/comercial/painel?attendantId=<uuid|me>
 // Quando attendantId omitido OU = 'me' e role != admin → escopo do user logado
 // ═══════════════════════════════════════════════════════════════
-// ─── Dashboard KPIs (por clínica) ───────────────────────────
-app.get('/api/dashboard/kpis', async (req, res) => {
-  try {
-    const { user } = await verifyUser(req);
-    const tId = user.tenant_id;
-    if (!tId) return res.status(403).json({ error: 'Sem clínica vinculada' });
-
-    // Tabela/coluna ausente em instalações antigas vira lista vazia, não 500.
-    const safe = async (sql) => {
-      try { return (await pool.query(sql, [tId])).rows; }
-      catch (err) {
-        if (err.code === '42P01' || err.code === '42703') return [];
-        throw err;
-      }
-    };
-    const TODAY = `(NOW() AT TIME ZONE 'America/Sao_Paulo')::date`;
-    const [pac, agenda, movs, orcs, leads, est] = await Promise.all([
-      safe('SELECT COUNT(*)::int AS n FROM pacientes WHERE tenant_id = $1'),
-      safe(`SELECT status FROM agendamentos WHERE tenant_id = $1 AND data = ${TODAY}`),
-      safe(`SELECT type, value FROM fin_movements WHERE tenant_id = $1 AND date >= date_trunc('month', ${TODAY})`),
-      safe('SELECT status, valor_total FROM orcamentos WHERE tenant_id = $1'),
-      safe('SELECT kanban_stage, status, valor, origem, paciente_id FROM crm_leads WHERE tenant_id = $1'),
-      safe('SELECT nome, quantidade, quantidade_minima, valor_unitario FROM estoque WHERE tenant_id = $1'),
-    ]);
-
-    const totalPacientes = pac[0]?.n || 0;
-    const count = (rows, fn) => rows.filter(fn).length;
-    const finalizados = count(agenda, (a) => a.status === 'concluido' || a.status === 'finalizado' || a.status === 'realizado');
-    const agendaKpis = {
-      total: agenda.length,
-      finalizados,
-      emAtendimento: count(agenda, (a) => a.status === 'em_atendimento'),
-      aguardando: count(agenda, (a) => a.status === 'agendado' || a.status === 'aguardando' || a.status === 'confirmado'),
-      faltas: count(agenda, (a) => a.status === 'cancelado' || a.status === 'faltou' || a.status === 'desmarcado'),
-      encaixes: count(agenda, (a) => a.status === 'encaixe'),
-      taxaPresenca: agenda.length ? Math.round((finalizados / agenda.length) * 100) : 0,
-    };
-
-    const sum = (rows, fn, val) => rows.filter(fn).reduce((acc, r) => acc + Number(val(r) || 0), 0);
-    const receitaMensal = sum(movs, (m) => m.type === 'entrada', (m) => m.value);
-    const despesaMensal = sum(movs, (m) => m.type === 'saida', (m) => m.value);
-
-    const aprovados = orcs.filter((o) => o.status === 'aprovado' || o.status === 'finalizado');
-    const valorAprovado = sum(aprovados, () => true, (o) => o.valor_total);
-    const orcamentos = {
-      total: orcs.length,
-      pendentes: count(orcs, (o) => o.status === 'pendente'),
-      aprovados: aprovados.length,
-      reprovados: count(orcs, (o) => o.status === 'reprovado'),
-      valorAprovado,
-      taxaConversao: orcs.length ? Math.round((aprovados.length / orcs.length) * 100) : 0,
-      ticketMedio: aprovados.length ? valorAprovado / aprovados.length : 0,
-    };
-
-    // Lead convertido = orçamento aprovado no Kanban ou já vinculado a paciente.
-    const leadStatus = (l) => (l.kanban_stage === 'orcamento_aprovado' || l.paciente_id) ? 'convertido'
-      : l.status === 'perdido' ? 'perdido'
-      : (l.kanban_stage || 'lead') === 'lead' ? 'novo' : 'ativo';
-    const ls = leads.map((l) => ({ ...l, st: leadStatus(l) }));
-    const crm = {
-      totalLeadsKanban: ls.length,
-      semResposta: count(ls, (l) => l.st === 'novo'),
-      ativos: count(ls, (l) => l.st !== 'perdido' && l.st !== 'convertido'),
-      inativos: count(ls, (l) => l.st === 'perdido'),
-      receitaTotal: sum(ls, (l) => l.st === 'convertido', (l) => l.valor),
-    };
-    const origins = new Map();
-    for (const l of ls) {
-      const k = l.origem || 'Outros';
-      const o = origins.get(k) || { leads: 0, convertidos: 0 };
-      o.leads++; if (l.st === 'convertido') o.convertidos++;
-      origins.set(k, o);
-    }
-    const conversionByOrigin = [...origins].map(([origin, o]) => ({
-      origin, leads: o.leads, convertidos: o.convertidos, rate: o.leads ? (o.convertidos / o.leads) * 100 : 0,
-    }));
-
-    const qtd = (i) => Number(i.quantidade || 0);
-    const abaixoMinimo = est.filter((i) => qtd(i) > 0 && qtd(i) <= Number(i.quantidade_minima || 0));
-    const semEstoque = est.filter((i) => qtd(i) <= 0);
-    const estoque = {
-      totalItens: est.length,
-      abaixoMinimo: abaixoMinimo.length,
-      itensAbaixoMinimo: abaixoMinimo.map((i) => i.nome),
-      semEstoque: semEstoque.length,
-      itensSemEstoque: semEstoque.map((i) => i.nome),
-      valorTotalEstoque: est.reduce((acc, i) => acc + Number(i.valor_unitario || 0) * qtd(i), 0),
-    };
-
-    res.json({
-      totalPacientes,
-      agendaHoje: agendaKpis.total,
-      receitaMensal,
-      despesaMensal,
-      agenda: agendaKpis,
-      orcamentos,
-      crm,
-      pacientes: { totalCadastrados: totalPacientes },
-      estoque,
-      conversionByOrigin,
-    });
-  } catch (error) {
-    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
-    console.error('GET /api/dashboard/kpis error:', error);
-    res.status(500).json({ error: 'Erro ao calcular KPIs' });
-  }
-});
-
 app.get('/api/comercial/painel', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
@@ -7771,6 +7724,7 @@ app.get('/api/comercial/painel', async (req, res) => {
     const attendantId = (user.role === 'admin' && requested && requested !== 'me')
       ? requested
       : user.id;
+    if (!PACIENTE_UUID_RE.test(String(attendantId))) return res.status(400).json({ error: 'Atendente inválido' });
 
     const safe = async (sql, params = []) => {
       try { return await pool.query(sql, params); }
@@ -7796,13 +7750,14 @@ app.get('/api/comercial/painel', async (req, res) => {
             AND tenant_id = $3`,
         [attendantId, today, user.tenant_id]
       ),
-      // Agendamentos criados hoje vinculados a leads atribuídos a este atendente
+      // Agendamentos criados hoje para pacientes de leads atribuídos a este atendente
+      // (agendamentos não guarda quem criou; o vínculo é lead.paciente_id).
       safe(
-        `SELECT COUNT(*)::int AS total
+        `SELECT COUNT(DISTINCT a.id)::int AS total
            FROM agendamentos a
-           LEFT JOIN crm_leads l ON l.id::text = a.paciente_id::text
+           JOIN crm_leads l ON l.paciente_id = a.paciente_id AND l.tenant_id = a.tenant_id
           WHERE a.created_at::date = $1
-            AND (l.assigned_to = $2 OR a.created_by = $2)
+            AND l.assigned_to::text = $2
             AND a.tenant_id = $3`,
         [today, attendantId, user.tenant_id]
       ),
@@ -7826,17 +7781,20 @@ app.get('/api/comercial/painel', async (req, res) => {
           GROUP BY origem`,
         [attendantId, user.tenant_id]
       ),
-      // Follow-ups: leads com follow_up_at <= now() OU em sem_resposta
+      // Follow-ups: leads do atendente que aguardam retorno (sem coluna de data agendada:
+      // usa updated_at), com a última mensagem do chat da mesma clínica como nota.
       safe(
-        `SELECT id, nome AS lead_name, kanban_stage, follow_up_at, last_message, updated_at
-           FROM crm_leads
-          WHERE assigned_to = $1
-            AND tenant_id = $2
-            AND (
-              (follow_up_at IS NOT NULL AND follow_up_at <= NOW() + INTERVAL '2 days')
-              OR kanban_stage IN ('sem_resposta','primeiro_contato')
-            )
-          ORDER BY COALESCE(follow_up_at, updated_at) ASC
+        `SELECT l.id, l.nome AS lead_name, l.kanban_stage, l.updated_at, m.content AS last_message
+           FROM crm_leads l
+           LEFT JOIN LATERAL (
+             SELECT cm.content FROM chat_messages cm
+              WHERE cm.lead_id = l.id::text AND cm.tenant_id = l.tenant_id
+              ORDER BY cm.timestamp DESC NULLS LAST LIMIT 1
+           ) m ON true
+          WHERE l.assigned_to::text = $1
+            AND l.tenant_id = $2
+            AND l.kanban_stage IN ('sem_resposta','primeiro_contato')
+          ORDER BY l.updated_at ASC
           LIMIT 12`,
         [attendantId, user.tenant_id]
       ),
@@ -7868,9 +7826,7 @@ app.get('/api/comercial/painel', async (req, res) => {
       id: r.id,
       leadName: r.lead_name || 'Lead sem nome',
       type: stageToType[r.kanban_stage] || 'retorno',
-      scheduledAt: r.follow_up_at
-        ? new Date(r.follow_up_at).toISOString()
-        : new Date(r.updated_at).toISOString(),
+      scheduledAt: new Date(r.updated_at).toISOString(),
       note: r.last_message ? String(r.last_message).slice(0, 80) : 'Sem nota',
     }));
 
@@ -7881,8 +7837,9 @@ app.get('/api/comercial/painel', async (req, res) => {
       conversionByOrigin,
     });
   } catch (error) {
-    const status = error.message === 'Unauthorized' ? 401 : 500;
-    res.status(status).json({ error: error.message });
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('GET /api/comercial/painel error:', error.message);
+    res.status(500).json({ error: 'Erro interno' });
   }
 });
 
@@ -7895,6 +7852,8 @@ app.get('/api/comercial/painel', async (req, res) => {
 app.get('/api/dentista/painel/:id?', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    const tId = user.tenant_id;
+    if (!tId) return res.status(403).json({ error: 'Sem clínica vinculada' });
     const today = new Date().toISOString().split('T')[0];
 
     const safe = async (sql, params = []) => {
@@ -7905,9 +7864,10 @@ app.get('/api/dentista/painel/:id?', async (req, res) => {
       }
     };
 
-    // Resolve dentista alvo
+    // Resolve dentista alvo (sempre da clínica do usuário; id de outra clínica → 404)
     let dentista = null;
     if (req.params.id) {
+      if (!PACIENTE_UUID_RE.test(String(req.params.id))) return res.status(404).json({ error: 'Dentista não encontrado' });
       const r = await safe('SELECT * FROM dentistas WHERE id = $1 AND tenant_id = $2 LIMIT 1', [req.params.id, user.tenant_id]);
       dentista = r.rows[0] || null;
     } else if (user.email) {
@@ -7915,8 +7875,10 @@ app.get('/api/dentista/painel/:id?', async (req, res) => {
       dentista = r.rows[0] || null;
     }
 
-    // Fallback: se admin e nada resolvido, pega o primeiro deste tenant
-    if (!dentista && user.role === 'admin') {
+    if (req.params.id && !dentista) return res.status(404).json({ error: 'Dentista não encontrado' });
+
+    // Fallback (só sem id): se admin e nada resolvido, pega o primeiro deste tenant
+    if (!dentista && !req.params.id && user.role === 'admin') {
       const r = await safe('SELECT * FROM dentistas WHERE tenant_id = $1 ORDER BY nome ASC LIMIT 1', [user.tenant_id]);
       dentista = r.rows[0] || null;
     }
@@ -7935,68 +7897,73 @@ app.get('/api/dentista/painel/:id?', async (req, res) => {
     const [atendHojeRows, agendaRows, orcamentosRows, prontuariosRows, comissoesRows, tratamentosRows] = await Promise.all([
       // Atendimentos de hoje
       safe(
-        `SELECT a.id, a.paciente_id, a.paciente_nome, p.nome as p_nome, a.hora, a.procedimento,
-                a.status, a.tipo, a.valor
+        `SELECT a.id, a.paciente_id, p.nome as p_nome, a.hora, a.procedimento,
+                a.status, a.tipo
            FROM agendamentos a
-           LEFT JOIN pacientes p ON p.id = a.paciente_id
-          WHERE a.dentista_id = $1 AND a.data = $2
+           LEFT JOIN pacientes p ON p.id = a.paciente_id AND p.tenant_id = a.tenant_id
+          WHERE a.dentista_id = $1 AND a.data = $2 AND a.tenant_id = $3
           ORDER BY a.hora ASC`,
-        [dentistaId, today]
+        [dentistaId, today, tId]
       ),
       // Agenda completa (hoje + próximos 30 dias)
       safe(
-        `SELECT a.id, a.paciente_id, a.paciente_nome, p.nome as p_nome, a.data, a.hora,
+        `SELECT a.id, a.paciente_id, p.nome as p_nome, a.data, a.hora,
                 a.duracao, a.tipo, a.status, a.observacoes, a.procedimento
            FROM agendamentos a
-           LEFT JOIN pacientes p ON p.id = a.paciente_id
-          WHERE a.dentista_id = $1 AND a.data >= $2 AND a.data <= ($2::date + INTERVAL '30 days')
+           LEFT JOIN pacientes p ON p.id = a.paciente_id AND p.tenant_id = a.tenant_id
+          WHERE a.dentista_id = $1 AND a.data >= $2 AND a.data <= ($2::date + INTERVAL '30 days') AND a.tenant_id = $3
           ORDER BY a.data ASC, a.hora ASC`,
-        [dentistaId, today]
+        [dentistaId, today, tId]
       ),
       // Orçamentos do dentista
       safe(
-        `SELECT o.id, o.paciente_id, o.paciente_nome, p.nome as p_nome, o.itens,
+        `SELECT o.id, o.paciente_id, p.nome as p_nome, o.itens,
                 o.valor_total, o.status, o.created_at
            FROM orcamentos o
-           LEFT JOIN pacientes p ON p.id = o.paciente_id
-          WHERE o.dentista_id = $1
+           LEFT JOIN pacientes p ON p.id = o.paciente_id AND p.tenant_id = o.tenant_id
+          WHERE o.dentista_id = $1 AND o.tenant_id = $2
           ORDER BY o.created_at DESC
           LIMIT 50`,
-        [dentistaId]
+        [dentistaId, tId]
       ),
       // Prontuários do dentista
       safe(
-        `SELECT pr.id, pr.paciente_id, pr.paciente_nome, p.nome as p_nome,
+        `SELECT pr.id, pr.paciente_id, p.nome as p_nome,
                 pr.titulo, pr.descricao, pr.tipo, pr.created_at,
-                p.alergias
+                an.alergias
            FROM prontuarios pr
-           LEFT JOIN pacientes p ON p.id = pr.paciente_id
-          WHERE pr.dentista_id = $1
+           LEFT JOIN pacientes p ON p.id = pr.paciente_id AND p.tenant_id = pr.tenant_id
+           LEFT JOIN LATERAL (
+             SELECT x.alergias FROM anamneses x
+              WHERE x.paciente_id = pr.paciente_id AND x.tenant_id = pr.tenant_id
+              ORDER BY x.updated_at DESC NULLS LAST LIMIT 1
+           ) an ON true
+          WHERE pr.dentista_id = $1 AND pr.tenant_id = $2
           ORDER BY pr.created_at DESC
           LIMIT 50`,
-        [dentistaId]
+        [dentistaId, tId]
       ),
       // Comissões do dentista
       safe(
         `SELECT c.id, c.paciente_id, c.procedimento, c.descricao, c.valor, c.percentual,
                 c.data, c.status, p.nome as paciente_nome
            FROM comissoes c
-           LEFT JOIN pacientes p ON p.id = c.paciente_id
-          WHERE c.dentista_id = $1
+           LEFT JOIN pacientes p ON p.id = c.paciente_id AND p.tenant_id = c.tenant_id
+          WHERE c.dentista_id = $1 AND c.tenant_id = $2
           ORDER BY c.data DESC
           LIMIT 100`,
-        [dentistaId]
+        [dentistaId, tId]
       ),
       // Tratamentos do dentista (todos os pacientes)
       safe(
         `SELECT t.id, t.paciente_id, t.descricao, t.dente, t.valor, t.status, t.plano,
                 t.observacoes, t.created_at, t.updated_at, p.nome as paciente_nome
            FROM tratamentos t
-           LEFT JOIN pacientes p ON p.id = t.paciente_id
-          WHERE t.dentista_id = $1
+           LEFT JOIN pacientes p ON p.id = t.paciente_id AND p.tenant_id = t.tenant_id
+          WHERE t.dentista_id = $1 AND t.tenant_id = $2
           ORDER BY t.created_at DESC
           LIMIT 200`,
-        [dentistaId]
+        [dentistaId, tId]
       ),
     ]);
 
@@ -8057,6 +8024,7 @@ app.get('/api/dentista/painel/:id?', async (req, res) => {
       let alergias = r.alergias;
       if (typeof alergias === 'string') { try { alergias = JSON.parse(alergias); } catch { alergias = []; } }
       if (!Array.isArray(alergias)) alergias = [];
+      alergias = alergias.filter(a => typeof a === 'string' && a.trim());
       return {
         id: r.id,
         pacienteId: r.paciente_id || undefined,
@@ -8114,8 +8082,9 @@ app.get('/api/dentista/painel/:id?', async (req, res) => {
       tratamentos,
     });
   } catch (error) {
-    const status = error.message === 'Unauthorized' ? 401 : 500;
-    res.status(status).json({ error: error.message });
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('GET /api/dentista/painel error:', error.message);
+    res.status(500).json({ error: 'Erro interno' });
   }
 });
 
@@ -9143,6 +9112,57 @@ app.put('/api/appointment-reminder-settings', async (req, res) => {
     res.json({ success: true, enabled });
   } catch (error) {
     res.status(tenantSettingsErrorStatus(error)).json({ error: error.message });
+  }
+});
+
+// Localização da clínica (aba Configurações → Clínica). Antes ficava só no navegador de quem
+// salvou; agora é da clínica (tenant_settings), e todo atendente vê o mesmo endereço no chat.
+const CLINIC_LOCATION_FIELDS = { name: 100, address: 200, city: 100, state: 2, zip: 10, phone: 20, googleMapsUrl: 500 };
+
+function sanitizeClinicLocation(body) {
+  const src = body && typeof body === 'object' ? body : {};
+  const out = {};
+  for (const [field, max] of Object.entries(CLINIC_LOCATION_FIELDS)) {
+    out[field] = typeof src[field] === 'string' ? src[field].trim().slice(0, max) : '';
+  }
+  out.state = out.state.toUpperCase();
+  return out;
+}
+
+// 401/403/503 dizem o motivo; 500 é genérico (detalhe só no log do servidor).
+function sendClinicLocationError(res, error) {
+  const status = tenantSettingsErrorStatus(error);
+  if (status !== 500) return res.status(status).json({ error: error.message });
+  console.error('❌ clinic-location:', error.message);
+  return res.status(500).json({ error: 'Não foi possível salvar ou ler a localização agora' });
+}
+
+app.get('/api/clinic-location', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!isValidTenantId(user.tenant_id)) return res.json(null);
+    const value = await getTenantSetting(user.tenant_id, 'clinic_location');
+    res.json(value && typeof value === 'object' ? sanitizeClinicLocation(value) : null);
+  } catch (error) {
+    sendClinicLocationError(res, error);
+  }
+});
+
+app.put('/api/clinic-location', async (req, res) => {
+  try {
+    const { user } = await verifyAdmin(req);
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const location = sanitizeClinicLocation(req.body);
+    if (!location.name || !location.address) {
+      return res.status(400).json({ error: 'Nome e endereço são obrigatórios' });
+    }
+    if (location.googleMapsUrl && !/^https:\/\/[^\s]+$/i.test(location.googleMapsUrl)) {
+      return res.status(400).json({ error: 'O link do mapa precisa começar com https://' });
+    }
+    await setTenantSetting(user.tenant_id, 'clinic_location', location);
+    res.json({ success: true, location });
+  } catch (error) {
+    sendClinicLocationError(res, error);
   }
 });
 
@@ -11747,7 +11767,10 @@ async function copyGlobalSettingsToTenants() {
     try {
       const { rowCount } = await pool.query(
         `WITH marcador AS (
-           INSERT INTO app_settings (key, value, updated_at) VALUES ($1, '{"feito": true}'::jsonb, NOW())
+           INSERT INTO app_settings (key, value, updated_at)
+           SELECT $1, '{"feito": true}'::jsonb, NOW()
+            -- Só marca como feito se o contexto enxerga alguma clínica real; senão tenta no próximo boot.
+            WHERE EXISTS (SELECT 1 FROM tenants t WHERE t.id::text <> ALL($3::text[]))
            ON CONFLICT (key) DO NOTHING
            RETURNING key
          ),
@@ -11762,7 +11785,9 @@ async function copyGlobalSettingsToTenants() {
             AND t.id::text <> ALL($3::text[])
             AND o.value <> '{}'::jsonb
          ON CONFLICT (tenant_id, key) DO NOTHING`,
-        [`tenant_settings_copia_${key}`, key, [...PLACEHOLDER_TENANT_IDS]]
+        // _v2: a 1ª versão gravou o marcador mas não copiou nada (o contexto de sistema
+        // não enxergava a tabela tenants por causa da RLS); roda de novo, sem sobrescrever.
+        [`tenant_settings_copia_v2_${key}`, key, [...PLACEHOLDER_TENANT_IDS]]
       );
       if (rowCount) console.log(`   ⚙️ Configuração global ${key} copiada para as clínicas: ${rowCount} registro(s)`);
     } catch (e) {
@@ -11996,7 +12021,7 @@ app.get('/api/automations/stats', async (req, res) => {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { days = '30' } = req.query;
-    const daysInt = Math.min(parseInt(days) || 30, 365);
+    const daysInt = Math.min(Math.max(parseInt(days, 10) || 30, 1), 365);
 
     // Overall stats
     const { rows: [overall] } = await pool.query(`
@@ -13016,10 +13041,16 @@ app.post('/api/crm/leads/:id/convert-to-patient', async (req, res) => {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { id } = req.params;
+    // CPF opcional (crm_leads não guarda CPF): vazio ou exatamente 11 dígitos.
+    const cpfBody = req.body?.cpf;
+    if (cpfBody !== undefined && cpfBody !== null && (typeof cpfBody !== 'string' || !/^(\d{11})?$/.test(cpfBody.trim()))) {
+      return res.status(400).json({ error: 'CPF inválido: informe 11 dígitos, sem pontos ou traço' });
+    }
+    const cpf = normalizarCpf(req.body?.cpf);
 
     // Fetch lead data
     const { rows: leadRows } = await pool.query(
-      'SELECT id, nome, telefone, email, cpf, origem, observacoes FROM crm_leads WHERE id = $1 AND tenant_id = $2', [id, user.tenant_id]
+      'SELECT id, nome, telefone, email, origem, observacoes FROM crm_leads WHERE id = $1 AND tenant_id = $2', [id, user.tenant_id]
     );
     if (leadRows.length === 0) return res.status(404).json({ error: 'Lead não encontrado' });
     const lead = leadRows[0];
@@ -13045,7 +13076,7 @@ app.post('/api/crm/leads/:id/convert-to-patient', async (req, res) => {
     const pacienteId = crypto.randomUUID();
     await pool.query(
       'INSERT INTO pacientes (id, nome, cpf, telefone, email, observacoes, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7)',
-      [pacienteId, lead.nome, lead.cpf || null, lead.telefone || null, lead.email || null, `Origem CRM: ${lead.origem || '—'}. ${lead.observacoes || ''}`, user.tenant_id]
+      [pacienteId, lead.nome, cpf, lead.telefone || null, lead.email || null, `Origem CRM: ${lead.origem || '—'}. ${lead.observacoes || ''}`, user.tenant_id]
     );
 
     // Update lead status to 'paciente' and link paciente_id
@@ -13053,9 +13084,7 @@ app.post('/api/crm/leads/:id/convert-to-patient', async (req, res) => {
 
     res.json({ success: true, paciente_id: pacienteId, nome: lead.nome });
   } catch (error) {
-    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
-    console.error('❌ Error converting lead to patient:', error.message);
-    res.status(500).json({ error: error.message });
+    responderErroPaciente(res, error, 'crm:convert-to-patient');
   }
 });
 
@@ -13392,7 +13421,8 @@ app.get('/api/metrics/attendance', async (req, res) => {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { days = '30' } = req.query;
-    const since = `NOW() - INTERVAL '${Math.min(Number(days), 365)} days'`;
+    const daysInt = Math.min(Math.max(parseInt(days, 10) || 30, 1), 365);
+    const since = `NOW() - INTERVAL '${daysInt} days'`;
 
     // General metrics
     const { rows: general } = await pool.query(`
@@ -14222,11 +14252,12 @@ app.get('/api/sessions/active', async (req, res) => {
         s.assigned_at AS started_at,
         (
           SELECT m.content FROM chat_messages m
-          WHERE m.lead_id = s.lead_id
+          WHERE m.lead_id = s.lead_id AND m.tenant_id = s.tenant_id
           ORDER BY m.timestamp DESC LIMIT 1
         ) AS last_message
       FROM attendance_sessions s
-      LEFT JOIN crm_leads l ON l.id = s.lead_id
+      -- attendance_sessions.lead_id é text e crm_leads.id é uuid: sem o ::text dá 500 (uuid = text).
+      LEFT JOIN crm_leads l ON l.id::text = s.lead_id AND l.tenant_id = s.tenant_id
       WHERE s.status = 'active' AND s.tenant_id = $1
       ORDER BY s.assigned_at DESC
       LIMIT 30
@@ -14975,16 +15006,20 @@ app.get('/api/messages/unread', async (req, res) => {
 });
 
 // Search messages globally or within a lead
+// Escapa os curingas do LIKE/ILIKE (\\, % e _) para o texto digitado ser buscado literalmente.
+const escapeLike = (text) => String(text).replace(/[\\%_]/g, (c) => `\\${c}`);
+
 app.get('/api/messages/search', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
-    const q = req.query.q;
-    const leadId = req.query.lead_id;
-    if (!q || q.length < 2) return res.status(400).json({ error: 'Query mínima 2 caracteres' });
+    const q = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 80) : '';
+    const leadId = typeof req.query.lead_id === 'string' ? req.query.lead_id : '';
+    if (q.length < 2) return res.status(400).json({ error: 'Query mínima 2 caracteres' });
 
-    let query = "SELECT m.*, l.nome as lead_name FROM chat_messages m LEFT JOIN crm_leads l ON l.id = m.lead_id AND l.tenant_id = m.tenant_id WHERE m.content ILIKE $1 AND m.tenant_id = $2";
-    const values = [`%${q}%`, user.tenant_id];
+    let query = "SELECT m.*, l.nome as lead_name FROM chat_messages m LEFT JOIN crm_leads l ON l.id::text = m.lead_id AND l.tenant_id = m.tenant_id WHERE m.content ILIKE $1 AND m.tenant_id = $2";
+    // chat_messages.lead_id é text e crm_leads.id é uuid: sem o ::text o Postgres dá 500 (uuid = text).
+    const values = [`%${escapeLike(q)}%`, user.tenant_id];
 
     if (leadId) {
       query += ' AND m.lead_id = $3';
@@ -14996,7 +15031,65 @@ app.get('/api/messages/search', async (req, res) => {
     const { rows } = await pool.query(query, values);
     res.json(rows);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('❌ busca de mensagens:', error.message);
+    res.status(500).json({ error: 'Não foi possível buscar as mensagens agora' });
+  }
+});
+
+// Busca global (Ctrl+K): pacientes, leads e agendamentos da própria clínica.
+// Até 20 resultados no total e só dados de identificação (nome, telefone, data/hora):
+// nada de procedimento, observação, convênio, CPF ou anamnese (LGPD art. 11).
+app.get('/api/search', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const q = String(req.query.q || '').trim().slice(0, 80);
+    if (q.length < 2) return res.status(400).json({ error: 'Digite pelo menos 2 caracteres' });
+
+    const like = `%${escapeLike(q)}%`;
+    const digits = q.replace(/\D/g, '');
+    // Só busca por número quando há dígitos suficientes ('' casaria com tudo).
+    const digitsLike = digits.length >= 3 ? `%${digits}%` : null;
+    // CPF parcial só para admin; os demais acham paciente por CPF só com os 11 dígitos exatos.
+    const isAdmin = user.role === 'admin' || !!user.is_super_admin;
+    const cpfParam = isAdmin ? digitsLike : (digits.length === 11 ? digits : null);
+    const tId = user.tenant_id;
+
+    const [pacientes, leads, agendamentos] = await Promise.all([
+      pool.query(
+        `SELECT id, nome, telefone FROM pacientes
+          WHERE tenant_id = $1
+            AND (nome ILIKE $2
+                 OR ($3::text IS NOT NULL AND regexp_replace(COALESCE(telefone, ''), '\\D', '', 'g') LIKE $3)
+                 OR ($4::text IS NOT NULL AND regexp_replace(COALESCE(cpf, ''), '\\D', '', 'g') ${isAdmin ? 'LIKE' : '='} $4))
+          ORDER BY nome LIMIT 8`,
+        [tId, like, digitsLike, cpfParam]
+      ),
+      pool.query(
+        `SELECT id, nome, telefone, kanban_stage FROM crm_leads
+          WHERE tenant_id = $1
+            AND (nome ILIKE $2 OR ($3::text IS NOT NULL
+                 AND regexp_replace(COALESCE(telefone, ''), '\\D', '', 'g') LIKE $3))
+          ORDER BY updated_at DESC NULLS LAST LIMIT 6`,
+        [tId, like, digitsLike]
+      ),
+      pool.query(
+        `SELECT a.id, a.data, a.hora, a.status, a.paciente_id, p.nome AS paciente_nome, d.nome AS dentista_nome
+           FROM agendamentos a
+           JOIN pacientes p ON p.id = a.paciente_id AND p.tenant_id = a.tenant_id
+           LEFT JOIN dentistas d ON d.id = a.dentista_id AND d.tenant_id = a.tenant_id
+          WHERE a.tenant_id = $1 AND p.nome ILIKE $2 AND a.data >= CURRENT_DATE - INTERVAL '30 days'
+          ORDER BY a.data, a.hora LIMIT 6`,
+        [tId, like]
+      ),
+    ]);
+
+    res.json({ pacientes: pacientes.rows, leads: leads.rows, agendamentos: agendamentos.rows });
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('❌ busca global:', error.message);
+    res.status(500).json({ error: 'Não foi possível buscar agora' });
   }
 });
 
@@ -15502,6 +15595,16 @@ app.get('/api/ai/reports/:patientId', async (req, res, next) => {
   }
 });
 
+// prescricoes é JSONB e nem sempre é lista (objeto, texto, null): nunca derrubar a rota por isso.
+function prescricoesComoLista(v) {
+  if (Array.isArray(v)) return v;
+  if (typeof v === 'string') {
+    try { const p = JSON.parse(v || '[]'); return Array.isArray(p) ? p : []; } catch { return []; }
+  }
+  return [];
+}
+const PRESCRICOES_QTD_SQL = `(CASE WHEN jsonb_typeof(prescricoes) = 'array' THEN jsonb_array_length(prescricoes) ELSE 0 END)`;
+
 // ─── List clinical reports with filters (period, status, patient, dentist) ──
 // GET /api/ai/reports?from=YYYY-MM-DD&to=YYYY-MM-DD&status=com_prescricao|sem_prescricao|todos&patientId=&attendantId=&q=
 app.get('/api/ai/reports', async (req, res) => {
@@ -15523,8 +15626,8 @@ app.get('/api/ai/reports', async (req, res) => {
       where.push(`(LOWER(patient_name) LIKE $${idx} OR LOWER(queixa_principal) LIKE $${idx} OR LOWER(procedimento) LIKE $${idx})`);
       params.push(`%${String(q).toLowerCase()}%`); idx++;
     }
-    if (status === 'com_prescricao') where.push(`jsonb_array_length(COALESCE(prescricoes, '[]'::jsonb)) > 0`);
-    if (status === 'sem_prescricao') where.push(`(prescricoes IS NULL OR jsonb_array_length(COALESCE(prescricoes, '[]'::jsonb)) = 0)`);
+    if (status === 'com_prescricao') where.push(`${PRESCRICOES_QTD_SQL} > 0`);
+    if (status === 'sem_prescricao') where.push(`${PRESCRICOES_QTD_SQL} = 0`);
 
     // Non-admin users only see their own reports
     if (user.role !== 'admin' && user.role !== 'gerente') {
@@ -15546,7 +15649,7 @@ app.get('/api/ai/reports', async (req, res) => {
 
     // Aggregated stats
     const total = rows.length;
-    const comPrescricao = rows.filter(r => Array.isArray(r.prescricoes) ? r.prescricoes.length > 0 : (r.prescricoes && JSON.parse(r.prescricoes || '[]').length > 0)).length;
+    const comPrescricao = rows.filter(r => prescricoesComoLista(r.prescricoes).length > 0).length;
     const totalDuration = rows.reduce((s, r) => s + (r.duration_seconds || 0), 0);
     const pacientesUnicos = new Set(rows.map(r => r.patient_id)).size;
 
@@ -15591,8 +15694,8 @@ app.get('/api/ai/reports/export.csv', async (req, res) => {
       where.push(`(LOWER(patient_name) LIKE $${idx} OR LOWER(queixa_principal) LIKE $${idx} OR LOWER(procedimento) LIKE $${idx})`);
       params.push(`%${String(q).toLowerCase()}%`); idx++;
     }
-    if (status === 'com_prescricao') where.push(`jsonb_array_length(COALESCE(prescricoes, '[]'::jsonb)) > 0`);
-    if (status === 'sem_prescricao') where.push(`(prescricoes IS NULL OR jsonb_array_length(COALESCE(prescricoes, '[]'::jsonb)) = 0)`);
+    if (status === 'com_prescricao') where.push(`${PRESCRICOES_QTD_SQL} > 0`);
+    if (status === 'sem_prescricao') where.push(`${PRESCRICOES_QTD_SQL} = 0`);
     if (user.role !== 'admin' && user.role !== 'gerente') {
       where.push(`attendant_id = $${idx++}`);
       params.push(user.id);
@@ -15615,7 +15718,7 @@ app.get('/api/ai/reports/export.csv', async (req, res) => {
     const header = ['Data', 'Hora', 'Paciente', 'Dentista', 'Queixa', 'Procedimento', 'Dente/Região', 'Duração (min)', 'Nº Prescrições'].map(esc).join(',');
     const lines = rows.map(r => {
       const d = new Date(r.created_at);
-      const presc = Array.isArray(r.prescricoes) ? r.prescricoes : (typeof r.prescricoes === 'string' ? JSON.parse(r.prescricoes || '[]') : []);
+      const presc = prescricoesComoLista(r.prescricoes);
       return [
         d.toLocaleDateString('pt-BR'),
         d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
@@ -16783,7 +16886,7 @@ app.delete('/api/exames/:id', async (req, res) => {
 // START SERVER
 
 if (process.env.NODE_ENV !== 'test') {
-  const server = app.listen(PORT, async () => {
+  const server = app.listen(PORT, LISTEN_HOST, async () => {
   console.log(`🦷 Odonto Connect API running on port ${PORT}`);
   console.log(`   Health: http://localhost:${PORT}/api/health`);
   console.log(`   Webhook URL: ${WEBHOOK_URL}`);
