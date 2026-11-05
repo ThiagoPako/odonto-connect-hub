@@ -152,7 +152,11 @@ const pool = new Pool({
   password: process.env.PG_PASSWORD,
 });
 
-// RLS da VPS lê app.tenant_id / app.is_super_admin. set_config de sessão num
+// RLS da VPS lê app.tenant_id / app.is_super_admin. Parte das políticas (tabelas
+// cujo dono é o postgres: tenants, plans, fin_*, anamneses, odontogramas, ...) usa a
+// função is_super_admin(), que lê app.jwt_payload — por isso o contexto de sistema e
+// de super-admin também grava esse payload; sem ele essas tabelas aparecem vazias.
+// set_config de sessão num
 // pool vaza entre requisições (cada query pode cair noutra conexão), então,
 // dentro de uma requisição autenticada, cada query roda numa transação curta
 // com o contexto local (is_local=true) na mesma conexão.
@@ -160,7 +164,8 @@ const rawPoolQuery = pool.query.bind(pool);
 const rawPoolConnect = pool.connect.bind(pool);
 const TENANT_SET_SQL = `SELECT set_config('app.tenant_id', $1, $3),
               set_config('app.current_tenant_id', $1, $3),
-              set_config('app.is_super_admin', $2, $3)`;
+              set_config('app.is_super_admin', $2, $3),
+              set_config('app.jwt_payload', CASE WHEN $2 = 'true' THEN '{"is_super_admin":true}' ELSE '' END, $3)`;
 const activeTenantCtx = () => {
   const ctx = tenantContext.getStore();
   return ctx && (ctx.tenantId || ctx.isSuperAdmin) ? ctx : null;
@@ -177,7 +182,11 @@ pool.connect = async (...args) => {
   const release = client.release;
   client.release = (err) => {
     client.release = release;
-    client.query(TENANT_SET_SQL, ['', 'false', false]).catch(() => {}).finally(() => release.call(client, err));
+    // Transação abortada impede o reset do contexto: desfaz antes e, se o reset ainda
+    // falhar, descarta a conexão em vez de devolvê-la ao pool com super-admin na sessão.
+    client.query('ROLLBACK').catch(() => {})
+      .then(() => client.query(TENANT_SET_SQL, ['', 'false', false]))
+      .then(() => release.call(client, err), () => release.call(client, true));
   };
   return client;
 };
@@ -11048,7 +11057,10 @@ async function copyGlobalSettingsToTenants() {
     try {
       const { rowCount } = await pool.query(
         `WITH marcador AS (
-           INSERT INTO app_settings (key, value, updated_at) VALUES ($1, '{"feito": true}'::jsonb, NOW())
+           INSERT INTO app_settings (key, value, updated_at)
+           SELECT $1, '{"feito": true}'::jsonb, NOW()
+            -- Só marca como feito se o contexto enxerga alguma clínica real; senão tenta no próximo boot.
+            WHERE EXISTS (SELECT 1 FROM tenants t WHERE t.id::text <> ALL($3::text[]))
            ON CONFLICT (key) DO NOTHING
            RETURNING key
          ),
@@ -11063,7 +11075,9 @@ async function copyGlobalSettingsToTenants() {
             AND t.id::text <> ALL($3::text[])
             AND o.value <> '{}'::jsonb
          ON CONFLICT (tenant_id, key) DO NOTHING`,
-        [`tenant_settings_copia_${key}`, key, [...PLACEHOLDER_TENANT_IDS]]
+        // _v2: a 1ª versão gravou o marcador mas não copiou nada (o contexto de sistema
+        // não enxergava a tabela tenants por causa da RLS); roda de novo, sem sobrescrever.
+        [`tenant_settings_copia_v2_${key}`, key, [...PLACEHOLDER_TENANT_IDS]]
       );
       if (rowCount) console.log(`   ⚙️ Configuração global ${key} copiada para as clínicas: ${rowCount} registro(s)`);
     } catch (e) {
