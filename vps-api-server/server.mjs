@@ -10708,6 +10708,22 @@ const WA_DEFAULT_DEDUPE_MINUTES = 24 * 60;
 
 // Janela de dedupe por job, limitada a [1 min, 24 h]. Menu de filas e confirmações
 // usam janela curta: a repetição legítima (paciente errou a opção) precisa sair.
+// Chaves de controle da fila em variables (dedupe por job, conteúdo interativo, kind,
+// menu após boas-vindas) só valem em jobs criados pelo próprio servidor. Em job
+// manual/de fluxo, o cliente poderia furar o dedupe de 24 h ou mandar um conteúdo
+// diferente do job.message auditado.
+const WA_INTERNAL_TRIGGERS = new Set(['auto_reply', 'satisfaction_survey']);
+const WA_CONTROL_VAR_KEYS = ['dedupeMinutes', 'interactive', 'kind', 'thenQueueMenu', 'enqueuedAt'];
+function stripWhatsAppControlVars(vars) {
+  if (!vars || typeof vars !== 'object' || Array.isArray(vars)) return {};
+  const out = { ...vars };
+  for (const k of WA_CONTROL_VAR_KEYS) delete out[k];
+  return out;
+}
+function trustedWhatsAppJobVars(job, vars) {
+  return WA_INTERNAL_TRIGGERS.has(job?.trigger_event) ? (vars || {}) : stripWhatsAppControlVars(vars);
+}
+
 function waDedupeMinutes(vars) {
   const n = Number(vars?.dedupeMinutes);
   return Number.isFinite(n) && n >= 1 ? Math.min(Math.round(n), WA_DEFAULT_DEDUPE_MINUTES) : WA_DEFAULT_DEDUPE_MINUTES;
@@ -10820,6 +10836,18 @@ async function runWhatsAppJobHooks(job, ok, errorMessage) {
         .catch(e => console.warn('[auto-reply] menu de filas não enfileirado:', e.message));
     }
   }
+  // Pesquisa de satisfação: só depois de sair, a próxima resposta 1–5 vira avaliação.
+  if (job.trigger_event === 'satisfaction_survey' && ok && vars.leadId && job.tenant_id) {
+    const phoneDigits = String(job.patient_phone || '').replace(/\D/g, '');
+    await pool.query(
+      `INSERT INTO app_settings (key, value, updated_at)
+       VALUES ($1, $2, NOW()) ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
+      [`awaiting_rating_${job.tenant_id}_${phoneDigits}`, JSON.stringify({
+        leadId: vars.leadId, sessionId: vars.sessionId || null,
+        attendantId: vars.attendantId || null, attendantName: vars.attendantName || null,
+      })]
+    ).catch(e => console.error('[survey hook]', e.message));
+  }
   if (job.trigger_event === 'reactivation') {
     await pool.query(
       `INSERT INTO reactivation_sends (rule_id, paciente_id, lead_id, phone, message, status, error_message, tenant_id)
@@ -10929,7 +10957,7 @@ async function processOneWhatsAppJob(candidate, openInstances, usedInstances) {
 
   let vars = job.variables;
   if (typeof vars === 'string') { try { vars = JSON.parse(vars); } catch { vars = {}; } }
-  vars = vars || {};
+  vars = trustedWhatsAppJobVars(job, vars || {});
 
   // 3) Opt-out e duplicidade (única exceção ao opt-out: a confirmação do próprio SAIR)
   if (!isOptOutConfirmationJob(job, vars) && await isWhatsAppOptedOut(tenantId, job.patient_phone)) {
@@ -11001,7 +11029,10 @@ async function processOneWhatsAppJob(candidate, openInstances, usedInstances) {
       body: JSON.stringify({ ...payload, number, delay: typingDelayMs(job.message) }),
       timeoutMs: 45_000,
     });
-    if (!delivered(result)) result = await sendTextNow();
+    // Timeout (504 do evolutionFetch): os botões podem ter saído sem a resposta chegar.
+    // Não reenvia em texto para não duplicar; o job falha como incerto. Verificar na
+    // Evolution pelo id não é possível aqui (sem key.id na resposta).
+    if (!delivered(result) && result.status !== 504) result = await sendTextNow();
   } else {
     result = await sendTextNow();
   }
@@ -11345,7 +11376,7 @@ app.post('/api/automations/enqueue', async (req, res) => {
     if (await isWhatsAppOptedOut(tenantId, phone)) {
       return res.status(409).json({ error: 'Este paciente pediu para não receber mensagens (SAIR).' });
     }
-    const vars = { nome: patientName || '', telefone: phone, ...(variables || {}) };
+    const vars = { nome: patientName || '', telefone: phone, ...stripWhatsAppControlVars(variables) };
     const now = new Date();
     const jobIds = [];
 
@@ -12579,7 +12610,10 @@ app.post('/api/sessions/first-response', async (req, res) => {
 app.post('/api/sessions/close', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
-    const { leadId, instance } = req.body;
+    const { leadId, outcome } = req.body;
+    // Instância da conversa (número em que o paciente falou). Sem ela, a fila usa o
+    // número padrão da clínica (getTenantDefaultInstance).
+    const instance = typeof req.body.instance === 'string' && req.body.instance.trim() ? req.body.instance.trim() : null;
     if (!leadId) return res.status(400).json({ error: 'leadId obrigatório' });
     if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Sem clínica vinculada' });
     // Telefone e nome do cadastro do lead desta clínica (nunca do corpo da requisição).
@@ -12599,14 +12633,16 @@ app.post('/api/sessions/close', async (req, res) => {
     );
 
     const session = result.rows[0];
-    const ownsSurveyInstance = session && instance ? await userOwnsInstance(user, instance) : false;
+    // Pesquisa só no desfecho "atendido" (follow-up e orçamento não recebem).
+    const wantsSurvey = outcome === 'atendido';
+    const surveyInstanceOk = !instance || (isSafeInstanceName(instance) && await userOwnsInstance(user, instance));
     const surveyOptedOut = leadPhone ? await isWhatsAppOptedOut(user.tenant_id, leadPhone).catch(() => false) : false;
 
     // Pesquisa de satisfação pela fila, pelo número da clínica: botões com fallback
     // em texto numerado (o texto é a mensagem do job). Não é resposta imediata ao
     // paciente, então não tem prioridade auto_reply e respeita a janela de horário.
     let surveyJob = null;
-    if (session && leadPhone && instance && ownsSurveyInstance && !surveyOptedOut && isSafeInstanceName(instance)) {
+    if (session && wantsSurvey && leadPhone && surveyInstanceOk && !surveyOptedOut) {
       const phone = leadPhone.replace(/\D/g, '');
       surveyJob = await enqueueWhatsAppJob({
         tenantId: user.tenant_id, instance, phone, category: 'transactional',
@@ -12615,6 +12651,7 @@ app.post('/api/sessions/close', async (req, res) => {
         message: `⭐ *Avalie nosso atendimento!*\n\nComo você avalia o atendimento que recebeu?\n\n5️⃣ Excelente\n4️⃣ Bom\n3️⃣ Regular\n2️⃣ Ruim\n1️⃣ Péssimo\n\nResponda com o número da sua avaliação.`,
         variables: {
           leadId: String(leadId),
+          sessionId: session.id || null, attendantId: session.attendant_id || null, attendantName: session.attendant_name || null,
           interactive: {
             endpoint: 'sendButtons',
             payload: {
@@ -12631,15 +12668,8 @@ app.post('/api/sessions/close', async (req, res) => {
       }).catch(e => { console.error('📊 Pesquisa de satisfação não enfileirada:', e.message); return null; });
     }
     if (surveyJob) {
-      const phone = leadPhone.replace(/\D/g, '');
-      console.log(`📊 Satisfaction survey queued for ${maskPhone(phone)} (job ${surveyJob})`);
-
-      // Mark lead as awaiting rating
-      await pool.query(
-        `INSERT INTO app_settings (key, value, updated_at) 
-         VALUES ($1, $2, NOW()) ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
-        [`awaiting_rating_${user.tenant_id}_${phone}`, JSON.stringify({ leadId, sessionId: session?.id, attendantId: session?.attendant_id, attendantName: session?.attendant_name })]
-      );
+      // A flag de "aguardando avaliação" é gravada no hook do job, quando a pesquisa sair.
+      console.log(`📊 Satisfaction survey queued for ${maskPhone(leadPhone)} (job ${surveyJob})`);
     }
 
     console.log(`✅ Session closed for lead ${leadId} (duration: ${session?.duration_seconds || 0}s)`);

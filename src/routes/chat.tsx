@@ -1282,11 +1282,13 @@ function ChatPage() {
       handleSendMessage(farewellMessage, "text");
     }
 
-    const instanceName = connectedInstances[0]?.instanceName || "teste";
+    // Número em que o paciente falou; sem ele, o backend usa o número padrão da clínica.
+    const conversationInstance = lead.instance
+      || [...(messages[lead.id] || [])].reverse().find((message) => message.instance)?.instance;
     sessionsApi.close({
       leadId: lead.id,
-      leadPhone: lead.phone,
-      instance: instanceName,
+      outcome: outcome || "atendido",
+      ...(conversationInstance ? { instance: conversationInstance } : {}),
     }).then(({ data, error }) => {
       if (error) {
         toast.error("Erro ao finalizar atendimento");

@@ -18,7 +18,7 @@ process.env.EVOLUTION_API_KEY = 'chave-de-teste';
 process.env.EVOLUTION_API_URL = 'http://evolution.teste.invalid';
 delete process.env.EVOLUTION_WEBHOOK_SECRET;
 
-const { app, pool, clearTenantSettingsCacheForTests, processAutomationJobs, resetWhatsAppQueueStateForTests } = await import('../server.mjs');
+const { app, pool, clearTenantSettingsCacheForTests, processAutomationJobs, resetWhatsAppQueueStateForTests, runWhatsAppJobHooks } = await import('../server.mjs');
 const JWT_SECRET = process.env.JWT_SECRET;
 
 const tenantA = '11111111-1111-1111-1111-111111111111';
@@ -84,6 +84,9 @@ describe('Fila: mensagens com botões e envios automáticos restantes', () => {
       }
       if (/UPDATE attendance_sessions SET/.test(text)) return ok([{ id: 'sess-1', duration_seconds: 10, attendant_id: null, attendant_name: 'Ana' }]);
       if (/INSERT INTO automation_jobs/.test(text)) return ok([{ id: 'job-1' }]);
+      if (/FROM automation_flows WHERE id = \$1 AND tenant_id = \$2/.test(text)) {
+        return ok(params[1] === tenantA ? [{ id: 'flow-1', name: 'Fluxo', active: true, steps: [{ message: 'Oi {{nome}}', delayMinutes: 0 }] }] : []);
+      }
       // Fila
       if (/SELECT DISTINCT ON/.test(text)) return ok(queueJob ? [queueJob] : []);
       if (/UPDATE automation_jobs SET claimed_at = NOW\(\)/.test(text)) return ok(queueJob ? [queueJob] : []);
@@ -173,6 +176,33 @@ describe('Fila: mensagens com botões e envios automáticos restantes', () => {
       expect(sends()).toHaveLength(0);
     });
 
+    test('job manual: dedupeMinutes e interactive vindos do cliente são ignorados', async () => {
+      queueJob = makeJob({
+        trigger_event: 'manual', category: 'transactional', message: 'Texto auditado',
+        variables: JSON.stringify({ dedupeMinutes: 1, interactive: { endpoint: 'sendButtons', payload: { description: 'OUTRO CONTEÚDO', buttons: [] } } }),
+      });
+      // Dentro da janela de envio (quarta, 10h em São Paulo).
+      jest.useFakeTimers({ now: new Date('2026-11-04T13:00:00Z'), doNotFake: ['nextTick', 'setImmediate', 'clearImmediate', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'queueMicrotask', 'hrtime', 'performance'] });
+      try { await processAutomationJobs(); } finally { jest.useRealTimers(); }
+      const dup = sqlLog.find(q => /status = 'sent' AND id <> \$2 AND message = \$3/.test(q.text));
+      expect(dup.params[4]).toBe(24 * 60);
+      expect(sends().map(s => s.url.split('/message/')[1])).toEqual([`sendText/${instA}`]);
+      expect(sends()[0].body.text).toBe('Texto auditado');
+    });
+
+    test('timeout nos botões: não reenvia em texto (evita duplicata)', async () => {
+      queueJob = makeJob();
+      fetchSpy.mockImplementation(async (url) => {
+        fetchLog.push({ url: String(url), body: null });
+        if (/fetchInstances/.test(String(url))) return { ok: true, status: 200, json: async () => [{ name: instA, connectionStatus: 'open' }] };
+        if (/sendButtons/.test(String(url))) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
+        return { ok: true, status: 200, json: async () => ({ key: { id: 'TXT' } }) };
+      });
+      await processAutomationJobs();
+      expect(sends().map(s => s.url.split('/message/')[1])).toEqual([`sendButtons/${instA}`]);
+      expect(jobStatus).toMatch(/^failed/);
+    });
+
     test('a exceção vale só para auto_reply: campanha com kind forjado continua barrada', async () => {
       optedOut = true;
       queueJob = makeJob({ trigger_event: 'campaign', category: 'marketing', variables: JSON.stringify({ kind: 'opt_out_confirmation' }) });
@@ -236,9 +266,25 @@ describe('Fila: mensagens com botões e envios automáticos restantes', () => {
     });
   });
 
+  describe('POST /api/automations/enqueue', () => {
+    test('remove dedupeMinutes, interactive e kind das variables do cliente', async () => {
+      const res = await request(app).post('/api/automations/enqueue').set(auth()).send({
+        flowId: 'flow-1', patientName: 'Maria', patientPhone: telefoneA,
+        variables: { extra: 'ok', dedupeMinutes: 1, interactive: { endpoint: 'sendButtons', payload: {} }, kind: 'opt_out_confirmation' },
+      });
+      expect(res.status).toBeLessThan(300);
+      const ins = sqlLog.find(q => /INSERT INTO automation_jobs/.test(q.text));
+      const vars = JSON.parse(ins.params[7]); // $8 = variables
+      expect(vars).toMatchObject({ extra: 'ok', nome: 'Maria' });
+      expect(vars).not.toHaveProperty('dedupeMinutes');
+      expect(vars).not.toHaveProperty('interactive');
+      expect(vars).not.toHaveProperty('kind');
+    });
+  });
+
   describe('POST /api/sessions/close', () => {
     test('pesquisa de satisfação vai para a fila, com botões e fallback, pelo número da clínica', async () => {
-      const res = await request(app).post('/api/sessions/close').set(auth()).send({ leadId: leadA, instance: instA });
+      const res = await request(app).post('/api/sessions/close').set(auth()).send({ leadId: leadA, instance: instA, outcome: 'atendido' });
       expect(res.status).toBe(200);
       expect(res.body.surveyQueued).toBe(true); // a tela do chat usa isso para avisar o atendente
       const [ins] = jobInserts();
@@ -251,12 +297,43 @@ describe('Fila: mensagens com botões e envios automáticos restantes', () => {
       const v = jobVars(ins);
       expect(v.interactive.endpoint).toBe('sendButtons');
       expect(v.interactive.payload.buttons.map(b => b.buttonId)).toEqual([`rating_${leadA}_5`, `rating_${leadA}_4`, `rating_${leadA}_3`]);
-      expect(sqlLog.some(q => /INSERT INTO app_settings/.test(q.text) && q.params[0] === `awaiting_rating_${tenantA}_${telefoneA}`)).toBe(true);
+      expect(v).toMatchObject({ leadId: leadA, sessionId: 'sess-1', attendantName: 'Ana' });
+      // A flag de avaliação só é gravada quando a pesquisa sair (hook), não ao enfileirar.
+      expect(sqlLog.some(q => /INSERT INTO app_settings/.test(q.text))).toBe(false);
       expect(sends()).toHaveLength(0);
     });
 
+    test('desfecho diferente de "atendido": sem pesquisa', async () => {
+      for (const outcome of ['followup', 'orcamento', undefined]) {
+        sqlLog = [];
+        const res = await request(app).post('/api/sessions/close').set(auth()).send({ leadId: leadA, instance: instA, outcome });
+        expect(res.body.surveyQueued).toBe(false);
+        expect(jobInserts()).toHaveLength(0);
+      }
+    });
+
+    test('sem instância da conversa: usa o número padrão da clínica, nunca o da B', async () => {
+      const res = await request(app).post('/api/sessions/close').set(auth()).send({ leadId: leadA, outcome: 'atendido' });
+      expect(res.body.surveyQueued).toBe(true);
+      const [ins] = jobInserts();
+      expect(jobCol(ins, 'instance')).toBe(instA);
+    });
+
+    test('hook: pesquisa enviada grava a flag de avaliação; falha não grava', async () => {
+      const job = {
+        trigger_event: 'satisfaction_survey', tenant_id: tenantA, patient_phone: telefoneA, message: 'x',
+        variables: JSON.stringify({ leadId: leadA, sessionId: 'sess-1', attendantId: 'att-1', attendantName: 'Ana' }),
+      };
+      await runWhatsAppJobHooks(job, false, 'erro');
+      expect(sqlLog.some(q => /INSERT INTO app_settings/.test(q.text))).toBe(false);
+      await runWhatsAppJobHooks(job, true);
+      const ins = sqlLog.find(q => /INSERT INTO app_settings/.test(q.text));
+      expect(ins.params[0]).toBe(`awaiting_rating_${tenantA}_${telefoneA}`);
+      expect(JSON.parse(ins.params[1])).toEqual({ leadId: leadA, sessionId: 'sess-1', attendantId: 'att-1', attendantName: 'Ana' });
+    });
+
     test('instância de outra clínica: nada é enfileirado', async () => {
-      const res = await request(app).post('/api/sessions/close').set(auth()).send({ leadId: leadA, instance: instB });
+      const res = await request(app).post('/api/sessions/close').set(auth()).send({ leadId: leadA, instance: instB, outcome: 'atendido' });
       expect(res.body.surveyQueued).toBe(false);
       expect(jobInserts()).toHaveLength(0);
       expect(sends()).toHaveLength(0);
