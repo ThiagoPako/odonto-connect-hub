@@ -240,6 +240,7 @@ describe('Fila: mensagens com botões e envios automáticos restantes', () => {
     test('pesquisa de satisfação vai para a fila, com botões e fallback, pelo número da clínica', async () => {
       const res = await request(app).post('/api/sessions/close').set(auth()).send({ leadId: leadA, instance: instA });
       expect(res.status).toBe(200);
+      expect(res.body.surveyQueued).toBe(true); // a tela do chat usa isso para avisar o atendente
       const [ins] = jobInserts();
       expect(ins).toBeDefined();
       expect(jobCol(ins, 'tenant_id')).toBe(tenantA);
@@ -255,7 +256,8 @@ describe('Fila: mensagens com botões e envios automáticos restantes', () => {
     });
 
     test('instância de outra clínica: nada é enfileirado', async () => {
-      await request(app).post('/api/sessions/close').set(auth()).send({ leadId: leadA, instance: instB });
+      const res = await request(app).post('/api/sessions/close').set(auth()).send({ leadId: leadA, instance: instB });
+      expect(res.body.surveyQueued).toBe(false);
       expect(jobInserts()).toHaveLength(0);
       expect(sends()).toHaveLength(0);
     });

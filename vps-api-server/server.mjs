@@ -12651,7 +12651,7 @@ app.post('/api/sessions/close', async (req, res) => {
       triggerAutomationFlows('Atendimento finalizado sem agendamento', { name, phone: leadPhone, tenantId: user.tenant_id }).catch(() => {});
     }
 
-    res.json({ success: true, sessionId: session?.id, duration: session?.duration_seconds });
+    res.json({ success: true, sessionId: session?.id, duration: session?.duration_seconds, surveyQueued: !!surveyJob });
   } catch (error) {
     res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
   }
