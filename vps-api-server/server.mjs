@@ -6968,7 +6968,13 @@ app.get(['/api/dashboard', '/api/dashboard/kpis'], async (req, res) => {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Sem clínica vinculada' });
     const today = new Date().toISOString().split('T')[0];
-    const firstDayOfMonth = `${today.substring(0, 7)}-01`;
+    // fin_movements.date é VARCHAR: a tela Financeiro grava dd/mm/aaaa (toLocaleDateString pt-BR),
+    // registros antigos podem estar em aaaa-mm-dd. Casa o mês nos dois formatos sem converter
+    // (texto fora do padrão simplesmente não entra, em vez de derrubar a consulta com erro de cast).
+    const [anoAtual, mesAtual] = today.split('-');
+    const mesIso = `${anoAtual}-${mesAtual}-%`;
+    const mesBr = `__/${mesAtual}/${anoAtual}%`;
+    const FIN_MES_SQL = 'SELECT COALESCE(SUM(value), 0)::numeric AS total FROM fin_movements WHERE type = $1 AND tenant_id = $2 AND (date LIKE $3 OR date LIKE $4)';
 
     // Helper: silencia erro se a tabela ainda não existe (migration pendente)
     const safe = async (sql, params = []) => {
@@ -6993,9 +6999,9 @@ app.get(['/api/dashboard', '/api/dashboard/kpis'], async (req, res) => {
     ] = await Promise.all([
       safe('SELECT COUNT(*)::int AS total FROM pacientes WHERE tenant_id = $1', [user.tenant_id]),
       safe('SELECT status, COUNT(*)::int AS qtd FROM agendamentos WHERE data = $1 AND tenant_id = $2 GROUP BY status', [today, user.tenant_id]),
-      // Recebimentos/pagamentos reais: movimentações da tela Financeiro (fin_movements.date é texto YYYY-MM-DD).
-      safe('SELECT COALESCE(SUM(value), 0)::numeric AS total FROM fin_movements WHERE type = $1 AND date >= $2 AND tenant_id = $3', ['entrada', firstDayOfMonth, user.tenant_id]),
-      safe('SELECT COALESCE(SUM(value), 0)::numeric AS total FROM fin_movements WHERE type = $1 AND date >= $2 AND tenant_id = $3', ['saida', firstDayOfMonth, user.tenant_id]),
+      // Recebimentos/pagamentos reais do mês: movimentações da tela Financeiro.
+      safe(FIN_MES_SQL, ['entrada', user.tenant_id, mesIso, mesBr]),
+      safe(FIN_MES_SQL, ['saida', user.tenant_id, mesIso, mesBr]),
       safe(`SELECT status, COUNT(*)::int AS qtd, COALESCE(SUM(valor_total), 0)::numeric AS soma
             FROM orcamentos WHERE tenant_id = $1 GROUP BY status`, [user.tenant_id]),
       safe(`SELECT kanban_stage AS stage, COUNT(*)::int AS qtd FROM crm_leads WHERE tenant_id = $1 GROUP BY kanban_stage`, [user.tenant_id]),
@@ -7115,114 +7121,6 @@ app.get(['/api/dashboard', '/api/dashboard/kpis'], async (req, res) => {
 // GET /api/comercial/painel?attendantId=<uuid|me>
 // Quando attendantId omitido OU = 'me' e role != admin → escopo do user logado
 // ═══════════════════════════════════════════════════════════════
-// ─── Dashboard KPIs (por clínica) ───────────────────────────
-app.get('/api/dashboard/kpis', async (req, res) => {
-  try {
-    const { user } = await verifyUser(req);
-    const tId = user.tenant_id;
-    if (!tId) return res.status(403).json({ error: 'Sem clínica vinculada' });
-
-    // Tabela/coluna ausente em instalações antigas vira lista vazia, não 500.
-    const safe = async (sql) => {
-      try { return (await pool.query(sql, [tId])).rows; }
-      catch (err) {
-        if (err.code === '42P01' || err.code === '42703') return [];
-        throw err;
-      }
-    };
-    const TODAY = `(NOW() AT TIME ZONE 'America/Sao_Paulo')::date`;
-    const [pac, agenda, movs, orcs, leads, est] = await Promise.all([
-      safe('SELECT COUNT(*)::int AS n FROM pacientes WHERE tenant_id = $1'),
-      safe(`SELECT status FROM agendamentos WHERE tenant_id = $1 AND data = ${TODAY}`),
-      safe(`SELECT type, value FROM fin_movements WHERE tenant_id = $1 AND date >= date_trunc('month', ${TODAY})`),
-      safe('SELECT status, valor_total FROM orcamentos WHERE tenant_id = $1'),
-      safe('SELECT kanban_stage, status, valor, origem, paciente_id FROM crm_leads WHERE tenant_id = $1'),
-      safe('SELECT nome, quantidade, quantidade_minima, valor_unitario FROM estoque WHERE tenant_id = $1'),
-    ]);
-
-    const totalPacientes = pac[0]?.n || 0;
-    const count = (rows, fn) => rows.filter(fn).length;
-    const finalizados = count(agenda, (a) => a.status === 'concluido' || a.status === 'finalizado' || a.status === 'realizado');
-    const agendaKpis = {
-      total: agenda.length,
-      finalizados,
-      emAtendimento: count(agenda, (a) => a.status === 'em_atendimento'),
-      aguardando: count(agenda, (a) => a.status === 'agendado' || a.status === 'aguardando' || a.status === 'confirmado'),
-      faltas: count(agenda, (a) => a.status === 'cancelado' || a.status === 'faltou' || a.status === 'desmarcado'),
-      encaixes: count(agenda, (a) => a.status === 'encaixe'),
-      taxaPresenca: agenda.length ? Math.round((finalizados / agenda.length) * 100) : 0,
-    };
-
-    const sum = (rows, fn, val) => rows.filter(fn).reduce((acc, r) => acc + Number(val(r) || 0), 0);
-    const receitaMensal = sum(movs, (m) => m.type === 'entrada', (m) => m.value);
-    const despesaMensal = sum(movs, (m) => m.type === 'saida', (m) => m.value);
-
-    const aprovados = orcs.filter((o) => o.status === 'aprovado' || o.status === 'finalizado');
-    const valorAprovado = sum(aprovados, () => true, (o) => o.valor_total);
-    const orcamentos = {
-      total: orcs.length,
-      pendentes: count(orcs, (o) => o.status === 'pendente'),
-      aprovados: aprovados.length,
-      reprovados: count(orcs, (o) => o.status === 'reprovado'),
-      valorAprovado,
-      taxaConversao: orcs.length ? Math.round((aprovados.length / orcs.length) * 100) : 0,
-      ticketMedio: aprovados.length ? valorAprovado / aprovados.length : 0,
-    };
-
-    // Lead convertido = orçamento aprovado no Kanban ou já vinculado a paciente.
-    const leadStatus = (l) => (l.kanban_stage === 'orcamento_aprovado' || l.paciente_id) ? 'convertido'
-      : l.status === 'perdido' ? 'perdido'
-      : (l.kanban_stage || 'lead') === 'lead' ? 'novo' : 'ativo';
-    const ls = leads.map((l) => ({ ...l, st: leadStatus(l) }));
-    const crm = {
-      totalLeadsKanban: ls.length,
-      semResposta: count(ls, (l) => l.st === 'novo'),
-      ativos: count(ls, (l) => l.st !== 'perdido' && l.st !== 'convertido'),
-      inativos: count(ls, (l) => l.st === 'perdido'),
-      receitaTotal: sum(ls, (l) => l.st === 'convertido', (l) => l.valor),
-    };
-    const origins = new Map();
-    for (const l of ls) {
-      const k = l.origem || 'Outros';
-      const o = origins.get(k) || { leads: 0, convertidos: 0 };
-      o.leads++; if (l.st === 'convertido') o.convertidos++;
-      origins.set(k, o);
-    }
-    const conversionByOrigin = [...origins].map(([origin, o]) => ({
-      origin, leads: o.leads, convertidos: o.convertidos, rate: o.leads ? (o.convertidos / o.leads) * 100 : 0,
-    }));
-
-    const qtd = (i) => Number(i.quantidade || 0);
-    const abaixoMinimo = est.filter((i) => qtd(i) > 0 && qtd(i) <= Number(i.quantidade_minima || 0));
-    const semEstoque = est.filter((i) => qtd(i) <= 0);
-    const estoque = {
-      totalItens: est.length,
-      abaixoMinimo: abaixoMinimo.length,
-      itensAbaixoMinimo: abaixoMinimo.map((i) => i.nome),
-      semEstoque: semEstoque.length,
-      itensSemEstoque: semEstoque.map((i) => i.nome),
-      valorTotalEstoque: est.reduce((acc, i) => acc + Number(i.valor_unitario || 0) * qtd(i), 0),
-    };
-
-    res.json({
-      totalPacientes,
-      agendaHoje: agendaKpis.total,
-      receitaMensal,
-      despesaMensal,
-      agenda: agendaKpis,
-      orcamentos,
-      crm,
-      pacientes: { totalCadastrados: totalPacientes },
-      estoque,
-      conversionByOrigin,
-    });
-  } catch (error) {
-    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
-    console.error('GET /api/dashboard/kpis error:', error);
-    res.status(500).json({ error: 'Erro ao calcular KPIs' });
-  }
-});
-
 app.get('/api/comercial/painel', async (req, res) => {
   try {
     const { user } = await verifyUser(req);

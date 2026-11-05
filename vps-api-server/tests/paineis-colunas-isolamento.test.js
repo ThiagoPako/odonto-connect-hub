@@ -37,6 +37,7 @@ const COLUNAS_INEXISTENTES = [
 let sqlLog;
 let querySpy;
 let reportRows;
+let movimentos;
 
 beforeAll(() => {
   jest.spyOn(console, 'log').mockImplementation(() => {});
@@ -47,6 +48,7 @@ beforeAll(() => {
 beforeEach(() => {
   sqlLog = [];
   reportRows = [];
+  movimentos = [];
   querySpy = jest.spyOn(pool, 'query').mockImplementation((sql, params = []) => {
     const text = String(sql);
     sqlLog.push({ text, params });
@@ -64,6 +66,15 @@ beforeEach(() => {
       return Promise.resolve({ rows: params[0] === leadDaA && params[1] === tenantA ? [{ id: leadDaA, nome: 'Lead', telefone: null }] : [] });
     }
     if (/FROM clinical_reports/.test(text)) return Promise.resolve({ rows: reportRows });
+    if (/FROM fin_movements WHERE type = \$1 AND tenant_id = \$2 AND \(date LIKE \$3 OR date LIKE \$4\)/.test(text)) {
+      // Simula o LIKE do Postgres (% = qualquer sequência, _ = um caractere).
+      const like = (pat) => new RegExp('^' + pat.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&').replace(/%/g, '.*').replace(/_/g, '.') + '$');
+      const [type, tenant, p3, p4] = params;
+      const total = movimentos
+        .filter(m => m.type === type && m.tenant_id === tenant && (like(p3).test(m.date) || like(p4).test(m.date)))
+        .reduce((acc, m) => acc + m.value, 0);
+      return Promise.resolve({ rows: [{ total: String(total) }] });
+    }
     if (/AS total_jobs/.test(text)) {
       return Promise.resolve({ rows: [{ total_jobs: '0', total_sent: '0', total_failed: '0', total_pending: '0', total_cancelled: '0' }] });
     }
@@ -122,9 +133,30 @@ describe('GET /api/dashboard', () => {
     expect(txt).toMatch(/kanban_stage AS stage/);
     expect(txt).toMatch(/quantidade AS current_stock/);
     expect(txt).toMatch(/valor_unitario AS unit_cost/);
-    expect(txt).toMatch(/FROM fin_movements WHERE type = \$1/);
+    expect(txt).toMatch(/FROM fin_movements WHERE type = \$1 AND tenant_id = \$2/);
     for (const q of sqlLog) expect(q.params).toContain(tenantA);
     semColunasInexistentes();
+  });
+
+  test('receita/despesa do mês somam datas dd/mm/aaaa e aaaa-mm-dd, só da clínica', async () => {
+    const hoje = new Date().toISOString().split('T')[0];
+    const [ano, mes, dia] = hoje.split('-');
+    const outroMes = mes === '01' ? `${Number(ano) - 1}-12` : `${ano}-${String(Number(mes) - 1).padStart(2, '0')}`;
+    const [ao, mo] = outroMes.split('-');
+    movimentos = [
+      { type: 'entrada', tenant_id: tenantA, value: 100, date: `${dia}/${mes}/${ano}` },
+      { type: 'entrada', tenant_id: tenantA, value: 50, date: `${ano}-${mes}-01` },
+      { type: 'entrada', tenant_id: tenantA, value: 999, date: `10/${mo}/${ao}` },
+      { type: 'entrada', tenant_id: tenantA, value: 999, date: `${ao}-${mo}-10` },
+      { type: 'entrada', tenant_id: tenantA, value: 999, date: 'lixo' },
+      { type: 'entrada', tenant_id: tenantB, value: 999, date: `${dia}/${mes}/${ano}` },
+      { type: 'saida', tenant_id: tenantA, value: 30, date: `05/${mes}/${ano}` },
+    ];
+    const res = await chamar('get', '/api/dashboard/kpis', token(tenantA));
+    expect(res.status).toBe(200);
+    expect(res.body.receitaMensal).toBe(150);
+    expect(res.body.despesaMensal).toBe(30);
+    expect(res.body.crm.receitaTotal).toBe(150);
   });
 
   test('usuário sem clínica → 403', async () => {
