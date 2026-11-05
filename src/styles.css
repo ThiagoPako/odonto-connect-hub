@@ -1,7 +1,30 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
-@custom-variant dark (&:is(.dark *));
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Tokens fixos do sistema (não mudam com o tema). Ver DESIGN.md › 10. Tokens.
+   Cada um vira utilitário do Tailwind: text-caption, h-touch, shadow-overlay, ease-out-soft… */
+@theme {
+  /* Escala tipográfica do app em rem (acompanha o zoom e a fonte do navegador). Mínimo: 12 px. */
+  --text-caption: 0.75rem;      --text-caption--line-height: 1rem;        /* 12 legenda, selo, horário */
+  --text-footnote: 0.8125rem;   --text-footnote--line-height: 1.125rem;   /* 13 rótulo, menu, tabela densa */
+  --text-body: 0.875rem;        --text-body--line-height: 1.25rem;        /* 14 texto do app */
+  --text-callout: 0.9375rem;    --text-callout--line-height: 1.375rem;    /* 15 título de cartão/seção */
+  --text-title-3: 1.125rem;     --text-title-3--line-height: 1.5rem;      /* 18 título da página */
+  --text-title-2: 1.5rem;       --text-title-2--line-height: 2rem;        /* 24 valor de KPI */
+  --text-title-1: 1.75rem;      --text-title-1--line-height: 2.25rem;     /* 28 saudação, título de tela vazia */
+
+  /* Alvo de toque mínimo (HIG 44 pt → 44 px). Ex.: size-touch, min-h-touch. */
+  --spacing-touch: 2.75rem;
+
+  /* Elevação: só o que flutua tem sombra. */
+  --shadow-raised: 0 1px 2px hsl(222 47% 13% / 0.04), 0 4px 12px hsl(222 47% 13% / 0.05);
+  --shadow-overlay: 0 8px 24px hsl(222 47% 13% / 0.12), 0 2px 6px hsl(222 47% 13% / 0.08);
+
+  /* Movimento: saída rápida, sem quique. Durações em :root (--duration-*). */
+  --ease-out-soft: cubic-bezier(0.16, 1, 0.3, 1);
+}
 
 @theme inline {
   --radius-sm: calc(var(--radius) - 4px);
@@ -48,10 +71,15 @@
   --color-success-foreground: var(--success-foreground);
   --color-warning: var(--warning);
   --color-warning-foreground: var(--warning-foreground);
+  --color-warning-text: var(--warning-text);
   --color-info: var(--info);
   --color-info-foreground: var(--info-foreground);
   --color-dental-cyan: var(--dental-cyan);
   --color-primary-glow: var(--primary-glow);
+  --color-stage: var(--stage);
+  --color-stage-foreground: var(--stage-foreground);
+  --color-stage-muted: var(--stage-muted);
+  --color-scrim: var(--scrim);
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-heading: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
 
@@ -66,92 +94,131 @@
 }
 
 :root {
-  --radius: 0.75rem;
-  /* Cyan primary */
-  --background: hsl(0, 0%, 97%);
-  --foreground: hsl(220, 20%, 14%);
+  --radius: 0.625rem;
+  color-scheme: light;
+  /* Marca: tinta azul-marinho do logotipo + ciano-petróleo para ação.
+     --primary passa AA (5,2:1) com texto branco; o ciano claro da marca
+     (--dental-cyan) fica só para destaque grande e gráficos. Ver DESIGN.md. */
+  --background: hsl(200, 20%, 98%);
+  --foreground: hsl(222, 47%, 13%);
   --card: hsl(0, 0%, 100%);
-  --card-foreground: hsl(220, 20%, 14%);
+  --card-foreground: hsl(222, 47%, 13%);
   --popover: hsl(0, 0%, 100%);
-  --popover-foreground: hsl(220, 20%, 14%);
-  --primary: hsl(187, 85%, 43%);
+  --popover-foreground: hsl(222, 47%, 13%);
+  --primary: hsl(189, 88%, 29%);
   --primary-foreground: hsl(0, 0%, 100%);
-  --primary-glow: hsl(192, 80%, 50%);
-  --secondary: hsl(200, 14%, 96%);
-  --secondary-foreground: hsl(200, 20%, 20%);
-  --muted: hsl(200, 14%, 96%);
-  --muted-foreground: hsl(200, 10%, 50%);
-  --accent: hsl(187, 85%, 95%);
-  --accent-foreground: hsl(187, 85%, 30%);
-  --destructive: hsl(0, 72%, 51%);
+  --primary-glow: hsl(187, 85%, 43%);
+  --secondary: hsl(200, 18%, 95%);
+  --secondary-foreground: hsl(222, 30%, 20%);
+  --muted: hsl(200, 18%, 95%);
+  --muted-foreground: hsl(215, 14%, 40%);
+  --accent: hsl(187, 60%, 94%);
+  --accent-foreground: hsl(189, 88%, 24%);
+  --destructive: hsl(0, 72%, 45%);
   --destructive-foreground: hsl(0, 0%, 100%);
-  --border: hsl(220, 13%, 91%);
-  --input: hsl(220, 13%, 91%);
-  --ring: hsl(187, 85%, 43%);
-  --success: hsl(152, 60%, 42%);
+  --border: hsl(210, 16%, 90%);
+  /* Borda de campo e botão contornado: ≥ 3:1 (WCAG 1.4.11). --border fica para divisórias. */
+  --input: hsl(215, 14%, 55%);
+  --ring: hsl(189, 88%, 29%);
+  /* Superfícies extras: palco escuro da landing e fundo de tela de entrada */
+  --stage: hsl(238, 49%, 12%); /* = fundo do símbolo do logotipo */
+  --stage-foreground: hsl(200, 20%, 96%);
+  --stage-muted: hsl(215, 20%, 72%);
+  --success: hsl(152, 70%, 27%);
   --success-foreground: hsl(0, 0%, 100%);
   --warning: hsl(38, 92%, 50%);
   --warning-foreground: hsl(30, 30%, 15%);
-  --info: hsl(217, 91%, 60%);
+  --warning-text: hsl(30, 95%, 32%); /* aviso como texto/ícone sobre fundo claro */
+  --info: hsl(217, 91%, 45%);
   --info-foreground: hsl(0, 0%, 100%);
-  --dental-cyan: hsl(190, 70%, 55%);
-  --chart-1: hsl(187, 85%, 43%);
-  --chart-2: hsl(217, 91%, 60%);
-  --chart-3: hsl(152, 60%, 42%);
-  --chart-4: hsl(38, 92%, 50%);
-  --chart-5: hsl(0, 72%, 51%);
+  --dental-cyan: hsl(187, 85%, 43%);
+  --chart-1: hsl(189, 88%, 33%);
+  --chart-2: hsl(217, 91%, 45%);
+  --chart-3: hsl(152, 70%, 27%);
+  --chart-4: hsl(32, 95%, 40%); /* antes 38 92% 50%: 2,1:1 no cartão; agora 3,8:1 */
+  --chart-5: hsl(0, 72%, 45%);
+  /* Véu atrás de diálogo e gaveta (antes bg-black/80, pesado demais no claro) */
+  --scrim: hsl(222 47% 8% / 0.55);
+  /* Durações: interação 120–200 ms, painel até 300 ms */
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+  --duration-panel: 300ms;
   /* Sidebar — white bg, cyan accent */
   --sidebar: hsl(0, 0%, 100%);
-  --sidebar-foreground: hsl(200, 20%, 25%);
-  --sidebar-primary: hsl(187, 85%, 43%);
+  --sidebar-foreground: hsl(222, 30%, 22%);
+  --sidebar-primary: hsl(189, 88%, 29%);
   --sidebar-primary-foreground: hsl(0, 0%, 100%);
-  --sidebar-accent: hsl(187, 85%, 95%);
-  --sidebar-accent-foreground: hsl(187, 85%, 30%);
-  --sidebar-border: hsl(220, 13%, 93%);
-  --sidebar-ring: hsl(187, 85%, 43%);
+  --sidebar-accent: hsl(187, 60%, 94%);
+  --sidebar-accent-foreground: hsl(189, 88%, 22%);
+  --sidebar-border: hsl(210, 16%, 92%);
+  --sidebar-ring: hsl(189, 88%, 29%);
 }
 
+
 .dark {
+  color-scheme: dark;
   --background: hsl(220, 20%, 10%);
   --foreground: hsl(220, 10%, 95%);
   --card: hsl(220, 20%, 13%);
   --card-foreground: hsl(220, 10%, 95%);
-  --popover: hsl(220, 20%, 13%);
+  /* Elevação no escuro pela claridade: fundo 10% → cartão 13% → popover/menu 16% */
+  --popover: hsl(220, 18%, 16%);
   --popover-foreground: hsl(220, 10%, 95%);
-  --primary: hsl(187, 85%, 48%);
-  --primary-foreground: hsl(0, 0%, 100%);
-  --primary-glow: hsl(192, 80%, 55%);
+  --primary: hsl(187, 80%, 52%);
+  --primary-foreground: hsl(222, 47%, 11%);
+  --primary-glow: hsl(187, 80%, 60%);
   --secondary: hsl(220, 18%, 16%);
   --secondary-foreground: hsl(220, 10%, 95%);
   --muted: hsl(220, 16%, 16%);
-  --muted-foreground: hsl(220, 10%, 55%);
+  --muted-foreground: hsl(215, 16%, 72%);
   --accent: hsl(187, 60%, 12%);
   --accent-foreground: hsl(187, 85%, 70%);
-  --destructive: hsl(0, 72%, 55%);
-  --destructive-foreground: hsl(0, 0%, 100%);
-  --border: hsl(220, 16%, 20%);
-  --input: hsl(220, 16%, 20%);
-  --ring: hsl(187, 85%, 48%);
+  --destructive: hsl(0, 85%, 65%);
+  --destructive-foreground: hsl(222, 47%, 11%);
+  --border: hsl(220, 14%, 22%);
+  --input: hsl(220, 14%, 45%);
+  --ring: hsl(187, 80%, 52%);
+  --stage: hsl(222, 40%, 7%);
+  --stage-foreground: hsl(200, 20%, 96%);
+  --stage-muted: hsl(215, 20%, 72%);
   --success: hsl(152, 60%, 48%);
-  --success-foreground: hsl(0, 0%, 100%);
+  --success-foreground: hsl(222, 47%, 11%);
   --warning: hsl(38, 92%, 55%);
   --warning-foreground: hsl(30, 30%, 10%);
+  --warning-text: hsl(38, 92%, 55%);
   --info: hsl(217, 91%, 65%);
-  --info-foreground: hsl(0, 0%, 100%);
+  --info-foreground: hsl(222, 47%, 11%);
   --dental-cyan: hsl(190, 70%, 50%);
   --chart-1: hsl(187, 85%, 48%);
   --chart-2: hsl(217, 91%, 65%);
   --chart-3: hsl(152, 60%, 48%);
   --chart-4: hsl(38, 92%, 55%);
-  --chart-5: hsl(0, 72%, 55%);
+  --chart-5: hsl(0, 85%, 65%);
+  --scrim: hsl(0 0% 0% / 0.7);
   --sidebar: hsl(220, 20%, 8%);
   --sidebar-foreground: hsl(220, 10%, 90%);
-  --sidebar-primary: hsl(187, 85%, 48%);
-  --sidebar-primary-foreground: hsl(0, 0%, 100%);
+  --sidebar-primary: hsl(187, 80%, 52%);
+  --sidebar-primary-foreground: hsl(222, 47%, 11%);
   --sidebar-accent: hsl(187, 60%, 12%);
   --sidebar-accent-foreground: hsl(187, 85%, 70%);
   --sidebar-border: hsl(220, 16%, 18%);
-  --sidebar-ring: hsl(187, 85%, 48%);
+  --sidebar-ring: hsl(187, 80%, 52%);
+}
+
+/* Mais contraste pedido pelo sistema (Acessibilidade → Aumentar contraste) */
+@media (prefers-contrast: more) {
+  :root {
+    --muted-foreground: hsl(215, 18%, 30%);
+    --border: hsl(210, 12%, 70%);
+    --input: hsl(215, 14%, 40%);
+    --primary: hsl(189, 90%, 24%);
+    --ring: hsl(189, 90%, 24%);
+  }
+  .dark {
+    --muted-foreground: hsl(215, 16%, 82%);
+    --border: hsl(220, 12%, 40%);
+    --input: hsl(220, 12%, 62%);
+  }
 }
 
 @layer base {
@@ -160,18 +227,28 @@
   }
   html {
     scroll-behavior: smooth;
-    transition: background-color 0.3s ease, color 0.3s ease;
   }
-  html *,
-  html *::before,
-  html *::after {
-    transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease, fill 0.3s ease, stroke 0.3s ease;
+  /* Sem transição de tema: antes valia para todo elemento (html *) e atrasava em
+     300 ms cada hover; a troca claro/escuro agora é instantânea. */
+  :focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: 2px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto !important; }
+    *, *::before, *::after {
+      animation-delay: 0s !important;
+      transition-delay: 0s !important;
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
   }
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);
     font-family: var(--font-sans);
-    font-size: 14px;
+    font-size: 0.875rem; /* 14 px no padrão; acompanha o tamanho de fonte do navegador */
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
@@ -185,36 +262,39 @@
     animation: pulse-red 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   }
 
+  /* Nomes mantidos para não quebrar as ~70 telas que usam estas classes;
+     o visual agora é chapado (sem degradê, vidro nem brilho). Ver DESIGN.md. */
   .glass-card {
-    background: hsl(var(--card) / 0.7);
-    backdrop-filter: blur(12px) saturate(180%);
-    -webkit-backdrop-filter: blur(12px) saturate(180%);
-    border: 1px solid hsl(var(--border) / 0.5);
-    box-shadow: 
-      0 1px 2px 0 rgb(0 0 0 / 0.05),
-      0 4px 12px 0 rgb(0 0 0 / 0.05);
+    background: var(--color-card);
+    border: 1px solid var(--color-border);
   }
 
-  .dark .glass-card {
-    background: hsl(var(--card) / 0.65);
-    border-color: hsl(var(--border) / 0.4);
+  /* Material translúcido: SÓ em barras fixas sobre conteúdo que rola (cabeçalhos sticky).
+     Nunca em cartões, nunca vidro sobre vidro. Opaco quando o usuário pede menos
+     transparência ou mais contraste. Ver DESIGN.md › Princípios › Materiais. */
+  .surface-glass {
+    background-color: color-mix(in srgb, var(--color-background) 85%, transparent);
+    -webkit-backdrop-filter: saturate(160%) blur(12px);
+    backdrop-filter: saturate(160%) blur(12px);
+  }
+  @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+    .surface-glass {
+      background-color: var(--color-background);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
   }
 
   .gradient-primary {
-    background: linear-gradient(135deg, var(--color-primary), var(--color-primary-glow));
+    background-color: var(--color-primary);
   }
 
   .gradient-text {
-    background: linear-gradient(135deg, var(--color-primary), var(--color-primary-glow));
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
+    color: var(--color-primary);
   }
 
   .shadow-card {
-    box-shadow:
-      0 1px 2px hsl(0 0% 0% / 0.03),
-      0 4px 12px hsl(0 0% 0% / 0.04);
+    box-shadow: var(--shadow-raised);
   }
 
   .shadow-card-hover {
@@ -223,16 +303,11 @@
       0 12px 32px hsl(0 0% 0% / 0.08);
   }
 
-  .shadow-glow {
-    box-shadow:
-      0 0 20px hsl(16 82% 51% / 0.15),
-      0 4px 16px hsl(0 0% 0% / 0.04);
-  }
-
+  .shadow-glow,
   .shadow-glow-primary {
     box-shadow:
-      0 0 24px hsl(187 85% 43% / 0.2),
-      0 4px 16px hsl(0 0% 0% / 0.04);
+      0 1px 2px hsl(222 47% 13% / 0.06),
+      0 4px 12px hsl(222 47% 13% / 0.06);
   }
 
   .animate-fade-in {
@@ -265,11 +340,11 @@
   }
 
   .icon-bounce {
-    transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   .icon-bounce:hover {
-    transform: scale(1.12);
+    transform: scale(1.06);
   }
 
   .card-glow {
@@ -283,7 +358,7 @@
     inset: 0;
     background: radial-gradient(
       circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
-      hsl(187 85% 43% / 0.06) 0%,
+      color-mix(in srgb, var(--color-primary) 6%, transparent) 0%,
       transparent 60%
     );
     opacity: 0;
@@ -332,8 +407,8 @@
 }
 
 @keyframes borderPulse {
-  0%, 100% { box-shadow: 0 0 24px -4px hsl(var(--primary) / 0.4), 0 0 48px -8px hsl(var(--primary) / 0.2); }
-  50% { box-shadow: 0 0 32px -2px hsl(var(--primary) / 0.5), 0 0 56px -6px hsl(var(--primary) / 0.3); }
+  0%, 100% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 40%, transparent); }
+  50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-primary) 25%, transparent); }
 }
 
 /* ─── Chat Animations ────────────────────────────────────── */
@@ -474,7 +549,7 @@
   right: -6px;
   width: 12px;
   height: 12px;
-  background: hsl(var(--primary));
+  background: var(--color-primary);
   clip-path: polygon(0 0, 0 100%, 100% 100%);
   border-bottom-right-radius: 2px;
 }
@@ -485,7 +560,7 @@
 }
 
 .msg-bubble-agent:hover {
-  box-shadow: 0 2px 12px hsl(var(--primary) / 0.2);
+  box-shadow: 0 2px 12px color-mix(in srgb, var(--color-primary) 20%, transparent);
 }
 
 /* Smooth list transitions */
@@ -516,4 +591,34 @@
   0% { transform: scale(1); opacity: 0.6; }
   70% { transform: scale(1.15); opacity: 0; }
   100% { transform: scale(1.15); opacity: 0; }
+}
+
+/* ─── Landing: entrada do título (linha sobe por trás da própria base) ─── */
+.hero-line {
+  display: inline-block;
+  overflow: hidden;
+  vertical-align: top;
+  padding-bottom: 0.08em;
+}
+.hero-line > span {
+  display: inline-block;
+  animation: heroLineUp 0.9s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.hero-fade {
+  animation: heroFade 0.7s cubic-bezier(0.16, 1, 0.3, 1) 0.35s both;
+}
+.hero-stage {
+  animation: heroStage 1s cubic-bezier(0.16, 1, 0.3, 1) 0.2s both;
+}
+@keyframes heroLineUp {
+  from { transform: translateY(105%); }
+  to { transform: translateY(0); }
+}
+@keyframes heroFade {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes heroStage {
+  from { opacity: 0; transform: translateY(24px) scale(0.985); }
+  to { opacity: 1; transform: none; }
 }

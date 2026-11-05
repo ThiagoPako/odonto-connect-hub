@@ -1,47 +1,69 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { useEffect, useState, type ReactNode } from "react";
 import {
-  CalendarCheck, Users, MessageSquare, DollarSign, Bot, ShieldCheck,
-  BarChart3, Zap, CheckCircle, ArrowRight, Star, Phone, Mail,
-  RefreshCcw, Brain, Flame, Clock, Target, TrendingUp, HelpCircle,
+  CalendarCheck, Users, MessageSquare, DollarSign, Bot,
+  BarChart3, CheckCircle, ArrowRight, Star, Phone, Mail,
+  RefreshCcw, Brain, Clock, Target, TrendingUp, Plus,
 } from "lucide-react";
 import logoHorizontal from "@/assets/logo-horizontal.png";
 import drLuisGustavo from "@/assets/dr-luis-gustavo.jpg";
 import { ScrollReveal } from "@/components/ScrollReveal";
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { AnimatedCounter } from "@/components/AnimatedCounter";
+import { AgendaFragment } from "@/components/marketing/AgendaFragment";
+import { useForceLightTheme } from "@/hooks/useForceLightTheme";
+import { TESTE_GRATIS_DIAS, TESTE_GRATIS_TEXTO, WHATSAPP_CONSULTOR, EMAIL_CONTATO } from "@/lib/oferta";
 
 export const Route = createFileRoute("/")({
   component: LandingPage,
   head: () => ({
     meta: [
       { title: "Odonto Connect — Sistema Completo para Clínicas Odontológicas" },
-      { name: "description", content: "SaaS completo de A a Z para clínicas odontológicas. CRM, agendamento com IA, WhatsApp, financeiro e muito mais. De dono de clínica para dono." },
+      { name: "description", content: "Sistema de gestão para clínicas odontológicas: CRM, agenda, WhatsApp, prontuário e financeiro. De dono de clínica para dono." },
       { property: "og:title", content: "Odonto Connect — Sistema Completo para Clínicas Odontológicas" },
-      { property: "og:description", content: "De dono de clínica para dono. Sistema completo de gestão odontológica com IA, CRM, WhatsApp e financeiro integrado." },
+      { property: "og:description", content: "De dono de clínica para dono. Gestão odontológica com CRM, agenda, WhatsApp, prontuário e financeiro." },
       { property: "og:image", content: "/images/logo-horizontal.png" },
     ],
   }),
 });
 
+/**
+ * ⚠️ PROVA SOCIAL EM ESPERA (revisão da Helena — CDC art. 37 e regras do CFO sobre publicidade).
+ * Depoimentos, a faixa "Quem confia" (clínicas com emoji), "500+ clínicas", "98% satisfação" e
+ * "centenas de clínicas" não têm fonte no repositório. Ficam guardados aqui e só aparecem quando
+ * alguém confirmar que são reais e autorizados. Os textos originais estão intactos abaixo.
+ */
+const PROVA_SOCIAL_CONFIRMADA = false;
+
+/**
+ * Textos de venda revisados pela Helena (docs/juridico/revisao-prs-lote-1.md, PR #19): cada
+ * frase descreve o que o sistema faz hoje (CDC arts. 30, 31 e 37). Recurso novo só entra aqui
+ * depois de existir no produto.
+ */
+
 const features = [
   { icon: RefreshCcw, title: "Reativação CRM Inteligente", desc: "Recupere pacientes inativos automaticamente com funil de follow-up inteligente. Kanban duplo de vendas e recuperação com níveis de consciência.", highlight: true },
   { icon: CalendarCheck, title: "Agenda Clínica Completa", desc: "Gestão completa de consultas, encaixes, confirmações automáticas e controle de faltas. Visão por dentista, sala e procedimento.", highlight: true },
-  { icon: Bot, title: "IA Agente Autônomo", desc: "Inteligência artificial que realiza atendimentos e agendamentos de forma autônoma via WhatsApp. Transcrição de áudio e relatórios clínicos com IA.", highlight: true },
-  { icon: Flame, title: "Sistema Fênix WhatsApp", desc: "Tecnologia exclusiva de contingência que mantém sua operação ativa 24/7. Múltiplas instâncias e failover automático. Nunca fique sem WhatsApp.", highlight: true },
+  { icon: MessageSquare, title: "WhatsApp da clínica", desc: "Conversas da recepção em um só lugar, com fila de envio que respeita horário, ritmo e pedidos de SAIR.", highlight: true },
   { icon: DollarSign, title: "Financeiro Integrado", desc: "Fluxo de caixa, contas a pagar/receber, comissões, faturamento e relatórios financeiros diretamente integrados com agendamentos e orçamentos.", highlight: true },
   { icon: Users, title: "CRM & Funil de Vendas", desc: "Kanban completo com funil de vendas e recuperação. Acompanhe cada lead do primeiro contato até a conversão em paciente." },
-  { icon: MessageSquare, title: "Chat Multi-Atendente", desc: "Central de atendimento via WhatsApp com fila inteligente, atribuição automática, modo fantasma e pesquisa de satisfação." },
-  { icon: BarChart3, title: "Dashboard & Analytics", desc: "Métricas em tempo real, KPIs de atendimento, taxa de conversão, ticket médio e relatórios gerenciais completos." },
+  { icon: MessageSquare, title: "Chat Multi-Atendente", desc: "Central de atendimento via WhatsApp com fila, atribuição de conversas, supervisão de conversas pelo gestor e pesquisa de satisfação." },
+  { icon: Bot, title: "Relatórios clínicos com IA", desc: "Transcrição da consulta, com autorização do paciente, e relatório revisado pelo dentista." },
+  { icon: BarChart3, title: "Painel do dia", desc: "Painel com a agenda e os atendimentos do dia." },
   { icon: Target, title: "Disparos em Massa", desc: "Campanhas recorrentes ou únicas com templates, segmentação de público, controle anti-spam e métricas de entrega." },
   { icon: Brain, title: "Meta Ads + IA", desc: "Integração com Meta Ads para análise de campanhas com insights gerados por inteligência artificial." },
   { icon: Clock, title: "Prontuário Digital", desc: "Odontograma interativo, histórico clínico, prescrições, relatórios IA e gestão completa do paciente." },
   { icon: TrendingUp, title: "Orçamentos & Tratamentos", desc: "Criação de orçamentos, acompanhamento de aprovação, controle de tratamentos em andamento e pagamentos." },
 ];
 
+/**
+ * Planos: slugs, nomes e limites iguais aos da tabela `plans` (vps-api-server/migration-saas.sql).
+ * ⚠️ PENDENTE (decisão do dono): preço. A landing anunciava 297/597/997 e o banco tem 197/397/897.
+ * Até haver uma fonte só (de preferência `GET /api/plans`), a página não mostra preço.
+ */
 const plans = [
-  { slug: "starter", name: "Starter", price: "297", desc: "Para clínicas iniciando a transformação digital", features: ["1 instância WhatsApp", "Até 500 pacientes", "CRM básico", "Agenda clínica", "Financeiro básico", "Suporte por e-mail"], popular: false },
-  { slug: "professional", name: "Professional", price: "597", desc: "Para clínicas que querem crescer com inteligência", features: ["3 instâncias WhatsApp", "Pacientes ilimitados", "CRM completo + Reativação", "IA Agente Autônomo", "Sistema Fênix", "Financeiro completo", "Disparos em massa", "Dashboard analytics", "Suporte prioritário"], popular: true },
-  { slug: "enterprise", name: "Enterprise", price: "997", desc: "Para redes e clínicas de alto volume", features: ["Instâncias ilimitadas", "Multi-unidade", "Tudo do Professional", "Meta Ads + IA Insights", "API personalizada", "Onboarding dedicado", "Gerente de conta", "SLA garantido"], popular: false },
+  { slug: "starter", name: "Starter", desc: "Para clínicas pequenas começando agora", features: ["1 número de WhatsApp", "Até 3 usuários e 2 dentistas", "Até 500 pacientes", "CRM e agenda clínica", "Financeiro", "Suporte por e-mail"], popular: false },
+  { slug: "pro", name: "Profissional", desc: "Para clínicas em crescimento", features: ["3 números de WhatsApp", "Até 10 usuários e 8 dentistas", "Até 5.000 pacientes", "CRM com reativação de pacientes", "Disparos com fila e opção de SAIR", "Integração Clinicorp", "Meta Ads"], popular: true },
+  { slug: "enterprise", name: "Enterprise", desc: "Para grandes clínicas e redes", features: ["Tudo do Profissional", "Sem limite de usuários, dentistas e pacientes", "Sem limite de números de WhatsApp", "Relatórios clínicos com IA"], popular: false },
 ];
 
 const testimonials = [
@@ -50,423 +72,615 @@ const testimonials = [
   { name: "Dra. Juliana Santos", clinic: "Dental Premium", text: "O sistema Fênix nos salvou várias vezes. Nunca mais ficamos sem WhatsApp.", stars: 5 },
 ];
 
+const faqs = [
+  { q: "Preciso instalar algum software no computador?", a: "Não! O Odonto Connect é 100% online (SaaS). Funciona no navegador, sem instalar nada." },
+  { q: "Como funciona a reativação de pacientes pelo CRM?", a: "O CRM possui um funil de recuperação com follow-ups automáticos. Pacientes inativos ou que não responderam entram em uma sequência inteligente de contato via WhatsApp, para trazer de volta quem não voltou." },
+  { q: "Posso migrar meus dados de outro sistema?", a: "Sim. Nossa equipe ajuda a trazer seus dados e confere tudo com você." },
+  { q: "Quantas pessoas podem usar o sistema ao mesmo tempo?", a: "Cada plano tem um número de usuários; toda a equipe pode acessar ao mesmo tempo, com permissões por função." },
+  { q: "O sistema emite relatórios financeiros?", a: "Sim! O módulo financeiro integrado gera relatórios de faturamento, fluxo de caixa, contas a pagar/receber, comissões por dentista e muito mais." },
+  { q: "Existe período de teste gratuito?", a: `Sim! Você testa por ${TESTE_GRATIS_DIAS} dias, sem cartão de crédito. Nada é cobrado sem a sua aprovação.` },
+];
+
+/* Medidas da página: uma margem, uma largura, um raio. Ver DESIGN.md › Landing. */
+const WRAP = "mx-auto w-full max-w-[1280px] px-5 sm:px-8 lg:px-12";
+const BTN_PRIMARY =
+  "inline-flex items-center justify-center gap-2 h-12 px-6 rounded-md bg-primary text-primary-foreground text-[0.9375rem] font-semibold hover:bg-primary/90 active:translate-y-px transition-[background-color,transform]";
+const BTN_SECONDARY =
+  "inline-flex items-center justify-center gap-2 h-12 px-6 rounded-md bg-secondary text-foreground text-[0.9375rem] font-semibold hover:bg-border active:translate-y-px transition-[background-color,transform]";
+
 function LandingPage() {
+  useForceLightTheme();
   return (
-    <div className="min-h-screen bg-background">
-      {/* Nav */}
-      <nav className="fixed top-0 left-0 right-0 z-50 bg-background/80 backdrop-blur-xl border-b border-border">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-          <img src={logoHorizontal} alt="Odonto Connect" className="h-8" />
-          <div className="hidden md:flex items-center gap-8 text-sm font-medium text-muted-foreground">
-            <a href="#funcionalidades" className="hover:text-foreground transition-colors">Funcionalidades</a>
-            <a href="#sobre" className="hover:text-foreground transition-colors">Sobre</a>
-            <a href="#planos" className="hover:text-foreground transition-colors">Planos</a>
-            <a href="#depoimentos" className="hover:text-foreground transition-colors">Depoimentos</a>
-            <a href="#faq" className="hover:text-foreground transition-colors">FAQ</a>
-          </div>
-          <div className="flex items-center gap-3">
-            <Link to="/login" className="text-sm font-medium text-foreground hover:text-primary transition-colors">
-              Entrar
-            </Link>
-            <Link to="/signup" search={{}} className="inline-flex items-center gap-1.5 rounded-lg gradient-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-glow-primary hover:opacity-90 transition-opacity">
-              Começar Agora <ArrowRight className="h-4 w-4" />
-            </Link>
-          </div>
+    <div className="min-h-dvh bg-background text-foreground text-base">
+      <SiteNav />
+      <main>
+        <Hero />
+        {PROVA_SOCIAL_CONFIRMADA && <TrustedBy />}
+        <Features />
+        <About />
+        <Pricing />
+        {PROVA_SOCIAL_CONFIRMADA && <Testimonials />}
+        <Faq />
+        <FinalCta />
+      </main>
+      <SiteFooter />
+    </div>
+  );
+}
+
+/* ─── Navegação ──────────────────────────────────────────── */
+
+function SiteNav() {
+  // Borda só depois que o conteúdo começa a passar por baixo (separa camadas sem pesar no topo)
+  const [rolou, setRolou] = useState(false);
+  useEffect(() => {
+    const onScroll = () => setRolou(window.scrollY > 8);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+  return (
+    <header className={`sticky top-0 z-50 surface-glass border-b transition-colors ${rolou ? "border-border" : "border-transparent"}`}>
+      <nav className={`${WRAP} h-16 flex items-center justify-between gap-3 sm:gap-4`} aria-label="Principal">
+        {/* No celular o logo encolhe para caber com os dois botões (a 375 px passava 8 px da tela) */}
+        <Link to="/" className="min-w-0 shrink" aria-label="Odonto Connect — início">
+          <img src={logoHorizontal} alt="Odonto Connect" className="block w-full max-w-[198px] h-auto sm:max-w-none sm:w-auto sm:h-7" width={1920} height={194} />
+        </Link>
+        <div className="hidden lg:flex items-center gap-8 text-[0.9375rem] font-medium text-muted-foreground">
+          <a href="#funcionalidades" className="hover:text-foreground transition-colors">Funcionalidades</a>
+          <a href="#sobre" className="hover:text-foreground transition-colors">Quem criou</a>
+          <a href="#planos" className="hover:text-foreground transition-colors">Planos</a>
+          {PROVA_SOCIAL_CONFIRMADA && <a href="#depoimentos" className="hover:text-foreground transition-colors">Depoimentos</a>}
+          <a href="#faq" className="hover:text-foreground transition-colors">Dúvidas</a>
+        </div>
+        <div className="flex items-center gap-1 sm:gap-3 shrink-0">
+          <Link to="/login" className="inline-flex items-center h-11 sm:h-10 px-3 rounded-md text-[0.9375rem] font-medium text-foreground hover:bg-secondary transition-colors">
+            Entrar
+          </Link>
+          <Link to="/signup" search={{}} className="inline-flex items-center gap-1.5 h-11 sm:h-10 px-4 rounded-md bg-primary text-primary-foreground text-[0.9375rem] font-semibold hover:bg-primary/90 transition-colors">
+            <span className="sm:hidden">Testar</span>
+            <span className="hidden sm:inline">Começar agora</span>
+          </Link>
         </div>
       </nav>
+    </header>
+  );
+}
 
-      {/* Hero */}
-      <section className="pt-32 pb-20 px-4 sm:px-6 lg:px-8 relative overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-br from-accent/40 via-background to-background" />
-        <div className="max-w-7xl mx-auto relative">
-          <div className="grid lg:grid-cols-2 gap-12 items-center">
-            <ScrollReveal direction="left" duration={800}>
-              <div className="space-y-8">
-                <div className="inline-flex items-center gap-2 rounded-full bg-accent px-4 py-1.5 text-xs font-semibold text-accent-foreground">
-                  <Zap className="h-3.5 w-3.5" /> De dono de clínica para dono
-                </div>
-                <h1 className="text-4xl sm:text-5xl lg:text-6xl font-heading font-bold text-foreground leading-tight">
-                  O sistema <span className="gradient-text">completo de A a Z</span> para clínicas odontológicas
-                </h1>
-                <p className="text-lg text-muted-foreground max-w-xl leading-relaxed">
-                  CRM inteligente, agendamento com IA autônoma, WhatsApp com contingência Fênix, financeiro integrado e muito mais. 
-                  Tudo que sua clínica precisa em uma única plataforma.
-                </p>
-                <div className="flex flex-col sm:flex-row gap-4">
-                  <Link to="/signup" search={{}} className="inline-flex items-center justify-center gap-2 rounded-xl gradient-primary px-8 py-3.5 text-base font-bold text-primary-foreground shadow-glow-primary hover:opacity-90 transition-opacity">
-                    Iniciar teste grátis <ArrowRight className="h-5 w-5" />
-                  </Link>
-                  <a href="https://wa.me/5511999990001" target="_blank" rel="noopener noreferrer" className="inline-flex items-center justify-center gap-2 rounded-xl border border-border bg-card px-8 py-3.5 text-base font-semibold text-foreground hover:bg-accent transition-colors">
-                    <Phone className="h-5 w-5 text-primary" /> Falar com Consultor
-                  </a>
-                </div>
-                <div className="flex items-center gap-6 text-sm text-muted-foreground">
-                  <span className="flex items-center gap-1.5"><CheckCircle className="h-4 w-4 text-success" /> 7 dias grátis</span>
-                  <span className="flex items-center gap-1.5"><CheckCircle className="h-4 w-4 text-success" /> Sem fidelidade</span>
-                  <span className="flex items-center gap-1.5"><CheckCircle className="h-4 w-4 text-success" /> Suporte humano</span>
-                </div>
-              </div>
-            </ScrollReveal>
-            <ScrollReveal direction="right" delay={200} duration={800}>
-              <div className="relative hidden lg:block">
-                <div className="absolute -inset-4 rounded-3xl bg-gradient-to-br from-primary/20 via-dental-cyan/10 to-transparent blur-3xl" />
-                <div className="relative rounded-2xl overflow-hidden shadow-2xl border border-border">
-                  <div className="bg-card p-8 space-y-4">
-                    <div className="flex items-center gap-3 mb-6">
-                      <div className="h-3 w-3 rounded-full bg-destructive/60" />
-                      <div className="h-3 w-3 rounded-full bg-warning/60" />
-                      <div className="h-3 w-3 rounded-full bg-success/60" />
-                      <span className="ml-2 text-xs text-muted-foreground">Odonto Connect — Dashboard</span>
-                    </div>
-                    <div className="grid grid-cols-3 gap-3">
-                      {[
-                        { label: "Consultas Hoje", val: "24", color: "text-primary" },
-                        { label: "Taxa Presença", val: "94%", color: "text-success" },
-                        { label: "Reativados", val: "18", color: "text-info" },
-                      ].map((k) => (
-                        <div key={k.label} className="rounded-xl bg-accent/50 p-3 text-center">
-                          <p className={`text-2xl font-bold ${k.color}`}>{k.val}</p>
-                          <p className="text-[10px] text-muted-foreground mt-1">{k.label}</p>
-                        </div>
-                      ))}
-                    </div>
-                    <div className="space-y-2">
-                      {["Maria Silva — Implante — 09:00", "João Santos — Clareamento — 10:30", "Ana Costa — Retorno — 14:00"].map((item) => (
-                        <div key={item} className="flex items-center gap-3 rounded-lg bg-accent/30 px-3 py-2 text-xs text-foreground">
-                          <CalendarCheck className="h-3.5 w-3.5 text-primary" />
-                          {item}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </ScrollReveal>
+/* ─── Hero: o produto trabalhando ────────────────────────── */
+
+function Hero() {
+  return (
+    <section className="pt-10 pb-16 sm:pt-16 lg:pt-20 lg:pb-24">
+      <div className={`${WRAP} grid lg:grid-cols-12 gap-10 lg:gap-12 items-center`}>
+        <div className="lg:col-span-6 min-w-0">
+          <h1 className="font-heading font-semibold tracking-[-0.03em] leading-[1.04] text-[1.875rem] sm:text-[3rem] lg:text-[clamp(3rem,4vw,3.75rem)] text-foreground">
+            <span className="hero-line sm:whitespace-nowrap"><span>Gestão odontológica</span></span>{" "}
+            <span className="hero-line"><span style={{ animationDelay: "110ms" }}>de A a Z</span></span>
+          </h1>
+          <p className="hero-fade mt-6 text-lg leading-relaxed text-foreground/80 max-w-[34rem]">
+            CRM, agenda, WhatsApp da recepção, prontuário e financeiro em uma única plataforma,
+            feita por quem tem clínica.
+          </p>
+          <div className="hero-fade mt-8 flex flex-col sm:flex-row gap-3">
+            <Link to="/signup" search={{}} className={BTN_PRIMARY}>
+              Iniciar teste grátis <ArrowRight className="h-4 w-4" />
+            </Link>
+            {WHATSAPP_CONSULTOR ? (
+              <a href={WHATSAPP_CONSULTOR} target="_blank" rel="noopener noreferrer" className={BTN_SECONDARY}>
+                <Phone className="h-4 w-4" /> Falar com consultor
+              </a>
+            ) : (
+              <a href="#funcionalidades" className={BTN_SECONDARY}>Ver funcionalidades</a>
+            )}
           </div>
-        </div>
-      </section>
-
-      {/* Trusted By */}
-      <section className="py-16 px-4 sm:px-6 lg:px-8 border-b border-border">
-        <div className="max-w-6xl mx-auto">
-          <ScrollReveal>
-            <p className="text-center text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-10">
-              Quem confia no Odonto Connect
-            </p>
-          </ScrollReveal>
-          <ScrollReveal direction="up" delay={100}>
-            <div className="flex flex-wrap items-center justify-center gap-x-12 gap-y-6">
-              {[
-                { name: "Sorriso Perfeito", icon: "🦷" },
-                { name: "OdontoLife", icon: "✨" },
-                { name: "Dental Premium", icon: "💎" },
-                { name: "CliniSmile", icon: "😁" },
-                { name: "OralCenter", icon: "🏥" },
-                { name: "DentCare Plus", icon: "🦷" },
-                { name: "Odonto Excellence", icon: "⭐" },
-                { name: "SmileLab", icon: "🔬" },
-              ].map((clinic) => (
-                <div
-                  key={clinic.name}
-                  className="flex items-center gap-2 text-muted-foreground/50 hover:text-muted-foreground transition-colors select-none"
-                >
-                  <span className="text-xl opacity-60">{clinic.icon}</span>
-                  <span className="text-base font-heading font-semibold tracking-tight whitespace-nowrap">{clinic.name}</span>
-                </div>
-              ))}
-            </div>
-          </ScrollReveal>
-        </div>
-      </section>
-
-      {/* Features */}
-      <section id="funcionalidades" className="py-24 px-4 sm:px-6 lg:px-8 bg-card/50">
-        <div className="max-w-7xl mx-auto">
-          <ScrollReveal>
-            <div className="text-center max-w-3xl mx-auto mb-16">
-              <h2 className="text-3xl sm:text-4xl font-heading font-bold text-foreground">
-                Tudo que sua clínica precisa, <span className="gradient-text">em um só lugar</span>
-              </h2>
-              <p className="mt-4 text-lg text-muted-foreground">
-                Sistema completo desenvolvido por quem entende a rotina de uma clínica odontológica.
-              </p>
-            </div>
-          </ScrollReveal>
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {features.map((f, i) => (
-              <ScrollReveal key={f.title} direction="up" delay={i * 80} duration={500}>
-                <div
-                  className={`group rounded-2xl p-6 transition-all hover-lift h-full ${
-                    f.highlight
-                      ? "bg-card border-2 border-primary/20 shadow-glow-primary"
-                      : "bg-card border border-border shadow-card"
-                  }`}
-                >
-                  <div className={`h-12 w-12 rounded-xl flex items-center justify-center mb-4 ${
-                    f.highlight ? "gradient-primary text-primary-foreground" : "bg-accent text-accent-foreground"
-                  }`}>
-                    <f.icon className="h-6 w-6" />
-                  </div>
-                  <h3 className="text-lg font-heading font-bold text-foreground mb-2">{f.title}</h3>
-                  <p className="text-sm text-muted-foreground leading-relaxed">{f.desc}</p>
-                  {f.highlight && (
-                    <div className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-primary">
-                      <Star className="h-3 w-3 fill-primary" /> Destaque
-                    </div>
-                  )}
-                </div>
-              </ScrollReveal>
+          <ul className="hero-fade mt-6 flex flex-wrap gap-x-5 gap-y-2 text-[0.9375rem] text-muted-foreground">
+            {[TESTE_GRATIS_TEXTO, "Sem fidelidade", "Suporte humano"].map((t) => (
+              <li key={t} className="flex items-center gap-1.5">
+                <CheckCircle className="h-4 w-4 text-success" aria-hidden="true" /> {t}
+              </li>
             ))}
+          </ul>
+        </div>
+
+        <div className="lg:col-span-6 min-w-0">
+          <div className="hero-stage rounded-lg bg-stage p-4 sm:p-8 lg:p-12">
+            <AgendaFragment />
           </div>
         </div>
-      </section>
+      </div>
+    </section>
+  );
+}
 
-      {/* About / Dr. Luis Gustavo */}
-      <section id="sobre" className="py-24 px-4 sm:px-6 lg:px-8">
-        <div className="max-w-7xl mx-auto">
-          <div className="grid lg:grid-cols-2 gap-16 items-center">
-            <ScrollReveal direction="left" duration={700}>
-              <div className="relative">
-                <div className="absolute -inset-4 rounded-3xl bg-gradient-to-br from-primary/10 to-dental-cyan/10 blur-2xl" />
-                <img
-                  src={drLuisGustavo}
-                  alt="Dr. Luis Gustavo — Fundador do Odonto Connect"
-                  className="relative rounded-2xl shadow-2xl w-full max-w-md mx-auto object-cover aspect-square"
-                />
-              </div>
+/* ─── Faixa de clínicas (em espera) ──────────────────────── */
+
+function TrustedBy() {
+  return (
+    <section className="py-12" aria-labelledby="quem-confia">
+      <div className={WRAP}>
+        <h2 id="quem-confia" className="text-[0.9375rem] font-medium text-muted-foreground">Quem confia no Odonto Connect</h2>
+        <ul className="mt-6 flex flex-wrap gap-x-10 gap-y-4">
+          {["Sorriso Perfeito", "OdontoLife", "Dental Premium", "CliniSmile", "OralCenter", "DentCare Plus", "Odonto Excellence", "SmileLab"].map((n) => (
+            <li key={n} className="font-heading text-lg font-semibold text-foreground/50">{n}</li>
+          ))}
+        </ul>
+      </div>
+    </section>
+  );
+}
+
+/* ─── Funcionalidades: cada uma com a prova ao lado ──────── */
+
+function Features() {
+  const destaques = features.filter((f) => f.highlight);
+  const demais = features.filter((f) => !f.highlight);
+  const provas: Record<string, ReactNode> = {
+    "Reativação CRM Inteligente": <ProofReativacao />,
+    "Agenda Clínica Completa": <ProofSemana />,
+    "WhatsApp da clínica": <ProofConversa />,
+    "Financeiro Integrado": <ProofCaixa />,
+  };
+
+  return (
+    <section id="funcionalidades" className="scroll-mt-20 py-24 lg:py-36 bg-secondary">
+      <div className={WRAP}>
+        <ScrollReveal className="max-w-[44rem]">
+          <h2 className="font-heading font-semibold tracking-[-0.02em] leading-[1.1] text-[1.625rem] sm:text-[2.125rem] lg:text-[2.5rem]">
+            Tudo que sua clínica precisa, em um só lugar
+          </h2>
+          <p className="mt-4 text-lg text-foreground/80">
+            Sistema completo desenvolvido por quem entende a rotina de uma clínica odontológica.
+          </p>
+        </ScrollReveal>
+
+        <div className="mt-16 lg:mt-24 space-y-16 lg:space-y-28">
+          {destaques.map((f) => (
+            <ScrollReveal key={f.title} className="min-w-0">
+              <article className="grid lg:grid-cols-12 gap-6 lg:gap-12 items-center">
+                <div className="lg:col-span-5 min-w-0">
+                  <h3 className="font-heading text-[1.625rem] sm:text-[1.875rem] font-semibold tracking-[-0.02em] leading-tight">{f.title}</h3>
+                  <p className="mt-3 text-lg leading-relaxed text-foreground/80 max-w-[30rem]">{f.desc}</p>
+                </div>
+                <div className="lg:col-span-7 min-w-0">{provas[f.title]}</div>
+              </article>
             </ScrollReveal>
-            <ScrollReveal direction="right" delay={150} duration={700}>
-              <div className="space-y-6">
-                <div className="inline-flex items-center gap-2 rounded-full bg-accent px-4 py-1.5 text-xs font-semibold text-accent-foreground">
-                  <ShieldCheck className="h-3.5 w-3.5" /> De dono de clínica para dono
-                </div>
-                <h2 className="text-3xl sm:text-4xl font-heading font-bold text-foreground leading-tight">
-                  Criado por quem <span className="gradient-text">vive a odontologia</span> todos os dias
-                </h2>
-                <p className="text-muted-foreground leading-relaxed">
-                  O Odonto Connect nasceu da experiência real do <strong className="text-foreground">Dr. Luis Gustavo</strong>, 
-                  implantodontista e dono de clínica há mais de 15 anos. Cansado de sistemas genéricos que não entendiam 
-                  a rotina de uma clínica odontológica, ele decidiu criar a solução que sempre quis ter.
-                </p>
-                <p className="text-muted-foreground leading-relaxed">
-                  Cada funcionalidade foi desenhada pensando nos problemas reais: pacientes que somem, 
-                  WhatsApp que cai, agenda desorganizada, financeiro manual. O resultado é um sistema que 
-                  realmente funciona porque foi feito por quem entende.
-                </p>
-                <div className="grid grid-cols-3 gap-4 pt-4">
-                  {[
-                    { num: 15, suffix: "+", label: "Anos de experiência" },
-                    { num: 500, suffix: "+", label: "Clínicas atendidas" },
-                    { num: 98, suffix: "%", label: "Satisfação" },
-                  ].map((s) => (
-                    <div key={s.label} className="text-center">
-                      <p className="text-2xl font-heading font-bold gradient-text">
-                        <AnimatedCounter value={s.num} suffix={s.suffix} />
-                      </p>
-                      <p className="text-xs text-muted-foreground mt-1">{s.label}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </ScrollReveal>
-          </div>
+          ))}
         </div>
-      </section>
 
-      {/* Pricing */}
-      <section id="planos" className="py-24 px-4 sm:px-6 lg:px-8 bg-card/50">
-        <div className="max-w-7xl mx-auto">
-          <ScrollReveal>
-            <div className="text-center max-w-3xl mx-auto mb-16">
-              <h2 className="text-3xl sm:text-4xl font-heading font-bold text-foreground">
-                Planos que <span className="gradient-text">cabem no seu bolso</span>
-              </h2>
-              <p className="mt-4 text-lg text-muted-foreground">
-                Comece gratuitamente por 7 dias. Sem compromisso, sem cartão de crédito.
-              </p>
-            </div>
-          </ScrollReveal>
-          <div className="grid md:grid-cols-3 gap-8 max-w-5xl mx-auto">
-            {plans.map((plan, i) => (
-              <ScrollReveal key={plan.name} direction="up" delay={i * 150} duration={600}>
-                <div
-                  className={`relative rounded-2xl p-8 flex flex-col h-full ${
-                    plan.popular
-                      ? "bg-card border-2 border-primary shadow-glow-primary scale-105"
-                      : "bg-card border border-border shadow-card"
-                  }`}
-                >
-                  {plan.popular && (
-                    <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 rounded-full gradient-primary px-4 py-1 text-xs font-bold text-primary-foreground">
-                      Mais Popular
-                    </div>
-                  )}
-                  <h3 className="text-xl font-heading font-bold text-foreground">{plan.name}</h3>
-                  <p className="text-sm text-muted-foreground mt-1">{plan.desc}</p>
-                  <div className="mt-6 mb-8">
-                    <span className="text-4xl font-heading font-bold text-foreground">R$ {plan.price}</span>
-                    <span className="text-muted-foreground text-sm">/mês</span>
-                  </div>
-                  <ul className="space-y-3 flex-1">
-                    {plan.features.map((f) => (
-                      <li key={f} className="flex items-start gap-2 text-sm text-foreground">
-                        <CheckCircle className="h-4 w-4 text-success mt-0.5 shrink-0" />
-                        {f}
-                      </li>
-                    ))}
-                  </ul>
-                  <Link
-                    to="/signup"
-                    search={{ plan: plan.slug }}
-                    className={`mt-8 w-full inline-flex items-center justify-center gap-2 rounded-xl px-6 py-3 text-sm font-bold transition-all ${
-                      plan.popular
-                        ? "gradient-primary text-primary-foreground shadow-glow-primary hover:opacity-90"
-                        : "border border-border bg-accent text-foreground hover:bg-primary hover:text-primary-foreground"
-                    }`}
-                  >
-                    Iniciar teste grátis <ArrowRight className="h-4 w-4" />
-                  </Link>
-                </div>
-              </ScrollReveal>
+        <div className="mt-24 lg:mt-36">
+          <h3 className="font-heading text-[1.625rem] sm:text-[1.875rem] font-semibold tracking-[-0.02em]">E ainda</h3>
+          <ul className="mt-10 grid sm:grid-cols-2 lg:grid-cols-3 gap-x-12 gap-y-10">
+            {demais.map((f) => (
+              <li key={f.title}>
+                <h4 className="text-lg font-semibold">{f.title}</h4>
+                <p className="mt-2 text-[1rem] leading-relaxed text-foreground/75">{f.desc}</p>
+              </li>
             ))}
-          </div>
+          </ul>
         </div>
-      </section>
+      </div>
+    </section>
+  );
+}
 
-      {/* Testimonials */}
-      <section id="depoimentos" className="py-24 px-4 sm:px-6 lg:px-8">
-        <div className="max-w-7xl mx-auto">
-          <ScrollReveal>
-            <div className="text-center max-w-3xl mx-auto mb-16">
-              <h2 className="text-3xl sm:text-4xl font-heading font-bold text-foreground">
-                Quem usa, <span className="gradient-text">recomenda</span>
-              </h2>
-            </div>
-          </ScrollReveal>
-          <div className="grid md:grid-cols-3 gap-8">
-            {testimonials.map((t, i) => (
-              <ScrollReveal key={t.name} direction={i === 0 ? "left" : i === 2 ? "right" : "up"} delay={i * 120} duration={600}>
-                <div className="rounded-2xl bg-card border border-border p-6 shadow-card h-full">
-                  <div className="flex gap-1 mb-4">
-                    {Array.from({ length: t.stars }).map((_, j) => (
-                      <Star key={j} className="h-4 w-4 fill-warning text-warning" />
-                    ))}
-                  </div>
-                  <p className="text-sm text-foreground leading-relaxed mb-4">"{t.text}"</p>
-                  <div>
-                    <p className="text-sm font-semibold text-foreground">{t.name}</p>
-                    <p className="text-xs text-muted-foreground">{t.clinic}</p>
-                  </div>
-                </div>
-              </ScrollReveal>
-            ))}
-          </div>
-        </div>
-      </section>
+/* Provas: pedaços de interface com conteúdo de exemplo (data-ui). */
 
-      {/* FAQ */}
-      <section id="faq" className="py-24 px-4 sm:px-6 lg:px-8 bg-card/50">
-        <div className="max-w-3xl mx-auto">
-          <ScrollReveal>
-            <div className="text-center mb-16">
-              <h2 className="text-3xl sm:text-4xl font-heading font-bold text-foreground">
-                Perguntas <span className="gradient-text">Frequentes</span>
-              </h2>
-              <p className="mt-4 text-lg text-muted-foreground">
-                Tire suas dúvidas sobre o Odonto Connect
-              </p>
-            </div>
-          </ScrollReveal>
-          <ScrollReveal direction="up" duration={600}>
-            <Accordion type="single" collapsible className="space-y-3">
-              {[
-                { q: "Preciso instalar algum software no computador?", a: "Não! O Odonto Connect é 100% online (SaaS). Basta acessar pelo navegador de qualquer computador, tablet ou celular. Não precisa instalar nada." },
-                { q: "Como funciona a IA Agente Autônomo?", a: "A IA atende seus pacientes via WhatsApp de forma autônoma: responde dúvidas, agenda consultas, envia lembretes e faz follow-up. Você configura as regras e a IA cuida do resto 24 horas por dia." },
-                { q: "O que é o Sistema Fênix de WhatsApp?", a: "É nossa tecnologia exclusiva de contingência. Se uma instância do WhatsApp cair, o sistema automaticamente redireciona para outra instância ativa, garantindo que sua clínica nunca fique sem atendimento." },
-                { q: "Como funciona a reativação de pacientes pelo CRM?", a: "O CRM possui um funil de recuperação com follow-ups automáticos. Pacientes inativos ou que não responderam entram em uma sequência inteligente de contato via WhatsApp, aumentando significativamente a taxa de retorno." },
-                { q: "Posso migrar meus dados de outro sistema?", a: "Sim! Nossa equipe auxilia na migração completa dos dados de pacientes, agenda e financeiro. O processo é rápido e sem perda de informações." },
-                { q: "Quantas pessoas podem usar o sistema ao mesmo tempo?", a: "Não há limite de usuários simultâneos. Toda a equipe — recepcionistas, dentistas, gestores — pode acessar ao mesmo tempo com permissões personalizadas por função." },
-                { q: "O sistema emite relatórios financeiros?", a: "Sim! O módulo financeiro integrado gera relatórios de faturamento, fluxo de caixa, contas a pagar/receber, comissões por dentista e muito mais. Tudo atualizado em tempo real." },
-                { q: "Existe período de teste gratuito?", a: "Sim! Oferecemos 7 dias grátis com acesso completo a todas as funcionalidades. Sem necessidade de cartão de crédito e sem compromisso." },
-              ].map((item, i) => (
-                <AccordionItem key={i} value={`faq-${i}`} className="rounded-xl border border-border bg-card px-6 shadow-card">
-                  <AccordionTrigger className="text-sm font-semibold text-foreground hover:text-primary py-5 text-left">
-                    {item.q}
-                  </AccordionTrigger>
-                  <AccordionContent className="text-sm text-muted-foreground leading-relaxed pb-5">
-                    {item.a}
-                  </AccordionContent>
-                </AccordionItem>
-              ))}
-            </Accordion>
-          </ScrollReveal>
-        </div>
-      </section>
-
-      {/* CTA */}
-      <ScrollReveal direction="scale" duration={700}>
-        <section className="py-24 px-4 sm:px-6 lg:px-8">
-          <div className="max-w-4xl mx-auto text-center rounded-3xl gradient-primary p-12 sm:p-16 shadow-glow-primary relative overflow-hidden">
-            <div className="absolute inset-0 bg-gradient-to-br from-primary-glow/20 to-transparent" />
-            <div className="relative space-y-6">
-              <h2 className="text-3xl sm:text-4xl font-heading font-bold text-primary-foreground">
-                Pronto para transformar sua clínica?
-              </h2>
-              <p className="text-primary-foreground/80 text-lg max-w-2xl mx-auto">
-                Junte-se a centenas de clínicas que já estão crescendo com o Odonto Connect. 
-                Comece seu teste gratuito de 7 dias agora.
-              </p>
-              <div className="flex flex-col sm:flex-row gap-4 justify-center">
-                <Link
-                  to="/signup"
-                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-card text-foreground px-8 py-3.5 text-base font-bold hover:bg-card/90 transition-colors"
-                >
-                  Começar Agora Grátis <ArrowRight className="h-5 w-5" />
-                </Link>
-              </div>
-            </div>
-          </div>
-        </section>
-      </ScrollReveal>
-
-      {/* Footer */}
-      <footer className="border-t border-border py-12 px-4 sm:px-6 lg:px-8 bg-card">
-        <div className="max-w-7xl mx-auto">
-          <div className="grid md:grid-cols-4 gap-8">
-            <div className="space-y-4">
-              <img src={logoHorizontal} alt="Odonto Connect" className="h-7" />
-              <p className="text-sm text-muted-foreground">
-                Sistema completo de A a Z para clínicas odontológicas. De dono de clínica para dono.
-              </p>
-            </div>
-            <div>
-              <h4 className="font-semibold text-foreground mb-4 text-sm">Produto</h4>
-              <ul className="space-y-2 text-sm text-muted-foreground">
-                <li><a href="#funcionalidades" className="hover:text-foreground transition-colors">Funcionalidades</a></li>
-                <li><a href="#planos" className="hover:text-foreground transition-colors">Planos</a></li>
-                <li><a href="#depoimentos" className="hover:text-foreground transition-colors">Depoimentos</a></li>
-              </ul>
-            </div>
-            <div>
-              <h4 className="font-semibold text-foreground mb-4 text-sm">Suporte</h4>
-              <ul className="space-y-2 text-sm text-muted-foreground">
-                <li><a href="https://wa.me/5511999990001" target="_blank" rel="noopener noreferrer" className="hover:text-foreground transition-colors flex items-center gap-1.5"><Phone className="h-3.5 w-3.5" /> WhatsApp</a></li>
-                <li><a href="mailto:contato@odontoconnect.com" className="hover:text-foreground transition-colors flex items-center gap-1.5"><Mail className="h-3.5 w-3.5" /> E-mail</a></li>
-              </ul>
-            </div>
-            <div>
-              <h4 className="font-semibold text-foreground mb-4 text-sm">Legal</h4>
-              <ul className="space-y-2 text-sm text-muted-foreground">
-                <li><Link to="/termos" className="hover:text-foreground transition-colors">Termos de Uso</Link></li>
-                <li><Link to="/privacidade" className="hover:text-foreground transition-colors">Política de Privacidade</Link></li>
-              </ul>
-            </div>
-          </div>
-          <div className="mt-12 pt-8 border-t border-border text-center text-xs text-muted-foreground">
-            © {new Date().getFullYear()} Odonto Connect. Todos os direitos reservados.
-          </div>
-        </div>
-      </footer>
+function ProofPanel({ children, className = "" }: { children: ReactNode; className?: string }) {
+  return (
+    <div data-ui className={`bg-card rounded-lg border border-border overflow-hidden ${className}`}>
+      {children}
     </div>
+  );
+}
+
+function ProofReativacao() {
+  const [enviados, setEnviados] = useState<string[]>([]);
+  const pacientes = [
+    { nome: "Fernanda Alves", ultima: "Última consulta há 8 meses", proc: "Limpeza" },
+    { nome: "Gustavo Rocha", ultima: "Orçamento parado há 45 dias", proc: "Implante" },
+    { nome: "Larissa Prado", ultima: "Última consulta há 1 ano", proc: "Manutenção de aparelho" },
+  ];
+  return (
+    <ProofPanel className="max-w-[560px]">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+        <p className="text-[0.875rem] font-semibold">Para reativar</p>
+        <p className="text-xs text-muted-foreground">{pacientes.length - enviados.length} pendentes</p>
+      </div>
+      <ul>
+        {pacientes.map((p) => {
+          const ok = enviados.includes(p.nome);
+          return (
+            <li key={p.nome} className="flex items-center gap-3 px-4 py-3 border-b border-border last:border-0">
+              <span className="h-8 w-8 rounded-full bg-accent text-accent-foreground text-xs font-semibold flex items-center justify-center shrink-0" aria-hidden="true">
+                {p.nome.split(" ").map((w) => w[0]).join("")}
+              </span>
+              <span className="flex-1 min-w-0">
+                <span className="block text-[0.875rem] font-medium truncate">{p.nome}</span>
+                <span className="block text-xs text-muted-foreground truncate">{p.ultima} · {p.proc}</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setEnviados((e) => (ok ? e.filter((n) => n !== p.nome) : [...e, p.nome]))}
+                className={`h-9 px-3 rounded text-xs font-semibold shrink-0 transition-colors ${
+                  ok ? "bg-success/12 text-success" : "border border-input bg-card text-foreground hover:bg-muted"
+                }`}
+              >
+                {ok ? "Na fila" : "Convidar"}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </ProofPanel>
+  );
+}
+
+function ProofSemana() {
+  const dias = [
+    { d: "Seg", n: 18, c: 16 }, { d: "Ter", n: 22, c: 19 }, { d: "Qua", n: 15, c: 15 },
+    { d: "Qui", n: 23, c: 20 }, { d: "Sex", n: 19, c: 12 }, { d: "Sáb", n: 8, c: 8 },
+  ];
+  const max = 24;
+  return (
+    <ProofPanel className="max-w-[620px] p-5">
+      <div className="flex items-baseline justify-between">
+        <p className="text-[0.875rem] font-semibold">Consultas da semana</p>
+        <p className="text-xs text-muted-foreground">
+          <span className="inline-block h-2 w-2 rounded-sm bg-primary mr-1.5 align-middle" />confirmadas
+          <span className="inline-block h-2 w-2 rounded-sm bg-accent ml-3 mr-1.5 align-middle" />a confirmar
+        </p>
+      </div>
+      <div className="mt-5 grid grid-cols-6 gap-3 items-end h-36">
+        {dias.map((x) => (
+          <div key={x.d} className="flex flex-col items-center gap-2 h-full justify-end">
+            <span className="text-xs font-medium tabular-nums">{x.n}</span>
+            <div className="w-full max-w-10 flex flex-col justify-end rounded-sm overflow-hidden" style={{ height: `${(x.n / max) * 100}%` }}>
+              <div className="bg-accent" style={{ height: `${((x.n - x.c) / x.n) * 100}%` }} />
+              <div className="bg-primary flex-1" />
+            </div>
+            <span className="text-xs text-muted-foreground">{x.d}</span>
+          </div>
+        ))}
+      </div>
+    </ProofPanel>
+  );
+}
+
+function ProofConversa() {
+  return (
+    <ProofPanel className="max-w-[460px]">
+      <div className="flex items-center gap-3 px-4 py-3 border-b border-border">
+        <span className="h-8 w-8 rounded-full bg-success/15 text-success text-xs font-semibold flex items-center justify-center" aria-hidden="true">PM</span>
+        <div>
+          <p className="text-[0.875rem] font-semibold leading-tight">Paulo Martins</p>
+          <p className="text-xs text-muted-foreground">WhatsApp · atendido pela recepção</p>
+        </div>
+      </div>
+      <div className="chat-bg-pattern px-4 py-4 space-y-2.5 text-[0.875rem]">
+        <p className="max-w-[80%] rounded-lg rounded-bl-sm bg-card px-3 py-2">Oi! Queria marcar uma limpeza essa semana.</p>
+        <p className="max-w-[85%] ml-auto rounded-lg rounded-br-sm bg-primary text-primary-foreground px-3 py-2">
+          Claro, Paulo! Tenho quinta às 14h ou sexta às 9h30 com a Dra. Paula. Qual prefere?
+        </p>
+        <p className="max-w-[80%] rounded-lg rounded-bl-sm bg-card px-3 py-2">Sexta 9h30.</p>
+        <p className="max-w-[85%] ml-auto rounded-lg rounded-br-sm bg-primary text-primary-foreground px-3 py-2">
+          Marcado: sexta, 9h30. Envio um lembrete na véspera.
+        </p>
+      </div>
+    </ProofPanel>
+  );
+}
+
+function ProofCaixa() {
+  const mov = [
+    { d: "Implante — Rafael Lima", v: 3200, tipo: "entrada" },
+    { d: "Comissão — Dra. Paula", v: -640, tipo: "saida" },
+    { d: "Clareamento — Ana Ribeiro", v: 850, tipo: "entrada" },
+    { d: "Fornecedor — resinas", v: -410, tipo: "saida" },
+  ];
+  const saldo = mov.reduce((a, m) => a + m.v, 0);
+  const brl = (n: number) => n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  return (
+    <ProofPanel className="max-w-[540px]">
+      <div className="flex items-end justify-between px-4 pt-4 pb-3 border-b border-border">
+        <div>
+          <p className="text-xs text-muted-foreground">Saldo do dia</p>
+          <p className="text-[1.5rem] font-semibold tabular-nums leading-tight">{brl(saldo)}</p>
+        </div>
+        <p className="text-xs text-muted-foreground">Fluxo de caixa</p>
+      </div>
+      <ul>
+        {mov.map((m) => (
+          <li key={m.d} className="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-border last:border-0 text-[0.875rem]">
+            <span className="truncate">{m.d}</span>
+            <span className={`tabular-nums font-medium shrink-0 ${m.v > 0 ? "text-success" : "text-foreground/70"}`}>
+              {m.v > 0 ? "+" : "−"} {brl(Math.abs(m.v))}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </ProofPanel>
+  );
+}
+
+/* ─── Quem criou ─────────────────────────────────────────── */
+
+function About() {
+  const numeros = [
+    { num: 15, suffix: "+", label: "Anos de experiência", verificado: true },
+    { num: 500, suffix: "+", label: "Clínicas atendidas", verificado: false },
+    { num: 98, suffix: "%", label: "Satisfação", verificado: false },
+  ].filter((s) => s.verificado || PROVA_SOCIAL_CONFIRMADA);
+
+  return (
+    <section id="sobre" className="scroll-mt-20 py-24 lg:py-36">
+      <div className={`${WRAP} grid lg:grid-cols-12 gap-10 lg:gap-16 items-center`}>
+        <ScrollReveal className="lg:col-span-6 min-w-0">
+          <img
+            src={drLuisGustavo}
+            alt="Dr. Luis Gustavo, fundador do Odonto Connect, no consultório"
+            width={853}
+            height={853}
+            loading="lazy"
+            className="w-full aspect-[4/5] sm:aspect-[5/4] lg:aspect-[4/5] object-cover object-[70%_30%] rounded-lg"
+          />
+        </ScrollReveal>
+        <ScrollReveal className="lg:col-span-6 min-w-0" delay={80}>
+          <h2 className="font-heading font-semibold tracking-[-0.02em] leading-[1.1] text-[1.625rem] sm:text-[2.125rem] lg:text-[2.5rem]">
+            Criado por quem vive a odontologia todos os dias
+          </h2>
+          <div className="mt-6 space-y-4 text-lg leading-relaxed text-foreground/85 max-w-[36rem]">
+            <p>
+              O Odonto Connect nasceu da experiência real do <strong className="font-semibold text-foreground">Dr. Luis Gustavo</strong>,
+              implantodontista e dono de clínica há mais de 15 anos. Cansado de sistemas genéricos que não entendiam
+              a rotina de uma clínica odontológica, ele decidiu criar a solução que sempre quis ter.
+            </p>
+            <p>
+              Cada funcionalidade foi desenhada pensando nos problemas reais: pacientes que somem,
+              WhatsApp que cai, agenda desorganizada, financeiro manual. O resultado é um sistema que
+              realmente funciona porque foi feito por quem entende.
+            </p>
+          </div>
+          <dl className="mt-10 flex gap-12">
+            {numeros.map((s) => (
+              <div key={s.label}>
+                <dd className="font-heading text-[2.5rem] font-semibold leading-none tracking-tight text-primary tabular-nums">
+                  <AnimatedCounter value={s.num} suffix={s.suffix} />
+                </dd>
+                <dt className="mt-2 text-[0.9375rem] text-muted-foreground">{s.label}</dt>
+              </div>
+            ))}
+          </dl>
+        </ScrollReveal>
+      </div>
+    </section>
+  );
+}
+
+/* ─── Planos: nomes à esquerda, um palco de preço ────────── */
+
+function Pricing() {
+  const [sel, setSel] = useState(plans.findIndex((p) => p.popular));
+  const plan = plans[sel];
+
+  return (
+    <section id="planos" className="scroll-mt-20 py-24 lg:py-36 bg-stage text-stage-foreground">
+      <div className={WRAP}>
+        <div className="max-w-[44rem]">
+          <h2 className="font-heading font-semibold tracking-[-0.02em] leading-[1.1] text-[1.625rem] sm:text-[2.125rem] lg:text-[2.5rem]">
+            Planos
+          </h2>
+          <p className="mt-4 text-lg text-stage-muted">
+            Teste por {TESTE_GRATIS_DIAS} dias, sem cartão de crédito. Para saber o valor de cada plano, fale com a nossa equipe.
+          </p>
+        </div>
+
+        {/* Computador: seletor + palco fixo */}
+        <div className="hidden lg:grid grid-cols-12 gap-12 mt-20">
+          <div className="col-span-5" role="tablist" aria-label="Planos" aria-orientation="vertical">
+            {plans.map((p, i) => (
+              <button
+                key={p.slug}
+                role="tab"
+                id={`plano-${p.slug}`}
+                aria-selected={i === sel}
+                aria-controls="plano-palco"
+                onClick={() => setSel(i)}
+                onFocus={() => setSel(i)}
+                className={`group flex w-full items-center gap-4 py-3 text-left font-heading text-[3.5rem] leading-[1.1] font-semibold tracking-[-0.03em] transition-colors ${
+                  i === sel ? "text-stage-foreground" : "text-stage-foreground/35 hover:text-stage-foreground/70"
+                }`}
+              >
+                <span className={`h-3 w-3 rounded-full bg-[var(--color-dental-cyan)] transition-opacity ${i === sel ? "opacity-100" : "opacity-0"}`} aria-hidden="true" />
+                {p.name}
+                {p.popular && (
+                  <span className="whitespace-nowrap text-[0.9375rem] font-medium tracking-normal text-stage-muted">· Recomendado</span>
+                )}
+              </button>
+            ))}
+          </div>
+          <div id="plano-palco" role="tabpanel" aria-labelledby={`plano-${plan.slug}`} className="col-span-7">
+            <PlanStage plan={plan} key={plan.slug} />
+          </div>
+        </div>
+
+        {/* Celular e tablet: os três planos completos, um abaixo do outro */}
+        <div className="lg:hidden mt-12 space-y-12">
+          {plans.map((p) => (
+            <div key={p.slug} className="rounded-lg bg-white/[0.06] p-6">
+              <h3 className="font-heading text-[1.875rem] font-semibold tracking-[-0.02em] leading-tight">
+                {p.name}
+                {p.popular && <span className="ml-2 text-[0.9375rem] font-medium tracking-normal text-stage-muted">· Recomendado</span>}
+              </h3>
+              <PlanStage plan={p} compact />
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function PlanStage({ plan, compact = false }: { plan: (typeof plans)[number]; compact?: boolean }) {
+  return (
+    <div className={compact ? "mt-3" : "animate-fade-in"}>
+      <p className={compact ? "mt-1 text-[1rem] text-stage-muted" : "font-heading text-[1.75rem] font-semibold tracking-[-0.02em] leading-tight"}>{plan.desc}</p>
+      <ul className={`grid gap-x-8 gap-y-2.5 ${compact ? "mt-5" : "mt-8 sm:grid-cols-2"}`}>
+        {plan.features.map((f) => (
+          <li key={f} className="flex items-start gap-2.5 text-[1rem]">
+            <CheckCircle className="h-4 w-4 mt-1 shrink-0 text-[var(--color-dental-cyan)]" aria-hidden="true" />
+            {f}
+          </li>
+        ))}
+      </ul>
+      <div className={`mt-8 flex gap-x-6 gap-y-3 ${compact ? "flex-col" : "flex-wrap items-center"}`}>
+      <Link
+        to="/signup"
+        search={{ plan: plan.slug }}
+        className={`inline-flex items-center justify-center gap-2 h-12 px-6 rounded-md bg-stage-foreground text-stage text-[0.9375rem] font-semibold hover:bg-white active:translate-y-px transition-[background-color,transform] ${compact ? "w-full" : ""}`}
+      >
+        Testar o {plan.name} grátis <ArrowRight className="h-4 w-4" />
+      </Link>
+      {EMAIL_CONTATO && (
+        <a
+          href={`mailto:${EMAIL_CONTATO}?subject=${encodeURIComponent(`Valores do plano ${plan.name}`)}`}
+          className="inline-flex items-center justify-center gap-2 min-h-11 text-[0.9375rem] font-semibold text-stage-foreground underline-offset-4 hover:underline"
+        >
+          <Mail className="h-4 w-4" aria-hidden="true" /> Consultar valores
+        </a>
+      )}
+      </div>
+    </div>
+  );
+}
+
+/* ─── Depoimentos (em espera) ────────────────────────────── */
+
+function Testimonials() {
+  return (
+    <section id="depoimentos" className="scroll-mt-20 py-24 lg:py-36">
+      <div className={WRAP}>
+        <h2 className="font-heading font-semibold tracking-[-0.02em] text-[1.625rem] sm:text-[2.125rem] lg:text-[2.5rem]">Quem usa, recomenda</h2>
+        <div className="mt-12 grid md:grid-cols-3 gap-10">
+          {testimonials.map((t) => (
+            <figure key={t.name}>
+              <div className="flex gap-0.5" aria-label={`${t.stars} de 5 estrelas`}>
+                {Array.from({ length: t.stars }).map((_, j) => (
+                  <Star key={j} className="h-4 w-4 fill-warning text-warning" aria-hidden="true" />
+                ))}
+              </div>
+              <blockquote className="mt-4 text-[1.1875rem] leading-relaxed">“{t.text}”</blockquote>
+              <figcaption className="mt-4 text-[0.9375rem] text-muted-foreground">
+                <span className="font-semibold text-foreground">{t.name}</span> · {t.clinic}
+              </figcaption>
+            </figure>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* ─── Dúvidas ────────────────────────────────────────────── */
+
+function Faq() {
+  return (
+    <section id="faq" className="scroll-mt-20 py-24 lg:py-36">
+      <div className={`${WRAP} grid lg:grid-cols-12 gap-10 lg:gap-12`}>
+        <div className="lg:col-span-4">
+          <div className="lg:sticky lg:top-28">
+            <h2 className="font-heading font-semibold tracking-[-0.02em] leading-[1.1] text-[1.625rem] sm:text-[2.125rem] lg:text-[2.5rem]">
+              Perguntas frequentes
+            </h2>
+            <p className="mt-4 text-lg text-foreground/80">Tire suas dúvidas sobre o Odonto Connect.</p>
+            {(WHATSAPP_CONSULTOR || EMAIL_CONTATO) && (
+              <a href={WHATSAPP_CONSULTOR ?? `mailto:${EMAIL_CONTATO}`} {...(WHATSAPP_CONSULTOR ? { target: "_blank", rel: "noopener noreferrer" } : {})} className="mt-6 inline-flex items-center gap-2 text-[0.9375rem] font-semibold text-primary hover:underline underline-offset-4">
+                Outra dúvida? Fale com a nossa equipe <ArrowRight className="h-4 w-4" />
+              </a>
+            )}
+          </div>
+        </div>
+        <div className="lg:col-span-8 space-y-2">
+          {faqs.map((item, i) => (
+            <details key={item.q} name="faq" className="faq-tile group rounded-lg bg-secondary open:bg-accent transition-colors" open={i === 0}>
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-6 px-6 py-5 text-lg sm:text-[1.125rem] font-semibold [&::-webkit-details-marker]:hidden">
+                {item.q}
+                <Plus className="h-5 w-5 shrink-0 text-primary transition-transform duration-200 group-open:rotate-45" aria-hidden="true" />
+              </summary>
+              <p className="px-6 pb-6 -mt-1 text-[1rem] leading-relaxed text-foreground/85 max-w-[52ch]">{item.a}</p>
+            </details>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* ─── Chamada final ──────────────────────────────────────── */
+
+function FinalCta() {
+  return (
+    <section className="pb-24 lg:pb-36">
+      <div className={WRAP}>
+        <div className="rounded-lg bg-primary text-primary-foreground px-6 py-14 sm:px-12 lg:px-16 lg:py-20 grid lg:grid-cols-12 gap-8 items-end">
+          <div className="lg:col-span-8">
+            <h2 className="font-heading font-semibold tracking-[-0.02em] leading-[1.1] text-[1.625rem] sm:text-[2.125rem] lg:text-[3rem]">
+              Veja a sua clínica no Odonto Connect
+            </h2>
+            <p className="mt-4 text-lg text-primary-foreground/85 max-w-[40rem]">
+              {PROVA_SOCIAL_CONFIRMADA && "Junte-se a centenas de clínicas que já estão crescendo com o Odonto Connect. "}
+              Comece seu teste gratuito de {TESTE_GRATIS_DIAS} dias agora.
+            </p>
+          </div>
+          <div className="lg:col-span-4 lg:justify-self-end">
+            <Link
+              to="/signup"
+              search={{}}
+              className="inline-flex w-full sm:w-auto items-center justify-center gap-2 h-12 px-6 rounded-md bg-white text-accent-foreground text-[0.9375rem] font-semibold hover:bg-white/90 active:translate-y-px transition-[background-color,transform]"
+            >
+              Criar conta de teste <ArrowRight className="h-4 w-4" />
+            </Link>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* ─── Rodapé ─────────────────────────────────────────────── */
+
+function SiteFooter() {
+  return (
+    <footer className="pb-10">
+      <div className={WRAP}>
+        <img src={logoHorizontal} alt="Odonto Connect" className="w-full max-w-[720px] h-auto opacity-90" width={1920} height={194} loading="lazy" />
+        <div className="mt-10 grid gap-6 md:grid-cols-[1fr_auto_1fr] md:items-center text-[0.9375rem]">
+          <p className="text-muted-foreground">Sistema completo de A a Z para clínicas odontológicas. De dono de clínica para dono.</p>
+          <ul className="flex flex-wrap gap-x-6 gap-y-2 font-medium">
+            <li><a href="#funcionalidades" className="hover:text-primary transition-colors">Funcionalidades</a></li>
+            <li><a href="#planos" className="hover:text-primary transition-colors">Planos</a></li>
+            {WHATSAPP_CONSULTOR && (
+              <li>
+                <a href={WHATSAPP_CONSULTOR} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 hover:text-primary transition-colors">
+                  <Phone className="h-4 w-4" aria-hidden="true" /> WhatsApp
+                </a>
+              </li>
+            )}
+            {EMAIL_CONTATO && (
+              <li>
+                <a href={`mailto:${EMAIL_CONTATO}`} className="inline-flex items-center gap-1.5 hover:text-primary transition-colors">
+                  <Mail className="h-4 w-4" aria-hidden="true" /> E-mail
+                </a>
+              </li>
+            )}
+          </ul>
+          <ul className="flex flex-wrap gap-x-6 gap-y-2 md:justify-end text-muted-foreground">
+            <li><Link to="/termos" className="hover:text-foreground transition-colors">Termos de Uso</Link></li>
+            <li><Link to="/privacidade" className="hover:text-foreground transition-colors">Política de Privacidade</Link></li>
+            <li>© {new Date().getFullYear()} Odonto Connect</li>
+          </ul>
+        </div>
+      </div>
+    </footer>
   );
 }
