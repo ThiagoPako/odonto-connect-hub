@@ -104,9 +104,9 @@ describe('CPF por clínica', () => {
     expect(res.body).toEqual({ error: 'Erro interno' });
   });
 
-  test('convert-to-patient normaliza o CPF do corpo, exige 11 dígitos e trata 23505 sem vazar', async () => {
+  test('convert-to-patient: CPF do corpo com 11 dígitos (validação do #44) e 23505 sem vazar', async () => {
     const url = `/api/crm/leads/${leadDaA}/convert-to-patient`;
-    const ok = await request(app).post(url).set('Authorization', `Bearer ${token()}`).send({ cpf: '123.456.789-00' });
+    const ok = await request(app).post(url).set('Authorization', `Bearer ${token()}`).send({ cpf: ' 12345678900 ' });
     expect(ok.status).toBe(200);
     expect(gravacao().params[2]).toBe('12345678900');
     sqlLog = [];

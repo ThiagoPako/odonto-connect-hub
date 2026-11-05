@@ -12122,15 +12122,12 @@ app.post('/api/crm/leads/:id/convert-to-patient', async (req, res) => {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { id } = req.params;
-    // CPF opcional (crm_leads não guarda CPF): vazio ou 11 dígitos (pontos e traço são ignorados).
+    // CPF opcional (crm_leads não guarda CPF): vazio ou exatamente 11 dígitos.
     const cpfBody = req.body?.cpf;
-    if (cpfBody !== undefined && cpfBody !== null && typeof cpfBody !== 'string') {
-      return res.status(400).json({ error: 'CPF inválido: informe 11 dígitos' });
+    if (cpfBody !== undefined && cpfBody !== null && (typeof cpfBody !== 'string' || !/^(\d{11})?$/.test(cpfBody.trim()))) {
+      return res.status(400).json({ error: 'CPF inválido: informe 11 dígitos, sem pontos ou traço' });
     }
     const cpf = normalizarCpf(req.body?.cpf);
-    if (cpf && !/^\d{11}$/.test(cpf)) {
-      return res.status(400).json({ error: 'CPF inválido: informe 11 dígitos' });
-    }
 
     // Fetch lead data
     const { rows: leadRows } = await pool.query(
