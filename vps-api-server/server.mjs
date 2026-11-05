@@ -7508,6 +7508,8 @@ app.get('/api/dentista/painel/:id?', async (req, res) => {
       };
     });
 
+    // Prontuários e alergias do painel do dentista: entram no registro de acesso.
+    registrarAcessoProntuario(pool, user, prontuariosRows.rows.map(r => r.paciente_id), 'prontuario');
     const prontuarios = prontuariosRows.rows.map(r => {
       const nome = r.p_nome || r.paciente_nome || 'Paciente';
       const parts = String(nome).trim().split(/\s+/);
@@ -14641,6 +14643,7 @@ app.get('/api/ai/reports/:patientId', async (req, res, next) => {
       'SELECT id, patient_name, transcription, report, queixa_principal, procedimento, dente_regiao, prescricoes, duration_seconds, created_at FROM clinical_reports WHERE patient_id = $1 AND tenant_id = $2 ORDER BY created_at DESC LIMIT 50',
       [patientId, user.tenant_id]
     );
+    if (rows.length) registrarAcessoProntuario(pool, user, patientId, 'relatorio_clinico');
     res.json(rows);
   } catch (err) {
     if (err.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
@@ -14695,6 +14698,7 @@ app.get('/api/ai/reports', async (req, res) => {
     const comPrescricao = rows.filter(r => Array.isArray(r.prescricoes) ? r.prescricoes.length > 0 : (r.prescricoes && JSON.parse(r.prescricoes || '[]').length > 0)).length;
     const totalDuration = rows.reduce((s, r) => s + (r.duration_seconds || 0), 0);
     const pacientesUnicos = new Set(rows.map(r => r.patient_id)).size;
+    registrarAcessoProntuario(pool, user, rows.map(r => r.patient_id), 'relatorio_clinico');
 
     res.json({
       reports: rows,
@@ -14745,13 +14749,14 @@ app.get('/api/ai/reports/export.csv', async (req, res) => {
     }
 
     const sql = `
-      SELECT created_at, patient_name, attendant_name, queixa_principal, procedimento,
+      SELECT created_at, patient_id, patient_name, attendant_name, queixa_principal, procedimento,
              dente_regiao, duration_seconds, prescricoes
       FROM clinical_reports
       ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
       ORDER BY created_at DESC LIMIT 5000
     `;
     const { rows } = await pool.query(sql, params);
+    registrarAcessoProntuario(pool, user, rows.map(r => r.patient_id), 'relatorio_clinico', 'exportar');
 
     const esc = (v) => {
       if (v === null || v === undefined) return '';

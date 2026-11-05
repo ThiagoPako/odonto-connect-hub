@@ -46,6 +46,15 @@ CREATE TABLE IF NOT EXISTS lgpd_solicitacoes (
 );
 ALTER TABLE lgpd_solicitacoes ADD COLUMN IF NOT EXISTS tentativas INT NOT NULL DEFAULT 0;
 ALTER TABLE lgpd_solicitacoes ADD COLUMN IF NOT EXISTS motivo_recusa TEXT;
+-- Quem conferiu a identidade e com qual documento (sem o número); representante do menor (LGPD 14, 18 § 3º).
+ALTER TABLE lgpd_solicitacoes ADD COLUMN IF NOT EXISTS identidade_conferida_por TEXT;
+ALTER TABLE lgpd_solicitacoes ADD COLUMN IF NOT EXISTS identidade_documento TEXT;
+ALTER TABLE lgpd_solicitacoes ADD COLUMN IF NOT EXISTS representante_nome TEXT;
+ALTER TABLE lgpd_solicitacoes ADD COLUMN IF NOT EXISTS representante_vinculo TEXT;
+-- Ao fim da guarda: eliminar ou devolver o prontuário ao paciente (Lei 13.787 art. 6º § 2º).
+ALTER TABLE lgpd_solicitacoes ADD COLUMN IF NOT EXISTS ao_fim_do_prazo TEXT;
+-- A clínica optou por eliminar as conversas de paciente com prontuário (assume a perda da prova).
+ALTER TABLE lgpd_solicitacoes ADD COLUMN IF NOT EXISTS eliminar_conversas BOOLEAN NOT NULL DEFAULT false;
 CREATE INDEX IF NOT EXISTS idx_lgpd_solicitacoes_tenant ON lgpd_solicitacoes (tenant_id, paciente_id, solicitado_em DESC);
 
 CREATE TABLE IF NOT EXISTS acessos_prontuario (
@@ -59,6 +68,24 @@ CREATE TABLE IF NOT EXISTS acessos_prontuario (
 );
 CREATE INDEX IF NOT EXISTS idx_acessos_prontuario_paciente ON acessos_prontuario (tenant_id, paciente_id, em DESC);
 CREATE INDEX IF NOT EXISTS idx_acessos_prontuario_em ON acessos_prontuario (tenant_id, em);
+
+-- acessos_prontuario é só de inclusão: UPDATE e TRUNCATE nunca; DELETE só no expurgo (registro com
+-- mais de 5 anos e a sessão marcada com SET odonto.expurgo_acessos = 'on') ou quando a clínica
+-- inteira é excluída (cascata a partir de tenants).
+CREATE OR REPLACE FUNCTION acessos_prontuario_somente_inclusao() RETURNS trigger AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    IF NOT EXISTS (SELECT 1 FROM tenants WHERE id = OLD.tenant_id) THEN RETURN OLD; END IF;
+    IF current_setting('odonto.expurgo_acessos', true) = 'on' AND OLD.em < NOW() - INTERVAL '5 years' THEN RETURN OLD; END IF;
+  END IF;
+  RAISE EXCEPTION 'acessos_prontuario é só de inclusão (%)', TG_OP USING ERRCODE = '42501';
+END $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_acessos_prontuario_somente_inclusao ON acessos_prontuario;
+CREATE TRIGGER trg_acessos_prontuario_somente_inclusao BEFORE UPDATE OR DELETE ON acessos_prontuario
+  FOR EACH ROW EXECUTE FUNCTION acessos_prontuario_somente_inclusao();
+DROP TRIGGER IF EXISTS trg_acessos_prontuario_sem_truncate ON acessos_prontuario;
+CREATE TRIGGER trg_acessos_prontuario_sem_truncate BEFORE TRUNCATE ON acessos_prontuario
+  FOR EACH STATEMENT EXECUTE FUNCTION acessos_prontuario_somente_inclusao();
 
 -- RLS: NÃO liga aqui. Em produção há tabelas cujo dono é o postgres, com RLS que depende do
 -- contexto da sessão (PR #32). Se estas nascerem do postgres com política, o INSERT do log de
