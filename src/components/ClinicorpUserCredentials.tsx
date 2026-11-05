@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from "react";
-import { clinicorpApi, type ClinicorpUserSettings, type ClinicorpConnectionTest, CLINICORP_WEBHOOK_URL } from "@/lib/clinicorpApi";
+import { clinicorpApi, type ClinicorpUserSettings, type ClinicorpConnectionTest, CLINICORP_WEBHOOK_URL, buildWebhookUrlWithSecret } from "@/lib/clinicorpApi";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -364,6 +364,14 @@ export function ClinicorpUserCredentials() {
                     </Button>
                   )}
                 </div>
+                {settings?.legacy_secret_deadline && (
+                  <p className="text-[11px] text-warning font-medium flex items-start gap-1.5">
+                    <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                    {new Date(settings.legacy_secret_deadline).getTime() > Date.now()
+                      ? `Este segredo é do formato antigo: gere um segredo novo até ${new Date(settings.legacy_secret_deadline).toLocaleDateString("pt-BR")}.`
+                      : `O segredo antigo deixou de valer em ${new Date(settings.legacy_secret_deadline).toLocaleDateString("pt-BR")}: gere um segredo novo.`}
+                  </p>
+                )}
                 {settings?.previous_secret_expires_at && (
                   <p className="text-[10px] text-muted-foreground">
                     O segredo anterior ainda funciona até {new Date(settings.previous_secret_expires_at).toLocaleString("pt-BR")}.
@@ -373,10 +381,25 @@ export function ClinicorpUserCredentials() {
                   <div className="mt-2 p-2 rounded border border-warning/40 bg-warning/10 space-y-1.5" role="status">
                     <p className="text-[11px] font-medium text-foreground flex items-start gap-1.5">
                       <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-warning" />
-                      Copie o segredo agora e cadastre na Clinicorp. Ele não aparece de novo: se perder, gere outro.
+                      Copie agora e cadastre na Clinicorp. A URL completa e o segredo não aparecem de novo: se perder, gere outro.
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">
+                      O painel da Clinicorp pede a URL do webhook: cole a URL completa abaixo, que já leva o segredo.
                     </p>
                     <div className="flex items-center gap-2">
-                      <code className="flex-1 text-[10px] font-mono break-all">{newSecret}</code>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[9px] text-muted-foreground font-medium uppercase mb-0.5">URL completa para a Clinicorp</p>
+                        <code className="text-[10px] font-mono break-all">{buildWebhookUrlWithSecret(newSecret)}</code>
+                      </div>
+                      <Button type="button" variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => copy(buildWebhookUrlWithSecret(newSecret), "URL")} aria-label="Copiar URL completa">
+                        <Copy className="h-3 w-3" />
+                      </Button>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[9px] text-muted-foreground font-medium uppercase mb-0.5">Só o segredo (cabeçalho x-user-api)</p>
+                        <code className="text-[10px] font-mono break-all">{newSecret}</code>
+                      </div>
                       <Button type="button" variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => copy(newSecret, "Segredo")} aria-label="Copiar segredo">
                         <Copy className="h-3 w-3" />
                       </Button>

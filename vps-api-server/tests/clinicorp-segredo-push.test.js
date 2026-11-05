@@ -64,23 +64,25 @@ describe('Clinicorp — segredo do webhook', () => {
         }
         const atual = tabela.get(userId);
         if (!atual) {
-          tabela.set(userId, { hash, prevHash: null, prevExp: null, enabled: true, plain: null });
+          tabela.set(userId, { hash, prevHash: null, prevExp: null, enabled: true, plain: null, legadoAte: null });
         } else {
-          atual.prevHash = atual.hash || (atual.plain ? sha(atual.plain) : null);
+          atual.prevHash = (atual.legadoAte == null || atual.legadoAte > agora) ? atual.hash : null;
           atual.prevExp = agora + horas * 3600_000;
           atual.hash = hash;
           atual.plain = null;
+          atual.legadoAte = null;
         }
         return { rows: [], rowCount: 1 };
       }
 
       if (/FROM clinicorp_user_settings s\s+JOIN profiles p/.test(text)) {
-        const h = params[0];
-        const achados = [...tabela.entries()].filter(([, r]) => r.enabled
-          && (r.hash === h || (r.prevHash === h && r.prevExp > agora)));
-        achados.sort((a, b) => Number(b[1].hash === h) - Number(a[1].hash === h));
-        const [uid] = achados[0] || [];
-        return { rows: uid ? [{ user_id: uid, tenant_id: tenantDe[uid], api_token: 't', subscriber_id: 's', base_url: 'x' }] : [] };
+        expect(text).toMatch(/LIMIT 2/);
+        const [h, len, minLen] = params;
+        const legadoOk = (r) => r.legadoAte != null && r.legadoAte > agora;
+        const achados = [...tabela.entries()].filter(([, r]) => r.enabled && (
+          (r.hash === h && (r.legadoAte == null || legadoOk(r)) && (len >= minLen || legadoOk(r)))
+          || (r.prevHash === h && r.prevExp > agora)));
+        return { rows: achados.slice(0, 2).map(([uid]) => ({ user_id: uid, tenant_id: tenantDe[uid], api_token: 't', subscriber_id: 's', base_url: 'x' })) };
       }
 
       if (/INSERT INTO clinicorp_webhook_events/.test(text)) return { rows: [{ id: 1 }], rowCount: 1 };
@@ -147,11 +149,58 @@ describe('Clinicorp — segredo do webhook', () => {
     expect((await webhook(novo)).status).toBe(200);
   });
 
-  test('segredo legado (em claro, sem hash) vira o anterior na primeira rotação', async () => {
-    tabela.set(adminA, { hash: null, prevHash: null, prevExp: null, enabled: true, plain: 'segredo-legado-1234567890abcd' });
+  test('segredo legado (com hash) vira o anterior na primeira rotação e o claro é apagado', async () => {
+    tabela.set(adminA, { hash: sha('segredo-legado-1234567890abcd'), prevHash: null, prevExp: null, enabled: true, plain: 'segredo-legado-1234567890abcd', legadoAte: agora + 1e9 });
     await rotacionar(adminA);
     expect(tabela.get(adminA).prevHash).toBe(sha('segredo-legado-1234567890abcd'));
     expect(tabela.get(adminA).plain).toBeNull();
+    expect(tabela.get(adminA).legadoAte).toBeNull();
+    const ins = sqlLog.find(q => /INSERT INTO clinicorp_user_settings/.test(q.text));
+    expect(ins.text).toMatch(/webhook_secret_legado_ate > NOW\(\)\s+THEN clinicorp_user_settings\.webhook_secret_hash END/);
+    expect(ins.text).toMatch(/webhook_secret_legado_ate = NULL/);
+  });
+
+  test('mesmo hash em duas linhas: 401 e log só com a contagem', async () => {
+    const segredo = 'segredo-repetido-entre-clinicas-0123456789abcdef';
+    tabela.set(adminA, { hash: sha(segredo), prevHash: null, prevExp: null, enabled: true, plain: null, legadoAte: null });
+    tabela.set(adminB, { hash: sha(segredo), prevHash: null, prevExp: null, enabled: true, plain: null, legadoAte: null });
+    console.warn.mockClear();
+    const res = await webhook(segredo);
+    expect(res.status).toBe(401);
+    expect(res.body).toEqual({ error: 'Unauthorized' });
+    expect(sqlLog.some(q => /INSERT INTO clinicorp_webhook_events/.test(q.text))).toBe(false);
+    const avisos = console.warn.mock.calls.map(c => c.join(' '));
+    expect(avisos.some(a => /2 linhas/.test(a))).toBe(true);
+    expect(avisos.some(a => a.includes(segredo) || a.includes(sha(segredo)))).toBe(false);
+  });
+
+  test('segredo legado curto vale até o prazo de 30 dias; depois, 401', async () => {
+    const legado = 'curto-legado-123';
+    tabela.set(adminA, { hash: sha(legado), prevHash: null, prevExp: null, enabled: true, plain: legado, legadoAte: agora + 30 * 86400_000 });
+    expect((await webhook(legado)).status).toBe(200);
+    agora += 31 * 86400_000;
+    expect((await webhook(legado)).status).toBe(401);
+  });
+
+  test('segredo legado longo também deixa de valer depois do prazo', async () => {
+    const legado = 'l'.repeat(60);
+    tabela.set(adminA, { hash: sha(legado), prevHash: null, prevExp: null, enabled: true, plain: legado, legadoAte: agora + 1000 });
+    expect((await webhook(legado)).status).toBe(200);
+    agora += 2000;
+    expect((await webhook(legado)).status).toBe(401);
+  });
+
+  test('segredo com menos de 43 caracteres sem prazo de legado é recusado', async () => {
+    const curto = 'curto-sem-prazo-1234';
+    tabela.set(adminA, { hash: sha(curto), prevHash: null, prevExp: null, enabled: true, plain: null, legadoAte: null });
+    expect((await webhook(curto)).status).toBe(401);
+  });
+
+  test('segredo gerado (43 caracteres) não depende do prazo de legado', async () => {
+    const novo = (await rotacionar(adminA)).body.webhook_secret;
+    expect(novo).toHaveLength(43);
+    agora += 365 * 86400_000;
+    expect((await webhook(novo)).status).toBe(200);
   });
 
   test('webhook com segredo inválido devolve 401 genérico e não grava evento', async () => {
@@ -217,7 +266,7 @@ describe('Clinicorp — segredo do webhook', () => {
     await rotacionar(adminA);
     querySpy.mockImplementation(async (sql) => {
       if (/FROM clinicorp_user_settings WHERE user_id/.test(String(sql))) {
-        return { rows: [{ enabled: true, has_webhook_secret: true, previous_secret_expires_at: null }] };
+        return { rows: [{ enabled: true, has_webhook_secret: true, previous_secret_expires_at: null, legacy_secret_deadline: '2026-12-05T00:00:00.000Z' }] };
       }
       return { rows: [], rowCount: 0 };
     });
@@ -226,6 +275,7 @@ describe('Clinicorp — segredo do webhook', () => {
     expect(res.body.has_webhook_secret).toBe(true);
     expect(res.body.webhook_secret_preview).toBe('••••••••');
     expect(res.body.can_manage).toBe(true);
+    expect(res.body.legacy_secret_deadline).toBe('2026-12-05T00:00:00.000Z');
   });
 });
 

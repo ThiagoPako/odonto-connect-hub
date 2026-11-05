@@ -15440,6 +15440,7 @@ app.get('/api/clinicorp/my-settings', async (req, res) => {
               webhook_secret_hash IS NOT NULL AS has_webhook_secret,
               CASE WHEN webhook_secret_anterior_hash IS NOT NULL AND anterior_expira_em > NOW()
                    THEN anterior_expira_em END AS previous_secret_expires_at,
+              CASE WHEN webhook_secret_hash IS NOT NULL THEN webhook_secret_legado_ate END AS legacy_secret_deadline,
               last_sync_at, last_sync_status, last_sync_error, sync_progress, updated_at
          FROM clinicorp_user_settings WHERE user_id = $1`,
       [user.id]
@@ -15458,6 +15459,8 @@ app.get('/api/clinicorp/my-settings', async (req, res) => {
       // O segredo não fica guardado em claro: a tela só mostra que existe.
       webhook_secret_preview: s.has_webhook_secret ? '••••••••' : '',
       previous_secret_expires_at: s.previous_secret_expires_at || null,
+      // Segredo antigo (escolhido à mão): vale até esta data; depois, é preciso gerar um novo.
+      legacy_secret_deadline: s.legacy_secret_deadline || null,
       can_manage: canManage,
       last_sync_at: s.last_sync_at || null,
       last_sync_status: s.last_sync_status || null,
@@ -15537,12 +15540,16 @@ app.post('/api/clinicorp/my-settings/rotate-secret', async (req, res) => {
           `INSERT INTO clinicorp_user_settings (user_id, enabled, base_url, webhook_secret_hash, updated_at)
            VALUES ($1, FALSE, $3, $2, NOW())
            ON CONFLICT (user_id) DO UPDATE SET
-             webhook_secret_anterior_hash = COALESCE(
-               clinicorp_user_settings.webhook_secret_hash,
-               CASE WHEN clinicorp_user_settings.webhook_secret <> ''
-                    THEN encode(sha256(convert_to(clinicorp_user_settings.webhook_secret, 'UTF8')), 'hex') END),
+             -- Só o hash atual vira o anterior. Segredo em claro sem hash (ex.: repetido
+             -- entre clínicas) não ganha prazo: poderia autenticar eventos de outra clínica.
+             -- Segredo legado já vencido também não volta a valer.
+             webhook_secret_anterior_hash = CASE
+               WHEN clinicorp_user_settings.webhook_secret_legado_ate IS NULL
+                 OR clinicorp_user_settings.webhook_secret_legado_ate > NOW()
+               THEN clinicorp_user_settings.webhook_secret_hash END,
              anterior_expira_em = NOW() + make_interval(hours => $4::int),
              webhook_secret_hash = EXCLUDED.webhook_secret_hash,
+             webhook_secret_legado_ate = NULL,
              webhook_secret = NULL,
              updated_at = NOW()`,
           [user.id, hashWebhookSecret(secret), CLINICORP_DEFAULT_BASE_URL, WEBHOOK_SECRET_GRACE_HOURS]

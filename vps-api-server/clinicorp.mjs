@@ -2224,6 +2224,12 @@ export function generateWebhookSecret() {
 // para dar tempo de atualizar o painel da Clinicorp.
 export const WEBHOOK_SECRET_GRACE_HOURS = 24;
 
+// Segredo legado (escolhido pelo usuário antes desta versão): aceito por este prazo
+// a partir da migração; depois, só segredo gerado pelo servidor.
+export const WEBHOOK_LEGACY_GRACE_DAYS = 30;
+// Tamanho do segredo gerado (32 bytes em base64url).
+export const WEBHOOK_SECRET_MIN_LENGTH = 43;
+
 // ─── Express routes ───────────────────────────────────────────
 export function registerClinicorp(app, pool, { verifyUser } = {}) {
   // Colunas usadas pela integração na VPS (idempotente; antes ficavam só no
@@ -2239,9 +2245,22 @@ export function registerClinicorp(app, pool, { verifyUser } = {}) {
       `ALTER TABLE clinicorp_user_settings ADD COLUMN IF NOT EXISTS webhook_secret_hash TEXT`,
       `ALTER TABLE clinicorp_user_settings ADD COLUMN IF NOT EXISTS webhook_secret_anterior_hash TEXT`,
       `ALTER TABLE clinicorp_user_settings ADD COLUMN IF NOT EXISTS anterior_expira_em TIMESTAMPTZ`,
+      `ALTER TABLE clinicorp_user_settings ADD COLUMN IF NOT EXISTS webhook_secret_legado_ate TIMESTAMPTZ`,
       `UPDATE clinicorp_user_settings
           SET webhook_secret_hash = encode(sha256(convert_to(webhook_secret, 'UTF8')), 'hex')
-        WHERE webhook_secret_hash IS NULL AND webhook_secret IS NOT NULL AND webhook_secret <> ''`,
+        WHERE webhook_secret_hash IS NULL AND webhook_secret IS NOT NULL AND webhook_secret <> ''
+          AND webhook_secret IN (
+            SELECT webhook_secret FROM clinicorp_user_settings
+             WHERE webhook_secret IS NOT NULL AND webhook_secret <> ''
+             GROUP BY webhook_secret HAVING COUNT(*) = 1)`,
+      `UPDATE clinicorp_user_settings
+          SET webhook_secret_legado_ate = NOW() + make_interval(days => ${WEBHOOK_LEGACY_GRACE_DAYS})
+        WHERE webhook_secret_legado_ate IS NULL AND webhook_secret IS NOT NULL AND webhook_secret <> ''
+          AND webhook_secret_hash = encode(sha256(convert_to(webhook_secret, 'UTF8')), 'hex')`,
+      `UPDATE clinicorp_user_settings SET webhook_secret_hash = NULL
+        WHERE webhook_secret_hash IN (
+          SELECT webhook_secret_hash FROM clinicorp_user_settings
+           WHERE webhook_secret_hash IS NOT NULL GROUP BY webhook_secret_hash HAVING COUNT(*) > 1)`,
       `CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS uq_clinicorp_user_settings_webhook_secret_hash
          ON clinicorp_user_settings (webhook_secret_hash) WHERE webhook_secret_hash IS NOT NULL`,
     ]) {
@@ -2274,18 +2293,26 @@ export function registerClinicorp(app, pool, { verifyUser } = {}) {
       }
 
       // Compara o hash do segredo recebido com o atual ou com o anterior ainda válido.
+      // Segredo atual legado (escolhido pelo usuário) só vale até webhook_secret_legado_ate;
+      // fora disso, só segredo do tamanho do gerado pelo servidor.
       const secretHash = hashWebhookSecret(userApi);
       const { rows } = await pool.query(
         `SELECT s.user_id, s.api_token, s.subscriber_id, s.base_url, p.tenant_id
          FROM clinicorp_user_settings s
          JOIN profiles p ON p.id = s.user_id
          WHERE s.enabled = true
-           AND (s.webhook_secret_hash = $1
+           AND ((s.webhook_secret_hash = $1
+                 AND (s.webhook_secret_legado_ate IS NULL OR s.webhook_secret_legado_ate > NOW())
+                 AND ($2::int >= $3::int OR s.webhook_secret_legado_ate > NOW()))
                 OR (s.webhook_secret_anterior_hash = $1 AND s.anterior_expira_em > NOW()))
-         ORDER BY (s.webhook_secret_hash = $1) DESC
-         LIMIT 1`,
-        [secretHash]
+         LIMIT 2`,
+        [secretHash, userApi.length, WEBHOOK_SECRET_MIN_LENGTH]
       );
+      // Mais de uma linha com o mesmo segredo: não dá para saber a clínica. Recusa.
+      if (rows.length > 1) {
+        console.warn(`[clinicorp webhook] segredo ambíguo: ${rows.length} linhas; recusado`);
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
       const settings = rows[0];
 
       if (!settings || !settings.tenant_id) {

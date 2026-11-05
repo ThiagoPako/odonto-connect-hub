@@ -69,6 +69,8 @@ export interface ClinicorpUserSettings {
   webhook_secret_preview: string;
   /** Até quando o segredo anterior ainda é aceito (após gerar um novo). */
   previous_secret_expires_at?: string | null;
+  /** Segredo antigo (escolhido à mão): aceito só até esta data. */
+  legacy_secret_deadline?: string | null;
   /** Admin da clínica: pode salvar, remover e gerar segredo. */
   can_manage?: boolean;
   last_sync_at: string | null;
@@ -301,3 +303,8 @@ export interface ClinicorpConnectionTest {
 
 /** URL do webhook, sem o segredo (o segredo vai no header x-user-api). */
 export const CLINICORP_WEBHOOK_URL = WEBHOOK_BASE;
+
+/** URL completa com o segredo: o painel da Clinicorp pede a URL. Mostrada só ao gerar. */
+export function buildWebhookUrlWithSecret(secret: string): string {
+  return `${WEBHOOK_BASE}?user_api=${encodeURIComponent(secret)}`;
+}
