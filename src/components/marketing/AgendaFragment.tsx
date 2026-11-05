@@ -22,8 +22,8 @@ const ROTULO: Record<Status, string> = {
 const ESTILO: Record<Status, string> = {
   agendado: "bg-muted text-muted-foreground",
   confirmado: "bg-accent text-accent-foreground",
-  atendimento: "bg-warning/15 text-[hsl(30,80%,28%)] dark:text-warning",
-  finalizado: "bg-success/12 text-[hsl(152,60%,26%)] dark:text-success",
+  atendimento: "bg-warning/15 text-warning-text",
+  finalizado: "bg-success/12 text-success",
 };
 
 interface Consulta {
@@ -98,7 +98,7 @@ export function AgendaFragment({ compact = false, className = "" }: { compact?: 
 
   const LinhaAgora = () => (
     <li aria-hidden="true" className="flex items-center gap-2 px-4 py-0.5">
-      <span className="text-[11px] font-semibold tabular-nums text-destructive w-11">{horaAgora}</span>
+      <span className="text-xs font-semibold tabular-nums text-destructive w-11">{horaAgora}</span>
       <span className="h-0.5 flex-1 rounded-full bg-destructive/70" />
     </li>
   );
@@ -110,22 +110,22 @@ export function AgendaFragment({ compact = false, className = "" }: { compact?: 
     >
       <div className="flex items-start justify-between gap-4 px-4 pt-4 pb-3 border-b border-border">
         <div className="min-w-0">
-          <p className="text-[15px] font-semibold leading-tight">Agenda</p>
-          <p className="text-[13px] text-muted-foreground first-letter:uppercase truncate">{hoje}</p>
+          <p className="text-[0.9375rem] font-semibold leading-tight">Agenda</p>
+          <p className="text-[0.8125rem] text-muted-foreground first-letter:uppercase truncate">{hoje}</p>
         </div>
         <div className="flex gap-4 text-right shrink-0" aria-live="polite">
           <div>
             <p className="text-lg font-semibold leading-none tabular-nums">{resumo.total}</p>
-            <p className="text-[11px] text-muted-foreground mt-1">consultas</p>
+            <p className="text-xs text-muted-foreground mt-1">consultas</p>
           </div>
           <div>
             <p className="text-lg font-semibold leading-none tabular-nums text-primary">{resumo.confirmadas}</p>
-            <p className="text-[11px] text-muted-foreground mt-1">confirmadas</p>
+            <p className="text-xs text-muted-foreground mt-1">confirmadas</p>
           </div>
           {!compact && (
             <div>
               <p className="text-lg font-semibold leading-none tabular-nums">{resumo.finalizadas}</p>
-              <p className="text-[11px] text-muted-foreground mt-1">finalizadas</p>
+              <p className="text-xs text-muted-foreground mt-1">finalizadas</p>
             </div>
           )}
         </div>
@@ -144,17 +144,17 @@ export function AgendaFragment({ compact = false, className = "" }: { compact?: 
                   className="group w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-muted/70 focus-visible:bg-muted/70 transition-colors"
                   aria-label={`${c.hora}, ${c.paciente}, ${ROTULO[c.status]}. Clique para avançar o status.`}
                 >
-                  <span className="text-[13px] font-medium tabular-nums text-muted-foreground w-11 shrink-0">{c.hora}</span>
+                  <span className="text-[0.8125rem] font-medium tabular-nums text-muted-foreground w-11 shrink-0">{c.hora}</span>
                   <span className="flex-1 min-w-0">
-                    <span className="block text-[14px] font-medium leading-tight truncate">{c.paciente}</span>
-                    <span className="block text-[12px] text-muted-foreground leading-tight truncate mt-0.5">
+                    <span className="block text-[0.875rem] font-medium leading-tight truncate">{c.paciente}</span>
+                    <span className="block text-xs text-muted-foreground leading-tight truncate mt-0.5">
                       {c.procedimento} · {c.dentista}
                     </span>
                   </span>
                   {c.viaWhatsApp && c.status === "confirmado" && !compact && (
                     <MessageCircle className="hidden sm:block h-3.5 w-3.5 text-success shrink-0" aria-label="Confirmado pelo WhatsApp" />
                   )}
-                  <span className={`inline-flex items-center gap-1 h-6 px-2 rounded text-[11px] font-semibold shrink-0 ${ESTILO[c.status]}`}>
+                  <span className={`inline-flex items-center gap-1 min-h-6 py-0.5 px-2 rounded text-xs font-semibold shrink-0 ${ESTILO[c.status]}`}>
                     {c.status === "finalizado" && <Check className="h-3 w-3" aria-hidden="true" />}
                     {ROTULO[c.status]}
                   </span>
@@ -167,7 +167,7 @@ export function AgendaFragment({ compact = false, className = "" }: { compact?: 
       </ul>
 
       {!compact && (
-        <p className="px-4 py-2.5 border-t border-border text-[12px] text-muted-foreground">
+        <p className="px-4 py-2.5 border-t border-border text-xs text-muted-foreground">
           Toque numa consulta para mudar o status · pacientes de exemplo
         </p>
       )}

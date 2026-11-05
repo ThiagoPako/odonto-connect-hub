@@ -7,11 +7,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { Loader2 } from "lucide-react";
+import { Loader2, AlertCircle } from "lucide-react";
 import { TERMOS_VERSAO, POLITICA_VERSAO } from "@/lib/legal";
 
 export const Route = createFileRoute("/signup")({
   ssr: false,
+  head: () => ({ meta: [{ title: "Cadastre sua clínica · Odonto Connect" }] }),
   validateSearch: (search: Record<string, unknown>): { plan?: string } => ({
     plan: typeof search.plan === "string" ? search.plan : undefined,
   }),
@@ -26,6 +27,8 @@ function SignupPage() {
   const { plan } = Route.useSearch();
   const { refreshUser } = useAuth();
   const [loading, setLoading] = useState(false);
+  // Erros mostrados junto do campo (mesmas regras de antes; o toast ficava longe do campo)
+  const [errors, setErrors] = useState<{ nome?: string; email?: string; password?: string; form?: string }>({});
   const [form, setForm] = useState({
     nome: "",
     clinic_name: "",
@@ -35,12 +38,15 @@ function SignupPage() {
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!form.email || form.password.length < 8) {
-      toast.error("Preencha o email e uma senha de no mínimo 8 caracteres");
-      return;
-    }
-    if (!form.nome.trim()) {
-      toast.error("Informe seu nome");
+    const novos: typeof errors = {};
+    if (!form.nome.trim()) novos.nome = "Informe seu nome.";
+    if (!form.email) novos.email = "Informe seu e-mail.";
+    else if (!/^\S+@\S+\.\S+$/.test(form.email)) novos.email = "Confira o e-mail: falta o @ ou o domínio.";
+    if (form.password.length < 8) novos.password = "A senha precisa ter no mínimo 8 caracteres.";
+    setErrors(novos);
+    if (Object.keys(novos).length) {
+      const primeiro = (["nome", "email", "password"] as const).find((k) => novos[k]);
+      if (primeiro) document.getElementById(primeiro)?.focus();
       return;
     }
 
@@ -56,7 +62,7 @@ function SignupPage() {
     });
     if (error) {
       setLoading(false);
-      toast.error(error);
+      setErrors({ form: error });
       return;
     }
 
@@ -68,6 +74,16 @@ function SignupPage() {
   };
 
   const field = "h-11";
+  const erro = (id: string, msg?: string) =>
+    msg ? (
+      <p id={id} className="flex items-start gap-1.5 text-sm text-destructive">
+        <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" aria-hidden="true" /> {msg}
+      </p>
+    ) : null;
+  const invalid = (k: keyof typeof errors) => ({
+    "aria-invalid": errors[k] ? true : undefined,
+    "aria-describedby": errors[k] ? `${k}-erro` : undefined,
+  });
 
   return (
     <AuthShell
@@ -85,7 +101,13 @@ function SignupPage() {
         </p>
       }
     >
-      <form onSubmit={submit} className="space-y-5">
+      <form onSubmit={submit} className="space-y-5" noValidate>
+        {errors.form && (
+          <div role="alert" className="flex gap-2 rounded-md bg-destructive/10 px-3.5 py-3 text-sm text-foreground">
+            <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-destructive" aria-hidden="true" />
+            <span>{errors.form}</span>
+          </div>
+        )}
         <div className="space-y-2">
           <Label htmlFor="nome">Seu nome completo</Label>
           <Input
@@ -96,7 +118,9 @@ function SignupPage() {
             required
             autoComplete="name"
             className={field}
+            {...invalid("nome")}
           />
+          {erro("nome-erro", errors.nome)}
         </div>
         <div className="space-y-2">
           <Label htmlFor="clinic_name">
@@ -122,7 +146,9 @@ function SignupPage() {
             required
             autoComplete="email"
             className={field}
+            {...invalid("email")}
           />
+          {erro("email-erro", errors.email)}
         </div>
         <div className="space-y-2">
           <Label htmlFor="password">Senha</Label>
@@ -135,13 +161,15 @@ function SignupPage() {
             required
             autoComplete="new-password"
             className={field}
+            {...invalid("password")}
           />
+          {erro("password-erro", errors.password)}
         </div>
-        <Button type="submit" disabled={loading} className="w-full h-11 text-[15px]">
-          {loading && <Loader2 className="h-4 w-4 animate-spin" />}
-          Criar conta
+        <Button type="submit" disabled={loading} aria-busy={loading || undefined} className="w-full h-11 text-[0.9375rem]">
+          {loading && <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />}
+          {loading ? "Criando conta…" : "Criar conta"}
         </Button>
-        <p className="text-[13px] leading-relaxed text-muted-foreground">
+        <p className="text-[0.8125rem] leading-relaxed text-muted-foreground">
           Ao criar a conta, você concorda com os{" "}
           <Link to="/termos" target="_blank" className="text-primary underline underline-offset-4">Termos de Uso</Link> e a{" "}
           <Link to="/privacidade" target="_blank" className="text-primary underline underline-offset-4">Política de Privacidade</Link>.

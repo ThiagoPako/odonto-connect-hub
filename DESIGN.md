@@ -61,11 +61,18 @@ Tinta azul-marinho do logotipo + ciano-petróleo para ação. Uma cor de ação 
 | Realce suave | `--accent` / `--accent-foreground` | `hsl(187 60% 94%)` / `hsl(189 88% 24%)` · 6,3:1 | | item ativo, selo "Confirmado" |
 | Ciano da marca | `--dental-cyan` | `hsl(187 85% 43%)` | | **só** decoração grande e gráficos; nunca texto pequeno sobre branco |
 | Palco | `--stage` / `--stage-foreground` / `--stage-muted` | `hsl(238 49% 12%)` (= fundo do símbolo) | `hsl(222 40% 7%)` | faixa escura da landing, painel do login |
-| Estados | `--success`, `--warning`, `--destructive`, `--info` | inalterados | | só para estado, nunca decoração |
+| Sucesso | `--success` | `hsl(152 70% 27%)` · 5,7:1 c/ branco | `hsl(152 60% 48%)` + texto azul-marinho | confirmado, pago, ganho |
+| Aviso | `--warning` / `--warning-foreground` / `--warning-text` | fundo `hsl(38 92% 50%)`; texto sobre ele `hsl(30 30% 15%)`; texto/ícone sobre o cartão `hsl(30 95% 32%)` | `hsl(38 92% 55%)` | pendente, falta, sem resposta |
+| Erro | `--destructive` | `hsl(0 72% 45%)` · 5,8:1 c/ branco | `hsl(0 85% 65%)` + texto azul-marinho · 5,4:1 | erro real, perda, excluir |
+| Informação | `--info` | `hsl(217 91% 45%)` · 6,0:1 | `hsl(217 91% 65%)` + texto azul-marinho | aviso neutro |
+| Borda de campo | `--input` | `hsl(215 14% 55%)` · 3,5:1 | `hsl(220 14% 45%)` · 3,2:1 | campos e botão contornado (WCAG 1.4.11) |
+| Divisória | `--border` | `hsl(210 16% 90%)` | `hsl(220 14% 22%)` | cartões, separadores (decorativa) |
 
 Regras:
-- Sem degradê, sem brilho, sem vidro. Superfícies separadas por um passo de tom ou uma borda de 1 px
-  dentro do app; na landing, por troca do fundo da seção.
+- Sem degradê e sem brilho. Vidro (`.surface-glass`) **só** em cabeçalhos fixos sobre conteúdo que
+  rola; o resto é opaco. Superfícies separadas por um passo de tom ou uma borda de 1 px dentro do
+  app; na landing, por troca do fundo da seção.
+- `@media (prefers-contrast: more)` escurece texto de apoio, bordas e a cor de ação (claro e escuro).
 - Sombra só no que flutua: menu, diálogo, gaveta, trilho da sidebar aberto por hover.
 - Texto corrido na tinta cheia; cinza só para o que é secundário.
 
@@ -109,12 +116,13 @@ espaçada); sem rótulo pequeno acima do título.
 
 | Componente | Arquivo | Regras |
 |---|---|---|
-| Botões, campos, diálogos | `src/components/ui/*` (shadcn) | Não editar o visual tela a tela; mudar por token. Campos de formulário em telas de entrada: `h-11`. |
-| `KpiCard` | `src/components/KpiCard.tsx` | Superfície chapada com borda; rótulo em caixa normal 13 px que quebra linha; ícone 16 px sem fundo; valor 24 px tabular. |
+| Botões, campos, diálogos | `src/components/ui/*` (shadcn) | Não editar o visual tela a tela; mudar por token. Foco: anel de 2 px com folga de 2 px. Sem sombra em repouso. Pressão: desce 1 px. Campo com `aria-invalid` ganha borda de erro. Campos de formulário em telas de entrada: `h-11`. |
+| `KpiCard` | `src/components/KpiCard.tsx` | Superfície chapada com borda; rótulo em caixa normal 13 px que quebra linha; ícone 16 px **neutro** (cor só para estado); valor 24 px tabular. `changeType`: `positive` · `negative` (erro/perda real) · `warning` (pede atenção) · `neutral`. `loading` mostra esqueleto na primeira carga. |
 | Sidebar | `src/components/AppSidebar.tsx` | Computador: trilho de 64 px; ao passar o mouse abre 248 px **por cima** do conteúdo; botão de fixar. Celular (< 768 px): barra de 56 px com botão "Abrir menu" e gaveta (Sheet) de 288 px que fecha ao trocar de página. Item ativo: fundo `--sidebar-accent`, `aria-current="page"`. Seções: rótulo 12 px em caixa normal. |
-| Cabeçalho | `src/components/DashboardHeader.tsx` | 64 px (56 no celular). Título 18 px + data no computador. Busca larga só a partir de 1024 px; abaixo disso, ícone. Avatar leva a `/perfil`. |
+| Cabeçalho | `src/components/DashboardHeader.tsx` | 64 px (56 no celular), material translúcido. Título 18 px + data no computador. Busca larga só a partir de 1024 px; abaixo, ícone de 44 px. Avatar (44 px no celular) leva a `/perfil`. Sem sino até existir a central de notificações. |
 | Moldura de entrada | `src/components/auth/AuthShell.tsx` | Login, cadastro, recuperar senha. Formulário à esquerda (máx. 400 px); palco azul-marinho com a agenda à direita a partir de 1024 px. |
 | Agenda de exemplo | `src/components/marketing/AgendaFragment.tsx` | Fragmento de interface (`data-ui`), pacientes de exemplo, linha "agora" em America/Sao_Paulo, status avança ao clique. |
+| Tema | `src/hooks/useTheme.ts` | Preferência **Sistema → Claro → Escuro** (padrão: sistema, acompanha a troca do aparelho ao vivo). Botão na sidebar com ícone e rótulo do estado. |
 | Tema claro forçado | `src/hooks/useForceLightTheme.ts` | Landing e telas de entrada ficam sempre claras (o logotipo tem texto azul-marinho). O tema do usuário volta ao entrar no app. |
 
 Utilitários antigos mantidos por compatibilidade (agora chapados): `.gradient-primary` = fundo
@@ -139,13 +147,44 @@ Odontológica sobre publicidade). Para religar: mudar para `true`.
 
 ---
 
-## 8. Pendências (para depois)
+## 8. Princípios (inspirados no Apple HIG)
+
+Estudamos as [Human Interface Guidelines](https://developer.apple.com/design/human-interface-guidelines/)
+(páginas Layout, Typography, Color, Dark Mode, Materials, Motion, Accessibility, Feedback, Loading,
+Buttons) e **adaptamos os princípios**, não a aparência. Não usamos SF Pro nem SF Symbols (licença só
+para plataformas Apple), nem logos ou imagens da Apple: as fontes continuam Inter e Space Grotesk e
+os ícones, lucide. Os valores em pt do HIG são de cada aparelho Apple; os números abaixo são a nossa
+tradução para web.
+
+| Princípio | Como vira regra/token aqui | Onde já está aplicado |
+|---|---|---|
+| **Clareza e hierarquia: conteúdo primeiro, cromo discreto** | Ordem de leitura: título → resumo/ação principal → conteúdo. Cromo (sidebar, cabeçalho) neutro; `--primary` só na ação principal, no link, no foco e no item ativo. Ícones decorativos em `--muted-foreground`. | Ícones do KpiCard, títulos de seção e cabeçalho viraram neutros; o "Convidar" da landing virou contornado (um botão cheio por área). |
+| **Tipografia com escala e pesos consistentes** | Tamanhos em **rem** (o `body` passou de `14px` para `0.875rem`). Mínimo de 12 px (`text-xs`); nada de 10–11 px. Pesos 400/500/600/700, nunca fino. Duas famílias. Hierarquia por tamanho, peso e cor (`foreground` → `muted-foreground`). | `styles.css`, sidebar (selos 10–11 px → 12 px), fragmento da agenda, todos os `text-[Npx]` das telas viraram rem. |
+| **Texto ampliável (Dynamic Type → rem)** | Respeitar a fonte e o zoom do navegador: rem em texto, `min-h-*` em vez de altura fixa em selos, quebra de linha em vez de cortar nome/valor. Testar com 200%. | Selos `min-h-6`, KpiCard com `break-words`. |
+| **Grade de 4/8 px** | Escala do Tailwind (4 px). Dentro de componente, passos de 4; entre blocos e seções, múltiplos de 8. Espaço entre grupos ≥ 2× o espaço dentro do grupo. | Dashboard: `gap-3/4` nos cartões, `space-y-8/10` entre seções. |
+| **Áreas de toque ≥ 44 px** | Em tela de toque: `size-11`/`h-11` (44 px) em botões, campos e itens de menu; no computador, denso a partir de 36 px (`md:h-9`). Ações vizinhas com `gap-2`+. | Itens da gaveta do celular `h-11`, botões do rodapé da sidebar, busca/avatar do cabeçalho, "Esqueci minha senha", mostrar senha, campos `h-11`, botões da barra da landing. |
+| **Cantos e profundidade sutis** | Raios concêntricos: selo 4–6 px, botão/campo 8 px, cartão 10 px. Profundidade por camadas de tom; sombra só no que flutua. No escuro, elevação pela claridade: fundo 10% → cartão 13% → popover 16%. | Botões do shadcn sem sombra em repouso; `--popover` do escuro mais claro. |
+| **Vidro com moderação** | Um utilitário, `.surface-glass` (85% do fundo + blur 12 px), **só** em cabeçalhos fixos. Nunca em cartões, nunca vidro sobre vidro. Fica opaco com `prefers-reduced-transparency` ou `prefers-contrast: more`. | Barra da landing e cabeçalho das telas internas. |
+| **Cor com propósito** | Uma cor de destaque (`--primary`). Cores semânticas só para estado, sempre com texto ou ícone junto (nunca só cor). Todas passam AA: texto ≥ 4,5:1, borda de campo e ícone informativo ≥ 3:1. | `--success`, `--destructive`, `--info` e `--input` corrigidos (antes 2,9:1, 3,9:1, 3,6:1 e 1,5:1). Dashboard: "Reprovados" e "Pacientes ativos" não pintam mais sem dado; faltas/sem resposta/inativos usam **aviso**, não erro. |
+| **Modo escuro de verdade** | Tokens próprios no escuro (nada de inverter), `color-scheme` declarado, texto de apoio ≥ 7:1 no cartão, texto escuro sobre cores claras de estado. Padrão: **seguir o sistema**. | `useTheme` com Sistema/Claro/Escuro; variante `dark:` corrigida (`:where(.dark, .dark *)`). |
+| **Movimento curto e funcional** | Só `transform` e `opacity`; 120–200 ms em interação, ≤ 300 ms em painel. Nada de cascata em telas abertas várias vezes por dia. `prefers-reduced-motion` zera duração **e atraso** (senão o conteúdo ficava invisível). Spinner para com movimento reduzido. | Dashboard sem cascata de entrada; regra global corrigida; landing mantém a entrada só na primeira dobra. |
+| **Acessibilidade** | Foco visível em tudo (anel de 2 px + folga). Erro ligado ao campo (`aria-invalid` + `aria-describedby`) e anunciado (`role="alert"`). `aria-busy` em botão carregando. Título de aba por tela. Rótulo em todo botão de ícone. `prefers-contrast: more`. | `button`, `input`, login, cadastro, dashboard (`head` com título), sidebar (rótulo do tema diz o estado e o próximo). |
+| **Feedback imediato** | Pressão: botão desce 1 px. Carregando: esqueleto com a forma do conteúdo (nunca "0" falso). Rótulo do botão diz o que está acontecendo ("Entrando…", "Criando conta…"). Erro perto do campo, em pt-BR, com saída ("Tentar de novo"). Sem controle morto. | KpiCard com esqueleto; erro do dashboard com "Tentar de novo"; cadastro com erro por campo (antes: toast no canto); sino sem função removido. |
+| **Consistência de componentes** | Um só jeito para cada coisa: botão do shadcn, `KpiCard`, `SectionHeader`, `AuthShell`, `.surface-glass`. Telas novas usam estes, não estilos soltos. | — |
+
+Regras que **não** trazemos da Apple para a web: Liquid Glass e efeitos de borda de rolagem, extensão
+de fundo por espelhamento, classes de tamanho por aparelho (usamos breakpoints), áreas seguras de
+hardware (só `env(safe-area-inset-*)` se virar PWA), SF Pro/SF Symbols.
+
+## 9. Pendências (para depois)
 
 1. **115 cores quebradas** `hsl(var(--x) / a)` em `.tsx` (A4). Trocar por `color-mix(in srgb, var(--color-x) N%, transparent)`
    ou pela classe Tailwind `bg-primary/20`. Arquivos de chat, agenda, disparos, campanhas — combinar com as frentes donas.
 2. **Teste grátis de 7 × 14 dias** (landing × cadastro) — decisão da Helena/dono; marcado no código com ⚠️.
 3. Número do WhatsApp do consultor `5511999990001` parece provisório (`WHATSAPP_CONSULTOR` em `index.tsx`).
-4. Botão de notificações no cabeçalho não faz nada.
+4. Central de notificações (o sino saiu do cabeçalho porque não fazia nada).
 5. Gráficos do dashboard (`src/components/charts/*`) ainda com o visual antigo; "Faturamento mensal" mostra R$ 0 com a API de teste.
 6. Telas mais usadas (agenda, chat, pacientes, atendimento) — próxima rodada, com as frentes donas.
 7. Imagens reais do mundo da clínica (além da foto do fundador) na landing — hoje só fragmentos de interface.
+8. Levar os princípios do HIG às telas das outras frentes: botões de ação a 44 px no celular, erros por campo, esqueleto no lugar de "0" e cores de estado com texto/ícone (agenda, pacientes, chat, financeiro).
+9. Escala tipográfica como tokens no `@theme` (`caption`, `footnote`, `title-1…3`) para trocar os `text-[…rem]` soltos.

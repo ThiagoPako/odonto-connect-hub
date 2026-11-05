@@ -1,7 +1,7 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
-@custom-variant dark (&:is(.dark *));
+@custom-variant dark (&:where(.dark, .dark *));
 
 @theme inline {
   --radius-sm: calc(var(--radius) - 4px);
@@ -48,6 +48,7 @@
   --color-success-foreground: var(--success-foreground);
   --color-warning: var(--warning);
   --color-warning-foreground: var(--warning-foreground);
+  --color-warning-text: var(--warning-text);
   --color-info: var(--info);
   --color-info-foreground: var(--info-foreground);
   --color-dental-cyan: var(--dental-cyan);
@@ -70,6 +71,7 @@
 
 :root {
   --radius: 0.625rem;
+  color-scheme: light;
   /* Marca: tinta azul-marinho do logotipo + ciano-petróleo para ação.
      --primary passa AA (5,2:1) com texto branco; o ciano claro da marca
      (--dental-cyan) fica só para destaque grande e gráficos. Ver DESIGN.md. */
@@ -88,27 +90,29 @@
   --muted-foreground: hsl(215, 14%, 40%);
   --accent: hsl(187, 60%, 94%);
   --accent-foreground: hsl(189, 88%, 24%);
-  --destructive: hsl(0, 72%, 51%);
+  --destructive: hsl(0, 72%, 45%);
   --destructive-foreground: hsl(0, 0%, 100%);
   --border: hsl(210, 16%, 90%);
-  --input: hsl(210, 14%, 84%);
+  /* Borda de campo e botão contornado: ≥ 3:1 (WCAG 1.4.11). --border fica para divisórias. */
+  --input: hsl(215, 14%, 55%);
   --ring: hsl(189, 88%, 29%);
   /* Superfícies extras: palco escuro da landing e fundo de tela de entrada */
   --stage: hsl(238, 49%, 12%); /* = fundo do símbolo do logotipo */
   --stage-foreground: hsl(200, 20%, 96%);
   --stage-muted: hsl(215, 20%, 72%);
-  --success: hsl(152, 60%, 42%);
+  --success: hsl(152, 70%, 27%);
   --success-foreground: hsl(0, 0%, 100%);
   --warning: hsl(38, 92%, 50%);
   --warning-foreground: hsl(30, 30%, 15%);
-  --info: hsl(217, 91%, 60%);
+  --warning-text: hsl(30, 95%, 32%); /* aviso como texto/ícone sobre fundo claro */
+  --info: hsl(217, 91%, 45%);
   --info-foreground: hsl(0, 0%, 100%);
   --dental-cyan: hsl(187, 85%, 43%);
   --chart-1: hsl(189, 88%, 33%);
-  --chart-2: hsl(217, 91%, 60%);
-  --chart-3: hsl(152, 60%, 42%);
+  --chart-2: hsl(217, 91%, 45%);
+  --chart-3: hsl(152, 70%, 27%);
   --chart-4: hsl(38, 92%, 50%);
-  --chart-5: hsl(0, 72%, 51%);
+  --chart-5: hsl(0, 72%, 45%);
   /* Sidebar — white bg, cyan accent */
   --sidebar: hsl(0, 0%, 100%);
   --sidebar-foreground: hsl(222, 30%, 22%);
@@ -120,12 +124,15 @@
   --sidebar-ring: hsl(189, 88%, 29%);
 }
 
+
 .dark {
+  color-scheme: dark;
   --background: hsl(220, 20%, 10%);
   --foreground: hsl(220, 10%, 95%);
   --card: hsl(220, 20%, 13%);
   --card-foreground: hsl(220, 10%, 95%);
-  --popover: hsl(220, 20%, 13%);
+  /* Elevação no escuro pela claridade: fundo 10% → cartão 13% → popover/menu 16% */
+  --popover: hsl(220, 18%, 16%);
   --popover-foreground: hsl(220, 10%, 95%);
   --primary: hsl(187, 80%, 52%);
   --primary-foreground: hsl(222, 47%, 11%);
@@ -133,29 +140,30 @@
   --secondary: hsl(220, 18%, 16%);
   --secondary-foreground: hsl(220, 10%, 95%);
   --muted: hsl(220, 16%, 16%);
-  --muted-foreground: hsl(215, 14%, 65%);
+  --muted-foreground: hsl(215, 16%, 72%);
   --accent: hsl(187, 60%, 12%);
   --accent-foreground: hsl(187, 85%, 70%);
-  --destructive: hsl(0, 72%, 55%);
-  --destructive-foreground: hsl(0, 0%, 100%);
-  --border: hsl(220, 16%, 20%);
-  --input: hsl(220, 16%, 20%);
+  --destructive: hsl(0, 85%, 65%);
+  --destructive-foreground: hsl(222, 47%, 11%);
+  --border: hsl(220, 14%, 22%);
+  --input: hsl(220, 14%, 45%);
   --ring: hsl(187, 80%, 52%);
   --stage: hsl(222, 40%, 7%);
   --stage-foreground: hsl(200, 20%, 96%);
   --stage-muted: hsl(215, 20%, 72%);
   --success: hsl(152, 60%, 48%);
-  --success-foreground: hsl(0, 0%, 100%);
+  --success-foreground: hsl(222, 47%, 11%);
   --warning: hsl(38, 92%, 55%);
   --warning-foreground: hsl(30, 30%, 10%);
+  --warning-text: hsl(38, 92%, 55%);
   --info: hsl(217, 91%, 65%);
-  --info-foreground: hsl(0, 0%, 100%);
+  --info-foreground: hsl(222, 47%, 11%);
   --dental-cyan: hsl(190, 70%, 50%);
   --chart-1: hsl(187, 85%, 48%);
   --chart-2: hsl(217, 91%, 65%);
   --chart-3: hsl(152, 60%, 48%);
   --chart-4: hsl(38, 92%, 55%);
-  --chart-5: hsl(0, 72%, 55%);
+  --chart-5: hsl(0, 85%, 65%);
   --sidebar: hsl(220, 20%, 8%);
   --sidebar-foreground: hsl(220, 10%, 90%);
   --sidebar-primary: hsl(187, 80%, 52%);
@@ -166,6 +174,22 @@
   --sidebar-ring: hsl(187, 80%, 52%);
 }
 
+/* Mais contraste pedido pelo sistema (Acessibilidade → Aumentar contraste) */
+@media (prefers-contrast: more) {
+  :root {
+    --muted-foreground: hsl(215, 18%, 30%);
+    --border: hsl(210, 12%, 70%);
+    --input: hsl(215, 14%, 40%);
+    --primary: hsl(189, 90%, 24%);
+    --ring: hsl(189, 90%, 24%);
+  }
+  .dark {
+    --muted-foreground: hsl(215, 16%, 82%);
+    --border: hsl(220, 12%, 40%);
+    --input: hsl(220, 12%, 62%);
+  }
+}
+
 @layer base {
   * {
     border-color: var(--color-border);
@@ -173,18 +197,17 @@
   html {
     scroll-behavior: smooth;
   }
-  /* A transição de tema fica só no fundo da página. Antes valia para todo
-     elemento (html *), o que atrasava em 300 ms cada hover e cada troca de estado. */
-  body {
-    transition: background-color 0.2s ease, color 0.2s ease;
-  }
+  /* Sem transição de tema: antes valia para todo elemento (html *) e atrasava em
+     300 ms cada hover; a troca claro/escuro agora é instantânea. */
   :focus-visible {
     outline: 2px solid var(--color-ring);
     outline-offset: 2px;
   }
   @media (prefers-reduced-motion: reduce) {
-    html { scroll-behavior: auto; }
+    html { scroll-behavior: auto !important; }
     *, *::before, *::after {
+      animation-delay: 0s !important;
+      transition-delay: 0s !important;
       animation-duration: 0.01ms !important;
       animation-iteration-count: 1 !important;
       transition-duration: 0.01ms !important;
@@ -194,7 +217,7 @@
     background-color: var(--color-background);
     color: var(--color-foreground);
     font-family: var(--font-sans);
-    font-size: 14px;
+    font-size: 0.875rem; /* 14 px no padrão; acompanha o tamanho de fonte do navegador */
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
@@ -213,6 +236,22 @@
   .glass-card {
     background: var(--color-card);
     border: 1px solid var(--color-border);
+  }
+
+  /* Material translúcido: SÓ em barras fixas sobre conteúdo que rola (cabeçalhos sticky).
+     Nunca em cartões, nunca vidro sobre vidro. Opaco quando o usuário pede menos
+     transparência ou mais contraste. Ver DESIGN.md › Princípios › Materiais. */
+  .surface-glass {
+    background-color: color-mix(in srgb, var(--color-background) 85%, transparent);
+    -webkit-backdrop-filter: saturate(160%) blur(12px);
+    backdrop-filter: saturate(160%) blur(12px);
+  }
+  @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+    .surface-glass {
+      background-color: var(--color-background);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
   }
 
   .gradient-primary {

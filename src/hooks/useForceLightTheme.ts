@@ -11,7 +11,11 @@ export function useForceLightTheme() {
     const wasDark = root.classList.contains("dark");
     root.classList.remove("dark");
     return () => {
-      if (wasDark || localStorage.getItem("odonto-theme") === "dark") root.classList.add("dark");
+      let pref: string | null = null;
+      try { pref = localStorage.getItem("odonto-theme"); } catch { /* ignora */ }
+      const sistemaEscuro = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      const escuro = pref === "dark" || ((pref === "system" || pref === null) && sistemaEscuro);
+      if (escuro || (wasDark && pref !== "light")) root.classList.add("dark");
     };
   }, []);
 }

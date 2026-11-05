@@ -1,4 +1,4 @@
-import { Bell, Search, LucideIcon } from "lucide-react";
+import { Search, LucideIcon } from "lucide-react";
 import { useState, useEffect } from "react";
 import { Link } from "@tanstack/react-router";
 import { useAuth } from "@/hooks/useAuth";
@@ -8,6 +8,7 @@ import { GlobalSearchDialog } from "@/components/GlobalSearchDialog";
  * Cabeçalho das telas internas. No computador: título + data, busca larga,
  * notificações e avatar. No celular (< 768 px): título e ícones, sem a data
  * nem a busca larga (que transbordavam a tela). Ver DESIGN.md › Layout.
+ * O sino de notificações saiu: não tinha função (botão sem resposta). Volta quando existir a central.
  */
 export function DashboardHeader({ title, icon: Icon }: { title: string; icon?: LucideIcon }) {
   const { user } = useAuth();
@@ -30,9 +31,9 @@ export function DashboardHeader({ title, icon: Icon }: { title: string; icon?: L
 
   return (
     <>
-      <header className="h-14 md:h-16 flex items-center justify-between gap-3 px-4 md:px-8 border-b border-border bg-card sticky top-0 z-20">
+      <header className="h-14 md:h-16 flex items-center justify-between gap-3 px-4 md:px-8 border-b border-border surface-glass sticky top-0 z-20">
         <div className="flex items-center gap-3 min-w-0">
-          {Icon && <Icon className="hidden sm:block h-5 w-5 shrink-0 text-primary" aria-hidden="true" />}
+          {Icon && <Icon className="hidden sm:block h-5 w-5 shrink-0 text-muted-foreground" aria-hidden="true" />}
           <div className="min-w-0">
             <h1 className="text-base md:text-lg font-semibold text-foreground tracking-tight truncate">{title}</h1>
             {today && (
@@ -48,26 +49,20 @@ export function DashboardHeader({ title, icon: Icon }: { title: string; icon?: L
           >
             <Search className="h-4 w-4 shrink-0" />
             <span className="flex-1 text-left truncate">Buscar paciente, orçamento…</span>
-            <kbd className="pointer-events-none inline-flex h-6 items-center rounded border border-border bg-card px-1.5 text-[11px] font-medium text-muted-foreground">
+            <kbd className="pointer-events-none inline-flex h-6 items-center rounded border border-border bg-card px-1.5 text-xs font-medium text-muted-foreground">
               ⌘K
             </kbd>
           </button>
           <button
             onClick={() => setSearchOpen(true)}
-            className="lg:hidden flex items-center justify-center h-10 w-10 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+            className="lg:hidden flex items-center justify-center size-11 rounded-md active:bg-muted text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
             aria-label="Buscar no sistema"
           >
             <Search className="h-5 w-5" />
           </button>
-          <button
-            className="flex items-center justify-center h-10 w-10 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-            aria-label="Notificações"
-          >
-            <Bell className="h-5 w-5" />
-          </button>
           <Link
             to="/perfil"
-            className="h-9 w-9 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-xs font-semibold"
+            className="size-11 md:size-9 rounded-full bg-accent flex items-center justify-center text-accent-foreground text-xs font-semibold"
             title={user?.name || "Meu perfil"}
             aria-label="Meu perfil"
           >

@@ -6,9 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { AuthShell } from "@/components/auth/AuthShell";
-import { Loader2, ArrowLeft, CheckCircle, Eye, EyeOff } from "lucide-react";
+import { Loader2, ArrowLeft, CheckCircle, Eye, EyeOff, AlertCircle } from "lucide-react";
 
 export const Route = createFileRoute("/login")({
+  head: () => ({ meta: [{ title: "Entrar · Odonto Connect" }] }),
   component: LoginPage,
 });
 
@@ -64,9 +65,10 @@ function LoginPage() {
 
   if (isAuthenticated) return null;
 
-  const errorBox = (msg: string) => (
-    <div role="alert" className="rounded-md bg-destructive/10 px-3.5 py-3 text-sm text-destructive animate-fade-in">
-      {msg}
+  const errorBox = (msg: string, id: string) => (
+    <div id={id} role="alert" className="flex gap-2 rounded-md bg-destructive/10 px-3.5 py-3 text-sm text-foreground animate-fade-in">
+      <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-destructive" aria-hidden="true" />
+      <span>{msg}</span>
     </div>
   );
 
@@ -98,7 +100,7 @@ function LoginPage() {
           </div>
         ) : (
           <form onSubmit={handleForgot} className="space-y-5">
-            {forgotError && errorBox(forgotError)}
+            {forgotError && errorBox(forgotError, "esqueci-erro")}
             <div className="space-y-2">
               <Label htmlFor="forgot-email">E-mail</Label>
               <Input
@@ -109,12 +111,14 @@ function LoginPage() {
                 onChange={(e) => setForgotEmail(e.target.value)}
                 required
                 autoComplete="email"
+                aria-invalid={!!forgotError || undefined}
+                aria-describedby={forgotError ? "esqueci-erro" : undefined}
                 className="h-11"
               />
             </div>
-            <Button type="submit" className="w-full h-11" disabled={forgotLoading}>
-              {forgotLoading && <Loader2 className="h-4 w-4 animate-spin" />}
-              Pedir nova senha
+            <Button type="submit" className="w-full h-11" disabled={forgotLoading} aria-busy={forgotLoading || undefined}>
+              {forgotLoading && <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />}
+              {forgotLoading ? "Enviando…" : "Pedir nova senha"}
             </Button>
             <Button
               type="button"
@@ -144,7 +148,7 @@ function LoginPage() {
       }
     >
       <form onSubmit={handleSubmit} className="space-y-5">
-        {error && errorBox(error)}
+        {error && errorBox(error, "login-erro")}
         <div className="space-y-2">
           <Label htmlFor="email">E-mail</Label>
           <Input
@@ -155,6 +159,8 @@ function LoginPage() {
             onChange={(e) => setEmail(e.target.value)}
             required
             autoComplete="email"
+            aria-invalid={!!error || undefined}
+            aria-describedby={error ? "login-erro" : undefined}
             className="h-11"
           />
         </div>
@@ -164,7 +170,7 @@ function LoginPage() {
             <button
               type="button"
               onClick={() => setShowForgot(true)}
-              className="text-[13px] font-medium text-primary hover:underline underline-offset-4"
+              className="inline-flex items-center min-h-11 -my-3 text-sm font-medium text-primary hover:underline underline-offset-4"
             >
               Esqueci minha senha
             </button>
@@ -177,21 +183,23 @@ function LoginPage() {
               onChange={(e) => setPassword(e.target.value)}
               required
               autoComplete="current-password"
-              className="h-11 pr-11"
+              aria-invalid={!!error || undefined}
+              aria-describedby={error ? "login-erro" : undefined}
+              className="h-11 pr-12"
             />
             <button
               type="button"
               onClick={() => setShowPassword(!showPassword)}
-              className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center justify-center h-9 w-9 rounded text-muted-foreground hover:text-foreground transition-colors"
+              className="absolute right-0 top-0 flex items-center justify-center size-11 rounded-md text-muted-foreground hover:text-foreground transition-colors"
               aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"}
             >
               {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
             </button>
           </div>
         </div>
-        <Button type="submit" className="w-full h-11 text-[15px]" disabled={loading}>
-          {loading && <Loader2 className="h-4 w-4 animate-spin" />}
-          Entrar
+        <Button type="submit" className="w-full h-11 text-[0.9375rem]" disabled={loading} aria-busy={loading || undefined}>
+          {loading && <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />}
+          {loading ? "Entrando…" : "Entrar"}
         </Button>
       </form>
     </AuthShell>

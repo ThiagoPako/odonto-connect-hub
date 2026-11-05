@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   CalendarCheck, Users, MessageSquare, DollarSign, Bot,
   BarChart3, CheckCircle, ArrowRight, Star, Phone, Mail,
@@ -78,9 +78,9 @@ const faqs = [
 /* Medidas da página: uma margem, uma largura, um raio. Ver DESIGN.md › Landing. */
 const WRAP = "mx-auto w-full max-w-[1280px] px-5 sm:px-8 lg:px-12";
 const BTN_PRIMARY =
-  "inline-flex items-center justify-center gap-2 h-12 px-6 rounded-md bg-primary text-primary-foreground text-[15px] font-semibold hover:bg-primary/90 active:translate-y-px transition-[background-color,transform]";
+  "inline-flex items-center justify-center gap-2 h-12 px-6 rounded-md bg-primary text-primary-foreground text-[0.9375rem] font-semibold hover:bg-primary/90 active:translate-y-px transition-[background-color,transform]";
 const BTN_SECONDARY =
-  "inline-flex items-center justify-center gap-2 h-12 px-6 rounded-md bg-secondary text-foreground text-[15px] font-semibold hover:bg-border active:translate-y-px transition-[background-color,transform]";
+  "inline-flex items-center justify-center gap-2 h-12 px-6 rounded-md bg-secondary text-foreground text-[0.9375rem] font-semibold hover:bg-border active:translate-y-px transition-[background-color,transform]";
 
 function LandingPage() {
   useForceLightTheme();
@@ -105,13 +105,21 @@ function LandingPage() {
 /* ─── Navegação ──────────────────────────────────────────── */
 
 function SiteNav() {
+  // Borda só depois que o conteúdo começa a passar por baixo (separa camadas sem pesar no topo)
+  const [rolou, setRolou] = useState(false);
+  useEffect(() => {
+    const onScroll = () => setRolou(window.scrollY > 8);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
   return (
-    <header className="sticky top-0 z-50 bg-background">
+    <header className={`sticky top-0 z-50 surface-glass border-b transition-colors ${rolou ? "border-border" : "border-transparent"}`}>
       <nav className={`${WRAP} h-16 flex items-center justify-between gap-4`} aria-label="Principal">
         <Link to="/" className="shrink-0" aria-label="Odonto Connect — início">
           <img src={logoHorizontal} alt="Odonto Connect" className="h-5 sm:h-7 w-auto" width={1920} height={194} />
         </Link>
-        <div className="hidden lg:flex items-center gap-8 text-[15px] font-medium text-muted-foreground">
+        <div className="hidden lg:flex items-center gap-8 text-[0.9375rem] font-medium text-muted-foreground">
           <a href="#funcionalidades" className="hover:text-foreground transition-colors">Funcionalidades</a>
           <a href="#sobre" className="hover:text-foreground transition-colors">Quem criou</a>
           <a href="#planos" className="hover:text-foreground transition-colors">Planos</a>
@@ -119,10 +127,10 @@ function SiteNav() {
           <a href="#faq" className="hover:text-foreground transition-colors">Dúvidas</a>
         </div>
         <div className="flex items-center gap-1 sm:gap-3 shrink-0">
-          <Link to="/login" className="inline-flex items-center h-10 px-3 rounded-md text-[15px] font-medium text-foreground hover:bg-secondary transition-colors">
+          <Link to="/login" className="inline-flex items-center h-11 sm:h-10 px-3 rounded-md text-[0.9375rem] font-medium text-foreground hover:bg-secondary transition-colors">
             Entrar
           </Link>
-          <Link to="/signup" search={{}} className="inline-flex items-center gap-1.5 h-10 px-4 rounded-md bg-primary text-primary-foreground text-[15px] font-semibold hover:bg-primary/90 transition-colors">
+          <Link to="/signup" search={{}} className="inline-flex items-center gap-1.5 h-11 sm:h-10 px-4 rounded-md bg-primary text-primary-foreground text-[0.9375rem] font-semibold hover:bg-primary/90 transition-colors">
             <span className="sm:hidden">Testar</span>
             <span className="hidden sm:inline">Começar agora</span>
           </Link>
@@ -139,7 +147,7 @@ function Hero() {
     <section className="pt-10 pb-16 sm:pt-16 lg:pt-20 lg:pb-24">
       <div className={`${WRAP} grid lg:grid-cols-12 gap-10 lg:gap-12 items-center`}>
         <div className="lg:col-span-6 min-w-0">
-          <h1 className="font-heading font-semibold tracking-[-0.03em] leading-[1.04] text-[30px] sm:text-[48px] lg:text-[clamp(3rem,4vw,3.75rem)] text-foreground">
+          <h1 className="font-heading font-semibold tracking-[-0.03em] leading-[1.04] text-[1.875rem] sm:text-[3rem] lg:text-[clamp(3rem,4vw,3.75rem)] text-foreground">
             <span className="hero-line sm:whitespace-nowrap"><span>Gestão odontológica</span></span>{" "}
             <span className="hero-line"><span style={{ animationDelay: "110ms" }}>de A a Z</span></span>
           </h1>
@@ -156,7 +164,7 @@ function Hero() {
             </a>
           </div>
           {/* ⚠️ Helena: "7 dias grátis" aqui × "14 dias" no /signup — não decidido. */}
-          <ul className="hero-fade mt-6 flex flex-wrap gap-x-5 gap-y-2 text-[15px] text-muted-foreground">
+          <ul className="hero-fade mt-6 flex flex-wrap gap-x-5 gap-y-2 text-[0.9375rem] text-muted-foreground">
             {["7 dias grátis", "Sem fidelidade", "Suporte humano"].map((t) => (
               <li key={t} className="flex items-center gap-1.5">
                 <CheckCircle className="h-4 w-4 text-success" aria-hidden="true" /> {t}
@@ -181,7 +189,7 @@ function TrustedBy() {
   return (
     <section className="py-12" aria-labelledby="quem-confia">
       <div className={WRAP}>
-        <h2 id="quem-confia" className="text-[15px] font-medium text-muted-foreground">Quem confia no Odonto Connect</h2>
+        <h2 id="quem-confia" className="text-[0.9375rem] font-medium text-muted-foreground">Quem confia no Odonto Connect</h2>
         <ul className="mt-6 flex flex-wrap gap-x-10 gap-y-4">
           {["Sorriso Perfeito", "OdontoLife", "Dental Premium", "CliniSmile", "OralCenter", "DentCare Plus", "Odonto Excellence", "SmileLab"].map((n) => (
             <li key={n} className="font-heading text-lg font-semibold text-foreground/50">{n}</li>
@@ -209,7 +217,7 @@ function Features() {
     <section id="funcionalidades" className="scroll-mt-20 py-24 lg:py-36 bg-secondary">
       <div className={WRAP}>
         <ScrollReveal className="max-w-[44rem]">
-          <h2 className="font-heading font-semibold tracking-[-0.02em] leading-[1.1] text-[26px] sm:text-[34px] lg:text-[40px]">
+          <h2 className="font-heading font-semibold tracking-[-0.02em] leading-[1.1] text-[1.625rem] sm:text-[2.125rem] lg:text-[2.5rem]">
             Tudo que sua clínica precisa, em um só lugar
           </h2>
           <p className="mt-4 text-lg text-foreground/80">
@@ -222,7 +230,7 @@ function Features() {
             <ScrollReveal key={f.title} className="min-w-0">
               <article className="grid lg:grid-cols-12 gap-6 lg:gap-12 items-center">
                 <div className="lg:col-span-5 min-w-0">
-                  <h3 className="font-heading text-[26px] sm:text-[30px] font-semibold tracking-[-0.02em] leading-tight">{f.title}</h3>
+                  <h3 className="font-heading text-[1.625rem] sm:text-[1.875rem] font-semibold tracking-[-0.02em] leading-tight">{f.title}</h3>
                   <p className="mt-3 text-lg leading-relaxed text-foreground/80 max-w-[30rem]">{f.desc}</p>
                 </div>
                 <div className="lg:col-span-7 min-w-0">{provas[f.title]}</div>
@@ -232,12 +240,12 @@ function Features() {
         </div>
 
         <div className="mt-24 lg:mt-36">
-          <h3 className="font-heading text-[26px] sm:text-[30px] font-semibold tracking-[-0.02em]">E ainda</h3>
+          <h3 className="font-heading text-[1.625rem] sm:text-[1.875rem] font-semibold tracking-[-0.02em]">E ainda</h3>
           <ul className="mt-10 grid sm:grid-cols-2 lg:grid-cols-3 gap-x-12 gap-y-10">
             {demais.map((f) => (
               <li key={f.title}>
                 <h4 className="text-lg font-semibold">{f.title}</h4>
-                <p className="mt-2 text-[16px] leading-relaxed text-foreground/75">{f.desc}</p>
+                <p className="mt-2 text-[1rem] leading-relaxed text-foreground/75">{f.desc}</p>
               </li>
             ))}
           </ul>
@@ -267,26 +275,26 @@ function ProofReativacao() {
   return (
     <ProofPanel className="max-w-[560px]">
       <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-        <p className="text-[14px] font-semibold">Para reativar</p>
-        <p className="text-[12px] text-muted-foreground">{pacientes.length - enviados.length} pendentes</p>
+        <p className="text-[0.875rem] font-semibold">Para reativar</p>
+        <p className="text-xs text-muted-foreground">{pacientes.length - enviados.length} pendentes</p>
       </div>
       <ul>
         {pacientes.map((p) => {
           const ok = enviados.includes(p.nome);
           return (
             <li key={p.nome} className="flex items-center gap-3 px-4 py-3 border-b border-border last:border-0">
-              <span className="h-8 w-8 rounded-full bg-accent text-accent-foreground text-[12px] font-semibold flex items-center justify-center shrink-0" aria-hidden="true">
+              <span className="h-8 w-8 rounded-full bg-accent text-accent-foreground text-xs font-semibold flex items-center justify-center shrink-0" aria-hidden="true">
                 {p.nome.split(" ").map((w) => w[0]).join("")}
               </span>
               <span className="flex-1 min-w-0">
-                <span className="block text-[14px] font-medium truncate">{p.nome}</span>
-                <span className="block text-[12px] text-muted-foreground truncate">{p.ultima} · {p.proc}</span>
+                <span className="block text-[0.875rem] font-medium truncate">{p.nome}</span>
+                <span className="block text-xs text-muted-foreground truncate">{p.ultima} · {p.proc}</span>
               </span>
               <button
                 type="button"
                 onClick={() => setEnviados((e) => (ok ? e.filter((n) => n !== p.nome) : [...e, p.nome]))}
-                className={`h-8 px-3 rounded text-[12px] font-semibold shrink-0 transition-colors ${
-                  ok ? "bg-success/12 text-[hsl(152,60%,26%)]" : "bg-primary text-primary-foreground hover:bg-primary/90"
+                className={`h-9 px-3 rounded text-xs font-semibold shrink-0 transition-colors ${
+                  ok ? "bg-success/12 text-success" : "border border-input bg-card text-foreground hover:bg-muted"
                 }`}
               >
                 {ok ? "Na fila" : "Convidar"}
@@ -308,8 +316,8 @@ function ProofSemana() {
   return (
     <ProofPanel className="max-w-[620px] p-5">
       <div className="flex items-baseline justify-between">
-        <p className="text-[14px] font-semibold">Consultas da semana</p>
-        <p className="text-[12px] text-muted-foreground">
+        <p className="text-[0.875rem] font-semibold">Consultas da semana</p>
+        <p className="text-xs text-muted-foreground">
           <span className="inline-block h-2 w-2 rounded-sm bg-primary mr-1.5 align-middle" />confirmadas
           <span className="inline-block h-2 w-2 rounded-sm bg-accent ml-3 mr-1.5 align-middle" />a confirmar
         </p>
@@ -317,12 +325,12 @@ function ProofSemana() {
       <div className="mt-5 grid grid-cols-6 gap-3 items-end h-36">
         {dias.map((x) => (
           <div key={x.d} className="flex flex-col items-center gap-2 h-full justify-end">
-            <span className="text-[12px] font-medium tabular-nums">{x.n}</span>
+            <span className="text-xs font-medium tabular-nums">{x.n}</span>
             <div className="w-full max-w-10 flex flex-col justify-end rounded-sm overflow-hidden" style={{ height: `${(x.n / max) * 100}%` }}>
               <div className="bg-accent" style={{ height: `${((x.n - x.c) / x.n) * 100}%` }} />
               <div className="bg-primary flex-1" />
             </div>
-            <span className="text-[12px] text-muted-foreground">{x.d}</span>
+            <span className="text-xs text-muted-foreground">{x.d}</span>
           </div>
         ))}
       </div>
@@ -334,13 +342,13 @@ function ProofConversa() {
   return (
     <ProofPanel className="max-w-[460px]">
       <div className="flex items-center gap-3 px-4 py-3 border-b border-border">
-        <span className="h-8 w-8 rounded-full bg-success/15 text-[hsl(152,60%,26%)] text-[12px] font-semibold flex items-center justify-center" aria-hidden="true">PM</span>
+        <span className="h-8 w-8 rounded-full bg-success/15 text-success text-xs font-semibold flex items-center justify-center" aria-hidden="true">PM</span>
         <div>
-          <p className="text-[14px] font-semibold leading-tight">Paulo Martins</p>
-          <p className="text-[12px] text-muted-foreground">WhatsApp · atendido pela IA</p>
+          <p className="text-[0.875rem] font-semibold leading-tight">Paulo Martins</p>
+          <p className="text-xs text-muted-foreground">WhatsApp · atendido pela IA</p>
         </div>
       </div>
-      <div className="chat-bg-pattern px-4 py-4 space-y-2.5 text-[14px]">
+      <div className="chat-bg-pattern px-4 py-4 space-y-2.5 text-[0.875rem]">
         <p className="max-w-[80%] rounded-lg rounded-bl-sm bg-card px-3 py-2">Oi! Queria marcar uma limpeza essa semana.</p>
         <p className="max-w-[85%] ml-auto rounded-lg rounded-br-sm bg-primary text-primary-foreground px-3 py-2">
           Claro, Paulo! Tenho quinta às 14h ou sexta às 9h30 com a Dra. Paula. Qual prefere?
@@ -363,11 +371,11 @@ function ProofFenix() {
   return (
     <ProofPanel className="max-w-[520px]">
       <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-        <p className="text-[14px] font-semibold">Canais de WhatsApp</p>
+        <p className="text-[0.875rem] font-semibold">Canais de WhatsApp</p>
         <button
           type="button"
           onClick={() => setPrincipalOn((v) => !v)}
-          className="h-8 px-3 rounded text-[12px] font-semibold bg-secondary hover:bg-muted transition-colors"
+          className="h-9 px-3 rounded text-xs font-semibold bg-secondary hover:bg-muted transition-colors"
         >
           {principalOn ? "Simular queda" : "Reconectar"}
         </button>
@@ -377,11 +385,11 @@ function ProofFenix() {
           <li key={l.nome} className="flex items-center gap-3 px-4 py-3.5 border-b border-border last:border-0">
             <Wifi className={`h-4 w-4 shrink-0 ${l.on ? "text-success" : "text-destructive"}`} aria-hidden="true" />
             <span className="flex-1 min-w-0">
-              <span className="block text-[14px] font-medium">{l.nome}</span>
-              <span className="block text-[12px] text-muted-foreground tabular-nums">{l.fone}</span>
+              <span className="block text-[0.875rem] font-medium">{l.nome}</span>
+              <span className="block text-xs text-muted-foreground tabular-nums">{l.fone}</span>
             </span>
-            <span className={`h-6 px-2 inline-flex items-center rounded text-[11px] font-semibold ${
-              l.uso === "Atendendo" ? "bg-success/12 text-[hsl(152,60%,26%)]" : l.on ? "bg-muted text-muted-foreground" : "bg-destructive/10 text-destructive"
+            <span className={`min-h-6 py-0.5 px-2 inline-flex items-center rounded text-xs font-semibold ${
+              l.uso === "Atendendo" ? "bg-success/12 text-success" : l.on ? "bg-muted text-muted-foreground" : "bg-destructive/10 text-destructive"
             }`}>{l.uso}</span>
           </li>
         ))}
@@ -403,16 +411,16 @@ function ProofCaixa() {
     <ProofPanel className="max-w-[540px]">
       <div className="flex items-end justify-between px-4 pt-4 pb-3 border-b border-border">
         <div>
-          <p className="text-[12px] text-muted-foreground">Saldo do dia</p>
-          <p className="text-[24px] font-semibold tabular-nums leading-tight">{brl(saldo)}</p>
+          <p className="text-xs text-muted-foreground">Saldo do dia</p>
+          <p className="text-[1.5rem] font-semibold tabular-nums leading-tight">{brl(saldo)}</p>
         </div>
-        <p className="text-[12px] text-muted-foreground">Fluxo de caixa</p>
+        <p className="text-xs text-muted-foreground">Fluxo de caixa</p>
       </div>
       <ul>
         {mov.map((m) => (
-          <li key={m.d} className="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-border last:border-0 text-[14px]">
+          <li key={m.d} className="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-border last:border-0 text-[0.875rem]">
             <span className="truncate">{m.d}</span>
-            <span className={`tabular-nums font-medium shrink-0 ${m.v > 0 ? "text-[hsl(152,60%,30%)]" : "text-foreground/70"}`}>
+            <span className={`tabular-nums font-medium shrink-0 ${m.v > 0 ? "text-success" : "text-foreground/70"}`}>
               {m.v > 0 ? "+" : "−"} {brl(Math.abs(m.v))}
             </span>
           </li>
@@ -445,7 +453,7 @@ function About() {
           />
         </ScrollReveal>
         <ScrollReveal className="lg:col-span-6 min-w-0" delay={80}>
-          <h2 className="font-heading font-semibold tracking-[-0.02em] leading-[1.1] text-[26px] sm:text-[34px] lg:text-[40px]">
+          <h2 className="font-heading font-semibold tracking-[-0.02em] leading-[1.1] text-[1.625rem] sm:text-[2.125rem] lg:text-[2.5rem]">
             Criado por quem vive a odontologia todos os dias
           </h2>
           <div className="mt-6 space-y-4 text-lg leading-relaxed text-foreground/85 max-w-[36rem]">
@@ -463,10 +471,10 @@ function About() {
           <dl className="mt-10 flex gap-12">
             {numeros.map((s) => (
               <div key={s.label}>
-                <dd className="font-heading text-[40px] font-semibold leading-none tracking-tight text-primary tabular-nums">
+                <dd className="font-heading text-[2.5rem] font-semibold leading-none tracking-tight text-primary tabular-nums">
                   <AnimatedCounter value={s.num} suffix={s.suffix} />
                 </dd>
-                <dt className="mt-2 text-[15px] text-muted-foreground">{s.label}</dt>
+                <dt className="mt-2 text-[0.9375rem] text-muted-foreground">{s.label}</dt>
               </div>
             ))}
           </dl>
@@ -486,7 +494,7 @@ function Pricing() {
     <section id="planos" className="scroll-mt-20 py-24 lg:py-36 bg-stage text-stage-foreground">
       <div className={WRAP}>
         <div className="max-w-[44rem]">
-          <h2 className="font-heading font-semibold tracking-[-0.02em] leading-[1.1] text-[26px] sm:text-[34px] lg:text-[40px]">
+          <h2 className="font-heading font-semibold tracking-[-0.02em] leading-[1.1] text-[1.625rem] sm:text-[2.125rem] lg:text-[2.5rem]">
             Planos que cabem no seu bolso
           </h2>
           <p className="mt-4 text-lg text-stage-muted">
@@ -506,14 +514,14 @@ function Pricing() {
                 aria-controls="plano-palco"
                 onClick={() => setSel(i)}
                 onFocus={() => setSel(i)}
-                className={`group flex w-full items-center gap-4 py-3 text-left font-heading text-[56px] leading-[1.1] font-semibold tracking-[-0.03em] transition-colors ${
+                className={`group flex w-full items-center gap-4 py-3 text-left font-heading text-[3.5rem] leading-[1.1] font-semibold tracking-[-0.03em] transition-colors ${
                   i === sel ? "text-stage-foreground" : "text-stage-foreground/35 hover:text-stage-foreground/70"
                 }`}
               >
                 <span className={`h-3 w-3 rounded-full bg-[var(--color-dental-cyan)] transition-opacity ${i === sel ? "opacity-100" : "opacity-0"}`} aria-hidden="true" />
                 {p.name}
                 {p.popular && (
-                  <span className="whitespace-nowrap text-[15px] font-medium tracking-normal text-stage-muted">· Mais popular</span>
+                  <span className="whitespace-nowrap text-[0.9375rem] font-medium tracking-normal text-stage-muted">· Mais popular</span>
                 )}
               </button>
             ))}
@@ -527,9 +535,9 @@ function Pricing() {
         <div className="lg:hidden mt-12 space-y-12">
           {plans.map((p) => (
             <div key={p.slug} className="rounded-lg bg-white/[0.06] p-6">
-              <h3 className="font-heading text-[30px] font-semibold tracking-[-0.02em] leading-tight">
+              <h3 className="font-heading text-[1.875rem] font-semibold tracking-[-0.02em] leading-tight">
                 {p.name}
-                {p.popular && <span className="ml-2 text-[15px] font-medium tracking-normal text-stage-muted">· Mais popular</span>}
+                {p.popular && <span className="ml-2 text-[0.9375rem] font-medium tracking-normal text-stage-muted">· Mais popular</span>}
               </h3>
               <PlanStage plan={p} compact />
             </div>
@@ -544,15 +552,15 @@ function PlanStage({ plan, compact = false }: { plan: (typeof plans)[number]; co
   return (
     <div className={compact ? "mt-3" : "animate-fade-in"}>
       <p className="flex items-baseline gap-2">
-        <span className={`font-heading font-semibold tracking-[-0.03em] tabular-nums leading-none ${compact ? "text-[48px]" : "text-[96px]"}`}>
+        <span className={`font-heading font-semibold tracking-[-0.03em] tabular-nums leading-none ${compact ? "text-[3rem]" : "text-[6rem]"}`}>
           R$ {plan.price}
         </span>
-        <span className="text-[18px] text-stage-muted">/mês</span>
+        <span className="text-[1.125rem] text-stage-muted">/mês</span>
       </p>
-      <p className={`text-stage-muted ${compact ? "mt-3 text-[16px]" : "mt-5 text-[18px]"}`}>{plan.desc}</p>
+      <p className={`text-stage-muted ${compact ? "mt-3 text-[1rem]" : "mt-5 text-[1.125rem]"}`}>{plan.desc}</p>
       <ul className={`grid gap-x-8 gap-y-2.5 ${compact ? "mt-5" : "mt-8 sm:grid-cols-2"}`}>
         {plan.features.map((f) => (
-          <li key={f} className="flex items-start gap-2.5 text-[16px]">
+          <li key={f} className="flex items-start gap-2.5 text-[1rem]">
             <CheckCircle className="h-4 w-4 mt-1 shrink-0 text-[var(--color-dental-cyan)]" aria-hidden="true" />
             {f}
           </li>
@@ -561,7 +569,7 @@ function PlanStage({ plan, compact = false }: { plan: (typeof plans)[number]; co
       <Link
         to="/signup"
         search={{ plan: plan.slug }}
-        className={`mt-8 inline-flex items-center justify-center gap-2 h-12 px-6 rounded-md bg-stage-foreground text-stage text-[15px] font-semibold hover:bg-white active:translate-y-px transition-[background-color,transform] ${compact ? "w-full" : ""}`}
+        className={`mt-8 inline-flex items-center justify-center gap-2 h-12 px-6 rounded-md bg-stage-foreground text-stage text-[0.9375rem] font-semibold hover:bg-white active:translate-y-px transition-[background-color,transform] ${compact ? "w-full" : ""}`}
       >
         Testar o {plan.name} grátis <ArrowRight className="h-4 w-4" />
       </Link>
@@ -575,7 +583,7 @@ function Testimonials() {
   return (
     <section id="depoimentos" className="scroll-mt-20 py-24 lg:py-36">
       <div className={WRAP}>
-        <h2 className="font-heading font-semibold tracking-[-0.02em] text-[26px] sm:text-[34px] lg:text-[40px]">Quem usa, recomenda</h2>
+        <h2 className="font-heading font-semibold tracking-[-0.02em] text-[1.625rem] sm:text-[2.125rem] lg:text-[2.5rem]">Quem usa, recomenda</h2>
         <div className="mt-12 grid md:grid-cols-3 gap-10">
           {testimonials.map((t) => (
             <figure key={t.name}>
@@ -584,8 +592,8 @@ function Testimonials() {
                   <Star key={j} className="h-4 w-4 fill-warning text-warning" aria-hidden="true" />
                 ))}
               </div>
-              <blockquote className="mt-4 text-[19px] leading-relaxed">“{t.text}”</blockquote>
-              <figcaption className="mt-4 text-[15px] text-muted-foreground">
+              <blockquote className="mt-4 text-[1.1875rem] leading-relaxed">“{t.text}”</blockquote>
+              <figcaption className="mt-4 text-[0.9375rem] text-muted-foreground">
                 <span className="font-semibold text-foreground">{t.name}</span> · {t.clinic}
               </figcaption>
             </figure>
@@ -604,11 +612,11 @@ function Faq() {
       <div className={`${WRAP} grid lg:grid-cols-12 gap-10 lg:gap-12`}>
         <div className="lg:col-span-4">
           <div className="lg:sticky lg:top-28">
-            <h2 className="font-heading font-semibold tracking-[-0.02em] leading-[1.1] text-[26px] sm:text-[34px] lg:text-[40px]">
+            <h2 className="font-heading font-semibold tracking-[-0.02em] leading-[1.1] text-[1.625rem] sm:text-[2.125rem] lg:text-[2.5rem]">
               Perguntas frequentes
             </h2>
             <p className="mt-4 text-lg text-foreground/80">Tire suas dúvidas sobre o Odonto Connect.</p>
-            <a href={WHATSAPP_CONSULTOR} target="_blank" rel="noopener noreferrer" className="mt-6 inline-flex items-center gap-2 text-[15px] font-semibold text-primary hover:underline underline-offset-4">
+            <a href={WHATSAPP_CONSULTOR} target="_blank" rel="noopener noreferrer" className="mt-6 inline-flex items-center gap-2 text-[0.9375rem] font-semibold text-primary hover:underline underline-offset-4">
               Outra dúvida? Fale com um consultor <ArrowRight className="h-4 w-4" />
             </a>
           </div>
@@ -616,11 +624,11 @@ function Faq() {
         <div className="lg:col-span-8 space-y-2">
           {faqs.map((item, i) => (
             <details key={item.q} name="faq" className="faq-tile group rounded-lg bg-secondary open:bg-accent transition-colors" open={i === 0}>
-              <summary className="flex cursor-pointer list-none items-center justify-between gap-6 px-6 py-5 text-lg sm:text-[18px] font-semibold [&::-webkit-details-marker]:hidden">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-6 px-6 py-5 text-lg sm:text-[1.125rem] font-semibold [&::-webkit-details-marker]:hidden">
                 {item.q}
                 <Plus className="h-5 w-5 shrink-0 text-primary transition-transform duration-200 group-open:rotate-45" aria-hidden="true" />
               </summary>
-              <p className="px-6 pb-6 -mt-1 text-[16px] leading-relaxed text-foreground/85 max-w-[52ch]">{item.a}</p>
+              <p className="px-6 pb-6 -mt-1 text-[1rem] leading-relaxed text-foreground/85 max-w-[52ch]">{item.a}</p>
             </details>
           ))}
         </div>
@@ -637,7 +645,7 @@ function FinalCta() {
       <div className={WRAP}>
         <div className="rounded-lg bg-primary text-primary-foreground px-6 py-14 sm:px-12 lg:px-16 lg:py-20 grid lg:grid-cols-12 gap-8 items-end">
           <div className="lg:col-span-8">
-            <h2 className="font-heading font-semibold tracking-[-0.02em] leading-[1.1] text-[26px] sm:text-[34px] lg:text-[48px]">
+            <h2 className="font-heading font-semibold tracking-[-0.02em] leading-[1.1] text-[1.625rem] sm:text-[2.125rem] lg:text-[3rem]">
               Pronto para transformar sua clínica?
             </h2>
             <p className="mt-4 text-lg text-primary-foreground/85 max-w-[40rem]">
@@ -650,7 +658,7 @@ function FinalCta() {
             <Link
               to="/signup"
               search={{}}
-              className="inline-flex w-full sm:w-auto items-center justify-center gap-2 h-12 px-6 rounded-md bg-white text-[hsl(189,88%,22%)] text-[15px] font-semibold hover:bg-white/90 active:translate-y-px transition-[background-color,transform]"
+              className="inline-flex w-full sm:w-auto items-center justify-center gap-2 h-12 px-6 rounded-md bg-white text-accent-foreground text-[0.9375rem] font-semibold hover:bg-white/90 active:translate-y-px transition-[background-color,transform]"
             >
               Começar agora grátis <ArrowRight className="h-4 w-4" />
             </Link>
@@ -668,7 +676,7 @@ function SiteFooter() {
     <footer className="pb-10">
       <div className={WRAP}>
         <img src={logoHorizontal} alt="Odonto Connect" className="w-full max-w-[720px] h-auto opacity-90" width={1920} height={194} loading="lazy" />
-        <div className="mt-10 grid gap-6 md:grid-cols-[1fr_auto_1fr] md:items-center text-[15px]">
+        <div className="mt-10 grid gap-6 md:grid-cols-[1fr_auto_1fr] md:items-center text-[0.9375rem]">
           <p className="text-muted-foreground">Sistema completo de A a Z para clínicas odontológicas. De dono de clínica para dono.</p>
           <ul className="flex flex-wrap gap-x-6 gap-y-2 font-medium">
             <li><a href="#funcionalidades" className="hover:text-primary transition-colors">Funcionalidades</a></li>

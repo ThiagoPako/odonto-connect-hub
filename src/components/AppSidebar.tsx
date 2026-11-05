@@ -9,6 +9,7 @@ import {
   ChevronDown,
   Sun,
   Moon,
+  Monitor,
   Users,
   Megaphone,
   BarChart3,
@@ -197,13 +198,13 @@ export function AppSidebar() {
       <div className="md:hidden flex items-center gap-3 h-14 px-3 bg-sidebar border-b border-sidebar-border shrink-0">
         <button
           onClick={() => setMobileOpen(true)}
-          className="flex items-center justify-center h-10 w-10 -ml-1 rounded-md text-sidebar-foreground hover:bg-sidebar-accent"
+          className="flex items-center justify-center size-11 -ml-1.5 rounded-md text-sidebar-foreground hover:bg-sidebar-accent active:bg-sidebar-accent"
           aria-label="Abrir menu"
         >
           <Menu className="h-5 w-5" />
         </button>
         <img src={logoImg} alt="" className="h-6 w-12 rounded object-cover" />
-        <span className="text-[15px] font-semibold tracking-tight font-heading text-sidebar-foreground">Odonto Connect</span>
+        <span className="text-[0.9375rem] font-semibold tracking-tight font-heading text-sidebar-foreground">Odonto Connect</span>
       </div>
       <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
         <SheetContent side="left" className="md:hidden w-[288px] max-w-[85vw] p-0 flex flex-col bg-sidebar text-sidebar-foreground gap-0">
@@ -211,7 +212,7 @@ export function AppSidebar() {
           <SheetDescription className="sr-only">Navegação do Odonto Connect</SheetDescription>
           <div className="flex items-center gap-2.5 px-4 h-14 border-b border-sidebar-border shrink-0">
             <img src={logoImg} alt="" className="h-6 w-12 rounded object-cover" />
-            <span className="text-[15px] font-semibold tracking-tight font-heading">Odonto Connect</span>
+            <span className="text-[0.9375rem] font-semibold tracking-tight font-heading">Odonto Connect</span>
           </div>
           {nav(true)}
           <SidebarUserFooter expanded />
@@ -235,12 +236,12 @@ export function AppSidebar() {
             <img src={logoImg} alt="Odonto Connect" className="h-6 w-12 rounded object-cover shrink-0" />
             {expanded && (
               <>
-                <span className="flex-1 min-w-0 text-[15px] font-semibold tracking-tight text-sidebar-foreground font-heading truncate">
+                <span className="flex-1 min-w-0 text-[0.9375rem] font-semibold tracking-tight text-sidebar-foreground font-heading truncate">
                   Odonto Connect
                 </span>
                 <button
                   onClick={() => setPinned(!pinned)}
-                  className="flex items-center justify-center h-8 w-8 rounded-md text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-foreground shrink-0"
+                  className="flex items-center justify-center size-9 rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground shrink-0"
                   title={pinned ? "Soltar menu" : "Fixar menu aberto"}
                   aria-label={pinned ? "Soltar menu" : "Fixar menu aberto"}
                   aria-pressed={pinned}
@@ -281,10 +282,10 @@ function CollapsibleSection({
             <Link
               key={item.title}
               to={item.url}
-              className={`flex items-center justify-center h-10 w-10 mx-auto rounded-md transition-colors relative ${
+              className={`flex items-center justify-center size-11 mx-auto rounded-md transition-colors relative ${
                 isActive
                   ? "bg-sidebar-accent text-sidebar-primary"
-                  : "text-sidebar-foreground/65 hover:bg-sidebar-accent hover:text-sidebar-foreground"
+                  : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
               }`}
               title={item.title}
               aria-label={item.title}
@@ -292,7 +293,7 @@ function CollapsibleSection({
             >
               <item.icon className="h-[18px] w-[18px]" />
               {item.badge ? (
-                <span className="absolute top-1 right-1 h-4 min-w-4 px-1 rounded-full bg-destructive text-destructive-foreground text-[10px] font-semibold leading-4 text-center tabular-nums">
+                <span className="absolute top-0.5 right-0.5 h-[1.125rem] min-w-[1.125rem] px-1 rounded-full bg-destructive text-destructive-foreground text-xs font-semibold leading-[1.125rem] text-center tabular-nums">
                   {item.badge}
                 </span>
               ) : null}
@@ -307,7 +308,7 @@ function CollapsibleSection({
     <div>
       <button
         onClick={() => setOpen(!open)}
-        className="flex items-center w-full h-8 px-2.5 rounded-md text-xs font-semibold text-muted-foreground hover:text-sidebar-foreground transition-colors"
+        className="flex items-center w-full h-11 md:h-8 px-2.5 rounded-md text-xs font-semibold text-muted-foreground hover:text-sidebar-foreground transition-colors"
         aria-expanded={open}
       >
         <span className="flex-1 text-left">{section.label}</span>
@@ -322,16 +323,16 @@ function CollapsibleSection({
                 key={item.title}
                 to={item.url}
                 aria-current={isActive ? "page" : undefined}
-                className={`flex items-center gap-3 h-9 px-2.5 rounded-md text-[13px] transition-colors ${
+                className={`flex items-center gap-3 h-11 md:h-9 px-2.5 rounded-md text-sm md:text-[0.8125rem] transition-colors ${
                   isActive
                     ? "bg-sidebar-accent text-sidebar-accent-foreground font-semibold"
-                    : "text-sidebar-foreground/80 font-medium hover:bg-sidebar-accent hover:text-sidebar-foreground"
+                    : "text-sidebar-foreground font-medium hover:bg-sidebar-accent"
                 }`}
               >
-                <item.icon className={`h-[18px] w-[18px] shrink-0 ${isActive ? "text-sidebar-primary" : "opacity-80"}`} />
+                <item.icon className={`h-[18px] w-[18px] shrink-0 ${isActive ? "text-sidebar-primary" : "text-muted-foreground"}`} />
                 <span className="flex-1 truncate">{item.title}</span>
                 {item.badge ? (
-                  <span className={`h-5 min-w-5 px-1.5 rounded-full text-[11px] font-semibold leading-5 text-center tabular-nums ${
+                  <span className={`h-5 min-w-5 px-1.5 rounded-full text-xs font-semibold leading-5 text-center tabular-nums ${
                     isActive
                       ? "bg-sidebar-primary text-sidebar-primary-foreground"
                       : "bg-destructive text-destructive-foreground"
@@ -350,7 +351,7 @@ function CollapsibleSection({
 
 function SidebarUserFooter({ expanded }: { expanded: boolean }) {
   const { user, logout } = useAuth();
-  const { theme, toggleTheme } = useTheme();
+  const { preference, toggleTheme } = useTheme();
   const navigate = useNavigate();
   const roleLabel = user?.is_super_admin ? "Super Admin" : user?.role ?? "";
 
@@ -367,22 +368,25 @@ function SidebarUserFooter({ expanded }: { expanded: boolean }) {
   const avatar = user?.avatar_url ? (
     <img src={user.avatar_url} alt="" className="h-8 w-8 rounded-full object-cover shrink-0" />
   ) : (
-    <div className="h-8 w-8 rounded-full bg-primary flex items-center justify-center text-[11px] font-semibold text-primary-foreground shrink-0" aria-hidden="true">
+    <div className="h-8 w-8 rounded-full bg-accent flex items-center justify-center text-xs font-semibold text-accent-foreground shrink-0" aria-hidden="true">
       {initials}
     </div>
   );
 
-  const iconBtn = "flex items-center justify-center h-9 w-9 rounded-md text-sidebar-foreground/65 hover:bg-sidebar-accent hover:text-sidebar-foreground transition-colors";
-  const themeLabel = theme === "dark" ? "Modo claro" : "Modo escuro";
+  const iconBtn = "flex items-center justify-center size-11 md:size-9 rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground active:bg-sidebar-accent transition-colors";
+  const temaNome = preference === "system" ? "do sistema" : preference === "dark" ? "escuro" : "claro";
+  const proximo = preference === "system" ? "claro" : preference === "light" ? "escuro" : "do sistema";
+  const themeLabel = `Tema ${temaNome}. Clique para usar o tema ${proximo}`;
+  const ThemeIcon = preference === "system" ? Monitor : preference === "dark" ? Moon : Sun;
 
   if (!expanded) {
     return (
-      <div className="p-2 border-t border-sidebar-border shrink-0 flex flex-col items-center gap-1">
+      <div className="p-2 border-t border-sidebar-border shrink-0 flex flex-col items-center gap-1.5">
         <Link to="/perfil" className="rounded-full" title="Meu perfil" aria-label="Meu perfil">
           {avatar}
         </Link>
         <button onClick={toggleTheme} className={iconBtn} title={themeLabel} aria-label={themeLabel}>
-          {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+          <ThemeIcon className="h-4 w-4" />
         </button>
         <button onClick={handleLogout} className={iconBtn} title="Sair" aria-label="Sair">
           <LogOut className="h-4 w-4" />
@@ -392,16 +396,16 @@ function SidebarUserFooter({ expanded }: { expanded: boolean }) {
   }
 
   return (
-    <div className="p-2 border-t border-sidebar-border shrink-0 flex items-center gap-1">
-      <Link to="/perfil" className="flex flex-1 min-w-0 items-center gap-2.5 px-2 py-1.5 rounded-md hover:bg-sidebar-accent transition-colors" title="Meu perfil">
+    <div className="p-2 border-t border-sidebar-border shrink-0 flex items-center gap-2">
+      <Link to="/perfil" className="flex flex-1 min-w-0 items-center gap-2.5 px-2 min-h-11 md:min-h-0 md:py-1.5 rounded-md hover:bg-sidebar-accent transition-colors" title="Meu perfil">
         {avatar}
         <div className="flex-1 min-w-0">
-          <p className="text-[13px] font-semibold text-sidebar-foreground leading-tight truncate">{user?.name ?? "Usuário"}</p>
+          <p className="text-[0.8125rem] font-semibold text-sidebar-foreground leading-tight truncate">{user?.name ?? "Usuário"}</p>
           <p className="text-xs text-muted-foreground capitalize truncate">{roleLabel}</p>
         </div>
       </Link>
       <button onClick={toggleTheme} className={iconBtn} title={themeLabel} aria-label={themeLabel}>
-        {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+        <ThemeIcon className="h-4 w-4" />
       </button>
       <button onClick={handleLogout} className={iconBtn} title="Sair" aria-label="Sair">
         <LogOut className="h-4 w-4" />
