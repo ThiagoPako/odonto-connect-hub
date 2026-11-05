@@ -19,3 +19,6 @@ Nunca aponte para produção. Todos os dados são fictícios (clínicas Alfa e B
 ## e2e do WhatsApp (Evolution simulada)
 Não precisa de Evolution nem de WhatsApp: `e2e/fake-evolution.mjs` imita a Evolution 2.3.7 (responde com `key.id`, registra o que recebeu e dispara webhooks com o token do ambiente) e `e2e/api-teste.mjs` sobe o backend em modo de teste (sem crons; `/__tick` roda a fila na hora; `/__clock` muda o relógio). Os dois recusam banco ou Evolution que não sejam locais.
 `E2E_WA_DB=odonto_local npx playwright test -c playwright.whatsapp.config.ts` (portas 3071/3072/4010; mude com `E2E_WA_API_PORT`, `E2E_WA_CONTROL_PORT`, `E2E_WA_FAKE_PORT`).
+
+## Testar o `vite preview` (o que roda em produção)
+`npm run build` e depois `E2E_API_URL=http://localhost:<api> npx vite preview -c vite.preview-local.config.ts --port 5295`. O preview com o plugin da Cloudflare não repassa `/api`; em produção quem faz isso é o nginx. Localmente, `node e2e/proxy-preview.mjs 5296 http://127.0.0.1:5295 http://127.0.0.1:<api>` imita o nginx (abra `http://127.0.0.1:5296`). Os dois recusam destino que não seja local.
