@@ -57,7 +57,7 @@ describe('Lista de espera e encaixe', () => {
     clearTenantSettingsCacheForTests();
     resetWhatsAppQueueStateForTests();
     sqlLog = []; fetchLog = [];
-    slot = { id: slotA, data: '2026-11-06', hora: '09:00', duracao: 30, dentista_id: dentA, paciente_id: pacA, status: 'remarcar', dentista_nome: 'Dra. Ana' };
+    slot = { id: slotA, data: '2026-11-06', hora: '09:00', duracao: 30, dentista_id: dentA, paciente_id: pacA, status: 'desmarcado', dentista_nome: 'Dra. Ana' };
     candidatos = [{ id: leA, paciente_id: pacB, paciente_nome: 'João Silva', telefone: telEspera }];
     ofertaAtiva = []; claimOk = true; ocupado = false;
     existingLead = { id: 'lead-1', name: 'João', phone: telEspera, awaiting_queue_selection: false };
@@ -155,6 +155,30 @@ describe('Lista de espera e encaixe', () => {
       const res = await request(app).get(`/api/agenda/${slotA}/encaixe`).set(auth(tenantB));
       expect(res.status).toBe(404);
     });
+    test('pediu remarcação: o horário continua reservado, sem sugestão (parecer T5)', async () => {
+      dentroDaJanela();
+      slot.status = 'remarcar';
+      const res = await request(app).get(`/api/agenda/${slotA}/encaixe`).set(auth());
+      expect(res.body).toMatchObject({ disponivel: false, liberado: false, candidatos: 0 });
+    });
+
+    test('liberar horário: só de "remarcar", na clínica, registrando quem e quando', async () => {
+      const res = await request(app).post(`/api/agenda/${slotA}/liberar-horario`).set(auth());
+      const [upd] = q(/SET status = 'desmarcado', liberado_por = \$3, liberado_em = NOW\(\)/);
+      expect(upd).toBeDefined();
+      expect(upd.text).toMatch(/AND status = 'remarcar'/);
+      expect(upd.params).toEqual([slotA, tenantA, '44444444-4444-4444-4444-444444444444']);
+      expect(res.status).toBe(409); // o mock não devolve linha: nada liberado
+    });
+
+    test('cancelar/desmarcar pela agenda registra quem liberou e quando', async () => {
+      await request(app).put(`/api/agenda/${slotA}`).set(auth()).send({ status: 'cancelado' });
+      const [upd] = q(/^\s*UPDATE agendamentos SET status = \$1/);
+      expect(upd.text).toMatch(/liberado_por = \$2, liberado_em = NOW\(\)/);
+      expect(upd.params.slice(0, 2)).toEqual(['cancelado', '44444444-4444-4444-4444-444444444444']);
+      expect(upd.params.slice(-1)).toEqual([tenantA]);
+    });
+
     test('horário não liberado: sem sugestão', async () => {
       dentroDaJanela();
       slot.status = 'agendado';
@@ -181,6 +205,7 @@ describe('Lista de espera e encaixe', () => {
       expect(String(jobCol(ins[0], 'patient_phone'))).toMatch(/77776666$/);
       expect(jobCol(ins[0], 'message')).toMatch(/Responda \*QUERO\*/);
       expect(jobCol(ins[0], 'message')).toMatch(/06\/11\/2026/);
+      expect(jobCol(ins[0], 'message')).toMatch(/Se não responder até lá, o horário vai para a próxima pessoa da lista e você continua na lista\./); // L1
       const v = jobVars(ins[0]);
       expect(v.interactive.payload.buttons.map(b => b.buttonId)).toEqual([`oferta_aceitar_${of.params[0]}`, `oferta_recusar_${of.params[0]}`]);
       expect(sends()).toHaveLength(0);
@@ -200,6 +225,15 @@ describe('Lista de espera e encaixe', () => {
       expect(res.status).toBe(409);
       expect(jobInserts()).toHaveLength(0);
     });
+    test('pediu remarcação: não oferece (horário prometido ao paciente)', async () => {
+      dentroDaJanela();
+      slot.status = 'remarcar';
+      const res = await request(app).post(`/api/agenda/${slotA}/oferecer-horario`).set(auth());
+      expect(res.status).toBe(409);
+      expect(q(/INSERT INTO lista_espera_ofertas/)).toHaveLength(0);
+      expect(jobInserts()).toHaveLength(0);
+    });
+
     test('horário não liberado: 409', async () => {
       dentroDaJanela();
       slot.status = 'confirmado';
@@ -273,6 +307,13 @@ describe('Lista de espera e encaixe', () => {
       await webhook('QUERO');
       await waitFor(() => q(/SET status = 'indisponivel'/).length);
       expect(q(/INSERT INTO agendamentos/)).toHaveLength(0);
+    });
+
+    test('no aceite, "remarcar" conta como ocupado (não cria encaixe por cima do horário prometido)', async () => {
+      await webhook('QUERO');
+      const conf = await waitFor(() => q(/FROM agendamentos\s+WHERE tenant_id = \$1 AND data = \$2 AND LEFT\(hora, 5\) = \$3/)[0]);
+      expect(conf.text).toMatch(/NOT IN \('cancelado', 'desmarcado', 'faltou'\)/);
+      expect(conf.text).not.toMatch(/remarcar/);
     });
 
     test('mensagem no número da clínica B não aceita oferta da clínica A', async () => {

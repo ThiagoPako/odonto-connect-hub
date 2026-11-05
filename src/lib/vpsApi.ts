@@ -309,6 +309,8 @@ export const listaEsperaApi = {
   add: (body: { paciente_id: string; dentista_id?: string | null; periodo: ListaEsperaItem["periodo"]; observacao?: string }) =>
     vpsApiFetch<{ id: string }>('/lista-espera', { method: 'POST', body }),
   remove: (id: string) => vpsApiFetch(`/lista-espera/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  liberarHorario: (agendamentoId: string) =>
+    vpsApiFetch<{ success: boolean }>(`/agenda/${encodeURIComponent(agendamentoId)}/liberar-horario`, { method: 'POST' }),
   encaixe: (agendamentoId: string) => vpsApiFetch<EncaixeInfo>(`/agenda/${encodeURIComponent(agendamentoId)}/encaixe`),
   oferecer: (agendamentoId: string) =>
     vpsApiFetch<{ oferta: { id: string; paciente_nome: string; expires_at: string } }>(`/agenda/${encodeURIComponent(agendamentoId)}/oferecer-horario`, { method: 'POST' }),

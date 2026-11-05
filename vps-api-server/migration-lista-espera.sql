@@ -37,6 +37,10 @@ CREATE INDEX IF NOT EXISTS idx_lista_espera_ofertas_tenant ON lista_espera_ofert
 -- Um paciente por vez: no máximo uma oferta aguardando resposta por horário.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_lista_espera_oferta_ativa ON lista_espera_ofertas (agendamento_origem_id) WHERE status = 'enviada';
 
+-- Quem liberou o horário e quando (cancelado/desmarcado pela recepção).
+ALTER TABLE IF EXISTS agendamentos ADD COLUMN IF NOT EXISTS liberado_por UUID;
+ALTER TABLE IF EXISTS agendamentos ADD COLUMN IF NOT EXISTS liberado_em TIMESTAMPTZ;
+
 ALTER TABLE lista_espera ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS tenant_isolation_policy ON lista_espera;
 CREATE POLICY tenant_isolation_policy ON lista_espera FOR ALL

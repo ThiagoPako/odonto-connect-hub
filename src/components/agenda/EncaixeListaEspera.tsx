@@ -6,7 +6,8 @@ import { listaEsperaApi, type EncaixeInfo } from "@/lib/vpsApi";
 
 // Horários liberados (paciente pediu remarcação ou cancelou). A oferta só sai pelo
 // clique da recepção, para um paciente por vez, pela fila do WhatsApp da clínica.
-const STATUS_LIBERADOS = new Set(["remarcar", "cancelado", "desmarcado"]);
+// "remarcar" não libera: o paciente foi avisado de que o horário continua reservado.
+const STATUS_LIBERADOS = new Set(["cancelado", "desmarcado"]);
 
 function horaCurta(iso: string) {
   return new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
@@ -29,6 +30,33 @@ export function EncaixeListaEspera({ agendamentoId, status, onChanged }: { agend
   }, [agendamentoId]);
 
   useEffect(() => { if (liberado) load(); }, [liberado, load]);
+
+  const liberar = async () => {
+    if (!confirm("Você já falou com o paciente? O horário dele será desmarcado e poderá ser oferecido à lista de espera.")) return;
+    setSending(true);
+    const { error } = await listaEsperaApi.liberarHorario(agendamentoId);
+    setSending(false);
+    if (error) { toast.error(error); return; }
+    toast.success("Horário liberado");
+    onChanged?.();
+  };
+
+  if (status === "remarcar") {
+    return (
+      <div className="p-3 border-t border-border/60 space-y-2">
+        <div className="text-[11px] uppercase tracking-wide text-muted-foreground font-semibold flex items-center gap-1.5">
+          <Users className="h-3 w-3" /> Lista de espera
+        </div>
+        <p className="text-xs text-foreground">
+          O paciente pediu para remarcar e foi avisado de que este horário continua reservado. Fale com ele antes de liberar.
+        </p>
+        <Button size="sm" variant="outline" className="w-full h-8" onClick={liberar} disabled={sending}>
+          {sending ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : null}
+          Liberar horário (já falei com o paciente)
+        </Button>
+      </div>
+    );
+  }
 
   if (!liberado) return null;
 
@@ -69,11 +97,6 @@ export function EncaixeListaEspera({ agendamentoId, status, onChanged }: { agend
           </div>
           {info.candidatos > 0 && (
             <>
-              {status === "remarcar" && (
-                <p className="text-[11px] text-muted-foreground">
-                  O paciente deste horário pediu para remarcar e foi avisado de que o horário continua reservado. Ofereça só depois de falar com ele.
-                </p>
-              )}
               {info.dentroDaJanela === false && (
                 <p className="text-[11px] text-warning">Fora do horário de envio do WhatsApp (seg a sex 8h–20h, sáb 8h–13h).</p>
               )}

@@ -5387,6 +5387,11 @@ app.put('/api/agenda/:id', async (req, res) => {
     if (dentista_nome) { params.push(dentista_nome); sets.push(`dentista_nome = $${params.length}`); }
     if (Array.isArray(marcadores)) { params.push(JSON.stringify(marcadores)); sets.push(`marcadores = $${params.length}::jsonb`); }
     if (como_conheceu !== undefined) { params.push(como_conheceu || null); sets.push(`como_conheceu = $${params.length}`); }
+    // Horário liberado pela recepção (cancelado/desmarcado): registra quem e quando.
+    if (status === 'cancelado' || status === 'desmarcado') {
+      params.push(PACIENTE_UUID_RE.test(String(user.id || '')) ? user.id : null);
+      sets.push(`liberado_por = $${params.length}`, 'liberado_em = NOW()');
+    }
     if (sets.length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
     params.push(id);
     params.push(user.tenant_id);
@@ -5444,7 +5449,10 @@ app.put('/api/agenda/:id', async (req, res) => {
 // UM paciente por vez, com prazo. Nunca há oferta automática sem esse clique.
 // ═══════════════════════════════════════════════════════════════
 const WAITLIST_PERIODOS = new Set(['manha', 'tarde', 'noite', 'qualquer']);
-const WAITLIST_FREED_STATUSES = ['remarcar', 'cancelado', 'desmarcado'];
+// "remarcar" NÃO libera: o paciente ouviu que o horário continua reservado (parecer T5).
+// O horário só fica livre quando a recepção desmarca/cancela, com registro de quem e quando
+// (agendamentos.liberado_por / liberado_em).
+const WAITLIST_FREED_STATUSES = ['cancelado', 'desmarcado'];
 const WAITLIST_OFFER_TTL_MS = 2 * 60 * 60_000;      // prazo de resposta: 2 h
 const WAITLIST_MIN_LEAD_MS = 30 * 60_000;           // não oferece horário a menos de 30 min
 
@@ -5595,6 +5603,27 @@ app.delete('/api/lista-espera/:id', async (req, res) => {
   }
 });
 
+// Recepção libera o horário de quem pediu para remarcar, depois de falar com o paciente.
+app.post('/api/agenda/:id/liberar-horario', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    if (!PACIENTE_UUID_RE.test(String(req.params.id))) return res.status(404).json({ error: 'Agendamento não encontrado' });
+    const { rows } = await pool.query(
+      `UPDATE agendamentos SET status = 'desmarcado', liberado_por = $3, liberado_em = NOW(), updated_at = NOW()
+        WHERE id = $1 AND tenant_id = $2 AND status = 'remarcar' RETURNING id, data`,
+      [req.params.id, user.tenant_id, PACIENTE_UUID_RE.test(String(user.id || '')) ? user.id : null]
+    );
+    if (!rows.length) return res.status(409).json({ error: 'Só dá para liberar um horário cujo paciente pediu para remarcar' });
+    broadcastSSE('agendamento_changed', { action: 'updated', id: rows[0].id, data: rows[0].data }, user.tenant_id);
+    res.json({ success: true });
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('❌ liberar horário:', error.message);
+    res.status(500).json({ error: 'Erro ao liberar o horário' });
+  }
+});
+
 // Sugestão de encaixe para um horário liberado.
 app.get('/api/agenda/:id/encaixe', async (req, res) => {
   try {
@@ -5629,7 +5658,7 @@ app.get('/api/agenda/:id/encaixe', async (req, res) => {
 // TEXTO PARA PACIENTE: revisão da Helena (helena-juridico) antes do merge.
 // Só clínica, profissional, data, hora e prazo: nada de procedimento.
 function buildWaitlistOfferMessage({ clinica, firstName, profissional, weekday, dataBR, hora, prazo }) {
-  const body = `📅 *Horário disponível — ${clinica}*\n\nOlá${firstName ? `, ${firstName}` : ''}! Você está na nossa lista de espera e abriu um horário:\n📅 ${weekday ? `${weekday}, ` : ''}${dataBR}\n⏰ ${hora}\n👩‍⚕️ ${profissional || 'Equipe da clínica'}\n\nA oferta vale até ${prazo}.`;
+  const body = `📅 *Horário disponível — ${clinica}*\n\nOlá${firstName ? `, ${firstName}` : ''}! Você está na nossa lista de espera e abriu um horário:\n📅 ${weekday ? `${weekday}, ` : ''}${dataBR}\n⏰ ${hora}\n👩‍⚕️ ${profissional || 'Equipe da clínica'}\n\nA oferta vale até ${prazo}. Se não responder até lá, o horário vai para a próxima pessoa da lista e você continua na lista.`;
   return { body, fallbackText: `${body}\n\nResponda *QUERO* para ficar com o horário ou *NÃO* se não puder.` };
 }
 
@@ -5791,7 +5820,7 @@ async function handleWaitlistOfferReply({ tenantId, phone, msgType, msgContent, 
   const { rows: ocupado } = await pool.query(
     `SELECT 1 FROM agendamentos
       WHERE tenant_id = $1 AND data = $2 AND LEFT(hora, 5) = $3 AND dentista_id IS NOT DISTINCT FROM $4 AND id <> $5
-        AND COALESCE(status, 'agendado') NOT IN ('cancelado', 'desmarcado', 'remarcar', 'faltou') LIMIT 1`,
+        AND COALESCE(status, 'agendado') NOT IN ('cancelado', 'desmarcado', 'faltou') LIMIT 1`,
     [tenantId, agendaYmd(oferta.data), hora, oferta.dentista_id || null, oferta.agendamento_origem_id]
   );
   if (ocupado.length) {
