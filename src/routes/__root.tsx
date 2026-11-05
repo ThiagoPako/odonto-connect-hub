@@ -2,6 +2,7 @@ import { Outlet, Link, createRootRoute, HeadContent, Scripts, useLocation, useNa
 import { useEffect } from "react";
 import { AppSidebar } from "@/components/AppSidebar";
 import { WhatsAppConnectionBanner } from "@/components/WhatsAppConnectionBanner";
+import { AceiteDocumentosGate } from "@/components/legal/AceiteDocumentosGate";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import { useGlobalChatNotifier } from "@/hooks/useGlobalChatNotifier";
 import { canAccessRoute } from "@/lib/routeAccess";
@@ -159,6 +160,7 @@ function AuthGate() {
       <AppSidebar />
       <div className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden">
         <WhatsAppConnectionBanner />
+        <AceiteDocumentosGate />
         {/* div, não main: cada tela já tem o próprio <main> (antes ficavam dois, um dentro do outro) */}
         <div id="conteudo" tabIndex={-1} className="flex-1 overflow-y-auto focus:outline-none">
           {hasAccess ? <Outlet /> : <UnauthorizedComponent />}
