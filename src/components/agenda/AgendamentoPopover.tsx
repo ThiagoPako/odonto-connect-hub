@@ -19,6 +19,7 @@ interface Props {
 const STATUS_OPTIONS: { value: string; label: string; icon: React.ElementType; color: string }[] = [
   { value: "agendado", label: "Agendado", icon: Clock, color: "text-primary" },
   { value: "confirmado", label: "Confirmado", icon: CheckCircle2, color: "text-success" },
+  { value: "remarcar", label: "Pediu remarcação", icon: Clock, color: "text-warning" },
   { value: "em_atendimento", label: "Em atendimento", icon: UserCheck, color: "text-primary" },
   { value: "finalizado", label: "Finalizado", icon: CheckCircle2, color: "text-muted-foreground" },
   { value: "faltou", label: "Faltou", icon: XCircle, color: "text-destructive" },

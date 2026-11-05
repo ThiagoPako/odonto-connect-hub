@@ -5356,9 +5356,18 @@ app.get('/api/agenda', async (req, res) => {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.json([]);
     const { data_inicio, data_fim, dentista_id } = req.query;
+    // lembrete_status: 'na_fila' | 'aguardando' (enviado, sem resposta) | 'confirmado' | 'remarcar' | 'falhou' | null
     let query = `SELECT a.*,
       COALESCE(NULLIF(TRIM(p.nome), ''), a.paciente_nome) AS paciente_nome,
-      COALESCE(NULLIF(TRIM(d.nome), ''), a.dentista_nome) AS dentista_nome
+      COALESCE(NULLIF(TRIM(d.nome), ''), a.dentista_nome) AS dentista_nome,
+      (SELECT CASE
+                WHEN aj.status = 'pending' THEN 'na_fila'
+                WHEN aj.status = 'sent' THEN COALESCE(NULLIF(aj.variables::jsonb->>'confirmationReply', ''), 'aguardando')
+                WHEN aj.status = 'failed' THEN 'falhou'
+                ELSE NULL END
+         FROM automation_jobs aj
+        WHERE aj.tenant_id = a.tenant_id AND aj.trigger_event = 'appointment_reminder' AND aj.flow_id = 'reminder_' || a.id::text
+        ORDER BY aj.scheduled_at DESC NULLS LAST LIMIT 1) AS lembrete_status
       FROM agendamentos a LEFT JOIN pacientes p ON a.paciente_id = p.id AND p.tenant_id = a.tenant_id LEFT JOIN dentistas d ON a.dentista_id = d.id AND d.tenant_id = a.tenant_id WHERE a.tenant_id = $1`;
     const params = [user.tenant_id];
     if (data_inicio) { params.push(data_inicio); query += ` AND a.data >= $${params.length}`; }
@@ -8794,6 +8803,33 @@ app.put('/api/attendance-settings', async (req, res) => {
   }
 });
 
+// Lembrete/pedido de confirmação de consulta por clínica (tenant_settings
+// 'appointment_reminder' = { enabled }). Sem registro: ligado, como sempre foi.
+app.get('/api/appointment-reminder-settings', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!isValidTenantId(user.tenant_id)) return res.json({ enabled: true });
+    const saved = await getTenantSetting(user.tenant_id, 'appointment_reminder');
+    res.json({ enabled: saved?.enabled !== false });
+  } catch (error) {
+    res.status(tenantSettingsErrorStatus(error)).json({ error: error.message });
+  }
+});
+
+app.put('/api/appointment-reminder-settings', async (req, res) => {
+  try {
+    const { user } = await verifyAdmin(req);
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const enabled = req.body?.enabled;
+    if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'Informe enabled (true ou false)' });
+    await setTenantSetting(user.tenant_id, 'appointment_reminder', { enabled });
+    console.log(`⚙️ Lembrete de consulta ${enabled ? 'ligado' : 'desligado'} (clínica ${String(user.tenant_id).slice(0, 8)})`);
+    res.json({ success: true, enabled });
+  } catch (error) {
+    res.status(tenantSettingsErrorStatus(error)).json({ error: error.message });
+  }
+});
+
 // Localização da clínica (aba Configurações → Clínica). Antes ficava só no navegador de quem
 // salvou; agora é da clínica (tenant_settings), e todo atendente vê o mesmo endereço no chat.
 const CLINIC_LOCATION_FIELDS = { name: 100, address: 200, city: 100, state: 2, zip: 10, phone: 20, googleMapsUrl: 500 };
@@ -9629,6 +9665,15 @@ app.post('/api/webhook/evolution', async (req, res) => {
       return res.json({ processed: true, optOut: true, leadId: lead?.id || null });
     }
 
+    // ─── Resposta ao pedido de confirmação de consulta (botão, 1/2 ou SIM) ───
+    // Antes do lead novo, do menu de filas e da avaliação: "1"/"2" aqui é a resposta
+    // ao lembrete, não escolha de setor nem nota.
+    const reminderReply = !isFromMe
+      ? await handleAppointmentReminderReply({ tenantId, phone: resolvedPhone, msgType, msgContent, instance })
+          .catch(e => { console.error('[confirmação] erro:', e.message); return null; })
+      : null;
+    const isReminderReply = !!reminderReply?.handled;
+
     // ─── New contact: create lead + contato + check hours + send menu ───
     if (!lead) {
       // Boas-vindas e fora de horário da clínica dona do número (não de outra clínica).
@@ -9636,10 +9681,10 @@ app.post('/api/webhook/evolution', async (req, res) => {
       const newId = crypto.randomUUID();
       await pool.query(
         `INSERT INTO crm_leads (id, nome, telefone, origem, status, kanban_stage, awaiting_queue_selection, tenant_id)
-         VALUES ($1, $2, $3, 'whatsapp', 'novo', 'lead', true, $4)`,
-        [newId, pushName, resolvedPhone, tenantId]
+         VALUES ($1, $2, $3, 'whatsapp', 'novo', 'lead', $5, $4)`,
+        [newId, pushName, resolvedPhone, tenantId, !isReminderReply]
       );
-      lead = { id: newId, name: pushName, phone: resolvedPhone, queue_id: null, queue_name: null, awaiting_queue_selection: true, avatar_url: null };
+      lead = { id: newId, name: pushName, phone: resolvedPhone, queue_id: null, queue_name: null, awaiting_queue_selection: !isReminderReply, avatar_url: null };
       console.log(`🆕 New lead created: ${maskPhone(resolvedPhone)}`);
 
       // 🤖 Trigger "Lead entrou no CRM" automation
@@ -9660,7 +9705,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
       }
 
       // Check business hours
-      if (!isFromMe && !isWithinBusinessHours(attendanceSettingsCache)) {
+      if (!isFromMe && !isReminderReply && !isWithinBusinessHours(attendanceSettingsCache)) {
         const offMsg = attendanceSettingsCache?.offHoursMessage ||
           `Olá! Aqui é da ${await getTenantClinicName(tenantId)}. Nosso atendimento está fechado agora. Deixe sua mensagem que respondemos assim que abrirmos. 😊`;
         // Pela fila (categoria 'service': é resposta à mensagem do paciente e só existe
@@ -9717,7 +9762,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
       // Boas-vindas pela fila; o menu de filas é enfileirado depois dela (hook do job)
       // para manter a ordem. Sem boas-vindas enfileirada, o menu entra na fila já.
       let welcomeJob = null;
-      if (!isFromMe && attendanceSettingsCache?.autoGreetingEnabled && attendanceSettingsCache?.welcomeMessage) {
+      if (!isFromMe && !isReminderReply && attendanceSettingsCache?.autoGreetingEnabled && attendanceSettingsCache?.welcomeMessage) {
         welcomeJob = await enqueueWhatsAppAutoReply({
           tenantId, instance, phone: resolvedPhone, message: attendanceSettingsCache.welcomeMessage,
           kind: 'welcome', category: 'transactional', thenQueueMenu: true,
@@ -9725,7 +9770,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
       }
 
       // Send queue menu
-      if (!isFromMe && !welcomeJob) {
+      if (!isFromMe && !isReminderReply && !welcomeJob) {
         enqueueQueueMenu({ tenantId, instance, phone: resolvedPhone })
           .catch((err) => console.warn('Queue menu not queued:', err.message));
       }
@@ -9742,7 +9787,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
     }
 
     // ─── Lead is awaiting queue selection ───
-    if (!isFromMe && lead.awaiting_queue_selection && (msgType === 'text' || msgType === 'button_response' || msgType === 'list_response')) {
+    if (!isFromMe && !isReminderReply && lead.awaiting_queue_selection && (msgType === 'text' || msgType === 'button_response' || msgType === 'list_response')) {
       const selectedQueue = await matchQueue(msgContent, tenantId);
 
       if (selectedQueue) {
@@ -9870,7 +9915,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
     // Chave com a clínica: o mesmo paciente pode ser atendido por duas clínicas.
     const ratingKey = `awaiting_rating_${tenantId}_${phone}`;
     const { rows: ratingCheck } = await pool.query("SELECT value FROM app_settings WHERE key = $1", [ratingKey]);
-    if (ratingCheck.length > 0 && (msgType === 'text' || msgType === 'button_response')) {
+    if (!isReminderReply && ratingCheck.length > 0 && (msgType === 'text' || msgType === 'button_response')) {
       let rating = null;
       // Button response: rating_leadId_N
       const btnMatch = msgContent.match(/rating_[^_]+_(\d)/);
@@ -10039,57 +10084,6 @@ app.post('/api/webhook/evolution', async (req, res) => {
           console.error('Webhook profile fetch error:', fetchErr.message);
         }
       })();
-    }
-
-    // ─── Auto-confirm appointment when patient replies SIM to reminder ───
-    try {
-      const normalizedReply = (resolvedContent || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-      const isConfirmation = ['sim', 'confirmo', 'confirmado', 'ok', 'yes', 'vou', 'estarei', 'pode confirmar', 'confirmada'].some(
-        kw => normalizedReply === kw || normalizedReply.startsWith(kw + ' ') || normalizedReply.startsWith(kw + '!')
-      );
-
-      if (isConfirmation) {
-        // Check if there's a recent reminder sent to this phone
-        const { rows: reminderJobs } = await pool.query(
-          `SELECT aj.id, aj.flow_id FROM automation_jobs aj
-           WHERE aj.trigger_event = 'appointment_reminder'
-             AND aj.status = 'sent'
-             AND aj.tenant_id = $2
-             AND aj.patient_phone LIKE $1
-             AND aj.sent_at >= NOW() - INTERVAL '48 hours'
-           ORDER BY aj.sent_at DESC LIMIT 1`,
-          [`%${phoneSuffix}`, tenantId]
-        );
-
-        if (reminderJobs.length > 0) {
-          const reminderId = reminderJobs[0].flow_id.replace('reminder_', '');
-          // Só confirma consulta da mesma clínica que recebeu a resposta
-          const { rowCount } = await pool.query(
-            `UPDATE agendamentos SET status = 'confirmado', updated_at = NOW()
-             WHERE id::text = $1 AND tenant_id = $2 AND status NOT IN ('finalizado', 'realizado', 'cancelado')`,
-            [reminderId, tenantId]
-          );
-
-          if (rowCount > 0) {
-            // Mark reminder as confirmed
-            await pool.query(
-              `UPDATE automation_jobs SET variables = jsonb_set(COALESCE(variables::jsonb, '{}'), '{confirmed}', 'true')
-               WHERE id = $1`,
-              [reminderJobs[0].id]
-            ).catch(() => {});
-
-            // Send confirmation reply
-            const confirmMsg = `✅ *Presença confirmada!*\n\nObrigado por confirmar. A ${await getTenantClinicName(tenantId)} aguarda você na data agendada. 😊`;
-            await enqueueWhatsAppAutoReply({
-              tenantId, instance, phone, message: confirmMsg, kind: 'appointment_confirmed', category: 'service', dedupeMinutes: 10,
-            }).catch(err => console.error('Failed to queue confirm reply:', err.message));
-
-            console.log(`✅ Auto-confirmed appointment ${reminderId} via WhatsApp reply from ${maskPhone(phone)}`);
-          }
-        }
-      }
-    } catch (confirmErr) {
-      console.error('Auto-confirm error:', confirmErr.message);
     }
 
     res.json({ processed: true, leadId: lead.id });
@@ -10998,7 +10992,7 @@ const WA_DEFAULT_DEDUPE_MINUTES = 24 * 60;
 // menu após boas-vindas) só valem em jobs criados pelo próprio servidor. Em job
 // manual/de fluxo, o cliente poderia furar o dedupe de 24 h ou mandar um conteúdo
 // diferente do job.message auditado.
-const WA_INTERNAL_TRIGGERS = new Set(['auto_reply', 'satisfaction_survey']);
+const WA_INTERNAL_TRIGGERS = new Set(['auto_reply', 'satisfaction_survey', 'appointment_reminder']);
 const WA_CONTROL_VAR_KEYS = ['dedupeMinutes', 'interactive', 'kind', 'thenQueueMenu', 'enqueuedAt'];
 function stripWhatsAppControlVars(vars) {
   if (!vars || typeof vars !== 'object' || Array.isArray(vars)) return {};
@@ -12220,12 +12214,31 @@ function saudacaoPaciente(nome) {
   return primeiro ? `Olá, ${primeiro}!` : 'Olá!';
 }
 
+// Antecedência do pedido de confirmação (coluna confirmacao_quando do agendamento).
+// 'nao' = confirmação desligada (agendamento salvo sem telefone do paciente).
+// Sem valor, ou valor antigo ('_none', 'agora', '1d'), vale a véspera: o lembrete
+// sempre existiu para toda consulta e não deve sumir de agendamentos antigos.
+const APPT_CONFIRMATION_LEAD_DAYS_SQL = `CASE a.confirmacao_quando WHEN '2d' THEN 2 WHEN '3d' THEN 3 WHEN '7d' THEN 7 ELSE 1 END`;
+const APPT_REMINDER_SKIP_STATUSES = ['cancelado', 'desmarcado', 'faltou', 'finalizado', 'realizado', 'confirmado', 'remarcar', 'em_atendimento'];
+
+// Texto do pedido de confirmação. Só clínica, data, hora e profissional: nada de
+// procedimento ou diagnóstico (a mensagem aparece na tela bloqueada — LGPD art. 6º III e 11).
+// TEXTO PARA PACIENTE: revisão da Helena (helena-juridico) antes do merge.
+function buildAppointmentReminderMessage({ clinica, pacienteNome, weekday, dataBR, hora, profissional }) {
+  const body = `🔔 *Lembrete de consulta — ${clinica}*\n\n${saudacaoPaciente(pacienteNome)}\n\nVocê tem uma consulta marcada:\n📅 ${weekday ? `${weekday}, ` : ''}${dataBR}\n⏰ ${hora}\n👩‍⚕️ ${profissional || 'Equipe da clínica'}`;
+  return {
+    body,
+    fallbackText: `${body}\n\nResponda *1* para confirmar ou *2* para remarcar.`,
+  };
+}
+
 async function processAppointmentReminders() {
   try {
-    // Consultas de amanhã (dia de Brasília) ainda sem lembrete. Cada lembrete
-    // sai pelo WhatsApp da própria clínica; a fila segura até o horário de envio.
+    // Consultas que chegaram à antecedência escolhida (dia de Brasília) e ainda sem
+    // pedido de confirmação para ESTA data. Cada lembrete sai pelo WhatsApp da própria
+    // clínica; a fila segura até a janela de envio. Nomes vêm dos cadastros da clínica.
     const { rows: appointments } = await pool.query(`
-      SELECT a.id, a.tenant_id, a.paciente_id, a.data, a.hora, a.procedimento, a.duracao,
+      SELECT a.id, a.tenant_id, a.paciente_id, a.data, a.hora, a.confirmacao_quando,
              COALESCE(NULLIF(TRIM(p.nome), ''), NULLIF(TRIM(a.paciente_nome), '')) AS paciente_nome,
              COALESCE(NULLIF(TRIM(d.nome), ''), NULLIF(TRIM(a.dentista_nome), '')) AS dentista_nome,
              p.telefone
@@ -12234,48 +12247,81 @@ async function processAppointmentReminders() {
       LEFT JOIN dentistas d ON d.id = a.dentista_id AND d.tenant_id = a.tenant_id
       WHERE a.tenant_id IS NOT NULL
         AND a.tenant_id <> '00000000-0000-0000-0000-000000000001'
-        AND a.data = ((NOW() AT TIME ZONE '${WA_TZ}')::date + 1)
-        AND a.status NOT IN ('cancelado', 'desmarcado', 'faltou', 'finalizado', 'realizado')
+        AND a.data = ((NOW() AT TIME ZONE '${WA_TZ}')::date + ${APPT_CONFIRMATION_LEAD_DAYS_SQL})
+        AND COALESCE(a.status, 'agendado') <> ALL($1::text[])
+        AND COALESCE(a.confirmacao_quando, '') <> 'nao'
         AND NOT EXISTS (
           SELECT 1 FROM automation_jobs aj
-           WHERE aj.trigger_event = 'appointment_reminder'
+           WHERE aj.tenant_id = a.tenant_id
+             AND aj.trigger_event = 'appointment_reminder'
              AND aj.flow_id = 'reminder_' || a.id::text
-             AND aj.created_at > NOW() - INTERVAL '3 days'
+             AND (aj.variables::jsonb->>'apptDate' = a.data::text OR aj.created_at > NOW() - INTERVAL '3 days')
         )
-    `);
+    `, [APPT_REMINDER_SKIP_STATUSES]);
 
     if (appointments.length === 0) return;
-    console.log(`🔔 Reminder: ${appointments.length} consultas amanhã para lembrar`);
+    console.log(`🔔 Reminder: ${appointments.length} consultas para pedir confirmação`);
 
     const WEEKDAYS = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
+    // Clínica que desligou o lembrete não recebe pedido. Se a leitura falhar, pula a
+    // clínica nesta rodada (o padrão "ligado" poderia contrariar quem desligou).
+    const reminderEnabled = new Map();
+    const isReminderEnabled = async (tenantId) => {
+      if (!reminderEnabled.has(tenantId)) {
+        const saved = await getTenantSetting(tenantId, 'appointment_reminder', { throwOnError: true }).catch(() => ({ enabled: false }));
+        reminderEnabled.set(tenantId, saved?.enabled !== false);
+      }
+      return reminderEnabled.get(tenantId);
+    };
     for (const appt of appointments) {
       try {
+        const tenantId = String(appt.tenant_id);
+        if (!(await isReminderEnabled(tenantId))) continue;
         const phone = normalizeWhatsappNumber(appt.telefone || '');
         if (!phone) continue;
+        if (await isWhatsAppOptedOut(tenantId, phone)) continue;
 
-        const isoDate = appt.data instanceof Date ? appt.data.toISOString().split('T')[0] : String(appt.data).slice(0, 10);
+        const isoDate = appt.data instanceof Date
+          ? `${appt.data.getFullYear()}-${String(appt.data.getMonth() + 1).padStart(2, '0')}-${String(appt.data.getDate()).padStart(2, '0')}`
+          : String(appt.data).slice(0, 10);
         const [y, m, d] = isoDate.split('-');
-        const dataBR = `${d}/${m}/${y}`;
-        const weekday = WEEKDAYS[new Date(`${isoDate}T12:00:00Z`).getUTCDay()] || '';
-        const saudacao = saudacaoPaciente(appt.paciente_nome);
         const hora = String(appt.hora || '').slice(0, 5);
+        const clinica = await getTenantClinicName(tenantId);
+        const { body, fallbackText } = buildAppointmentReminderMessage({
+          clinica,
+          pacienteNome: appt.paciente_nome,
+          weekday: WEEKDAYS[new Date(`${isoDate}T12:00:00Z`).getUTCDay()] || '',
+          dataBR: `${d}/${m}/${y}`,
+          hora: hora || appt.hora || '—',
+          profissional: appt.dentista_nome,
+        });
 
-        // Data explícita em vez de "amanhã": o lembrete pode sair só no dia
-        // seguinte à criação (fila fora do horário de envio).
-        // Sem o procedimento: a mensagem aparece na tela bloqueada (LGPD art. 6º III e 46).
-        const clinica = await getTenantClinicName(appt.tenant_id);
-        const message = `🔔 *Lembrete de consulta — ${clinica}*\n\n${saudacao}\n\nVocê tem uma consulta marcada:\n📅 ${weekday}, ${dataBR}\n⏰ ${hora || appt.hora}\n👩‍⚕️ ${appt.dentista_nome || 'Equipe da clínica'}\n\nResponda *SIM* para confirmar ou mande uma mensagem aqui para remarcar.`;
-
-        // Validade: até o horário da consulta (horário de Brasília).
+        // Validade do pedido e da resposta: até o horário da consulta (Brasília, -03:00).
         let expiresAt = new Date(`${isoDate}T${/^\d{2}:\d{2}$/.test(hora) ? hora : '23:59'}:00-03:00`);
         if (Number.isNaN(expiresAt.getTime())) expiresAt = null;
+        if (expiresAt && expiresAt.getTime() <= Date.now()) continue;
 
         await enqueueWhatsAppJob({
-          tenantId: String(appt.tenant_id), phone, message, category: 'transactional',
-          flowId: `reminder_${appt.id}`, flowName: 'Lembrete 24h', patientName: appt.paciente_nome,
-          triggerEvent: 'appointment_reminder', expiresAt,
+          tenantId, phone, message: fallbackText, category: 'transactional',
+          flowId: `reminder_${appt.id}`, flowName: 'Confirmação de consulta', patientName: appt.paciente_nome || '',
+          triggerEvent: 'appointment_reminder', ...(expiresAt ? { expiresAt } : {}),
+          variables: {
+            agendamentoId: String(appt.id), apptDate: isoDate, apptHora: hora,
+            interactive: {
+              endpoint: 'sendButtons',
+              payload: {
+                title: '',
+                description: body,
+                footer: clinica,
+                buttons: [
+                  { buttonId: `appt_confirm_${appt.id}`, buttonText: { displayText: 'Confirmar' }, type: 1 },
+                  { buttonId: `appt_reschedule_${appt.id}`, buttonText: { displayText: 'Preciso remarcar' }, type: 1 },
+                ],
+              },
+            },
+          },
         });
-        console.log(`   📩 Lembrete enfileirado (consulta ${appt.id})`);
+        console.log(`   📩 Pedido de confirmação enfileirado (consulta ${appt.id})`);
       } catch (apptErr) {
         console.error(`   ❌ Lembrete da consulta ${appt.id}:`, apptErr.message);
       }
@@ -12283,6 +12329,98 @@ async function processAppointmentReminders() {
   } catch (err) {
     console.error('❌ Appointment reminder cron error:', err.message);
   }
+}
+
+// ─── Resposta ao pedido de confirmação (botão ou 1/2, SIM legado) ───
+// Sem "ok": muitas vezes é só "recebi" e confirmaria presença sem intenção (parecer T3).
+const APPT_CONFIRM_WORDS = new Set(['1', 'sim', 'confirmo', 'confirmar', 'confirmado', 'confirmada', 'yes', 'vou', 'estarei', 'pode confirmar']);
+const APPT_RESCHEDULE_WORDS = new Set(['2', 'remarcar', 'preciso remarcar', 'quero remarcar', 'reagendar']);
+
+function parseAppointmentReminderReply(msgContent) {
+  const raw = String(msgContent || '').trim();
+  const btn = raw.match(/^appt_(confirm|reschedule)_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+  if (btn) return { action: btn[1] === 'confirm' ? 'confirmado' : 'remarcar', agendamentoId: btn[2].toLowerCase() };
+  const t = raw.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[!.\s]+$/g, '').replace(/\s+/g, ' ');
+  if (!t || t.length > 40) return null;
+  if (APPT_CONFIRM_WORDS.has(t)) return { action: 'confirmado', agendamentoId: null };
+  if (APPT_RESCHEDULE_WORDS.has(t)) return { action: 'remarcar', agendamentoId: null };
+  return null;
+}
+
+// Só vale se: houver pedido ENVIADO por esta clínica a este telefone, ainda no prazo
+// (até o horário da consulta), sem resposta anterior; o agendamento é da clínica e o
+// telefone é o do cadastro do paciente daquele agendamento.
+async function handleAppointmentReminderReply({ tenantId, phone, msgType, msgContent, instance }) {
+  if (!isValidTenantId(tenantId) || !phone) return null;
+  if (!['text', 'button_response', 'list_response'].includes(msgType)) return null;
+  const parsed = parseAppointmentReminderReply(msgContent);
+  if (!parsed) return null;
+  const key = waPhoneKey(phone);
+  const params = [tenantId, key];
+  if (parsed.agendamentoId) params.push(`reminder_${parsed.agendamentoId}`);
+  const { rows: [job] } = await pool.query(
+    `SELECT aj.id, aj.flow_id, aj.variables FROM automation_jobs aj
+      WHERE aj.tenant_id = $1 AND aj.trigger_event = 'appointment_reminder' AND aj.status = 'sent'
+        AND RIGHT(regexp_replace(aj.patient_phone, '\\D', '', 'g'), 8) = RIGHT($2, 8)
+        AND (aj.expires_at IS NULL OR aj.expires_at > NOW())
+        AND aj.sent_at > NOW() - INTERVAL '8 days'
+        AND COALESCE(aj.variables::jsonb->>'confirmationReply', '') = ''
+        ${parsed.agendamentoId ? 'AND aj.flow_id = $3' : ''}
+      ORDER BY aj.sent_at DESC LIMIT 1`,
+    params
+  );
+  if (!job) return null;
+  const agendamentoId = String(job.flow_id || '').replace(/^reminder_/, '');
+  const { rows: [appt] } = await pool.query(
+    `SELECT a.id, a.status, a.data, a.hora, p.telefone
+       FROM agendamentos a JOIN pacientes p ON p.id = a.paciente_id AND p.tenant_id = a.tenant_id
+      WHERE a.id::text = $1 AND a.tenant_id = $2 LIMIT 1`,
+    [agendamentoId, tenantId]
+  );
+  // Mesmo critério da fila (8 últimos dígitos): o cadastro costuma vir sem o 55.
+  const last8 = (v) => String(v || '').replace(/\D/g, '').slice(-8);
+  if (!appt || !last8(appt.telefone) || last8(appt.telefone) !== last8(phone)) return null;
+  if (['cancelado', 'desmarcado', 'faltou', 'finalizado', 'realizado', 'em_atendimento'].includes(String(appt.status || ''))) return null;
+
+  const { rowCount } = await pool.query(
+    `UPDATE agendamentos SET status = $3, updated_at = NOW()
+      WHERE id::text = $1 AND tenant_id = $2 AND status NOT IN ('cancelado', 'desmarcado', 'faltou', 'finalizado', 'realizado', 'em_atendimento')`,
+    [agendamentoId, tenantId, parsed.action]
+  );
+  if (!rowCount) return null;
+  await pool.query(
+    `UPDATE automation_jobs SET variables = jsonb_set(jsonb_set(COALESCE(variables::jsonb, '{}'), '{confirmationReply}', to_jsonb($2::text)), '{answeredAt}', to_jsonb(NOW()::text))
+      WHERE id = $1 AND tenant_id = $3`,
+    [job.id, parsed.action, tenantId]
+  ).catch(e => console.error('[confirmação] marcar resposta falhou:', e.message));
+
+  const clinica = await getTenantClinicName(tenantId);
+  // TEXTO PARA PACIENTE: revisão da Helena (helena-juridico) antes do merge.
+  const reply = parsed.action === 'confirmado'
+    ? `✅ *Presença confirmada!*\n\nObrigado por confirmar. A ${clinica} aguarda você na data agendada. 😊`
+    // Parecer T5: diz qual consulta, que o retorno vem no horário de atendimento e que o
+    // horário atual segue reservado (o status "remarcar" não libera o horário sozinho; só
+    // a recepção decide oferecê-lo a outro paciente depois de falar com este).
+    : `📅 Recebemos seu pedido para remarcar a consulta de ${formatAgendaDateBR(appt.data)} às ${String(appt.hora || '').slice(0, 5)}. A equipe da ${clinica} vai falar com você por aqui, no horário de atendimento, para combinar um novo horário. Até lá, seu horário atual continua reservado.`;
+  await enqueueWhatsAppAutoReply({
+    tenantId, instance, phone, message: reply, category: 'service', dedupeMinutes: 10,
+    kind: parsed.action === 'confirmado' ? 'appointment_confirmed' : 'appointment_reschedule',
+  }).catch(e => console.error('[confirmação] resposta não enfileirada:', e.message));
+
+  broadcastSSE('agendamento_changed', { action: 'updated', id: agendamentoId, data: appt.data }, tenantId);
+  if (parsed.action === 'remarcar') {
+    // Aviso à recepção: evento na tela (agenda/chat) e notificação; a conversa entra na fila de atendimento.
+    const dataBR = formatAgendaDateBR(appt.data);
+    broadcastSSE('appointment_reschedule_requested', { agendamentoId, data: appt.data, hora: appt.hora }, tenantId);
+    sendPushToAll({
+      title: '📅 Pedido de remarcação',
+      body: `Um paciente pediu para remarcar a consulta de ${dataBR} às ${String(appt.hora || '').slice(0, 5)}.`,
+      tag: `remarcar-${agendamentoId}`,
+      url: '/agenda',
+    }, tenantId);
+  }
+  console.log(`📅 Resposta ao pedido de confirmação: ${parsed.action} (consulta ${agendamentoId}, final ${maskPhone(phone)})`);
+  return { handled: true, action: parsed.action, agendamentoId };
 }
 
 // ─── Cron: inactive patients & birthdays (runs every 6h) ────
@@ -16916,4 +17054,5 @@ export { processAutomationJobs };
 export function resetWhatsAppQueueStateForTests() {
   waPacing.clear(); waOutcomes.clear(); waOpenInstancesCache = { at: 0, names: new Set() };
 }
+export { parseAppointmentReminderReply };
 export { isWhatsAppOptOutText };
