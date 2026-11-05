@@ -937,6 +937,17 @@ export const sessionsApi = {
     vpsApiFetch<{ active: boolean; attendantId?: string; attendantName?: string; isCurrentUser?: boolean }>(`/sessions/active/${leadId}`, { background: true }),
   list: (params?: { active?: boolean }) =>
     vpsApiFetch<any[]>('/sessions/active', { params: params?.active ? { active: 'true' } : undefined, background: true }),
+  /** Devolve o atendimento à fila (409 se outro atendente estiver com ele). */
+  returnToQueue: (leadId: string) =>
+    vpsApiFetch<{ success: boolean; sessionId: string; status: 'waiting' }>('/sessions/return-to-queue', { method: 'POST', body: { leadId } }),
+  /** Reabre conversa encerrada como atendimento do usuário (409 se outro já assumiu). */
+  reopen: (leadId: string) =>
+    vpsApiFetch<{ success: boolean; sessionId: string; status: 'active'; alreadyOpen?: boolean }>('/sessions/reopen', { method: 'POST', body: { leadId } }),
+};
+
+/** Conexão principal de WhatsApp da clínica (guardada no servidor, em tenant_settings). */
+export const whatsappPrimaryApi = {
+  get: () => vpsApiFetch<{ instance: string | null; updatedAt: string | null }>('/whatsapp/primary', { background: true }),
 };
 
 

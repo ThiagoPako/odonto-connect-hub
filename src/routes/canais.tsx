@@ -9,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Plus, RefreshCw, Loader2, WifiOff, Smartphone, Wifi, Star } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useWhatsAppInstances } from "@/hooks/useWhatsAppInstances";
-import { vpsApiFetch, whatsappApi } from "@/lib/vpsApi";
+import { vpsApiFetch, whatsappApi, whatsappPrimaryApi } from "@/lib/vpsApi";
 import { ImportWhatsAppDialog } from "@/components/contatos/ImportWhatsAppDialog";
 import { toast } from "sonner";
 
@@ -27,9 +27,15 @@ function CanaisPage() {
   const [error, setError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [qrInstance, setQrInstance] = useState<string | null>(null);
-  const [primaryInstance, setPrimaryInstance] = useState<string | null>(() => {
-    try { return localStorage.getItem("wa_primary_instance"); } catch { return null; }
-  });
+  // Conexão principal vem do servidor (por clínica). Antes ficava no localStorage: cada
+  // computador da recepção mostrava uma principal diferente, ou nenhuma.
+  const [primaryInstance, setPrimaryInstance] = useState<string | null>(null);
+  useEffect(() => {
+    whatsappPrimaryApi.get().then(({ data, error }) => {
+      if (!error) setPrimaryInstance(data?.instance ?? null);
+    });
+    try { localStorage.removeItem("wa_primary_instance"); } catch { /* sem acesso ao armazenamento */ }
+  }, []);
 
   // Switch primary dialog
   const [switchDialogOpen, setSwitchDialogOpen] = useState(false);
@@ -63,7 +69,6 @@ function CanaisPage() {
         throw new Error(result.error || 'Erro desconhecido');
       }
 
-      localStorage.setItem("wa_primary_instance", pendingSwitchName);
       setPrimaryInstance(pendingSwitchName);
 
       const { sent, failed } = result.data;

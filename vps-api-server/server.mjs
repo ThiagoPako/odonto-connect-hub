@@ -11013,6 +11013,23 @@ async function ensureTenantConfigSchema() {
   } catch (e) {
     console.error('[tenant-schema] tenant_settings:', e.message);
   }
+  // Histórico de "retornar à fila"/"reabrir" (mesma definição da migration-attendance-session-events.sql).
+  try {
+    await pool.query(`CREATE TABLE IF NOT EXISTS attendance_session_events (
+      id BIGSERIAL PRIMARY KEY,
+      tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      session_id UUID,
+      lead_id TEXT NOT NULL,
+      action TEXT NOT NULL,
+      user_id UUID,
+      user_name TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_attendance_session_events_tenant
+      ON attendance_session_events (tenant_id, lead_id, created_at DESC)`);
+  } catch (e) {
+    console.error('[tenant-schema] attendance_session_events:', e.message);
+  }
   await copyGlobalSettingsToTenants();
 }
 
@@ -12464,9 +12481,22 @@ app.post('/api/sessions/close', async (req, res) => {
          closed_at = NOW(), status = 'closed',
          duration_seconds = EXTRACT(EPOCH FROM (NOW() - COALESCE(assigned_at, started_waiting_at)))::INTEGER
        WHERE lead_id = $1 AND status = 'active' AND tenant_id = $2
+         AND (attendant_id = $3 OR $4::boolean)
        RETURNING id, duration_seconds, attendant_id, attendant_name`,
-      [leadId, user.tenant_id || null]
+      [leadId, user.tenant_id || null, user.id, user.role === 'admin']
     );
+    // Só quem está atendendo (ou um admin) encerra: antes qualquer usuário da clínica
+    // fechava o atendimento de um colega.
+    if (result.rowCount === 0) {
+      const { rows: [other] } = await pool.query(
+        `SELECT attendant_name FROM attendance_sessions
+          WHERE lead_id = $1 AND tenant_id = $2 AND status = 'active' LIMIT 1`,
+        [leadId, user.tenant_id || null]
+      ).catch(() => ({ rows: [] }));
+      if (other) {
+        return res.status(409).json({ error: `${other.attendant_name || 'Outro atendente'} está atendendo este paciente; só essa pessoa ou um administrador pode finalizar.`, code: 'TAKEN_BY_OTHER' });
+      }
+    }
 
     const session = result.rows[0];
     const ownsSurveyInstance = session && instance ? await userOwnsInstance(user, instance) : false;
@@ -12526,6 +12556,175 @@ app.post('/api/sessions/close', async (req, res) => {
     res.json({ success: true, sessionId: session?.id, duration: session?.duration_seconds });
   } catch (error) {
     res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+  }
+});
+
+// ─── Retornar à fila / reabrir atendimento ────────────────────────────────────
+// Antes estas ações só mudavam a tela do atendente: ao recarregar, o atendimento voltava
+// para ele e os colegas nunca o viam na fila. Agora o servidor confirma, registra quem fez
+// e quando (attendance_session_events) e avisa os outros atendentes da clínica por SSE.
+// Concorrência: lock por (clínica, lead) dentro da transação, para dois atendentes não
+// reabrirem/assumirem a mesma conversa ao mesmo tempo.
+async function recordAttendanceSessionEvent(client, { tenantId, sessionId, leadId, action, userId, userName }) {
+  try {
+    await client.query('SAVEPOINT session_event');
+    await client.query(
+      `INSERT INTO attendance_session_events (tenant_id, session_id, lead_id, action, user_id, user_name)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [tenantId, sessionId || null, String(leadId), action, userId || null, userName || null]
+    );
+    await client.query('RELEASE SAVEPOINT session_event');
+  } catch (err) {
+    // Tabela ainda não criada (migração/boot): a ação vale mesmo assim; só o histórico falta.
+    await client.query('ROLLBACK TO SAVEPOINT session_event').catch(() => {});
+    if (err.code !== '42P01') console.error('[session-events]', err.message);
+  }
+}
+
+function sessionTakenResponse(res, session, userId) {
+  const isMine = session.attendant_id && String(session.attendant_id) === String(userId);
+  if (session.status === 'waiting') {
+    return res.status(409).json({ error: 'Este paciente já está na fila de espera.', code: 'ALREADY_WAITING' });
+  }
+  if (!isMine) {
+    return res.status(409).json({
+      error: `${session.attendant_name || 'Outro atendente'} já está atendendo este paciente.`,
+      code: 'TAKEN_BY_OTHER',
+      attendantName: session.attendant_name || null,
+    });
+  }
+  return null;
+}
+
+app.post('/api/sessions/return-to-queue', async (req, res) => {
+  let client;
+  try {
+    const { user } = await verifyUser(req);
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const leadId = req.body?.leadId ? String(req.body.leadId) : '';
+    if (!leadId) return res.status(400).json({ error: 'leadId obrigatório' });
+    const tenantId = String(user.tenant_id);
+    const userName = await getProfileDisplayName(user.id, 'Atendente');
+
+    client = await pool.connect();
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`session:${tenantId}:${leadId}`]);
+    const { rows } = await client.query(
+      `SELECT id, status, attendant_id, attendant_name FROM attendance_sessions
+        WHERE tenant_id = $1 AND lead_id = $2 AND status IN ('waiting', 'active')
+        ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
+      [tenantId, leadId]
+    );
+    const session = rows[0];
+    if (!session) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Não há atendimento aberto para este paciente.', code: 'NOT_FOUND' });
+    }
+    // Só quem está atendendo devolve; admin pode devolver o de qualquer um.
+    if (session.status === 'waiting' || (user.role !== 'admin' && String(session.attendant_id) !== String(user.id))) {
+      await client.query('ROLLBACK');
+      return sessionTakenResponse(res, session, user.id);
+    }
+    await client.query(
+      `UPDATE attendance_sessions
+          SET status = 'waiting', attendant_id = NULL, attendant_name = NULL,
+              assigned_at = NULL, started_waiting_at = NOW()
+        WHERE id = $1 AND tenant_id = $2`,
+      [session.id, tenantId]
+    );
+    await recordAttendanceSessionEvent(client, { tenantId, sessionId: session.id, leadId, action: 'returned_to_queue', userId: user.id, userName });
+    await client.query('COMMIT');
+    broadcastSSE('session_update', { action: 'returned_to_queue', leadId, sessionId: session.id, byUserId: user.id, byUserName: userName, at: new Date().toISOString() }, tenantId);
+    res.json({ success: true, sessionId: session.id, status: 'waiting' });
+  } catch (error) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('[sessions/return-to-queue]', error.message);
+    res.status(500).json({ error: 'Não foi possível devolver o atendimento à fila.' });
+  } finally {
+    client?.release();
+  }
+});
+
+app.post('/api/sessions/reopen', async (req, res) => {
+  let client;
+  try {
+    const { user } = await verifyUser(req);
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const leadId = req.body?.leadId ? String(req.body.leadId) : '';
+    if (!leadId) return res.status(400).json({ error: 'leadId obrigatório' });
+    const tenantId = String(user.tenant_id);
+    const userName = await getProfileDisplayName(user.id, 'Atendente');
+
+    client = await pool.connect();
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`session:${tenantId}:${leadId}`]);
+    const { rows: open } = await client.query(
+      `SELECT id, status, attendant_id, attendant_name FROM attendance_sessions
+        WHERE tenant_id = $1 AND lead_id = $2 AND status IN ('waiting', 'active')
+        ORDER BY created_at DESC LIMIT 1`,
+      [tenantId, leadId]
+    );
+    if (open[0]) {
+      await client.query('ROLLBACK');
+      const taken = sessionTakenResponse(res, open[0], user.id);
+      if (taken) return taken;
+      return res.json({ success: true, sessionId: open[0].id, status: 'active', alreadyOpen: true });
+    }
+    // O lead precisa ser desta clínica: pela sessão encerrada ou pelo CRM.
+    const { rows: closed } = await client.query(
+      `SELECT id, lead_name, lead_phone, queue_id, queue_name FROM attendance_sessions
+        WHERE tenant_id = $1 AND lead_id = $2 AND status = 'closed'
+        ORDER BY COALESCE(closed_at, created_at) DESC LIMIT 1`,
+      [tenantId, leadId]
+    );
+    let base = closed[0];
+    if (!base) {
+      const { rows: leads } = await client.query(
+        `SELECT nome AS lead_name, telefone AS lead_phone FROM crm_leads WHERE tenant_id = $1 AND id::text = $2 LIMIT 1`,
+        [tenantId, leadId]
+      ).catch(() => ({ rows: [] }));
+      base = leads[0];
+    }
+    if (!base) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Atendimento não encontrado nesta clínica.', code: 'NOT_FOUND' });
+    }
+    // Encerrada por mim nas últimas 24 h: reabre a mesma sessão (as métricas continuam nela).
+    // Senão cria uma sessão nova já em atendimento comigo.
+    const { rows: recent } = await client.query(
+      `UPDATE attendance_sessions
+          SET status = 'active', closed_at = NULL, duration_seconds = NULL, assigned_at = NOW()
+        WHERE id = (
+          SELECT id FROM attendance_sessions
+           WHERE tenant_id = $1 AND lead_id = $2 AND status = 'closed'
+             AND attendant_id = $3 AND closed_at > NOW() - INTERVAL '24 hours'
+           ORDER BY closed_at DESC LIMIT 1
+        ) AND tenant_id = $1
+        RETURNING id`,
+      [tenantId, leadId, user.id]
+    );
+    let id = recent[0]?.id;
+    if (!id) {
+      id = randomUUID();
+      await client.query(
+        `INSERT INTO attendance_sessions (id, lead_id, lead_name, lead_phone, queue_id, queue_name,
+           attendant_id, attendant_name, started_waiting_at, assigned_at, status, wait_time_seconds, tenant_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW(), 'active', 0, $9)`,
+        [id, leadId, base.lead_name || null, base.lead_phone || null, base.queue_id || null, base.queue_name || null, user.id, userName, tenantId]
+      );
+    }
+    await recordAttendanceSessionEvent(client, { tenantId, sessionId: id, leadId, action: 'reopened', userId: user.id, userName });
+    await client.query('COMMIT');
+    broadcastSSE('session_update', { action: 'reopened', leadId, sessionId: id, byUserId: user.id, byUserName: userName, at: new Date().toISOString() }, tenantId);
+    res.json({ success: true, sessionId: id, status: 'active' });
+  } catch (error) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('[sessions/reopen]', error.message);
+    res.status(500).json({ error: 'Não foi possível reabrir o atendimento.' });
+  } finally {
+    client?.release();
   }
 });
 
@@ -13419,6 +13618,20 @@ app.get('/api/sessions/active/:leadId', async (req, res) => {
 });
 
 // ─── Switch Primary WhatsApp Instance ───────────────────────
+// Conexão principal da clínica (tenant_settings.whatsapp_primary_instance).
+app.get('/api/whatsapp/primary', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const value = await getTenantSetting(String(user.tenant_id), 'whatsapp_primary_instance');
+    const instance = value && typeof value === 'object' ? value.instance || null : (typeof value === 'string' ? value : null);
+    res.json({ instance, updatedAt: value?.updatedAt || null });
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    res.status(500).json({ error: 'Não foi possível ler a conexão principal.' });
+  }
+});
+
 app.post('/api/whatsapp/switch-primary', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
@@ -13434,6 +13647,10 @@ app.post('/api/whatsapp/switch-primary', async (req, res) => {
     if (!isSafeInstanceName(newInstance) || !(await userOwnsInstance(user, newInstance))) {
       return res.status(403).json({ error: 'Este número de WhatsApp não pertence à sua clínica.' });
     }
+
+    // A conexão principal fica no servidor, por clínica (antes só no localStorage de cada navegador).
+    await setTenantSetting(tenantId, 'whatsapp_primary_instance', { instance: newInstance, updatedBy: user.id, updatedAt: new Date().toISOString() });
+    broadcastSSE('whatsapp_primary_changed', { instance: newInstance }, tenantId);
 
     // 1. Find open attendances for the CURRENT tenant
     const { rows: openChats } = await pool.query(

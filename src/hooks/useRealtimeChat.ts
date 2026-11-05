@@ -54,7 +54,18 @@ export interface LeadRecoveryReturn {
   previousStage: string;
 }
 
+/** Atendimento devolvido à fila ou reaberto por alguém da clínica. */
+export interface SessionChange {
+  action: "returned_to_queue" | "reopened";
+  leadId: string;
+  sessionId: string;
+  byUserId: string;
+  byUserName: string;
+  at: string;
+}
+
 type MessageHandler = (msg: IncomingMessage) => void;
+type SessionChangeHandler = (data: SessionChange) => void;
 type PresenceHandler = (update: PresenceUpdate) => void;
 type QueueAssignHandler = (assignment: QueueAssignment) => void;
 type MessageStatusHandler = (update: MessageStatusUpdate) => void;
@@ -89,6 +100,7 @@ interface RealtimeChatOptions {
   onMessageStatus?: MessageStatusHandler;
   onLeadRecoveryReturn?: LeadRecoveryHandler;
   onConnected?: ConnectedHandler;
+  onSessionChanged?: SessionChangeHandler;
 }
 
 /** Realtime chat hook — VPS SSE backed. */
@@ -112,6 +124,9 @@ export function useRealtimeChat(options: RealtimeChatOptions) {
 
   const connectedRef = useRef<ConnectedHandler | undefined>(options.onConnected);
   connectedRef.current = options.onConnected;
+
+  const sessionChangedRef = useRef<SessionChangeHandler | undefined>(options.onSessionChanged);
+  sessionChangedRef.current = options.onSessionChanged;
 
   useEffect(() => {
     if (!enabled) return;
@@ -186,6 +201,10 @@ export function useRealtimeChat(options: RealtimeChatOptions) {
       eventSource.addEventListener("message_status_update", (event) => {
         const data = parse<MessageStatusUpdate>(event as MessageEvent<string>);
         if (data) messageStatusRef.current?.(data);
+      });
+      eventSource.addEventListener("session_update", (event) => {
+        const data = parse<SessionChange>(event as MessageEvent<string>);
+        if (data) sessionChangedRef.current?.(data);
       });
       eventSource.addEventListener("lead_returned_from_recovery", (event) => {
         const data = parse<LeadRecoveryReturn>(event as MessageEvent<string>);

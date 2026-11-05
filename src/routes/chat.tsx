@@ -150,6 +150,7 @@ export const Route = createFileRoute("/chat")({
 function ChatPage() {
   const navigate = useNavigate();
   const { user: currentUser } = useAuth();
+  const [reopening, setReopening] = useState(false);
   const activeTenantId = currentUser?.tenant_id || getCachedTenantId();
   const { lead: leadSearch } = Route.useSearch();
   const { connected: connectedInstances } = useWhatsAppInstances();
@@ -634,6 +635,15 @@ function ChatPage() {
     onMessageStatus: handleMessageStatusUpdate,
     onLeadRecoveryReturn: handleLeadRecoveryReturn,
     onConnected: () => void reloadQueueLeads(),
+    // Outro atendente devolveu ou reabriu um atendimento: a fila e "Meus atendimentos"
+    // vêm de novo do servidor; se era a conversa aberta aqui, avisa.
+    onSessionChanged: (change) => {
+      if (change.byUserId === currentUser?.id) return;
+      void reloadQueueLeads();
+      if (change.action === "reopened" && selectedLeadRef.current?.id === change.leadId) {
+        toast.info(`${change.byUserName} reabriu este atendimento e está atendendo agora.`);
+      }
+    },
   });
 
   useEffect(() => {
@@ -1308,7 +1318,7 @@ function ChatPage() {
       instance: instanceName,
     }).then(({ data, error }) => {
       if (error) {
-        toast.error("Erro ao finalizar atendimento");
+        toast.error(`Não foi possível finalizar: ${error}`);
         return;
       }
       const durationMin = data?.duration ? Math.floor(data.duration / 60) : 0;
@@ -1435,8 +1445,15 @@ function ChatPage() {
     setSurveyLead(null);
   };
 
-  const handleReturnToQueue = (lead: Lead) => {
-    // Move from myLeads back to queue
+  // Antes só mudava a tela: ao recarregar o atendimento voltava para a pessoa e os colegas
+  // nunca o viam na fila. Agora a tela só muda depois que o servidor confirmou.
+  const handleReturnToQueue = async (lead: Lead) => {
+    const { error } = await sessionsApi.returnToQueue(lead.id);
+    if (error) {
+      toast.error(`Não foi possível devolver ${lead.name} à fila: ${error}`);
+      void reloadQueueLeads();
+      return;
+    }
     setMyLeads((prev) => prev.filter((l) => l.id !== lead.id));
     const queuedLead: Lead = { ...lead, status: "waiting", assignedTo: undefined, unreadCount: 0 };
     setQueue((prev) => [queuedLead, ...prev]);
@@ -1914,16 +1931,29 @@ function ChatPage() {
                 <div className="px-4 py-3 border-t border-border/50 bg-muted/30 flex items-center justify-center gap-3">
                   <p className="text-sm text-muted-foreground">Atendimento finalizado</p>
                   <button
-                    onClick={() => {
+                    disabled={reopening}
+                    onClick={async () => {
+                      const lead = selectedLead;
+                      setReopening(true);
+                      const { error } = await sessionsApi.reopen(lead.id);
+                      setReopening(false);
+                      if (error) {
+                        // Ex.: "Carla já está atendendo este paciente."
+                        toast.error(`Não foi possível reabrir: ${error}`);
+                        void reloadQueueLeads();
+                        return;
+                      }
                       setMyLeads((prev) =>
-                        prev.map((l) => l.id === selectedLead.id ? { ...l, status: "active" as const } : l)
+                        prev.some((l) => l.id === lead.id)
+                          ? prev.map((l) => l.id === lead.id ? { ...l, status: "active" as const } : l)
+                          : [{ ...lead, status: "active" as const }, ...prev]
                       );
-                      setSelectedLead({ ...selectedLead, status: "active" });
+                      setSelectedLead({ ...lead, status: "active" });
                       toast.success("Atendimento reaberto");
                     }}
-                    className="px-4 py-1.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
+                    className="px-4 py-1.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
                   >
-                    Reabrir atendimento
+                    {reopening ? "Reabrindo..." : "Reabrir atendimento"}
                   </button>
                 </div>
               ) : (
