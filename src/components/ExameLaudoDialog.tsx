@@ -3,7 +3,7 @@ import { AlertTriangle, CheckCircle2, Download, ExternalLink, FileText, Loader2,
 import { toast } from "sonner";
 import {
   examesApi, exameArquivosApi, formatarTamanho, urlArquivoExame, STATUS_LABELS,
-  type Exame, type ExameArquivo, type ExameUpdate,
+  type Exame, type ExameArquivo, type ExameLaudoHistorico, type ExameUpdate,
 } from "@/lib/examesApi";
 import { resolveMediaUrl } from "@/lib/vpsApi";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { ExameImagemViewer } from "@/components/ExameImagemViewer";
 import { imprimirLaudo } from "@/lib/laudoImpressao";
+import { useAuth } from "@/hooks/useAuth";
 
 const ACEITOS = "image/jpeg,image/png,image/webp,image/gif,image/bmp,application/pdf,.dcm,application/dicom,.zip,application/zip";
 
@@ -34,6 +35,10 @@ export function ExameLaudoDialog({ exame: exameProp, onOpenChange, onSaved }: Pr
   const [arquivosErro, setArquivosErro] = useState<string | null>(null);
   const [verId, setVerId] = useState<string | null>(null);
   const [alterou, setAlterou] = useState(false);
+  const [historico, setHistorico] = useState<ExameLaudoHistorico[] | null>(null);
+  const { user } = useAuth();
+  // Finalizar e reabrir: só dentista ou administrador (o servidor confere de novo)
+  const podeLaudar = ["admin", "dentista"].includes(user?.role ?? "");
   const fileRef = useRef<HTMLInputElement>(null);
 
   const exameId = exameProp?.id ?? null;
@@ -57,6 +62,7 @@ export function ExameLaudoDialog({ exame: exameProp, onOpenChange, onSaved }: Pr
     setLegadoUrl(exameProp.arquivo_url ?? null);
     setVerId(null);
     setAlterou(false);
+    setHistorico(null);
     setArquivos([]);
     carregarArquivos();
     // Versão completa (clínica, nascimento, quem laudou) para impressão e controle de edição
@@ -72,7 +78,13 @@ export function ExameLaudoDialog({ exame: exameProp, onOpenChange, onSaved }: Pr
   if (!exame) return null;
 
   const finalizado = !!exame.laudado_em;
-  const podeFinalizar = !finalizado && exame.status !== "cancelado";
+  const podeFinalizar = podeLaudar && !finalizado && exame.status !== "cancelado";
+
+  async function verHistorico() {
+    if (!exame) return;
+    try { setHistorico(await examesApi.historicoLaudo(exame.id)); }
+    catch (e: unknown) { toast.error((e as Error).message || "Não foi possível carregar o histórico"); }
+  }
   const imagens = arquivos.filter((a) => a.imagem);
   const legadoResolvido = resolveMediaUrl(legadoUrl);
   const legadoNome = legadoUrl?.split("?")[0].split("/").pop() ?? "";
@@ -148,6 +160,7 @@ export function ExameLaudoDialog({ exame: exameProp, onOpenChange, onSaved }: Pr
     try {
       const atualizado = await examesApi.finalizarLaudo(exame.id, laudo.trim(), exame.updated_at);
       setAlterou(true);
+      setHistorico(null);
       await recarregarExame(atualizado.id);
       toast.success("Laudo finalizado");
     } catch (e: unknown) {
@@ -164,6 +177,7 @@ export function ExameLaudoDialog({ exame: exameProp, onOpenChange, onSaved }: Pr
     try {
       await examesApi.reabrirLaudo(exame.id);
       setAlterou(true);
+      setHistorico(null);
       await recarregarExame(exame.id);
       toast.success("Laudo reaberto para correção");
     } catch (e: unknown) {
@@ -217,9 +231,33 @@ export function ExameLaudoDialog({ exame: exameProp, onOpenChange, onSaved }: Pr
               />
               {finalizado && (
                 <p id="laudo-finalizado-aviso" className="text-xs text-muted-foreground">
-                  Laudo finalizado não pode ser editado. Para corrigir, use "Reabrir laudo".
+                  Laudo finalizado não pode ser editado. {podeLaudar ? 'Para corrigir, use "Reabrir laudo".' : "Para corrigir, peça a um dentista ou administrador que reabra o laudo."}
                 </p>
               )}
+              {!finalizado && !podeLaudar && (
+                <p className="text-xs text-muted-foreground">Você pode salvar o rascunho; só dentista ou administrador finaliza o laudo.</p>
+              )}
+              <div className="text-xs">
+                {historico === null ? (
+                  <button type="button" className="text-primary underline-offset-2 hover:underline" onClick={verHistorico}>
+                    Ver histórico do laudo
+                  </button>
+                ) : historico.length === 0 ? (
+                  <p className="text-muted-foreground">Sem finalizações registradas ainda.</p>
+                ) : (
+                  <ul className="space-y-2 rounded-md border border-border p-2" aria-label="Histórico do laudo">
+                    {historico.map((h) => (
+                      <li key={h.id}>
+                        <div className="font-medium">
+                          {h.acao === "finalizado" ? "Finalizado" : "Reaberto"} por {h.autor_nome || "usuário"} em{" "}
+                          {new Date(h.criado_em).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}
+                        </div>
+                        {h.laudo_texto && <p className="whitespace-pre-wrap text-muted-foreground line-clamp-4">{h.laudo_texto}</p>}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             </div>
 
             <section className="space-y-2" aria-labelledby="exame-arquivos-titulo">
@@ -332,7 +370,7 @@ export function ExameLaudoDialog({ exame: exameProp, onOpenChange, onSaved }: Pr
               <Button variant="outline" className="gap-1" onClick={imprimir} disabled={!laudo.trim() && imagens.length === 0}>
                 <Printer className="h-4 w-4" /> Imprimir / PDF
               </Button>
-              {finalizado && (
+              {finalizado && podeLaudar && (
                 <Button variant="ghost" className="gap-1" onClick={reabrir} disabled={acao !== null}>
                   {acao === "reabrir" ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />} Reabrir laudo
                 </Button>
