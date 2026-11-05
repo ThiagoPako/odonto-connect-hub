@@ -799,19 +799,38 @@ async function ensureLeadForPatient(pool, pacienteId, cpPatientId, info = {}, te
 
 // ─── Política de resolução de conflitos ────────────────────────
 // Resolve estratégia efetiva e flag keep_local para um registro vindo da Clinicorp.
-// Precedência: profissional > clínica > global > settings.conflict_strategy.
-async function resolveConflictPolicy(pool, { clinicId, professionalId } = {}) {
+// Precedência: profissional > clínica > global > settings.conflict_strategy; no mesmo escopo,
+// a regra da própria clínica (tenant_id) vence a da plataforma (tenant_id NULL). Regra de outra
+// clínica nunca é lida.
+async function resolveConflictPolicy(pool, { clinicId, professionalId, tenantId = null } = {}) {
   const defaultStrategy = 'newest_wins';
-  const ovs = await pool.query(
-    `SELECT scope_type, scope_id, keep_local, conflict_strategy
-       FROM clinicorp_local_overrides
-       WHERE (scope_type='global')
-          OR (scope_type='clinic'       AND scope_id=$1)
-          OR (scope_type='professional' AND scope_id=$2)`,
-    [clinicId != null ? String(clinicId) : null, professionalId != null ? String(professionalId) : null]
-  );
+  const params = [clinicId != null ? String(clinicId) : null, professionalId != null ? String(professionalId) : null, tenantId];
+  let ovs;
+  try {
+    ovs = await pool.query(
+      `SELECT scope_type, scope_id, keep_local, conflict_strategy, tenant_id
+         FROM clinicorp_local_overrides
+         WHERE (tenant_id IS NULL OR tenant_id = $3)
+           AND ((scope_type='global')
+             OR (scope_type='clinic'       AND scope_id=$1)
+             OR (scope_type='professional' AND scope_id=$2))`,
+      params
+    );
+  } catch (e) {
+    if (e.code !== '42703') throw e;
+    // Antes de migration-clinicorp-multi-clinica.sql (sem tenant_id): só as regras da plataforma.
+    ovs = await pool.query(
+      `SELECT scope_type, scope_id, keep_local, conflict_strategy, NULL AS tenant_id
+         FROM clinicorp_local_overrides
+         WHERE (scope_type='global')
+            OR (scope_type='clinic'       AND scope_id=$1)
+            OR (scope_type='professional' AND scope_id=$2)`,
+      params.slice(0, 2)
+    );
+  }
   const order = { global: 0, clinic: 1, professional: 2 };
-  const sorted = ovs.rows.sort((a, b) => order[a.scope_type] - order[b.scope_type]);
+  const sorted = ovs.rows.sort((a, b) =>
+    (order[a.scope_type] - order[b.scope_type]) || ((a.tenant_id ? 1 : 0) - (b.tenant_id ? 1 : 0)));
   let strategy = defaultStrategy;
   let keepLocal = false;
   let scopeType = 'settings';
@@ -885,7 +904,7 @@ async function projectAppointmentToLocal(pool, a, cpApptId, tenantId = null) {
   const cpProfId = pickFirst(a, 'ProfessionalId', 'Dentist_PersonId', 'DentistPersonId', 'Professional_PersonId', 'ScheduleToId', 'ScheduleTo_PersonId', 'DentistId', 'Dentist_Id', 'professional_id', 'dentist_id') ?? a.Dentist?.Id ?? a.Professional?.Id ?? null;
   const cpClinicId = pickFirst(a, 'BusinessId', 'Clinic_BusinessId', 'ClinicBusinessId', 'ClinicId', 'clinic_id', 'business_id') ?? a.Business?.Id ?? null;
   const cpUpdatedAt = a.UpdateDate || a.UpdatedAt || a.LastModified || a.ModifiedAt || a.z_LastChange_Date || a.ModifiedDate || null;
-  const policy = await resolveConflictPolicy(pool, { clinicId: cpClinicId, professionalId: cpProfId });
+  const policy = await resolveConflictPolicy(pool, { clinicId: cpClinicId, professionalId: cpProfId, tenantId: tId });
 
   // Busca ou cria o dentista no schema local ANTES do agendamento
   const professionalName = pickFirst(a, 'ProfessionalName', 'Dentist_FullName', 'Dentist_Name', 'DentistName', 'ScheduleToName', 'Professional_Name', 'professional_name', 'dentist_name') ?? a.Dentist?.Name ?? a.Dentist?.FullName ?? a.Professional?.Name ?? a.Professional?.FullName ?? null;
@@ -1015,7 +1034,7 @@ async function projectPatientToLocal(pool, p, tenantId = null) {
   if (!cpId) return null;
   const tId = await resolveTenantId(pool, tenantId);
   const cpUpdatedAt = p.UpdateDate || p.UpdatedAt || p.LastModified || null;
-  const policy = await resolveConflictPolicy(pool, {});
+  const policy = await resolveConflictPolicy(pool, { tenantId: tId });
   const existing = await pool.query(
     `SELECT id, nome, telefone, email, data_nascimento, sexo, cpf,
             updated_at, last_clinicorp_sync_at, keep_local
@@ -2217,6 +2236,8 @@ export function registerClinicorp(app, pool, { verifyUser } = {}) {
       `ALTER TABLE clinicorp_push_log ADD COLUMN IF NOT EXISTS tenant_id UUID`,
       `ALTER TABLE clinicorp_webhook_events ADD COLUMN IF NOT EXISTS tenant_id UUID`,
       `ALTER TABLE clinicorp_conflicts ADD COLUMN IF NOT EXISTS tenant_id UUID`,
+      `ALTER TABLE clinicorp_local_overrides ADD COLUMN IF NOT EXISTS tenant_id UUID`,
+      `ALTER TABLE clinicorp_override_history ADD COLUMN IF NOT EXISTS tenant_id UUID`,
       `CREATE INDEX IF NOT EXISTS idx_clinicorp_push_log_tenant ON clinicorp_push_log(tenant_id, created_at DESC)`,
     ]) {
       try { await pool.query(sql); }
@@ -2463,13 +2484,20 @@ export function registerClinicorp(app, pool, { verifyUser } = {}) {
     res.json({ ok: true, ...counts });
   }));
 
-  // ── Conflict overrides (global / clinic / professional) ─────
+  // ── Conflict overrides (global / clinic / professional), por clínica ou da plataforma ─────
+  const UUID_RE_OVERRIDE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   app.get('/api/clinicorp/overrides', async (req, res) => {
     if (!requireSuperAdmin(req, res)) return;
     try {
+      // ?tenant_id=<uuid>: regras daquela clínica + as da plataforma; sem filtro: todas.
+      const tf = req.query.tenant_id ? String(req.query.tenant_id) : null;
+      if (tf && !UUID_RE_OVERRIDE.test(tf)) return res.status(400).json({ error: 'tenant_id inválido' });
       const { rows } = await pool.query(
-        `SELECT id, scope_type, scope_id, keep_local, conflict_strategy, note, updated_at
-           FROM clinicorp_local_overrides ORDER BY scope_type, scope_id`
+        `SELECT id, tenant_id, scope_type, scope_id, keep_local, conflict_strategy, note, updated_at
+           FROM clinicorp_local_overrides
+          ${tf ? 'WHERE tenant_id IS NULL OR tenant_id = $1' : ''}
+          ORDER BY tenant_id NULLS FIRST, scope_type, scope_id`,
+        tf ? [tf] : []
       );
       res.json(rows);
     } catch (e) { res.status(500).json({ error: e.message }); }
@@ -2479,6 +2507,13 @@ export function registerClinicorp(app, pool, { verifyUser } = {}) {
     if (!requireSuperAdmin(req, res)) return;
     try {
       const { scope_type, scope_id, keep_local, conflict_strategy, note, scope_label } = req.body || {};
+      // tenant_id ausente/null = regra da plataforma (todas as clínicas); com uuid = só daquela clínica.
+      const tid = req.body?.tenant_id ? String(req.body.tenant_id) : null;
+      if (tid) {
+        if (!UUID_RE_OVERRIDE.test(tid)) return res.status(400).json({ error: 'tenant_id inválido' });
+        const { rows: t } = await pool.query('SELECT 1 FROM tenants WHERE id = $1', [tid]);
+        if (!t.length) return res.status(404).json({ error: 'Clínica não encontrada' });
+      }
       if (!['global','clinic','professional'].includes(scope_type))
         return res.status(400).json({ error: 'scope_type inválido' });
       if (conflict_strategy && !['clinicorp_wins','local_wins','newest_wins'].includes(conflict_strategy))
@@ -2495,20 +2530,21 @@ export function registerClinicorp(app, pool, { verifyUser } = {}) {
 
       // snapshot anterior
       const prev = (await pool.query(
-        `SELECT * FROM clinicorp_local_overrides WHERE scope_type=$1 AND COALESCE(scope_id,'')=COALESCE($2,'')`,
-        [scope_type, sid]
+        `SELECT * FROM clinicorp_local_overrides
+          WHERE tenant_id IS NOT DISTINCT FROM $3 AND scope_type=$1 AND COALESCE(scope_id,'')=COALESCE($2,'')`,
+        [scope_type, sid, tid]
       )).rows[0] || null;
 
       const result = await pool.query(
-        `INSERT INTO clinicorp_local_overrides (scope_type, scope_id, keep_local, conflict_strategy, note)
-         VALUES ($1,$2,COALESCE($3,FALSE),$4,$5)
-         ON CONFLICT (scope_type, COALESCE(scope_id,'')) DO UPDATE SET
+        `INSERT INTO clinicorp_local_overrides (scope_type, scope_id, keep_local, conflict_strategy, note, tenant_id)
+         VALUES ($1,$2,COALESCE($3,FALSE),$4,$5,$6)
+         ON CONFLICT ((COALESCE(tenant_id, '00000000-0000-0000-0000-000000000000'::uuid)), scope_type, (COALESCE(scope_id,''))) DO UPDATE SET
            keep_local = COALESCE(EXCLUDED.keep_local, clinicorp_local_overrides.keep_local),
            conflict_strategy = COALESCE(EXCLUDED.conflict_strategy, clinicorp_local_overrides.conflict_strategy),
            note = COALESCE(EXCLUDED.note, clinicorp_local_overrides.note),
            updated_at = NOW()
          RETURNING *`,
-        [scope_type, sid, typeof keep_local === 'boolean' ? keep_local : null, conflict_strategy ?? null, note ?? null]
+        [scope_type, sid, typeof keep_local === 'boolean' ? keep_local : null, conflict_strategy ?? null, note ?? null, tid]
       );
       const next = result.rows[0];
 
@@ -2525,11 +2561,11 @@ export function registerClinicorp(app, pool, { verifyUser } = {}) {
       if (action === 'create' || changed.length > 0) {
         await pool.query(
           `INSERT INTO clinicorp_override_history
-             (override_id, action, scope_type, scope_id, scope_label, before_data, after_data, changed_fields, changed_by, note)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+             (override_id, action, scope_type, scope_id, scope_label, before_data, after_data, changed_fields, changed_by, note, tenant_id)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
           [next.id, action, scope_type, sid, scope_label || null,
            prev ? JSON.stringify(prev) : null, JSON.stringify(next),
-           changed.length ? changed : null, req.clinicorpUser?.email || req.clinicorpUser?.id || 'system', note || null]
+           changed.length ? changed : null, req.clinicorpUser?.email || req.clinicorpUser?.id || 'system', note || null, tid]
         );
       }
 
@@ -2547,9 +2583,9 @@ export function registerClinicorp(app, pool, { verifyUser } = {}) {
         await pool.query(`DELETE FROM clinicorp_local_overrides WHERE id=$1`, [req.params.id]);
         await pool.query(
           `INSERT INTO clinicorp_override_history
-             (override_id, action, scope_type, scope_id, before_data, after_data, changed_by)
-           VALUES ($1,'delete',$2,$3,$4,NULL,$5)`,
-          [prev.id, prev.scope_type, prev.scope_id, JSON.stringify(prev), req.clinicorpUser?.email || req.clinicorpUser?.id || 'system']
+             (override_id, action, scope_type, scope_id, before_data, after_data, changed_by, tenant_id)
+           VALUES ($1,'delete',$2,$3,$4,NULL,$5,$6)`,
+          [prev.id, prev.scope_type, prev.scope_id, JSON.stringify(prev), req.clinicorpUser?.email || req.clinicorpUser?.id || 'system', prev.tenant_id || null]
         );
       }
       res.json({ ok: true });
@@ -2679,3 +2715,5 @@ export function registerClinicorp(app, pool, { verifyUser } = {}) {
 
   console.log('🦷 Clinicorp routes registered');
 }
+
+export const __paraTestesMultiClinica = { resolveConflictPolicy };

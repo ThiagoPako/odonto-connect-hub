@@ -124,6 +124,11 @@ jobs:
             cat /root/odonto-connect/vps-api-server/migration-whatsapp-fase1.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             cat /root/odonto-connect/vps-api-server/migration-seguranca-p0.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             cat /root/odonto-connect/vps-api-server/migration-contatos-recuperacao.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
+            # Clinicorp com mais de uma clínica: chaves únicas por clínica (sem BEGIN: CONCURRENTLY).
+            if ! cat /root/odonto-connect/vps-api-server/migration-clinicorp-multi-clinica.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1; then
+              echo "::warning title=Clinicorp multi-clínica não aplicado::migration-clinicorp-multi-clinica.sql falhou (repetido na mesma clínica, lock ou erro). Chaves globais mantidas; o deploy segue. Ver log acima."
+              echo "!!! ATENÇÃO: Clinicorp ainda com chaves únicas globais: a segunda clínica com Clinicorp colide."
+            fi
             echo "=== Migrations applied ==="
 
             # ─── Pre-flight syntax check on server.mjs ─────────────────────
