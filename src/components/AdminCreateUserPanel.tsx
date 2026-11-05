@@ -57,8 +57,8 @@ export function AdminCreateUserPanel() {
       toast.error("Preencha todos os campos");
       return;
     }
-    if (password.length < 6) {
-      toast.error("Senha deve ter pelo menos 6 caracteres");
+    if (password.length < 8) {
+      toast.error("Senha deve ter pelo menos 8 caracteres");
       return;
     }
 
@@ -223,7 +223,7 @@ export function AdminCreateUserPanel() {
               <Input
                 id="user-password"
                 type="password"
-                placeholder="Mín. 6 caracteres"
+                placeholder="Mín. 8 caracteres"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />
