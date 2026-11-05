@@ -12,7 +12,6 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Search,
-  Loader2,
   Phone,
   MessageSquare,
   Users,
@@ -72,11 +71,11 @@ export function NewChatFromContactDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg max-h-[80vh] flex flex-col">
+      <DialogContent className="sm:max-w-lg max-h-[90dvh] flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Users className="h-5 w-5 text-primary" />
-            Iniciar Chat com Contato
+            <Users className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
+            Iniciar conversa com contato
           </DialogTitle>
           <DialogDescription>
             Selecione um contato para iniciar uma conversa no WhatsApp
@@ -85,22 +84,25 @@ export function NewChatFromContactDialog({
 
         {/* Search */}
         <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" aria-hidden="true" />
           <Input
             placeholder="Buscar por nome ou telefone..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="pl-10"
+            className="pl-10 h-11 text-base sm:text-sm"
+            aria-label="Buscar contato"
             autoFocus
           />
         </div>
 
         {/* Type filters */}
-        <div className="flex gap-1.5 flex-wrap">
+        <div role="group" aria-label="Filtrar por tipo" className="flex gap-2 overflow-x-auto pb-1 md:flex-wrap md:overflow-visible">
           <Button
-            variant={tipoFilter === null ? "default" : "outline"}
+            type="button"
+            variant={tipoFilter === null ? "secondary" : "outline"}
             size="sm"
-            className="h-7 text-xs"
+            aria-pressed={tipoFilter === null}
+            className={`h-11 md:h-8 shrink-0 text-sm ${tipoFilter === null ? "border border-primary text-primary" : ""}`}
             onClick={() => setTipoFilter(null)}
           >
             Todos
@@ -108,9 +110,11 @@ export function NewChatFromContactDialog({
           {tipos.map((t) => (
             <Button
               key={t}
-              variant={tipoFilter === t ? "default" : "outline"}
+              type="button"
+              variant={tipoFilter === t ? "secondary" : "outline"}
               size="sm"
-              className="h-7 text-xs capitalize"
+              aria-pressed={tipoFilter === t}
+              className={`h-11 md:h-8 shrink-0 text-sm capitalize ${tipoFilter === t ? "border border-primary text-primary" : ""}`}
               onClick={() => setTipoFilter(t === tipoFilter ? null : t)}
             >
               {t}
@@ -119,17 +123,28 @@ export function NewChatFromContactDialog({
         </div>
 
         {/* Contact list */}
-        <ScrollArea className="flex-1 min-h-0 max-h-[400px]">
+        <ScrollArea className="flex-1 min-h-0" aria-busy={loading}>
           {loading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-6 w-6 animate-spin text-primary" />
+            <div className="space-y-1 pr-3">
+              <span className="sr-only">Carregando contatos…</span>
+              {[0, 1, 2, 3].map((i) => (
+                <div key={i} className="h-14 rounded-lg bg-muted animate-pulse motion-reduce:animate-none" aria-hidden="true" />
+              ))}
             </div>
           ) : withPhone.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 gap-2">
-              <Users className="h-8 w-8 text-muted-foreground/40" />
-              <p className="text-sm text-muted-foreground">
-                {search ? "Nenhum contato encontrado" : "Nenhum contato com telefone"}
-              </p>
+            <div className="flex flex-col items-center justify-center py-12 gap-2 px-4 text-center">
+              <Users className="h-8 w-8 text-muted-foreground" aria-hidden="true" />
+              {search ? (
+                <p className="text-sm text-muted-foreground max-w-full">
+                  Nenhum contato encontrado para{" "}
+                  <span className="inline-block max-w-[16rem] truncate align-bottom font-medium text-foreground">“{search}”</span>.
+                  {" "}Confira o nome ou o número.
+                </p>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  Nenhum contato com telefone cadastrado. Cadastre em Contatos.
+                </p>
+              )}
             </div>
           ) : (
             <div className="space-y-1 pr-3">
@@ -140,9 +155,10 @@ export function NewChatFromContactDialog({
                     onSelectContact(contato);
                     onOpenChange(false);
                   }}
-                  className="w-full flex items-center gap-3 p-3 rounded-lg hover:bg-muted/60 transition-colors text-left group"
+                  type="button"
+                  className="w-full min-h-14 flex items-center gap-3 p-3 rounded-lg hover:bg-muted/60 transition-colors text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
-                  <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold text-xs shrink-0">
+                  <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold text-xs shrink-0" aria-hidden="true">
                     {contato.nome.slice(0, 2).toUpperCase()}
                   </div>
                   <div className="flex-1 min-w-0">
@@ -151,21 +167,24 @@ export function NewChatFromContactDialog({
                         {contato.nome}
                       </span>
                       {contato.favorito && (
-                        <Star className="h-3 w-3 text-warning fill-warning shrink-0" />
+                        <>
+                          <Star className="h-3 w-3 text-warning fill-warning shrink-0" aria-hidden="true" />
+                          <span className="sr-only">Favorito</span>
+                        </>
                       )}
                       <Badge
                         variant="outline"
-                        className={`text-[10px] px-1.5 py-0 ${tipoColors[contato.tipo] || ""}`}
+                        className={`text-xs px-1.5 py-0 ${tipoColors[contato.tipo] || ""}`}
                       >
                         {contato.tipo}
                       </Badge>
                     </div>
                     <span className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
-                      <Phone className="h-3 w-3" />
+                      <Phone className="h-3 w-3" aria-hidden="true" />
                       {contato.telefone}
                     </span>
                   </div>
-                  <MessageSquare className="h-4 w-4 text-primary opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                  <MessageSquare className="h-4 w-4 text-muted-foreground shrink-0" aria-hidden="true" />
                 </button>
               ))}
             </div>

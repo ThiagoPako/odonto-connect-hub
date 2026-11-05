@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { Star, Send } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 
 interface SatisfactionSurveyDialogProps {
   leadName: string;
@@ -45,54 +47,57 @@ export function SatisfactionSurveyDialog({
       if (activeRating === 3) return "text-warning fill-warning";
       return "text-success fill-success";
     }
-    return "text-muted-foreground/30";
+    return "text-muted-foreground";
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm animate-fade-in"
-      onClick={onClose}
-    >
-      <div
-        className="bg-card border border-border rounded-2xl shadow-2xl w-[420px] max-w-[95vw] animate-scale-in overflow-hidden"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="bg-card w-full max-w-[calc(100vw-1rem)] sm:max-w-[420px] max-h-[90dvh] overflow-y-auto p-0 gap-0 rounded-2xl sm:rounded-2xl block [&>button:last-child]:hidden">
         <div className="px-6 pt-6 pb-3 text-center">
-          <div className="mx-auto h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center mb-3">
-            <Star className="h-6 w-6 text-primary" />
+          <div className="mx-auto h-12 w-12 rounded-lg bg-muted flex items-center justify-center mb-3">
+            <Star className="h-6 w-6 text-muted-foreground" aria-hidden="true" />
           </div>
-          <h3 className="text-base font-semibold text-foreground">
-            Pesquisa de Satisfação
-          </h3>
-          <p className="text-xs text-muted-foreground mt-1">
+          <DialogTitle className="text-lg font-semibold text-foreground">
+            Pesquisa de satisfação
+          </DialogTitle>
+          <DialogDescription className="text-sm text-muted-foreground mt-1">
             Enviar pesquisa NPS para{" "}
             <span className="font-medium text-foreground">{leadName}</span> via
             WhatsApp
-          </p>
+          </DialogDescription>
         </div>
 
         {/* Stars */}
         <div className="px-6 py-4 flex flex-col items-center gap-2">
-          <div className="flex gap-2">
+          <div role="group" aria-label="Nota de 1 a 5" className="flex gap-1">
             {[1, 2, 3, 4, 5].map((i) => (
               <button
                 key={i}
+                type="button"
+                aria-pressed={rating === i}
+                aria-label={`Nota ${i} de 5: ${RATING_LABELS[i - 1]}`}
                 onMouseEnter={() => setHoveredStar(i)}
                 onMouseLeave={() => setHoveredStar(0)}
                 onClick={() => setRating(i)}
-                className="transition-transform hover:scale-125 active:scale-95 p-1"
+                className="size-11 inline-flex items-center justify-center rounded-lg transition-transform active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <Star
-                  className={`h-9 w-9 transition-colors duration-150 ${starColor(i)}`}
+                  className={`size-8 transition-colors duration-150 ${starColor(i)}`}
+                  aria-hidden="true"
                 />
               </button>
             ))}
           </div>
-          {activeRating > 0 && (
-            <span className="text-xs font-medium text-muted-foreground animate-fade-in">
+          {activeRating > 0 ? (
+            <span className="text-sm font-medium text-foreground animate-fade-in" aria-hidden="true">
               {RATING_LABELS[activeRating - 1]}
             </span>
+          ) : (
+            <span className="text-sm text-muted-foreground" aria-hidden="true">Escolha uma nota</span>
           )}
+          <span className="sr-only" aria-live="polite">
+            {rating > 0 ? `Nota escolhida: ${rating} de 5, ${RATING_LABELS[rating - 1]}` : ""}
+          </span>
         </div>
 
         {/* Comment */}
@@ -100,10 +105,11 @@ export function SatisfactionSurveyDialog({
           <textarea
             value={comment}
             onChange={(e) => setComment(e.target.value.slice(0, 300))}
-            className="w-full h-16 px-3 py-2.5 rounded-xl bg-muted border-0 text-sm text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-ring"
+            aria-label="Mensagem personalizada (opcional)"
+            className="w-full h-16 px-3 py-2.5 rounded-lg bg-muted border-0 text-base sm:text-sm text-foreground placeholder:text-muted-foreground resize-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             placeholder="Mensagem personalizada (opcional)..."
           />
-          <p className="text-[10px] text-muted-foreground text-right mt-1">
+          <p className="text-xs text-muted-foreground text-right mt-1 tabular-nums">
             {comment.length}/300
           </p>
         </div>
@@ -111,10 +117,10 @@ export function SatisfactionSurveyDialog({
         {/* Preview */}
         {rating > 0 && (
           <div className="px-6 pb-4 animate-fade-in">
-            <p className="text-[10px] text-muted-foreground mb-1 uppercase tracking-wide font-medium">
+            <p className="text-xs text-muted-foreground mb-1 font-medium">
               Prévia da mensagem
             </p>
-            <div className="bg-muted/50 border border-border/50 rounded-xl px-3 py-2 text-xs text-muted-foreground leading-relaxed">
+            <div className="bg-muted/50 border border-border/50 rounded-lg px-3 py-2 text-xs text-muted-foreground leading-relaxed">
               Olá {leadName}! Como foi seu atendimento? Avalie de 1 a 5
               estrelas: {"⭐".repeat(rating)} ({RATING_LABELS[activeRating - 1]}
               )
@@ -129,23 +135,26 @@ export function SatisfactionSurveyDialog({
         )}
 
         {/* Actions */}
-        <div className="px-6 py-3 border-t border-border/50 flex items-center justify-between">
-          <button
+        <div className="px-4 sm:px-6 py-3 border-t border-border flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <Button
+            type="button"
+            variant="ghost"
             onClick={handleSkip}
-            className="px-4 py-2 rounded-lg text-sm text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+            className="h-11 md:h-9 w-full sm:w-auto"
           >
-            Pular
-          </button>
-          <button
+            Não enviar
+          </Button>
+          <Button
+            type="button"
             onClick={handleSend}
             disabled={rating === 0}
-            className="px-5 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
+            className="h-11 md:h-9 w-full sm:w-auto"
           >
-            <Send className="h-4 w-4" />
-            Enviar Pesquisa
-          </button>
+            <Send className="size-4" aria-hidden="true" />
+            Enviar pesquisa
+          </Button>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

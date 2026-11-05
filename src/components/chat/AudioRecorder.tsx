@@ -1,12 +1,18 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { Mic, Square, Trash2, Send } from "lucide-react";
+import { toast } from "sonner";
+
+const MIC_BLOCKED_TITLE = "Microfone bloqueado";
+const MIC_BLOCKED_DESCRIPTION = "Libere o microfone nas configurações do navegador para gravar áudio.";
 
 interface AudioRecorderProps {
   onRecordingComplete: (blob: Blob, duration: number) => void;
   onRecordingStateChange?: (status: "recording" | "paused") => void;
+  /** Só visual: desativa o botão de gravar (ex.: conversa ainda na fila). */
+  disabled?: boolean;
 }
 
-export function AudioRecorder({ onRecordingComplete, onRecordingStateChange }: AudioRecorderProps) {
+export function AudioRecorder({ onRecordingComplete, onRecordingStateChange, disabled }: AudioRecorderProps) {
   const [isRecording, setIsRecording] = useState(false);
   const [duration, setDuration] = useState(0);
   const [waveformBars, setWaveformBars] = useState<number[]>(Array(24).fill(4));
@@ -37,6 +43,7 @@ export function AudioRecorder({ onRecordingComplete, onRecordingStateChange }: A
           const status = await navigator.permissions.query({ name: "microphone" as PermissionName });
           if (status.state === "denied") {
             console.error("Microphone blocked");
+            toast.error(MIC_BLOCKED_TITLE, { description: MIC_BLOCKED_DESCRIPTION });
             return;
           }
         } catch {
@@ -115,10 +122,16 @@ export function AudioRecorder({ onRecordingComplete, onRecordingStateChange }: A
     } catch (err: any) {
       if (err.name === "NotAllowedError") {
         console.error("Permission denied for microphone");
+        toast.error(MIC_BLOCKED_TITLE, { description: MIC_BLOCKED_DESCRIPTION });
       } else if (err.name === "NotFoundError") {
         console.error("No microphone found");
+        toast.error("Nenhum microfone encontrado", { description: "Conecte um microfone e tente de novo." });
+      } else if (err.name === "NotReadableError") {
+        console.error("Microphone in use:", err);
+        toast.error("Microfone em uso", { description: "Feche outros apps que usam o microfone e tente de novo." });
       } else {
         console.error("Audio recording error:", err);
+        toast.error("Não foi possível gravar o áudio", { description: "Tente de novo." });
       }
     }
   }, [onRecordingComplete]);
@@ -162,41 +175,59 @@ export function AudioRecorder({ onRecordingComplete, onRecordingStateChange }: A
   if (!isRecording) {
     return (
       <button
+        type="button"
         onClick={startRecording}
-        className="p-2.5 rounded-full hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+        disabled={disabled}
+        aria-label="Gravar áudio"
         title="Gravar áudio"
+        className="inline-flex size-11 md:size-10 shrink-0 items-center justify-center rounded-full hover:bg-muted transition-colors text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
       >
-        <Mic className="h-5 w-5" />
+        <Mic className="size-5" aria-hidden="true" />
       </button>
     );
   }
 
   return (
-    <div className="flex items-center gap-3 bg-destructive/5 rounded-full px-4 py-2 flex-1">
-      <button onClick={cancelRecording} className="text-destructive hover:text-destructive/80 transition-colors">
-        <Trash2 className="h-4 w-4" />
+    <div
+      role="group"
+      aria-label="Gravando áudio"
+      data-recording=""
+      className="flex min-h-11 md:min-h-10 min-w-0 flex-1 items-center gap-2 rounded-full bg-destructive/10 px-0.5"
+    >
+      <button
+        type="button"
+        onClick={cancelRecording}
+        aria-label="Descartar gravação"
+        title="Descartar gravação"
+        className="inline-flex size-11 md:size-10 shrink-0 items-center justify-center rounded-full text-destructive hover:bg-destructive/10 transition-colors"
+      >
+        <Trash2 className="size-5" aria-hidden="true" />
       </button>
 
-      <span className="text-xs font-mono text-destructive font-medium min-w-[40px]">
+      <span className="flex items-center gap-1.5 shrink-0 text-sm font-medium tabular-nums text-destructive min-w-[3.25rem]">
+        <span className="size-2 rounded-full bg-destructive motion-safe:animate-pulse" aria-hidden="true" />
+        <span className="sr-only">Gravando</span>
         {formatTime(duration)}
       </span>
 
-      <div className="flex items-center gap-[2px] flex-1 h-8">
+      <div className="flex min-w-0 flex-1 items-center gap-[2px] h-8 overflow-hidden" aria-hidden="true">
         {waveformBars.map((h, i) => (
           <div
             key={i}
-            className="bg-destructive/60 rounded-full transition-all duration-75"
+            className="bg-destructive/60 rounded-full transition-all duration-75 shrink-0"
             style={{ width: 3, height: h, minHeight: 4 }}
           />
         ))}
       </div>
 
       <button
+        type="button"
         onClick={stopAndSend}
-        className="h-8 w-8 rounded-full bg-primary flex items-center justify-center text-primary-foreground hover:bg-primary/90 transition-colors"
+        aria-label="Enviar áudio"
         title="Enviar áudio"
+        className="inline-flex size-11 md:size-10 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground hover:bg-primary/90 active:translate-y-px transition-colors"
       >
-        <Send className="h-3.5 w-3.5" />
+        <Send className="size-5" aria-hidden="true" />
       </button>
     </div>
   );

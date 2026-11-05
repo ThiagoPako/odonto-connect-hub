@@ -1,6 +1,6 @@
-import { useState, useRef, useMemo, useCallback, useEffect } from "react";
+import { useState, useRef, useMemo, useCallback, useEffect, useId } from "react";
 import { contatosApi, crmApi, type Contato } from "@/lib/vpsApi";
-import { Send, Paperclip, Smile, Image, MapPin, UserCircle, BarChart3, FileText, Video, Sticker, X, Bold, Italic, Strikethrough, Code, List, Zap, Loader2, Kanban, Check } from "lucide-react";
+import { Send, Paperclip, Smile, Image, MapPin, UserCircle, BarChart3, FileText, Video, Sticker, X, Bold, Italic, Strikethrough, Code, List, Zap, Loader2, Kanban, Check, Info } from "lucide-react";
 import { toast } from "sonner";
 import { AudioRecorder } from "./AudioRecorder";
 import { getClinicLocation } from "@/components/ClinicLocationPanel";
@@ -25,6 +25,10 @@ interface MessageInputProps {
   leadId?: string;
   crmStage?: string;
   onStageChange?: (leadId: string, stage: string) => void;
+  /** Aviso acima do campo, sem desativar nada. */
+  notice?: "no-whatsapp" | null;
+  /** Quando `disabled` (conversa na fila), mostra o botão "Assumir atendimento". */
+  onAssign?: () => void;
 }
 
 const QUICK_EMOJIS = ["👍", "❤️", "😁", "🦷", "✨", "🙏", "🎉", "💪", "😄", "🪥", "💉", "🩺", "😊", "👏", "💙"];
@@ -33,7 +37,7 @@ interface MessageInputInternalProps extends MessageInputProps {
   attendantName?: string;
 }
 
-export function MessageInput({ onSendMessage, onPresenceChange, disabled, replyingTo, onCancelReply, attendantName, leadId, crmStage, onStageChange }: MessageInputProps & { attendantName?: string }) {
+export function MessageInput({ onSendMessage, onPresenceChange, disabled, replyingTo, onCancelReply, attendantName, leadId, crmStage, onStageChange, notice, onAssign }: MessageInputProps & { attendantName?: string }) {
   const [message, setMessage] = useState("");
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -52,6 +56,7 @@ export function MessageInput({ onSendMessage, onPresenceChange, disabled, replyi
   const imageInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
   const presenceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const quickRepliesTitleId = useId();
 
   const attendanceSettings = useMemo(() => getAttendanceSettings(), []);
   const quickReplies = attendanceSettings.quickReplies;
@@ -385,23 +390,23 @@ export function MessageInput({ onSendMessage, onPresenceChange, disabled, replyi
     setShowEmojiPicker(false);
   };
 
-  const formInputClass = "w-full bg-muted rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring";
-  const formBtnClass = "px-4 py-2 rounded-lg text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors";
+  const formInputClass = "w-full min-h-11 md:min-h-9 bg-muted rounded-lg px-3 py-2 text-base md:text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+  const formBtnClass = "min-h-11 md:min-h-9 px-4 py-2 rounded-lg text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors";
 
   // If media preview is active, show fullscreen-ish preview panel
   if (mediaPreview) {
     return (
       <div className="border-t border-border bg-card">
         <div className="relative flex flex-col items-center p-4 bg-muted/30">
-          <button onClick={cancelMediaPreview} className="absolute top-2 right-2 p-1.5 rounded-full bg-card/80 hover:bg-card text-muted-foreground hover:text-foreground z-10 shadow-sm">
-            <X className="h-4 w-4" />
+          <button type="button" onClick={cancelMediaPreview} aria-label="Cancelar envio" title="Cancelar envio" className="absolute top-2 right-2 inline-flex size-11 md:size-9 items-center justify-center rounded-full bg-card/80 hover:bg-card text-muted-foreground hover:text-foreground z-10 shadow-sm">
+            <X className="size-4" aria-hidden="true" />
           </button>
           {mediaPreview.type === "image" ? (
-            <img src={mediaPreview.previewUrl} alt="Preview" className="max-h-60 max-w-full rounded-lg object-contain shadow-md" />
+            <img src={mediaPreview.previewUrl} alt="Pré-visualização do arquivo" className="max-h-60 max-w-full rounded-lg object-contain shadow-md" />
           ) : (
             <video src={mediaPreview.previewUrl} controls className="max-h-60 max-w-full rounded-lg shadow-md" />
           )}
-          <p className="text-[11px] text-muted-foreground mt-2 truncate max-w-[300px]">{mediaPreview.file.name} ({(mediaPreview.file.size / 1024).toFixed(0)} KB)</p>
+          <p className="text-xs text-muted-foreground mt-2 truncate max-w-[18.75rem]">{mediaPreview.file.name} ({(mediaPreview.file.size / 1024).toFixed(0)} KB)</p>
         </div>
         <div className="flex items-center gap-2 p-3">
           <input
@@ -409,15 +414,21 @@ export function MessageInput({ onSendMessage, onPresenceChange, disabled, replyi
             onChange={(e) => setMediaCaption(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSendMediaPreview(); } }}
             placeholder="Adicione uma legenda..."
-            className="flex-1 bg-muted rounded-xl px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            aria-label="Legenda"
+            enterKeyHint="send"
+            className="flex-1 min-h-11 md:min-h-10 bg-muted border border-input rounded-xl px-4 py-2.5 text-base md:text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             autoFocus
           />
           <button
+            type="button"
             onClick={handleSendMediaPreview}
             disabled={uploading}
-            className="p-2.5 rounded-full bg-primary text-primary-foreground hover:bg-primary/90 transition-colors shrink-0 disabled:opacity-50"
+            aria-label={uploading ? "Enviando arquivo" : "Enviar arquivo"}
+            aria-busy={uploading}
+            title="Enviar arquivo"
+            className="inline-flex size-11 md:size-10 items-center justify-center rounded-full bg-primary text-primary-foreground hover:bg-primary/90 active:translate-y-px transition-colors shrink-0 disabled:opacity-50"
           >
-            {uploading ? <Loader2 className="h-5 w-5 animate-spin" /> : <Send className="h-5 w-5" />}
+            {uploading ? <Loader2 className="size-5 animate-spin" aria-hidden="true" /> : <Send className="size-5" aria-hidden="true" />}
           </button>
         </div>
       </div>
@@ -431,11 +442,11 @@ export function MessageInput({ onSendMessage, onPresenceChange, disabled, replyi
         <div className="flex items-center gap-2 px-4 py-2 bg-muted/50 border-b border-border">
           <div className="w-1 h-8 rounded-full bg-primary shrink-0" />
           <div className="flex-1 min-w-0">
-            <p className="text-[11px] font-medium text-primary">{replyingTo.sender}</p>
+            <p className="text-xs font-medium text-primary">{replyingTo.sender}</p>
             <p className="text-xs text-muted-foreground truncate">{replyingTo.content}</p>
           </div>
-          <button onClick={onCancelReply} className="p-1 rounded hover:bg-muted">
-            <X className="h-4 w-4 text-muted-foreground" />
+          <button type="button" onClick={onCancelReply} aria-label="Cancelar resposta" title="Cancelar resposta" className="inline-flex size-11 md:size-9 shrink-0 items-center justify-center rounded-md hover:bg-muted">
+            <X className="size-4 text-muted-foreground" aria-hidden="true" />
           </button>
         </div>
       )}
@@ -445,7 +456,7 @@ export function MessageInput({ onSendMessage, onPresenceChange, disabled, replyi
         <div className="p-3 space-y-2 border-b border-border bg-muted/30">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-foreground flex items-center gap-1.5"><MapPin className="h-3.5 w-3.5" /> Enviar Localização</span>
-            <button onClick={() => setShowLocationForm(false)} className="p-1 rounded hover:bg-muted"><X className="h-3.5 w-3.5" /></button>
+            <button type="button" onClick={() => setShowLocationForm(false)} aria-label="Fechar localização" className="inline-flex size-11 md:size-8 items-center justify-center rounded-md hover:bg-muted"><X className="size-4" aria-hidden="true" /></button>
           </div>
           {getClinicLocation() && (
             <button
@@ -480,7 +491,7 @@ export function MessageInput({ onSendMessage, onPresenceChange, disabled, replyi
         <div className="p-3 space-y-2 border-b border-border bg-muted/30">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-foreground flex items-center gap-1.5"><UserCircle className="h-3.5 w-3.5" /> Enviar Contato</span>
-            <button onClick={() => { setShowContactForm(false); setCtSearch(""); }} className="p-1 rounded hover:bg-muted"><X className="h-3.5 w-3.5" /></button>
+            <button type="button" onClick={() => { setShowContactForm(false); setCtSearch(""); }} aria-label="Fechar contato" className="inline-flex size-11 md:size-8 items-center justify-center rounded-md hover:bg-muted"><X className="size-4" aria-hidden="true" /></button>
           </div>
 
           {/* Search system contacts */}
@@ -506,12 +517,12 @@ export function MessageInput({ onSendMessage, onPresenceChange, disabled, replyi
                   onClick={() => selectSystemContact(c)}
                   className="w-full flex items-center gap-2 p-2 rounded-lg hover:bg-muted/60 transition-colors text-left"
                 >
-                  <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold text-[10px] shrink-0">
+                  <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold text-xs shrink-0">
                     {c.nome.slice(0, 2).toUpperCase()}
                   </div>
                   <div className="flex-1 min-w-0">
                     <span className="text-xs font-medium text-foreground truncate block">{c.nome}</span>
-                    <span className="text-[10px] text-muted-foreground">{c.telefone}</span>
+                    <span className="text-xs text-muted-foreground tabular-nums">{c.telefone}</span>
                   </div>
                 </button>
               ))}
@@ -543,7 +554,7 @@ export function MessageInput({ onSendMessage, onPresenceChange, disabled, replyi
         <div className="p-3 space-y-2 border-b border-border bg-muted/30">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-foreground flex items-center gap-1.5"><BarChart3 className="h-3.5 w-3.5" /> Criar Enquete</span>
-            <button onClick={() => setShowPollForm(false)} className="p-1 rounded hover:bg-muted"><X className="h-3.5 w-3.5" /></button>
+            <button type="button" onClick={() => setShowPollForm(false)} aria-label="Fechar enquete" className="inline-flex size-11 md:size-8 items-center justify-center rounded-md hover:bg-muted"><X className="size-4" aria-hidden="true" /></button>
           </div>
           <input value={pollQuestion} onChange={e => setPollQuestion(e.target.value)} placeholder="Pergunta da enquete *" className={formInputClass} />
           {pollOptions.map((opt, i) => (
@@ -560,7 +571,7 @@ export function MessageInput({ onSendMessage, onPresenceChange, disabled, replyi
         <div className="p-3 space-y-2 border-b border-border bg-muted/30">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-foreground flex items-center gap-1.5"><List className="h-3.5 w-3.5" /> Enviar Lista</span>
-            <button onClick={() => setShowListForm(false)} className="p-1 rounded hover:bg-muted"><X className="h-3.5 w-3.5" /></button>
+            <button type="button" onClick={() => setShowListForm(false)} aria-label="Fechar lista" className="inline-flex size-11 md:size-8 items-center justify-center rounded-md hover:bg-muted"><X className="size-4" aria-hidden="true" /></button>
           </div>
           <input value={listTitle} onChange={e => setListTitle(e.target.value)} placeholder="Título da lista *" className={formInputClass} />
           <input value={listButton} onChange={e => setListButton(e.target.value)} placeholder="Texto do botão" className={formInputClass} />
@@ -577,7 +588,7 @@ export function MessageInput({ onSendMessage, onPresenceChange, disabled, replyi
 
       {/* Attach menu */}
       {showAttachMenu && (
-        <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-border bg-muted/30">
+        <div role="group" aria-label="Anexar" className="grid grid-cols-4 gap-2 px-3 py-3 border-b border-border bg-muted/30 md:flex md:flex-wrap">
           {[
             { icon: Image, label: "Imagem", onClick: () => { imageInputRef.current?.click(); closeAllForms(); } },
             { icon: Video, label: "Vídeo", onClick: () => { videoInputRef.current?.click(); closeAllForms(); } },
@@ -585,11 +596,11 @@ export function MessageInput({ onSendMessage, onPresenceChange, disabled, replyi
             { icon: MapPin, label: "Localização", onClick: () => { closeAllForms(); setShowLocationForm(true); } },
             { icon: UserCircle, label: "Contato", onClick: () => { closeAllForms(); setShowContactForm(true); } },
             { icon: BarChart3, label: "Enquete", onClick: () => { closeAllForms(); setShowPollForm(true); } },
-            { icon: Sticker, label: "Sticker", onClick: () => { onSendMessage("😊", "sticker", { stickerUrl: "😊" }); closeAllForms(); } },
+            { icon: Sticker, label: "Figurinha", onClick: () => { onSendMessage("😊", "sticker", { stickerUrl: "😊" }); closeAllForms(); } },
             { icon: List, label: "Lista", onClick: () => { closeAllForms(); setShowListForm(true); } },
           ].map(({ icon: Icon, label, onClick }) => (
-            <button key={label} onClick={onClick} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-muted hover:bg-accent text-muted-foreground hover:text-accent-foreground transition-colors">
-              <Icon className="h-4 w-4" /> {label}
+            <button type="button" key={label} onClick={onClick} className="flex min-h-16 flex-col items-center justify-center gap-1 rounded-lg bg-card border border-border px-2 text-xs font-medium text-foreground hover:bg-accent hover:text-accent-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:min-h-9 md:flex-row md:gap-1.5 md:px-3">
+              <Icon className="size-5 md:size-4" aria-hidden="true" /> {label}
             </button>
           ))}
         </div>
@@ -597,9 +608,9 @@ export function MessageInput({ onSendMessage, onPresenceChange, disabled, replyi
 
       {/* Emoji quick picker */}
       {showEmojiPicker && (
-        <div className="flex items-center gap-1 px-3 py-2 border-b border-border bg-muted/30">
+        <div role="group" aria-label="Emojis rápidos" className="flex flex-wrap items-center gap-1 px-3 py-2 border-b border-border bg-muted/30">
           {QUICK_EMOJIS.map(emoji => (
-            <button key={emoji} onClick={() => { setMessage(m => m + emoji); setShowEmojiPicker(false); }} className="text-xl hover:scale-125 transition-transform p-1">
+            <button key={emoji} onClick={() => { setMessage(m => m + emoji); setShowEmojiPicker(false); }} type="button" aria-label={`Inserir ${emoji}`} className="inline-flex size-11 md:size-9 items-center justify-center rounded-md text-xl hover:bg-muted motion-safe:hover:scale-110 transition-transform">
               {emoji}
             </button>
           ))}
@@ -608,35 +619,38 @@ export function MessageInput({ onSendMessage, onPresenceChange, disabled, replyi
 
       {/* CRM Stage picker */}
       {showStageMenu && (
-        <div className="flex items-center gap-1.5 px-3 py-2 border-b border-border bg-muted/30 flex-wrap">
-          <Kanban className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-          <span className="text-[11px] text-muted-foreground font-medium mr-1">Etapa:</span>
+        <div role="group" aria-label="Etapa do funil" aria-busy={updatingStage} className="flex items-center gap-2 px-3 py-2 border-b border-border bg-muted/30 flex-wrap">
+          <Kanban className="size-4 text-muted-foreground shrink-0" aria-hidden="true" />
+          <span className="text-[0.8125rem] text-muted-foreground font-medium">Etapa do funil</span>
+          {updatingStage && <Loader2 className="size-4 animate-spin text-muted-foreground" aria-hidden="true" />}
           {CRM_STAGES.map((stage) => {
             const isActive = crmStage === stage.id;
             return (
               <button
+                type="button"
                 key={stage.id}
+                aria-pressed={isActive}
                 disabled={updatingStage}
                 onClick={async () => {
                   if (!leadId) return;
                   setUpdatingStage(true);
                   const { error } = await crmApi.updateStage(leadId, stage.id, "Marcado via chat");
                   if (error) {
-                    toast.error("Erro ao atualizar etapa");
+                    toast.error("Não foi possível alterar a etapa", { description: "Tente de novo." });
                   } else {
                     onStageChange?.(leadId, stage.id);
-                    toast.success(`${stage.emoji} Marcado como "${stage.label}"`);
+                    toast.success(`Etapa alterada para "${stage.label}"`);
                   }
                   setUpdatingStage(false);
                   setShowStageMenu(false);
                 }}
-                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium transition-colors shrink-0 disabled:opacity-50 ${
-                  isActive ? "text-white shadow-sm" : "hover:opacity-80"
+                className={`inline-flex min-h-11 md:min-h-9 items-center gap-1.5 rounded-md border px-3 text-[0.8125rem] font-medium transition-colors shrink-0 disabled:opacity-50 ${
+                  isActive ? "border-primary bg-accent text-accent-foreground" : "border-border bg-card text-foreground hover:bg-muted"
                 }`}
-                style={isActive ? { backgroundColor: stage.color } : { backgroundColor: stage.color + "20", color: stage.color }}
               >
-                {stage.emoji} {stage.label}
-                {isActive && <Check className="h-3 w-3" />}
+                <span className="size-2 rounded-full shrink-0" style={{ backgroundColor: stage.color }} aria-hidden="true" />
+                {stage.label}
+                {isActive && <Check className="size-4" aria-hidden="true" />}
               </button>
             );
           })}
@@ -646,54 +660,94 @@ export function MessageInput({ onSendMessage, onPresenceChange, disabled, replyi
       <div className="p-3">
         {/* Formatting toolbar */}
         {message.length > 0 && (
-          <div className="flex items-center gap-1 mb-2 px-1">
+          <div role="group" aria-label="Formatação do texto" className="hidden md:flex items-center gap-1 mb-2 px-1">
             {[
-              { icon: Bold, format: "bold", title: "*negrito*" },
-              { icon: Italic, format: "italic", title: "_itálico_" },
-              { icon: Strikethrough, format: "strikethrough", title: "~riscado~" },
-              { icon: Code, format: "monospace", title: "```código```" },
-            ].map(({ icon: Icon, format, title }) => (
-              <button key={format} onClick={() => applyFormatting(format)} title={title} className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors">
-                <Icon className="h-3.5 w-3.5" />
+              { icon: Bold, format: "bold", title: "*negrito*", label: "Negrito" },
+              { icon: Italic, format: "italic", title: "_itálico_", label: "Itálico" },
+              { icon: Strikethrough, format: "strikethrough", title: "~riscado~", label: "Riscado" },
+              { icon: Code, format: "monospace", title: "```código```", label: "Código" },
+            ].map(({ icon: Icon, format, title, label }) => (
+              <button type="button" key={format} onClick={() => applyFormatting(format)} title={title} aria-label={label} className="inline-flex size-9 items-center justify-center rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors">
+                <Icon className="size-4" aria-hidden="true" />
               </button>
             ))}
           </div>
         )}
 
-        <div className="flex items-end gap-2">
+        {notice === "no-whatsapp" && (
+          <p role="status" className="mb-2 flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-[0.8125rem] text-foreground">
+            <Info className="size-4 shrink-0 mt-0.5 text-warning-text" aria-hidden="true" />
+            Nenhum WhatsApp conectado: a mensagem não será enviada. Conecte em Canais.
+          </p>
+        )}
+
+        {disabled && (
+          onAssign ? (
+            <button
+              type="button"
+              onClick={onAssign}
+              className="mb-2 inline-flex h-11 w-full items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 active:translate-y-px transition-colors"
+            >
+              Assumir atendimento
+            </button>
+          ) : (
+            <p role="status" className="mb-2 flex items-center gap-2 rounded-md bg-muted px-3 py-2 text-[0.8125rem] text-muted-foreground">
+              <Info className="size-4 shrink-0" aria-hidden="true" />
+              Assuma o atendimento para responder.
+            </p>
+          )
+        )}
+
+        <div className="flex items-end gap-2 has-[[data-recording]]:[&>button]:hidden">
           <button
+            type="button"
+            disabled={disabled}
+            aria-label="Anexar arquivo"
+            aria-expanded={showAttachMenu}
+            title="Anexar arquivo"
             onClick={() => { setShowAttachMenu(!showAttachMenu); setShowEmojiPicker(false); setShowStageMenu(false); }}
-            className="p-2.5 rounded-full hover:bg-muted transition-colors text-muted-foreground hover:text-foreground shrink-0"
+            className="inline-flex size-11 md:size-10 items-center justify-center rounded-full hover:bg-muted transition-colors text-muted-foreground hover:text-foreground shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <Paperclip className="h-5 w-5" />
+            <Paperclip className="size-5" aria-hidden="true" />
           </button>
 
           <button
+            type="button"
+            aria-label="Marcar etapa do funil"
+            aria-expanded={showStageMenu}
             onClick={() => { setShowStageMenu(!showStageMenu); setShowAttachMenu(false); setShowEmojiPicker(false); }}
-            className={`p-2.5 rounded-full transition-colors shrink-0 ${showStageMenu ? "bg-primary/10 text-primary" : "hover:bg-muted text-muted-foreground hover:text-foreground"}`}
+            className={`hidden md:inline-flex size-11 md:size-10 items-center justify-center rounded-full transition-colors shrink-0 ${showStageMenu ? "bg-primary/10 text-primary" : "hover:bg-muted text-muted-foreground hover:text-foreground"}`}
             title="Marcar etapa do funil"
           >
-            <Kanban className="h-5 w-5" />
+            <Kanban className="size-5" aria-hidden="true" />
           </button>
 
-          <div className="flex-1 flex items-end gap-2 relative">
+          <div className="flex-1 min-w-0 flex items-end gap-2 relative has-[[data-recording]]:[&>textarea]:hidden">
             {/* Quick Replies Dropdown */}
-            {showQuickReplies && filteredQuickReplies.length > 0 && (
-              <div className="absolute bottom-full left-0 right-0 mb-1 bg-card border border-border rounded-xl shadow-lg max-h-60 overflow-y-auto z-50">
+            {showQuickReplies && (
+              <div role="group" aria-labelledby={quickRepliesTitleId} className="absolute bottom-full left-0 right-0 mb-1 bg-card border border-border rounded-xl shadow-lg max-h-60 overflow-y-auto z-50">
                 <div className="p-2 border-b border-border">
-                  <p className="text-[11px] text-muted-foreground font-medium flex items-center gap-1">
-                    <Zap className="h-3 w-3" /> Respostas Rápidas
+                  <p id={quickRepliesTitleId} className="text-xs text-muted-foreground font-medium flex items-center gap-1.5">
+                    <Zap className="size-3.5" aria-hidden="true" /> Respostas rápidas
                   </p>
                 </div>
+                {filteredQuickReplies.length === 0 && (
+                  <p aria-live="polite" className="px-3 py-3 text-sm text-muted-foreground">
+                    {quickReplies.length === 0
+                      ? "Nenhuma resposta rápida cadastrada. Cadastre em Configurações › Atendimento."
+                      : `Nenhuma resposta rápida com "${quickReplyFilter}". Cadastre em Configurações › Atendimento.`}
+                  </p>
+                )}
                 {filteredQuickReplies.map((qr) => (
                   <button
+                    type="button"
                     key={qr.id}
                     onClick={() => selectQuickReply(qr)}
-                    className="w-full text-left px-3 py-2 hover:bg-muted/50 transition-colors border-b border-border/30 last:border-0"
+                    className="w-full min-h-11 text-left px-3 py-2.5 hover:bg-muted focus-visible:bg-muted focus-visible:outline-none transition-colors border-b border-border last:border-0"
                   >
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-medium text-foreground">{qr.title}</span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary">{qr.category}</span>
+                      <span className="text-xs px-1.5 py-0.5 rounded bg-primary/10 text-primary">{qr.category}</span>
                     </div>
                     <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">{qr.content}</p>
                   </button>
@@ -706,28 +760,40 @@ export function MessageInput({ onSendMessage, onPresenceChange, disabled, replyi
               onChange={(e) => handleMessageChange(e.target.value)}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
-              placeholder={disabled ? "Selecione um atendimento" : 'Digite "/" para respostas rápidas...'}
+              placeholder={disabled ? "Assuma para responder" : "Mensagem (/ atalhos)"}
+              aria-label="Mensagem"
+              enterKeyHint="send"
+              autoCapitalize="sentences"
               disabled={disabled}
               rows={1}
-              className="flex-1 resize-none bg-muted rounded-xl px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring min-h-[40px] max-h-[120px] disabled:opacity-50"
+              className="flex-1 min-w-0 resize-none bg-muted border border-input rounded-xl px-4 py-2.5 text-base md:text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring min-h-11 md:min-h-10 max-h-[7.5rem] disabled:opacity-50 disabled:cursor-not-allowed"
             />
             {message.length === 0 ? (
-              <AudioRecorder onRecordingComplete={handleAudioComplete} onRecordingStateChange={onPresenceChange} />
+              <AudioRecorder onRecordingComplete={handleAudioComplete} onRecordingStateChange={onPresenceChange} disabled={disabled} />
             ) : (
               <button
+                type="button"
                 onClick={handleSend}
-                className="p-2.5 rounded-full bg-primary text-primary-foreground hover:bg-primary/90 transition-colors shrink-0"
+                disabled={disabled}
+                aria-label="Enviar mensagem"
+                title="Enviar (Enter)"
+                className="inline-flex size-11 md:size-10 items-center justify-center rounded-full bg-primary text-primary-foreground hover:bg-primary/90 active:translate-y-px transition-colors shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <Send className="h-5 w-5" />
+                <Send className="size-5" aria-hidden="true" />
               </button>
             )}
           </div>
 
           <button
+            type="button"
+            disabled={disabled}
+            aria-label="Inserir emoji"
+            aria-expanded={showEmojiPicker}
+            title="Inserir emoji"
             onClick={() => { setShowEmojiPicker(!showEmojiPicker); setShowAttachMenu(false); setShowStageMenu(false); }}
-            className="p-2.5 rounded-full hover:bg-muted transition-colors text-muted-foreground hover:text-foreground shrink-0"
+            className="hidden md:inline-flex size-11 md:size-10 items-center justify-center rounded-full hover:bg-muted transition-colors text-muted-foreground hover:text-foreground shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <Smile className="h-5 w-5" />
+            <Smile className="size-5" aria-hidden="true" />
           </button>
         </div>
       </div>
