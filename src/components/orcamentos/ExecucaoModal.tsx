@@ -39,11 +39,10 @@ export function ExecucaoModal({ open, onOpenChange, orcamento, onChanged }: Prop
   const load = useCallback(async () => {
     if (!orcamento) return;
     setLoading(true);
-    try {
-      const res = await execucoesApi.listByOrcamento(orcamento.id);
-      const data = ((res as any).data || res || []) as ExecucaoRow[];
-      setExecucoes(Array.isArray(data) ? data : []);
-    } finally { setLoading(false); }
+    const { data, error } = await execucoesApi.listByOrcamento(orcamento.id);
+    if (error) toast.error("Não foi possível carregar os procedimentos já executados: " + error);
+    else setExecucoes(Array.isArray(data) ? (data as ExecucaoRow[]) : []);
+    setLoading(false);
   }, [orcamento]);
 
   useEffect(() => { if (open) load(); }, [open, load]);
