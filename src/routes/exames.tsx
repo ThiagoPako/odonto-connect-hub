@@ -52,6 +52,8 @@ function ExamesPage() {
   const [buscaPaciente, setBuscaPaciente] = useState("");
   const [statusFilter, setStatusFilter] = useState<ExameStatus | "">("");
   const [q, setQ] = useState("");
+  // Busca que está valendo na lista (q é só o que está digitado no campo)
+  const [qAplicado, setQAplicado] = useState("");
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [laudoExame, setLaudoExame] = useState<Exame | null>(null);
@@ -72,7 +74,7 @@ function ExamesPage() {
     setLoading(true);
     try {
       const [list, st] = await Promise.all([
-        examesApi.list({ status: statusFilter || undefined, q: q || undefined }),
+        examesApi.list({ status: statusFilter || undefined, q: qAplicado.trim() || undefined }),
         examesApi.stats(),
       ]);
       setExames(list); setStats(st); setErro(null);
@@ -108,7 +110,13 @@ function ExamesPage() {
     })();
   }, []);
 
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [statusFilter]);
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [statusFilter, qAplicado]);
+
+  // Aplica a busca digitada; se não mudou, recarrega (o efeito não dispararia)
+  function aplicarBusca() {
+    if (q.trim() === qAplicado.trim()) load();
+    else setQAplicado(q);
+  }
 
   async function handleCreate() {
     if (!form.tipo_nome.trim()) {
@@ -155,7 +163,7 @@ function ExamesPage() {
     carregarTipos();
   }
 
-  const temFiltro = !!statusFilter || !!q.trim();
+  const temFiltro = !!statusFilter || !!qAplicado.trim();
   const termoPaciente = buscaPaciente.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
   const pacientesFiltrados = (termoPaciente
     ? pacientes.filter((p) => (p.nome || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().includes(termoPaciente))
@@ -201,11 +209,11 @@ function ExamesPage() {
             placeholder="Buscar por código, tipo, paciente..."
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && load()}
+            onKeyDown={(e) => e.key === "Enter" && aplicarBusca()}
             className="pl-9"
           />
         </div>
-        <Button variant="outline" size="sm" onClick={load} className="gap-2">
+        <Button variant="outline" size="sm" onClick={aplicarBusca} className="gap-2">
           <Filter className="h-4 w-4" /> Filtrar
         </Button>
       </div>
@@ -229,7 +237,7 @@ function ExamesPage() {
             {temFiltro ? (
               <>
                 <p>Nenhum exame com esse filtro.</p>
-                <Button variant="outline" size="sm" onClick={() => { setQ(""); if (statusFilter) setStatusFilter(""); else load(); }}>Limpar filtros</Button>
+                <Button variant="outline" size="sm" onClick={() => { setQ(""); setQAplicado(""); setStatusFilter(""); }}>Limpar filtros</Button>
               </>
             ) : (
               <>
