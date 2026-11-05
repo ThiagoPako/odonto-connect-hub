@@ -5,7 +5,7 @@ import { forgotPassword } from "@/lib/vpsApi";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { AuthShell } from "@/components/auth/AuthShell";
 import { Loader2, ArrowLeft, CheckCircle, Eye, EyeOff } from "lucide-react";
 
 export const Route = createFileRoute("/login")({
@@ -64,147 +64,136 @@ function LoginPage() {
 
   if (isAuthenticated) return null;
 
+  const errorBox = (msg: string) => (
+    <div role="alert" className="rounded-md bg-destructive/10 px-3.5 py-3 text-sm text-destructive animate-fade-in">
+      {msg}
+    </div>
+  );
+
   if (showForgot) {
     return (
-      <div className="flex min-h-screen w-full items-center justify-center bg-background p-4">
-        <Card className="w-full max-w-sm shadow-card animate-fade-in">
-          <CardHeader className="text-center">
-            <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-xl gradient-primary">
-              <span className="text-xl font-bold text-primary-foreground">OC</span>
+      <AuthShell
+        title={forgotSent ? "Pedido enviado" : "Recuperar acesso"}
+        description={
+          forgotSent
+            ? undefined
+            : "Informe o e-mail da sua conta. O administrador da clínica recebe o pedido e redefine sua senha."
+        }
+      >
+        {forgotSent ? (
+          <div className="space-y-6">
+            <div className="flex gap-3 rounded-md bg-success/10 px-4 py-3.5">
+              <CheckCircle className="h-5 w-5 text-success shrink-0 mt-0.5" aria-hidden="true" />
+              <p className="text-sm text-foreground leading-relaxed">
+                O administrador da clínica vai redefinir sua senha e falar com você.
+              </p>
             </div>
-            <CardTitle className="text-xl font-heading">Recuperar Senha</CardTitle>
-            <CardDescription>
-              {forgotSent
-                ? "Solicitação enviada"
-                : "Informe seu email; o administrador da clínica vai redefinir sua senha"}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {forgotSent ? (
-              <div className="text-center space-y-4">
-                <CheckCircle className="h-12 w-12 text-success mx-auto" />
-                <p className="text-sm text-muted-foreground">
-                  Sua solicitação foi enviada ao administrador. Ele redefinirá sua senha e entrará em contato.
-                </p>
-                <Button
-                  variant="outline"
-                  className="w-full"
-                  onClick={() => { setShowForgot(false); setForgotSent(false); }}
-                >
-                  <ArrowLeft className="mr-2 h-4 w-4" /> Voltar ao Login
-                </Button>
-              </div>
-            ) : (
-              <form onSubmit={handleForgot} className="space-y-4">
-                {forgotError && (
-                  <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive animate-fade-in">
-                    {forgotError}
-                  </div>
-                )}
-                <div className="space-y-2">
-                  <Label htmlFor="forgot-email">Email</Label>
-                  <Input
-                    id="forgot-email"
-                    type="email"
-                    placeholder="seu@email.com"
-                    value={forgotEmail}
-                    onChange={(e) => setForgotEmail(e.target.value)}
-                    required
-                    autoComplete="email"
-                  />
-                </div>
-                <Button type="submit" className="w-full" disabled={forgotLoading}>
-                  {forgotLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  Enviar Link de Recuperação
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className="w-full"
-                  onClick={() => setShowForgot(false)}
-                >
-                  <ArrowLeft className="mr-2 h-4 w-4" /> Voltar ao Login
-                </Button>
-              </form>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+            <Button
+              variant="outline"
+              className="w-full h-11"
+              onClick={() => { setShowForgot(false); setForgotSent(false); }}
+            >
+              <ArrowLeft className="h-4 w-4" /> Voltar ao login
+            </Button>
+          </div>
+        ) : (
+          <form onSubmit={handleForgot} className="space-y-5">
+            {forgotError && errorBox(forgotError)}
+            <div className="space-y-2">
+              <Label htmlFor="forgot-email">E-mail</Label>
+              <Input
+                id="forgot-email"
+                type="email"
+                placeholder="seu@email.com"
+                value={forgotEmail}
+                onChange={(e) => setForgotEmail(e.target.value)}
+                required
+                autoComplete="email"
+                className="h-11"
+              />
+            </div>
+            <Button type="submit" className="w-full h-11" disabled={forgotLoading}>
+              {forgotLoading && <Loader2 className="h-4 w-4 animate-spin" />}
+              Pedir nova senha
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              className="w-full h-11"
+              onClick={() => setShowForgot(false)}
+            >
+              <ArrowLeft className="h-4 w-4" /> Voltar ao login
+            </Button>
+          </form>
+        )}
+      </AuthShell>
     );
   }
 
   return (
-    <div className="flex min-h-screen w-full items-center justify-center bg-background p-4">
-      <Card className="w-full max-w-sm shadow-card animate-fade-in">
-        <CardHeader className="text-center">
-          <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-xl gradient-primary">
-            <span className="text-xl font-bold text-primary-foreground">OC</span>
-          </div>
-          <CardTitle className="text-xl font-heading">Odonto Connect</CardTitle>
-          <CardDescription>Faça login para acessar o sistema</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {error && (
-              <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive animate-fade-in">
-                {error}
-              </div>
-            )}
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                placeholder="admin@odontoconnect.tech"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                autoComplete="email"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="password">Senha</Label>
-              <div className="relative">
-                <Input
-                  id="password"
-                  type={showPassword ? "text" : "password"}
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  autoComplete="current-password"
-                  className="pr-10"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                  aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"}
-                >
-                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
-              </div>
-            </div>
-            <Button type="submit" className="w-full" disabled={loading}>
-              {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Entrar
-            </Button>
+    <AuthShell
+      title="Entrar no Odonto Connect"
+      description="Acesse a agenda e os pacientes da sua clínica."
+      footer={
+        <p>
+          Ainda não usa o Odonto Connect?{" "}
+          <Link to="/signup" search={{}} className="font-medium text-primary hover:underline underline-offset-4">
+            Cadastre sua clínica
+          </Link>
+        </p>
+      }
+    >
+      <form onSubmit={handleSubmit} className="space-y-5">
+        {error && errorBox(error)}
+        <div className="space-y-2">
+          <Label htmlFor="email">E-mail</Label>
+          <Input
+            id="email"
+            type="email"
+            placeholder="seu@email.com"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+            autoComplete="email"
+            className="h-11"
+          />
+        </div>
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <Label htmlFor="password">Senha</Label>
             <button
               type="button"
               onClick={() => setShowForgot(true)}
-              className="w-full text-center text-sm text-muted-foreground hover:text-primary transition-colors"
+              className="text-[13px] font-medium text-primary hover:underline underline-offset-4"
             >
               Esqueci minha senha
             </button>
-            <p className="text-center text-sm text-muted-foreground">
-              Não tem conta?{" "}
-              <Link to="/signup" search={{}} className="text-primary hover:underline font-medium">
-                Cadastre sua clínica
-              </Link>
-            </p>
-          </form>
-        </CardContent>
-      </Card>
-    </div>
+          </div>
+          <div className="relative">
+            <Input
+              id="password"
+              type={showPassword ? "text" : "password"}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              autoComplete="current-password"
+              className="h-11 pr-11"
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword(!showPassword)}
+              className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center justify-center h-9 w-9 rounded text-muted-foreground hover:text-foreground transition-colors"
+              aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"}
+            >
+              {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </button>
+          </div>
+        </div>
+        <Button type="submit" className="w-full h-11 text-[15px]" disabled={loading}>
+          {loading && <Loader2 className="h-4 w-4 animate-spin" />}
+          Entrar
+        </Button>
+      </form>
+    </AuthShell>
   );
 }

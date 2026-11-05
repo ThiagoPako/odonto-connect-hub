@@ -13,7 +13,8 @@ import {
   CalendarCheck, Users, FileText, DollarSign, Package,
   AlertTriangle, TrendingUp, Activity,
   UserCheck, UserX, Clock, CheckCircle, XCircle, BarChart3,
-  ExternalLink, Loader2, AlertCircle,
+  ArrowRight, Loader2, AlertCircle, MessageSquare,
+  type LucideIcon,
 } from "lucide-react";
 
 export const Route = createFileRoute("/dashboard")({
@@ -49,8 +50,32 @@ function getInitials(name: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
+const fmt = (n: number) => Number(n || 0).toLocaleString("pt-BR");
+
+function saudacao(): string {
+  const h = new Date().getHours();
+  if (h < 12) return "Bom dia";
+  if (h < 18) return "Boa tarde";
+  return "Boa noite";
+}
+
+function SectionHeader({ icon: Icon, title, to, linkLabel }: { icon: LucideIcon; title: string; to: string; linkLabel: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3 mb-3 md:mb-4">
+      <div className="flex items-center gap-2 min-w-0">
+        <Icon className="h-[18px] w-[18px] shrink-0 text-primary" aria-hidden="true" />
+        <h2 className="text-[15px] font-semibold text-foreground truncate">{title}</h2>
+      </div>
+      <Link to={to} className="group inline-flex items-center gap-1 shrink-0 text-[13px] font-medium text-primary hover:underline underline-offset-4">
+        {linkLabel} <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
+      </Link>
+    </div>
+  );
+}
+
 function DashboardPage() {
   const { user, isLoading: authLoading } = useAuth();
+  const primeiroNome = user?.name?.trim().split(/\s+/)[0] ?? "";
   const [kpis, setKpis] = useState<any>(EMPTY_KPIS);
 
   const [sessions, setSessions] = useState<ActiveSession[]>([]);
@@ -100,91 +125,86 @@ function DashboardPage() {
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Dashboard" />
-      <main className="flex-1 p-8 space-y-8 overflow-auto">
+      <main className="flex-1 px-4 py-6 md:p-8 space-y-8 md:space-y-10 overflow-auto max-w-[1600px] w-full mx-auto">
+
+        <div className="space-y-1">
+          <p className="text-2xl md:text-[28px] font-semibold tracking-tight text-foreground font-heading">
+            {saudacao()}{primeiroNome ? `, ${primeiroNome}` : ""}
+          </p>
+          <p className="text-sm md:text-[15px] text-muted-foreground">
+            {loading && agenda.total === 0
+              ? "Carregando o resumo do dia…"
+              : agenda.total === 0
+                ? "Nenhuma consulta marcada para hoje."
+                : `Hoje: ${agenda.total} ${agenda.total === 1 ? "consulta" : "consultas"} · ${agenda.aguardando} aguardando · ${agenda.emAtendimento} em atendimento.`}
+          </p>
+        </div>
 
         {loading && (
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Atualizando KPIs...
+            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Atualizando indicadores…
           </div>
         )}
 
         {error && (
-          <div className="flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+          <div className="flex items-center gap-2 rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive">
             <AlertCircle className="h-4 w-4" />
             <span>Erro ao carregar dashboard: {error}</span>
           </div>
         )}
 
         {isEmpty && (
-          <div className="rounded-xl border border-warning/40 bg-warning/5 px-4 py-3 text-sm text-warning-foreground flex items-start gap-3">
-            <AlertCircle className="h-4 w-4 text-warning shrink-0 mt-0.5" />
-            <div>
-              <p className="font-medium text-foreground">Banco de dados vazio</p>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                Cadastre pacientes, agendamentos e orçamentos para ver os indicadores reais aqui.
-                Comece em <Link to="/pacientes" className="text-primary hover:underline">Pacientes</Link> ou <Link to="/agenda" className="text-primary hover:underline">Agenda</Link>.
+          <div className="rounded-lg bg-accent px-5 py-4 flex flex-col sm:flex-row sm:items-center gap-4">
+            <div className="flex-1">
+              <p className="text-[15px] font-semibold text-foreground">Sua clínica ainda não tem dados</p>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                Cadastre pacientes e marque consultas para os indicadores aparecerem aqui.
               </p>
+            </div>
+            <div className="flex gap-2 shrink-0">
+              <Link to="/pacientes" className="inline-flex items-center h-9 px-4 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors">
+                Cadastrar paciente
+              </Link>
+              <Link to="/agenda" className="inline-flex items-center h-9 px-4 rounded-md bg-card text-foreground text-sm font-medium border border-border hover:bg-muted transition-colors">
+                Abrir agenda
+              </Link>
             </div>
           </div>
         )}
 
         {/* === AGENDA DO DIA === */}
         <section className="animate-slide-up" style={{ animationDelay: '0ms', animationFillMode: 'both' }}>
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
-              <CalendarCheck className="h-5 w-5 text-primary" />
-              <h2 className="text-sm font-bold text-foreground uppercase tracking-wider">Agenda do Dia</h2>
-            </div>
-            <Link to="/agenda" className="text-xs text-primary hover:underline flex items-center gap-1">
-              Ver agenda <ExternalLink className="h-3 w-3" />
-            </Link>
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-            <KpiCard title="Total Consultas" value={String(agenda.total)} icon={CalendarCheck} />
-            <KpiCard title="Finalizados" value={String(agenda.finalizados)} change={`${agenda.taxaPresenca}% presença`} changeType="positive" icon={CheckCircle} />
-            <KpiCard title="Em Atendimento" value={String(agenda.emAtendimento)} icon={Activity} />
-            <KpiCard title="Aguardando" value={String(agenda.aguardando)} icon={Clock} />
-            <KpiCard title="Faltas" value={String(agenda.faltas)} change={agenda.faltas > 0 ? "Atenção" : ""} changeType={agenda.faltas > 0 ? "negative" : "neutral"} icon={XCircle} />
-            <KpiCard title="Encaixes" value={String(agenda.encaixes)} icon={TrendingUp} />
+          <SectionHeader icon={CalendarCheck} title="Agenda de hoje" to="/agenda" linkLabel="Ver agenda" />
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 md:gap-4">
+            <KpiCard title="Total Consultas" value={fmt(agenda.total)} icon={CalendarCheck} />
+            <KpiCard title="Finalizados" value={fmt(agenda.finalizados)} change={`${agenda.taxaPresenca}% presença`} changeType="positive" icon={CheckCircle} />
+            <KpiCard title="Em Atendimento" value={fmt(agenda.emAtendimento)} icon={Activity} />
+            <KpiCard title="Aguardando" value={fmt(agenda.aguardando)} icon={Clock} />
+            <KpiCard title="Faltas" value={fmt(agenda.faltas)} change={agenda.faltas > 0 ? "Atenção" : ""} changeType={agenda.faltas > 0 ? "negative" : "neutral"} icon={XCircle} />
+            <KpiCard title="Encaixes" value={fmt(agenda.encaixes)} icon={TrendingUp} />
           </div>
         </section>
 
         {/* === FINANCEIRO / ORÇAMENTOS === */}
         <section className="animate-slide-up" style={{ animationDelay: '80ms', animationFillMode: 'both' }}>
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
-              <DollarSign className="h-5 w-5 text-primary" />
-              <h2 className="text-sm font-bold text-foreground uppercase tracking-wider">Orçamentos</h2>
-            </div>
-            <Link to="/orcamentos" className="text-xs text-primary hover:underline flex items-center gap-1">
-              Ver orçamentos <ExternalLink className="h-3 w-3" />
-            </Link>
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-            <KpiCard title="Total Orçamentos" value={String(orcamento.total)} icon={FileText} />
+          <SectionHeader icon={FileText} title="Orçamentos" to="/orcamentos" linkLabel="Ver orçamentos" />
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4">
+            <KpiCard title="Total Orçamentos" value={fmt(orcamento.total)} icon={FileText} />
             <KpiCard title="Valor Aprovado" value={`R$ ${orcamento.valorAprovado.toLocaleString("pt-BR")}`} change={`${orcamento.taxaConversao}% conversão`} changeType="positive" icon={DollarSign} />
-            <KpiCard title="Pendentes" value={String(orcamento.pendentes)} change="Aguardando resposta" changeType="neutral" icon={Clock} />
-            <KpiCard title="Reprovados" value={String(orcamento.reprovados)} changeType="negative" icon={XCircle} />
+            <KpiCard title="Pendentes" value={fmt(orcamento.pendentes)} change="Aguardando resposta" changeType="neutral" icon={Clock} />
+            <KpiCard title="Reprovados" value={fmt(orcamento.reprovados)} changeType="negative" icon={XCircle} />
             <KpiCard title="Ticket Médio" value={`R$ ${orcamento.ticketMedio.toLocaleString("pt-BR")}`} icon={BarChart3} />
           </div>
         </section>
 
         {/* === CRM / PACIENTES === */}
         <section className="animate-slide-up" style={{ animationDelay: '160ms', animationFillMode: 'both' }}>
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
-              <Users className="h-5 w-5 text-primary" />
-              <h2 className="text-sm font-bold text-foreground uppercase tracking-wider">CRM & Pacientes</h2>
-            </div>
-            <Link to="/crm" className="text-xs text-primary hover:underline flex items-center gap-1">
-              Ver CRM <ExternalLink className="h-3 w-3" />
-            </Link>
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-            <KpiCard title="Pacientes Cadastrados" value={String(pacientes.totalCadastrados)} icon={Users} />
-            <KpiCard title="Pacientes Ativos" value={String(crm.ativos)} changeType="positive" icon={UserCheck} />
-            <KpiCard title="Leads no Funil" value={String(crm.totalLeadsKanban)} change={`${crm.semResposta} sem resposta`} changeType={crm.semResposta > 0 ? "negative" : "neutral"} icon={TrendingUp} />
-            <KpiCard title="Inativos" value={String(crm.inativos)} change="Reativar" changeType="negative" icon={UserX} />
+          <SectionHeader icon={Users} title="Pacientes e CRM" to="/crm" linkLabel="Ver CRM" />
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-4">
+            <KpiCard title="Pacientes Cadastrados" value={fmt(pacientes.totalCadastrados)} icon={Users} />
+            <KpiCard title="Pacientes Ativos" value={fmt(crm.ativos)} changeType="positive" icon={UserCheck} />
+            <KpiCard title="Leads no Funil" value={fmt(crm.totalLeadsKanban)} change={`${crm.semResposta} sem resposta`} changeType={crm.semResposta > 0 ? "negative" : "neutral"} icon={TrendingUp} />
+            <KpiCard title="Inativos" value={fmt(crm.inativos)} change="Reativar" changeType="negative" icon={UserX} />
             <KpiCard title="Receita Mensal" value={`R$ ${crm.receitaTotal.toLocaleString("pt-BR")}`} icon={DollarSign} />
           </div>
         </section>
@@ -200,27 +220,19 @@ function DashboardPage() {
         </section>
 
         <section className="animate-slide-up" style={{ animationDelay: '320ms', animationFillMode: 'both' }}>
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
-              <Package className="h-5 w-5 text-primary" />
-              <h2 className="text-sm font-bold text-foreground uppercase tracking-wider">Estoque</h2>
-            </div>
-            <Link to="/estoque" className="text-xs text-primary hover:underline flex items-center gap-1">
-              Ver estoque <ExternalLink className="h-3 w-3" />
-            </Link>
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-            <KpiCard title="Total Itens" value={String(estoque.totalItens)} icon={Package} />
+          <SectionHeader icon={Package} title="Estoque" to="/estoque" linkLabel="Ver estoque" />
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 md:gap-4">
+            <KpiCard title="Total Itens" value={fmt(estoque.totalItens)} icon={Package} />
             <KpiCard
               title="Abaixo do Mínimo"
-              value={String(estoque.abaixoMinimo)}
+              value={fmt(estoque.abaixoMinimo)}
               change={estoque.itensAbaixoMinimo.slice(0, 2).join(", ")}
               changeType="negative"
               icon={AlertTriangle}
             />
             <KpiCard
               title="Sem Estoque"
-              value={String(estoque.semEstoque)}
+              value={fmt(estoque.semEstoque)}
               change={estoque.itensSemEstoque.join(", ")}
               changeType="negative"
               icon={XCircle}
@@ -231,15 +243,10 @@ function DashboardPage() {
 
         {/* === ATENDIMENTOS ATIVOS (CHAT) === */}
         <section className="animate-slide-up">
-          <div className="flex items-center justify-between mb-5">
-            <div>
-              <h2 className="text-base font-bold text-foreground">Atendimentos Ativos</h2>
-              <p className="text-[11px] text-muted-foreground mt-0.5">Conversas em andamento agora</p>
-            </div>
-          </div>
+          <SectionHeader icon={MessageSquare} title="Atendimentos ativos" to="/chat" linkLabel="Abrir chat" />
           {sessions.length === 0 ? (
-            <div className="rounded-xl border border-border/60 bg-muted/30 p-8 text-center text-sm text-muted-foreground">
-              Nenhum atendimento ativo no momento. <Link to="/chat" className="text-primary hover:underline">Abrir chat</Link>.
+            <div className="rounded-lg bg-muted px-5 py-6 text-sm text-muted-foreground">
+              Nenhuma conversa em andamento agora.
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">

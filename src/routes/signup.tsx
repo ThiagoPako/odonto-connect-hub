@@ -2,12 +2,12 @@ import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useState, type FormEvent } from "react";
 import { saasApi } from "@/lib/saasApi";
 import { useAuth } from "@/hooks/useAuth";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { AuthShell } from "@/components/auth/AuthShell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { Loader2, Sparkles } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { TERMOS_VERSAO, POLITICA_VERSAO } from "@/lib/legal";
 
 export const Route = createFileRoute("/signup")({
@@ -17,6 +17,9 @@ export const Route = createFileRoute("/signup")({
   }),
   component: SignupPage,
 });
+
+// Nomes exibidos dos planos da landing (o slug vai para a API sem mudança)
+const PLANOS: Record<string, string> = { starter: "Starter", professional: "Professional", enterprise: "Enterprise" };
 
 function SignupPage() {
   const navigate = useNavigate();
@@ -64,76 +67,86 @@ function SignupPage() {
     navigate({ to: "/dashboard" });
   };
 
+  const field = "h-11";
+
   return (
-    <div className="min-h-screen bg-slate-50/50 flex items-center justify-center p-4">
-      <Card className="w-full max-w-md shadow-xl">
-        <CardHeader className="text-center">
-          <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10">
-            <Sparkles className="h-6 w-6 text-primary" />
-          </div>
-          <CardTitle className="text-2xl font-heading">Cadastre sua clínica</CardTitle>
-          <CardDescription>14 dias grátis, sem cartão de crédito</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={submit} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="nome">Seu nome completo</Label>
-              <Input
-                id="nome"
-                value={form.nome}
-                onChange={(e) => setForm({ ...form, nome: e.target.value })}
-                placeholder="Dr. João Silva"
-                required
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="clinic_name">Nome da clínica</Label>
-              <Input
-                id="clinic_name"
-                value={form.clinic_name}
-                onChange={(e) => setForm({ ...form, clinic_name: e.target.value })}
-                placeholder="Sorriso Vital"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="email">E-mail</Label>
-              <Input
-                id="email"
-                type="email"
-                value={form.email}
-                onChange={(e) => setForm({ ...form, email: e.target.value })}
-                placeholder="seu@email.com"
-                required
-                autoComplete="email"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="password">Senha</Label>
-              <Input
-                id="password"
-                type="password"
-                value={form.password}
-                onChange={(e) => setForm({ ...form, password: e.target.value })}
-                placeholder="Mínimo 6 caracteres"
-                required
-                autoComplete="new-password"
-              />
-            </div>
-            <Button type="submit" disabled={loading} className="w-full h-11 font-bold">
-              {loading ? <Loader2 className="h-5 w-5 mr-2 animate-spin" /> : <Sparkles className="h-5 w-5 mr-2" />}
-              Criar conta
-            </Button>
-            <p className="text-center text-[11px] leading-relaxed text-muted-foreground">
-              Ao criar a conta, você concorda com os{" "}
-              <Link to="/termos" target="_blank" className="text-primary hover:underline">Termos de Uso</Link> e a{" "}
-              <Link to="/privacidade" target="_blank" className="text-primary hover:underline">Política de Privacidade</Link>.
-            </p>
-            <p className="text-center text-xs text-muted-foreground">
-              Já tem conta? <Link to="/login" className="text-primary font-bold hover:underline">Entrar</Link>
-            </p>
-          </form>
-        </CardContent>
-      </Card>
-    </div>
+    <AuthShell
+      title="Cadastre sua clínica"
+      // ⚠️ Helena: a landing promete 7 dias grátis; aqui são 14. Não decidido — ver PR.
+      description={
+        PLANOS[plan ?? ""]
+          ? `Plano ${PLANOS[plan as string]} · 14 dias grátis, sem cartão de crédito.`
+          : "14 dias grátis, sem cartão de crédito."
+      }
+      footer={
+        <p>
+          Já tem conta?{" "}
+          <Link to="/login" className="font-medium text-primary hover:underline underline-offset-4">Entrar</Link>
+        </p>
+      }
+    >
+      <form onSubmit={submit} className="space-y-5">
+        <div className="space-y-2">
+          <Label htmlFor="nome">Seu nome completo</Label>
+          <Input
+            id="nome"
+            value={form.nome}
+            onChange={(e) => setForm({ ...form, nome: e.target.value })}
+            placeholder="Dr. João Silva"
+            required
+            autoComplete="name"
+            className={field}
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="clinic_name">
+            Nome da clínica <span className="font-normal text-muted-foreground">(opcional)</span>
+          </Label>
+          <Input
+            id="clinic_name"
+            value={form.clinic_name}
+            onChange={(e) => setForm({ ...form, clinic_name: e.target.value })}
+            placeholder="Sorriso Vital"
+            autoComplete="organization"
+            className={field}
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="email">E-mail</Label>
+          <Input
+            id="email"
+            type="email"
+            value={form.email}
+            onChange={(e) => setForm({ ...form, email: e.target.value })}
+            placeholder="seu@email.com"
+            required
+            autoComplete="email"
+            className={field}
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="password">Senha</Label>
+          <Input
+            id="password"
+            type="password"
+            value={form.password}
+            onChange={(e) => setForm({ ...form, password: e.target.value })}
+            placeholder="Mínimo 6 caracteres"
+            required
+            autoComplete="new-password"
+            className={field}
+          />
+        </div>
+        <Button type="submit" disabled={loading} className="w-full h-11 text-[15px]">
+          {loading && <Loader2 className="h-4 w-4 animate-spin" />}
+          Criar conta
+        </Button>
+        <p className="text-[13px] leading-relaxed text-muted-foreground">
+          Ao criar a conta, você concorda com os{" "}
+          <Link to="/termos" target="_blank" className="text-primary underline underline-offset-4">Termos de Uso</Link> e a{" "}
+          <Link to="/privacidade" target="_blank" className="text-primary underline underline-offset-4">Política de Privacidade</Link>.
+        </p>
+      </form>
+    </AuthShell>
   );
 }

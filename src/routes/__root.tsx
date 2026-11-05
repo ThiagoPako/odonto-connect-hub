@@ -146,10 +146,10 @@ function AuthGate() {
 
   // Authenticated — show sidebar + content (or unauthorized)
   return (
-    <div className="flex h-screen w-full overflow-hidden">
+    <div className="flex flex-col md:flex-row h-dvh w-full overflow-hidden">
       <GlobalChatNotifierMount />
       <AppSidebar />
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden">
         <WhatsAppConnectionBanner />
         <main className="flex-1 overflow-y-auto">
           {hasAccess ? <Outlet /> : <UnauthorizedComponent />}
