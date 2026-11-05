@@ -14,8 +14,10 @@ describe('contexto de RLS do pool', () => {
     expect(sql).toMatch(/set_config\('app\.jwt_payload', CASE WHEN \$2 = 'true' THEN '\{"is_super_admin":true\}' ELSE '' END, \$3\)/);
   });
 
-  test('a limpeza do contexto zera o payload (is_super_admin = false)', () => {
+  test('a limpeza do contexto zera o payload e descarta a conexão se falhar', () => {
     expect(src).toContain("client.query(TENANT_SET_SQL, ['', 'false', false])");
+    expect(src).toContain("client.query('ROLLBACK').catch(() => {})");
+    expect(src).toContain('() => release.call(client, true)');
   });
 
   test('cópia das configurações globais usa marcador v2', () => {

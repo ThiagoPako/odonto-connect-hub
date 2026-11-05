@@ -182,7 +182,11 @@ pool.connect = async (...args) => {
   const release = client.release;
   client.release = (err) => {
     client.release = release;
-    client.query(TENANT_SET_SQL, ['', 'false', false]).catch(() => {}).finally(() => release.call(client, err));
+    // Transação abortada impede o reset do contexto: desfaz antes e, se o reset ainda
+    // falhar, descarta a conexão em vez de devolvê-la ao pool com super-admin na sessão.
+    client.query('ROLLBACK').catch(() => {})
+      .then(() => client.query(TENANT_SET_SQL, ['', 'false', false]))
+      .then(() => release.call(client, err), () => release.call(client, true));
   };
   return client;
 };
