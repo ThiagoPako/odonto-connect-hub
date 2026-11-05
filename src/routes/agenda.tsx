@@ -15,6 +15,7 @@ import { NovoAgendamentoModal } from "@/components/agenda/NovoAgendamentoModal";
 import { AgendamentoPopover } from "@/components/agenda/AgendamentoPopover";
 import { AgendaStatusFilter } from "@/components/agenda/AgendaStatusFilter";
 import { cn } from "@/lib/utils";
+import { usePodeAcessar } from "@/hooks/usePodeAcessar";
 import { Calendar as CalendarIcon } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
@@ -63,6 +64,7 @@ function clinicorpErrorMessage(err: unknown): string {
 }
 
 function AgendaPage() {
+  const podeAcessar = usePodeAcessar();
   const [currentDate, setCurrentDate] = useState(new Date());
   const [profs, setProfs] = useState<Prof[]>([]);
   const [selectedProfs, setSelectedProfs] = useState<string[]>([]);
@@ -349,11 +351,14 @@ function AgendaPage() {
             <Button size="sm" variant="outline" className="rounded-xl glass-card hover:bg-primary/10 transition-colors" onClick={loadAppointments} disabled={loading} aria-label="Recarregar agenda">
               <RefreshCw className={`h-4 w-4 text-primary ${loading ? "animate-spin" : ""}`} />
             </Button>
-            <Link to="/configuracoes/agenda">
-              <Button size="sm" variant="outline" className="rounded-xl glass-card text-[11px] font-bold uppercase tracking-wider">
-                <Settings className="h-4 w-4 mr-2 text-primary" /> Config
-              </Button>
-            </Link>
+            {/* Só admin abre /configuracoes/agenda: para os outros perfis o botão levava a "Acesso negado" */}
+            {podeAcessar("/configuracoes/agenda") && (
+              <Link to="/configuracoes/agenda">
+                <Button size="sm" variant="outline" className="rounded-xl glass-card text-[11px] font-bold uppercase tracking-wider">
+                  <Settings className="h-4 w-4 mr-2 text-primary" /> Config
+                </Button>
+              </Link>
+            )}
             <Button size="sm" className="rounded-xl bg-primary shadow-glow-primary hover:scale-[1.02] active:scale-[0.98] transition-all text-[11px] font-bold uppercase tracking-wider" onClick={() => { setNovoDefaults({}); setShowNovo(true); }}>
               <Plus className="h-4 w-4 mr-1" /> Novo
             </Button>
