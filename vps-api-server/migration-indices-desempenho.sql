@@ -116,9 +116,22 @@ SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'pu
   \echo '[indices] pacientes: coluna ausente, idx_pacientes_tenant_telefone pulado'
 \endif
 
+-- idx_pacientes_tenant_fone11: PR #85 (helper foneIndexado/sqlFoneIgual): convert-to-patient e link buscam paciente por RIGHT(REGEXP_REPLACE(COALESCE(telefone,''),'\D','','g'),11) = ANY($1) com tenant_id. Mesma expressão do helper; o índice 8 (igualdade) continua para o Clinicorp.
+SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'pacientes' AND column_name = 'tenant_id') AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'pacientes' AND column_name = 'telefone') AS tem \gset
+\if :tem
+  SELECT EXISTS (SELECT 1 FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+                  WHERE c.relname = 'idx_pacientes_tenant_fone11' AND NOT i.indisvalid) AS invalido \gset
+  \if :invalido
+    DROP INDEX CONCURRENTLY IF EXISTS idx_pacientes_tenant_fone11;
+  \endif
+  CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_pacientes_tenant_fone11 ON pacientes (tenant_id, (RIGHT(REGEXP_REPLACE(COALESCE(telefone, ''), '\D', '', 'g'), 11)));
+\else
+  \echo '[indices] pacientes: coluna ausente, idx_pacientes_tenant_fone11 pulado'
+\endif
+
 -- Confere: algum índice desta migração ficou inválido? (falha controlada para o ::warning do deploy)
 SELECT count(*) > 0 AS sobrou_invalido FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
- WHERE NOT i.indisvalid AND c.relname IN ('idx_orcamentos_tenant_clinicorp_estimate', 'idx_crm_leads_tenant_fone11', 'idx_chat_messages_tenant_fone11', 'idx_chat_messages_tenant_lead_ts', 'idx_automation_jobs_flow_trigger', 'idx_automation_jobs_tenant_trigger_created', 'idx_agendamentos_tenant_paciente_data', 'idx_pacientes_tenant_telefone') \gset
+ WHERE NOT i.indisvalid AND c.relname IN ('idx_orcamentos_tenant_clinicorp_estimate', 'idx_crm_leads_tenant_fone11', 'idx_chat_messages_tenant_fone11', 'idx_chat_messages_tenant_lead_ts', 'idx_automation_jobs_flow_trigger', 'idx_automation_jobs_tenant_trigger_created', 'idx_agendamentos_tenant_paciente_data', 'idx_pacientes_tenant_telefone', 'idx_pacientes_tenant_fone11') \gset
 \if :sobrou_invalido
   \echo '!!! [indices] índice inválido depois da criação: rodar de novo'
   SELECT 1/0 AS indice_invalido;
