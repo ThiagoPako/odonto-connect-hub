@@ -246,6 +246,8 @@ export const clinicorpApi = {
 
   // ── Credenciais por usuário (SaaS) — VPS ──
   getMySettings: () => req<ClinicorpUserSettings>('/my-settings'),
+  /** A clínica tem integração Clinicorp ativa (de qualquer usuário)? Só o booleano. */
+  getTenantStatus: () => req<{ configured: boolean }>('/tenant-status'),
   saveMySettings: (payload: Partial<{
     enabled: boolean;
     api_token: string;
