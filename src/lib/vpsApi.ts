@@ -286,6 +286,38 @@ export const pacientesApi = {
   getHistorico: (id: string) => vpsApiFetch<HistoricoConsulta[]>(`/pacientes/${id}/historico`),
 };
 
+// ─── Lista de espera e encaixe (horário liberado → oferta por clique da recepção) ───
+export interface ListaEsperaItem {
+  id: string;
+  paciente_id: string;
+  paciente_nome: string;
+  dentista_id: string | null;
+  dentista_nome: string | null;
+  periodo: "manha" | "tarde" | "noite" | "qualquer";
+  observacao: string | null;
+  status: "aguardando" | "oferecido";
+  created_at: string;
+}
+export interface EncaixeInfo {
+  disponivel: boolean;
+  liberado: boolean;
+  futuro: boolean;
+  candidatos: number;
+  dentroDaJanela?: boolean;
+  oferta: { id: string; status: "enviada" | "aceita"; expires_at: string; paciente_nome: string } | null;
+}
+export const listaEsperaApi = {
+  list: () => vpsApiFetch<ListaEsperaItem[]>('/lista-espera'),
+  add: (body: { paciente_id: string; dentista_id?: string | null; periodo: ListaEsperaItem["periodo"]; observacao?: string }) =>
+    vpsApiFetch<{ id: string }>('/lista-espera', { method: 'POST', body }),
+  remove: (id: string) => vpsApiFetch(`/lista-espera/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  liberarHorario: (agendamentoId: string) =>
+    vpsApiFetch<{ success: boolean }>(`/agenda/${encodeURIComponent(agendamentoId)}/liberar-horario`, { method: 'POST' }),
+  encaixe: (agendamentoId: string) => vpsApiFetch<EncaixeInfo>(`/agenda/${encodeURIComponent(agendamentoId)}/encaixe`),
+  oferecer: (agendamentoId: string) =>
+    vpsApiFetch<{ oferta: { id: string; paciente_nome: string; expires_at: string } }>(`/agenda/${encodeURIComponent(agendamentoId)}/oferecer-horario`, { method: 'POST' }),
+};
+
 export const agendaApi = {
   list: (params?: Record<string, string>) => vpsApiFetch<AgendamentoVPS[]>('/agenda', { params }),
   create: (body: unknown) => vpsApiFetch<{ id: string; success: boolean }>('/agenda', { method: 'POST', body }),
