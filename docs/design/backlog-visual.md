@@ -45,7 +45,7 @@ Contagem por categoria: **quebr.** = `hsl(var())` · **paleta** = Tailwind solto
 | 3 | Pacientes (+ prontuário) | 0 | 16 | 5 | 1 | 47 | 47 | Davi |
 | 4 | Consulta (atendimento, painel do dentista, gravação) | 7 | 0 | 2 | 0 | 58 | 58 | Davi |
 | 5 | Financeiro (+ comissões) | 1 | 0 | 3 | 6 | 73 | 73 | Davi (#34) |
-| 6 | Dashboard (+ gráficos) | 0 | 6 | 0 | 47 | 17 | 23 | Lara |
+| 6 | Dashboard (+ gráficos) | 0 | 6 | 0 | 25 | 7 | 12 | Lara (os 4 gráficos do dashboard já foram corrigidos no #19) |
 | 7 | CRM (+ reativação) | 1 | 0 | 3 | 0 | 51 | 51 | Davi |
 | 8 | Orçamentos (+ tratamentos) | 6 | 29 | 14 | 1 | 47 | 47 | Davi |
 | 9 | Exames (+ pedido de exame) | 0 | 107 | 24 | 3 | 3 | 6 | Marcos (radiologia, #33/#37) |
@@ -89,9 +89,11 @@ Contagem por categoria: **quebr.** = `hsl(var())` · **paleta** = Tailwind solto
 - **Médio:** 6 cores literais (categorias) → `chart-1…5`.
 
 ### 6. Dashboard (`routes/dashboard.tsx`, `components/charts/*`)
-- **Médio:** 47 cores literais nos gráficos (`DespesasCategoriaChart` 14, `ReceitaDespesaChart` 9,
-  `FaturamentoMensalChart` 7, `AgendaStatusChart` 6). Exemplo: `salario: "hsl(217, 91%, 60%)"` →
-  `var(--color-chart-2)`. Assim os gráficos mudam com o tema e passam 3:1, como já medido.
+- **Feito no #19:** os 4 gráficos do dashboard (Faturamento, Orçamentos, Origem, Agenda) e o
+  `ActiveAttendanceCard` usam tokens e o desenho do `KpiCard`.
+- **Médio, falta:** 25 cores literais nos gráficos do financeiro que moram em `charts/`
+  (`DespesasCategoriaChart` 14, `ReceitaDespesaChart` 9, `FluxoCaixaChart` 2). Exemplo:
+  `salario: "hsl(217, 91%, 60%)"` → `var(--color-chart-2)`.
 - **Alto:** 17 textos < 12 px nos eixos e legendas → `text-caption` (o `chartTheme.ts` já usa 12 px no tooltip).
 
 ### 7. CRM (`routes/crm.tsx`, `reativacao.tsx`)
