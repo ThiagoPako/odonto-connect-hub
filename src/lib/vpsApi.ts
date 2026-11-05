@@ -274,6 +274,8 @@ export async function adminUploadUserAvatar(userId: string, file: File) {
 
 export const pacientesApi = {
   list: () => vpsApiFetch('/pacientes'),
+  /** Um paciente da clínica do usuário (erro "Paciente não encontrado" se for de outra). */
+  get: (id: string) => vpsApiFetch(`/pacientes/${encodeURIComponent(id)}`),
   create: (body: unknown) => vpsApiFetch('/pacientes', { method: 'POST', body }),
   update: (id: string, body: unknown) => vpsApiFetch(`/pacientes/${id}`, { method: 'PUT', body }),
   delete: (id: string) => vpsApiFetch(`/pacientes/${id}`, { method: 'DELETE' }),
@@ -767,6 +769,13 @@ export interface WhatsAppHealthInstance {
   lastCheckedAt: string | null;
 }
 
+export const optOutApi = {
+  status: (leadId: string) =>
+    vpsApiFetch<{ optedOut: boolean; since?: string; keyword?: string | null }>('/whatsapp/opt-out', { params: { leadId }, background: true }),
+  revogar: (leadId: string, solicitacao: string) =>
+    vpsApiFetch<{ success: boolean }>('/whatsapp/opt-out/revogar', { method: 'POST', body: { leadId, solicitacao } }),
+};
+
 export const whatsappApi = {
   health: () => vpsApiFetch<{ instances: WhatsAppHealthInstance[]; anyDown: boolean; pendingJobsWithoutInstance?: number; alertAfterMinutes?: number }>('/whatsapp/health', { background: true }),
   instances: () => vpsApiFetch('/whatsapp/instances'),
@@ -944,7 +953,7 @@ export const sessionsApi = {
   firstResponse: (body: { leadId: string }) =>
     vpsApiFetch<{ success: boolean }>('/sessions/first-response', { method: 'POST', body, background: true }),
   close: (body: unknown) =>
-    vpsApiFetch<{ success: boolean; sessionId?: string; duration?: number }>('/sessions/close', { method: 'POST', body }),
+    vpsApiFetch<{ success: boolean; sessionId?: string; duration?: number; surveyQueued?: boolean }>('/sessions/close', { method: 'POST', body }),
   checkActive: (leadId: string) =>
     vpsApiFetch<{ active: boolean; attendantId?: string; attendantName?: string; isCurrentUser?: boolean }>(`/sessions/active/${leadId}`, { background: true }),
   list: (params?: { active?: boolean }) =>
