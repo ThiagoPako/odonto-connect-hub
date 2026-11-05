@@ -416,7 +416,31 @@ function PedidoExamePage() {
         tipo_nome: t,
         observacoes: obsResumo || null,
       }));
-      for (const row of rows) await examesApi.create(row);
+      // examesApi.create lança com a mensagem amigável do servidor (unwrap). Confere cada
+      // exame: sem isso, uma falha no meio aborta o laço e esconde quais já foram salvos.
+      const falhas: { tipo: string; erro: string }[] = [];
+      for (const row of rows) {
+        try {
+          await examesApi.create(row);
+        } catch (e) {
+          falhas.push({ tipo: row.tipo_nome, erro: e instanceof Error ? e.message : "Erro ao salvar o exame." });
+        }
+      }
+
+      if (falhas.length > 0) {
+        const salvos = rows.length - falhas.length;
+        const inicio = pacienteNovo ? "Paciente cadastrado, mas " : "";
+        toast.error(
+          `${inicio}${falhas.length} de ${rows.length} ${rows.length === 1 ? "exame não foi salvo" : "exames não foram salvos"}`,
+          {
+            description:
+              `Não salvos: ${falhas.map((f) => f.tipo).join(", ")}. ${falhas[0].erro}` +
+              (salvos > 0 ? ` Os outros ${salvos} já estão na ficha; ao tentar de novo, marque só os que faltaram.` : ""),
+            duration: 15000,
+          },
+        );
+        return;
+      }
 
       const qtd = `${rows.length} ${rows.length === 1 ? "exame" : "exames"}`;
       toast.success(

@@ -23,6 +23,8 @@ export const Route = createFileRoute("/relatorios-clinicos")({
 type StatusFilter = 'todos' | 'com_prescricao' | 'sem_prescricao';
 
 // Teto do servidor em GET /api/ai/reports.
+// TODO(minimização): a lista de pacientes do filtro vem de até 1000 relatórios completos; o
+// ideal é um endpoint que devolva só patient_id/patient_name distintos (não existe hoje).
 const LIMITE_PACIENTES = 1000;
 
 function RelatoriosClinicosPage() {
