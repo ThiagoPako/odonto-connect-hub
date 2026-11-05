@@ -1237,21 +1237,58 @@ export interface ConsentimentoPaciente {
   versao: string;
   aceito_em: string;
   registrado_por_email: string | null;
+  decisao?: 'autorizo' | 'nao_autorizo' | null;
+  assinante_nome?: string | null;
+  assinante_tipo?: 'paciente' | 'responsavel' | null;
 }
+
+/** Texto do consentimento montado pelo servidor (catálogo de versões), com o hash SHA-256. */
+export interface ConsentimentoTexto {
+  versao: string;
+  curta: string;
+  completa: string;
+  opcoes: { autorizo: string; nao_autorizo: string };
+  hash: string;
+  encarregado_cadastrado: boolean;
+  idade: number | null;
+}
+
+export interface RegistrarConsentimentoBody {
+  tipo: ConsentimentoTipo;
+  decisao: 'autorizo' | 'nao_autorizo';
+  texto_hash: string;
+  assinante_tipo: 'paciente' | 'responsavel';
+  assinante_nome: string;
+  assinante_vinculo?: string;
+  responsavel_documento?: string;
+  adolescente_ciente?: boolean;
+  idade_informada?: number;
+  assinatura?: { base64: string };
+  profissional_presente_nome?: string;
+  copia_oferecida?: boolean;
+}
+
+export type CanalRevogacao = 'recepcao' | 'whatsapp' | 'dentista' | 'outro';
 
 export const consentimentosApi = {
   getAtivo: (pacienteId: string, tipo: ConsentimentoTipo) =>
-    vpsApiFetch<{ consent: ConsentimentoPaciente | null }>(
+    vpsApiFetch<{ consent: ConsentimentoPaciente | null; recusa?: { id: string; aceito_em: string; assinante_nome: string | null } | null }>(
       `/pacientes/${encodeURIComponent(pacienteId)}/consentimentos`,
       { params: { tipo }, background: true }
     ),
-  registrar: (pacienteId: string, body: { tipo: ConsentimentoTipo; versao: string; texto: string }) =>
-    vpsApiFetch<{ consent: ConsentimentoPaciente }>(
+  getTexto: (pacienteId: string, tipo: ConsentimentoTipo) =>
+    vpsApiFetch<ConsentimentoTexto>('/consentimentos/texto', { params: { tipo, paciente_id: pacienteId }, background: true }),
+  registrar: (pacienteId: string, body: RegistrarConsentimentoBody) =>
+    vpsApiFetch<{ consent: ConsentimentoPaciente | null; registro: ConsentimentoPaciente }>(
       `/pacientes/${encodeURIComponent(pacienteId)}/consentimentos`,
       { method: 'POST', body }
     ),
-  revogar: (consentId: string) =>
-    vpsApiFetch<{ success: boolean }>(`/consentimentos/${encodeURIComponent(consentId)}/revogar`, { method: 'POST' }),
+  revogar: (consentId: string, canal: CanalRevogacao = 'dentista') =>
+    vpsApiFetch<{ success: boolean }>(`/consentimentos/${encodeURIComponent(consentId)}/revogar`, { method: 'POST', body: { canal } }),
+  getEncarregado: () =>
+    vpsApiFetch<{ encarregado: { nome: string; contato: string } | null }>('/lgpd/encarregado', { background: true }),
+  setEncarregado: (body: { nome: string; contato: string }) =>
+    vpsApiFetch<{ encarregado: { nome: string; contato: string } }>('/lgpd/encarregado', { method: 'PUT', body }),
 };
 
 export const aiApi = {

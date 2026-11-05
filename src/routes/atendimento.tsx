@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { exportarPrescricaoPdf } from "@/lib/prescricaoPdfExport";
 import { ClinicalAudioRecorder } from "@/components/ClinicalAudioRecorder";
-import { GravacaoConsentDialog, GRAVACAO_CONSENT_TEXT, GRAVACAO_CONSENT_VERSION } from "@/components/GravacaoConsentDialog";
+import { GravacaoConsentDialog } from "@/components/GravacaoConsentDialog";
 import { OdontogramaEditor } from "@/components/OdontogramaChart";
 import {
   getPacienteById, getPacienteIniciais, getPacienteIdade, getPacienteIdadeTexto,
@@ -104,17 +104,21 @@ function ConsultaPage() {
   // Consentimento de gravação/transcrição por IA — pedido uma vez por paciente (LGPD art. 11, I)
   const [consentGravacao, setConsentGravacao] = useState<ConsentimentoPaciente | null>(null);
   const [consentDialogOpen, setConsentDialogOpen] = useState(false);
-  const [consentSaving, setConsentSaving] = useState(false);
+  // Última recusa registrada (v2.0): a tela não pergunta de novo a cada consulta.
+  const [consentRecusaEm, setConsentRecusaEm] = useState<string | null>(null);
   const consentResolverRef = useRef<((ok: boolean) => void) | null>(null);
 
   useEffect(() => {
     // Áudio é de um único paciente: ao trocar de paciente, descarta o que estava em memória.
     setGravacoes([]);
     setConsentGravacao(null);
+    setConsentRecusaEm(null);
     if (!pacienteSelecionado) return;
     let cancelled = false;
     consentimentosApi.getAtivo(pacienteSelecionado.id, 'gravacao_transcricao_ia').then(({ data }) => {
-      if (!cancelled) setConsentGravacao(data?.consent ?? null);
+      if (cancelled) return;
+      setConsentGravacao(data?.consent ?? null);
+      setConsentRecusaEm(data?.recusa?.aceito_em ?? null);
     });
     return () => { cancelled = true; };
   }, [pacienteSelecionado?.id]);
@@ -125,6 +129,7 @@ function ConsultaPage() {
     // Revalida no servidor (pode ter sido registrado em outro dispositivo)
     const { data } = await consentimentosApi.getAtivo(pacienteSelecionado.id, 'gravacao_transcricao_ia');
     if (data?.consent) { setConsentGravacao(data.consent); return true; }
+    setConsentRecusaEm(data?.recusa?.aceito_em ?? null);
     return new Promise<boolean>((resolve) => {
       consentResolverRef.current = resolve;
       setConsentDialogOpen(true);
@@ -137,26 +142,20 @@ function ConsultaPage() {
     consentResolverRef.current = null;
   }, []);
 
-  const confirmarConsentGravacao = useCallback(async () => {
-    if (!pacienteSelecionado) return fecharConsentDialog(false);
-    setConsentSaving(true);
-    const { data, error } = await consentimentosApi.registrar(pacienteSelecionado.id, {
-      tipo: 'gravacao_transcricao_ia',
-      versao: GRAVACAO_CONSENT_VERSION,
-      texto: GRAVACAO_CONSENT_TEXT,
-    });
-    setConsentSaving(false);
-    if (error || !data?.consent) {
-      toast.error(error || 'Não foi possível registrar a autorização.');
-      return fecharConsentDialog(false);
+  // O diálogo (v2.0) registra a decisão no servidor e devolve o consentimento quando autorizou.
+  const concluirConsentGravacao = useCallback((consent: ConsentimentoPaciente | null, decisao: 'autorizo' | 'nao_autorizo' | null) => {
+    if (consent) {
+      setConsentGravacao(consent);
+      setConsentRecusaEm(null);
+    } else if (decisao === 'nao_autorizo') {
+      setConsentRecusaEm(new Date().toISOString());
     }
-    setConsentGravacao(data.consent);
-    fecharConsentDialog(true);
-  }, [pacienteSelecionado, fecharConsentDialog]);
+    fecharConsentDialog(!!consent);
+  }, [fecharConsentDialog]);
 
   const revogarConsentGravacao = useCallback(async () => {
     if (!consentGravacao) return;
-    const { error } = await consentimentosApi.revogar(consentGravacao.id);
+    const { error } = await consentimentosApi.revogar(consentGravacao.id, 'dentista');
     if (error) { toast.error(error); return; }
     setConsentGravacao(null);
     setGravacoes([]);
@@ -519,6 +518,10 @@ function ConsultaPage() {
 
   const handleGerarFollowup = useCallback(async () => {
     if (!aiState.reportId || !pacienteSelecionado) return;
+    if (!consentGravacao) {
+      toast.error('O paciente precisa autorizar o uso de IA (versão 2.0) antes do follow-up.');
+      return;
+    }
     setFollowupState(prev => ({ ...prev, status: 'generating', error: '' }));
     try {
       const { data, error } = await aiApi.generateFollowupMessages({
@@ -538,7 +541,7 @@ function ConsultaPage() {
       setFollowupState(prev => ({ ...prev, status: 'error', error: msg }));
       toast.error(msg);
     }
-  }, [aiState.reportId, pacienteSelecionado]);
+  }, [aiState.reportId, pacienteSelecionado, consentGravacao]);
 
   const handleAgendarFollowup = useCallback(async () => {
     if (!aiState.reportId || !pacienteSelecionado || followupState.messages.length === 0) return;
@@ -936,10 +939,10 @@ function ConsultaPage() {
                                 )}
                                 <GravacaoConsentDialog
                                   open={consentDialogOpen}
+                                  pacienteId={pacienteSelecionado?.id}
                                   pacienteNome={pacienteSelecionado?.nome}
-                                  saving={consentSaving}
-                                  onConfirm={confirmarConsentGravacao}
-                                  onCancel={() => fecharConsentDialog(false)}
+                                  recusaEm={consentRecusaEm}
+                                  onDone={concluirConsentGravacao}
                                 />
 
                                 {gravacoes.length > 0 && (
@@ -1193,12 +1196,22 @@ function ConsultaPage() {
                                   {followupState.status === 'idle' && (
                                     <button
                                       onClick={handleGerarFollowup}
-                                      className="h-8 px-4 rounded-lg gradient-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition-all inline-flex items-center gap-1.5 shadow-glow-primary"
+                                      disabled={!consentGravacao}
+                                      aria-describedby={!consentGravacao ? "followup-sem-consentimento" : undefined}
+                                      className="h-8 px-4 rounded-lg gradient-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition-all inline-flex items-center gap-1.5 shadow-glow-primary disabled:opacity-50 disabled:cursor-not-allowed"
                                     >
                                       <Sparkles className="h-3 w-3" /> Gerar Follow-up
                                     </button>
                                   )}
                                 </div>
+                                {!consentGravacao && (
+                                  <p id="followup-sem-consentimento" className="text-xs text-muted-foreground">
+                                    O follow-up com IA envia o relatório à OpenAI e precisa da autorização do paciente (versão 2.0).{" "}
+                                    <button type="button" onClick={() => void garantirConsentGravacao()} className="font-medium text-primary hover:underline">
+                                      Coletar autorização
+                                    </button>
+                                  </p>
+                                )}
 
                                 {followupState.status === 'generating' && (
                                   <div className="flex items-center gap-3 p-4 rounded-xl bg-primary/5 border border-primary/10">
@@ -1252,7 +1265,8 @@ function ConsultaPage() {
                                       </button>
                                       <button
                                         onClick={handleGerarFollowup}
-                                        className="h-9 px-4 rounded-lg border border-border text-foreground text-xs font-medium hover:bg-muted transition-colors"
+                                        disabled={!consentGravacao}
+                                        className="h-9 px-4 rounded-lg border border-border text-foreground text-xs font-medium hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                                       >
                                         Regenerar
                                       </button>

@@ -24,6 +24,10 @@ import { promisify } from 'util';
 import { existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { AsyncLocalStorage } from 'async_hooks';
+import {
+  CONSENT_TIPO_GRAVACAO_IA, CONSENT_VERSAO_ATUAL, CONSENT_VERSAO_MINIMA,
+  montarTextoConsentimento, retencaoProvedor, versaoMaiorOuIgual, idadeEmAnos, validarAssinante,
+} from './consentimento-ia.mjs';
 
 // Compatibilidade para trechos legados deste arquivo que ainda chamam
 // crypto.randomUUID(). O módulo importa randomUUID de forma nomeada; sem este
@@ -14397,11 +14401,33 @@ app.post('/api/ai/settings', async (req, res) => {
 
 // ─── Consentimentos LGPD por paciente ───────────────────────
 // Registro probatório do consentimento (LGPD arts. 8º §2º, 11 I) e revogação (art. 8º §5º).
-const CONSENT_TIPOS = new Set(['gravacao_transcricao_ia']);
+// Texto v2.0 (docs/juridico/consentimento-transcricao-ia.md): o servidor monta o texto a partir
+// do catálogo (consentimento-ia.mjs) e grava o SHA-256 do que ELE montou; a recusa também é
+// registrada; a prova é a assinatura do paciente ou do responsável na tela.
+const CONSENT_TIPOS = new Set([CONSENT_TIPO_GRAVACAO_IA]);
+const CONSENT_ADMIN_KEY_ENCARREGADO = 'lgpd_encarregado';
 
+// Consentimento que AUTORIZA hoje: não revogado, decisão "autorizo" e versão >= mínima.
+// Versões antigas (1.0) não cobrem o envio do relatório à OpenAI nem a retenção no provedor.
 async function findActiveConsent(tenantId, pacienteId, tipo) {
+  // Coluna nova ainda não criada (primeiros segundos do boot, 42703): ninguém está autorizado —
+  // bloqueia a gravação em vez de liberar com base em registro antigo.
   const { rows } = await pool.query(
-    `SELECT id, tipo, versao, aceito_em, registrado_por_email
+    `SELECT id, tipo, versao, aceito_em, registrado_por_email, decisao, assinante_nome, assinante_tipo
+       FROM consentimentos_pacientes
+      WHERE tenant_id = $1 AND paciente_id = $2 AND tipo = $3 AND revogado_em IS NULL
+      ORDER BY aceito_em DESC LIMIT 20`,
+    [tenantId, String(pacienteId), tipo]
+  ).catch((err) => { if (err.code === '42703') return { rows: [] }; throw err; });
+  // Vale a decisão mais recente na versão atual: um "não autorizo" posterior anula um "autorizo".
+  const atual = rows.find((r) => versaoMaiorOuIgual(r.versao, CONSENT_VERSAO_MINIMA));
+  return atual && atual.decisao === 'autorizo' ? atual : null;
+}
+
+// Última decisão registrada (autorizo ou não), para a tela não perguntar de novo a cada consulta.
+async function findLatestConsentDecision(tenantId, pacienteId, tipo) {
+  const { rows } = await pool.query(
+    `SELECT id, versao, decisao, aceito_em, assinante_nome
        FROM consentimentos_pacientes
       WHERE tenant_id = $1 AND paciente_id = $2 AND tipo = $3 AND revogado_em IS NULL
       ORDER BY aceito_em DESC LIMIT 1`,
@@ -14410,6 +14436,98 @@ async function findActiveConsent(tenantId, pacienteId, tipo) {
   return rows[0] || null;
 }
 
+// 403 padrão para rotas que mandam dado clínico do paciente à IA.
+const CONSENT_REQUIRED_BODY = {
+  error: 'Este paciente ainda não autorizou o uso de IA (consentimento v2.0). Colete a autorização na Consulta, antes de gravar.',
+  code: 'CONSENT_REQUIRED',
+};
+
+async function getEncarregado(tenantId) {
+  const v = await getTenantSetting(tenantId, CONSENT_ADMIN_KEY_ENCARREGADO);
+  const nome = String(v?.nome || '').trim();
+  const contato = String(v?.contato || '').trim();
+  return nome && contato ? { nome, contato } : null;
+}
+
+// Paciente (ou o agendamento sem paciente vinculado) desta clínica.
+async function loadConsentSubject(tenantId, id) {
+  const { rows: pac } = await pool.query(
+    'SELECT id, nome, data_nascimento FROM pacientes WHERE id::text = $1 AND tenant_id = $2 LIMIT 1', [String(id), tenantId]);
+  if (pac[0]) return { tipo: 'paciente', id: pac[0].id, nome: pac[0].nome, dataNascimento: pac[0].data_nascimento };
+  const { rows: apt } = await pool.query(
+    'SELECT id FROM agendamentos WHERE id::text = $1 AND tenant_id = $2 LIMIT 1', [String(id), tenantId]);
+  if (apt[0]) return { tipo: 'agendamento', id: apt[0].id, nome: '', dataNascimento: null };
+  return null;
+}
+
+async function buildConsentTextFor(tenantId, subject) {
+  const { rows } = await pool.query('SELECT nome, cnpj FROM tenants WHERE id = $1 LIMIT 1', [tenantId]);
+  const loc = await getTenantSetting(tenantId, 'clinic_location');
+  const endereco = loc && typeof loc === 'object'
+    ? [loc.address, [loc.city, loc.state].filter(Boolean).join(' - ')].filter(Boolean).join(', ')
+    : '';
+  const encarregado = await getEncarregado(tenantId);
+  const montado = montarTextoConsentimento(CONSENT_TIPO_GRAVACAO_IA, CONSENT_VERSAO_ATUAL, {
+    clinica: rows[0]?.nome,
+    cnpj: rows[0]?.cnpj,
+    endereco,
+    contato_encarregado: encarregado ? `${encarregado.nome} (${encarregado.contato})` : '',
+    retencao: retencaoProvedor(),
+    paciente: subject?.nome || '',
+  });
+  return { montado, encarregado };
+}
+
+const consentError = (res, err, ctx) => {
+  if (err.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+  if (err.message === 'Admin access required') return res.status(403).json({ error: 'Só o administrador da clínica pode alterar.' });
+  console.error(`❌ consentimento ${ctx}:`, err.message);
+  return res.status(500).json({ error: 'Não foi possível concluir agora. Tente de novo.' });
+};
+
+// Encarregado de dados (LGPD art. 41 §1º): sem ele, a gravação fica bloqueada.
+app.get('/api/lgpd/encarregado', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
+    res.json({ encarregado: await getEncarregado(user.tenant_id) });
+  } catch (err) { consentError(res, err, 'encarregado'); }
+});
+
+app.put('/api/lgpd/encarregado', async (req, res) => {
+  try {
+    const { user } = await verifyAdmin(req);
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const nome = String(req.body?.nome || '').trim().slice(0, 120);
+    const contato = String(req.body?.contato || '').trim().slice(0, 160);
+    if (!nome || !contato) return res.status(400).json({ error: 'Informe o nome e um contato (e-mail ou telefone) do encarregado.' });
+    await setTenantSetting(user.tenant_id, CONSENT_ADMIN_KEY_ENCARREGADO, { nome, contato });
+    res.json({ encarregado: { nome, contato } });
+  } catch (err) { consentError(res, err, 'encarregado'); }
+});
+
+// Texto da versão atual, já com os dados da clínica, e o hash — é o que a tela mostra.
+app.get('/api/consentimentos/texto', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const tipo = String(req.query.tipo || '');
+    if (!CONSENT_TIPOS.has(tipo)) return res.status(400).json({ error: 'tipo inválido' });
+    const subject = req.query.paciente_id ? await loadConsentSubject(user.tenant_id, req.query.paciente_id) : null;
+    if (req.query.paciente_id && !subject) return res.status(404).json({ error: 'Paciente não encontrado' });
+    const { montado, encarregado } = await buildConsentTextFor(user.tenant_id, subject);
+    res.json({
+      versao: montado.versao,
+      curta: montado.curta,
+      completa: montado.completa,
+      opcoes: montado.opcoes,
+      hash: montado.hash,
+      encarregado_cadastrado: !!encarregado,
+      idade: subject?.dataNascimento ? idadeEmAnos(subject.dataNascimento) : null,
+    });
+  } catch (err) { consentError(res, err, 'texto'); }
+});
+
 app.get('/api/pacientes/:id/consentimentos', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
@@ -14417,62 +14535,115 @@ app.get('/api/pacientes/:id/consentimentos', async (req, res) => {
     const tipo = String(req.query.tipo || '');
     if (!CONSENT_TIPOS.has(tipo)) return res.status(400).json({ error: 'tipo inválido' });
     const consent = await findActiveConsent(user.tenant_id, req.params.id, tipo);
-    res.json({ consent });
-  } catch (err) {
-    res.status(err.message === 'Unauthorized' ? 401 : 500).json({ error: err.message });
-  }
+    const ultima = consent ? null : await findLatestConsentDecision(user.tenant_id, req.params.id, tipo);
+    // recusa: a última decisão válida foi "não autorizo" (na versão atual ou superior)
+    const recusa = ultima && ultima.decisao === 'nao_autorizo' && versaoMaiorOuIgual(ultima.versao, CONSENT_VERSAO_MINIMA)
+      ? { id: ultima.id, aceito_em: ultima.aceito_em, assinante_nome: ultima.assinante_nome } : null;
+    res.json({ consent, recusa });
+  } catch (err) { consentError(res, err, 'leitura'); }
 });
 
 app.post('/api/pacientes/:id/consentimentos', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
-    if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
-    const { tipo, versao, texto } = req.body || {};
-    if (!CONSENT_TIPOS.has(tipo) || !versao || !texto) {
-      return res.status(400).json({ error: 'tipo, versao e texto são obrigatórios' });
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Sem tenant' });
+    const b = req.body || {};
+    const tipo = String(b.tipo || '');
+    if (!CONSENT_TIPOS.has(tipo)) return res.status(400).json({ error: 'tipo inválido' });
+    const decisao = String(b.decisao || '');
+    if (!['autorizo', 'nao_autorizo'].includes(decisao)) {
+      return res.status(400).json({ error: 'Escolha "Autorizo" ou "Não autorizo".' });
     }
+
     // atendimento.tsx usa o id do agendamento quando o agendamento não tem paciente
     // vinculado; aceita os dois, desde que sejam desta clínica.
-    const { rows: pac } = await pool.query(
-      'SELECT 1 FROM pacientes WHERE id = $1 AND tenant_id = $2 LIMIT 1', [req.params.id, user.tenant_id]);
-    let donoOk = pac.length > 0;
-    if (!donoOk) {
-      const { rows: apt } = await pool.query(
-        'SELECT 1 FROM agendamentos WHERE id = $1 AND tenant_id = $2 LIMIT 1', [req.params.id, user.tenant_id]);
-      donoOk = apt.length > 0;
+    const subject = await loadConsentSubject(user.tenant_id, req.params.id);
+    if (!subject) return res.status(404).json({ error: 'Paciente não encontrado' });
+
+    const { montado, encarregado } = await buildConsentTextFor(user.tenant_id, subject);
+    if (!encarregado) {
+      return res.status(409).json({
+        error: 'A clínica ainda não cadastrou o encarregado de dados (LGPD art. 41). Peça ao administrador para cadastrar antes de gravar.',
+        code: 'ENCARREGADO_REQUIRED',
+      });
     }
-    if (!donoOk) return res.status(404).json({ error: 'Paciente não encontrado' });
+    // O texto que vale é o que o servidor montou. Se a tela mostrou outro (versão antiga em cache,
+    // dados da clínica alterados), pede para recarregar em vez de registrar um texto diferente.
+    if (b.texto_hash && String(b.texto_hash) !== montado.hash) {
+      return res.status(409).json({ error: 'O texto da autorização mudou. Recarregue a tela e peça a assinatura de novo.', code: 'TEXTO_DESATUALIZADO' });
+    }
+
+    const idadeCadastro = subject.dataNascimento ? idadeEmAnos(subject.dataNascimento) : null;
+    const idadeInformada = Number.isInteger(Number(b.idade_informada)) && b.idade_informada !== '' && b.idade_informada != null
+      ? Math.max(0, Math.min(129, Number(b.idade_informada))) : null;
+    const idade = idadeCadastro ?? idadeInformada;
+    const assinanteTipo = String(b.assinante_tipo || '');
+    const assinanteNome = String(b.assinante_nome || '').trim().slice(0, 160);
+    const assinanteVinculo = String(b.assinante_vinculo || '').trim().slice(0, 60);
+    const responsavelDocumento = String(b.responsavel_documento || '').trim().slice(0, 40);
+    const adolescenteCiente = b.adolescente_ciente === true;
+    const erroAssinante = validarAssinante({
+      idade, decisao, assinanteTipo, assinanteNome, assinanteVinculo, responsavelDocumento, adolescenteCiente,
+    });
+    if (erroAssinante) return res.status(400).json({ error: erroAssinante });
+
+    const assinaturaBase64 = typeof b.assinatura?.base64 === 'string' ? b.assinatura.base64 : '';
+    if (decisao === 'autorizo') {
+      if (!/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(assinaturaBase64) || assinaturaBase64.length > 600_000) {
+        return res.status(400).json({ error: 'Falta a assinatura de quem autoriza.' });
+      }
+    }
+
+    const ip = req.headers['x-forwarded-for'] || req.ip || null;
+    const ua = req.headers['user-agent'] || null;
+    let assinaturaId = null;
+    if (assinaturaBase64) {
+      assinaturaId = randomUUID();
+      // Sem geolocalização: dado desnecessário para este aceite (LGPD 6º III), conforme o parecer.
+      await pool.query(
+        `INSERT INTO assinaturas_eletronicas
+           (id, paciente_id, dentista_id, contexto, assinatura_base64, ip_address, user_agent,
+            verificacao_canal, consentimento_aceito, consentimento_em, consentimento_versao, consentimento_texto, tenant_id)
+         VALUES ($1, $2, NULL, 'consentimento_gravacao_ia', $3, $4, $5, 'none', $6, NOW(), $7, $8, $9)`,
+        [assinaturaId, subject.tipo === 'paciente' ? subject.id : null, assinaturaBase64, ip, ua,
+          decisao === 'autorizo', montado.versao, montado.hash, user.tenant_id]
+      );
+    }
+
     const { rows } = await pool.query(
       `INSERT INTO consentimentos_pacientes
-         (tenant_id, paciente_id, tipo, versao, texto, registrado_por, registrado_por_email, ip_address, user_agent)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-       RETURNING id, tipo, versao, aceito_em, registrado_por_email`,
+         (tenant_id, paciente_id, tipo, versao, texto, texto_hash, decisao,
+          assinante_nome, assinante_tipo, assinante_vinculo, responsavel_documento, adolescente_ciente, idade_informada,
+          assinatura_id, registrado_por, registrado_por_email, profissional_presente_nome, copia_oferecida,
+          ip_address, user_agent)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+       RETURNING id, tipo, versao, aceito_em, registrado_por_email, decisao, assinante_nome, assinante_tipo, texto_hash`,
       [
-        user.tenant_id, String(req.params.id), tipo, String(versao), String(texto).slice(0, 5000),
-        user.id || null, user.email || null,
-        req.headers['x-forwarded-for'] || req.ip || null,
-        req.headers['user-agent'] || null,
+        user.tenant_id, String(req.params.id), tipo, montado.versao, montado.texto, montado.hash, decisao,
+        assinanteNome, assinanteTipo, assinanteTipo === 'responsavel' ? assinanteVinculo : null,
+        responsavelDocumento || null, idade != null && idade >= 12 && idade < 18 ? adolescenteCiente : null,
+        idadeCadastro == null ? idadeInformada : null,
+        assinaturaId, user.id || null, user.email || null, String(b.profissional_presente_nome || '').trim().slice(0, 160) || null,
+        b.copia_oferecida === true,
+        ip, ua,
       ]
     );
-    res.json({ consent: rows[0] });
-  } catch (err) {
-    res.status(err.message === 'Unauthorized' ? 401 : 500).json({ error: err.message });
-  }
+    res.json({ consent: decisao === 'autorizo' ? rows[0] : null, registro: rows[0] });
+  } catch (err) { consentError(res, err, 'registro'); }
 });
 
 app.post('/api/consentimentos/:id/revogar', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
+    const canal = ['recepcao', 'whatsapp', 'dentista', 'outro'].includes(req.body?.canal) ? req.body.canal : 'outro';
     const { rowCount } = await pool.query(
-      `UPDATE consentimentos_pacientes SET revogado_em = NOW(), revogado_por = $3
+      `UPDATE consentimentos_pacientes SET revogado_em = NOW(), revogado_por = $3, revogacao_canal = $4
         WHERE id = $1 AND tenant_id = $2 AND revogado_em IS NULL`,
-      [req.params.id, user.tenant_id, user.id || null]
+      [req.params.id, user.tenant_id, user.id || null, canal]
     );
     res.json({ success: rowCount > 0 });
-  } catch (err) {
-    res.status(err.message === 'Unauthorized' ? 401 : 500).json({ error: err.message });
-  }
+  } catch (err) { consentError(res, err, 'revogação'); }
 });
 
 // ─── Transcribe audio via OpenAI Whisper ────────────────────
@@ -14487,13 +14658,8 @@ app.post('/api/ai/transcribe', express.raw({ type: ['audio/*', 'application/octe
     if (!pacienteId || !user.tenant_id) {
       return res.status(400).json({ error: 'Selecione o paciente antes de transcrever.', code: 'CONSENT_REQUIRED' });
     }
-    const consent = await findActiveConsent(user.tenant_id, pacienteId, 'gravacao_transcricao_ia');
-    if (!consent) {
-      return res.status(403).json({
-        error: 'O paciente ainda não autorizou a gravação e transcrição por IA.',
-        code: 'CONSENT_REQUIRED',
-      });
-    }
+    const consent = await findActiveConsent(user.tenant_id, pacienteId, CONSENT_TIPO_GRAVACAO_IA);
+    if (!consent) return res.status(403).json(CONSENT_REQUIRED_BODY);
 
     // Get OpenAI key from DB
     const { rows } = await pool.query("SELECT api_key, enabled FROM ai_settings WHERE provider = 'openai' LIMIT 1");
@@ -14553,6 +14719,11 @@ app.post('/api/ai/clinical-report', async (req, res) => {
     const { transcription, queixaPrincipal, procedimento, dente, prescricoes, patientId, patientName, durationSeconds } = req.body;
 
     if (!transcription) return res.status(400).json({ error: 'Transcrição é obrigatória' });
+    // Dado clínico vai à OpenAI (EUA): só com consentimento v2.0 do paciente (LGPD 11 I; 33 VIII).
+    if (!patientId || !isValidTenantId(user.tenant_id)) return res.status(403).json(CONSENT_REQUIRED_BODY);
+    if (!(await findActiveConsent(user.tenant_id, patientId, CONSENT_TIPO_GRAVACAO_IA))) {
+      return res.status(403).json(CONSENT_REQUIRED_BODY);
+    }
 
     // Get OpenAI settings
     const { rows } = await pool.query("SELECT api_key, model, enabled FROM ai_settings WHERE provider = 'openai' LIMIT 1");
@@ -14858,11 +15029,15 @@ app.post('/api/ai/followup-messages', async (req, res) => {
 
     // Fetch the clinical report
     const { rows: reports } = await pool.query(
-      'SELECT report, queixa_principal, procedimento, dente_regiao, prescricoes FROM clinical_reports WHERE id = $1 AND tenant_id = $2 LIMIT 1',
+      'SELECT patient_id, report, queixa_principal, procedimento, dente_regiao, prescricoes FROM clinical_reports WHERE id = $1 AND tenant_id = $2 LIMIT 1',
       [reportId, user.tenant_id]
     );
     if (reports.length === 0) return res.status(404).json({ error: 'Relatório não encontrado' });
     const report = reports[0];
+    // O relatório clínico vai à OpenAI: exige consentimento v2.0 (item 3(e) do texto da Helena).
+    if (!report.patient_id || !(await findActiveConsent(user.tenant_id, report.patient_id, CONSENT_TIPO_GRAVACAO_IA))) {
+      return res.status(403).json(CONSENT_REQUIRED_BODY);
+    }
 
     // Get OpenAI settings
     const { rows: aiRows } = await pool.query("SELECT api_key, model, enabled FROM ai_settings WHERE provider = 'openai' LIMIT 1");
@@ -16267,6 +16442,19 @@ if (process.env.NODE_ENV !== 'test') {
         revogado_por UUID
       )`,
       `CREATE INDEX IF NOT EXISTS idx_consentimentos_pacientes_lookup ON consentimentos_pacientes(tenant_id, paciente_id, tipo)`,
+      // v2.0 do consentimento de IA (migration-consentimento-ia-v2.sql): pacote de evidências.
+      `ALTER TABLE consentimentos_pacientes ADD COLUMN IF NOT EXISTS texto_hash TEXT`,
+      `ALTER TABLE consentimentos_pacientes ADD COLUMN IF NOT EXISTS decisao TEXT`,
+      `ALTER TABLE consentimentos_pacientes ADD COLUMN IF NOT EXISTS assinante_nome TEXT`,
+      `ALTER TABLE consentimentos_pacientes ADD COLUMN IF NOT EXISTS assinante_tipo TEXT`,
+      `ALTER TABLE consentimentos_pacientes ADD COLUMN IF NOT EXISTS assinante_vinculo TEXT`,
+      `ALTER TABLE consentimentos_pacientes ADD COLUMN IF NOT EXISTS responsavel_documento TEXT`,
+      `ALTER TABLE consentimentos_pacientes ADD COLUMN IF NOT EXISTS adolescente_ciente BOOLEAN`,
+      `ALTER TABLE consentimentos_pacientes ADD COLUMN IF NOT EXISTS idade_informada INTEGER`,
+      `ALTER TABLE consentimentos_pacientes ADD COLUMN IF NOT EXISTS assinatura_id TEXT`,
+      `ALTER TABLE consentimentos_pacientes ADD COLUMN IF NOT EXISTS profissional_presente_nome TEXT`,
+      `ALTER TABLE consentimentos_pacientes ADD COLUMN IF NOT EXISTS copia_oferecida BOOLEAN DEFAULT false`,
+      `ALTER TABLE consentimentos_pacientes ADD COLUMN IF NOT EXISTS revogacao_canal TEXT`,
       `ALTER TABLE consentimentos_pacientes ENABLE ROW LEVEL SECURITY`,
       `DROP POLICY IF EXISTS tenant_isolation_policy ON consentimentos_pacientes`,
       `CREATE POLICY tenant_isolation_policy ON consentimentos_pacientes FOR ALL
