@@ -40,6 +40,16 @@ export function getPacienteIdade(paciente: Paciente): number {
   return idade;
 }
 
+/** Idade para exibir: "45 anos" ou "Idade não informada" (sem data de nascimento válida). */
+export function getPacienteIdadeTexto(paciente: Paciente): string {
+  const nasc = paciente.dataNascimento;
+  if (!(nasc instanceof Date) || Number.isNaN(nasc.getTime()) || nasc.getTime() > Date.now() - 86400000) {
+    return "Idade não informada";
+  }
+  const idade = getPacienteIdade(paciente);
+  return `${idade} ${idade === 1 ? "ano" : "anos"}`;
+}
+
 /** Retorna anamnese do paciente */
 export function getAnamnese(pacienteId: string): Anamnese | undefined {
   return undefined;

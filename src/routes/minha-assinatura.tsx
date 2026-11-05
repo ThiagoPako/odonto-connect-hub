@@ -5,8 +5,18 @@ import { DashboardHeader } from "@/components/DashboardHeader";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
-import { CreditCard, Crown, Loader2 } from "lucide-react";
+import { AlertTriangle, CreditCard, Crown, Loader2, RefreshCw } from "lucide-react";
 
 export const Route = createFileRoute("/minha-assinatura")({
   ssr: false,
@@ -21,21 +31,43 @@ const STATUS_LABEL: Record<Tenant["status"], { label: string; variant: "default"
   canceled: { label: "Cancelada", variant: "destructive" },
 };
 
+const INVOICE_STATUS_LABEL: Record<string, string> = {
+  paid: "Paga",
+  pending: "Em aberto",
+  failed: "Falhou",
+  refunded: "Reembolsada",
+  canceled: "Cancelada",
+};
+
+const limite = (v: number | null, singular: string, plural: string) =>
+  v == null ? `${plural} ilimitados` : `até ${v} ${v === 1 ? singular : plural}`;
+
 function MinhaAssinaturaPage() {
   const [tenant, setTenant] = useState<Tenant | null>(null);
   const [sub, setSub] = useState<Subscription | null>(null);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [changing, setChanging] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [plansError, setPlansError] = useState<string | null>(null);
+  const [confirmPlan, setConfirmPlan] = useState<Plan | null>(null);
 
   const reload = async () => {
+    setLoadError(null);
     const [t, p] = await Promise.all([saasApi.myTenant(), saasApi.listPlans()]);
     if (t.data) {
       setTenant(t.data.tenant);
       setSub(t.data.subscription);
       setInvoices(t.data.invoices);
+    } else {
+      setLoadError(t.error || "Resposta vazia do servidor");
     }
-    if (p.data) setPlans(p.data.data);
+    if (p.data) {
+      setPlans(p.data.data);
+      setPlansError(null);
+    } else {
+      setPlansError(p.error || "Resposta vazia do servidor");
+    }
   };
 
   useEffect(() => { reload(); }, []);
@@ -48,6 +80,24 @@ function MinhaAssinaturaPage() {
     toast.success("Plano atualizado");
     reload();
   };
+
+  if (!tenant && loadError) {
+    return (
+      <div className="flex-1 flex flex-col min-h-screen">
+        <DashboardHeader title="Minha Assinatura" />
+        <main className="flex-1 p-6 flex items-start justify-center">
+          <div className="w-full max-w-md rounded-xl border border-destructive/30 bg-destructive/5 p-6 text-center space-y-3">
+            <AlertTriangle className="h-6 w-6 text-destructive mx-auto" />
+            <p className="text-sm font-medium text-foreground">Não foi possível carregar sua assinatura</p>
+            <p className="text-xs text-muted-foreground">{loadError}</p>
+            <Button variant="outline" onClick={() => reload()}>
+              <RefreshCw className="h-4 w-4 mr-2" /> Tentar de novo
+            </Button>
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   if (!tenant) {
     return (
@@ -96,6 +146,14 @@ function MinhaAssinaturaPage() {
 
         <div>
           <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">Planos disponíveis</h3>
+          {plansError && (
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm">
+              <span className="text-destructive">Não foi possível carregar os planos: {plansError}</span>
+              <Button size="sm" variant="outline" onClick={() => reload()}>
+                <RefreshCw className="h-4 w-4 mr-2" /> Tentar de novo
+              </Button>
+            </div>
+          )}
           <div className="grid md:grid-cols-3 gap-4">
             {plans.map((p) => {
               const isCurrent = p.slug === tenant.plan_slug;
@@ -117,7 +175,7 @@ function MinhaAssinaturaPage() {
                     </ul>
                     <Button
                       disabled={isCurrent || changing === p.slug}
-                      onClick={() => changePlan(p.slug)}
+                      onClick={() => setConfirmPlan(p)}
                       className="w-full"
                       variant={isCurrent ? "secondary" : "default"}
                     >
@@ -151,7 +209,7 @@ function MinhaAssinaturaPage() {
                       </div>
                     </div>
                     <Badge variant={inv.status === "paid" ? "default" : "secondary"}>
-                      {inv.status}
+                      {INVOICE_STATUS_LABEL[inv.status] ?? inv.status}
                     </Badge>
                   </div>
                 ))}
@@ -160,6 +218,42 @@ function MinhaAssinaturaPage() {
           </CardContent>
         </Card>
       </main>
+
+      <AlertDialog open={!!confirmPlan} onOpenChange={(o) => { if (!o) setConfirmPlan(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Trocar para o plano {confirmPlan?.nome}?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm text-muted-foreground">
+                {confirmPlan && (
+                  <>
+                    <p>
+                      Valor: <strong className="text-foreground">R$ {Number(confirmPlan.preco_mensal).toFixed(2)}/mês</strong>
+                      {tenant.plan_nome ? <> (hoje: {tenant.plan_nome}{tenant.preco_mensal ? ` — R$ ${Number(tenant.preco_mensal).toFixed(2)}/mês` : ""})</> : null}
+                    </p>
+                    <p>
+                      Limites: {limite(confirmPlan.max_dentistas, "dentista", "dentistas")}, {limite(confirmPlan.max_usuarios, "usuário", "usuários")} e {limite(confirmPlan.max_pacientes, "paciente", "pacientes")}.
+                    </p>
+                  </>
+                )}
+                <p>A troca vale imediatamente. Confira se sua equipe e seus pacientes cabem nos limites do novo plano.</p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                const slug = confirmPlan?.slug;
+                setConfirmPlan(null);
+                if (slug) changePlan(slug);
+              }}
+            >
+              Trocar plano
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
