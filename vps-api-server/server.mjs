@@ -9061,6 +9061,33 @@ app.put('/api/attendance-settings', async (req, res) => {
   }
 });
 
+// Lembrete/pedido de confirmação de consulta por clínica (tenant_settings
+// 'appointment_reminder' = { enabled }). Sem registro: ligado, como sempre foi.
+app.get('/api/appointment-reminder-settings', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!isValidTenantId(user.tenant_id)) return res.json({ enabled: true });
+    const saved = await getTenantSetting(user.tenant_id, 'appointment_reminder');
+    res.json({ enabled: saved?.enabled !== false });
+  } catch (error) {
+    res.status(tenantSettingsErrorStatus(error)).json({ error: error.message });
+  }
+});
+
+app.put('/api/appointment-reminder-settings', async (req, res) => {
+  try {
+    const { user } = await verifyAdmin(req);
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const enabled = req.body?.enabled;
+    if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'Informe enabled (true ou false)' });
+    await setTenantSetting(user.tenant_id, 'appointment_reminder', { enabled });
+    console.log(`⚙️ Lembrete de consulta ${enabled ? 'ligado' : 'desligado'} (clínica ${String(user.tenant_id).slice(0, 8)})`);
+    res.json({ success: true, enabled });
+  } catch (error) {
+    res.status(tenantSettingsErrorStatus(error)).json({ error: error.message });
+  }
+});
+
 // Helper: send WhatsApp button menu with active queues
 // Menu de filas da clínica: botões (Evolution sendButtons) com fallback em lista
 // numerada no texto do job. Vai pela fila como resposta ao paciente (auto_reply,
@@ -10968,20 +10995,40 @@ function waPhoneKey(phone) {
   return digits.slice(-10);
 }
 
-// Pedido de descadastro: só quando a mensagem inteira é a palavra-chave, para
-// não confundir "quero cancelar a consulta" com opt-out. "Cancelar" fica de fora
-// porque responde a lembrete de consulta.
+// Lista para revisão da Helena (helena-juridico): é a única forma de o paciente sair sem
+// falar com a equipe, então errar para menos prejudica o direito de revogar (LGPD 8º §5º)
+// e errar para mais corta lembretes de quem não pediu.
 const WA_OPT_OUT_PHRASES = new Set([
-  'sair', 'parar', 'pare', 'stop', 'descadastrar', 'descadastre', 'remover',
+  'sair', 'parar', 'pare', 'stop', 'descadastrar', 'descadastre', 'remover', 'unsubscribe',
   'nao quero', 'nao quero mais', 'nao quero receber', 'nao quero receber mensagens',
-  'nao envie mais', 'nao mande mais', 'parar mensagens', 'sair da lista',
+  'nao quero mais receber', 'nao quero mais mensagens', 'nao quero receber mais',
+  'nao envie mais', 'nao mande mais', 'nao me envie mais', 'nao me mande mais',
+  'parar mensagens', 'parar de receber', 'parar de enviar', 'pare de enviar', 'pare de mandar',
+  'cancelar mensagens', 'cancelar as mensagens', 'cancelar envio', 'cancelar envios', 'cancelar inscricao',
+  'sair da lista', 'me tire da lista', 'me tira da lista', 'tirar da lista', 'me remova', 'me remove',
+  'me descadastre', 'me descadastra', 'descadastro',
+  'quero sair', 'quero sair da lista', 'quero descadastrar', 'quero parar de receber',
 ]);
+// Cortesia que não muda a intenção ("SAIR, por favor", "pare, obrigado").
+const WA_OPT_OUT_FILLERS = /\b(por favor|porfavor|pfvr|pfv|pf|obrigad[oa]|obg|grat[oa]|agora|ja)\b/g;
+const WA_OPT_OUT_MAX_WORDS = 6;
 
-function isWhatsAppOptOutText(text) {
-  const normalized = String(text || '')
+function normalizeOptOutText(text) {
+  return String(text || '')
     .normalize('NFD').replace(/[̀-ͯ]/g, '')
     .toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
-  return normalized.length > 0 && normalized.length <= 40 && WA_OPT_OUT_PHRASES.has(normalized);
+}
+
+// Pedido de descadastro: só quando a mensagem INTEIRA é o pedido (frase da lista, com
+// acento/caixa/pontuação variando e, no máximo, cortesia em volta). Frase com outro
+// assunto não conta: "vou sair do trabalho às 18h" ou "quero cancelar a consulta".
+// "Cancelar" sozinho fica de fora porque responde a lembrete de consulta.
+function isWhatsAppOptOutText(text) {
+  const normalized = normalizeOptOutText(text);
+  if (!normalized || normalized.length > 60) return false;
+  if (WA_OPT_OUT_PHRASES.has(normalized)) return true;
+  const core = normalized.replace(WA_OPT_OUT_FILLERS, ' ').replace(/\s+/g, ' ').trim();
+  return !!core && core.split(' ').length <= WA_OPT_OUT_MAX_WORDS && WA_OPT_OUT_PHRASES.has(core);
 }
 
 async function isWhatsAppOptedOut(tenantId, phone) {
@@ -12384,9 +12431,20 @@ async function processAppointmentReminders() {
     console.log(`🔔 Reminder: ${appointments.length} consultas para pedir confirmação`);
 
     const WEEKDAYS = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
+    // Clínica que desligou o lembrete não recebe pedido. Se a leitura falhar, pula a
+    // clínica nesta rodada (o padrão "ligado" poderia contrariar quem desligou).
+    const reminderEnabled = new Map();
+    const isReminderEnabled = async (tenantId) => {
+      if (!reminderEnabled.has(tenantId)) {
+        const saved = await getTenantSetting(tenantId, 'appointment_reminder', { throwOnError: true }).catch(() => ({ enabled: false }));
+        reminderEnabled.set(tenantId, saved?.enabled !== false);
+      }
+      return reminderEnabled.get(tenantId);
+    };
     for (const appt of appointments) {
       try {
         const tenantId = String(appt.tenant_id);
+        if (!(await isReminderEnabled(tenantId))) continue;
         const phone = normalizeWhatsappNumber(appt.telefone || '');
         if (!phone) continue;
         if (await isWhatsAppOptedOut(tenantId, phone)) continue;
@@ -17089,3 +17147,4 @@ export function resetWhatsAppQueueStateForTests() {
 }
 export { parseAppointmentReminderReply };
 export { parseWaitlistOfferReply };
+export { isWhatsAppOptOutText };
