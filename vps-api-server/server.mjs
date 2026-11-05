@@ -16170,7 +16170,8 @@ app.delete('/api/exames/:id', async (req, res) => {
     // não é apagado; a clínica cancela o exame. Só pedidos sem resultado podem ser excluídos.
     const { rows } = await pool.query(
       `SELECT (COALESCE(btrim(e.laudo_texto), '') <> '' OR e.arquivo_url IS NOT NULL
-               OR EXISTS (SELECT 1 FROM exame_arquivos a WHERE a.exame_id = e.id AND a.tenant_id = e.tenant_id AND a.removido_em IS NULL AND NOT a.anexo_do_pedido)) AS tem_resultado
+               OR EXISTS (SELECT 1 FROM exame_arquivos a WHERE a.exame_id = e.id AND a.tenant_id = e.tenant_id AND NOT a.anexo_do_pedido)
+               OR EXISTS (SELECT 1 FROM exame_laudo_historico h WHERE h.exame_id = e.id AND h.tenant_id = e.tenant_id)) AS tem_resultado
          FROM exames e WHERE e.id=$1 AND e.tenant_id=$2`,
       [req.params.id, user.tenant_id]
     );
@@ -16178,12 +16179,44 @@ app.delete('/api/exames/:id', async (req, res) => {
     if (rows[0].tem_resultado) {
       return res.status(409).json({ error: 'Este exame já tem laudo ou imagem do resultado e faz parte do prontuário (o anexo do pedido não conta). Em vez de excluir, mude o status para Cancelado.' });
     }
-    await pool.query(
+    // Arquivo retirado também conta: o DELETE em cascata apagaria o registro dele (prontuário).
+    // Anexos do pedido saem junto (registro e arquivo no disco), na mesma transação.
+    const client = await pool.connect();
+    let rowCount = 0;
+    let caminhosAnexos = [];
+    try {
+      await client.query('BEGIN');
+      const anexos = await client.query(
+        `DELETE FROM exame_arquivos a USING exames e
+          WHERE a.exame_id = e.id AND a.tenant_id = e.tenant_id AND a.anexo_do_pedido
+            AND e.id = $1 AND e.tenant_id = $2
+            AND COALESCE(btrim(e.laudo_texto), '') = '' AND e.arquivo_url IS NULL
+            AND NOT EXISTS (SELECT 1 FROM exame_arquivos x WHERE x.exame_id = e.id AND x.tenant_id = e.tenant_id AND NOT x.anexo_do_pedido)
+            AND NOT EXISTS (SELECT 1 FROM exame_laudo_historico h WHERE h.exame_id = e.id AND h.tenant_id = e.tenant_id)
+          RETURNING a.caminho`,
+        [req.params.id, user.tenant_id]
+      );
+      caminhosAnexos = anexos.rows.map((r) => r.caminho);
+      ({ rowCount } = await client.query(
       `DELETE FROM exames e WHERE e.id=$1 AND e.tenant_id=$2
           AND COALESCE(btrim(e.laudo_texto), '') = '' AND e.arquivo_url IS NULL
-          AND NOT EXISTS (SELECT 1 FROM exame_arquivos a WHERE a.exame_id = e.id AND a.tenant_id = e.tenant_id AND a.removido_em IS NULL AND NOT a.anexo_do_pedido)`,
+          AND NOT EXISTS (SELECT 1 FROM exame_arquivos a WHERE a.exame_id = e.id AND a.tenant_id = e.tenant_id AND NOT a.anexo_do_pedido)
+          AND NOT EXISTS (SELECT 1 FROM exame_laudo_historico h WHERE h.exame_id = e.id AND h.tenant_id = e.tenant_id)`,
       [req.params.id, user.tenant_id]
-    );
+      ));
+      if (!rowCount) { await client.query('ROLLBACK'); caminhosAnexos = []; }
+      else await client.query('COMMIT');
+    } catch (errTx) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw errTx;
+    } finally {
+      client.release();
+    }
+    // Recebeu laudo/imagem entre a leitura e a exclusão: nada foi apagado
+    if (!rowCount) return res.status(409).json({ error: 'O exame mudou enquanto você excluía. Atualize a lista e tente de novo.' });
+    for (const c of caminhosAnexos) {
+      if (/^[0-9a-f-]{36}\/[0-9a-f-]{36}\.[a-z0-9]{2,5}$/.test(c)) await rm(path.join(EXAMES_UPLOADS_DIR, c), { force: true }).catch(() => {});
+    }
     res.json({ success: true });
   } catch (err) {
     responderErroExame(res, err, 'exames:delete');
@@ -16285,7 +16318,9 @@ app.post('/api/exames/:id/arquivos', express.raw({ type: '*/*', limit: '64mb' })
     // Anexo do pedido (requisição, encaminhamento) não é o resultado do exame
     const anexoDoPedido = req.headers['x-anexo-do-pedido'] === '1';
     // Laudo finalizado: imagens do resultado não mudam sem reabrir (anexo do pedido pode)
-    if (exame.laudado_em && !anexoDoPedido) return res.status(409).json({ error: 'Laudo finalizado. Reabra o laudo para alterar as imagens.' });
+    if (exame.laudado_em) return res.status(409).json({ error: 'Laudo finalizado. Reabra o laudo para alterar as imagens.' });
+    // Anexo do pedido só enquanto o pedido não foi realizado (o cabeçalho não fura a trava)
+    if (anexoDoPedido && exame.status !== 'novo') return res.status(409).json({ error: 'Anexo do pedido só pode ser incluído enquanto o exame está como Pedido.' });
     const buf = req.body;
     if (!Buffer.isBuffer(buf) || buf.length === 0) return res.status(400).json({ error: 'Arquivo não enviado' });
     if (buf.length > EXAME_ARQUIVO_MAX_BYTES) return res.status(413).json({ error: 'Arquivo maior que 64 MB' });
@@ -16309,9 +16344,12 @@ app.post('/api/exames/:id/arquivos', express.raw({ type: '*/*', limit: '64mb' })
     let rows;
     try {
       ({ rows } = await pool.query(
+        // Só grava se o laudo continuar aberto (alguém pode ter finalizado durante o envio)
         `INSERT INTO exame_arquivos
            (id, tenant_id, exame_id, paciente_id, caminho, nome_original, mime_type, tamanho_bytes, descricao, enviado_por, anexo_do_pedido)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+         SELECT $1,$2,e.id,$4,$5,$6,$7,$8,$9,$10,$11 FROM exames e
+          WHERE e.id = $3 AND e.tenant_id = $2 AND e.laudado_em IS NULL
+            AND (NOT $11::boolean OR e.status = 'novo')
          RETURNING *`,
         [id, user.tenant_id, exame.id, exame.paciente_id || null, caminho, nomeOriginal, tipo.mime, buf.length, descricao, user.id, anexoDoPedido]
       ));
@@ -16319,6 +16357,10 @@ app.post('/api/exames/:id/arquivos', express.raw({ type: '*/*', limit: '64mb' })
       // Sem registro o arquivo nunca seria servido: não deixa órfão no disco
       await rm(absArquivo, { force: true }).catch(() => {});
       throw insErr;
+    }
+    if (!rows.length) {
+      await rm(absArquivo, { force: true }).catch(() => {});
+      return res.status(409).json({ error: 'Laudo finalizado. Reabra o laudo para alterar as imagens.' });
     }
     // Chegou imagem: o exame foi realizado e passa a aguardar laudo
     if (!anexoDoPedido) await pool.query(
@@ -16343,19 +16385,23 @@ app.delete('/api/exames/:id/arquivos/:arquivoId', async (req, res) => {
     }
     const exame = await exameDaClinica(req.params.id, user.tenant_id);
     if (!exame) return res.status(404).json({ error: 'Arquivo não encontrado' });
-    if (exame.laudado_em) {
-      const { rows: arq } = await pool.query(
-        'SELECT anexo_do_pedido FROM exame_arquivos WHERE id = $1 AND exame_id = $2 AND tenant_id = $3',
-        [req.params.arquivoId, req.params.id, user.tenant_id]);
-      if (arq.length && !arq[0].anexo_do_pedido) return res.status(409).json({ error: 'Laudo finalizado. Reabra o laudo para alterar as imagens.' });
-    }
+    if (exame.laudado_em) return res.status(409).json({ error: 'Laudo finalizado. Reabra o laudo para alterar as imagens.' });
+    // Mesmas travas na gravação: laudo aberto; anexo do pedido só com o exame ainda como Pedido
     const { rowCount } = await pool.query(
       `UPDATE exame_arquivos a SET removido_em = NOW(), removido_por = $4
         WHERE a.id = $1 AND a.exame_id = $2 AND a.tenant_id = $3 AND a.removido_em IS NULL
-          AND (a.anexo_do_pedido OR NOT EXISTS (SELECT 1 FROM exames e WHERE e.id = a.exame_id AND e.tenant_id = a.tenant_id AND e.laudado_em IS NOT NULL))`,
+          AND EXISTS (SELECT 1 FROM exames e WHERE e.id = a.exame_id AND e.tenant_id = a.tenant_id
+                       AND e.laudado_em IS NULL AND (NOT a.anexo_do_pedido OR e.status = 'novo'))`,
       [req.params.arquivoId, req.params.id, user.tenant_id, user.id]
     );
-    if (!rowCount) return res.status(404).json({ error: 'Arquivo não encontrado' });
+    if (!rowCount) {
+      // Existe e está ativo, mas uma trava impediu: 409 (não é "não encontrado")
+      const { rows: ainda } = await pool.query(
+        'SELECT 1 FROM exame_arquivos WHERE id = $1 AND exame_id = $2 AND tenant_id = $3 AND removido_em IS NULL',
+        [req.params.arquivoId, req.params.id, user.tenant_id]);
+      if (ainda.length) return res.status(409).json({ error: 'Este arquivo não pode ser retirado agora: o laudo foi finalizado ou o exame já não está como Pedido.' });
+      return res.status(404).json({ error: 'Arquivo não encontrado' });
+    }
     res.json({ success: true });
   } catch (err) {
     responderErroExame(res, err, 'exames:arquivos:delete');
@@ -16397,8 +16443,9 @@ app.get('/api/exame-arquivos/:arquivoId/conteudo', async (req, res) => {
     res.setHeader('Cache-Control', 'private, max-age=300');
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="${nomeAscii}"; filename*=UTF-8''${encodeURIComponent(nomeSeguro)}`);
-    // PDF pode ter JavaScript embutido: abre isolado, sem acesso à origem da API
-    if (!/^image\//.test(mime_type)) res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+    // PDF pode ter JavaScript embutido: sem scripts nem conexões. Sem "sandbox" (o Chrome bloquearia
+    // o visualizador de PDF); outros tipos não imagem já saem como download.
+    if (!/^image\//.test(mime_type)) res.setHeader('Content-Security-Policy', "default-src 'none'");
     res.sendFile(abs, { headers: { 'Content-Type': mime_type } }, (err) => {
       if (err && !res.headersSent) res.status(404).json({ error: 'Arquivo não encontrado' });
     });

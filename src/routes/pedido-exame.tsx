@@ -205,6 +205,8 @@ function PedidoExamePage() {
   const [parcial, setParcial] = useState<{
     pacienteId: string;
     pacienteNovo: boolean;
+    /** Dados do paciente quando os primeiros exames foram gravados */
+    ficha: string;
     tipos: string[];
     criados: Array<{ id: string; codigo: string | null }>;
     anexos: string[];
@@ -328,8 +330,20 @@ function PedidoExamePage() {
 
     setSaving(true);
     try {
-      let pacienteId: string | null = parcial?.pacienteId ?? null;
-      let pacienteNovo = parcial?.pacienteNovo ?? false;
+      // Nova tentativa depois de falha parcial: se a recepção corrigiu o paciente, não manda
+      // os exames que faltam para o paciente antigo sem perguntar
+      const fichaAtual = [paciente.trim(), cpf.trim(), fone.trim(), dataNasc].join("|");
+      let continuar = parcial;
+      if (parcial && parcial.ficha !== fichaAtual) {
+        const manter = window.confirm(
+          "Os dados do paciente mudaram desde a primeira tentativa.\n\n" +
+            `OK: continuar vinculando os exames que faltam ao mesmo paciente da primeira tentativa (${parcial.ficha.split("|")[0]}).\n` +
+            "Cancelar: tratar como um pedido novo para o paciente digitado agora (os exames já gravados ficam no paciente anterior).",
+        );
+        if (!manter) { continuar = null; setParcial(null); }
+      }
+      let pacienteId: string | null = continuar?.pacienteId ?? null;
+      let pacienteNovo = continuar?.pacienteNovo ?? false;
       const cpfTrim = cpf.trim();
       const { data: lista, error: listaError } = await pacientesApi.list();
       // Sem a lista, não dá para saber se o paciente já existe: parar evita cadastro duplicado
@@ -432,7 +446,7 @@ function PedidoExamePage() {
         const ativos = catalogo.filter((c) => c.ativo);
         return ativos.find((c) => semAcento(c.nome) === n) ?? ativos.find((c) => semAcento(c.nome).includes(n));
       };
-      const jaCriados = new Set(parcial?.tipos ?? []);
+      const jaCriados = new Set(continuar?.tipos ?? []);
       const rows = tipos.filter((t) => !jaCriados.has(t)).map((t) => {
         const c = doCatalogo(t);
         return {
@@ -459,9 +473,9 @@ function PedidoExamePage() {
       }
 
       // Anexos vão para o primeiro exame criado do pedido (os demais citam o código dele)
-      const todosCriados = [...(parcial?.criados ?? []), ...criados];
+      const todosCriados = [...(continuar?.criados ?? []), ...criados];
       const anexosFalharam: string[] = [];
-      const anexosEnviados: string[] = [...(parcial?.anexos ?? [])];
+      const anexosEnviados: string[] = [...(continuar?.anexos ?? [])];
       const pendentes = uploads.filter((u) => !anexosEnviados.includes(u.id));
       if (todosCriados.length && pendentes.length) {
         for (const u of pendentes) {
@@ -488,7 +502,8 @@ function PedidoExamePage() {
         setParcial({
           pacienteId,
           pacienteNovo,
-          tipos: [...(parcial?.tipos ?? []), ...tiposCriados],
+          ficha: continuar?.ficha ?? fichaAtual,
+          tipos: [...(continuar?.tipos ?? []), ...tiposCriados],
           criados: todosCriados,
           anexos: anexosEnviados,
         });

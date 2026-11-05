@@ -27,6 +27,7 @@ let sqlLog;
 let querySpy;
 let arquivos; // linhas de exame_arquivos "no banco"
 let exameLaudado;
+let exameStatus;
 const token = (tenant = tenantA) => jwt.sign({
   sub: '44444444-4444-4444-4444-444444444444', email: 'admin@clinica.com',
   role: 'admin', tenant_id: tenant, is_super_admin: false,
@@ -43,12 +44,13 @@ beforeEach(() => {
   sqlLog = [];
   arquivos = [];
   exameLaudado = false;
+  exameStatus = 'novo';
   querySpy = jest.spyOn(pool, 'query').mockImplementation((sql, params = []) => {
     const text = String(sql);
     sqlLog.push({ text, params });
     if (/SELECT id, paciente_id, status, laudado_em FROM exames WHERE id = \$1 AND tenant_id = \$2/.test(text)) {
       const ok = donoExame[params[0]] === params[1];
-      return Promise.resolve({ rows: ok ? [{ id: params[0], paciente_id: null, status: 'novo', laudado_em: exameLaudado ? '2026-11-05T10:00:00Z' : null }] : [], rowCount: ok ? 1 : 0 });
+      return Promise.resolve({ rows: ok ? [{ id: params[0], paciente_id: null, status: exameStatus, laudado_em: exameLaudado ? '2026-11-05T10:00:00Z' : null }] : [], rowCount: ok ? 1 : 0 });
     }
     if (/^\s*INSERT INTO exame_arquivos/.test(text)) {
       const [id, tenant_id, exame_id, paciente_id, caminho, nome_original, mime_type, tamanho_bytes] = params;
@@ -160,6 +162,18 @@ describe('arquivos de exame', () => {
     expect((await readdir(dir).catch(() => [])).length).toBe(antes.length);
   });
 
+  test('laudo finalizado durante o envio: INSERT não grava → 409 e arquivo apagado', async () => {
+    const dir = path.join(__dirname, '..', '..', 'uploads', 'exames', tenantA);
+    const antes = await readdir(dir).catch(() => []);
+    const original = querySpy.getMockImplementation();
+    querySpy.mockImplementation((sql, params) => (/INSERT INTO exame_arquivos/.test(String(sql))
+      ? Promise.resolve({ rows: [], rowCount: 0 })
+      : original(sql, params)));
+    const res = await enviar(exameA, PNG);
+    expect(res.status).toBe(409);
+    expect((await readdir(dir).catch(() => [])).length).toBe(antes.length);
+  });
+
   test('laudo finalizado: anexar ou tirar imagem → 409 sem gravar', async () => {
     exameLaudado = true;
     expect((await enviar(exameA, PNG)).status).toBe(409);
@@ -168,11 +182,25 @@ describe('arquivos de exame', () => {
     expect(sqlLog.some(q => /INSERT INTO exame_arquivos|UPDATE exame_arquivos/.test(q.text))).toBe(false);
   });
 
-  test('laudo finalizado: anexo do pedido ainda pode ser enviado', async () => {
+  test('cabeçalho de anexo do pedido não fura a trava: laudo finalizado ou exame já realizado → 409', async () => {
     exameLaudado = true;
-    const res = await request(app).post(`/api/exames/${exameA}/arquivos`).set('Authorization', `Bearer ${token()}`)
+    const r1 = await request(app).post(`/api/exames/${exameA}/arquivos`).set('Authorization', `Bearer ${token()}`)
       .set('Content-Type', 'application/octet-stream').set('X-Anexo-Do-Pedido', '1').send(PNG);
-    expect(res.status).toBe(200);
+    expect(r1.status).toBe(409);
+    exameLaudado = false;
+    exameStatus = 'aguardando_laudo';
+    const r2 = await request(app).post(`/api/exames/${exameA}/arquivos`).set('Authorization', `Bearer ${token()}`)
+      .set('Content-Type', 'application/octet-stream').set('X-Anexo-Do-Pedido', '1').send(PNG);
+    expect(r2.status).toBe(409);
+    expect(gravou(/INSERT INTO exame_arquivos/)).toBe(false);
+  });
+
+  test('INSERT do arquivo exige laudo aberto e, para anexo do pedido, exame como Pedido', async () => {
+    await request(app).post(`/api/exames/${exameA}/arquivos`).set('Authorization', `Bearer ${token()}`)
+      .set('Content-Type', 'application/octet-stream').set('X-Anexo-Do-Pedido', '1').send(PNG);
+    const ins = sqlLog.find(q => /INSERT INTO exame_arquivos/.test(q.text));
+    expect(ins.text).toMatch(/e\.laudado_em IS NULL/);
+    expect(ins.text).toMatch(/e\.status = 'novo'/);
   });
 
   test('tirar arquivo do exame só marca removido_em (não apaga) e filtra a clínica', async () => {
