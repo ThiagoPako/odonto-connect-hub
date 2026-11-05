@@ -3689,17 +3689,34 @@ app.post('/api/whatsapp/opt-out/revogar', async (req, res) => {
     const phone = await getLeadPhoneForTenant(user.tenant_id, leadId);
     if (!phone) return res.status(404).json({ error: 'Conversa não encontrada' });
     const key = waPhoneKey(phone);
-    const { rows: [removed] } = await pool.query(
-      'DELETE FROM whatsapp_opt_outs WHERE tenant_id = $1 AND phone_key = $2 RETURNING phone, keyword, created_at',
-      [user.tenant_id, key]
-    );
-    if (!removed) return res.status(409).json({ error: 'Este paciente não está descadastrado' });
-    await pool.query(
-      `INSERT INTO whatsapp_opt_out_reversals (tenant_id, phone_key, phone, opted_out_at, keyword, lead_id, requested_via, reverted_by, reverted_by_email)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-      [user.tenant_id, key, removed.phone || null, removed.created_at || null, removed.keyword || null, String(leadId),
-        requestedVia.slice(0, 300), isValidTenantId(user.id) ? user.id : null, user.email || null]
-    );
+    // Registro e remoção na mesma transação: se o registro falhar, o descadastro fica
+    // (sem prova de que o paciente pediu para voltar, ele continua valendo).
+    // pool.connect já aplica o contexto da clínica na conexão (TENANT_SET_SQL).
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows: [current] } = await client.query(
+        'SELECT phone, keyword, created_at FROM whatsapp_opt_outs WHERE tenant_id = $1 AND phone_key = $2 FOR UPDATE',
+        [user.tenant_id, key]
+      );
+      if (!current) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: 'Este paciente não está descadastrado' });
+      }
+      await client.query(
+        `INSERT INTO whatsapp_opt_out_reversals (tenant_id, phone_key, phone, opted_out_at, keyword, lead_id, requested_via, reverted_by, reverted_by_email)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [user.tenant_id, key, current.phone || null, current.created_at || null, current.keyword || null, String(leadId),
+          requestedVia.slice(0, 300), isValidTenantId(user.id) ? user.id : null, user.email || null]
+      );
+      await client.query('DELETE FROM whatsapp_opt_outs WHERE tenant_id = $1 AND phone_key = $2', [user.tenant_id, key]);
+      await client.query('COMMIT');
+    } catch (txError) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw txError;
+    } finally {
+      client.release();
+    }
     console.log(`↩️ Opt-out desfeito a pedido do paciente (tenant ${user.tenant_id}, final ${maskPhone(phone)})`);
     res.json({ success: true });
   } catch (error) {
