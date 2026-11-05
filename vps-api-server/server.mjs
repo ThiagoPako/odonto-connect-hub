@@ -13408,11 +13408,12 @@ app.get('/api/sessions/active', async (req, res) => {
         s.assigned_at AS started_at,
         (
           SELECT m.content FROM chat_messages m
-          WHERE m.lead_id = s.lead_id
+          WHERE m.lead_id = s.lead_id AND m.tenant_id = s.tenant_id
           ORDER BY m.timestamp DESC LIMIT 1
         ) AS last_message
       FROM attendance_sessions s
-      LEFT JOIN crm_leads l ON l.id = s.lead_id
+      -- attendance_sessions.lead_id é text e crm_leads.id é uuid: sem o ::text dá 500 (uuid = text).
+      LEFT JOIN crm_leads l ON l.id::text = s.lead_id AND l.tenant_id = s.tenant_id
       WHERE s.status = 'active' AND s.tenant_id = $1
       ORDER BY s.assigned_at DESC
       LIMIT 30

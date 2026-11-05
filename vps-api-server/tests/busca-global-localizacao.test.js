@@ -175,3 +175,23 @@ describe('GET /api/messages/search', () => {
     expect(res.status).toBe(401);
   });
 });
+
+describe('GET /api/sessions/active (painel)', () => {
+  const sessoes = () => sqlLog.find(q => /FROM attendance_sessions s/.test(q.text));
+
+  test('junta o lead convertendo o uuid para texto e só da mesma clínica', async () => {
+    const res = await request(app).get('/api/sessions/active').set('Authorization', `Bearer ${token()}`);
+    expect(res.status).toBe(200);
+    const q = sessoes();
+    // attendance_sessions.lead_id é text: sem o ::text o dashboard recebia 500 em produção.
+    expect(q.text).toMatch(/l\.id::text = s\.lead_id AND l\.tenant_id = s\.tenant_id/);
+    expect(q.text).toMatch(/m\.lead_id = s\.lead_id AND m\.tenant_id = s\.tenant_id/);
+    expect(q.text).toMatch(/s\.tenant_id = \$1/);
+    expect(q.params).toEqual([tenantA]);
+  });
+
+  test('sem login → 401', async () => {
+    const res = await request(app).get('/api/sessions/active');
+    expect(res.status).toBe(401);
+  });
+});
