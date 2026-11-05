@@ -2231,8 +2231,8 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     const profile = rows[0];
     console.log(`🔑 [RESET REQUEST] usuário ${profile.id} solicitou recuperação de senha`);
 
-    // Store notification for admin. A tabela vem de migration-force-rls.sql: o
-    // usuário da API (odonto_app) não é dono e não pode rodar CREATE TABLE aqui.
+    // Store notification for admin. A tabela vem do auto-migration do boot e da
+    // migration-tenant-m0.sql (DDL fora da rota: um usuário não dono não pode criá-la aqui).
     await pool.query(
       'INSERT INTO password_reset_requests (user_id, email) VALUES ($1, $2)',
       [profile.id, email.toLowerCase().trim()]
@@ -10842,6 +10842,31 @@ async function processAutomationJobs() {
   }
 }
 
+// DDL do boot com tolerância a usuário do banco que não é dono (ex.: odonto_app depois da
+// virada da RLS). Erro 42501 (permission denied / must be owner) não derruba nada nem vira
+// um log por comando: conta e registra uma linha só no fim; o esquema vem das migrações
+// do deploy (que rodam como postgres). Com a app dona (produção hoje) nada muda.
+function createBootSchemaRunner(tag) {
+  let semPermissao = 0;
+  return {
+    async run(sql, onOtherError) {
+      try {
+        return await pool.query(sql);
+      } catch (e) {
+        if (e?.code === '42501') { semPermissao++; return null; }
+        if (onOtherError) onOtherError(e);
+        else console.error(`[${tag}]`, e.message, '→', sql.split('\n')[0].slice(0, 90));
+        return null;
+      }
+    },
+    done() {
+      if (semPermissao > 0) {
+        console.warn(`[${tag}] ${semPermissao} comando(s) de esquema pulados: usuário do banco sem permissão de DDL (esquema vem das migrações do deploy)`);
+      }
+    },
+  };
+}
+
 // Esquema da fila (idempotente; também em migration-whatsapp-fase1.sql).
 async function ensureWhatsAppQueueSchema() {
   const statements = [
@@ -10878,9 +10903,9 @@ async function ensureWhatsAppQueueSchema() {
     `UPDATE automation_jobs SET expires_at = scheduled_at + INTERVAL '7 days'
       WHERE status = 'pending' AND expires_at IS NULL`,
   ];
-  for (const sql of statements) {
-    await pool.query(sql).catch(e => console.error('[wa-schema]', e.message, '→', sql.split('\n')[0].slice(0, 90)));
-  }
+  const runner = createBootSchemaRunner('wa-schema');
+  for (const sql of statements) await runner.run(sql);
+  runner.done();
 }
 
 // Isolamento por clínica de tabelas criadas fora do bootstrap (idempotente; também em
@@ -10905,9 +10930,9 @@ async function ensureTenantConfigSchema() {
     `UPDATE procedimentos_catalogo SET tenant_id = (SELECT id FROM tenants LIMIT 1)
       WHERE tenant_id IS NULL AND (SELECT COUNT(*) FROM tenants) = 1`,
   ];
-  for (const sql of statements) {
-    await pool.query(sql).catch(e => console.error('[tenant-schema]', e.message, '→', sql.split('\n')[0].slice(0, 90)));
-  }
+  const runner = createBootSchemaRunner('tenant-schema');
+  for (const sql of statements) await runner.run(sql);
+  runner.done();
 }
 
 // Gatilhos de prospecção/retorno: contam como marketing (opt-out obrigatório, dedupe).
@@ -16116,20 +16141,29 @@ if (process.env.NODE_ENV !== 'test') {
       `DROP POLICY IF EXISTS tenant_isolation_policy ON consentimentos_pacientes`,
       `CREATE POLICY tenant_isolation_policy ON consentimentos_pacientes FOR ALL
          USING (is_super_admin() OR tenant_id = get_current_tenant_id())
-         WITH CHECK (is_super_admin() OR tenant_id = get_current_tenant_id())`
+         WITH CHECK (is_super_admin() OR tenant_id = get_current_tenant_id())`,
+
+      // Pedidos de recuperação de senha (antes a rota forgot-password criava; também na M0)
+      `CREATE TABLE IF NOT EXISTS password_reset_requests (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID REFERENCES profiles(id) ON DELETE CASCADE NOT NULL,
+        email TEXT NOT NULL,
+        status TEXT DEFAULT 'pending',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )`
     ];
 
+    const runner = createBootSchemaRunner('auto-migration');
     for (const sql of migrations) {
-      try {
-        await pool.query(sql);
-        checkedStatements++;
-      } catch (migErr) {
+      const ok = await runner.run(sql, (migErr) => {
         // 42701 = column already exists, 42P07 = relation already exists — both are fine
         if (!['42701', '42P07', '42723'].includes(migErr?.code)) {
           console.warn(`⚠️ Auto-migration warning on statement ${checkedStatements}: ${migErr.message.slice(0, 120)}`);
         }
-      }
+      });
+      if (ok) checkedStatements++;
     }
+    runner.done();
     console.log(`   ✅ Auto-migration: ${checkedStatements}/${migrations.length} statements checked`);
   } catch (migErr) {
     console.error('❌ Auto-migration failed:', migErr.message);
