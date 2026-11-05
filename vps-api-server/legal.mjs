@@ -33,12 +33,20 @@ export async function registrarAceite(db, { tenantId, usuarioId, documento, vers
     `INSERT INTO aceites_documentos (tenant_id, usuario_id, documento, versao, hash_texto, ip, user_agent)
      VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, documento, versao, hash_texto, aceito_em`,
     [tenantId, usuarioId || null, documento, versao, v[0].hash_texto || null, ip || null, userAgent ? String(userAgent).slice(0, 300) : null]);
-  // Compatibilidade: as colunas antigas de tenants continuam com o último aceite.
+  // Compatibilidade: as colunas antigas de tenants continuam com o último aceite. Se elas ainda
+  // não existem (antes da migration-schema-alinhamento.sql), o aceite vale do mesmo jeito.
   if (documento === 'termos' || documento === 'politica') {
-    await db.query(
-      `UPDATE tenants SET ${documento === 'termos' ? 'termos_versao' : 'politica_versao'} = $2,
-              termos_aceitos_em = NOW(), termos_aceite_ip = $3
-        WHERE id = $1`, [tenantId, versao, ip || null]);
+    await db.query('SAVEPOINT aceite_tenants');
+    try {
+      await db.query(
+        `UPDATE tenants SET ${documento === 'termos' ? 'termos_versao' : 'politica_versao'} = $2,
+                termos_aceitos_em = NOW(), termos_aceite_ip = $3
+          WHERE id = $1`, [tenantId, versao, ip || null]);
+      await db.query('RELEASE SAVEPOINT aceite_tenants');
+    } catch (e) {
+      await db.query('ROLLBACK TO SAVEPOINT aceite_tenants');
+      console.warn('[legal] colunas de aceite em tenants não atualizadas:', e.code || e.message);
+    }
   }
   return rows[0];
 }

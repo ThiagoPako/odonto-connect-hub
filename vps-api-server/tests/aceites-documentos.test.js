@@ -155,6 +155,20 @@ describe('POST /api/legal/aceites', () => {
     expect(upd.params).toEqual([tenantA, '2.0', '198.51.100.2']);
   });
 
+  test('tenants sem as colunas antigas: o aceite vale do mesmo jeito', async () => {
+    spyC.mockImplementation(async () => ({
+      query: async (sq, p) => {
+        if (/^UPDATE tenants SET/.test(String(sq).trim())) throw Object.assign(new Error('column "termos_versao" does not exist'), { code: '42703' });
+        return responder(sq, p);
+      },
+      release: () => {},
+    }));
+    const res = await request(app).post('/api/legal/aceites').set('Authorization', `Bearer ${token()}`).send({ documento: 'termos', versao: '1.0' });
+    expect(res.status).toBe(201);
+    expect(sqlLog.some(q => /ROLLBACK TO SAVEPOINT aceite_tenants/.test(q.text))).toBe(true);
+    expect(sqlLog.some(q => q.text === 'COMMIT')).toBe(true);
+  });
+
   test('versão não publicada: 404 sem gravar', async () => {
     const res = await request(app).post('/api/legal/aceites').set('Authorization', `Bearer ${token()}`).send({ documento: 'termos', versao: '9.9' });
     expect(res.status).toBe(404);
