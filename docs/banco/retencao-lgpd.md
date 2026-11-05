@@ -36,8 +36,17 @@ estrutura, e os ajustes pedidos estão aplicados. O que ainda depende de advogad
 | Gravação de áudio | não fica no servidor: arquivo temporário, apagado depois da transcrição | 0 no servidor | — | Consentimento e operador (OpenAI) com a Helena, o Marcos e o Davi |
 | Mídia do WhatsApp / Clinicorp | fora do nosso banco | — | LGPD 18 § 6º | A resposta ao titular informa que a exclusão nesses sistemas é pedida à parte |
 
-**Ao fim do prazo:**
-- o expurgo automático, quando existir, **só gera uma lista**, e o dentista responsável aprova cada caso;
+**Ao fim do prazo** (expurgo: `vps-api-server/lgpd-expurgo.mjs`, tela `/lgpd-expurgo`):
+- um job mensal, por clínica, **só gera uma lista** com contagens. As categorias são leads (2 anos sem
+  interação), fila (1 ano), conversas (5 anos), log de acesso (5 anos), pedidos do titular (5 anos) e
+  prontuários com todos os prazos vencidos. Cada item guarda a data-limite do momento da geração;
+- a eliminação só roda depois de três passos:
+  - aprovação item a item: o admin aprova as categorias em massa, e **só um dentista da clínica**
+    aprova cada prontuário;
+  - **simulação (dry-run) obrigatória**, válida por 1 hora e invalidada se alguma aprovação mudar;
+  - a palavra `ELIMINAR`;
+- o registro fica em `lgpd_expurgo_listas`/`lgpd_expurgo_itens`: quem aprovou (e o papel), quem executou
+  e o resultado só por contagens;
 - a eliminação fica registrada (Lei 13.787 art. 6º § 4º), e a linha de `lgpd_solicitacoes` serve de registro;
 - o paciente pode pedir a **devolução** do prontuário em vez da eliminação (§ 2º): fica gravado em `ao_fim_do_prazo = 'devolver'`.
 
@@ -84,6 +93,7 @@ O texto para o titular sai em `resposta_titular`, para enviar por e-mail ou impr
 4. O procedimento de verificação de identidade do titular e do representante.
 
 ## Pendências técnicas
-- O job de expurgo por prazo, que deve gerar lista para aprovação.
+- Devolução do prontuário: o item com `devolver` não é eliminado. A clínica exporta (pedido `exportar`),
+  entrega ao paciente, e a eliminação entra numa lista seguinte se o paciente concordar.
 - Apagar a mídia na Evolution e o cadastro no Clinicorp.
 - A tela: os endpoints estão prontos, e o aviso do campo motivo vem em `previa.aviso_motivo`.

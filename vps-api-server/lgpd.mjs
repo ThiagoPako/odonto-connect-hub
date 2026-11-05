@@ -717,3 +717,6 @@ export function registerLgpd(app, { pool, verifyAdmin, optOutKey }) {
     } catch (err) { erroHttp(res, err, 'acessos'); }
   });
 }
+
+// Usado por lgpd-expurgo.mjs (mesma regra de prazo e de eliminação do pedido do titular).
+export const __interno = { previa, eliminar };

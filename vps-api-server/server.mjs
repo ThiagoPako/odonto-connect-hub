@@ -15368,9 +15368,12 @@ app.get('/api/ai/meta-ads/insight', async (req, res) => {
 // CLINICORP INTEGRATION
 import { registerClinicorp, reconciliationTick } from './clinicorp.mjs';
 import { registerLgpd, registrarAcessoProntuario } from './lgpd.mjs';
+import { registerLgpdExpurgo, processarExpurgoLgpd } from './lgpd-expurgo.mjs';
 registerClinicorp(app, pool, { verifyUser });
 // Direitos do titular (LGPD art. 18): exportar, excluir, anonimizar; log de acesso ao prontuário.
 registerLgpd(app, { pool, verifyAdmin, optOutKey: waPhoneKey });
+// Expurgo por prazo: o job só gera a lista; elimina só o aprovado, depois do dry-run.
+registerLgpdExpurgo(app, { pool, verifyUser, optOutKey: waPhoneKey });
 
 // ── Per-user Clinicorp credentials (SaaS multi-tenant) ─────────
 // Each authenticated user has their own row in clinicorp_user_settings.
@@ -16351,6 +16354,9 @@ if (process.env.NODE_ENV !== 'test') {
   // Start appointment reminder cron (every 1h)
   asSystemJob(processAppointmentReminders)();
   appointmentReminderInterval = setInterval(asSystemJob(processAppointmentReminders), 60 * 60 * 1000);
+  // Expurgo LGPD: confere 1x por dia e gera a lista do mês de cada clínica (só lista, nunca apaga).
+  setInterval(asSystemJob(() => processarExpurgoLgpd(pool)), 24 * 60 * 60 * 1000);
+  setTimeout(asSystemJob(() => processarExpurgoLgpd(pool)), 10 * 60 * 1000);
   console.log('   🔔 Lembrete de consulta 24h ativo (a cada 1h)');
 
   // Clinicorp auto-reconciliation: tick a cada 60s, decide via DB se executa
