@@ -11057,7 +11057,10 @@ async function copyGlobalSettingsToTenants() {
     try {
       const { rowCount } = await pool.query(
         `WITH marcador AS (
-           INSERT INTO app_settings (key, value, updated_at) VALUES ($1, '{"feito": true}'::jsonb, NOW())
+           INSERT INTO app_settings (key, value, updated_at)
+           SELECT $1, '{"feito": true}'::jsonb, NOW()
+            -- Só marca como feito se o contexto enxerga alguma clínica real; senão tenta no próximo boot.
+            WHERE EXISTS (SELECT 1 FROM tenants t WHERE t.id::text <> ALL($3::text[]))
            ON CONFLICT (key) DO NOTHING
            RETURNING key
          ),

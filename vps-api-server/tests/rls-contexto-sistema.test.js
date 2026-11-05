@@ -20,7 +20,8 @@ describe('contexto de RLS do pool', () => {
     expect(src).toContain('() => release.call(client, true)');
   });
 
-  test('cópia das configurações globais usa marcador v2', () => {
+  test('cópia das configurações globais usa marcador v2, gravado só se houver clínica visível', () => {
     expect(src).toContain('tenant_settings_copia_v2_${key}');
+    expect(src).toContain('WHERE EXISTS (SELECT 1 FROM tenants t WHERE t.id::text <> ALL($3::text[]))');
   });
 });
