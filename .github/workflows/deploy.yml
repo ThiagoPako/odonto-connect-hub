@@ -127,7 +127,7 @@ jobs:
             # Colunas/tabelas que o código usa e faltam no banco (docs/banco/drift-schema-2026-11-05.md).
             if ! cat /root/odonto-connect/vps-api-server/migration-schema-alinhamento.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1; then
               echo "::warning title=Alinhamento de schema não aplicado::migration-schema-alinhamento.sql falhou (lock ou erro). O deploy segue; ver log acima."
-              echo "!!! ATENÇÃO: migration-schema-alinhamento.sql NÃO foi aplicada — lembrete 24h e PUT da agenda continuam quebrados."
+              echo "!!! ATENÇÃO: migration-schema-alinhamento.sql NÃO foi aplicada — cadastro de clínica, exames, lembrete 24h e PUT da agenda continuam quebrados."
             fi
             echo "=== Migrations applied ==="
 

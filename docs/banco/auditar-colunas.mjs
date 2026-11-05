@@ -127,7 +127,7 @@ for (const file of files) {
     if (!sql && !single) continue;
     // INSERT INTO t (cols)
     for (const m of s.matchAll(/insert\s+into\s+(?:public\.)?([a-z_][a-z0-9_]*)\s*\(([^)]*)\)/gi)) {
-      for (const c of m[2].split(',')) add(m[1].toLowerCase(), c.trim().toLowerCase(), 'insert');
+      for (const c of m[2].split(',')) add(m[1].toLowerCase(), c.trim().split(/\s+/)[0].toLowerCase(), 'insert');
     }
     // UPDATE t SET a = .., b = ..
     for (const m of s.matchAll(/update\s+(?:public\.)?([a-z_][a-z0-9_]*)(?:\s+(?:as\s+)?[a-z_]+)?\s+set\s+([\s\S]*?)(?=\bwhere\b|\breturning\b|\bfrom\b|$)/gi)) {
