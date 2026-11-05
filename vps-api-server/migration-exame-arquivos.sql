@@ -18,6 +18,8 @@ CREATE TABLE IF NOT EXISTS exame_arquivos (
   removido_em    TIMESTAMPTZ,
   removido_por   UUID
 );
+-- Anexo do pedido (requisição) não é resultado: não bloqueia excluir o pedido nem muda status
+ALTER TABLE exame_arquivos ADD COLUMN IF NOT EXISTS anexo_do_pedido BOOLEAN NOT NULL DEFAULT false;
 CREATE INDEX IF NOT EXISTS idx_exame_arquivos_tenant_exame ON exame_arquivos (tenant_id, exame_id);
 CREATE INDEX IF NOT EXISTS idx_exame_arquivos_tenant_paciente ON exame_arquivos (tenant_id, paciente_id);
 

@@ -91,7 +91,8 @@ export function ExameLaudoDialog({ exame: exameProp, onOpenChange, onSaved }: Pr
     try { setHistorico(await examesApi.historicoLaudo(exame.id)); }
     catch (e: unknown) { toast.error((e as Error).message || "Não foi possível carregar o histórico"); }
   }
-  const imagens = arquivos.filter((a) => a.imagem);
+  // Resultado do exame (visualizador e impressão): o anexo do pedido fica de fora
+  const imagens = arquivos.filter((a) => a.imagem && !a.anexo_do_pedido);
   const legadoResolvido = resolveMediaUrl(legadoUrl);
   const legadoNome = legadoUrl?.split("?")[0].split("/").pop() ?? "";
 
@@ -198,7 +199,7 @@ export function ExameLaudoDialog({ exame: exameProp, onOpenChange, onSaved }: Pr
     let imgs = imagens;
     if (Date.now() - linksEmitidosEm.current > 50 * 60 * 1000) {
       const novas = await carregarArquivos();
-      if (novas) imgs = novas.filter((a) => a.imagem);
+      if (novas) imgs = novas.filter((a) => a.imagem && !a.anexo_do_pedido);
     }
     const ok = imprimirLaudo({ ...exame, laudo_texto: finalizado ? exame.laudo_texto : laudo }, imgs);
     if (!ok) toast.error("Não foi possível preparar a impressão neste navegador.");
@@ -324,7 +325,7 @@ export function ExameLaudoDialog({ exame: exameProp, onOpenChange, onSaved }: Pr
                         <div className="min-w-0 flex-1">
                           <div className="truncate text-xs" title={a.nome_original ?? undefined}>{a.nome_original || "arquivo"}</div>
                           <div className="text-[10px] text-muted-foreground">
-                            {formatarTamanho(a.tamanho_bytes)} · {new Date(a.created_at).toLocaleDateString("pt-BR")}
+                            {a.descricao ? `${a.descricao} · ` : ""}{formatarTamanho(a.tamanho_bytes)} · {new Date(a.created_at).toLocaleDateString("pt-BR")}
                           </div>
                         </div>
                         <Button asChild size="icon" variant="ghost" className="h-8 w-8">
@@ -332,7 +333,7 @@ export function ExameLaudoDialog({ exame: exameProp, onOpenChange, onSaved }: Pr
                             <Download className="h-3.5 w-3.5" />
                           </a>
                         </Button>
-                        {!finalizado && <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => removerArquivo(a)} aria-label={`Tirar ${a.nome_original || "arquivo"} do exame`}>
+                        {!finalizado && (!a.anexo_do_pedido || exame.status === "novo") && <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => removerArquivo(a)} aria-label={`Tirar ${a.nome_original || "arquivo"} do exame`}>
                           <Trash2 className="h-3.5 w-3.5 text-destructive" />
                         </Button>}
                       </div>

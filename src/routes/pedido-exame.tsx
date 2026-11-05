@@ -6,9 +6,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { Printer, Send, FileDown, Upload, X } from "lucide-react";
-import { mediaApi, pacientesApi } from "@/lib/vpsApi";
-import { examesApi } from "@/lib/examesApi";
+import { Link } from "@tanstack/react-router";
+import { Printer, Send, FileDown, Upload, X, CheckCircle2 } from "lucide-react";
+import { pacientesApi } from "@/lib/vpsApi";
+import { examesApi, exameArquivosApi, exameTiposApi, type ExameTipo } from "@/lib/examesApi";
 import odontogramaFullAsset from "@/assets/odontograma-full.png.asset.json";
 import odontogramaAdultoAsset from "@/assets/odontograma-adulto.png.asset.json";
 import { parsePedidoFile } from "@/lib/pedidoExameParser";
@@ -194,15 +195,24 @@ function PedidoExamePage() {
 
   const [saving, setSaving] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [uploading, setUploading] = useState(false);
-  const [uploads, setUploads] = useState<Array<{ name: string; url: string; path: string; type: string; file?: File }>>([]);
+  // Anexos ficam só no navegador até "Cadastrar": aí são gravados no exame, com acesso
+  // restrito à clínica. Antes iam para um link público e não ficavam ligados ao pedido.
+  const [uploads, setUploads] = useState<Array<{ id: string; name: string; file: File }>>([]);
   const [activeFile, setActiveFile] = useState<string | null>(null);
+  // Pedido já cadastrado nesta tela: evita cadastrar de novo por clique repetido
+  const [salvo, setSalvo] = useState<{ codigos: string[]; anexosFalharam: string[] } | null>(null);
+  // Cadastro que falhou no meio: o que já foi gravado não é repetido na nova tentativa
+  const [parcial, setParcial] = useState<{
+    pacienteId: string;
+    pacienteNovo: boolean;
+    /** Dados do paciente quando os primeiros exames foram gravados */
+    ficha: string;
+    tipos: string[];
+    criados: Array<{ id: string; codigo: string | null }>;
+    anexos: string[];
+  } | null>(null);
 
-  const applyParsed = useCallback(async (u: { name: string; file?: File; url: string; type: string }) => {
-    if (!u.file) {
-      toast.error("Arquivo não disponível para leitura nesta sessão. Refaça o upload.");
-      return;
-    }
+  const applyParsed = useCallback(async (u: { name: string; file: File }) => {
     try {
       const parsed = await parsePedidoFile(u.file);
       if (parsed.paciente) setPaciente(parsed.paciente);
@@ -267,33 +277,32 @@ function PedidoExamePage() {
     };
   }, [syncPrintScale]);
 
-  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
+    if (fileInputRef.current) fileInputRef.current.value = "";
     if (!files.length) return;
-    setUploading(true);
-    try {
-      const novos: Array<{ name: string; url: string; path: string; type: string; file?: File }> = [];
-      for (const file of files) {
-        // Arquivos ficam em /uploads/media da VPS; a URL serve como identificador.
-        const { url, error } = await mediaApi.upload(file);
-        if (error || !url) {
-          toast.error(`Falha ao enviar ${file.name}: ${error || "sem URL"}`);
-          continue;
-        }
-        novos.push({ name: file.name, url, path: url, type: file.type || "application/octet-stream", file });
-      }
-      if (novos.length) {
-        setUploads((prev) => [...prev, ...novos]);
-        toast.success(`${novos.length} arquivo(s) enviado(s)`);
-      }
-    } finally {
-      setUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
+    const grandes = files.filter((f) => f.size > 64 * 1024 * 1024);
+    if (grandes.length) toast.error(`Maior que 64 MB, não anexado: ${grandes.map((f) => f.name).join(", ")}`);
+    const novos = files
+      .filter((f) => f.size <= 64 * 1024 * 1024)
+      .map((file) => ({ id: `${file.name}-${file.size}-${file.lastModified}-${Math.random().toString(36).slice(2)}`, name: file.name, file }));
+    if (novos.length) {
+      setUploads((prev) => [...prev, ...novos]);
+      toast.success(
+        novos.length === 1 ? "Arquivo anexado ao pedido" : `${novos.length} arquivos anexados ao pedido`,
+        { description: "Eles são gravados no exame quando você clicar em Cadastrar. Clique no nome do PDF para preencher o pedido com ele." },
+      );
     }
   };
 
-  const removeUpload = async (path: string) => {
-    setUploads((prev) => prev.filter((u) => u.path !== path));
+  const removeUpload = (id: string) => {
+    setUploads((prev) => prev.filter((u) => u.id !== id));
+  };
+
+  const novoPedido = () => {
+    setPaciente(""); setEndereco(""); setFone(""); setCpf(""); setDataNasc(""); setDoutor(""); setCro("");
+    setTeethSel(new Set()); setTomoSel(new Set()); setChk({}); setObs(""); setAnalise(""); setFotoOutros("");
+    setUploads([]); setActiveFile(null); setSalvo(null); setParcial(null);
   };
 
   const buildTiposExame = (): string[] => {
@@ -321,8 +330,20 @@ function PedidoExamePage() {
 
     setSaving(true);
     try {
-      let pacienteId: string | null = null;
-      let pacienteNovo = false;
+      // Nova tentativa depois de falha parcial: se a recepção corrigiu o paciente, não manda
+      // os exames que faltam para o paciente antigo sem perguntar
+      const fichaAtual = [paciente.trim(), cpf.trim(), fone.trim(), dataNasc].join("|");
+      let continuar = parcial;
+      if (parcial && parcial.ficha !== fichaAtual) {
+        const manter = window.confirm(
+          "Os dados do paciente mudaram desde a primeira tentativa.\n\n" +
+            `OK: continuar vinculando os exames que faltam ao mesmo paciente da primeira tentativa (${parcial.ficha.split("|")[0]}).\n` +
+            "Cancelar: tratar como um pedido novo para o paciente digitado agora (os exames já gravados ficam no paciente anterior).",
+        );
+        if (!manter) { continuar = null; setParcial(null); }
+      }
+      let pacienteId: string | null = continuar?.pacienteId ?? null;
+      let pacienteNovo = continuar?.pacienteNovo ?? false;
       const cpfTrim = cpf.trim();
       const { data: lista, error: listaError } = await pacientesApi.list();
       // Sem a lista, não dá para saber se o paciente já existe: parar evita cadastro duplicado
@@ -342,7 +363,7 @@ function PedidoExamePage() {
         return da.slice(-8) === db.slice(-8);
       };
 
-      if (cpfTrim) {
+      if (cpfTrim && !pacienteId) {
         const existente = pacientesLista.find(
           (p) => p.cpf === cpfTrim || (soDigitos(p.cpf) !== "" && soDigitos(p.cpf) === soDigitos(cpfTrim)),
         );
@@ -368,9 +389,14 @@ function PedidoExamePage() {
           const semCpf = cpfTrim ? ", sem CPF na ficha" : "";
           const usar = window.confirm(
             `Já existe um paciente chamado "${c.nome}"${c.telefone ? `, telefone ${c.telefone}` : ""}${semCpf}${extra}.\n\n` +
-              "OK: vincular o pedido a esse paciente.\nCancelar: cadastrar um paciente novo.",
+              "OK: vincular o pedido a esse paciente.\nCancelar: não vincular (a próxima pergunta confirma se é um paciente novo).",
           );
           if (usar) pacienteId = c.id;
+          // Cancelar não pode virar cadastro duplicado sem querer: confirma de novo
+          else if (!window.confirm(`Cadastrar um paciente NOVO chamado "${paciente.trim()}"?\n\nOK: cadastrar novo.\nCancelar: não salvar nada agora.`)) {
+            toast.info("Nada foi salvo. Confira o paciente e clique em Cadastrar de novo.");
+            return;
+          }
         }
       }
 
@@ -411,20 +437,76 @@ function PedidoExamePage() {
         obs && `Obs: ${obs}`,
       ].filter(Boolean).join(" | ");
 
-      const rows = tipos.map((t) => ({
-        paciente_id: pacienteId,
-        tipo_nome: t,
-        observacoes: obsResumo || null,
-      }));
+      // Liga ao catálogo da clínica quando o nome bate (ex.: "Panorâmica" → "Radiografia Panorâmica"),
+      // para o exame já sair com tipo e valor. Sem catálogo, segue só com o nome.
+      const catalogo: ExameTipo[] = await exameTiposApi.list().catch(() => []);
+      const semAcento = (v: string) => v.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+      const doCatalogo = (nome: string) => {
+        const n = semAcento(nome);
+        const ativos = catalogo.filter((c) => c.ativo);
+        return ativos.find((c) => semAcento(c.nome) === n) ?? ativos.find((c) => semAcento(c.nome).includes(n));
+      };
+      const jaCriados = new Set(continuar?.tipos ?? []);
+      const rows = tipos.filter((t) => !jaCriados.has(t)).map((t) => {
+        const c = doCatalogo(t);
+        return {
+          tipo_original: t,
+          paciente_id: pacienteId,
+          tipo_nome: c?.nome ?? t,
+          tipo_exame_id: c?.id ?? null,
+          valor: c ? Number(c.preco) || 0 : 0,
+          observacoes: obsResumo || null,
+        };
+      });
       // examesApi.create lança com a mensagem amigável do servidor (unwrap). Confere cada
       // exame: sem isso, uma falha no meio aborta o laço e esconde quais já foram salvos.
       const falhas: { tipo: string; erro: string }[] = [];
-      for (const row of rows) {
+      const criados: Array<{ id: string; codigo: string | null }> = [];
+      const tiposCriados: string[] = [];
+      for (const { tipo_original, ...row } of rows) {
         try {
-          await examesApi.create(row);
+          const ex = await examesApi.create(row);
+          if (ex?.id) { criados.push({ id: ex.id, codigo: ex.codigo }); tiposCriados.push(tipo_original); }
         } catch (e) {
           falhas.push({ tipo: row.tipo_nome, erro: e instanceof Error ? e.message : "Erro ao salvar o exame." });
         }
+      }
+
+      // Anexos vão para o primeiro exame criado do pedido (os demais citam o código dele)
+      const todosCriados = [...(continuar?.criados ?? []), ...criados];
+      const anexosFalharam: string[] = [];
+      const anexosEnviados: string[] = [...(continuar?.anexos ?? [])];
+      const pendentes = uploads.filter((u) => !anexosEnviados.includes(u.id));
+      if (todosCriados.length && pendentes.length) {
+        for (const u of pendentes) {
+          try {
+            await exameArquivosApi.upload(todosCriados[0].id, u.file, { anexoDoPedido: true });
+            anexosEnviados.push(u.id);
+          } catch {
+            anexosFalharam.push(u.name);
+          }
+        }
+      }
+      if (anexosEnviados.length) {
+        const nota = `Anexos do pedido no exame ${todosCriados[0]?.codigo ?? ""}`.trim();
+        for (const c of criados) {
+          if (c.id === todosCriados[0]?.id) continue;
+          await examesApi.update(c.id, { observacoes: [obsResumo, nota].filter(Boolean).join(" | ") }).catch(() => undefined);
+        }
+      }
+      if (todosCriados.length && falhas.length === 0) {
+        setSalvo({ codigos: todosCriados.map((c) => c.codigo ?? "").filter(Boolean), anexosFalharam });
+        setParcial(null);
+      } else if (pacienteId) {
+        // Parte falhou: guarda o que já foi gravado para a próxima tentativa não duplicar
+        setParcial({
+          pacienteId,
+          pacienteNovo,
+          ficha: continuar?.ficha ?? fichaAtual,
+          tipos: [...(continuar?.tipos ?? []), ...tiposCriados],
+          criados: todosCriados,
+          anexos: anexosEnviados,
+        });
       }
 
       if (falhas.length > 0) {
@@ -435,7 +517,7 @@ function PedidoExamePage() {
           {
             description:
               `Não salvos: ${falhas.map((f) => f.tipo).join(", ")}. ${falhas[0].erro}` +
-              (salvos > 0 ? ` Os outros ${salvos} já estão na ficha; ao tentar de novo, marque só os que faltaram.` : ""),
+              (salvos > 0 ? ` Os outros ${salvos} já estão na ficha. Clique em Cadastrar de novo: só os que faltaram serão enviados.` : " Clique em Cadastrar para tentar de novo."),
             duration: 15000,
           },
         );
@@ -443,6 +525,12 @@ function PedidoExamePage() {
       }
 
       const qtd = `${rows.length} ${rows.length === 1 ? "exame" : "exames"}`;
+      if (anexosFalharam.length) {
+        toast.error(`Pedido salvo, mas ${anexosFalharam.length} anexo(s) não foram gravados`, {
+          description: `${anexosFalharam.join(", ")}. Abra o exame em Exames → Laudo e anexe de novo.`,
+          duration: 15000,
+        });
+      }
       toast.success(
         pacienteNovo
           ? `Paciente cadastrado e pedido salvo (${qtd})`
@@ -520,28 +608,42 @@ function PedidoExamePage() {
         <div className="no-print flex flex-wrap items-center justify-between gap-2 px-4 py-2 bg-slate-50 border-b">
           <h1 className="text-sm font-bold text-slate-700 uppercase tracking-wide">Pedido de Exame</h1>
           <div className="flex flex-wrap items-center gap-2">
-            <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleUpload} accept="image/*,application/pdf" />
-            <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
-              <Upload className="size-4 mr-1" /> {uploading ? "Enviando..." : "Upload"}
+            <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleUpload} accept="image/jpeg,image/png,image/webp,image/gif,image/bmp,application/pdf" />
+            <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} disabled={!!salvo}>
+              <Upload className="size-4 mr-1" /> Anexar
             </Button>
             <Button variant="outline" size="sm" onClick={handleImprimir}>
               <Printer className="size-4 mr-1" /> Imprimir
             </Button>
-            <Button variant="outline" size="sm" onClick={handleSalvar} disabled={saving}>
-              <FileDown className="size-4 mr-1" /> {saving ? "Salvando..." : "Cadastrar"}
+            <Button variant="outline" size="sm" onClick={handleSalvar} disabled={saving || !!salvo}>
+              <FileDown className="size-4 mr-1" /> {saving ? "Salvando..." : salvo ? "Cadastrado" : "Cadastrar"}
             </Button>
-            {/* O envio ao laboratório ainda não existe: antes o botão só mostrava "enviado" */}
-            <Button size="sm" className="bg-orange-500 hover:bg-orange-600" disabled title="Envio direto ao laboratório ainda não está disponível. Use Cadastrar e imprima o pedido.">
-              <Send className="size-4 mr-1" /> Enviar (em breve)
+            {/* Não há integração com laboratório: o botão fica visível, desligado e explicado */}
+            <Button size="sm" className="bg-orange-500 hover:bg-orange-600" disabled aria-describedby="pedido-envio-indisponivel">
+              <Send className="size-4 mr-1" /> Enviar ao laboratório
             </Button>
+            <span id="pedido-envio-indisponivel" className="text-[11px] text-slate-500 basis-full sm:basis-auto">
+              Envio direto ao laboratório ainda não existe. Cadastre e imprima (ou salve em PDF) o pedido.
+            </span>
           </div>
         </div>
+        {salvo && (
+          <div className="no-print px-4 py-2 bg-emerald-50 border-b border-emerald-200 flex flex-wrap items-center gap-2 text-sm text-emerald-800" role="status">
+            <CheckCircle2 className="size-4 shrink-0" aria-hidden />
+            <span className="flex-1 min-w-0">
+              Pedido cadastrado{salvo.codigos.length ? `: ${salvo.codigos.join(", ")}` : ""}.
+              {uploads.length > 0 && salvo.anexosFalharam.length === 0 ? " Anexos gravados no exame." : ""}
+            </span>
+            <Button asChild size="sm" variant="outline"><Link to="/exames">Ver em Exames</Link></Button>
+            <Button size="sm" variant="outline" onClick={novoPedido}>Novo pedido</Button>
+          </div>
+        )}
         {uploads.length > 0 && (
           <div className="no-print px-4 py-2 bg-slate-50 border-b flex flex-wrap gap-2">
             {uploads.map((u) => {
               const isActive = activeFile === u.name;
               return (
-                <div key={u.path} className={cn(
+                <div key={u.id} className={cn(
                   "inline-flex items-center gap-1 text-xs border rounded px-2 py-1 transition-colors",
                   isActive ? "bg-orange-100 border-orange-400 text-orange-800" : "bg-white text-slate-700 hover:bg-slate-100"
                 )}>
@@ -549,12 +651,13 @@ function PedidoExamePage() {
                     type="button"
                     onClick={() => applyParsed(u)}
                     className="inline-flex items-center gap-1 max-w-[240px] truncate hover:text-orange-600"
-                    title={`Ler e aplicar conteúdo de ${u.name}`}
+                    title={`Preencher o pedido com o conteúdo de ${u.name}`}
+                    aria-label={`Preencher o pedido com o conteúdo de ${u.name}`}
                   >
                     <FileDown className="size-3 shrink-0" />
                     <span className="truncate">{u.name}</span>
                   </button>
-                  <button type="button" onClick={() => removeUpload(u.path)} aria-label={`Remover ${u.name}`} className="ml-1 -my-1 inline-flex size-7 items-center justify-center rounded text-slate-400 hover:text-red-500">
+                  <button type="button" onClick={() => removeUpload(u.id)} disabled={!!salvo} aria-label={`Remover ${u.name}`} className="ml-1 -my-1 inline-flex size-7 items-center justify-center rounded text-slate-400 hover:text-red-500">
                     <X className="size-3.5" />
                   </button>
                 </div>

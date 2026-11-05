@@ -22,6 +22,7 @@ const donoTipo = { [tipoA]: tenantA, [tipoB]: tenantB };
 
 let sqlLog;
 let querySpy;
+let connectSpy;
 let exameTemResultado;
 let deleteAfeta;
 const token = () => jwt.sign({
@@ -42,6 +43,8 @@ beforeEach(() => {
   sqlLog = [];
   exameTemResultado = false;
   deleteAfeta = 1;
+  // Transação manual (pool.connect) usa o mesmo mock
+  connectSpy = jest.spyOn(pool, 'connect').mockImplementation(async () => ({ query: (q, p) => pool.query(q, p), release: () => {} }));
   querySpy = jest.spyOn(pool, 'query').mockImplementation((sql, params = []) => {
     const text = String(sql);
     sqlLog.push({ text, params });
@@ -52,6 +55,7 @@ beforeEach(() => {
     if (/next_code/.test(text)) return Promise.resolve({ rows: [{ next_code: 'EX-000001' }], rowCount: 1 });
     if (/^\s*INSERT INTO exames/.test(text)) return Promise.resolve({ rows: [{ id: exameA }], rowCount: 1 });
     if (/^\s*UPDATE exames/.test(text)) return Promise.resolve({ rows: params.at(-1) === tenantA ? [{ id: exameA }] : [], rowCount: 1 });
+    if (/^\s*DELETE FROM exame_arquivos a USING/.test(text)) return Promise.resolve({ rows: [], rowCount: 0 });
     if (/^\s*DELETE FROM exames/.test(text)) return Promise.resolve({ rows: [], rowCount: deleteAfeta });
     if (/AS tem_resultado/.test(text)) {
       const ok = params[0] === exameA && params[1] === tenantA;
@@ -61,7 +65,7 @@ beforeEach(() => {
   });
 });
 
-afterEach(() => querySpy.mockRestore());
+afterEach(() => { querySpy.mockRestore(); connectSpy.mockRestore(); });
 afterAll(async () => { await pool.end(); });
 
 describe('exames: entrada inválida vira 400 sem gravar', () => {
@@ -110,6 +114,22 @@ describe('exames: exclusão protege o prontuário', () => {
     expect(res.status).toBe(200);
     const del = sqlLog.find(q => /^\s*DELETE FROM exames/.test(q.text));
     expect(del.params).toEqual([exameA, tenantA]);
+  });
+
+  test('anexo do pedido não conta como resultado; arquivo retirado conta', async () => {
+    await chamar('delete', `/api/exames/${exameA}`);
+    const q = sqlLog.find(x => /AS tem_resultado/.test(x.text));
+    expect(q.text).toMatch(/NOT a\.anexo_do_pedido/);
+    expect(q.text).not.toMatch(/removido_em IS NULL/);
+  });
+
+  test('exclusão apaga os anexos do pedido na mesma transação', async () => {
+    await chamar('delete', `/api/exames/${exameA}`);
+    const i = sqlLog.findIndex(x => /DELETE FROM exame_arquivos a USING exames e/.test(x.text));
+    const j = sqlLog.findIndex(x => /^\s*DELETE FROM exames e/.test(x.text));
+    expect(i).toBeGreaterThan(-1);
+    expect(j).toBeGreaterThan(i);
+    expect(sqlLog[i].text).toMatch(/RETURNING a\.caminho/);
   });
 
   test('histórico de laudo ou qualquer arquivo impede excluir', async () => {

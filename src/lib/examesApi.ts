@@ -67,6 +67,8 @@ export interface ExameArquivo {
   created_at: string;
   enviado_por_nome: string | null;
   imagem: boolean;
+  /** Requisição/encaminhamento anexado no pedido: não é resultado do exame. */
+  anexo_do_pedido?: boolean;
   url: string;
   url_download: string;
 }
@@ -117,7 +119,7 @@ export const exameArquivosApi = {
   list: (exameId: string) =>
     unwrap<ExameArquivo[]>(vpsApiFetch<ExameArquivo[]>(`/exames/${exameId}/arquivos`), []),
   /** Envia o arquivo como bytes; o nome vai num cabeçalho (nunca na URL: pode ter o nome do paciente). */
-  upload: async (exameId: string, file: File): Promise<ExameArquivo> => {
+  upload: async (exameId: string, file: File, opcoes: { anexoDoPedido?: boolean } = {}): Promise<ExameArquivo> => {
     const token = await getAccessToken();
     const tenantId = getCachedTenantId();
     let response: Response;
@@ -129,6 +131,8 @@ export const exameArquivosApi = {
           ...(tenantId ? { "X-Tenant-Id": tenantId } : {}),
           "Content-Type": "application/octet-stream",
           "X-Nome-Arquivo": encodeURIComponent(file.name),
+          // Anexo do pedido não muda o status do exame para "aguardando laudo"
+          ...(opcoes.anexoDoPedido ? { "X-Anexo-Do-Pedido": "1" } : {}),
         },
         body: file,
       });
