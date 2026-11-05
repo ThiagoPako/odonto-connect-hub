@@ -11,12 +11,14 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as UsuariosRouteImport } from './routes/usuarios'
 import { Route as TratamentosRouteImport } from './routes/tratamentos'
+import { Route as TermosRouteImport } from './routes/termos'
 import { Route as SuperAdminRouteImport } from './routes/super-admin'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as RelatoriosClinicosRouteImport } from './routes/relatorios-clinicos'
 import { Route as ReativacaoRouteImport } from './routes/reativacao'
 import { Route as ProntuarioRouteImport } from './routes/prontuario'
 import { Route as ProcedimentosRouteImport } from './routes/procedimentos'
+import { Route as PrivacidadeRouteImport } from './routes/privacidade'
 import { Route as PerfilRouteImport } from './routes/perfil'
 import { Route as PedidoExameRouteImport } from './routes/pedido-exame'
 import { Route as PainelDentistaRouteImport } from './routes/painel-dentista'
@@ -58,6 +60,11 @@ const TratamentosRoute = TratamentosRouteImport.update({
   path: '/tratamentos',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TermosRoute = TermosRouteImport.update({
+  id: '/termos',
+  path: '/termos',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SuperAdminRoute = SuperAdminRouteImport.update({
   id: '/super-admin',
   path: '/super-admin',
@@ -86,6 +93,11 @@ const ProntuarioRoute = ProntuarioRouteImport.update({
 const ProcedimentosRoute = ProcedimentosRouteImport.update({
   id: '/procedimentos',
   path: '/procedimentos',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PrivacidadeRoute = PrivacidadeRouteImport.update({
+  id: '/privacidade',
+  path: '/privacidade',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PerfilRoute = PerfilRouteImport.update({
@@ -269,12 +281,14 @@ export interface FileRoutesByFullPath {
   '/painel-dentista': typeof PainelDentistaRoute
   '/pedido-exame': typeof PedidoExameRoute
   '/perfil': typeof PerfilRoute
+  '/privacidade': typeof PrivacidadeRoute
   '/procedimentos': typeof ProcedimentosRoute
   '/prontuario': typeof ProntuarioRoute
   '/reativacao': typeof ReativacaoRoute
   '/relatorios-clinicos': typeof RelatoriosClinicosRoute
   '/signup': typeof SignupRoute
   '/super-admin': typeof SuperAdminRoute
+  '/termos': typeof TermosRoute
   '/tratamentos': typeof TratamentosRoute
   '/usuarios': typeof UsuariosRoute
   '/configuracoes/agenda': typeof ConfiguracoesAgendaRoute
@@ -309,12 +323,14 @@ export interface FileRoutesByTo {
   '/painel-dentista': typeof PainelDentistaRoute
   '/pedido-exame': typeof PedidoExameRoute
   '/perfil': typeof PerfilRoute
+  '/privacidade': typeof PrivacidadeRoute
   '/procedimentos': typeof ProcedimentosRoute
   '/prontuario': typeof ProntuarioRoute
   '/reativacao': typeof ReativacaoRoute
   '/relatorios-clinicos': typeof RelatoriosClinicosRoute
   '/signup': typeof SignupRoute
   '/super-admin': typeof SuperAdminRoute
+  '/termos': typeof TermosRoute
   '/tratamentos': typeof TratamentosRoute
   '/usuarios': typeof UsuariosRoute
   '/configuracoes/agenda': typeof ConfiguracoesAgendaRoute
@@ -350,12 +366,14 @@ export interface FileRoutesById {
   '/painel-dentista': typeof PainelDentistaRoute
   '/pedido-exame': typeof PedidoExameRoute
   '/perfil': typeof PerfilRoute
+  '/privacidade': typeof PrivacidadeRoute
   '/procedimentos': typeof ProcedimentosRoute
   '/prontuario': typeof ProntuarioRoute
   '/reativacao': typeof ReativacaoRoute
   '/relatorios-clinicos': typeof RelatoriosClinicosRoute
   '/signup': typeof SignupRoute
   '/super-admin': typeof SuperAdminRoute
+  '/termos': typeof TermosRoute
   '/tratamentos': typeof TratamentosRoute
   '/usuarios': typeof UsuariosRoute
   '/configuracoes/agenda': typeof ConfiguracoesAgendaRoute
@@ -392,12 +410,14 @@ export interface FileRouteTypes {
     | '/painel-dentista'
     | '/pedido-exame'
     | '/perfil'
+    | '/privacidade'
     | '/procedimentos'
     | '/prontuario'
     | '/reativacao'
     | '/relatorios-clinicos'
     | '/signup'
     | '/super-admin'
+    | '/termos'
     | '/tratamentos'
     | '/usuarios'
     | '/configuracoes/agenda'
@@ -432,12 +452,14 @@ export interface FileRouteTypes {
     | '/painel-dentista'
     | '/pedido-exame'
     | '/perfil'
+    | '/privacidade'
     | '/procedimentos'
     | '/prontuario'
     | '/reativacao'
     | '/relatorios-clinicos'
     | '/signup'
     | '/super-admin'
+    | '/termos'
     | '/tratamentos'
     | '/usuarios'
     | '/configuracoes/agenda'
@@ -472,12 +494,14 @@ export interface FileRouteTypes {
     | '/painel-dentista'
     | '/pedido-exame'
     | '/perfil'
+    | '/privacidade'
     | '/procedimentos'
     | '/prontuario'
     | '/reativacao'
     | '/relatorios-clinicos'
     | '/signup'
     | '/super-admin'
+    | '/termos'
     | '/tratamentos'
     | '/usuarios'
     | '/configuracoes/agenda'
@@ -513,12 +537,14 @@ export interface RootRouteChildren {
   PainelDentistaRoute: typeof PainelDentistaRoute
   PedidoExameRoute: typeof PedidoExameRoute
   PerfilRoute: typeof PerfilRoute
+  PrivacidadeRoute: typeof PrivacidadeRoute
   ProcedimentosRoute: typeof ProcedimentosRoute
   ProntuarioRoute: typeof ProntuarioRoute
   ReativacaoRoute: typeof ReativacaoRoute
   RelatoriosClinicosRoute: typeof RelatoriosClinicosRoute
   SignupRoute: typeof SignupRoute
   SuperAdminRoute: typeof SuperAdminRoute
+  TermosRoute: typeof TermosRoute
   TratamentosRoute: typeof TratamentosRoute
   UsuariosRoute: typeof UsuariosRoute
 }
@@ -537,6 +563,13 @@ declare module '@tanstack/react-router' {
       path: '/tratamentos'
       fullPath: '/tratamentos'
       preLoaderRoute: typeof TratamentosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/termos': {
+      id: '/termos'
+      path: '/termos'
+      fullPath: '/termos'
+      preLoaderRoute: typeof TermosRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/super-admin': {
@@ -579,6 +612,13 @@ declare module '@tanstack/react-router' {
       path: '/procedimentos'
       fullPath: '/procedimentos'
       preLoaderRoute: typeof ProcedimentosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/privacidade': {
+      id: '/privacidade'
+      path: '/privacidade'
+      fullPath: '/privacidade'
+      preLoaderRoute: typeof PrivacidadeRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/perfil': {
@@ -836,12 +876,14 @@ const rootRouteChildren: RootRouteChildren = {
   PainelDentistaRoute: PainelDentistaRoute,
   PedidoExameRoute: PedidoExameRoute,
   PerfilRoute: PerfilRoute,
+  PrivacidadeRoute: PrivacidadeRoute,
   ProcedimentosRoute: ProcedimentosRoute,
   ProntuarioRoute: ProntuarioRoute,
   ReativacaoRoute: ReativacaoRoute,
   RelatoriosClinicosRoute: RelatoriosClinicosRoute,
   SignupRoute: SignupRoute,
   SuperAdminRoute: SuperAdminRoute,
+  TermosRoute: TermosRoute,
   TratamentosRoute: TratamentosRoute,
   UsuariosRoute: UsuariosRoute,
 }

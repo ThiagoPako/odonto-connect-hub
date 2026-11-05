@@ -1,13 +1,29 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Mic, Pause, Play, Square, Trash2, Volume2 } from "lucide-react";
+import { Mic, Pause, Play, Square, Trash2, Volume2, ShieldCheck } from "lucide-react";
+import { toast } from "sonner";
 
 interface ClinicalAudioRecorderProps {
   onRecordingComplete: (blob: Blob, duration: number) => void;
+  /** Chamado antes de abrir o microfone; retornar false cancela (ex.: sem consentimento). */
+  beforeStart?: () => Promise<boolean>;
+  /** Linha discreta exibida no estado inicial (ex.: "Autorizado pelo paciente em 04/11"). */
+  consentNote?: string;
+}
+
+function micErrorMessage(err: unknown): string {
+  const name = err instanceof DOMException ? err.name : "";
+  if (name === "NotAllowedError" || name === "SecurityError")
+    return "Permissão do microfone negada. Libere o microfone no navegador (ícone de cadeado na barra de endereço).";
+  if (name === "NotFoundError" || name === "OverconstrainedError")
+    return "Nenhum microfone encontrado. Conecte um microfone e tente de novo.";
+  if (name === "NotReadableError")
+    return "O microfone está sendo usado por outro programa. Feche-o e tente de novo.";
+  return "Não foi possível iniciar a gravação.";
 }
 
 type RecState = "idle" | "recording" | "paused" | "review";
 
-export function ClinicalAudioRecorder({ onRecordingComplete }: ClinicalAudioRecorderProps) {
+export function ClinicalAudioRecorder({ onRecordingComplete, beforeStart, consentNote }: ClinicalAudioRecorderProps) {
   const [state, setState] = useState<RecState>("idle");
   const [duration, setDuration] = useState(0);
   const [waveformBars, setWaveformBars] = useState<number[]>(Array(40).fill(6));
@@ -87,6 +103,7 @@ export function ClinicalAudioRecorder({ onRecordingComplete }: ClinicalAudioReco
   }, []);
 
   const startRecording = useCallback(async () => {
+    if (beforeStart && !(await beforeStart())) return;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
@@ -148,8 +165,9 @@ export function ClinicalAudioRecorder({ onRecordingComplete }: ClinicalAudioReco
       startWaveform();
     } catch (err) {
       console.error("Audio recording error:", err);
+      toast.error(micErrorMessage(err));
     }
-  }, [startWaveform, reviewUrl]);
+  }, [startWaveform, reviewUrl, beforeStart]);
 
   const pauseRecording = useCallback(() => {
     if (mediaRecorderRef.current?.state === "recording") {
@@ -267,6 +285,11 @@ export function ClinicalAudioRecorder({ onRecordingComplete }: ClinicalAudioReco
         <div className="text-left">
           <p className="text-base font-bold text-foreground">Gravar Consulta</p>
           <p className="text-xs text-muted-foreground mt-0.5">Clique para iniciar a gravação do áudio da consulta</p>
+          {consentNote && (
+            <p className="text-[10px] text-success mt-1 flex items-center gap-1">
+              <ShieldCheck className="h-3 w-3" /> {consentNote}
+            </p>
+          )}
         </div>
       </button>
     );

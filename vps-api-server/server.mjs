@@ -1112,7 +1112,7 @@ app.get('/api/plans', async (_req, res) => {
 app.post('/api/auth/signup-clinic', async (req, res) => {
   const client = await pool.connect();
   try {
-    const { clinic_name, admin_name, email, password, plan_slug, telefone, cnpj } = req.body || {};
+    const { clinic_name, admin_name, email, password, plan_slug, telefone, cnpj, termos_versao, politica_versao } = req.body || {};
     if (!clinic_name || !admin_name || !email || !password) {
       return res.status(400).json({ error: 'Campos obrigatórios: clinic_name, admin_name, email, password' });
     }
@@ -1140,9 +1140,12 @@ app.post('/api/auth/signup-clinic', async (req, res) => {
 
     const trialDays = plan.trial_days || 14;
     const { rows: tRows } = await client.query(
-      `INSERT INTO tenants (nome, slug, cnpj, telefone, email_contato, status, trial_ends_at, plan_id)
-       VALUES ($1,$2,$3,$4,$5,'trial', NOW() + ($6 || ' days')::interval, $7) RETURNING *`,
-      [clinic_name, slug, cnpj || null, telefone || null, normalizedEmail, String(trialDays), plan.id]
+      `INSERT INTO tenants (nome, slug, cnpj, telefone, email_contato, status, trial_ends_at, plan_id,
+                            termos_versao, politica_versao, termos_aceitos_em, termos_aceite_ip)
+       VALUES ($1,$2,$3,$4,$5,'trial', NOW() + ($6 || ' days')::interval, $7, $8, $9, NOW(), $10) RETURNING *`,
+      [clinic_name, slug, cnpj || null, telefone || null, normalizedEmail, String(trialDays), plan.id,
+       termos_versao ? String(termos_versao) : null, politica_versao ? String(politica_versao) : null,
+       req.headers['x-forwarded-for'] || req.ip || null]
     );
     const tenant = tRows[0];
 
@@ -13607,10 +13610,94 @@ app.post('/api/ai/settings', async (req, res) => {
   }
 });
 
-// ─── Transcribe audio via OpenAI Whisper ────────────────────
-app.post('/api/ai/transcribe', express.raw({ type: ['audio/*', 'application/octet-stream'], limit: '50mb' }), async (req, res) => {
+// ─── Consentimentos LGPD por paciente ───────────────────────
+// Registro probatório do consentimento (LGPD arts. 8º §2º, 11 I) e revogação (art. 8º §5º).
+const CONSENT_TIPOS = new Set(['gravacao_transcricao_ia']);
+
+async function findActiveConsent(tenantId, pacienteId, tipo) {
+  const { rows } = await pool.query(
+    `SELECT id, tipo, versao, aceito_em, registrado_por_email
+       FROM consentimentos_pacientes
+      WHERE tenant_id = $1 AND paciente_id = $2 AND tipo = $3 AND revogado_em IS NULL
+      ORDER BY aceito_em DESC LIMIT 1`,
+    [tenantId, String(pacienteId), tipo]
+  );
+  return rows[0] || null;
+}
+
+app.get('/api/pacientes/:id/consentimentos', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
+    const tipo = String(req.query.tipo || '');
+    if (!CONSENT_TIPOS.has(tipo)) return res.status(400).json({ error: 'tipo inválido' });
+    const consent = await findActiveConsent(user.tenant_id, req.params.id, tipo);
+    res.json({ consent });
+  } catch (err) {
+    res.status(err.message === 'Unauthorized' ? 401 : 500).json({ error: err.message });
+  }
+});
+
+app.post('/api/pacientes/:id/consentimentos', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
+    const { tipo, versao, texto } = req.body || {};
+    if (!CONSENT_TIPOS.has(tipo) || !versao || !texto) {
+      return res.status(400).json({ error: 'tipo, versao e texto são obrigatórios' });
+    }
+    const { rows } = await pool.query(
+      `INSERT INTO consentimentos_pacientes
+         (tenant_id, paciente_id, tipo, versao, texto, registrado_por, registrado_por_email, ip_address, user_agent)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       RETURNING id, tipo, versao, aceito_em, registrado_por_email`,
+      [
+        user.tenant_id, String(req.params.id), tipo, String(versao), String(texto).slice(0, 5000),
+        user.id || null, user.email || null,
+        req.headers['x-forwarded-for'] || req.ip || null,
+        req.headers['user-agent'] || null,
+      ]
+    );
+    res.json({ consent: rows[0] });
+  } catch (err) {
+    res.status(err.message === 'Unauthorized' ? 401 : 500).json({ error: err.message });
+  }
+});
+
+app.post('/api/consentimentos/:id/revogar', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
+    const { rowCount } = await pool.query(
+      `UPDATE consentimentos_pacientes SET revogado_em = NOW(), revogado_por = $3
+        WHERE id = $1 AND tenant_id = $2 AND revogado_em IS NULL`,
+      [req.params.id, user.tenant_id, user.id || null]
+    );
+    res.json({ success: rowCount > 0 });
+  } catch (err) {
+    res.status(err.message === 'Unauthorized' ? 401 : 500).json({ error: err.message });
+  }
+});
+
+// ─── Transcribe audio via OpenAI Whisper ────────────────────
+// O áudio fica só num arquivo temporário durante a chamada e é apagado em seguida
+// (LGPD art. 16). Exige consentimento ativo do paciente para gravação/transcrição por IA.
+app.post('/api/ai/transcribe', express.raw({ type: ['audio/*', 'application/octet-stream'], limit: '50mb' }), async (req, res) => {
+  let tmpDir = null;
+  try {
+    const { user } = await verifyUser(req);
+
+    const pacienteId = req.query.paciente_id ? String(req.query.paciente_id) : '';
+    if (!pacienteId || !user.tenant_id) {
+      return res.status(400).json({ error: 'Selecione o paciente antes de transcrever.', code: 'CONSENT_REQUIRED' });
+    }
+    const consent = await findActiveConsent(user.tenant_id, pacienteId, 'gravacao_transcricao_ia');
+    if (!consent) {
+      return res.status(403).json({
+        error: 'O paciente ainda não autorizou a gravação e transcrição por IA.',
+        code: 'CONSENT_REQUIRED',
+      });
+    }
 
     // Get OpenAI key from DB
     const { rows } = await pool.query("SELECT api_key, enabled FROM ai_settings WHERE provider = 'openai' LIMIT 1");
@@ -13621,7 +13708,7 @@ app.post('/api/ai/transcribe', express.raw({ type: ['audio/*', 'application/octe
     const openaiKey = rows[0].api_key;
 
     // Save audio to temp file
-    const tmpDir = await mkdtemp(path.join(tmpdir(), 'whisper-'));
+    tmpDir = await mkdtemp(path.join(tmpdir(), 'whisper-'));
     const audioPath = path.join(tmpDir, 'audio.webm');
     await writeFile(audioPath, req.body);
 
@@ -13645,6 +13732,7 @@ app.post('/api/ai/transcribe', express.raw({ type: ['audio/*', 'application/octe
 
     // Cleanup temp
     await rm(tmpDir, { recursive: true, force: true });
+    tmpDir = null;
 
     if (!whisperRes.ok) {
       const errText = await whisperRes.text();
@@ -13656,7 +13744,9 @@ app.post('/api/ai/transcribe', express.raw({ type: ['audio/*', 'application/octe
     res.json({ transcription });
   } catch (err) {
     console.error('Transcription error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(err.message === 'Unauthorized' ? 401 : 500).json({ error: err.message });
+  } finally {
+    if (tmpDir) await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
   }
 });
 
@@ -15294,7 +15384,36 @@ if (process.env.NODE_ENV !== 'test') {
       `UPDATE clinicorp_financial_entries SET tenant_id = (SELECT tenant_id FROM profiles WHERE role = 'admin' ORDER BY created_at ASC LIMIT 1) WHERE tenant_id IS NULL`,
       `UPDATE clinicorp_monthly_summary SET tenant_id = (SELECT tenant_id FROM profiles WHERE role = 'admin' ORDER BY created_at ASC LIMIT 1) WHERE tenant_id IS NULL`,
       `ALTER TABLE clinicorp_monthly_summary DROP CONSTRAINT IF EXISTS clinicorp_monthly_summary_source_period_month_business_id_key`,
-      `CREATE UNIQUE INDEX IF NOT EXISTS idx_clinicorp_monthly_summary_tenant_period ON clinicorp_monthly_summary(source, period_month, business_id, tenant_id)`
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_clinicorp_monthly_summary_tenant_period ON clinicorp_monthly_summary(source, period_month, business_id, tenant_id)`,
+
+      // ─── Aceite dos Termos de Uso / Política de Privacidade no cadastro da clínica ───
+      `ALTER TABLE tenants ADD COLUMN IF NOT EXISTS termos_versao TEXT`,
+      `ALTER TABLE tenants ADD COLUMN IF NOT EXISTS politica_versao TEXT`,
+      `ALTER TABLE tenants ADD COLUMN IF NOT EXISTS termos_aceitos_em TIMESTAMPTZ`,
+      `ALTER TABLE tenants ADD COLUMN IF NOT EXISTS termos_aceite_ip TEXT`,
+
+      // ─── Consentimentos LGPD por paciente (art. 8º §2º: ônus da prova é do controlador) ───
+      `CREATE TABLE IF NOT EXISTS consentimentos_pacientes (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        tenant_id UUID NOT NULL DEFAULT get_current_tenant_id(),
+        paciente_id TEXT NOT NULL,
+        tipo TEXT NOT NULL,
+        versao TEXT NOT NULL,
+        texto TEXT NOT NULL,
+        registrado_por UUID,
+        registrado_por_email TEXT,
+        ip_address TEXT,
+        user_agent TEXT,
+        aceito_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        revogado_em TIMESTAMPTZ,
+        revogado_por UUID
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_consentimentos_pacientes_lookup ON consentimentos_pacientes(tenant_id, paciente_id, tipo)`,
+      `ALTER TABLE consentimentos_pacientes ENABLE ROW LEVEL SECURITY`,
+      `DROP POLICY IF EXISTS tenant_isolation_policy ON consentimentos_pacientes`,
+      `CREATE POLICY tenant_isolation_policy ON consentimentos_pacientes FOR ALL
+         USING (is_super_admin() OR tenant_id = get_current_tenant_id())
+         WITH CHECK (is_super_admin() OR tenant_id = get_current_tenant_id())`
     ];
 
     for (const sql of migrations) {

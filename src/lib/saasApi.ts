@@ -69,6 +69,8 @@ export const saasApi = {
     plan_slug?: string;
     telefone?: string;
     cnpj?: string;
+    termos_versao?: string;
+    politica_versao?: string;
   }) => {
     const res = await vpsApiFetch<{ token: string; user: unknown; tenant: Tenant; plan: Plan }>(
       "/auth/signup-clinic",

@@ -1196,15 +1196,41 @@ export interface ClinicalReportApi {
   created_at: string;
 }
 
+// ─── Consentimentos LGPD por paciente ───────────────────────
+export type ConsentimentoTipo = 'gravacao_transcricao_ia';
+
+export interface ConsentimentoPaciente {
+  id: string;
+  tipo: ConsentimentoTipo;
+  versao: string;
+  aceito_em: string;
+  registrado_por_email: string | null;
+}
+
+export const consentimentosApi = {
+  getAtivo: (pacienteId: string, tipo: ConsentimentoTipo) =>
+    vpsApiFetch<{ consent: ConsentimentoPaciente | null }>(
+      `/pacientes/${encodeURIComponent(pacienteId)}/consentimentos`,
+      { params: { tipo }, background: true }
+    ),
+  registrar: (pacienteId: string, body: { tipo: ConsentimentoTipo; versao: string; texto: string }) =>
+    vpsApiFetch<{ consent: ConsentimentoPaciente }>(
+      `/pacientes/${encodeURIComponent(pacienteId)}/consentimentos`,
+      { method: 'POST', body }
+    ),
+  revogar: (consentId: string) =>
+    vpsApiFetch<{ success: boolean }>(`/consentimentos/${encodeURIComponent(consentId)}/revogar`, { method: 'POST' }),
+};
+
 export const aiApi = {
   getSettings: () => vpsApiFetch<AISettingApi[]>('/ai/settings'),
   saveSettings: (body: { provider: string; api_key: string; model?: string; enabled?: boolean }) =>
     vpsApiFetch<{ success: boolean }>('/ai/settings', { method: 'POST', body }),
 
-  transcribe: async (audioBlob: Blob): Promise<{ data: { transcription: string } | null; error: string | null }> => {
+  transcribe: async (audioBlob: Blob, pacienteId: string): Promise<{ data: { transcription: string } | null; error: string | null }> => {
     try {
       const token = await getAccessToken();
-      const response = await fetch(`${VPS_API_BASE}/ai/transcribe`, {
+      const response = await fetch(`${VPS_API_BASE}/ai/transcribe?paciente_id=${encodeURIComponent(pacienteId)}`, {
         method: 'POST',
         headers: {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
