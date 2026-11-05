@@ -11,6 +11,8 @@ import { mkdir, writeFile, rm } from 'fs/promises';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '../.env') });
+// Reivindicação de arquivo antigo é desligada por padrão; aqui ligada para testar as regras
+process.env.MEDIA_REIVINDICAR_LEGADO = '1';
 
 const { app, pool } = await import('../server.mjs');
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -24,7 +26,10 @@ const PNG = Buffer.from('89504e470d0a1a0a0000000d4948445200000001000000010806000
 const DIR = path.join(__dirname, '..', '..', 'uploads', 'media', '2099-01');
 
 let donos; // media_files "no banco": path → tenant
-let citacoes; // referências antigas: path → [tenant]
+let citacoes; // referências antigas: path → [{ tenant, em }]
+let citacaoFalha; // código de erro simulado na leitura das citações
+const CORTE = '2026-11-05T12:00:00.000Z';
+const ANTES = '2026-01-10T10:00:00.000Z';
 let sqlLog;
 let querySpy;
 const token = (tenant = tenantA) => jwt.sign({
@@ -42,7 +47,8 @@ beforeAll(async () => {
 beforeEach(() => {
   sqlLog = [];
   donos = { [relA]: tenantA, [relB]: tenantB };
-  citacoes = { [relLegado]: [tenantA] };
+  citacoes = { [relLegado]: [{ tenant: tenantA, em: ANTES }] };
+  citacaoFalha = null;
   querySpy = jest.spyOn(pool, 'query').mockImplementation((sql, params = []) => {
     const text = String(sql);
     sqlLog.push({ text, params });
@@ -58,11 +64,14 @@ beforeEach(() => {
       const rows = params[0].filter(p => donos[p]).map(p => ({ path: p, tenant_id: donos[p] }));
       return Promise.resolve({ rows, rowCount: rows.length });
     }
-    if (/SELECT DISTINCT tenant_id FROM chat_messages WHERE media_url LIKE/.test(text)) {
+    if (/FROM app_settings WHERE key = 'l7_media_backfill'/.test(text)) return Promise.resolve({ rows: [{ em: CORTE }], rowCount: 1 });
+    if (/AS em FROM chat_messages WHERE lower\(media_url\) LIKE/.test(text)) {
+      if (citacaoFalha) return Promise.reject(Object.assign(new Error('falha'), { code: citacaoFalha }));
       const rel = String(params[0]).replace(/^%\/uploads\/media\//, '').replace(/%$/, '');
-      const rows = (citacoes[rel] || []).map(t => ({ tenant_id: t }));
+      const rows = (citacoes[rel] || []).map(c => ({ tenant_id: c.tenant, em: c.em }));
       return Promise.resolve({ rows, rowCount: rows.length });
     }
+    if (/AS em FROM (profiles|exames|prontuarios)/.test(text)) return Promise.reject(Object.assign(new Error('no column'), { code: '42703' }));
     if (/INSERT INTO media_files/.test(text)) {
       if (!donos[params[1]]) donos[params[1]] = params[0];
       return Promise.resolve({ rows: [], rowCount: 1 });
@@ -120,10 +129,33 @@ describe('mídia autenticada (L7)', () => {
     expect(donos[relLegado]).toBe(tenantA);
   });
 
-  test('arquivo citado por duas clínicas não é reivindicado', async () => {
-    citacoes[relLegado] = [tenantA, tenantB];
+  test.each([
+    ['citado por duas clínicas', () => { citacoes[relLegado] = [{ tenant: tenantA, em: ANTES }, { tenant: tenantB, em: ANTES }]; }],
+    ['citação sem clínica (NULL) conta como conflito', () => { citacoes[relLegado] = [{ tenant: tenantA, em: ANTES }, { tenant: null, em: ANTES }]; }],
+    ['citação posterior ao backfill do L7', () => { citacoes[relLegado] = [{ tenant: tenantA, em: '2026-11-06T10:00:00.000Z' }]; }],
+    ['erro ao ler citações (falha fechada)', () => { citacaoFalha = '57014'; }],
+  ])('arquivo antigo não é reivindicado: %s', async (_, preparar) => {
+    preparar();
     expect((await request(app).get(`/uploads/media/${relLegado}`).set('Authorization', `Bearer ${token()}`)).status).toBe(404);
     expect(donos[relLegado]).toBeUndefined();
+  });
+
+  test('tabela/coluna ausente (42P01/42703) não impede reivindicar', async () => {
+    citacaoFalha = null;
+    const ok = await request(app).get(`/uploads/media/${relLegado}`).set('Authorization', `Bearer ${token()}`);
+    expect(ok.status).toBe(200);
+  });
+
+  test('resposta inline traz CSP restritiva; PDF sem sandbox', async () => {
+    const ok = await request(app).get(`/uploads/media/${relA}`).set('Authorization', `Bearer ${token()}`);
+    expect(ok.headers['content-security-policy']).toBe("default-src 'none'; img-src 'self'; media-src 'self'; sandbox");
+  });
+
+  test('POST /api/messages não sobrescreve mensagem de outra clínica com o mesmo id', async () => {
+    await request(app).post('/api/messages').set('Authorization', `Bearer ${token()}`)
+      .send({ id: 'm2', leadId: 'l1', content: 'oi', type: 'text' });
+    const ins = sqlLog.find(q => /INSERT INTO chat_messages/.test(q.text));
+    expect(ins.text).toMatch(/WHERE chat_messages\.tenant_id = EXCLUDED\.tenant_id/);
   });
 
   test('resposta JSON troca URL de mídia da clínica por link assinado e deixa a de outra clínica sem assinatura', async () => {
@@ -134,6 +166,7 @@ describe('mídia autenticada (L7)', () => {
     expect(up.body.url).toMatch(/^\/uploads\/media\/\d{4}-\d{2}\/[0-9a-f-]{36}\.png\?exp=\d+&sig=[0-9a-f]{64}$/);
     const ins = sqlLog.find(q => /INSERT INTO media_files/.test(q.text));
     expect(ins.params[0]).toBe(tenantA);
+    expect(ins.params[2]).toBe('image/png'); // tipo detectado pelo conteúdo
     await rm(path.join(__dirname, '..', '..', 'uploads', 'media', up.body.url.split('/')[3], up.body.url.split('/')[4].split('?')[0]), { force: true });
   });
 

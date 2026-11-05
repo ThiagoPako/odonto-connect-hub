@@ -18,7 +18,7 @@ import webpush from 'web-push';
 import path from 'path';
 import { randomUUID, createHash, createHmac, timingSafeEqual } from 'crypto';
 import { execFile } from 'child_process';
-import { mkdtemp, writeFile, readFile, rm, mkdir } from 'fs/promises';
+import { mkdtemp, writeFile, readFile, rm, mkdir, open } from 'fs/promises';
 import { tmpdir } from 'os';
 import { promisify } from 'util';
 import { existsSync } from 'fs';
@@ -122,7 +122,9 @@ async function saveMediaToDisk(base64OrDataUri, mimeType, originalFileName, dono
       'application/pdf': 'pdf', 'application/msword': 'doc',
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
     };
-    const ext = extMap[resolvedMime.split(';')[0].trim()] || originalFileName?.split('.').pop() || 'bin';
+    const extBruta = extMap[resolvedMime.split(';')[0].trim()] || originalFileName?.split('.').pop() || 'bin';
+    // Extensão em minúsculas e só [a-z0-9] (o caminho vira chave em media_files)
+    const ext = (String(extBruta).toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 10)) || 'bin';
 
     // Generate unique filename: YYYY-MM/uuid.ext
     const now = new Date();
@@ -139,7 +141,8 @@ async function saveMediaToDisk(base64OrDataUri, mimeType, originalFileName, dono
 
     // Return relative URL path
     const publicUrl = `/uploads/media/${subDir}/${fileName}`;
-    await registrarMidia(`${subDir}/${fileName}`, { ...dono, mimeType: resolvedMime.split(';')[0].trim(), tamanho: buffer.length });
+    // Tipo gravado é o detectado pelo conteúdo; desconhecido vira download (octet-stream)
+    await registrarMidia(`${subDir}/${fileName}`, { ...dono, mimeType: detectarMimeMidia(buffer) || 'application/octet-stream', tamanho: buffer.length });
     console.log(`💾 Media saved: ${publicUrl} (${(buffer.length / 1024).toFixed(1)} KB)`);
     return publicUrl;
   } catch (err) {
@@ -251,8 +254,8 @@ const JWT_EXPIRES_IN = '7d';
 // DEPOIS de checar a clínica, devolve um link com validade curta assinado por HMAC.
 const LINK_ASSINADO_SECRET = process.env.MEDIA_SIGNING_SECRET
   || createHmac('sha256', String(JWT_SECRET)).update('links-assinados-v1').digest('hex');
-// Telas: 8 h (um turno; a tela de chat não renova sozinha). Evolution: 10 min, só para o envio.
-const MEDIA_LINK_TTL_S = Math.max(300, Number(process.env.MEDIA_LINK_TTL_S) || 8 * 60 * 60);
+// Telas: 1 h por padrão (a tela renova com mediaApi.renovarLinks), teto de 8 h. Evolution: 10 min.
+const MEDIA_LINK_TTL_S = Math.min(8 * 60 * 60, Math.max(300, Number(process.env.MEDIA_LINK_TTL_S) || 60 * 60));
 const MEDIA_EVOLUTION_TTL_S = 10 * 60;
 
 function assinarLink(recurso, escopo, ttlS) {
@@ -277,7 +280,7 @@ const MEDIA_URL_RE = /^((?:https?:\/\/[^/?#\s]+)?\/uploads\/media\/)(\d{4}-\d{2}
 function caminhoDeMidia(valor) {
   if (typeof valor !== 'string') return null;
   const m = MEDIA_URL_RE.exec(valor.trim());
-  return m && MEDIA_REL_RE.test(m[2]) ? m[2] : null;
+  return m && MEDIA_REL_RE.test(m[2]) ? m[2].toLowerCase() : null;
 }
 
 /** URL limpa para gravar no banco (sem exp/sig). Outros valores voltam iguais. */
@@ -326,9 +329,10 @@ async function assinarMidiasNoCorpo(corpo, ctx) {
   return trocarStrings(corpo, (s) => {
     const m = MEDIA_URL_RE.exec(s.trim());
     if (!m) return s;
-    const t = dono.get(m[2]);
+    const rel = m[2].toLowerCase();
+    const t = dono.get(rel);
     if (!t || (!ctx.isSuperAdmin && t !== String(ctx.tenantId))) return s;
-    return urlMidiaAssinada(m[2], t, m[1]);
+    return urlMidiaAssinada(rel, t, m[1]);
   });
 }
 
@@ -339,6 +343,42 @@ const MEDIA_MIME_POR_EXT = {
   mp4: 'video/mp4', '3gp': 'video/3gpp', mov: 'video/quicktime', webm: 'video/webm',
   ogg: 'audio/ogg', mp3: 'audio/mpeg', m4a: 'audio/mp4', aac: 'audio/aac', pdf: 'application/pdf',
 };
+
+/** Tipo real pelos primeiros bytes (o que o cliente diz não vale para servir). */
+function detectarMimeMidia(buf) {
+  if (!Buffer.isBuffer(buf) || buf.length < 4) return null;
+  const hex = buf.subarray(0, 12).toString('hex');
+  const asc = (a, b) => buf.subarray(a, b).toString('latin1');
+  if (hex.startsWith('ffd8ff')) return 'image/jpeg';
+  if (hex.startsWith('89504e470d0a1a0a')) return 'image/png';
+  if (hex.startsWith('47494638')) return 'image/gif';
+  if (asc(0, 4) === 'RIFF' && asc(8, 12) === 'WEBP') return 'image/webp';
+  if (asc(0, 4) === 'RIFF' && asc(8, 12) === 'WAVE') return 'audio/wav';
+  if (hex.startsWith('25504446')) return 'application/pdf';
+  if (asc(0, 4) === 'OggS') return 'audio/ogg';
+  if (asc(0, 3) === 'ID3' || hex.startsWith('fffb') || hex.startsWith('fff3') || hex.startsWith('fff2')) return 'audio/mpeg';
+  if (hex.startsWith('fff1') || hex.startsWith('fff9')) return 'audio/aac';
+  if (hex.startsWith('1a45dfa3')) return 'video/webm';
+  if (buf.length >= 12 && asc(4, 8) === 'ftyp') {
+    const marca = asc(8, 12);
+    if (/^(M4A |M4B )/.test(marca)) return 'audio/mp4';
+    if (marca === 'qt  ') return 'video/quicktime';
+    if (/^3g/.test(marca)) return 'video/3gpp';
+    return 'video/mp4';
+  }
+  return null;
+}
+
+async function lerInicioDoArquivo(abs, n = 512) {
+  const fh = await open(abs, 'r');
+  try {
+    const buf = Buffer.alloc(n);
+    const { bytesRead } = await fh.read(buf, 0, n, 0);
+    return buf.subarray(0, bytesRead);
+  } finally {
+    await fh.close();
+  }
+}
 
 /** Grava quem é dono do arquivo. Sem clínica conhecida o arquivo fica sem dono e não é servido. */
 async function registrarMidia(rel, { tenantId, mimeType, tamanho, tipo, enviadoPor } = {}) {
@@ -359,38 +399,95 @@ async function registrarMidia(rel, { tenantId, mimeType, tamanho, tipo, enviadoP
   }
 }
 
-/**
- * Arquivo antigo (de antes do registro de dono): procura quem o cita no banco. Se só uma
- * clínica cita e é a do usuário, registra o dono e devolve a linha; senão null.
- */
-async function reivindicarMidiaLegada(rel, tenantId) {
-  if (!isValidTenantId(tenantId) || !MEDIA_REL_RE.test(rel)) return null;
-  const sufixo = `%/uploads/media/${rel}%`;
-  const fontes = [
-    ['chat', `SELECT DISTINCT tenant_id FROM chat_messages WHERE media_url LIKE $1 AND tenant_id IS NOT NULL`],
-    ['avatar', `SELECT DISTINCT tenant_id FROM profiles WHERE avatar_url LIKE $1 AND tenant_id IS NOT NULL`],
-    ['exame', `SELECT DISTINCT tenant_id FROM exames WHERE arquivo_url LIKE $1 AND tenant_id IS NOT NULL`],
-    ['prontuario', `SELECT DISTINCT tenant_id FROM prontuarios WHERE anexos::text LIKE $1 AND tenant_id IS NOT NULL`],
-  ];
-  const donos = new Set();
-  let tipo = 'other';
-  for (const [k, sql] of fontes) {
-    try {
-      const { rows } = await pool.query(sql, [sufixo]);
-      for (const r of rows) { donos.add(String(r.tenant_id)); tipo = k; }
-    } catch { /* tabela/coluna ausente neste banco */ }
+// Reivindicação de arquivo antigo (sem dono registrado) fica DESLIGADA por padrão: o backfill
+// do deploy já registra o dono de tudo que o banco cita. Ligar só para tratar sobra:
+// MEDIA_REIVINDICAR_LEGADO=1 (e reiniciar). Os conflitos ficam em media_files_conflitos.
+const MEDIA_REIVINDICAR_LEGADO = process.env.MEDIA_REIVINDICAR_LEGADO === '1';
+const MEDIA_REIVINDICACOES_POR_REQ = 20;
+const MEDIA_REIVINDICACOES_POR_HORA = 200;
+const reivindicacoesPorUsuario = new Map(); // userId → { inicio, n }
+
+function permitirReivindicacao(userId) {
+  const agora = Date.now();
+  const atual = reivindicacoesPorUsuario.get(userId);
+  if (!atual || agora - atual.inicio > 60 * 60 * 1000) {
+    reivindicacoesPorUsuario.set(userId, { inicio: agora, n: 1 });
+    return true;
   }
-  if (donos.size !== 1 || !donos.has(String(tenantId))) return null;
-  await registrarMidia(rel, { tenantId, tipo, mimeType: MEDIA_MIME_POR_EXT[rel.split('.').pop().toLowerCase()] });
-  const { rows } = await pool.query('SELECT tenant_id, mime_type FROM media_files WHERE path = $1', [rel]);
-  return rows[0] || null;
+  if (atual.n >= MEDIA_REIVINDICACOES_POR_HORA) return false;
+  atual.n++;
+  return true;
+}
+
+/** Caminho absoluto do arquivo (aceita extensão antiga em maiúsculas) ou null. */
+function midiaExisteNoDisco(rel) {
+  for (const r of [rel, rel.replace(/\.([a-z0-9]+)$/, (_, e) => `.${e.toUpperCase()}`)]) {
+    const abs = path.join(UPLOADS_DIR, r);
+    if (abs.startsWith(UPLOADS_DIR + path.sep) && existsSync(abs)) return abs;
+  }
+  return null;
+}
+
+/** Data do backfill do L7 (app_settings 'l7_media_backfill'); null se ainda não rodou. */
+async function dataBackfillMidia() {
+  const { rows } = await pool.query("SELECT value->>'executado_em' AS em FROM app_settings WHERE key = 'l7_media_backfill'");
+  const d = rows[0]?.em ? new Date(rows[0].em) : null;
+  return d && !Number.isNaN(d.getTime()) ? d : null;
+}
+
+/**
+ * Arquivo antigo sem dono registrado: só pode ser reivindicado se TODAS as citações no banco
+ * forem da clínica do usuário, com clínica preenchida (NULL conta como conflito) e anteriores
+ * ao backfill do L7. Qualquer erro de leitura (fora tabela/coluna ausente) → não reivindica.
+ * Roda em contexto de sistema (continua funcionando com FORCE RLS).
+ */
+async function reivindicarMidiaLegada(rel, tenantId, userId) {
+  if (!MEDIA_REIVINDICAR_LEGADO || !isValidTenantId(tenantId) || !MEDIA_REL_RE.test(rel)) return null;
+  if (userId && !permitirReivindicacao(userId)) return null;
+  if (!midiaExisteNoDisco(rel)) return null;
+  return tenantContext.run({ tenantId: null, isSuperAdmin: true }, async () => {
+    const corte = await dataBackfillMidia();
+    if (!corte) return null;
+    const padrao = `%/uploads/media/${rel}%`;
+    const fontes = [
+      ['chat', `SELECT tenant_id, COALESCE(created_at, "timestamp") AS em FROM chat_messages WHERE lower(media_url) LIKE $1`],
+      ['avatar', `SELECT tenant_id, COALESCE(updated_at, created_at) AS em FROM profiles WHERE lower(avatar_url) LIKE $1`],
+      ['exame', `SELECT tenant_id, COALESCE(updated_at, created_at) AS em FROM exames WHERE lower(arquivo_url) LIKE $1`],
+      ['prontuario', `SELECT tenant_id, COALESCE(updated_at, created_at) AS em FROM prontuarios WHERE lower(anexos::text) LIKE $1`],
+    ];
+    const donos = new Set();
+    let tipo = 'other';
+    for (const [k, sql] of fontes) {
+      let rows;
+      try {
+        ({ rows } = await pool.query(sql, [padrao]));
+      } catch (err) {
+        if (err?.code === '42P01' || err?.code === '42703') continue; // tabela/coluna não existe aqui
+        console.warn('[midia] reivindicação abortada (falha ao ler citações):', err?.code || err?.message);
+        return null; // falha fechada: sem certeza, sem dono
+      }
+      for (const r of rows) {
+        if (!r.tenant_id) return null;                    // citação sem clínica = conflito
+        if (!r.em || new Date(r.em) >= corte) return null; // citação depois do L7 não dá posse
+        donos.add(String(r.tenant_id));
+        tipo = k;
+      }
+    }
+    if (donos.size !== 1 || !donos.has(String(tenantId))) return null;
+    let mimeType = null;
+    try { mimeType = detectarMimeMidia(await lerInicioDoArquivo(midiaExisteNoDisco(rel))); } catch { mimeType = null; }
+    await registrarMidia(rel, { tenantId, tipo, mimeType: mimeType || 'application/octet-stream' });
+    const { rows } = await pool.query('SELECT tenant_id, mime_type FROM media_files WHERE path = $1', [rel]);
+    return rows[0] || null;
+  });
 }
 
 // GET /uploads/media/AAAA-MM/arquivo — link assinado OU Bearer da mesma clínica. Nunca público.
 async function servirMidia(req, res) {
   try {
-    const rel = `${req.params.mes}/${req.params.arquivo}`;
-    if (!MEDIA_REL_RE.test(rel)) return res.status(404).json({ error: 'Arquivo não encontrado' });
+    const relPedido = `${req.params.mes}/${req.params.arquivo}`;
+    if (!MEDIA_REL_RE.test(relPedido)) return res.status(404).json({ error: 'Arquivo não encontrado' });
+    const rel = relPedido.toLowerCase();
     const { rows } = await pool.query('SELECT tenant_id, mime_type FROM media_files WHERE path = $1', [rel]);
     let registro = rows[0] || null;
     if (req.query.sig) {
@@ -400,17 +497,25 @@ async function servirMidia(req, res) {
       }
     } else if (req.headers.authorization) {
       const { user } = await verifyUser(req);
-      if (!registro) registro = await reivindicarMidiaLegada(rel, user.tenant_id);
+      if (!registro) registro = await reivindicarMidiaLegada(rel, user.tenant_id, user.id);
       if (!registro || (!user.is_super_admin && String(registro.tenant_id) !== String(user.tenant_id))) {
         return res.status(404).json({ error: 'Arquivo não encontrado' });
       }
     } else {
       return res.status(401).json({ error: 'Unauthorized' });
     }
-    const abs = path.join(UPLOADS_DIR, rel);
+    // Arquivo antigo pode ter extensão em maiúsculas no disco
+    let abs = path.join(UPLOADS_DIR, rel);
+    if (!existsSync(abs)) abs = path.join(UPLOADS_DIR, relPedido);
+    if (!existsSync(abs)) abs = path.join(UPLOADS_DIR, rel.replace(/\.([a-z0-9]+)$/, (_, e) => `.${e.toUpperCase()}`));
     if (!abs.startsWith(UPLOADS_DIR + path.sep) || !existsSync(abs)) return res.status(404).json({ error: 'Arquivo não encontrado' });
-    const ext = rel.split('.').pop().toLowerCase();
-    const mime = String(registro.mime_type || MEDIA_MIME_POR_EXT[ext] || 'application/octet-stream').split(';')[0].trim();
+    let mime = registro.mime_type ? String(registro.mime_type).split(';')[0].trim() : null;
+    if (!mime) {
+      // Registro do backfill sem tipo: detecta pelo conteúdo e guarda
+      try { mime = detectarMimeMidia(await lerInicioDoArquivo(abs)); } catch { mime = null; }
+      mime = mime || 'application/octet-stream';
+      pool.query('UPDATE media_files SET mime_type = $1 WHERE path = $2 AND mime_type IS NULL', [mime, rel]).catch(() => {});
+    }
     const inline = MEDIA_INLINE_SEGURO.test(mime) && req.query.download !== '1';
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Cache-Control', 'private, max-age=300');
@@ -418,6 +523,11 @@ async function servirMidia(req, res) {
     if (!inline) {
       res.setHeader('Content-Disposition', 'attachment');
       res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+    } else if (mime === 'application/pdf') {
+      // Sem "sandbox": o Chrome bloqueia o visualizador de PDF com ele
+      res.setHeader('Content-Security-Policy', "default-src 'none'");
+    } else {
+      res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self'; media-src 'self'; sandbox");
     }
     res.sendFile(abs, { headers: { 'Content-Type': mime }, dotfiles: 'deny' }, (err) => {
       if (err && !res.headersSent) res.status(404).json({ error: 'Arquivo não encontrado' });
@@ -13876,7 +13986,8 @@ app.post('/api/messages', async (req, res) => {
              attendant_name = COALESCE(chat_messages.attendant_name, EXCLUDED.attendant_name),
              instance = COALESCE(chat_messages.instance, EXCLUDED.instance),
              phone = COALESCE(chat_messages.phone, EXCLUDED.phone),
-             tenant_id = COALESCE(chat_messages.tenant_id, EXCLUDED.tenant_id)`,
+             tenant_id = COALESCE(chat_messages.tenant_id, EXCLUDED.tenant_id)
+       WHERE chat_messages.tenant_id = EXCLUDED.tenant_id`,
       [
         id, leadId, content || '', type || 'text', initialStatus,
         persistedMediaUrl, fileName || null, mimeType || null,
@@ -13916,12 +14027,17 @@ app.post('/api/media/sign', async (req, res) => {
     if (!user.tenant_id && !user.is_super_admin) return res.status(403).json({ error: 'Sem tenant' });
     const lista = Array.isArray(req.body?.paths) ? req.body.paths.slice(0, 200) : [];
     const links = {};
+    let reivindicacoes = 0;
     for (const original of lista) {
       const rel = caminhoDeMidia(original);
       if (!rel) continue;
+      if (!midiaExisteNoDisco(rel)) continue; // não existe em disco: nem consulta
       const { rows } = await pool.query('SELECT tenant_id FROM media_files WHERE path = $1', [rel]);
       let dono = rows[0]?.tenant_id ? String(rows[0].tenant_id) : null;
-      if (!dono) dono = (await reivindicarMidiaLegada(rel, user.tenant_id))?.tenant_id ?? null;
+      if (!dono && reivindicacoes < MEDIA_REIVINDICACOES_POR_REQ) {
+        reivindicacoes++;
+        dono = (await reivindicarMidiaLegada(rel, user.tenant_id, user.id))?.tenant_id ?? null;
+      }
       if (!dono || (!user.is_super_admin && String(dono) !== String(user.tenant_id))) continue;
       links[original] = urlMidiaAssinada(rel, dono);
     }
@@ -16456,37 +16572,59 @@ app.get('/api/exame-arquivos/:arquivoId/conteudo', async (req, res) => {
   }
 });
 
-// Registra o dono (clínica) dos arquivos já citados no banco antes do L7. Roda uma vez
-// (marca em media_files_backfill). Caminho citado por mais de uma clínica NÃO é registrado:
-// fica sem servir até decisão humana (ver docs/operacao/l7-midia-autenticada.md).
-async function backfillMediaFiles() {
-  const { rows: feito } = await pool.query('SELECT 1 FROM media_files_backfill WHERE versao = 1');
+// Registra o dono (clínica) dos arquivos já citados no banco antes do L7. Roda uma vez (marca e
+// data em app_settings 'l7_media_backfill'; a data é o corte da reivindicação). Caminho citado por
+// mais de uma clínica, ou com citação sem clínica, NÃO é registrado: vai para media_files_conflitos
+// para tratamento manual. Em contexto de sistema (funciona com FORCE RLS).
+const backfillMediaFiles = asSystemJob(async () => {
+  const { rows: feito } = await pool.query("SELECT 1 FROM app_settings WHERE key = 'l7_media_backfill'");
   if (feito.length) return;
   const re = `'/uploads/media/([0-9]{4}-[0-9]{2}/[0-9a-fA-F-]{36}\\.[A-Za-z0-9]{1,10})'`;
   const fontes = [];
   const existe = async (t, c) => (await pool.query(
     `SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name=$1 AND column_name=$2`, [t, c])).rows.length > 0;
-  if (await existe('chat_messages', 'media_url')) fontes.push(`SELECT tenant_id, substring(media_url from ${re}) AS path, 'chat' AS kind FROM chat_messages WHERE media_url LIKE '%/uploads/media/%'`);
-  if (await existe('profiles', 'avatar_url')) fontes.push(`SELECT tenant_id, substring(avatar_url from ${re}), 'avatar' FROM profiles WHERE avatar_url LIKE '%/uploads/media/%'`);
-  if (await existe('exames', 'arquivo_url')) fontes.push(`SELECT tenant_id, substring(arquivo_url from ${re}), 'exame' FROM exames WHERE arquivo_url LIKE '%/uploads/media/%'`);
-  if (await existe('prontuarios', 'anexos')) fontes.push(`SELECT tenant_id, (regexp_matches(anexos::text, ${re}, 'g'))[1], 'prontuario' FROM prontuarios WHERE anexos::text LIKE '%/uploads/media/%'`);
+  if (await existe('chat_messages', 'media_url')) fontes.push(`SELECT tenant_id, lower(substring(media_url from ${re})) AS path, 'chat' AS kind FROM chat_messages WHERE media_url LIKE '%/uploads/media/%'`);
+  if (await existe('profiles', 'avatar_url')) fontes.push(`SELECT tenant_id, lower(substring(avatar_url from ${re})), 'avatar' FROM profiles WHERE avatar_url LIKE '%/uploads/media/%'`);
+  if (await existe('exames', 'arquivo_url')) fontes.push(`SELECT tenant_id, lower(substring(arquivo_url from ${re})), 'exame' FROM exames WHERE arquivo_url LIKE '%/uploads/media/%'`);
+  if (await existe('prontuarios', 'anexos')) fontes.push(`SELECT tenant_id, lower((regexp_matches(anexos::text, ${re}, 'g'))[1]), 'prontuario' FROM prontuarios WHERE anexos::text LIKE '%/uploads/media/%'`);
   if (!fontes.length) return;
-  const { rowCount } = await pool.query(
-    `INSERT INTO media_files (tenant_id, path, kind)
-     SELECT (array_agg(DISTINCT tenant_id))[1], path, min(kind)
-       FROM (${fontes.join(' UNION ALL ')}) r
-      WHERE path IS NOT NULL AND tenant_id IS NOT NULL
-      GROUP BY path
-     HAVING count(DISTINCT tenant_id) = 1
-     ON CONFLICT (path) DO NOTHING`
-  );
-  const { rows: conflitos } = await pool.query(
-    `SELECT count(*)::int AS n FROM (SELECT path FROM (${fontes.join(' UNION ALL ')}) r
-       WHERE path IS NOT NULL AND tenant_id IS NOT NULL GROUP BY path HAVING count(DISTINCT tenant_id) > 1) x`
-  );
-  await pool.query('INSERT INTO media_files_backfill (versao, registrados) VALUES (1, $1) ON CONFLICT DO NOTHING', [rowCount]);
-  console.log(`[midia] backfill: ${rowCount} arquivo(s) com dono registrado; ${conflitos[0]?.n || 0} citado(s) por mais de uma clínica (não servidos)`);
-}
+  const uniao = fontes.join(' UNION ALL ');
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rowCount } = await client.query(
+      `INSERT INTO media_files (tenant_id, path, kind)
+       SELECT (array_agg(DISTINCT tenant_id))[1], path, min(kind)
+         FROM (${uniao}) r
+        WHERE path IS NOT NULL
+        GROUP BY path
+       HAVING count(DISTINCT tenant_id) = 1 AND bool_and(tenant_id IS NOT NULL)
+       ON CONFLICT (path) DO NOTHING`
+    );
+    const conflitos = await client.query(
+      `INSERT INTO media_files_conflitos (path, tenants, tem_sem_clinica, fontes)
+       SELECT path, array_remove(array_agg(DISTINCT tenant_id), NULL), bool_or(tenant_id IS NULL), array_agg(DISTINCT kind)
+         FROM (${uniao}) r
+        WHERE path IS NOT NULL
+        GROUP BY path
+       HAVING count(DISTINCT tenant_id) > 1 OR bool_or(tenant_id IS NULL)
+       ON CONFLICT (path) DO NOTHING`
+    );
+    await client.query(
+      `INSERT INTO app_settings (key, value, updated_at)
+       VALUES ('l7_media_backfill', jsonb_build_object('executado_em', NOW(), 'registrados', $1::int, 'conflitos', $2::int), NOW())
+       ON CONFLICT (key) DO NOTHING`,
+      [rowCount, conflitos.rowCount]
+    );
+    await client.query('COMMIT');
+    console.log(`[midia] backfill: ${rowCount} arquivo(s) com dono registrado; ${conflitos.rowCount} em conflito (não servidos; ver media_files_conflitos)`);
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+});
 
 // ═══════════════════════════════════════════════════════════════
 // START SERVER
@@ -16515,7 +16653,15 @@ if (process.env.NODE_ENV !== 'test') {
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )`,
       `CREATE INDEX IF NOT EXISTS idx_media_files_tenant ON media_files (tenant_id, created_at DESC)`,
-      `CREATE TABLE IF NOT EXISTS media_files_backfill (versao INT PRIMARY KEY, executado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(), registrados INT)`,
+      `CREATE TABLE IF NOT EXISTS media_files_conflitos (
+        path TEXT PRIMARY KEY,
+        tenants UUID[] NOT NULL DEFAULT '{}',
+        tem_sem_clinica BOOLEAN NOT NULL DEFAULT false,
+        fontes TEXT[],
+        detectado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        resolvido_em TIMESTAMPTZ,
+        observacao TEXT
+      )`,
 
       // ─── 0. Enable RLS and tenant session support ───
       `CREATE OR REPLACE FUNCTION set_tenant(t_id UUID) RETURNS VOID AS $$
