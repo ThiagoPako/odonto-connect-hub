@@ -10,6 +10,9 @@ interface AIProvider {
   api_key: string;
   model: string;
   enabled: boolean;
+  /** false = chave da plataforma; o admin da clínica não pode ver nem trocar */
+  editable?: boolean;
+  configured?: boolean;
 }
 
 const DEFAULT_PROVIDERS: AIProvider[] = [
@@ -49,7 +52,14 @@ export function AISettingsPanel() {
         prev.map(p => {
           const saved = data.find((s: AIProvider) => s.provider === p.provider);
           return saved
-            ? { ...p, api_key: saved.api_key || "", model: saved.model || p.model, enabled: saved.enabled }
+            ? {
+                ...p,
+                api_key: saved.api_key || "",
+                model: saved.model || p.model,
+                enabled: saved.enabled,
+                editable: saved.editable !== false,
+                configured: saved.configured,
+              }
             : p;
         })
       );
@@ -128,6 +138,7 @@ export function AISettingsPanel() {
                 <p className="text-[11px] text-muted-foreground">{provider.description}</p>
               </div>
             </div>
+            {provider.editable !== false && (
             <button
               onClick={() => {
                 updateProvider(provider.provider, "enabled", !provider.enabled);
@@ -142,8 +153,16 @@ export function AISettingsPanel() {
                 }`}
               />
             </button>
+            )}
           </div>
 
+          {provider.editable === false ? (
+            <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+              <Key className="h-3 w-3" />
+              {provider.configured ? "Configurado pela plataforma" : "Ainda não configurado pela plataforma"}
+            </p>
+          ) : (
+          <>
           <div className="space-y-2">
             <label className="text-xs font-medium text-foreground flex items-center gap-1.5">
               <Key className="h-3 w-3" /> API Key
@@ -195,6 +214,8 @@ export function AISettingsPanel() {
             )}
             Salvar {provider.label}
           </button>
+          </>
+          )}
 
           {provider.provider === "openai" && provider.api_key && provider.enabled && (
             <div className="flex items-center gap-1.5 text-[11px] text-success">
