@@ -249,10 +249,11 @@ const PLACEHOLDER_TENANT_IDS = new Set([
   '00000000-0000-0000-0000-000000000000',
   '00000000-0000-0000-0000-000000000001',
 ]);
+const TENANT_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 function isValidTenantId(id) {
   if (!id) return false;
   const s = String(id).toLowerCase();
-  return !PLACEHOLDER_TENANT_IDS.has(s);
+  return TENANT_UUID_RE.test(s) && !PLACEHOLDER_TENANT_IDS.has(s);
 }
 
 function getCachedTenantId(instanceName) {
@@ -977,9 +978,9 @@ async function verifySuperAdmin(req) {
 
 async function verifyAdmin(req) {
   const { user } = await verifyUser(req);
-  // Super Admins bypass normal admin checks for maintenance
-  if (user.is_super_admin) return { user };
   // Papel atual do banco (não o do JWT): rebaixamento/desativação vale na hora.
+  // Super-admin não tem mais passe livre: só é admin na clínica onde tem perfil de admin
+  // (mesma regra do exigePapel; LGPD art. 37). O painel /api/super-admin/* usa verifySuperAdmin.
   if ((await papelAtual(user)) !== 'admin') {
     console.warn(`[SECURITY] Access denied: user=${user.id} is not an admin`);
     throw new Error('Admin access required');

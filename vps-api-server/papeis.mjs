@@ -38,7 +38,8 @@ export function limparCachePapel(userId, tenantId) {
 export async function papelAtual(pool, user) {
   if (!user?.id || !user?.tenant_id) return null;
   const chave = chaveDe(user.id, user.tenant_id);
-  const hit = cache.get(chave) || cache.get(chaveDe(user.id, '*'));
+  // A chave curinga '*' só existe nos testes (pool mockado); fora deles nunca é lida.
+  const hit = cache.get(chave) || (process.env.NODE_ENV === 'test' ? cache.get(chaveDe(user.id, '*')) : undefined);
   if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.papel;
   const { rows } = await pool.query(
     `SELECT ur.role::text AS papel_ur, p.role::text AS papel_perfil, COALESCE(p.active, true) AS ativo

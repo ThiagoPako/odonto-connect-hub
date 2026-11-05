@@ -270,3 +270,32 @@ describe('papel por clínica e super-admin', () => {
     expect(req.papel).toBe('super_admin');
   });
 });
+
+describe('ajustes finais do Igor', () => {
+  test("chave curinga '*' só vale com NODE_ENV=test", async () => {
+    _definirPapelParaTestes('u-curinga', 'admin');
+    const vazio = { query: jest.fn().mockResolvedValue({ rows: [] }) };
+    expect(await papelAtual(vazio, { id: 'u-curinga', tenant_id: tenantA })).toBe('admin');
+    const antes = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      expect(await papelAtual(vazio, { id: 'u-curinga', tenant_id: tenantA })).toBeNull();
+    } finally {
+      process.env.NODE_ENV = antes;
+    }
+  });
+
+  test('tenant que não é UUID é recusado (isValidTenantId)', async () => {
+    const tk = jwt.sign({ sub: usuario, email: 'p@c.com', role: 'admin', tenant_id: 'clinica-a', is_super_admin: false }, JWT_SECRET);
+    const res = await request(app).get('/api/attendance-settings').set('Authorization', `Bearer ${tk}`);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({});
+    expect(sqlLog.some(q => /FROM tenant_settings/.test(q.text))).toBe(false);
+  });
+
+  test('verifyAdmin: super-admin fora da própria clínica → 403', async () => {
+    const tk = jwt.sign({ sub: 'sa-x', email: 'root@p.com', role: 'admin', tenant_id: tenantA, is_super_admin: true }, JWT_SECRET);
+    const res = await request(app).put('/api/attendance-settings').set('Authorization', `Bearer ${tk}`).send({});
+    expect(res.status).toBe(403);
+  });
+});
