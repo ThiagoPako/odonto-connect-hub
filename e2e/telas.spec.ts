@@ -106,11 +106,8 @@ test.describe("Chat (#53)", () => {
     await expect(page.locator(`#msg-m${id}-159`)).not.toContainText("mensagem número 159");
   });
 
-  // BUG (fora do #53): GET /api/messages/search devolve 500 `operator does not exist: uuid = text` porque faz
-  // `LEFT JOIN crm_leads l ON l.id = m.lead_id` (chat_messages.lead_id é TEXT; server.mjs ~14131). Mesma classe do B1.
-  // test.fail: verde enquanto o bug existir, vermelho quando corrigirem (aí remover o test.fail).
+  // Regressão: GET /api/messages/search dava 500 (uuid = text no JOIN com crm_leads); corrigido no #42.
   test("C4. busca real no histórico responde 200 e acha a mensagem", async ({ page }) => {
-    test.fail(true, "GET /api/messages/search: uuid = text (JOIN crm_leads l ON l.id = m.lead_id sem ::text)");
     const { id, leadId } = await conversaComHistorico(page);
     const r = await page.request.get(`/api/messages/search?q=${encodeURIComponent(`palavra-rara-${id}`)}&lead_id=${leadId}`, { headers: await auth(page) });
     expect(r.status()).toBe(200);
