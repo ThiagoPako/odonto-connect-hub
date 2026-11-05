@@ -1,3 +1,4 @@
+import { escapeHtml } from "@/lib/safeHtml";
 /**
  * Gera um PDF de prescrição médica odontológica e abre para impressão/download.
  */
@@ -29,7 +30,7 @@ export function exportarPrescricaoPdf(data: PrescricaoData) {
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
-<title>Prescrição - ${data.pacienteNome}</title>
+<title>Prescrição - ${escapeHtml(data.pacienteNome)}</title>
 <style>
   @page { size: A4; margin: 20mm 25mm; }
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -83,27 +84,27 @@ export function exportarPrescricaoPdf(data: PrescricaoData) {
   <div class="patient-info">
     <div class="row">
       <span class="label">Paciente:</span>
-      <span class="value">${data.pacienteNome}</span>
-      ${data.pacienteIdade ? `<span class="label" style="margin-left:auto;">Idade:</span><span class="value">${data.pacienteIdade} anos</span>` : ""}
+      <span class="value">${escapeHtml(data.pacienteNome)}</span>
+      ${data.pacienteIdade ? `<span class="label" style="margin-left:auto;">Idade:</span><span class="value">${escapeHtml(data.pacienteIdade)} anos</span>` : ""}
     </div>
-    ${data.pacienteTelefone ? `<div class="row"><span class="label">Telefone:</span><span class="value">${data.pacienteTelefone}</span></div>` : ""}
+    ${data.pacienteTelefone ? `<div class="row"><span class="label">Telefone:</span><span class="value">${escapeHtml(data.pacienteTelefone)}</span></div>` : ""}
   </div>
 
   <div class="rx-symbol">Rx</div>
 
   ${data.prescricoes.map((rx, i) => `
     <div class="prescricao-item">
-      <div class="medicamento">${i + 1}. ${rx.medicamento} ${rx.dosagem ? `— ${rx.dosagem}` : ""}</div>
+      <div class="medicamento">${i + 1}. ${escapeHtml(rx.medicamento)} ${rx.dosagem ? `— ${escapeHtml(rx.dosagem)}` : ""}</div>
       <div class="detalhes">
-        ${rx.posologia ? `<span><span class="dlabel">Posologia</span>${rx.posologia}</span>` : ""}
-        ${rx.duracao ? `<span><span class="dlabel">Duração</span>${rx.duracao}</span>` : ""}
+        ${rx.posologia ? `<span><span class="dlabel">Posologia</span>${escapeHtml(rx.posologia)}</span>` : ""}
+        ${rx.duracao ? `<span><span class="dlabel">Duração</span>${escapeHtml(rx.duracao)}</span>` : ""}
       </div>
     </div>
   `).join("")}
 
   ${data.observacoes ? `
     <div class="observacoes">
-      <strong>Observações:</strong> ${data.observacoes}
+      <strong>Observações:</strong> ${escapeHtml(data.observacoes)}
     </div>
   ` : ""}
 
@@ -111,8 +112,8 @@ export function exportarPrescricaoPdf(data: PrescricaoData) {
 
   <div class="footer">
     <div class="linha"></div>
-    <div class="nome">${data.profissional}</div>
-    ${data.croProfissional ? `<div class="cro">CRO: ${data.croProfissional}</div>` : `<div class="cro">Cirurgião(ã) Dentista</div>`}
+    <div class="nome">${escapeHtml(data.profissional)}</div>
+    ${data.croProfissional ? `<div class="cro">CRO: ${escapeHtml(data.croProfissional)}</div>` : `<div class="cro">Cirurgião(ã) Dentista</div>`}
   </div>
 
   <div class="disclaimer">

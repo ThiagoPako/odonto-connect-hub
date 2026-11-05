@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { localDateISO } from "@/lib/utils";
+import { simpleMarkdownToHtml } from "@/lib/safeHtml";
 import { useState, useCallback, useEffect, useRef } from "react";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import {
@@ -1127,14 +1128,7 @@ function ConsultaPage() {
                               <div className="bg-card border border-primary/20 rounded-xl p-5">
                                 <div className="prose prose-sm max-w-none text-foreground text-xs leading-relaxed"
                                      dangerouslySetInnerHTML={{
-                                       __html: aiState.report
-                                         .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-                                         .replace(/^### (.*$)/gm, '<h4 class="text-sm font-semibold text-foreground mt-3 mb-1">$1</h4>')
-                                         .replace(/^## (.*$)/gm, '<h3 class="text-sm font-bold text-foreground mt-4 mb-2">$1</h3>')
-                                         .replace(/^# (.*$)/gm, '<h2 class="text-base font-bold text-foreground mt-4 mb-2">$1</h2>')
-                                         .replace(/^- (.*$)/gm, '<li class="ml-4 list-disc text-muted-foreground">$1</li>')
-                                         .replace(/\n\n/g, '<br/><br/>')
-                                         .replace(/\n/g, '<br/>')
+                                       __html: simpleMarkdownToHtml(aiState.report)
                                      }}
                                 />
                               </div>
