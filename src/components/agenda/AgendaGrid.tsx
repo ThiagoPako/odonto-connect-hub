@@ -127,6 +127,37 @@ function timeToMin(t: string) {
   return h * 60 + m;
 }
 
+/**
+ * Distribui agendamentos que se sobrepõem no tempo em faixas lado a lado
+ * (como agendas de calendário), para os textos não ficarem um em cima do outro.
+ * Devolve, por id, a faixa e quantas faixas o grupo de sobreposição tem.
+ */
+function layoutLanes(apts: AgendamentoVPS[]): Map<string, { lane: number; lanes: number }> {
+  const items = apts
+    .map((a) => {
+      const start = timeToMin(a.hora || "00:00");
+      return { id: a.id, start, end: start + Math.max(a.duracao || 30, 1) };
+    })
+    .sort((x, y) => x.start - y.start || y.end - x.end);
+  const out = new Map<string, { lane: number; lanes: number }>();
+  let cluster: { id: string; lane: number }[] = [];
+  let laneEnds: number[] = [];
+  let clusterEnd = -1;
+  const flush = () => {
+    for (const c of cluster) out.set(c.id, { lane: c.lane, lanes: laneEnds.length });
+    cluster = []; laneEnds = [];
+  };
+  for (const it of items) {
+    if (it.start >= clusterEnd) { flush(); clusterEnd = -1; }
+    let lane = laneEnds.findIndex((end) => end <= it.start);
+    if (lane === -1) { lane = laneEnds.length; laneEnds.push(it.end); } else laneEnds[lane] = it.end;
+    cluster.push({ id: it.id, lane });
+    clusterEnd = Math.max(clusterEnd, it.end);
+  }
+  flush();
+  return out;
+}
+
 function initials(name: string) {
   return name
     .split(" ")
@@ -140,22 +171,63 @@ export function AgendaGrid({
   professionals, appointments, intervalo, inicio, fim, onCellClick, onAppointmentClick,
 }: Props) {
   const isDark = useIsDark();
-  const slots = useMemo(() => buildSlots(inicio, fim, intervalo), [inicio, fim, intervalo]);
-  const startMin = timeToMin(inicio);
+  // Eventos de dia inteiro (gravados como 00:00 + 1440 min) não entram na grade
+  // de horários: cobririam a coluna inteira e bloqueariam os cliques. Ficam numa
+  // faixa própria acima da grade.
+  const { timed, allDay } = useMemo(() => {
+    const timed: AgendamentoVPS[] = [];
+    const allDay: AgendamentoVPS[] = [];
+    for (const a of appointments) {
+      if (a.dia_inteiro || (a.duracao || 0) >= 24 * 60) allDay.push(a);
+      else timed.push(a);
+    }
+    return { timed, allDay };
+  }, [appointments]);
+  // Amplia a grade para caber consultas marcadas antes/depois do expediente
+  // (ex.: vindas do Clinicorp). Sem isso elas sumiam da tela sem aviso.
+  // A ampliação anda em múltiplos do intervalo a partir do expediente, para o
+  // horário de abertura continuar sendo o começo de um slot.
+  const { gridInicio, gridFim, foraExpediente, expIni, expFim } = useMemo(() => {
+    const expIni = timeToMin(inicio);
+    const expFim = timeToMin(fim);
+    const passo = Math.max(1, intervalo);
+    let ini = expIni;
+    let end = expFim;
+    let fora = 0;
+    for (const a of timed) {
+      if (!a.hora || !/^\d{1,2}:\d{2}/.test(a.hora)) continue;
+      const s = timeToMin(a.hora);
+      const e = s + Math.max(a.duracao || 30, 1);
+      if (s < expIni || s >= expFim) fora++;
+      if (s < ini) {
+        const k = Math.min(Math.ceil((expIni - s) / passo), Math.floor(expIni / passo));
+        ini = Math.min(ini, expIni - k * passo);
+      }
+      if (e > end) {
+        end = Math.max(end, Math.min(24 * 60, expFim + Math.ceil((e - expFim) / passo) * passo));
+      }
+    }
+    const fmt = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+    return { gridInicio: fmt(ini), gridFim: fmt(end), foraExpediente: fora, expIni, expFim };
+  }, [timed, inicio, fim, intervalo]);
+  const slots = useMemo(() => buildSlots(gridInicio, gridFim, intervalo), [gridInicio, gridFim, intervalo]);
+  const startMin = timeToMin(gridInicio);
   const SLOT_HEIGHT = 48; // px por slot (mais ar para design premium)
   const totalHeight = slots.length * SLOT_HEIGHT;
   const slotsPerHour = Math.max(1, Math.round(60 / intervalo));
 
-  // Agrupa appointments por profissional
+  // Agrupa appointments (só os com horário) por profissional
   const byProf = useMemo(() => {
     const map = new Map<string, AgendamentoVPS[]>();
-    for (const a of appointments) {
+    for (const a of timed) {
       const arr = map.get(a.dentista_id) || [];
       arr.push(a);
       map.set(a.dentista_id, arr);
     }
     return map;
-  }, [appointments]);
+  }, [timed]);
+  const profNome = (id: string | null | undefined) =>
+    professionals.find((p) => p.id === id)?.nome;
 
   if (professionals.length === 0) {
     return (
@@ -168,6 +240,30 @@ export function AgendaGrid({
   return (
     <TooltipProvider>
     <div className="flex-1 overflow-auto glass-card rounded-2xl border-none shadow-xl animate-fade-in">
+      {foraExpediente > 0 && (
+        <div role="status" className="px-3 py-1.5 text-[11px] font-medium text-amber-700 dark:text-amber-300 bg-amber-500/10 border-b border-amber-500/20">
+          {foraExpediente} agendamento(s) fora do horário de atendimento deste dia. A grade foi ampliada só para mostrá-los: as linhas listradas estão fora do expediente e não aceitam novos agendamentos.
+        </div>
+      )}
+      {allDay.length > 0 && (
+        <div className="px-3 py-2 border-b border-border/40 flex flex-wrap items-center gap-2">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Dia inteiro</span>
+          {allDay.map((a) => {
+            const quem = a.dentista_id ? profNome(a.dentista_id) : "Clínica toda";
+            const titulo = a.evento_titulo || a.paciente_nome || a.procedimento || "Compromisso";
+            return (
+              <button
+                key={a.id}
+                type="button"
+                onClick={() => onAppointmentClick(a)}
+                className="text-[11px] font-medium px-2 py-1 rounded-md bg-muted hover:bg-muted/70 text-foreground border border-border/40 transition-colors"
+              >
+                {titulo}{quem ? ` · ${quem}` : ""}
+              </button>
+            );
+          })}
+        </div>
+      )}
       <div className="min-w-fit">
         {/* Header com nomes dos profissionais */}
         <div
@@ -209,14 +305,18 @@ export function AgendaGrid({
           <div className="border-r border-border/40 relative bg-muted/5">
             {slots.map((s, i) => {
               const isHour = i % slotsPerHour === 0;
+              const sm = timeToMin(s);
+              const fora = sm < expIni || sm >= expFim;
               return (
                 <div
                   key={s}
-                  className={`text-[11px] pr-2 text-right ${
+                  className={cn(
+                    "text-[11px] pr-2 text-right",
                     isHour
                       ? "text-foreground/80 font-medium border-b border-border/30"
-                      : "text-muted-foreground/40 border-b border-border/10"
-                  }`}
+                      : "text-muted-foreground/40 border-b border-border/10",
+                    fora && "bg-muted/40 text-muted-foreground/60",
+                  )}
                   style={{ height: SLOT_HEIGHT, lineHeight: `${SLOT_HEIGHT}px` }}
                 >
                   {isHour ? s : ""}
@@ -228,12 +328,30 @@ export function AgendaGrid({
           {/* Colunas dos profissionais */}
           {professionals.map((prof, profIdx) => {
             const apts = byProf.get(prof.id) || [];
+            const lanes = layoutLanes(apts);
             const profColor = PROF_COLORS[profIdx % PROF_COLORS.length];
             return (
               <div key={prof.id} className="relative border-r border-border/60">
                 {/* células base (clicáveis) */}
                 {slots.map((s, i) => {
                   const isHour = i % slotsPerHour === 0;
+                  const sm = timeToMin(s);
+                  if (sm < expIni || sm >= expFim) {
+                    // Fora do expediente: só aparece porque há agendamento nesse dia.
+                    // Não abre "Novo agendamento" para não marcar fora do horário.
+                    return (
+                      <div
+                        key={s}
+                        aria-hidden="true"
+                        title="Fora do horário de atendimento"
+                        className={cn(
+                          "bg-muted/40 bg-[repeating-linear-gradient(135deg,transparent_0,transparent_6px,var(--border)_6px,var(--border)_7px)] cursor-not-allowed",
+                          isHour ? "border-b border-border/60" : "border-b border-border/15",
+                        )}
+                        style={{ height: SLOT_HEIGHT }}
+                      />
+                    );
+                  }
                   return (
                     <div
                       key={s}
@@ -258,7 +376,8 @@ export function AgendaGrid({
                   const height = Math.max(SLOT_HEIGHT, ((a.duracao || 30) / intervalo) * SLOT_HEIGHT);
                   const status = STATUS_STYLE[a.status] || STATUS_STYLE.agendado;
                   const StatusIcon = status.icon;
-                  const compact = height < 50;
+                  const lanePos = lanes.get(a.id) || { lane: 0, lanes: 1 };
+                  const compact = height < 50 || lanePos.lanes > 2;
                   
                   // Verifica se é um evento compartilhado (mesmo título, data e hora)
                   const others = a.evento_titulo ? appointments.filter(apt => 
@@ -291,8 +410,9 @@ export function AgendaGrid({
                             e.stopPropagation();
                             onAppointmentClick(a);
                           }}
+                          aria-label={`${(a.hora || "").slice(0, 5)} · ${a.paciente_nome || "Sem paciente"}${a.procedimento ? ` · ${a.procedimento}` : ""} · ${status.label}`}
                           className={cn(
-                            "absolute left-1 right-1 rounded-xl border shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] overflow-hidden text-left group/apt",
+                            "absolute rounded-xl border shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)] overflow-hidden text-left group/apt",
                             validHex
                               ? "hover:border-foreground/30"
                               : "bg-muted/30 border-dashed border-border/40 hover:border-primary/40 hover:bg-muted/50",
@@ -301,6 +421,8 @@ export function AgendaGrid({
                           style={{
                             top,
                             height: height - 2,
+                            left: `calc(${(lanePos.lane / lanePos.lanes) * 100}% + 4px)`,
+                            width: `calc(${100 / lanePos.lanes}% - 8px)`,
                             background: isShared ? undefined : catBg,
                             borderColor: isShared ? undefined : catBorder,
                           }}
@@ -323,9 +445,15 @@ export function AgendaGrid({
                       <div className={`absolute right-0 top-0 bottom-0 w-0.5 ${profColor.bar} opacity-60`} />
 
                       <div className={`pl-4 pr-2 ${compact ? "py-1" : "py-2"} h-full flex flex-col justify-center gap-1`}>
-                        <div className="flex items-center justify-between min-w-0">
+                        <div className="flex items-center justify-between gap-1 min-w-0">
+                          {compact && (
+                            <span className={`inline-flex items-center justify-center h-4 w-4 rounded-full ${status.chip} shrink-0`} title={status.label}>
+                              <StatusIcon className="h-2.5 w-2.5" />
+                            </span>
+                          )}
                           <span className="text-[12px] font-bold text-foreground tracking-tight truncate flex-1 uppercase">
-                            {a.evento_titulo || a.procedimento || a.paciente_nome}
+                            {compact && <span className="font-medium text-muted-foreground mr-1">{(a.hora || "").slice(0, 5)}</span>}
+                            {(isShared && a.evento_titulo) || a.paciente_nome || a.evento_titulo || a.procedimento || "Sem paciente"}
                           </span>
                           {!compact && (
                             <span
@@ -350,7 +478,7 @@ export function AgendaGrid({
                             <div className="flex items-center gap-2 text-[10px] text-muted-foreground/80 font-medium">
                               <div className="flex items-center gap-1">
                                 <Clock className="h-3 w-3" />
-                                <span>{a.hora}</span>
+                                <span>{(a.hora || "").slice(0, 5)}</span>
                               </div>
                               {a.duracao ? (
                                 <div className="flex items-center gap-1 before:content-['·'] before:mr-1">

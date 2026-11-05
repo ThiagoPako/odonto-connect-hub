@@ -44,6 +44,7 @@ function ReativacaoPage() {
   const [kpis, setKpis] = useState<ReactivationKpis | null>(null);
   const [loadingRules, setLoadingRules] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [kpisError, setKpisError] = useState<string | null>(null);
 
   const [selectedRule, setSelectedRule] = useState<ReactivationRule | null>(null);
   const [showNewForm, setShowNewForm] = useState(false);
@@ -65,13 +66,15 @@ function ReativacaoPage() {
   const loadAll = useCallback(async () => {
     setLoadingRules(true);
     setError(null);
+    setKpisError(null);
     const [rulesRes, kpisRes] = await Promise.all([
       reativacaoApi.listRules(),
       reativacaoApi.kpis(),
     ]);
     if (rulesRes.error) setError(rulesRes.error);
     setRules(rulesRes.data || []);
-    setKpis(kpisRes.data || null);
+    if (kpisRes.error) setKpisError(kpisRes.error);
+    setKpis(kpisRes.error ? null : kpisRes.data || null);
     setLoadingRules(false);
   }, []);
 
@@ -190,10 +193,11 @@ function ReativacaoPage() {
     else setPatients(r.data || []);
   };
 
-  const totalActive = kpis?.activeRules ?? 0;
-  const totalMatched = kpis?.inactivePatients ?? 0;
-  const totalSent = kpis?.messagesSent ?? 0;
-  const avgResponse = kpis?.responseRate ?? 0;
+  // Sem KPIs (falha na carga): mostra "—" em vez de 0, que pareceria dado real.
+  const totalActive = kpis ? String(kpis.activeRules ?? 0) : "—";
+  const totalMatched = kpis ? String(kpis.inactivePatients ?? 0) : "—";
+  const totalSent = kpis ? String(kpis.messagesSent ?? 0) : "—";
+  const avgResponse = kpis ? `${(kpis.responseRate ?? 0).toFixed(0)}%` : "—";
 
   return (
     <div className="flex-1 flex flex-col min-h-screen">
@@ -201,15 +205,37 @@ function ReativacaoPage() {
       <main className="flex-1 p-6 overflow-auto space-y-5">
         {/* KPIs */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <KpiBox icon={RefreshCcw} label="Regras Ativas" value={String(totalActive)} color="text-primary" />
-          <KpiBox icon={Users} label="Pacientes Inativos" value={String(totalMatched)} color="text-warning" />
-          <KpiBox icon={Send} label="Mensagens Enviadas" value={String(totalSent)} color="text-chart-1" />
-          <KpiBox icon={MessageSquare} label="Taxa de Resposta" value={`${avgResponse.toFixed(0)}%`} color="text-success" />
+          <KpiBox icon={RefreshCcw} label="Regras Ativas" value={totalActive} color="text-primary" />
+          <KpiBox icon={Users} label="Pacientes Inativos" value={totalMatched} color="text-warning" />
+          <KpiBox icon={Send} label="Mensagens Enviadas" value={totalSent} color="text-chart-1" />
+          <KpiBox icon={MessageSquare} label="Taxa de Resposta" value={avgResponse} color="text-success" />
         </div>
 
+        {kpisError && !error && (
+          <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive flex flex-wrap items-center gap-2">
+            <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+            <span className="flex-1 min-w-0">Não foi possível carregar os indicadores: {kpisError}</span>
+            <button
+              onClick={() => void loadAll()}
+              className="h-8 px-3 rounded-lg border border-destructive/30 bg-background text-xs font-medium text-destructive hover:bg-destructive/10"
+            >
+              Tentar de novo
+            </button>
+          </div>
+        )}
+
         {error && (
-          <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive flex items-center gap-2">
-            <AlertCircle className="h-3.5 w-3.5" /> {error}
+          <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive flex flex-wrap items-center gap-2">
+            <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+            <span className="flex-1 min-w-0">
+              Não foi possível carregar as regras{kpisError ? " nem os indicadores" : ""}: {error}
+            </span>
+            <button
+              onClick={() => void loadAll()}
+              className="h-8 px-3 rounded-lg border border-destructive/30 bg-background text-xs font-medium text-destructive hover:bg-destructive/10"
+            >
+              Tentar de novo
+            </button>
           </div>
         )}
 
@@ -220,14 +246,18 @@ function ReativacaoPage() {
               <h3 className="text-sm font-semibold text-foreground">Regras de Reativação</h3>
               <button
                 onClick={() => { setShowNewForm(true); setSelectedRule(null); }}
-                className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-primary text-primary-foreground text-[10px] font-medium hover:bg-primary/90"
+                className="flex items-center gap-1 h-8 px-3 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90"
               >
-                <Plus className="h-3 w-3" /> Nova Regra
+                <Plus className="h-3.5 w-3.5" /> Nova Regra
               </button>
             </div>
 
             {loadingRules && rules.length === 0 ? (
               <div className="py-8 text-center"><Loader2 className="h-5 w-5 animate-spin mx-auto text-muted-foreground" /></div>
+            ) : error && rules.length === 0 ? (
+              <div className="py-8 text-center text-xs text-muted-foreground">
+                As regras não puderam ser carregadas. Use "Tentar de novo" acima.
+              </div>
             ) : rules.length === 0 ? (
               <div className="py-8 text-center text-xs text-muted-foreground">
                 Nenhuma regra criada. Crie a primeira para reativar pacientes inativos.
@@ -265,10 +295,10 @@ function ReativacaoPage() {
                         </div>
                       )}
                     </button>
-                    <div className="flex items-center gap-1 mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div className="flex items-center gap-1.5 mt-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 transition-opacity">
                       <button
                         onClick={(e) => { e.stopPropagation(); handleToggleStatus(rule); }}
-                        className="text-[10px] px-1.5 py-0.5 rounded bg-muted hover:bg-muted/70 text-muted-foreground flex items-center gap-1"
+                        className="h-8 text-xs px-2.5 rounded-md bg-muted hover:bg-muted/70 text-muted-foreground flex items-center gap-1"
                         title={rule.status === "ativo" ? "Pausar" : "Ativar"}
                       >
                         {rule.status === "ativo" ? <PauseCircle className="h-3 w-3" /> : <PlayCircle className="h-3 w-3" />}
@@ -276,7 +306,7 @@ function ReativacaoPage() {
                       </button>
                       <button
                         onClick={(e) => { e.stopPropagation(); handleDeleteRule(rule); }}
-                        className="text-[10px] px-1.5 py-0.5 rounded bg-destructive/10 text-destructive hover:bg-destructive/20 flex items-center gap-1"
+                        className="h-8 text-xs px-2.5 rounded-md bg-destructive/10 text-destructive hover:bg-destructive/20 flex items-center gap-1"
                       >
                         <Trash2 className="h-3 w-3" /> Excluir
                       </button>
