@@ -10786,7 +10786,15 @@ async function processOneWhatsAppJob(candidate, openInstances, usedInstances) {
 
   // 0) Validade
   if (job.expires_at && new Date(job.expires_at) < new Date()) {
-    return fail('Expirado: a mensagem não saiu a tempo (WhatsApp desconectado ou fila parada)');
+    // Motivo real: a última nota de espera do job diz por que ele não saiu.
+    const nota = String(job.error || '');
+    const motivo = /^Limite diário/.test(nota) ? 'limite diário de envio do número'
+      : /^Limite por hora/.test(nota) ? 'limite por hora de envio do número'
+      : /^Fora do horário/.test(nota) ? 'fora do horário de envio'
+      : /desconectad|Aguardando WhatsApp/i.test(nota) ? 'WhatsApp da clínica desconectado'
+      : /pausa/i.test(nota) ? 'número em pausa automática'
+      : 'fila parada ou WhatsApp desconectado';
+    return fail(`Expirado: a mensagem não saiu a tempo (${motivo})`);
   }
 
   // 1) Clínica dona do envio
@@ -11617,19 +11625,37 @@ async function resolveCampaignAudience(camp, tenantId) {
 // As colunas são TEXT (o assistente grava YYYY-MM-DD de <input type="date">): a
 // comparação é feita aqui, com o dia de São Paulo (spClock), e não por cast no SQL,
 // para um valor vazio ou fora do formato não derrubar o agendador de todas as clínicas.
-function campaignDateKey(value) {
+const campaignDateWarned = new Set(); // aviso único por campanha/campo (sem dado de paciente)
+function campaignDateKey(value, { campId = null, field = '' } = {}) {
   const t = String(value ?? '').trim();
+  if (!t) return null;
+  let ymd = null;
   let m = t.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
-  m = t.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-  if (m) return `${m[3]}-${m[2]}-${m[1]}`;
-  return null;
+  if (m) ymd = `${m[1]}-${m[2]}-${m[3]}`;
+  else if ((m = t.match(/^(\d{2})\/(\d{2})\/(\d{4})$/))) ymd = `${m[3]}-${m[2]}-${m[1]}`;
+  // Ida e volta pelo Date: 2026-13-45 ou 2026-02-30 não são datas.
+  if (ymd) {
+    const d = new Date(`${ymd}T12:00:00Z`);
+    if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== ymd) ymd = null;
+  }
+  if (!ymd && campId) {
+    const k = `${campId}:${field}`;
+    if (!campaignDateWarned.has(k)) {
+      campaignDateWarned.add(k);
+      console.warn(`[campaign] ${field || 'data'} fora do formato na campanha ${campId}: ignorada (vale como sem limite)`);
+    }
+  }
+  return ymd;
+}
+
+function addDaysYmd(ymd, n) {
+  return new Date(new Date(`${ymd}T12:00:00Z`).getTime() + n * 86_400_000).toISOString().slice(0, 10);
 }
 
 // 'antes' (início no futuro), 'encerrada' (passou do fim) ou 'vigente'.
 function campaignPeriodStatus(camp, today = spClock().day) {
-  const inicio = campaignDateKey(camp.data_inicio);
-  const fim = camp.campanha_perpetua ? null : campaignDateKey(camp.data_fim);
+  const inicio = campaignDateKey(camp.data_inicio, { campId: camp.id, field: 'data_inicio' });
+  const fim = camp.campanha_perpetua ? null : campaignDateKey(camp.data_fim, { campId: camp.id, field: 'data_fim' });
   if (inicio && today < inicio) return 'antes';
   if (fim && today > fim) return 'encerrada';
   return 'vigente';
@@ -11658,7 +11684,10 @@ async function cancelPendingCampaignJobs(tenantId, campId, motivo) {
 // Coloca a campanha na fila anti-bloqueio. A fila decide quando cada mensagem
 // sai (horário, limites do número, intervalo aleatório, SAIR).
 // scheduledAt/expiresAt: disparo único com data marcada e fim da campanha.
-async function enqueueCampaignForTenant(camp, tenantId, { scheduledAt = null, expiresAt = null } = {}) {
+// spread (disparo único): reparte os contatos pelos dias, no limite diário do número
+// (getRateTier), até WA_CAMPAIGN_MAX_SPREAD_DAYS; o que não cabe não entra na fila.
+const WA_CAMPAIGN_MAX_SPREAD_DAYS = 7;
+async function enqueueCampaignForTenant(camp, tenantId, { scheduledAt = null, expiresAt = null, spread = null } = {}) {
   const template = typeof camp.template === 'string' ? JSON.parse(camp.template) : camp.template;
   const message = template?.mensagem || template?.message || '';
   if (!message) return { error: 'Template sem mensagem configurada', status: 400 };
@@ -11680,24 +11709,48 @@ async function enqueueCampaignForTenant(camp, tenantId, { scheduledAt = null, ex
   );
   const recentKeys = new Set(recentlySent.map(r => waPhoneKey(r.patient_phone)));
 
-  let enqueued = 0, optedOut = 0;
+  let perDay = null;
+  if (spread) {
+    const { rows: [inst] } = await pool.query('SELECT created_at FROM whatsapp_instances WHERE instance_name = $1 AND tenant_id = $2', [instance, tenantId])
+      .catch(() => ({ rows: [] }));
+    perDay = getRateTier(inst?.created_at).perDay;
+  }
+  let enqueued = 0, optedOut = 0, naoCabem = 0, ultimoDia = spread?.startYmd || null;
   const clinica = await getTenantClinicName(tenantId);
   for (const contact of contacts) {
     const phone = normalizeWhatsappNumber(contact.telefone);
     if (!phone || recentKeys.has(waPhoneKey(phone))) continue;
     if (await isWhatsAppOptedOut(tenantId, phone)) { optedOut++; continue; }
+    let jobScheduledAt = scheduledAt, jobExpiresAt = expiresAt;
+    if (spread) {
+      const k = Math.floor(enqueued / perDay);
+      if (k >= WA_CAMPAIGN_MAX_SPREAD_DAYS) { naoCabem++; continue; }
+      const dia = addDaysYmd(spread.startYmd, k);
+      ultimoDia = dia;
+      jobScheduledAt = k === 0 ? spread.firstAt : spDateTime(dia, spread.horaInicio, '08:00');
+      jobExpiresAt = null; // definido depois, quando se sabe o último dia
+    }
     recentKeys.add(waPhoneKey(phone));
     const personalizedMsg = message
       .replace(/\{\{nome\}\}/gi, (contact.nome || 'Cliente').split(' ')[0])
       .replace(/\{\{telefone\}\}/gi, contact.telefone || '')
       .replace(/\{\{clinica\}\}/gi, clinica)
       .replace(/\{\{\s*(procedimento|valor)\s*\}\}/gi, '');
-    await enqueueWhatsAppJob({
+    const jobId = await enqueueWhatsAppJob({
       tenantId, instance, phone, message: personalizedMsg, category: 'marketing',
       flowId: camp.id, flowName: camp.nome, patientName: contact.nome || '', triggerEvent: 'campaign',
-      ...(scheduledAt ? { scheduledAt } : {}), ...(expiresAt ? { expiresAt } : {}),
+      ...(jobScheduledAt ? { scheduledAt: jobScheduledAt } : {}), ...(jobExpiresAt ? { expiresAt: jobExpiresAt } : {}),
     });
+    if (spread && jobId) spread.jobIds = [...(spread.jobIds || []), jobId];
     enqueued++;
+  }
+  // Validade de todos os envios do disparo: até o fim do último dia previsto (dia + N).
+  if (spread && spread.jobIds?.length) {
+    const ate = spDateTime(ultimoDia, spread.horaFim, '23:59');
+    await pool.query(
+      `UPDATE automation_jobs SET expires_at = $3 WHERE tenant_id = $1 AND id = ANY($2::uuid[])`,
+      [tenantId, spread.jobIds, ate]
+    ).catch(e => console.error('[campaign] validade do disparo:', e.message));
   }
 
   if (enqueued > 0) {
@@ -11709,7 +11762,10 @@ async function enqueueCampaignForTenant(camp, tenantId, { scheduledAt = null, ex
       [enqueued, contacts.length, camp.id, tenantId]
     );
   }
-  return { enqueued, total: contacts.length, skipped: contacts.length - enqueued, optedOut };
+  return {
+    enqueued, total: contacts.length, skipped: contacts.length - enqueued, optedOut,
+    ...(spread ? { porDia: perDay, previsaoTermino: ultimoDia, naoCabem } : {}),
+  };
 }
 
 // Execute campaign — resolve contacts by audience, enqueue jobs
@@ -11736,16 +11792,27 @@ app.post('/api/campaigns/:id/execute', async (req, res) => {
       const fim = camp.campanha_perpetua ? null : campaignDateKey(camp.data_fim);
       if (fim) opts.expiresAt = campaignExpiry(fim);
     } else {
-      // Disparo único: sai na data e no horário marcados (sem data = agora).
-      const dia = campaignDateKey(camp.data_inicio) || today;
-      if (dia < today) return res.status(409).json({ error: 'A data do disparo já passou' });
+      // Disparo único: sai na data e no horário marcados (sem data = hoje, agora).
+      // O 409 só vale para data/horário que a própria clínica marcou.
+      const dataMarcada = campaignDateKey(camp.data_inicio, { campId: camp.id, field: 'data_inicio' });
+      const horarioMarcado = /^\d{2}:\d{2}/.test(String(camp.horario_fim || ''));
+      const dia = dataMarcada || today;
+      if (dataMarcada && dia < today) return res.status(409).json({ error: 'A data do disparo já passou' });
       const inicio = spDateTime(dia, camp.horario_inicio, '08:00');
       const fimJanela = spDateTime(dia, camp.horario_fim, '23:59');
-      if (fimJanela.getTime() <= Date.now()) return res.status(409).json({ error: 'O horário do disparo já passou' });
-      opts = { scheduledAt: new Date(Math.max(Date.now(), inicio.getTime())), expiresAt: fimJanela };
+      if ((dataMarcada || horarioMarcado) && fimJanela.getTime() <= Date.now()) {
+        return res.status(409).json({ error: 'O horário do disparo já passou' });
+      }
+      // Hoje já depois do horário (sem nada marcado): começa amanhã.
+      const startYmd = fimJanela.getTime() <= Date.now() ? addDaysYmd(today, 1) : dia;
+      const firstAt = startYmd === dia ? new Date(Math.max(Date.now(), inicio.getTime())) : spDateTime(startYmd, camp.horario_inicio, '08:00');
+      opts = { spread: { startYmd, firstAt, horaInicio: camp.horario_inicio, horaFim: camp.horario_fim } };
+      if (startYmd > today) opts.comecaEm = startYmd;
     }
-    const result = await enqueueCampaignForTenant(camp, tenantId, opts);
+    const { comecaEm = null, ...enqueueOpts } = opts;
+    const result = await enqueueCampaignForTenant(camp, tenantId, enqueueOpts);
     if (result.error) return res.status(result.status || 400).json({ error: result.error });
+    if (comecaEm) result.inicio = comecaEm;
     await pool.query(
       `UPDATE broadcast_campaigns SET ativo = true, updated_at = NOW() WHERE id = $1 AND tenant_id = $2`,
       [camp.id, user.tenant_id]
@@ -11797,7 +11864,10 @@ async function processCampaignScheduler() {
       if (periodo === 'antes') continue;
       if (periodo === 'encerrada') {
         const n = await cancelPendingCampaignJobs(String(camp.tenant_id), camp.id, 'Cancelado: campanha passou da data de término');
-        if (n) console.log(`   ⏹️ Campaign "${camp.nome}" encerrada: ${n} envio(s) pendente(s) cancelado(s)`);
+        // Desativa: a tela mostra "Encerrada" e o cancelamento não roda a cada ciclo.
+        await pool.query(`UPDATE broadcast_campaigns SET ativo = false, updated_at = NOW() WHERE id = $1 AND tenant_id = $2`, [camp.id, camp.tenant_id])
+          .catch(e => console.error('[campaign] encerrar:', e.message));
+        console.log(`   ⏹️ Campaign "${camp.nome}" encerrada${n ? `: ${n} envio(s) pendente(s) cancelado(s)` : ''}`);
         continue;
       }
       const diasSemana = typeof camp.dias_semana === 'string' ? JSON.parse(camp.dias_semana) : (camp.dias_semana || []);
@@ -16434,4 +16504,4 @@ export { app, pool };
 export { processSolutionTriggers, runWhatsAppJobHooks, ensureTenantConfigSchema, triggerFollowupAutomation };
 export function clearTenantSettingsCacheForTests() { tenantSettingsCache.clear(); }
 
-export { processCampaignScheduler, campaignPeriodStatus };
+export { processCampaignScheduler, campaignPeriodStatus, processAutomationJobs as processAutomationJobsForCampaignTests };

@@ -92,6 +92,17 @@ function DisparosPage() {
       loadCampaigns();
       return;
     }
+    if (data && data.porDia) {
+      // Disparo único: previsão pelo limite diário do número.
+      const br = (ymd?: string) => { const [y, m, d] = String(ymd || "").split("-"); return d && m ? `${d}/${m}` : ""; };
+      const partes = [`${data.enqueued} na fila`];
+      if (data.inicio) partes.push(`os envios começam em ${br(data.inicio)}`);
+      partes.push(`o número envia até ${data.porDia} por dia, previsão de término em ${br(data.previsaoTermino)}`);
+      if (data.naoCabem) partes.push(`${data.naoCabem} não couberam em 7 dias e ficaram de fora`);
+      toast.success(partes.join("; ") + ".");
+      loadCampaigns();
+      return;
+    }
     if (data) {
       toast.success(`${data.enqueued} mensagens na fila (${data.skipped} ignoradas: já receberam ou pediram para sair). O envio é gradual, em horário comercial.`);
       loadCampaigns();
@@ -257,6 +268,10 @@ function DisparoCard({
             }`}>
               {disparo.tipo === "recorrente" ? "Recorrente" : "Único"}
             </span>
+            {disparo.tipo === "recorrente" && !disparo.ativo && !disparo.campanhaPerpetua && !!disparo.dataFim
+              && disparo.dataFim < new Date().toLocaleDateString("sv-SE", { timeZone: "America/Sao_Paulo" }) && (
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-muted text-muted-foreground">Encerrada</span>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground mb-3">
