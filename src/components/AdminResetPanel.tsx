@@ -38,8 +38,8 @@ export function AdminResetPanel() {
 
   const handleReset = async (userId: string, email: string) => {
     const newPassword = passwords[userId];
-    if (!newPassword || newPassword.length < 6) {
-      toast.error("A nova senha deve ter pelo menos 6 caracteres");
+    if (!newPassword || newPassword.length < 8) {
+      toast.error("A nova senha deve ter pelo menos 8 caracteres");
       return;
     }
     setResetting(userId);
@@ -113,7 +113,7 @@ export function AdminResetPanel() {
                     <div className="flex gap-2">
                       <Input
                         type="password"
-                        placeholder="Nova senha (mín. 6 caracteres)"
+                        placeholder="Nova senha (mín. 8 caracteres)"
                         value={passwords[req.user_id] || ""}
                         onChange={(e) =>
                           setPasswords((prev) => ({ ...prev, [req.user_id]: e.target.value }))
