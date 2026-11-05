@@ -519,7 +519,7 @@ async function getFallbackTenantIdForIncomingMessage({ instanceName, phoneSuffix
       );
       if (rows[0]?.tenant_id && isValidTenantId(rows[0].tenant_id)) return rows[0].tenant_id;
     } catch (err) {
-      console.error(`Tenant fallback by phone failed (${suffix}):`, err.message);
+      console.error(`Tenant fallback by phone failed (${maskPhone(suffix)}):`, err.message);
     }
   }
 
@@ -704,6 +704,12 @@ const WEBHOOK_URL = WEBHOOK_PUBLIC_URL || (isLocalAppUrl ? `${APP_URL.replace(/:
 
 // Metadados de credencial para logs/diagnóstico: só diz se existe e o tamanho,
 // nunca trechos do valor. Usado em sendEvolutionTextMessage e /api/debug/config.
+// Logs: telefone só com os 4 últimos dígitos; nunca nome, e-mail ou corpo de mensagem (LGPD).
+function maskPhone(value) {
+  const digits = String(value || '').replace(/\D/g, '');
+  return digits ? `***${digits.slice(-4)}` : '-';
+}
+
 function getCredentialDebugMeta(value) {
   const raw = String(value || '');
   return { present: raw.length > 0, length: raw.length };
@@ -962,7 +968,7 @@ async function getProfileDisplayName(userId, fallback = 'Atendente') {
 async function verifySuperAdmin(req) {
   const { user } = await verifyUser(req);
   if (!user.is_super_admin) {
-    console.warn(`[SECURITY] Unprivileged super-admin access attempt: ${user.email}`);
+    console.warn(`[SECURITY] Unprivileged super-admin access attempt: user=${user.id}`);
     throw new Error('Super admin access required');
   }
   return { user };
@@ -980,7 +986,7 @@ async function verifyAdmin(req) {
     [user.id, 'admin']
   );
   if (rows.length === 0) {
-    console.warn(`[SECURITY] Access denied: User ${user.email} is not an admin`);
+    console.warn(`[SECURITY] Access denied: user=${user.id} is not an admin`);
     throw new Error('Admin access required');
   }
   return { user };
@@ -1025,7 +1031,7 @@ async function assertCanManageUser(actor, targetUserId) {
   if (actor?.is_super_admin) return target;
   const sameTenant = actor?.tenant_id && target.tenant_id && String(actor.tenant_id) === String(target.tenant_id);
   if (!sameTenant || target.is_super_admin) {
-    console.warn(`[SECURITY] Bloqueado: ${actor?.email} tentou alterar o usuário ${targetUserId} de outra clínica/super-admin`);
+    console.warn(`[SECURITY] Bloqueado: user=${actor?.id} tentou alterar o usuário ${targetUserId} de outra clínica/super-admin`);
     const e = new Error('Usuário não encontrado'); e.status = 404; throw e;
   }
   return target;
@@ -3076,7 +3082,7 @@ function rememberLidMappingFromMessage(msg, resolvedRemoteJid) {
   const phoneNumber = normalizeWhatsappNumber(resolvedRemoteJid);
   if (lidNumber && phoneNumber && lidNumber !== phoneNumber) {
     registerLidMapping(lidNumber, phoneNumber);
-    console.log(`🔗 LID mapped from message: ${lidNumber} → ${phoneNumber}`);
+    console.log(`🔗 LID mapped from message → ${maskPhone(phoneNumber)}`);
   }
 }
 
@@ -3192,7 +3198,7 @@ async function resolveLidForPhone(instance, phone) {
       method: 'POST',
       body: JSON.stringify({ numbers: [phone] }),
     });
-    console.log(`🔍 whatsappNumbers response for ${phone}:`, JSON.stringify(result.data).slice(0, 500));
+    console.log(`🔍 whatsappNumbers response for ${maskPhone(phone)}: status=${result.status}`);
     if (result.ok && Array.isArray(result.data)) {
       for (const entry of result.data) {
         const jid = entry?.jid || entry?.id || '';
@@ -3201,7 +3207,7 @@ async function resolveLidForPhone(instance, phone) {
         const lidNum = normalizeWhatsappNumber(lid) || (jid.includes('@lid') ? normalizeWhatsappNumber(jid) : '');
         if (lidNum && lidNum.length >= 10) {
           registerLidMapping(lidNum, phone);
-          console.log(`🔗 LID mapped: ${lidNum} → ${phone}`);
+          console.log(`🔗 LID mapped → ${maskPhone(phone)}`);
           return lidNum;
         }
       }
@@ -3218,14 +3224,14 @@ async function resolveLidForPhone(instance, phone) {
           const lidNum = normalizeWhatsappNumber(cLid);
           if (lidNum && lidNum.length >= 10) {
             registerLidMapping(lidNum, phone);
-            console.log(`🔗 LID mapped (findContacts): ${lidNum} → ${phone}`);
+            console.log(`🔗 LID mapped (findContacts) → ${maskPhone(phone)}`);
             return lidNum;
           }
         }
       }
     } catch (e2) { /* ignore findContacts fallback error */ }
   } catch (err) {
-    console.error(`LID resolve error for ${phone}:`, err.message);
+    console.error(`LID resolve error for ${maskPhone(phone)}:`, err.message);
   }
   return null;
 }
@@ -3305,7 +3311,7 @@ async function resolveValidWhatsAppNumber(instance, cleanNumber) {
       return { exists: false, canonical: cleanNumber };
     }
   } catch (err) {
-    console.warn(`⚠️ whatsappNumbers check failed for ${cleanNumber}:`, err.message);
+    console.warn(`⚠️ whatsappNumbers check failed for ${maskPhone(cleanNumber)}:`, err.message);
   }
 
   // Failure to validate → don't block, but do not invent a destination number.
@@ -3952,11 +3958,11 @@ app.post('/api/whatsapp/subscribe-presence', async (req, res) => {
             presence: 'composing',
           }),
         });
-        console.log(`👁️ Presence subscribe attempt for ${cleanNumber} on ${instance}: status=${subResult.status}, data=${JSON.stringify(subResult.data).slice(0, 200)}`);
+        console.log(`👁️ Presence subscribe attempt for ${maskPhone(cleanNumber)} on ${instance}: status=${subResult.status}`);
         if (subResult.ok || subResult.status === 201) {
           presenceSubscribed.add(subKey);
           didSubscribe = true;
-          console.log(`✅ Presence subscribed for ${cleanNumber} on ${instance}`);
+          console.log(`✅ Presence subscribed for ${maskPhone(cleanNumber)} on ${instance}`);
 
           // Track subscribed phone for this instance (for LID resolution fallback)
           if (!instanceSubscribedPhones.has(instance)) instanceSubscribedPhones.set(instance, new Set());
@@ -3969,14 +3975,14 @@ app.post('/api/whatsapp/subscribe-presence', async (req, res) => {
             if (!resolveLidWarned) resolveLidWarned = new Set();
             if (!resolveLidWarned.has(cleanNumber)) {
               resolveLidWarned.add(cleanNumber);
-              console.warn(`⚠️ Could not resolve LID for ${cleanNumber} — presence updates may not match (suppressing future warnings for this number)`);
+              console.warn(`⚠️ Could not resolve LID for ${maskPhone(cleanNumber)} — presence updates may not match (suppressing future warnings for this number)`);
             }
           }
         } else {
-          console.warn(`⚠️ Presence subscribe failed for ${cleanNumber}:`, JSON.stringify(subResult.data).slice(0, 300));
+          console.warn(`⚠️ Presence subscribe failed for ${maskPhone(cleanNumber)}: status=${subResult.status}`);
         }
       } catch (subErr) {
-        console.error(`❌ Presence subscribe error for ${cleanNumber}:`, subErr.message);
+        console.error(`❌ Presence subscribe error for ${maskPhone(cleanNumber)}:`, subErr.message);
       }
     }
 
@@ -4167,7 +4173,7 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
 
     if (!result.ok) {
       const errMsg = getEvolutionErrorMessage(result);
-      console.error(`❌ send-text failed for ${instance} → ${sentNumber}: ${errMsg}`, result.data);
+      console.error(`❌ send-text failed for ${instance} → ${maskPhone(sentNumber)}: ${errMsg} (status=${result.status})`);
       const httpStatus = result.status === 401 || result.status === 403 ? 502 : (result.status || 502);
       return res.status(httpStatus).json({ error: errMsg, details: result.data });
     }
@@ -4177,7 +4183,7 @@ app.post('/api/whatsapp/send-text', async (req, res) => {
       // Sem key.id/messageId real não há como correlacionar ACK, persistir status
       // ou garantir entrega. Retornar sucesso aqui gera exatamente o falso
       // positivo visto na UI: "enviado", mas nada chega ao WhatsApp.
-      console.error(`❌ send-text sem message id real para ${instance} → ${sentNumber}:`, result.data);
+      console.error(`❌ send-text sem message id real para ${instance} → ${maskPhone(sentNumber)} (status=${result.status})`);
       return res.status(502).json({
         error: 'Evolution aceitou a requisição, mas não retornou confirmação real da mensagem. Envio não confirmado.',
         details: result.data,
@@ -4256,7 +4262,7 @@ app.post('/api/whatsapp/send-media', async (req, res) => {
     const cleanedBase64 = media.base64 ? cleanBase64Media(media.base64) : null;
     const mimeType = media.mimeType || 'application/octet-stream';
 
-    console.log(`📤 sendMedia [${mediaType}] to ${cleanNumber}, base64 len: ${cleanedBase64 ? cleanedBase64.length : 0}, url: ${media.url || 'none'}, mime: ${mimeType}`);
+    console.log(`📤 sendMedia [${mediaType}] to ${maskPhone(cleanNumber)}, base64 len: ${cleanedBase64 ? cleanedBase64.length : 0}, url: ${media.url || 'none'}, mime: ${mimeType}`);
 
     const payload = {
       number: cleanNumber,
@@ -4279,7 +4285,7 @@ app.post('/api/whatsapp/send-media', async (req, res) => {
       return res.status(400).json({ error: 'Nenhuma mídia válida fornecida (base64 vazio ou URL ausente)' });
     }
 
-    console.log(`📤 sendMedia payload size: ${JSON.stringify(payload).length} bytes, media field starts with: ${String(payload.media).substring(0, 50)}`);
+    console.log(`📤 sendMedia payload size: ${JSON.stringify(payload).length} bytes`);
 
     const result = await evolutionFetch(`/message/sendMedia/${instance}`, {
       method: 'POST',
@@ -4344,7 +4350,7 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '6
       : `upload.${resolvedMimeType.split('/')[1] || 'bin'}`;
     const mediaCaption = caption && String(caption).trim() ? String(caption).trim() : undefined;
 
-    console.log(`📤 send-media-upload jobId=${jobId} [${String(mediaType)}] to ${cleanNumber}, binary size: ${rawBody.length}, base64 len: ${base64Data.length}, mime: ${resolvedMimeType}`);
+    console.log(`📤 send-media-upload jobId=${jobId} [${String(mediaType)}] to ${maskPhone(cleanNumber)}, binary size: ${rawBody.length}, base64 len: ${base64Data.length}, mime: ${resolvedMimeType}`);
 
     if (String(mediaType) === 'audio') {
       const result = await sendWhatsAppAudioWithFallback(
@@ -4725,7 +4731,7 @@ app.post('/api/whatsapp/profile-picture', async (req, res) => {
     const cleanNumber = number.replace(/\D/g, '');
 
     // Fetch profile picture URL via Evolution API
-    console.log(`📸 Fetching profile picture for ${cleanNumber} on instance ${instance}`);
+    console.log(`📸 Fetching profile picture for ${maskPhone(cleanNumber)} on instance ${instance}`);
     const result = await evolutionFetch(`/chat/fetchProfilePictureUrl/${instance}`, {
       method: 'POST',
       body: JSON.stringify({ number: cleanNumber }),
@@ -4770,7 +4776,7 @@ app.post('/api/whatsapp/sync-profile-pictures', async (req, res) => {
     const { instance } = req.body;
     if (!instance) return res.status(400).json({ error: 'instance é obrigatório' });
 
-    console.log(`🔄 Syncing profile pictures for tenant ${user.tenant_id} on instance ${instance} (User: ${user.email}, SuperAdmin: ${user.is_super_admin})`);
+    console.log(`🔄 Syncing profile pictures for tenant ${user.tenant_id} on instance ${instance} (user=${user.id}, SuperAdmin: ${user.is_super_admin})`);
 
     // Get leads (scoped to tenant when available) without avatar
     const tenantId = user.tenant_id || null;
@@ -4838,7 +4844,7 @@ app.post('/api/whatsapp/call', async (req, res) => {
     }
 
     const cleanNumber = number.replace(/\D/g, '');
-    console.log(`📞 Initiating ${isVideo ? 'video' : 'voice'} call to ${cleanNumber} on instance ${instance}`);
+    console.log(`📞 Initiating ${isVideo ? 'video' : 'voice'} call to ${maskPhone(cleanNumber)} on instance ${instance}`);
 
     const result = await evolutionFetch(`/call/offer/${instance}`, {
       method: 'POST',
@@ -4854,7 +4860,7 @@ app.post('/api/whatsapp/call', async (req, res) => {
       return res.status(result.status).json({ error: 'Não foi possível iniciar a ligação', details: result.data });
     }
 
-    console.log(`📞 Call offered successfully to ${cleanNumber}`);
+    console.log(`📞 Call offered successfully to ${maskPhone(cleanNumber)}`);
     res.json({ success: true, data: result.data });
   } catch (error) {
     console.error('Call error:', error);
@@ -4865,6 +4871,22 @@ app.post('/api/whatsapp/call', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════
 
 const PACIENTE_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Ids de paciente/dentista recebidos no corpo precisam ser da clínica do usuário.
+// Devolve a mensagem para responder 400, ou null se estiver tudo certo.
+async function validarReferenciasDoTenant(tenantId, { pacienteId, dentistaId } = {}) {
+  const checks = [
+    ['pacientes', pacienteId, 'Paciente não encontrado'],
+    ['dentistas', dentistaId, 'Dentista não encontrado'],
+  ];
+  for (const [tabela, id, msg] of checks) {
+    if (id === undefined || id === null || id === '') continue;
+    if (!tenantId || !PACIENTE_UUID_RE.test(String(id))) return msg;
+    const { rows } = await pool.query(`SELECT 1 FROM ${tabela} WHERE id = $1 AND tenant_id = $2 LIMIT 1`, [id, tenantId]);
+    if (!rows.length) return msg;
+  }
+  return null;
+}
 
 // Todas as rotas /api/pacientes/:id/* recebem um UUID; qualquer outro valor é
 // "não encontrado" (sem chegar ao banco, que responderia 500 por cast inválido).
@@ -5147,6 +5169,8 @@ app.post('/api/agenda', async (req, res) => {
       confirmacao_canal, confirmacao_quando, alerta_retorno_canal, alerta_retorno_quando,
       evento_titulo, sala, serie_id, marcadores, como_conheceu,
     } = req.body;
+    const refErro = await validarReferenciasDoTenant(user.tenant_id, { pacienteId: paciente_id, dentistaId: dentista_id });
+    if (refErro) return res.status(400).json({ error: refErro });
     const id = crypto.randomUUID();
     await pool.query(
       `INSERT INTO agendamentos (
@@ -5210,6 +5234,8 @@ app.post('/api/agenda/serie', async (req, res) => {
     if (!dentista_id || !paciente_id) {
       return res.status(400).json({ error: 'paciente_id e dentista_id são obrigatórios' });
     }
+    const refErroSerie = await validarReferenciasDoTenant(user.tenant_id, { pacienteId: paciente_id, dentistaId: dentista_id });
+    if (refErroSerie) return res.status(400).json({ error: refErroSerie });
     const serie_id = crypto.randomUUID();
     const created = [];
     const start = new Date(data_inicio + 'T12:00:00Z');
@@ -5331,6 +5357,8 @@ app.put('/api/agenda/:id', async (req, res) => {
     if (!user.tenant_id) return res.status(403).json({ error: 'Sem clínica vinculada' });
     const { id } = req.params;
     const { status, hora, duracao, procedimento, observacoes, sala, data, dentista_id, dentista_nome, marcadores, como_conheceu } = req.body;
+    const refErro = await validarReferenciasDoTenant(user.tenant_id, { dentistaId: dentista_id });
+    if (refErro) return res.status(400).json({ error: refErro });
     const sets = [];
     const params = [];
     if (status) { params.push(status); sets.push(`status = $${params.length}`); }
@@ -6120,6 +6148,8 @@ app.post('/api/tratamentos', async (req, res) => {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { paciente_id, dentista_id, descricao, dente, valor, status, plano, observacoes } = req.body;
+    const refErro = await validarReferenciasDoTenant(user.tenant_id, { pacienteId: paciente_id, dentistaId: dentista_id });
+    if (refErro) return res.status(400).json({ error: refErro });
     const id = crypto.randomUUID();
     await pool.query(
       'INSERT INTO tratamentos (id, paciente_id, dentista_id, descricao, dente, valor, status, plano, observacoes, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
@@ -6142,6 +6172,8 @@ app.put('/api/tratamentos/:id', async (req, res) => {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { descricao, dente, valor, status, plano, observacoes, dentista_id } = req.body;
+    const refErro = await validarReferenciasDoTenant(user.tenant_id, { dentistaId: dentista_id });
+    if (refErro) return res.status(400).json({ error: refErro });
     const sets = []; const params = [];
     if (descricao !== undefined) { params.push(descricao); sets.push(`descricao=$${params.length}`); }
     if (dente !== undefined) { params.push(dente); sets.push(`dente=$${params.length}`); }
@@ -7278,13 +7310,14 @@ app.get('/api/comercial/painel', async (req, res) => {
         `SELECT id, nome AS lead_name, kanban_stage, follow_up_at, last_message, updated_at
            FROM crm_leads
           WHERE assigned_to = $1
+            AND tenant_id = $2
             AND (
               (follow_up_at IS NOT NULL AND follow_up_at <= NOW() + INTERVAL '2 days')
               OR kanban_stage IN ('sem_resposta','primeiro_contato')
             )
           ORDER BY COALESCE(follow_up_at, updated_at) ASC
           LIMIT 12`,
-        [attendantId]
+        [attendantId, user.tenant_id]
       ),
     ]);
 
@@ -8621,7 +8654,7 @@ async function sendQueueMenu(instance, phone, tenantId) {
     [phone.slice(-11), tenantId]
   );
 
-  console.log(`📋 Queue menu sent to ${phone} (${queues.length} options)`);
+  console.log(`📋 Queue menu sent to ${maskPhone(phone)} (${queues.length} options)`);
 }
 
 // Helper: match queue from button response or number
@@ -8824,7 +8857,7 @@ async function ensureWaitingSessionForIncomingLead({ lead, phone, queueId = null
               AND tenant_id = $6`,
           [existing[0].id, lead.name || null, phone || null, queueId || null, queueName || null, tenantId]
         );
-        console.log(`📥 Stale active session returned to queue for ${lead.name || phone} (session=${existing[0].id})`);
+        console.log(`📥 Stale active session returned to queue for ${maskPhone(phone)} (session=${existing[0].id})`);
       }
       return existing[0].id;
     }
@@ -8849,7 +8882,7 @@ async function ensureWaitingSessionForIncomingLead({ lead, phone, queueId = null
        VALUES ($1, $2, $3, $4, $5, $6, NOW(), 'waiting', $7)`,
       [sessionId, lead.id.toString(), lead.name || null, phone || null, queueId || null, queueName || null, tenantId]
     );
-    console.log(`📥 Lead ${lead.name || phone} entrou na fila de espera (session=${sessionId})`);
+    console.log(`📥 Lead ${maskPhone(phone)} entrou na fila de espera (session=${sessionId})`);
     return sessionId;
   } catch (err) {
     console.error('Failed to ensure waiting session:', err.message);
@@ -8880,10 +8913,6 @@ app.post('/api/webhook/evolution', async (req, res) => {
     let tenantId = await getTenantIdByInstance(instance);
     
     console.log(`📩 Webhook event: ${event} from ${instance} (tenant: ${tenantId})`);
-    if (event !== 'presence.update') {
-      console.log(`📦 Webhook Body:`, JSON.stringify(body).slice(0, 1000));
-    }
-
     // ─── Presence updates (typing, recording, online) ───
     if (isEvolutionEvent(event, 'presence.update', 'presence_update')) {
       const presenceData = body.data;
@@ -9004,7 +9033,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
             || globalStatus
             || 'unavailable';
 
-          console.log(`👁️ PRESENCE resolved: phone=${resolvedPhone} status=${status}${participantPhone !== resolvedPhone ? ` (LID fallback from ${chatJid})` : ''}`);
+          console.log(`👁️ PRESENCE resolved: phone=${maskPhone(resolvedPhone)} status=${status}`);
           // Cache under both the resolved phone AND the raw LID for future lookups
           const cacheEntry = {
             status,
@@ -9021,7 +9050,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
       } else if (fallbackPhone && globalStatus) {
         const resolvedFallback = resolvePhoneFromLid(fallbackPhone);
         const finalPhone = resolvedFallback !== fallbackPhone ? resolvedFallback : fallbackPhone;
-        console.log(`👁️ PRESENCE fallback: phone=${finalPhone} status=${globalStatus}${finalPhone !== fallbackPhone ? ` (resolved from LID ${fallbackPhone})` : ''}`);
+        console.log(`👁️ PRESENCE fallback: phone=${maskPhone(finalPhone)} status=${globalStatus}`);
         presenceStateCache.set(finalPhone, {
           status: globalStatus,
           instance,
@@ -9033,7 +9062,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
           instance,
         }, tenantId);
       } else {
-        console.log(`⚠️ PRESENCE_UPDATE: could not extract phone or status from:`, JSON.stringify(presenceData).slice(0, 300));
+        console.log(`⚠️ PRESENCE_UPDATE: could not extract phone or status`);
       }
       return res.json({ processed: true, event: 'presence' });
     }
@@ -9042,7 +9071,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
     const isSendMessageEvent = isEvolutionEvent(event, 'send.message', 'send_message');
     if (isEvolutionEvent(event, 'messages.update', 'messages_update', 'send.message.update', 'send_message_update', 'message.update', 'message_update', 'send.message', 'send_message')) {
       const updates = extractStatusUpdates(body.data || body);
-      console.log(`📩 MESSAGES_UPDATE: ${updates.length} updates, raw:`, JSON.stringify(body.data || body).slice(0, 500));
+      console.log(`📩 MESSAGES_UPDATE: ${updates.length} updates`);
       for (const update of updates) {
         const lookupIds = extractStatusLookupIds(update);
         const primaryMessageId = lookupIds[0];
@@ -9068,7 +9097,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
               );
               if (msgRows[0]?.phone) {
                 registerLidMapping(lidNum, msgRows[0].phone);
-                console.log(`🔗 LID mapped from ACK: ${lidNum} → ${msgRows[0].phone}`);
+                console.log(`🔗 LID mapped from ACK → ${maskPhone(msgRows[0].phone)}`);
               }
             } catch (e) { /* ignore */ }
           }
@@ -9105,7 +9134,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
             phoneSuffix: phone.slice(-11),
           });
           if (!tenantId) {
-            console.warn(`⚠️ ACK ignored without tenant: instance=${instance || 'unknown'} phone=${phone.slice(-11)} ids=${lookupIds.join(',')}`);
+            console.warn(`⚠️ ACK ignored without tenant: instance=${instance || 'unknown'} phone=${maskPhone(phone)} ids=${lookupIds.join(',')}`);
             // Do not lose this ACK. It can arrive before the instance→tenant
             // mapping is warm or before /api/messages persists the outgoing row.
             // Store it globally by message id; /api/messages will consume it once
@@ -9115,7 +9144,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
           }
         }
 
-        console.log(`✅ ACK: ${lookupIds.join(',')} → ${newStatus} (ack=${ack}, phone=${phone || messageContext?.phone || 'unknown'})`);
+        console.log(`✅ ACK: ${lookupIds.join(',')} → ${newStatus} (ack=${ack}, phone=${maskPhone(phone || messageContext?.phone)})`);
 
         let updatedRows = [];
         try {
@@ -9171,9 +9200,9 @@ app.post('/api/webhook/evolution', async (req, res) => {
     if (!tenantId) {
       tenantId = await getFallbackTenantIdForIncomingMessage({ instanceName: instance, phoneSuffix });
       if (tenantId) {
-        console.log(`🔐 Tenant resolved by fallback for ${instance || 'unknown-instance'} / ${phoneSuffix}: ${tenantId}`);
+        console.log(`🔐 Tenant resolved by fallback for ${instance || 'unknown-instance'} / ${maskPhone(phoneSuffix)}: ${tenantId}`);
       } else {
-        console.warn(`⚠️ Webhook message without tenant_id: instance=${instance || 'unknown'} phone=${phoneSuffix}. Message will be ignored to avoid cross-clinic leakage.`);
+        console.warn(`⚠️ Webhook message without tenant_id: instance=${instance || 'unknown'} phone=${maskPhone(phoneSuffix)}. Message will be ignored to avoid cross-clinic leakage.`);
         return res.status(202).json({ ignored: true, reason: 'tenant_not_resolved' });
       }
     }
@@ -9264,7 +9293,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
     // não disparam automações e não geram notificação de entrada.
     if (isFromMe) {
       if (!lead) {
-        console.log(`↪️ Outgoing webhook ignored without existing lead: ${resolvedPhone} (${msgId})`);
+        console.log(`↪️ Outgoing webhook ignored without existing lead: ${maskPhone(resolvedPhone)} (${msgId})`);
         return res.json({ processed: true, fromMe: true, ignored: 'lead_not_found' });
       }
 
@@ -9305,7 +9334,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
         sender: 'attendant',
       });
 
-      console.log(`↪️ Outgoing webhook synced: ${resolvedPhone} (${msgId})`);
+      console.log(`↪️ Outgoing webhook synced: ${maskPhone(resolvedPhone)} (${msgId})`);
       return res.json({ processed: true, fromMe: true, leadId: lead.id });
     }
 
@@ -9350,7 +9379,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
         [newId, pushName, resolvedPhone, tenantId]
       );
       lead = { id: newId, name: pushName, phone: resolvedPhone, queue_id: null, queue_name: null, awaiting_queue_selection: true, avatar_url: null };
-      console.log(`🆕 New lead created: ${pushName} (${resolvedPhone})`);
+      console.log(`🆕 New lead created: ${maskPhone(resolvedPhone)}`);
 
       // 🤖 Trigger "Lead entrou no CRM" automation
       triggerAutomationFlows('Lead entrou no CRM', { name: pushName, phone, tenantId }).catch(() => {});
@@ -9363,7 +9392,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
             'INSERT INTO contatos (id, nome, telefone, tipo, tenant_id) VALUES ($1, $2, $3, $4, $5)',
             [crypto.randomUUID(), pushName, resolvedPhone, 'pessoal', tenantId]
           );
-          console.log(`📇 Auto-saved contact: ${pushName} (${resolvedPhone})`);
+          console.log(`📇 Auto-saved contact: ${maskPhone(resolvedPhone)}`);
         }
       } catch (contatoErr) {
         console.error('Failed to auto-save contato:', contatoErr.message);
@@ -9483,7 +9512,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
           }),
         });
 
-        console.log(`📌 Lead ${lead.name} routed to queue: ${selectedQueue.name}`);
+        console.log(`📌 Lead ${lead.id} routed to queue: ${selectedQueue.name}`);
 
         // Broadcast queue assignment to SSE
         broadcastSSE('queue_assigned', {
@@ -9574,7 +9603,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
         // block message delivery/realtime if Evolution is slow.
         sendQueueMenu(instance, resolvedPhone, tenantId)
           .catch((err) => console.warn('Queue menu resend failed:', err.message));
-        console.log(`💬 Incoming message from ${pushName} (${resolvedPhone}) awaiting queue selection → saved + broadcast to ${sseClients.size} clients`);
+        console.log(`💬 Incoming message from ${maskPhone(resolvedPhone)} awaiting queue selection → saved + broadcast to ${sseClients.size} clients`);
         return res.json({ processed: true, resent_menu: true, leadId: lead.id });
       }
     }
@@ -9617,7 +9646,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
           body: JSON.stringify({ number: phone, text: thanks }),
         });
 
-        console.log(`⭐ Rating ${rating}/5 received from ${phone}`);
+        console.log(`⭐ Rating ${rating}/5 received from ${maskPhone(phone)}`);
         return res.json({ processed: true, rating, leadId: ratingData.leadId });
       }
     }
@@ -9674,7 +9703,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
             [sessionId, lead.id.toString(), phone, tenantId]
           ).catch(() => {});
 
-          console.log(`🔄 Lead ${lead.name} (${phone}) replied from recovery stage ${currentStage} → returned to queue with priority`);
+          console.log(`🔄 Lead ${lead.id} (${maskPhone(phone)}) replied from recovery stage ${currentStage} → returned to queue with priority`);
           broadcastSSE('lead_returned_from_recovery', {
             leadId: lead.id,
             leadName: lead.name || pushName,
@@ -9726,7 +9755,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
       sender: senderRole,
     });
 
-    console.log(`💬 New message from ${pushName} (${phone}) → saved + broadcast to ${sseClients.size} clients`);
+    console.log(`💬 New message from ${maskPhone(phone)} → saved + broadcast to ${sseClients.size} clients`);
 
     // Send Web Push notification to all subscribed attendants
     sendPushToAll({
@@ -9748,7 +9777,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
           const pictureUrl = result.data?.profilePictureUrl || result.data?.picture || result.data?.url || null;
           if (pictureUrl) {
             await pool.query('UPDATE crm_leads SET avatar_url = $1, updated_at = NOW() WHERE id = $2', [pictureUrl, lead.id]);
-            console.log(`📸 Auto-synced avatar for lead ${lead.id} (${phone})`);
+            console.log(`📸 Auto-synced avatar for lead ${lead.id}`);
           }
         } catch (fetchErr) {
           console.error('Webhook profile fetch error:', fetchErr.message);
@@ -9800,7 +9829,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
               body: JSON.stringify({ number: `${phone}@s.whatsapp.net`, text: confirmMsg }),
             }).catch(err => console.error('Failed to send confirm reply:', err.message));
 
-            console.log(`✅ Auto-confirmed appointment ${reminderId} via WhatsApp reply from ${phone}`);
+            console.log(`✅ Auto-confirmed appointment ${reminderId} via WhatsApp reply from ${maskPhone(phone)}`);
           }
         }
       }
@@ -11239,7 +11268,7 @@ async function triggerAutomationFlows(triggerEvent, patientData) {
     }
 
     if (totalJobs > 0) {
-      console.log(`🤖 Automation: ${totalJobs} jobs enqueued for trigger "${triggerEvent}" → ${phone} (${flows.length} flows)`);
+      console.log(`🤖 Automation: ${totalJobs} jobs enqueued for trigger "${triggerEvent}" → ${maskPhone(phone)} (${flows.length} flows)`);
     }
   } catch (err) {
     console.error('❌ triggerAutomationFlows error:', err.message);
@@ -11296,7 +11325,7 @@ app.post('/api/automations/enqueue', async (req, res) => {
       [steps.length, flow.id]
     ).catch(() => {});
 
-    console.log(`🤖 Manual enqueue: ${steps.length} jobs for flow "${flow.name}" → ${phone}`);
+    console.log(`🤖 Manual enqueue: ${steps.length} jobs for flow "${flow.name}" → ${maskPhone(phone)}`);
     res.json({ success: true, jobsCreated: jobIds.length, jobIds });
   } catch (error) {
     res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
@@ -12548,7 +12577,7 @@ app.post('/api/sessions/close', async (req, res) => {
         }),
       });
       if (btnResult.ok) {
-        console.log(`📊 Satisfaction survey sent to ${phone}`);
+        console.log(`📊 Satisfaction survey sent to ${maskPhone(phone)}`);
       } else {
         // Fallback: text-based survey
         await evolutionFetch(`/message/sendText/${instance}`, {
@@ -12558,7 +12587,7 @@ app.post('/api/sessions/close', async (req, res) => {
             text: `⭐ *Avalie nosso atendimento!*\n\nComo você avalia o atendimento que recebeu?\n\n5️⃣ Excelente\n4️⃣ Bom\n3️⃣ Regular\n2️⃣ Ruim\n1️⃣ Péssimo\n\nResponda com o número da sua avaliação.`,
           }),
         });
-        console.log(`📊 Satisfaction survey (text fallback) sent to ${phone}`);
+        console.log(`📊 Satisfaction survey (text fallback) sent to ${maskPhone(phone)}`);
       }
 
       // Mark lead as awaiting rating
@@ -13084,7 +13113,7 @@ app.post('/api/contatos/sync/now', async (req, res) => {
         if (cRes.ok) {
           const contacts = await cRes.json();
           const rawList = Array.isArray(contacts) ? contacts : Array.isArray(contacts?.data) ? contacts.data : Array.isArray(contacts?.contacts) ? contacts.contacts : Array.isArray(contacts?.result) ? contacts.result : [];
-          console.log(`[sync][${name}] findContacts retornou ${rawList.length} items. Amostra:`, JSON.stringify(rawList.slice(0, 3)).substring(0, 500));
+          console.log(`[sync][${name}] findContacts retornou ${rawList.length} items.`);
           waContacts = normalizeEvolutionContacts(contacts);
           console.log(`[sync][${name}] Após normalização: ${waContacts.length} contatos`);
         } else {
@@ -13104,7 +13133,7 @@ app.post('/api/contatos/sync/now', async (req, res) => {
             if (altRes.ok) {
               const altContacts = await altRes.json();
               const rawAltList = Array.isArray(altContacts) ? altContacts : Array.isArray(altContacts?.data) ? altContacts.data : Array.isArray(altContacts?.contacts) ? altContacts.contacts : Array.isArray(altContacts?.result) ? altContacts.result : [];
-              console.log(`[sync][${name}] contact/find retornou ${rawAltList.length} items. Amostra:`, JSON.stringify(rawAltList.slice(0, 3)).substring(0, 500));
+              console.log(`[sync][${name}] contact/find retornou ${rawAltList.length} items.`);
               waContacts = normalizeEvolutionContacts(altContacts);
               console.log(`[sync][${name}] Após normalização fallback: ${waContacts.length} contatos`);
             } else {
@@ -13356,7 +13385,7 @@ app.post('/api/messages/import-whatsapp', async (req, res) => {
     const { user } = await verifyUser(req);
     const { startDate, endDate, instances: allowedInstances, stream } = req.body;
 
-    console.log(`📥 Importing WhatsApp messages for tenant ${user.tenant_id} (User: ${user.email}, SuperAdmin: ${user.is_super_admin})`);
+    console.log(`📥 Importing WhatsApp messages for tenant ${user.tenant_id} (user=${user.id}, SuperAdmin: ${user.is_super_admin})`);
 
     if (!startDate || !endDate) return res.status(400).json({ error: 'startDate e endDate obrigatórios' });
 
@@ -13818,7 +13847,7 @@ app.get('/api/queue/leads', async (req, res) => {
     const { user } = await verifyUser(req);
 
     if (!isValidTenantId(user.tenant_id)) {
-      console.warn(`[queue/leads] user ${user.id || user.email || 'unknown'} has no valid tenant_id; returning explicit empty queue`);
+      console.warn(`[queue/leads] user ${user.id || 'unknown'} has no valid tenant_id; returning explicit empty queue`);
       return res.json({ queue: [], active: [], _warn: 'tenant_not_resolved' });
     }
 
@@ -14053,10 +14082,10 @@ app.get('/api/queue/leads', async (req, res) => {
             const pictureUrl = picResult.data?.profilePictureUrl || picResult.data?.picture || picResult.data?.url || null;
             if (pictureUrl) {
               await pool.query('UPDATE crm_leads SET avatar_url = $1, updated_at = NOW() WHERE id = $2', [pictureUrl, r.id]);
-              console.log(`📸 Background avatar sync: ${r.name || r.phone} → OK`);
+              console.log(`📸 Background avatar sync: ${maskPhone(r.phone)} → OK`);
             }
           } catch (err) {
-            console.error(`📸 Avatar sync error for ${r.phone}:`, err.message);
+            console.error(`📸 Avatar sync error for ${maskPhone(r.phone)}:`, err.message);
           }
         }
       }
@@ -15070,7 +15099,7 @@ app.post('/api/ai/schedule-followup', async (req, res) => {
       WHERE id = $2
     `, [JSON.stringify(flowId), reportId]);
 
-    console.log(`🤖 Follow-up IA agendado: ${jobIds.length} mensagens para ${patientName} (${formattedPhone})`);
+    console.log(`🤖 Follow-up IA agendado: ${jobIds.length} mensagens para ${maskPhone(formattedPhone)}`);
     res.json({ success: true, flowId, jobs: jobIds });
   } catch (err) {
     if (err.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
@@ -15858,8 +15887,8 @@ app.get('/api/exames', async (req, res) => {
               p.nome AS paciente_nome,
               d.nome AS dentista_nome
          FROM exames e
-         LEFT JOIN pacientes p ON p.id = e.paciente_id
-         LEFT JOIN dentistas d ON d.id = e.dentista_solicitante_id
+         LEFT JOIN pacientes p ON p.id = e.paciente_id AND p.tenant_id = e.tenant_id
+         LEFT JOIN dentistas d ON d.id = e.dentista_solicitante_id AND d.tenant_id = e.tenant_id
         WHERE ${where.join(' AND ')}
         ORDER BY e.data_solicitacao DESC
         LIMIT 500`,
@@ -15899,6 +15928,8 @@ app.post('/api/exames', async (req, res) => {
       observacoes, terceirizado, fornecedor_terc, status
     } = req.body || {};
     if (!tipo_nome?.trim()) return res.status(400).json({ error: 'tipo_nome obrigatório' });
+    const refErro = await validarReferenciasDoTenant(user.tenant_id, { pacienteId: paciente_id, dentistaId: dentista_solicitante_id });
+    if (refErro) return res.status(400).json({ error: refErro });
 
     // Gera código sequencial simples por tenant
     const { rows: [{ next_code }] } = await pool.query(
@@ -15942,6 +15973,10 @@ app.patch('/api/exames/:id', async (req, res) => {
       if (req.body[k] !== undefined) { params.push(req.body[k]); sets.push(`${k}=$${params.length}`); }
     }
     if (!sets.length) return res.status(400).json({ error: 'Nada a atualizar' });
+    const refErro = await validarReferenciasDoTenant(user.tenant_id, {
+      pacienteId: req.body.paciente_id, dentistaId: req.body.dentista_solicitante_id,
+    });
+    if (refErro) return res.status(400).json({ error: refErro });
     params.push(req.params.id, user.tenant_id);
     const { rows } = await pool.query(
       `UPDATE exames SET ${sets.join(', ')}

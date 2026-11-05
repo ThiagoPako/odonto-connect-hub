@@ -9,6 +9,10 @@ import { tratamentosApi, dentistasApi, pacientesApi } from "@/lib/vpsApi";
 import { toast } from "sonner";
 import { exportarTratamentosPdf } from "@/lib/tratamentosPdfExport";
 import { useTratamentoRealtime } from "@/hooks/useTratamentoRealtime";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 export const Route = createFileRoute("/tratamentos")({
   ssr: false,
@@ -64,6 +68,12 @@ const stepStatusCfg: Record<string, { label: string; color: string }> = {
 
 function getInitials(name: string) {
   return name.split(" ").filter((_, i, a) => i === 0 || i === a.length - 1).map(n => n[0]).join("").toUpperCase();
+}
+
+// Data de hoje no fuso do aparelho (AAAA-MM-DD); a coluna data_realizada é DATE.
+function hojeLocal() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 const AVATAR_COLORS = ["bg-chart-1", "bg-chart-2", "bg-chart-3", "bg-chart-4", "bg-primary"];
@@ -170,6 +180,28 @@ function TratamentosPage() {
     loadAll();
   };
 
+  const [updatingStatus, setUpdatingStatus] = useState(false);
+  const [updatingEtapaId, setUpdatingEtapaId] = useState<string | null>(null);
+  const [confirmEtapa, setConfirmEtapa] = useState<EtapaRow | null>(null);
+
+  const handleStatusChange = async (id: string, status: string) => {
+    setUpdatingStatus(true);
+    const { error } = await tratamentosApi.update(id, { status });
+    setUpdatingStatus(false);
+    if (error) { toast.error("Não foi possível mudar o status: " + error); return; }
+    toast.success(`Status alterado para ${(treatmentStatusCfg[status] || treatmentStatusCfg.planejado).label}.`);
+    loadAll();
+  };
+
+  const handleMarcarRealizada = async (step: EtapaRow) => {
+    setUpdatingEtapaId(step.id);
+    const { error } = await tratamentosApi.updateEtapa(step.id, { status: 'realizado', data_realizada: hojeLocal() });
+    setUpdatingEtapaId(null);
+    if (error) { toast.error("Não foi possível marcar a etapa: " + error); return; }
+    toast.success(`Etapa "${step.descricao}" marcada como realizada.`);
+    loadEtapas(step.tratamento_id);
+  };
+
   const handleDelete = async () => {
     if (!deleteTarget) return;
     const { error } = await tratamentosApi.delete(deleteTarget) as any;
@@ -180,15 +212,47 @@ function TratamentosPage() {
     loadAll();
   };
 
-  const handleExportPdf = () => {
+  const [exporting, setExporting] = useState(false);
+
+  const handleExportPdf = async () => {
     const ativos = tratamentos.filter(t => t.status !== 'finalizado');
     if (ativos.length === 0) { toast.error("Nenhum tratamento em andamento para exportar."); return; }
-    exportarTratamentosPdf(ativos.map(t => ({
-      ...t,
-      etapas_total: 0,
-      etapas_concluidas: 0,
-    })));
-    toast.success("Relatório gerado com sucesso!");
+    // Abre a janela já no clique: depois do await o navegador (Safari/iPhone e Chrome
+    // após alguns segundos) bloqueia o pop-up.
+    const janela = window.open("", "_blank");
+    if (!janela) {
+      toast.error("O navegador bloqueou a janela do relatório. Permita pop-ups para este site e tente de novo.");
+      return;
+    }
+    janela.document.write('<p style="font-family:sans-serif;padding:24px;color:#555">Carregando relatório...</p>');
+    setExporting(true);
+    // Busca as etapas de cada tratamento para o progresso sair real no relatório.
+    const contagens = await Promise.all(ativos.map(async t => {
+      const res = await tratamentosApi.getEtapas(t.id);
+      const lista: { status?: string }[] = Array.isArray(res.data) ? (res.data as { status?: string }[]) : [];
+      return { erro: !!res.error, total: lista.length, concluidas: lista.filter(e => e.status === 'realizado').length };
+    }));
+    setExporting(false);
+    if (janela.closed) return;
+    if (contagens.some(c => c.erro)) {
+      janela.close();
+      toast.error("Não foi possível carregar as etapas de todos os tratamentos. Tente de novo para o progresso sair certo.");
+      return;
+    }
+    // exportarTratamentosPdf chama window.open por conta própria; aqui ele recebe a
+    // janela que já abrimos no clique (troca só durante esta chamada síncrona).
+    const abrirOriginal = window.open;
+    window.open = (() => { janela.document.open(); return janela; }) as typeof window.open;
+    try {
+      exportarTratamentosPdf(ativos.map((t, i) => ({
+        ...t,
+        etapas_total: contagens[i].total,
+        etapas_concluidas: contagens[i].concluidas,
+      })));
+    } finally {
+      window.open = abrirOriginal;
+    }
+    janela.focus();
   };
 
   const filtered = tratamentos.filter(
@@ -227,10 +291,10 @@ function TratamentosPage() {
                 className="h-9 px-3 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 flex items-center gap-1 shrink-0">
                 <Plus className="h-3.5 w-3.5" /> Novo
               </button>
-              <button onClick={handleExportPdf}
-                className="h-9 w-9 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-muted flex items-center justify-center shrink-0"
-                title="Exportar PDF">
-                <Download className="h-3.5 w-3.5" />
+              <button onClick={handleExportPdf} disabled={exporting}
+                className="h-9 px-3 rounded-lg border border-border text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted flex items-center gap-1 justify-center shrink-0 disabled:opacity-50"
+                aria-label="Exportar relatório em PDF" title="Exportar relatório em PDF">
+                {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />} PDF
               </button>
             </div>
             <div className="space-y-1.5 max-h-[calc(100vh-200px)] overflow-y-auto">
@@ -278,12 +342,15 @@ function TratamentosPage() {
                       {selected.plano && <p className="text-xs text-muted-foreground mt-0.5">Plano: {selected.plano}</p>}
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${(treatmentStatusCfg[selected.status] || treatmentStatusCfg.planejado).color}`}>
-                        {(treatmentStatusCfg[selected.status] || treatmentStatusCfg.planejado).label}
-                      </span>
+                      <select value={selected.status} disabled={updatingStatus}
+                        onChange={(e) => handleStatusChange(selected.id, e.target.value)}
+                        aria-label="Status do tratamento"
+                        className={`h-8 px-2.5 rounded-full text-xs font-medium border-0 focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-60 ${(treatmentStatusCfg[selected.status] || treatmentStatusCfg.planejado).color}`}>
+                        {Object.entries(treatmentStatusCfg).map(([key, c]) => <option key={key} value={key}>{c.label}</option>)}
+                      </select>
                       <button onClick={() => setDeleteTarget(selected.id)}
-                        className="p-1.5 rounded-lg hover:bg-destructive/15 text-muted-foreground hover:text-destructive transition-colors"
-                        title="Excluir tratamento">
+                        className="h-8 w-8 flex items-center justify-center rounded-lg hover:bg-destructive/15 text-muted-foreground hover:text-destructive transition-colors"
+                        aria-label="Excluir tratamento" title="Excluir tratamento">
                         <Trash2 className="h-4 w-4" />
                       </button>
                     </div>
@@ -321,9 +388,18 @@ function TratamentosPage() {
                               {i < etapas.length - 1 && <div className="w-px flex-1 bg-border my-1" />}
                             </div>
                             <div className={`flex-1 ${i < etapas.length - 1 ? "pb-4" : ""}`}>
-                              <div className="flex items-center justify-between mb-0.5">
+                              <div className="flex flex-wrap items-center justify-between gap-2 mb-0.5">
                                 <span className="text-xs font-medium text-foreground">{step.descricao}</span>
-                                <span className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${sCfg.color}`}>{sCfg.label}</span>
+                                <div className="flex items-center gap-2">
+                                  <span className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${sCfg.color}`}>{sCfg.label}</span>
+                                  {step.status !== "realizado" && step.status !== "cancelado" && (
+                                    <button type="button" onClick={() => setConfirmEtapa(step)} disabled={updatingEtapaId === step.id}
+                                      className="h-8 px-2.5 rounded-lg text-[11px] font-medium bg-success/15 text-success hover:bg-success/25 flex items-center gap-1 disabled:opacity-50">
+                                      {updatingEtapaId === step.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}
+                                      Marcar como realizada
+                                    </button>
+                                  )}
+                                </div>
                               </div>
                               <div className="flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
                                 {step.dente && <span>Dente: {step.dente}</span>}
@@ -393,6 +469,31 @@ function TratamentosPage() {
             </div>
           </div>
         )}
+
+        {/* Confirmar etapa clínica realizada (não há como desmarcar por esta tela) */}
+        <AlertDialog open={!!confirmEtapa} onOpenChange={(o) => { if (!o) setConfirmEtapa(null); }}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Marcar a etapa como realizada hoje?</AlertDialogTitle>
+              <AlertDialogDescription>
+                "{confirmEtapa?.descricao}" vai entrar no histórico do tratamento como realizada em{" "}
+                {new Date().toLocaleDateString("pt-BR")}. Depois de confirmar, não dá para desmarcar por esta tela.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancelar</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => {
+                  const step = confirmEtapa;
+                  setConfirmEtapa(null);
+                  if (step) handleMarcarRealizada(step);
+                }}
+              >
+                Marcar como realizada
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </main>
     </div>
   );
@@ -434,7 +535,8 @@ function AddTratamentoModal({
         const pList = Array.isArray(pData) ? pData.map((p: any) => ({ id: p.id, nome: p.nome })) : [];
         setDentistas(dList);
         setPacientes(pList);
-        setForm(f => ({ ...f, dentista_id: dList[0]?.id || '', paciente_id: pList[0]?.id || '' }));
+        // Paciente começa vazio: quem cadastra precisa escolher de propósito.
+        setForm(f => ({ ...f, dentista_id: dList[0]?.id || '', paciente_id: '' }));
       } catch (err) { console.error(err); }
       finally { setLoadingData(false); }
     })();
@@ -443,6 +545,18 @@ function AddTratamentoModal({
   const filteredPacientes = pacientes.filter(p =>
     !pacienteSearch || p.nome.toLowerCase().includes(pacienteSearch.toLowerCase())
   ).slice(0, 50);
+  const pacienteSelecionado = pacientes.find(p => p.id === form.paciente_id) || null;
+
+  // Se o paciente escolhido sair do filtro da busca, limpa a seleção
+  // para não gravar o tratamento em outro paciente sem a pessoa ver.
+  const handlePacienteSearch = (value: string) => {
+    setPacienteSearch(value);
+    const termo = value.toLowerCase();
+    const atual = pacientes.find(p => p.id === form.paciente_id);
+    if (atual && termo && !atual.nome.toLowerCase().includes(termo)) {
+      setForm(f => ({ ...f, paciente_id: '' }));
+    }
+  };
 
   const addEtapa = () => setEtapasForm([...etapasForm, { descricao: '', dente: '', valor: '' }]);
   const removeEtapa = (idx: number) => setEtapasForm(etapasForm.filter((_, i) => i !== idx));
@@ -456,7 +570,10 @@ function AddTratamentoModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.paciente_id || !form.dentista_id || !form.descricao) return;
+    if (!form.paciente_id || !form.dentista_id || !form.descricao) {
+      toast.error(!form.paciente_id ? "Escolha o paciente." : !form.dentista_id ? "Escolha o dentista." : "Preencha a descrição do tratamento.");
+      return;
+    }
     const validEtapas = etapasForm.filter(et => et.descricao.trim());
     setSaving(true);
     await onSave({ ...form, etapas: validEtapas });
@@ -479,12 +596,17 @@ function AddTratamentoModal({
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">Paciente</label>
                 <input type="text" placeholder="Buscar paciente..." value={pacienteSearch}
-                  onChange={(e) => setPacienteSearch(e.target.value)}
+                  onChange={(e) => handlePacienteSearch(e.target.value)}
                   className="w-full h-9 px-3 rounded-lg bg-background border border-border/60 text-xs text-foreground mb-1 focus:outline-none focus:ring-1 focus:ring-primary" />
-                <select value={form.paciente_id} onChange={(e) => setForm({ ...form, paciente_id: e.target.value })}
+                <select value={form.paciente_id} onChange={(e) => setForm({ ...form, paciente_id: e.target.value })} required
+                  aria-label="Paciente"
                   className="w-full h-10 px-3 rounded-xl bg-background border border-border/60 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30">
+                  <option value="">{filteredPacientes.length === 0 ? "Nenhum paciente encontrado" : "Selecione o paciente"}</option>
                   {filteredPacientes.map(p => <option key={p.id} value={p.id}>{p.nome}</option>)}
                 </select>
+                {pacienteSelecionado && (
+                  <p className="text-[11px] text-muted-foreground mt-1">Paciente selecionado: <span className="font-medium text-foreground">{pacienteSelecionado.nome}</span></p>
+                )}
               </div>
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">Dentista</label>

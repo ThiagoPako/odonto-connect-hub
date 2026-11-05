@@ -4,7 +4,7 @@ import { useVpsEvent } from "@/hooks/useVpsEvent";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, ChevronLeft, ChevronRight, Settings, RefreshCw, Clock, Database, Send } from "lucide-react";
+import { Plus, ChevronLeft, ChevronRight, Settings, RefreshCw, Clock, Database, Send, SlidersHorizontal } from "lucide-react";
 import { toast } from "sonner";
 import { agendaApi, dentistasApi, clinicaApi, type AgendamentoVPS, type ClinicaConfig } from "@/lib/vpsApi";
 import { clinicorpApi } from "@/lib/clinicorpApi";
@@ -38,6 +38,30 @@ function toISO(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+// Mesma lista da tela Configurações > Agenda
+const INTERVALOS = [5, 15, 20, 30, 60];
+const INTERVALO_SESSION_KEY = "agenda:intervalo";
+
+/**
+ * Troca mensagens técnicas (HTTP 502, "VPS"...) por um texto para a recepção.
+ * "Tente de novo" só quando esperar resolve (servidor fora, limite, rede).
+ * Erro de configuração/validação (4xx) mostra o motivo do servidor.
+ */
+function clinicorpErrorMessage(err: unknown): string {
+  const e = err as { message?: string; status?: number } | null;
+  const status = typeof e?.status === "number" ? e.status : 0;
+  const msg = e?.message?.trim() || "";
+  const falhaRede = err instanceof TypeError || /Failed to fetch|NetworkError|Load failed/i.test(msg);
+  if (falhaRede || status >= 500 || status === 429) {
+    return "Não foi possível falar com o Clinicorp agora. Tente de novo em alguns minutos.";
+  }
+  const semTexto = !msg || /^HTTP \d+$/i.test(msg);
+  if (semTexto) {
+    return "O Clinicorp recusou o pedido. Verifique a integração em Configurações > Integrações.";
+  }
+  return `Clinicorp: ${msg}`;
+}
+
 function AgendaPage() {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [profs, setProfs] = useState<Prof[]>([]);
@@ -52,6 +76,19 @@ function AgendaPage() {
   const [popoverApt, setPopoverApt] = useState<AgendamentoVPS | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isReprojecting, setIsReprojecting] = useState(false);
+  const [clinicorpAtivo, setClinicorpAtivo] = useState(false);
+  const [showFiltros, setShowFiltros] = useState(false);
+
+  // "Buscar do Clinicorp" usa as credenciais do próprio usuário (/sync/now é
+  // por usuário). "Atualizar agenda" é por clínica e continua sempre visível,
+  // porque ainda não existe um sinal de "clínica tem Clinicorp".
+  useEffect(() => {
+    let cancel = false;
+    clinicorpApi.getMySettings()
+      .then((s) => { if (!cancel) setClinicorpAtivo(!!s?.enabled); })
+      .catch(() => { if (!cancel) setClinicorpAtivo(false); });
+    return () => { cancel = true; };
+  }, []);
 
   // Load profs + config
   useEffect(() => {
@@ -145,16 +182,27 @@ function AgendaPage() {
     return { inicio: h.inicio, fim: h.fim };
   }, [config, currentDate]);
 
+  // Ajuste temporário (só nesta aba/sessão). O padrão é o da clínica, definido
+  // em Configurações > Agenda. Antes ficava salvo para sempre no navegador.
   const [intervaloOverride, setIntervaloOverride] = useState<number | null>(() => {
     if (typeof window === "undefined") return null;
-    const v = window.localStorage.getItem("agenda:intervalo");
-    return v ? Number(v) : null;
+    try {
+      window.localStorage.removeItem(INTERVALO_SESSION_KEY);
+      const v = Number(window.sessionStorage.getItem(INTERVALO_SESSION_KEY));
+      return v > 0 ? v : null;
+    } catch { return null; }
   });
-  const intervalo = intervaloOverride ?? config?.intervalo_agenda ?? 30;
-  const setIntervalo = (v: number) => {
+  const intervaloPadrao = config?.intervalo_agenda ?? 30;
+  const intervalo = intervaloOverride ?? intervaloPadrao;
+  const setIntervalo = (v: number | null) => {
     setIntervaloOverride(v);
-    try { window.localStorage.setItem("agenda:intervalo", String(v)); } catch {}
+    try {
+      if (v == null) window.sessionStorage.removeItem(INTERVALO_SESSION_KEY);
+      else window.sessionStorage.setItem(INTERVALO_SESSION_KEY, String(v));
+    } catch { /* storage indisponível: vale só até recarregar */ }
   };
+  const fmtIntervalo = (m: number) => (m < 60 ? `${m} MINUTOS` : "1 HORA");
+  const opcoesIntervalo = Array.from(new Set([...INTERVALOS, intervaloPadrao, intervalo])).sort((a, b) => a - b);
 
   const visibleProfs = profs.filter((p) => selectedProfs.includes(p.id));
   const visibleApts = appointments.filter((a) => {
@@ -178,8 +226,8 @@ function AgendaPage() {
     try {
       await clinicorpApi.syncMyNow({ force_metadata: true });
       toast.success("Sincronização iniciada em segundo plano!", { id: toastId });
-    } catch (err: any) {
-      toast.error("Erro ao sincronizar: " + err.message, { id: toastId });
+    } catch (err) {
+      toast.error(clinicorpErrorMessage(err), { id: toastId });
     } finally {
       setIsSyncing(false);
     }
@@ -187,10 +235,17 @@ function AgendaPage() {
 
   const handleReproject = async () => {
     setIsReprojecting(true);
-    const toastId = toast.loading("Enviando dados para Agenda e Pacientes...");
+    const toastId = toast.loading("Atualizando agenda com os dados já trazidos do Clinicorp...");
     try {
       const result = await clinicorpApi.reproject();
-      toast.success(`Dados enviados! ${result.appointments} agendamentos, ${result.patients} pacientes e ${result.professionals} profissionais sincronizados.`, { id: toastId });
+      const ag = result?.appointments ?? 0;
+      const pa = result?.patients ?? 0;
+      const pr = result?.professionals ?? 0;
+      if (ag + pa + pr === 0) {
+        toast.info("Nenhum dado do Clinicorp encontrado para esta clínica. Se a clínica usa Clinicorp, use antes \"Buscar do Clinicorp\".", { id: toastId });
+        return;
+      }
+      toast.success(`Agenda atualizada com o Clinicorp: ${ag} agendamentos, ${pa} pacientes e ${pr} profissionais.`, { id: toastId });
       loadAppointments();
       const { data, error } = await dentistasApi.list();
       if (error) toast.error("Não foi possível atualizar os profissionais: " + error);
@@ -201,8 +256,8 @@ function AgendaPage() {
           return Array.from(merged.values());
         });
       }
-    } catch (err: any) {
-      toast.error("Erro ao enviar dados: " + err.message, { id: toastId });
+    } catch (err) {
+      toast.error(clinicorpErrorMessage(err), { id: toastId });
     } finally {
       setIsReprojecting(false);
     }
@@ -248,39 +303,49 @@ function AgendaPage() {
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border bg-card/50 glass-card">
               <Clock className="h-3.5 w-3.5 text-primary" />
-              <Select value={String(intervalo)} onValueChange={(v) => setIntervalo(Number(v))}>
-                <SelectTrigger className="h-7 w-[100px] border-0 shadow-none focus:ring-0 px-1 text-[11px] font-bold uppercase tracking-wider">
+              <Select
+                value={intervaloOverride == null ? "padrao" : String(intervalo)}
+                onValueChange={(v) => setIntervalo(v === "padrao" ? null : Number(v))}
+              >
+                <SelectTrigger aria-label="Tempo de cada linha da agenda" className="h-7 w-[160px] border-0 shadow-none focus:ring-0 px-1 text-[11px] font-bold uppercase tracking-wider">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent className="rounded-xl border-border/40 glass-card">
-                  {[5, 10, 15, 20, 30, 45, 60].map(m => (
+                  <SelectItem value="padrao" className="text-[11px] font-medium rounded-lg">
+                    PADRÃO · {intervaloPadrao < 60 ? `${intervaloPadrao} MIN` : "1 H"}
+                  </SelectItem>
+                  {opcoesIntervalo.map(m => (
                     <SelectItem key={m} value={String(m)} className="text-[11px] font-medium rounded-lg">
-                      {m < 60 ? `${m} MINUTOS` : "1 HORA"}
+                      {fmtIntervalo(m)}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
-            <Button 
-              size="sm" 
-              variant="outline" 
-              className="rounded-xl glass-card text-[11px] font-bold uppercase tracking-wider" 
-              onClick={handleSyncClinicorp} 
-              disabled={isSyncing}
-            >
-              <Database className={cn("h-4 w-4 mr-2 text-primary", isSyncing && "animate-spin")} />
-              Sincronizar
-            </Button>
-            <Button 
-              size="sm" 
-              variant="outline" 
-              className="rounded-xl glass-card text-[11px] font-bold uppercase tracking-wider" 
-              onClick={handleReproject} 
-              disabled={isReprojecting}
-            >
-              <Send className={cn("h-4 w-4 mr-2 text-primary", isReprojecting && "animate-pulse")} />
-              Enviar Dados
-            </Button>
+            {clinicorpAtivo && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="rounded-xl glass-card text-[11px] font-bold uppercase tracking-wider"
+                  onClick={handleSyncClinicorp}
+                  disabled={isSyncing}
+                  title="Busca no Clinicorp os agendamentos, pacientes e profissionais mais recentes"
+                >
+                  <Database className={cn("h-4 w-4 mr-2 text-primary", isSyncing && "animate-spin")} />
+                  Buscar do Clinicorp
+                </Button>
+            )}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="rounded-xl glass-card text-[11px] font-bold uppercase tracking-wider"
+                  onClick={handleReproject}
+                  disabled={isReprojecting}
+                  title="Atualizar agenda com dados do Clinicorp"
+                >
+                  <Send className={cn("h-4 w-4 mr-2 text-primary", isReprojecting && "animate-pulse")} />
+                  Atualizar agenda com Clinicorp
+                </Button>
             <Button size="sm" variant="outline" className="rounded-xl glass-card hover:bg-primary/10 transition-colors" onClick={loadAppointments} disabled={loading} aria-label="Recarregar agenda">
               <RefreshCw className={`h-4 w-4 text-primary ${loading ? "animate-spin" : ""}`} />
             </Button>
@@ -302,8 +367,20 @@ function AgendaPage() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-6 h-[calc(100vh-220px)]">
-          <aside className="space-y-3 overflow-y-auto">
+        <Button
+          size="sm"
+          variant="outline"
+          className="lg:hidden mb-3 w-full justify-center gap-2 rounded-xl glass-card"
+          onClick={() => setShowFiltros((v) => !v)}
+          aria-expanded={showFiltros}
+          aria-controls="agenda-filtros"
+        >
+          <SlidersHorizontal className="h-4 w-4 text-primary" />
+          {showFiltros ? "Esconder filtros" : "Filtros (calendário, status, profissionais)"}
+        </Button>
+
+        <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-4 lg:gap-6 lg:h-[calc(100vh-220px)]">
+          <aside id="agenda-filtros" className={cn("space-y-3 lg:overflow-y-auto", showFiltros ? "block" : "hidden", "lg:block")}>
             <AgendaMiniCalendar currentDate={currentDate} onChange={setCurrentDate} />
             <AgendaStatusFilter 
               selected={selectedStatuses}
@@ -322,6 +399,7 @@ function AgendaPage() {
             />
           </aside>
 
+          <div className="flex min-h-0 h-[70vh] lg:h-auto">
           <AgendaGrid
             professionals={visibleProfs}
             appointments={visibleApts}
@@ -331,6 +409,7 @@ function AgendaPage() {
             onCellClick={handleCellClick}
             onAppointmentClick={(a) => setPopoverApt(a)}
           />
+          </div>
         </div>
       </main>
 

@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
-import { MapPin, Save, Copy, ExternalLink } from "lucide-react";
+import { MapPin, Save, Copy, ExternalLink, Info } from "lucide-react";
 
 const STORAGE_KEY = "odonto_clinic_location";
 
@@ -73,7 +73,9 @@ export function ClinicLocationPanel() {
     }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(location));
     setSaved(true);
-    toast.success("Localização salva com sucesso!");
+    toast.success("Localização salva neste aparelho", {
+      description: "Quem usa outro computador ou celular precisa salvar lá também.",
+    });
   };
 
   const handleCopy = () => {
@@ -101,12 +103,21 @@ export function ClinicLocationPanel() {
           <div>
             <CardTitle className="text-lg">Localização da Clínica</CardTitle>
             <CardDescription>
-              Endereço compartilhado automaticamente com leads e pacientes
+              Endereço que você envia para leads e pacientes pelo chat
             </CardDescription>
           </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
+        <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-foreground">
+          <Info className="h-4 w-4 mt-0.5 shrink-0 text-amber-600" />
+          <p>
+            Por enquanto, a localização fica salva <strong>apenas neste aparelho</strong> (neste
+            navegador). Cada pessoa da equipe precisa salvar no computador ou celular que usa
+            para o botão de enviar localização aparecer no chat. Limpar os dados do navegador
+            apaga o endereço.
+          </p>
+        </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="space-y-2 sm:col-span-2">
             <Label>Nome da clínica *</Label>
@@ -178,7 +189,7 @@ export function ClinicLocationPanel() {
         <div className="flex flex-wrap gap-2">
           <Button onClick={handleSave}>
             <Save className="h-4 w-4 mr-2" />
-            {saved ? "Salvo ✓" : "Salvar Localização"}
+            {saved ? "Salvo neste aparelho ✓" : "Salvar neste aparelho"}
           </Button>
           <Button variant="outline" onClick={handleCopy}>
             <Copy className="h-4 w-4 mr-2" />

@@ -205,12 +205,13 @@ function ContatosPage() {
                 </div>
 
                 {/* Actions */}
-                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-center gap-1 shrink-0 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
                   <Button
                     variant="ghost"
                     size="icon"
                     className="h-8 w-8"
                     title={contato.favorito ? "Remover favorito" : "Favoritar"}
+                    aria-label={contato.favorito ? "Remover favorito" : "Favoritar"}
                     onClick={() => void handleToggleFavorito(contato.id)}
                   >
                     {contato.favorito ? (
@@ -225,6 +226,7 @@ function ContatosPage() {
                       size="icon"
                       className="h-8 w-8"
                       title="Abrir Chat"
+                      aria-label="Abrir chat"
                       onClick={() => navigate({ to: "/chat", search: { lead: contato.telefone || contato.nome } })}
                     >
                       <MessageSquare className="h-4 w-4 text-primary" />
@@ -234,6 +236,8 @@ function ContatosPage() {
                     variant="ghost"
                     size="icon"
                     className="h-8 w-8"
+                    title="Editar contato"
+                    aria-label="Editar contato"
                     onClick={() => setEditContato(contato)}
                   >
                     <Pencil className="h-4 w-4 text-muted-foreground" />
@@ -242,6 +246,8 @@ function ContatosPage() {
                     variant="ghost"
                     size="icon"
                     className="h-8 w-8"
+                    title="Excluir contato"
+                    aria-label="Excluir contato"
                     onClick={() => void handleDelete(contato.id)}
                   >
                     <Trash2 className="h-4 w-4 text-destructive" />

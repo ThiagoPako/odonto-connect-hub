@@ -193,17 +193,17 @@ function OrcamentosPage() {
 
         {/* Controls */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <div className="relative">
+          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+            <div className="relative w-full sm:w-auto">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
               <input type="text" placeholder="Buscar paciente..." value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="h-8 pl-8 pr-3 rounded-lg bg-muted border-0 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary w-48" />
+                className="h-8 pl-8 pr-3 rounded-lg bg-muted border-0 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary w-full sm:w-48" />
             </div>
-            <div className="inline-flex h-8 items-center rounded-lg bg-muted p-0.5 text-sm">
+            <div className="inline-flex h-8 items-center rounded-lg bg-muted p-0.5 text-sm max-w-full overflow-x-auto">
               {[{ id: "all", label: "Todos" }, { id: "pendente", label: "Pendentes" }, { id: "aprovado", label: "Aprovados" }, { id: "reprovado", label: "Reprovados" }].map(f => (
                 <button key={f.id} onClick={() => setFilterStatus(f.id)}
-                  className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${filterStatus === f.id ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>
+                  className={`shrink-0 px-3 py-1 rounded-md text-xs font-medium transition-colors ${filterStatus === f.id ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>
                   {f.label}
                 </button>
               ))}
@@ -528,12 +528,12 @@ function BudgetDetail({ budget: b, onStatusChange, onExecute, onPrint, onEdit, o
 
         {b.status === "reprovado" && (
           <div className="mt-3 p-2 rounded-lg bg-destructive/10 text-destructive text-xs">
-            ❌ Orçamento reprovado — lead movido para Recuperação de Vendas no CRM
+            ❌ Orçamento reprovado
           </div>
         )}
         {b.status === "aprovado" && (
           <div className="mt-3 p-2 rounded-lg bg-success/10 text-success text-xs">
-            ✅ Orçamento aprovado — lead movido para Orçamento Aprovado no CRM
+            ✅ Orçamento aprovado
           </div>
         )}
       </div>
