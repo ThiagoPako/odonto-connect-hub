@@ -70,9 +70,11 @@ export function buildDefaultAttendanceSettings(clinicName?: string | null): Atte
       sat: { enabled: true, openTime: "08:00", closeTime: "12:00" },
       sun: { enabled: false, openTime: "08:00", closeTime: "12:00" },
     },
+    // Textos do parecer da Helena (T12/T13): falam pela clínica, nunca pela plataforma,
+    // e não fixam horário (o horário real é o da aba "Horários").
     offHoursMessage:
-      `Olá! Aqui é da ${nome}. 👋 Nosso atendimento está fechado agora.\n\nDeixe sua mensagem que respondemos assim que abrirmos! 😊`,
-    welcomeMessage: `Olá! 👋 Seja bem-vindo(a) à *${nome}*! Como podemos ajudar hoje?`,
+      `Olá! Aqui é da ${nome}. Nosso atendimento está fechado agora. Deixe sua mensagem que respondemos assim que abrirmos. 😊`,
+    welcomeMessage: `Olá! 👋 Você está falando com a *${nome}*. Como podemos ajudar você hoje?`,
     signatureEnabled: true,
     signatureTemplate: "{name}:",
     autoGreetingEnabled: true,
@@ -148,6 +150,15 @@ export function isWithinBusinessHours(settings: AttendanceSettings): boolean {
 
 export function formatSignature(template: string, userName: string): string {
   return template.replace("{name}", userName);
+}
+
+// Lei 5.081/66 art. 7º, a e g; Res. CFO 271/2025 (Código de Ética, art. 44, XIV).
+function AvisoTextoAutomatico() {
+  return (
+    <p className="mt-1 text-[11px] text-muted-foreground">
+      Não inclua preços, promoções, descontos nem nomes de tratamentos nas mensagens automáticas.
+    </p>
+  );
 }
 
 function isForbiddenError(error: string) {
@@ -391,6 +402,7 @@ export function AttendanceSettingsPanel() {
                 placeholder="Mensagem para fora do horário..."
               />
               <p className="text-[11px] text-muted-foreground mt-1 text-right">{settings.offHoursMessage.length}/1000</p>
+              <AvisoTextoAutomatico />
             </div>
 
             <Separator />
@@ -414,6 +426,7 @@ export function AttendanceSettingsPanel() {
                 maxLength={500}
                 disabled={!settings.autoGreetingEnabled}
               />
+              <AvisoTextoAutomatico />
             </div>
 
             <Separator />
@@ -437,6 +450,7 @@ export function AttendanceSettingsPanel() {
                 maxLength={500}
                 disabled={!settings.closingMessageEnabled}
               />
+              <AvisoTextoAutomatico />
             </div>
 
             <Separator />
@@ -558,6 +572,7 @@ export function AttendanceSettingsPanel() {
                 maxLength={500}
                 disabled={!settings.inactivityMessageEnabled}
               />
+              <AvisoTextoAutomatico />
             </div>
           </div>
         )}
