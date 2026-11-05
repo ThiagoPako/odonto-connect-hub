@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, Outlet, useLocation } from "@tanstack/react-router";
 import { useState } from "react";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { AdminResetPanel } from "@/components/AdminResetPanel";
@@ -63,6 +63,13 @@ const TABS: TabDef[] = [
 function ConfiguracoesPage() {
   const [activeTab, setActiveTab] = useState<TabId>("clinica");
   const current = TABS.find((t) => t.id === activeTab)!;
+  const pathname = useLocation({ select: (l) => l.pathname });
+
+  // Rotas filhas (ex.: /configuracoes/agenda) têm tela própria: mostra a filha
+  // no lugar das abas, senão a pessoa nunca chega nela.
+  if (pathname.replace(/\/+$/, "") !== "/configuracoes") {
+    return <Outlet />;
+  }
 
   return (
     <div className="flex-1 flex flex-col min-h-screen">

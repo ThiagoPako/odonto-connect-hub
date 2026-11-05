@@ -100,7 +100,7 @@ export function DespesasCategoriaChart({ movements }: Props) {
         <h3 className="text-sm font-semibold text-card-foreground mb-1">Composição das Despesas</h3>
         <p className="text-[11px] text-muted-foreground mb-4">Distribuição por categoria — mês atual</p>
         <div className="h-[240px] flex items-center justify-center text-xs text-muted-foreground">
-          Nenhuma despesa registrada
+          Nenhuma despesa registrada neste mês
         </div>
       </div>
     );
