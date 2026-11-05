@@ -17,7 +17,7 @@ export const Route = createFileRoute("/configuracoes/cobranca")({
   component: ConfiguracoesCobrancaPage,
 });
 
-const MAX_ETAPAS = 6;
+const MAX_ETAPAS = 5;
 const EXEMPLO = { nome: "Maria", clinica: "Sua Clínica", valor: "R$ 150,00", vencimento: "10/11/2026" };
 
 function descreverDias(dias: number): string {
@@ -111,8 +111,12 @@ function ConfiguracoesCobrancaPage() {
               <CardHeader>
                 <CardTitle className="text-base">Ligar a régua</CardTitle>
                 <CardDescription>
-                  Vem desligada. Ao ligar, só contas em aberto (pendente, atrasado ou vencido) com paciente e telefone
-                  recebem lembrete. Conta paga, cancelada ou com novo vencimento sai da fila sozinha.
+                  Vem desligada. Ao ligar, só contas em aberto (pendente, atrasado ou vencido) recebem lembrete, no
+                  máximo uma mensagem por pessoa por dia (contas juntas), nunca em feriado nacional nem perto de uma
+                  consulta marcada. Se houver responsável financeiro, a mensagem vai para ele; paciente menor de idade
+                  sem responsável não recebe. Conta paga, cancelada ou com novo vencimento sai da fila sozinha. Se a
+                  pessoa responder "já paguei" ou contestar, a cobrança daquela conta para e a recepção é avisada.
+                  Negativação e protesto não são feitos pela régua.
                 </CardDescription>
               </CardHeader>
               <CardContent className="flex items-center gap-3">
@@ -125,9 +129,11 @@ function ConfiguracoesCobrancaPage() {
               <CardHeader>
                 <CardTitle className="text-base">Etapas e textos</CardTitle>
                 <CardDescription>
-                  Use {"{nome}"}, {"{clinica}"}, {"{valor}"} e {"{vencimento}"}. Fale só de valor e vencimento: o
-                  texto não pode citar procedimento, tratamento ou diagnóstico, nem termos que constranjam (ex.: SPC,
-                  Serasa, dívida). Sem links.
+                  Use {"{nome}"}, {"{clinica}"}, {"{valor}"} e {"{vencimento}"}. Todo texto precisa ter "Aqui é da{" "}
+                  {"{clinica}"}" e o valor só depois disso. Fale só de pagamento e vencimento: nada de procedimento,
+                  tratamento, consulta ou diagnóstico, nada que condicione o atendimento ao pagamento e nada que
+                  constranja (ex.: último aviso, suspender, cartório, SPC). Sem links e sem texto todo em maiúsculas.
+                  Depois do vencimento: no máximo 3 etapas, com pelo menos 3 dias entre elas.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-5">
@@ -142,7 +148,7 @@ function ConfiguracoesCobrancaPage() {
                         <Input
                           id={`dias-${i}`}
                           type="number"
-                          min={-15}
+                          min={-7}
                           max={30}
                           className="w-28"
                           value={Number.isFinite(etapa.dias) ? etapa.dias : 0}
@@ -184,7 +190,7 @@ function ConfiguracoesCobrancaPage() {
                     variant="outline"
                     size="sm"
                     disabled={etapas.length >= MAX_ETAPAS}
-                    onClick={() => setEtapas((prev) => [...prev, { dias: 1, texto: "Olá, {nome}! " }])}
+                    onClick={() => setEtapas((prev) => [...prev, { dias: 10, texto: "Olá, {nome}! Aqui é da {clinica}. " }])}
                   >
                     <Plus className="h-4 w-4 mr-1" /> Adicionar etapa
                   </Button>
