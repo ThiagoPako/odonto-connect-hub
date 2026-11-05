@@ -14505,10 +14505,68 @@ function validarMensagensFollowup(messages) {
 
 // Configuração da clínica para a IA clínica (tenant_settings). Padrão: apagar a transcrição
 // bruta quando o dentista aprova o relatório (LGPD art. 6º III e 16).
+// Rascunho tem prazo de revisão (padrão 60 dias, aviso na tela).
 const IA_CLINICA_SETTINGS_KEY = 'ia_relatorio_clinico';
+const IA_PRAZO_REVISAO_PADRAO = 60;
+const IA_PRAZO_REVISAO_MIN = 7;
+const IA_PRAZO_REVISAO_MAX = 365;
 async function getIaClinicaConfig(tenantId) {
   const v = await getTenantSetting(tenantId, IA_CLINICA_SETTINGS_KEY);
-  return { manter_transcricao: v?.manter_transcricao === true };
+  const dias = Number(v?.prazo_revisao_dias);
+  return {
+    manter_transcricao: v?.manter_transcricao === true,
+    prazo_revisao_dias: Number.isInteger(dias) && dias >= IA_PRAZO_REVISAO_MIN && dias <= IA_PRAZO_REVISAO_MAX ? dias : IA_PRAZO_REVISAO_PADRAO,
+  };
+}
+
+// Cadastro de cirurgião-dentista do usuário nesta clínica (pelo e-mail, ativo e com CRO), ou null.
+async function findDentistaDoUsuario(user) {
+  if (!isValidTenantId(user?.tenant_id) || !user?.email) return null;
+  const { rows } = await pool.query(
+    `SELECT id, nome, cro FROM dentistas
+      WHERE tenant_id = $1 AND LOWER(email) = LOWER($2) AND ativo IS NOT FALSE AND COALESCE(TRIM(cro), '') <> ''
+      LIMIT 1`,
+    [user.tenant_id, user.email]
+  );
+  return rows[0] || null;
+}
+
+// Dentista do atendimento: o próprio usuário, se for dentista; senão (admin gerando), o dentista
+// do agendamento ou o informado, sempre desta clínica.
+async function resolverDentistaDoAtendimento(user, { appointmentId, patientId, dentistaId }) {
+  const proprio = await findDentistaDoUsuario(user);
+  if (proprio) return proprio.id;
+  for (const ag of [appointmentId, patientId]) {
+    if (!UUID_RE.test(String(ag || ''))) continue;
+    const { rows } = await pool.query(
+      'SELECT dentista_id FROM agendamentos WHERE id = $1::uuid AND tenant_id = $2 AND dentista_id IS NOT NULL LIMIT 1',
+      [String(ag), user.tenant_id]
+    );
+    if (rows[0]?.dentista_id) return rows[0].dentista_id;
+  }
+  if (UUID_RE.test(String(dentistaId || ''))) {
+    const { rows } = await pool.query(
+      'SELECT id FROM dentistas WHERE id = $1::uuid AND tenant_id = $2 LIMIT 1', [String(dentistaId), user.tenant_id]);
+    if (rows[0]) return rows[0].id;
+  }
+  return null;
+}
+
+// Rascunho nunca revisado não guarda a transcrição bruta para sempre: apagada em 30 dias
+// (LGPD art. 6º III e 16). O texto do rascunho fica; só a transcrição sai.
+const IA_TRANSCRICAO_RASCUNHO_DIAS = 30;
+async function apagarTranscricoesDeRascunhosVencidos() {
+  try {
+    const { rowCount } = await pool.query(
+      `UPDATE clinical_reports SET transcription = NULL, transcricao_apagada_em = NOW()
+        WHERE status IN ('rascunho', 'nao_aprovado') AND transcription IS NOT NULL
+          AND COALESCE(revisao_pendente_desde, created_at) < NOW() - make_interval(days => $1)`,
+      [IA_TRANSCRICAO_RASCUNHO_DIAS]
+    );
+    if (rowCount) console.log(`   🧹 Transcrições de rascunhos de IA com mais de ${IA_TRANSCRICAO_RASCUNHO_DIAS} dias apagadas: ${rowCount}`);
+  } catch (e) {
+    if (e.code !== '42703' && e.code !== '42P01') console.error('[ia:transcricoes-vencidas]', e.message);
+  }
 }
 
 app.get('/api/pacientes/:id/consentimentos', async (req, res) => {
@@ -14676,11 +14734,16 @@ app.post('/api/ai/clinical-report', async (req, res) => {
     if (!(await userTemPapel(user, ['admin', 'dentista']))) {
       return res.status(403).json({ error: 'Só o dentista ou o administrador da clínica gera o relatório clínico.' });
     }
-    const { transcription, queixaPrincipal, procedimento, dente, prescricoes, patientId, patientName, durationSeconds } = req.body || {};
+    const { transcription, queixaPrincipal, procedimento, dente, prescricoes, patientId, patientName, durationSeconds, appointmentId, dentistaId } = req.body || {};
 
     if (!transcription || typeof transcription !== 'string') return res.status(400).json({ error: 'Transcrição é obrigatória' });
     if (!(await pacienteOuAgendamentoDaClinica(user.tenant_id, patientId))) {
       return res.status(404).json({ error: 'Paciente não encontrado' });
+    }
+    // Quem aprova é o dentista do atendimento; quando o admin gera, grava esse dentista.
+    const dentistaDoAtendimento = await resolverDentistaDoAtendimento(user, { appointmentId, patientId, dentistaId });
+    if (!dentistaDoAtendimento) {
+      return res.status(400).json({ error: 'Selecione o agendamento com o dentista do atendimento: é ele quem revisa e aprova o relatório.' });
     }
     const consent = await exigeConsentimentoIA(user.tenant_id, patientId);
     if (!consent) {
@@ -14739,11 +14802,11 @@ ${transcription}`;
     const reportId = randomUUID();
     const attendantName = await getProfileDisplayName(user.id, '');
     await pool.query(`
-      INSERT INTO clinical_reports (id, patient_id, patient_name, attendant_id, attendant_name, transcription, report, report_ia_original, status, gerado_por_ia, queixa_principal, procedimento, dente_regiao, prescricoes, duration_seconds, tenant_id)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $7, 'rascunho', true, $8, $9, $10, $11, $12, $13)
-    `, [reportId, String(patientId), patientName || '', user.id, attendantName, transcription, report, queixaPrincipal || '', procedimento || '', dente || '', JSON.stringify(listaPrescricoes), durationSeconds || 0, user.tenant_id]);
+      INSERT INTO clinical_reports (id, patient_id, patient_name, attendant_id, attendant_name, transcription, report, report_ia_original, status, gerado_por_ia, queixa_principal, procedimento, dente_regiao, prescricoes, duration_seconds, tenant_id, dentista_id, revisao_pendente_desde)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $7, 'rascunho', true, $8, $9, $10, $11, $12, $13, $14, NOW())
+    `, [reportId, String(patientId), patientName || '', user.id, attendantName, transcription, report, queixaPrincipal || '', procedimento || '', dente || '', JSON.stringify(listaPrescricoes), durationSeconds || 0, user.tenant_id, dentistaDoAtendimento]);
 
-    res.json({ id: reportId, report, transcription, status: 'rascunho' });
+    res.json({ id: reportId, report, transcription, status: 'rascunho', dentista_id: dentistaDoAtendimento });
   } catch (err) {
     if (err.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
     console.error('Clinical report error:', err.message);
@@ -14751,51 +14814,106 @@ ${transcription}`;
   }
 });
 
-// ─── Aprovar o rascunho (revisão humana) ────────────────────
-// O dentista pode editar o texto antes de aprovar; grava quem aprovou e quando. O texto
-// original da IA fica em report_ia_original. A transcrição bruta é apagada na aprovação,
+// ─── Revisão do rascunho pelo cirurgião-dentista ────────────
+// Registrar o atendimento é ato do cirurgião-dentista (Lei 5.081 art. 6º, I); a aprovação dá
+// autoria e autenticidade ao registro (Lei 13.787 art. 2º). Por isso só aprova (ou não aprova)
+// quem tem cadastro ativo de dentista com CRO na clínica, e é o dentista do atendimento. Se ele
+// saiu da clínica, outro dentista pode revisar, e fica marcado que não realizou o atendimento.
+// Quem é admin sem cadastro de dentista não aprova.
+async function autorizarRevisaoRelatorio(user, reportId) {
+  if (!UUID_RE.test(String(reportId || ''))) return { status: 404, error: 'Relatório não encontrado' };
+  const dentista = await findDentistaDoUsuario(user);
+  if (!dentista) {
+    return { status: 403, error: 'Só o cirurgião-dentista com cadastro e CRO nesta clínica revisa o relatório clínico.' };
+  }
+  const { rows } = await pool.query(
+    `SELECT r.id, r.status, COALESCE(r.dentista_id, d2.id) AS responsavel_id,
+            d.id AS responsavel_cadastro, d.ativo AS responsavel_ativo, d.nome AS responsavel_nome
+       FROM clinical_reports r
+       LEFT JOIN profiles p ON r.dentista_id IS NULL AND p.id::text = r.attendant_id
+       LEFT JOIN dentistas d2 ON r.dentista_id IS NULL AND d2.tenant_id = r.tenant_id AND LOWER(d2.email) = LOWER(p.email)
+       LEFT JOIN dentistas d ON d.id = COALESCE(r.dentista_id, d2.id) AND d.tenant_id = r.tenant_id
+      WHERE r.id = $1 AND r.tenant_id = $2
+      LIMIT 1`,
+    [reportId, user.tenant_id]
+  );
+  const r = rows[0];
+  if (!r) return { status: 404, error: 'Relatório não encontrado' };
+  if (r.status === 'aprovado') return { status: 409, error: 'Este relatório já foi aprovado' };
+  if (r.status === 'nao_aprovado') return { status: 409, error: 'Este relatório já foi marcado como não aprovado' };
+  const responsavelNaClinica = !!r.responsavel_cadastro && r.responsavel_ativo !== false;
+  if (responsavelNaClinica && String(r.responsavel_id) !== String(dentista.id)) {
+    return { status: 403, error: `Só o dentista que fez o atendimento (${r.responsavel_nome || 'dentista do atendimento'}) revisa este relatório.` };
+  }
+  return { dentista, outroDentista: String(r.responsavel_id || '') !== String(dentista.id) };
+}
+
+// ─── Aprovar o rascunho ─────────────────────────────────────
+// O dentista pode editar o texto antes de aprovar; grava quem aprovou (nome e CRO) e quando.
+// O texto original da IA fica em report_ia_original. A transcrição bruta é apagada na aprovação,
 // a não ser que a clínica tenha escolhido mantê-la (configuração ia_relatorio_clinico).
-// Vale também para relatórios antigos, gravados sem revisão (origem_ia_sem_revisao).
 app.post('/api/ai/reports/:id/aprovar', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
-    if (!UUID_RE.test(req.params.id)) return res.status(404).json({ error: 'Relatório não encontrado' });
-    const isAdmin = await userTemPapel(user, ['admin']);
-    if (!isAdmin && !(await userTemPapel(user, ['dentista']))) {
-      return res.status(403).json({ error: 'Só o dentista ou o administrador da clínica aprova o relatório.' });
-    }
     const texto = typeof req.body?.report === 'string' ? req.body.report.trim() : '';
     if (!texto) return res.status(400).json({ error: 'O texto do relatório não pode ficar vazio' });
     if (texto.length > 20000) return res.status(400).json({ error: 'Relatório muito longo' });
+    const auth = await autorizarRevisaoRelatorio(user, req.params.id);
+    if (auth.error) return res.status(auth.status).json({ error: auth.error });
+    const { dentista, outroDentista } = auth;
 
     const { manter_transcricao: manter } = await getIaClinicaConfig(user.tenant_id);
-    const aprovadorNome = await getProfileDisplayName(user.id, user.email || 'Dentista');
-    // Dentista só aprova o que ele mesmo gerou; o admin da clínica aprova qualquer um.
-    const params = [texto, user.id, aprovadorNome, manter, req.params.id, user.tenant_id];
-    let donoSql = '';
-    if (!isAdmin) { params.push(String(user.id)); donoSql = ` AND attendant_id = $${params.length}`; }
     const { rows } = await pool.query(
       `UPDATE clinical_reports
-          SET report = $1, status = 'aprovado', aprovado_por = $2, aprovado_por_nome = $3, aprovado_em = NOW(),
+          SET report = $1, status = 'aprovado', aprovado_por = $2, aprovado_por_nome = $3, aprovado_por_cro = $4,
+              aprovado_por_dentista_id = $5, aprovado_por_outro_dentista = $6, aprovado_em = NOW(),
               report_ia_original = COALESCE(report_ia_original, report),
-              transcription = CASE WHEN $4::boolean THEN transcription ELSE NULL END,
-              transcricao_apagada_em = CASE WHEN $4::boolean OR transcription IS NULL THEN transcricao_apagada_em ELSE NOW() END
-        WHERE id = $5 AND tenant_id = $6 AND status = 'rascunho'${donoSql}
-        RETURNING id, status, aprovado_por_nome, aprovado_em, transcricao_apagada_em, origem_ia_sem_revisao`,
-      params
+              transcription = CASE WHEN $7::boolean THEN transcription ELSE NULL END,
+              transcricao_apagada_em = CASE WHEN $7::boolean OR transcription IS NULL THEN transcricao_apagada_em ELSE NOW() END
+        WHERE id = $8 AND tenant_id = $9 AND status = 'rascunho'
+        RETURNING id, status, aprovado_por_nome, aprovado_por_cro, aprovado_por_outro_dentista, aprovado_em,
+                  transcricao_apagada_em, origem_ia_sem_revisao`,
+      [texto, user.id, dentista.nome, dentista.cro, dentista.id, outroDentista, manter, req.params.id, user.tenant_id]
     );
-    if (!rows.length) {
-      const { rows: atual } = await pool.query(
-        'SELECT status FROM clinical_reports WHERE id = $1 AND tenant_id = $2 LIMIT 1', [req.params.id, user.tenant_id]);
-      if (atual[0]?.status === 'aprovado') return res.status(409).json({ error: 'Este relatório já foi aprovado' });
-      return res.status(404).json({ error: 'Relatório não encontrado' });
-    }
+    if (!rows.length) return res.status(409).json({ error: 'O relatório mudou enquanto você revisava. Recarregue a página.' });
     res.json({ success: true, ...rows[0], transcricao_mantida: manter });
   } catch (err) {
     if (err.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
     console.error('[ai:aprovar-relatorio]', err.message);
     res.status(500).json({ error: 'Erro ao aprovar o relatório' });
+  }
+});
+
+// ─── Não aprovar o rascunho ─────────────────────────────────
+// O texto fica guardado para auditoria (nada é apagado, Lei 13.787 art. 2º), mas sai de vez da
+// lista de pendentes e nunca entra no prontuário, na impressão nem nas exportações.
+app.post('/api/ai/reports/:id/nao-aprovar', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const motivo = typeof req.body?.motivo === 'string' ? req.body.motivo.trim().slice(0, 500) : '';
+    const auth = await autorizarRevisaoRelatorio(user, req.params.id);
+    if (auth.error) return res.status(auth.status).json({ error: auth.error });
+    const { dentista } = auth;
+
+    const { manter_transcricao: manter } = await getIaClinicaConfig(user.tenant_id);
+    const { rows } = await pool.query(
+      `UPDATE clinical_reports
+          SET status = 'nao_aprovado', nao_aprovado_por = $1, nao_aprovado_por_nome = $2, nao_aprovado_por_cro = $3,
+              nao_aprovado_em = NOW(), nao_aprovado_motivo = $4,
+              transcription = CASE WHEN $5::boolean THEN transcription ELSE NULL END,
+              transcricao_apagada_em = CASE WHEN $5::boolean OR transcription IS NULL THEN transcricao_apagada_em ELSE NOW() END
+        WHERE id = $6 AND tenant_id = $7 AND status = 'rascunho'
+        RETURNING id, status, nao_aprovado_por_nome, nao_aprovado_por_cro, nao_aprovado_em, transcricao_apagada_em`,
+      [user.id, dentista.nome, dentista.cro, motivo || null, manter, req.params.id, user.tenant_id]
+    );
+    if (!rows.length) return res.status(409).json({ error: 'O relatório mudou enquanto você revisava. Recarregue a página.' });
+    res.json({ success: true, ...rows[0], transcricao_mantida: manter });
+  } catch (err) {
+    if (err.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('[ai:nao-aprovar-relatorio]', err.message);
+    res.status(500).json({ error: 'Erro ao registrar a decisão' });
   }
 });
 
@@ -14815,7 +14933,16 @@ app.put('/api/ai/clinic-settings', async (req, res) => {
   try {
     const { user } = await verifyAdmin(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
-    const cfg = { manter_transcricao: req.body?.manter_transcricao === true };
+    const atual = await getIaClinicaConfig(user.tenant_id);
+    const cfg = { ...atual };
+    if (req.body && 'manter_transcricao' in req.body) cfg.manter_transcricao = req.body.manter_transcricao === true;
+    if (req.body && 'prazo_revisao_dias' in req.body) {
+      const dias = Number(req.body.prazo_revisao_dias);
+      if (!Number.isInteger(dias) || dias < IA_PRAZO_REVISAO_MIN || dias > IA_PRAZO_REVISAO_MAX) {
+        return res.status(400).json({ error: `Prazo de revisão: número inteiro de ${IA_PRAZO_REVISAO_MIN} a ${IA_PRAZO_REVISAO_MAX} dias` });
+      }
+      cfg.prazo_revisao_dias = dias;
+    }
     await setTenantSetting(user.tenant_id, IA_CLINICA_SETTINGS_KEY, cfg);
     res.json(cfg);
   } catch (err) {
@@ -14827,20 +14954,20 @@ app.put('/api/ai/clinic-settings', async (req, res) => {
 });
 
 // ─── Get clinical reports for a patient (prontuário) ────────
-// Só o que é oficial: aprovado pelo dentista, ou antigo (gravado antes da revisão obrigatória,
-// com o aviso origem_ia_sem_revisao). Rascunho novo não entra no prontuário.
+// Só o histórico clínico oficial: relatório aprovado pelo dentista. Rascunho (novo ou antigo,
+// gerado sem revisão) e "não aprovado" ficam guardados, mas fora do prontuário.
 app.get('/api/ai/reports/:patientId', async (req, res, next) => {
-  // export.csv tem rota própria (registrada depois); sem isto ela nunca era alcançada
-  if (req.params.patientId === 'export.csv') return next();
+  // export.csv e export-pdf têm rota própria (registrada depois); sem isto nunca seriam alcançadas
+  if (req.params.patientId === 'export.csv' || req.params.patientId === 'export-pdf') return next();
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { patientId } = req.params;
     const { rows } = await pool.query(
-      `SELECT id, patient_name, transcription, report, queixa_principal, procedimento, dente_regiao, prescricoes, duration_seconds, created_at,
-              status, gerado_por_ia, aprovado_por_nome, aprovado_em, origem_ia_sem_revisao, transcricao_apagada_em
+      `SELECT id, patient_name, report, queixa_principal, procedimento, dente_regiao, prescricoes, duration_seconds, created_at,
+              status, gerado_por_ia, aprovado_por_nome, aprovado_por_cro, aprovado_por_outro_dentista, aprovado_em, transcricao_apagada_em
          FROM clinical_reports
-        WHERE patient_id = $1 AND tenant_id = $2 AND (status = 'aprovado' OR origem_ia_sem_revisao = true)
+        WHERE patient_id = $1 AND tenant_id = $2 AND status = 'aprovado'
         ORDER BY created_at DESC LIMIT 50`,
       [patientId, user.tenant_id]
     );
@@ -14851,48 +14978,72 @@ app.get('/api/ai/reports/:patientId', async (req, res, next) => {
   }
 });
 
+// Filtros comuns da lista e das exportações. Sempre começa pela clínica do usuário.
+function filtrosRelatoriosClinicos(query, tenantId) {
+  const { from, to, status, patientId, attendantId, q } = query || {};
+  const where = ['tenant_id = $1'];
+  const params = [tenantId];
+  let idx = 2;
+  if (from) { where.push(`created_at >= $${idx++}`); params.push(from); }
+  if (to)   { where.push(`created_at <= ($${idx++}::date + INTERVAL '1 day')`); params.push(to); }
+  if (patientId) { where.push(`patient_id = $${idx++}`); params.push(patientId); }
+  if (attendantId) { where.push(`attendant_id = $${idx++}`); params.push(attendantId); }
+  if (q) {
+    where.push(`(LOWER(patient_name) LIKE $${idx} OR LOWER(queixa_principal) LIKE $${idx} OR LOWER(procedimento) LIKE $${idx})`);
+    params.push(`%${String(q).toLowerCase()}%`); idx++;
+  }
+  if (status === 'com_prescricao') where.push(`jsonb_array_length(COALESCE(prescricoes, '[]'::jsonb)) > 0`);
+  if (status === 'sem_prescricao') where.push(`(prescricoes IS NULL OR jsonb_array_length(COALESCE(prescricoes, '[]'::jsonb)) = 0)`);
+  return { where, params, filtrosLog: { from: from || null, to: to || null, status: status || null, patientId: patientId || null, attendantId: attendantId || null, busca: q ? true : null } };
+}
+
 // ─── List clinical reports with filters (period, status, patient, dentist) ──
 // GET /api/ai/reports?from=YYYY-MM-DD&to=YYYY-MM-DD&status=com_prescricao|sem_prescricao|todos&patientId=&attendantId=&q=
+// Traz também rascunhos e não aprovados, com o status, para a tela separar o que é oficial.
 app.get('/api/ai/reports', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
-    const { from, to, status, patientId, attendantId, q, limit } = req.query;
+    const { where, params } = filtrosRelatoriosClinicos(req.query, user.tenant_id);
 
-    const where = [];
-    const params = [];
-    let idx = 1;
-    where.push(`tenant_id = $${idx++}`); params.push(user.tenant_id);
-
-    if (from) { where.push(`created_at >= $${idx++}`); params.push(from); }
-    if (to)   { where.push(`created_at <= ($${idx++}::date + INTERVAL '1 day')`); params.push(to); }
-    if (patientId) { where.push(`patient_id = $${idx++}`); params.push(patientId); }
-    if (attendantId) { where.push(`attendant_id = $${idx++}`); params.push(attendantId); }
-    if (q) {
-      where.push(`(LOWER(patient_name) LIKE $${idx} OR LOWER(queixa_principal) LIKE $${idx} OR LOWER(procedimento) LIKE $${idx})`);
-      params.push(`%${String(q).toLowerCase()}%`); idx++;
-    }
-    if (status === 'com_prescricao') where.push(`jsonb_array_length(COALESCE(prescricoes, '[]'::jsonb)) > 0`);
-    if (status === 'sem_prescricao') where.push(`(prescricoes IS NULL OR jsonb_array_length(COALESCE(prescricoes, '[]'::jsonb)) = 0)`);
-
-    // Non-admin users only see their own reports
+    // Quem não é admin vê o que gerou e, se for dentista, os do seu atendimento e os rascunhos
+    // de dentista que saiu da clínica (que ele pode revisar).
     if (user.role !== 'admin' && user.role !== 'gerente') {
-      where.push(`attendant_id = $${idx++}`);
-      params.push(user.id);
+      const dentista = await findDentistaDoUsuario(user);
+      params.push(String(user.id));
+      const meu = `attendant_id = $${params.length}`;
+      if (dentista) {
+        params.push(dentista.id);
+        const d = `$${params.length}`;
+        where.push(`(${meu} OR dentista_id = ${d} OR (status = 'rascunho' AND (dentista_id IS NULL OR NOT EXISTS (
+          SELECT 1 FROM dentistas dd WHERE dd.id = clinical_reports.dentista_id AND dd.tenant_id = clinical_reports.tenant_id AND dd.ativo IS NOT FALSE))))`);
+      } else {
+        where.push(meu);
+      }
     }
 
-    const lim = Math.min(parseInt(limit) || 200, 1000);
+    const lim = Math.min(parseInt(req.query.limit) || 200, 1000);
     const sql = `
       SELECT id, patient_id, patient_name, attendant_id, attendant_name,
              transcription, report, queixa_principal, procedimento, dente_regiao,
              prescricoes, duration_seconds, created_at,
-             status, gerado_por_ia, aprovado_por_nome, aprovado_em, origem_ia_sem_revisao, transcricao_apagada_em
+             status, gerado_por_ia, dentista_id, aprovado_por_nome, aprovado_por_cro, aprovado_por_outro_dentista, aprovado_em,
+             nao_aprovado_por_nome, nao_aprovado_por_cro, nao_aprovado_em, nao_aprovado_motivo,
+             origem_ia_sem_revisao, revisao_pendente_desde, transcricao_apagada_em
       FROM clinical_reports
-      ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+      WHERE ${where.join(' AND ')}
       ORDER BY created_at DESC
       LIMIT ${lim}
     `;
     const { rows } = await pool.query(sql, params);
+
+    // Prazo de revisão dos rascunhos (configurável por clínica)
+    const { prazo_revisao_dias: prazo } = await getIaClinicaConfig(user.tenant_id);
+    for (const r of rows) {
+      r.revisar_ate = r.status === 'rascunho'
+        ? new Date(new Date(r.revisao_pendente_desde || r.created_at).getTime() + prazo * 86_400_000).toISOString()
+        : null;
+    }
 
     // Aggregated stats
     const total = rows.length;
@@ -14908,6 +15059,8 @@ app.get('/api/ai/reports', async (req, res) => {
         sem_prescricao: total - comPrescricao,
         pacientes_unicos: pacientesUnicos,
         duracao_total_min: Math.round(totalDuration / 60),
+        pendentes_revisao: rows.filter(r => r.status === 'rascunho').length,
+        prazo_revisao_dias: prazo,
       },
     });
   } catch (err) {
@@ -14917,10 +15070,61 @@ app.get('/api/ai/reports', async (req, res) => {
   }
 });
 
-// ─── Export clinical reports as CSV ─────────────────────────
-// GET /api/ai/reports/export.csv?from=&to=&status=&patientId=&attendantId=&token=<JWT>
-// Exportação em massa de dado de saúde: só o admin da clínica, e cada exportação fica registrada
+// ─── Exportações (CSV e PDF) ────────────────────────────────
+// Exportação em massa de dado de saúde: só o admin da clínica, só relatórios APROVADOS pelo
+// dentista (rascunho e não aprovado nunca saem), e cada exportação fica registrada
 // (quem, quando, quantos) — LGPD arts. 6º III, 37 e 46; Lei 13.787 art. 2º.
+async function buscarRelatoriosParaExportar(user, query, formato) {
+  const { where, params, filtrosLog } = filtrosRelatoriosClinicos(query, user.tenant_id);
+  where.push(`status = 'aprovado'`);
+  const { rows } = await pool.query(
+    `SELECT id, created_at, patient_id, patient_name, attendant_name, queixa_principal, procedimento,
+            dente_regiao, duration_seconds, prescricoes, status, aprovado_por_nome, aprovado_por_cro,
+            aprovado_por_outro_dentista, aprovado_em
+       FROM clinical_reports
+      WHERE ${where.join(' AND ')}
+      ORDER BY created_at DESC LIMIT 5000`,
+    params
+  );
+  // Registro antes de entregar; sem registro, não exporta.
+  try {
+    await pool.query(
+      `INSERT INTO exportacoes_relatorios_ia (tenant_id, usuario_id, usuario_email, quantidade, filtros, formato)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [user.tenant_id, user.id || null, user.email || null, rows.length, JSON.stringify(filtrosLog), formato]
+    );
+  } catch (logErr) {
+    console.error(`[ai:export-${formato}] registro da exportação falhou:`, logErr.message);
+    return { erroRegistro: true };
+  }
+  // Também no registro de acesso ao prontuário (PR #59), se a tabela já existir.
+  const pacienteIds = [...new Set(rows.map(r => r.patient_id).filter(Boolean).map(String))];
+  if (pacienteIds.length) {
+    await pool.query(
+      `INSERT INTO acessos_prontuario (tenant_id, usuario_id, paciente_id, recurso, acao)
+       SELECT $1, $2, unnest($3::text[]), 'relatorio_clinico_ia', 'exportar'`,
+      [user.tenant_id, UUID_RE.test(String(user.id || '')) ? user.id : null, pacienteIds]
+    ).catch(e => { if (e?.code !== '42P01') console.error(`[ai:export-${formato}] acessos_prontuario:`, e.message); });
+  }
+  return { rows };
+}
+
+function rotuloAprovacao(r) {
+  const cro = r.aprovado_por_cro ? ` (CRO ${r.aprovado_por_cro})` : '';
+  const data = r.aprovado_em ? new Date(r.aprovado_em).toLocaleDateString('pt-BR') : '';
+  return r.aprovado_por_outro_dentista
+    ? `Revisado por ${r.aprovado_por_nome || 'dentista'}${cro}, que não realizou o atendimento, em ${data}`
+    : `Aprovado por ${r.aprovado_por_nome || 'dentista'}${cro} em ${data}`;
+}
+
+function erroExportacao(res, err, formato) {
+  if (err.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+  if (err.message === 'Admin access required') return res.status(403).json({ error: 'Só o administrador da clínica pode exportar os relatórios' });
+  console.error(`❌ Export ${formato} error:`, err.message);
+  return res.status(500).json({ error: 'Erro ao exportar' });
+}
+
+// GET /api/ai/reports/export.csv?from=&to=&status=&patientId=&attendantId=&token=<JWT>
 app.get('/api/ai/reports/export.csv', async (req, res) => {
   try {
     // Allow token via query string for direct browser download links
@@ -14929,53 +15133,8 @@ app.get('/api/ai/reports/export.csv', async (req, res) => {
     }
     const { user } = await verifyAdmin(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
-    const { from, to, status, patientId, attendantId, q } = req.query;
-
-    const where = [];
-    const params = [];
-    let idx = 1;
-    where.push(`tenant_id = $${idx++}`); params.push(user.tenant_id);
-    if (from) { where.push(`created_at >= $${idx++}`); params.push(from); }
-    if (to)   { where.push(`created_at <= ($${idx++}::date + INTERVAL '1 day')`); params.push(to); }
-    if (patientId) { where.push(`patient_id = $${idx++}`); params.push(patientId); }
-    if (attendantId) { where.push(`attendant_id = $${idx++}`); params.push(attendantId); }
-    if (q) {
-      where.push(`(LOWER(patient_name) LIKE $${idx} OR LOWER(queixa_principal) LIKE $${idx} OR LOWER(procedimento) LIKE $${idx})`);
-      params.push(`%${String(q).toLowerCase()}%`); idx++;
-    }
-    if (status === 'com_prescricao') where.push(`jsonb_array_length(COALESCE(prescricoes, '[]'::jsonb)) > 0`);
-    if (status === 'sem_prescricao') where.push(`(prescricoes IS NULL OR jsonb_array_length(COALESCE(prescricoes, '[]'::jsonb)) = 0)`);
-
-    const sql = `
-      SELECT created_at, patient_id, patient_name, attendant_name, queixa_principal, procedimento,
-             dente_regiao, duration_seconds, prescricoes, status, aprovado_por_nome, aprovado_em, origem_ia_sem_revisao
-      FROM clinical_reports
-      ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
-      ORDER BY created_at DESC LIMIT 5000
-    `;
-    const { rows } = await pool.query(sql, params);
-
-    // Registro da exportação antes de entregar o arquivo; sem registro, não exporta.
-    const filtros = { from: from || null, to: to || null, status: status || null, patientId: patientId || null, attendantId: attendantId || null, busca: q ? true : null };
-    try {
-      await pool.query(
-        `INSERT INTO exportacoes_relatorios_ia (tenant_id, usuario_id, usuario_email, quantidade, filtros, formato)
-         VALUES ($1, $2, $3, $4, $5, 'csv')`,
-        [user.tenant_id, user.id || null, user.email || null, rows.length, JSON.stringify(filtros)]
-      );
-    } catch (logErr) {
-      console.error('[ai:export-csv] registro da exportação falhou:', logErr.message);
-      return res.status(503).json({ error: 'Não foi possível registrar a exportação. Tente novamente em instantes.' });
-    }
-    // Também no registro de acesso ao prontuário (PR #59), se a tabela já existir.
-    const pacienteIds = [...new Set(rows.map(r => r.patient_id).filter(Boolean).map(String))];
-    if (pacienteIds.length) {
-      await pool.query(
-        `INSERT INTO acessos_prontuario (tenant_id, usuario_id, paciente_id, recurso, acao)
-         SELECT $1, $2, unnest($3::text[]), 'relatorio_clinico_ia', 'exportar'`,
-        [user.tenant_id, UUID_RE.test(String(user.id || '')) ? user.id : null, pacienteIds]
-      ).catch(e => { if (e?.code !== '42P01') console.error('[ai:export-csv] acessos_prontuario:', e.message); });
-    }
+    const { rows, erroRegistro } = await buscarRelatoriosParaExportar(user, req.query, 'csv');
+    if (erroRegistro) return res.status(503).json({ error: 'Não foi possível registrar a exportação. Tente novamente em instantes.' });
 
     const esc = (v) => {
       if (v === null || v === undefined) return '';
@@ -14983,9 +15142,6 @@ app.get('/api/ai/reports/export.csv', async (req, res) => {
       if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`; // evita fórmula ao abrir na planilha
       return `"${s}"`;
     };
-    const statusCsv = (r) => r.status === 'aprovado'
-      ? `Aprovado por ${r.aprovado_por_nome || 'dentista'} em ${r.aprovado_em ? new Date(r.aprovado_em).toLocaleDateString('pt-BR') : ''}`
-      : (r.origem_ia_sem_revisao ? 'Gerado por IA sem revisão (antigo)' : 'Rascunho gerado por IA (não revisado)');
     const header = ['Data', 'Hora', 'Paciente', 'Dentista', 'Queixa', 'Procedimento', 'Dente/Região', 'Duração (min)', 'Nº Prescrições', 'Revisão'].map(esc).join(',');
     const lines = rows.map(r => {
       const d = new Date(r.created_at);
@@ -15000,19 +15156,30 @@ app.get('/api/ai/reports/export.csv', async (req, res) => {
         r.dente_regiao || '',
         Math.round((r.duration_seconds || 0) / 60),
         presc.length,
-        statusCsv(r),
+        rotuloAprovacao(r),
       ].map(esc).join(',');
     });
 
-    const csv = '\uFEFF' + [header, ...lines].join('\n');
+    const csv = '﻿' + [header, ...lines].join('\n');
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="relatorios-clinicos-${new Date().toISOString().slice(0, 10)}.csv"`);
     res.send(csv);
   } catch (err) {
-    if (err.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
-    if (err.message === 'Admin access required') return res.status(403).json({ error: 'Só o administrador da clínica pode exportar os relatórios' });
-    console.error('❌ Export CSV error:', err.message);
-    res.status(500).json({ error: 'Erro ao exportar' });
+    erroExportacao(res, err, 'csv');
+  }
+});
+
+// GET /api/ai/reports/export-pdf?from=&to=&status=&patientId= — dados para o PDF montado na tela.
+// Mesma regra do CSV: só admin, só aprovados, com registro.
+app.get('/api/ai/reports/export-pdf', async (req, res) => {
+  try {
+    const { user } = await verifyAdmin(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rows, erroRegistro } = await buscarRelatoriosParaExportar(user, req.query, 'pdf');
+    if (erroRegistro) return res.status(503).json({ error: 'Não foi possível registrar a exportação. Tente novamente em instantes.' });
+    res.json({ reports: rows.map(r => ({ ...r, rotulo_aprovacao: rotuloAprovacao(r) })) });
+  } catch (err) {
+    erroExportacao(res, err, 'pdf');
   }
 });
 
@@ -16471,15 +16638,38 @@ if (process.env.NODE_ENV !== 'test') {
       `ALTER TABLE IF EXISTS clinical_reports ADD COLUMN IF NOT EXISTS aprovado_em TIMESTAMPTZ`,
       `ALTER TABLE IF EXISTS clinical_reports ADD COLUMN IF NOT EXISTS origem_ia_sem_revisao BOOLEAN NOT NULL DEFAULT false`,
       `ALTER TABLE IF EXISTS clinical_reports ADD COLUMN IF NOT EXISTS transcricao_apagada_em TIMESTAMPTZ`,
-      // Relatórios antigos (sem status) entraram no prontuário sem revisão: marca, não apaga.
+      `ALTER TABLE IF EXISTS clinical_reports ADD COLUMN IF NOT EXISTS dentista_id UUID`,
+      `ALTER TABLE IF EXISTS clinical_reports ADD COLUMN IF NOT EXISTS aprovado_por_cro TEXT`,
+      `ALTER TABLE IF EXISTS clinical_reports ADD COLUMN IF NOT EXISTS aprovado_por_dentista_id UUID`,
+      `ALTER TABLE IF EXISTS clinical_reports ADD COLUMN IF NOT EXISTS aprovado_por_outro_dentista BOOLEAN NOT NULL DEFAULT false`,
+      `ALTER TABLE IF EXISTS clinical_reports ADD COLUMN IF NOT EXISTS nao_aprovado_por TEXT`,
+      `ALTER TABLE IF EXISTS clinical_reports ADD COLUMN IF NOT EXISTS nao_aprovado_por_nome TEXT`,
+      `ALTER TABLE IF EXISTS clinical_reports ADD COLUMN IF NOT EXISTS nao_aprovado_por_cro TEXT`,
+      `ALTER TABLE IF EXISTS clinical_reports ADD COLUMN IF NOT EXISTS nao_aprovado_em TIMESTAMPTZ`,
+      `ALTER TABLE IF EXISTS clinical_reports ADD COLUMN IF NOT EXISTS nao_aprovado_motivo TEXT`,
+      `ALTER TABLE IF EXISTS clinical_reports ADD COLUMN IF NOT EXISTS revisao_pendente_desde TIMESTAMPTZ`,
+      // Relatórios antigos (sem status) foram gerados sem revisão: ficam guardados como rascunho
+      // antigo, fora do prontuário, com prazo de revisão contado a partir daqui. Nada é apagado.
       `UPDATE clinical_reports SET status = 'rascunho', origem_ia_sem_revisao = true,
-              report_ia_original = COALESCE(report_ia_original, report)
+              report_ia_original = COALESCE(report_ia_original, report), revisao_pendente_desde = NOW()
         WHERE status IS NULL`,
+      `UPDATE clinical_reports SET revisao_pendente_desde = COALESCE(CASE WHEN origem_ia_sem_revisao THEN NOW() END, created_at)
+        WHERE status = 'rascunho' AND revisao_pendente_desde IS NULL`,
+      // Dentista do atendimento dos relatórios já gravados: o dentista com o e-mail de quem gerou.
+      `UPDATE clinical_reports r SET dentista_id = d.id
+         FROM profiles p, dentistas d
+        WHERE r.dentista_id IS NULL AND p.id::text = r.attendant_id
+          AND d.tenant_id = r.tenant_id AND LOWER(d.email) = LOWER(p.email)`,
       `DO $$ BEGIN
+         IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'clinical_reports_status_check'
+                     AND pg_get_constraintdef(oid) NOT LIKE '%nao_aprovado%') THEN
+           ALTER TABLE clinical_reports DROP CONSTRAINT clinical_reports_status_check;
+         END IF;
          IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'clinical_reports_status_check') THEN
-           ALTER TABLE clinical_reports ADD CONSTRAINT clinical_reports_status_check CHECK (status IN ('rascunho', 'aprovado'));
+           ALTER TABLE clinical_reports ADD CONSTRAINT clinical_reports_status_check CHECK (status IN ('rascunho', 'aprovado', 'nao_aprovado'));
          END IF;
        END $$`,
+      `CREATE INDEX IF NOT EXISTS idx_clinical_reports_tenant_dentista ON clinical_reports (tenant_id, dentista_id, status)`,
       `CREATE INDEX IF NOT EXISTS idx_clinical_reports_tenant_status ON clinical_reports (tenant_id, status, created_at DESC)`,
       `CREATE TABLE IF NOT EXISTS exportacoes_relatorios_ia (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -16560,6 +16750,10 @@ if (process.env.NODE_ENV !== 'test') {
   asSystemJob(processCampaignScheduler)();
   campaignSchedulerInterval = setInterval(asSystemJob(processCampaignScheduler), 60 * 1000);
   console.log('   📢 Campaign scheduler ativo (a cada 60s)');
+
+  // Transcrição de rascunho de IA nunca revisado: apagada em 30 dias (a cada 6h)
+  setTimeout(asSystemJob(apagarTranscricoesDeRascunhosVencidos), 20000);
+  setInterval(asSystemJob(apagarTranscricoesDeRascunhosVencidos), 6 * 60 * 60 * 1000);
 
   // Start appointment reminder cron (every 1h)
   asSystemJob(processAppointmentReminders)();

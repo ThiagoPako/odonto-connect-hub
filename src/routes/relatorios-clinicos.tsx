@@ -36,7 +36,10 @@ function RelatoriosClinicosPage() {
   const isAdmin = user?.role === "admin";
   const [busca, setBusca] = useState("");
   const [reports, setReports] = useState<ClinicalReportApi[]>([]);
-  const [stats, setStats] = useState({ total: 0, com_prescricao: 0, sem_prescricao: 0, pacientes_unicos: 0, duracao_total_min: 0 });
+  const [stats, setStats] = useState<{
+    total: number; com_prescricao: number; sem_prescricao: number; pacientes_unicos: number; duracao_total_min: number;
+    pendentes_revisao?: number; prazo_revisao_dias?: number;
+  }>({ total: 0, com_prescricao: 0, sem_prescricao: 0, pacientes_unicos: 0, duracao_total_min: 0 });
   // Começa em true para não piscar "Nenhum relatório" antes da primeira carga
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -142,13 +145,183 @@ function RelatoriosClinicosPage() {
     return pacientesDisponiveis.filter(p => p.nome.toLowerCase().includes(termo));
   }, [pacientesDisponiveis, buscaPaciente]);
 
-  const exportarPdf = () => {
-    if (reports.length === 0) {
-      toast.error("Nenhum relatório para exportar");
+  // Só o aprovado é histórico clínico oficial; rascunhos (novos e antigos) e não aprovados ficam à parte
+  const oficiais = reports.filter(r => r.status === 'aprovado');
+  const pendentes = reports.filter(r => r.status !== 'aprovado' && r.status !== 'nao_aprovado');
+  const naoAprovados = reports.filter(r => r.status === 'nao_aprovado');
+  const pendentesVencidos = pendentes.filter(r => r.revisar_ate && new Date(r.revisar_ate).getTime() < Date.now()).length;
+
+  const atualizarRelatorio = (id: string, mudanca: Partial<ClinicalReportApi>) =>
+    setReports(prev => prev.map(x => (x.id === id ? { ...x, ...mudanca } : x)));
+
+  const renderRelatorio = (r: ClinicalReportApi, i: number) => {
+      const isOpen = relatorioAberto === r.id;
+      const createdAt = new Date(r.created_at);
+      const prescricoes: Array<{ medicamento: string; dosagem: string; posologia: string; duracao: string }> =
+        typeof r.prescricoes === 'string' ? JSON.parse(r.prescricoes || '[]') : (r.prescricoes || []);
+
+      return (
+        <div
+          key={r.id}
+          className="bg-card rounded-2xl border border-border/60 shadow-card overflow-hidden animate-slide-up"
+          style={{ animationDelay: `${Math.min(i, 10) * 30}ms`, animationFillMode: "both" }}
+        >
+          <button
+            onClick={() => setRelatorioAberto(isOpen ? null : r.id)}
+            className="w-full flex items-center gap-4 p-4 text-left hover:bg-muted/30 transition-colors"
+          >
+            <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
+              <Sparkles className="h-5 w-5 text-primary" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                <p className="text-sm font-semibold text-foreground truncate">
+                  {r.patient_name || 'Paciente'}
+                </p>
+                {r.dente_regiao && (
+                  <span className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-medium shrink-0">
+                    {r.dente_regiao}
+                  </span>
+                )}
+                <span className={cn(
+                  "px-2 py-0.5 rounded-full text-[10px] font-medium",
+                  relatorioAprovado(r) ? "bg-success/10 text-success" : "bg-warning/15 text-foreground"
+                )}>
+                  {relatorioAprovado(r) ? "Aprovado" : r.status === 'nao_aprovado' ? "Não aprovado" : r.origem_ia_sem_revisao ? "Rascunho antigo" : "Rascunho IA"}
+                </span>
+                <span className={cn(
+                  "px-2 py-0.5 rounded-full text-[10px] font-medium",
+                  prescricoes.length > 0 ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"
+                )}>
+                  {prescricoes.length > 0 ? `${prescricoes.length} Rx` : 'Sem Rx'}
+                </span>
+              </div>
+              <div className="flex items-center gap-3 text-[11px] text-muted-foreground flex-wrap">
+                <span className="flex items-center gap-1"><Calendar className="h-3 w-3" />{format(createdAt, "dd/MM/yyyy")}</span>
+                <span className="flex items-center gap-1"><Clock className="h-3 w-3" />{format(createdAt, "HH:mm")}</span>
+                {r.attendant_name && (
+                  <span className="flex items-center gap-1"><Stethoscope className="h-3 w-3" />{r.attendant_name}</span>
+                )}
+                {r.duration_seconds > 0 && (
+                  <span className="flex items-center gap-1"><Activity className="h-3 w-3" />{Math.round(r.duration_seconds / 60)} min</span>
+                )}
+                {r.procedimento && (
+                  <span className="flex items-center gap-1 truncate max-w-[200px]"><MessageSquareIcon /> {r.procedimento}</span>
+                )}
+              </div>
+            </div>
+            <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`} />
+          </button>
+
+          {isOpen && (
+            <div className="border-t border-border/40 p-5 space-y-4 animate-slide-up">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                {r.queixa_principal && (
+                  <InfoBlock label="Queixa Principal" value={r.queixa_principal} />
+                )}
+                {r.procedimento && (
+                  <InfoBlock label="Procedimento" value={r.procedimento} />
+                )}
+                {r.dente_regiao && (
+                  <InfoBlock label="Dente / Região" value={r.dente_regiao} />
+                )}
+                {r.duration_seconds > 0 && (
+                  <InfoBlock label="Duração" value={`${Math.round(r.duration_seconds / 60)} min`} />
+                )}
+              </div>
+
+              {prescricoes.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-foreground mb-2 flex items-center gap-1.5">
+                    <Pill className="h-3.5 w-3.5 text-primary" /> Prescrições
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {prescricoes.map((rx, j) => (
+                      <div key={j} className="bg-primary/5 border border-primary/10 rounded-lg p-2.5 text-xs">
+                        <p className="font-medium text-foreground">{rx.medicamento} {rx.dosagem}</p>
+                        <p className="text-muted-foreground">{rx.posologia} — {rx.duracao}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {r.transcription && (
+                <details className="group">
+                  <summary className="cursor-pointer text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1.5">
+                    <Mic className="h-3 w-3" /> Ver transcrição completa
+                  </summary>
+                  <div className="mt-2 bg-muted/30 rounded-xl p-4 text-xs text-foreground whitespace-pre-wrap max-h-48 overflow-y-auto">
+                    {r.transcription}
+                  </div>
+                </details>
+              )}
+
+              <div className="bg-card border border-primary/20 rounded-xl p-5 space-y-3">
+                <p className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                  <Bot className="h-3.5 w-3.5 text-primary" /> Relatório Clínico IA
+                </p>
+                <RotuloRelatorioIA report={r} />
+                {relatorioAprovado(r) ? (
+                  <div
+                    className="prose prose-sm max-w-none text-foreground text-xs leading-relaxed"
+                    dangerouslySetInnerHTML={{
+                      __html: simpleMarkdownToHtml(r.report || ""),
+                    }}
+                  />
+                ) : r.status === 'nao_aprovado' ? (
+                  <details>
+                    <summary className="cursor-pointer text-xs text-muted-foreground">Ver o texto guardado (não é registro do dentista)</summary>
+                    <p className="mt-2 text-xs text-muted-foreground whitespace-pre-wrap">{r.report}</p>
+                  </details>
+                ) : (
+                  <AprovarRelatorioIA
+                    key={r.id}
+                    reportId={r.id}
+                    textoInicial={r.report || ""}
+                    onAprovado={(aprovacao, textoAprovado) => atualizarRelatorio(r.id, {
+                      report: textoAprovado,
+                      status: 'aprovado',
+                      aprovado_por_nome: aprovacao.aprovado_por_nome,
+                      aprovado_por_cro: aprovacao.aprovado_por_cro,
+                      aprovado_por_outro_dentista: aprovacao.aprovado_por_outro_dentista,
+                      aprovado_em: aprovacao.aprovado_em,
+                      revisar_ate: null,
+                      transcricao_apagada_em: aprovacao.transcricao_apagada_em,
+                      ...(aprovacao.transcricao_mantida ? {} : { transcription: '' }),
+                    })}
+                    onNaoAprovado={(decisao) => atualizarRelatorio(r.id, {
+                      status: 'nao_aprovado',
+                      nao_aprovado_por_nome: decisao.nao_aprovado_por_nome,
+                      nao_aprovado_por_cro: decisao.nao_aprovado_por_cro,
+                      nao_aprovado_em: decisao.nao_aprovado_em,
+                      revisar_ate: null,
+                      transcricao_apagada_em: decisao.transcricao_apagada_em,
+                      ...(decisao.transcricao_mantida ? {} : { transcription: '' }),
+                    })}
+                  />
+                )}
+                <AvisoDecisaoClinica />
+              </div>
+            </div>
+          )}
+        </div>
+      );
+  };
+
+  // Só o admin exporta, e só relatórios aprovados: o servidor filtra e registra cada exportação
+  const exportarPdf = async () => {
+    const { data, error: err } = await aiApi.exportReportsPdfData(buildFilters());
+    if (err || !data) {
+      toast.error(err || "Não foi possível exportar");
+      return;
+    }
+    if (data.reports.length === 0) {
+      toast.error("Nenhum relatório aprovado para exportar");
       return;
     }
     const pacienteNome = pacienteFilter ? pacientesDisponiveis.find(p => p.id === pacienteFilter)?.nome : undefined;
-    exportarRelatoriosClinicosPdf(reports, {
+    exportarRelatoriosClinicosPdf(data.reports, {
       from: dateFrom ? format(dateFrom, 'yyyy-MM-dd') : undefined,
       to: dateTo ? format(dateTo, 'yyyy-MM-dd') : undefined,
       status: statusFilter,
@@ -157,8 +330,8 @@ function RelatoriosClinicosPage() {
   };
 
   const exportarCsv = () => {
-    if (reports.length === 0) {
-      toast.error("Nenhum relatório para exportar");
+    if (oficiais.length === 0) {
+      toast.error("Nenhum relatório aprovado para exportar");
       return;
     }
     const url = aiApi.exportReportsCsvUrl(buildFilters());
@@ -190,12 +363,15 @@ function RelatoriosClinicosPage() {
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <button
-                  onClick={exportarPdf}
-                  className="h-9 px-3 rounded-lg bg-white/15 hover:bg-white/25 text-primary-foreground text-xs font-semibold inline-flex items-center gap-1.5 transition-colors backdrop-blur"
-                >
-                  <FileDown className="h-3.5 w-3.5" /> Exportar PDF
-                </button>
+                {isAdmin && (
+                  <button
+                    onClick={exportarPdf}
+                    title="Só relatórios aprovados; cada exportação fica registrada"
+                    className="h-9 px-3 rounded-lg bg-white/15 hover:bg-white/25 text-primary-foreground text-xs font-semibold inline-flex items-center gap-1.5 transition-colors backdrop-blur"
+                  >
+                    <FileDown className="h-3.5 w-3.5" /> Exportar PDF
+                  </button>
+                )}
                 {isAdmin && (
                   <button
                     onClick={exportarCsv}
@@ -401,144 +577,39 @@ function RelatoriosClinicosPage() {
                   </p>
                 </div>
               ) : (
-                reports.map((r, i) => {
-                  const isOpen = relatorioAberto === r.id;
-                  const createdAt = new Date(r.created_at);
-                  const prescricoes: Array<{ medicamento: string; dosagem: string; posologia: string; duracao: string }> =
-                    typeof r.prescricoes === 'string' ? JSON.parse(r.prescricoes || '[]') : (r.prescricoes || []);
-
-                  return (
-                    <div
-                      key={r.id}
-                      className="bg-card rounded-2xl border border-border/60 shadow-card overflow-hidden animate-slide-up"
-                      style={{ animationDelay: `${Math.min(i, 10) * 30}ms`, animationFillMode: "both" }}
-                    >
-                      <button
-                        onClick={() => setRelatorioAberto(isOpen ? null : r.id)}
-                        className="w-full flex items-center gap-4 p-4 text-left hover:bg-muted/30 transition-colors"
-                      >
-                        <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
-                          <Sparkles className="h-5 w-5 text-primary" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-0.5 flex-wrap">
-                            <p className="text-sm font-semibold text-foreground truncate">
-                              {r.patient_name || 'Paciente'}
-                            </p>
-                            {r.dente_regiao && (
-                              <span className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-medium shrink-0">
-                                {r.dente_regiao}
-                              </span>
-                            )}
-                            <span className={cn(
-                              "px-2 py-0.5 rounded-full text-[10px] font-medium",
-                              relatorioAprovado(r) ? "bg-success/10 text-success" : "bg-warning/15 text-foreground"
-                            )}>
-                              {relatorioAprovado(r) ? "Aprovado" : r.origem_ia_sem_revisao ? "Não revisado" : "Rascunho IA"}
-                            </span>
-                            <span className={cn(
-                              "px-2 py-0.5 rounded-full text-[10px] font-medium",
-                              prescricoes.length > 0 ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"
-                            )}>
-                              {prescricoes.length > 0 ? `${prescricoes.length} Rx` : 'Sem Rx'}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-3 text-[11px] text-muted-foreground flex-wrap">
-                            <span className="flex items-center gap-1"><Calendar className="h-3 w-3" />{format(createdAt, "dd/MM/yyyy")}</span>
-                            <span className="flex items-center gap-1"><Clock className="h-3 w-3" />{format(createdAt, "HH:mm")}</span>
-                            {r.attendant_name && (
-                              <span className="flex items-center gap-1"><Stethoscope className="h-3 w-3" />{r.attendant_name}</span>
-                            )}
-                            {r.duration_seconds > 0 && (
-                              <span className="flex items-center gap-1"><Activity className="h-3 w-3" />{Math.round(r.duration_seconds / 60)} min</span>
-                            )}
-                            {r.procedimento && (
-                              <span className="flex items-center gap-1 truncate max-w-[200px]"><MessageSquareIcon /> {r.procedimento}</span>
-                            )}
-                          </div>
-                        </div>
-                        <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`} />
-                      </button>
-
-                      {isOpen && (
-                        <div className="border-t border-border/40 p-5 space-y-4 animate-slide-up">
-                          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                            {r.queixa_principal && (
-                              <InfoBlock label="Queixa Principal" value={r.queixa_principal} />
-                            )}
-                            {r.procedimento && (
-                              <InfoBlock label="Procedimento" value={r.procedimento} />
-                            )}
-                            {r.dente_regiao && (
-                              <InfoBlock label="Dente / Região" value={r.dente_regiao} />
-                            )}
-                            {r.duration_seconds > 0 && (
-                              <InfoBlock label="Duração" value={`${Math.round(r.duration_seconds / 60)} min`} />
-                            )}
-                          </div>
-
-                          {prescricoes.length > 0 && (
-                            <div>
-                              <p className="text-xs font-semibold text-foreground mb-2 flex items-center gap-1.5">
-                                <Pill className="h-3.5 w-3.5 text-primary" /> Prescrições
-                              </p>
-                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                {prescricoes.map((rx, j) => (
-                                  <div key={j} className="bg-primary/5 border border-primary/10 rounded-lg p-2.5 text-xs">
-                                    <p className="font-medium text-foreground">{rx.medicamento} {rx.dosagem}</p>
-                                    <p className="text-muted-foreground">{rx.posologia} — {rx.duracao}</p>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-
-                          {r.transcription && (
-                            <details className="group">
-                              <summary className="cursor-pointer text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1.5">
-                                <Mic className="h-3 w-3" /> Ver transcrição completa
-                              </summary>
-                              <div className="mt-2 bg-muted/30 rounded-xl p-4 text-xs text-foreground whitespace-pre-wrap max-h-48 overflow-y-auto">
-                                {r.transcription}
-                              </div>
-                            </details>
-                          )}
-
-                          <div className="bg-card border border-primary/20 rounded-xl p-5 space-y-3">
-                            <p className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-                              <Bot className="h-3.5 w-3.5 text-primary" /> Relatório Clínico IA
-                            </p>
-                            <RotuloRelatorioIA report={r} />
-                            {relatorioAprovado(r) ? (
-                              <div
-                                className="prose prose-sm max-w-none text-foreground text-xs leading-relaxed"
-                                dangerouslySetInnerHTML={{
-                                  __html: simpleMarkdownToHtml(r.report || ""),
-                                }}
-                              />
-                            ) : (
-                              <AprovarRelatorioIA
-                                key={r.id}
-                                reportId={r.id}
-                                textoInicial={r.report || ""}
-                                onAprovado={(aprovacao, textoAprovado) => setReports(prev => prev.map(x => x.id === r.id ? {
-                                  ...x,
-                                  report: textoAprovado,
-                                  status: 'aprovado',
-                                  aprovado_por_nome: aprovacao.aprovado_por_nome,
-                                  aprovado_em: aprovacao.aprovado_em,
-                                  transcricao_apagada_em: aprovacao.transcricao_apagada_em,
-                                  transcription: aprovacao.transcricao_mantida ? x.transcription : '',
-                                } : x))}
-                              />
-                            )}
-                            <AvisoDecisaoClinica />
-                          </div>
-                        </div>
-                      )}
+                <>
+                  {oficiais.length === 0 ? (
+                    <div className="bg-card rounded-2xl border-2 border-dashed border-border p-8 text-center">
+                      <p className="text-sm font-medium text-muted-foreground">Nenhum relatório aprovado neste filtro</p>
+                      <p className="text-xs text-muted-foreground/60">Os rascunhos de IA aparecem abaixo até o dentista revisar.</p>
                     </div>
-                  );
-                })
+                  ) : oficiais.map(renderRelatorio)}
+
+                  {pendentes.length > 0 && (
+                    <details className="bg-warning/5 rounded-2xl border border-warning/30 p-4">
+                      <summary className="cursor-pointer text-sm font-semibold text-foreground">
+                        Rascunhos de IA pendentes de revisão ({pendentes.length}) — não são registro do dentista
+                        {pendentesVencidos > 0 && (
+                          <span className="ml-2 text-xs font-medium text-destructive">{pendentesVencidos} com prazo vencido</span>
+                        )}
+                      </summary>
+                      <p className="text-xs text-muted-foreground mt-2">
+                        Ficam guardados, fora do histórico clínico oficial, da impressão e das exportações, até o dentista
+                        do atendimento aprovar ou não aprovar. Prazo de revisão: {stats.prazo_revisao_dias ?? 60} dias.
+                      </p>
+                      <div className="space-y-3 mt-3">{pendentes.map(renderRelatorio)}</div>
+                    </details>
+                  )}
+
+                  {naoAprovados.length > 0 && (
+                    <details className="bg-muted/30 rounded-2xl border border-border/60 p-4">
+                      <summary className="cursor-pointer text-sm font-semibold text-muted-foreground">
+                        Não aprovados ({naoAprovados.length}) — guardados só para auditoria
+                      </summary>
+                      <div className="space-y-3 mt-3">{naoAprovados.map(renderRelatorio)}</div>
+                    </details>
+                  )}
+                </>
               )}
             </div>
           </div>

@@ -16,25 +16,54 @@ ALTER TABLE IF EXISTS clinical_reports ADD COLUMN IF NOT EXISTS aprovado_por_nom
 ALTER TABLE IF EXISTS clinical_reports ADD COLUMN IF NOT EXISTS aprovado_em TIMESTAMPTZ;
 ALTER TABLE IF EXISTS clinical_reports ADD COLUMN IF NOT EXISTS origem_ia_sem_revisao BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE IF EXISTS clinical_reports ADD COLUMN IF NOT EXISTS transcricao_apagada_em TIMESTAMPTZ;
+-- Dentista do atendimento (quem aprova) e dados de quem aprovou ou não aprovou (nome e CRO).
+ALTER TABLE IF EXISTS clinical_reports ADD COLUMN IF NOT EXISTS dentista_id UUID;
+ALTER TABLE IF EXISTS clinical_reports ADD COLUMN IF NOT EXISTS aprovado_por_cro TEXT;
+ALTER TABLE IF EXISTS clinical_reports ADD COLUMN IF NOT EXISTS aprovado_por_dentista_id UUID;
+ALTER TABLE IF EXISTS clinical_reports ADD COLUMN IF NOT EXISTS aprovado_por_outro_dentista BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE IF EXISTS clinical_reports ADD COLUMN IF NOT EXISTS nao_aprovado_por TEXT;
+ALTER TABLE IF EXISTS clinical_reports ADD COLUMN IF NOT EXISTS nao_aprovado_por_nome TEXT;
+ALTER TABLE IF EXISTS clinical_reports ADD COLUMN IF NOT EXISTS nao_aprovado_por_cro TEXT;
+ALTER TABLE IF EXISTS clinical_reports ADD COLUMN IF NOT EXISTS nao_aprovado_em TIMESTAMPTZ;
+ALTER TABLE IF EXISTS clinical_reports ADD COLUMN IF NOT EXISTS nao_aprovado_motivo TEXT;
+-- Início do prazo de revisão do rascunho (o prazo em dias é configurável por clínica).
+ALTER TABLE IF EXISTS clinical_reports ADD COLUMN IF NOT EXISTS revisao_pendente_desde TIMESTAMPTZ;
 
--- Relatórios gravados antes desta mudança entraram no prontuário sem revisão: ficam marcados,
--- com o aviso na tela, e podem ser aprovados depois. O texto da IA é preservado como original.
--- Só toca linhas sem status (as antigas); na segunda execução não muda nada.
+-- Relatórios gravados antes desta mudança foram gerados sem revisão (e com o prompt antigo):
+-- ficam guardados como rascunho antigo, FORA do prontuário oficial, da impressão e das
+-- exportações, até um dentista aprovar ou não aprovar. O prazo de revisão conta a partir daqui.
+-- Só toca linhas sem status (as antigas); na segunda execução não muda nada. Nada é apagado.
 UPDATE clinical_reports
    SET status = 'rascunho',
        origem_ia_sem_revisao = true,
-       report_ia_original = COALESCE(report_ia_original, report)
+       report_ia_original = COALESCE(report_ia_original, report),
+       revisao_pendente_desde = NOW()
  WHERE status IS NULL;
+UPDATE clinical_reports
+   SET revisao_pendente_desde = COALESCE(CASE WHEN origem_ia_sem_revisao THEN NOW() END, created_at)
+ WHERE status = 'rascunho' AND revisao_pendente_desde IS NULL;
 
+-- Dentista do atendimento dos relatórios já gravados: o dentista com o e-mail de quem gerou.
+UPDATE clinical_reports r SET dentista_id = d.id
+  FROM profiles p, dentistas d
+ WHERE r.dentista_id IS NULL AND p.id::text = r.attendant_id
+   AND d.tenant_id = r.tenant_id AND LOWER(d.email) = LOWER(p.email);
+
+-- Status: rascunho, aprovado (pelo dentista) ou nao_aprovado (guardado só para auditoria).
 DO $$
 BEGIN
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'clinical_reports_status_check'
+              AND pg_get_constraintdef(oid) NOT LIKE '%nao_aprovado%') THEN
+    ALTER TABLE clinical_reports DROP CONSTRAINT clinical_reports_status_check;
+  END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'clinical_reports_status_check') THEN
     ALTER TABLE clinical_reports ADD CONSTRAINT clinical_reports_status_check
-      CHECK (status IN ('rascunho', 'aprovado'));
+      CHECK (status IN ('rascunho', 'aprovado', 'nao_aprovado'));
   END IF;
 END $$;
 
 CREATE INDEX IF NOT EXISTS idx_clinical_reports_tenant_status ON clinical_reports (tenant_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_clinical_reports_tenant_dentista ON clinical_reports (tenant_id, dentista_id, status);
 
 -- Registro de cada exportação de relatórios clínicos (quem, quando, quantos, com quais filtros).
 -- Quando a tabela acessos_prontuario (PR #59) existir, a exportação também é gravada lá, por paciente.

@@ -61,9 +61,11 @@ interface TranscriptionState {
   report: string;
   reportId: string;
   error: string;
-  /** rascunho até o dentista clicar em "Revisei e aprovo o relatório" */
-  reportStatus: 'rascunho' | 'aprovado';
+  /** rascunho até o dentista do atendimento clicar em "Revisei e aprovo o relatório" */
+  reportStatus: 'rascunho' | 'aprovado' | 'nao_aprovado';
   aprovadoPorNome: string;
+  aprovadoPorCro: string;
+  aprovadoPorOutroDentista: boolean;
   aprovadoEm: string;
   transcricaoApagada: boolean;
 }
@@ -98,7 +100,7 @@ function ConsultaPage() {
   const timerRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const [aiState, setAiState] = useState<TranscriptionState>({
     status: 'idle', transcription: '', report: '', reportId: '', error: '',
-    reportStatus: 'rascunho', aprovadoPorNome: '', aprovadoEm: '', transcricaoApagada: false,
+    reportStatus: 'rascunho', aprovadoPorNome: '', aprovadoPorCro: '', aprovadoPorOutroDentista: false, aprovadoEm: '', transcricaoApagada: false,
   });
   const [followupState, setFollowupState] = useState<FollowupState>({
     status: 'idle', messages: [], summary: '', jobs: [], error: '', revisado: false,
@@ -505,6 +507,7 @@ function ConsultaPage() {
         patientId: pacienteSelecionado?.id,
         patientName: pacienteSelecionado?.nome,
         durationSeconds: tempoAtendimento,
+        appointmentId: appointmentSelecionado?.id,
       });
 
       if (reportError || !reportData) {
@@ -521,6 +524,8 @@ function ConsultaPage() {
         error: '',
         reportStatus: 'rascunho',
         aprovadoPorNome: '',
+        aprovadoPorCro: '',
+        aprovadoPorOutroDentista: false,
         aprovadoEm: '',
         transcricaoApagada: false,
       });
@@ -530,7 +535,7 @@ function ConsultaPage() {
       setAiState(prev => ({ ...prev, status: 'error', error: msg }));
       toast.error(msg);
     }
-  }, [gravacoes, queixaPrincipal, procedimentoRealizado, dente, prescricoes, pacienteSelecionado, tempoAtendimento]);
+  }, [gravacoes, queixaPrincipal, procedimentoRealizado, dente, prescricoes, pacienteSelecionado, appointmentSelecionado, tempoAtendimento]);
 
   const handleGerarFollowup = useCallback(async () => {
     if (!aiState.reportId || !pacienteSelecionado) return;
@@ -1183,6 +1188,8 @@ function ConsultaPage() {
                                 report={{
                                   status: aiState.reportStatus,
                                   aprovado_por_nome: aiState.aprovadoPorNome,
+                                  aprovado_por_cro: aiState.aprovadoPorCro,
+                                  aprovado_por_outro_dentista: aiState.aprovadoPorOutroDentista,
                                   aprovado_em: aiState.aprovadoEm,
                                 }}
                               />
@@ -1214,11 +1221,23 @@ function ConsultaPage() {
                                     report: textoAprovado,
                                     reportStatus: 'aprovado',
                                     aprovadoPorNome: aprovacao.aprovado_por_nome,
+                                    aprovadoPorCro: aprovacao.aprovado_por_cro || '',
+                                    aprovadoPorOutroDentista: aprovacao.aprovado_por_outro_dentista,
                                     aprovadoEm: aprovacao.aprovado_em,
                                     transcricaoApagada: !aprovacao.transcricao_mantida,
                                     transcription: aprovacao.transcricao_mantida ? prev.transcription : '',
                                   }))}
+                                  onNaoAprovado={(decisao) => setAiState(prev => ({
+                                    ...prev,
+                                    reportStatus: 'nao_aprovado',
+                                    transcricaoApagada: !decisao.transcricao_mantida,
+                                    transcription: decisao.transcricao_mantida ? prev.transcription : '',
+                                  }))}
                                 />
+                              ) : aiState.reportStatus === 'nao_aprovado' ? (
+                                <p className="text-xs text-muted-foreground">
+                                  O rascunho foi guardado só para auditoria e não entra no prontuário.
+                                </p>
                               ) : (
                                 <div className="bg-card border border-primary/20 rounded-xl p-5">
                                   <div className="prose prose-sm max-w-none text-foreground text-xs leading-relaxed"
