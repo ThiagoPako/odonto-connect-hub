@@ -68,7 +68,7 @@ describe('ids do corpo precisam ser da clínica do usuário', () => {
   test.each([
     ['post', '/api/exames', { tipo_nome: 'Panorâmica', paciente_id: pacienteB }, /INSERT INTO exames/],
     ['post', '/api/exames', { tipo_nome: 'Panorâmica', dentista_solicitante_id: dentistaB }, /INSERT INTO exames/],
-    ['patch', '/api/exames/ex1', { paciente_id: pacienteB }, /UPDATE exames/],
+    ['patch', '/api/exames/eeeeeeee-0000-4000-8000-00000000000a', { paciente_id: pacienteB }, /UPDATE exames/],
     ['post', '/api/agenda', { paciente_id: pacienteB, data: '2026-11-10', hora: '09:00' }, /INSERT INTO agendamentos/],
     ['post', '/api/agenda', { dentista_id: dentistaB, data: '2026-11-10', hora: '09:00' }, /INSERT INTO agendamentos/],
     ['post', '/api/agenda/serie', { paciente_id: pacienteB, dentista_id: dentistaA, data_inicio: '2026-11-10', hora: '09:00' }, /INSERT INTO agendamentos/],
