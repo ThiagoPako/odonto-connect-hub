@@ -34,6 +34,14 @@ const buttonVariants = cva(
   }
 )
 
+/**
+ * Alvo de toque de 44 px (HIG) sem mudar o desenho: em tela de toque, um ::after invisível
+ * cresce até 44×44 em volta do botão. Só no componente <Button> (não em buttonVariants, usado
+ * pelos dias do calendário, que são vizinhos colados).
+ */
+const TOUCH_TARGET =
+  "relative pointer-coarse:after:absolute pointer-coarse:after:left-1/2 pointer-coarse:after:top-1/2 pointer-coarse:after:size-full pointer-coarse:after:min-h-touch pointer-coarse:after:min-w-touch pointer-coarse:after:-translate-x-1/2 pointer-coarse:after:-translate-y-1/2"
+
 export interface ButtonProps
   extends React.ButtonHTMLAttributes<HTMLButtonElement>,
     VariantProps<typeof buttonVariants> {
@@ -45,7 +53,7 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
     const Comp = asChild ? Slot : "button"
     return (
       <Comp
-        className={cn(buttonVariants({ variant, size, className }))}
+        className={cn(TOUCH_TARGET, buttonVariants({ variant, size }), className)}
         ref={ref}
         {...props}
       />
