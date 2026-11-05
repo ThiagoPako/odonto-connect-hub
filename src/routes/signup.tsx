@@ -25,10 +25,18 @@ export const Route = createFileRoute("/signup")({
 const PLANOS: Record<string, string> = { starter: "Starter", pro: "Profissional", enterprise: "Enterprise" };
 const SLUG_ANTIGO: Record<string, string> = { professional: "pro" };
 
+/** Slug válido do `?plan=` ou `undefined` (plano padrão). Usa Object.hasOwn: `?plan=toString`
+ * não pode casar com propriedades herdadas do objeto. Slug desconhecido nunca vai à API. */
+function planoValido(param: string | undefined): string | undefined {
+  if (!param) return undefined;
+  const slug = Object.hasOwn(SLUG_ANTIGO, param) ? SLUG_ANTIGO[param] : param;
+  return Object.hasOwn(PLANOS, slug) ? slug : undefined;
+}
+
 function SignupPage() {
   const navigate = useNavigate();
   const { plan: planParam } = Route.useSearch();
-  const plan = planParam ? (SLUG_ANTIGO[planParam] ?? planParam) : undefined;
+  const plan = planoValido(planParam);
   const { refreshUser } = useAuth();
   const [loading, setLoading] = useState(false);
   // Erros mostrados junto do campo (mesmas regras de antes; o toast ficava longe do campo)
@@ -93,8 +101,8 @@ function SignupPage() {
     <AuthShell
       title="Cadastre sua clínica"
       description={
-        PLANOS[plan ?? ""]
-          ? `Plano ${PLANOS[plan as string]} · ${TESTE_GRATIS_TEXTO}, sem cartão de crédito.`
+        plan
+          ? `Plano ${PLANOS[plan]} · ${TESTE_GRATIS_TEXTO}, sem cartão de crédito.`
           : `${TESTE_GRATIS_TEXTO}, sem cartão de crédito.`
       }
       footer={
