@@ -174,7 +174,10 @@ export function ChatHeader({ lead, onClose, onTransfer, onFinishAttendance, onRe
         setTimeout(() => setCalling(false), 3000);
       }
     } else {
-      window.open(`https://wa.me/${cleanNumber}`, "_blank");
+      // wa.me exige o código do país: "(11) 98888-7777" virava wa.me/11988887777 (outro país).
+      // Mesma regra do #60 (agenda): 10 ou 11 dígitos ganham o 55.
+      const waNumber = cleanNumber.length === 10 || cleanNumber.length === 11 ? `55${cleanNumber}` : cleanNumber;
+      window.open(`https://wa.me/${waNumber}`, "_blank");
       toast.info("Abrindo WhatsApp para ligar");
     }
   };
