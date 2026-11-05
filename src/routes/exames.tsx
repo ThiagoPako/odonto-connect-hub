@@ -62,9 +62,12 @@ function ExamesPage() {
       try {
         const [t, p] = await Promise.all([exameTiposApi.list(), pacientesApi.list()]);
         setTipos(t);
-        const pData = (p as { data: unknown }).data;
+        if (p.error) toast.error("Não foi possível carregar a lista de pacientes: " + p.error);
+        const pData = p.data;
         setPacientes(Array.isArray(pData) ? (pData as Array<{ id: string; nome: string }>) : []);
-      } catch {}
+      } catch (e) {
+        toast.error("Não foi possível carregar os tipos de exame: " + ((e as Error)?.message || "erro"));
+      }
     })();
   }, []);
 

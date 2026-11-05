@@ -25,8 +25,9 @@ export function TagManagementPanel() {
   const [editIcon, setEditIcon] = useState("");
 
   useEffect(() => {
-    tagsApi.list().then(({ data }) => {
-      if (data) setTags(data);
+    tagsApi.list().then(({ data, error }) => {
+      if (error) toast.error("Não foi possível carregar as etiquetas: " + error);
+      else if (data) setTags(data);
       setLoading(false);
     });
   }, []);
