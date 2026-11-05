@@ -39,7 +39,7 @@ async function waitFor(fn, ms = 2000) {
 }
 
 describe('Confirmação de consulta pelo WhatsApp', () => {
-  let querySpy, fetchSpy, sqlLog, fetchLog, optedOut, reminderRows, sentReminder, apptRow, existingLead, queues;
+  let querySpy, fetchSpy, sqlLog, fetchLog, optedOut, reminderRows, sentReminder, apptRow, existingLead, queues, reminderSetting, settingsFail;
 
   beforeAll(() => {
     jest.spyOn(console, 'log').mockImplementation(() => {});
@@ -50,7 +50,7 @@ describe('Confirmação de consulta pelo WhatsApp', () => {
   beforeEach(() => {
     clearTenantSettingsCacheForTests();
     resetWhatsAppQueueStateForTests();
-    sqlLog = []; fetchLog = []; optedOut = false; existingLead = null; queues = [];
+    sqlLog = []; fetchLog = []; optedOut = false; existingLead = null; queues = []; reminderSetting = undefined; settingsFail = false;
     reminderRows = [{
       id: agendA, tenant_id: tenantA, paciente_id: 'p1', data: '2099-03-10', hora: '14:30', confirmacao_quando: null,
       paciente_nome: 'Maria Souza', telefone: '(11) 98888-7777', dentista_nome: 'Dra. Ana', procedimento: 'Canal no dente 36',
@@ -68,6 +68,11 @@ describe('Confirmação de consulta pelo WhatsApp', () => {
         return ok(Object.entries(instanceOwner).filter(([, t]) => t === params[0]).map(([n]) => ({ instance_name: n })));
       }
       if (/FROM whatsapp_opt_outs/.test(text)) return ok(optedOut ? [{ x: 1 }] : []);
+      if (/SELECT value FROM tenant_settings WHERE tenant_id = \$1 AND key = \$2/.test(text)) {
+        if (settingsFail) return Promise.reject(new Error('timeout'));
+        return ok(params[1] === 'appointment_reminder' && reminderSetting !== undefined && params[0] === tenantA ? [{ value: reminderSetting }] : []);
+      }
+      if (/INSERT INTO tenant_settings/.test(text)) return ok([], 1);
       if (/SELECT nome FROM tenants WHERE id = \$1/.test(text)) return ok([{ nome: params[0] === tenantA ? 'Clínica A' : 'Clínica B' }]);
       if (/FROM agendamentos a\s+(LEFT )?JOIN pacientes p ON p.id = a.paciente_id AND p.tenant_id = a.tenant_id\s+LEFT JOIN dentistas/.test(text)) return ok(reminderRows);
       if (/trigger_event = 'appointment_reminder' AND aj.status = 'sent'/.test(text)) {
@@ -150,6 +155,38 @@ describe('Confirmação de consulta pelo WhatsApp', () => {
       expect(jobCol(ins, 'message')).not.toMatch(/Olá, !/);
       expect(jobCol(ins, 'message')).toMatch(/Olá!\n\nVocê tem uma consulta/);
       expect(jobVars(ins).interactive.payload.description).toMatch(/Olá!/);
+    });
+
+    test('clínica que desligou o lembrete não recebe pedido (item 20)', async () => {
+      reminderSetting = { enabled: false };
+      await processAppointmentReminders();
+      expect(jobInserts()).toHaveLength(0);
+      const q = sqlLog.find(s => /FROM tenant_settings/.test(s.text));
+      expect(q.params).toEqual([tenantA, 'appointment_reminder']);
+    });
+
+    test('sem registro, o lembrete continua ligado; falha na leitura pula a clínica', async () => {
+      await processAppointmentReminders();
+      expect(jobInserts()).toHaveLength(1);
+      clearTenantSettingsCacheForTests(); sqlLog = []; settingsFail = true;
+      await processAppointmentReminders();
+      expect(jobInserts()).toHaveLength(0);
+    });
+
+    test('API: admin liga/desliga só na própria clínica; valor precisa ser booleano', async () => {
+      const bad = await request(app).put('/api/appointment-reminder-settings').set(auth()).send({ enabled: 'nao' });
+      expect(bad.status).toBe(400);
+      const res = await request(app).put('/api/appointment-reminder-settings').set(auth()).send({ enabled: false });
+      expect(res.status).toBe(200);
+      const ins = sqlLog.find(s => /INSERT INTO tenant_settings/.test(s.text));
+      expect(ins.params).toEqual([tenantA, 'appointment_reminder', JSON.stringify({ enabled: false })]);
+      reminderSetting = { enabled: false };
+      clearTenantSettingsCacheForTests();
+      const get = await request(app).get('/api/appointment-reminder-settings').set(auth());
+      expect(get.body).toEqual({ enabled: false });
+      clearTenantSettingsCacheForTests();
+      const getB = await request(app).get('/api/appointment-reminder-settings').set(auth(tenantB));
+      expect(getB.body).toEqual({ enabled: true });
     });
 
     test('paciente em opt-out não recebe pedido', async () => {

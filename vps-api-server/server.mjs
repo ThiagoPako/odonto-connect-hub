@@ -8652,6 +8652,33 @@ app.put('/api/attendance-settings', async (req, res) => {
   }
 });
 
+// Lembrete/pedido de confirmação de consulta por clínica (tenant_settings
+// 'appointment_reminder' = { enabled }). Sem registro: ligado, como sempre foi.
+app.get('/api/appointment-reminder-settings', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!isValidTenantId(user.tenant_id)) return res.json({ enabled: true });
+    const saved = await getTenantSetting(user.tenant_id, 'appointment_reminder');
+    res.json({ enabled: saved?.enabled !== false });
+  } catch (error) {
+    res.status(tenantSettingsErrorStatus(error)).json({ error: error.message });
+  }
+});
+
+app.put('/api/appointment-reminder-settings', async (req, res) => {
+  try {
+    const { user } = await verifyAdmin(req);
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const enabled = req.body?.enabled;
+    if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'Informe enabled (true ou false)' });
+    await setTenantSetting(user.tenant_id, 'appointment_reminder', { enabled });
+    console.log(`⚙️ Lembrete de consulta ${enabled ? 'ligado' : 'desligado'} (clínica ${String(user.tenant_id).slice(0, 8)})`);
+    res.json({ success: true, enabled });
+  } catch (error) {
+    res.status(tenantSettingsErrorStatus(error)).json({ error: error.message });
+  }
+});
+
 // Helper: send WhatsApp button menu with active queues
 // Menu de filas da clínica: botões (Evolution sendButtons) com fallback em lista
 // numerada no texto do job. Vai pela fila como resposta ao paciente (auto_reply,
@@ -11990,9 +12017,20 @@ async function processAppointmentReminders() {
     console.log(`🔔 Reminder: ${appointments.length} consultas para pedir confirmação`);
 
     const WEEKDAYS = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
+    // Clínica que desligou o lembrete não recebe pedido. Se a leitura falhar, pula a
+    // clínica nesta rodada (o padrão "ligado" poderia contrariar quem desligou).
+    const reminderEnabled = new Map();
+    const isReminderEnabled = async (tenantId) => {
+      if (!reminderEnabled.has(tenantId)) {
+        const saved = await getTenantSetting(tenantId, 'appointment_reminder', { throwOnError: true }).catch(() => ({ enabled: false }));
+        reminderEnabled.set(tenantId, saved?.enabled !== false);
+      }
+      return reminderEnabled.get(tenantId);
+    };
     for (const appt of appointments) {
       try {
         const tenantId = String(appt.tenant_id);
+        if (!(await isReminderEnabled(tenantId))) continue;
         const phone = normalizeWhatsappNumber(appt.telefone || '');
         if (!phone) continue;
         if (await isWhatsAppOptedOut(tenantId, phone)) continue;
