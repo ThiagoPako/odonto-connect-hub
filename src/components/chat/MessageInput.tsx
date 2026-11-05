@@ -54,11 +54,17 @@ export function MessageInput({ onSendMessage, onPresenceChange, disabled, replyi
   const presenceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Respostas rápidas e assinatura da clínica, lidas do servidor (não do navegador).
+  // A assinatura só vale depois de carregar com sucesso: carregando ou com erro, envia sem
+  // assinatura (o padrão tem assinatura ligada e a clínica pode tê-la desligado).
   const [attendanceSettings, setAttendanceSettings] = useState<AttendanceSettings>(() => buildDefaultAttendanceSettings());
+  const [attendanceSettingsLoaded, setAttendanceSettingsLoaded] = useState(false);
   useEffect(() => {
     let active = true;
     void fetchAttendanceSettings().then(({ settings, error }) => {
-      if (active && !error) setAttendanceSettings(settings);
+      if (active && !error) {
+        setAttendanceSettings(settings);
+        setAttendanceSettingsLoaded(true);
+      }
     });
     return () => {
       active = false;
@@ -125,7 +131,7 @@ export function MessageInput({ onSendMessage, onPresenceChange, disabled, replyi
     if (!message.trim()) return;
     let finalMessage = message.trim();
     // Prepend attendant signature (e.g. "Julia:\nmensagem")
-    if (attendanceSettings.signatureEnabled && attendantName) {
+    if (attendanceSettingsLoaded && attendanceSettings.signatureEnabled && attendantName) {
       const sig = attendanceSettings.signatureTemplate.replace("{name}", attendantName);
       finalMessage = `${sig}\n${finalMessage}`;
     }
