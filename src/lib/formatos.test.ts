@@ -1,7 +1,7 @@
 // Rodar: npm test (node --test)
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { formatBRL, parseValorBRL, maskCPF, cpfValido, maskTelefone, telefoneValido, brParaIso, isoParaBr } from "./formatos.ts";
+import { formatBRL, parseValorBRL, maskCPF, cpfValido, maskTelefone, telefoneValido, telefoneParaGravar, centavos, brParaIso, isoParaBr } from "./formatos.ts";
 
 test("formatBRL usa duas casas e separador brasileiro", () => {
   assert.equal(formatBRL(1234.5).replace(/\s/g, " "), "R$ 1.234,50");
@@ -13,7 +13,15 @@ test("parseValorBRL aceita vírgula, ponto e milhar", () => {
   assert.equal(parseValorBRL("1234.56"), 1234.56);
   assert.equal(parseValorBRL("1.234"), 1234);
   assert.equal(parseValorBRL("R$ 12,5"), 12.5);
+  assert.equal(parseValorBRL("12.50"), 12.5);
   assert.equal(parseValorBRL("abc"), null);
+  // formato americano e casas demais são recusados
+  assert.equal(parseValorBRL("1,234.56"), null);
+  assert.equal(parseValorBRL("1,234"), null);
+  assert.equal(parseValorBRL("10.505"), 10505); // milhar pt-BR
+  assert.equal(parseValorBRL("12.505"), 12505);
+  assert.equal(parseValorBRL("1.5055"), null);
+  assert.equal(parseValorBRL("1.234,567"), null);
   assert.equal(parseValorBRL(""), null);
 });
 
@@ -38,4 +46,17 @@ test("datas dd/mm/aaaa <-> aaaa-mm-dd", () => {
   assert.equal(brParaIso("31/02/2026"), "");
   assert.equal(isoParaBr("2026-11-05"), "05/11/2026");
   assert.equal(isoParaBr("2026-11-05T03:00:00.000Z"), "05/11/2026");
+});
+
+test("telefone para gravar: dígitos com 55, igual ao CRM", () => {
+  assert.equal(telefoneParaGravar("(11) 98765-4321"), "5511987654321");
+  assert.equal(telefoneParaGravar("(11) 3333-4444"), "551133334444");
+  assert.equal(telefoneParaGravar("+55 11 98765-4321"), "5511987654321");
+  assert.equal(telefoneParaGravar("5511987654321"), "5511987654321");
+  assert.equal(telefoneParaGravar(""), null);
+});
+
+test("centavos arredonda", () => {
+  assert.equal(centavos(0.1 + 0.2), 0.3);
+  assert.equal(centavos(3 * 33.335), 100.01);
 });

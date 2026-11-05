@@ -6,7 +6,7 @@ import { OdontogramaChart, OdontogramaEditor } from "@/components/OdontogramaCha
 import { toast } from "sonner";
 import { type KanbanLead } from "@/data/crmMockData";
 import { crmApi } from "@/lib/vpsApi";
-import { maskCPF, cpfValido, maskTelefone, telefoneValido, isoParaBr } from "@/lib/formatos";
+import { maskCPF, cpfValido, maskTelefone, telefoneValido, telefoneParaGravar, isoParaBr } from "@/lib/formatos";
 import { localDateISO } from "@/lib/utils";
 import {
   Search,
@@ -72,27 +72,35 @@ const soDigitos = (v: string | null | undefined) => (v || "").replace(/\D/g, "")
 
 type ErrosPaciente = Partial<Record<"nome" | "cpf" | "telefone" | "email" | "data_nascimento", string>>;
 
+type CamposValidados = { nome: string; cpf: string; telefone: string; email: string; data_nascimento: string };
+
 /**
  * Validação do cadastro: mensagens por campo + CPF repetido na clínica (bloqueia)
  * e telefone repetido (só avisa: famílias costumam dividir o número).
+ * Com `original` (edição), só valida o que a pessoa mudou: um paciente importado
+ * com CPF ruim continua editável nos outros campos.
  */
 function validarPaciente(
-  form: { nome: string; cpf: string; telefone: string; email: string; data_nascimento: string },
+  form: CamposValidados,
   pacientes: { id: string; nome: string; cpf: string | null; telefone: string | null }[],
   proprioId?: string,
+  original?: CamposValidados,
 ): { erros: ErrosPaciente; telefoneRepetido: string | null } {
   const erros: ErrosPaciente = {};
-  if (!form.nome.trim()) erros.nome = "Informe o nome do paciente.";
-  else if (form.nome.trim().length < 3) erros.nome = "Nome muito curto.";
-  const cpf = soDigitos(form.cpf);
-  if (cpf && !cpfValido(cpf)) erros.cpf = "CPF inválido. Confira os 11 dígitos.";
-  else if (cpf) {
-    const dono = pacientes.find((p) => p.id !== proprioId && soDigitos(p.cpf) === cpf);
-    if (dono) erros.cpf = `Já existe um paciente com este CPF: ${dono.nome}.`;
+  const mudou = (k: keyof CamposValidados) => !original || (form[k] || "").trim() !== (original[k] || "").trim();
+  if (mudou("nome")) {
+    if (!form.nome.trim()) erros.nome = "Informe o nome do paciente.";
+    else if (form.nome.trim().length < 3) erros.nome = "Nome muito curto.";
   }
-  if (form.telefone.trim() && !telefoneValido(form.telefone)) erros.telefone = "Telefone incompleto. Use DDD + número.";
-  if (form.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) erros.email = "E-mail inválido.";
-  if (form.data_nascimento) {
+  const cpf = soDigitos(form.cpf);
+  if (mudou("cpf") && cpf) {
+    if (!cpfValido(cpf)) erros.cpf = "CPF inválido. Confira os 11 dígitos.";
+    // Mesma frase do servidor (#50); não expõe quem é o outro paciente
+    else if (pacientes.some((p) => p.id !== proprioId && soDigitos(p.cpf) === cpf)) erros.cpf = "Já existe um paciente com este CPF nesta clínica.";
+  }
+  if (mudou("telefone") && form.telefone.trim() && !telefoneValido(form.telefone)) erros.telefone = "Telefone incompleto. Use DDD + número.";
+  if (mudou("email") && form.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) erros.email = "E-mail inválido.";
+  if (mudou("data_nascimento") && form.data_nascimento) {
     if (form.data_nascimento > localDateISO()) erros.data_nascimento = "A data de nascimento não pode ser no futuro.";
     else if (form.data_nascimento < "1900-01-01") erros.data_nascimento = "Data de nascimento inválida.";
   }
@@ -563,7 +571,8 @@ function NovoPacienteModal({ pacientes, onClose, onSaved }: { pacientes: Pacient
       const { error } = await pacientesApi.create({
         nome: form.nome.trim(),
         cpf: form.cpf.trim() || null,
-        telefone: form.telefone.trim() || null,
+        // Grava só dígitos com 55, igual ao lead do CRM (o servidor cruza por igualdade exata)
+        telefone: telefoneParaGravar(form.telefone),
         email: form.email.trim() || null,
         data_nascimento: form.data_nascimento || null,
         sexo: form.sexo || null,
@@ -752,7 +761,7 @@ function NovoPacienteModal({ pacientes, onClose, onSaved }: { pacientes: Pacient
               />
               <ErroCampo id="novo-telefone" msg={erros.telefone} />
               {!erros.telefone && telefoneRepetido && (
-                <p className="mt-1 text-xs text-warning">Este telefone já está no cadastro de {telefoneRepetido}. Confira se não é a mesma pessoa.</p>
+                <p className="mt-1 text-xs text-warning">Este telefone já está no cadastro de outro paciente da clínica. Confira se não é a mesma pessoa antes de salvar.</p>
               )}
             </div>
             <div>
@@ -878,7 +887,11 @@ function PacienteDetailModal({
   };
 
   const handleSave = async () => {
-    const { erros: er } = validarPaciente(form, pacientesClinica, paciente.id);
+    const original = {
+      nome: paciente.nome || "", cpf: paciente.cpf || "", telefone: paciente.telefone || "",
+      email: paciente.email || "", data_nascimento: dataSemHora(paciente.data_nascimento),
+    };
+    const { erros: er } = validarPaciente(form, pacientesClinica, paciente.id, original);
     setErrosEdicao(er);
     if (Object.keys(er).length) {
       toast.error("Confira os campos destacados.");
@@ -889,7 +902,8 @@ function PacienteDetailModal({
       const { error } = await pacientesApi.update(paciente.id, {
         nome: form.nome.trim(),
         cpf: form.cpf.trim() || null,
-        telefone: form.telefone.trim() || null,
+        // Telefone não alterado vai como estava; alterado vai no formato de gravação (dígitos com 55)
+        telefone: form.telefone.trim() === (paciente.telefone || "").trim() ? (paciente.telefone || null) : telefoneParaGravar(form.telefone),
         email: form.email.trim() || null,
         data_nascimento: form.data_nascimento || null,
         sexo: form.sexo || null,
