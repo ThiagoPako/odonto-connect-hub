@@ -4899,7 +4899,7 @@ app.use('/api/pacientes/:id', (req, res, next) => {
   next();
 });
 
-app.get('/api/pacientes', async (req, res) => {
+app.get('/api/pacientes', so(PERMISSOES.EQUIPE), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -4910,7 +4910,7 @@ app.get('/api/pacientes', async (req, res) => {
   }
 });
 
-app.post('/api/pacientes', async (req, res) => {
+app.post('/api/pacientes', so(PERMISSOES.EQUIPE), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -4928,7 +4928,7 @@ app.post('/api/pacientes', async (req, res) => {
   }
 });
 
-app.put('/api/pacientes/:id', async (req, res) => {
+app.put('/api/pacientes/:id', so(PERMISSOES.EQUIPE), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -5081,7 +5081,7 @@ app.put('/api/pacientes/:id/odontograma', so(PERMISSOES.CLINICO), async (req, re
 // HISTORICO DE CONSULTAS (por paciente)
 // ═══════════════════════════════════════════════════════════════
 
-app.get('/api/pacientes/:id/historico', async (req, res) => {
+app.get('/api/pacientes/:id/historico', so(PERMISSOES.EQUIPE), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -7037,7 +7037,7 @@ app.delete('/api/execucoes/:id', so(PERMISSOES.ADMIN), async (req, res) => {
 });
 
 // Detalhe de uma assinatura (para auditoria)
-app.get('/api/assinaturas/:id', async (req, res) => {
+app.get('/api/assinaturas/:id', so(PERMISSOES.EQUIPE), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -7226,114 +7226,6 @@ app.get(['/api/dashboard', '/api/dashboard/kpis'], ocultarFinanceiroDoDashboard,
 // GET /api/comercial/painel?attendantId=<uuid|me>
 // Quando attendantId omitido OU = 'me' e role != admin → escopo do user logado
 // ═══════════════════════════════════════════════════════════════
-// ─── Dashboard KPIs (por clínica) ───────────────────────────
-app.get('/api/dashboard/kpis', async (req, res) => {
-  try {
-    const { user } = await verifyUser(req);
-    const tId = user.tenant_id;
-    if (!tId) return res.status(403).json({ error: 'Sem clínica vinculada' });
-
-    // Tabela/coluna ausente em instalações antigas vira lista vazia, não 500.
-    const safe = async (sql) => {
-      try { return (await pool.query(sql, [tId])).rows; }
-      catch (err) {
-        if (err.code === '42P01' || err.code === '42703') return [];
-        throw err;
-      }
-    };
-    const TODAY = `(NOW() AT TIME ZONE 'America/Sao_Paulo')::date`;
-    const [pac, agenda, movs, orcs, leads, est] = await Promise.all([
-      safe('SELECT COUNT(*)::int AS n FROM pacientes WHERE tenant_id = $1'),
-      safe(`SELECT status FROM agendamentos WHERE tenant_id = $1 AND data = ${TODAY}`),
-      safe(`SELECT type, value FROM fin_movements WHERE tenant_id = $1 AND date >= date_trunc('month', ${TODAY})`),
-      safe('SELECT status, valor_total FROM orcamentos WHERE tenant_id = $1'),
-      safe('SELECT kanban_stage, status, valor, origem, paciente_id FROM crm_leads WHERE tenant_id = $1'),
-      safe('SELECT nome, quantidade, quantidade_minima, valor_unitario FROM estoque WHERE tenant_id = $1'),
-    ]);
-
-    const totalPacientes = pac[0]?.n || 0;
-    const count = (rows, fn) => rows.filter(fn).length;
-    const finalizados = count(agenda, (a) => a.status === 'concluido' || a.status === 'finalizado' || a.status === 'realizado');
-    const agendaKpis = {
-      total: agenda.length,
-      finalizados,
-      emAtendimento: count(agenda, (a) => a.status === 'em_atendimento'),
-      aguardando: count(agenda, (a) => a.status === 'agendado' || a.status === 'aguardando' || a.status === 'confirmado'),
-      faltas: count(agenda, (a) => a.status === 'cancelado' || a.status === 'faltou' || a.status === 'desmarcado'),
-      encaixes: count(agenda, (a) => a.status === 'encaixe'),
-      taxaPresenca: agenda.length ? Math.round((finalizados / agenda.length) * 100) : 0,
-    };
-
-    const sum = (rows, fn, val) => rows.filter(fn).reduce((acc, r) => acc + Number(val(r) || 0), 0);
-    const receitaMensal = sum(movs, (m) => m.type === 'entrada', (m) => m.value);
-    const despesaMensal = sum(movs, (m) => m.type === 'saida', (m) => m.value);
-
-    const aprovados = orcs.filter((o) => o.status === 'aprovado' || o.status === 'finalizado');
-    const valorAprovado = sum(aprovados, () => true, (o) => o.valor_total);
-    const orcamentos = {
-      total: orcs.length,
-      pendentes: count(orcs, (o) => o.status === 'pendente'),
-      aprovados: aprovados.length,
-      reprovados: count(orcs, (o) => o.status === 'reprovado'),
-      valorAprovado,
-      taxaConversao: orcs.length ? Math.round((aprovados.length / orcs.length) * 100) : 0,
-      ticketMedio: aprovados.length ? valorAprovado / aprovados.length : 0,
-    };
-
-    // Lead convertido = orçamento aprovado no Kanban ou já vinculado a paciente.
-    const leadStatus = (l) => (l.kanban_stage === 'orcamento_aprovado' || l.paciente_id) ? 'convertido'
-      : l.status === 'perdido' ? 'perdido'
-      : (l.kanban_stage || 'lead') === 'lead' ? 'novo' : 'ativo';
-    const ls = leads.map((l) => ({ ...l, st: leadStatus(l) }));
-    const crm = {
-      totalLeadsKanban: ls.length,
-      semResposta: count(ls, (l) => l.st === 'novo'),
-      ativos: count(ls, (l) => l.st !== 'perdido' && l.st !== 'convertido'),
-      inativos: count(ls, (l) => l.st === 'perdido'),
-      receitaTotal: sum(ls, (l) => l.st === 'convertido', (l) => l.valor),
-    };
-    const origins = new Map();
-    for (const l of ls) {
-      const k = l.origem || 'Outros';
-      const o = origins.get(k) || { leads: 0, convertidos: 0 };
-      o.leads++; if (l.st === 'convertido') o.convertidos++;
-      origins.set(k, o);
-    }
-    const conversionByOrigin = [...origins].map(([origin, o]) => ({
-      origin, leads: o.leads, convertidos: o.convertidos, rate: o.leads ? (o.convertidos / o.leads) * 100 : 0,
-    }));
-
-    const qtd = (i) => Number(i.quantidade || 0);
-    const abaixoMinimo = est.filter((i) => qtd(i) > 0 && qtd(i) <= Number(i.quantidade_minima || 0));
-    const semEstoque = est.filter((i) => qtd(i) <= 0);
-    const estoque = {
-      totalItens: est.length,
-      abaixoMinimo: abaixoMinimo.length,
-      itensAbaixoMinimo: abaixoMinimo.map((i) => i.nome),
-      semEstoque: semEstoque.length,
-      itensSemEstoque: semEstoque.map((i) => i.nome),
-      valorTotalEstoque: est.reduce((acc, i) => acc + Number(i.valor_unitario || 0) * qtd(i), 0),
-    };
-
-    res.json({
-      totalPacientes,
-      agendaHoje: agendaKpis.total,
-      receitaMensal,
-      despesaMensal,
-      agenda: agendaKpis,
-      orcamentos,
-      crm,
-      pacientes: { totalCadastrados: totalPacientes },
-      estoque,
-      conversionByOrigin,
-    });
-  } catch (error) {
-    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
-    console.error('GET /api/dashboard/kpis error:', error);
-    res.status(500).json({ error: 'Erro ao calcular KPIs' });
-  }
-});
-
 app.get('/api/comercial/painel', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
@@ -7341,7 +7233,7 @@ app.get('/api/comercial/painel', async (req, res) => {
     const requested = (req.query.attendantId || '').toString();
 
     // Admin pode passar attendantId arbitrário; caso contrário usa o próprio.
-    const attendantId = (user.role === 'admin' && requested && requested !== 'me')
+    const attendantId = ((await papelAtual(user)) === 'admin' && requested && requested !== 'me')
       ? requested
       : user.id;
 
@@ -7489,7 +7381,8 @@ app.get('/api/dentista/painel/:id?', async (req, res) => {
     }
 
     // Fallback: se admin e nada resolvido, pega o primeiro deste tenant
-    if (!dentista && user.role === 'admin') {
+    const papel = await papelAtual(user);
+    if (!dentista && papel === 'admin') {
       const r = await safe('SELECT * FROM dentistas WHERE tenant_id = $1 ORDER BY nome ASC LIMIT 1', [user.tenant_id]);
       dentista = r.rows[0] || null;
     }
@@ -7499,7 +7392,7 @@ app.get('/api/dentista/painel/:id?', async (req, res) => {
     }
 
     // Autorização: admin pode tudo; demais só ver o próprio
-    if (user.role !== 'admin' && (user.email || '').toLowerCase() !== (dentista.email || '').toLowerCase()) {
+    if (papel !== 'admin' && (user.email || '').toLowerCase() !== (dentista.email || '').toLowerCase()) {
       return res.status(403).json({ error: 'Acesso negado a este painel' });
     }
 
@@ -10410,7 +10303,7 @@ app.patch('/api/automations/flows/:id/toggle', async (req, res) => {
 // AUTOMATION SOLUTIONS — Dynamic Patient Counts
 // ═══════════════════════════════════════════════════════════════
 
-app.get('/api/automations/solution-counts', async (req, res) => {
+app.get('/api/automations/solution-counts', so(PERMISSOES.EQUIPE), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
@@ -11811,7 +11704,7 @@ app.post('/api/campaigns/:id/execute', async (req, res) => {
 });
 
 // Campaign job stats
-app.get('/api/campaigns/:id/jobs', async (req, res) => {
+app.get('/api/campaigns/:id/jobs', so(PERMISSOES.ADMIN), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     const { id } = req.params;
@@ -14528,7 +14421,7 @@ async function findActiveConsent(tenantId, pacienteId, tipo) {
   return rows[0] || null;
 }
 
-app.get('/api/pacientes/:id/consentimentos', async (req, res) => {
+app.get('/api/pacientes/:id/consentimentos', so(PERMISSOES.EQUIPE), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
@@ -14541,7 +14434,7 @@ app.get('/api/pacientes/:id/consentimentos', async (req, res) => {
   }
 });
 
-app.post('/api/pacientes/:id/consentimentos', async (req, res) => {
+app.post('/api/pacientes/:id/consentimentos', so(PERMISSOES.EQUIPE), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
@@ -14578,7 +14471,7 @@ app.post('/api/pacientes/:id/consentimentos', async (req, res) => {
   }
 });
 
-app.post('/api/consentimentos/:id/revogar', async (req, res) => {
+app.post('/api/consentimentos/:id/revogar', so(PERMISSOES.EQUIPE), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
@@ -14788,7 +14681,7 @@ app.get('/api/ai/reports', so(PERMISSOES.CLINICO), async (req, res) => {
     if (status === 'sem_prescricao') where.push(`(prescricoes IS NULL OR jsonb_array_length(COALESCE(prescricoes, '[]'::jsonb)) = 0)`);
 
     // Non-admin users only see their own reports
-    if (user.role !== 'admin' && user.role !== 'gerente') {
+    if ((await papelAtual(user)) !== 'admin') {
       where.push(`attendant_id = $${idx++}`);
       params.push(user.id);
     }
@@ -14854,7 +14747,7 @@ app.get('/api/ai/reports/export.csv', so(PERMISSOES.CLINICO), async (req, res) =
     }
     if (status === 'com_prescricao') where.push(`jsonb_array_length(COALESCE(prescricoes, '[]'::jsonb)) > 0`);
     if (status === 'sem_prescricao') where.push(`(prescricoes IS NULL OR jsonb_array_length(COALESCE(prescricoes, '[]'::jsonb)) = 0)`);
-    if (user.role !== 'admin' && user.role !== 'gerente') {
+    if ((await papelAtual(user)) !== 'admin') {
       where.push(`attendant_id = $${idx++}`);
       params.push(user.id);
     }
@@ -15900,7 +15793,7 @@ app.delete('/api/exame-tipos/:id', async (req, res) => {
 });
 
 // Listar exames com filtros
-app.get('/api/exames', async (req, res) => {
+app.get('/api/exames', so(PERMISSOES.EQUIPE), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.json([]);
@@ -15935,7 +15828,7 @@ app.get('/api/exames', async (req, res) => {
   }
 });
 
-app.get('/api/exames/stats', async (req, res) => {
+app.get('/api/exames/stats', so(PERMISSOES.EQUIPE), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.json({});
@@ -15952,7 +15845,7 @@ app.get('/api/exames/stats', async (req, res) => {
   }
 });
 
-app.post('/api/exames', async (req, res) => {
+app.post('/api/exames', so(PERMISSOES.EQUIPE), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
@@ -15995,7 +15888,7 @@ app.post('/api/exames', async (req, res) => {
   }
 });
 
-app.patch('/api/exames/:id', async (req, res) => {
+app.patch('/api/exames/:id', so(PERMISSOES.EQUIPE), async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });

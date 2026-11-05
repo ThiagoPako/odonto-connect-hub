@@ -8,7 +8,8 @@ import { jest } from '@jest/globals';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { papelAtual, limparCachePapel, _definirPapelParaTestes } from '../papeis.mjs';
+import { readFileSync } from 'fs';
+import { papelAtual, exigePapel, limparCachePapel, _definirPapelParaTestes } from '../papeis.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '../.env') });
@@ -132,19 +133,19 @@ describe('papelAtual', () => {
   const poolCom = (rows) => ({ query: jest.fn().mockResolvedValue({ rows }) });
   test('prioridade admin > dentista > recepcionista > user', async () => {
     const pool2 = poolCom([{ papel_ur: 'user', ativo: true }, { papel_ur: 'dentista', ativo: true }]);
-    expect(await papelAtual(pool2, { id: 'u1' })).toBe('dentista');
+    expect(await papelAtual(pool2, { id: 'u1', tenant_id: 'tA' })).toBe('dentista');
   });
   test('perfil inativo → sem acesso', async () => {
-    expect(await papelAtual(poolCom([{ papel_ur: 'admin', ativo: false }]), { id: 'u2' })).toBeNull();
+    expect(await papelAtual(poolCom([{ papel_ur: 'admin', ativo: false }]), { id: 'u2', tenant_id: 'tA' })).toBeNull();
   });
   test('sem user_roles usa profiles.role; papel desconhecido → sem acesso', async () => {
-    expect(await papelAtual(poolCom([{ papel_ur: null, papel_perfil: 'recepcionista', ativo: true }]), { id: 'u3' })).toBe('recepcionista');
-    expect(await papelAtual(poolCom([{ papel_ur: 'comercial', ativo: true }]), { id: 'u4' })).toBeNull();
+    expect(await papelAtual(poolCom([{ papel_ur: null, papel_perfil: 'recepcionista', ativo: true }]), { id: 'u3', tenant_id: 'tA' })).toBe('recepcionista');
+    expect(await papelAtual(poolCom([{ papel_ur: 'comercial', ativo: true }]), { id: 'u4', tenant_id: 'tA' })).toBeNull();
   });
   test('cache de 60 s: segunda chamada não consulta o banco', async () => {
     const pool2 = poolCom([{ papel_ur: 'admin', ativo: true }]);
-    await papelAtual(pool2, { id: 'u5' });
-    await papelAtual(pool2, { id: 'u5' });
+    await papelAtual(pool2, { id: 'u5', tenant_id: 'tA' });
+    await papelAtual(pool2, { id: 'u5', tenant_id: 'tA' });
     expect(pool2.query).toHaveBeenCalledTimes(1);
   });
 });
@@ -178,5 +179,94 @@ describe('perfil que não existe', () => {
     const res = await chamar('post', '/api/my-tenant/users', { name: 'X', email: 'x@c.com', password: 'senha-12345', role: 'comercial' });
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('Perfil inválido. Use: admin, dentista, recepcionista, user');
+  });
+});
+
+describe('rotas que entraram na revisão do Igor', () => {
+  const EQUIPE_ROTAS = [
+    ['get', '/api/exames'], ['post', '/api/exames', {}], ['patch', `/api/exames/${ID}`, {}],
+    ['get', `/api/assinaturas/${ID}`], ['get', `/api/pacientes/${ID}/historico`],
+    ['get', `/api/pacientes/${ID}/consentimentos`], ['post', `/api/pacientes/${ID}/consentimentos`, {}],
+    ['post', `/api/consentimentos/${ID}/revogar`, {}],
+    ['get', '/api/pacientes'], ['post', '/api/pacientes', {}], ['put', `/api/pacientes/${ID}`, {}],
+    ['get', '/api/automations/solution-counts'],
+  ];
+  test.each(EQUIPE_ROTAS.map(([m, u, b]) => [m, u, b || null]))('%s %s: user 403, recepcionista passa', async (m, u, b) => {
+    _definirPapelParaTestes(usuario, 'user');
+    expect((await chamar(m, u, b)).status).toBe(403);
+    limparCachePapel();
+    _definirPapelParaTestes(usuario, 'recepcionista');
+    expect((await chamar(m, u, b)).status).not.toBe(403);
+  });
+
+  test('jobs de campanha (telefone e texto): só admin', async () => {
+    _definirPapelParaTestes(usuario, 'recepcionista');
+    expect((await chamar('get', `/api/campaigns/${ID}/jobs`)).status).toBe(403);
+    limparCachePapel();
+    _definirPapelParaTestes(usuario, 'admin');
+    expect((await chamar('get', `/api/campaigns/${ID}/jobs`)).status).not.toBe(403);
+  });
+
+  test('relatórios de IA: JWT admin mas papel dentista no banco → só os próprios', async () => {
+    _definirPapelParaTestes(usuario, 'dentista');
+    await chamar('get', '/api/ai/reports');
+    const q = sqlLog.find(x => /FROM clinical_reports/.test(x.text));
+    expect(q.text).toMatch(/attendant_id = \$/);
+    expect(q.params).toContain(usuario);
+  });
+
+  test('painel comercial: attendantId de outro só para admin do banco', async () => {
+    _definirPapelParaTestes(usuario, 'recepcionista');
+    const res = await chamar('get', '/api/comercial/painel?attendantId=99999999-9999-9999-9999-999999999999');
+    expect(res.body.attendantId).toBe(usuario);
+  });
+
+  test('não sobra papel do JWT nem "gerente" no servidor', () => {
+    const src = readFileSync(path.join(__dirname, '../server.mjs'), 'utf8');
+    expect(src).not.toMatch(/user\.role (===|!==) '(admin|gerente)'/);
+    expect(src).not.toMatch(/'gerente'/);
+  });
+
+  test('GET /api/dashboard/kpis duplicado foi removido (uma única declaração)', () => {
+    const src = readFileSync(path.join(__dirname, '../server.mjs'), 'utf8');
+    expect(src.match(/app\.get\([^\n]*'\/api\/dashboard\/kpis'/g)).toHaveLength(1);
+  });
+});
+
+describe('papel por clínica e super-admin', () => {
+  test('papelAtual filtra a clínica do perfil e guarda cache por usuário + clínica', async () => {
+    const q = jest.fn().mockImplementation((_sql, params) =>
+      Promise.resolve({ rows: params[1] === 'tA' ? [{ papel_ur: 'admin', ativo: true }] : [] }));
+    const pool2 = { query: q };
+    expect(await papelAtual(pool2, { id: 'u9', tenant_id: 'tA' })).toBe('admin');
+    expect(await papelAtual(pool2, { id: 'u9', tenant_id: 'tB' })).toBeNull(); // admin em A não é admin em B
+    expect(q.mock.calls[0][0]).toMatch(/WHERE p\.id = \$1 AND p\.tenant_id = \$2/);
+    expect(q).toHaveBeenCalledTimes(2);
+  });
+
+  test('sem clínica na requisição → sem papel', async () => {
+    expect(await papelAtual({ query: jest.fn() }, { id: 'u10', tenant_id: null })).toBeNull();
+  });
+
+  const reqRes = () => {
+    const res = { statusCode: 200, body: null, status(c) { this.statusCode = c; return this; }, json(b) { this.body = b; return this; } };
+    return [{ method: 'GET', route: { path: '/x' } }, res];
+  };
+  test('super-admin em clínica que não é a dele → 403', async () => {
+    const deps = {
+      verifyUser: async () => ({ user: { id: 'sa1', tenant_id: 'tB', is_super_admin: true } }),
+      pool: { query: async (_s, params) => ({ rows: params[1] === 'tA' ? [{ papel_ur: 'admin', ativo: true }] : [] }) },
+    };
+    const [req, res] = reqRes(); const next = jest.fn();
+    await exigePapel(deps, 'admin', 'dentista')(req, res, next);
+    expect(res.statusCode).toBe(403);
+    expect(next).not.toHaveBeenCalled();
+  });
+  test('super-admin passa só quando a rota lista super_admin', async () => {
+    const deps = { verifyUser: async () => ({ user: { id: 'sa2', tenant_id: 'tB', is_super_admin: true } }), pool: { query: jest.fn() } };
+    const [req, res] = reqRes(); const next = jest.fn();
+    await exigePapel(deps, 'admin', 'super_admin')(req, res, next);
+    expect(next).toHaveBeenCalled();
+    expect(req.papel).toBe('super_admin');
   });
 });
