@@ -15843,10 +15843,12 @@ app.get('/api/exames', async (req, res) => {
     const { rows } = await pool.query(
       `SELECT e.*,
               p.nome AS paciente_nome,
-              d.nome AS dentista_nome
+              d.nome AS dentista_nome,
+              lp.name AS laudado_por_nome
          FROM exames e
          LEFT JOIN pacientes p ON p.id = e.paciente_id AND p.tenant_id = e.tenant_id
          LEFT JOIN dentistas d ON d.id = e.dentista_solicitante_id AND d.tenant_id = e.tenant_id
+         LEFT JOIN profiles lp ON lp.id = e.laudado_por
         WHERE ${where.join(' AND ')}
         ORDER BY e.data_solicitacao DESC
         LIMIT 500`,
@@ -15967,17 +15969,137 @@ app.patch('/api/exames/:id', async (req, res) => {
     }
     const campoErro = await validarCamposExame(user.tenant_id, body);
     if (campoErro) return res.status(400).json({ error: campoErro });
+    if (body.updated_at_esperado != null && Number.isNaN(Date.parse(String(body.updated_at_esperado)))) {
+      return res.status(400).json({ error: 'updated_at_esperado inválido' });
+    }
+    const { rows: atuais } = await pool.query(
+      'SELECT laudo_texto, laudado_em FROM exames WHERE id = $1 AND tenant_id = $2',
+      [req.params.id, user.tenant_id]
+    );
+    if (!atuais.length) return res.status(404).json({ error: 'Exame não encontrado' });
+    const laudoMudou = body.laudo_texto !== undefined && (body.laudo_texto || null) !== (atuais[0].laudo_texto || null);
+    // Laudo finalizado (assinado) não muda em silêncio: precisa ser reaberto antes
+    if (laudoMudou && atuais[0].laudado_em) {
+      return res.status(409).json({ error: 'Este laudo já foi finalizado. Use "Reabrir laudo" para corrigir.' });
+    }
+    if (laudoMudou) {
+      params.push(user.id);
+      sets.push(`laudo_atualizado_por=$${params.length}`, 'laudo_atualizado_em=NOW()');
+    }
     params.push(req.params.id, user.tenant_id);
+    let filtroVersao = '';
+    // Duas pessoas editando o mesmo exame: quem salvar por último com versão velha recebe 409
+    if (body.updated_at_esperado != null) {
+      params.push(body.updated_at_esperado);
+      filtroVersao = ` AND date_trunc('milliseconds', updated_at) = date_trunc('milliseconds', $${params.length}::timestamptz)`;
+    }
+    const idIdx = body.updated_at_esperado != null ? params.length - 2 : params.length - 1;
     const { rows } = await pool.query(
       `UPDATE exames SET ${sets.join(', ')}
-        WHERE id=$${params.length-1} AND tenant_id=$${params.length}
+        WHERE id=$${idIdx} AND tenant_id=$${idIdx + 1}${filtroVersao}
         RETURNING *`,
       params
     );
-    if (!rows[0]) return res.status(404).json({ error: 'Exame não encontrado' });
+    if (!rows[0]) {
+      if (filtroVersao) return res.status(409).json({ error: 'Outra pessoa alterou este exame enquanto você editava. Feche e abra de novo para ver a versão atual.' });
+      return res.status(404).json({ error: 'Exame não encontrado' });
+    }
     res.json(rows[0]);
   } catch (err) {
     responderErroExame(res, err, 'exames:patch');
+  }
+});
+
+// Um exame com nomes de paciente, solicitante, quem laudou e a clínica (tela de laudo e impressão)
+app.get('/api/exames/:id', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
+    if (!EXAME_UUID_RE.test(String(req.params.id))) return res.status(404).json({ error: 'Exame não encontrado' });
+    const { rows } = await pool.query(
+      `SELECT e.*,
+              p.nome AS paciente_nome, p.data_nascimento AS paciente_data_nascimento,
+              d.nome AS dentista_nome,
+              lp.name AS laudado_por_nome,
+              t.nome AS clinica_nome
+         FROM exames e
+         LEFT JOIN pacientes p ON p.id = e.paciente_id AND p.tenant_id = e.tenant_id
+         LEFT JOIN dentistas d ON d.id = e.dentista_solicitante_id AND d.tenant_id = e.tenant_id
+         LEFT JOIN profiles lp ON lp.id = e.laudado_por
+         LEFT JOIN tenants t ON t.id = e.tenant_id
+        WHERE e.id = $1 AND e.tenant_id = $2`,
+      [req.params.id, user.tenant_id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Exame não encontrado' });
+    res.json(rows[0]);
+  } catch (err) {
+    responderErroExame(res, err, 'exames:get');
+  }
+});
+
+// Finalizar (assinar) o laudo: grava o texto, quem laudou e quando, e conclui o exame
+app.post('/api/exames/:id/laudo/finalizar', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
+    if (!EXAME_UUID_RE.test(String(req.params.id))) return res.status(404).json({ error: 'Exame não encontrado' });
+    const texto = String(req.body?.laudo_texto ?? '').trim();
+    if (!texto) return res.status(400).json({ error: 'Escreva o laudo antes de finalizar' });
+    const esperado = req.body?.updated_at_esperado;
+    if (esperado != null && Number.isNaN(Date.parse(String(esperado)))) return res.status(400).json({ error: 'updated_at_esperado inválido' });
+    const params = [req.params.id, user.tenant_id, texto, user.id];
+    let filtroVersao = '';
+    if (esperado != null) {
+      params.push(esperado);
+      filtroVersao = ` AND date_trunc('milliseconds', updated_at) = date_trunc('milliseconds', $5::timestamptz)`;
+    }
+    const { rows } = await pool.query(
+      `UPDATE exames
+          SET laudo_texto = $3, laudado_por = $4, laudado_em = NOW(),
+              laudo_atualizado_por = $4, laudo_atualizado_em = NOW(),
+              status = CASE WHEN status IN ('entregue') THEN status ELSE 'concluido' END,
+              data_realizacao = COALESCE(data_realizacao, NOW())
+        WHERE id = $1 AND tenant_id = $2 AND laudado_em IS NULL AND status <> 'cancelado'${filtroVersao}
+        RETURNING *`,
+      params
+    );
+    if (!rows.length) {
+      const { rows: atual } = await pool.query('SELECT status, laudado_em FROM exames WHERE id = $1 AND tenant_id = $2', [req.params.id, user.tenant_id]);
+      if (!atual.length) return res.status(404).json({ error: 'Exame não encontrado' });
+      if (atual[0].laudado_em) return res.status(409).json({ error: 'Este laudo já foi finalizado.' });
+      if (atual[0].status === 'cancelado') return res.status(409).json({ error: 'Exame cancelado não pode ser laudado.' });
+      return res.status(409).json({ error: 'Outra pessoa alterou este exame enquanto você editava. Feche e abra de novo para ver a versão atual.' });
+    }
+    res.json(rows[0]);
+  } catch (err) {
+    responderErroExame(res, err, 'exames:laudo:finalizar');
+  }
+});
+
+// Reabrir um laudo finalizado para correção: volta para "aguardando laudo" e limpa a assinatura
+// (a última edição continua registrada em laudo_atualizado_por/em)
+app.post('/api/exames/:id/laudo/reabrir', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
+    if (!EXAME_UUID_RE.test(String(req.params.id))) return res.status(404).json({ error: 'Exame não encontrado' });
+    const { rows } = await pool.query(
+      `UPDATE exames
+          SET laudado_por = NULL, laudado_em = NULL,
+              laudo_atualizado_por = $3, laudo_atualizado_em = NOW(),
+              status = CASE WHEN status IN ('concluido', 'entregue') THEN 'aguardando_laudo' ELSE status END
+        WHERE id = $1 AND tenant_id = $2 AND laudado_em IS NOT NULL
+        RETURNING *`,
+      [req.params.id, user.tenant_id, user.id]
+    );
+    if (!rows.length) {
+      const { rows: atual } = await pool.query('SELECT 1 FROM exames WHERE id = $1 AND tenant_id = $2', [req.params.id, user.tenant_id]);
+      if (!atual.length) return res.status(404).json({ error: 'Exame não encontrado' });
+      return res.status(409).json({ error: 'Este laudo não está finalizado.' });
+    }
+    res.json(rows[0]);
+  } catch (err) {
+    responderErroExame(res, err, 'exames:laudo:reabrir');
   }
 });
 
@@ -16126,6 +16248,12 @@ app.post('/api/exames/:id/arquivos', express.raw({ type: '*/*', limit: '64mb' })
        RETURNING *`,
       [id, user.tenant_id, exame.id, exame.paciente_id || null, caminho, nomeOriginal, tipo.mime, buf.length, descricao, user.id]
     );
+    // Chegou imagem: o exame foi realizado e passa a aguardar laudo
+    await pool.query(
+      `UPDATE exames SET status = 'aguardando_laudo', data_realizacao = COALESCE(data_realizacao, NOW())
+        WHERE id = $1 AND tenant_id = $2 AND status IN ('novo', 'em_andamento')`,
+      [exame.id, user.tenant_id]
+    );
     res.json(arquivoExameParaResposta(rows[0]));
   } catch (err) {
     responderErroExame(res, err, 'exames:arquivos:upload');
@@ -16228,6 +16356,11 @@ if (process.env.NODE_ENV !== 'test') {
       )`,
       `CREATE INDEX IF NOT EXISTS idx_exame_arquivos_tenant_exame ON exame_arquivos (tenant_id, exame_id)`,
       `CREATE INDEX IF NOT EXISTS idx_exame_arquivos_tenant_paciente ON exame_arquivos (tenant_id, paciente_id)`,
+      // ─── Exames: autoria do laudo (migration-exames-laudo.sql) ───
+      `ALTER TABLE exames ADD COLUMN IF NOT EXISTS laudado_por UUID`,
+      `ALTER TABLE exames ADD COLUMN IF NOT EXISTS laudado_em TIMESTAMPTZ`,
+      `ALTER TABLE exames ADD COLUMN IF NOT EXISTS laudo_atualizado_por UUID`,
+      `ALTER TABLE exames ADD COLUMN IF NOT EXISTS laudo_atualizado_em TIMESTAMPTZ`,
 
       // ─── 0. Enable RLS and tenant session support ───
       `CREATE OR REPLACE FUNCTION set_tenant(t_id UUID) RETURNS VOID AS $$

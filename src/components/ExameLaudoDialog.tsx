@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, Download, ExternalLink, FileText, Loader2, Paperclip, Trash2, Upload } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Download, ExternalLink, FileText, Loader2, Paperclip, Printer, RotateCcw, Save, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import {
   examesApi, exameArquivosApi, formatarTamanho, urlArquivoExame, STATUS_LABELS,
-  type Exame, type ExameArquivo,
+  type Exame, type ExameArquivo, type ExameUpdate,
 } from "@/lib/examesApi";
 import { resolveMediaUrl } from "@/lib/vpsApi";
 import { Button } from "@/components/ui/button";
@@ -11,8 +11,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { ExameImagemViewer } from "@/components/ExameImagemViewer";
+import { imprimirLaudo } from "@/lib/laudoImpressao";
 
-const PENDING_STATUS: Exame["status"][] = ["novo", "em_andamento", "aguardando_laudo"];
 const ACEITOS = "image/jpeg,image/png,image/webp,image/gif,image/bmp,application/pdf,.dcm,application/dicom,.zip,application/zip";
 
 interface Props {
@@ -21,20 +21,22 @@ interface Props {
   onSaved: () => void;
 }
 
-export function ExameLaudoDialog({ exame, onOpenChange, onSaved }: Props) {
+export function ExameLaudoDialog({ exame: exameProp, onOpenChange, onSaved }: Props) {
+  // Cópia local: atualizada depois de enviar arquivo, finalizar ou reabrir (a versão muda)
+  const [exame, setExame] = useState<Exame | null>(exameProp);
   const [laudo, setLaudo] = useState("");
   const [legadoUrl, setLegadoUrl] = useState<string | null>(null);
-  const [concluir, setConcluir] = useState(false);
+  const [acao, setAcao] = useState<null | "finalizar" | "reabrir">(null);
   const [uploading, setUploading] = useState(0);
   const [saving, setSaving] = useState(false);
   const [arquivos, setArquivos] = useState<ExameArquivo[]>([]);
   const [arquivosEstado, setArquivosEstado] = useState<"carregando" | "ok" | "erro">("carregando");
   const [arquivosErro, setArquivosErro] = useState<string | null>(null);
   const [verId, setVerId] = useState<string | null>(null);
-  const [enviouArquivo, setEnviouArquivo] = useState(false);
+  const [alterou, setAlterou] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const exameId = exame?.id ?? null;
+  const exameId = exameProp?.id ?? null;
 
   const carregarArquivos = useCallback(async () => {
     if (!exameId) return;
@@ -49,19 +51,24 @@ export function ExameLaudoDialog({ exame, onOpenChange, onSaved }: Props) {
   }, [exameId]);
 
   useEffect(() => {
-    if (!exame) return;
-    setLaudo(exame.laudo_texto ?? "");
-    setLegadoUrl(exame.arquivo_url ?? null);
-    setConcluir(false);
+    setExame(exameProp);
+    if (!exameProp) return;
+    setLaudo(exameProp.laudo_texto ?? "");
+    setLegadoUrl(exameProp.arquivo_url ?? null);
     setVerId(null);
-    setEnviouArquivo(false);
+    setAlterou(false);
     setArquivos([]);
     carregarArquivos();
-  }, [exame, carregarArquivos]);
+  }, [exameProp, carregarArquivos]);
+
+  async function recarregarExame(id: string) {
+    try { setExame(await examesApi.get(id)); } catch { /* mantém a cópia atual; o próximo salvar avisa se mudou */ }
+  }
 
   if (!exame) return null;
 
-  const podeConcluir = PENDING_STATUS.includes(exame.status);
+  const finalizado = !!exame.laudado_em;
+  const podeFinalizar = !finalizado && exame.status !== "cancelado";
   const imagens = arquivos.filter((a) => a.imagem);
   const legadoResolvido = resolveMediaUrl(legadoUrl);
   const legadoNome = legadoUrl?.split("?")[0].split("/").pop() ?? "";
@@ -83,7 +90,9 @@ export function ExameLaudoDialog({ exame, onOpenChange, onSaved }: Props) {
       }
     }
     if (ok) {
-      setEnviouArquivo(true);
+      setAlterou(true);
+      // O envio pode ter mudado o status (realizado → aguardando laudo) e a versão do exame
+      await recarregarExame(exame.id);
       toast.success(ok === 1 ? "Arquivo anexado ao exame" : `${ok} arquivos anexados ao exame`);
     }
     if (fileRef.current) fileRef.current.value = "";
@@ -95,7 +104,7 @@ export function ExameLaudoDialog({ exame, onOpenChange, onSaved }: Props) {
     try {
       await exameArquivosApi.remove(exame.id, a.id);
       setArquivos((prev) => prev.filter((x) => x.id !== a.id));
-      setEnviouArquivo(true);
+      setAlterou(true);
       toast.success("Arquivo retirado do exame");
     } catch (e: unknown) {
       toast.error((e as Error).message || "Erro ao retirar o arquivo");
@@ -104,7 +113,7 @@ export function ExameLaudoDialog({ exame, onOpenChange, onSaved }: Props) {
 
   function fechar(open: boolean) {
     // Arquivos são gravados na hora do envio: a lista de exames precisa recarregar mesmo sem "Salvar"
-    if (!open && enviouArquivo) onSaved();
+    if (!open && alterou) onSaved();
     onOpenChange(open);
   }
 
@@ -112,14 +121,12 @@ export function ExameLaudoDialog({ exame, onOpenChange, onSaved }: Props) {
     if (!exame) return;
     setSaving(true);
     try {
-      const payload: Partial<Exame> = { laudo_texto: laudo.trim() || null };
+      const payload: ExameUpdate = { updated_at_esperado: exame.updated_at };
+      if (!finalizado) payload.laudo_texto = laudo.trim() || null;
       if (exame.arquivo_url && !legadoUrl) payload.arquivo_url = null;
-      if (concluir && podeConcluir) {
-        payload.status = "concluido";
-        if (!exame.data_realizacao) payload.data_realizacao = new Date().toISOString();
-      }
+      if (Object.keys(payload).length === 1) { fechar(false); return; }
       await examesApi.update(exame.id, payload);
-      toast.success("Laudo salvo");
+      toast.success(finalizado ? "Exame salvo" : "Rascunho do laudo salvo");
       onSaved();
       onOpenChange(false);
     } catch (e: unknown) {
@@ -127,6 +134,45 @@ export function ExameLaudoDialog({ exame, onOpenChange, onSaved }: Props) {
     } finally {
       setSaving(false);
     }
+  }
+
+  async function finalizar() {
+    if (!exame) return;
+    if (!laudo.trim()) { toast.error("Escreva o laudo antes de finalizar"); return; }
+    if (!confirm("Finalizar o laudo? Ele fica registrado em seu nome, com data e hora, e o exame passa a Concluído. Para corrigir depois, será preciso reabrir.")) return;
+    setAcao("finalizar");
+    try {
+      const atualizado = await examesApi.finalizarLaudo(exame.id, laudo.trim(), exame.updated_at);
+      setAlterou(true);
+      await recarregarExame(atualizado.id);
+      toast.success("Laudo finalizado");
+    } catch (e: unknown) {
+      toast.error((e as Error).message || "Erro ao finalizar o laudo");
+    } finally {
+      setAcao(null);
+    }
+  }
+
+  async function reabrir() {
+    if (!exame) return;
+    if (!confirm("Reabrir o laudo para correção? A assinatura atual é retirada e o exame volta para Aguardando laudo até ser finalizado de novo.")) return;
+    setAcao("reabrir");
+    try {
+      await examesApi.reabrirLaudo(exame.id);
+      setAlterou(true);
+      await recarregarExame(exame.id);
+      toast.success("Laudo reaberto para correção");
+    } catch (e: unknown) {
+      toast.error((e as Error).message || "Erro ao reabrir o laudo");
+    } finally {
+      setAcao(null);
+    }
+  }
+
+  function imprimir() {
+    if (!exame) return;
+    const ok = imprimirLaudo({ ...exame, laudo_texto: finalizado ? exame.laudo_texto : laudo }, imagens);
+    if (!ok) toast.error("Não foi possível preparar a impressão neste navegador.");
   }
 
   const titulo = `${exame.codigo ?? ""} · ${exame.tipo_nome}`;
@@ -144,14 +190,32 @@ export function ExameLaudoDialog({ exame, onOpenChange, onSaved }: Props) {
 
           <div className="space-y-5">
             <div className="space-y-2">
-              <Label htmlFor="laudo-texto">Laudo</Label>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <Label htmlFor="laudo-texto">Laudo</Label>
+                {finalizado ? (
+                  <span className="inline-flex items-center gap-1 text-xs text-emerald-700 dark:text-emerald-300">
+                    <CheckCircle2 className="h-3.5 w-3.5" aria-hidden />
+                    Finalizado por {exame.laudado_por_nome || "usuário"} em {new Date(exame.laudado_em as string).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}
+                  </span>
+                ) : exame.laudo_texto ? (
+                  <span className="text-xs text-amber-700 dark:text-amber-300">Rascunho (ainda não finalizado)</span>
+                ) : null}
+              </div>
               <Textarea
                 id="laudo-texto"
                 rows={10}
                 value={laudo}
+                readOnly={finalizado}
+                aria-describedby={finalizado ? "laudo-finalizado-aviso" : undefined}
                 onChange={(e) => setLaudo(e.target.value)}
                 placeholder="Descreva os achados radiográficos, impressão diagnóstica e recomendações..."
+                className={finalizado ? "bg-muted/40" : undefined}
               />
+              {finalizado && (
+                <p id="laudo-finalizado-aviso" className="text-xs text-muted-foreground">
+                  Laudo finalizado não pode ser editado. Para corrigir, use "Reabrir laudo".
+                </p>
+              )}
             </div>
 
             <section className="space-y-2" aria-labelledby="exame-arquivos-titulo">
@@ -257,20 +321,39 @@ export function ExameLaudoDialog({ exame, onOpenChange, onSaved }: Props) {
               />
             </section>
 
-            {podeConcluir && (
-              <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={concluir} onChange={(e) => setConcluir(e.target.checked)} />
-                Marcar exame como concluído ao salvar
-              </label>
-            )}
           </div>
 
-          <DialogFooter>
-            <Button variant="outline" onClick={() => fechar(false)}>Cancelar</Button>
-            <Button onClick={handleSave} disabled={saving || uploading > 0} className="gap-2">
-              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
-              Salvar laudo
-            </Button>
+          <DialogFooter className="flex-wrap gap-2 sm:justify-between">
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" className="gap-1" onClick={imprimir} disabled={!laudo.trim() && imagens.length === 0}>
+                <Printer className="h-4 w-4" /> Imprimir / PDF
+              </Button>
+              {finalizado && (
+                <Button variant="ghost" className="gap-1" onClick={reabrir} disabled={acao !== null}>
+                  {acao === "reabrir" ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />} Reabrir laudo
+                </Button>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" onClick={() => fechar(false)}>Fechar</Button>
+              {!finalizado && (
+                <Button variant="outline" onClick={handleSave} disabled={saving || uploading > 0 || acao !== null} className="gap-1">
+                  {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                  Salvar rascunho
+                </Button>
+              )}
+              {podeFinalizar && (
+                <Button onClick={finalizar} disabled={saving || uploading > 0 || acao !== null || !laudo.trim()} className="gap-1">
+                  {acao === "finalizar" ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                  Finalizar laudo
+                </Button>
+              )}
+              {finalizado && legadoUrl !== (exame.arquivo_url ?? null) && (
+                <Button onClick={handleSave} disabled={saving} className="gap-1">
+                  <FileText className="h-4 w-4" /> Salvar
+                </Button>
+              )}
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>

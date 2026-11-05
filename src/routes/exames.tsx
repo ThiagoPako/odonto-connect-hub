@@ -182,7 +182,13 @@ function ExamesPage() {
                     <Badge variant="outline" className={STATUS_COLORS[e.status]}>{STATUS_LABELS[e.status]}</Badge>
                     {e.terceirizado && <Badge variant="outline" className="text-xs">Terceirizado</Badge>}
                     {e.prioridade !== "normal" && <Badge variant="outline" className="text-xs capitalize">{e.prioridade}</Badge>}
-                    {e.laudo_texto && <Badge variant="outline" className="text-xs gap-1"><FileSignature className="h-3 w-3" />Laudo</Badge>}
+                    {e.laudado_em ? (
+                      <Badge variant="outline" className="text-xs gap-1" title={e.laudado_por_nome ? `Finalizado por ${e.laudado_por_nome}` : undefined}>
+                        <FileSignature className="h-3 w-3" />Laudo finalizado
+                      </Badge>
+                    ) : e.laudo_texto ? (
+                      <Badge variant="outline" className="text-xs gap-1"><FileSignature className="h-3 w-3" />Laudo em rascunho</Badge>
+                    ) : null}
                     {((e.arquivos_count ?? 0) > 0 || e.arquivo_url) && (
                       <Badge variant="outline" className="text-xs gap-1">
                         <Paperclip className="h-3 w-3" />
