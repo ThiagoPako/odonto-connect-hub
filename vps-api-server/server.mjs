@@ -16245,7 +16245,7 @@ app.delete('/api/exames/:id', async (req, res) => {
     // não é apagado; a clínica cancela o exame. Só pedidos sem resultado podem ser excluídos.
     const { rows } = await pool.query(
       `SELECT (COALESCE(btrim(e.laudo_texto), '') <> '' OR e.arquivo_url IS NOT NULL
-               OR EXISTS (SELECT 1 FROM exame_arquivos a WHERE a.exame_id = e.id AND a.tenant_id = e.tenant_id AND a.removido_em IS NULL)) AS tem_resultado
+               OR EXISTS (SELECT 1 FROM exame_arquivos a WHERE a.exame_id = e.id AND a.tenant_id = e.tenant_id)) AS tem_resultado
          FROM exames e WHERE e.id=$1 AND e.tenant_id=$2`,
       [req.params.id, user.tenant_id]
     );
@@ -16253,12 +16253,15 @@ app.delete('/api/exames/:id', async (req, res) => {
     if (rows[0].tem_resultado) {
       return res.status(409).json({ error: 'Este exame já tem laudo ou imagem e faz parte do prontuário. Em vez de excluir, mude o status para Cancelado.' });
     }
-    await pool.query(
+    // Arquivo retirado também conta: o DELETE em cascata apagaria o registro dele (prontuário)
+    const { rowCount } = await pool.query(
       `DELETE FROM exames e WHERE e.id=$1 AND e.tenant_id=$2
           AND COALESCE(btrim(e.laudo_texto), '') = '' AND e.arquivo_url IS NULL
-          AND NOT EXISTS (SELECT 1 FROM exame_arquivos a WHERE a.exame_id = e.id AND a.tenant_id = e.tenant_id AND a.removido_em IS NULL)`,
+          AND NOT EXISTS (SELECT 1 FROM exame_arquivos a WHERE a.exame_id = e.id AND a.tenant_id = e.tenant_id)`,
       [req.params.id, user.tenant_id]
     );
+    // Recebeu laudo/imagem entre a leitura e a exclusão: nada foi apagado
+    if (!rowCount) return res.status(409).json({ error: 'O exame mudou enquanto você excluía. Atualize a lista e tente de novo.' });
     res.json({ success: true });
   } catch (err) {
     responderErroExame(res, err, 'exames:delete');
