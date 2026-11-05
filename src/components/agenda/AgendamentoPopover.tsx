@@ -44,8 +44,10 @@ export function AgendamentoPopover({ appointment, open, onOpenChange, onChanged 
     else { toast.success(serie ? "Série excluída" : "Agendamento excluído"); onChanged(); onOpenChange(false); }
   };
 
-  const wppLink = appointment.telefone
-    ? `https://wa.me/${appointment.telefone.replace(/\D/g, "")}`
+  // wa.me exige o código do país: "(11) 98888-7777" virava wa.me/11988887777 (outro país)
+  const wppDigits = (appointment.telefone || "").replace(/\D/g, "");
+  const wppLink = wppDigits.length >= 10
+    ? `https://wa.me/${wppDigits.length <= 11 ? `55${wppDigits}` : wppDigits}`
     : null;
 
   return (
