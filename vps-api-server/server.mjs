@@ -6091,12 +6091,19 @@ async function handleWaitlistOfferReply({ tenantId, phone, msgType, msgContent, 
       [oferta.id, tenantId]
     );
     if (!claimed) {
-      outcome = 'expirada';
+      // Reserva vazia: expirou ou outra mensagem do MESMO telefone (a oferta foi achada pelo
+      // telefone) já ganhou o aceite, ex.: "SIM" repetido/reentregue. Já aceita → não diz "Que pena".
+      const { rows: [atual] } = await client.query(
+        `SELECT status FROM lista_espera_ofertas WHERE id = $1 AND tenant_id = $2`,
+        [oferta.id, tenantId]
+      );
+      outcome = atual?.status === 'aceita' ? 'ja_aceita' : 'expirada';
     } else {
-      // Horário ainda livre? (a recepção pode ter marcado alguém por fora). hora é TIME.
+      // Horário ainda livre? (a recepção pode ter marcado alguém por fora). hora é TIME em
+      // produção; LEFT(hora::text, 5) funciona com TIME e com TEXT ('09:00:00' → '09:00').
       const { rows: ocupado } = await client.query(
         `SELECT 1 FROM agendamentos
-          WHERE tenant_id = $1 AND data = $2 AND to_char(hora, 'HH24:MI') = $3 AND dentista_id IS NOT DISTINCT FROM $4 AND id <> $5
+          WHERE tenant_id = $1 AND data = $2 AND LEFT(hora::text, 5) = $3 AND dentista_id IS NOT DISTINCT FROM $4 AND id <> $5
             AND COALESCE(status, 'agendado') NOT IN ('cancelado', 'desmarcado', 'faltou') LIMIT 1`,
         [tenantId, agendaYmd(oferta.data), hora, oferta.dentista_id || null, oferta.agendamento_origem_id]
       );
@@ -6114,12 +6121,16 @@ async function handleWaitlistOfferReply({ tenantId, phone, msgType, msgContent, 
         outcome = 'aceita';
       }
     }
-    await client.query(outcome === 'expirada' ? 'ROLLBACK' : 'COMMIT');
+    await client.query(outcome === 'expirada' || outcome === 'ja_aceita' ? 'ROLLBACK' : 'COMMIT');
   } catch (txError) {
     await client.query('ROLLBACK').catch(() => {});
     throw txError;
   } finally {
     client.release();
+  }
+  if (outcome === 'ja_aceita') {
+    // O encaixe e a confirmação ficaram com a mensagem que ganhou; nada a responder aqui.
+    return { handled: true, accepted: true, duplicate: true, ofertaId: oferta.id };
   }
   if (outcome === 'expirada') {
     await pool.query(`UPDATE lista_espera_ofertas SET status = 'expirada', answered_at = NOW() WHERE id = $1 AND tenant_id = $2 AND status = 'enviada'`, [oferta.id, tenantId]).catch(() => {});

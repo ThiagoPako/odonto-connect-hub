@@ -45,7 +45,7 @@ async function waitFor(fn, ms = 2000) {
 }
 
 describe('Lista de espera e encaixe', () => {
-  let querySpy, connectSpy, fetchSpy, failAgendamentoInsert, released, sqlLog, fetchLog, slot, candidatos, ofertaAtiva, ofertaPendente, claimOk, ocupado, existingLead;
+  let querySpy, connectSpy, fetchSpy, failAgendamentoInsert, released, sqlLog, fetchLog, slot, candidatos, ofertaAtiva, ofertaPendente, claimOk, ocupado, existingLead, statusAtual;
 
   beforeAll(() => {
     jest.spyOn(console, 'log').mockImplementation(() => {});
@@ -59,7 +59,7 @@ describe('Lista de espera e encaixe', () => {
     sqlLog = []; fetchLog = [];
     slot = { id: slotA, data: '2026-11-06', hora: '09:00', duracao: 30, dentista_id: dentA, paciente_id: pacA, status: 'desmarcado', dentista_nome: 'Dra. Ana' };
     candidatos = [{ id: leA, paciente_id: pacB, paciente_nome: 'João Silva', telefone: telEspera }];
-    ofertaAtiva = []; claimOk = true; ocupado = false; failAgendamentoInsert = false; released = 0;
+    ofertaAtiva = []; claimOk = true; statusAtual = 'expirada'; ocupado = false; failAgendamentoInsert = false; released = 0;
     existingLead = { id: 'lead-1', name: 'João', phone: telEspera, awaiting_queue_selection: false };
     ofertaPendente = {
       id: ofertaA, lista_espera_id: leA, paciente_id: pacB, agendamento_origem_id: slotA,
@@ -95,7 +95,8 @@ describe('Lista de espera e encaixe', () => {
         return ok(params[0] === tenantA && okTel && ofertaPendente && (!params[2] || params[2] === ofertaPendente.id) ? [ofertaPendente] : []);
       }
       if (/SET status = 'aceita'/.test(text)) return ok(claimOk ? [{ id: ofertaA }] : []);
-      if (/FROM agendamentos\s+WHERE tenant_id = \$1 AND data = \$2 AND to_char\(hora, 'HH24:MI'\) = \$3/.test(text)) return ok(ocupado ? [{ x: 1 }] : []);
+      if (/SELECT status FROM lista_espera_ofertas WHERE id = \$1 AND tenant_id = \$2/.test(text)) return ok(params[1] === tenantA ? [{ status: statusAtual }] : []);
+      if (/FROM agendamentos\s+WHERE tenant_id = \$1 AND data = \$2 AND LEFT\(hora::text, 5\) = \$3/.test(text)) return ok(ocupado ? [{ x: 1 }] : []);
       if (/SELECT id, nome as name, avatar_url, telefone as phone/.test(text)) return ok(existingLead ? [existingLead] : []);
       if (/INSERT INTO automation_jobs/.test(text)) return ok([{ id: `job-${sqlLog.length}` }]);
       return ok([]);
@@ -325,6 +326,23 @@ describe('Lista de espera e encaixe', () => {
       expect(q(/INSERT INTO agendamentos/)).toHaveLength(0);
     });
 
+    test('aceite repetido (mesma mensagem já aceita): não responde "Que pena" nem agenda de novo', async () => {
+      claimOk = false; statusAtual = 'aceita';
+      await webhook('QUERO');
+      await waitFor(() => released);
+      await sleep(150);
+      const [reler] = q(/SELECT status FROM lista_espera_ofertas WHERE id = \$1 AND tenant_id = \$2/);
+      expect(reler.params).toEqual([ofertaA, tenantA]);
+      expect(reler.via).toBe('client');
+      const tx = sqlLog.filter(s => s.via === 'client').map(s => s.text.trim().split(/\s+/)[0]);
+      expect(tx).toEqual(['BEGIN', 'UPDATE', 'SELECT', 'ROLLBACK']);
+      const replies = jobInserts().filter(i => jobCol(i, 'trigger_event') === 'auto_reply');
+      expect(replies.filter(r => /não está mais disponível/.test(jobCol(r, 'message')))).toHaveLength(0);
+      expect(q(/INSERT INTO agendamentos/)).toHaveLength(0);
+      expect(q(/SET status = 'expirada'/)).toHaveLength(0);
+      expect(q(/UPDATE lista_espera SET status = 'aguardando'/)).toHaveLength(0);
+    });
+
     test('horário ocupado por fora: não agenda', async () => {
       ocupado = true;
       await webhook('QUERO');
@@ -334,7 +352,7 @@ describe('Lista de espera e encaixe', () => {
 
     test('no aceite, "remarcar" conta como ocupado (não cria encaixe por cima do horário prometido)', async () => {
       await webhook('QUERO');
-      const conf = await waitFor(() => q(/FROM agendamentos\s+WHERE tenant_id = \$1 AND data = \$2 AND to_char\(hora, 'HH24:MI'\) = \$3/)[0]);
+      const conf = await waitFor(() => q(/FROM agendamentos\s+WHERE tenant_id = \$1 AND data = \$2 AND LEFT\(hora::text, 5\) = \$3/)[0]);
       expect(conf.text).toMatch(/NOT IN \('cancelado', 'desmarcado', 'faltou'\)/);
       expect(conf.text).not.toMatch(/remarcar/);
     });
