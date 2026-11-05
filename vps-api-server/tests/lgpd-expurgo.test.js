@@ -3,6 +3,8 @@
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
+import fs from 'fs';
+import os from 'os';
 import { jest } from '@jest/globals';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -13,6 +15,7 @@ dotenv.config({ path: path.join(__dirname, '../.env') });
 
 const { app, pool } = await import('../server.mjs');
 const { processarExpurgoLgpd } = await import('../lgpd-expurgo.mjs');
+const { classificar, novoColetor, avisoBackups } = await import('../lgpd-arquivos.mjs');
 const JWT_SECRET = process.env.JWT_SECRET;
 
 const tenantA = '11111111-1111-1111-1111-111111111111';
@@ -24,13 +27,13 @@ const token = (extra = {}) => jwt.sign({ sub: adminA, email: 'admin@a.test', rol
 
 const INV = {
   crm_leads: ['id', 'tenant_id', 'paciente_id', 'created_at', 'updated_at'],
-  chat_messages: ['id', 'tenant_id', 'lead_id', 'timestamp', 'created_at'],
+  chat_messages: ['id', 'tenant_id', 'lead_id', 'timestamp', 'created_at', 'media_url'],
   automation_jobs: ['id', 'tenant_id', 'status', 'created_at'],
   acessos_prontuario: ['id', 'tenant_id', 'em'],
   lgpd_solicitacoes: ['id', 'tenant_id', 'solicitado_em', 'status'],
   pacientes: ['id', 'tenant_id', 'nome'],
 };
-let sqlLog, listas, itens, dentistaEmail, spyQ, spyC;
+let sqlLog, listas, itens, dentistaEmail, spyQ, spyC, refsMidia, falharDelete;
 const assinatura = (its) => crypto.createHash('sha256').update(its.filter(i => i.aprovado).map(i => `${i.id}:${i.aprovado_em}`).sort().join('|')).digest('hex');
 
 function responder(sql, params = []) {
@@ -73,7 +76,8 @@ function responder(sql, params = []) {
     if (l) l.status = 'executada';
     return { rowCount: 1, rows: [] };
   }
-  if (/^DELETE/.test(text)) return { rowCount: 3, rows: [] };
+  if (/^SELECT "media_url" FROM "chat_messages"/.test(text)) return { rows: refsMidia.map(m => ({ media_url: m })) };
+  if (/^DELETE/.test(text)) { if (falharDelete) throw Object.assign(new Error('falha simulada'), { code: 'XX000' }); return { rowCount: 3, rows: [] }; }
   return { rows: [], rowCount: 0 };
 }
 const deletes = () => sqlLog.filter(q => /^DELETE/.test(q.text));
@@ -86,7 +90,7 @@ beforeAll(() => {
   jest.spyOn(console, 'warn').mockImplementation(() => {});
 });
 beforeEach(() => {
-  sqlLog = []; dentistaEmail = null;
+  sqlLog = []; dentistaEmail = null; refsMidia = []; falharDelete = false;
   listas = [
     { id: listaA, tenant_id: tenantA, status: 'pendente' },
     { id: listaB, tenant_id: tenantB, status: 'pendente' },
@@ -211,5 +215,83 @@ describe('papéis e isolamento', () => {
     const res = await chamar('post', `/api/lgpd/expurgo/listas/${listaA}/executar`, token(), { frase: 'ELIMINAR' });
     expect(res.status).toBe(409);
     expect(deletes()).toHaveLength(0);
+  });
+});
+
+describe('arquivos, backups e idade (parecer do #76)', () => {
+  let dir;
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lgpd-uploads-'));
+    process.env.LGPD_UPLOADS_DIR = dir;
+    fs.mkdirSync(path.join(dir, '2026-11'));
+    fs.writeFileSync(path.join(dir, '2026-11', 'foto.jpg'), 'x');
+  });
+  afterEach(() => { delete process.env.LGPD_UPLOADS_DIR; fs.rmSync(dir, { recursive: true, force: true }); });
+
+  test('classifica: arquivo local, caminho fora de uploads, link externo e conteúdo inline', () => {
+    expect(classificar('/uploads/media/2026-11/foto.jpg')).toEqual({ tipo: 'local', abs: path.join(dir, '2026-11', 'foto.jpg') });
+    expect(classificar('https://api.exemplo.test/uploads/media/2026-11/foto.jpg').tipo).toBe('local');
+    expect(classificar('/uploads/media/../../etc/passwd')).toEqual({ tipo: 'externo', host: 'caminho fora de uploads' });
+    expect(classificar('https://mmg.whatsapp.net/v/abc.enc')).toEqual({ tipo: 'externo', host: 'mmg.whatsapp.net' });
+    expect(classificar('data:image/png;base64,AAAA')).toBeNull();
+  });
+
+  test('coletor apaga o local e lista o que não alcançou, só por contagem e host', async () => {
+    const c = novoColetor();
+    const db = { query: async () => ({ rows: [{ media_url: '/uploads/media/2026-11/foto.jpg' }, { media_url: 'https://mmg.whatsapp.net/x.enc' }] }) };
+    await c.coletar(db, { tabela: 'chat_messages', where: 'tenant_id = $1', params: [tenantA] });
+    expect(c.previa()).toEqual({ arquivos_locais: 1, nao_alcancados: { 'mmg.whatsapp.net': 1 } });
+    const r = await c.apagar();
+    expect(r.arquivos_apagados).toBe(1);
+    expect(r.nao_alcancados).toEqual({ total: 1, por_host: { 'mmg.whatsapp.net': 1 } });
+    expect(r.acao_manual).toMatch(/Evolution/);
+    expect(fs.existsSync(path.join(dir, '2026-11', 'foto.jpg'))).toBe(false);
+    expect(JSON.stringify(r)).not.toMatch(/foto\.jpg/);
+  });
+
+  test('backups: data prevista = execução + 6 meses', () => {
+    const b = avisoBackups(new Date('2026-11-05T12:00:00Z'));
+    expect(b.previsto_ate.slice(0, 7)).toBe('2027-05');
+    expect(b.texto).toMatch(/rotação normal dos backups/);
+  });
+
+  test('execução: conversas aprovadas apagam o arquivo ligado depois do commit e registram backups', async () => {
+    refsMidia = ['/uploads/media/2026-11/foto.jpg', 'https://mmg.whatsapp.net/x.enc'];
+    itens.push({ ...itens[0], id: 4, categoria: 'conversas' });
+    await chamar('post', '/api/lgpd/expurgo/itens/4/aprovar', token(), { aprovar: true });
+    const dr = await chamar('post', `/api/lgpd/expurgo/listas/${listaA}/dry-run`, token());
+    expect(dr.body.dry_run['4']).toMatchObject({ arquivos_locais: 1, nao_alcancados: { 'mmg.whatsapp.net': 1 } });
+    expect(fs.existsSync(path.join(dir, '2026-11', 'foto.jpg'))).toBe(true); // dry-run não apaga
+    const res = await chamar('post', `/api/lgpd/expurgo/listas/${listaA}/executar`, token(), { frase: 'ELIMINAR' });
+    expect(res.status).toBe(200);
+    expect(fs.existsSync(path.join(dir, '2026-11', 'foto.jpg'))).toBe(false);
+    expect(res.body.resultado['4'].arquivos).toMatchObject({ arquivos_apagados: 1, nao_alcancados: { total: 1 } });
+    expect(res.body.backups.texto).toMatch(/backups/);
+    const reg = sqlLog.filter(q => /^UPDATE lgpd_expurgo_listas SET (status = 'executada'|resultado)/.test(q.text));
+    expect(reg.some(q => /previsto_ate/.test(q.params[3] || q.params[2]))).toBe(true);
+  });
+
+  test('se a eliminação falha, nenhum arquivo sai do disco', async () => {
+    refsMidia = ['/uploads/media/2026-11/foto.jpg'];
+    itens.push({ ...itens[0], id: 4, categoria: 'conversas' });
+    await chamar('post', '/api/lgpd/expurgo/itens/4/aprovar', token(), { aprovar: true });
+    await chamar('post', `/api/lgpd/expurgo/listas/${listaA}/dry-run`, token());
+    falharDelete = true;
+    const res = await chamar('post', `/api/lgpd/expurgo/listas/${listaA}/executar`, token(), { frase: 'ELIMINAR' });
+    expect(res.status).toBe(500);
+    expect(fs.existsSync(path.join(dir, '2026-11', 'foto.jpg'))).toBe(true);
+  });
+
+  test('prontuário sem data de nascimento: dentista precisa confirmar a idade para aprovar', async () => {
+    dentistaEmail = 'dra@a.test';
+    itens[1].detalhe = { alertas: ['idade_desconhecida'], alerta: 'Idade desconhecida' };
+    const tk = token({ role: 'dentista', email: 'dra@a.test' });
+    const r1 = await chamar('post', '/api/lgpd/expurgo/itens/2/aprovar', tk, { aprovar: true });
+    expect(r1.status).toBe(422);
+    expect(r1.body.exige).toBe('confirmo_idade');
+    expect(itens[1].aprovado).toBe(false);
+    const r2 = await chamar('post', '/api/lgpd/expurgo/itens/2/aprovar', tk, { aprovar: true, confirmo_idade: true });
+    expect(r2.status).toBe(200);
+    expect(itens[1].aprovado).toBe(true);
   });
 });

@@ -25,13 +25,14 @@ interface Lista {
   gerada_em: string;
   dry_run_em: string | null;
   executada_em: string | null;
+  resultado?: { backups?: { texto: string } } | null;
 }
 interface Item {
   id: number;
   categoria: string;
   referencia: string | null;
   quantidade: number;
-  detalhe: Record<string, number> | null;
+  detalhe: (Record<string, unknown> & { alertas?: string[]; alerta?: string }) | null;
   corte: string;
   acao: "eliminar" | "devolver";
   prazo_ate: string | null;
@@ -96,7 +97,12 @@ function LgpdExpurgoPage() {
   };
 
   const aprovar = async (item: Item, valor: boolean) => {
-    const { error } = await vpsApiFetch(`/api/lgpd/expurgo/itens/${item.id}/aprovar`, { method: "POST", body: { aprovar: valor } });
+    // Sem data de nascimento, o dentista confere se o paciente era menor (guarda até os 21 anos).
+    const semIdade = valor && item.detalhe?.alertas?.includes("idade_desconhecida");
+    if (semIdade && !window.confirm(`${item.detalhe?.alerta || "Idade desconhecida."}\n\nConferi a idade e aprovo a eliminação.`)) return;
+    const { error } = await vpsApiFetch(`/api/lgpd/expurgo/itens/${item.id}/aprovar`, {
+      method: "POST", body: { aprovar: valor, ...(semIdade ? { confirmo_idade: true } : {}) },
+    });
     if (error) { toast.error(error); return; }
     if (lista) abrir(lista.id);
   };
@@ -176,6 +182,13 @@ function LgpdExpurgoPage() {
             <div className="text-sm text-muted-foreground">
               Gerada em {data(lista.gerada_em)} · Simulação: {data(lista.dry_run_em)} · Execução: {data(lista.executada_em)}
             </div>
+            {lista.resultado?.backups?.texto && (
+              <div className="rounded-md border bg-muted/40 p-3 text-sm">{lista.resultado.backups.texto}</div>
+            )}
+            <p className="text-xs text-muted-foreground">
+              Arquivos locais (exames, anexos, mídia em uploads) saem junto. Os que estão fora do sistema, como
+              mídia no servidor do WhatsApp, aparecem como "não alcançados", com a ação manual.
+            </p>
             {itens.length === 0 ? (
               <div className="rounded-md border p-6 text-sm text-muted-foreground">Nada venceu o prazo neste mês.</div>
             ) : (
@@ -200,6 +213,9 @@ function LgpdExpurgoPage() {
                           <td className="p-2">
                             {NOMES[i.categoria] || i.categoria}
                             {ehProntuario && i.referencia && <div className="text-xs text-muted-foreground">Paciente {i.referencia.slice(0, 8)}…</div>}
+                            {i.detalhe?.alertas?.includes("idade_desconhecida") && (
+                              <div role="alert" className="mt-1 text-xs font-medium text-warning">{i.detalhe.alerta || "Idade desconhecida"}</div>
+                            )}
                           </td>
                           <td className="p-2">{i.quantidade}</td>
                           <td className="p-2">{data(i.corte)}</td>

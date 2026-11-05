@@ -47,6 +47,16 @@ estrutura, e os ajustes pedidos estão aplicados. O que ainda depende de advogad
   - a palavra `ELIMINAR`;
 - o registro fica em `lgpd_expurgo_listas`/`lgpd_expurgo_itens`: quem aprovou (e o papel), quem executou
   e o resultado só por contagens;
+- **arquivos** (parecer do #76):
+  - os ligados às linhas eliminadas saem do disco depois do COMMIT: exame (`arquivo_url`, `exame_arquivos`
+    quando existir), anexos do prontuário, áudio de relatório e mídia do chat em `uploads/media`;
+  - o que está fora do sistema (mídia no servidor da Evolution/WhatsApp, link externo) aparece como
+    **não alcançado**, com o host e a ação manual, no dry-run e no registro;
+  - vale também para o pedido de exclusão e de anonimização do titular;
+- **backups:** o registro informa que os dados saem das cópias de segurança na rotação normal, com a data
+  prevista (execução + 6 meses, conforme `docs/operacao/backup.md`);
+- **idade desconhecida:** prontuário de paciente sem data de nascimento vem com alerta, porque a regra dos
+  21 anos não pode ser conferida. O dentista só aprova confirmando que conferiu a idade (`confirmo_idade`);
 - a eliminação fica registrada (Lei 13.787 art. 6º § 4º), e a linha de `lgpd_solicitacoes` serve de registro;
 - o paciente pode pedir a **devolução** do prontuário em vez da eliminação (§ 2º): fica gravado em `ao_fim_do_prazo = 'devolver'`.
 

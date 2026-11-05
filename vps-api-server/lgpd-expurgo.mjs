@@ -24,10 +24,12 @@
 // Registro (Lei 13.787 art. 6º § 4º): quem aprovou cada item, quem executou, e o resultado por contagens.
 import crypto from 'crypto';
 import { __interno as lgpd } from './lgpd.mjs';
+import { novoColetor, avisoBackups } from './lgpd-arquivos.mjs';
 
 export const CATEGORIAS = ['leads', 'fila', 'conversas', 'acessos', 'solicitacoes', 'prontuario'];
 const ANOS = { leads: 2, fila: 1, conversas: 5, acessos: 5, solicitacoes: 5, prontuario: 20 };
 const DRY_RUN_VALIDADE_MIN = 60;
+export const ALERTA_IDADE = 'Idade desconhecida: confira se o paciente era menor (guarda até os 21 anos) antes de aprovar.';
 const MAX_PRONTUARIOS_POR_LISTA = 200;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const q = (ident) => `"${String(ident).replace(/"/g, '""')}"`;
@@ -146,7 +148,9 @@ async function candidatosProntuario(db, cols, tenantId, agora = new Date()) {
       if (s[0]?.ao_fim_do_prazo === 'devolver') acao = 'devolver';
     }
     const registros = Object.values(prev.grupos).reduce((a, g) => a + Object.values(g).reduce((x, y) => x + y, 0), 0);
-    saida.push({ paciente_id: String(r.id), prazo_ate: rt.prontuario_ate, acao, registros });
+    // Sem data de nascimento a regra dos 21 anos não pode ser conferida (parecer do #76).
+    const alertas = pac[0].data_nascimento ? [] : ['idade_desconhecida'];
+    saida.push({ paciente_id: String(r.id), prazo_ate: rt.prontuario_ate, acao, registros, alertas });
   }
   return saida;
 }
@@ -166,7 +170,9 @@ export async function gerarListaExpurgo(pool, tenantId, { agora = new Date() } =
     if (principal > 0) itens.push({ categoria, referencia: null, quantidade: principal, detalhe: porTabela, corte, acao: 'eliminar' });
   }
   for (const c of await candidatosProntuario(pool, cols, tenantId, agora)) {
-    itens.push({ categoria: 'prontuario', referencia: c.paciente_id, quantidade: c.registros, detalhe: null, corte: corteDe(ANOS.prontuario, agora), acao: c.acao, prazo_ate: c.prazo_ate });
+    itens.push({ categoria: 'prontuario', referencia: c.paciente_id, quantidade: c.registros,
+      detalhe: c.alertas.length ? { alertas: c.alertas, alerta: ALERTA_IDADE } : null,
+      corte: corteDe(ANOS.prontuario, agora), acao: c.acao, prazo_ate: c.prazo_ate });
   }
   const client = await pool.connect();
   try {
@@ -293,6 +299,10 @@ export function registerLgpdExpurgo(app, { pool, verifyUser, optOutKey }) {
       if (item.categoria === 'prontuario' && !p.dentistaId) return res.status(403).json({ error: 'Eliminação de prontuário só com aprovação de um dentista da clínica' });
       if (item.categoria !== 'prontuario' && !p.admin) return res.status(403).json({ error: 'Só o administrador aprova esta categoria' });
       const aprovar = req.body?.aprovar !== false;
+      const alertas = item.detalhe?.alertas || [];
+      if (aprovar && alertas.includes('idade_desconhecida') && req.body?.confirmo_idade !== true) {
+        return res.status(422).json({ error: ALERTA_IDADE, alertas, exige: 'confirmo_idade' });
+      }
       await pool.query(
         `UPDATE lgpd_expurgo_itens SET aprovado = $3, aprovado_por = $4, aprovado_papel = $5, dentista_id = $6, aprovado_em = NOW()
           WHERE id = $1 AND tenant_id = $2`,
@@ -314,11 +324,16 @@ export function registerLgpdExpurgo(app, { pool, verifyUser, optOutKey }) {
         const prev = await lgpd.previa(db, tenantId, pac[0]);
         const rt = prev.retencao;
         const vigente = rt.prontuario_em_vigor || rt.fiscal_em_vigor || rt.comercial_em_vigor || rt.conversas_em_vigor || prev.sem_regra_com_dados.length > 0;
-        out[i.id] = vigente ? { retido: true } : { porGrupo: prev.grupos };
+        if (vigente) { out[i.id] = { retido: true }; continue; }
+        const col = novoColetor();
+        for (const a of prev._alvos.filter(x => x.registros && x.vinculo === 'paciente')) await col.coletar(db, a);
+        out[i.id] = { porGrupo: prev.grupos, ...col.previa() };
         continue;
       }
       const plano = await planoCategoria(db, cols, tenantId, i.categoria, new Date(i.corte));
-      out[i.id] = (await contarPlano(db, plano)).porTabela;
+      const col = novoColetor();
+      for (const pl of plano) await col.coletar(db, { ...pl, cols: cols.get(pl.tabela) });
+      out[i.id] = { ...(await contarPlano(db, plano)).porTabela, ...col.previa() };
     }
     return out;
   };
@@ -370,13 +385,15 @@ export function registerLgpdExpurgo(app, { pool, verifyUser, optOutKey }) {
       }
       const cols = await colunas(client);
       const resultado = {};
+      const coletores = {};
       for (const i of aprovados) {
+        const coletor = coletores[i.id] = novoColetor();
         if (i.categoria === 'prontuario') {
           if (i.acao === 'devolver') { resultado[i.id] = { aguardando_devolucao: true }; continue; }
           const { rows: pac } = await client.query('SELECT * FROM pacientes WHERE id = $1 AND tenant_id = $2', [i.referencia, p.user.tenant_id]);
           if (!pac[0]) { resultado[i.id] = { ausente: true }; continue; }
           const prev = await lgpd.previa(client, p.user.tenant_id, pac[0]);
-          const r = await lgpd.eliminar(client, p.user.tenant_id, pac[0], 'excluir', prev, new Set(), { optOutKey });
+          const r = await lgpd.eliminar(client, p.user.tenant_id, pac[0], 'excluir', prev, new Set(), { optOutKey, coletor });
           resultado[i.id] = { cadastro: r.cadastro, eliminados: r.eliminados };
           continue;
         }
@@ -384,6 +401,7 @@ export function registerLgpdExpurgo(app, { pool, verifyUser, optOutKey }) {
         const plano = await planoCategoria(client, cols, p.user.tenant_id, i.categoria, new Date(i.corte));
         const porTabela = {};
         for (const pl of plano) {
+          await coletor.coletar(client, { ...pl, cols: cols.get(pl.tabela) });
           const { rowCount } = await client.query(`DELETE FROM ${q(pl.tabela)} WHERE ${pl.where}`, pl.params);
           if (rowCount) porTabela[pl.tabela] = (porTabela[pl.tabela] || 0) + rowCount;
         }
@@ -393,12 +411,22 @@ export function registerLgpdExpurgo(app, { pool, verifyUser, optOutKey }) {
         await client.query('UPDATE lgpd_expurgo_itens SET resultado = $3 WHERE id = $1 AND tenant_id = $2',
           [i.id, p.user.tenant_id, JSON.stringify(resultado[i.id] || {})]);
       }
+      const backups = avisoBackups();
       await client.query(
         `UPDATE lgpd_expurgo_listas SET status = 'executada', executada_em = NOW(), executada_por = $3, resultado = $4
           WHERE id = $1 AND tenant_id = $2`,
-        [lista.id, p.user.tenant_id, p.user.id || null, JSON.stringify(resultado)]);
+        [lista.id, p.user.tenant_id, p.user.id || null, JSON.stringify({ itens: resultado, backups })]);
       await client.query('COMMIT');
-      res.json({ success: true, resultado });
+      // Arquivos só depois do COMMIT; o resultado (apagados e não alcançados) vai para o registro.
+      for (const i of aprovados) {
+        const arquivos = await coletores[i.id].apagar();
+        resultado[i.id] = { ...(resultado[i.id] || {}), arquivos };
+        await pool.query('UPDATE lgpd_expurgo_itens SET resultado = $3 WHERE id = $1 AND tenant_id = $2',
+          [i.id, p.user.tenant_id, JSON.stringify(resultado[i.id])]).catch(e => console.error('[lgpd-expurgo] registro de arquivos:', e.code || e.message));
+      }
+      await pool.query('UPDATE lgpd_expurgo_listas SET resultado = $3 WHERE id = $1 AND tenant_id = $2',
+        [lista.id, p.user.tenant_id, JSON.stringify({ itens: resultado, backups })]).catch(e => console.error('[lgpd-expurgo] registro de arquivos:', e.code || e.message));
+      res.json({ success: true, resultado, backups });
     } catch (e) {
       if (client) await client.query('ROLLBACK').catch(() => {});
       if (e?.code === '23503') return res.status(409).json({ error: `Há registros ligados em ${e.table || 'outra tabela'}: nada foi apagado.` });
