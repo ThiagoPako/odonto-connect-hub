@@ -15,3 +15,7 @@ Nunca aponte para produção. Todos os dados são fictícios (clínicas Alfa e B
    `cd vps-api-server && PG_DATABASE=odonto_local PG_USER=odonto_user PG_PASSWORD=local_test_pw PG_HOST=localhost JWT_SECRET=local-e2e API_PORT=3012 EVOLUTION_API_URL=http://127.0.0.1:9 node server.mjs`
 3. Frontend: `E2E_API_URL=http://localhost:3012 npx vite dev -c vite.local.config.ts --port 5173 --strictPort` (sem `E2E_API_URL`, o proxy usa `http://localhost:3002`).
 4. Testes: `npx playwright test -c playwright.local.config.ts`
+
+## e2e do WhatsApp (Evolution simulada)
+Não precisa de Evolution nem de WhatsApp: `e2e/fake-evolution.mjs` imita a Evolution 2.3.7 (responde com `key.id`, registra o que recebeu e dispara webhooks com o token do ambiente) e `e2e/api-teste.mjs` sobe o backend em modo de teste (sem crons; `/__tick` roda a fila na hora; `/__clock` muda o relógio). Os dois recusam banco ou Evolution que não sejam locais.
+`E2E_WA_DB=odonto_local npx playwright test -c playwright.whatsapp.config.ts` (portas 3071/3072/4010; mude com `E2E_WA_API_PORT`, `E2E_WA_CONTROL_PORT`, `E2E_WA_FAKE_PORT`).
