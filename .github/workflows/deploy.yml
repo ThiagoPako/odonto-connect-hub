@@ -141,6 +141,20 @@ jobs:
             cat /root/odonto-connect/vps-api-server/migration-contatos-recuperacao.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             # Colunas usadas por agendamentos (idempotente; ausentes em produção)
             sudo -u postgres psql -p 5433 -d odonto_db -c "SET lock_timeout = '5s'; ALTER TABLE IF EXISTS agendamentos ADD COLUMN IF NOT EXISTS paciente_nome TEXT, ADD COLUMN IF NOT EXISTS dentista_nome TEXT;" 2>&1 || true
+            # Colunas/tabelas que o código usa e faltam no banco (docs/banco/drift-schema-2026-11-05.md).
+            # Transação única com lock_timeout: tenta até 3 vezes antes de avisar.
+            ALINHAMENTO_OK=0
+            for TENTATIVA in 1 2 3; do
+              if cat /root/odonto-connect/vps-api-server/migration-schema-alinhamento.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1; then
+                ALINHAMENTO_OK=1; break
+              fi
+              echo "Alinhamento de schema: tentativa $TENTATIVA falhou; aguardando 10s..."
+              sleep 10
+            done
+            if [ "$ALINHAMENTO_OK" != "1" ]; then
+              echo "::warning title=Alinhamento de schema não aplicado::migration-schema-alinhamento.sql falhou 3x (lock ou erro). O deploy segue; ver log acima."
+              echo "!!! ATENÇÃO: migration-schema-alinhamento.sql NÃO foi aplicada — cadastro de clínica, exames, lembrete 24h e PUT da agenda continuam quebrados."
+            fi
             echo "=== Migrations applied ==="
 
             # ─── Pre-flight syntax check on server.mjs ─────────────────────
