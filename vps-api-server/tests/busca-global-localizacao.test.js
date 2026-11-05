@@ -195,3 +195,57 @@ describe('GET /api/sessions/active (painel)', () => {
     expect(res.status).toBe(401);
   });
 });
+
+describe('revisão do Igor: 500 genérico, curingas e CPF', () => {
+  const falhaNoBanco = () => querySpy.mockImplementation((sql, params = []) => {
+    sqlLog.push({ text: String(sql), params });
+    if (/tenant_settings|chat_messages/.test(String(sql))) {
+      return Promise.reject(Object.assign(new Error('relation "x" detalhe interno do banco'), { code: 'XX000' }));
+    }
+    return Promise.resolve({ rows: [], rowCount: 0 });
+  });
+
+  test('clinic-location: 500 sem detalhe interno', async () => {
+    falhaNoBanco();
+    const res = await request(app).put('/api/clinic-location').set('Authorization', `Bearer ${token({ role: 'admin' })}`)
+      .send({ name: 'Clínica', address: 'Rua A' });
+    expect(res.status).toBe(500);
+    expect(JSON.stringify(res.body)).not.toMatch(/detalhe interno|relation/);
+  });
+
+  test('messages/search: 500 sem detalhe interno', async () => {
+    falhaNoBanco();
+    const res = await request(app).get('/api/messages/search').query({ q: 'dor' }).set('Authorization', `Bearer ${token()}`);
+    expect(res.status).toBe(500);
+    expect(JSON.stringify(res.body)).not.toMatch(/detalhe interno|relation/);
+  });
+
+  test('messages/search escapa % e _', async () => {
+    await request(app).get('/api/messages/search').query({ q: '50%_x' }).set('Authorization', `Bearer ${token()}`);
+    const q = sqlLog.find(x => /FROM chat_messages m/.test(x.text));
+    expect(q.params[0]).toBe('%50\\%\\_x%');
+  });
+
+  const pacientesQuery = () => sqlLog.find(x => /FROM pacientes/.test(x.text));
+
+  test('não-admin: CPF parcial não busca no CPF', async () => {
+    await request(app).get('/api/search').query({ q: '123.456' }).set('Authorization', `Bearer ${token()}`);
+    const q = pacientesQuery();
+    expect(q.params[3]).toBeNull();
+    expect(q.params[2]).toBe('%123456%'); // telefone continua parcial
+  });
+
+  test('não-admin: CPF completo busca por igualdade', async () => {
+    await request(app).get('/api/search').query({ q: '123.456.789-09' }).set('Authorization', `Bearer ${token()}`);
+    const q = pacientesQuery();
+    expect(q.params[3]).toBe('12345678909');
+    expect(q.text).toMatch(/COALESCE\(cpf, ''\)[^)]*\) = \$4/);
+  });
+
+  test('admin: CPF parcial permitido', async () => {
+    await request(app).get('/api/search').query({ q: '123.456' }).set('Authorization', `Bearer ${token({ role: 'admin' })}`);
+    const q = pacientesQuery();
+    expect(q.params[3]).toBe('%123456%');
+    expect(q.text).toMatch(/COALESCE\(cpf, ''\)[^)]*\) LIKE \$4/);
+  });
+});
