@@ -702,6 +702,13 @@ if (!EVOLUTION_API_KEY) {
 // Ensure the webhook URL points to the backend API endpoint
 const WEBHOOK_URL = WEBHOOK_PUBLIC_URL || (isLocalAppUrl ? `${APP_URL.replace(/:\d+$/, `:${PORT}`)}/api/webhook/evolution` : `https://backend.odontoconnect.tech/api/webhook/evolution`);
 
+// Metadados de credencial para logs/diagnóstico: só diz se existe e o tamanho,
+// nunca trechos do valor. Usado em sendEvolutionTextMessage e /api/debug/config.
+function getCredentialDebugMeta(value) {
+  const raw = String(value || '');
+  return { present: raw.length > 0, length: raw.length };
+}
+
 // Segredo do webhook da Evolution. Vai na URL registrada (?token=...) e é
 // conferido em cada chamada. Sem ele, qualquer pessoa podia forjar mensagens,
 // leads e confirmações de consulta para qualquer clínica.
@@ -1002,7 +1009,41 @@ async function getProfileByEmail(email) {
   }
 }
 
-async function listProfilesWithRoles() {
+// Papéis que um admin de clínica pode atribuir (my-tenant e /api/auth/users).
+const TENANT_ASSIGNABLE_ROLES = ['admin', 'dentista', 'recepcionista', 'comercial', 'user'];
+
+// Um admin de clínica só pode mexer em usuários da própria clínica, e nunca
+// em um super-admin. Super-admin pode tudo. Lança erro com status HTTP.
+async function assertCanManageUser(actor, targetUserId) {
+  if (!targetUserId) { const e = new Error('Usuário não informado'); e.status = 400; throw e; }
+  const { rows } = await pool.query(
+    'SELECT id, tenant_id, COALESCE(is_super_admin, false) AS is_super_admin FROM profiles WHERE id = $1',
+    [targetUserId]
+  );
+  const target = rows[0];
+  if (!target) { const e = new Error('Usuário não encontrado'); e.status = 404; throw e; }
+  if (actor?.is_super_admin) return target;
+  const sameTenant = actor?.tenant_id && target.tenant_id && String(actor.tenant_id) === String(target.tenant_id);
+  if (!sameTenant || target.is_super_admin) {
+    console.warn(`[SECURITY] Bloqueado: ${actor?.email} tentou alterar o usuário ${targetUserId} de outra clínica/super-admin`);
+    const e = new Error('Usuário não encontrado'); e.status = 404; throw e;
+  }
+  return target;
+}
+
+function httpStatusOf(error, fallback = 500) {
+  if (error?.status) return error.status;
+  if (error?.message === 'Unauthorized') return 401;
+  if (error?.message === 'Admin access required' || error?.message === 'Super admin access required') return 403;
+  return fallback;
+}
+
+// tenantId = null só para super-admin (lista todos)
+async function listProfilesWithRoles(tenantId = null) {
+  const where = tenantId ? 'WHERE p.tenant_id = $1' : '';
+  // Lista de clínica nunca mostra super-admins (eles podem estar no tenant "Legado")
+  const whereMain = tenantId ? 'WHERE p.tenant_id = $1 AND COALESCE(p.is_super_admin, false) = false' : '';
+  const params = tenantId ? [tenantId] : [];
   try {
     const { rows } = await pool.query(`
       SELECT p.id, p.name, p.email, p.avatar_url, p.created_at, p.updated_at,
@@ -1010,8 +1051,9 @@ async function listProfilesWithRoles() {
              COALESCE(ur.role::text, p.role::text, 'user') as role
       FROM profiles p
       LEFT JOIN user_roles ur ON ur.user_id = p.id
+      ${whereMain}
       ORDER BY p.created_at DESC
-    `);
+    `, params);
 
     return rows;
   } catch (error) {
@@ -1023,8 +1065,9 @@ async function listProfilesWithRoles() {
              COALESCE(ur.role::text, p.role::text, 'user') as role
       FROM profiles p
       LEFT JOIN user_roles ur ON ur.user_id = p.id
+      ${where}
       ORDER BY p.created_at DESC
-    `);
+    `, params);
 
     return rows;
   }
@@ -1116,8 +1159,8 @@ app.post('/api/auth/signup-clinic', async (req, res) => {
     if (!clinic_name || !admin_name || !email || !password) {
       return res.status(400).json({ error: 'Campos obrigatórios: clinic_name, admin_name, email, password' });
     }
-    if (String(password).length < 6) {
-      return res.status(400).json({ error: 'Senha deve ter no mínimo 6 caracteres' });
+    if (String(password).length < 8) {
+      return res.status(400).json({ error: 'Senha deve ter no mínimo 8 caracteres' });
     }
     const normalizedEmail = String(email).toLowerCase().trim();
 
@@ -1231,13 +1274,14 @@ app.get('/api/my-tenant/users', async (req, res) => {
               COALESCE(ur.role::text, p.role::text, 'user') as role
          FROM profiles p
          LEFT JOIN user_roles ur ON ur.user_id = p.id
-        WHERE p.tenant_id = $1
+        WHERE p.tenant_id = $1 AND COALESCE(p.is_super_admin, false) = false
         ORDER BY p.created_at DESC`,
       [user.tenant_id]
     );
     res.json({ data: rows });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    const status = httpStatusOf(e);
+    res.status(status).json({ error: status === 500 ? 'Erro interno' : e.message });
   }
 });
 
@@ -1248,10 +1292,9 @@ app.post('/api/my-tenant/users', async (req, res) => {
     if (!user.tenant_id) return res.status(404).json({ error: 'Usuário sem tenant' });
     const { name, email, password, role } = req.body || {};
     if (!name || !email || !password) return res.status(400).json({ error: 'Nome, email e senha obrigatórios' });
-    if (password.length < 6) return res.status(400).json({ error: 'Senha mínima de 6 caracteres' });
+    if (password.length < 8) return res.status(400).json({ error: 'Senha mínima de 8 caracteres' });
 
-    const allowed = ['admin', 'dentista', 'recepcionista', 'comercial', 'user'];
-    const userRole = allowed.includes(role) ? role : 'user';
+    const userRole = TENANT_ASSIGNABLE_ROLES.includes(role) ? role : 'user';
 
     const normalizedEmail = email.toLowerCase().trim();
     const { rows: existing } = await pool.query('SELECT id FROM profiles WHERE email = $1', [normalizedEmail]);
@@ -1283,8 +1326,9 @@ app.post('/api/my-tenant/users', async (req, res) => {
     await pool.query('INSERT INTO user_roles (user_id, role) VALUES ($1, $2) ON CONFLICT DO NOTHING', [id, userRole]);
     res.json({ success: true, user: { id, name: name.trim(), email: normalizedEmail, role: userRole, active: true } });
   } catch (e) {
-    console.error('Tenant create user error:', e);
-    res.status(500).json({ error: e.message });
+    console.error('Tenant create user error:', e.message);
+    const status = httpStatusOf(e);
+    res.status(status).json({ error: status === 500 ? 'Erro interno' : e.message });
   }
 });
 
@@ -1296,10 +1340,18 @@ app.patch('/api/my-tenant/users/:id', async (req, res) => {
     const { id } = req.params;
     const { name, email, role, active } = req.body || {};
 
-    // Ensure target belongs to same tenant
-    const { rows: target } = await pool.query('SELECT id, tenant_id FROM profiles WHERE id = $1', [id]);
-    if (!target[0] || target[0].tenant_id !== user.tenant_id) {
+    // Mesma clínica e nunca um super-admin (assertCanManageUser), mesmo quando o ator é super-admin
+    let target;
+    try { target = await assertCanManageUser(user, id); }
+    catch (err) { return res.status(err.status || 500).json({ error: err.status === 404 ? 'Usuário não encontrado neste tenant' : err.message }); }
+    if (String(target.tenant_id || '') !== String(user.tenant_id) || (target.is_super_admin && !user.is_super_admin)) {
       return res.status(404).json({ error: 'Usuário não encontrado neste tenant' });
+    }
+    if (email !== undefined) {
+      const { rows: taken } = await pool.query(
+        'SELECT 1 FROM profiles WHERE email = $1 AND id <> $2 LIMIT 1', [String(email).toLowerCase().trim(), id]
+      );
+      if (taken.length) return res.status(409).json({ error: 'Email já em uso por outro usuário' });
     }
     if (id === user.id && active === false) {
       return res.status(400).json({ error: 'Você não pode desativar o próprio usuário' });
@@ -1317,16 +1369,16 @@ app.patch('/api/my-tenant/users/:id', async (req, res) => {
       await pool.query(`UPDATE profiles SET ${updates.join(', ')} WHERE id = $${idx}`, values);
     }
     if (role !== undefined) {
-      const allowed = ['admin', 'dentista', 'recepcionista', 'comercial', 'user'];
-      if (!allowed.includes(role)) return res.status(400).json({ error: 'Perfil inválido' });
+      if (!TENANT_ASSIGNABLE_ROLES.includes(role)) return res.status(400).json({ error: 'Perfil inválido' });
       await pool.query('DELETE FROM user_roles WHERE user_id = $1', [id]);
       await pool.query('INSERT INTO user_roles (user_id, role) VALUES ($1, $2)', [id, role]);
       await pool.query('UPDATE profiles SET role = $1, updated_at = NOW() WHERE id = $2', [role, id]);
     }
     res.json({ success: true });
   } catch (e) {
-    console.error('Tenant update user error:', e);
-    res.status(500).json({ error: e.message });
+    console.error('Tenant update user error:', e.message);
+    const status = httpStatusOf(e);
+    res.status(status).json({ error: status === 500 ? 'Erro interno' : e.message });
   }
 });
 
@@ -1337,17 +1389,22 @@ app.post('/api/my-tenant/users/:id/reset-password', async (req, res) => {
     if (!user.tenant_id) return res.status(404).json({ error: 'Usuário sem tenant' });
     const { id } = req.params;
     const { password } = req.body || {};
-    if (!password || password.length < 6) return res.status(400).json({ error: 'Senha mínima de 6 caracteres' });
+    if (!password || password.length < 8) return res.status(400).json({ error: 'Senha mínima de 8 caracteres' });
 
-    const { rows: target } = await pool.query('SELECT id, tenant_id FROM profiles WHERE id = $1', [id]);
-    if (!target[0] || target[0].tenant_id !== user.tenant_id) {
+    // Mesma clínica e nunca um super-admin (assertCanManageUser), mesmo quando o ator é super-admin
+    let target;
+    try { target = await assertCanManageUser(user, id); }
+    catch (err) { return res.status(err.status || 500).json({ error: err.status === 404 ? 'Usuário não encontrado neste tenant' : err.message }); }
+    if (String(target.tenant_id || '') !== String(user.tenant_id) || (target.is_super_admin && !user.is_super_admin)) {
       return res.status(404).json({ error: 'Usuário não encontrado neste tenant' });
     }
     const hash = await bcrypt.hash(password, 12);
     await pool.query('UPDATE profiles SET password_hash = $1, updated_at = NOW() WHERE id = $2', [hash, id]);
     res.json({ success: true });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    console.error('Tenant reset password error:', e.message);
+    const status = httpStatusOf(e);
+    res.status(status).json({ error: status === 500 ? 'Erro interno' : e.message });
   }
 });
 
@@ -1548,7 +1605,7 @@ app.get('/api/super-admin/stats', async (req, res) => {
 app.get('/api/debug/config', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
-    if (user.role !== 'admin') return res.status(403).json({ error: 'Admin required' });
+    if (!user.is_super_admin) return res.status(403).json({ error: 'Super admin required' });
     
     res.json({
       environment: process.env.NODE_ENV,
@@ -2034,25 +2091,29 @@ app.get('/api/auth/me', async (req, res) => {
 
 app.post('/api/auth/create-user', async (req, res) => {
   try {
-    await verifyAdmin(req);
+    const { user: actor } = await verifyAdmin(req);
     const { name, email, password, role } = req.body;
     if (!name || !email || !password) return res.status(400).json({ error: 'Nome, email e senha obrigatórios' });
-    if (password.length < 6) return res.status(400).json({ error: 'Senha mínima de 6 caracteres' });
+    if (password.length < 8) return res.status(400).json({ error: 'Senha mínima de 8 caracteres' });
+    if (!actor.tenant_id) return res.status(400).json({ error: 'Crie usuários a partir de uma clínica' });
 
     const { rows: existing } = await pool.query('SELECT id FROM profiles WHERE email = $1', [email.toLowerCase().trim()]);
     if (existing.length > 0) return res.status(409).json({ error: 'Email já cadastrado' });
 
     const id = crypto.randomUUID();
     const hash = await bcrypt.hash(password, 12);
+    if (role !== undefined && role !== null && role !== '' && !TENANT_ASSIGNABLE_ROLES.includes(role)) {
+      return res.status(400).json({ error: 'Perfil inválido' });
+    }
     const userRole = role || 'user';
 
-    await pool.query('INSERT INTO profiles (id, name, email, role, password_hash) VALUES ($1, $2, $3, $4, $5)', [id, name, email.toLowerCase().trim(), userRole, hash]);
+    await pool.query('INSERT INTO profiles (id, name, email, role, password_hash, tenant_id) VALUES ($1, $2, $3, $4, $5, $6)', [id, name, email.toLowerCase().trim(), userRole, hash, actor.tenant_id]);
     await pool.query('INSERT INTO user_roles (user_id, role) VALUES ($1, $2)', [id, userRole]);
 
     res.json({ success: true, user: { id, name, email: email.toLowerCase().trim(), role: userRole } });
   } catch (error) {
-    console.error('Create user error:', error);
-    res.status(500).json({ error: error.message });
+    console.error('Create user error:', error.message);
+    res.status(httpStatusOf(error)).json({ error: error.message });
   }
 });
 
@@ -2060,10 +2121,12 @@ app.post('/api/auth/change-password', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     const { currentPassword, newPassword } = req.body;
-    if (!newPassword || newPassword.length < 6) return res.status(400).json({ error: 'Nova senha mínima 6 chars' });
+    if (!newPassword || newPassword.length < 8) return res.status(400).json({ error: 'Senha mínima de 8 caracteres' });
 
     const { rows } = await pool.query('SELECT password_hash FROM profiles WHERE id = $1', [user.id]);
-    if (rows[0]?.password_hash && currentPassword) {
+    if (rows[0]?.password_hash) {
+      // Sem a senha atual, um token roubado bastava para trocar a senha e tomar a conta.
+      if (!currentPassword) return res.status(400).json({ error: 'Informe a senha atual' });
       const valid = await bcrypt.compare(currentPassword, rows[0].password_hash);
       if (!valid) return res.status(401).json({ error: 'Senha atual incorreta' });
     }
@@ -2166,7 +2229,7 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     if (rows.length === 0) return res.json({ success: true });
 
     const profile = rows[0];
-    console.log(`🔑 [RESET REQUEST] "${profile.name}" (${email}) solicitou recuperação de senha em ${new Date().toISOString()}`);
+    console.log(`🔑 [RESET REQUEST] usuário ${profile.id} solicitou recuperação de senha`);
 
     // Store notification for admin
     await pool.query(`
@@ -2193,41 +2256,45 @@ app.post('/api/auth/forgot-password', async (req, res) => {
 // ─── Admin: list password reset requests ────────────────────
 app.get('/api/auth/reset-requests', async (req, res) => {
   try {
-    await verifyAdmin(req);
+    const { user: actor } = await verifyAdmin(req);
+    const scoped = !actor.is_super_admin;
     const { rows } = await pool.query(`
       SELECT r.*, p.name as user_name FROM password_reset_requests r
       JOIN profiles p ON r.user_id = p.id
+      ${scoped ? 'WHERE p.tenant_id = $1 AND COALESCE(p.is_super_admin, false) = false' : ''}
       ORDER BY r.created_at DESC LIMIT 50
-    `);
+    `, scoped ? [actor.tenant_id || null] : []);
     res.json(rows);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(httpStatusOf(error)).json({ error: error.message });
   }
 });
 
 // ─── Admin: reset user password ─────────────────────────────
 app.post('/api/auth/admin-reset-password', async (req, res) => {
   try {
-    await verifyAdmin(req);
+    const { user: actor } = await verifyAdmin(req);
     const { userId, newPassword } = req.body;
     if (!userId || !newPassword) return res.status(400).json({ error: 'userId e newPassword obrigatórios' });
-    if (newPassword.length < 6) return res.status(400).json({ error: 'Senha mínima de 6 caracteres' });
+    if (newPassword.length < 8) return res.status(400).json({ error: 'Senha mínima de 8 caracteres' });
+    await assertCanManageUser(actor, userId);
 
     const hash = await bcrypt.hash(newPassword, 12);
     await pool.query('UPDATE profiles SET password_hash = $1, updated_at = NOW() WHERE id = $2', [hash, userId]);
     await pool.query("UPDATE password_reset_requests SET status = 'resolved' WHERE user_id = $1 AND status = 'pending'", [userId]);
     res.json({ success: true });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(httpStatusOf(error)).json({ error: error.message });
   }
 });
 
 // ─── Admin: upload avatar for any user ──────────────────────
 app.post('/api/auth/users/:userId/avatar', async (req, res) => {
   try {
-    await verifyAdmin(req);
+    const { user: actor } = await verifyAdmin(req);
     const { userId } = req.params;
     const { avatar } = req.body;
+    await assertCanManageUser(actor, userId);
 
     if (!avatar) return res.status(400).json({ error: 'Imagem é obrigatória' });
     if (!avatar.startsWith('data:image/')) return res.status(400).json({ error: 'Formato inválido. Envie uma imagem.' });
@@ -2243,27 +2310,37 @@ app.post('/api/auth/users/:userId/avatar', async (req, res) => {
     await pool.query('UPDATE profiles SET avatar_url = $1, updated_at = NOW() WHERE id = $2', [avatarUrl, userId]);
     res.json({ avatar_url: avatarUrl });
   } catch (error) {
-    console.error('Admin avatar upload error:', error);
-    res.status(error.message === 'Admin access required' ? 403 : 500).json({ error: error.message });
+    console.error('Admin avatar upload error:', error.message);
+    res.status(httpStatusOf(error)).json({ error: error.message });
   }
 });
 
 app.get('/api/auth/users', async (req, res) => {
   try {
-    await verifyAdmin(req);
-    const rows = await listProfilesWithRoles();
+    const { user: actor } = await verifyAdmin(req);
+    const rows = await listProfilesWithRoles(actor.is_super_admin ? null : (actor.tenant_id || '00000000-0000-0000-0000-000000000000'));
     res.json(rows);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(httpStatusOf(error)).json({ error: error.message });
   }
 });
 
 // ─── Admin: update user ─────────────────────────────────────
 app.put('/api/auth/users/:id', async (req, res) => {
   try {
-    await verifyAdmin(req);
+    const { user: actor } = await verifyAdmin(req);
     const { id } = req.params;
     const { name, email, role, active } = req.body;
+    await assertCanManageUser(actor, id);
+    if (role !== undefined && !TENANT_ASSIGNABLE_ROLES.includes(role)) {
+      return res.status(400).json({ error: 'Perfil inválido' });
+    }
+    if (email !== undefined) {
+      const { rows: taken } = await pool.query(
+        'SELECT 1 FROM profiles WHERE email = $1 AND id <> $2 LIMIT 1', [String(email).toLowerCase().trim(), id]
+      );
+      if (taken.length) return res.status(409).json({ error: 'Email já em uso por outro usuário' });
+    }
 
     const updates = [];
     const values = [];
@@ -2285,7 +2362,7 @@ app.put('/api/auth/users/:id', async (req, res) => {
 
     res.json({ success: true });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(httpStatusOf(error)).json({ error: error.message });
   }
 });
 
@@ -4570,8 +4647,9 @@ app.post('/api/whatsapp/send-list', async (req, res) => {
 // Send reaction emoji
 app.post('/api/whatsapp/send-reaction', async (req, res) => {
   try {
+    let user;
     try {
-      await verifyUser(req);
+      ({ user } = await verifyUser(req));
     } catch (authErr) {
       console.warn('[send-reaction] auth failed:', authErr.message);
       return res.status(401).json({ error: 'Unauthorized' });
@@ -4584,8 +4662,8 @@ app.post('/api/whatsapp/send-reaction', async (req, res) => {
 
     const cleanNumber = String(number).replace(/\D/g, '');
     const { rows: messageRows } = await pool.query(
-      `SELECT sender FROM chat_messages WHERE id = $1 LIMIT 1`,
-      [messageId]
+      `SELECT sender FROM chat_messages WHERE id = $1 AND tenant_id = $2 LIMIT 1`,
+      [messageId, user.tenant_id]
     );
     const fromMe = messageRows[0]?.sender === 'attendant';
 
@@ -4598,14 +4676,14 @@ app.post('/api/whatsapp/send-reaction', async (req, res) => {
       reaction,
     };
 
-    console.log('[send-reaction] payload:', JSON.stringify(payload));
+    console.log('[send-reaction] enviando reação', { messageId, fromMe });
 
     const result = await evolutionFetch(`/message/sendReaction/${instance}`, {
       method: 'POST',
       body: JSON.stringify(payload),
     });
 
-    console.log('[send-reaction] evolution response:', result.status, JSON.stringify(result.data).slice(0, 500));
+    console.log('[send-reaction] evolution response:', result.status);
 
     if (!result.ok) {
       const rawMsg = result.data?.response?.message ?? result.data?.error ?? result.data?.message;
@@ -4618,8 +4696,8 @@ app.post('/api/whatsapp/send-reaction', async (req, res) => {
     await pool.query(
       `UPDATE chat_messages
          SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('reactions', $2::jsonb)
-       WHERE id = $1`,
-      [messageId, JSON.stringify(reaction ? [{ emoji: reaction, count: 1 }] : [])]
+       WHERE id = $1 AND tenant_id = $3`,
+      [messageId, JSON.stringify(reaction ? [{ emoji: reaction, count: 1 }] : []), user.tenant_id]
     );
 
     res.json({ success: true, reaction, result: result.data });
@@ -4636,7 +4714,8 @@ app.post('/api/whatsapp/send-reaction', async (req, res) => {
 // Fetch profile picture from Evolution API and optionally save to lead
 app.post('/api/whatsapp/profile-picture', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { instance, number, leadId } = req.body;
     if (!instance || !number) {
       return res.status(400).json({ error: 'instance e number são obrigatórios' });
@@ -4665,8 +4744,8 @@ app.post('/api/whatsapp/profile-picture', async (req, res) => {
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (leadId && pictureUrl && uuidRegex.test(leadId)) {
       await pool.query(
-        'UPDATE crm_leads SET avatar_url = $1, updated_at = NOW() WHERE id = $2',
-        [pictureUrl, leadId]
+        'UPDATE crm_leads SET avatar_url = $1, updated_at = NOW() WHERE id = $2 AND tenant_id = $3',
+        [pictureUrl, leadId, user.tenant_id]
       );
     }
 
@@ -4785,9 +4864,19 @@ app.post('/api/whatsapp/call', async (req, res) => {
 
 // ═══════════════════════════════════════════════════════════════
 
+const PACIENTE_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Todas as rotas /api/pacientes/:id/* recebem um UUID; qualquer outro valor é
+// "não encontrado" (sem chegar ao banco, que responderia 500 por cast inválido).
+app.use('/api/pacientes/:id', (req, res, next) => {
+  if (!PACIENTE_UUID_RE.test(String(req.params.id))) return res.status(404).json({ error: 'Paciente não encontrado' });
+  next();
+});
+
 app.get('/api/pacientes', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { rows } = await pool.query('SELECT * FROM pacientes WHERE tenant_id = $1 ORDER BY nome ASC', [user.tenant_id]);
     res.json(rows);
   } catch (error) {
@@ -4798,6 +4887,7 @@ app.get('/api/pacientes', async (req, res) => {
 app.post('/api/pacientes', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes } = req.body;
     const id = crypto.randomUUID();
     await pool.query(
@@ -4814,12 +4904,14 @@ app.post('/api/pacientes', async (req, res) => {
 
 app.put('/api/pacientes/:id', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes } = req.body;
-    await pool.query(
-      'UPDATE pacientes SET nome=$1, cpf=$2, telefone=$3, email=$4, data_nascimento=$5, sexo=$6, convenio=$7, endereco=$8, observacoes=$9, updated_at=NOW() WHERE id=$10',
-      [nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes, req.params.id]
+    const { rowCount } = await pool.query(
+      'UPDATE pacientes SET nome=$1, cpf=$2, telefone=$3, email=$4, data_nascimento=$5, sexo=$6, convenio=$7, endereco=$8, observacoes=$9, updated_at=NOW() WHERE id=$10 AND tenant_id=$11',
+      [nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes, req.params.id, user.tenant_id]
     );
+    if (rowCount === 0) return res.status(404).json({ error: 'Paciente não encontrado' });
     res.json({ success: true });
     // Push to Clinicorp
     import('./clinicorp.mjs').then(m => m.clinicorpPush.pushPatient(pool, req.params.id)).catch(e => console.error('Clinicorp push failed:', e.message));
@@ -4830,8 +4922,10 @@ app.put('/api/pacientes/:id', async (req, res) => {
 
 app.delete('/api/pacientes/:id', async (req, res) => {
   try {
-    await verifyAdmin(req);
-    await pool.query('DELETE FROM pacientes WHERE id = $1', [req.params.id]);
+    const { user } = await verifyAdmin(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rowCount } = await pool.query('DELETE FROM pacientes WHERE id = $1 AND tenant_id = $2', [req.params.id, user.tenant_id]);
+    if (rowCount === 0) return res.status(404).json({ error: 'Paciente não encontrado' });
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -4844,8 +4938,11 @@ app.delete('/api/pacientes/:id', async (req, res) => {
 
 app.get('/api/pacientes/:id/anamnese', async (req, res) => {
   try {
-    await verifyUser(req);
-    const { rows } = await pool.query('SELECT * FROM anamneses WHERE paciente_id = $1', [req.params.id]);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rows: pac } = await pool.query('SELECT 1 FROM pacientes WHERE id = $1 AND tenant_id = $2', [req.params.id, user.tenant_id]);
+    if (pac.length === 0) return res.status(404).json({ error: 'Paciente não encontrado' });
+    const { rows } = await pool.query('SELECT * FROM anamneses WHERE paciente_id = $1 AND tenant_id = $2', [req.params.id, user.tenant_id]);
     res.json(rows[0] || null);
   } catch (error) {
     res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
@@ -4854,7 +4951,8 @@ app.get('/api/pacientes/:id/anamnese', async (req, res) => {
 
 app.put('/api/pacientes/:id/anamnese', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { id } = req.params;
     const {
       alergias, medicamentos, doencas_preexistentes, cirurgias_anteriores,
@@ -4862,7 +4960,10 @@ app.put('/api/pacientes/:id/anamnese', async (req, res) => {
       hemofilia, epilepsia, pressao_arterial, observacoes
     } = req.body;
 
-    const { rows: existing } = await pool.query('SELECT id FROM anamneses WHERE paciente_id = $1', [id]);
+    const { rows: pac } = await pool.query('SELECT 1 FROM pacientes WHERE id = $1 AND tenant_id = $2', [id, user.tenant_id]);
+    if (pac.length === 0) return res.status(404).json({ error: 'Paciente não encontrado' });
+
+    const { rows: existing } = await pool.query('SELECT id FROM anamneses WHERE paciente_id = $1 AND tenant_id = $2', [id, user.tenant_id]);
 
     if (existing.length > 0) {
       await pool.query(
@@ -4871,26 +4972,26 @@ app.put('/api/pacientes/:id/anamnese', async (req, res) => {
           fumante=$5, etilista=$6, gestante=$7, diabetes=$8, cardiopatia=$9,
           hepatite=$10, hiv=$11, hemofilia=$12, epilepsia=$13,
           pressao_arterial=$14, observacoes=$15, updated_at=NOW()
-        WHERE paciente_id=$16`,
+        WHERE paciente_id=$16 AND tenant_id=$17`,
         [alergias||[], medicamentos||[], doencas_preexistentes||[], cirurgias_anteriores||[],
          fumante||false, etilista||false, gestante||false, diabetes||false, cardiopatia||false,
          hepatite||false, hiv||false, hemofilia||false, epilepsia||false,
-         pressao_arterial||null, observacoes||null, id]
+         pressao_arterial||null, observacoes||null, id, user.tenant_id]
       );
     } else {
       await pool.query(
         `INSERT INTO anamneses (paciente_id, alergias, medicamentos, doencas_preexistentes, cirurgias_anteriores,
           fumante, etilista, gestante, diabetes, cardiopatia, hepatite, hiv, hemofilia, epilepsia,
-          pressao_arterial, observacoes)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+          pressao_arterial, observacoes, tenant_id)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
         [id, alergias||[], medicamentos||[], doencas_preexistentes||[], cirurgias_anteriores||[],
          fumante||false, etilista||false, gestante||false, diabetes||false, cardiopatia||false,
          hepatite||false, hiv||false, hemofilia||false, epilepsia||false,
-         pressao_arterial||null, observacoes||null]
+         pressao_arterial||null, observacoes||null, user.tenant_id]
       );
     }
 
-    const { rows } = await pool.query('SELECT * FROM anamneses WHERE paciente_id = $1', [id]);
+    const { rows } = await pool.query('SELECT * FROM anamneses WHERE paciente_id = $1 AND tenant_id = $2', [id, user.tenant_id]);
     res.json(rows[0]);
   } catch (error) {
     if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
@@ -4905,8 +5006,11 @@ app.put('/api/pacientes/:id/anamnese', async (req, res) => {
 
 app.get('/api/pacientes/:id/odontograma', async (req, res) => {
   try {
-    await verifyUser(req);
-    const { rows } = await pool.query('SELECT * FROM odontogramas WHERE paciente_id = $1', [req.params.id]);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rows: pac } = await pool.query('SELECT 1 FROM pacientes WHERE id = $1 AND tenant_id = $2', [req.params.id, user.tenant_id]);
+    if (pac.length === 0) return res.status(404).json({ error: 'Paciente não encontrado' });
+    const { rows } = await pool.query('SELECT * FROM odontogramas WHERE paciente_id = $1 AND tenant_id = $2', [req.params.id, user.tenant_id]);
     res.json(rows[0] || null);
   } catch (error) {
     if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
@@ -4916,25 +5020,29 @@ app.get('/api/pacientes/:id/odontograma', async (req, res) => {
 
 app.put('/api/pacientes/:id/odontograma', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const id = req.params.id;
     const { dentes, observacoes } = req.body;
 
-    const { rows: existing } = await pool.query('SELECT id FROM odontogramas WHERE paciente_id = $1', [id]);
+    const { rows: pac } = await pool.query('SELECT 1 FROM pacientes WHERE id = $1 AND tenant_id = $2', [id, user.tenant_id]);
+    if (pac.length === 0) return res.status(404).json({ error: 'Paciente não encontrado' });
+
+    const { rows: existing } = await pool.query('SELECT id FROM odontogramas WHERE paciente_id = $1 AND tenant_id = $2', [id, user.tenant_id]);
 
     if (existing.length > 0) {
       await pool.query(
-        `UPDATE odontogramas SET dentes=$1, observacoes=$2, updated_at=NOW() WHERE paciente_id=$3`,
-        [JSON.stringify(dentes), observacoes || null, id]
+        `UPDATE odontogramas SET dentes=$1, observacoes=$2, updated_at=NOW() WHERE paciente_id=$3 AND tenant_id=$4`,
+        [JSON.stringify(dentes), observacoes || null, id, user.tenant_id]
       );
     } else {
       await pool.query(
-        `INSERT INTO odontogramas (paciente_id, dentes, observacoes) VALUES ($1, $2, $3)`,
-        [id, JSON.stringify(dentes), observacoes || null]
+        `INSERT INTO odontogramas (paciente_id, dentes, observacoes, tenant_id) VALUES ($1, $2, $3, $4)`,
+        [id, JSON.stringify(dentes), observacoes || null, user.tenant_id]
       );
     }
 
-    const { rows } = await pool.query('SELECT * FROM odontogramas WHERE paciente_id = $1', [id]);
+    const { rows } = await pool.query('SELECT * FROM odontogramas WHERE paciente_id = $1 AND tenant_id = $2', [id, user.tenant_id]);
     res.json(rows[0]);
   } catch (error) {
     if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
@@ -4949,15 +5057,18 @@ app.put('/api/pacientes/:id/odontograma', async (req, res) => {
 
 app.get('/api/pacientes/:id/historico', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rows: pac } = await pool.query('SELECT 1 FROM pacientes WHERE id = $1 AND tenant_id = $2', [req.params.id, user.tenant_id]);
+    if (pac.length === 0) return res.status(404).json({ error: 'Paciente não encontrado' });
     const { rows } = await pool.query(
       `SELECT a.id, a.data, a.hora, a.duracao, a.procedimento, a.status, a.observacoes,
               d.nome as dentista_nome, d.especialidade as dentista_especialidade
        FROM agendamentos a
-       LEFT JOIN dentistas d ON a.dentista_id = d.id
-       WHERE a.paciente_id = $1
+       LEFT JOIN dentistas d ON a.dentista_id = d.id AND d.tenant_id = a.tenant_id
+       WHERE a.paciente_id = $1 AND a.tenant_id = $2
        ORDER BY a.data DESC, a.hora DESC`,
-      [req.params.id]
+      [req.params.id, user.tenant_id]
     );
     res.json(rows);
   } catch (error) {
@@ -4975,7 +5086,7 @@ app.get('/api/agenda', async (req, res) => {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.json([]);
     const { data_inicio, data_fim, dentista_id } = req.query;
-    let query = 'SELECT a.*, p.nome as paciente_nome, d.nome as dentista_nome FROM agendamentos a LEFT JOIN pacientes p ON a.paciente_id = p.id LEFT JOIN dentistas d ON a.dentista_id = d.id WHERE a.tenant_id = $1';
+    let query = 'SELECT a.*, p.nome as paciente_nome, d.nome as dentista_nome FROM agendamentos a LEFT JOIN pacientes p ON a.paciente_id = p.id AND p.tenant_id = a.tenant_id LEFT JOIN dentistas d ON a.dentista_id = d.id AND d.tenant_id = a.tenant_id WHERE a.tenant_id = $1';
     const params = [user.tenant_id];
     if (data_inicio) { params.push(data_inicio); query += ` AND a.data >= $${params.length}`; }
     if (data_fim) { params.push(data_fim); query += ` AND a.data <= $${params.length}`; }
@@ -4991,21 +5102,23 @@ app.get('/api/agenda', async (req, res) => {
 // ─── Marcadores da agenda (tags coloridas) ─────────────────
 app.get('/api/agenda/marcadores', async (req, res) => {
   try {
-    await verifyUser(req);
-    const { rows } = await pool.query('SELECT * FROM agenda_marcadores ORDER BY nome ASC');
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rows } = await pool.query('SELECT * FROM agenda_marcadores WHERE tenant_id = $1 ORDER BY nome ASC', [user.tenant_id]);
     res.json(rows);
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 app.post('/api/agenda/marcadores', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { nome, cor } = req.body;
     if (!nome || !nome.trim()) return res.status(400).json({ error: 'Nome obrigatório' });
     const id = crypto.randomUUID();
     const corFinal = (cor || '#06b6d4').slice(0, 9);
     try {
-      await pool.query('INSERT INTO agenda_marcadores (id, nome, cor) VALUES ($1,$2,$3)', [id, nome.trim(), corFinal]);
+      await pool.query('INSERT INTO agenda_marcadores (id, nome, cor, tenant_id) VALUES ($1,$2,$3,$4)', [id, nome.trim(), corFinal, user.tenant_id]);
       res.json({ id, nome: nome.trim(), cor: corFinal });
     } catch (err) {
       if (err.code === '23505') return res.status(409).json({ error: 'Marcador com este nome já existe' });
@@ -5016,8 +5129,10 @@ app.post('/api/agenda/marcadores', async (req, res) => {
 
 app.delete('/api/agenda/marcadores/:id', async (req, res) => {
   try {
-    await verifyUser(req);
-    await pool.query('DELETE FROM agenda_marcadores WHERE id = $1', [req.params.id]);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rowCount } = await pool.query('DELETE FROM agenda_marcadores WHERE id = $1 AND tenant_id = $2', [req.params.id, user.tenant_id]);
+    if (rowCount === 0) return res.status(404).json({ error: 'Marcador não encontrado' });
     res.json({ success: true });
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
@@ -5259,10 +5374,11 @@ app.put('/api/agenda/:id', async (req, res) => {
 
 app.get('/api/financeiro', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { tipo, mes, ano } = req.query;
-    let query = 'SELECT * FROM financeiro WHERE 1=1';
-    const params = [];
+    let query = 'SELECT * FROM financeiro WHERE tenant_id = $1';
+    const params = [user.tenant_id];
     if (tipo) { params.push(tipo); query += ` AND tipo = $${params.length}`; }
     if (mes && ano) { params.push(mes, ano); query += ` AND EXTRACT(MONTH FROM data) = $${params.length - 1} AND EXTRACT(YEAR FROM data) = $${params.length}`; }
     query += ' ORDER BY data DESC';
@@ -5275,12 +5391,13 @@ app.get('/api/financeiro', async (req, res) => {
 
 app.post('/api/financeiro', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { tipo, descricao, valor, data, categoria, paciente_id, forma_pagamento } = req.body;
     const id = crypto.randomUUID();
     await pool.query(
-      'INSERT INTO financeiro (id, tipo, descricao, valor, data, categoria, paciente_id, forma_pagamento) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
-      [id, tipo, descricao, valor, data, categoria, paciente_id, forma_pagamento]
+      'INSERT INTO financeiro (id, tipo, descricao, valor, data, categoria, paciente_id, forma_pagamento, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+      [id, tipo, descricao, valor, data, categoria, paciente_id, forma_pagamento, user.tenant_id]
     );
     res.json({ id, success: true });
   } catch (error) {
@@ -5295,6 +5412,7 @@ app.post('/api/financeiro', async (req, res) => {
 app.get('/api/dentistas', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     let { rows } = await pool.query('SELECT * FROM dentistas WHERE tenant_id = $1 ORDER BY nome ASC', [user.tenant_id]);
     if (rows.length === 0) {
       const fallback = await pool.query(`
@@ -5302,8 +5420,10 @@ app.get('/api/dentistas', async (req, res) => {
           FROM dentistas d
           JOIN agendamentos a ON a.dentista_id = d.id
          WHERE d.ativo IS DISTINCT FROM false
+           AND a.tenant_id = $1
+           AND (d.tenant_id IS NULL OR d.tenant_id = $1)
          ORDER BY d.nome ASC
-      `);
+      `, [user.tenant_id]);
       rows = fallback.rows;
     }
     res.json(rows);
@@ -5333,7 +5453,8 @@ app.post('/api/dentistas', async (req, res) => {
 
 app.put('/api/dentistas/:id', async (req, res) => {
   try {
-    await verifyAdmin(req);
+    const { user } = await verifyAdmin(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { nome, cro, especialidade, telefone, email, comissao_percentual, ativo, cor_agenda, sala } = req.body;
     const sets = []; const params = [];
     if (nome !== undefined) { params.push(nome); sets.push(`nome=$${params.length}`); }
@@ -5346,9 +5467,10 @@ app.put('/api/dentistas/:id', async (req, res) => {
     if (cor_agenda !== undefined) { params.push(cor_agenda); sets.push(`cor_agenda=$${params.length}`); }
     if (sala !== undefined) { params.push(sala); sets.push(`sala=$${params.length}`); }
     if (sets.length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
-    params.push(req.params.id);
-    await pool.query(`UPDATE dentistas SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length}`, params);
-    const { rows } = await pool.query('SELECT * FROM dentistas WHERE id=$1', [req.params.id]);
+    params.push(req.params.id, user.tenant_id);
+    const { rowCount } = await pool.query(`UPDATE dentistas SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length - 1} AND tenant_id=$${params.length}`, params);
+    if (rowCount === 0) return res.status(404).json({ error: 'Dentista não encontrado' });
+    const { rows } = await pool.query('SELECT * FROM dentistas WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
     res.json(rows[0]);
   } catch (error) {
     if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
@@ -5359,8 +5481,10 @@ app.put('/api/dentistas/:id', async (req, res) => {
 
 app.delete('/api/dentistas/:id', async (req, res) => {
   try {
-    await verifyAdmin(req);
-    await pool.query('DELETE FROM dentistas WHERE id=$1', [req.params.id]);
+    const { user } = await verifyAdmin(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rowCount } = await pool.query('DELETE FROM dentistas WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
+    if (rowCount === 0) return res.status(404).json({ error: 'Dentista não encontrado' });
     res.json({ success: true });
   } catch (error) {
     if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
@@ -5396,12 +5520,22 @@ function validateHorarios(h) {
   return true;
 }
 
+// Configuração por clínica (tenant_id). A linha legada id=1 (compartilhada) só serve
+// de valor padrão de leitura enquanto a clínica não salvou a própria configuração.
+async function getClinicaConfigRows(tenantId) {
+  const { rows } = await pool.query('SELECT * FROM clinica_config WHERE tenant_id=$1 LIMIT 1', [tenantId]);
+  if (rows.length > 0) return rows;
+  const { rows: legacy } = await pool.query('SELECT * FROM clinica_config WHERE id=1');
+  return legacy;
+}
+
 app.get('/api/clinica/config', async (req, res) => {
   try {
-    await verifyUser(req);
-    const { rows } = await pool.query('SELECT * FROM clinica_config WHERE id=1');
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const rows = await getClinicaConfigRows(user.tenant_id);
     if (rows.length === 0) {
-      // fallback: cria registro default
+      // fallback: cria registro default (legado, usado só como padrão de leitura)
       await pool.query('INSERT INTO clinica_config (id) VALUES (1) ON CONFLICT (id) DO NOTHING');
       const { rows: r2 } = await pool.query('SELECT * FROM clinica_config WHERE id=1');
       return res.json(r2[0]);
@@ -5415,7 +5549,8 @@ app.get('/api/clinica/config', async (req, res) => {
 
 app.put('/api/clinica/config', async (req, res) => {
   try {
-    await verifyAdmin(req);
+    const { user } = await verifyAdmin(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { horarios, intervalo_agenda, limitar_mesmo_horario, permitir_horario_indisponivel, habilitar_sessoes_procedimento } = req.body || {};
     const sets = []; const params = [];
     if (horarios !== undefined) {
@@ -5430,13 +5565,22 @@ app.put('/api/clinica/config', async (req, res) => {
     if (permitir_horario_indisponivel !== undefined) { params.push(!!permitir_horario_indisponivel); sets.push(`permitir_horario_indisponivel=$${params.length}`); }
     if (habilitar_sessoes_procedimento !== undefined) { params.push(!!habilitar_sessoes_procedimento); sets.push(`habilitar_sessoes_procedimento=$${params.length}`); }
     if (sets.length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
-    await pool.query(`UPDATE clinica_config SET ${sets.join(', ')}, updated_at=NOW() WHERE id=1`, params);
-    const { rows } = await pool.query('SELECT * FROM clinica_config WHERE id=1');
+    // Upsert da linha da clínica: na primeira gravação copia os valores legados (id=1) como ponto de partida.
+    await pool.query(
+      `INSERT INTO clinica_config (tenant_id, horarios, intervalo_agenda, limitar_mesmo_horario, permitir_horario_indisponivel, habilitar_sessoes_procedimento)
+       SELECT $1, horarios, intervalo_agenda, limitar_mesmo_horario, permitir_horario_indisponivel, habilitar_sessoes_procedimento
+         FROM clinica_config WHERE id=1
+       ON CONFLICT (tenant_id) DO NOTHING`,
+      [user.tenant_id]
+    );
+    await pool.query('INSERT INTO clinica_config (tenant_id) VALUES ($1) ON CONFLICT (tenant_id) DO NOTHING', [user.tenant_id]);
+    params.push(user.tenant_id);
+    await pool.query(`UPDATE clinica_config SET ${sets.join(', ')}, updated_at=NOW() WHERE tenant_id=$${params.length}`, params);
+    const { rows } = await pool.query('SELECT * FROM clinica_config WHERE tenant_id=$1', [user.tenant_id]);
     res.json(rows[0]);
   } catch (error) {
-    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
-    if (error.message === 'Admin only') return res.status(403).json({ error: 'Admin only' });
-    res.status(500).json({ error: error.message });
+    const status = httpStatusOf(error);
+    res.status(status).json({ error: status === 500 ? 'Erro interno' : error.message });
   }
 });
 
@@ -5446,15 +5590,16 @@ app.put('/api/clinica/config', async (req, res) => {
 
 app.get('/api/dentistas/:id/horarios', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { rows } = await pool.query(
-      'SELECT id, nome, usar_horario_clinica, horarios FROM dentistas WHERE id=$1',
-      [req.params.id]
+      'SELECT id, nome, usar_horario_clinica, horarios FROM dentistas WHERE id=$1 AND tenant_id=$2',
+      [req.params.id, user.tenant_id]
     );
     if (rows.length === 0) return res.status(404).json({ error: 'Dentista não encontrado' });
     const d = rows[0];
     if (d.usar_horario_clinica || !d.horarios) {
-      const { rows: c } = await pool.query('SELECT horarios FROM clinica_config WHERE id=1');
+      const c = await getClinicaConfigRows(user.tenant_id);
       return res.json({ id: d.id, nome: d.nome, usar_horario_clinica: true, horarios: c[0]?.horarios || DEFAULT_HORARIOS, herdado: true });
     }
     res.json({ ...d, herdado: false });
@@ -5466,7 +5611,8 @@ app.get('/api/dentistas/:id/horarios', async (req, res) => {
 
 app.put('/api/dentistas/:id/horarios', async (req, res) => {
   try {
-    await verifyAdmin(req);
+    const { user } = await verifyAdmin(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { usar_horario_clinica, horarios } = req.body || {};
     const sets = []; const params = [];
     if (usar_horario_clinica !== undefined) {
@@ -5481,9 +5627,10 @@ app.put('/api/dentistas/:id/horarios', async (req, res) => {
       }
     }
     if (sets.length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
-    params.push(req.params.id);
-    await pool.query(`UPDATE dentistas SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length}`, params);
-    const { rows } = await pool.query('SELECT id, nome, usar_horario_clinica, horarios FROM dentistas WHERE id=$1', [req.params.id]);
+    params.push(req.params.id, user.tenant_id);
+    const { rowCount } = await pool.query(`UPDATE dentistas SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length - 1} AND tenant_id=$${params.length}`, params);
+    if (rowCount === 0) return res.status(404).json({ error: 'Dentista não encontrado' });
+    const { rows } = await pool.query('SELECT id, nome, usar_horario_clinica, horarios FROM dentistas WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
     res.json(rows[0]);
   } catch (error) {
     if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
@@ -5496,7 +5643,8 @@ app.put('/api/dentistas/:id/horarios', async (req, res) => {
 
 app.put('/api/financeiro/:id', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { tipo, descricao, valor, data, categoria, paciente_id, forma_pagamento, status, vencimento, observacoes } = req.body;
     const sets = []; const params = [];
     if (tipo !== undefined) { params.push(tipo); sets.push(`tipo=$${params.length}`); }
@@ -5510,9 +5658,10 @@ app.put('/api/financeiro/:id', async (req, res) => {
     if (vencimento !== undefined) { params.push(vencimento); sets.push(`vencimento=$${params.length}`); }
     if (observacoes !== undefined) { params.push(observacoes); sets.push(`observacoes=$${params.length}`); }
     if (sets.length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
-    params.push(req.params.id);
-    await pool.query(`UPDATE financeiro SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length}`, params);
-    const { rows } = await pool.query('SELECT * FROM financeiro WHERE id=$1', [req.params.id]);
+    params.push(req.params.id, user.tenant_id);
+    const { rowCount } = await pool.query(`UPDATE financeiro SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length - 1} AND tenant_id=$${params.length}`, params);
+    if (rowCount === 0) return res.status(404).json({ error: 'Lançamento não encontrado' });
+    const { rows } = await pool.query('SELECT * FROM financeiro WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
     res.json(rows[0]);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -5521,8 +5670,10 @@ app.put('/api/financeiro/:id', async (req, res) => {
 
 app.delete('/api/financeiro/:id', async (req, res) => {
   try {
-    await verifyUser(req);
-    await pool.query('DELETE FROM financeiro WHERE id=$1', [req.params.id]);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rowCount } = await pool.query('DELETE FROM financeiro WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
+    if (rowCount === 0) return res.status(404).json({ error: 'Lançamento não encontrado' });
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -5536,6 +5687,7 @@ app.delete('/api/financeiro/:id', async (req, res) => {
 app.get('/api/fin/banks', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { rows } = await pool.query('SELECT * FROM fin_bank_accounts WHERE active=true AND tenant_id = $1 ORDER BY created_at', [user.tenant_id]);
     res.json(rows);
   } catch (error) { res.status(500).json({ error: error.message }); }
@@ -5544,6 +5696,7 @@ app.get('/api/fin/banks', async (req, res) => {
 app.post('/api/fin/banks', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { name, bank, agency, account, type, balance, color } = req.body;
     const id = randomUUID();
     await pool.query(
@@ -5557,22 +5710,26 @@ app.post('/api/fin/banks', async (req, res) => {
 
 app.put('/api/fin/banks/:id', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const fields = ['name','bank','agency','account','type','balance','color'];
     const sets = []; const params = [];
     fields.forEach(f => { if (req.body[f] !== undefined) { params.push(req.body[f]); sets.push(`${f}=$${params.length}`); } });
     if (sets.length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
-    params.push(req.params.id);
-    await pool.query(`UPDATE fin_bank_accounts SET ${sets.join(',')}, updated_at=NOW() WHERE id=$${params.length}`, params);
-    const { rows } = await pool.query('SELECT * FROM fin_bank_accounts WHERE id=$1', [req.params.id]);
+    params.push(req.params.id, user.tenant_id);
+    const { rowCount } = await pool.query(`UPDATE fin_bank_accounts SET ${sets.join(',')}, updated_at=NOW() WHERE id=$${params.length - 1} AND tenant_id=$${params.length}`, params);
+    if (rowCount === 0) return res.status(404).json({ error: 'Conta não encontrada' });
+    const { rows } = await pool.query('SELECT * FROM fin_bank_accounts WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
     res.json(rows[0]);
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 app.delete('/api/fin/banks/:id', async (req, res) => {
   try {
-    await verifyUser(req);
-    await pool.query('UPDATE fin_bank_accounts SET active=false WHERE id=$1', [req.params.id]);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rowCount } = await pool.query('UPDATE fin_bank_accounts SET active=false WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
+    if (rowCount === 0) return res.status(404).json({ error: 'Conta não encontrada' });
     res.json({ success: true });
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
@@ -5583,30 +5740,34 @@ app.delete('/api/fin/banks/:id', async (req, res) => {
 
 app.get('/api/fin/employees', async (req, res) => {
   try {
-    await verifyUser(req);
-    const { rows } = await pool.query('SELECT * FROM fin_employees WHERE active=true ORDER BY name');
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rows } = await pool.query('SELECT * FROM fin_employees WHERE active=true AND tenant_id=$1 ORDER BY name', [user.tenant_id]);
     res.json(rows);
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 app.post('/api/fin/employees', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { name, role, cpf, admission_date, salary, benefits, bank_account_id } = req.body;
     const id = randomUUID();
     await pool.query(
-      'INSERT INTO fin_employees (id,name,role,cpf,admission_date,salary,benefits,bank_account_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
-      [id, name, role, cpf || '', admission_date || '', salary || 0, benefits || 0, bank_account_id || null]
+      'INSERT INTO fin_employees (id,name,role,cpf,admission_date,salary,benefits,bank_account_id,tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+      [id, name, role, cpf || '', admission_date || '', salary || 0, benefits || 0, bank_account_id || null, user.tenant_id]
     );
-    const { rows } = await pool.query('SELECT * FROM fin_employees WHERE id=$1', [id]);
+    const { rows } = await pool.query('SELECT * FROM fin_employees WHERE id=$1 AND tenant_id=$2', [id, user.tenant_id]);
     res.status(201).json(rows[0]);
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 app.delete('/api/fin/employees/:id', async (req, res) => {
   try {
-    await verifyUser(req);
-    await pool.query('UPDATE fin_employees SET active=false WHERE id=$1', [req.params.id]);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rowCount } = await pool.query('UPDATE fin_employees SET active=false WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
+    if (rowCount === 0) return res.status(404).json({ error: 'Funcionário não encontrado' });
     res.json({ success: true });
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
@@ -5618,6 +5779,7 @@ app.delete('/api/fin/employees/:id', async (req, res) => {
 app.get('/api/fin/payrolls', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { month } = req.query;
     let q = 'SELECT * FROM fin_payrolls WHERE tenant_id = $1'; 
     const params = [user.tenant_id];
@@ -5630,28 +5792,31 @@ app.get('/api/fin/payrolls', async (req, res) => {
 
 app.post('/api/fin/payrolls', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { employee_id, employee_name, month, gross_salary, benefits, deductions, net_salary, status, payment_date, bank_account_id } = req.body;
     const id = randomUUID();
     await pool.query(
-      'INSERT INTO fin_payrolls (id,employee_id,employee_name,month,gross_salary,benefits,deductions,net_salary,status,payment_date,bank_account_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
-      [id, employee_id, employee_name, month, gross_salary || 0, benefits || 0, deductions || 0, net_salary || 0, status || 'pendente', payment_date || null, bank_account_id || null]
+      'INSERT INTO fin_payrolls (id,employee_id,employee_name,month,gross_salary,benefits,deductions,net_salary,status,payment_date,bank_account_id,tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',
+      [id, employee_id, employee_name, month, gross_salary || 0, benefits || 0, deductions || 0, net_salary || 0, status || 'pendente', payment_date || null, bank_account_id || null, user.tenant_id]
     );
-    const { rows } = await pool.query('SELECT * FROM fin_payrolls WHERE id=$1', [id]);
+    const { rows } = await pool.query('SELECT * FROM fin_payrolls WHERE id=$1 AND tenant_id=$2', [id, user.tenant_id]);
     res.status(201).json(rows[0]);
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 app.put('/api/fin/payrolls/:id', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const fields = ['status','payment_date','bank_account_id'];
     const sets = []; const params = [];
     fields.forEach(f => { if (req.body[f] !== undefined) { params.push(req.body[f]); sets.push(`${f}=$${params.length}`); } });
     if (sets.length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
-    params.push(req.params.id);
-    await pool.query(`UPDATE fin_payrolls SET ${sets.join(',')}, updated_at=NOW() WHERE id=$${params.length}`, params);
-    const { rows } = await pool.query('SELECT * FROM fin_payrolls WHERE id=$1', [req.params.id]);
+    params.push(req.params.id, user.tenant_id);
+    const { rowCount } = await pool.query(`UPDATE fin_payrolls SET ${sets.join(',')}, updated_at=NOW() WHERE id=$${params.length - 1} AND tenant_id=$${params.length}`, params);
+    if (rowCount === 0) return res.status(404).json({ error: 'Folha não encontrada' });
+    const { rows } = await pool.query('SELECT * FROM fin_payrolls WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
     res.json(rows[0]);
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
@@ -5662,44 +5827,50 @@ app.put('/api/fin/payrolls/:id', async (req, res) => {
 
 app.get('/api/fin/bills', async (req, res) => {
   try {
-    await verifyUser(req);
-    const { rows } = await pool.query('SELECT * FROM fin_bills ORDER BY due_date DESC');
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rows } = await pool.query('SELECT * FROM fin_bills WHERE tenant_id=$1 ORDER BY due_date DESC', [user.tenant_id]);
     res.json(rows);
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 app.post('/api/fin/bills', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { description, category, value, due_date, status, supplier, recurrent } = req.body;
     const id = randomUUID();
     await pool.query(
-      'INSERT INTO fin_bills (id,description,category,value,due_date,status,supplier,recurrent) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
-      [id, description, category, value, due_date, status || 'pendente', supplier || null, recurrent || false]
+      'INSERT INTO fin_bills (id,description,category,value,due_date,status,supplier,recurrent,tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+      [id, description, category, value, due_date, status || 'pendente', supplier || null, recurrent || false, user.tenant_id]
     );
-    const { rows } = await pool.query('SELECT * FROM fin_bills WHERE id=$1', [id]);
+    const { rows } = await pool.query('SELECT * FROM fin_bills WHERE id=$1 AND tenant_id=$2', [id, user.tenant_id]);
     res.status(201).json(rows[0]);
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 app.put('/api/fin/bills/:id', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const fields = ['description','category','value','due_date','status','supplier','bank_account_id','payment_date','recurrent'];
     const sets = []; const params = [];
     fields.forEach(f => { if (req.body[f] !== undefined) { params.push(req.body[f]); sets.push(`${f}=$${params.length}`); } });
     if (sets.length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
-    params.push(req.params.id);
-    await pool.query(`UPDATE fin_bills SET ${sets.join(',')}, updated_at=NOW() WHERE id=$${params.length}`, params);
-    const { rows } = await pool.query('SELECT * FROM fin_bills WHERE id=$1', [req.params.id]);
+    params.push(req.params.id, user.tenant_id);
+    const { rowCount } = await pool.query(`UPDATE fin_bills SET ${sets.join(',')}, updated_at=NOW() WHERE id=$${params.length - 1} AND tenant_id=$${params.length}`, params);
+    if (rowCount === 0) return res.status(404).json({ error: 'Conta não encontrada' });
+    const { rows } = await pool.query('SELECT * FROM fin_bills WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
     res.json(rows[0]);
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 app.delete('/api/fin/bills/:id', async (req, res) => {
   try {
-    await verifyUser(req);
-    await pool.query('DELETE FROM fin_bills WHERE id=$1', [req.params.id]);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rowCount } = await pool.query('DELETE FROM fin_bills WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
+    if (rowCount === 0) return res.status(404).json({ error: 'Conta não encontrada' });
     res.json({ success: true });
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
@@ -5710,27 +5881,33 @@ app.delete('/api/fin/bills/:id', async (req, res) => {
 
 app.get('/api/fin/movements', async (req, res) => {
   try {
-    await verifyUser(req);
-    const { rows } = await pool.query('SELECT * FROM fin_movements ORDER BY created_at DESC');
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rows } = await pool.query('SELECT * FROM fin_movements WHERE tenant_id=$1 ORDER BY created_at DESC', [user.tenant_id]);
     res.json(rows);
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 app.post('/api/fin/movements', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { type, description, category, value, date, bank_account_id, bank_name, patient, bill_id, payroll_id } = req.body;
+    if (bank_account_id) {
+      const { rows: bank } = await pool.query('SELECT 1 FROM fin_bank_accounts WHERE id=$1 AND tenant_id=$2', [bank_account_id, user.tenant_id]);
+      if (bank.length === 0) return res.status(404).json({ error: 'Conta não encontrada' });
+    }
     const id = randomUUID();
     await pool.query(
-      'INSERT INTO fin_movements (id,type,description,category,value,date,bank_account_id,bank_name,patient,bill_id,payroll_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
-      [id, type, description, category, value, date, bank_account_id || null, bank_name || '', patient || null, bill_id || null, payroll_id || null]
+      'INSERT INTO fin_movements (id,type,description,category,value,date,bank_account_id,bank_name,patient,bill_id,payroll_id,tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',
+      [id, type, description, category, value, date, bank_account_id || null, bank_name || '', patient || null, bill_id || null, payroll_id || null, user.tenant_id]
     );
     // Update bank balance
     if (bank_account_id) {
       const op = type === 'entrada' ? '+' : '-';
-      await pool.query(`UPDATE fin_bank_accounts SET balance = balance ${op} $1, updated_at=NOW() WHERE id=$2`, [value, bank_account_id]);
+      await pool.query(`UPDATE fin_bank_accounts SET balance = balance ${op} $1, updated_at=NOW() WHERE id=$2 AND tenant_id=$3`, [value, bank_account_id, user.tenant_id]);
     }
-    const { rows } = await pool.query('SELECT * FROM fin_movements WHERE id=$1', [id]);
+    const { rows } = await pool.query('SELECT * FROM fin_movements WHERE id=$1 AND tenant_id=$2', [id, user.tenant_id]);
     res.status(201).json(rows[0]);
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
@@ -5741,27 +5918,31 @@ app.post('/api/fin/movements', async (req, res) => {
 
 app.get('/api/fin/overdue', async (req, res) => {
   try {
-    await verifyUser(req);
-    const { rows } = await pool.query('SELECT * FROM fin_overdue ORDER BY days_late DESC');
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rows } = await pool.query('SELECT * FROM fin_overdue WHERE tenant_id=$1 ORDER BY days_late DESC', [user.tenant_id]);
     res.json(rows);
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 app.post('/api/fin/overdue', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { patient, value, days_late, procedure: proc } = req.body;
     const id = randomUUID();
-    await pool.query('INSERT INTO fin_overdue (id,patient,value,days_late,procedure) VALUES ($1,$2,$3,$4,$5)', [id, patient, value, days_late || 0, proc || '']);
-    const { rows } = await pool.query('SELECT * FROM fin_overdue WHERE id=$1', [id]);
+    await pool.query('INSERT INTO fin_overdue (id,patient,value,days_late,procedure,tenant_id) VALUES ($1,$2,$3,$4,$5,$6)', [id, patient, value, days_late || 0, proc || '', user.tenant_id]);
+    const { rows } = await pool.query('SELECT * FROM fin_overdue WHERE id=$1 AND tenant_id=$2', [id, user.tenant_id]);
     res.status(201).json(rows[0]);
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 app.delete('/api/fin/overdue/:id', async (req, res) => {
   try {
-    await verifyUser(req);
-    await pool.query('DELETE FROM fin_overdue WHERE id=$1', [req.params.id]);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rowCount } = await pool.query('DELETE FROM fin_overdue WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
+    if (rowCount === 0) return res.status(404).json({ error: 'Registro não encontrado' });
     res.json({ success: true });
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
@@ -5772,8 +5953,9 @@ app.delete('/api/fin/overdue/:id', async (req, res) => {
 
 app.get('/api/estoque', async (req, res) => {
   try {
-    await verifyUser(req);
-    const { rows } = await pool.query('SELECT * FROM estoque ORDER BY nome ASC');
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rows } = await pool.query('SELECT * FROM estoque WHERE tenant_id=$1 ORDER BY nome ASC', [user.tenant_id]);
     res.json(rows);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -5782,12 +5964,13 @@ app.get('/api/estoque', async (req, res) => {
 
 app.post('/api/estoque', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { nome, categoria, quantidade, quantidade_minima, unidade, valor_unitario, fornecedor, localizacao, validade, lote } = req.body;
     const id = crypto.randomUUID();
     await pool.query(
-      'INSERT INTO estoque (id, nome, categoria, quantidade, quantidade_minima, unidade, valor_unitario, fornecedor, localizacao, validade, lote) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
-      [id, nome, categoria, quantidade || 0, quantidade_minima || 5, unidade || 'un', valor_unitario, fornecedor, localizacao, validade, lote]
+      'INSERT INTO estoque (id, nome, categoria, quantidade, quantidade_minima, unidade, valor_unitario, fornecedor, localizacao, validade, lote, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',
+      [id, nome, categoria, quantidade || 0, quantidade_minima || 5, unidade || 'un', valor_unitario, fornecedor, localizacao, validade, lote, user.tenant_id]
     );
     res.json({ id, success: true });
   } catch (error) {
@@ -5797,7 +5980,8 @@ app.post('/api/estoque', async (req, res) => {
 
 app.put('/api/estoque/:id', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { nome, categoria, quantidade, quantidade_minima, unidade, valor_unitario, fornecedor, localizacao, validade, lote } = req.body;
     const sets = []; const params = [];
     if (nome !== undefined) { params.push(nome); sets.push(`nome=$${params.length}`); }
@@ -5811,9 +5995,10 @@ app.put('/api/estoque/:id', async (req, res) => {
     if (validade !== undefined) { params.push(validade); sets.push(`validade=$${params.length}`); }
     if (lote !== undefined) { params.push(lote); sets.push(`lote=$${params.length}`); }
     if (sets.length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
-    params.push(req.params.id);
-    await pool.query(`UPDATE estoque SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length}`, params);
-    const { rows } = await pool.query('SELECT * FROM estoque WHERE id=$1', [req.params.id]);
+    params.push(req.params.id, user.tenant_id);
+    const { rowCount } = await pool.query(`UPDATE estoque SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length - 1} AND tenant_id=$${params.length}`, params);
+    if (rowCount === 0) return res.status(404).json({ error: 'Item não encontrado' });
+    const { rows } = await pool.query('SELECT * FROM estoque WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
     res.json(rows[0]);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -5822,8 +6007,10 @@ app.put('/api/estoque/:id', async (req, res) => {
 
 app.delete('/api/estoque/:id', async (req, res) => {
   try {
-    await verifyUser(req);
-    await pool.query('DELETE FROM estoque WHERE id=$1', [req.params.id]);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rowCount } = await pool.query('DELETE FROM estoque WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
+    if (rowCount === 0) return res.status(404).json({ error: 'Item não encontrado' });
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -5832,12 +6019,14 @@ app.delete('/api/estoque/:id', async (req, res) => {
 
 app.get('/api/estoque-movimentos', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { rows } = await pool.query(`
       SELECT em.*, e.nome as item_nome FROM estoque_movimentos em
-      LEFT JOIN estoque e ON e.id = em.item_id
+      LEFT JOIN estoque e ON e.id = em.item_id AND e.tenant_id = em.tenant_id
+      WHERE em.tenant_id = $1
       ORDER BY em.created_at DESC LIMIT 100
-    `);
+    `, [user.tenant_id]);
     res.json(rows);
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
@@ -5845,8 +6034,11 @@ app.get('/api/estoque-movimentos', async (req, res) => {
 
 app.get('/api/estoque/:id/movimentos', async (req, res) => {
   try {
-    await verifyUser(req);
-    const { rows } = await pool.query('SELECT * FROM estoque_movimentos WHERE item_id=$1 ORDER BY created_at DESC', [req.params.id]);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rows: item } = await pool.query('SELECT 1 FROM estoque WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
+    if (item.length === 0) return res.status(404).json({ error: 'Item não encontrado' });
+    const { rows } = await pool.query('SELECT * FROM estoque_movimentos WHERE item_id=$1 AND tenant_id=$2 ORDER BY created_at DESC', [req.params.id, user.tenant_id]);
     res.json(rows);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -5855,17 +6047,20 @@ app.get('/api/estoque/:id/movimentos', async (req, res) => {
 
 app.post('/api/estoque/:id/movimentos', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { tipo, quantidade, motivo, usuario_nome } = req.body;
+    const { rows: item } = await pool.query('SELECT 1 FROM estoque WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
+    if (item.length === 0) return res.status(404).json({ error: 'Item não encontrado' });
     const id = crypto.randomUUID();
     await pool.query(
-      'INSERT INTO estoque_movimentos (id, item_id, tipo, quantidade, motivo, usuario_nome) VALUES ($1,$2,$3,$4,$5,$6)',
-      [id, req.params.id, tipo, quantidade, motivo, usuario_nome]
+      'INSERT INTO estoque_movimentos (id, item_id, tipo, quantidade, motivo, usuario_nome, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+      [id, req.params.id, tipo, quantidade, motivo, usuario_nome, user.tenant_id]
     );
     // Update stock quantity
     const delta = tipo === 'entrada' ? quantidade : -quantidade;
-    await pool.query('UPDATE estoque SET quantidade = GREATEST(0, quantidade + $1), updated_at=NOW() WHERE id=$2', [delta, req.params.id]);
-    const { rows } = await pool.query('SELECT * FROM estoque WHERE id=$1', [req.params.id]);
+    await pool.query('UPDATE estoque SET quantidade = GREATEST(0, quantidade + $1), updated_at=NOW() WHERE id=$2 AND tenant_id=$3', [delta, req.params.id, user.tenant_id]);
+    const { rows } = await pool.query('SELECT * FROM estoque WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
     res.json({ success: true, item: rows[0] });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -5878,13 +6073,14 @@ app.post('/api/estoque/:id/movimentos', async (req, res) => {
 
 app.get('/api/tratamentos', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { paciente_id } = req.query;
     let query = `SELECT t.*, p.nome as paciente_nome, d.nome as dentista_nome
       FROM tratamentos t
-      LEFT JOIN pacientes p ON t.paciente_id = p.id
-      LEFT JOIN dentistas d ON t.dentista_id = d.id WHERE 1=1`;
-    const params = [];
+      LEFT JOIN pacientes p ON t.paciente_id = p.id AND p.tenant_id = t.tenant_id
+      LEFT JOIN dentistas d ON t.dentista_id = d.id AND d.tenant_id = t.tenant_id WHERE t.tenant_id = $1`;
+    const params = [user.tenant_id];
     if (paciente_id) { params.push(paciente_id); query += ` AND t.paciente_id=$${params.length}`; }
     query += ' ORDER BY t.created_at DESC';
     const { rows } = await pool.query(query, params);
@@ -5897,6 +6093,7 @@ app.get('/api/tratamentos', async (req, res) => {
 app.post('/api/tratamentos', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { paciente_id, dentista_id, descricao, dente, valor, status, plano, observacoes } = req.body;
     const id = crypto.randomUUID();
     await pool.query(
@@ -5918,6 +6115,7 @@ app.post('/api/tratamentos', async (req, res) => {
 app.put('/api/tratamentos/:id', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { descricao, dente, valor, status, plano, observacoes, dentista_id } = req.body;
     const sets = []; const params = [];
     if (descricao !== undefined) { params.push(descricao); sets.push(`descricao=$${params.length}`); }
@@ -5928,8 +6126,9 @@ app.put('/api/tratamentos/:id', async (req, res) => {
     if (observacoes !== undefined) { params.push(observacoes); sets.push(`observacoes=$${params.length}`); }
     if (dentista_id !== undefined) { params.push(dentista_id); sets.push(`dentista_id=$${params.length}`); }
     if (sets.length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
-    params.push(req.params.id);
-    await pool.query(`UPDATE tratamentos SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length} AND tenant_id = '${user.tenant_id}'`, params);
+    params.push(req.params.id, user.tenant_id);
+    const { rowCount } = await pool.query(`UPDATE tratamentos SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length - 1} AND tenant_id = $${params.length}`, params);
+    if (rowCount === 0) return res.status(404).json({ error: 'Tratamento não encontrado' });
     const { rows } = await pool.query('SELECT * FROM tratamentos WHERE id=$1 AND tenant_id = $2', [req.params.id, user.tenant_id]);
     try {
       broadcastSSE('tratamento_changed', {
@@ -5949,8 +6148,10 @@ app.put('/api/tratamentos/:id', async (req, res) => {
 app.delete('/api/tratamentos/:id', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { rows: prev } = await pool.query('SELECT paciente_id, dentista_id FROM tratamentos WHERE id=$1 AND tenant_id = $2', [req.params.id, user.tenant_id]);
-    await pool.query('DELETE FROM tratamentos WHERE id=$1 AND tenant_id = $2', [req.params.id, user.tenant_id]);
+    const { rowCount } = await pool.query('DELETE FROM tratamentos WHERE id=$1 AND tenant_id = $2', [req.params.id, user.tenant_id]);
+    if (rowCount === 0) return res.status(404).json({ error: 'Tratamento não encontrado' });
     try {
       broadcastSSE('tratamento_changed', {
         action: 'deleted', id: req.params.id,
@@ -5967,12 +6168,15 @@ app.delete('/api/tratamentos/:id', async (req, res) => {
 // Etapas de tratamento
 app.get('/api/tratamentos/:id/etapas', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rows: trat } = await pool.query('SELECT 1 FROM tratamentos WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
+    if (trat.length === 0) return res.status(404).json({ error: 'Tratamento não encontrado' });
     const { rows } = await pool.query(
       `SELECT e.*, d.nome as dentista_nome FROM tratamento_etapas e
-       LEFT JOIN dentistas d ON e.dentista_id = d.id
-       WHERE e.tratamento_id=$1 ORDER BY e.ordem ASC, e.created_at ASC`,
-      [req.params.id]
+       LEFT JOIN dentistas d ON e.dentista_id = d.id AND d.tenant_id = e.tenant_id
+       WHERE e.tratamento_id=$1 AND e.tenant_id=$2 ORDER BY e.ordem ASC, e.created_at ASC`,
+      [req.params.id, user.tenant_id]
     );
     res.json(rows);
   } catch (error) {
@@ -5982,12 +6186,15 @@ app.get('/api/tratamentos/:id/etapas', async (req, res) => {
 
 app.post('/api/tratamentos/:id/etapas', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { descricao, dente, valor, status, dentista_id, observacoes, ordem } = req.body;
+    const { rows: trat } = await pool.query('SELECT 1 FROM tratamentos WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
+    if (trat.length === 0) return res.status(404).json({ error: 'Tratamento não encontrado' });
     const id = crypto.randomUUID();
     await pool.query(
-      'INSERT INTO tratamento_etapas (id, tratamento_id, descricao, dente, valor, status, dentista_id, observacoes, ordem) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
-      [id, req.params.id, descricao, dente, valor || 0, status || 'pendente', dentista_id, observacoes, ordem || 0]
+      'INSERT INTO tratamento_etapas (id, tratamento_id, descricao, dente, valor, status, dentista_id, observacoes, ordem, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
+      [id, req.params.id, descricao, dente, valor || 0, status || 'pendente', dentista_id, observacoes, ordem || 0, user.tenant_id]
     );
     res.json({ id, success: true });
   } catch (error) {
@@ -5997,7 +6204,8 @@ app.post('/api/tratamentos/:id/etapas', async (req, res) => {
 
 app.put('/api/tratamentos/etapas/:id', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { descricao, dente, valor, status, dentista_id, observacoes, ordem, data_realizada } = req.body;
     const sets = []; const params = [];
     if (descricao !== undefined) { params.push(descricao); sets.push(`descricao=$${params.length}`); }
@@ -6009,9 +6217,10 @@ app.put('/api/tratamentos/etapas/:id', async (req, res) => {
     if (ordem !== undefined) { params.push(ordem); sets.push(`ordem=$${params.length}`); }
     if (data_realizada !== undefined) { params.push(data_realizada); sets.push(`data_realizada=$${params.length}`); }
     if (sets.length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
-    params.push(req.params.id);
-    await pool.query(`UPDATE tratamento_etapas SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length}`, params);
-    const { rows } = await pool.query('SELECT * FROM tratamento_etapas WHERE id=$1', [req.params.id]);
+    params.push(req.params.id, user.tenant_id);
+    const { rowCount } = await pool.query(`UPDATE tratamento_etapas SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length - 1} AND tenant_id=$${params.length}`, params);
+    if (rowCount === 0) return res.status(404).json({ error: 'Etapa não encontrada' });
+    const { rows } = await pool.query('SELECT * FROM tratamento_etapas WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
     res.json(rows[0]);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -6020,8 +6229,10 @@ app.put('/api/tratamentos/etapas/:id', async (req, res) => {
 
 app.delete('/api/tratamentos/etapas/:id', async (req, res) => {
   try {
-    await verifyUser(req);
-    await pool.query('DELETE FROM tratamento_etapas WHERE id=$1', [req.params.id]);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rowCount } = await pool.query('DELETE FROM tratamento_etapas WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
+    if (rowCount === 0) return res.status(404).json({ error: 'Etapa não encontrada' });
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -6034,13 +6245,14 @@ app.delete('/api/tratamentos/etapas/:id', async (req, res) => {
 
 app.get('/api/comissoes', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { dentista_id, status: statusFilter, mes, ano } = req.query;
     let query = `SELECT c.*, d.nome as dentista_nome, p.nome as paciente_nome
       FROM comissoes c
-      LEFT JOIN dentistas d ON c.dentista_id = d.id
-      LEFT JOIN pacientes p ON c.paciente_id = p.id WHERE 1=1`;
-    const params = [];
+      LEFT JOIN dentistas d ON c.dentista_id = d.id AND d.tenant_id = c.tenant_id
+      LEFT JOIN pacientes p ON c.paciente_id = p.id AND p.tenant_id = c.tenant_id WHERE c.tenant_id = $1`;
+    const params = [user.tenant_id];
     if (dentista_id) { params.push(dentista_id); query += ` AND c.dentista_id=$${params.length}`; }
     if (statusFilter) { params.push(statusFilter); query += ` AND c.status=$${params.length}`; }
     if (mes && ano) { params.push(mes, ano); query += ` AND EXTRACT(MONTH FROM c.data)=$${params.length - 1} AND EXTRACT(YEAR FROM c.data)=$${params.length}`; }
@@ -6054,12 +6266,13 @@ app.get('/api/comissoes', async (req, res) => {
 
 app.post('/api/comissoes', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { dentista_id, tratamento_id, paciente_id, valor, percentual, data, procedimento, descricao, status } = req.body;
     const id = crypto.randomUUID();
     await pool.query(
-      'INSERT INTO comissoes (id, dentista_id, tratamento_id, paciente_id, valor, percentual, data, procedimento, descricao, status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
-      [id, dentista_id, tratamento_id, paciente_id, valor, percentual, data || new Date().toISOString().split('T')[0], procedimento, descricao, status || 'pendente']
+      'INSERT INTO comissoes (id, dentista_id, tratamento_id, paciente_id, valor, percentual, data, procedimento, descricao, status, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
+      [id, dentista_id, tratamento_id, paciente_id, valor, percentual, data || new Date().toISOString().split('T')[0], procedimento, descricao, status || 'pendente', user.tenant_id]
     );
     res.json({ id, success: true });
   } catch (error) {
@@ -6069,7 +6282,8 @@ app.post('/api/comissoes', async (req, res) => {
 
 app.put('/api/comissoes/:id', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { valor, percentual, status, pago, descricao } = req.body;
     const sets = []; const params = [];
     if (valor !== undefined) { params.push(valor); sets.push(`valor=$${params.length}`); }
@@ -6078,9 +6292,10 @@ app.put('/api/comissoes/:id', async (req, res) => {
     if (pago !== undefined) { params.push(pago); sets.push(`pago=$${params.length}`); }
     if (descricao !== undefined) { params.push(descricao); sets.push(`descricao=$${params.length}`); }
     if (sets.length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
-    params.push(req.params.id);
-    await pool.query(`UPDATE comissoes SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length}`, params);
-    const { rows } = await pool.query('SELECT * FROM comissoes WHERE id=$1', [req.params.id]);
+    params.push(req.params.id, user.tenant_id);
+    const { rowCount } = await pool.query(`UPDATE comissoes SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length - 1} AND tenant_id=$${params.length}`, params);
+    if (rowCount === 0) return res.status(404).json({ error: 'Comissão não encontrada' });
+    const { rows } = await pool.query('SELECT * FROM comissoes WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
     res.json(rows[0]);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -6089,8 +6304,10 @@ app.put('/api/comissoes/:id', async (req, res) => {
 
 app.delete('/api/comissoes/:id', async (req, res) => {
   try {
-    await verifyUser(req);
-    await pool.query('DELETE FROM comissoes WHERE id=$1', [req.params.id]);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rowCount } = await pool.query('DELETE FROM comissoes WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
+    if (rowCount === 0) return res.status(404).json({ error: 'Comissão não encontrada' });
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -6103,13 +6320,14 @@ app.delete('/api/comissoes/:id', async (req, res) => {
 
 app.get('/api/prontuarios', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { paciente_id } = req.query;
     let query = `SELECT pr.*, p.nome as paciente_nome, d.nome as dentista_nome
       FROM prontuarios pr
-      LEFT JOIN pacientes p ON pr.paciente_id = p.id
-      LEFT JOIN dentistas d ON pr.dentista_id = d.id WHERE 1=1`;
-    const params = [];
+      LEFT JOIN pacientes p ON pr.paciente_id = p.id AND p.tenant_id = pr.tenant_id
+      LEFT JOIN dentistas d ON pr.dentista_id = d.id AND d.tenant_id = pr.tenant_id WHERE pr.tenant_id = $1`;
+    const params = [user.tenant_id];
     if (paciente_id) { params.push(paciente_id); query += ` AND pr.paciente_id=$${params.length}`; }
     query += ' ORDER BY pr.created_at DESC';
     const { rows } = await pool.query(query, params);
@@ -6121,12 +6339,17 @@ app.get('/api/prontuarios', async (req, res) => {
 
 app.post('/api/prontuarios', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { paciente_id, dentista_id, descricao, tipo, titulo, odontograma, anexos } = req.body;
+    if (paciente_id) {
+      const { rows: pac } = await pool.query('SELECT 1 FROM pacientes WHERE id=$1 AND tenant_id=$2', [paciente_id, user.tenant_id]);
+      if (pac.length === 0) return res.status(404).json({ error: 'Paciente não encontrado' });
+    }
     const id = crypto.randomUUID();
     await pool.query(
-      'INSERT INTO prontuarios (id, paciente_id, dentista_id, descricao, tipo, titulo, odontograma, anexos) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
-      [id, paciente_id, dentista_id, descricao, tipo || 'evolucao', titulo, odontograma ? JSON.stringify(odontograma) : '{}', anexos ? JSON.stringify(anexos) : '[]']
+      'INSERT INTO prontuarios (id, paciente_id, dentista_id, descricao, tipo, titulo, odontograma, anexos, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+      [id, paciente_id, dentista_id, descricao, tipo || 'evolucao', titulo, odontograma ? JSON.stringify(odontograma) : '{}', anexos ? JSON.stringify(anexos) : '[]', user.tenant_id]
     );
     res.json({ id, success: true });
   } catch (error) {
@@ -6136,7 +6359,8 @@ app.post('/api/prontuarios', async (req, res) => {
 
 app.put('/api/prontuarios/:id', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { descricao, tipo, titulo, odontograma, anexos } = req.body;
     const sets = []; const params = [];
     if (descricao !== undefined) { params.push(descricao); sets.push(`descricao=$${params.length}`); }
@@ -6145,9 +6369,10 @@ app.put('/api/prontuarios/:id', async (req, res) => {
     if (odontograma !== undefined) { params.push(JSON.stringify(odontograma)); sets.push(`odontograma=$${params.length}`); }
     if (anexos !== undefined) { params.push(JSON.stringify(anexos)); sets.push(`anexos=$${params.length}`); }
     if (sets.length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
-    params.push(req.params.id);
-    await pool.query(`UPDATE prontuarios SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length}`, params);
-    const { rows } = await pool.query('SELECT * FROM prontuarios WHERE id=$1', [req.params.id]);
+    params.push(req.params.id, user.tenant_id);
+    const { rowCount } = await pool.query(`UPDATE prontuarios SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length - 1} AND tenant_id=$${params.length}`, params);
+    if (rowCount === 0) return res.status(404).json({ error: 'Prontuário não encontrado' });
+    const { rows } = await pool.query('SELECT * FROM prontuarios WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
     res.json(rows[0]);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -6156,8 +6381,10 @@ app.put('/api/prontuarios/:id', async (req, res) => {
 
 app.delete('/api/prontuarios/:id', async (req, res) => {
   try {
-    await verifyUser(req);
-    await pool.query('DELETE FROM prontuarios WHERE id=$1', [req.params.id]);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rowCount } = await pool.query('DELETE FROM prontuarios WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
+    if (rowCount === 0) return res.status(404).json({ error: 'Prontuário não encontrado' });
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -6173,16 +6400,17 @@ app.delete('/api/prontuarios/:id', async (req, res) => {
  * `procedimento_versao_id`, congela a versão atualmente vigente — assim o
  * orçamento mantém preços/requisitos históricos mesmo se o catálogo mudar.
  */
-async function congelarVersoesItens(itens) {
+async function congelarVersoesItens(itens, tenantId) {
   if (!Array.isArray(itens) || itens.length === 0) return itens || [];
   const out = [];
   for (const it of itens) {
     if (it && it.procedimento_id && !it.procedimento_versao_id) {
       const { rows } = await pool.query(
-        `SELECT id, versao FROM procedimentos_catalogo_versoes
-         WHERE procedimento_id=$1 AND valido_ate IS NULL
-         ORDER BY versao DESC LIMIT 1`,
-        [it.procedimento_id]
+        `SELECT v.id, v.versao FROM procedimentos_catalogo_versoes v
+         JOIN procedimentos_catalogo pc ON pc.id = v.procedimento_id AND pc.tenant_id = $2
+         WHERE v.procedimento_id=$1 AND v.valido_ate IS NULL
+         ORDER BY v.versao DESC LIMIT 1`,
+        [it.procedimento_id, tenantId]
       );
       if (rows[0]) {
         out.push({ ...it, procedimento_versao_id: rows[0].id, procedimento_versao: rows[0].versao });
@@ -6196,18 +6424,19 @@ async function congelarVersoesItens(itens) {
 
 app.post('/api/orcamentos', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const {
       paciente_id, dentista_id, itens, valor_total, desconto, status, validade,
       observacoes, forma_pagamento, parcelas, titulo, print_config, odontograma_snapshot,
     } = req.body;
-    const itensCongelados = await congelarVersoesItens(itens);
+    const itensCongelados = await congelarVersoesItens(itens, user.tenant_id);
     const id = crypto.randomUUID();
     await pool.query(
       `INSERT INTO orcamentos (
         id, paciente_id, dentista_id, itens, valor_total, desconto, status, validade,
-        observacoes, forma_pagamento, parcelas, titulo, print_config, odontograma_snapshot
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+        observacoes, forma_pagamento, parcelas, titulo, print_config, odontograma_snapshot, tenant_id
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
       [
         id, paciente_id, dentista_id, JSON.stringify(itensCongelados),
         valor_total, desconto || 0, status || 'pendente', validade,
@@ -6215,6 +6444,7 @@ app.post('/api/orcamentos', async (req, res) => {
         titulo || null,
         print_config ? JSON.stringify(print_config) : null,
         odontograma_snapshot ? JSON.stringify(odontograma_snapshot) : null,
+        user.tenant_id,
       ]
     );
     res.json({ id, success: true });
@@ -6226,14 +6456,15 @@ app.post('/api/orcamentos', async (req, res) => {
 
 app.put('/api/orcamentos/:id', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const {
       itens, valor_total, desconto, status, validade, observacoes,
       forma_pagamento, parcelas, titulo, print_config, odontograma_snapshot,
     } = req.body;
     const sets = []; const params = [];
     if (itens !== undefined) {
-      const itensCongelados = await congelarVersoesItens(itens);
+      const itensCongelados = await congelarVersoesItens(itens, user.tenant_id);
       params.push(JSON.stringify(itensCongelados)); sets.push(`itens=$${params.length}`);
     }
     if (valor_total !== undefined) { params.push(valor_total); sets.push(`valor_total=$${params.length}`); }
@@ -6247,9 +6478,10 @@ app.put('/api/orcamentos/:id', async (req, res) => {
     if (print_config !== undefined) { params.push(JSON.stringify(print_config)); sets.push(`print_config=$${params.length}`); }
     if (odontograma_snapshot !== undefined) { params.push(JSON.stringify(odontograma_snapshot)); sets.push(`odontograma_snapshot=$${params.length}`); }
     if (sets.length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
-    params.push(req.params.id);
-    await pool.query(`UPDATE orcamentos SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length}`, params);
-    const { rows } = await pool.query('SELECT * FROM orcamentos WHERE id=$1', [req.params.id]);
+    params.push(req.params.id, user.tenant_id);
+    const { rowCount } = await pool.query(`UPDATE orcamentos SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length - 1} AND tenant_id=$${params.length}`, params);
+    if (rowCount === 0) return res.status(404).json({ error: 'Orçamento não encontrado' });
+    const { rows } = await pool.query('SELECT * FROM orcamentos WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
     res.json(rows[0]);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -6258,8 +6490,10 @@ app.put('/api/orcamentos/:id', async (req, res) => {
 
 app.delete('/api/orcamentos/:id', async (req, res) => {
   try {
-    await verifyUser(req);
-    await pool.query('DELETE FROM orcamentos WHERE id=$1', [req.params.id]);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rowCount } = await pool.query('DELETE FROM orcamentos WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
+    if (rowCount === 0) return res.status(404).json({ error: 'Orçamento não encontrado' });
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -6343,9 +6577,11 @@ function alteracaoExigeVersao(antes, depois) {
 
 app.get('/api/procedimentos-catalogo', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { rows } = await pool.query(
-      `SELECT * FROM procedimentos_catalogo WHERE ativo = true ORDER BY categoria NULLS LAST, nome ASC`
+      `SELECT * FROM procedimentos_catalogo WHERE ativo = true AND tenant_id = $1 ORDER BY categoria NULLS LAST, nome ASC`,
+      [user.tenant_id]
     );
     res.json(rows);
   } catch (error) {
@@ -6357,6 +6593,7 @@ app.post('/api/procedimentos-catalogo', async (req, res) => {
   const client = await pool.connect();
   try {
     const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const {
       codigo, nome, categoria, valor_particular, valor_convenio,
       duracao_minutos, cor, requer_dente, requer_face, descricao,
@@ -6367,17 +6604,17 @@ app.post('/api/procedimentos-catalogo', async (req, res) => {
     const id = crypto.randomUUID();
     await client.query(
       `INSERT INTO procedimentos_catalogo
-        (id, codigo, nome, categoria, valor_particular, valor_convenio, duracao_minutos, cor, requer_dente, requer_face, descricao, versao_atual)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,1)`,
+        (id, codigo, nome, categoria, valor_particular, valor_convenio, duracao_minutos, cor, requer_dente, requer_face, descricao, versao_atual, tenant_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,1,$12)`,
       [id, codigo || null, nome, categoria || null,
        valor_particular || 0, valor_convenio || 0, duracao_minutos || 30,
-       cor || '#0d9488', requer_dente !== false, !!requer_face, descricao || null]
+       cor || '#0d9488', requer_dente !== false, !!requer_face, descricao || null, user.tenant_id]
     );
     // Versão inicial (motivo: criação)
     await criarVersaoProcedimento(client, id, 'criação', user?.id || null);
     await client.query('COMMIT');
 
-    const { rows } = await pool.query('SELECT * FROM procedimentos_catalogo WHERE id=$1', [id]);
+    const { rows } = await pool.query('SELECT * FROM procedimentos_catalogo WHERE id=$1 AND tenant_id=$2', [id, user.tenant_id]);
     res.json(rows[0]);
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
@@ -6391,11 +6628,12 @@ app.put('/api/procedimentos-catalogo/:id', async (req, res) => {
   const client = await pool.connect();
   try {
     const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const procId = req.params.id;
     const fields = ['codigo','nome','categoria','valor_particular','valor_convenio','duracao_minutos','cor','requer_dente','requer_face','descricao','ativo'];
 
     // Snapshot anterior (para decidir se cria nova versão)
-    const { rows: beforeRows } = await client.query('SELECT * FROM procedimentos_catalogo WHERE id=$1', [procId]);
+    const { rows: beforeRows } = await client.query('SELECT * FROM procedimentos_catalogo WHERE id=$1 AND tenant_id=$2', [procId, user.tenant_id]);
     const antes = beforeRows[0];
     if (!antes) return res.status(404).json({ error: 'Procedimento não encontrado' });
 
@@ -6406,8 +6644,8 @@ app.put('/api/procedimentos-catalogo/:id', async (req, res) => {
     if (!sets.length) return res.status(400).json({ error: 'Nada para atualizar' });
 
     await client.query('BEGIN');
-    params.push(procId);
-    await client.query(`UPDATE procedimentos_catalogo SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length}`, params);
+    params.push(procId, user.tenant_id);
+    await client.query(`UPDATE procedimentos_catalogo SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length - 1} AND tenant_id=$${params.length}`, params);
 
     // Cria nova versão somente se houve mudança em campo versionável
     let novaVersao = null;
@@ -6421,7 +6659,7 @@ app.put('/api/procedimentos-catalogo/:id', async (req, res) => {
     }
     await client.query('COMMIT');
 
-    const { rows } = await pool.query('SELECT * FROM procedimentos_catalogo WHERE id=$1', [procId]);
+    const { rows } = await pool.query('SELECT * FROM procedimentos_catalogo WHERE id=$1 AND tenant_id=$2', [procId, user.tenant_id]);
     res.json({ ...rows[0], _nova_versao: novaVersao });
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
@@ -6433,8 +6671,10 @@ app.put('/api/procedimentos-catalogo/:id', async (req, res) => {
 
 app.delete('/api/procedimentos-catalogo/:id', async (req, res) => {
   try {
-    await verifyUser(req);
-    await pool.query('UPDATE procedimentos_catalogo SET ativo=false, updated_at=NOW() WHERE id=$1', [req.params.id]);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rowCount } = await pool.query('UPDATE procedimentos_catalogo SET ativo=false, updated_at=NOW() WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
+    if (rowCount === 0) return res.status(404).json({ error: 'Procedimento não encontrado' });
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -6444,7 +6684,10 @@ app.delete('/api/procedimentos-catalogo/:id', async (req, res) => {
 // Histórico completo de versões de um procedimento
 app.get('/api/procedimentos-catalogo/:id/versoes', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rows: proc } = await pool.query('SELECT 1 FROM procedimentos_catalogo WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
+    if (proc.length === 0) return res.status(404).json({ error: 'Procedimento não encontrado' });
     const { rows } = await pool.query(
       `SELECT * FROM procedimentos_catalogo_versoes
        WHERE procedimento_id=$1
@@ -6460,9 +6703,12 @@ app.get('/api/procedimentos-catalogo/:id/versoes', async (req, res) => {
 // Resolve a versão vigente em uma data específica (para reabrir orçamentos antigos)
 app.get('/api/procedimentos-catalogo/:id/versao-em', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { data } = req.query; // ISO string
     if (!data) return res.status(400).json({ error: 'parâmetro `data` (ISO) obrigatório' });
+    const { rows: proc } = await pool.query('SELECT 1 FROM procedimentos_catalogo WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
+    if (proc.length === 0) return res.status(404).json({ error: 'Procedimento não encontrado' });
     const { rows } = await pool.query(
       `SELECT * FROM procedimentos_catalogo_versoes
        WHERE procedimento_id=$1
@@ -6484,16 +6730,19 @@ app.get('/api/procedimentos-catalogo/:id/versao-em', async (req, res) => {
 // Lista execuções de um orçamento
 app.get('/api/orcamentos/:id/execucoes', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rows: orc } = await pool.query('SELECT 1 FROM orcamentos WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
+    if (orc.length === 0) return res.status(404).json({ error: 'Orçamento não encontrado' });
     const { rows } = await pool.query(
       `SELECT e.*, d.nome as dentista_nome,
               a.assinatura_base64, a.latitude, a.longitude, a.accuracy_m
        FROM procedimento_execucoes e
-       LEFT JOIN dentistas d ON e.dentista_id = d.id
+       LEFT JOIN dentistas d ON e.dentista_id = d.id AND d.tenant_id = $2
        LEFT JOIN assinaturas_eletronicas a ON e.assinatura_id = a.id
        WHERE e.orcamento_id = $1
        ORDER BY e.executado_em DESC`,
-      [req.params.id]
+      [req.params.id, user.tenant_id]
     );
     res.json(rows);
   } catch (error) {
@@ -6504,14 +6753,17 @@ app.get('/api/orcamentos/:id/execucoes', async (req, res) => {
 // Lista execuções de um paciente (histórico clínico-financeiro)
 app.get('/api/pacientes/:id/execucoes', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rows: pac } = await pool.query('SELECT 1 FROM pacientes WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id]);
+    if (pac.length === 0) return res.status(404).json({ error: 'Paciente não encontrado' });
     const { rows } = await pool.query(
       `SELECT e.*, d.nome as dentista_nome
        FROM procedimento_execucoes e
-       LEFT JOIN dentistas d ON e.dentista_id = d.id
+       LEFT JOIN dentistas d ON e.dentista_id = d.id AND d.tenant_id = $2
        WHERE e.paciente_id = $1
        ORDER BY e.executado_em DESC`,
-      [req.params.id]
+      [req.params.id, user.tenant_id]
     );
     res.json(rows);
   } catch (error) {
@@ -6522,7 +6774,8 @@ app.get('/api/pacientes/:id/execucoes', async (req, res) => {
 // Cria uma execução (com ou sem assinatura)
 app.post('/api/execucoes', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const {
       orcamento_id, orcamento_item_id, paciente_id, dentista_id,
       procedimento_id, procedimento_nome, dente, faces, valor, observacoes,
@@ -6531,6 +6784,18 @@ app.post('/api/execucoes', async (req, res) => {
 
     if (!paciente_id || !procedimento_nome) {
       return res.status(400).json({ error: 'paciente_id e procedimento_nome são obrigatórios' });
+    }
+
+    // Paciente, orçamento e dentista precisam ser da clínica
+    const { rows: pacOk } = await pool.query('SELECT 1 FROM pacientes WHERE id=$1 AND tenant_id=$2', [paciente_id, user.tenant_id]);
+    if (pacOk.length === 0) return res.status(404).json({ error: 'Paciente não encontrado' });
+    if (orcamento_id) {
+      const { rows: orcOk } = await pool.query('SELECT 1 FROM orcamentos WHERE id=$1 AND tenant_id=$2', [orcamento_id, user.tenant_id]);
+      if (orcOk.length === 0) return res.status(404).json({ error: 'Orçamento não encontrado' });
+    }
+    if (dentista_id) {
+      const { rows: denOk } = await pool.query('SELECT 1 FROM dentistas WHERE id=$1 AND tenant_id=$2', [dentista_id, user.tenant_id]);
+      if (denOk.length === 0) return res.status(404).json({ error: 'Dentista não encontrado' });
     }
 
     let assinaturaId = null;
@@ -6542,14 +6807,13 @@ app.post('/api/execucoes', async (req, res) => {
         });
       }
       const aId = crypto.randomUUID();
-      await pool.query(
-        `INSERT INTO assinaturas_eletronicas
+      const assinaturaSql = (withTenant) => `INSERT INTO assinaturas_eletronicas
           (id, paciente_id, dentista_id, contexto, assinatura_base64,
            latitude, longitude, accuracy_m, ip_address, user_agent,
            verificacao_canal, verificacao_codigo, verificacao_em,
-           consentimento_aceito, consentimento_em, consentimento_versao, consentimento_texto)
-         VALUES ($1,$2,$3,'execucao',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
-        [
+           consentimento_aceito, consentimento_em, consentimento_versao, consentimento_texto${withTenant ? ', tenant_id' : ''})
+         VALUES ($1,$2,$3,'execucao',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16${withTenant ? ',$17' : ''})`;
+      const assinaturaParams = [
           aId, paciente_id, dentista_id || null, assinatura.base64,
           assinatura.lat ?? null, assinatura.lng ?? null, assinatura.accuracy ?? null,
           req.ip || req.headers['x-forwarded-for'] || null,
@@ -6561,29 +6825,48 @@ app.post('/api/execucoes', async (req, res) => {
           assinatura.consentimento_em ? new Date(assinatura.consentimento_em) : new Date(),
           assinatura.consentimento_versao || '1.0',
           assinatura.consentimento_texto || null,
-        ]
-      );
+        ];
+      try {
+        await pool.query(assinaturaSql(true), [...assinaturaParams, user.tenant_id]);
+      } catch (sigErr) {
+        // 42703: coluna tenant_id ainda não criada (migração pendente)
+        if (sigErr.code !== '42703') throw sigErr;
+        await pool.query(assinaturaSql(false), assinaturaParams);
+      }
       assinaturaId = aId;
     }
 
     const id = crypto.randomUUID();
-    await pool.query(
-      `INSERT INTO procedimento_execucoes
-        (id, orcamento_id, orcamento_item_id, paciente_id, dentista_id,
-         procedimento_id, procedimento_nome, dente, faces, valor, observacoes, assinatura_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-      [
-        id, orcamento_id || null, orcamento_item_id || null,
-        paciente_id, dentista_id || null,
-        procedimento_id || null, procedimento_nome,
-        dente || null, JSON.stringify(faces || []),
-        valor || 0, observacoes || null, assinaturaId,
-      ]
-    );
+    const execParams = [
+      id, orcamento_id || null, orcamento_item_id || null,
+      paciente_id, dentista_id || null,
+      procedimento_id || null, procedimento_nome,
+      dente || null, JSON.stringify(faces || []),
+      valor || 0, observacoes || null, assinaturaId,
+    ];
+    try {
+      await pool.query(
+        `INSERT INTO procedimento_execucoes
+          (id, orcamento_id, orcamento_item_id, paciente_id, dentista_id,
+           procedimento_id, procedimento_nome, dente, faces, valor, observacoes, assinatura_id, tenant_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+        [...execParams, user.tenant_id]
+      );
+    } catch (insErr) {
+      // 42703: coluna tenant_id ainda não criada (migração pendente) — escopo garantido pelo paciente/orçamento validados acima
+      if (insErr.code !== '42703') throw insErr;
+      await pool.query(
+        `INSERT INTO procedimento_execucoes
+          (id, orcamento_id, orcamento_item_id, paciente_id, dentista_id,
+           procedimento_id, procedimento_nome, dente, faces, valor, observacoes, assinatura_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+        execParams
+      );
+    }
 
     // Se todos os itens do orçamento foram executados → marca como 'finalizado'
     if (orcamento_id) {
-      const { rows: orc } = await pool.query('SELECT itens FROM orcamentos WHERE id=$1', [orcamento_id]);
+      const { rows: orc } = await pool.query('SELECT itens FROM orcamentos WHERE id=$1 AND tenant_id=$2', [orcamento_id, user.tenant_id]);
       if (orc[0]) {
         let itens = orc[0].itens;
         if (typeof itens === 'string') { try { itens = JSON.parse(itens); } catch { itens = []; } }
@@ -6592,9 +6875,9 @@ app.post('/api/execucoes', async (req, res) => {
           'SELECT COUNT(*)::int as c FROM procedimento_execucoes WHERE orcamento_id=$1', [orcamento_id]
         );
         if (totalItens > 0 && cnt[0].c >= totalItens) {
-          await pool.query(`UPDATE orcamentos SET status='finalizado', updated_at=NOW() WHERE id=$1 AND status NOT IN ('reprovado','finalizado')`, [orcamento_id]);
+          await pool.query(`UPDATE orcamentos SET status='finalizado', updated_at=NOW() WHERE id=$1 AND tenant_id=$2 AND status NOT IN ('reprovado','finalizado')`, [orcamento_id, user.tenant_id]);
         } else if (totalItens > 0) {
-          await pool.query(`UPDATE orcamentos SET status='em_tratamento', updated_at=NOW() WHERE id=$1 AND status='aprovado'`, [orcamento_id]);
+          await pool.query(`UPDATE orcamentos SET status='em_tratamento', updated_at=NOW() WHERE id=$1 AND tenant_id=$2 AND status='aprovado'`, [orcamento_id, user.tenant_id]);
         }
       }
     }
@@ -6610,13 +6893,15 @@ app.post('/api/execucoes', async (req, res) => {
 // Remove uma execução (apenas se não tiver assinatura — segurança LGPD/MP 2200-2)
 app.delete('/api/execucoes/:id', async (req, res) => {
   try {
-    await verifyUser(req);
-    const { rows } = await pool.query('SELECT assinatura_id FROM procedimento_execucoes WHERE id=$1', [req.params.id]);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rows } = await pool.query('SELECT e.assinatura_id FROM procedimento_execucoes e WHERE e.id=$1 AND EXISTS (SELECT 1 FROM pacientes p WHERE p.id::text = e.paciente_id::text AND p.tenant_id = $2)', [req.params.id, user.tenant_id]);
     if (!rows[0]) return res.status(404).json({ error: 'Execução não encontrada' });
     if (rows[0].assinatura_id) {
       return res.status(403).json({ error: 'Execução assinada eletronicamente não pode ser removida (MP 2200-2/2001).' });
     }
-    await pool.query('DELETE FROM procedimento_execucoes WHERE id=$1', [req.params.id]);
+    const { rowCount } = await pool.query('DELETE FROM procedimento_execucoes e WHERE e.id=$1 AND EXISTS (SELECT 1 FROM pacientes p WHERE p.id::text = e.paciente_id::text AND p.tenant_id = $2)', [req.params.id, user.tenant_id]);
+    if (rowCount === 0) return res.status(404).json({ error: 'Execução não encontrada' });
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -6626,8 +6911,16 @@ app.delete('/api/execucoes/:id', async (req, res) => {
 // Detalhe de uma assinatura (para auditoria)
 app.get('/api/assinaturas/:id', async (req, res) => {
   try {
-    await verifyUser(req);
-    const { rows } = await pool.query('SELECT * FROM assinaturas_eletronicas WHERE id=$1', [req.params.id]);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rows } = await pool.query(
+      `SELECT a.* FROM assinaturas_eletronicas a
+        WHERE a.id=$1
+          AND (EXISTS (SELECT 1 FROM pacientes p WHERE p.id::text = a.paciente_id::text AND p.tenant_id = $2)
+               OR EXISTS (SELECT 1 FROM procedimento_execucoes e JOIN orcamentos o ON o.id = e.orcamento_id
+                           WHERE e.assinatura_id = a.id AND o.tenant_id = $2))`,
+      [req.params.id, user.tenant_id]
+    );
     if (!rows[0]) return res.status(404).json({ error: 'Não encontrada' });
     res.json(rows[0]);
   } catch (error) {
@@ -7631,11 +7924,12 @@ app.get('/api/reativacao/kpis', async (req, res) => {
 
 app.get('/api/generic/:tableName', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const allowedTables = ['crm_leads', 'estoque', 'tratamentos', 'orcamentos', 'comissoes', 'prontuarios'];
     const table = req.params.tableName;
     if (!allowedTables.includes(table)) return res.status(403).json({ error: 'Tabela não permitida' });
-    const { rows } = await pool.query(`SELECT * FROM ${table} ORDER BY created_at DESC`);
+    const { rows } = await pool.query(`SELECT * FROM ${table} WHERE tenant_id = $1 ORDER BY created_at DESC`, [user.tenant_id]);
     res.json(rows);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -7649,14 +7943,16 @@ app.get('/api/generic/:tableName', async (req, res) => {
 // List budgets
 app.get('/api/orcamentos', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { rows } = await pool.query(`
       SELECT o.*, p.nome as paciente_nome, d.nome as dentista_nome
       FROM orcamentos o
-      LEFT JOIN pacientes p ON o.paciente_id = p.id
-      LEFT JOIN dentistas d ON o.dentista_id = d.id
+      LEFT JOIN pacientes p ON o.paciente_id = p.id AND p.tenant_id = o.tenant_id
+      LEFT JOIN dentistas d ON o.dentista_id = d.id AND d.tenant_id = o.tenant_id
+      WHERE o.tenant_id = $1
       ORDER BY o.created_at DESC
-    `);
+    `, [user.tenant_id]);
     res.json(rows);
   } catch (error) {
     res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
@@ -7667,6 +7963,7 @@ app.get('/api/orcamentos', async (req, res) => {
 app.patch('/api/orcamentos/:id/status', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { status } = req.body;
     const validStatuses = ['pendente', 'aprovado', 'reprovado', 'em_tratamento', 'finalizado'];
     if (!status || !validStatuses.includes(status)) {
@@ -7674,8 +7971,8 @@ app.patch('/api/orcamentos/:id/status', async (req, res) => {
     }
 
     const { rows } = await pool.query(
-      `UPDATE orcamentos SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
-      [status, req.params.id]
+      `UPDATE orcamentos SET status = $1, updated_at = NOW() WHERE id = $2 AND tenant_id = $3 RETURNING *`,
+      [status, req.params.id, user.tenant_id]
     );
     if (rows.length === 0) return res.status(404).json({ error: 'Orçamento não encontrado' });
 
@@ -7685,8 +7982,8 @@ app.patch('/api/orcamentos/:id/status', async (req, res) => {
     // Find lead linked to this budget (by orcamento_id) or by paciente_id
     let leadId = null;
     const { rows: linkedLeads } = await pool.query(
-      `SELECT id FROM crm_leads WHERE orcamento_id = $1 LIMIT 1`,
-      [req.params.id]
+      `SELECT id FROM crm_leads WHERE orcamento_id = $1 AND tenant_id = $2 LIMIT 1`,
+      [req.params.id, user.tenant_id]
     );
     if (linkedLeads.length > 0) {
       leadId = linkedLeads[0].id;
@@ -7694,9 +7991,9 @@ app.patch('/api/orcamentos/:id/status', async (req, res) => {
       // Try matching by paciente_id via telefone
       const { rows: patientLeads } = await pool.query(
         `SELECT cl.id FROM crm_leads cl
-         JOIN pacientes p ON p.telefone = cl.telefone
-         WHERE p.id = $1 LIMIT 1`,
-        [budget.paciente_id]
+         JOIN pacientes p ON p.telefone = cl.telefone AND p.tenant_id = cl.tenant_id
+         WHERE p.id = $1 AND cl.tenant_id = $2 LIMIT 1`,
+        [budget.paciente_id, user.tenant_id]
       );
       if (patientLeads.length > 0) leadId = patientLeads[0].id;
     }
@@ -7709,20 +8006,20 @@ app.patch('/api/orcamentos/:id/status', async (req, res) => {
 
       if (newStage) {
         // Get current stage for audit
-        const { rows: currentLead } = await pool.query('SELECT kanban_stage FROM crm_leads WHERE id = $1', [leadId]);
+        const { rows: currentLead } = await pool.query('SELECT kanban_stage FROM crm_leads WHERE id = $1 AND tenant_id = $2', [leadId, user.tenant_id]);
         const fromStage = currentLead[0]?.kanban_stage || 'lead';
 
         await pool.query(
-          `UPDATE crm_leads SET kanban_stage = $1, status = $1, updated_at = NOW() WHERE id = $2`,
-          [newStage, leadId]
+          `UPDATE crm_leads SET kanban_stage = $1, status = $1, updated_at = NOW() WHERE id = $2 AND tenant_id = $3`,
+          [newStage, leadId, user.tenant_id]
         );
 
         // Log movement
         const profile = await getProfileByEmail(user.email);
         await pool.query(
-          `INSERT INTO kanban_movements (lead_id, from_stage, to_stage, moved_by, moved_by_name, reason)
-           VALUES ($1, $2, $3, $4, $5, $6)`,
-          [leadId, fromStage, newStage, user.id, profile?.name || user.email, `Orçamento #${req.params.id} ${status}`]
+          `INSERT INTO kanban_movements (lead_id, from_stage, to_stage, moved_by, moved_by_name, reason, tenant_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [leadId, fromStage, newStage, user.id, profile?.name || user.email, `Orçamento #${req.params.id} ${status}`, user.tenant_id]
         ).catch(err => console.error('Failed to log kanban movement:', err.message));
 
         console.log(`🔄 Lead ${leadId} auto-moved to ${newStage} (budget ${req.params.id} → ${status})`);
@@ -8994,11 +9291,11 @@ app.post('/api/webhook/evolution', async (req, res) => {
 
       // Auto-save to contatos table (skip if phone already exists)
       try {
-        const existingContato = await pool.query('SELECT id FROM contatos WHERE telefone = $1', [resolvedPhone]);
+        const existingContato = await pool.query('SELECT id FROM contatos WHERE telefone = $1 AND tenant_id = $2', [resolvedPhone, tenantId]);
         if (existingContato.rows.length === 0) {
           await pool.query(
-            'INSERT INTO contatos (id, nome, telefone, tipo) VALUES ($1, $2, $3, $4)',
-            [crypto.randomUUID(), pushName, resolvedPhone, 'pessoal']
+            'INSERT INTO contatos (id, nome, telefone, tipo, tenant_id) VALUES ($1, $2, $3, $4, $5)',
+            [crypto.randomUUID(), pushName, resolvedPhone, 'pessoal', tenantId]
           );
           console.log(`📇 Auto-saved contact: ${pushName} (${resolvedPhone})`);
         }
@@ -9231,9 +9528,9 @@ app.post('/api/webhook/evolution', async (req, res) => {
         const ratingData = ratingCheck[0].value;
         const ratingId = crypto.randomUUID();
         await pool.query(
-          `INSERT INTO satisfaction_ratings (id, session_id, lead_id, lead_phone, rating, attendant_id, attendant_name)
-           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-          [ratingId, ratingData.sessionId || null, ratingData.leadId, phone, rating, ratingData.attendantId || null, ratingData.attendantName || null]
+          `INSERT INTO satisfaction_ratings (id, session_id, lead_id, lead_phone, rating, attendant_id, attendant_name, tenant_id)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+          [ratingId, ratingData.sessionId || null, ratingData.leadId, phone, rating, ratingData.attendantId || null, ratingData.attendantName || null, tenantId]
         );
         // Remove awaiting flag
         await pool.query("DELETE FROM app_settings WHERE key = $1", [ratingKey]);
@@ -9268,15 +9565,16 @@ app.post('/api/webhook/evolution', async (req, res) => {
           );
           // Log movement
           await pool.query(
-            `INSERT INTO kanban_movements (lead_id, from_stage, to_stage, moved_by_name, reason)
-             VALUES ($1, $2, $3, $4, $5)`,
-            [lead.id, currentStage, 'em_atendimento', 'Sistema (Auto-retorno)', 'Cliente respondeu durante recuperação — retornou à fila com prioridade']
+            `INSERT INTO kanban_movements (lead_id, from_stage, to_stage, moved_by_name, reason, tenant_id)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [lead.id, currentStage, 'em_atendimento', 'Sistema (Auto-retorno)', 'Cliente respondeu durante recuperação — retornou à fila com prioridade', tenantId]
           ).catch(() => {});
           // Add "Recuperação de Lead" tag
           try {
             // Ensure the tag exists
             const { rows: existingTag } = await pool.query(
-              "SELECT id FROM lead_tags WHERE name = 'Recuperação de Lead' LIMIT 1"
+              "SELECT id FROM lead_tags WHERE name = 'Recuperação de Lead' AND tenant_id = $1 LIMIT 1",
+              [tenantId]
             );
             let tagId;
             if (existingTag.length > 0) {
@@ -9284,14 +9582,14 @@ app.post('/api/webhook/evolution', async (req, res) => {
             } else {
               tagId = crypto.randomUUID();
               await pool.query(
-                "INSERT INTO lead_tags (id, name, color) VALUES ($1, $2, $3)",
-                [tagId, 'Recuperação de Lead', '#F59E0B']
+                "INSERT INTO lead_tags (id, name, color, tenant_id) VALUES ($1, $2, $3, $4)",
+                [tagId, 'Recuperação de Lead', '#F59E0B', tenantId]
               );
             }
             // Assign tag to lead
             await pool.query(
-              "INSERT INTO lead_tag_assignments (lead_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-              [lead.id.toString(), tagId]
+              "INSERT INTO lead_tag_assignments (lead_id, tag_id, tenant_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
+              [lead.id.toString(), tagId, tenantId]
             );
           } catch (tagErr) {
             console.error('Failed to assign recovery tag:', tagErr.message);
@@ -9454,6 +9752,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
 app.post('/api/transfers', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { leadId, leadName, leadPhone, toUserId, toUserName, reason, queueId, queueName } = req.body;
     if (!leadId || !toUserId || !reason) {
       return res.status(400).json({ error: 'leadId, toUserId e reason são obrigatórios' });
@@ -9463,9 +9762,9 @@ app.post('/api/transfers', async (req, res) => {
 
     const id = crypto.randomUUID();
     await pool.query(
-      `INSERT INTO transfer_logs (id, lead_id, lead_name, lead_phone, from_user_id, from_user_name, to_user_id, to_user_name, reason, queue_id, queue_name)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-      [id, leadId, leadName || null, leadPhone || null, user.id, fromName, toUserId, toUserName || null, reason, queueId || null, queueName || null]
+      `INSERT INTO transfer_logs (id, lead_id, lead_name, lead_phone, from_user_id, from_user_name, to_user_id, to_user_name, reason, queue_id, queue_name, tenant_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+      [id, leadId, leadName || null, leadPhone || null, user.id, fromName, toUserId, toUserName || null, reason, queueId || null, queueName || null, user.tenant_id]
     );
 
     console.log(`🔄 Transfer: ${fromName} → ${toUserName} | Lead: ${leadName} | Motivo: ${reason}`);
@@ -9478,11 +9777,12 @@ app.post('/api/transfers', async (req, res) => {
 
 app.get('/api/transfers', async (req, res) => {
   try {
-    await verifyAdmin(req);
+    const { user } = await verifyAdmin(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { limit = '50', offset = '0' } = req.query;
     const { rows } = await pool.query(
-      'SELECT * FROM transfer_logs ORDER BY created_at DESC LIMIT $1 OFFSET $2',
-      [Math.min(Number(limit), 100), Number(offset)]
+      'SELECT * FROM transfer_logs WHERE tenant_id = $3 ORDER BY created_at DESC LIMIT $1 OFFSET $2',
+      [Math.min(Number(limit), 100), Number(offset), user.tenant_id]
     );
     res.json(rows);
   } catch (error) {
@@ -9908,7 +10208,8 @@ app.patch('/api/automations/flows/:id/toggle', async (req, res) => {
 
 app.get('/api/automations/solution-counts', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const today = new Date().toISOString().slice(0, 10);
 
     const [
@@ -9923,48 +10224,57 @@ app.get('/api/automations/solution-counts', async (req, res) => {
     ] = await Promise.all([
       // Agendamento sem Confirmação: agendamentos futuros com status 'agendado' (não confirmado)
       pool.query(
-        `SELECT COUNT(DISTINCT paciente_id) as total FROM agendamentos WHERE data >= $1 AND status = 'agendado'`,
-        [today]
+        `SELECT COUNT(DISTINCT paciente_id) as total FROM agendamentos WHERE data >= $1 AND status = 'agendado' AND tenant_id = $2`,
+        [today, user.tenant_id]
       ),
       // Aniversariantes: pacientes com aniversário este mês
       pool.query(
-        `SELECT COUNT(*) as total FROM pacientes WHERE EXTRACT(MONTH FROM data_nascimento) = EXTRACT(MONTH FROM CURRENT_DATE) AND EXTRACT(DAY FROM data_nascimento) >= EXTRACT(DAY FROM CURRENT_DATE)`
+        `SELECT COUNT(*) as total FROM pacientes WHERE EXTRACT(MONTH FROM data_nascimento) = EXTRACT(MONTH FROM CURRENT_DATE) AND EXTRACT(DAY FROM data_nascimento) >= EXTRACT(DAY FROM CURRENT_DATE) AND tenant_id = $1`,
+        [user.tenant_id]
       ),
       // Desmarcações: agendamentos com status 'desmarcado' ou 'cancelado' nos últimos 30 dias
       pool.query(
-        `SELECT COUNT(DISTINCT paciente_id) as total FROM agendamentos WHERE status IN ('desmarcado','cancelado') AND data >= CURRENT_DATE - INTERVAL '30 days'`
+        `SELECT COUNT(DISTINCT paciente_id) as total FROM agendamentos WHERE status IN ('desmarcado','cancelado') AND data >= CURRENT_DATE - INTERVAL '30 days' AND tenant_id = $1`,
+        [user.tenant_id]
       ),
       // Faltas: agendamentos com status 'faltou' nos últimos 30 dias
       pool.query(
-        `SELECT COUNT(DISTINCT paciente_id) as total FROM agendamentos WHERE status = 'faltou' AND data >= CURRENT_DATE - INTERVAL '30 days'`
+        `SELECT COUNT(DISTINCT paciente_id) as total FROM agendamentos WHERE status = 'faltou' AND data >= CURRENT_DATE - INTERVAL '30 days' AND tenant_id = $1`,
+        [user.tenant_id]
       ),
       // Faltas 1ª Consulta: pacientes que faltaram e nunca tiveram consulta 'realizado'
       pool.query(
         `SELECT COUNT(DISTINCT a.paciente_id) as total FROM agendamentos a
          WHERE a.status = 'faltou'
          AND a.data >= CURRENT_DATE - INTERVAL '30 days'
-         AND NOT EXISTS (SELECT 1 FROM agendamentos b WHERE b.paciente_id = a.paciente_id AND b.status IN ('realizado','confirmado','atendido'))`
+         AND a.tenant_id = $1
+         AND NOT EXISTS (SELECT 1 FROM agendamentos b WHERE b.paciente_id = a.paciente_id AND b.tenant_id = a.tenant_id AND b.status IN ('realizado','confirmado','atendido'))`,
+        [user.tenant_id]
       ),
       // Inadimplência: financeiro com tipo receita e valor em parcelas vencidas (simplificado: orçamentos aprovados sem receita correspondente)
       pool.query(
         `SELECT COUNT(DISTINCT o.paciente_id) as total FROM orcamentos o
          WHERE o.status = 'aprovado'
+         AND o.tenant_id = $1
          AND NOT EXISTS (
-           SELECT 1 FROM financeiro f WHERE f.paciente_id = o.paciente_id AND f.tipo = 'receita' AND f.valor >= o.valor_total
-         )`
+           SELECT 1 FROM financeiro f WHERE f.paciente_id = o.paciente_id AND f.tenant_id = o.tenant_id AND f.tipo = 'receita' AND f.valor >= o.valor_total
+         )`,
+        [user.tenant_id]
       ),
       // Orçamentos em Aberto: orçamentos com status 'pendente'
       pool.query(
-        `SELECT COUNT(DISTINCT paciente_id) as total FROM orcamentos WHERE status = 'pendente'`
+        `SELECT COUNT(DISTINCT paciente_id) as total FROM orcamentos WHERE status = 'pendente' AND tenant_id = $1`,
+        [user.tenant_id]
       ),
       // Tratamento sem Agendamento: tratamentos ativos sem agendamento futuro
       pool.query(
         `SELECT COUNT(DISTINCT t.paciente_id) as total FROM tratamentos t
          WHERE t.status IN ('planejado','em_andamento','ativo')
+         AND t.tenant_id = $2
          AND NOT EXISTS (
-           SELECT 1 FROM agendamentos a WHERE a.paciente_id = t.paciente_id AND a.data >= $1 AND a.status NOT IN ('cancelado','desmarcado','faltou')
+           SELECT 1 FROM agendamentos a WHERE a.paciente_id = t.paciente_id AND a.tenant_id = t.tenant_id AND a.data >= $1 AND a.status NOT IN ('cancelado','desmarcado','faltou')
          )`,
-        [today]
+        [today, user.tenant_id]
       ),
     ]);
 
@@ -10529,6 +10839,33 @@ async function ensureWhatsAppQueueSchema() {
   }
 }
 
+// Isolamento por clínica de tabelas criadas fora do bootstrap (idempotente; também em
+// migration-seguranca-p0.sql). clinica_config passa a ter uma linha por tenant; a linha
+// legada id=1 fica só como valor padrão de leitura.
+async function ensureTenantConfigSchema() {
+  const statements = [
+    `ALTER TABLE IF EXISTS clinica_config ADD COLUMN IF NOT EXISTS tenant_id UUID`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_clinica_config_tenant ON clinica_config (tenant_id)`,
+    `CREATE SEQUENCE IF NOT EXISTS clinica_config_id_seq`,
+    `SELECT setval('clinica_config_id_seq', GREATEST((SELECT COALESCE(MAX(id), 1) FROM clinica_config), 1))`,
+    `ALTER TABLE IF EXISTS clinica_config ALTER COLUMN id SET DEFAULT nextval('clinica_config_id_seq')`,
+    `ALTER TABLE IF EXISTS agenda_marcadores ADD COLUMN IF NOT EXISTS tenant_id UUID`,
+    `ALTER TABLE IF EXISTS agenda_marcadores ALTER COLUMN tenant_id SET DEFAULT get_current_tenant_id()`,
+    `CREATE INDEX IF NOT EXISTS idx_agenda_marcadores_tenant ON agenda_marcadores (tenant_id)`,
+    `ALTER TABLE IF EXISTS procedimentos_catalogo ADD COLUMN IF NOT EXISTS tenant_id UUID`,
+    `ALTER TABLE IF EXISTS procedimentos_catalogo ALTER COLUMN tenant_id SET DEFAULT get_current_tenant_id()`,
+    `CREATE INDEX IF NOT EXISTS idx_procedimentos_catalogo_tenant ON procedimentos_catalogo (tenant_id)`,
+    // Registros antigos sem clínica: só atribui automaticamente quando existe uma única clínica.
+    `UPDATE agenda_marcadores SET tenant_id = (SELECT id FROM tenants LIMIT 1)
+      WHERE tenant_id IS NULL AND (SELECT COUNT(*) FROM tenants) = 1`,
+    `UPDATE procedimentos_catalogo SET tenant_id = (SELECT id FROM tenants LIMIT 1)
+      WHERE tenant_id IS NULL AND (SELECT COUNT(*) FROM tenants) = 1`,
+  ];
+  for (const sql of statements) {
+    await pool.query(sql).catch(e => console.error('[tenant-schema]', e.message, '→', sql.split('\n')[0].slice(0, 90)));
+  }
+}
+
 // Gatilhos de prospecção/retorno: contam como marketing (opt-out obrigatório, dedupe).
 const AUTOMATION_MARKETING_TRIGGERS = new Set([
   'Paciente inativo há 60+ dias', 'Paciente inativo há 90+ dias', 'Paciente inativo há 180+ dias',
@@ -10747,7 +11084,8 @@ app.delete('/api/automations/jobs/cancel', async (req, res) => {
 // Automation stats/report endpoint
 app.get('/api/automations/stats', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { days = '30' } = req.query;
     const daysInt = Math.min(parseInt(days) || 30, 365);
 
@@ -10760,8 +11098,8 @@ app.get('/api/automations/stats', async (req, res) => {
         COUNT(*) FILTER (WHERE status = 'cancelled') AS total_cancelled,
         COUNT(*) AS total_jobs
       FROM automation_jobs
-      WHERE created_at >= NOW() - INTERVAL '${daysInt} days'
-    `);
+      WHERE created_at >= NOW() - INTERVAL '${daysInt} days' AND tenant_id = $1
+    `, [user.tenant_id]);
 
     // Per-flow stats
     const { rows: perFlow } = await pool.query(`
@@ -10772,10 +11110,10 @@ app.get('/api/automations/stats', async (req, res) => {
         COUNT(*) FILTER (WHERE status = 'failed') AS failed,
         COUNT(*) FILTER (WHERE status = 'pending') AS pending
       FROM automation_jobs
-      WHERE created_at >= NOW() - INTERVAL '${daysInt} days'
+      WHERE created_at >= NOW() - INTERVAL '${daysInt} days' AND tenant_id = $1
       GROUP BY flow_id, flow_name
       ORDER BY total DESC
-    `);
+    `, [user.tenant_id]);
 
     // Daily timeline
     const { rows: timeline } = await pool.query(`
@@ -10786,10 +11124,10 @@ app.get('/api/automations/stats', async (req, res) => {
         COUNT(*) FILTER (WHERE status = 'pending') AS pending,
         COUNT(*) AS total
       FROM automation_jobs
-      WHERE created_at >= NOW() - INTERVAL '${daysInt} days'
+      WHERE created_at >= NOW() - INTERVAL '${daysInt} days' AND tenant_id = $1
       GROUP BY DATE(scheduled_at)
       ORDER BY date ASC
-    `);
+    `, [user.tenant_id]);
 
     // Per-flow stats from automation_flows table (includes responded/converted)
     const { rows: flowStats } = await pool.query(`
@@ -10798,8 +11136,9 @@ app.get('/api/automations/stats', async (req, res) => {
         COALESCE((stats->>'responded')::int, 0) AS responded,
         COALESCE((stats->>'converted')::int, 0) AS converted
       FROM automation_flows
+      WHERE tenant_id = $1
       ORDER BY sent DESC
-    `);
+    `, [user.tenant_id]);
 
     res.json({
       overall: {
@@ -11529,27 +11868,29 @@ async function processSolutionTriggers() {
 app.patch('/api/crm/leads/:id/stage', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { stage, reason } = req.body;
     if (!stage || !ALL_KANBAN_STAGES.includes(stage)) {
       return res.status(400).json({ error: `Stage inválido. Válidos: ${ALL_KANBAN_STAGES.join(', ')}` });
     }
 
     // Get current stage for audit
-    const { rows: current } = await pool.query('SELECT kanban_stage FROM crm_leads WHERE id = $1', [req.params.id]);
+    const { rows: current } = await pool.query('SELECT kanban_stage FROM crm_leads WHERE id = $1 AND tenant_id = $2', [req.params.id, user.tenant_id]);
     if (current.length === 0) return res.status(404).json({ error: 'Lead não encontrado' });
     const fromStage = current[0].kanban_stage;
 
     const { rows } = await pool.query(
-      `UPDATE crm_leads SET kanban_stage = $1, status = $1, updated_at = NOW() WHERE id = $2 RETURNING id, nome, kanban_stage`,
-      [stage, req.params.id]
+      `UPDATE crm_leads SET kanban_stage = $1, status = $1, updated_at = NOW() WHERE id = $2 AND tenant_id = $3 RETURNING id, nome, kanban_stage`,
+      [stage, req.params.id, user.tenant_id]
     );
+    if (rows.length === 0) return res.status(404).json({ error: 'Lead não encontrado' });
 
     // Log movement
     const profile = await getProfileByEmail(user.email);
     await pool.query(
-      `INSERT INTO kanban_movements (lead_id, from_stage, to_stage, moved_by, moved_by_name, reason)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [req.params.id, fromStage, stage, user.id, profile?.name || user.email, reason || null]
+      `INSERT INTO kanban_movements (lead_id, from_stage, to_stage, moved_by, moved_by_name, reason, tenant_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [req.params.id, fromStage, stage, user.id, profile?.name || user.email, reason || null, user.tenant_id]
     ).catch(err => console.error('Failed to log kanban movement:', err.message));
 
     // 🤖 Trigger follow-up automation if entering a follow-up stage
@@ -11560,7 +11901,7 @@ app.patch('/api/crm/leads/:id/stage', async (req, res) => {
     // 🤖 Trigger automation flows based on stage change
     const leadForAutomation = rows[0];
     if (leadForAutomation) {
-      const { rows: leadDetail } = await pool.query('SELECT nome, telefone, tenant_id FROM crm_leads WHERE id = $1', [req.params.id]).catch(() => ({ rows: [] }));
+      const { rows: leadDetail } = await pool.query('SELECT nome, telefone, tenant_id FROM crm_leads WHERE id = $1 AND tenant_id = $2', [req.params.id, user.tenant_id]).catch(() => ({ rows: [] }));
       const ld = leadDetail[0];
       if (ld?.telefone) {
         // Orçamento stage → trigger budget follow-up
@@ -11583,14 +11924,15 @@ app.patch('/api/crm/leads/:id/stage', async (req, res) => {
 // Update lead consciousness level
 app.patch('/api/crm/leads/:id/consciousness', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { level } = req.body;
     if (!level || !VALID_CONSCIOUSNESS.includes(level)) {
       return res.status(400).json({ error: `Nível inválido. Válidos: ${VALID_CONSCIOUSNESS.join(', ')}` });
     }
     const { rows } = await pool.query(
-      `UPDATE crm_leads SET consciousness_level = $1, updated_at = NOW() WHERE id = $2 RETURNING id, nome, consciousness_level`,
-      [level, req.params.id]
+      `UPDATE crm_leads SET consciousness_level = $1, updated_at = NOW() WHERE id = $2 AND tenant_id = $3 RETURNING id, nome, consciousness_level`,
+      [level, req.params.id, user.tenant_id]
     );
     if (rows.length === 0) return res.status(404).json({ error: 'Lead não encontrado' });
     res.json(rows[0]);
@@ -11602,11 +11944,12 @@ app.patch('/api/crm/leads/:id/consciousness', async (req, res) => {
 // Assign lead to attendant
 app.patch('/api/crm/leads/:id/assign', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { assignedTo, assignedToName } = req.body;
     const { rows } = await pool.query(
-      `UPDATE crm_leads SET assigned_to = $1, assigned_to_name = $2, updated_at = NOW() WHERE id = $3 RETURNING id, nome, assigned_to, assigned_to_name`,
-      [assignedTo || null, assignedToName || null, req.params.id]
+      `UPDATE crm_leads SET assigned_to = $1, assigned_to_name = $2, updated_at = NOW() WHERE id = $3 AND tenant_id = $4 RETURNING id, nome, assigned_to, assigned_to_name`,
+      [assignedTo || null, assignedToName || null, req.params.id, user.tenant_id]
     );
     if (rows.length === 0) return res.status(404).json({ error: 'Lead não encontrado' });
     res.json(rows[0]);
@@ -11618,12 +11961,13 @@ app.patch('/api/crm/leads/:id/assign', async (req, res) => {
 // POST /api/crm/leads/:id/convert-to-patient — register lead as patient
 app.post('/api/crm/leads/:id/convert-to-patient', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { id } = req.params;
 
     // Fetch lead data
     const { rows: leadRows } = await pool.query(
-      'SELECT id, nome, telefone, email, cpf, origem, observacoes FROM crm_leads WHERE id = $1', [id]
+      'SELECT id, nome, telefone, email, cpf, origem, observacoes FROM crm_leads WHERE id = $1 AND tenant_id = $2', [id, user.tenant_id]
     );
     if (leadRows.length === 0) return res.status(404).json({ error: 'Lead não encontrado' });
     const lead = leadRows[0];
@@ -11632,7 +11976,7 @@ app.post('/api/crm/leads/:id/convert-to-patient', async (req, res) => {
     if (lead.telefone) {
       const clean = lead.telefone.replace(/\D/g, '');
       const { rows: existing } = await pool.query(
-        "SELECT id, nome, telefone FROM pacientes WHERE REPLACE(REPLACE(REPLACE(telefone, ' ', ''), '-', ''), '+', '') LIKE '%' || $1", [clean.slice(-8)]
+        "SELECT id, nome, telefone FROM pacientes WHERE REPLACE(REPLACE(REPLACE(telefone, ' ', ''), '-', ''), '+', '') LIKE '%' || $1 AND tenant_id = $2", [clean.slice(-8), user.tenant_id]
       );
       if (existing.length > 0) {
         return res.json({
@@ -11648,12 +11992,12 @@ app.post('/api/crm/leads/:id/convert-to-patient', async (req, res) => {
     // Create patient from lead data
     const pacienteId = crypto.randomUUID();
     await pool.query(
-      'INSERT INTO pacientes (id, nome, cpf, telefone, email, observacoes) VALUES ($1,$2,$3,$4,$5,$6)',
-      [pacienteId, lead.nome, lead.cpf || null, lead.telefone || null, lead.email || null, `Origem CRM: ${lead.origem || '—'}. ${lead.observacoes || ''}`]
+      'INSERT INTO pacientes (id, nome, cpf, telefone, email, observacoes, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+      [pacienteId, lead.nome, lead.cpf || null, lead.telefone || null, lead.email || null, `Origem CRM: ${lead.origem || '—'}. ${lead.observacoes || ''}`, user.tenant_id]
     );
 
     // Update lead status to 'paciente' and link paciente_id
-    await pool.query("UPDATE crm_leads SET status = 'paciente', paciente_id = $2, updated_at = NOW() WHERE id = $1", [id, pacienteId]);
+    await pool.query("UPDATE crm_leads SET status = 'paciente', paciente_id = $2, updated_at = NOW() WHERE id = $1 AND tenant_id = $3", [id, pacienteId, user.tenant_id]);
 
     res.json({ success: true, paciente_id: pacienteId, nome: lead.nome });
   } catch (error) {
@@ -11666,21 +12010,22 @@ app.post('/api/crm/leads/:id/convert-to-patient', async (req, res) => {
 // POST /api/crm/leads/:id/link-patient — link lead to existing patient
 app.post('/api/crm/leads/:id/link-patient', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { id } = req.params;
     const { paciente_id } = req.body;
     if (!paciente_id) return res.status(400).json({ error: 'paciente_id obrigatório' });
 
     // Verify lead exists
-    const { rows: leadRows } = await pool.query('SELECT id, nome FROM crm_leads WHERE id = $1', [id]);
+    const { rows: leadRows } = await pool.query('SELECT id, nome FROM crm_leads WHERE id = $1 AND tenant_id = $2', [id, user.tenant_id]);
     if (leadRows.length === 0) return res.status(404).json({ error: 'Lead não encontrado' });
 
     // Verify patient exists
-    const { rows: pacRows } = await pool.query('SELECT id, nome FROM pacientes WHERE id = $1', [paciente_id]);
+    const { rows: pacRows } = await pool.query('SELECT id, nome FROM pacientes WHERE id = $1 AND tenant_id = $2', [paciente_id, user.tenant_id]);
     if (pacRows.length === 0) return res.status(404).json({ error: 'Paciente não encontrado' });
 
     // Link: update lead with paciente_id and status
-    await pool.query("UPDATE crm_leads SET paciente_id = $2, status = 'paciente', updated_at = NOW() WHERE id = $1", [id, paciente_id]);
+    await pool.query("UPDATE crm_leads SET paciente_id = $2, status = 'paciente', updated_at = NOW() WHERE id = $1 AND tenant_id = $3", [id, paciente_id, user.tenant_id]);
 
     res.json({ success: true, paciente_id, paciente_nome: pacRows[0].nome, lead_nome: leadRows[0].nome });
   } catch (error) {
@@ -11694,11 +12039,12 @@ app.post('/api/crm/leads/:id/link-patient', async (req, res) => {
 // GET /api/crm/leads/:id/history — appointment history for a lead
 app.get('/api/crm/leads/:id/history', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { id } = req.params;
 
     // Get lead's paciente_id and phone
-    const { rows: leadRows } = await pool.query('SELECT paciente_id, telefone FROM crm_leads WHERE id = $1', [id]);
+    const { rows: leadRows } = await pool.query('SELECT paciente_id, telefone FROM crm_leads WHERE id = $1 AND tenant_id = $2', [id, user.tenant_id]);
     if (leadRows.length === 0) return res.status(404).json({ error: 'Lead não encontrado' });
     const { paciente_id, telefone } = leadRows[0];
 
@@ -11706,9 +12052,9 @@ app.get('/api/crm/leads/:id/history', async (req, res) => {
     if (paciente_id) {
       const { rows } = await pool.query(
         `SELECT a.id, a.data, a.hora, a.procedimento, a.status, d.nome as dentista_nome
-         FROM agendamentos a LEFT JOIN dentistas d ON a.dentista_id = d.id
-         WHERE a.paciente_id = $1 ORDER BY a.data DESC, a.hora DESC LIMIT 10`,
-        [paciente_id]
+         FROM agendamentos a LEFT JOIN dentistas d ON a.dentista_id = d.id AND d.tenant_id = a.tenant_id
+         WHERE a.paciente_id = $1 AND a.tenant_id = $2 ORDER BY a.data DESC, a.hora DESC LIMIT 10`,
+        [paciente_id, user.tenant_id]
       );
       appointments = rows;
     } else if (telefone) {
@@ -11717,11 +12063,12 @@ app.get('/api/crm/leads/:id/history', async (req, res) => {
       const { rows } = await pool.query(
         `SELECT a.id, a.data, a.hora, a.procedimento, a.status, d.nome as dentista_nome
          FROM agendamentos a
-         LEFT JOIN dentistas d ON a.dentista_id = d.id
-         LEFT JOIN pacientes p ON a.paciente_id = p.id
+         LEFT JOIN dentistas d ON a.dentista_id = d.id AND d.tenant_id = a.tenant_id
+         LEFT JOIN pacientes p ON a.paciente_id = p.id AND p.tenant_id = a.tenant_id
          WHERE REPLACE(REPLACE(REPLACE(p.telefone, ' ', ''), '-', ''), '+', '') LIKE '%' || $1
+           AND a.tenant_id = $2
          ORDER BY a.data DESC, a.hora DESC LIMIT 10`,
-        [clean.slice(-8)]
+        [clean.slice(-8), user.tenant_id]
       );
       appointments = rows;
     }
@@ -11735,10 +12082,13 @@ app.get('/api/crm/leads/:id/history', async (req, res) => {
 
 app.get('/api/crm/leads/:id/movements', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rows: lead } = await pool.query('SELECT 1 FROM crm_leads WHERE id = $1 AND tenant_id = $2', [req.params.id, user.tenant_id]);
+    if (lead.length === 0) return res.status(404).json({ error: 'Lead não encontrado' });
     const { rows } = await pool.query(
-      `SELECT * FROM kanban_movements WHERE lead_id = $1 ORDER BY created_at DESC LIMIT 50`,
-      [req.params.id]
+      `SELECT * FROM kanban_movements WHERE lead_id = $1 AND tenant_id = $2 ORDER BY created_at DESC LIMIT 50`,
+      [req.params.id, user.tenant_id]
     );
     res.json(rows);
   } catch (error) {
@@ -11829,6 +12179,8 @@ app.get('/api/crm/leads', async (req, res) => {
 // Record first response (attendant sends first message)
 app.post('/api/sessions/first-response', async (req, res) => {
   try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { leadId } = req.body;
     if (!leadId) return res.status(400).json({ error: 'leadId obrigatório' });
 
@@ -11836,12 +12188,12 @@ app.post('/api/sessions/first-response', async (req, res) => {
       `UPDATE attendance_sessions SET 
          first_response_at = COALESCE(first_response_at, NOW()),
          response_time_seconds = COALESCE(response_time_seconds, EXTRACT(EPOCH FROM (NOW() - assigned_at))::INTEGER)
-       WHERE lead_id = $1 AND status = 'active' AND first_response_at IS NULL`,
-      [leadId]
+       WHERE lead_id = $1 AND status = 'active' AND first_response_at IS NULL AND tenant_id = $2`,
+      [leadId, user.tenant_id]
     );
     res.json({ success: true });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
   }
 });
 
@@ -11925,7 +12277,8 @@ app.post('/api/sessions/close', async (req, res) => {
 // Get metrics (general + per attendant)
 app.get('/api/metrics/attendance', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { days = '30' } = req.query;
     const since = `NOW() - INTERVAL '${Math.min(Number(days), 365)} days'`;
 
@@ -11940,8 +12293,8 @@ app.get('/api/metrics/attendance', async (req, res) => {
         MAX(wait_time_seconds) as max_wait_time,
         MIN(wait_time_seconds) FILTER (WHERE wait_time_seconds > 0) as min_wait_time
       FROM attendance_sessions 
-      WHERE created_at >= ${since}
-    `);
+      WHERE created_at >= ${since} AND tenant_id = $1
+    `, [user.tenant_id]);
 
     // Per attendant metrics
     const { rows: perAttendant } = await pool.query(`
@@ -11953,10 +12306,10 @@ app.get('/api/metrics/attendance', async (req, res) => {
         ROUND(AVG(response_time_seconds) FILTER (WHERE response_time_seconds IS NOT NULL)) as avg_response_time,
         ROUND(AVG(duration_seconds) FILTER (WHERE duration_seconds IS NOT NULL)) as avg_duration
       FROM attendance_sessions 
-      WHERE attendant_id IS NOT NULL AND created_at >= ${since}
+      WHERE attendant_id IS NOT NULL AND created_at >= ${since} AND tenant_id = $1
       GROUP BY attendant_id, attendant_name
       ORDER BY total_sessions DESC
-    `);
+    `, [user.tenant_id]);
 
     // Satisfaction metrics
     const { rows: satisfaction } = await pool.query(`
@@ -11969,8 +12322,8 @@ app.get('/api/metrics/attendance', async (req, res) => {
         COUNT(*) FILTER (WHERE rating = 2) as two_star,
         COUNT(*) FILTER (WHERE rating = 1) as one_star
       FROM satisfaction_ratings
-      WHERE created_at >= ${since}
-    `);
+      WHERE created_at >= ${since} AND tenant_id = $1
+    `, [user.tenant_id]);
 
     // Satisfaction per attendant
     const { rows: satisfactionPerAttendant } = await pool.query(`
@@ -11979,10 +12332,10 @@ app.get('/api/metrics/attendance', async (req, res) => {
         ROUND(AVG(rating)::NUMERIC, 1) as avg_rating,
         COUNT(*) as total_ratings
       FROM satisfaction_ratings
-      WHERE attendant_id IS NOT NULL AND created_at >= ${since}
+      WHERE attendant_id IS NOT NULL AND created_at >= ${since} AND tenant_id = $1
       GROUP BY attendant_id, attendant_name
       ORDER BY avg_rating DESC
-    `);
+    `, [user.tenant_id]);
 
     res.json({
       general: general[0],
@@ -12002,8 +12355,9 @@ app.get('/api/metrics/attendance', async (req, res) => {
 // List all tags
 app.get('/api/tags', async (req, res) => {
   try {
-    await verifyUser(req);
-    const { rows } = await pool.query('SELECT * FROM lead_tags ORDER BY created_at ASC');
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rows } = await pool.query('SELECT * FROM lead_tags WHERE tenant_id = $1 ORDER BY created_at ASC', [user.tenant_id]);
     res.json(rows);
   } catch (error) {
     res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
@@ -12013,12 +12367,13 @@ app.get('/api/tags', async (req, res) => {
 // Create tag
 app.post('/api/tags', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { name, color, icon } = req.body;
     if (!name?.trim()) return res.status(400).json({ error: 'Nome obrigatório' });
     const { rows } = await pool.query(
-      'INSERT INTO lead_tags (name, color, icon) VALUES ($1, $2, $3) RETURNING *',
-      [name.trim(), color || '#3B82F6', icon || '📌']
+      'INSERT INTO lead_tags (name, color, icon, tenant_id) VALUES ($1, $2, $3, $4) RETURNING *',
+      [name.trim(), color || '#3B82F6', icon || '📌', user.tenant_id]
     );
     res.json(rows[0]);
   } catch (error) {
@@ -12029,12 +12384,14 @@ app.post('/api/tags', async (req, res) => {
 // Update tag
 app.put('/api/tags/:id', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { name, color, icon } = req.body;
-    await pool.query(
-      'UPDATE lead_tags SET name = COALESCE($1, name), color = COALESCE($2, color), icon = COALESCE($3, icon), updated_at = NOW() WHERE id = $4',
-      [name?.trim(), color, icon, req.params.id]
+    const { rowCount } = await pool.query(
+      'UPDATE lead_tags SET name = COALESCE($1, name), color = COALESCE($2, color), icon = COALESCE($3, icon), updated_at = NOW() WHERE id = $4 AND tenant_id = $5',
+      [name?.trim(), color, icon, req.params.id, user.tenant_id]
     );
+    if (rowCount === 0) return res.status(404).json({ error: 'Etiqueta não encontrada' });
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -12044,8 +12401,10 @@ app.put('/api/tags/:id', async (req, res) => {
 // Delete tag
 app.delete('/api/tags/:id', async (req, res) => {
   try {
-    await verifyUser(req);
-    await pool.query('DELETE FROM lead_tags WHERE id = $1', [req.params.id]);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rowCount } = await pool.query('DELETE FROM lead_tags WHERE id = $1 AND tenant_id = $2', [req.params.id, user.tenant_id]);
+    if (rowCount === 0) return res.status(404).json({ error: 'Etiqueta não encontrada' });
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -12055,8 +12414,9 @@ app.delete('/api/tags/:id', async (req, res) => {
 // Get all lead-tag assignments
 app.get('/api/tag-assignments', async (req, res) => {
   try {
-    await verifyUser(req);
-    const { rows } = await pool.query('SELECT lead_id, tag_id FROM lead_tag_assignments ORDER BY created_at ASC');
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rows } = await pool.query('SELECT lead_id, tag_id FROM lead_tag_assignments WHERE tenant_id = $1 ORDER BY created_at ASC', [user.tenant_id]);
     // Group by lead_id
     const map = {};
     for (const r of rows) {
@@ -12072,20 +12432,27 @@ app.get('/api/tag-assignments', async (req, res) => {
 // Toggle a tag on a lead (add or remove)
 app.post('/api/tag-assignments/toggle', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { leadId, tagId } = req.body;
     if (!leadId || !tagId) return res.status(400).json({ error: 'leadId e tagId obrigatórios' });
 
+    const { rows: own } = await pool.query(
+      'SELECT 1 FROM crm_leads l, lead_tags t WHERE l.id = $1 AND t.id = $2 AND l.tenant_id = $3 AND t.tenant_id = $3',
+      [leadId, tagId, user.tenant_id]
+    );
+    if (own.length === 0) return res.status(404).json({ error: 'Lead ou etiqueta não encontrado' });
+
     const { rows } = await pool.query(
-      'SELECT id FROM lead_tag_assignments WHERE lead_id = $1 AND tag_id = $2',
-      [leadId, tagId]
+      'SELECT id FROM lead_tag_assignments WHERE lead_id = $1 AND tag_id = $2 AND tenant_id = $3',
+      [leadId, tagId, user.tenant_id]
     );
 
     if (rows.length > 0) {
-      await pool.query('DELETE FROM lead_tag_assignments WHERE lead_id = $1 AND tag_id = $2', [leadId, tagId]);
+      await pool.query('DELETE FROM lead_tag_assignments WHERE lead_id = $1 AND tag_id = $2 AND tenant_id = $3', [leadId, tagId, user.tenant_id]);
       res.json({ action: 'removed' });
     } else {
-      await pool.query('INSERT INTO lead_tag_assignments (lead_id, tag_id) VALUES ($1, $2)', [leadId, tagId]);
+      await pool.query('INSERT INTO lead_tag_assignments (lead_id, tag_id, tenant_id) VALUES ($1, $2, $3)', [leadId, tagId, user.tenant_id]);
       res.json({ action: 'added' });
     }
   } catch (error) {
@@ -12099,10 +12466,11 @@ app.post('/api/tag-assignments/toggle', async (req, res) => {
 
 app.get('/api/contatos', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { search, tipo } = req.query;
-    let query = 'SELECT * FROM contatos WHERE 1=1';
-    const params = [];
+    let query = 'SELECT * FROM contatos WHERE tenant_id = $1';
+    const params = [user.tenant_id];
     if (search) {
       params.push(`%${search}%`);
       query += ` AND (nome ILIKE $${params.length} OR telefone ILIKE $${params.length} OR email ILIKE $${params.length})`;
@@ -12118,15 +12486,16 @@ app.get('/api/contatos', async (req, res) => {
 
 app.post('/api/contatos', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { nome, telefone, email, tipo, empresa, cargo, observacoes } = req.body;
     if (!nome || !nome.trim()) return res.status(400).json({ error: 'Nome é obrigatório' });
     const id = crypto.randomUUID();
     await pool.query(
-      'INSERT INTO contatos (id, nome, telefone, email, tipo, empresa, cargo, observacoes) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
-      [id, nome.trim(), telefone || null, email || null, tipo || 'pessoal', empresa || null, cargo || null, observacoes || null]
+      'INSERT INTO contatos (id, nome, telefone, email, tipo, empresa, cargo, observacoes, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+      [id, nome.trim(), telefone || null, email || null, tipo || 'pessoal', empresa || null, cargo || null, observacoes || null, user.tenant_id]
     );
-    const { rows } = await pool.query('SELECT * FROM contatos WHERE id = $1', [id]);
+    const { rows } = await pool.query('SELECT * FROM contatos WHERE id = $1 AND tenant_id = $2', [id, user.tenant_id]);
     res.json(rows[0]);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -12135,14 +12504,16 @@ app.post('/api/contatos', async (req, res) => {
 
 app.put('/api/contatos/:id', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { nome, telefone, email, tipo, empresa, cargo, observacoes, favorito } = req.body;
-    await pool.query(
+    const { rowCount } = await pool.query(
       `UPDATE contatos SET nome=COALESCE($1,nome), telefone=$2, email=$3, tipo=COALESCE($4,tipo),
-       empresa=$5, cargo=$6, observacoes=$7, favorito=COALESCE($8,favorito), updated_at=NOW() WHERE id=$9`,
-      [nome, telefone, email, tipo, empresa, cargo, observacoes, favorito, req.params.id]
+       empresa=$5, cargo=$6, observacoes=$7, favorito=COALESCE($8,favorito), updated_at=NOW() WHERE id=$9 AND tenant_id=$10`,
+      [nome, telefone, email, tipo, empresa, cargo, observacoes, favorito, req.params.id, user.tenant_id]
     );
-    const { rows } = await pool.query('SELECT * FROM contatos WHERE id = $1', [req.params.id]);
+    if (rowCount === 0) return res.status(404).json({ error: 'Contato não encontrado' });
+    const { rows } = await pool.query('SELECT * FROM contatos WHERE id = $1 AND tenant_id = $2', [req.params.id, user.tenant_id]);
     res.json(rows[0]);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -12151,8 +12522,10 @@ app.put('/api/contatos/:id', async (req, res) => {
 
 app.delete('/api/contatos/:id', async (req, res) => {
   try {
-    await verifyUser(req);
-    await pool.query('DELETE FROM contatos WHERE id = $1', [req.params.id]);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rowCount } = await pool.query('DELETE FROM contatos WHERE id = $1 AND tenant_id = $2', [req.params.id, user.tenant_id]);
+    if (rowCount === 0) return res.status(404).json({ error: 'Contato não encontrado' });
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -12161,10 +12534,11 @@ app.delete('/api/contatos/:id', async (req, res) => {
 
 app.patch('/api/contatos/:id/favorito', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { rows } = await pool.query(
-      'UPDATE contatos SET favorito = NOT favorito, updated_at = NOW() WHERE id = $1 RETURNING *',
-      [req.params.id]
+      'UPDATE contatos SET favorito = NOT favorito, updated_at = NOW() WHERE id = $1 AND tenant_id = $2 RETURNING *',
+      [req.params.id, user.tenant_id]
     );
     if (rows.length === 0) return res.status(404).json({ error: 'Contato não encontrado' });
     res.json(rows[0]);
@@ -12176,7 +12550,8 @@ app.patch('/api/contatos/:id/favorito', async (req, res) => {
 // ─── Bulk import contatos (WhatsApp) ────────────────────────
 app.post('/api/contatos/import', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { contatos } = req.body;
     if (!Array.isArray(contatos) || contatos.length === 0) {
       return res.status(400).json({ error: 'Lista de contatos vazia' });
@@ -12191,12 +12566,12 @@ app.post('/api/contatos/import', async (req, res) => {
       if (!telefone) { skipped++; continue; }
 
       // Skip if phone already exists
-      const existing = await pool.query('SELECT id FROM contatos WHERE telefone = $1', [telefone]);
+      const existing = await pool.query('SELECT id FROM contatos WHERE telefone = $1 AND tenant_id = $2', [telefone, user.tenant_id]);
       if (existing.rows.length > 0) { skipped++; continue; }
 
       await pool.query(
-        'INSERT INTO contatos (id, nome, telefone, tipo) VALUES ($1, $2, $3, $4)',
-        [crypto.randomUUID(), nome || telefone, telefone, 'pessoal']
+        'INSERT INTO contatos (id, nome, telefone, tipo, tenant_id) VALUES ($1, $2, $3, $4, $5)',
+        [crypto.randomUUID(), nome || telefone, telefone, 'pessoal', user.tenant_id]
       );
       imported++;
     }
@@ -12209,6 +12584,20 @@ app.post('/api/contatos/import', async (req, res) => {
 
 // ─── Auto-sync WhatsApp contacts (runs every 30 min) ────────
 let syncInterval = null;
+
+// Clínica dona da instância para a sincronização de contatos. O tenant
+// 00000000-0000-0000-0000-000000000001 é uma clínica real em algumas bases
+// (migration-saas.sql): aceito quando há mapeamento explícito em whatsapp_instances.
+async function resolveContactSyncTenant(instanceName) {
+  const t = await getTenantIdByInstance(instanceName).catch(() => null);
+  if (isValidTenantId(t)) return String(t);
+  const { rows } = await pool.query(
+    'SELECT tenant_id FROM whatsapp_instances WHERE instance_name = $1 AND tenant_id IS NOT NULL LIMIT 1',
+    [instanceName]
+  ).catch(() => ({ rows: [] }));
+  const mapped = rows[0]?.tenant_id ? String(rows[0].tenant_id) : null;
+  return mapped === '00000000-0000-0000-0000-000000000001' ? mapped : null;
+}
 
 async function syncWhatsAppContacts() {
   try {
@@ -12241,6 +12630,8 @@ async function syncWhatsAppContacts() {
     let totalImported = 0;
     for (const inst of connected) {
       const name = inst.name || inst.instanceName;
+      const instTenantId = await resolveContactSyncTenant(name);
+      if (!instTenantId) continue; // instância sem clínica: não importa
       try {
         let waContacts = [];
         const cRes = await fetch(`${EVOLUTION_API_URL}/chat/findContacts/${name}`, {
@@ -12271,21 +12662,21 @@ async function syncWhatsAppContacts() {
           const nome = (c.name || c.pushName || c.profileName || c.notify || telefone).trim();
           if (!telefone) continue;
 
-          const existing = await pool.query('SELECT id, nome FROM contatos WHERE telefone = $1', [telefone]);
+          const existing = await pool.query('SELECT id, nome FROM contatos WHERE telefone = $1 AND tenant_id = $2', [telefone, instTenantId]);
           if (existing.rows.length > 0) {
             const currentName = (existing.rows[0].nome || '').trim();
             if (nome && nome !== telefone && (!currentName || currentName === telefone)) {
               await pool.query(
-                `UPDATE contatos SET nome = $1, updated_at = NOW() WHERE telefone = $2`,
-                [nome, telefone]
+                `UPDATE contatos SET nome = $1, updated_at = NOW() WHERE telefone = $2 AND tenant_id = $3`,
+                [nome, telefone, instTenantId]
               );
             }
             continue;
           }
 
           await pool.query(
-            'INSERT INTO contatos (id, nome, telefone, tipo) VALUES ($1, $2, $3, $4)',
-            [crypto.randomUUID(), nome || telefone, telefone, 'pessoal']
+            'INSERT INTO contatos (id, nome, telefone, tipo, tenant_id) VALUES ($1, $2, $3, $4, $5)',
+            [crypto.randomUUID(), nome || telefone, telefone, 'pessoal', instTenantId]
           );
           totalImported++;
         }
@@ -12305,8 +12696,9 @@ async function syncWhatsAppContacts() {
 // Sync status & manual trigger endpoint
 app.get('/api/contatos/sync/status', async (req, res) => {
   try {
-    await verifyUser(req);
-    const { rows } = await pool.query('SELECT COUNT(*) as total FROM contatos');
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rows } = await pool.query('SELECT COUNT(*) as total FROM contatos WHERE tenant_id = $1', [user.tenant_id]);
     res.json({
       autoSync: !!syncInterval,
       intervalMinutes: 30,
@@ -12319,7 +12711,8 @@ app.get('/api/contatos/sync/status', async (req, res) => {
 
 app.post('/api/contatos/sync/now', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const allowedInstances = Array.isArray(req.body?.instances) ? req.body.instances : null;
     const normalizeEvolutionContacts = (payload) => {
       const list = Array.isArray(payload)
@@ -12349,6 +12742,14 @@ app.post('/api/contatos/sync/now', async (req, res) => {
     if (allowedInstances && allowedInstances.length > 0) {
       connected = connected.filter(i => allowedInstances.includes(i.name || i.instanceName));
     }
+
+    // Só instâncias da própria clínica
+    const ownConnected = [];
+    for (const i of connected) {
+      const instTenant = await resolveContactSyncTenant(i.name || i.instanceName);
+      if (instTenant && String(instTenant) === String(user.tenant_id)) ownConnected.push(i);
+    }
+    connected = ownConnected;
 
     if (connected.length === 0) {
       return res.json({ success: true, imported: 0, totalContatos: 0, instances: [], message: 'Nenhuma instância conectada/selecionada' });
@@ -12411,13 +12812,13 @@ app.post('/api/contatos/sync/now', async (req, res) => {
           const nome = (c.name || c.pushName || c.profileName || c.notify || telefone).trim();
           if (!telefone) continue;
 
-          const existing = await pool.query('SELECT id, nome FROM contatos WHERE telefone = $1', [telefone]);
+          const existing = await pool.query('SELECT id, nome FROM contatos WHERE telefone = $1 AND tenant_id = $2', [telefone, user.tenant_id]);
           if (existing.rows.length > 0) {
             const currentName = (existing.rows[0].nome || '').trim();
             if (nome && nome !== telefone && (!currentName || currentName === telefone)) {
               await pool.query(
-                `UPDATE contatos SET nome = $1, updated_at = NOW() WHERE telefone = $2`,
-                [nome, telefone]
+                `UPDATE contatos SET nome = $1, updated_at = NOW() WHERE telefone = $2 AND tenant_id = $3`,
+                [nome, telefone, user.tenant_id]
               );
             }
             instResult.skipped++;
@@ -12425,8 +12826,8 @@ app.post('/api/contatos/sync/now', async (req, res) => {
           }
 
           await pool.query(
-            'INSERT INTO contatos (id, nome, telefone, tipo) VALUES ($1, $2, $3, $4)',
-            [crypto.randomUUID(), nome || telefone, telefone, 'pessoal']
+            'INSERT INTO contatos (id, nome, telefone, tipo, tenant_id) VALUES ($1, $2, $3, $4, $5)',
+            [crypto.randomUUID(), nome || telefone, telefone, 'pessoal', user.tenant_id]
           );
           instResult.imported++;
           totalImported++;
@@ -12437,7 +12838,7 @@ app.post('/api/contatos/sync/now', async (req, res) => {
       instanceResults.push(instResult);
     }
 
-    const after = await pool.query('SELECT COUNT(*) as total FROM contatos');
+    const after = await pool.query('SELECT COUNT(*) as total FROM contatos WHERE tenant_id = $1', [user.tenant_id]);
     res.json({
       success: true,
       imported: totalImported,
@@ -13362,7 +13763,8 @@ app.get('/api/queue/leads', async (req, res) => {
 // Save multiple messages (batch)
 app.post('/api/messages/batch', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { messages } = req.body;
     if (!Array.isArray(messages) || messages.length === 0) {
       return res.status(400).json({ error: 'Array messages obrigatório' });
@@ -13371,21 +13773,33 @@ app.post('/api/messages/batch', async (req, res) => {
       return res.status(400).json({ error: 'Máximo 500 mensagens por batch' });
     }
 
+    // Cada lead precisa ser da clínica (lead do CRM, sessão de atendimento ou conversa existente)
+    const leadIds = [...new Set(messages.map(m => String(m?.lead_id || '')))];
+    if (leadIds.some(l => !l)) return res.status(400).json({ error: 'lead_id obrigatório em cada mensagem' });
+    const { rows: ownLeads } = await pool.query(
+      `SELECT l.lead_id FROM unnest($1::text[]) AS l(lead_id)
+        WHERE EXISTS (SELECT 1 FROM crm_leads c WHERE c.id::text = l.lead_id AND c.tenant_id = $2)
+           OR EXISTS (SELECT 1 FROM attendance_sessions s WHERE s.lead_id::text = l.lead_id AND s.tenant_id = $2)
+           OR EXISTS (SELECT 1 FROM chat_messages cm WHERE cm.lead_id::text = l.lead_id AND cm.tenant_id = $2)`,
+      [leadIds, user.tenant_id]
+    );
+    if (ownLeads.length !== leadIds.length) return res.status(404).json({ error: 'Lead não encontrado' });
+
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
       for (const m of messages) {
         await client.query(`
           INSERT INTO chat_messages (id, lead_id, content, sender, type, status, timestamp, media_url, file_name, mime_type,
-            reply_to_id, reply_to_content, reply_to_sender, attendant_id, attendant_name, instance, phone, metadata)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+            reply_to_id, reply_to_content, reply_to_sender, attendant_id, attendant_name, instance, phone, metadata, tenant_id)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
           ON CONFLICT (id) DO NOTHING
         `, [
           m.id, m.lead_id, m.content || null, m.sender, m.type || 'text', m.status || 'sent',
           m.timestamp || new Date().toISOString(), m.media_url || null, m.file_name || null, m.mime_type || null,
           m.reply_to_id || null, m.reply_to_content || null, m.reply_to_sender || null,
           m.attendant_id || null, m.attendant_name || null, m.instance || null, m.phone || null,
-          JSON.stringify(m.metadata || {})
+          JSON.stringify(m.metadata || {}), user.tenant_id
         ]);
       }
       await client.query('COMMIT');
@@ -13405,15 +13819,18 @@ app.post('/api/messages/batch', async (req, res) => {
 // Delete a message (soft or hard)
 app.delete('/api/messages/:id', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { id } = req.params;
     const hard = req.query.hard === 'true';
 
+    let rowCount = 0;
     if (hard) {
-      await pool.query('DELETE FROM chat_messages WHERE id = $1', [id]);
+      ({ rowCount } = await pool.query('DELETE FROM chat_messages WHERE id = $1 AND tenant_id = $2', [id, user.tenant_id]));
     } else {
-      await pool.query("UPDATE chat_messages SET content = NULL, type = 'text', media_url = NULL, metadata = '{\"deleted\":true}' WHERE id = $1", [id]);
+      ({ rowCount } = await pool.query("UPDATE chat_messages SET content = NULL, type = 'text', media_url = NULL, metadata = '{\"deleted\":true}' WHERE id = $1 AND tenant_id = $2", [id, user.tenant_id]));
     }
+    if (rowCount === 0) return res.status(404).json({ error: 'Mensagem não encontrada' });
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -13448,16 +13865,17 @@ app.get('/api/messages/unread', async (req, res) => {
 // Search messages globally or within a lead
 app.get('/api/messages/search', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const q = req.query.q;
     const leadId = req.query.lead_id;
     if (!q || q.length < 2) return res.status(400).json({ error: 'Query mínima 2 caracteres' });
 
-    let query = "SELECT m.*, l.nome as lead_name FROM chat_messages m LEFT JOIN crm_leads l ON l.id = m.lead_id WHERE m.content ILIKE $1";
-    const values = [`%${q}%`];
+    let query = "SELECT m.*, l.nome as lead_name FROM chat_messages m LEFT JOIN crm_leads l ON l.id = m.lead_id AND l.tenant_id = m.tenant_id WHERE m.content ILIKE $1 AND m.tenant_id = $2";
+    const values = [`%${q}%`, user.tenant_id];
 
     if (leadId) {
-      query += ' AND m.lead_id = $2';
+      query += ' AND m.lead_id = $3';
       values.push(leadId);
     }
 
@@ -13505,12 +13923,13 @@ app.post('/api/push/subscribe', async (req, res) => {
 // Unsubscribe from push notifications
 app.post('/api/push/unsubscribe', async (req, res) => {
   try {
+    const { user } = await verifyUser(req);
     const { endpoint } = req.body;
     if (!endpoint) return res.status(400).json({ error: 'endpoint required' });
-    await pool.query('DELETE FROM push_subscriptions WHERE endpoint = $1', [endpoint]);
+    await pool.query('DELETE FROM push_subscriptions WHERE endpoint = $1 AND user_id = $2', [endpoint, user.id]);
     res.json({ success: true });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
   }
 });
 
@@ -13579,13 +13998,47 @@ app.put('/api/user/preferences', async (req, res) => {
 // GET all AI settings (keys masked for frontend)
 app.get('/api/ai/settings', async (req, res) => {
   try {
-    await verifyAdmin(req);
+    const { user } = await verifyAdmin(req);
     const { rows } = await pool.query('SELECT provider, api_key, model, enabled FROM ai_settings ORDER BY provider');
-    // Mask keys for display
-    const masked = rows.map(r => ({
-      ...r,
-      api_key: r.api_key ? r.api_key.slice(0, 8) + '...' + r.api_key.slice(-4) : '',
+    // Nunca devolver a chave nem pedaços dela; super-admin vê só os 4 últimos.
+    let masked = rows.map(r => ({
+      provider: r.provider,
+      model: r.model,
+      enabled: r.enabled,
+      configured: !!r.api_key,
+      api_key: r.api_key ? (user.is_super_admin ? '...' + r.api_key.slice(-4) : '...configurada') : '',
+      editable: !!user.is_super_admin,
     }));
+    // Meta Ads (provider 'manus'): o token é da clínica, não da plataforma
+    if (!user.is_super_admin) {
+      let own = null;
+      if (user.tenant_id) {
+        try {
+          const { rows: t } = await pool.query(
+            `SELECT * FROM tenant_ai_settings WHERE tenant_id = $1 AND provider = 'manus'`,
+            [user.tenant_id]
+          );
+          own = t[0] || null;
+        } catch (e) {
+          if (e.code !== '42P01') throw e; // tabela ainda não criada: trata como não configurado
+        }
+      }
+      masked = masked.filter(r => r.provider !== 'manus');
+      masked.push({
+        provider: 'manus',
+        model: own?.model || '',
+        enabled: own ? own.enabled !== false : false,
+        configured: !!own?.api_key,
+        api_key: own?.api_key ? '...' + own.api_key.slice(-4) : '',
+        editable: !!user.tenant_id,
+        config: own?.config || {},
+      });
+    }
+    for (const p of ['openai', 'manus']) {
+      if (!masked.some(r => r.provider === p)) {
+        masked.push({ provider: p, model: '', enabled: false, configured: false, api_key: '', editable: !!user.is_super_admin });
+      }
+    }
     res.json(masked);
   } catch (err) {
     if (err.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
@@ -13597,9 +14050,62 @@ app.get('/api/ai/settings', async (req, res) => {
 // Save/update AI provider settings
 app.post('/api/ai/settings', async (req, res) => {
   try {
-    await verifyAdmin(req);
-    const { provider, api_key, model, enabled } = req.body;
+    const { user } = await verifyAdmin(req);
+    const { provider, api_key, model, enabled, config } = req.body;
     if (!provider) return res.status(400).json({ error: 'Provider é obrigatório' });
+
+    // Meta Ads (provider 'manus'): token por clínica, gravado pelo admin da própria clínica
+    if (provider === 'manus' && !user.is_super_admin) {
+      if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+      const isNewTenantKey = api_key && !String(api_key).includes('...');
+      const tenantConfig = config && typeof config === 'object' && !Array.isArray(config) ? JSON.stringify(config) : null;
+      try {
+        if (isNewTenantKey) {
+          await pool.query(`
+            INSERT INTO tenant_ai_settings (tenant_id, provider, api_key, model, enabled, updated_at)
+            VALUES ($1, 'manus', $2, $3, $4, NOW())
+            ON CONFLICT (tenant_id, provider) DO UPDATE SET
+              api_key = EXCLUDED.api_key,
+              model = EXCLUDED.model,
+              enabled = EXCLUDED.enabled,
+              updated_at = NOW()
+          `, [user.tenant_id, api_key, model || '', enabled !== false]);
+        } else {
+          // Chave mascarada: mantém a atual, muda só modelo/ativação
+          await pool.query(`
+            INSERT INTO tenant_ai_settings (tenant_id, provider, api_key, model, enabled, updated_at)
+            VALUES ($1, 'manus', '', $2, $3, NOW())
+            ON CONFLICT (tenant_id, provider) DO UPDATE SET
+              model = EXCLUDED.model,
+              enabled = EXCLUDED.enabled,
+              updated_at = NOW()
+          `, [user.tenant_id, model || '', enabled !== false]);
+        }
+        if (tenantConfig) {
+          try {
+            await pool.query(
+              `UPDATE tenant_ai_settings SET config = COALESCE(config, '{}'::jsonb) || $1::jsonb, updated_at = NOW() WHERE tenant_id = $2 AND provider = 'manus'`,
+              [tenantConfig, user.tenant_id]
+            );
+          } catch (cfgErr) {
+            if (cfgErr.code === '42703') {
+              return res.status(503).json({ error: 'Token salvo, mas o ID da conta de anúncios não pôde ser gravado (migração do banco pendente). Fale com o suporte.' });
+            }
+            throw cfgErr;
+          }
+        }
+      } catch (e) {
+        if (e.code === '42P01') {
+          return res.status(503).json({ error: 'A configuração do Meta Ads por clínica ainda não está disponível neste servidor (migração do banco pendente). Fale com o suporte.' });
+        }
+        throw e;
+      }
+      return res.json({ success: true });
+    }
+
+    if (!user.is_super_admin) {
+      return res.status(403).json({ error: 'As chaves de IA são da plataforma e só o super admin pode alterá-las.' });
+    }
 
     // Only update api_key if a full key is provided (not masked)
     const isNewKey = api_key && !api_key.includes('...');
@@ -13670,6 +14176,17 @@ app.post('/api/pacientes/:id/consentimentos', async (req, res) => {
     if (!CONSENT_TIPOS.has(tipo) || !versao || !texto) {
       return res.status(400).json({ error: 'tipo, versao e texto são obrigatórios' });
     }
+    // atendimento.tsx usa o id do agendamento quando o agendamento não tem paciente
+    // vinculado; aceita os dois, desde que sejam desta clínica.
+    const { rows: pac } = await pool.query(
+      'SELECT 1 FROM pacientes WHERE id = $1 AND tenant_id = $2 LIMIT 1', [req.params.id, user.tenant_id]);
+    let donoOk = pac.length > 0;
+    if (!donoOk) {
+      const { rows: apt } = await pool.query(
+        'SELECT 1 FROM agendamentos WHERE id = $1 AND tenant_id = $2 LIMIT 1', [req.params.id, user.tenant_id]);
+      donoOk = apt.length > 0;
+    }
+    if (!donoOk) return res.status(404).json({ error: 'Paciente não encontrado' });
     const { rows } = await pool.query(
       `INSERT INTO consentimentos_pacientes
          (tenant_id, paciente_id, tipo, versao, texto, registrado_por, registrado_por_email, ip_address, user_agent)
@@ -13843,9 +14360,9 @@ ${transcription}`;
     // Save to DB
     const reportId = randomUUID();
     await pool.query(`
-      INSERT INTO clinical_reports (id, patient_id, patient_name, attendant_id, attendant_name, transcription, report, queixa_principal, procedimento, dente_regiao, prescricoes, duration_seconds)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-    `, [reportId, patientId || 'unknown', patientName || '', user.id, '', transcription, report, queixaPrincipal || '', procedimento || '', dente || '', JSON.stringify(prescricoes || []), durationSeconds || 0]);
+      INSERT INTO clinical_reports (id, patient_id, patient_name, attendant_id, attendant_name, transcription, report, queixa_principal, procedimento, dente_regiao, prescricoes, duration_seconds, tenant_id)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+    `, [reportId, patientId || 'unknown', patientName || '', user.id, '', transcription, report, queixaPrincipal || '', procedimento || '', dente || '', JSON.stringify(prescricoes || []), durationSeconds || 0, user.tenant_id]);
 
     res.json({ id: reportId, report, transcription });
   } catch (err) {
@@ -13855,13 +14372,16 @@ ${transcription}`;
 });
 
 // ─── Get clinical reports for a patient ─────────────────────
-app.get('/api/ai/reports/:patientId', async (req, res) => {
+app.get('/api/ai/reports/:patientId', async (req, res, next) => {
+  // export.csv tem rota própria (registrada depois); sem isto ela nunca era alcançada
+  if (req.params.patientId === 'export.csv') return next();
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { patientId } = req.params;
     const { rows } = await pool.query(
-      'SELECT id, patient_name, transcription, report, queixa_principal, procedimento, dente_regiao, prescricoes, duration_seconds, created_at FROM clinical_reports WHERE patient_id = $1 ORDER BY created_at DESC LIMIT 50',
-      [patientId]
+      'SELECT id, patient_name, transcription, report, queixa_principal, procedimento, dente_regiao, prescricoes, duration_seconds, created_at FROM clinical_reports WHERE patient_id = $1 AND tenant_id = $2 ORDER BY created_at DESC LIMIT 50',
+      [patientId, user.tenant_id]
     );
     res.json(rows);
   } catch (err) {
@@ -13875,11 +14395,13 @@ app.get('/api/ai/reports/:patientId', async (req, res) => {
 app.get('/api/ai/reports', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { from, to, status, patientId, attendantId, q, limit } = req.query;
 
     const where = [];
     const params = [];
     let idx = 1;
+    where.push(`tenant_id = $${idx++}`); params.push(user.tenant_id);
 
     if (from) { where.push(`created_at >= $${idx++}`); params.push(from); }
     if (to)   { where.push(`created_at <= ($${idx++}::date + INTERVAL '1 day')`); params.push(to); }
@@ -13942,11 +14464,13 @@ app.get('/api/ai/reports/export.csv', async (req, res) => {
       req.headers.authorization = `Bearer ${req.query.token}`;
     }
     const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { from, to, status, patientId, attendantId, q } = req.query;
 
     const where = [];
     const params = [];
     let idx = 1;
+    where.push(`tenant_id = $${idx++}`); params.push(user.tenant_id);
     if (from) { where.push(`created_at >= $${idx++}`); params.push(from); }
     if (to)   { where.push(`created_at <= ($${idx++}::date + INTERVAL '1 day')`); params.push(to); }
     if (patientId) { where.push(`patient_id = $${idx++}`); params.push(patientId); }
@@ -14010,6 +14534,7 @@ app.get('/api/ai/reports/export.csv', async (req, res) => {
 app.post('/api/consultations', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const {
       patient_id, patient_name, appointment_id,
       queixa_principal, procedimento, dente_regiao, observacoes,
@@ -14024,8 +14549,8 @@ app.post('/api/consultations', async (req, res) => {
         (patient_id, patient_name, appointment_id, dentist_id, dentist_name,
          queixa_principal, procedimento, dente_regiao, observacoes,
          prescricoes, duration_seconds, gravacoes_count, clinical_report_id,
-         started_at, finished_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW())
+         started_at, finished_at, tenant_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW(),$15)
        RETURNING id, finished_at`,
       [
         patient_id, patient_name || null, appointment_id || null,
@@ -14033,6 +14558,7 @@ app.post('/api/consultations', async (req, res) => {
         queixa_principal || null, procedimento || null, dente_regiao || null, observacoes || null,
         JSON.stringify(prescricoes || []), duration_seconds || 0, gravacoes_count || 0,
         clinical_report_id || null, started_at || null,
+        user.tenant_id,
       ]
     );
 
@@ -14047,17 +14573,18 @@ app.post('/api/consultations', async (req, res) => {
 // GET /api/consultations/:patientId — consultation history for a patient
 app.get('/api/consultations/:patientId', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { patientId } = req.params;
     const { rows } = await pool.query(
       `SELECT id, patient_name, dentist_name, queixa_principal, procedimento,
               dente_regiao, observacoes, prescricoes, duration_seconds,
               gravacoes_count, clinical_report_id, status, started_at, finished_at
        FROM consultations
-       WHERE patient_id = $1
+       WHERE patient_id = $1 AND tenant_id = $2
        ORDER BY finished_at DESC
        LIMIT 50`,
-      [patientId]
+      [patientId, user.tenant_id]
     );
     res.json(rows);
   } catch (err) {
@@ -14070,13 +14597,14 @@ app.get('/api/consultations/:patientId', async (req, res) => {
 app.post('/api/ai/followup-messages', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { reportId, patientName, patientPhone } = req.body;
     if (!reportId) return res.status(400).json({ error: 'reportId é obrigatório' });
 
     // Fetch the clinical report
     const { rows: reports } = await pool.query(
-      'SELECT report, queixa_principal, procedimento, dente_regiao, prescricoes FROM clinical_reports WHERE id = $1 LIMIT 1',
-      [reportId]
+      'SELECT report, queixa_principal, procedimento, dente_regiao, prescricoes FROM clinical_reports WHERE id = $1 AND tenant_id = $2 LIMIT 1',
+      [reportId, user.tenant_id]
     );
     if (reports.length === 0) return res.status(404).json({ error: 'Relatório não encontrado' });
     const report = reports[0];
@@ -14242,9 +14770,43 @@ app.post('/api/ai/schedule-followup', async (req, res) => {
 /**
  * Helper: get Manus AI settings from ai_settings table
  */
-async function getManusSettings() {
+// Meta Ads: tabelas meta_ads_* isoladas por clínica. Upsert manual por (tenant_id, chave)
+// para não depender da ordem da migração (constraint única antiga é só por campaign_id/account_id).
+const META_ADS_MIGRATION_MSG = 'O Meta Ads por clínica ainda não está disponível neste servidor (migração do banco pendente). Fale com o suporte.';
+async function metaAdsUpsert(table, tenantId, keys, values) {
+  const keyNames = Object.keys(keys);
+  const where = keyNames.map((k, i) => `${k} = $${i + 2}`).join(' AND ');
+  const keyParams = [tenantId, ...keyNames.map(k => keys[k])];
+  const valNames = Object.keys(values);
+  const { rows } = await pool.query(`SELECT 1 FROM ${table} WHERE tenant_id = $1 AND ${where} LIMIT 1`, keyParams);
+  if (rows.length > 0) {
+    const sets = valNames.map((k, i) => `${k} = $${keyParams.length + i + 1}`).join(', ');
+    await pool.query(`UPDATE ${table} SET ${sets} WHERE tenant_id = $1 AND ${where}`, [...keyParams, ...valNames.map(k => values[k])]);
+  } else {
+    const cols = ['tenant_id', ...keyNames, ...valNames];
+    const all = [tenantId, ...keyNames.map(k => keys[k]), ...valNames.map(k => values[k])];
+    await pool.query(`INSERT INTO ${table} (${cols.join(', ')}) VALUES (${cols.map((_, i) => `$${i + 1}`).join(', ')})`, all);
+  }
+}
+
+// Token do Meta Ads da clínica (tenant_ai_settings). A configuração global (ai_settings)
+// só é usada como fallback para super-admin.
+async function getManusSettings(tenantId, allowGlobalFallback = false) {
+  if (tenantId) {
+    try {
+      const { rows } = await pool.query(
+        `SELECT * FROM tenant_ai_settings WHERE tenant_id = $1 AND provider = 'manus' AND enabled = true`,
+        [tenantId]
+      );
+      if (rows[0]?.api_key) return { ...rows[0], _source: 'tenant' };
+    } catch (err) {
+      if (err.code !== '42P01') throw err; // tabela ainda não criada (migração pendente)
+      console.warn('[meta-ads] tenant_ai_settings não existe — aplique a migração de segurança P0');
+    }
+  }
+  if (!allowGlobalFallback) return null;
   const result = await pool.query(`SELECT * FROM ai_settings WHERE provider = 'manus' AND enabled = true`);
-  return result.rows[0] || null;
+  return result.rows[0] ? { ...result.rows[0], _source: 'global' } : null;
 }
 
 /**
@@ -14298,9 +14860,10 @@ async function generateMetaAdsInsight(campaigns) {
 // GET /api/ai/meta-ads/overview — return aggregated Meta Ads data
 app.get('/api/ai/meta-ads/overview', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
 
-    const manus = await getManusSettings();
+    const manus = await getManusSettings(user.tenant_id, false);
     const connected = !!manus?.api_key;
 
     // Try to get cached insights from DB
@@ -14328,10 +14891,11 @@ app.get('/api/ai/meta-ads/overview', async (req, res) => {
           THEN ROUND(COALESCE(SUM(i.spend), 0) / SUM(i.conversions), 2)
           ELSE NULL END AS cost_per_conversion
       FROM meta_ads_campaigns c
-      LEFT JOIN meta_ads_insights i ON c.campaign_id = i.campaign_id
+      LEFT JOIN meta_ads_insights i ON c.campaign_id = i.campaign_id AND i.tenant_id = c.tenant_id
+      WHERE c.tenant_id = $1
       GROUP BY c.campaign_id, c.name, c.status, c.objective
       ORDER BY spend DESC
-    `);
+    `, [user.tenant_id]);
 
     const campaigns = campaignsResult.rows.map(r => ({
       ...r,
@@ -14350,7 +14914,7 @@ app.get('/api/ai/meta-ads/overview', async (req, res) => {
     const total_conversions = campaigns.reduce((s, c) => s + c.conversions, 0);
 
     // Get last sync time
-    const syncResult = await pool.query(`SELECT last_sync FROM meta_ads_accounts ORDER BY last_sync DESC NULLS LAST LIMIT 1`);
+    const syncResult = await pool.query(`SELECT last_sync FROM meta_ads_accounts WHERE tenant_id = $1 ORDER BY last_sync DESC NULLS LAST LIMIT 1`, [user.tenant_id]);
     const lastSync = syncResult.rows[0]?.last_sync;
 
     res.json({
@@ -14368,17 +14932,19 @@ app.get('/api/ai/meta-ads/overview', async (req, res) => {
     });
   } catch (err) {
     if (err.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    if (err.code === '42703') return res.status(503).json({ error: META_ADS_MIGRATION_MSG });
     console.error('Meta Ads overview error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: err?.code === '23505' ? 'Esta conta ou campanha já está sendo sincronizada. Tente de novo em instantes.' : 'Erro interno ao processar o Meta Ads' });
   }
 });
 
 // POST /api/ai/meta-ads/sync — sync campaigns from Meta Graph API
 app.post('/api/ai/meta-ads/sync', async (req, res) => {
   try {
-    await verifyAdmin(req);
+    const { user } = await verifyAdmin(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
 
-    const manus = await getManusSettings();
+    const manus = await getManusSettings(user.tenant_id, false);
     if (!manus?.api_key) {
       return res.status(400).json({ error: 'Manus AI não configurado. Vá em Configurações → IA e adicione a API key.' });
     }
@@ -14390,25 +14956,32 @@ app.post('/api/ai/meta-ads/sync', async (req, res) => {
     const config = typeof manus.config === 'string' ? JSON.parse(manus.config) : (manus.config || {});
     let adAccountId = config.ad_account_id;
 
-    // If no ad_account_id configured, try to discover it
+    // Sem ad_account_id configurado na clínica: descobre a primeira conta do token
+    let adAccountName = adAccountId;
     if (!adAccountId) {
       const meData = await metaGraphFetch('/me/adaccounts', accessToken, { fields: 'id,name,account_status' });
       if (meData.data && meData.data.length > 0) {
         adAccountId = meData.data[0].id;
-        // Save discovered account
-        await pool.query(`
-          INSERT INTO meta_ads_accounts (account_id, account_name, access_token, connected, last_sync)
-          VALUES ($1, $2, $3, true, NOW())
-          ON CONFLICT (account_id) DO UPDATE SET account_name = $2, access_token = $3, connected = true, last_sync = NOW()
-        `, [adAccountId, meData.data[0].name || adAccountId, accessToken]);
-        // Save ad_account_id to config
-        await pool.query(`UPDATE ai_settings SET config = config || $1::jsonb WHERE provider = 'manus'`, [
-          JSON.stringify({ ad_account_id: adAccountId }),
-        ]);
+        adAccountName = meData.data[0].name || adAccountId;
+        // Guarda a conta descoberta na configuração de quem forneceu o token
+        if (manus._source === 'global') {
+          await pool.query(`UPDATE ai_settings SET config = config || $1::jsonb WHERE provider = 'manus'`, [
+            JSON.stringify({ ad_account_id: adAccountId }),
+          ]);
+        } else {
+          await pool.query(
+            `UPDATE tenant_ai_settings SET config = COALESCE(config, '{}'::jsonb) || $1::jsonb WHERE tenant_id = $2 AND provider = 'manus'`,
+            [JSON.stringify({ ad_account_id: adAccountId }), user.tenant_id]
+          ).catch(e => { if (e.code !== '42703') throw e; });
+        }
       } else {
         return res.status(400).json({ error: 'Nenhuma conta de anúncio encontrada. Verifique o token de acesso.' });
       }
     }
+    // Conta da clínica (o token fica só em tenant_ai_settings/ai_settings, não aqui)
+    await metaAdsUpsert('meta_ads_accounts', user.tenant_id, { account_id: adAccountId }, {
+      account_name: adAccountName, access_token: '', connected: true,
+    });
 
     // Fetch campaigns
     const campaignsData = await metaGraphFetch(`/${adAccountId}/campaigns`, accessToken, {
@@ -14420,18 +14993,12 @@ app.post('/api/ai/meta-ads/sync', async (req, res) => {
     let synced = 0;
 
     for (const c of campaigns) {
-      await pool.query(`
-        INSERT INTO meta_ads_campaigns (campaign_id, account_id, name, status, objective, daily_budget, lifetime_budget, start_time, stop_time, updated_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
-        ON CONFLICT (campaign_id) DO UPDATE SET
-          name = $3, status = $4, objective = $5, daily_budget = $6, lifetime_budget = $7,
-          start_time = $8, stop_time = $9, updated_at = NOW()
-      `, [
-        c.id, adAccountId, c.name, c.status, c.objective,
-        c.daily_budget ? parseFloat(c.daily_budget) / 100 : null,
-        c.lifetime_budget ? parseFloat(c.lifetime_budget) / 100 : null,
-        c.start_time || null, c.stop_time || null,
-      ]);
+      await metaAdsUpsert('meta_ads_campaigns', user.tenant_id, { campaign_id: c.id }, {
+        account_id: adAccountId, name: c.name, status: c.status, objective: c.objective,
+        daily_budget: c.daily_budget ? parseFloat(c.daily_budget) / 100 : null,
+        lifetime_budget: c.lifetime_budget ? parseFloat(c.lifetime_budget) / 100 : null,
+        start_time: c.start_time || null, stop_time: c.stop_time || null, updated_at: new Date(),
+      });
 
       // Fetch insights for each campaign (last 30 days)
       try {
@@ -14446,23 +15013,18 @@ app.post('/api/ai/meta-ads/sync', async (req, res) => {
           const leads = actions.find(a => a.action_type === 'lead')?.value || 0;
           const conversions = actions.find(a => a.action_type === 'offsite_conversion.fb_pixel_purchase')?.value || 0;
 
-          await pool.query(`
-            INSERT INTO meta_ads_insights (campaign_id, date_start, date_stop, impressions, clicks, spend, reach, ctr, cpc, cpm, actions, leads, conversions, cost_per_lead, cost_per_conversion)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-            ON CONFLICT (campaign_id, date_start) DO UPDATE SET
-              impressions = $4, clicks = $5, spend = $6, reach = $7, ctr = $8, cpc = $9, cpm = $10,
-              actions = $11, leads = $12, conversions = $13, cost_per_lead = $14, cost_per_conversion = $15
-          `, [
-            c.id, ins.date_start, ins.date_stop,
-            parseInt(ins.impressions) || 0, parseInt(ins.clicks) || 0,
-            parseFloat(ins.spend) || 0, parseInt(ins.reach) || 0,
-            parseFloat(ins.ctr) || 0, parseFloat(ins.cpc) || 0, parseFloat(ins.cpm) || 0,
-            JSON.stringify(actions), parseInt(leads) || 0, parseInt(conversions) || 0,
-            leads > 0 ? parseFloat(ins.spend) / parseInt(leads) : null,
-            conversions > 0 ? parseFloat(ins.spend) / parseInt(conversions) : null,
-          ]);
+          await metaAdsUpsert('meta_ads_insights', user.tenant_id, { campaign_id: c.id, date_start: ins.date_start }, {
+            date_stop: ins.date_stop,
+            impressions: parseInt(ins.impressions) || 0, clicks: parseInt(ins.clicks) || 0,
+            spend: parseFloat(ins.spend) || 0, reach: parseInt(ins.reach) || 0,
+            ctr: parseFloat(ins.ctr) || 0, cpc: parseFloat(ins.cpc) || 0, cpm: parseFloat(ins.cpm) || 0,
+            actions: JSON.stringify(actions), leads: parseInt(leads) || 0, conversions: parseInt(conversions) || 0,
+            cost_per_lead: leads > 0 ? parseFloat(ins.spend) / parseInt(leads) : null,
+            cost_per_conversion: conversions > 0 ? parseFloat(ins.spend) / parseInt(conversions) : null,
+          });
         }
       } catch (insErr) {
+        if (insErr.code === '42703') throw insErr;
         console.warn(`⚠️ Insights fetch failed for campaign ${c.id}: ${insErr.message}`);
       }
 
@@ -14470,7 +15032,7 @@ app.post('/api/ai/meta-ads/sync', async (req, res) => {
     }
 
     // Update last_sync
-    await pool.query(`UPDATE meta_ads_accounts SET last_sync = NOW() WHERE account_id = $1`, [adAccountId]);
+    await pool.query(`UPDATE meta_ads_accounts SET last_sync = NOW() WHERE account_id = $1 AND tenant_id = $2`, [adAccountId, user.tenant_id]);
 
     // Generate AI insight
     let aiInsight = null;
@@ -14482,9 +15044,10 @@ app.post('/api/ai/meta-ads/sync', async (req, res) => {
             CASE WHEN SUM(i.impressions)>0 THEN ROUND(SUM(i.clicks)::numeric/SUM(i.impressions)*100,2) ELSE 0 END AS ctr,
             COALESCE(SUM(i.leads),0) AS leads,
             CASE WHEN SUM(i.leads)>0 THEN ROUND(SUM(i.spend)/SUM(i.leads),2) ELSE NULL END AS cost_per_lead
-          FROM meta_ads_campaigns c LEFT JOIN meta_ads_insights i ON c.campaign_id=i.campaign_id
+          FROM meta_ads_campaigns c LEFT JOIN meta_ads_insights i ON c.campaign_id=i.campaign_id AND i.tenant_id = c.tenant_id
+          WHERE c.tenant_id = $1
           GROUP BY c.name ORDER BY spend DESC LIMIT 10
-        `);
+        `, [user.tenant_id]);
         aiInsight = await generateMetaAdsInsight(freshCampaigns.rows);
       } catch (aiErr) {
         console.warn('⚠️ AI insight generation failed:', aiErr.message);
@@ -14495,15 +15058,17 @@ app.post('/api/ai/meta-ads/sync', async (req, res) => {
     res.json({ success: true, synced, ai_insight: aiInsight });
   } catch (err) {
     if (err.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    if (err.code === '42703') return res.status(503).json({ error: META_ADS_MIGRATION_MSG });
     console.error('Meta Ads sync error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: err?.code === '23505' ? 'Esta conta ou campanha já está sendo sincronizada. Tente de novo em instantes.' : 'Erro interno ao processar o Meta Ads' });
   }
 });
 
 // GET /api/ai/meta-ads/insight — generate AI insight on demand
 app.get('/api/ai/meta-ads/insight', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
 
     const campaignsResult = await pool.query(`
       SELECT c.name, COALESCE(SUM(i.spend),0) AS spend, COALESCE(SUM(i.impressions),0) AS impressions,
@@ -14511,9 +15076,10 @@ app.get('/api/ai/meta-ads/insight', async (req, res) => {
         CASE WHEN SUM(i.impressions)>0 THEN ROUND(SUM(i.clicks)::numeric/SUM(i.impressions)*100,2) ELSE 0 END AS ctr,
         COALESCE(SUM(i.leads),0) AS leads,
         CASE WHEN SUM(i.leads)>0 THEN ROUND(SUM(i.spend)/SUM(i.leads),2) ELSE NULL END AS cost_per_lead
-      FROM meta_ads_campaigns c LEFT JOIN meta_ads_insights i ON c.campaign_id=i.campaign_id
+      FROM meta_ads_campaigns c LEFT JOIN meta_ads_insights i ON c.campaign_id=i.campaign_id AND i.tenant_id = c.tenant_id
+      WHERE c.tenant_id = $1
       GROUP BY c.name ORDER BY spend DESC LIMIT 10
-    `);
+    `, [user.tenant_id]);
 
     if (campaignsResult.rows.length === 0) {
       return res.json({ insight: 'Nenhuma campanha encontrada. Sincronize os dados primeiro.' });
@@ -14523,8 +15089,9 @@ app.get('/api/ai/meta-ads/insight', async (req, res) => {
     res.json({ insight: insight || 'Não foi possível gerar análise. Verifique a API key da OpenAI.' });
   } catch (err) {
     if (err.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    if (err.code === '42703') return res.status(503).json({ error: META_ADS_MIGRATION_MSG });
     console.error('Meta Ads insight error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: err?.code === '23505' ? 'Esta conta ou campanha já está sendo sincronizada. Tente de novo em instantes.' : 'Erro interno ao processar o Meta Ads' });
   }
 });
 
@@ -15482,6 +16049,7 @@ if (process.env.NODE_ENV !== 'test') {
   // Fila de envio do WhatsApp: garante o esquema e roda a cada 5 s
   // (o intervalo real entre mensagens é controlado por número dentro da fila)
   await asSystemJob(ensureWhatsAppQueueSchema)();
+  await asSystemJob(ensureTenantConfigSchema)();
   asSystemJob(processAutomationJobs)();
   automationSchedulerInterval = setInterval(asSystemJob(processAutomationJobs), 5 * 1000);
   console.log('   🤖 Fila anti-bloqueio do WhatsApp ativa (ciclo de 5s)');
