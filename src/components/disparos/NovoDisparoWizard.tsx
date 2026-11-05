@@ -689,7 +689,7 @@ function StepRevisao({
         <ReviewRow label="Tipo" value={tipo === "recorrente" ? "Campanha Recorrente" : "Campanha Única"} />
         {tipo === "recorrente" && <ReviewRow label="Dias" value={diasSemana.join(", ") || "Nenhum"} />}
         <ReviewRow label="Horário" value={`${horarioInicio} — ${horarioFim}`} />
-        {tipo === "recorrente" && <ReviewRow label="Período" value={campanhaPerpetua ? "Perpétua" : `${dataInicio || "?"} a ${dataFim || "?"}`} />}
+        {tipo === "recorrente" && <ReviewRow label="Período" value={periodoRecorrente(campanhaPerpetua, dataInicio, dataFim)} />}
         {tipo === "unico" && dataInicio && <ReviewRow label="Data" value={dataInicio} />}
         <ReviewRow label="Intervalo anti-spam" value={`${intervaloSpam} dias`} />
         <ReviewRow label="Número de envio" value={numeroLabel || "Não selecionado"} />
@@ -706,6 +706,18 @@ function StepRevisao({
       </div>
     </div>
   );
+}
+
+const dataBR = (iso: string) => {
+  const [a, m, d] = iso.split("-");
+  return a && m && d ? `${d}/${m}/${a}` : iso;
+};
+
+/** Texto do período na revisão: antes aparecia "? a ?" quando as datas ficavam em branco. */
+function periodoRecorrente(perpetua: boolean, inicio: string, fim: string): string {
+  const comeco = inicio ? `De ${dataBR(inicio)}` : "Começa quando você ativar";
+  if (perpetua || !fim) return `${comeco}, sem data de término`;
+  return `${comeco} até ${dataBR(fim)}`;
 }
 
 function ReviewRow({ label, value }: { label: string; value: string }) {
