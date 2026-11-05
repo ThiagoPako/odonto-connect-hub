@@ -33,7 +33,7 @@ test.describe("Fluxos adicionais", () => {
     await expect(page.getByText("Selecione um orçamento")).toBeVisible();
     // A lista mostra paciente/itens/valor (não o título): uma linha a mais da Lúcia depois do reload.
     await expect.poll(() => linhas.count()).toBeGreaterThan(antes);
-    expect(falhas.filter((f) => !f.includes("sessions/active"))).toEqual([]);
+    expect(falhas).toEqual([]);
   });
 
   test("7. tratamento: cria com 1 etapa e aparece após recarregar", async ({ page }) => {
@@ -56,7 +56,7 @@ test.describe("Fluxos adicionais", () => {
     await expect(page.getByText("Selecione um tratamento")).toBeVisible();
     // A lista mostra o paciente (não a descrição): deve haver uma linha a mais que antes.
     await expect.poll(() => linhas.count()).toBeGreaterThan(antes);
-    expect(falhas.filter((f) => !f.includes("sessions/active"))).toEqual([]);
+    expect(falhas).toEqual([]);
   });
 
   test("8. prontuário/anamnese: registra uma anamnese e ela persiste após recarregar", async ({ page }) => {
@@ -75,7 +75,7 @@ test.describe("Fluxos adicionais", () => {
     await page.reload();
     await page.getByText("Lúcia Gomes (Alfa)").first().click();
     await expect(page.getByText(titulo).first()).toBeVisible();
-    expect(falhas.filter((f) => !f.includes("sessions/active"))).toEqual([]);
+    expect(falhas).toEqual([]);
   });
 
   test("9. financeiro: movimentação criada persiste após recarregar", async ({ page }) => {
@@ -93,7 +93,7 @@ test.describe("Fluxos adicionais", () => {
     await page.reload();
     await page.getByRole("button", { name: "Movimentações" }).click();
     await expect(page.getByText(desc).first()).toBeVisible();
-    expect(falhas.filter((f) => !f.includes("sessions/active"))).toEqual([]);
+    expect(falhas).toEqual([]);
   });
 
   test("10. CRM: novo lead aparece no funil e persiste após recarregar", async ({ page }) => {
@@ -109,27 +109,25 @@ test.describe("Fluxos adicionais", () => {
     expect((await resp).status()).toBeLessThan(300);
     await page.reload();
     await expect(page.getByText(nome).first()).toBeVisible();
-    expect(falhas.filter((f) => !f.includes("sessions/active"))).toEqual([]);
+    expect(falhas).toEqual([]);
   });
 
   test("11. configuração: nome da clínica salvo persiste após recarregar", async ({ page }) => {
     await login(page);
     await page.goto("/configuracoes");
     const nome = `Clínica Alfa E2E ${Date.now()}`;
-    const campo = page.getByPlaceholder("Odonto Connect Clínica");
+    const campo = page.getByPlaceholder(/^(Odonto Connect Clínica|Clínica Sorriso)$/);
     await campo.fill(nome);
     await page.getByPlaceholder("Rua Exemplo, 123 - Sala 45").fill("Rua E2E, 100");
-    await page.getByRole("button", { name: "Salvar neste aparelho" }).click();
+    await page.getByRole("button", { name: /^Salvar (neste aparelho|localização)$/ }).click();
     await page.reload();
-    await expect(page.getByPlaceholder("Odonto Connect Clínica")).toHaveValue(nome);
+    await expect(page.getByPlaceholder(/^(Odonto Connect Clínica|Clínica Sorriso)$/)).toHaveValue(nome);
   });
 });
 
-// BUG CONHECIDO (docs/qa/varredura-2026-11-05-tarde.md, B1): GET /api/sessions/active devolve 500 em toda carga do
-// dashboard e do layout (attendance_sessions.lead_id é TEXT; server.mjs faz `l.id = s.lead_id` sem ::text).
-// test.fail: a suíte fica verde enquanto o bug existir e VERMELHA quando for corrigido — aí remova o test.fail.
+// Regressão de B1 (docs/qa/varredura-2026-11-05-tarde.md): GET /api/sessions/active devolvia 500 em toda carga do
+// dashboard (attendance_sessions.lead_id é TEXT; JOIN precisa de `l.id::text = s.lead_id`). Corrigido no #42.
 test("12. regressão: /api/sessions/active responde 200", async ({ page }) => {
-  test.fail(true, "B1: uuid = text em server.mjs (JOIN crm_leads l ON l.id = s.lead_id)");
   await login(page);
   const status = await page.evaluate(async () => {
     const token = localStorage.getItem("odonto_jwt");
