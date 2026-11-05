@@ -11981,7 +11981,8 @@ async function processAppointmentReminders() {
 }
 
 // ─── Resposta ao pedido de confirmação (botão ou 1/2, SIM legado) ───
-const APPT_CONFIRM_WORDS = new Set(['1', 'sim', 'confirmo', 'confirmar', 'confirmado', 'confirmada', 'ok', 'yes', 'vou', 'estarei', 'pode confirmar']);
+// Sem "ok": muitas vezes é só "recebi" e confirmaria presença sem intenção (parecer T3).
+const APPT_CONFIRM_WORDS = new Set(['1', 'sim', 'confirmo', 'confirmar', 'confirmado', 'confirmada', 'yes', 'vou', 'estarei', 'pode confirmar']);
 const APPT_RESCHEDULE_WORDS = new Set(['2', 'remarcar', 'preciso remarcar', 'quero remarcar', 'reagendar']);
 
 function parseAppointmentReminderReply(msgContent) {
@@ -12046,7 +12047,10 @@ async function handleAppointmentReminderReply({ tenantId, phone, msgType, msgCon
   // TEXTO PARA PACIENTE: revisão da Helena (helena-juridico) antes do merge.
   const reply = parsed.action === 'confirmado'
     ? `✅ *Presença confirmada!*\n\nObrigado por confirmar. A ${clinica} aguarda você na data agendada. 😊`
-    : `📅 Recebemos seu pedido para remarcar. A equipe da ${clinica} vai falar com você por aqui para combinar um novo horário.`;
+    // Parecer T5: diz qual consulta, que o retorno vem no horário de atendimento e que o
+    // horário atual segue reservado (o status "remarcar" não libera o horário sozinho; só
+    // a recepção decide oferecê-lo a outro paciente depois de falar com este).
+    : `📅 Recebemos seu pedido para remarcar a consulta de ${formatAgendaDateBR(appt.data)} às ${String(appt.hora || '').slice(0, 5)}. A equipe da ${clinica} vai falar com você por aqui, no horário de atendimento, para combinar um novo horário. Até lá, seu horário atual continua reservado.`;
   await enqueueWhatsAppAutoReply({
     tenantId, instance, phone, message: reply, category: 'service', dedupeMinutes: 10,
     kind: parsed.action === 'confirmado' ? 'appointment_confirmed' : 'appointment_reschedule',
