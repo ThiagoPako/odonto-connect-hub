@@ -12,7 +12,7 @@
     "test": "node --test src/lib/*.test.ts"
   },
   "dependencies": {
-    "@cloudflare/vite-plugin": "^1.25.5",
+    "@cloudflare/vite-plugin": "^1.67.0",
     "@hookform/resolvers": "^5.2.2",
     "@radix-ui/react-accordion": "^1.2.12",
     "@radix-ui/react-alert-dialog": "^1.1.15",
@@ -42,10 +42,10 @@
     "@radix-ui/react-tooltip": "^1.2.8",
     "@tailwindcss/vite": "^4.2.1",
     "@tanstack/react-query": "^5.83.0",
-    "@tanstack/react-router": "1.162.9",
-    "@tanstack/react-start": "1.162.9",
-    "@tanstack/router-plugin": "1.162.9",
-    "@tanstack/zod-adapter": "^1.166.9",
+    "@tanstack/react-router": "1.170.42",
+    "@tanstack/react-start": "1.168.61",
+    "@tanstack/router-plugin": "1.168.43",
+    "@tanstack/zod-adapter": "^1.167.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
@@ -54,7 +54,7 @@
     "framer-motion": "^12.38.0",
     "input-otp": "^1.4.2",
     "lucide-react": "^0.575.0",
-    "pdfjs-dist": "^6.0.227",
+    "pdfjs-dist": "^6.5.438",
     "react": "^19.2.0",
     "react-day-picker": "^9.14.0",
     "react-dom": "^19.2.0",
@@ -82,6 +82,6 @@
     "lovable-tagger": "^1.1.13",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.56.1",
-    "vite": "^7.3.1"
+    "vite": "^7.3.7"
   }
 }
