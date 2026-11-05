@@ -56,6 +56,9 @@ CREATE TABLE IF NOT EXISTS lgpd_expurgo_itens (
   aprovado_em TIMESTAMPTZ,
   resultado JSONB
 );
+-- Quem conferiu a idade quando o paciente não tem data de nascimento (alerta "idade desconhecida").
+ALTER TABLE lgpd_expurgo_itens ADD COLUMN IF NOT EXISTS idade_confirmada_por UUID;
+ALTER TABLE lgpd_expurgo_itens ADD COLUMN IF NOT EXISTS idade_confirmada_em TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_lgpd_expurgo_itens_lista ON lgpd_expurgo_itens (tenant_id, lista_id);
 
 DO $$

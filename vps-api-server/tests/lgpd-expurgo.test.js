@@ -107,6 +107,12 @@ afterAll(async () => { await pool.end(); });
 
 const chamar = (m, url, tk, body) => { const r = request(app)[m](url).set('Authorization', `Bearer ${tk}`); return body ? r.send(body) : r; };
 
+test('a tela chama os caminhos sem /api (VPS_API_BASE já termina em /api)', () => {
+  const tela = fs.readFileSync(path.join(__dirname, '../../src/routes/lgpd-expurgo.tsx'), 'utf8');
+  expect(tela).not.toMatch(/vpsApiFetch[^(]*\(\s*[`"']\/api\//);
+  expect((tela.match(/[`"']\/lgpd\/expurgo\//g) || []).length).toBe(6);
+});
+
 describe('job mensal', () => {
   test('só gera lista, uma por clínica, e nunca apaga', async () => {
     await processarExpurgoLgpd(pool);
@@ -293,5 +299,8 @@ describe('arquivos, backups e idade (parecer do #76)', () => {
     const r2 = await chamar('post', '/api/lgpd/expurgo/itens/2/aprovar', tk, { aprovar: true, confirmo_idade: true });
     expect(r2.status).toBe(200);
     expect(itens[1].aprovado).toBe(true);
+    const upd = sqlLog.filter(q => /^UPDATE lgpd_expurgo_itens SET aprovado =/.test(q.text)).pop();
+    expect(upd.text).toMatch(/idade_confirmada_por = \$4, idade_confirmada_em = NOW\(\)/);
+    expect(upd.params[3]).toBe(adminA);
   });
 });

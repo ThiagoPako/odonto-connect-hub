@@ -270,7 +270,8 @@ export function registerLgpdExpurgo(app, { pool, verifyUser, optOutKey }) {
       const { rows: l } = await pool.query('SELECT * FROM lgpd_expurgo_listas WHERE id = $1 AND tenant_id = $2', [req.params.id, p.user.tenant_id]);
       if (!l[0]) return res.status(404).json({ error: 'Lista não encontrada' });
       const { rows: itens } = await pool.query(
-        `SELECT id, categoria, referencia, quantidade, detalhe, corte, acao, prazo_ate, aprovado, aprovado_por, aprovado_papel, aprovado_em, resultado
+        `SELECT id, categoria, referencia, quantidade, detalhe, corte, acao, prazo_ate, aprovado, aprovado_por, aprovado_papel, aprovado_em,
+                idade_confirmada_por, idade_confirmada_em, resultado
            FROM lgpd_expurgo_itens WHERE lista_id = $1 AND tenant_id = $2 ORDER BY categoria, id`, [req.params.id, p.user.tenant_id]);
       res.json({ lista: l[0], itens });
     } catch (e) { erroHttp(res, e, 'lista'); }
@@ -303,8 +304,11 @@ export function registerLgpdExpurgo(app, { pool, verifyUser, optOutKey }) {
       if (aprovar && alertas.includes('idade_desconhecida') && req.body?.confirmo_idade !== true) {
         return res.status(422).json({ error: ALERTA_IDADE, alertas, exige: 'confirmo_idade' });
       }
+      // Confirmação da idade (paciente sem data de nascimento) fica gravada: quem e quando.
+      const confirmouIdade = aprovar && alertas.includes('idade_desconhecida');
       await pool.query(
         `UPDATE lgpd_expurgo_itens SET aprovado = $3, aprovado_por = $4, aprovado_papel = $5, dentista_id = $6, aprovado_em = NOW()
+                ${confirmouIdade ? ', idade_confirmada_por = $4, idade_confirmada_em = NOW()' : ''}
           WHERE id = $1 AND tenant_id = $2`,
         [item.id, p.user.tenant_id, aprovar, p.user.id || null, item.categoria === 'prontuario' ? 'dentista' : 'admin',
          item.categoria === 'prontuario' ? p.dentistaId : null]);

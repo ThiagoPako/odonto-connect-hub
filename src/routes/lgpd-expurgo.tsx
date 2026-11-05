@@ -9,7 +9,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { vpsApiFetch } from "@/lib/vpsApi";
+import { vpsApiFetch } from "@/lib/vpsApi"; // VPS_API_BASE já termina em /api: caminhos sem o prefixo
 
 // Revisão das listas de expurgo por prazo de guarda (LGPD). O sistema só gera a lista;
 // nada é apagado sem aprovação item a item, simulação (dry-run) e a palavra ELIMINAR.
@@ -39,6 +39,7 @@ interface Item {
   aprovado: boolean;
   aprovado_papel: string | null;
   aprovado_em: string | null;
+  idade_confirmada_em?: string | null;
   resultado: Record<string, unknown> | null;
 }
 
@@ -66,7 +67,7 @@ function LgpdExpurgoPage() {
   const [frase, setFrase] = useState("");
 
   const abrir = useCallback(async (id: string) => {
-    const { data: d, error } = await vpsApiFetch<{ lista: Lista; itens: Item[] }>(`/api/lgpd/expurgo/listas/${id}`);
+    const { data: d, error } = await vpsApiFetch<{ lista: Lista; itens: Item[] }>(`/lgpd/expurgo/listas/${id}`);
     if (error || !d) { toast.error(error || "Não foi possível abrir a lista"); return; }
     setLista(d.lista);
     setItens(d.itens);
@@ -75,7 +76,7 @@ function LgpdExpurgoPage() {
 
   const carregar = useCallback(async () => {
     setCarregando(true);
-    const { data: d, error } = await vpsApiFetch<{ listas: Lista[]; pode_aprovar_prontuario: boolean; admin: boolean }>("/api/lgpd/expurgo/listas");
+    const { data: d, error } = await vpsApiFetch<{ listas: Lista[]; pode_aprovar_prontuario: boolean; admin: boolean }>("/lgpd/expurgo/listas");
     setCarregando(false);
     if (error || !d) { setErro(error || "Não foi possível carregar"); return; }
     setErro(null);
@@ -89,7 +90,7 @@ function LgpdExpurgoPage() {
 
   const gerar = async () => {
     setOcupado(true);
-    const { error } = await vpsApiFetch("/api/lgpd/expurgo/listas/gerar", { method: "POST" });
+    const { error } = await vpsApiFetch("/lgpd/expurgo/listas/gerar", { method: "POST" });
     setOcupado(false);
     if (error) { toast.error(error); return; }
     toast.success("Lista do mês gerada. Nada foi apagado.");
@@ -100,7 +101,7 @@ function LgpdExpurgoPage() {
     // Sem data de nascimento, o dentista confere se o paciente era menor (guarda até os 21 anos).
     const semIdade = valor && item.detalhe?.alertas?.includes("idade_desconhecida");
     if (semIdade && !window.confirm(`${item.detalhe?.alerta || "Idade desconhecida."}\n\nConferi a idade e aprovo a eliminação.`)) return;
-    const { error } = await vpsApiFetch(`/api/lgpd/expurgo/itens/${item.id}/aprovar`, {
+    const { error } = await vpsApiFetch(`/lgpd/expurgo/itens/${item.id}/aprovar`, {
       method: "POST", body: { aprovar: valor, ...(semIdade ? { confirmo_idade: true } : {}) },
     });
     if (error) { toast.error(error); return; }
@@ -110,7 +111,7 @@ function LgpdExpurgoPage() {
   const simular = async () => {
     if (!lista) return;
     setOcupado(true);
-    const { data: d, error } = await vpsApiFetch<{ dry_run: Record<string, unknown> }>(`/api/lgpd/expurgo/listas/${lista.id}/dry-run`, { method: "POST" });
+    const { data: d, error } = await vpsApiFetch<{ dry_run: Record<string, unknown> }>(`/lgpd/expurgo/listas/${lista.id}/dry-run`, { method: "POST" });
     setOcupado(false);
     if (error || !d) { toast.error(error || "Falha na simulação"); return; }
     setDryRun(d.dry_run);
@@ -120,7 +121,7 @@ function LgpdExpurgoPage() {
   const executar = async () => {
     if (!lista) return;
     setOcupado(true);
-    const { error } = await vpsApiFetch(`/api/lgpd/expurgo/listas/${lista.id}/executar`, { method: "POST", body: { frase } });
+    const { error } = await vpsApiFetch(`/lgpd/expurgo/listas/${lista.id}/executar`, { method: "POST", body: { frase } });
     setOcupado(false);
     setConfirmar(false);
     setFrase("");
@@ -222,6 +223,7 @@ function LgpdExpurgoPage() {
                           <td className="p-2">{i.acao === "devolver" ? "Devolver ao paciente" : "Eliminar"}</td>
                           <td className="p-2">
                             {i.aprovado ? `Aprovado (${i.aprovado_papel}) em ${data(i.aprovado_em)}` : "Não aprovado"}
+                            {i.idade_confirmada_em && <div className="text-xs text-muted-foreground">Idade conferida em {data(i.idade_confirmada_em)}</div>}
                             {pode && (
                               <div className="mt-1">
                                 <Button size="sm" variant={i.aprovado ? "outline" : "default"} onClick={() => aprovar(i, !i.aprovado)}>
