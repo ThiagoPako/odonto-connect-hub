@@ -23,6 +23,7 @@ import {
   CalendarClock,
   ChevronRight,
   Plug,
+  Receipt,
 } from "lucide-react";
 
 export const Route = createFileRoute("/configuracoes")({
@@ -38,6 +39,7 @@ type TabId =
   | "integracoes"
   | "tags"
   | "notificacoes"
+  | "cobranca"
   | "usuarios"
   | "avancado";
 
@@ -56,6 +58,7 @@ const TABS: TabDef[] = [
   { id: "integracoes", label: "Integrações", description: "Clinicorp e outras integrações externas", icon: Plug },
   { id: "tags", label: "Tags", description: "Etiquetas usadas em leads e contatos", icon: Tag },
   { id: "notificacoes", label: "Notificações", description: "Som, push e alertas do sistema", icon: Bell },
+  { id: "cobranca", label: "Cobrança", description: "Lembretes de pagamento pelo WhatsApp", icon: Receipt },
   { id: "usuarios", label: "Usuários", description: "Equipe e permissões de acesso", icon: Users },
   { id: "avancado", label: "Avançado", description: "Reset e operações administrativas", icon: ShieldAlert },
 ];
@@ -160,6 +163,21 @@ function ConfiguracoesPage() {
               {activeTab === "tags" && <TagManagementPanel />}
 
               {activeTab === "notificacoes" && <NotificationSettingsPanel />}
+
+              {activeTab === "cobranca" && (
+                <div className="bg-card rounded-xl border border-border/60 shadow-card p-5">
+                  <h4 className="text-sm font-semibold mb-1">Régua de cobrança</h4>
+                  <p className="text-sm text-muted-foreground mb-4">
+                    Lembretes de pagamento antes e depois do vencimento, pelo WhatsApp da clínica. Vem desligada.
+                  </p>
+                  <Link
+                    to="/configuracoes/cobranca"
+                    className="inline-flex items-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
+                  >
+                    Abrir régua de cobrança <ChevronRight className="h-4 w-4" />
+                  </Link>
+                </div>
+              )}
 
               {activeTab === "usuarios" && (
                 <>
