@@ -1563,8 +1563,16 @@ function ChatPage() {
       ),
     }));
 
-    // Delete on WhatsApp for everyone (only works for messages we sent)
-    const connected = connectedInstances[0];
+    // Delete on WhatsApp for everyone (only works for messages we sent) — pelo número da conversa
+    const connected = resolveConnectedInstance(connectedInstances, lead.instance);
+    // Com 2+ números conectados e a conversa sem número, não dá para saber por qual apagar:
+    // avisa em vez de pular em silêncio.
+    if (!connected && msg.sender === "attendant") {
+      toast.warning("Apagada no sistema, mas pode continuar no WhatsApp do paciente.", {
+        description: "Não foi possível identificar por qual número de WhatsApp esta conversa foi feita.",
+      });
+      return;
+    }
     if (connected && lead.phone && msg.sender === "attendant") {
       const { error: waError } = await whatsappApi.deleteMessage(connected.instanceName, lead.phone, msg.id, true);
       if (waError) {
