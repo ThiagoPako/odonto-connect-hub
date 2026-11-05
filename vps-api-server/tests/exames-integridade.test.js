@@ -23,6 +23,7 @@ const donoTipo = { [tipoA]: tenantA, [tipoB]: tenantB };
 let sqlLog;
 let querySpy;
 let exameTemResultado;
+let deleteAfeta;
 const token = () => jwt.sign({
   sub: '44444444-4444-4444-4444-444444444444', email: 'admin@clinica-a.com',
   role: 'admin', tenant_id: tenantA, is_super_admin: false,
@@ -40,6 +41,7 @@ beforeAll(() => {
 beforeEach(() => {
   sqlLog = [];
   exameTemResultado = false;
+  deleteAfeta = 1;
   querySpy = jest.spyOn(pool, 'query').mockImplementation((sql, params = []) => {
     const text = String(sql);
     sqlLog.push({ text, params });
@@ -50,6 +52,7 @@ beforeEach(() => {
     if (/next_code/.test(text)) return Promise.resolve({ rows: [{ next_code: 'EX-000001' }], rowCount: 1 });
     if (/^\s*INSERT INTO exames/.test(text)) return Promise.resolve({ rows: [{ id: exameA }], rowCount: 1 });
     if (/^\s*UPDATE exames/.test(text)) return Promise.resolve({ rows: params.at(-1) === tenantA ? [{ id: exameA }] : [], rowCount: 1 });
+    if (/^\s*DELETE FROM exames/.test(text)) return Promise.resolve({ rows: [], rowCount: deleteAfeta });
     if (/AS tem_resultado/.test(text)) {
       const ok = params[0] === exameA && params[1] === tenantA;
       return Promise.resolve({ rows: ok ? [{ tem_resultado: exameTemResultado }] : [], rowCount: ok ? 1 : 0 });
@@ -107,6 +110,12 @@ describe('exames: exclusão protege o prontuário', () => {
     expect(res.status).toBe(200);
     const del = sqlLog.find(q => /^\s*DELETE FROM exames/.test(q.text));
     expect(del.params).toEqual([exameA, tenantA]);
+  });
+
+  test('exclusão que não apagou nada (mudou no meio) → 409', async () => {
+    deleteAfeta = 0;
+    const res = await chamar('delete', `/api/exames/${exameA}`);
+    expect(res.status).toBe(409);
   });
 
   test('exame com laudo ou imagem → 409 sem apagar', async () => {

@@ -15976,11 +15976,13 @@ app.delete('/api/exames/:id', async (req, res) => {
     if (rows[0].tem_resultado) {
       return res.status(409).json({ error: 'Este exame já tem laudo ou imagem e faz parte do prontuário. Em vez de excluir, mude o status para Cancelado.' });
     }
-    await pool.query(
+    const { rowCount } = await pool.query(
       `DELETE FROM exames WHERE id=$1 AND tenant_id=$2
           AND COALESCE(btrim(laudo_texto), '') = '' AND arquivo_url IS NULL`,
       [req.params.id, user.tenant_id]
     );
+    // Recebeu laudo/imagem entre a leitura e a exclusão: nada foi apagado
+    if (!rowCount) return res.status(409).json({ error: 'O exame mudou enquanto você excluía. Atualize a lista e tente de novo.' });
     res.json({ success: true });
   } catch (err) {
     responderErroExame(res, err, 'exames:delete');
