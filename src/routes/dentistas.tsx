@@ -33,6 +33,12 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 export const Route = createFileRoute("/dentistas")({
   ssr: false,
@@ -59,7 +65,6 @@ function DentistasPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [editingDentista, setEditingDentista] = useState<Dentista | null>(null);
-  const [menuOpen, setMenuOpen] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [toDelete, setToDelete] = useState<Dentista | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -125,7 +130,6 @@ function DentistasPage() {
   const handleEdit = (dentista: Dentista) => {
     setEditingDentista(dentista);
     setShowForm(true);
-    setMenuOpen(null);
   };
 
   if (loading && dentistas.length === 0) {
@@ -234,24 +238,29 @@ function DentistasPage() {
                       </span>
                     </td>
                     <td className="px-6 py-4 text-right">
-                      <div className="relative inline-block">
-                        <button onClick={() => setMenuOpen(menuOpen === dentista.id ? null : dentista.id)} aria-label={`Ações de ${dentista.nome}`} className="p-2 rounded-lg hover:bg-muted/60 transition-colors">
-                          <MoreVertical className="h-4 w-4 text-muted-foreground" />
-                        </button>
-                        {menuOpen === dentista.id && (
-                          <div className="absolute right-0 top-full mt-1 w-44 bg-card rounded-xl border border-border/60 shadow-lg z-20 py-1">
-                            <Link to="/painel-dentista" search={{ id: dentista.id }} className="flex items-center gap-2 px-4 py-2.5 text-sm text-foreground hover:bg-muted/40 transition-colors w-full">
+                      <DropdownMenu modal={false}>
+                        <DropdownMenuTrigger asChild>
+                          <button aria-label={`Ações de ${dentista.nome}`} className="p-2 rounded-lg hover:bg-muted/60 transition-colors">
+                            <MoreVertical className="h-4 w-4 text-muted-foreground" />
+                          </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-44">
+                          <DropdownMenuItem asChild className="gap-2 py-2.5 cursor-pointer">
+                            <Link to="/painel-dentista" search={{ id: dentista.id }}>
                               <Eye className="h-4 w-4" />Ver Painel
                             </Link>
-                            <button onClick={() => handleEdit(dentista)} className="flex items-center gap-2 px-4 py-2.5 text-sm text-foreground hover:bg-muted/40 transition-colors w-full">
-                              <Edit className="h-4 w-4" />Editar
-                            </button>
-                            <button onClick={() => { setToDelete(dentista); setMenuOpen(null); }} className="flex items-center gap-2 px-4 py-2.5 text-sm text-destructive hover:bg-destructive/10 transition-colors w-full">
-                              <Trash2 className="h-4 w-4" />Excluir
-                            </button>
-                          </div>
-                        )}
-                      </div>
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onSelect={() => handleEdit(dentista)} className="gap-2 py-2.5 cursor-pointer">
+                            <Edit className="h-4 w-4" />Editar
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onSelect={() => setToDelete(dentista)}
+                            className="gap-2 py-2.5 cursor-pointer text-destructive focus:text-destructive focus:bg-destructive/10"
+                          >
+                            <Trash2 className="h-4 w-4" />Excluir
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </td>
                   </tr>
                 ))}

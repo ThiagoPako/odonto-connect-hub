@@ -32,15 +32,49 @@ export function AttendanceMetricsPanel() {
   const [metrics, setMetrics] = useState<AttendanceMetrics | null>(null);
   const [loading, setLoading] = useState(true);
   const [days, setDays] = useState(30);
+  const [error, setError] = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
-    const { data } = await metricsApi.attendance(days);
-    if (data) setMetrics(data);
+    setError(null);
+    const { data, error: err } = await metricsApi.attendance(days);
+    if (err || !data) {
+      // Não deixa na tela números do período anterior com o novo período destacado
+      setMetrics(null);
+      setError(err || "Resposta vazia do servidor.");
+    } else {
+      setMetrics(data);
+    }
     setLoading(false);
   };
 
   useEffect(() => { load(); }, [days]);
+
+  // Seletor de período fica visível também no erro, para o usuário poder trocar de período
+  const header = (
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <div className="flex items-center gap-2">
+        <TrendingUp className="h-5 w-5 text-primary" />
+        <h3 className="font-semibold text-foreground">Métricas de Atendimento</h3>
+      </div>
+      <div className="flex items-center gap-2">
+        {[7, 15, 30, 90].map((d) => (
+          <button
+            key={d}
+            onClick={() => setDays(d)}
+            className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors ${
+              days === d ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/80"
+            }`}
+          >
+            {d}d
+          </button>
+        ))}
+        <button onClick={load} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground" title="Atualizar" aria-label="Atualizar métricas">
+          <RefreshCw className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </div>
+  );
 
   if (loading) {
     return (
@@ -52,10 +86,17 @@ export function AttendanceMetricsPanel() {
 
   if (!metrics) {
     return (
-      <Card className="p-6 text-center text-sm text-muted-foreground">
-        Não foi possível carregar as métricas.
-        <Button variant="outline" size="sm" className="ml-2" onClick={load}>Tentar novamente</Button>
-      </Card>
+      <div className="space-y-4">
+        {header}
+        <Card role="alert" className="p-6 text-center text-sm text-destructive space-y-3">
+          <p>
+            Não foi possível carregar as métricas dos últimos {days} dias
+            {error ? `: ${error}` : "."}
+          </p>
+          <p className="text-muted-foreground">Tente de novo ou escolha outro período acima.</p>
+          <Button variant="outline" size="sm" onClick={load}>Tentar novamente</Button>
+        </Card>
+      </div>
     );
   }
 
@@ -65,29 +106,7 @@ export function AttendanceMetricsPanel() {
 
   return (
     <div className="space-y-4">
-      {/* Period selector */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <TrendingUp className="h-5 w-5 text-primary" />
-          <h3 className="font-semibold text-foreground">Métricas de Atendimento</h3>
-        </div>
-        <div className="flex items-center gap-2">
-          {[7, 15, 30, 90].map((d) => (
-            <button
-              key={d}
-              onClick={() => setDays(d)}
-              className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors ${
-                days === d ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/80"
-              }`}
-            >
-              {d}d
-            </button>
-          ))}
-          <button onClick={load} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground" title="Atualizar">
-            <RefreshCw className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      </div>
+      {header}
 
       {/* General KPIs */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">

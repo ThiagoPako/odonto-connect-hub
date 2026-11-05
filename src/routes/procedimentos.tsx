@@ -5,7 +5,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { useEffect, useState, useCallback } from "react";
-import { Plus, Pencil, Trash2, Loader2, Search, History } from "lucide-react";
+import { Plus, Pencil, Archive, Loader2, Search, History } from "lucide-react";
 import { procedimentosCatalogoApi, type ProcedimentoCatalogo } from "@/lib/vpsApi";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -96,8 +96,8 @@ function ProcedimentosCatalogoPage() {
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Catálogo de Procedimentos" />
-      <main className="flex-1 p-6 space-y-4 overflow-auto">
-        <div className="flex items-center justify-between gap-3">
+      <main className="flex-1 p-4 sm:p-6 space-y-4 overflow-auto">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
             <input
@@ -116,8 +116,8 @@ function ProcedimentosCatalogoPage() {
             <Loader2 className="h-6 w-6 animate-spin text-primary" />
           </div>
         ) : (
-          <div className="bg-card border border-border rounded-xl overflow-hidden">
-            <table className="w-full text-xs">
+          <div className="bg-card border border-border rounded-xl overflow-x-auto">
+            <table className="w-full min-w-[860px] text-xs">
               <thead>
                 <tr className="bg-muted/40 text-left">
                   <th className="px-3 py-2 font-semibold w-2"></th>
@@ -156,12 +156,13 @@ function ProcedimentosCatalogoPage() {
                         <button
                           onClick={() => { setHistoricoId(p.id); setHistoricoNome(p.nome); }}
                           title="Ver histórico de versões"
-                          className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-primary"
+                          aria-label="Ver histórico de versões"
+                          className="h-8 w-8 inline-flex items-center justify-center rounded hover:bg-muted text-muted-foreground hover:text-primary"
                         >
                           <History className="h-3.5 w-3.5" />
                         </button>
-                        <button onClick={() => editar(p)} className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"><Pencil className="h-3.5 w-3.5" /></button>
-                        <button onClick={() => excluir(p.id)} className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>
+                        <button onClick={() => editar(p)} title="Editar" aria-label="Editar procedimento" className="h-8 w-8 inline-flex items-center justify-center rounded hover:bg-muted text-muted-foreground hover:text-foreground"><Pencil className="h-3.5 w-3.5" /></button>
+                        <button onClick={() => excluir(p.id)} title="Inativar (sai da lista)" aria-label="Inativar procedimento" className="h-8 w-8 inline-flex items-center justify-center rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"><Archive className="h-3.5 w-3.5" /></button>
                       </div>
                     </td>
                   </tr>

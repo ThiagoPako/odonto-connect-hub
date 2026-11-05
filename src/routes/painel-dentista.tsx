@@ -136,7 +136,7 @@ function PainelDentistaPage() {
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title={`Painel — ${dentista.nome}`} />
-      <main className="flex-1 p-8 space-y-6 overflow-auto">
+      <main className="flex-1 p-4 sm:p-8 space-y-6 overflow-auto">
         {user?.role === "admin" && (
           <div className="flex items-center gap-4 animate-fade-in">
             <Link
@@ -157,11 +157,11 @@ function PainelDentistaPage() {
         )}
 
         {/* Dentist Profile Card */}
-        <div className="bg-card rounded-2xl border border-border/60 p-6 shadow-card flex items-center gap-6 animate-fade-in">
-          <div className="h-16 w-16 rounded-2xl bg-primary/10 flex items-center justify-center text-xl font-bold text-primary font-heading">
+        <div className="bg-card rounded-2xl border border-border/60 p-4 sm:p-6 shadow-card flex flex-col lg:flex-row lg:items-center gap-4 lg:gap-6 animate-fade-in">
+          <div className="h-16 w-16 shrink-0 rounded-2xl bg-primary/10 flex items-center justify-center text-xl font-bold text-primary font-heading">
             {iniciaisDentista}
           </div>
-          <div className="flex-1">
+          <div className="flex-1 min-w-0">
             <h2 className="text-lg font-bold text-foreground font-heading">{dentista.nome}</h2>
             <div className="flex items-center gap-4 mt-1 flex-wrap">
               {dentista.cro && <span className="text-xs text-muted-foreground">{dentista.cro}</span>}
@@ -178,19 +178,19 @@ function PainelDentistaPage() {
               </span>
             </div>
           </div>
-          <div className="grid grid-cols-4 gap-6">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 lg:gap-6">
             <div className="text-center">
-              <p className="text-2xl font-bold text-foreground font-heading">{atendimentos.length}</p>
+              <p className="text-xl sm:text-2xl font-bold text-foreground font-heading">{atendimentos.length}</p>
               <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Atendimentos</p>
             </div>
             <div className="text-center">
-              <p className="text-2xl font-bold text-foreground font-heading">
+              <p className="text-xl sm:text-2xl font-bold text-foreground font-heading">
                 {orcamentos.filter((o) => isAprovado(o.status)).length}
               </p>
               <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Aprovados</p>
             </div>
             <div className="text-center">
-              <p className="text-2xl font-bold text-primary font-heading">
+              <p className="text-xl sm:text-2xl font-bold text-primary font-heading">
                 R$ {orcamentos
                   .filter((o) => isAprovado(o.status))
                   .reduce((sum, o) => sum + o.total, 0)
@@ -199,7 +199,7 @@ function PainelDentistaPage() {
               <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Faturamento</p>
             </div>
             <div className="text-center">
-              <p className="text-2xl font-bold text-success font-heading">
+              <p className="text-xl sm:text-2xl font-bold text-success font-heading">
                 R$ {totalComissoes.toLocaleString("pt-BR")}
               </p>
               <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Comissões</p>
@@ -318,12 +318,12 @@ function ComissoesTab({
           return (
             <div
               key={c.id}
-              className="bg-card rounded-2xl border border-border/60 p-5 shadow-card hover:shadow-card-hover transition-all flex items-center gap-4"
+              className="bg-card rounded-2xl border border-border/60 p-4 sm:p-5 shadow-card hover:shadow-card-hover transition-all flex flex-wrap items-center gap-3 sm:gap-4"
             >
               <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center">
                 <Percent className="h-5 w-5 text-primary" />
               </div>
-              <div className="flex-1 min-w-0">
+              <div className="flex-1 min-w-[10rem]">
                 <p className="text-sm font-semibold text-foreground">{c.pacienteNome}</p>
                 <p className="text-xs text-muted-foreground mt-0.5">{c.procedimento}</p>
               </div>
@@ -382,13 +382,13 @@ function AtendimentosTab({ atendimentos }: { atendimentos: PainelAtendimento[] }
         return (
           <div
             key={a.id}
-            className="bg-card rounded-2xl border border-border/60 p-5 shadow-card hover:shadow-card-hover transition-all flex items-center gap-4"
+            className="bg-card rounded-2xl border border-border/60 p-4 sm:p-5 shadow-card hover:shadow-card-hover transition-all flex flex-wrap items-center gap-3 sm:gap-4"
           >
             <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center text-sm font-bold text-primary">
               {a.pacienteIniciais}
             </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
+            <div className="flex-1 min-w-[10rem]">
+              <div className="flex flex-wrap items-center gap-2">
                 <p className="text-sm font-semibold text-foreground">{a.pacienteNome}</p>
                 {a.pacienteId && (
                   <Link
@@ -396,6 +396,7 @@ function AtendimentosTab({ atendimentos }: { atendimentos: PainelAtendimento[] }
                     search={{ pacienteId: a.pacienteId }}
                     className="p-0.5 rounded hover:bg-primary/10"
                     title="Ver ficha"
+                    aria-label="Ver ficha do paciente"
                   >
                     <ExternalLink className="h-3 w-3 text-primary" />
                   </Link>
@@ -516,6 +517,7 @@ function AgendaTab({
                 search={{ pacienteId: item.pacienteId }}
                 className="p-0.5 rounded hover:bg-primary/10"
                 title="Ver ficha"
+                aria-label="Ver ficha do paciente"
               >
                 <ExternalLink className="h-3 w-3 text-primary" />
               </Link>
@@ -663,6 +665,7 @@ function OrcamentosTab({ orcamentos }: { orcamentos: PainelOrcamento[] }) {
                         search={{ pacienteId: orc.pacienteId }}
                         className="p-0.5 rounded hover:bg-primary/10"
                         title="Ver ficha"
+                        aria-label="Ver ficha do paciente"
                       >
                         <ExternalLink className="h-3 w-3 text-primary" />
                       </Link>
@@ -744,6 +747,7 @@ function ProntuarioTab({ prontuarios }: { prontuarios: PainelProntuario[] }) {
                     search={{ pacienteId: p.pacienteId }}
                     className="p-0.5 rounded hover:bg-primary/10"
                     title="Ver ficha"
+                    aria-label="Ver ficha do paciente"
                   >
                     <ExternalLink className="h-3 w-3 text-primary" />
                   </Link>
