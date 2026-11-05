@@ -14169,7 +14169,8 @@ app.get('/api/messages/search', async (req, res) => {
     const leadId = req.query.lead_id;
     if (!q || q.length < 2) return res.status(400).json({ error: 'Query mínima 2 caracteres' });
 
-    let query = "SELECT m.*, l.nome as lead_name FROM chat_messages m LEFT JOIN crm_leads l ON l.id = m.lead_id AND l.tenant_id = m.tenant_id WHERE m.content ILIKE $1 AND m.tenant_id = $2";
+    let query = "SELECT m.*, l.nome as lead_name FROM chat_messages m LEFT JOIN crm_leads l ON l.id::text = m.lead_id AND l.tenant_id = m.tenant_id WHERE m.content ILIKE $1 AND m.tenant_id = $2";
+    // chat_messages.lead_id é text e crm_leads.id é uuid: sem o ::text o Postgres dá 500 (uuid = text).
     const values = [`%${q}%`, user.tenant_id];
 
     if (leadId) {
@@ -14182,6 +14183,7 @@ app.get('/api/messages/search', async (req, res) => {
     const { rows } = await pool.query(query, values);
     res.json(rows);
   } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
     res.status(500).json({ error: error.message });
   }
 });

@@ -141,3 +141,37 @@ describe('/api/clinic-location', () => {
     expect(sel.params).toEqual([tenantB, 'clinic_location']);
   });
 });
+
+describe('GET /api/messages/search', () => {
+  const buscar = (query, tk = token()) =>
+    request(app).get('/api/messages/search').query(query).set('Authorization', `Bearer ${tk}`);
+  const busca = () => sqlLog.find(q => /FROM chat_messages m/.test(q.text));
+
+  test('junta o lead convertendo o uuid para texto (chat_messages.lead_id é text)', async () => {
+    const res = await buscar({ q: 'dor' });
+    expect(res.status).toBe(200);
+    // Sem o ::text o Postgres responde "operator does not exist: uuid = text" (500 em produção).
+    expect(busca().text).toMatch(/l\.id::text = m\.lead_id/);
+    expect(busca().text).not.toMatch(/l\.id = m\.lead_id/);
+  });
+
+  test('mantém o filtro da clínica na mensagem e no lead', async () => {
+    await buscar({ q: 'dor', tenant_id: tenantB });
+    const q = busca();
+    expect(q.text).toMatch(/l\.tenant_id = m\.tenant_id/);
+    expect(q.text).toMatch(/m\.tenant_id = \$2/);
+    expect(q.params[1]).toBe(tenantA);
+  });
+
+  test('filtro por lead continua com a clínica', async () => {
+    await buscar({ q: 'dor', lead_id: 'lead-1' });
+    const q = busca();
+    expect(q.text).toMatch(/m\.tenant_id = \$2 AND m\.lead_id = \$3/);
+    expect(q.params).toEqual(['%dor%', tenantA, 'lead-1']);
+  });
+
+  test('sem login → 401', async () => {
+    const res = await request(app).get('/api/messages/search').query({ q: 'dor' });
+    expect(res.status).toBe(401);
+  });
+});
