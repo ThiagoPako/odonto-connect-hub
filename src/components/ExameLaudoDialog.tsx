@@ -59,6 +59,10 @@ export function ExameLaudoDialog({ exame: exameProp, onOpenChange, onSaved }: Pr
     setAlterou(false);
     setArquivos([]);
     carregarArquivos();
+    // Versão completa (clínica, nascimento, quem laudou) para impressão e controle de edição
+    let ativo = true;
+    examesApi.get(exameProp.id).then((e) => { if (ativo) setExame(e); }).catch(() => { /* usa a cópia da lista */ });
+    return () => { ativo = false; };
   }, [exameProp, carregarArquivos]);
 
   async function recarregarExame(id: string) {
