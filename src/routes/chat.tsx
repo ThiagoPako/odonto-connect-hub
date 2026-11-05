@@ -1716,7 +1716,7 @@ function ChatPage() {
     "flex-1 min-w-0 min-h-11 flex items-center justify-center gap-1.5 px-2 text-sm transition-colors border-b-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
 
   return (
-    <div className="flex-1 flex flex-col h-full overflow-hidden">
+    <main className="flex-1 flex flex-col h-full overflow-hidden">
       <div className={selectedLead ? "hidden md:block" : undefined}>
         <DashboardHeader title="Chat" />
       </div>
@@ -2094,6 +2094,6 @@ function ChatPage() {
         onOpenChange={setImportContactsOpen}
         onImported={reloadQueueLeads}
       />
-    </div>
+    </main>
   );
 }
