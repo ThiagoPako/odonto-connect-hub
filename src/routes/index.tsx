@@ -541,12 +541,14 @@ function PlanStage({ plan, compact = false }: { plan: (typeof plans)[number]; co
       >
         Testar o {plan.name} grátis <ArrowRight className="h-4 w-4" />
       </Link>
-      <a
-        href={`mailto:${EMAIL_CONTATO}?subject=${encodeURIComponent(`Valores do plano ${plan.name}`)}`}
-        className="inline-flex items-center justify-center gap-2 min-h-11 text-[0.9375rem] font-semibold text-stage-foreground underline-offset-4 hover:underline"
-      >
-        <Mail className="h-4 w-4" aria-hidden="true" /> Consultar valores
-      </a>
+      {EMAIL_CONTATO && (
+        <a
+          href={`mailto:${EMAIL_CONTATO}?subject=${encodeURIComponent(`Valores do plano ${plan.name}`)}`}
+          className="inline-flex items-center justify-center gap-2 min-h-11 text-[0.9375rem] font-semibold text-stage-foreground underline-offset-4 hover:underline"
+        >
+          <Mail className="h-4 w-4" aria-hidden="true" /> Consultar valores
+        </a>
+      )}
       </div>
     </div>
   );
@@ -591,9 +593,11 @@ function Faq() {
               Perguntas frequentes
             </h2>
             <p className="mt-4 text-lg text-foreground/80">Tire suas dúvidas sobre o Odonto Connect.</p>
-            <a href={WHATSAPP_CONSULTOR ?? `mailto:${EMAIL_CONTATO}`} {...(WHATSAPP_CONSULTOR ? { target: "_blank", rel: "noopener noreferrer" } : {})} className="mt-6 inline-flex items-center gap-2 text-[0.9375rem] font-semibold text-primary hover:underline underline-offset-4">
-              Outra dúvida? Fale com a nossa equipe <ArrowRight className="h-4 w-4" />
-            </a>
+            {(WHATSAPP_CONSULTOR || EMAIL_CONTATO) && (
+              <a href={WHATSAPP_CONSULTOR ?? `mailto:${EMAIL_CONTATO}`} {...(WHATSAPP_CONSULTOR ? { target: "_blank", rel: "noopener noreferrer" } : {})} className="mt-6 inline-flex items-center gap-2 text-[0.9375rem] font-semibold text-primary hover:underline underline-offset-4">
+                Outra dúvida? Fale com a nossa equipe <ArrowRight className="h-4 w-4" />
+              </a>
+            )}
           </div>
         </div>
         <div className="lg:col-span-8 space-y-2">
@@ -662,11 +666,13 @@ function SiteFooter() {
                 </a>
               </li>
             )}
-            <li>
-              <a href={`mailto:${EMAIL_CONTATO}`} className="inline-flex items-center gap-1.5 hover:text-primary transition-colors">
-                <Mail className="h-4 w-4" aria-hidden="true" /> E-mail
-              </a>
-            </li>
+            {EMAIL_CONTATO && (
+              <li>
+                <a href={`mailto:${EMAIL_CONTATO}`} className="inline-flex items-center gap-1.5 hover:text-primary transition-colors">
+                  <Mail className="h-4 w-4" aria-hidden="true" /> E-mail
+                </a>
+              </li>
+            )}
           </ul>
           <ul className="flex flex-wrap gap-x-6 gap-y-2 md:justify-end text-muted-foreground">
             <li><Link to="/termos" className="hover:text-foreground transition-colors">Termos de Uso</Link></li>
