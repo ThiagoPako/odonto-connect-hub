@@ -18,7 +18,7 @@ import {
 } from "@/lib/vpsApi";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { formatBRL, parseValorBRL, maskValorDigitado, maskCPF, cpfValido, isoParaBr } from "@/lib/formatos";
+import { formatBRL, parseValorBRL, maskValorDigitado, maskCPF, cpfValido, isoParaBr, centavos } from "@/lib/formatos";
 import { localDateISO } from "@/lib/utils";
 import type { FinanceMovement, BankAccount, Employee, Payroll, Bill } from "@/data/financeiroMockData";
 
@@ -103,7 +103,7 @@ const ariaErro = (id: string, erros: Erros) =>
 function validarValor(text: string): number | string {
   if (!text.trim()) return "Informe o valor.";
   const v = parseValorBRL(text);
-  if (v === null) return "Valor inválido. Use o formato 1.234,56.";
+  if (v === null) return "Valor inválido. Use o formato brasileiro, por exemplo 1.234,56 (não 1,234.56).";
   if (v <= 0) return "O valor precisa ser maior que zero.";
   return v;
 }
@@ -276,7 +276,8 @@ function FinanceiroPage() {
       employee_id: (created.data as any)?.id ?? null, employee_name: emp.name,
       month: `${String(new Date().getMonth() + 1).padStart(2, '0')}/${new Date().getFullYear()}`,
       gross_salary: emp.salary, benefits: emp.benefits,
-      deductions, net_salary: emp.salary + emp.benefits - deductions,
+      // Centavos: 1500,10 + 200,20 − 0,30 virava 1700.0000000000002 no banco
+      deductions, net_salary: centavos(emp.salary + emp.benefits - deductions),
       status: 'pendente',
     });
     if (folha.error) toast.error("Funcionário cadastrado, mas a folha do mês não foi criada: " + folha.error);
@@ -907,7 +908,7 @@ function TabFuncionarios({
   const opcional = (text: string): number | string => {
     if (!text.trim()) return 0;
     const v = parseValorBRL(text);
-    if (v === null) return "Valor inválido. Use o formato 1.234,56.";
+    if (v === null) return "Valor inválido. Use o formato brasileiro, por exemplo 1.234,56 (não 1,234.56).";
     if (v < 0) return "Não pode ser negativo.";
     return v;
   };
@@ -1118,7 +1119,7 @@ function TabBancos({
     if (!form.name.trim()) e["banco-nome"] = "Dê um nome à conta (ex.: Conta principal).";
     if (!form.bank.trim()) e["banco-banco"] = "Informe o banco.";
     const saldo = form.balance.trim() ? parseValorBRL(form.balance) : 0;
-    if (saldo === null) e["banco-saldo"] = "Valor inválido. Use o formato 1.234,56.";
+    if (saldo === null) e["banco-saldo"] = "Valor inválido. Use o formato brasileiro, por exemplo 1.234,56 (não 1,234.56).";
     setErros(e);
     if (Object.keys(e).length || saldo === null) return;
     setSaving(true);
