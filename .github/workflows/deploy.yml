@@ -126,6 +126,8 @@ jobs:
             cat /root/odonto-connect/vps-api-server/migration-contatos-recuperacao.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             cat /root/odonto-connect/vps-api-server/migration-regua-cobranca.sql | sudo -u postgres psql -p 5433 -d odonto_db -v ON_ERROR_STOP=1 2>&1 \
               || echo "::warning::migration-regua-cobranca.sql falhou: confira pacientes.responsavel_* e financeiro.cobranca_pausa*"
+            cat /root/odonto-connect/vps-api-server/migration-contas-receber.sql | sudo -u postgres psql -p 5433 -d odonto_db -v ON_ERROR_STOP=1 2>&1 \
+              || echo "::warning::migration-contas-receber.sql falhou: confira financeiro.orcamento_id, financeiro.pago_em e o índice único das parcelas"
             echo "=== Migrations applied ==="
 
             # ─── Pre-flight syntax check on server.mjs ─────────────────────
