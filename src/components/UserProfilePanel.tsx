@@ -76,8 +76,8 @@ export function UserProfilePanel() {
       toast.error("Preencha todos os campos de senha");
       return;
     }
-    if (newPassword.length < 6) {
-      toast.error("Nova senha deve ter pelo menos 6 caracteres");
+    if (newPassword.length < 8) {
+      toast.error("Nova senha deve ter pelo menos 8 caracteres");
       return;
     }
     if (newPassword !== confirmPassword) {
@@ -228,7 +228,7 @@ export function UserProfilePanel() {
                   type="password"
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
-                  placeholder="Mín. 6 caracteres"
+                  placeholder="Mín. 8 caracteres"
                 />
               </div>
               <div className="space-y-2">

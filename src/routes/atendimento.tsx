@@ -15,12 +15,14 @@ import { GravacaoConsentDialog, GRAVACAO_CONSENT_TEXT, GRAVACAO_CONSENT_VERSION 
 import { OdontogramaEditor } from "@/components/OdontogramaChart";
 import {
   getPacienteById, getPacienteIniciais, getPacienteIdade, getPacienteIdadeTexto,
-  getAlergias, getCondicoesCriticas, getAnamnese, getOdontograma, temAlertasMedicos,
+  getOdontograma,
   type Paciente
 } from "@/data/registroCentral";
 import { type Appointment } from "@/data/agendaMockData";
 import { aiApi, consultationsApi, agendaApi, dentistasApi, consentimentosApi, pacientesApi, type AgendamentoVPS, type ConsultationRecord, type ConsentimentoPaciente } from "@/lib/vpsApi";
 import { toast } from "sonner";
+import { AlertasMedicosBanner, type EstadoAnamnese } from "@/components/AlertasMedicosBanner";
+import { extrairAlertasMedicos, type AnamneseVPS } from "@/lib/alertasMedicos";
 
 type SearchParams = { appointmentId?: string };
 
@@ -184,6 +186,31 @@ function ConsultaPage() {
     return () => { cancelled = true; };
   }, [pacienteSelecionado?.id]);
 
+  // Alergias e alertas médicos: anamnese real do paciente do agendamento.
+  // Só busca com paciente_id real — sem ele o "id" do paciente é o do agendamento.
+  const pacienteIdReal = appointmentSelecionado?.pacienteId || null;
+  const [estadoAnamnese, setEstadoAnamnese] = useState<EstadoAnamnese>({ status: "carregando" });
+  const [recarregarAnamnese, setRecarregarAnamnese] = useState(0);
+  useEffect(() => {
+    if (!pacienteIdReal) {
+      setEstadoAnamnese({ status: "sem_paciente" });
+      return;
+    }
+    let cancelled = false;
+    setEstadoAnamnese({ status: "carregando" });
+    pacientesApi.getAnamnese(pacienteIdReal).then(({ data, error }) => {
+      if (cancelled) return;
+      if (error) {
+        setEstadoAnamnese({ status: "erro", mensagem: error });
+      } else if (!data) {
+        setEstadoAnamnese({ status: "vazia" });
+      } else {
+        setEstadoAnamnese({ status: "ok", alertas: extrairAlertasMedicos(data as AnamneseVPS) });
+      }
+    });
+    return () => { cancelled = true; };
+  }, [pacienteIdReal, recarregarAnamnese]);
+
   /** Convert VPS agendamento to local Appointment shape */
   const vpsToAppointment = useCallback((a: AgendamentoVPS): Appointment => {
     const name = a.paciente_nome || "Paciente";
@@ -280,6 +307,8 @@ function ConsultaPage() {
     if (pacienteBuscandoRef.current === p.id) return;
     pacienteBuscandoRef.current = p.id;
     let vivo = true;
+    // TODO(LGPD, minimização): o backend não tem GET /api/pacientes/:id; a lista inteira é
+    // carregada só para achar um paciente. Trocar por pacientesApi.get(id) quando o endpoint existir.
     pacientesApi.list().then(({ data, error }) => {
       pacienteBuscandoRef.current = null;
       if (!vivo) return;
@@ -573,10 +602,6 @@ function ConsultaPage() {
   const formatTime = (s: number) =>
     `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 
-  const alergias = pacienteSelecionado ? getAlergias(pacienteSelecionado.id) : [];
-  const condicoes = pacienteSelecionado ? getCondicoesCriticas(pacienteSelecionado.id) : [];
-  const temAlertas = pacienteSelecionado ? temAlertasMedicos(pacienteSelecionado.id) : false;
-
   // Odontograma state — load from patient data
   const odontogramaBase = pacienteSelecionado ? getOdontograma(pacienteSelecionado.id) : undefined;
   const [dentesOdontograma, setDentesOdontograma] = useState<import("@/data/pacientesMockData").DenteInfo[]>([]);
@@ -607,6 +632,14 @@ function ConsultaPage() {
     <div className="flex-1 flex flex-col overflow-hidden">
       <DashboardHeader title="Consulta" />
       <main className="flex-1 overflow-auto p-6">
+        {pacienteSelecionado && (
+          <div className="sticky -top-6 z-20 -mt-6 mb-4 pt-6 pb-1 bg-background max-w-[1600px] mx-auto">
+            <AlertasMedicosBanner
+              estado={estadoAnamnese}
+              onTentarNovamente={() => setRecarregarAnamnese(n => n + 1)}
+            />
+          </div>
+        )}
         <div className="max-w-[1600px] mx-auto grid grid-cols-12 gap-6">
 
               {/* Coluna esquerda — Agenda do Dia */}
@@ -691,35 +724,6 @@ function ConsultaPage() {
                     )}
                   </div>
                 </div>
-
-                {/* Alertas médicos */}
-                {pacienteSelecionado && temAlertas && (
-                  <div className="bg-destructive/5 border border-destructive/20 rounded-2xl p-4 animate-slide-up" style={{ animationDelay: "50ms" }}>
-                    <h3 className="text-xs font-semibold text-destructive flex items-center gap-1.5 mb-2">
-                      <AlertTriangle className="h-3.5 w-3.5" /> ALERTAS MÉDICOS
-                    </h3>
-                    {alergias.length > 0 && (
-                      <div className="mb-2">
-                        <p className="text-[10px] text-destructive/70 font-medium uppercase">Alergias</p>
-                        <div className="flex flex-wrap gap-1 mt-1">
-                          {alergias.map(a => (
-                            <span key={a} className="px-2 py-0.5 rounded-full bg-destructive/10 text-destructive text-[10px] font-medium">{a}</span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    {condicoes.length > 0 && (
-                      <div>
-                        <p className="text-[10px] text-destructive/70 font-medium uppercase">Condições</p>
-                        <div className="flex flex-wrap gap-1 mt-1">
-                          {condicoes.map(c => (
-                            <span key={c} className="px-2 py-0.5 rounded-full bg-destructive/10 text-destructive text-[10px] font-medium">{c}</span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
 
                 {/* Info paciente */}
                 {pacienteSelecionado && (

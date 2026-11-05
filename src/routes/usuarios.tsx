@@ -92,8 +92,8 @@ function UsuariosPage() {
   useEffect(() => { fetchUsers(); }, []);
 
   const handleCreate = async () => {
-    if (!cName.trim() || !cEmail.trim() || cPassword.length < 6) {
-      toast.error("Preencha nome, email e senha (mín. 6 caracteres)");
+    if (!cName.trim() || !cEmail.trim() || cPassword.length < 8) {
+      toast.error("Preencha nome, email e senha (mín. 8 caracteres)");
       return;
     }
     setCreating(true);
@@ -141,8 +141,8 @@ function UsuariosPage() {
   };
 
   const handleResetPw = async () => {
-    if (!pwUser || pwValue.length < 6) {
-      toast.error("Senha mínima 6 caracteres"); return;
+    if (!pwUser || pwValue.length < 8) {
+      toast.error("Senha mínima 8 caracteres"); return;
     }
     setPwSaving(true);
     const { error } = await saasApi.resetTenantUserPassword(pwUser.id, pwValue);
@@ -210,7 +210,7 @@ function UsuariosPage() {
                       </div>
                       <div className="space-y-2">
                         <Label>Senha</Label>
-                        <Input type="password" value={cPassword} onChange={(e) => setCPassword(e.target.value)} minLength={6} />
+                        <Input type="password" value={cPassword} onChange={(e) => setCPassword(e.target.value)} minLength={8} />
                       </div>
                       <div className="space-y-2">
                         <Label>Perfil de acesso</Label>
@@ -382,7 +382,7 @@ function UsuariosPage() {
             </p>
             <div className="space-y-2">
               <Label>Nova senha</Label>
-              <Input type="password" value={pwValue} onChange={(e) => setPwValue(e.target.value)} minLength={6} />
+              <Input type="password" value={pwValue} onChange={(e) => setPwValue(e.target.value)} minLength={8} />
             </div>
           </div>
           <DialogFooter>

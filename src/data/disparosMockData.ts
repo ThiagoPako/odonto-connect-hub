@@ -64,35 +64,36 @@ export const templatesProntos: DisparoTemplate[] = [
   {
     id: "tpl1",
     nome: "Lembrete de Retorno",
-    mensagem: "Olá {{nome}}! 😊 Faz um tempo desde sua última visita na Odonto Connect. Que tal agendar seu retorno? Cuidar do sorriso é cuidar da saúde! 🦷\n\nAgende pelo WhatsApp ou ligue: (11) 99999-0001",
-    variaveis: ["nome"],
+    mensagem: "Olá, {{nome}}! Aqui é da {{clinica}}. Já faz um tempo desde sua última visita. Quer agendar um retorno? É só responder esta mensagem. Responda SAIR para não receber mais.",
+    variaveis: ["nome", "clinica"],
   },
   {
     id: "tpl2",
-    nome: "Promoção Clareamento",
-    mensagem: "{{nome}}, temos uma novidade! ✨\n\nClareamento dental com 20% de desconto este mês. Resultado garantido em apenas 1 sessão!\n\nAgende sua avaliação gratuita. Vagas limitadas! 📅",
-    variaveis: ["nome"],
+    nome: "Convite para avaliação",
+    mensagem: "Olá, {{nome}}! Aqui é da {{clinica}}. Manter as consultas em dia ajuda a cuidar do seu sorriso. Se quiser marcar um horário, responda esta mensagem. Responda SAIR para não receber mais.",
+    variaveis: ["nome", "clinica"],
   },
   {
     id: "tpl3",
     nome: "Aniversário",
-    mensagem: "Parabéns, {{nome}}! 🎂🎉\n\nA equipe Odonto Connect deseja um feliz aniversário!\n\nComo presente, preparamos uma condição especial para você. Entre em contato e saiba mais! 🎁",
-    variaveis: ["nome"],
+    mensagem: "Feliz aniversário, {{nome}}! 🎂 A equipe da {{clinica}} deseja um dia muito especial para você. Responda SAIR para não receber mais.",
+    variaveis: ["nome", "clinica"],
   },
   {
     id: "tpl4",
-    nome: "Avaliação Gratuita",
-    mensagem: "Oi {{nome}}, tudo bem?\n\nEstamos oferecendo avaliação odontológica gratuita esta semana! 🦷\n\nAproveite para cuidar do seu sorriso sem compromisso. Agende agora!",
-    variaveis: ["nome"],
-  },
-  {
-    id: "tpl5",
-    nome: "Confirmação de Consulta",
-    mensagem: "Olá {{nome}}! 📋\n\nSua consulta está agendada para {{data}} às {{horario}} com {{dentista}}.\n\nConfirme respondendo ✅ ou ligue para remarcar.",
-    variaveis: ["nome", "data", "horario", "dentista"],
+    nome: "Horários disponíveis",
+    mensagem: "Oi, {{nome}}! Aqui é da {{clinica}}. Temos horários para avaliação nesta semana. Quer que a gente reserve um para você? Responda SAIR para não receber mais.",
+    variaveis: ["nome", "clinica"],
   },
 ];
 
+// Confirmação é transacional: não é oferecida como modelo de disparo em massa.
+const templateConfirmacaoDemo: DisparoTemplate = {
+  id: "tpl5",
+  nome: "Confirmação de Consulta",
+  mensagem: "Olá {{nome}}! 📋\n\nSua consulta está agendada para {{data}} às {{horario}} com {{dentista}}.\n\nConfirme respondendo ✅ ou ligue para remarcar.",
+  variaveis: ["nome", "data", "horario", "dentista"],
+};
 export const mockDisparos: DisparoProgramado[] = [
   {
     id: "dp1",
@@ -153,7 +154,7 @@ export const mockDisparos: DisparoProgramado[] = [
   {
     id: "dp4",
     nome: "Confirmação Dia Seguinte",
-    template: templatesProntos[4],
+    template: templateConfirmacaoDemo,
     tipo: "recorrente",
     diasSemana: ["SEG", "TER", "QUA", "QUI", "SEX"],
     horarioInicio: "18:00",

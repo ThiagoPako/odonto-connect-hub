@@ -19,7 +19,7 @@ export const Route = createFileRoute("/canais")({
 });
 
 
-const DEFAULT_SWITCH_MSG = `Olá! Informamos que tivemos um problema técnico temporário com nossa conexão anterior. Estamos continuando seu atendimento por este novo número. Fique tranquilo(a), temos todo o histórico da sua conversa e seguiremos de onde paramos. 😊`;
+const DEFAULT_SWITCH_MSG = `Olá! A partir de agora, nosso atendimento pelo WhatsApp passa a ser por este número. Pode salvar o contato e continuar a conversa por aqui. 😊`;
 const syncedChatInstances = new Set<string>();
 
 function CanaisPage() {

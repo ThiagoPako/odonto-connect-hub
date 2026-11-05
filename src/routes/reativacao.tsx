@@ -60,7 +60,7 @@ function ReativacaoPage() {
   const [newDays, setNewDays] = useState(180);
   const [newOrigin, setNewOrigin] = useState<ReactivationOrigin>("todos");
   const [newMessage, setNewMessage] = useState(
-    "Olá {nome}! Sentimos sua falta 😊 Agende sua consulta de retorno!"
+    "Olá, {nome}! Aqui é da {clinica}. Faz um tempo desde sua última visita. Quando quiser marcar um retorno, é só responder esta mensagem. Responda SAIR para não receber mais."
   );
 
   const loadAll = useCallback(async () => {
@@ -148,7 +148,7 @@ function ReativacaoPage() {
     setNewName("");
     setNewDays(180);
     setNewOrigin("todos");
-    setNewMessage("Olá {nome}! Sentimos sua falta 😊 Agende sua consulta de retorno!");
+    setNewMessage("Olá, {nome}! Aqui é da {clinica}. Faz um tempo desde sua última visita. Quando quiser marcar um retorno, é só responder esta mensagem. Responda SAIR para não receber mais.");
     await loadAll();
   };
 
@@ -381,7 +381,7 @@ function ReativacaoPage() {
                     placeholder="Use {nome} para personalizar..."
                     className="mt-1 w-full px-3 py-2 rounded-lg bg-muted border-0 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary resize-none"
                   />
-                  <p className="text-[9px] text-muted-foreground mt-1">Variáveis: {"{nome}"}, {"{tratamento}"}, {"{dias_inativo}"}</p>
+                  <p className="text-[9px] text-muted-foreground mt-1">Variáveis: {"{nome}"}, {"{clinica}"}, {"{dias_inativo}"}</p>
                 </div>
 
                 <div className="flex items-center justify-end pt-2 border-t border-border">
