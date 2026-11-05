@@ -383,6 +383,8 @@ export interface AgendamentoVPS {
   categoria_cor?: string;
   confirmacao_canal?: string;
   confirmacao_quando?: string;
+  /** Pedido de confirmação pelo WhatsApp: na_fila · aguardando · confirmado · remarcar · falhou (só leitura). */
+  lembrete_status?: "na_fila" | "aguardando" | "confirmado" | "remarcar" | "falhou" | null;
   alerta_retorno_canal?: string;
   alerta_retorno_quando?: string;
   evento_titulo?: string;

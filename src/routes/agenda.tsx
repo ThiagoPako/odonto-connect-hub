@@ -14,6 +14,7 @@ import { AgendaGrid } from "@/components/agenda/AgendaGrid";
 import { NovoAgendamentoModal } from "@/components/agenda/NovoAgendamentoModal";
 import { AgendamentoPopover } from "@/components/agenda/AgendamentoPopover";
 import { AgendaStatusFilter } from "@/components/agenda/AgendaStatusFilter";
+import { STATUS_OPTIONS as AGENDA_STATUS_OPTIONS, UNCONFIRMED_STATUSES } from "@/components/agenda/agendaStatus";
 import { cn } from "@/lib/utils";
 import { Calendar as CalendarIcon } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -66,7 +67,7 @@ function AgendaPage() {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [profs, setProfs] = useState<Prof[]>([]);
   const [selectedProfs, setSelectedProfs] = useState<string[]>([]);
-  const [selectedStatuses, setSelectedStatuses] = useState<string[]>(["agendado", "confirmado", "em_atendimento", "finalizado", "faltou", "cancelado"]);
+  const [selectedStatuses, setSelectedStatuses] = useState<string[]>(AGENDA_STATUS_OPTIONS.map((s) => s.id));
   const [appointments, setAppointments] = useState<AgendamentoVPS[]>([]);
   const [config, setConfig] = useState<ClinicaConfig | null>(null);
   const [loading, setLoading] = useState(false);
@@ -385,7 +386,8 @@ function AgendaPage() {
             <AgendaStatusFilter 
               selected={selectedStatuses}
               onToggle={(id) => setSelectedStatuses(prev => prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id])}
-              onSelectAll={() => setSelectedStatuses(prev => prev.length === 6 ? [] : ["agendado", "confirmado", "em_atendimento", "finalizado", "faltou", "cancelado"])}
+              onSelectAll={() => setSelectedStatuses(prev => prev.length === AGENDA_STATUS_OPTIONS.length ? [] : AGENDA_STATUS_OPTIONS.map((s) => s.id))}
+              onOnlyUnconfirmed={() => setSelectedStatuses(UNCONFIRMED_STATUSES)}
             />
             <AgendaProfessionalsList
               professionals={profs}

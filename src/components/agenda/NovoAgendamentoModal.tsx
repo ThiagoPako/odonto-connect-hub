@@ -36,6 +36,15 @@ const CATEGORIAS = [
   { label: "Retorno", value: "retorno", cor: "bg-success/20" },
 ];
 
+// Antecedência do pedido de confirmação pelo WhatsApp (o servidor lê confirmacao_quando).
+// Sem escolha vale a véspera, como sempre foi.
+const CONFIRMACAO_OPCOES = [
+  { label: "Na véspera (padrão)", value: "1d" },
+  { label: "2 dias antes", value: "2d" },
+  { label: "3 dias antes", value: "3d" },
+  { label: "1 semana antes", value: "7d" },
+];
+
 const QUANDO_OPCOES = [
   { label: "Não enviar", value: "_none" },
   { label: "Enviar agora", value: "agora" },
@@ -527,25 +536,25 @@ export function NovoAgendamentoModal({
             </div>
 
             {/* Confirmação + Alerta de retorno.
-                Hoje o servidor não usa confirmacao_quando nem alerta_retorno_* para enviar nada:
-                o único envio é o lembrete automático da véspera, que vale para toda consulta.
-                Por isso as escolhas ficam desabilitadas ("em breve") e o aviso diz o que de fato acontece. */}
+                confirmacao_quando define a antecedência do pedido de confirmação (botões Confirmar /
+                Preciso remarcar). alerta_retorno_* ainda não é usado pelo servidor: fica "em breve". */}
             <div className="rounded-lg border border-border/60 p-3 space-y-3">
               <div className="flex items-start gap-2 text-[12px]">
                 <MessageSquare className="h-4 w-4 text-primary shrink-0 mt-0.5" />
                 <p className="text-foreground">
-                  <span className="font-medium">Lembrete automático:</span> na véspera da consulta, o paciente recebe uma mensagem no WhatsApp da clínica pedindo confirmação (quando o WhatsApp está conectado e o paciente tem telefone).
+                  <span className="font-medium">Confirmação automática:</span> o paciente recebe uma mensagem no WhatsApp da clínica para confirmar ou pedir para remarcar (quando o WhatsApp está conectado e o paciente tem telefone). A resposta aparece no card da agenda.
                 </p>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <Label className="mb-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-                    Confirmação extra <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[9px] font-bold uppercase text-primary">em breve</span>
-                  </Label>
-                  <Select value="_none" disabled>
-                    <SelectTrigger aria-label="Confirmação extra (em breve)"><SelectValue /></SelectTrigger>
+                  <Label htmlFor="confirmacao-quando" className="mb-1 block text-xs">Pedir confirmação</Label>
+                  <Select
+                    value={["2d", "3d", "7d"].includes(confirmacaoQuando) ? confirmacaoQuando : "1d"}
+                    onValueChange={(v) => setConfirmacaoQuando(v === "1d" ? "" : v)}
+                  >
+                    <SelectTrigger id="confirmacao-quando" aria-label="Quando pedir confirmação"><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      {QUANDO_OPCOES.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                      {CONFIRMACAO_OPCOES.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </div>
