@@ -36,8 +36,14 @@ test.describe("Fluxos críticos", () => {
     await dialog.locator("button", { hasText: "Selecione" }).click();
     await page.getByRole("option", { name: "Dr. Davi Dentista" }).click();
     // "Confirmação" vem como "Enviar agora" por padrão: desligamos para o teste não enfileirar WhatsApp.
-    await dialog.locator("button", { hasText: "Enviar agora" }).first().click();
-    await page.getByRole("option", { name: "Não enviar" }).first().click();
+    // (Versões novas da tela já abrem em "Não enviar" e sem esse seletor: só mexe se ele existir.)
+    const confirmacao = dialog.locator("button:not([disabled])", { hasText: "Enviar agora" }).first();
+    if (await confirmacao.count()) {
+      await confirmacao.click();
+      await page.getByRole("option", { name: "Não enviar" }).first().click();
+    }
+    // Reexecuções criam conflito de horário (09:00 do mesmo profissional): a tela pede window.confirm — aceitamos.
+    page.once("dialog", (d) => d.accept());
     const resp = page.waitForResponse((r) => r.url().endsWith("/api/agenda") && r.request().method() === "POST");
     await page.getByRole("button", { name: "Agendar", exact: true }).click();
     expect((await resp).status()).toBe(200);
