@@ -104,7 +104,8 @@ describe('GET /api/dentista/painel/:id', () => {
   test('id inválido → 404 sem consultar o banco', async () => {
     const res = await chamar('get', '/api/dentista/painel/nao-uuid', token(tenantA));
     expect(res.status).toBe(404);
-    expect(sqlLog).toHaveLength(0);
+    // O import do clinicorp.mjs roda ALTER TABLE de boot em paralelo: confere só as consultas da rota.
+    expect(sqlLog.filter(q => /FROM (dentistas|agendamentos|orcamentos|prontuarios|comissoes|tratamentos)\b/.test(q.text))).toHaveLength(0);
   });
 
   test('dentista da própria clínica: todas as consultas filtram tenant_id e alergias vêm da anamnese', async () => {
@@ -185,13 +186,25 @@ describe('GET /api/comercial/painel', () => {
 
 describe('POST /api/crm/leads/:id/convert-to-patient', () => {
   test('não lê crm_leads.cpf; CPF opcional vem do corpo', async () => {
-    const res = await chamar('post', `/api/crm/leads/${leadDaA}/convert-to-patient`, token(tenantA), { cpf: '123' });
+    const res = await chamar('post', `/api/crm/leads/${leadDaA}/convert-to-patient`, token(tenantA), { cpf: '12345678901' });
     expect(res.status).toBe(200);
     const sel = sqlLog.find(q => /FROM crm_leads WHERE id/.test(q.text));
     expect(sel.text).not.toMatch(/cpf/);
     const ins = sqlLog.find(q => /INSERT INTO pacientes/.test(q.text));
-    expect(ins.params[2]).toBe('123');
+    expect(ins.params[2]).toBe('12345678901');
     expect(ins.params[6]).toBe(tenantA);
+  });
+
+  test.each([['123'], ['123.456.789-01'], ['1234567890a'], [12345678901]])('CPF %p inválido → 400 sem gravar', async (cpf) => {
+    const res = await chamar('post', `/api/crm/leads/${leadDaA}/convert-to-patient`, token(tenantA), { cpf });
+    expect(res.status).toBe(400);
+    expect(sqlLog.some(q => /INSERT INTO pacientes/.test(q.text))).toBe(false);
+  });
+
+  test('CPF vazio grava null', async () => {
+    const res = await chamar('post', `/api/crm/leads/${leadDaA}/convert-to-patient`, token(tenantA), { cpf: '  ' });
+    expect(res.status).toBe(200);
+    expect(sqlLog.find(q => /INSERT INTO pacientes/.test(q.text)).params[2]).toBeNull();
   });
 
   test('lead de outra clínica → 404', async () => {

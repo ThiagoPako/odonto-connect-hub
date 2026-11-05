@@ -12085,6 +12085,12 @@ app.post('/api/crm/leads/:id/convert-to-patient', async (req, res) => {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { id } = req.params;
+    // CPF opcional (crm_leads não guarda CPF): vazio ou exatamente 11 dígitos.
+    const cpfBody = req.body?.cpf;
+    if (cpfBody !== undefined && cpfBody !== null && (typeof cpfBody !== 'string' || !/^(\d{11})?$/.test(cpfBody.trim()))) {
+      return res.status(400).json({ error: 'CPF inválido: informe 11 dígitos, sem pontos ou traço' });
+    }
+    const cpf = typeof cpfBody === 'string' && cpfBody.trim() ? cpfBody.trim() : null;
 
     // Fetch lead data
     const { rows: leadRows } = await pool.query(
@@ -12114,8 +12120,7 @@ app.post('/api/crm/leads/:id/convert-to-patient', async (req, res) => {
     const pacienteId = crypto.randomUUID();
     await pool.query(
       'INSERT INTO pacientes (id, nome, cpf, telefone, email, observacoes, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7)',
-      // crm_leads não tem CPF: vem do corpo, se a recepção informou na conversão.
-      [pacienteId, lead.nome, (typeof req.body?.cpf === 'string' && req.body.cpf.trim()) || null, lead.telefone || null, lead.email || null, `Origem CRM: ${lead.origem || '—'}. ${lead.observacoes || ''}`, user.tenant_id]
+      [pacienteId, lead.nome, cpf, lead.telefone || null, lead.email || null, `Origem CRM: ${lead.origem || '—'}. ${lead.observacoes || ''}`, user.tenant_id]
     );
 
     // Update lead status to 'paciente' and link paciente_id
