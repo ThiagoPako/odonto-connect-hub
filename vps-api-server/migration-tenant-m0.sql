@@ -7,7 +7,8 @@
 --     32 tabelas que as rotas novas filtram; clinica_config por clínica; tenant_ai_settings;
 --     chaves únicas do Meta Ads.
 --   ESTE ARQUIVO (M0): o que o P0 não cobre —
---     1. tenant_settings (configuração por clínica, substitui app_settings) e as tabelas que
+--     1. tenant_settings (configuração por clínica, substitui app_settings),
+--        whatsapp_marketing_consents (consentimento de marketing, com histórico) e as tabelas que
 --        só o boot criava (password_reset_requests, consentimentos_pacientes);
 --     2. tenant_id nas tabelas da clínica fora da lista do P0 (kanban, preferências, push,
 --        pedidos de senha, versões do catálogo, reativação, Clinicorp...);
@@ -86,6 +87,38 @@ CREATE TABLE IF NOT EXISTS consentimentos_pacientes (
 CREATE INDEX IF NOT EXISTS idx_consentimentos_pacientes_lookup
   ON consentimentos_pacientes (tenant_id, paciente_id, tipo);
 
+-- Consentimento de marketing no WhatsApp (parecer jurídico A1; fila em processOneWhatsAppJob).
+-- Por telefone, como whatsapp_opt_outs: marketing também vai para lead que não é paciente.
+-- phone_key = waPhoneKey() do server.mjs (a mesma chave do opt-out).
+-- HISTÓRICO, não uma linha por telefone: cada aceite é uma linha; revogar preenche
+-- revogado_em (nunca apagar — LGPD art. 8º §2º, ônus da prova do aceite, e §5º, revogação).
+-- Só uma linha ATIVA por clínica + telefone (índice único parcial abaixo).
+-- Regra para a fila: envio de marketing só com linha ativa E sem opt-out em whatsapp_opt_outs
+-- (opt-out sempre vence; ao registrar opt-out, revogar a linha ativa com origem_revogacao='opt_out').
+CREATE TABLE IF NOT EXISTS whatsapp_marketing_consents (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL DEFAULT get_current_tenant_id() REFERENCES tenants(id) ON DELETE CASCADE,
+  phone_key TEXT NOT NULL CHECK (phone_key ~ '^[0-9]{8,}$'),
+  paciente_id TEXT,
+  lead_id TEXT,
+  base_legal TEXT NOT NULL CHECK (base_legal IN ('consentimento', 'legitimo_interesse')),
+  origem TEXT NOT NULL,              -- ex.: 'recepcao', 'formulario', 'whatsapp_resposta', 'importacao'
+  texto TEXT,                        -- texto exato mostrado/lido ao titular
+  versao TEXT,
+  registrado_por UUID,
+  ip_address TEXT,
+  user_agent TEXT,
+  aceito_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  revogado_em TIMESTAMPTZ,
+  revogado_por UUID,
+  origem_revogacao TEXT,             -- ex.: 'opt_out', 'pedido_titular', 'clinica'
+  CHECK (revogado_em IS NULL OR revogado_em >= aceito_em)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_whatsapp_marketing_consents_ativo
+  ON whatsapp_marketing_consents (tenant_id, phone_key) WHERE revogado_em IS NULL;
+CREATE INDEX IF NOT EXISTS idx_whatsapp_marketing_consents_historico
+  ON whatsapp_marketing_consents (tenant_id, phone_key, aceito_em DESC);
+
 -- O deploy roda como postgres. Tabela criada aqui passa para o dono das tabelas da API
 -- (dono de pacientes), para a API atual ter o mesmo acesso que teria se o boot a criasse.
 DO $$
@@ -93,7 +126,7 @@ DECLARE
   dono TEXT := (SELECT tableowner FROM pg_tables WHERE schemaname = 'public' AND tablename = 'pacientes');
   t TEXT;
 BEGIN
-  FOREACH t IN ARRAY ARRAY['tenant_settings', 'password_reset_requests', 'consentimentos_pacientes'] LOOP
+  FOREACH t IN ARRAY ARRAY['tenant_settings', 'password_reset_requests', 'consentimentos_pacientes', 'whatsapp_marketing_consents'] LOOP
     IF dono IS NOT NULL AND dono <> 'postgres'
        AND (SELECT tableowner FROM pg_tables WHERE schemaname = 'public' AND tablename = t) = 'postgres' THEN
       EXECUTE format('ALTER TABLE public.%I OWNER TO %I', t, dono);

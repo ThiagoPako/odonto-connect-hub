@@ -170,7 +170,7 @@ BEGIN
       'password_reset_requests', 'user_roles', 'reactivation_rules', 'reactivation_sends',
       'chat_read_status', 'attendance_queues', 'whatsapp_instances', 'automation_flows',
       'automation_jobs', 'broadcast_campaigns', 'clinicorp_user_settings', 'clinicorp_push_log',
-      'clinicorp_webhook_events', 'clinicorp_conflicts', 'tenant_settings', 'consentimentos_pacientes',
+      'clinicorp_webhook_events', 'clinicorp_conflicts', 'tenant_settings', 'consentimentos_pacientes', 'whatsapp_marketing_consents',
       -- já existentes
       'pacientes', 'agendamentos', 'crm_leads', 'chat_messages', 'attendance_sessions', 'profiles'
     ]) AS t
