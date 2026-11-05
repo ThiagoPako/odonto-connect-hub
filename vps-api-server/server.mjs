@@ -3641,6 +3641,64 @@ app.use('/api/whatsapp', async (req, res, next) => {
   }
 });
 
+// ─── Opt-out na conversa: ver e desfazer a pedido do paciente ───
+async function getLeadPhoneForTenant(tenantId, leadId) {
+  if (!isValidTenantId(tenantId) || !leadId) return null;
+  const { rows: [lead] } = await pool.query(
+    'SELECT telefone FROM crm_leads WHERE id::text = $1 AND tenant_id = $2 LIMIT 1',
+    [String(leadId), tenantId]
+  );
+  return lead ? normalizeWhatsappNumber(lead.telefone || '') || null : null;
+}
+
+app.get('/api/whatsapp/opt-out', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    const phone = await getLeadPhoneForTenant(user.tenant_id, req.query.leadId);
+    if (!phone) return res.json({ optedOut: false });
+    const { rows: [row] } = await pool.query(
+      'SELECT created_at, keyword FROM whatsapp_opt_outs WHERE tenant_id = $1 AND phone_key = $2 LIMIT 1',
+      [user.tenant_id, waPhoneKey(phone)]
+    );
+    res.json(row ? { optedOut: true, since: row.created_at, keyword: row.keyword || null } : { optedOut: false });
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    res.status(500).json({ error: 'Erro ao consultar o descadastro' });
+  }
+});
+
+// Só admin, e só a pedido do paciente: registra como ele pediu, quem desfez e quando.
+app.post('/api/whatsapp/opt-out/revogar', async (req, res) => {
+  try {
+    const { user } = await verifyAdmin(req);
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { leadId } = req.body || {};
+    const requestedVia = String(req.body?.solicitacao || '').trim();
+    if (requestedVia.length < 3) return res.status(400).json({ error: 'Diga como o paciente pediu para voltar a receber (ex.: por telefone, no balcão)' });
+    const phone = await getLeadPhoneForTenant(user.tenant_id, leadId);
+    if (!phone) return res.status(404).json({ error: 'Conversa não encontrada' });
+    const key = waPhoneKey(phone);
+    const { rows: [removed] } = await pool.query(
+      'DELETE FROM whatsapp_opt_outs WHERE tenant_id = $1 AND phone_key = $2 RETURNING phone, keyword, created_at',
+      [user.tenant_id, key]
+    );
+    if (!removed) return res.status(409).json({ error: 'Este paciente não está descadastrado' });
+    await pool.query(
+      `INSERT INTO whatsapp_opt_out_reversals (tenant_id, phone_key, phone, opted_out_at, keyword, lead_id, requested_via, reverted_by, reverted_by_email)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [user.tenant_id, key, removed.phone || null, removed.created_at || null, removed.keyword || null, String(leadId),
+        requestedVia.slice(0, 300), isValidTenantId(user.id) ? user.id : null, user.email || null]
+    );
+    console.log(`↩️ Opt-out desfeito a pedido do paciente (tenant ${user.tenant_id}, final ${maskPhone(phone)})`);
+    res.json({ success: true });
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    if (error.message === 'Admin access required') return res.status(403).json({ error: 'Só o administrador da clínica pode desfazer o descadastro' });
+    console.error('❌ revogar opt-out:', error.message);
+    res.status(500).json({ error: 'Erro ao desfazer o descadastro' });
+  }
+});
+
 app.get('/api/whatsapp/instances', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
@@ -10995,14 +11053,20 @@ function waPhoneKey(phone) {
   return digits.slice(-10);
 }
 
-// Lista para revisão da Helena (helena-juridico): é a única forma de o paciente sair sem
-// falar com a equipe, então errar para menos prejudica o direito de revogar (LGPD 8º §5º)
-// e errar para mais corta lembretes de quem não pediu.
+// Lista aprovada pela Helena (docs/juridico/parecer-optout-pr35.md): é a única forma de o
+// paciente sair sem falar com a equipe, então errar para menos prejudica o direito de
+// revogar (LGPD 8º §5º) e errar para mais corta lembretes de quem não pediu.
+// Fora de propósito: "não quero" sozinho (pega "não quero agora", "não quero, obrigado") e
+// "apague/exclua meus dados" (pedido de eliminação, LGPD art. 18 VI: vai para uma pessoa).
+// "não quero mais" fica porque a clínica pode desfazer o opt-out a pedido do paciente
+// (POST /api/whatsapp/opt-out/revogar, com registro de quem e quando).
 const WA_OPT_OUT_PHRASES = new Set([
   'sair', 'parar', 'pare', 'stop', 'descadastrar', 'descadastre', 'remover', 'unsubscribe',
-  'nao quero', 'nao quero mais', 'nao quero receber', 'nao quero receber mensagens',
-  'nao quero mais receber', 'nao quero mais mensagens', 'nao quero receber mais',
+  'nao quero mais', 'nao quero receber', 'nao quero receber mensagens',
+  'nao quero mais receber', 'nao quero mais mensagens', 'nao quero mais mensagem', 'nao quero receber mais',
   'nao envie mais', 'nao mande mais', 'nao me envie mais', 'nao me mande mais',
+  'nao mande mais mensagens', 'nao envie mais mensagens', 'nao me mande mais mensagens',
+  'me exclua da lista', 'excluir da lista', 'remover meu numero',
   'parar mensagens', 'parar de receber', 'parar de enviar', 'pare de enviar', 'pare de mandar',
   'cancelar mensagens', 'cancelar as mensagens', 'cancelar envio', 'cancelar envios', 'cancelar inscricao',
   'sair da lista', 'me tire da lista', 'me tira da lista', 'tirar da lista', 'me remova', 'me remove',
@@ -11568,6 +11632,20 @@ async function ensureWhatsAppQueueSchema() {
     `ALTER TABLE IF EXISTS broadcast_campaigns ADD COLUMN IF NOT EXISTS tenant_id UUID`,
     `ALTER TABLE IF EXISTS whatsapp_instances ADD COLUMN IF NOT EXISTS paused_until TIMESTAMPTZ`,
     `ALTER TABLE IF EXISTS whatsapp_instances ADD COLUMN IF NOT EXISTS pause_reason TEXT`,
+    `CREATE TABLE IF NOT EXISTS whatsapp_opt_out_reversals (
+       id BIGSERIAL PRIMARY KEY,
+       tenant_id UUID NOT NULL,
+       phone_key TEXT NOT NULL,
+       phone TEXT,
+       opted_out_at TIMESTAMPTZ,
+       keyword TEXT,
+       lead_id TEXT,
+       requested_via TEXT NOT NULL,
+       reverted_by UUID,
+       reverted_by_email TEXT,
+       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_wa_opt_out_reversals_tenant ON whatsapp_opt_out_reversals (tenant_id, phone_key, created_at DESC)`,
     `CREATE TABLE IF NOT EXISTS whatsapp_opt_outs (
        tenant_id UUID NOT NULL,
        phone_key TEXT NOT NULL,

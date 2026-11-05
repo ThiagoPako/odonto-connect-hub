@@ -5,6 +5,7 @@ import { LeadListItem } from "@/components/chat/LeadListItem";
 import { ConversationView } from "@/components/chat/ConversationView";
 import { MessageInput } from "@/components/chat/MessageInput";
 import { ChatHeader } from "@/components/chat/ChatHeader";
+import { OptOutAviso } from "@/components/chat/OptOutAviso";
 import { Users, MessageSquare, Inbox, Filter, Kanban, UserPlus, Wifi, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { NewChatFromContactDialog } from "@/components/chat/NewChatFromContactDialog";
@@ -1840,6 +1841,7 @@ function ChatPage() {
           {selectedLead ? (
             <>
               <ChatHeader lead={selectedLead} onClose={() => setSelectedLead(null)} onTransfer={handleTransfer} onFinishAttendance={handleFinishAttendance} onReturnToQueue={handleReturnToQueue} messages={currentMessages} presence={presenceMap[selectedLead.id]?.status ?? "offline"} lastSeen={presenceMap[selectedLead.id]?.lastSeen ?? null} crmStage={crmStages[selectedLead.id]} onStageChange={(leadId, stage) => setCrmStages((prev) => ({ ...prev, [leadId]: stage }))} />
+              <OptOutAviso leadId={selectedLead.id} />
               <ConversationView
                 messages={currentMessages}
                 leadName={selectedLead.name}
