@@ -11684,9 +11684,41 @@ async function cancelPendingCampaignJobs(tenantId, campId, motivo) {
 // Coloca a campanha na fila anti-bloqueio. A fila decide quando cada mensagem
 // sai (horário, limites do número, intervalo aleatório, SAIR).
 // scheduledAt/expiresAt: disparo único com data marcada e fim da campanha.
-// spread (disparo único): reparte os contatos pelos dias, no limite diário do número
-// (getRateTier), até WA_CAMPAIGN_MAX_SPREAD_DAYS; o que não cabe não entra na fila.
+// spread (disparo único): reparte os contatos pelos dias de envio, até
+// WA_CAMPAIGN_MAX_SPREAD_DAYS dias COM janela; o que não cabe não entra na fila.
+// Cota do dia = perDay × folga (lembretes e confirmações dividem o mesmo limite do
+// número) × fração da janela de envio disponível naquele dia (domingo = 0; sábado
+// proporcional; no 1º dia só o que ainda resta da janela).
 const WA_CAMPAIGN_MAX_SPREAD_DAYS = 7;
+const WA_CAMPAIGN_DAILY_SHARE = 0.8;
+const WA_CAMPAIGN_REF_WINDOW_MIN = 12 * 60; // janela cheia de dia útil (8h–20h)
+
+function hhmmToMinutes(v) {
+  const m = String(v || '').match(/^(\d{2}):(\d{2})/);
+  return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+}
+
+// Plano de envio: [{ dia, cota, inicio (Date) }] só com dias que têm janela.
+function planCampaignSpread({ startYmd, firstAt, horaInicio, perDay, now = new Date() }) {
+  const plan = [];
+  const hoje = spClock(now).day;
+  for (let d = 0; d < 31 && plan.length < WA_CAMPAIGN_MAX_SPREAD_DAYS; d++) {
+    const dia = addDaysYmd(startYmd, d);
+    const win = WA_SEND_WINDOWS[new Date(`${dia}T12:00:00Z`).getUTCDay()];
+    if (!win) continue;
+    let inicioMin = Math.max(win[0], hhmmToMinutes(horaInicio) ?? win[0]);
+    if (d === 0 && firstAt) inicioMin = Math.max(inicioMin, spClock(firstAt).minutes);
+    if (dia === hoje) inicioMin = Math.max(inicioMin, spClock(now).minutes);
+    const disponivel = Math.max(0, win[1] - inicioMin);
+    const cota = Math.floor(perDay * WA_CAMPAIGN_DAILY_SHARE * Math.min(1, disponivel / WA_CAMPAIGN_REF_WINDOW_MIN));
+    if (cota <= 0) continue;
+    const hh = String(Math.floor(inicioMin / 60)).padStart(2, '0');
+    const mm = String(inicioMin % 60).padStart(2, '0');
+    const inicio = new Date(Math.max(now.getTime(), spDateTime(dia, `${hh}:${mm}`, '08:00').getTime()));
+    plan.push({ dia, cota, inicio });
+  }
+  return plan;
+}
 async function enqueueCampaignForTenant(camp, tenantId, { scheduledAt = null, expiresAt = null, spread = null } = {}) {
   const template = typeof camp.template === 'string' ? JSON.parse(camp.template) : camp.template;
   const message = template?.mensagem || template?.message || '';
@@ -11709,11 +11741,12 @@ async function enqueueCampaignForTenant(camp, tenantId, { scheduledAt = null, ex
   );
   const recentKeys = new Set(recentlySent.map(r => waPhoneKey(r.patient_phone)));
 
-  let perDay = null;
+  let perDay = null, plan = [], planIdx = 0, usadosNoDia = 0;
   if (spread) {
     const { rows: [inst] } = await pool.query('SELECT created_at FROM whatsapp_instances WHERE instance_name = $1 AND tenant_id = $2', [instance, tenantId])
       .catch(() => ({ rows: [] }));
     perDay = getRateTier(inst?.created_at).perDay;
+    plan = planCampaignSpread({ startYmd: spread.startYmd, firstAt: spread.firstAt, horaInicio: spread.horaInicio, perDay });
   }
   let enqueued = 0, optedOut = 0, naoCabem = 0, ultimoDia = spread?.startYmd || null;
   const clinica = await getTenantClinicName(tenantId);
@@ -11723,11 +11756,11 @@ async function enqueueCampaignForTenant(camp, tenantId, { scheduledAt = null, ex
     if (await isWhatsAppOptedOut(tenantId, phone)) { optedOut++; continue; }
     let jobScheduledAt = scheduledAt, jobExpiresAt = expiresAt;
     if (spread) {
-      const k = Math.floor(enqueued / perDay);
-      if (k >= WA_CAMPAIGN_MAX_SPREAD_DAYS) { naoCabem++; continue; }
-      const dia = addDaysYmd(spread.startYmd, k);
-      ultimoDia = dia;
-      jobScheduledAt = k === 0 ? spread.firstAt : spDateTime(dia, spread.horaInicio, '08:00');
+      while (planIdx < plan.length && usadosNoDia >= plan[planIdx].cota) { planIdx++; usadosNoDia = 0; }
+      if (planIdx >= plan.length) { naoCabem++; continue; }
+      ultimoDia = plan[planIdx].dia;
+      jobScheduledAt = plan[planIdx].inicio;
+      usadosNoDia++;
       jobExpiresAt = null; // definido depois, quando se sabe o último dia
     }
     recentKeys.add(waPhoneKey(phone));
@@ -11744,9 +11777,10 @@ async function enqueueCampaignForTenant(camp, tenantId, { scheduledAt = null, ex
     if (spread && jobId) spread.jobIds = [...(spread.jobIds || []), jobId];
     enqueued++;
   }
-  // Validade de todos os envios do disparo: até o fim do último dia previsto (dia + N).
+  // Validade de todos os envios do disparo: fim do dia seguinte ao último dia previsto
+  // (1 dia de folga para atrasos da fila).
   if (spread && spread.jobIds?.length) {
-    const ate = spDateTime(ultimoDia, spread.horaFim, '23:59');
+    const ate = spDateTime(addDaysYmd(ultimoDia, 1), '23:59', '23:59');
     await pool.query(
       `UPDATE automation_jobs SET expires_at = $3 WHERE tenant_id = $1 AND id = ANY($2::uuid[])`,
       [tenantId, spread.jobIds, ate]
@@ -11764,7 +11798,7 @@ async function enqueueCampaignForTenant(camp, tenantId, { scheduledAt = null, ex
   }
   return {
     enqueued, total: contacts.length, skipped: contacts.length - enqueued, optedOut,
-    ...(spread ? { porDia: perDay, previsaoTermino: ultimoDia, naoCabem } : {}),
+    ...(spread ? { porDia: perDay, cotaDiaUtil: Math.floor(perDay * WA_CAMPAIGN_DAILY_SHARE), previsaoTermino: ultimoDia, naoCabem } : {}),
   };
 }
 
@@ -11795,12 +11829,12 @@ app.post('/api/campaigns/:id/execute', async (req, res) => {
       // Disparo único: sai na data e no horário marcados (sem data = hoje, agora).
       // O 409 só vale para data/horário que a própria clínica marcou.
       const dataMarcada = campaignDateKey(camp.data_inicio, { campId: camp.id, field: 'data_inicio' });
-      const horarioMarcado = /^\d{2}:\d{2}/.test(String(camp.horario_fim || ''));
       const dia = dataMarcada || today;
       if (dataMarcada && dia < today) return res.status(409).json({ error: 'A data do disparo já passou' });
       const inicio = spDateTime(dia, camp.horario_inicio, '08:00');
       const fimJanela = spDateTime(dia, camp.horario_fim, '23:59');
-      if ((dataMarcada || horarioMarcado) && fimJanela.getTime() <= Date.now()) {
+      // O wizard sempre grava horarioFim (padrão 18:00): só a data marcada justifica o 409.
+      if (dataMarcada && fimJanela.getTime() <= Date.now()) {
         return res.status(409).json({ error: 'O horário do disparo já passou' });
       }
       // Hoje já depois do horário (sem nada marcado): começa amanhã.

@@ -97,7 +97,7 @@ function DisparosPage() {
       const br = (ymd?: string) => { const [y, m, d] = String(ymd || "").split("-"); return d && m ? `${d}/${m}` : ""; };
       const partes = [`${data.enqueued} na fila`];
       if (data.inicio) partes.push(`os envios começam em ${br(data.inicio)}`);
-      partes.push(`o número envia até ${data.porDia} por dia, previsão de término em ${br(data.previsaoTermino)}`);
+      partes.push(`o número envia até ${data.cotaDiaUtil ?? data.porDia} por dia útil para campanhas (menos no sábado, nada no domingo), previsão de término em ${br(data.previsaoTermino)}`);
       if (data.naoCabem) partes.push(`${data.naoCabem} não couberam em 7 dias e ficaram de fora`);
       toast.success(partes.join("; ") + ".");
       loadCampaigns();
@@ -268,8 +268,8 @@ function DisparoCard({
             }`}>
               {disparo.tipo === "recorrente" ? "Recorrente" : "Único"}
             </span>
-            {disparo.tipo === "recorrente" && !disparo.ativo && !disparo.campanhaPerpetua && !!disparo.dataFim
-              && disparo.dataFim < new Date().toLocaleDateString("sv-SE", { timeZone: "America/Sao_Paulo" }) && (
+            {disparo.tipo === "recorrente" && !disparo.ativo && !disparo.campanhaPerpetua && !!dataFimIso(disparo.dataFim)
+              && dataFimIso(disparo.dataFim)! < new Date().toLocaleDateString("sv-SE", { timeZone: "America/Sao_Paulo" }) && (
               <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-muted text-muted-foreground">Encerrada</span>
             )}
           </div>
@@ -466,4 +466,13 @@ function CampaignJobsPanel({ campaignId, campaignName, onClose }: { campaignId: 
       </div>
     </div>
   );
+}
+
+// dataFim chega como YYYY-MM-DD (input date) ou dd/mm/aaaa (dados antigos).
+function dataFimIso(v?: string): string | null {
+  const t = String(v || "").trim();
+  let m = t.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m = t.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  return m ? `${m[3]}-${m[2]}-${m[1]}` : null;
 }
