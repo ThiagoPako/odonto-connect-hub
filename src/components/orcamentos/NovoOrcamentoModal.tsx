@@ -15,7 +15,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, Plus, Trash2, Printer, Save } from "lucide-react";
+import { Loader2, Plus, Trash2, Printer, Save, ChevronsUpDown, Check } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import {
   pacientesApi,
@@ -52,8 +58,8 @@ interface Props {
   onSaved?: () => void;
 }
 
-const fmt = (v: number) =>
-  v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+const fmt = (v: number | string) =>
+  (Number(v) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
 function uid() {
   return (typeof crypto !== "undefined" && (crypto as any).randomUUID)
@@ -86,6 +92,8 @@ export function NovoOrcamentoModal({
 
   const [saving, setSaving] = useState(false);
   const [showPrint, setShowPrint] = useState(false);
+  const [confirmDescartar, setConfirmDescartar] = useState(false);
+  const [erroPaciente, setErroPaciente] = useState(false);
 
   // Carregar listas
   useEffect(() => {
@@ -118,6 +126,11 @@ export function NovoOrcamentoModal({
   // Reset ao fechar
   useEffect(() => {
     if (!open) {
+      // Sem isso, depois de editar o orçamento da Maria, o "Novo" abria com a Maria escolhida
+      setPacienteId("");
+      setDentistaId("");
+      setErroPaciente(false);
+      setConfirmDescartar(false);
       setItens([]);
       setObservacoes("");
       setDesconto(0);
@@ -215,7 +228,8 @@ export function NovoOrcamentoModal({
             const it = updated[idx];
             updated[idx] = { ...it, faces: Array.from(new Set([...(it.faces ?? []), face])) };
           } else {
-            const valor = procAtivo.valor_particular || 0;
+            // O Postgres devolve numeric como texto ("350.00"): sem Number(), o subtotal concatenava ("0350350")
+            const valor = Number(procAtivo.valor_particular) || 0;
             updated.push({
               id: uid(),
               procedimento_id: procAtivo.id,
@@ -239,7 +253,7 @@ export function NovoOrcamentoModal({
   // Procedimento sem dente (ex: limpeza, anestesia geral) — adicionado por botão
   const adicionarProcedimentoAvulso = () => {
     if (!procAtivo) return;
-    const valor = procAtivo.valor_particular || 0;
+    const valor = Number(procAtivo.valor_particular) || 0; // numeric chega como texto
     setItens((cur) => [
       ...cur,
       {
@@ -278,15 +292,27 @@ export function NovoOrcamentoModal({
       )
     );
 
-  const subtotal = itens.reduce((acc, it) => acc + it.valor_total, 0);
+  const subtotal = itens.reduce((acc, it) => acc + (Number(it.valor_total) || 0), 0);
   const total = Math.max(0, subtotal - desconto);
 
   const pacienteSelecionado = pacientes.find((p) => p.id === pacienteId);
   const dentistaSelecionado = dentistas.find((d) => d.id === dentistaId);
 
+  const erroDesconto = desconto < 0 ? "O desconto não pode ser negativo."
+    : desconto > subtotal && subtotal > 0 ? `O desconto passa do subtotal (${fmt(subtotal)}).` : null;
+  // Fechar sem querer (Esc, clique fora) perdia o plano montado no odontograma
+  const temAlteracao = !orcamentoEditar && (itens.length > 0 || observacoes.trim() !== "" || desconto > 0);
+  const pedirFechar = (v: boolean) => {
+    if (v) { onOpenChange(true); return; }
+    if (saving) return;
+    if (temAlteracao) { setConfirmDescartar(true); return; }
+    onOpenChange(false);
+  };
+
   const salvar = async () => {
-    if (!pacienteId) { toast.error("Selecione o paciente"); return; }
+    if (!pacienteId) { setErroPaciente(true); toast.error("Selecione o paciente"); return; }
     if (itens.length === 0) { toast.error("Adicione ao menos um procedimento"); return; }
+    if (erroDesconto) { toast.error(erroDesconto); return; }
     setSaving(true);
     try {
       const body = {
@@ -328,7 +354,7 @@ export function NovoOrcamentoModal({
 
   return (
     <>
-      <Dialog open={open} onOpenChange={onOpenChange}>
+      <Dialog open={open} onOpenChange={pedirFechar}>
         <DialogContent className="max-w-6xl max-h-[92vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-base">{orcamentoEditar ? "Editar Orçamento" : "Novo Orçamento / Plano de Tratamento"}</DialogTitle>
@@ -338,17 +364,19 @@ export function NovoOrcamentoModal({
             {/* COLUNA ESQUERDA — formulário + itens */}
             <div className="lg:col-span-3 space-y-4">
               {/* Paciente / Dentista */}
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1.5">
-                  <Label className="text-xs">Paciente *</Label>
-                  <Select value={pacienteId} onValueChange={setPacienteId}>
-                    <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="Selecione" /></SelectTrigger>
-                    <SelectContent>
-                      {pacientes.map((p) => (
-                        <SelectItem key={p.id} value={p.id} className="text-xs">{p.nome}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Label htmlFor="orc-paciente" className="text-xs">Paciente *</Label>
+                  <PacienteCombobox
+                    id="orc-paciente"
+                    pacientes={pacientes}
+                    value={pacienteId}
+                    invalido={erroPaciente && !pacienteId}
+                    onChange={(id) => { setPacienteId(id); setErroPaciente(false); }}
+                  />
+                  {erroPaciente && !pacienteId && (
+                    <p id="orc-paciente-erro" className="text-[11px] text-destructive">Escolha o paciente do orçamento.</p>
+                  )}
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs">Dentista responsável</Label>
@@ -381,7 +409,7 @@ export function NovoOrcamentoModal({
                     <SelectContent>
                       {procedimentos.length === 0 && (
                         <div className="p-2 text-xs text-muted-foreground">
-                          Cadastre procedimentos em /tratamentos
+                          Nenhum procedimento no catálogo. Cadastre em Procedimentos.
                         </div>
                       )}
                       {procedimentos.map((p) => (
@@ -444,6 +472,7 @@ export function NovoOrcamentoModal({
                         <Input
                           type="number"
                           min={1}
+                          aria-label={`Quantidade de ${it.procedimento_nome}`}
                           value={it.quantidade}
                           onChange={(e) => atualizarQuantidade(it.id, Math.max(1, Number(e.target.value)))}
                           className="col-span-1 h-7 text-xs text-center px-1"
@@ -452,13 +481,14 @@ export function NovoOrcamentoModal({
                           type="number"
                           min={0}
                           step="0.01"
+                          aria-label={`Valor unitário de ${it.procedimento_nome}`}
                           value={it.valor_unitario}
                           onChange={(e) => atualizarValorUnit(it.id, Number(e.target.value))}
                           className="col-span-2 h-7 text-xs text-right"
                         />
                         <div className="col-span-2 flex items-center justify-end gap-2">
                           <span className="font-semibold text-foreground">{fmt(it.valor_total)}</span>
-                          <button onClick={() => removerItem(it.id)} className="text-muted-foreground hover:text-destructive">
+                          <button type="button" onClick={() => removerItem(it.id)} aria-label={`Remover ${it.procedimento_nome}`} className="text-muted-foreground hover:text-destructive">
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
                         </div>
@@ -469,7 +499,7 @@ export function NovoOrcamentoModal({
               </div>
 
               {/* Totais + pagamento */}
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-2">
                   <Label className="text-xs">Forma de pagamento</Label>
                   <Select value={formaPagamento} onValueChange={setFormaPagamento}>
@@ -489,11 +519,14 @@ export function NovoOrcamentoModal({
                 <div className="space-y-1.5 bg-muted/40 border border-border rounded-lg p-3">
                   <div className="flex justify-between text-xs"><span className="text-muted-foreground">Subtotal</span><span className="font-semibold">{fmt(subtotal)}</span></div>
                   <div className="flex justify-between items-center text-xs">
-                    <span className="text-muted-foreground">Desconto (R$)</span>
-                    <Input type="number" min={0} step="0.01" value={desconto}
-                      onChange={(e) => setDesconto(Number(e.target.value))}
-                      className="h-7 text-xs text-right w-24" />
+                    <label htmlFor="orc-desconto" className="text-muted-foreground">Desconto (R$)</label>
+                    <Input id="orc-desconto" type="number" min={0} step="0.01" value={desconto}
+                      onChange={(e) => setDesconto(Number(e.target.value) || 0)}
+                      aria-invalid={!!erroDesconto}
+                      aria-describedby={erroDesconto ? "orc-desconto-erro" : undefined}
+                      className="h-7 text-xs text-right w-24 aria-[invalid=true]:border-destructive" />
                   </div>
+                  {erroDesconto && <p id="orc-desconto-erro" className="text-[11px] text-destructive text-right">{erroDesconto}</p>}
                   <div className="border-t border-border pt-1.5 flex justify-between text-sm font-bold">
                     <span>Total</span><span className="text-primary">{fmt(total)}</span>
                   </div>
@@ -543,14 +576,14 @@ export function NovoOrcamentoModal({
           </div>
 
           {/* Footer */}
-          <div className="flex items-center justify-between border-t border-border pt-3 mt-2">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3 mt-2">
             <Button variant="outline" size="sm" onClick={() => setShowPrint(true)}
               disabled={itens.length === 0 || !pacienteId} className="h-9 text-xs">
               <Printer className="h-3.5 w-3.5 mr-1.5" /> Pré-visualizar impressão
             </Button>
             <div className="flex gap-2">
-              <Button variant="ghost" size="sm" onClick={() => onOpenChange(false)} className="h-9 text-xs">Cancelar</Button>
-              <Button size="sm" onClick={salvar} disabled={saving} className="h-9 text-xs">
+              <Button variant="ghost" size="sm" onClick={() => pedirFechar(false)} className="h-9 text-xs">Cancelar</Button>
+              <Button size="sm" onClick={salvar} disabled={saving || !!erroDesconto} className="h-9 text-xs">
                 {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Save className="h-3.5 w-3.5 mr-1.5" />}
                 Salvar orçamento
               </Button>
@@ -558,6 +591,26 @@ export function NovoOrcamentoModal({
           </div>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={confirmDescartar} onOpenChange={setConfirmDescartar}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Descartar este orçamento?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {itens.length} procedimento(s) já foram adicionados e ainda não foram salvos.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Continuar editando</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => { setConfirmDescartar(false); onOpenChange(false); }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Descartar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {showPrint && pacienteSelecionado && (
         <OrcamentoPrintPreview
@@ -578,5 +631,61 @@ export function NovoOrcamentoModal({
         />
       )}
     </>
+  );
+}
+
+/** Escolha de paciente com busca por nome, CPF ou telefone (o Select simples não serve para centenas de pacientes). */
+function PacienteCombobox({ id, pacientes, value, onChange, invalido }: {
+  id: string; pacientes: { id: string; nome: string; cpf?: string | null; telefone?: string | null }[];
+  value: string; onChange: (id: string) => void; invalido?: boolean;
+}) {
+  const [aberto, setAberto] = useState(false);
+  const atual = pacientes.find((p) => p.id === value);
+  return (
+    <Popover open={aberto} onOpenChange={setAberto}>
+      <PopoverTrigger asChild>
+        <button
+          id={id}
+          type="button"
+          role="combobox"
+          aria-expanded={aberto}
+          aria-invalid={invalido || undefined}
+          aria-describedby={invalido ? `${id}-erro` : undefined}
+          className="flex h-9 w-full items-center justify-between rounded-md border border-input bg-background px-3 text-xs text-left aria-[invalid=true]:border-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <span className={atual ? "truncate text-foreground" : "text-muted-foreground"}>{atual ? atual.nome : "Buscar paciente…"}</span>
+          <ChevronsUpDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[--radix-popover-trigger-width] min-w-[260px] p-0" align="start">
+        <Command
+          filter={(itemValue, busca) => {
+            const alvo = itemValue.toLowerCase();
+            const q = busca.toLowerCase().trim();
+            const digitos = q.replace(/\D/g, "");
+            return alvo.includes(q) || (digitos.length >= 3 && alvo.replace(/\D/g, "").includes(digitos)) ? 1 : 0;
+          }}
+        >
+          <CommandInput placeholder="Nome, CPF ou telefone" className="text-xs" />
+          <CommandList>
+            <CommandEmpty>Nenhum paciente encontrado.</CommandEmpty>
+            <CommandGroup>
+              {pacientes.map((p) => (
+                <CommandItem
+                  key={p.id}
+                  value={`${p.nome} ${p.cpf ?? ""} ${p.telefone ?? ""} ${p.id}`}
+                  onSelect={() => { onChange(p.id); setAberto(false); }}
+                  className="text-xs"
+                >
+                  <Check className={`mr-2 h-3.5 w-3.5 ${p.id === value ? "opacity-100" : "opacity-0"}`} />
+                  <span className="truncate">{p.nome}</span>
+                  {p.telefone && <span className="ml-auto pl-2 text-[10px] text-muted-foreground">{p.telefone}</span>}
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
   );
 }
