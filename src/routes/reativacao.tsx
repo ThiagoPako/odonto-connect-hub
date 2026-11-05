@@ -182,7 +182,7 @@ function ReativacaoPage() {
   const handleDeleteRule = async (rule: ReactivationRule) => {
     const ok = await confirm({
       title: `Excluir a regra "${rule.name}"?`,
-      description: "A regra sai da lista. Mensagens já enviadas não são afetadas. Esta ação não pode ser desfeita.",
+      description: "A regra sai da lista e não gera novos envios. Atenção: as mensagens desta regra que já estão na fila de envio continuam saindo normalmente. Esta ação não pode ser desfeita.",
       confirmLabel: "Excluir",
       destructive: true,
     });

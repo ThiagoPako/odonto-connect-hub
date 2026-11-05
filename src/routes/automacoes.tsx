@@ -495,6 +495,7 @@ function FollowupAutomationCard({
   onUpdate: (c: FollowupAutomationConfig) => void;
 }) {
   const [saving, setSaving] = useState(false);
+  const [confirmFollowup, confirmFollowupDialog] = useConfirm();
   const [editMessages, setEditMessages] = useState<Record<string, string>>({});
   const [editDelay, setEditDelay] = useState<number>(30);
   const [editDelayDays, setEditDelayDays] = useState<Record<string, number>>({});
@@ -511,6 +512,14 @@ function FollowupAutomationCard({
 
   const handleToggle = async () => {
     if (!config) return;
+    if (!config.enabled) {
+      const ok = await confirmFollowup({
+        title: "Ligar o follow-up automático do CRM?",
+        description: "A partir de agora, os leads que ficarem parados nas etapas do funil recebem as mensagens configuradas pelo WhatsApp automaticamente, depois do tempo de cada etapa. Você pode desligar a qualquer momento.",
+        confirmLabel: "Ligar follow-up",
+      });
+      if (!ok) return;
+    }
     setSaving(true);
     try {
       const res = await automationsApi.updateFollowup({ enabled: !config.enabled });
@@ -568,6 +577,7 @@ function FollowupAutomationCard({
 
   return (
     <div className="bg-card rounded-xl border border-primary/30 overflow-hidden">
+      {confirmFollowupDialog}
       <div className="p-5">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
