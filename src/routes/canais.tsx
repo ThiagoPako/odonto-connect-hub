@@ -68,7 +68,7 @@ function CanaisPage() {
 
       const { sent, failed } = result.data;
       toast.success(
-        `"${pendingSwitchName}" agora é a conexão principal. ${sent} paciente(s) notificado(s).${failed > 0 ? ` ${failed} falha(s).` : ''}`
+        `"${pendingSwitchName}" agora é a conexão principal. Aviso na fila para ${sent} paciente(s)${failed > 0 ? ` (${failed} falha(s))` : ''}; as mensagens saem aos poucos.`
       );
       setSwitchDialogOpen(false);
     } catch (err) {

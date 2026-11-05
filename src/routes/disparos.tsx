@@ -87,7 +87,7 @@ function DisparosPage() {
     setExecutingId(null);
     if (error) { toast.error("Erro ao executar: " + error); return; }
     if (data) {
-      toast.success(`${data.enqueued} mensagens enfileiradas (${data.skipped} ignoradas pelo filtro anti-spam)`);
+      toast.success(`${data.enqueued} mensagens na fila (${data.skipped} ignoradas: já receberam ou pediram para sair). O envio é gradual, em horário comercial.`);
       loadCampaigns();
     }
   };
