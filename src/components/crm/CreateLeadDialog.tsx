@@ -8,6 +8,7 @@ import { useEffect, useState } from "react";
 import { crmApi } from "@/lib/vpsApi";
 import { CANAIS, getCampanhas, getPendingUtm, linkLeadToCampaign } from "@/data/campanhasStore";
 import { toast } from "sonner";
+import { mascaraTelefoneBR, erroTelefoneBR } from "@/lib/mascaraTelefone";
 
 interface Props {
   open: boolean;
@@ -16,10 +17,11 @@ interface Props {
 }
 
 const origens = ["WhatsApp", "Google Ads", "Meta Ads", "Instagram", "TikTok", "YouTube", "Indicação", "Site", "Telefone", "Outro"];
-const responsaveis = ["Ana", "Beatriz", "Carla", "Dr. Marcos", "Dr. Paula"];
+// O campo "Responsável" saiu: listava nomes fictícios (Ana, Beatriz, Carla...) e nunca era enviado.
+// O responsável é definido ao assumir o atendimento no funil.
 
 export function CreateLeadDialog({ open, onOpenChange, onCreated }: Props) {
-  const [form, setForm] = useState({ nome: "", telefone: "", email: "", origem: "WhatsApp", value: "", responsavel: "" });
+  const [form, setForm] = useState({ nome: "", telefone: "", email: "", origem: "WhatsApp", value: "" });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pendingCampaign, setPendingCampaign] = useState<{ nome: string; canal: string } | null>(null);
@@ -41,7 +43,10 @@ export function CreateLeadDialog({ open, onOpenChange, onCreated }: Props) {
   }, [open]);
 
   const handleSubmit = async () => {
-    if (!form.nome.trim()) return setError("Nome é obrigatório");
+    if (!form.nome.trim()) return setError("Informe o nome do lead.");
+    const telErro = erroTelefoneBR(form.telefone);
+    if (telErro) return setError(telErro);
+    if (form.value && (!Number.isFinite(Number(form.value)) || Number(form.value) < 0)) return setError("O valor estimado não pode ser negativo.");
     setLoading(true);
     setError(null);
     const { data, error: apiError } = await crmApi.create({
@@ -63,7 +68,7 @@ export function CreateLeadDialog({ open, onOpenChange, onCreated }: Props) {
       }
       onCreated();
       onOpenChange(false);
-      setForm({ nome: "", telefone: "", email: "", origem: "WhatsApp", value: "", responsavel: "" });
+      setForm({ nome: "", telefone: "", email: "", origem: "WhatsApp", value: "" });
       setPendingCampaign(null);
     }
   };
@@ -86,18 +91,18 @@ export function CreateLeadDialog({ open, onOpenChange, onCreated }: Props) {
               </div>
             </div>
           )}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="col-span-2 space-y-2">
-              <Label>Nome *</Label>
-              <Input value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} placeholder="Nome completo" />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="sm:col-span-2 space-y-2">
+              <Label htmlFor="lead-nome">Nome *</Label>
+              <Input id="lead-nome" value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} placeholder="Nome completo" />
             </div>
             <div className="space-y-2">
-              <Label>Telefone</Label>
-              <Input value={form.telefone} onChange={(e) => setForm({ ...form, telefone: e.target.value })} placeholder="(11) 99999-9999" />
+              <Label htmlFor="lead-tel">Telefone</Label>
+              <Input id="lead-tel" type="tel" inputMode="tel" value={form.telefone} onChange={(e) => setForm({ ...form, telefone: mascaraTelefoneBR(e.target.value) })} placeholder="(11) 99999-9999" aria-invalid={!!erroTelefoneBR(form.telefone)} />
             </div>
             <div className="space-y-2">
-              <Label>Email</Label>
-              <Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="email@exemplo.com" />
+              <Label htmlFor="lead-email">Email</Label>
+              <Input id="lead-email" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="email@exemplo.com" />
             </div>
             <div className="space-y-2">
               <Label>Origem</Label>
@@ -111,22 +116,11 @@ export function CreateLeadDialog({ open, onOpenChange, onCreated }: Props) {
               </Select>
             </div>
             <div className="space-y-2">
-              <Label>Valor estimado (R$)</Label>
-              <Input type="number" value={form.value} onChange={(e) => setForm({ ...form, value: e.target.value })} placeholder="0" />
-            </div>
-            <div className="col-span-2 space-y-2">
-              <Label>Responsável</Label>
-              <Select value={form.responsavel} onValueChange={(v) => setForm({ ...form, responsavel: v })}>
-                <SelectTrigger><SelectValue placeholder="Selecionar responsável" /></SelectTrigger>
-                <SelectContent>
-                  {responsaveis.map((r) => (
-                    <SelectItem key={r} value={r}>{r}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Label htmlFor="lead-valor">Valor estimado (R$)</Label>
+              <Input id="lead-valor" type="number" min={0} inputMode="decimal" value={form.value} onChange={(e) => setForm({ ...form, value: e.target.value })} placeholder="0" />
             </div>
           </div>
-          {error && <p className="text-sm text-destructive">{error}</p>}
+          {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
           <Button onClick={handleSubmit} disabled={loading} className="w-full">
             {loading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
             Cadastrar Lead

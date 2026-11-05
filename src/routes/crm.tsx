@@ -173,7 +173,7 @@ function GenericKanbanBoard<T extends string>({
         <div className="flex items-center gap-6">
           <div>
             <span className="text-xs text-muted-foreground">Total no funil</span>
-            <p className="text-lg font-bold text-foreground">{visibleList.length} leads</p>
+            <p className="text-lg font-bold text-foreground">{visibleList.length} {visibleList.length === 1 ? "lead" : "leads"}</p>
           </div>
           <div>
             <span className="text-xs text-muted-foreground">Valor total</span>
