@@ -16360,7 +16360,8 @@ app.post('/api/exames/:id/arquivos', express.raw({ type: '*/*', limit: '64mb' })
     }
     if (!rows.length) {
       await rm(absArquivo, { force: true }).catch(() => {});
-      return res.status(409).json({ error: 'Laudo finalizado. Reabra o laudo para alterar as imagens.' });
+      // Laudo finalizado ou exame deixou de ser Pedido (anexo) enquanto o arquivo era enviado
+      return res.status(409).json({ error: 'O exame mudou durante o envio. Atualize e tente de novo.' });
     }
     // Chegou imagem: o exame foi realizado e passa a aguardar laudo
     if (!anexoDoPedido) await pool.query(
