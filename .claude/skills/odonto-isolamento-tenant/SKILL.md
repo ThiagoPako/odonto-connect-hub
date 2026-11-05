@@ -20,6 +20,14 @@ cada rota. Confirme cada um lendo o handler antes de reportar. O script **não**
 `tenant_id` mas grava id da URL sem validar o dono (ex.: INSERT com `req.params.id` de paciente) —
 procure isso à mão.
 
+Limites do script (leia "ok" como "nada suspeito pelas regras abaixo", não "verificado"):
+- Rotas `/api/whatsapp/*` **não** recebem `INSTANCIA-SEM-userOwnsInstance`: o guarda global
+  `app.use('/api/whatsapp', …)` (`server.mjs` ≈3539) já chama `userOwnsInstance`. Confira à mão só rotas
+  fora desse prefixo e o próprio guarda (`WA_PATH_INSTANCE_ACTIONS`; o resto vem de `body.instance`/`query.instance`).
+- `clinicorpUserOf(req)` conta como autenticação (rotas `/api/clinicorp/my-settings*`, `sync/now`).
+- Heurísticas conhecidas: `tenant_id` em qualquer ponto do handler silencia os alertas de SQL; SQL em
+  minúsculas não é detectado; rotas com array de paths, `router.*` e `app.use` (exceto o guarda acima) ficam fora.
+
 ## Padrão correto de endpoint
 ```js
 app.put('/api/pacientes/:id', async (req, res) => {

@@ -45,8 +45,9 @@ export function MarcadoresSelector({ value, onChange, compact }: Props) {
   useEffect(() => {
     if (!open) return;
     setLoading(true);
-    marcadoresAgendaApi.list().then(({ data }) => {
-      if (Array.isArray(data)) setMarcadores(data);
+    marcadoresAgendaApi.list().then(({ data, error }) => {
+      if (error) toast.error("Não foi possível carregar os marcadores: " + error);
+      else if (Array.isArray(data)) setMarcadores(data);
     }).finally(() => setLoading(false));
   }, [open]);
 

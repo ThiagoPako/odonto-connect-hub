@@ -66,12 +66,14 @@ export function EditarAgendamentoModal({ appointment, open, onOpenChange, onSave
 
   useEffect(() => {
     if (!open) return;
-    dentistasApi.list().then(({ data }) => {
-      if (Array.isArray(data)) setProfs(data as Prof[]);
-    }).catch(() => {});
-    procedimentosCatalogoApi.list().then(({ data }) => {
-      if (Array.isArray(data)) setCatalogo(data.filter((p) => p.ativo));
-    }).catch(() => {});
+    dentistasApi.list().then(({ data, error }) => {
+      if (error) toast.error("Não foi possível carregar os profissionais: " + error);
+      else if (Array.isArray(data)) setProfs(data as Prof[]);
+    });
+    procedimentosCatalogoApi.list().then(({ data, error }) => {
+      if (error) toast.error("Não foi possível carregar o catálogo de procedimentos: " + error);
+      else if (Array.isArray(data)) setCatalogo(data.filter((p) => p.ativo));
+    });
   }, [open]);
 
   useEffect(() => {
@@ -117,10 +119,12 @@ export function EditarAgendamentoModal({ appointment, open, onOpenChange, onSave
     setLoadingDay(true);
     agendaApi
       .list({ data_inicio: data, data_fim: data, dentista_id: dentistaId })
-      .then(({ data: list }) => {
-        if (Array.isArray(list)) setDayAppts(list);
+      .then(({ data: list, error }) => {
+        if (error) {
+          setDayAppts([]);
+          toast.error("Não foi possível checar conflitos de horário: " + error);
+        } else if (Array.isArray(list)) setDayAppts(list);
       })
-      .catch(() => {})
       .finally(() => setLoadingDay(false));
   }, [open, data, dentistaId]);
 

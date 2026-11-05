@@ -21,6 +21,18 @@ import {
 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import { dentistasApi } from "@/lib/vpsApi";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 export const Route = createFileRoute("/dentistas")({
   ssr: false,
@@ -48,17 +60,21 @@ function DentistasPage() {
   const [showForm, setShowForm] = useState(false);
   const [editingDentista, setEditingDentista] = useState<Dentista | null>(null);
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [toDelete, setToDelete] = useState<Dentista | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const loadDentistas = useCallback(async () => {
-    try {
-      const res = await dentistasApi.list();
-      const data = (res as any).data || res || [];
+    setLoading(true);
+    const { data, error } = await dentistasApi.list();
+    if (error) {
+      setLoadError(error);
+      toast.error("Não foi possível carregar os dentistas: " + error);
+    } else {
+      setLoadError(null);
       setDentistas(Array.isArray(data) ? data.map(mapDentista) : []);
-    } catch (err) {
-      console.error('Erro ao carregar dentistas:', err);
-    } finally {
-      setLoading(false);
     }
+    setLoading(false);
   }, []);
 
   useEffect(() => { loadDentistas(); }, [loadDentistas]);
@@ -70,35 +86,40 @@ function DentistasPage() {
       d.especialidade.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const handleSave = async (data: Omit<Dentista, "id" | "criadoEm">) => {
+  /** Devolve true se salvou; em erro mantém o formulário aberto. */
+  const handleSave = async (data: Omit<Dentista, "id" | "criadoEm">): Promise<boolean> => {
     const payload = {
       nome: data.nome, email: data.email, telefone: data.telefone,
       cro: data.cro, especialidade: data.especialidade,
       comissao_percentual: data.comissao,
       ativo: data.status === 'ativo',
     };
-    try {
-      if (editingDentista) {
-        await dentistasApi.update(editingDentista.id, payload);
-      } else {
-        await dentistasApi.create(payload);
-      }
-      await loadDentistas();
-    } catch (err) {
-      console.error('Erro ao salvar dentista:', err);
+    const { error } = editingDentista
+      ? await dentistasApi.update(editingDentista.id, payload)
+      : await dentistasApi.create(payload);
+    if (error) {
+      toast.error("Erro ao salvar dentista: " + error);
+      return false;
     }
+    toast.success(editingDentista ? "Dentista atualizado" : "Dentista cadastrado");
     setShowForm(false);
     setEditingDentista(null);
+    await loadDentistas();
+    return true;
   };
 
-  const handleDelete = async (id: string) => {
-    try {
-      await dentistasApi.delete(id);
-      await loadDentistas();
-    } catch (err) {
-      console.error('Erro ao excluir dentista:', err);
+  const handleDelete = async () => {
+    if (!toDelete) return;
+    setDeleting(true);
+    const { error } = await dentistasApi.delete(toDelete.id);
+    setDeleting(false);
+    if (error) {
+      toast.error("Erro ao excluir dentista: " + error);
+      return;
     }
-    setMenuOpen(null);
+    toast.success(`${toDelete.nome} excluído`);
+    setToDelete(null);
+    await loadDentistas();
   };
 
   const handleEdit = (dentista: Dentista) => {
@@ -107,7 +128,7 @@ function DentistasPage() {
     setMenuOpen(null);
   };
 
-  if (loading) {
+  if (loading && dentistas.length === 0) {
     return (
       <div className="flex-1 flex flex-col min-h-screen">
         <DashboardHeader title="Gestão de Dentistas" />
@@ -121,7 +142,14 @@ function DentistasPage() {
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Gestão de Dentistas" />
-      <main className="flex-1 p-8 space-y-6 overflow-auto">
+      <main className="flex-1 p-4 sm:p-8 space-y-6 overflow-auto">
+        {loadError && (
+          <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+            <span>Não foi possível carregar os dentistas. {loadError}</span>
+            <Button size="sm" variant="outline" onClick={loadDentistas}>Tentar de novo</Button>
+          </div>
+        )}
+
         {/* Stats */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 animate-slide-up" style={{ animationFillMode: 'both' }}>
           <div className="group bg-card rounded-2xl border border-border/60 p-5 shadow-card hover:shadow-glow-primary hover-lift transition-all duration-300 relative overflow-hidden">
@@ -142,7 +170,7 @@ function DentistasPage() {
         </div>
 
         {/* Actions */}
-        <div className="flex items-center justify-between gap-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
           <div className="relative flex-1 max-w-md">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <input
@@ -207,7 +235,7 @@ function DentistasPage() {
                     </td>
                     <td className="px-6 py-4 text-right">
                       <div className="relative inline-block">
-                        <button onClick={() => setMenuOpen(menuOpen === dentista.id ? null : dentista.id)} className="p-2 rounded-lg hover:bg-muted/60 transition-colors">
+                        <button onClick={() => setMenuOpen(menuOpen === dentista.id ? null : dentista.id)} aria-label={`Ações de ${dentista.nome}`} className="p-2 rounded-lg hover:bg-muted/60 transition-colors">
                           <MoreVertical className="h-4 w-4 text-muted-foreground" />
                         </button>
                         {menuOpen === dentista.id && (
@@ -218,7 +246,7 @@ function DentistasPage() {
                             <button onClick={() => handleEdit(dentista)} className="flex items-center gap-2 px-4 py-2.5 text-sm text-foreground hover:bg-muted/40 transition-colors w-full">
                               <Edit className="h-4 w-4" />Editar
                             </button>
-                            <button onClick={() => handleDelete(dentista.id)} className="flex items-center gap-2 px-4 py-2.5 text-sm text-destructive hover:bg-destructive/10 transition-colors w-full">
+                            <button onClick={() => { setToDelete(dentista); setMenuOpen(null); }} className="flex items-center gap-2 px-4 py-2.5 text-sm text-destructive hover:bg-destructive/10 transition-colors w-full">
                               <Trash2 className="h-4 w-4" />Excluir
                             </button>
                           </div>
@@ -230,12 +258,38 @@ function DentistasPage() {
               </tbody>
             </table>
           </div>
-          {filtered.length === 0 && (
+          {filtered.length === 0 && !loadError && (
             <div className="text-center py-12">
-              <p className="text-muted-foreground text-sm">Nenhum dentista encontrado.</p>
+              <p className="text-muted-foreground text-sm">
+                {dentistas.length === 0
+                  ? "Nenhum dentista cadastrado ainda. Clique em \"Novo Dentista\" para começar."
+                  : "Nenhum dentista encontrado para essa busca."}
+              </p>
             </div>
           )}
         </div>
+
+        <AlertDialog open={!!toDelete} onOpenChange={(v) => { if (!v && !deleting) setToDelete(null); }}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Excluir {toDelete?.nome}?</AlertDialogTitle>
+              <AlertDialogDescription>
+                O cadastro é apagado e não pode ser recuperado. Se ele só deixou de atender, prefira editar e marcar como "Inativo".
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={deleting}>Cancelar</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={(e) => { e.preventDefault(); handleDelete(); }}
+                disabled={deleting}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                {deleting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Excluir
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         {/* Form Modal */}
         {showForm && (
@@ -256,7 +310,7 @@ function DentistaFormModal({
   onClose,
 }: {
   dentista: Dentista | null;
-  onSave: (data: Omit<Dentista, "id" | "criadoEm">) => void;
+  onSave: (data: Omit<Dentista, "id" | "criadoEm">) => Promise<boolean>;
   onClose: () => void;
 }) {
   const [nome, setNome] = useState(dentista?.nome ?? "");

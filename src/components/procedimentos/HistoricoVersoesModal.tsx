@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Loader2, History, TrendingUp, TrendingDown, Minus } from "lucide-react";
 import { procedimentosCatalogoApi, type ProcedimentoVersao } from "@/lib/vpsApi";
+import { toast } from "sonner";
 
 interface Props {
   open: boolean;
@@ -36,8 +37,8 @@ export function HistoricoVersoesModal({ open, onOpenChange, procedimentoId, proc
     if (!open || !procedimentoId) return;
     setLoading(true);
     procedimentosCatalogoApi.versoes(procedimentoId).then((res) => {
-      const data = ((res as any).data || res || []) as ProcedimentoVersao[];
-      setVersoes(Array.isArray(data) ? data : []);
+      if (res.error) { toast.error("Não foi possível carregar o histórico de versões: " + res.error); return; }
+      setVersoes(Array.isArray(res.data) ? (res.data as ProcedimentoVersao[]) : []);
     }).finally(() => setLoading(false));
   }, [open, procedimentoId]);
 

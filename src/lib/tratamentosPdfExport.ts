@@ -1,3 +1,4 @@
+import { escapeHtml } from "@/lib/safeHtml";
 /**
  * Gera um relatório PDF de tratamentos em andamento via janela de impressão.
  */
@@ -46,10 +47,10 @@ export function exportarTratamentosPdf(tratamentos: TratamentoReport[]) {
 
     return `
       <tr style="border-bottom:1px solid #e2e8f0;${i % 2 === 1 ? 'background:#f8fafb;' : ''}">
-        <td style="padding:10px 12px;font-size:12px;font-weight:600;color:#1a1a2e;">${t.paciente_nome}</td>
-        <td style="padding:10px 12px;font-size:12px;color:#444;">${t.dentista_nome}</td>
-        <td style="padding:10px 12px;font-size:12px;color:#444;">${t.descricao}</td>
-        <td style="padding:10px 12px;font-size:12px;color:#444;">${t.plano || '-'}</td>
+        <td style="padding:10px 12px;font-size:12px;font-weight:600;color:#1a1a2e;">${escapeHtml(t.paciente_nome)}</td>
+        <td style="padding:10px 12px;font-size:12px;color:#444;">${escapeHtml(t.dentista_nome)}</td>
+        <td style="padding:10px 12px;font-size:12px;color:#444;">${escapeHtml(t.descricao)}</td>
+        <td style="padding:10px 12px;font-size:12px;color:#444;">${escapeHtml(t.plano || '-')}</td>
         <td style="padding:10px 12px;font-size:12px;text-align:right;font-weight:600;">R$ ${t.valor.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</td>
         <td style="padding:10px 12px;text-align:center;">
           <span style="display:inline-block;padding:2px 8px;border-radius:9999px;font-size:10px;font-weight:600;background:${statusColor}15;color:${statusColor};border:1px solid ${statusColor}30;">${statusLabel}</span>

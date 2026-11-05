@@ -54,24 +54,28 @@ function AutomacoesPage() {
   useEffect(() => {
     automationsApi.listFlows()
       .then((res) => {
-        if (res.data && Array.isArray(res.data)) {
+        if (res.error) {
+          toast.error("Não foi possível carregar os fluxos de automação: " + res.error);
+          setFlows([]);
+        } else if (res.data && Array.isArray(res.data)) {
           setFlows(res.data);
         } else {
           setFlows([]);
         }
       })
-      .catch(() => setFlows([]))
       .finally(() => setLoadingFlows(false));
 
     automationsApi.getFollowup()
-      .then((res) => { if (res.data) setFollowupConfig(res.data); })
-      .catch(() => {})
+      .then((res) => {
+        if (res.error) toast.error("Não foi possível carregar a configuração de follow-up: " + res.error);
+        else if (res.data) setFollowupConfig(res.data);
+      })
       .finally(() => setLoadingConfig(false));
 
     // Load real patient counts for solutions
     automationsApi.getSolutionCounts()
-      .then((res) => { if (res.data) setSolutionCounts(res.data); })
-      .catch(() => {});
+      .then((res) => { if (res.data) setSolutionCounts(res.data); });
+    // Contagens são só informativas: falha não bloqueia a tela
   }, []);
 
   const filtered = filterType === "all" ? flows : flows.filter((f) => f.type === filterType);
@@ -79,23 +83,30 @@ function AutomacoesPage() {
   const toggleActive = (id: string) => {
     setFlows((prev) => prev.map((f) => f.id === id ? { ...f, active: !f.active } : f));
     const flow = flows.find(f => f.id === id);
-    toast.success(flow?.active ? `"${flow.name}" pausado` : `"${flow?.name}" ativado`);
-    automationsApi.toggleFlow(id).catch(() => {
-      // Rollback on failure
-      setFlows((prev) => prev.map((f) => f.id === id ? { ...f, active: !f.active } : f));
-      toast.error("Erro ao alterar status");
+    automationsApi.toggleFlow(id).then(({ error }) => {
+      if (error) {
+        // Desfaz: o servidor não mudou o status
+        setFlows((prev) => prev.map((f) => f.id === id ? { ...f, active: !f.active } : f));
+        toast.error("Erro ao alterar status: " + error);
+        return;
+      }
+      toast.success(flow?.active ? `"${flow.name}" pausado` : `"${flow?.name}" ativado`);
     });
   };
 
   const deleteFlow = (id: string) => {
     const flow = flows.find(f => f.id === id);
+    if (!confirm(`Excluir o fluxo "${flow?.name ?? ""}"? Os envios automáticos dele param e não dá para desfazer.`)) return;
     setFlows((prev) => prev.filter((f) => f.id !== id));
     if (selectedFlow?.id === id) setSelectedFlow(null);
     if (editingFlow?.id === id) setEditingFlow(null);
-    toast.success(`Fluxo "${flow?.name}" removido`);
-    automationsApi.deleteFlow(id).catch(() => {
-      if (flow) setFlows((prev) => [flow, ...prev]);
-      toast.error("Erro ao excluir fluxo");
+    automationsApi.deleteFlow(id).then(({ error }) => {
+      if (error) {
+        if (flow) setFlows((prev) => [flow, ...prev]);
+        toast.error("Erro ao excluir fluxo: " + error);
+        return;
+      }
+      toast.success(`Fluxo "${flow?.name}" removido`);
     });
   };
 
@@ -112,7 +123,7 @@ function AutomacoesPage() {
     setFlows((prev) => [newFlow, ...prev]);
     setSelectedFlow(newFlow);
     toast.success(`Fluxo duplicado: "${newFlow.name}"`);
-    automationsApi.createFlow(newFlow).catch(() => toast.error("Erro ao salvar cópia"));
+    automationsApi.createFlow(newFlow).then(({ error }) => { if (error) toast.error("A cópia não foi salva no servidor: " + error); });
   };
 
   const createNewFlow = () => {
@@ -133,7 +144,7 @@ function AutomacoesPage() {
     setEditingFlow(newFlow);
     setSelectedFlow(newFlow);
     toast.success("Novo fluxo criado! Edite os detalhes.");
-    automationsApi.createFlow(newFlow).catch(() => toast.error("Erro ao criar fluxo"));
+    automationsApi.createFlow(newFlow).then(({ error }) => { if (error) toast.error("O fluxo não foi salvo no servidor: " + error); });
   };
 
   const activateSolution = (solution: PreConfiguredSolution) => {
@@ -162,7 +173,7 @@ function AutomacoesPage() {
     setSelectedFlow(newFlow);
     setEditingFlow(newFlow);
     toast.success(`Solução "${solution.name}" ativada! Personalize as mensagens.`);
-    automationsApi.createFlow(newFlow).catch(() => toast.error("Erro ao salvar fluxo"));
+    automationsApi.createFlow(newFlow).then(({ error }) => { if (error) toast.error("O fluxo não foi salvo no servidor: " + error); });
   };
 
   const saveEditedFlow = (updated: AutomationFlow) => {
@@ -170,7 +181,6 @@ function AutomacoesPage() {
     setFlows((prev) => prev.map((f) => f.id === updated.id ? withUpdate : f));
     setSelectedFlow(withUpdate);
     setEditingFlow(null);
-    toast.success(`Fluxo "${updated.name}" salvo`);
     automationsApi.updateFlow(updated.id, {
       name: updated.name,
       description: updated.description,
@@ -178,7 +188,10 @@ function AutomacoesPage() {
       trigger: updated.trigger,
       steps: updated.steps,
       active: updated.active,
-    }).catch(() => toast.error("Erro ao salvar no servidor"));
+    }).then(({ error }) => {
+      if (error) toast.error(`O fluxo "${updated.name}" não foi salvo no servidor: ` + error);
+      else toast.success(`Fluxo "${updated.name}" salvo`);
+    });
   };
 
   const totalSent = flows.reduce((a, f) => a + f.stats.sent, 0);
@@ -1223,8 +1236,10 @@ function SolutionsGrid({
 
   useEffect(() => {
     automationsApi.getSolutionHours()
-      .then(res => { if (res.data) setHoursConfig(res.data); })
-      .catch(() => {});
+      .then(res => {
+        if (res.error) toast.error("Não foi possível carregar o horário de envio: " + res.error);
+        else if (res.data) setHoursConfig(res.data);
+      });
   }, []);
 
   const saveHours = async () => {

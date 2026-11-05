@@ -19,9 +19,13 @@ const pool = new pg.Pool({
 
 async function createSuperAdmin() {
   try {
-    const email = 'superadmin@odontoconnect.tech';
-    const password = 'Connect#SecureAdmin@2026'; // Senha alterada para maior segurança
-    const name = 'Super Admin';
+    // Dados do super-admin vêm do ambiente; nunca escreva e-mail ou senha neste arquivo.
+    // Uso: SUPER_ADMIN_EMAIL=... SUPER_ADMIN_PASSWORD=... [SUPER_ADMIN_NAME=...] node create-super-admin.mjs
+    const email = String(process.env.SUPER_ADMIN_EMAIL || '').trim().toLowerCase();
+    const password = String(process.env.SUPER_ADMIN_PASSWORD || '');
+    const name = String(process.env.SUPER_ADMIN_NAME || 'Super Admin').trim();
+    if (!email || !email.includes('@')) throw new Error('Defina SUPER_ADMIN_EMAIL');
+    if (password.length < 12) throw new Error('Defina SUPER_ADMIN_PASSWORD com pelo menos 12 caracteres');
     const hash = await bcrypt.hash(password, 12);
 
     console.log(`Checking for user ${email}...`);
@@ -48,6 +52,7 @@ async function createSuperAdmin() {
       console.log('Super Admin created successfully.');
     }
   } catch (err) {
+    process.exitCode = 1;
     console.error('Error creating super admin:', err.message);
   } finally {
     await pool.end();

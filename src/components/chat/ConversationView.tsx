@@ -2,6 +2,7 @@ import type { ChatMessage } from "@/data/chatMockData";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { CheckCheck, Check, MapPin, Phone, Mail, Globe, Building2, BarChart3, Reply, SmilePlus, ExternalLink, List, ChevronDown, Forward, Trash2, Search, Loader2, Upload, Copy, Clock, Mic, Download, X, ZoomIn, ZoomOut, AlertCircle, ImageOff, VideoOff, FileText, MoreVertical, ChevronUp } from "lucide-react";
 import { TypingIndicator } from "./TypingIndicator";
+import { whatsappTextToHtml, createDownloadLink } from "@/lib/safeHtml";
 
 interface ServerSearchResult {
   id: string;
@@ -462,14 +463,10 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
   const formatTime = (date: Date) =>
     date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 
-  const renderFormattedText = (text: string) => {
-    let html = text
-      .replace(/\*([^*]+)\*/g, '<strong>$1</strong>')
-      .replace(/_([^_]+)_/g, '<em>$1</em>')
-      .replace(/~([^~]+)~/g, '<del>$1</del>')
-      .replace(/```([^`]+)```/g, '<code class="bg-background/20 px-1.5 py-0.5 rounded text-[13px] font-mono">$1</code>');
-    return <span dangerouslySetInnerHTML={{ __html: html }} />;
-  };
+  // Texto vem de quem mandou a mensagem: whatsappTextToHtml escapa antes de formatar.
+  const renderFormattedText = (text: string) => (
+    <span dangerouslySetInnerHTML={{ __html: whatsappTextToHtml(text) }} />
+  );
 
   const renderLinkPreview = (msg: ChatMessage) => {
     if (!msg.linkPreview) return null;
@@ -856,7 +853,7 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
                             el.style.display = "none";
                             const fallback = document.createElement("div");
                             fallback.className = "flex items-center gap-3 p-4 text-xs";
-                            fallback.innerHTML = `<a href="${msg.fileUrl}" download="${msg.fileName || 'imagem'}" class="flex items-center gap-2 text-primary hover:underline"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Baixar imagem</a>`;
+                            fallback.appendChild(createDownloadLink(msg.fileUrl, msg.fileName || 'imagem', 'Baixar imagem'));
                             el.parentElement?.appendChild(fallback);
                           }}
                         />
@@ -896,7 +893,7 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
                             el.style.display = "none";
                             const fallback = document.createElement("div");
                             fallback.className = "flex items-center gap-3 p-4 text-xs";
-                            fallback.innerHTML = `<a href="${msg.fileUrl}" download="${msg.fileName || 'video'}" class="flex items-center gap-2 text-primary hover:underline"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Baixar vídeo</a>`;
+                            fallback.appendChild(createDownloadLink(msg.fileUrl, msg.fileName || 'video', 'Baixar vídeo'));
                             el.parentElement?.appendChild(fallback);
                           }}
                         />

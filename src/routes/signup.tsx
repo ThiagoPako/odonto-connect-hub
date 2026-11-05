@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { Loader2, AlertCircle } from "lucide-react";
 import { TERMOS_VERSAO, POLITICA_VERSAO } from "@/lib/legal";
+import { TESTE_GRATIS_TEXTO } from "@/lib/oferta";
 
 export const Route = createFileRoute("/signup")({
   ssr: false,
@@ -19,12 +20,15 @@ export const Route = createFileRoute("/signup")({
   component: SignupPage,
 });
 
-// Nomes exibidos dos planos da landing (o slug vai para a API sem mudança)
-const PLANOS: Record<string, string> = { starter: "Starter", professional: "Professional", enterprise: "Enterprise" };
+// Nomes exibidos dos planos (slugs da tabela `plans`). "professional" era o slug antigo da landing,
+// que não existe no banco ("Plano inválido"): links antigos passam a usar "pro".
+const PLANOS: Record<string, string> = { starter: "Starter", pro: "Profissional", enterprise: "Enterprise" };
+const SLUG_ANTIGO: Record<string, string> = { professional: "pro" };
 
 function SignupPage() {
   const navigate = useNavigate();
-  const { plan } = Route.useSearch();
+  const { plan: planParam } = Route.useSearch();
+  const plan = planParam ? (SLUG_ANTIGO[planParam] ?? planParam) : undefined;
   const { refreshUser } = useAuth();
   const [loading, setLoading] = useState(false);
   // Erros mostrados junto do campo (mesmas regras de antes; o toast ficava longe do campo)
@@ -88,11 +92,10 @@ function SignupPage() {
   return (
     <AuthShell
       title="Cadastre sua clínica"
-      // ⚠️ Helena: a landing promete 7 dias grátis; aqui são 14. Não decidido — ver PR.
       description={
         PLANOS[plan ?? ""]
-          ? `Plano ${PLANOS[plan as string]} · 14 dias grátis, sem cartão de crédito.`
-          : "14 dias grátis, sem cartão de crédito."
+          ? `Plano ${PLANOS[plan as string]} · ${TESTE_GRATIS_TEXTO}, sem cartão de crédito.`
+          : `${TESTE_GRATIS_TEXTO}, sem cartão de crédito.`
       }
       footer={
         <p>

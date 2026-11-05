@@ -33,13 +33,15 @@ function ProcedimentosCatalogoPage() {
   const [historicoId, setHistoricoId] = useState<string | null>(null);
   const [historicoNome, setHistoricoNome] = useState<string>("");
 
+  const [loadError, setLoadError] = useState<string | null>(null);
+
   const load = useCallback(async () => {
     setLoading(true);
-    try {
-      const res = await procedimentosCatalogoApi.list();
-      const data = ((res as any).data || res || []) as ProcedimentoCatalogo[];
-      setItems(Array.isArray(data) ? data : []);
-    } finally { setLoading(false); }
+    const res = await procedimentosCatalogoApi.list();
+    setLoadError(res.error);
+    if (res.error) toast.error("Não foi possível carregar os procedimentos: " + res.error);
+    else setItems(Array.isArray(res.data) ? (res.data as ProcedimentoCatalogo[]) : []);
+    setLoading(false);
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -165,7 +167,14 @@ function ProcedimentosCatalogoPage() {
                   </tr>
                 ))}
                 {filtered.length === 0 && (
-                  <tr><td colSpan={10} className="px-3 py-12 text-center text-muted-foreground">Nenhum procedimento cadastrado</td></tr>
+                  <tr><td colSpan={10} className="px-3 py-12 text-center text-muted-foreground">
+                    {loadError ? (
+                      <span role="alert" className="text-destructive">
+                        Não foi possível carregar os procedimentos. {loadError}{" "}
+                        <button type="button" onClick={load} className="underline font-semibold">Tentar de novo</button>
+                      </span>
+                    ) : "Nenhum procedimento cadastrado"}
+                  </td></tr>
                 )}
               </tbody>
             </table>
