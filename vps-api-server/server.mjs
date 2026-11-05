@@ -41,6 +41,8 @@ dotenv.config({
 const { Pool } = pg;
 const app = express();
 const PORT = process.env.API_PORT || 3002;
+// Escuta só no loopback: o acesso externo passa pelo nginx (HTTPS). Sobrescreva com API_HOST se precisar.
+const LISTEN_HOST = process.env.API_HOST || '127.0.0.1';
 
 // ─── Middleware ──────────────────────────────────────────────
 app.use(cors());
@@ -15948,7 +15950,7 @@ app.delete('/api/exames/:id', async (req, res) => {
 // START SERVER
 
 if (process.env.NODE_ENV !== 'test') {
-  const server = app.listen(PORT, async () => {
+  const server = app.listen(PORT, LISTEN_HOST, async () => {
   console.log(`🦷 Odonto Connect API running on port ${PORT}`);
   console.log(`   Health: http://localhost:${PORT}/api/health`);
   console.log(`   Webhook URL: ${WEBHOOK_URL}`);
