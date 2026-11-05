@@ -4785,19 +4785,43 @@ app.post('/api/whatsapp/call', async (req, res) => {
 
 // ═══════════════════════════════════════════════════════════════
 
+const PACIENTE_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Isolamento entre clínicas: a RLS não protege (tabelas NO FORCE). Toda rota
+// /api/pacientes/:id/* valida aqui que o paciente é da clínica do usuário.
+async function assertPacienteDoTenant(pacienteId, tenantId) {
+  if (!tenantId || !PACIENTE_UUID_RE.test(String(pacienteId || ''))) return false;
+  const { rows } = await pool.query(
+    'SELECT 1 FROM pacientes WHERE id = $1 AND tenant_id = $2 LIMIT 1',
+    [pacienteId, tenantId]
+  );
+  return rows.length > 0;
+}
+
+function sendPacienteRouteError(res, error, tag) {
+  if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+  if (error.message === 'Admin access required') return res.status(403).json({ error: error.message });
+  if (error.code === '23503') return res.status(409).json({ error: 'Paciente possui agendamentos ou registros vinculados' });
+  if (error.code === '23505') return res.status(409).json({ error: 'Já existe um cadastro com esses dados (ex.: CPF)' });
+  console.error(`[${tag}]`, error.message);
+  return res.status(500).json({ error: 'Erro interno' });
+}
+
 app.get('/api/pacientes', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
     const { rows } = await pool.query('SELECT * FROM pacientes WHERE tenant_id = $1 ORDER BY nome ASC', [user.tenant_id]);
     res.json(rows);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    sendPacienteRouteError(res, error, 'pacientes:list');
   }
 });
 
 app.post('/api/pacientes', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
     const { nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes } = req.body;
     const id = crypto.randomUUID();
     await pool.query(
@@ -4808,33 +4832,39 @@ app.post('/api/pacientes', async (req, res) => {
     // Push to Clinicorp
     import('./clinicorp.mjs').then(m => m.clinicorpPush.pushPatient(pool, id)).catch(e => console.error('Clinicorp push failed:', e.message));
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    sendPacienteRouteError(res, error, 'pacientes:create');
   }
 });
 
 app.put('/api/pacientes/:id', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
+    if (!PACIENTE_UUID_RE.test(String(req.params.id))) return res.status(404).json({ error: 'Paciente não encontrado' });
     const { nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes } = req.body;
-    await pool.query(
-      'UPDATE pacientes SET nome=$1, cpf=$2, telefone=$3, email=$4, data_nascimento=$5, sexo=$6, convenio=$7, endereco=$8, observacoes=$9, updated_at=NOW() WHERE id=$10',
-      [nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes, req.params.id]
+    const { rowCount } = await pool.query(
+      'UPDATE pacientes SET nome=$1, cpf=$2, telefone=$3, email=$4, data_nascimento=$5, sexo=$6, convenio=$7, endereco=$8, observacoes=$9, updated_at=NOW() WHERE id=$10 AND tenant_id=$11',
+      [nome, cpf, telefone, email, data_nascimento, sexo, convenio, endereco, observacoes, req.params.id, user.tenant_id]
     );
+    if (!rowCount) return res.status(404).json({ error: 'Paciente não encontrado' });
     res.json({ success: true });
-    // Push to Clinicorp
+    // Push to Clinicorp (só depois de confirmar que o paciente é desta clínica)
     import('./clinicorp.mjs').then(m => m.clinicorpPush.pushPatient(pool, req.params.id)).catch(e => console.error('Clinicorp push failed:', e.message));
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    sendPacienteRouteError(res, error, 'pacientes:update');
   }
 });
 
 app.delete('/api/pacientes/:id', async (req, res) => {
   try {
-    await verifyAdmin(req);
-    await pool.query('DELETE FROM pacientes WHERE id = $1', [req.params.id]);
+    const { user } = await verifyAdmin(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
+    if (!PACIENTE_UUID_RE.test(String(req.params.id))) return res.status(404).json({ error: 'Paciente não encontrado' });
+    const { rowCount } = await pool.query('DELETE FROM pacientes WHERE id = $1 AND tenant_id = $2', [req.params.id, user.tenant_id]);
+    if (!rowCount) return res.status(404).json({ error: 'Paciente não encontrado' });
     res.json({ success: true });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    sendPacienteRouteError(res, error, 'pacientes:delete');
   }
 });
 
@@ -4844,17 +4874,25 @@ app.delete('/api/pacientes/:id', async (req, res) => {
 
 app.get('/api/pacientes/:id/anamnese', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
+    if (!(await assertPacienteDoTenant(req.params.id, user.tenant_id))) {
+      return res.status(404).json({ error: 'Paciente não encontrado' });
+    }
     const { rows } = await pool.query('SELECT * FROM anamneses WHERE paciente_id = $1', [req.params.id]);
     res.json(rows[0] || null);
   } catch (error) {
-    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+    sendPacienteRouteError(res, error, 'pacientes:anamnese:get');
   }
 });
 
 app.put('/api/pacientes/:id/anamnese', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
+    if (!(await assertPacienteDoTenant(req.params.id, user.tenant_id))) {
+      return res.status(404).json({ error: 'Paciente não encontrado' });
+    }
     const { id } = req.params;
     const {
       alergias, medicamentos, doencas_preexistentes, cirurgias_anteriores,
@@ -4893,9 +4931,7 @@ app.put('/api/pacientes/:id/anamnese', async (req, res) => {
     const { rows } = await pool.query('SELECT * FROM anamneses WHERE paciente_id = $1', [id]);
     res.json(rows[0]);
   } catch (error) {
-    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
-    console.error('❌ Error saving anamnese:', error.message);
-    res.status(500).json({ error: error.message });
+    sendPacienteRouteError(res, error, 'pacientes:anamnese:save');
   }
 });
 
@@ -4905,18 +4941,25 @@ app.put('/api/pacientes/:id/anamnese', async (req, res) => {
 
 app.get('/api/pacientes/:id/odontograma', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
+    if (!(await assertPacienteDoTenant(req.params.id, user.tenant_id))) {
+      return res.status(404).json({ error: 'Paciente não encontrado' });
+    }
     const { rows } = await pool.query('SELECT * FROM odontogramas WHERE paciente_id = $1', [req.params.id]);
     res.json(rows[0] || null);
   } catch (error) {
-    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
-    res.status(500).json({ error: error.message });
+    sendPacienteRouteError(res, error, 'pacientes:odontograma:get');
   }
 });
 
 app.put('/api/pacientes/:id/odontograma', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
+    if (!(await assertPacienteDoTenant(req.params.id, user.tenant_id))) {
+      return res.status(404).json({ error: 'Paciente não encontrado' });
+    }
     const id = req.params.id;
     const { dentes, observacoes } = req.body;
 
@@ -4937,9 +4980,7 @@ app.put('/api/pacientes/:id/odontograma', async (req, res) => {
     const { rows } = await pool.query('SELECT * FROM odontogramas WHERE paciente_id = $1', [id]);
     res.json(rows[0]);
   } catch (error) {
-    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
-    console.error('❌ Error saving odontograma:', error.message);
-    res.status(500).json({ error: error.message });
+    sendPacienteRouteError(res, error, 'pacientes:odontograma:save');
   }
 });
 
@@ -4949,20 +4990,23 @@ app.put('/api/pacientes/:id/odontograma', async (req, res) => {
 
 app.get('/api/pacientes/:id/historico', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
+    if (!(await assertPacienteDoTenant(req.params.id, user.tenant_id))) {
+      return res.status(404).json({ error: 'Paciente não encontrado' });
+    }
     const { rows } = await pool.query(
       `SELECT a.id, a.data, a.hora, a.duracao, a.procedimento, a.status, a.observacoes,
               d.nome as dentista_nome, d.especialidade as dentista_especialidade
        FROM agendamentos a
-       LEFT JOIN dentistas d ON a.dentista_id = d.id
-       WHERE a.paciente_id = $1
+       LEFT JOIN dentistas d ON a.dentista_id = d.id AND d.tenant_id = $2
+       WHERE a.paciente_id = $1 AND a.tenant_id = $2
        ORDER BY a.data DESC, a.hora DESC`,
-      [req.params.id]
+      [req.params.id, user.tenant_id]
     );
     res.json(rows);
   } catch (error) {
-    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
-    res.status(500).json({ error: error.message });
+    sendPacienteRouteError(res, error, 'pacientes:historico');
   }
 });
 
@@ -6504,18 +6548,22 @@ app.get('/api/orcamentos/:id/execucoes', async (req, res) => {
 // Lista execuções de um paciente (histórico clínico-financeiro)
 app.get('/api/pacientes/:id/execucoes', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
+    if (!(await assertPacienteDoTenant(req.params.id, user.tenant_id))) {
+      return res.status(404).json({ error: 'Paciente não encontrado' });
+    }
     const { rows } = await pool.query(
       `SELECT e.*, d.nome as dentista_nome
        FROM procedimento_execucoes e
-       LEFT JOIN dentistas d ON e.dentista_id = d.id
+       LEFT JOIN dentistas d ON e.dentista_id = d.id AND d.tenant_id = $2
        WHERE e.paciente_id = $1
        ORDER BY e.executado_em DESC`,
-      [req.params.id]
+      [req.params.id, user.tenant_id]
     );
     res.json(rows);
   } catch (error) {
-    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+    sendPacienteRouteError(res, error, 'pacientes:execucoes');
   }
 });
 
@@ -13634,7 +13682,7 @@ app.get('/api/pacientes/:id/consentimentos', async (req, res) => {
     const consent = await findActiveConsent(user.tenant_id, req.params.id, tipo);
     res.json({ consent });
   } catch (err) {
-    res.status(err.message === 'Unauthorized' ? 401 : 500).json({ error: err.message });
+    sendPacienteRouteError(res, err, 'pacientes:consentimentos:get');
   }
 });
 
@@ -13646,6 +13694,17 @@ app.post('/api/pacientes/:id/consentimentos', async (req, res) => {
     if (!CONSENT_TIPOS.has(tipo) || !versao || !texto) {
       return res.status(400).json({ error: 'tipo, versao e texto são obrigatórios' });
     }
+    // atendimento.tsx usa o id do agendamento quando o agendamento não tem paciente
+    // vinculado; aceita os dois, desde que sejam desta clínica.
+    let donoOk = await assertPacienteDoTenant(req.params.id, user.tenant_id);
+    if (!donoOk && PACIENTE_UUID_RE.test(String(req.params.id))) {
+      const { rows: apt } = await pool.query(
+        'SELECT 1 FROM agendamentos WHERE id = $1 AND tenant_id = $2 LIMIT 1',
+        [req.params.id, user.tenant_id]
+      );
+      donoOk = apt.length > 0;
+    }
+    if (!donoOk) return res.status(404).json({ error: 'Paciente não encontrado' });
     const { rows } = await pool.query(
       `INSERT INTO consentimentos_pacientes
          (tenant_id, paciente_id, tipo, versao, texto, registrado_por, registrado_por_email, ip_address, user_agent)
@@ -13660,7 +13719,7 @@ app.post('/api/pacientes/:id/consentimentos', async (req, res) => {
     );
     res.json({ consent: rows[0] });
   } catch (err) {
-    res.status(err.message === 'Unauthorized' ? 401 : 500).json({ error: err.message });
+    sendPacienteRouteError(res, err, 'pacientes:consentimentos:create');
   }
 });
 
