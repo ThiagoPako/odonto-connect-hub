@@ -1,5 +1,6 @@
 import { Outlet, Link, createRootRoute, HeadContent, Scripts, useLocation, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
+import { OG_TITULO, OG_DESCRICAO, OG_IMAGE_META } from "@/lib/site";
 import { AppSidebar } from "@/components/AppSidebar";
 import { WhatsAppConnectionBanner } from "@/components/WhatsAppConnectionBanner";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
@@ -64,12 +65,11 @@ export const Route = createRootRoute({
       { name: "viewport", content: "width=device-width, initial-scale=1" },
       { title: "Odonto Connect — Gestão Inteligente de Atendimento" },
       { name: "description", content: "SaaS de gestão de atendimento odontológico com WhatsApp, CRM e IA financeira." },
-      { property: "og:title", content: "Odonto Connect — Gestão Inteligente de Atendimento" },
-      { name: "twitter:title", content: "Odonto Connect — Gestão Inteligente de Atendimento" },
-      { property: "og:description", content: "SaaS de gestão de atendimento odontológico com WhatsApp, CRM e IA financeira." },
-      { name: "twitter:description", content: "SaaS de gestão de atendimento odontológico com WhatsApp, CRM e IA financeira." },
-      { property: "og:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/4001bcb9-5ba0-47a6-8bef-2c35ce6a55eb/id-preview-d5ddb45f--13cc4491-4be3-465b-a0f9-b514546d337a.lovable.app-1779750648705.png" },
-      { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/4001bcb9-5ba0-47a6-8bef-2c35ce6a55eb/id-preview-d5ddb45f--13cc4491-4be3-465b-a0f9-b514546d337a.lovable.app-1779750648705.png" },
+      { property: "og:title", content: OG_TITULO },
+      { name: "twitter:title", content: OG_TITULO },
+      { property: "og:description", content: OG_DESCRICAO },
+      { name: "twitter:description", content: OG_DESCRICAO },
+      ...OG_IMAGE_META,
       { name: "twitter:card", content: "summary_large_image" },
       { property: "og:type", content: "website" },
     ],

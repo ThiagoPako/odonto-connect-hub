@@ -1,0 +1,44 @@
+<!doctype html>
+<!--
+  Fonte da imagem de compartilhamento public/og-image.png (1200×630).
+  Cores e fontes do sistema (DESIGN.md / src/styles.css): fundo --background, tinta --foreground,
+  texto de apoio --muted-foreground, palco --stage (= fundo do símbolo), ação --primary.
+  Texto: o mesmo da landing revisada pela Helena. Sem promessa, preço ou dado de clínica.
+  Para regerar: abra este arquivo num navegador com janela de 1200×630 e capture a página
+  (ex.: Playwright `page.setViewportSize({width:1200,height:630}); page.screenshot(...)`).
+-->
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=Space+Grotesk:wght@600&display=block">
+<style>
+  :root {
+    --background: hsl(200, 20%, 98%);
+    --foreground: hsl(222, 47%, 13%);
+    --muted-foreground: hsl(215, 14%, 40%);
+    --stage: hsl(238, 49%, 12%);
+    --primary: hsl(189, 88%, 29%);
+  }
+  * { margin: 0; box-sizing: border-box; }
+  html, body { width: 1200px; height: 630px; overflow: hidden; }
+  body { display: grid; grid-template-columns: 790px 410px; background: var(--background); font-family: Inter, sans-serif; -webkit-font-smoothing: antialiased; }
+  .texto { padding: 64px 48px 60px 72px; display: flex; flex-direction: column; }
+  .logo { height: 44px; width: auto; align-self: flex-start; }
+  h1 { margin-top: auto; font-family: "Space Grotesk", sans-serif; font-weight: 600; font-size: 62px; line-height: 1.06; letter-spacing: -0.03em; color: var(--foreground); }
+  p { margin-top: 24px; font-size: 27px; line-height: 1.4; color: var(--muted-foreground); max-width: 34rem; }
+  .dominio { margin-top: 40px; font-size: 22px; font-weight: 500; color: var(--primary); }
+  .palco { background: var(--stage); display: flex; align-items: center; justify-content: center; }
+  .palco img { width: 300px; height: auto; }
+</style>
+</head>
+<body>
+  <div class="texto">
+    <img class="logo" src="../../src/assets/logo-horizontal.png" alt="">
+    <h1>Gestão odontológica<br>de A a Z</h1>
+    <p>CRM, agenda, WhatsApp da recepção, prontuário e financeiro em uma única plataforma.</p>
+    <div class="dominio">odontoconnect.tech</div>
+  </div>
+  <div class="palco"><img src="../../src/assets/symbol.jpg" alt=""></div>
+</body>
+</html>
