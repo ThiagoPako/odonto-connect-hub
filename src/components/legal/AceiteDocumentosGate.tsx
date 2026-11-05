@@ -149,14 +149,17 @@ function DialogoAceite({ pendentes, onAceito }: { pendentes: PendenciasLegais["p
         </AlertDialogHeader>
 
         <div className="space-y-3 text-body text-foreground">
+          {/* Resumo só da v2 (docs/juridico/politica-e-termos-v2.md §2); versões futuras mostram só os links */}
+          {pendentes.every((p) => p.versao === "2.0") && (<>
           <p className="font-semibold">O que mudou</p>
           <ul className="list-disc pl-5 space-y-1.5 text-muted-foreground">
             <li>A Política separa quando somos controladores (clínica e equipe) e operadores (dados dos pacientes).</li>
             <li>Lista dos fornecedores que tratam dados (suboperadores), com o país de cada um.</li>
-            <li>O que cada recurso de inteligência artificial envia e o que fica com a clínica revisar.</li>
+            <li>O que cada recurso de inteligência artificial envia ao fornecedor, e que tudo passa pela revisão da clínica.</li>
             <li>Os Termos ganham o Anexo I, Acordo de Tratamento de Dados, e a regra dos textos escritos pela clínica.</li>
             <li>Na saída, a guarda do prontuário por 20 anos continua sendo da clínica.</li>
           </ul>
+          </>)}
           <ul className="space-y-1">
             {pendentes.map((p) => (
               <li key={p.documento}>
