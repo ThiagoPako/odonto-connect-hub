@@ -50,7 +50,7 @@ beforeEach(() => {
     }
     if (/^\s*INSERT INTO exame_arquivos/.test(text)) {
       const [id, tenant_id, exame_id, paciente_id, caminho, nome_original, mime_type, tamanho_bytes] = params;
-      const row = { id, tenant_id, exame_id, paciente_id, caminho, nome_original, mime_type, tamanho_bytes, created_at: new Date().toISOString() };
+      const row = { id, tenant_id, exame_id, paciente_id, caminho, nome_original, mime_type, tamanho_bytes, descricao: params[8], created_at: new Date().toISOString() };
       arquivos.push(row);
       return Promise.resolve({ rows: [row], rowCount: 1 });
     }
@@ -129,6 +129,17 @@ describe('arquivos de exame', () => {
     // Bearer da própria clínica → 200
     const mesma = await request(app).get(res.body.url.split('?')[0]).set('Authorization', `Bearer ${token()}`);
     expect(mesma.status).toBe(200);
+  });
+
+  test('imagem enviada move o exame para aguardando laudo; anexo do pedido não', async () => {
+    await enviar(exameA, PNG);
+    expect(sqlLog.some(q => /SET status = 'aguardando_laudo'/.test(q.text))).toBe(true);
+    sqlLog = [];
+    const res = await request(app).post(`/api/exames/${exameA}/arquivos`).set('Authorization', `Bearer ${token()}`)
+      .set('Content-Type', 'application/octet-stream').set('X-Anexo-Do-Pedido', '1').send(PNG);
+    expect(res.status).toBe(200);
+    expect(res.body.descricao).toBe('Anexo do pedido');
+    expect(sqlLog.some(q => /SET status = 'aguardando_laudo'/.test(q.text))).toBe(false);
   });
 
   test('tirar arquivo do exame só marca removido_em (não apaga) e filtra a clínica', async () => {

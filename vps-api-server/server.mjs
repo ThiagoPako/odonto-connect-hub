@@ -16232,7 +16232,11 @@ app.post('/api/exames/:id/arquivos', express.raw({ type: '*/*', limit: '64mb' })
     let nomeOriginal = '';
     try { nomeOriginal = decodeURIComponent(String(req.headers['x-nome-arquivo'] || '')); } catch { nomeOriginal = ''; }
     nomeOriginal = nomeOriginal.replace(/[\u0000-\u001f\u007f/\\]/g, '').trim().slice(0, 200) || `arquivo.${tipo.ext}`;
-    const descricao = String(req.headers['x-descricao'] ? decodeURIComponent(String(req.headers['x-descricao'])) : '').trim().slice(0, 300) || null;
+    // Anexo do pedido (requisição, encaminhamento) não é o resultado do exame
+    const anexoDoPedido = req.headers['x-anexo-do-pedido'] === '1';
+    const descricao = (() => {
+      try { return decodeURIComponent(String(req.headers['x-descricao'] || '')).trim().slice(0, 300); } catch { return ''; }
+    })() || (anexoDoPedido ? 'Anexo do pedido' : null);
 
     const id = randomUUID();
     const subDir = user.tenant_id;
@@ -16249,7 +16253,7 @@ app.post('/api/exames/:id/arquivos', express.raw({ type: '*/*', limit: '64mb' })
       [id, user.tenant_id, exame.id, exame.paciente_id || null, caminho, nomeOriginal, tipo.mime, buf.length, descricao, user.id]
     );
     // Chegou imagem: o exame foi realizado e passa a aguardar laudo
-    await pool.query(
+    if (!anexoDoPedido) await pool.query(
       `UPDATE exames SET status = 'aguardando_laudo', data_realizacao = COALESCE(data_realizacao, NOW())
         WHERE id = $1 AND tenant_id = $2 AND status IN ('novo', 'em_andamento')`,
       [exame.id, user.tenant_id]

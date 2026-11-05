@@ -274,7 +274,7 @@ export function ExameLaudoDialog({ exame: exameProp, onOpenChange, onSaved }: Pr
                         <div className="min-w-0 flex-1">
                           <div className="truncate text-xs" title={a.nome_original ?? undefined}>{a.nome_original || "arquivo"}</div>
                           <div className="text-[10px] text-muted-foreground">
-                            {formatarTamanho(a.tamanho_bytes)} · {new Date(a.created_at).toLocaleDateString("pt-BR")}
+                            {a.descricao ? `${a.descricao} · ` : ""}{formatarTamanho(a.tamanho_bytes)} · {new Date(a.created_at).toLocaleDateString("pt-BR")}
                           </div>
                         </div>
                         <Button asChild size="icon" variant="ghost" className="h-8 w-8">
