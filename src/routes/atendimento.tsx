@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { localDateISO } from "@/lib/utils";
+import { simpleMarkdownToHtml } from "@/lib/safeHtml";
 import { useState, useCallback, useEffect, useRef } from "react";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import {
@@ -21,7 +22,6 @@ import {
 import { type Appointment } from "@/data/agendaMockData";
 import { aiApi, consultationsApi, agendaApi, dentistasApi, consentimentosApi, type AgendamentoVPS, type ConsultationRecord, type ConsentimentoPaciente } from "@/lib/vpsApi";
 import { toast } from "sonner";
-import { simpleMarkdownToHtml } from "@/lib/safeHtml";
 
 type SearchParams = { appointmentId?: string };
 
