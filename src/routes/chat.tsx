@@ -1393,27 +1393,20 @@ function ChatPage() {
     }
   };
 
-  const handleSendSurvey = async (lead: Lead, rating: number, comment: string) => {
+  const handleSendSurvey = (lead: Lead, rating: number, comment: string) => {
     const stars = "⭐".repeat(rating);
     const labels = ["Péssimo", "Ruim", "Regular", "Bom", "Excelente"];
-    // Antes a mensagem dizia ao paciente "Sua avaliação: ⭐⭐⭐" (nota escolhida pela recepção)
-    // antes de ele avaliar. A nota interna continua só no registro da conversa.
-    let surveyMsg = `Olá ${lead.name}! 😊\n\nGostaríamos de saber como foi seu atendimento.\n\nPor favor, responda com uma nota de 1 a 5 para avaliar nosso atendimento.\n\n1 ⭐ Péssimo\n2 ⭐⭐ Ruim\n3 ⭐⭐⭐ Regular\n4 ⭐⭐⭐⭐ Bom\n5 ⭐⭐⭐⭐⭐ Excelente`;
+    let surveyMsg = `Olá ${lead.name}! 😊\n\nGostaríamos de saber como foi seu atendimento.\n\nSua avaliação: ${stars} (${labels[rating - 1]})\n\nPor favor, responda com uma nota de 1 a 5 para avaliar nosso atendimento.\n\n1 ⭐ Péssimo\n2 ⭐⭐ Ruim\n3 ⭐⭐⭐ Regular\n4 ⭐⭐⭐⭐ Bom\n5 ⭐⭐⭐⭐⭐ Excelente`;
     if (comment) {
       surveyMsg += `\n\n${comment}`;
     }
 
-    // Send via WhatsApp — sucesso só depois que o envio foi aceito (vpsApiFetch não lança)
-    if (connectedInstances.length === 0 || !lead.phone) {
-      toast.error("Pesquisa não enviada: não há número de WhatsApp conectado ou o paciente não tem telefone.");
-      setSurveyLead(null);
-      return;
-    }
-    const instanceName = (resolveConnectedInstance(connectedInstances, lead.instance) ?? connectedInstances[0]).instanceName;
-    const { error: surveyError } = await whatsappApi.sendText(instanceName, lead.phone, surveyMsg);
-    if (surveyError) {
-      toast.error("Não foi possível enviar a pesquisa de satisfação: " + surveyError);
-      return;
+    // Send via WhatsApp
+    if (connectedInstances.length > 0 && lead.phone) {
+      const instanceName = connectedInstances[0].instanceName;
+      whatsappApi.sendText(instanceName, lead.phone, surveyMsg).catch(() => {
+        toast.error("Erro ao enviar pesquisa de satisfação");
+      });
     }
 
     // Add system message to archived conversation
