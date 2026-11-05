@@ -67,6 +67,9 @@ describe('exames: entrada inválida vira 400 sem gravar', () => {
     ['post', '/api/exames', { tipo_nome: 'Panorâmica', status: 'qualquer' }, /INSERT INTO exames/],
     ['post', '/api/exames', { tipo_nome: 'Panorâmica', prioridade: 'maxima' }, /INSERT INTO exames/],
     ['post', '/api/exames', { tipo_nome: 'Panorâmica', valor: 'abc' }, /INSERT INTO exames/],
+    ['post', '/api/exames', { tipo_nome: 'Panorâmica', valor: -5 }, /INSERT INTO exames/],
+    ['patch', `/api/exames/${exameA}`, { valor: -0.01 }, /UPDATE exames/],
+    ['post', '/api/exame-tipos', { nome: 'Panorâmica', preco: -1 }, /INSERT INTO exame_tipos/],
     ['patch', `/api/exames/${exameA}`, { tipo_exame_id: tipoB }, /UPDATE exames/],
     ['patch', `/api/exames/${exameA}`, { status: 'apagado' }, /UPDATE exames/],
     ['patch', `/api/exames/${exameA}`, { status: null }, /UPDATE exames/],
@@ -104,6 +107,12 @@ describe('exames: exclusão protege o prontuário', () => {
     expect(res.status).toBe(200);
     const del = sqlLog.find(q => /^\s*DELETE FROM exames/.test(q.text));
     expect(del.params).toEqual([exameA, tenantA]);
+  });
+
+  test('anexo do pedido e arquivo retirado não contam como resultado', async () => {
+    await chamar('delete', `/api/exames/${exameA}`);
+    const q = sqlLog.find(x => /AS tem_resultado/.test(x.text));
+    expect(q.text).toMatch(/a\.removido_em IS NULL AND NOT a\.anexo_do_pedido/);
   });
 
   test('exame com laudo ou imagem → 409 sem apagar', async () => {

@@ -201,6 +201,14 @@ function PedidoExamePage() {
   const [activeFile, setActiveFile] = useState<string | null>(null);
   // Pedido já cadastrado nesta tela: evita cadastrar de novo por clique repetido
   const [salvo, setSalvo] = useState<{ codigos: string[]; anexosFalharam: string[] } | null>(null);
+  // Cadastro que falhou no meio: o que já foi gravado não é repetido na nova tentativa
+  const [parcial, setParcial] = useState<{
+    pacienteId: string;
+    pacienteNovo: boolean;
+    tipos: string[];
+    criados: Array<{ id: string; codigo: string | null }>;
+    anexos: string[];
+  } | null>(null);
 
   const applyParsed = useCallback(async (u: { name: string; file: File }) => {
     try {
@@ -292,7 +300,7 @@ function PedidoExamePage() {
   const novoPedido = () => {
     setPaciente(""); setEndereco(""); setFone(""); setCpf(""); setDataNasc(""); setDoutor(""); setCro("");
     setTeethSel(new Set()); setTomoSel(new Set()); setChk({}); setObs(""); setAnalise(""); setFotoOutros("");
-    setUploads([]); setActiveFile(null); setSalvo(null);
+    setUploads([]); setActiveFile(null); setSalvo(null); setParcial(null);
   };
 
   const buildTiposExame = (): string[] => {
@@ -320,8 +328,8 @@ function PedidoExamePage() {
 
     setSaving(true);
     try {
-      let pacienteId: string | null = null;
-      let pacienteNovo = false;
+      let pacienteId: string | null = parcial?.pacienteId ?? null;
+      let pacienteNovo = parcial?.pacienteNovo ?? false;
       const cpfTrim = cpf.trim();
       const { data: lista, error: listaError } = await pacientesApi.list();
       // Sem a lista, não dá para saber se o paciente já existe: parar evita cadastro duplicado
@@ -341,7 +349,7 @@ function PedidoExamePage() {
         return da.slice(-8) === db.slice(-8);
       };
 
-      if (cpfTrim) {
+      if (cpfTrim && !pacienteId) {
         const existente = pacientesLista.find(
           (p) => p.cpf === cpfTrim || (soDigitos(p.cpf) !== "" && soDigitos(p.cpf) === soDigitos(cpfTrim)),
         );
@@ -367,9 +375,14 @@ function PedidoExamePage() {
           const semCpf = cpfTrim ? ", sem CPF na ficha" : "";
           const usar = window.confirm(
             `Já existe um paciente chamado "${c.nome}"${c.telefone ? `, telefone ${c.telefone}` : ""}${semCpf}${extra}.\n\n` +
-              "OK: vincular o pedido a esse paciente.\nCancelar: cadastrar um paciente novo.",
+              "OK: vincular o pedido a esse paciente.\nCancelar: não vincular (a próxima pergunta confirma se é um paciente novo).",
           );
           if (usar) pacienteId = c.id;
+          // Cancelar não pode virar cadastro duplicado sem querer: confirma de novo
+          else if (!window.confirm(`Cadastrar um paciente NOVO chamado "${paciente.trim()}"?\n\nOK: cadastrar novo.\nCancelar: não salvar nada agora.`)) {
+            toast.info("Nada foi salvo. Confira o paciente e clique em Cadastrar de novo.");
+            return;
+          }
         }
       }
 
@@ -419,9 +432,11 @@ function PedidoExamePage() {
         const ativos = catalogo.filter((c) => c.ativo);
         return ativos.find((c) => semAcento(c.nome) === n) ?? ativos.find((c) => semAcento(c.nome).includes(n));
       };
-      const rows = tipos.map((t) => {
+      const jaCriados = new Set(parcial?.tipos ?? []);
+      const rows = tipos.filter((t) => !jaCriados.has(t)).map((t) => {
         const c = doCatalogo(t);
         return {
+          tipo_original: t,
           paciente_id: pacienteId,
           tipo_nome: c?.nome ?? t,
           tipo_exame_id: c?.id ?? null,
@@ -433,37 +448,50 @@ function PedidoExamePage() {
       // exame: sem isso, uma falha no meio aborta o laço e esconde quais já foram salvos.
       const falhas: { tipo: string; erro: string }[] = [];
       const criados: Array<{ id: string; codigo: string | null }> = [];
-      for (const row of rows) {
+      const tiposCriados: string[] = [];
+      for (const { tipo_original, ...row } of rows) {
         try {
           const ex = await examesApi.create(row);
-          if (ex?.id) criados.push({ id: ex.id, codigo: ex.codigo });
+          if (ex?.id) { criados.push({ id: ex.id, codigo: ex.codigo }); tiposCriados.push(tipo_original); }
         } catch (e) {
           falhas.push({ tipo: row.tipo_nome, erro: e instanceof Error ? e.message : "Erro ao salvar o exame." });
         }
       }
 
       // Anexos vão para o primeiro exame criado do pedido (os demais citam o código dele)
+      const todosCriados = [...(parcial?.criados ?? []), ...criados];
       const anexosFalharam: string[] = [];
-      if (criados.length && uploads.length) {
-        for (const u of uploads) {
+      const anexosEnviados: string[] = [...(parcial?.anexos ?? [])];
+      const pendentes = uploads.filter((u) => !anexosEnviados.includes(u.id));
+      if (todosCriados.length && pendentes.length) {
+        for (const u of pendentes) {
           try {
-            await exameArquivosApi.upload(criados[0].id, u.file, { anexoDoPedido: true });
+            await exameArquivosApi.upload(todosCriados[0].id, u.file, { anexoDoPedido: true });
+            anexosEnviados.push(u.id);
           } catch {
             anexosFalharam.push(u.name);
           }
         }
-        if (criados.length > 1 && uploads.length > anexosFalharam.length) {
-          const nota = `Anexos do pedido no exame ${criados[0].codigo ?? ""}`.trim();
-          for (const c of criados.slice(1)) {
-            await examesApi.update(c.id, { observacoes: [obsResumo, nota].filter(Boolean).join(" | ") }).catch(() => undefined);
-          }
+      }
+      if (anexosEnviados.length) {
+        const nota = `Anexos do pedido no exame ${todosCriados[0]?.codigo ?? ""}`.trim();
+        for (const c of criados) {
+          if (c.id === todosCriados[0]?.id) continue;
+          await examesApi.update(c.id, { observacoes: [obsResumo, nota].filter(Boolean).join(" | ") }).catch(() => undefined);
         }
       }
-      if (criados.length && falhas.length === 0) {
-        setSalvo({ codigos: criados.map((c) => c.codigo ?? "").filter(Boolean), anexosFalharam });
-      } else if (criados.length && uploads.length && anexosFalharam.length === 0) {
-        // Parte dos exames falhou: o botão continua ativo para tentar de novo, sem reenviar anexos
-        setUploads([]);
+      if (todosCriados.length && falhas.length === 0) {
+        setSalvo({ codigos: todosCriados.map((c) => c.codigo ?? "").filter(Boolean), anexosFalharam });
+        setParcial(null);
+      } else if (pacienteId) {
+        // Parte falhou: guarda o que já foi gravado para a próxima tentativa não duplicar
+        setParcial({
+          pacienteId,
+          pacienteNovo,
+          tipos: [...(parcial?.tipos ?? []), ...tiposCriados],
+          criados: todosCriados,
+          anexos: anexosEnviados,
+        });
       }
 
       if (falhas.length > 0) {
@@ -474,7 +502,7 @@ function PedidoExamePage() {
           {
             description:
               `Não salvos: ${falhas.map((f) => f.tipo).join(", ")}. ${falhas[0].erro}` +
-              (salvos > 0 ? ` Os outros ${salvos} já estão na ficha; ao tentar de novo, marque só os que faltaram.` : ""),
+              (salvos > 0 ? ` Os outros ${salvos} já estão na ficha. Clique em Cadastrar de novo: só os que faltaram serão enviados.` : " Clique em Cadastrar para tentar de novo."),
             duration: 15000,
           },
         );

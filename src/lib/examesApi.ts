@@ -46,6 +46,14 @@ export interface Exame {
   clinica_nome?: string | null;
 }
 
+export interface ExameLaudoHistorico {
+  id: string;
+  acao: "finalizado" | "reaberto";
+  laudo_texto: string | null;
+  criado_em: string;
+  autor_nome: string | null;
+}
+
 export type ExameUpdate = Partial<Exame> & { updated_at_esperado?: string };
 
 /** Imagem ou arquivo de um exame. `url` e `url_download` são links assinados de vida curta (1 h). */
@@ -59,6 +67,8 @@ export interface ExameArquivo {
   created_at: string;
   enviado_por_nome: string | null;
   imagem: boolean;
+  /** Requisição/encaminhamento anexado no pedido: não é resultado do exame. */
+  anexo_do_pedido?: boolean;
   url: string;
   url_download: string;
 }
@@ -97,6 +107,8 @@ export const examesApi = {
   /** Grava o texto, quem laudou e quando, e conclui o exame. */
   finalizarLaudo: (id: string, laudo_texto: string, updated_at_esperado?: string) =>
     unwrap<Exame>(vpsApiFetch<Exame>(`/exames/${id}/laudo/finalizar`, { method: "POST", body: { laudo_texto, updated_at_esperado } }), {} as Exame),
+  historicoLaudo: (id: string) =>
+    unwrap<ExameLaudoHistorico[]>(vpsApiFetch<ExameLaudoHistorico[]>(`/exames/${id}/laudo/historico`), []),
   reabrirLaudo: (id: string) =>
     unwrap<Exame>(vpsApiFetch<Exame>(`/exames/${id}/laudo/reabrir`, { method: "POST", body: {} }), {} as Exame),
   remove: (id: string) =>

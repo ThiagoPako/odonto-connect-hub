@@ -76,6 +76,8 @@ ${finalizado ? `<div class="assinatura"><div class="linha"></div>${esc(exame.lau
   const prontas = Promise.all(imgs.map((i) => (i.complete ? null : new Promise((r) => { i.onload = i.onerror = r; }))));
   const limite = new Promise((r) => setTimeout(r, 4000));
   Promise.race([prontas, limite]).then(() => {
+    // Sai da página depois de imprimir (ou cancelar): não deixa dado de paciente no DOM
+    janela.addEventListener("afterprint", () => frame.remove(), { once: true });
     janela.focus();
     janela.print();
   });

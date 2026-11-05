@@ -22,8 +22,8 @@ const exameB = 'eeeeeeee-0000-4000-8000-00000000000b';
 let sqlLog;
 let querySpy;
 let estado; // exame A "no banco"
-const token = () => jwt.sign({ sub: userA, email: 'dentista@clinica-a.com', role: 'dentista', tenant_id: tenantA, is_super_admin: false }, JWT_SECRET);
-const chamar = (method, url, body = {}) => request(app)[method](url).set('Authorization', `Bearer ${token()}`).send(body);
+const token = (role = 'dentista') => jwt.sign({ sub: userA, email: 'dentista@clinica-a.com', role, tenant_id: tenantA, is_super_admin: false }, JWT_SECRET);
+const chamar = (method, url, body = {}, role = 'dentista') => request(app)[method](url).set('Authorization', `Bearer ${token(role)}`).send(body);
 
 beforeAll(() => {
   jest.spyOn(console, 'log').mockImplementation(() => {});
@@ -38,13 +38,14 @@ beforeEach(() => {
     const text = String(sql);
     sqlLog.push({ text, params });
     const eA = params[0] === exameA && params[1] === tenantA;
-    if (/SELECT laudo_texto, laudado_em FROM exames/.test(text)) return Promise.resolve({ rows: eA ? [estado] : [], rowCount: eA ? 1 : 0 });
+    if (/SELECT laudo_texto, laudado_em, status FROM exames/.test(text)) return Promise.resolve({ rows: eA ? [estado] : [], rowCount: eA ? 1 : 0 });
     if (/SELECT status, laudado_em FROM exames/.test(text)) return Promise.resolve({ rows: eA ? [estado] : [], rowCount: eA ? 1 : 0 });
     if (/^\s*UPDATE exames SET/.test(text)) {
       // PATCH: confere a versão quando enviada (último parâmetro)
       const id = params.find(p => p === exameA || p === exameB);
       const versao = /date_trunc/.test(text) ? params.at(-1) : null;
-      const ok = id === exameA && params.includes(tenantA) && (!versao || versao === estado.updated_at);
+      const travado = / AND laudado_em IS NULL/.test(text) && !!estado.laudado_em;
+      const ok = id === exameA && params.includes(tenantA) && (!versao || versao === estado.updated_at) && !travado;
       return Promise.resolve({ rows: ok ? [{ ...estado }] : [], rowCount: ok ? 1 : 0 });
     }
     if (/UPDATE exames\s+SET laudo_texto = \$3, laudado_por = \$4/.test(text)) {
@@ -90,7 +91,7 @@ describe('laudo do exame', () => {
 
   test('PATCH do texto de laudo finalizado → 409 sem gravar', async () => {
     estado.laudado_em = '2026-11-05T10:00:00.000Z';
-    const res = await chamar('patch', `/api/exames/${exameA}`, { laudo_texto: 'outro texto' });
+    const res = await chamar('patch', `/api/exames/${exameA}`, { laudo_texto: 'outro texto', updated_at_esperado: estado.updated_at });
     expect(res.status).toBe(409);
     expect(sqlLog.some(q => /^\s*UPDATE exames SET/.test(q.text))).toBe(false);
   });
@@ -113,11 +114,61 @@ describe('laudo do exame', () => {
     expect((await chamar('post', `/api/exames/${exameB}/laudo/reabrir`)).status).toBe(404);
   });
 
+  test('"Concluído" sem laudo finalizado → 409', async () => {
+    const res = await chamar('patch', `/api/exames/${exameA}`, { status: 'concluido' });
+    expect(res.status).toBe(409);
+  });
+
+  test('reabrir não tira o status Entregue', async () => {
+    estado.laudado_em = '2026-11-05T10:00:00.000Z';
+    await chamar('post', `/api/exames/${exameA}/laudo/reabrir`);
+    expect(sqlLog.find(q => /laudado_por = NULL/.test(q.text)).text).toMatch(/WHEN status = 'concluido' THEN 'aguardando_laudo'/);
+  });
+
+  test('PATCH com texto de laudo sem versão → 400', async () => {
+    const res = await chamar('patch', `/api/exames/${exameA}`, { laudo_texto: 'novo' });
+    expect(res.status).toBe(400);
+  });
+
+  test('laudo finalizado: paciente/tipo/datas → 409; status só para entregue', async () => {
+    estado.laudado_em = '2026-11-05T10:00:00.000Z';
+    estado.status = 'concluido';
+    expect((await chamar('patch', `/api/exames/${exameA}`, { paciente_id: null })).status).toBe(409);
+    expect((await chamar('patch', `/api/exames/${exameA}`, { tipo_nome: 'Outro' })).status).toBe(409);
+    expect((await chamar('patch', `/api/exames/${exameA}`, { data_realizacao: '2026-11-01' })).status).toBe(409);
+    expect((await chamar('patch', `/api/exames/${exameA}`, { status: 'cancelado' })).status).toBe(409);
+    expect(sqlLog.some(q => /^\s*UPDATE exames SET/.test(q.text))).toBe(false);
+    expect((await chamar('patch', `/api/exames/${exameA}`, { status: 'entregue' })).status).toBe(200);
+  });
+
+  test('alteração clínica vai com AND laudado_em IS NULL (finalizado no meio → 409)', async () => {
+    const res = await chamar('patch', `/api/exames/${exameA}`, { tipo_nome: 'Outro' });
+    expect(res.status).toBe(200);
+    expect(sqlLog.find(q => /^\s*UPDATE exames SET/.test(q.text)).text).toMatch(/AND laudado_em IS NULL/);
+  });
+
+  test('finalizar e reabrir: só dentista ou admin', async () => {
+    expect((await chamar('post', `/api/exames/${exameA}/laudo/finalizar`, { laudo_texto: 'x' }, 'recepcionista')).status).toBe(403);
+    estado.laudado_em = '2026-11-05T10:00:00.000Z';
+    expect((await chamar('post', `/api/exames/${exameA}/laudo/reabrir`, {}, 'recepcionista')).status).toBe(403);
+    expect((await chamar('post', `/api/exames/${exameA}/laudo/reabrir`, {}, 'admin')).status).toBe(200);
+  });
+
+  test('finalizar e reabrir gravam o histórico na mesma instrução', async () => {
+    await chamar('post', `/api/exames/${exameA}/laudo/finalizar`, { laudo_texto: 'Texto assinado' });
+    expect(sqlLog.find(q => /laudado_por = \$4/.test(q.text)).text).toMatch(/INSERT INTO exame_laudo_historico[\s\S]*'finalizado'/);
+    estado.laudado_em = '2026-11-05T10:00:00.000Z';
+    sqlLog = [];
+    await chamar('post', `/api/exames/${exameA}/laudo/reabrir`);
+    expect(sqlLog.find(q => /laudado_por = NULL/.test(q.text)).text).toMatch(/INSERT INTO exame_laudo_historico[\s\S]*'reaberto'/);
+  });
+
   test('GET /api/exames/:id filtra a clínica e junta só da mesma clínica', async () => {
     await chamar('get', `/api/exames/${exameA}`);
     const q = sqlLog.find(x => /FROM exames e/.test(x.text));
     expect(q.text).toMatch(/WHERE e\.id = \$1 AND e\.tenant_id = \$2/);
     expect(q.text).toMatch(/p\.tenant_id = e\.tenant_id/);
+    expect(q.text).toMatch(/lp\.tenant_id = e\.tenant_id/);
     expect(q.params).toEqual([exameA, tenantA]);
   });
 });
