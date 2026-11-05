@@ -1546,8 +1546,8 @@ function ChatPage() {
       ),
     }));
 
-    // Delete on WhatsApp for everyone (only works for messages we sent)
-    const connected = connectedInstances[0];
+    // Delete on WhatsApp for everyone (only works for messages we sent) — pelo número da conversa
+    const connected = resolveConnectedInstance(connectedInstances, lead.instance);
     if (connected && lead.phone && msg.sender === "attendant") {
       const { error: waError } = await whatsappApi.deleteMessage(connected.instanceName, lead.phone, msg.id, true);
       if (waError) {

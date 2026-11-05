@@ -2,6 +2,7 @@ import type { ChatMessage } from "@/data/chatMockData";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { CheckCheck, Check, MapPin, Phone, Mail, Globe, Building2, BarChart3, Reply, SmilePlus, ExternalLink, List, ChevronDown, Forward, Trash2, Search, Loader2, Upload, Copy, Clock, Mic, Download, X, ZoomIn, ZoomOut } from "lucide-react";
 import { TypingIndicator } from "./TypingIndicator";
+import { useConfirm } from "@/hooks/useConfirm";
 import { whatsappTextToHtml, createDownloadLink } from "@/lib/safeHtml";
 
 interface ServerSearchResult {
@@ -364,6 +365,21 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
   onServerSearchRef.current = onServerSearch;
   const hasMoreRef = useRef(hasMore);
   hasMoreRef.current = hasMore;
+  // A função de carregar mais muda a cada página (fecha sobre as mensagens atuais): o laço
+  // precisa da versão mais nova, senão pede sempre a mesma página.
+  const onLoadMoreRef = useRef(onLoadMore);
+  onLoadMoreRef.current = onLoadMore;
+  const [confirmDelete, confirmDeleteDialog] = useConfirm();
+  const pedirApagar = async (msg: ChatMessage) => {
+    if (!onDelete) return;
+    const ok = await confirmDelete({
+      title: "Apagar esta mensagem para todos?",
+      description: "Ela some da conversa no sistema e o sistema tenta apagá-la também no WhatsApp do paciente. Se o paciente já leu, ele pode ter visto. Não dá para desfazer.",
+      confirmLabel: "Apagar para todos",
+      destructive: true,
+    });
+    if (ok) onDelete(msg);
+  };
   const hasServerSearch = !!onServerSearch;
 
   const closeSearch = () => {
@@ -444,10 +460,10 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
       return true;
     };
     if (tryJump()) return;
-    if (onLoadMore && !locating) {
+    if (onLoadMoreRef.current && !locating) {
       setLocating(true);
-      for (let i = 0; i < 10 && hasMoreRef.current; i++) {
-        await onLoadMore();
+      for (let i = 0; i < 10 && hasMoreRef.current && onLoadMoreRef.current; i++) {
+        await onLoadMoreRef.current();
         await new Promise((r) => setTimeout(r, 200));
         if (tryJump()) { setLocating(false); return; }
       }
@@ -682,6 +698,7 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
       onDragOver={handleDragOver}
       onDrop={handleDrop}
     >
+      {confirmDeleteDialog}
       {/* Drag overlay */}
       {isDragOver && (
         <div className="absolute inset-0 z-50 bg-primary/10 backdrop-blur-sm border-2 border-dashed border-primary rounded-xl flex items-center justify-center animate-fade-in pointer-events-none">
@@ -996,7 +1013,7 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
                     )}
                     {onDelete && msg.sender === "attendant" && (
                       <button
-                        onClick={() => onDelete(msg)}
+                        onClick={() => void pedirApagar(msg)}
                         className="p-1.5 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
                         title="Apagar"
                       >
@@ -1089,7 +1106,7 @@ export function ConversationView({ messages, leadName, isTyping, isRecording, on
             <>
               <div className="h-px bg-border/40 my-1" />
               <button
-                onClick={() => { onDelete(contextMenu.msg); setContextMenu(null); }}
+                onClick={() => { const m = contextMenu.msg; setContextMenu(null); void pedirApagar(m); }}
                 className="w-full flex items-center gap-2.5 px-3.5 py-2 text-sm text-destructive hover:bg-destructive/10 transition-colors"
               >
                 <Trash2 className="h-4 w-4" /> Apagar
