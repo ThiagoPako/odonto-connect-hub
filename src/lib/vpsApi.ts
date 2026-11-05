@@ -1103,6 +1103,14 @@ export const messagesApi = {
 // ─── Media Upload ───────────────────────────────────────────
 
 export const mediaApi = {
+  /**
+   * Links novos (assinados) para mídias da clínica: link vencido ou URL antiga gravada.
+   * Devolve { [url original]: url assinada }; o que não for da clínica não volta.
+   */
+  renovarLinks: async (paths: string[]): Promise<Record<string, string>> => {
+    const { data } = await vpsApiFetch<{ links: Record<string, string> }>('/media/sign', { method: 'POST', body: { paths } });
+    return data?.links ?? {};
+  },
   upload: async (file: File): Promise<{ url: string | null; error: string | null }> => {
     try {
       const token = await getAccessToken();
