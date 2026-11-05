@@ -5307,6 +5307,54 @@ app.delete('/api/agenda/:id', async (req, res) => {
   }
 });
 
+// Formata a data do agendamento (DATE do pg chega como Date à meia-noite local).
+function formatAgendaDateBR(value) {
+  if (!value) return '—';
+  const d = value instanceof Date ? value : new Date(`${String(value).slice(0, 10)}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+
+// Aviso de reagendamento: fila central, número da clínica dona (enqueueWhatsAppJob
+// resolve por tenantId), telefone do cadastro do paciente DESTA clínica.
+async function enqueueRescheduleNotice(tenantId, appt) {
+  if (!isValidTenantId(tenantId) || !appt?.paciente_id) return null;
+  const { rows: [pac] } = await pool.query(
+    'SELECT nome, telefone FROM pacientes WHERE id = $1 AND tenant_id = $2 LIMIT 1',
+    [appt.paciente_id, tenantId]
+  );
+  if (!pac) {
+    // Agendamento aponta para um lead (ou paciente de outra clínica): sem aviso. Só o id no log.
+    console.warn(`[reschedule] paciente não encontrado para o agendamento ${appt.id}; aviso não enfileirado`);
+    return null;
+  }
+  const phone = normalizeWhatsappNumber(pac?.telefone || '');
+  if (!phone) return null;
+  if (await isWhatsAppOptedOut(tenantId, phone)) return null;
+  // O aviso perde o sentido depois do horário da consulta (Brasil sem horário de verão: -03:00).
+  const ymd = appt.data instanceof Date
+    ? `${appt.data.getFullYear()}-${String(appt.data.getMonth() + 1).padStart(2, '0')}-${String(appt.data.getDate()).padStart(2, '0')}`
+    : String(appt.data || '').slice(0, 10);
+  const hhmm = /^\d{2}:\d{2}/.test(String(appt.hora || '')) ? String(appt.hora).slice(0, 5) : '23:59';
+  const apptAt = new Date(`${ymd}T${hhmm}:00-03:00`);
+  const validAt = !Number.isNaN(apptAt.getTime());
+  if (validAt && apptAt.getTime() <= Date.now()) return null; // consulta já passou
+  // Reagendou de novo antes do aviso sair: só o último vale.
+  await pool.query(
+    `UPDATE automation_jobs SET status = 'cancelled', error = 'Substituído por reagendamento mais recente', claimed_at = NULL
+      WHERE tenant_id = $1 AND status = 'pending' AND trigger_event = 'reschedule_notice' AND variables->>'agendamentoId' = $2`,
+    [tenantId, String(appt.id)]
+  ).catch(e => console.error('[reschedule] cancelar aviso anterior falhou:', e.message));
+  const firstName = String(appt.paciente_nome || pac?.nome || '').trim().split(/\s+/)[0] || 'Paciente';
+  const clinica = await getTenantClinicName(tenantId);
+  const msg = `📋 *Consulta reagendada — ${clinica}*\n\nOlá, ${firstName}!\n\nSua consulta foi reagendada:\n📅 ${formatAgendaDateBR(appt.data)}\n⏰ ${appt.hora || '—'}\n👩‍⚕️ ${appt.dentista_nome || 'Equipe da clínica'}\n\nSe precisar remarcar de novo, é só mandar uma mensagem aqui.`;
+  return enqueueWhatsAppJob({
+    tenantId, phone, message: msg, category: 'transactional',
+    patientName: pac?.nome || appt.paciente_nome || '', triggerEvent: 'reschedule_notice',
+    variables: { agendamentoId: String(appt.id) }, ...(validAt ? { expiresAt: apptAt } : {}),
+  });
+}
+
 // PUT /api/agenda/:id — update appointment (status, etc.)
 app.put('/api/agenda/:id', async (req, res) => {
   try {
@@ -5332,6 +5380,10 @@ app.put('/api/agenda/:id', async (req, res) => {
     if (sets.length === 0) return res.status(400).json({ error: 'Nada para atualizar' });
     params.push(id);
     params.push(user.tenant_id);
+    // Valores anteriores: só avisa o paciente se data/hora mudaram de verdade.
+    const before = (data || hora)
+      ? (await pool.query('SELECT data, hora FROM agendamentos WHERE id = $1 AND tenant_id = $2', [id, user.tenant_id])).rows[0] || null
+      : null;
     const query = `UPDATE agendamentos SET ${sets.join(', ')}, updated_at = NOW() WHERE id = $${params.length - 1} AND tenant_id = $${params.length} RETURNING *`;
     const { rows } = await pool.query(query, params);
     if (rows.length === 0) return res.status(404).json({ error: 'Agendamento não encontrado' });
@@ -5358,37 +5410,14 @@ app.put('/api/agenda/:id', async (req, res) => {
     const updated = rows[0];
     res.json(updated);
 
-    // ── WhatsApp notification on reschedule (date or time changed) ──
-    if ((data || hora) && updated.telefone && EVOLUTION_API_KEY) {
-      (async () => {
-        try {
-          // Fetch connected instance
-          const instResult = await evolutionFetch('/instance/fetchInstances');
-          const instances = Array.isArray(instResult) ? instResult : [];
-          const connected = instances.find(i => (i.connectionStatus || i.status) === 'open');
-          if (!connected) return;
-          const instName = connected.name || connected.instanceName;
-
-          const phone = updated.telefone.replace(/\D/g, '');
-          if (!phone) return;
-
-          const dataFormatted = updated.data
-            ? new Date(updated.data + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
-            : '—';
-          const firstName = (updated.paciente_nome || '').split(' ')[0] || 'Paciente';
-
-          const clinica = await getTenantClinicName(user.tenant_id);
-          const msg = `📋 *Consulta reagendada — ${clinica}*\n\nOlá, ${firstName}!\n\nSua consulta foi reagendada:\n📅 ${dataFormatted}\n⏰ ${updated.hora || '—'}\n👩‍⚕️ ${updated.dentista_nome || 'Equipe da clínica'}\n\nSe precisar remarcar de novo, é só mandar uma mensagem aqui.`;
-
-          await evolutionFetch(`/message/sendText/${instName}`, {
-            method: 'POST',
-            body: JSON.stringify({ number: phone, text: msg }),
-          });
-          console.log(`📲 Reschedule notification sent to ${maskPhone(phone)}`);
-        } catch (err) {
-          console.error('⚠️ Failed to send reschedule notification:', err.message);
-        }
-      })();
+    // ── Aviso de reagendamento (data ou hora mudou) ──
+    // Pela fila, pelo número da própria clínica; telefone do cadastro do paciente
+    // desta clínica (agendamentos não tem telefone em produção).
+    const dateKey = (v) => (v instanceof Date ? v.toISOString() : String(v ?? ''));
+    const reagendou = !!before && (dateKey(before.data) !== dateKey(updated.data) || String(before.hora ?? '') !== String(updated.hora ?? ''));
+    if ((data || hora) && reagendou && updated.paciente_id && !/cancel/i.test(String(updated.status || ''))) {
+      enqueueRescheduleNotice(user.tenant_id, updated)
+        .catch(err => console.error('⚠️ Aviso de reagendamento não enfileirado:', err.message));
     }
   } catch (error) {
     if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
@@ -8626,7 +8655,13 @@ app.put('/api/clinic-location', async (req, res) => {
 });
 
 // Helper: send WhatsApp button menu with active queues
-async function sendQueueMenu(instance, phone, tenantId) {
+// Menu de filas da clínica: botões (Evolution sendButtons) com fallback em lista
+// numerada no texto do job. Vai pela fila como resposta ao paciente (auto_reply,
+// prioridade sobre campanhas). Dedupe curto: reenviar o menu quando o paciente
+// responde uma opção inválida é legítimo, mas não várias vezes por minuto.
+const WA_QUEUE_MENU_DEDUPE_MINUTES = 2;
+
+async function buildQueueMenu(tenantId) {
   const { rows: queues } = await pool.query(
     `SELECT id, name, icon, whatsapp_button_label
        FROM attendance_queues
@@ -8634,54 +8669,44 @@ async function sendQueueMenu(instance, phone, tenantId) {
       ORDER BY name ASC`,
     [isValidTenantId(tenantId) ? tenantId : null]
   );
-  if (queues.length === 0) return; // No queues configured
-
+  if (queues.length === 0) return null; // No queues configured
   const clinica = await getTenantClinicName(tenantId);
-  // Evolution API: sendButtons (Baileys)
-  const buttons = queues.map((q, i) => ({
-    buttonId: `queue_${q.id}`,
-    buttonText: { displayText: q.whatsapp_button_label || `${q.icon} ${q.name}` },
-    type: 1,
-  }));
-
-  // Try button message first
-  const buttonPayload = {
-    number: phone,
-    title: '',
-    description: `Olá! 👋 Aqui é da ${clinica}. Selecione o setor para ser atendido:`,
-    footer: clinica,
-    buttons,
+  const label = (q) => q.whatsapp_button_label || `${q.icon} ${q.name}`;
+  const lines = [`Olá! 👋 Aqui é da ${clinica}. Selecione o setor desejado:`, ''];
+  queues.forEach((q, i) => lines.push(`*${i + 1}* - ${label(q)}`));
+  lines.push('', 'Responda com o *número* da opção desejada.');
+  return {
+    fallbackText: lines.join('\n'),
+    interactive: {
+      endpoint: 'sendButtons',
+      payload: {
+        title: '',
+        description: `Olá! 👋 Aqui é da ${clinica}. Selecione o setor para ser atendido:`,
+        footer: clinica,
+        buttons: queues.map(q => ({ buttonId: `queue_${q.id}`, buttonText: { displayText: label(q) }, type: 1 })),
+      },
+    },
+    count: queues.length,
   };
+}
 
-  const btnResult = await evolutionFetch(`/message/sendButtons/${instance}`, {
-    method: 'POST',
-    body: JSON.stringify(buttonPayload),
+async function enqueueQueueMenu({ tenantId, instance, phone }) {
+  if (!isValidTenantId(tenantId) || !phone) return null;
+  const menu = await buildQueueMenu(tenantId);
+  if (!menu) return null;
+  const jobId = await enqueueWhatsAppAutoReply({
+    tenantId, instance, phone, message: menu.fallbackText, kind: 'queue_menu', category: 'service',
+    interactive: menu.interactive, dedupeMinutes: WA_QUEUE_MENU_DEDUPE_MINUTES,
   });
-
-  // Fallback: if buttons not supported, send numbered list as text
-  if (!btnResult.ok) {
-    console.log('⚠️ Buttons not supported, falling back to text list');
-    const lines = [`Olá! 👋 Aqui é da ${clinica}. Selecione o setor desejado:`, ''];
-    queues.forEach((q, i) => {
-      lines.push(`*${i + 1}* - ${q.whatsapp_button_label || `${q.icon} ${q.name}`}`);
-    });
-    lines.push('', 'Responda com o *número* da opção desejada.');
-
-    await evolutionFetch(`/message/sendText/${instance}`, {
-      method: 'POST',
-      body: JSON.stringify({ number: phone, text: lines.join('\n') }),
-    });
-  }
-
   // Mark lead as awaiting queue selection
   await pool.query(
     `UPDATE crm_leads SET awaiting_queue_selection = true, updated_at = NOW()
      WHERE tenant_id = $2
        AND REPLACE(REPLACE(REPLACE(REPLACE(telefone, ' ', ''), '-', ''), '(', ''), ')', '') LIKE '%' || $1`,
-    [phone.slice(-11), tenantId]
+    [String(phone).slice(-11), tenantId]
   );
-
-  console.log(`📋 Queue menu sent to ${maskPhone(phone)} (${queues.length} options)`);
+  if (jobId) console.log(`📋 Queue menu queued (job ${jobId}, ${menu.count} options)`);
+  return jobId;
 }
 
 // Helper: match queue from button response or number
@@ -9383,13 +9408,12 @@ app.post('/api/webhook/evolution', async (req, res) => {
         });
       }
       if (isNewOptOut) {
-        await evolutionFetch(`/message/sendText/${instance}`, {
-          method: 'POST',
-          body: JSON.stringify({
-            number: resolvedPhone,
-            text: `Pronto! A ${await getTenantClinicName(tenantId)} não vai mais enviar mensagens automáticas para este número, inclusive lembretes de consulta. Se precisar falar com a gente, é só mandar uma mensagem por aqui.`,
-          }),
-        });
+        // Confirmação obrigatória do SAIR: pela fila, como resposta (service), e é a
+        // ÚNICA mensagem que passa pelo filtro de opt-out (isOptOutConfirmationJob).
+        await enqueueWhatsAppAutoReply({
+          tenantId, instance, phone: resolvedPhone, kind: WA_OPT_OUT_CONFIRMATION_KIND, category: 'service',
+          message: `Pronto! A ${await getTenantClinicName(tenantId)} não vai mais enviar mensagens automáticas para este número, inclusive lembretes de consulta. Se precisar falar com a gente, é só mandar uma mensagem por aqui.`,
+        }).catch(e => console.error('[opt-out] confirmação não enfileirada:', e.message));
       }
       console.log(`🚫 Opt-out registrado (tenant ${tenantId}, final ${String(resolvedPhone).slice(-4)})`);
       return res.json({ processed: true, optOut: true, leadId: lead?.id || null });
@@ -9429,11 +9453,12 @@ app.post('/api/webhook/evolution', async (req, res) => {
       if (!isFromMe && !isWithinBusinessHours(attendanceSettingsCache)) {
         const offMsg = attendanceSettingsCache?.offHoursMessage ||
           `Olá! Aqui é da ${await getTenantClinicName(tenantId)}. Nosso atendimento está fechado agora. Deixe sua mensagem que respondemos assim que abrirmos. 😊`;
-        await evolutionFetch(`/message/sendText/${instance}`, {
-          method: 'POST',
-          body: JSON.stringify({ number: resolvedPhone, text: offMsg }),
-        });
-        console.log(`🕐 Off-hours message sent to ${maskPhone(resolvedPhone)}`);
+        // Pela fila (categoria 'service': é resposta à mensagem do paciente e só existe
+        // fora do expediente, então a janela de envio não se aplica).
+        const offJob = await enqueueWhatsAppAutoReply({
+          tenantId, instance, phone: resolvedPhone, message: offMsg, kind: 'off_hours', category: 'service',
+        }).catch(e => { console.error('[auto-reply] fora do horário não enfileirada:', e.message); return null; });
+        if (offJob) console.log(`🕐 Off-hours reply queued (job ${offJob})`);
         if (!isFromMe) {
           await ensureWaitingSessionForIncomingLead({
             lead,
@@ -9479,18 +9504,20 @@ app.post('/api/webhook/evolution', async (req, res) => {
         return res.json({ processed: true, offHours: true, leadId: lead.id });
       }
 
-      // Send welcome message if enabled
+      // Boas-vindas pela fila; o menu de filas é enfileirado depois dela (hook do job)
+      // para manter a ordem. Sem boas-vindas enfileirada, o menu entra na fila já.
+      let welcomeJob = null;
       if (!isFromMe && attendanceSettingsCache?.autoGreetingEnabled && attendanceSettingsCache?.welcomeMessage) {
-        await evolutionFetch(`/message/sendText/${instance}`, {
-          method: 'POST',
-          body: JSON.stringify({ number: resolvedPhone, text: attendanceSettingsCache.welcomeMessage }),
-        });
+        welcomeJob = await enqueueWhatsAppAutoReply({
+          tenantId, instance, phone: resolvedPhone, message: attendanceSettingsCache.welcomeMessage,
+          kind: 'welcome', category: 'transactional', thenQueueMenu: true,
+        }).catch(e => { console.error('[auto-reply] boas-vindas não enfileirada:', e.message); return null; });
       }
 
       // Send queue menu
-      if (!isFromMe) {
-        sendQueueMenu(instance, resolvedPhone, tenantId)
-          .catch((err) => console.warn('Queue menu send failed:', err.message));
+      if (!isFromMe && !welcomeJob) {
+        enqueueQueueMenu({ tenantId, instance, phone: resolvedPhone })
+          .catch((err) => console.warn('Queue menu not queued:', err.message));
       }
     }
 
@@ -9511,8 +9538,8 @@ app.post('/api/webhook/evolution', async (req, res) => {
       if (selectedQueue) {
         // Assign queue to lead
         await pool.query(
-          `UPDATE crm_leads SET queue_id = $1, queue_name = $2, awaiting_queue_selection = false, updated_at = NOW() WHERE id = $3`,
-          [selectedQueue.id, selectedQueue.name, lead.id]
+          `UPDATE crm_leads SET queue_id = $1, queue_name = $2, awaiting_queue_selection = false, updated_at = NOW() WHERE id = $3 AND tenant_id = $4`,
+          [selectedQueue.id, selectedQueue.name, lead.id, tenantId]
         );
         lead.queue_id = selectedQueue.id;
         lead.queue_name = selectedQueue.name;
@@ -9527,14 +9554,11 @@ app.post('/api/webhook/evolution', async (req, res) => {
           });
         }
 
-        // Send confirmation
-        await evolutionFetch(`/message/sendText/${instance}`, {
-          method: 'POST',
-          body: JSON.stringify({
-            number: resolvedPhone,
-            text: `✅ Você foi direcionado para o setor *${selectedQueue.icon} ${selectedQueue.name}*.\n\nUm de nossos atendentes irá te ajudar em breve! 😊`,
-          }),
-        });
+        // Confirmação do setor escolhido: resposta ao paciente, pela fila.
+        await enqueueWhatsAppAutoReply({
+          tenantId, instance, phone: resolvedPhone, kind: 'queue_selected', category: 'service', dedupeMinutes: 10,
+          message: `✅ Você foi direcionado para o setor *${selectedQueue.icon} ${selectedQueue.name}*.\n\nUm de nossos atendentes irá te ajudar em breve! 😊`,
+        }).catch(e => console.error('[auto-reply] confirmação de setor não enfileirada:', e.message));
 
         console.log(`📌 Lead ${lead.id} routed to queue: ${selectedQueue.name}`);
 
@@ -9625,8 +9649,8 @@ app.post('/api/webhook/evolution', async (req, res) => {
         });
         // Invalid selection — resend menu in background so the webhook does not
         // block message delivery/realtime if Evolution is slow.
-        sendQueueMenu(instance, resolvedPhone, tenantId)
-          .catch((err) => console.warn('Queue menu resend failed:', err.message));
+        enqueueQueueMenu({ tenantId, instance, phone: resolvedPhone })
+          .catch((err) => console.warn('Queue menu resend not queued:', err.message));
         console.log(`💬 Incoming message from ${maskPhone(resolvedPhone)} awaiting queue selection → saved + broadcast to ${sseClients.size} clients`);
         return res.json({ processed: true, resent_menu: true, leadId: lead.id });
       }
@@ -9665,10 +9689,9 @@ app.post('/api/webhook/evolution', async (req, res) => {
           ? `${stars}\n\nObrigado pela avaliação! Vamos trabalhar para melhorar. 🙏`
           : `${stars}\n\nObrigado pelo feedback. Vamos analisar e melhorar nosso atendimento. 🙏`;
 
-        await evolutionFetch(`/message/sendText/${instance}`, {
-          method: 'POST',
-          body: JSON.stringify({ number: phone, text: thanks }),
-        });
+        await enqueueWhatsAppAutoReply({
+          tenantId, instance, phone, message: thanks, kind: 'rating_thanks', category: 'service', dedupeMinutes: 10,
+        }).catch(e => console.error('[auto-reply] agradecimento não enfileirado:', e.message));
 
         console.log(`⭐ Rating ${rating}/5 received from ${maskPhone(phone)}`);
         return res.json({ processed: true, rating, leadId: ratingData.leadId });
@@ -9678,13 +9701,13 @@ app.post('/api/webhook/evolution', async (req, res) => {
     // ─── Auto-return from recovery stage to queue with priority ───
     if ((await getFollowupConfig(tenantId)).returnToQueueOnReply) {
       try {
-        const { rows: leadStage } = await pool.query('SELECT kanban_stage FROM crm_leads WHERE id = $1', [lead.id]);
+        const { rows: leadStage } = await pool.query('SELECT kanban_stage FROM crm_leads WHERE id = $1 AND tenant_id = $2', [lead.id, tenantId]);
         const currentStage = leadStage[0]?.kanban_stage;
         if (currentStage && RECOVERY_STAGES.includes(currentStage)) {
           // Move lead back to "lead" stage (top of funnel)
           await pool.query(
-            `UPDATE crm_leads SET kanban_stage = 'em_atendimento', status = 'em_atendimento', priority = true, updated_at = NOW() WHERE id = $1`,
-            [lead.id]
+            `UPDATE crm_leads SET kanban_stage = 'em_atendimento', status = 'em_atendimento', priority = true, updated_at = NOW() WHERE id = $1 AND tenant_id = $2`,
+            [lead.id, tenantId]
           );
           // Log movement
           await pool.query(
@@ -9848,10 +9871,9 @@ app.post('/api/webhook/evolution', async (req, res) => {
 
             // Send confirmation reply
             const confirmMsg = `✅ *Presença confirmada!*\n\nObrigado por confirmar. A ${await getTenantClinicName(tenantId)} aguarda você na data agendada. 😊`;
-            await evolutionFetch(`/message/sendText/${instance}`, {
-              method: 'POST',
-              body: JSON.stringify({ number: `${phone}@s.whatsapp.net`, text: confirmMsg }),
-            }).catch(err => console.error('Failed to send confirm reply:', err.message));
+            await enqueueWhatsAppAutoReply({
+              tenantId, instance, phone, message: confirmMsg, kind: 'appointment_confirmed', category: 'service', dedupeMinutes: 10,
+            }).catch(err => console.error('Failed to queue confirm reply:', err.message));
 
             console.log(`✅ Auto-confirmed appointment ${reminderId} via WhatsApp reply from ${maskPhone(phone)}`);
           }
@@ -10719,6 +10741,91 @@ async function enqueueWhatsAppJob({
   return rows[0]?.id || null;
 }
 
+// Resposta automática a uma mensagem que o paciente ACABOU de mandar (boas-vindas e
+// "fora do horário" do webhook). Sai pela fila — opt-out, dedupe, número da clínica,
+// ritmo por número, "digitando" e disjuntor —, com scheduledAt imediato e prioridade
+// sobre lembretes/campanhas na escolha do próximo job do número (trigger_event
+// 'auto_reply'). Validade curta: resposta atrasada não faz sentido e não deve sair.
+// Categoria: 'service' (resposta de atendimento, sem janela de horário) para a
+// "fora do horário", que só existe fora do expediente; 'transactional' (com janela)
+// para as boas-vindas, que saem dentro do expediente — se o expediente da clínica
+// passar da janela de envio, a boas-vindas nem é enfileirada (o menu sai direto).
+const WA_AUTO_REPLY_TTL_MS = 30 * 60_000;
+const WA_AUTO_REPLY_MENU_MAX_AGE_MS = 10 * 60_000;
+
+// Endpoints da Evolution aceitos para mensagem interativa na fila (payload sem `number`).
+const WA_INTERACTIVE_ENDPOINTS = new Set(['sendButtons', 'sendList']);
+const WA_DEFAULT_DEDUPE_MINUTES = 24 * 60;
+
+// Janela de dedupe por job, limitada a [1 min, 24 h]. Menu de filas e confirmações
+// usam janela curta: a repetição legítima (paciente errou a opção) precisa sair.
+// Chaves de controle da fila em variables (dedupe por job, conteúdo interativo, kind,
+// menu após boas-vindas) só valem em jobs criados pelo próprio servidor. Em job
+// manual/de fluxo, o cliente poderia furar o dedupe de 24 h ou mandar um conteúdo
+// diferente do job.message auditado.
+const WA_INTERNAL_TRIGGERS = new Set(['auto_reply', 'satisfaction_survey']);
+const WA_CONTROL_VAR_KEYS = ['dedupeMinutes', 'interactive', 'kind', 'thenQueueMenu', 'enqueuedAt'];
+function stripWhatsAppControlVars(vars) {
+  if (!vars || typeof vars !== 'object' || Array.isArray(vars)) return {};
+  const out = { ...vars };
+  for (const k of WA_CONTROL_VAR_KEYS) delete out[k];
+  return out;
+}
+function trustedWhatsAppJobVars(job, vars) {
+  return WA_INTERNAL_TRIGGERS.has(job?.trigger_event) ? (vars || {}) : stripWhatsAppControlVars(vars);
+}
+
+function waDedupeMinutes(vars) {
+  const n = Number(vars?.dedupeMinutes);
+  return Number.isFinite(n) && n >= 1 ? Math.min(Math.round(n), WA_DEFAULT_DEDUPE_MINUTES) : WA_DEFAULT_DEDUPE_MINUTES;
+}
+
+// EXCEÇÃO ÚNICA ao opt-out: a confirmação de que o descadastro foi registrado
+// (LGPD art. 18 §2º e política do WhatsApp: confirmar o pedido de saída). Só ela
+// passa pelo filtro de opt-out, e só quando enfileirada como auto_reply com esse kind.
+const WA_OPT_OUT_CONFIRMATION_KIND = 'opt_out_confirmation';
+function isOptOutConfirmationJob(job, vars) {
+  return job?.trigger_event === 'auto_reply' && vars?.kind === WA_OPT_OUT_CONFIRMATION_KIND;
+}
+
+async function enqueueWhatsAppAutoReply({
+  tenantId, instance, phone, message, kind, category, thenQueueMenu = false,
+  interactive = null, dedupeMinutes = WA_DEFAULT_DEDUPE_MINUTES,
+}) {
+  const text = String(message || '').trim();
+  if (!isValidTenantId(tenantId) || !phone || !text) return null;
+  if (interactive && !WA_INTERACTIVE_ENDPOINTS.has(interactive.endpoint)) throw new Error('enqueueWhatsAppAutoReply: endpoint interativo inválido');
+  // Fora da janela a fila seguraria a mensagem até expirar: nem enfileira.
+  if (category !== 'service' && !isWithinWhatsAppSendWindow()) return null;
+  if (kind !== WA_OPT_OUT_CONFIRMATION_KIND && await isWhatsAppOptedOut(tenantId, phone)) return null;
+  // Só responde pelo número que recebeu, e só se ele for desta clínica.
+  const owner = instance ? await resolveInstanceTenant(instance).catch(() => null) : null;
+  if (owner && owner !== String(tenantId)) {
+    console.warn(`[auto-reply] instância ${instance} pertence a outra clínica; resposta não enfileirada`);
+    return null;
+  }
+  // Dedupe: Evolution às vezes repete o webhook; a mesma resposta não vai duas vezes em 24 h.
+  const { rows: dup } = await pool.query(
+    `SELECT 1 FROM automation_jobs
+      WHERE tenant_id = $1 AND trigger_event = 'auto_reply' AND message = $2
+        AND status IN ('pending', 'sent')
+        AND RIGHT(regexp_replace(patient_phone, '\\D', '', 'g'), 8) = RIGHT(regexp_replace($3, '\\D', '', 'g'), 8)
+        AND scheduled_at > NOW() - make_interval(mins => $4::int) LIMIT 1`,
+    [tenantId, text, String(phone), waDedupeMinutes({ dedupeMinutes })]
+  );
+  if (dup.length) return null;
+  const now = Date.now();
+  return enqueueWhatsAppJob({
+    tenantId, instance: owner ? instance : null, phone, message: text, category,
+    triggerEvent: 'auto_reply', scheduledAt: new Date(now), expiresAt: new Date(now + WA_AUTO_REPLY_TTL_MS),
+    variables: {
+      kind, thenQueueMenu: !!thenQueueMenu, enqueuedAt: new Date(now).toISOString(),
+      dedupeMinutes: waDedupeMinutes({ dedupeMinutes }),
+      ...(interactive ? { interactive: { endpoint: interactive.endpoint, payload: interactive.payload } } : {}),
+    },
+  });
+}
+
 // Estado em memória por número: ritmo e falhas recentes.
 const waPacing = new Map();   // instance -> { nextAt, sinceBreak, breakEvery }
 const waOutcomes = new Map(); // instance -> [{ at, ok }]
@@ -10770,6 +10877,28 @@ async function runWhatsAppJobHooks(job, ok, errorMessage) {
   let vars = job.variables;
   if (typeof vars === 'string') { try { vars = JSON.parse(vars); } catch { vars = {}; } }
   vars = vars || {};
+  // Menu de filas depois das boas-vindas, para manter a ordem das mensagens. Se a
+  // boas-vindas falhou logo (ex.: idêntica à de ontem), o menu sai mesmo assim;
+  // se ficou parada (número desconectado), o menu atrasado não sai.
+  if (job.trigger_event === 'auto_reply' && vars.thenQueueMenu && job.instance && job.tenant_id) {
+    const age = Date.now() - new Date(vars.enqueuedAt || 0).getTime();
+    if (age >= 0 && age < WA_AUTO_REPLY_MENU_MAX_AGE_MS) {
+      await enqueueQueueMenu({ tenantId: String(job.tenant_id), instance: job.instance, phone: normalizeWhatsappNumber(job.patient_phone) })
+        .catch(e => console.warn('[auto-reply] menu de filas não enfileirado:', e.message));
+    }
+  }
+  // Pesquisa de satisfação: só depois de sair, a próxima resposta 1–5 vira avaliação.
+  if (job.trigger_event === 'satisfaction_survey' && ok && vars.leadId && job.tenant_id) {
+    const phoneDigits = String(job.patient_phone || '').replace(/\D/g, '');
+    await pool.query(
+      `INSERT INTO app_settings (key, value, updated_at)
+       VALUES ($1, $2, NOW()) ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
+      [`awaiting_rating_${job.tenant_id}_${phoneDigits}`, JSON.stringify({
+        leadId: vars.leadId, sessionId: vars.sessionId || null,
+        attendantId: vars.attendantId || null, attendantName: vars.attendantName || null,
+      })]
+    ).catch(e => console.error('[survey hook]', e.message));
+  }
   if (job.trigger_event === 'reactivation') {
     await pool.query(
       `INSERT INTO reactivation_sends (rule_id, paciente_id, lead_id, phone, message, status, error_message, tenant_id)
@@ -10877,18 +11006,27 @@ async function processOneWhatsAppJob(candidate, openInstances, usedInstances) {
     return release(new Date(inst.paused_until), 'Número em pausa automática');
   }
 
-  // 3) Opt-out e duplicidade
-  if (await isWhatsAppOptedOut(tenantId, job.patient_phone)) {
+  let vars = job.variables;
+  if (typeof vars === 'string') { try { vars = JSON.parse(vars); } catch { vars = {}; } }
+  vars = trustedWhatsAppJobVars(job, vars || {});
+
+  // 3) Opt-out e duplicidade (única exceção ao opt-out: a confirmação do próprio SAIR)
+  if (!isOptOutConfirmationJob(job, vars) && await isWhatsAppOptedOut(tenantId, job.patient_phone)) {
     return fail('Paciente pediu para não receber mensagens (SAIR)');
   }
+  const dedupeMinutes = waDedupeMinutes(vars);
   const { rows: dup } = await pool.query(
     `SELECT 1 FROM automation_jobs
       WHERE tenant_id = $1 AND status = 'sent' AND id <> $2 AND message = $3
         AND RIGHT(regexp_replace(patient_phone, '\\D', '', 'g'), 8) = RIGHT(regexp_replace($4, '\\D', '', 'g'), 8)
-        AND sent_at > NOW() - INTERVAL '24 hours' LIMIT 1`,
-    [tenantId, job.id, job.message, job.patient_phone]
+        AND sent_at > NOW() - make_interval(mins => $5::int) LIMIT 1`,
+    [tenantId, job.id, job.message, job.patient_phone, dedupeMinutes]
   );
-  if (dup.length) return fail('Mensagem idêntica já enviada a este paciente nas últimas 24h');
+  if (dup.length) {
+    return fail(dedupeMinutes >= WA_DEFAULT_DEDUPE_MINUTES
+      ? 'Mensagem idêntica já enviada a este paciente nas últimas 24h'
+      : `Mensagem idêntica já enviada a este paciente nos últimos ${dedupeMinutes} min`);
+  }
 
   // 4) Janela de horário (não vale para respostas de atendimento)
   if (job.category !== 'service' && !isWithinWhatsAppSendWindow()) {
@@ -10913,8 +11051,6 @@ async function processOneWhatsAppJob(candidate, openInstances, usedInstances) {
   }
 
   // 6) Condições específicas do job
-  let vars = job.variables;
-  if (typeof vars === 'string') { try { vars = JSON.parse(vars); } catch { vars = {}; } }
   if (vars?.requireStage && vars?.leadId) {
     const { rows: lead } = await pool.query('SELECT kanban_stage FROM crm_leads WHERE id = $1 AND tenant_id = $2', [vars.leadId, tenantId]);
     if (!lead.length || lead[0].kanban_stage !== vars.requireStage) {
@@ -10925,16 +11061,33 @@ async function processOneWhatsAppJob(candidate, openInstances, usedInstances) {
   // 7) Envio com "digitando..."
   scheduleNextWhatsAppSend(instance);
   const phone = normalizeWhatsappNumber(job.patient_phone);
-  const result = await evolutionFetch(`/message/sendText/${encodeURIComponent(instance)}`, {
+  const number = phone.includes('@') ? phone : `${phone}@s.whatsapp.net`;
+  const delivered = (r) => r.ok && !!(r.data?.key?.id || r.data?.message?.key?.id);
+  const sendTextNow = () => evolutionFetch(`/message/sendText/${encodeURIComponent(instance)}`, {
     method: 'POST',
-    body: JSON.stringify({
-      number: phone.includes('@') ? phone : `${phone}@s.whatsapp.net`,
-      text: job.message,
-      delay: typingDelayMs(job.message),
-    }),
+    body: JSON.stringify({ number, text: job.message, delay: typingDelayMs(job.message) }),
     timeoutMs: 45_000, // > tempo de "digitando" + margem; evita falso "falhou"
   });
-  const ok = result.ok && !!(result.data?.key?.id || result.data?.message?.key?.id);
+  // Botões/lista: tenta o endpoint interativo; sem ok/key.id (muitos aparelhos não
+  // exibem botões via Baileys), cai para o texto do job, que é a versão numerada.
+  const interactive = vars.interactive && WA_INTERACTIVE_ENDPOINTS.has(vars.interactive.endpoint)
+    && vars.interactive.payload && typeof vars.interactive.payload === 'object' ? vars.interactive : null;
+  let result;
+  if (interactive) {
+    const { number: _ignored, ...payload } = interactive.payload;
+    result = await evolutionFetch(`/message/${interactive.endpoint}/${encodeURIComponent(instance)}`, {
+      method: 'POST',
+      body: JSON.stringify({ ...payload, number, delay: typingDelayMs(job.message) }),
+      timeoutMs: 45_000,
+    });
+    // Timeout (504 do evolutionFetch): os botões podem ter saído sem a resposta chegar.
+    // Não reenvia em texto para não duplicar; o job falha como incerto. Verificar na
+    // Evolution pelo id não é possível aqui (sem key.id na resposta).
+    if (!delivered(result) && result.status !== 504) result = await sendTextNow();
+  } else {
+    result = await sendTextNow();
+  }
+  const ok = delivered(result);
   await recordWhatsAppOutcome(instance, tenantId, ok);
   if (ok) {
     await pool.query(`UPDATE automation_jobs SET status = 'sent', sent_at = NOW(), claimed_at = NULL, error = NULL WHERE id = $1`, [job.id]);
@@ -10962,7 +11115,8 @@ async function processAutomationJobs() {
          FROM automation_jobs
         WHERE status = 'pending' AND scheduled_at <= NOW() AND COALESCE(channel, 'whatsapp') = 'whatsapp'
           AND (claimed_at IS NULL OR claimed_at < NOW() - ${WA_CLAIM_TIMEOUT_SQL})
-        ORDER BY COALESCE(NULLIF(instance, ''), 'tenant:' || COALESCE(tenant_id::text, 'none')), scheduled_at ASC
+        ORDER BY COALESCE(NULLIF(instance, ''), 'tenant:' || COALESCE(tenant_id::text, 'none')),
+                 (trigger_event = 'auto_reply') DESC NULLS LAST, scheduled_at ASC
         LIMIT 200`
     );
     if (!candidates.length) return;
@@ -11273,7 +11427,7 @@ app.post('/api/automations/enqueue', async (req, res) => {
     if (await isWhatsAppOptedOut(tenantId, phone)) {
       return res.status(409).json({ error: 'Este paciente pediu para não receber mensagens (SAIR).' });
     }
-    const vars = { nome: patientName || '', telefone: phone, ...(variables || {}) };
+    const vars = { nome: patientName || '', telefone: phone, ...stripWhatsAppControlVars(variables) };
     const now = new Date();
     const jobIds = [];
 
@@ -12507,8 +12661,18 @@ app.post('/api/sessions/first-response', async (req, res) => {
 app.post('/api/sessions/close', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
-    const { leadId, leadPhone, instance } = req.body;
+    const { leadId, outcome } = req.body;
+    // Instância da conversa (número em que o paciente falou). Sem ela, a fila usa o
+    // número padrão da clínica (getTenantDefaultInstance).
+    const instance = typeof req.body.instance === 'string' && req.body.instance.trim() ? req.body.instance.trim() : null;
     if (!leadId) return res.status(400).json({ error: 'leadId obrigatório' });
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Sem clínica vinculada' });
+    // Telefone e nome do cadastro do lead desta clínica (nunca do corpo da requisição).
+    const { rows: [leadRow] } = await pool.query(
+      'SELECT nome, telefone FROM crm_leads WHERE id = $1 AND tenant_id = $2 LIMIT 1',
+      [leadId, user.tenant_id]
+    ).catch(() => ({ rows: [] }));
+    const leadPhone = normalizeWhatsappNumber(leadRow?.telefone || '') || null;
 
     const result = await pool.query(
       `UPDATE attendance_sessions SET 
@@ -12520,61 +12684,55 @@ app.post('/api/sessions/close', async (req, res) => {
     );
 
     const session = result.rows[0];
-    const ownsSurveyInstance = session && instance ? await userOwnsInstance(user, instance) : false;
+    // Pesquisa só no desfecho "atendido" (follow-up e orçamento não recebem).
+    const wantsSurvey = outcome === 'atendido';
+    const surveyInstanceOk = !instance || (isSafeInstanceName(instance) && await userOwnsInstance(user, instance));
     const surveyOptedOut = leadPhone ? await isWhatsAppOptedOut(user.tenant_id, leadPhone).catch(() => false) : false;
 
-    // Send satisfaction survey via WhatsApp buttons (só pelo número da clínica)
-    if (session && leadPhone && instance && ownsSurveyInstance && !surveyOptedOut && isSafeInstanceName(instance) && EVOLUTION_API_KEY) {
+    // Pesquisa de satisfação pela fila, pelo número da clínica: botões com fallback
+    // em texto numerado (o texto é a mensagem do job). Não é resposta imediata ao
+    // paciente, então não tem prioridade auto_reply e respeita a janela de horário.
+    let surveyJob = null;
+    if (session && wantsSurvey && leadPhone && surveyInstanceOk && !surveyOptedOut) {
       const phone = leadPhone.replace(/\D/g, '');
-      try {
-        // Try buttons first
-        await evolutionFetch(`/message/sendButtons/${instance}`, {
-          method: 'POST',
-          body: JSON.stringify({
-            number: phone,
-            title: '⭐ Avalie nosso atendimento',
-            description: 'Como você avalia o atendimento que recebeu?',
-            buttons: [
-              { buttonId: `rating_${leadId}_5`, buttonText: { displayText: '⭐⭐⭐⭐⭐ Excelente' } },
-              { buttonId: `rating_${leadId}_4`, buttonText: { displayText: '⭐⭐⭐⭐ Bom' } },
-              { buttonId: `rating_${leadId}_3`, buttonText: { displayText: '⭐⭐⭐ Regular' } },
-            ],
-          }),
-        });
-        console.log(`📊 Satisfaction survey sent to ${maskPhone(phone)}`);
-      } catch (btnErr) {
-        // Fallback: text-based survey
-        await evolutionFetch(`/message/sendText/${instance}`, {
-          method: 'POST',
-          body: JSON.stringify({
-            number: phone,
-            text: `⭐ *Avalie nosso atendimento!*\n\nComo você avalia o atendimento que recebeu?\n\n5️⃣ Excelente\n4️⃣ Bom\n3️⃣ Regular\n2️⃣ Ruim\n1️⃣ Péssimo\n\nResponda com o número da sua avaliação.`,
-          }),
-        });
-        console.log(`📊 Satisfaction survey (text fallback) sent to ${maskPhone(phone)}`);
-      }
-
-      // Mark lead as awaiting rating
-      await pool.query(
-        `INSERT INTO app_settings (key, value, updated_at) 
-         VALUES ($1, $2, NOW()) ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
-        [`awaiting_rating_${user.tenant_id}_${phone}`, JSON.stringify({ leadId, sessionId: session?.id, attendantId: session?.attendant_id, attendantName: session?.attendant_name })]
-      );
+      surveyJob = await enqueueWhatsAppJob({
+        tenantId: user.tenant_id, instance, phone, category: 'transactional',
+        triggerEvent: 'satisfaction_survey', patientName: leadRow?.nome || '',
+        expiresAt: new Date(Date.now() + 24 * 60 * 60_000),
+        message: `⭐ *Avalie nosso atendimento!*\n\nComo você avalia o atendimento que recebeu?\n\n5️⃣ Excelente\n4️⃣ Bom\n3️⃣ Regular\n2️⃣ Ruim\n1️⃣ Péssimo\n\nResponda com o número da sua avaliação.`,
+        variables: {
+          leadId: String(leadId),
+          sessionId: session.id || null, attendantId: session.attendant_id || null, attendantName: session.attendant_name || null,
+          interactive: {
+            endpoint: 'sendButtons',
+            payload: {
+              title: '⭐ Avalie nosso atendimento',
+              description: 'Como você avalia o atendimento que recebeu?',
+              buttons: [
+                { buttonId: `rating_${leadId}_5`, buttonText: { displayText: '⭐⭐⭐⭐⭐ Excelente' } },
+                { buttonId: `rating_${leadId}_4`, buttonText: { displayText: '⭐⭐⭐⭐ Bom' } },
+                { buttonId: `rating_${leadId}_3`, buttonText: { displayText: '⭐⭐⭐ Regular' } },
+              ],
+            },
+          },
+        },
+      }).catch(e => { console.error('📊 Pesquisa de satisfação não enfileirada:', e.message); return null; });
+    }
+    if (surveyJob) {
+      // A flag de "aguardando avaliação" é gravada no hook do job, quando a pesquisa sair.
+      console.log(`📊 Satisfaction survey queued for ${maskPhone(leadPhone)} (job ${surveyJob})`);
     }
 
     console.log(`✅ Session closed for lead ${leadId} (duration: ${session?.duration_seconds || 0}s)`);
 
     // 🤖 Trigger "Após consulta finalizada" automation
     if (leadPhone) {
-      const leadName = session?.attendant_name || leadId;
-      // Get lead name from DB
-      const { rows: leadRows } = await pool.query('SELECT nome FROM crm_leads WHERE id = $1', [leadId]).catch(() => ({ rows: [] }));
-      const name = leadRows[0]?.nome || leadId;
+      const name = leadRow?.nome || leadId;
       triggerAutomationFlows('Após consulta finalizada', { name, phone: leadPhone, tenantId: user.tenant_id }).catch(() => {});
       triggerAutomationFlows('Atendimento finalizado sem agendamento', { name, phone: leadPhone, tenantId: user.tenant_id }).catch(() => {});
     }
 
-    res.json({ success: true, sessionId: session?.id, duration: session?.duration_seconds });
+    res.json({ success: true, sessionId: session?.id, duration: session?.duration_seconds, surveyQueued: !!surveyJob });
   } catch (error) {
     res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
   }
@@ -16471,3 +16629,7 @@ export { app, pool };
 export { processSolutionTriggers, runWhatsAppJobHooks, ensureTenantConfigSchema, triggerFollowupAutomation };
 export function clearTenantSettingsCacheForTests() { tenantSettingsCache.clear(); }
 
+export { processAutomationJobs };
+export function resetWhatsAppQueueStateForTests() {
+  waPacing.clear(); waOutcomes.clear(); waOpenInstancesCache = { at: 0, names: new Set() };
+}

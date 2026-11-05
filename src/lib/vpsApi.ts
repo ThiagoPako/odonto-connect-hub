@@ -932,7 +932,7 @@ export const sessionsApi = {
   firstResponse: (body: { leadId: string }) =>
     vpsApiFetch<{ success: boolean }>('/sessions/first-response', { method: 'POST', body, background: true }),
   close: (body: unknown) =>
-    vpsApiFetch<{ success: boolean; sessionId?: string; duration?: number }>('/sessions/close', { method: 'POST', body }),
+    vpsApiFetch<{ success: boolean; sessionId?: string; duration?: number; surveyQueued?: boolean }>('/sessions/close', { method: 'POST', body }),
   checkActive: (leadId: string) =>
     vpsApiFetch<{ active: boolean; attendantId?: string; attendantName?: string; isCurrentUser?: boolean }>(`/sessions/active/${leadId}`, { background: true }),
   list: (params?: { active?: boolean }) =>
