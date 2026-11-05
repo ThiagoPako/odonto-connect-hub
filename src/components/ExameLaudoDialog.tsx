@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, Download, ExternalLink, FileText, Loader2, Paperclip, Trash2, Upload } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Download, ExternalLink, FileText, Loader2, Paperclip, Printer, RotateCcw, Save, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import {
   examesApi, exameArquivosApi, formatarTamanho, urlArquivoExame, STATUS_LABELS,
-  type Exame, type ExameArquivo,
+  type Exame, type ExameArquivo, type ExameLaudoHistorico, type ExameUpdate,
 } from "@/lib/examesApi";
 import { resolveMediaUrl } from "@/lib/vpsApi";
 import { Button } from "@/components/ui/button";
@@ -11,8 +11,9 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { ExameImagemViewer } from "@/components/ExameImagemViewer";
+import { imprimirLaudo } from "@/lib/laudoImpressao";
+import { useAuth } from "@/hooks/useAuth";
 
-const PENDING_STATUS: Exame["status"][] = ["novo", "em_andamento", "aguardando_laudo"];
 const ACEITOS = "image/jpeg,image/png,image/webp,image/gif,image/bmp,application/pdf,.dcm,application/dicom,.zip,application/zip";
 
 interface Props {
@@ -21,47 +22,75 @@ interface Props {
   onSaved: () => void;
 }
 
-export function ExameLaudoDialog({ exame, onOpenChange, onSaved }: Props) {
+export function ExameLaudoDialog({ exame: exameProp, onOpenChange, onSaved }: Props) {
+  // Cópia local: atualizada depois de enviar arquivo, finalizar ou reabrir (a versão muda)
+  const [exame, setExame] = useState<Exame | null>(exameProp);
   const [laudo, setLaudo] = useState("");
   const [legadoUrl, setLegadoUrl] = useState<string | null>(null);
-  const [concluir, setConcluir] = useState(false);
+  const [acao, setAcao] = useState<null | "finalizar" | "reabrir">(null);
   const [uploading, setUploading] = useState(0);
   const [saving, setSaving] = useState(false);
   const [arquivos, setArquivos] = useState<ExameArquivo[]>([]);
   const [arquivosEstado, setArquivosEstado] = useState<"carregando" | "ok" | "erro">("carregando");
   const [arquivosErro, setArquivosErro] = useState<string | null>(null);
   const [verId, setVerId] = useState<string | null>(null);
-  const [enviouArquivo, setEnviouArquivo] = useState(false);
+  const [alterou, setAlterou] = useState(false);
+  const [historico, setHistorico] = useState<ExameLaudoHistorico[] | null>(null);
+  const { user } = useAuth();
+  // Finalizar e reabrir: só dentista ou administrador (o servidor confere de novo)
+  const podeLaudar = ["admin", "dentista"].includes(user?.role ?? "");
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const exameId = exame?.id ?? null;
+  const exameId = exameProp?.id ?? null;
 
-  const carregarArquivos = useCallback(async () => {
-    if (!exameId) return;
+  // Quando os links assinados (1 h) foram emitidos: renovados antes de imprimir se estiverem velhos
+  const linksEmitidosEm = useRef(0);
+  const carregarArquivos = useCallback(async (): Promise<ExameArquivo[] | null> => {
+    if (!exameId) return null;
     setArquivosEstado("carregando");
     try {
-      setArquivos(await exameArquivosApi.list(exameId));
+      const lista = await exameArquivosApi.list(exameId);
+      setArquivos(lista);
+      linksEmitidosEm.current = Date.now();
       setArquivosEstado("ok");
+      return lista;
     } catch (e: unknown) {
       setArquivosErro((e as Error).message || "erro");
       setArquivosEstado("erro");
+      return null;
     }
   }, [exameId]);
 
   useEffect(() => {
-    if (!exame) return;
-    setLaudo(exame.laudo_texto ?? "");
-    setLegadoUrl(exame.arquivo_url ?? null);
-    setConcluir(false);
+    setExame(exameProp);
+    if (!exameProp) return;
+    setLaudo(exameProp.laudo_texto ?? "");
+    setLegadoUrl(exameProp.arquivo_url ?? null);
     setVerId(null);
-    setEnviouArquivo(false);
+    setAlterou(false);
+    setHistorico(null);
     setArquivos([]);
     carregarArquivos();
-  }, [exame, carregarArquivos]);
+    // Versão completa (clínica, nascimento, quem laudou) para impressão e controle de edição
+    let ativo = true;
+    examesApi.get(exameProp.id).then((e) => { if (ativo) setExame(e); }).catch(() => { /* usa a cópia da lista */ });
+    return () => { ativo = false; };
+  }, [exameProp, carregarArquivos]);
+
+  async function recarregarExame(id: string) {
+    try { setExame(await examesApi.get(id)); } catch { /* mantém a cópia atual; o próximo salvar avisa se mudou */ }
+  }
 
   if (!exame) return null;
 
-  const podeConcluir = PENDING_STATUS.includes(exame.status);
+  const finalizado = !!exame.laudado_em;
+  const podeFinalizar = podeLaudar && !finalizado && exame.status !== "cancelado";
+
+  async function verHistorico() {
+    if (!exame) return;
+    try { setHistorico(await examesApi.historicoLaudo(exame.id)); }
+    catch (e: unknown) { toast.error((e as Error).message || "Não foi possível carregar o histórico"); }
+  }
   const imagens = arquivos.filter((a) => a.imagem);
   const legadoResolvido = resolveMediaUrl(legadoUrl);
   const legadoNome = legadoUrl?.split("?")[0].split("/").pop() ?? "";
@@ -83,7 +112,9 @@ export function ExameLaudoDialog({ exame, onOpenChange, onSaved }: Props) {
       }
     }
     if (ok) {
-      setEnviouArquivo(true);
+      setAlterou(true);
+      // O envio pode ter mudado o status (realizado → aguardando laudo) e a versão do exame
+      await recarregarExame(exame.id);
       toast.success(ok === 1 ? "Arquivo anexado ao exame" : `${ok} arquivos anexados ao exame`);
     }
     if (fileRef.current) fileRef.current.value = "";
@@ -95,7 +126,7 @@ export function ExameLaudoDialog({ exame, onOpenChange, onSaved }: Props) {
     try {
       await exameArquivosApi.remove(exame.id, a.id);
       setArquivos((prev) => prev.filter((x) => x.id !== a.id));
-      setEnviouArquivo(true);
+      setAlterou(true);
       toast.success("Arquivo retirado do exame");
     } catch (e: unknown) {
       toast.error((e as Error).message || "Erro ao retirar o arquivo");
@@ -104,7 +135,7 @@ export function ExameLaudoDialog({ exame, onOpenChange, onSaved }: Props) {
 
   function fechar(open: boolean) {
     // Arquivos são gravados na hora do envio: a lista de exames precisa recarregar mesmo sem "Salvar"
-    if (!open && enviouArquivo) onSaved();
+    if (!open && alterou) onSaved();
     onOpenChange(open);
   }
 
@@ -112,14 +143,12 @@ export function ExameLaudoDialog({ exame, onOpenChange, onSaved }: Props) {
     if (!exame) return;
     setSaving(true);
     try {
-      const payload: Partial<Exame> = { laudo_texto: laudo.trim() || null };
+      const payload: ExameUpdate = { updated_at_esperado: exame.updated_at };
+      if (!finalizado) payload.laudo_texto = laudo.trim() || null;
       if (exame.arquivo_url && !legadoUrl) payload.arquivo_url = null;
-      if (concluir && podeConcluir) {
-        payload.status = "concluido";
-        if (!exame.data_realizacao) payload.data_realizacao = new Date().toISOString();
-      }
+      if (Object.keys(payload).length === 1) { fechar(false); return; }
       await examesApi.update(exame.id, payload);
-      toast.success("Laudo salvo");
+      toast.success(finalizado ? "Exame salvo" : "Rascunho do laudo salvo");
       onSaved();
       onOpenChange(false);
     } catch (e: unknown) {
@@ -127,6 +156,52 @@ export function ExameLaudoDialog({ exame, onOpenChange, onSaved }: Props) {
     } finally {
       setSaving(false);
     }
+  }
+
+  async function finalizar() {
+    if (!exame) return;
+    if (!laudo.trim()) { toast.error("Escreva o laudo antes de finalizar"); return; }
+    if (!confirm("Finalizar o laudo? Ele fica registrado em seu nome, com data e hora, e o exame passa a Concluído. Para corrigir depois, será preciso reabrir.")) return;
+    setAcao("finalizar");
+    try {
+      const atualizado = await examesApi.finalizarLaudo(exame.id, laudo.trim(), exame.updated_at);
+      setAlterou(true);
+      setHistorico(null);
+      await recarregarExame(atualizado.id);
+      toast.success("Laudo finalizado");
+    } catch (e: unknown) {
+      toast.error((e as Error).message || "Erro ao finalizar o laudo");
+    } finally {
+      setAcao(null);
+    }
+  }
+
+  async function reabrir() {
+    if (!exame) return;
+    if (!confirm("Reabrir o laudo para correção? A finalização atual é retirada (o texto fica no histórico) e o exame volta para Aguardando laudo até ser finalizado de novo.")) return;
+    setAcao("reabrir");
+    try {
+      await examesApi.reabrirLaudo(exame.id);
+      setAlterou(true);
+      setHistorico(null);
+      await recarregarExame(exame.id);
+      toast.success("Laudo reaberto para correção");
+    } catch (e: unknown) {
+      toast.error((e as Error).message || "Erro ao reabrir o laudo");
+    } finally {
+      setAcao(null);
+    }
+  }
+
+  async function imprimir() {
+    if (!exame) return;
+    let imgs = imagens;
+    if (Date.now() - linksEmitidosEm.current > 50 * 60 * 1000) {
+      const novas = await carregarArquivos();
+      if (novas) imgs = novas.filter((a) => a.imagem);
+    }
+    const ok = imprimirLaudo({ ...exame, laudo_texto: finalizado ? exame.laudo_texto : laudo }, imgs);
+    if (!ok) toast.error("Não foi possível preparar a impressão neste navegador.");
   }
 
   const titulo = `${exame.codigo ?? ""} · ${exame.tipo_nome}`;
@@ -144,20 +219,63 @@ export function ExameLaudoDialog({ exame, onOpenChange, onSaved }: Props) {
 
           <div className="space-y-5">
             <div className="space-y-2">
-              <Label htmlFor="laudo-texto">Laudo</Label>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <Label htmlFor="laudo-texto">Laudo</Label>
+                {finalizado ? (
+                  <span className="inline-flex items-center gap-1 text-xs text-emerald-700 dark:text-emerald-300">
+                    <CheckCircle2 className="h-3.5 w-3.5" aria-hidden />
+                    Finalizado por {exame.laudado_por_nome || "usuário"} em {new Date(exame.laudado_em as string).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}
+                  </span>
+                ) : exame.laudo_texto ? (
+                  <span className="text-xs text-amber-700 dark:text-amber-300">Rascunho (ainda não finalizado)</span>
+                ) : null}
+              </div>
               <Textarea
                 id="laudo-texto"
                 rows={10}
                 value={laudo}
+                readOnly={finalizado}
+                aria-describedby={finalizado ? "laudo-finalizado-aviso" : undefined}
                 onChange={(e) => setLaudo(e.target.value)}
                 placeholder="Descreva os achados radiográficos, impressão diagnóstica e recomendações..."
+                className={finalizado ? "bg-muted/40" : undefined}
               />
+              {finalizado && (
+                <p id="laudo-finalizado-aviso" className="text-xs text-muted-foreground">
+                  Laudo finalizado não pode ser editado. {podeLaudar ? 'Para corrigir, use "Reabrir laudo".' : "Para corrigir, peça a um dentista ou administrador que reabra o laudo."}
+                </p>
+              )}
+              {!finalizado && !podeLaudar && (
+                <p className="text-xs text-muted-foreground">Você pode salvar o rascunho; só dentista ou administrador finaliza o laudo.</p>
+              )}
+              <div className="text-xs">
+                {historico === null ? (
+                  <button type="button" className="text-primary underline-offset-2 hover:underline" onClick={verHistorico}>
+                    Ver histórico do laudo
+                  </button>
+                ) : historico.length === 0 ? (
+                  <p className="text-muted-foreground">Sem finalizações registradas ainda.</p>
+                ) : (
+                  <ul className="space-y-2 rounded-md border border-border p-2" aria-label="Histórico do laudo">
+                    {historico.map((h) => (
+                      <li key={h.id}>
+                        <div className="font-medium">
+                          {h.acao === "finalizado" ? "Finalizado" : "Reaberto"} por {h.autor_nome || "usuário"} em{" "}
+                          {new Date(h.criado_em).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}
+                        </div>
+                        {h.laudo_texto && <p className="whitespace-pre-wrap text-muted-foreground line-clamp-4">{h.laudo_texto}</p>}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             </div>
 
             <section className="space-y-2" aria-labelledby="exame-arquivos-titulo">
               <div className="flex items-center justify-between gap-2">
                 <h3 id="exame-arquivos-titulo" className="text-sm font-medium">Imagens e arquivos</h3>
-                <Button size="sm" variant="outline" className="gap-1" onClick={() => fileRef.current?.click()} disabled={uploading > 0}>
+                <Button size="sm" variant="outline" className="gap-1" onClick={() => fileRef.current?.click()} disabled={uploading > 0 || finalizado}
+                  title={finalizado ? "Laudo finalizado: reabra o laudo para alterar as imagens" : undefined}>
                   {uploading > 0 ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
                   {uploading > 0 ? `Enviando (${uploading})...` : "Anexar"}
                 </Button>
@@ -176,7 +294,7 @@ export function ExameLaudoDialog({ exame, onOpenChange, onSaved }: Props) {
                   <Button size="sm" variant="outline" onClick={carregarArquivos}>Tentar de novo</Button>
                 </div>
               )}
-              {arquivosEstado === "ok" && arquivos.length === 0 && !legadoUrl && (
+              {arquivosEstado === "ok" && arquivos.length === 0 && !legadoUrl && !finalizado && (
                 <button
                   type="button"
                   onClick={() => fileRef.current?.click()}
@@ -214,9 +332,9 @@ export function ExameLaudoDialog({ exame, onOpenChange, onSaved }: Props) {
                             <Download className="h-3.5 w-3.5" />
                           </a>
                         </Button>
-                        <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => removerArquivo(a)} aria-label={`Tirar ${a.nome_original || "arquivo"} do exame`}>
+                        {!finalizado && <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => removerArquivo(a)} aria-label={`Tirar ${a.nome_original || "arquivo"} do exame`}>
                           <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                        </Button>
+                        </Button>}
                       </div>
                     </li>
                   ))}
@@ -257,20 +375,39 @@ export function ExameLaudoDialog({ exame, onOpenChange, onSaved }: Props) {
               />
             </section>
 
-            {podeConcluir && (
-              <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={concluir} onChange={(e) => setConcluir(e.target.checked)} />
-                Marcar exame como concluído ao salvar
-              </label>
-            )}
           </div>
 
-          <DialogFooter>
-            <Button variant="outline" onClick={() => fechar(false)}>Cancelar</Button>
-            <Button onClick={handleSave} disabled={saving || uploading > 0} className="gap-2">
-              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
-              Salvar laudo
-            </Button>
+          <DialogFooter className="flex-wrap gap-2 sm:justify-between">
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" className="gap-1" onClick={imprimir} disabled={!laudo.trim() && imagens.length === 0}>
+                <Printer className="h-4 w-4" /> Imprimir / PDF
+              </Button>
+              {finalizado && podeLaudar && (
+                <Button variant="ghost" className="gap-1" onClick={reabrir} disabled={acao !== null}>
+                  {acao === "reabrir" ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />} Reabrir laudo
+                </Button>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" onClick={() => fechar(false)}>Fechar</Button>
+              {!finalizado && (
+                <Button variant="outline" onClick={handleSave} disabled={saving || uploading > 0 || acao !== null} className="gap-1">
+                  {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                  Salvar rascunho
+                </Button>
+              )}
+              {podeFinalizar && (
+                <Button onClick={finalizar} disabled={saving || uploading > 0 || acao !== null || !laudo.trim()} className="gap-1">
+                  {acao === "finalizar" ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                  Finalizar laudo
+                </Button>
+              )}
+              {finalizado && legadoUrl !== (exame.arquivo_url ?? null) && (
+                <Button onClick={handleSave} disabled={saving} className="gap-1">
+                  <FileText className="h-4 w-4" /> Salvar
+                </Button>
+              )}
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>

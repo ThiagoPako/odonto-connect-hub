@@ -112,6 +112,13 @@ describe('exames: exclusão protege o prontuário', () => {
     expect(del.params).toEqual([exameA, tenantA]);
   });
 
+  test('histórico de laudo ou qualquer arquivo impede excluir', async () => {
+    await chamar('delete', `/api/exames/${exameA}`);
+    const q = sqlLog.find(x => /AS tem_resultado/.test(x.text));
+    expect(q.text).toMatch(/exame_laudo_historico/);
+    expect(q.text).not.toMatch(/removido_em IS NULL/);
+  });
+
   test('exclusão que não apagou nada (mudou no meio) → 409', async () => {
     deleteAfeta = 0;
     const res = await chamar('delete', `/api/exames/${exameA}`);

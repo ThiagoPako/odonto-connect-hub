@@ -182,7 +182,13 @@ function ExamesPage() {
                     <Badge variant="outline" className={STATUS_COLORS[e.status]}>{STATUS_LABELS[e.status]}</Badge>
                     {e.terceirizado && <Badge variant="outline" className="text-xs">Terceirizado</Badge>}
                     {e.prioridade !== "normal" && <Badge variant="outline" className="text-xs capitalize">{e.prioridade}</Badge>}
-                    {e.laudo_texto && <Badge variant="outline" className="text-xs gap-1"><FileSignature className="h-3 w-3" />Laudo</Badge>}
+                    {e.laudado_em ? (
+                      <Badge variant="outline" className="text-xs gap-1" title={e.laudado_por_nome ? `Finalizado por ${e.laudado_por_nome}` : undefined}>
+                        <FileSignature className="h-3 w-3" />Laudo finalizado
+                      </Badge>
+                    ) : e.laudo_texto ? (
+                      <Badge variant="outline" className="text-xs gap-1"><FileSignature className="h-3 w-3" />Laudo em rascunho</Badge>
+                    ) : null}
                     {((e.arquivos_count ?? 0) > 0 || e.arquivo_url) && (
                       <Badge variant="outline" className="text-xs gap-1">
                         <Paperclip className="h-3 w-3" />
@@ -199,7 +205,13 @@ function ExamesPage() {
                 <Select value={e.status} onValueChange={(v) => changeStatus(e.id, v as ExameStatus)}>
                   <SelectTrigger className="w-[170px]"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {STATUS_ORDER.map(s => <SelectItem key={s} value={s}>{STATUS_LABELS[s]}</SelectItem>)}
+                    {STATUS_ORDER.map(s => (
+                      // Concluído só pelo "Finalizar laudo"; com laudo finalizado, só Entregue
+                      <SelectItem key={s} value={s}
+                        disabled={s !== e.status && ((s === "concluido" && !e.laudado_em) || (!!e.laudado_em && s !== "entregue"))}>
+                        {STATUS_LABELS[s]}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
                 <Button size="sm" variant="outline" className="gap-1" onClick={() => setLaudoExame(e)}>
