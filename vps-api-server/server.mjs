@@ -15748,7 +15748,7 @@ async function validarCamposExame(tenantId, body) {
     const { rows } = await pool.query('SELECT 1 FROM exame_tipos WHERE id = $1 AND tenant_id = $2', [body.tipo_exame_id, tenantId]);
     if (!rows.length) return 'Tipo de exame não encontrado';
   }
-  if (body.valor !== undefined && body.valor !== null && body.valor !== '' && !Number.isFinite(Number(body.valor))) return 'Valor inválido';
+  if (body.valor !== undefined && body.valor !== null && body.valor !== '' && !(Number.isFinite(Number(body.valor)) && Number(body.valor) >= 0)) return 'Valor inválido';
   for (const campo of ['data_realizacao', 'data_entrega']) {
     const v = body[campo];
     if (v !== undefined && v !== null && v !== '' && Number.isNaN(Date.parse(String(v)))) return 'Data inválida';
@@ -15781,7 +15781,7 @@ app.post('/api/exame-tipos', async (req, res) => {
     if (!user.tenant_id) return res.status(403).json({ error: 'Sem tenant' });
     const { nome, categoria, codigo_tiss, preco, ativo } = req.body || {};
     if (!nome?.trim()) return res.status(400).json({ error: 'Nome obrigatório' });
-    if (preco !== undefined && preco !== null && preco !== '' && !Number.isFinite(Number(preco))) {
+    if (preco !== undefined && preco !== null && preco !== '' && !(Number.isFinite(Number(preco)) && Number(preco) >= 0)) {
       return res.status(400).json({ error: 'Preço inválido' });
     }
     const { rows } = await pool.query(
