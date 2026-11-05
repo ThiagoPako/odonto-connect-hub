@@ -32,7 +32,9 @@ Object.assign(process.env, {
   RATE_LIMIT_EVOLUTION_INSTANCIA_MAX: '5',
   RATE_LIMIT_CLINICORP_SEGREDO_MAX: '4',
   RATE_LIMIT_CLINICORP_FALHA_MAX: '3',
-  RATE_LIMIT_LOGIN_EMAIL_MAX: '7',
+  RATE_LIMIT_LOGIN_DELAY_MAX_MS: '100',
+  RATE_LIMIT_CLINICORP_FALHA_IP_TOTAL_MAX: '6',
+  RATE_LIMIT_EVOLUTION_FALHA_IP_TOTAL_MAX: '6',
 });
 delete process.env.EVOLUTION_WEBHOOK_SECRET;
 
@@ -108,10 +110,19 @@ describe('login', () => {
     expect(inexistente.body).toEqual(certa.body);
   });
 
-  test('e-mail sozinho tem teto bem mais alto (aqui 7 por env; padrão 50), de IPs diferentes', async () => {
-    for (let i = 0; i < 7; i++) expect((await login('muito@clinica.com', 'errada', `192.0.2.${i}`)).status).toBe(401);
-    expect((await login('muito@clinica.com', 'errada', '192.0.2.200')).status).toBe(429);
-  });
+  test('60 falhas de outros IPs não travam a dona da conta com a senha certa', async () => {
+    // 12 IPs x 5 falhas = 60 falhas contadas (cada par e-mail + IP bloqueia na 6ª).
+    const status = [];
+    for (let ip = 0; ip < 12; ip++) {
+      for (let i = 0; i < 5; i++) status.push((await login('ok@clinica.com', 'errada', `192.0.2.${ip}`)).status);
+    }
+    expect(status.filter(x => x === 401)).toHaveLength(60);
+    const dona = await login('ok@clinica.com', SENHA, '198.51.100.200');
+    expect(dona.status).toBe(200);
+    expect(dona.body.token).toBeTruthy();
+    // Senha errada da própria dona: 401 (com atraso), não 429.
+    expect((await login('ok@clinica.com', 'errada', '198.51.100.201')).status).toBe(401);
+  }, 30000);
 
   test('tráfego normal passa: login certo funciona e zera as falhas do e-mail', async () => {
     for (let i = 0; i < 4; i++) await login('ok@clinica.com', 'errada');
@@ -256,6 +267,23 @@ describe('webhooks', () => {
     const hook = (secret) => request(app).post('/api/webhook/clinicorp').set('x-real-ip', '203.0.113.42').set('x-user-api', secret).send({});
     for (let i = 0; i < 3; i++) expect((await hook('x')).status).toBe(401); // sem credencial plausível: conta por IP
     expect((await hook('y')).status).toBe(429);
+    expect((await hook(valido)).status).toBe(200);
+  });
+
+  test('Clinicorp: força bruta trocando o segredo a cada tentativa bate no teto por IP; segredo válido passa', async () => {
+    const valido = 'segredo-valido-da-clinica-b-0123456789abcdefghij';
+    querySpy.mockImplementation(async (sql, params = []) => {
+      const text = String(sql);
+      if (/FROM clinicorp_user_settings s\s+JOIN profiles p/.test(text)) {
+        const ok = params.includes(valido) || params.includes(createHash('sha256').update(valido).digest('hex'));
+        return { rows: ok ? [{ user_id: userB, tenant_id: tenantA }] : [] };
+      }
+      if (/INSERT INTO clinicorp_webhook_events/.test(text)) return { rows: [{ id: 1 }] };
+      return { rows: [], rowCount: 0 };
+    });
+    const hook = (secret) => request(app).post('/api/webhook/clinicorp').set('x-real-ip', '203.0.113.50').set('x-user-api', secret).send({});
+    for (let i = 0; i < 6; i++) expect((await hook(`tentativa-${i}-segredo-plausivel`)).status).toBe(401);
+    expect((await hook('tentativa-nova-segredo-plausivel')).status).toBe(429);
     expect((await hook(valido)).status).toBe(200);
   });
 

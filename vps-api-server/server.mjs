@@ -56,10 +56,10 @@ app.use(express.json({ limit: '64mb' }));
 // Login e reset contam por IP e por e-mail; signup por IP; busca, upload e envio
 // manual de WhatsApp por usuário; webhooks por instância/segredo (ver as rotas).
 const RL = {
-  // Bloqueio por e-mail + IP; o e-mail sozinho tem teto alto (não deixa um atacante
-  // bloquear a conta de alguém de qualquer IP) e serve para o atraso progressivo.
+  // Bloqueio por e-mail + IP e por IP. O contador só por e-mail NÃO bloqueia (senão
+  // um atacante travaria a dona da conta de qualquer IP): serve só para o atraso progressivo.
   loginFalhaEmailIp: createLimiter('login_email_ip', { windowMs: 15 * 60_000, max: 5 }),
-  loginFalhaEmail: createLimiter('login_email', { windowMs: 15 * 60_000, max: 50 }),
+  loginFalhaEmail: createLimiter('login_email', { windowMs: 15 * 60_000, max: Number.MAX_SAFE_INTEGER }),
   loginFalhaIp: createLimiter('login_ip', { windowMs: 15 * 60_000, max: 20 }),
   resetEmail: createLimiter('reset_email', { windowMs: 15 * 60_000, max: 3 }),
   resetIp: createLimiter('reset_ip', { windowMs: 15 * 60_000, max: 10 }),
@@ -73,12 +73,16 @@ const RL = {
   // Falhas de autenticação nos webhooks: por IP + credencial (ou só IP, sem credencial
   // plausível). O bloqueio só troca a recusa por 429: credencial válida sempre passa.
   evolutionFalha: createLimiter('evolution_falha', { windowMs: 15 * 60_000, max: 30 }),
+  // Teto só por IP, para quem troca a credencial a cada tentativa.
+  evolutionFalhaIpTotal: createLimiter('evolution_falha_ip_total', { windowMs: 15 * 60_000, max: 200 }),
   // Clinicorp: eventos de agenda/paciente de uma clínica, bem abaixo disto.
   clinicorpSegredo: createLimiter('clinicorp_segredo', { windowMs: 60_000, max: 600 }),
   clinicorpFalha: createLimiter('clinicorp_falha', { windowMs: 15 * 60_000, max: 30 }),
+  clinicorpFalhaIpTotal: createLimiter('clinicorp_falha_ip_total', { windowMs: 15 * 60_000, max: 200 }),
 };
 const LOGIN_DELAY_BASE_MS = Number(process.env.RATE_LIMIT_LOGIN_DELAY_MS) >= 0 && process.env.RATE_LIMIT_LOGIN_DELAY_MS !== undefined
   ? Number(process.env.RATE_LIMIT_LOGIN_DELAY_MS) : 500;
+const LOGIN_DELAY_MAX_MS = Number(process.env.RATE_LIMIT_LOGIN_DELAY_MAX_MS) > 0 ? Number(process.env.RATE_LIMIT_LOGIN_DELAY_MAX_MS) : 4000;
 
 // Chave por usuário: o `sub` do JWT com assinatura conferida. Token inválido ou sem
 // assinatura nossa (ex.: Supabase) cai na chave por IP: um `sub` forjado não gasta o
@@ -121,16 +125,18 @@ app.use('/api/webhook/clinicorp', (req, res, next) => {
     const r = RL.clinicorpSegredo.hit(sha256Hex(secret));
     if (!r.allowed) return sendTooMany(res, r.retryAfterSec, 'Too many requests');
   }
-  const falhaKey = chaveFalhaWebhook(ipKey(req), secret);
+  const ip = ipKey(req);
+  const falhaKey = chaveFalhaWebhook(ip, secret);
   const json = res.json.bind(res);
   res.json = (body) => {
     if (res.statusCode !== 401) return json(body);
-    const b = RL.clinicorpFalha.blocked(falhaKey);
-    if (b.blocked) {
+    const b = [RL.clinicorpFalha.blocked(falhaKey), RL.clinicorpFalhaIpTotal.blocked(ip)].find(x => x.blocked);
+    if (b) {
       res.status(429).set('Retry-After', String(b.retryAfterSec));
       return json({ error: 'Too many requests' });
     }
     RL.clinicorpFalha.hit(falhaKey);
+    RL.clinicorpFalhaIpTotal.hit(ip);
     return json(body);
   };
   next();
@@ -1185,19 +1191,19 @@ app.post('/api/auth/login', async (req, res) => {
     const { email, password } = req.body || {};
     if (!email || !password) return res.status(400).json({ error: 'Email e senha são obrigatórios' });
 
-    // Limite: falhas por e-mail + IP, por IP e (teto alto) por e-mail; login certo não
-    // conta. Depois da 3ª falha do e-mail, a resposta demora cada vez mais.
+    // Limite: bloqueia por falhas de e-mail + IP e por IP; login certo não conta.
+    // Falhas só do e-mail (de qualquer IP) não bloqueiam a dona da conta: só fazem a
+    // resposta de senha errada demorar cada vez mais depois da 3ª.
     const emailKey = typeof email === 'string' ? email.toLowerCase().trim() : null;
     const ipK = ipKey(req);
     const emailIpKey = emailKey && ipK ? `${emailKey}|${ipK}` : null;
-    const bloqueio = [RL.loginFalhaEmailIp.blocked(emailIpKey), RL.loginFalhaIp.blocked(ipK), RL.loginFalhaEmail.blocked(emailKey)]
-      .find(b => b.blocked);
+    const bloqueio = [RL.loginFalhaEmailIp.blocked(emailIpKey), RL.loginFalhaIp.blocked(ipK)].find(b => b.blocked);
     if (bloqueio) return sendTooMany(res, bloqueio.retryAfterSec);
     const falhou = async (status, error) => {
       const { count } = RL.loginFalhaEmail.hit(emailKey);
       RL.loginFalhaEmailIp.hit(emailIpKey);
       RL.loginFalhaIp.hit(ipK);
-      if (count >= 3 && LOGIN_DELAY_BASE_MS > 0) await sleep(Math.min(LOGIN_DELAY_BASE_MS * 2 ** (count - 3), 4000));
+      if (count >= 3 && LOGIN_DELAY_BASE_MS > 0) await sleep(Math.min(LOGIN_DELAY_BASE_MS * 2 ** (count - 3), LOGIN_DELAY_MAX_MS));
       return res.status(status).json({ error });
     };
 
@@ -8992,10 +8998,12 @@ app.post('/api/webhook/evolution', async (req, res) => {
   // passado o limite, responde 429. Token válido nunca é bloqueado.
   if (!isValidEvolutionWebhookRequest(req, authInstance)) {
     const tok = String(req.query?.token || req.headers['x-webhook-token'] || '');
-    const falhaKey = chaveFalhaWebhook(ipKey(req), tok ? `${authInstance}|${tok}` : '', 16);
-    const b = RL.evolutionFalha.blocked(falhaKey);
-    if (b.blocked) return sendTooMany(res, b.retryAfterSec, 'Too many requests');
+    const ip = ipKey(req);
+    const falhaKey = chaveFalhaWebhook(ip, tok ? `${authInstance}|${tok}` : '', 16);
+    const b = [RL.evolutionFalha.blocked(falhaKey), RL.evolutionFalhaIpTotal.blocked(ip)].find(x => x.blocked);
+    if (b) return sendTooMany(res, b.retryAfterSec, 'Too many requests');
     RL.evolutionFalha.hit(falhaKey);
+    RL.evolutionFalhaIpTotal.hit(ip);
     console.warn(`[webhook] chamada rejeitada (token inválido) de ${clientIp(req)}`);
     return res.status(401).json({ error: 'Unauthorized' });
   }
