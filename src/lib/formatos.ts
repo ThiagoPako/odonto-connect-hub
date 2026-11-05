@@ -9,19 +9,31 @@ export function formatBRL(value: number | string | null | undefined): string {
   return brl.format(Number.isFinite(n as number) ? (n as number) : 0);
 }
 
+/** Arredonda para centavos (evita 0,1 + 0,2 = 0,30000000000000004 gravado no banco). */
+export function centavos(n: number): number {
+  return Math.round((Number(n) || 0) * 100) / 100;
+}
+
 /**
- * Lê um valor digitado em reais: "1.234,56", "1234,56", "1234.56", "R$ 50".
- * Devolve null se não houver número válido.
+ * Lê um valor digitado em reais: "1.234,56", "1234,56", "R$ 50", "12.50".
+ * Recusa (null) o formato americano com vírgula de milhar ("1,234.56", "1,234")
+ * e mais de 2 casas decimais, para não gravar mil vezes o valor sem avisar.
  */
 export function parseValorBRL(text: string | null | undefined): number | null {
   if (text == null) return null;
   let s = String(text).replace(/[R$\s]/g, "");
   if (!s) return null;
-  if (s.includes(",")) s = s.replace(/\./g, "").replace(",", ".");
-  else if (/^\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g, ""); // "1.234" = mil e duzentos
-  if (!/^-?\d+(\.\d+)?$/.test(s)) return null;
+  if (s.includes(",")) {
+    // pt-BR: vírgula decimal (uma só, no fim, até 2 casas); pontos antes dela são milhar
+    if (!/^-?\d{1,3}(\.\d{3})*,\d{1,2}$|^-?\d+,\d{1,2}$/.test(s)) return null;
+    s = s.replace(/\./g, "").replace(",", ".");
+  } else if (/^-?\d{1,3}(\.\d{3})+$/.test(s)) {
+    s = s.replace(/\./g, ""); // "1.234" = mil duzentos e trinta e quatro
+  } else if (!/^-?\d+(\.\d{1,2})?$/.test(s)) {
+    return null;
+  }
   const n = Number(s);
-  return Number.isFinite(n) ? Math.round(n * 100) / 100 : null;
+  return Number.isFinite(n) ? centavos(n) : null;
 }
 
 /** Mantém só dígitos, vírgula e ponto enquanto a pessoa digita um valor em reais. */
@@ -62,6 +74,20 @@ export function maskTelefone(text: string): string {
   if (d.length <= 6) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
   if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
   return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+}
+
+/**
+ * Formato de gravação do telefone: só dígitos, com 55 na frente quando tem DDD
+ * (10/11 dígitos). É o mesmo que o CRM grava nos leads, e o servidor cruza
+ * lead e paciente por igualdade exata do telefone (server.mjs:8031).
+ * A máscara "(11) 98765-4321" é só para exibir.
+ */
+export function telefoneParaGravar(text: string | null | undefined): string | null {
+  let d = (text || "").replace(/\D/g, "");
+  if (!d) return null;
+  if ((d.length === 12 || d.length === 13) && d.startsWith("55")) return d;
+  if (d.length === 10 || d.length === 11) d = `55${d}`;
+  return d;
 }
 
 /** Telefone brasileiro com DDD: 10 (fixo) ou 11 (celular) dígitos. */
