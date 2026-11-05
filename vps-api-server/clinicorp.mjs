@@ -2224,6 +2224,12 @@ export function registerClinicorp(app, pool, { verifyUser } = {}) {
     }
   })();
 
+  // Cabeçalhos guardados para diagnóstico, sem o segredo do webhook nem credenciais.
+  const sanitizeWebhookHeaders = (headers = {}) => {
+    const omit = new Set(['x-user-api', 'authorization', 'cookie', 'proxy-authorization', 'x-api-key', 'apikey']);
+    return Object.fromEntries(Object.entries(headers).filter(([k]) => !omit.has(String(k).toLowerCase())));
+  };
+
   // ── Webhook receiver (público; protegido por ?user_api=<webhook_secret>) ──
   app.post('/api/webhook/clinicorp', async (req, res) => {
     const startedAt = Date.now();
@@ -2259,7 +2265,7 @@ export function registerClinicorp(app, pool, { verifyUser } = {}) {
       const ins = await pool.query(
         `INSERT INTO clinicorp_webhook_events (event_type, external_id, status, payload, headers, ip, tenant_id)
          VALUES ($1, $2, 'received', $3, $4, $5, $6) RETURNING id`,
-        [eventType, externalId, JSON.stringify(payload), JSON.stringify(req.headers), req.ip, webhookTenantId]
+        [eventType, externalId, JSON.stringify(payload), JSON.stringify(sanitizeWebhookHeaders(req.headers)), req.ip, webhookTenantId]
       );
       eventId = ins.rows[0].id;
 
@@ -2593,8 +2599,10 @@ export function registerClinicorp(app, pool, { verifyUser } = {}) {
                 l.kanban_stage AS lead_stage
            FROM clinicorp_conflicts c
            LEFT JOIN pacientes p ON p.id = c.paciente_id
-           LEFT JOIN crm_leads  l ON l.id = c.lead_id
-                                  OR (c.lead_id IS NULL AND l.paciente_id = c.paciente_id)
+                                  AND (c.tenant_id IS NULL OR p.tenant_id = c.tenant_id)
+           LEFT JOIN crm_leads  l ON (l.id = c.lead_id
+                                      OR (c.lead_id IS NULL AND l.paciente_id = c.paciente_id))
+                                  AND l.tenant_id = COALESCE(c.tenant_id, p.tenant_id)
           ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
           ORDER BY c.created_at DESC
           LIMIT $${params.length}`,
