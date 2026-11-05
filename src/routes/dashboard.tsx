@@ -4,7 +4,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import { KpiCard } from "@/components/KpiCard";
 import { ActiveAttendanceCard } from "@/components/ActiveAttendanceCard";
-import { dashboardApi, sessionsApi } from "@/lib/vpsApi";
+import { dashboardApi, sessionsApi, whatsappApi } from "@/lib/vpsApi";
 import { OrcamentoConversaoChart } from "@/components/charts/OrcamentoConversaoChart";
 import { OrigemLeadsChart } from "@/components/charts/OrigemLeadsChart";
 import { AgendaStatusChart } from "@/components/charts/AgendaStatusChart";
@@ -101,6 +101,7 @@ function DashboardPage() {
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Dashboard" />
       <main className="flex-1 p-8 space-y-8 overflow-auto">
+        <WhatsAppDesconectadoSelo />
 
         {loading && (
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -260,5 +261,36 @@ function DashboardPage() {
 
       </main>
     </div>
+  );
+}
+
+// Selo "WhatsApp desconectado": aparece só quando algum número da clínica está fora do ar.
+function WhatsAppDesconectadoSelo() {
+  const [down, setDown] = useState<{ count: number; pending: number } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => whatsappApi.health().then(({ data }) => {
+      if (cancelled || !data) return;
+      const caidos = data.instances.filter((i) => i.state !== "open" && i.state !== "desconhecido");
+      setDown(caidos.length ? { count: caidos.length, pending: caidos.reduce((n, i) => n + i.pendingJobs, 0) } : null);
+    });
+    void load();
+    const t = setInterval(load, 60_000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, []);
+  if (!down) return null;
+  return (
+    <Link
+      to="/canais"
+      role="status"
+      className="flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive hover:bg-destructive/10"
+    >
+      <AlertTriangle className="h-4 w-4 shrink-0" />
+      <span className="font-semibold">WhatsApp desconectado</span>
+      <span className="text-destructive/80">
+        {down.count > 1 ? `${down.count} números fora do ar` : "O número da clínica está fora do ar"}
+        {down.pending > 0 ? ` · ${down.pending} mensagem(ns) aguardando` : ""} · reconecte em Canais
+      </span>
+    </Link>
   );
 }

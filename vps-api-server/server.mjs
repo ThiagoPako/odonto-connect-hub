@@ -21,7 +21,7 @@ import { execFile } from 'child_process';
 import { mkdtemp, writeFile, readFile, rm, mkdir } from 'fs/promises';
 import { tmpdir } from 'os';
 import { promisify } from 'util';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { AsyncLocalStorage } from 'async_hooks';
 
@@ -3638,6 +3638,163 @@ app.use('/api/whatsapp', async (req, res, next) => {
     return res.status(403).json({ error: 'Este número de WhatsApp não pertence à sua clínica.' });
   } catch (error) {
     return res.status(401).json({ error: 'Unauthorized' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Saúde do WhatsApp — estado de cada número por clínica (job a cada N min)
+// Grava o estado atual e o histórico de mudanças; quando o número cai, avisa a
+// clínica (painel via SSE e push, sem dado de paciente). A fila já segura os envios
+// de número desconectado (processOneWhatsAppJob) e o disjuntor WA_* segue valendo.
+// Este job SÓ LÊ a Evolution: nunca reconecta, faz logout nem reinicia instância.
+// ═══════════════════════════════════════════════════════════════════════════
+const WA_HEALTH_INTERVAL_MS = Math.max(1, Number(process.env.WA_HEALTH_INTERVAL_MIN || 5)) * 60_000;
+const WA_HEALTH_ALERT_AFTER_MS = 10 * 60_000;      // ignora quedas rápidas (< 10 min)
+const WA_HEALTH_ALERT_COOLDOWN_MS = 6 * 60 * 60_000; // no máximo 1 aviso a cada 6 h por número
+const WA_HEALTH_LOOP_MIN_CHANGES = 4;              // 4+ mudanças de estado em 1 h = loop de reconexão
+
+async function ensureWhatsAppHealthSchema() {
+  let sql;
+  try { sql = readFileSync(path.join(__dirname, 'migration-whatsapp-saude.sql'), 'utf8'); }
+  catch (e) { console.error('[wa-health] migração não encontrada:', e.message); return; }
+  const statements = sql.split(/;\s*\n/).map(t => t.replace(/^\s*--.*$/gm, '').trim()).filter(Boolean);
+  for (const st of statements) {
+    await pool.query(st).catch(e => console.error('[wa-health-schema]', e.message, '→', st.split('\n')[0].slice(0, 90)));
+  }
+}
+
+function normalizeEvolutionConnectionState(inst) {
+  const raw = String(inst?.connectionStatus || inst?.status || inst?.instance?.state || inst?.state || '').toLowerCase();
+  if (raw === 'open') return 'open';
+  if (raw === 'connecting') return 'connecting';
+  return 'close';
+}
+
+async function alertWhatsAppDown(tenantId, instanceName, since) {
+  // Sem dado de paciente: só o aviso e para onde ir.
+  sendPushToAll({
+    title: '⚠️ WhatsApp da clínica desconectado',
+    body: 'As mensagens automáticas estão aguardando. Abra Canais e reconecte o número com o QR Code.',
+    tag: `wa-down-${instanceName}`,
+    url: '/canais',
+  }, tenantId);
+  broadcastSSE('whatsapp_health_alert', { instance: instanceName, since }, tenantId);
+  // E-mail: o servidor ainda não tem envio de e-mail configurado (SMTP); quando tiver, avisar o admin aqui.
+}
+
+let waHealthRunning = false;
+async function checkWhatsAppHealth() {
+  if (waHealthRunning) return;
+  waHealthRunning = true;
+  try {
+    const result = await evolutionFetch('/instance/fetchInstances', { timeoutMs: 15_000 });
+    // Evolution fora do ar ou sem resposta: não grava nada (evita marcar todas as
+    // clínicas como desconectadas por falha de leitura).
+    if (!result.ok) { console.warn(`[wa-health] Evolution sem resposta (HTTP ${result.status}); estado não atualizado`); return; }
+    const live = new Map();
+    for (const inst of extractEvolutionArray(result.data)) {
+      const name = inst.name || inst.instanceName || inst.instance?.instanceName;
+      if (name) live.set(name, normalizeEvolutionConnectionState(inst));
+    }
+    const { rows } = await pool.query(
+      `SELECT instance_name, tenant_id, connection_state, state_since, last_alert_at
+         FROM whatsapp_instances WHERE tenant_id IS NOT NULL`
+    );
+    const now = Date.now();
+    for (const row of rows) {
+      const tenantId = String(row.tenant_id);
+      // Nome que não existe mais na Evolution: 'ausente' (apagado ou nunca criado).
+      const state = live.get(row.instance_name) || 'ausente';
+      const changed = state !== row.connection_state;
+      if (changed) {
+        await pool.query(
+          `UPDATE whatsapp_instances SET connection_state = $3, state_since = NOW(), last_checked_at = NOW()
+            WHERE instance_name = $1 AND tenant_id = $2`,
+          [row.instance_name, tenantId, state]
+        );
+        await pool.query(
+          `INSERT INTO whatsapp_instance_health_log (tenant_id, instance_name, state, previous_state) VALUES ($1, $2, $3, $4)`,
+          [tenantId, row.instance_name, state, row.connection_state || null]
+        ).catch(e => console.error('[wa-health] histórico:', e.message));
+        broadcastSSE('whatsapp_health', { instance: row.instance_name, state, since: new Date(now).toISOString() }, tenantId);
+      } else {
+        await pool.query(
+          `UPDATE whatsapp_instances SET last_checked_at = NOW() WHERE instance_name = $1 AND tenant_id = $2`,
+          [row.instance_name, tenantId]
+        ).catch(() => {});
+      }
+      if (state === 'open') continue;
+      const since = changed || !row.state_since ? now : new Date(row.state_since).getTime();
+      const lastAlert = row.last_alert_at ? new Date(row.last_alert_at).getTime() : 0;
+      const newOutage = lastAlert < since;
+      if (now - since >= WA_HEALTH_ALERT_AFTER_MS && (newOutage || now - lastAlert >= WA_HEALTH_ALERT_COOLDOWN_MS)) {
+        await pool.query(
+          `UPDATE whatsapp_instances SET last_alert_at = NOW() WHERE instance_name = $1 AND tenant_id = $2`,
+          [row.instance_name, tenantId]
+        ).catch(() => {});
+        await alertWhatsAppDown(tenantId, row.instance_name, new Date(since).toISOString());
+        console.warn(`⚠️ [wa-health] ${row.instance_name} (tenant ${tenantId}) ${state} há ${Math.round((now - since) / 60_000)} min`);
+      }
+    }
+  } catch (err) {
+    console.error('[wa-health] erro:', err.message);
+  } finally {
+    waHealthRunning = false;
+  }
+}
+
+// Estado ao vivo para a tela de Canais e o selo do dashboard (só números da clínica).
+app.get('/api/whatsapp/health', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.json({ instances: [], anyDown: false });
+    const { rows } = await pool.query(
+      `SELECT w.instance_name, w.connection_state, w.state_since, w.last_checked_at,
+              (SELECT COUNT(*)::int FROM whatsapp_instance_health_log l
+                WHERE l.tenant_id = w.tenant_id AND l.instance_name = w.instance_name
+                  AND l.changed_at > NOW() - INTERVAL '1 hour') AS changes_last_hour,
+              (SELECT COUNT(*)::int FROM automation_jobs j
+                WHERE j.tenant_id = w.tenant_id AND j.status = 'pending'
+                  AND (j.instance = w.instance_name OR j.instance IS NULL)) AS pending_jobs
+         FROM whatsapp_instances w
+        WHERE w.tenant_id = $1
+        ORDER BY w.created_at ASC NULLS LAST`,
+      [user.tenant_id]
+    );
+    const now = Date.now();
+    const instances = rows.map(r => {
+      const state = r.connection_state || 'desconhecido';
+      const since = r.state_since ? new Date(r.state_since).toISOString() : null;
+      const down = state !== 'open' && state !== 'desconhecido';
+      return {
+        instance: r.instance_name, state, since,
+        downForMinutes: down && since ? Math.max(0, Math.round((now - new Date(since).getTime()) / 60_000)) : 0,
+        reconnectLoop: Number(r.changes_last_hour || 0) >= WA_HEALTH_LOOP_MIN_CHANGES,
+        pendingJobs: Number(r.pending_jobs || 0),
+        lastCheckedAt: r.last_checked_at ? new Date(r.last_checked_at).toISOString() : null,
+      };
+    });
+    res.json({ instances, anyDown: instances.some(i => i.state !== 'open' && i.state !== 'desconhecido') });
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('❌ wa health:', error.message);
+    res.status(500).json({ error: 'Erro ao consultar o estado do WhatsApp' });
+  }
+});
+
+app.get('/api/whatsapp/health/:instance/history', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rows } = await pool.query(
+      `SELECT state, previous_state, changed_at FROM whatsapp_instance_health_log
+        WHERE tenant_id = $1 AND instance_name = $2 ORDER BY changed_at DESC LIMIT 50`,
+      [user.tenant_id, req.params.instance]
+    );
+    res.json(rows);
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    res.status(500).json({ error: 'Erro ao consultar o histórico' });
   }
 });
 
@@ -10802,11 +10959,9 @@ async function processOneWhatsAppJob(candidate, openInstances, usedInstances) {
     if (!owner) instance = null;
   }
   if (!instance) instance = await getTenantDefaultInstance(tenantId);
-  if (!instance) {
-    const ageMs = Date.now() - new Date(job.created_at || job.scheduled_at || Date.now()).getTime();
-    if (ageMs > 3 * 86_400_000) return fail('Nenhum WhatsApp da clínica conectado há mais de 3 dias');
-    return release(new Date(Date.now() + 15 * 60_000), 'Aguardando WhatsApp da clínica conectar');
-  }
+  // Sem número da clínica conectado: segura o envio (não falha, não conta para o
+  // disjuntor). A mensagem só deixa de sair pela própria validade (expires_at, passo 0).
+  if (!instance) return release(new Date(Date.now() + 15 * 60_000), 'Aguardando WhatsApp da clínica conectar');
   if (instance !== job.instance || String(job.tenant_id || '') !== tenantId) {
     await pool.query('UPDATE automation_jobs SET instance = $2, tenant_id = $3 WHERE id = $1', [job.id, instance, tenantId]);
     job.instance = instance; job.tenant_id = tenantId;
@@ -16317,6 +16472,10 @@ if (process.env.NODE_ENV !== 'test') {
   // (o intervalo real entre mensagens é controlado por número dentro da fila)
   await asSystemJob(ensureWhatsAppQueueSchema)();
   await asSystemJob(ensureTenantConfigSchema)();
+  await asSystemJob(ensureWhatsAppHealthSchema)();
+  asSystemJob(checkWhatsAppHealth)();
+  setInterval(asSystemJob(checkWhatsAppHealth), WA_HEALTH_INTERVAL_MS);
+  console.log(`   🩺 Saúde do WhatsApp: verificação a cada ${WA_HEALTH_INTERVAL_MS / 60_000} min`);
   asSystemJob(processAutomationJobs)();
   automationSchedulerInterval = setInterval(asSystemJob(processAutomationJobs), 5 * 1000);
   console.log('   🤖 Fila anti-bloqueio do WhatsApp ativa (ciclo de 5s)');
@@ -16357,3 +16516,4 @@ export { app, pool };
 export { processSolutionTriggers, runWhatsAppJobHooks, ensureTenantConfigSchema, triggerFollowupAutomation };
 export function clearTenantSettingsCacheForTests() { tenantSettingsCache.clear(); }
 
+export { checkWhatsAppHealth, processAutomationJobs as processAutomationJobsForHealthTests };

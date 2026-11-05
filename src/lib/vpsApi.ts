@@ -756,7 +756,19 @@ export const execucoesApi = {
 
 // ─── WhatsApp (via proxy) ───────────────────────────────────
 
+/** Estado de cada número da clínica gravado pelo job de saúde (a cada 5 min). */
+export interface WhatsAppHealthInstance {
+  instance: string;
+  state: "open" | "connecting" | "close" | "ausente" | "desconhecido";
+  since: string | null;
+  downForMinutes: number;
+  reconnectLoop: boolean;
+  pendingJobs: number;
+  lastCheckedAt: string | null;
+}
+
 export const whatsappApi = {
+  health: () => vpsApiFetch<{ instances: WhatsAppHealthInstance[]; anyDown: boolean }>('/whatsapp/health', { background: true }),
   instances: () => vpsApiFetch('/whatsapp/instances'),
   create: (instanceName: string) => vpsApiFetch('/whatsapp/instances', { method: 'POST', body: { instanceName } }),
   connect: (instance: string) => vpsApiFetch(`/whatsapp/connect/${instance}`),
