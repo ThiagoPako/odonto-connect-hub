@@ -124,6 +124,11 @@ jobs:
             cat /root/odonto-connect/vps-api-server/migration-whatsapp-fase1.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             cat /root/odonto-connect/vps-api-server/migration-seguranca-p0.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             cat /root/odonto-connect/vps-api-server/migration-contatos-recuperacao.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
+            # Prova do aceite de Termos/Política (aceites_documentos) e versões publicadas.
+            if ! cat /root/odonto-connect/vps-api-server/migration-aceites-documentos.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1; then
+              echo "::warning title=Aceites não aplicados::migration-aceites-documentos.sql falhou (lock ou erro). O cadastro segue gravando nas colunas de tenants; ver log acima."
+              echo "!!! ATENÇÃO: migration-aceites-documentos.sql NÃO foi aplicada."
+            fi
             echo "=== Migrations applied ==="
 
             # ─── Pre-flight syntax check on server.mjs ─────────────────────

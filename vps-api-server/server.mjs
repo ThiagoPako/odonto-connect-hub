@@ -1212,6 +1212,15 @@ app.post('/api/auth/signup-clinic', async (req, res) => {
       [profile.id]
     );
 
+    // Prova do aceite (aceites_documentos, só inclusão); as colunas de tenants acima ficam por compatibilidade.
+    await registrarAceitesNoSignup(client, {
+      tenantId: tenant.id, usuarioId: profile.id,
+      termosVersao: termos_versao ? String(termos_versao) : null,
+      politicaVersao: politica_versao ? String(politica_versao) : null,
+      ip: String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim() || null,
+      userAgent: req.headers['user-agent'],
+    });
+
     await client.query(
       `INSERT INTO subscriptions (tenant_id, plan_id, status, current_period_end, gateway)
        VALUES ($1,$2,'active', NOW() + ($3 || ' days')::interval, 'manual')`,
@@ -15359,7 +15368,10 @@ app.get('/api/ai/meta-ads/insight', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════
 // CLINICORP INTEGRATION
 import { registerClinicorp, reconciliationTick } from './clinicorp.mjs';
+import { registerLegal, registrarAceitesNoSignup } from './legal.mjs';
 registerClinicorp(app, pool, { verifyUser });
+// Aceite de Termos/Política com prova (aceites_documentos) e pendências de versão nova.
+registerLegal(app, { pool, verifyUser, verifyAdmin, verifySuperAdmin });
 
 // ── Per-user Clinicorp credentials (SaaS multi-tenant) ─────────
 // Each authenticated user has their own row in clinicorp_user_settings.
