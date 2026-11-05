@@ -178,7 +178,10 @@ test.describe("Exames e radiologia", () => {
     await expect(page.getByText("Laudo finalizado").first()).toBeVisible();
     await expect(dialog.locator("textarea")).toHaveAttribute("readonly", "");
     // Editar finalizado direto na API: 409; finalizar de novo: 409
-    const edit = await page.request.patch(`/api/exames/${ex.id}`, { headers: h, data: { laudo_texto: "Alterado em silêncio" } });
+    // (a partir do #43 o PATCH do laudo exige updated_at_esperado: sem ele é 400)
+    const atual = await (await page.request.get(`/api/exames/${ex.id}`, { headers: h })).json();
+    expect((await page.request.patch(`/api/exames/${ex.id}`, { headers: h, data: { laudo_texto: "Alterado em silêncio" } })).status()).toBe(400);
+    const edit = await page.request.patch(`/api/exames/${ex.id}`, { headers: h, data: { laudo_texto: "Alterado em silêncio", updated_at_esperado: atual.updated_at } });
     expect(edit.status()).toBe(409);
     expect((await page.request.post(`/api/exames/${ex.id}/laudo/finalizar`, { headers: h, data: { laudo_texto: "x" } })).status()).toBe(409);
     // Reabrir pela tela (confirm nativo)
@@ -197,6 +200,15 @@ test.describe("Exames e radiologia", () => {
   });
 
   test("E6. impressão: monta o laudo com paciente, texto, imagens e marca de rascunho", async ({ page }) => {
+    // O iframe de impressão é removido no "afterprint" (headless imprime na hora): captura o conteúdo enquanto existe.
+    await page.addInitScript(() => {
+      const remover = Element.prototype.remove;
+      Element.prototype.remove = function (this: Element) {
+        const d = (this as HTMLIFrameElement).id === "laudo-impressao-frame" ? (this as HTMLIFrameElement).contentDocument : null;
+        if (d?.body?.textContent) (window as unknown as { __laudo?: unknown }).__laudo = { texto: d.body.textContent, imgs: d.images.length };
+        return remover.call(this);
+      };
+    });
     await login(page);
     const h = await auth(page);
     const pac = ((await (await page.request.get("/api/pacientes", { headers: h })).json()) as Array<{ id: string; nome: string }>).find((p) => p.nome.startsWith("Lúcia"))!;
@@ -206,12 +218,13 @@ test.describe("Exames e radiologia", () => {
     await abrirLaudo(page, ex.codigo);
     await page.getByRole("dialog").locator("textarea").fill("Achados de impressão (e2e).");
     await page.getByRole("button", { name: /Imprimir/ }).click();
-    const frame = page.frameLocator("#laudo-impressao-frame");
-    await expect(frame.locator("body")).toContainText("Laudo de exame");
-    await expect(frame.locator("body")).toContainText("Lúcia Gomes (Alfa)");
-    await expect(frame.locator("body")).toContainText("Achados de impressão (e2e).");
-    await expect(frame.locator("body")).toContainText("RASCUNHO");
-    await expect(frame.locator("img")).toHaveCount(1);
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __laudo?: unknown }).__laudo ?? null)).not.toBeNull();
+    const laudo = (await page.evaluate(() => (window as unknown as { __laudo: { texto: string; imgs: number } }).__laudo));
+    expect(laudo.texto).toContain("Laudo de exame");
+    expect(laudo.texto).toContain("Lúcia Gomes (Alfa)");
+    expect(laudo.texto).toContain("Achados de impressão (e2e).");
+    expect(laudo.texto).toContain("RASCUNHO");
+    expect(laudo.imgs).toBe(1);
   });
 
   test("E7. exame com laudo ou imagem não é excluído (409); sem resultado pode ser excluído", async ({ page }) => {
@@ -308,16 +321,33 @@ test.describe("Exames e radiologia", () => {
     expect(await estouro()).toBeLessThanOrEqual(1);
   });
 
-  // ── Bugs conhecidos (docs/qa: pilha de exames). test.fail: verde enquanto existir; vermelho quando corrigirem → remover o test.fail.
+  // ── Regressões dos bugs corrigidos pelo Marcos (B-EX1 no #33, B-EX2 e papel no #43).
   test("B-EX1. valor negativo no exame deve ser recusado (400)", async ({ page }) => {
-    test.fail(true, "POST /api/exames aceita valor < 0 (validarCamposExame não checa) — #33");
     await login(page);
     const r = await page.request.post("/api/exames", { headers: await auth(page), data: { tipo_nome: "Valor negativo", valor: -5 } });
     expect(r.status()).toBe(400);
   });
 
+  test("B-EX3. recepção não finaliza nem reabre laudo (403); dentista e admin podem", async ({ page, browser, baseURL }) => {
+    await login(page);
+    const ex = await criarExame(page);
+    await enviar(page, ex.id, await imagem(page, "image/jpeg", "#444"), "rx.jpg");
+    const ctx = await browser.newContext({ baseURL });
+    const rec = await ctx.request.post("/api/auth/login", { data: { email: USUARIOS.recepcionista, password: SENHA_TESTE } });
+    const hr = { Authorization: `Bearer ${(await rec.json()).token}` };
+    const r1 = await ctx.request.post(`/api/exames/${ex.id}/laudo/finalizar`, { headers: hr, data: { laudo_texto: "Laudo da recepção" } });
+    expect(r1.status()).toBe(403);
+    expect((await (await page.request.get(`/api/exames/${ex.id}`, { headers: await auth(page) })).json()).laudado_em).toBeNull();
+    // Dentista finaliza; recepção não consegue reabrir
+    const den = await ctx.request.post("/api/auth/login", { data: { email: USUARIOS.dentista, password: SENHA_TESTE } });
+    const hd = { Authorization: `Bearer ${(await den.json()).token}` };
+    expect((await ctx.request.post(`/api/exames/${ex.id}/laudo/finalizar`, { headers: hd, data: { laudo_texto: "Laudo do dentista (e2e)" } })).status()).toBe(200);
+    expect((await ctx.request.post(`/api/exames/${ex.id}/laudo/reabrir`, { headers: hr })).status()).toBe(403);
+    expect((await page.request.post(`/api/exames/${ex.id}/laudo/reabrir`, { headers: await auth(page) })).status()).toBe(200); // admin
+    await ctx.close();
+  });
+
   test("B-EX2. exame com laudo finalizado não deve aceitar retirar/anexar imagem sem reabrir (409)", async ({ page }) => {
-    test.fail(true, "DELETE/POST /api/exames/:id/arquivos ignoram laudado_em; PATCH status também — #37/#43");
     await login(page);
     const h = await auth(page);
     const ex = await criarExame(page);
