@@ -16,7 +16,7 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import webpush from 'web-push';
 import path from 'path';
-import { randomUUID, createHash } from 'crypto';
+import { randomUUID, createHash, createHmac, timingSafeEqual } from 'crypto';
 import { execFile } from 'child_process';
 import { mkdtemp, writeFile, readFile, rm, mkdir } from 'fs/promises';
 import { tmpdir } from 'os';
@@ -702,14 +702,42 @@ if (!EVOLUTION_API_KEY) {
 // Ensure the webhook URL points to the backend API endpoint
 const WEBHOOK_URL = WEBHOOK_PUBLIC_URL || (isLocalAppUrl ? `${APP_URL.replace(/:\d+$/, `:${PORT}`)}/api/webhook/evolution` : `https://backend.odontoconnect.tech/api/webhook/evolution`);
 
-function getCredentialDebugMeta(value) {
-  const raw = String(value || '');
-  return {
-    present: raw.length > 0,
-    length: raw.length,
-    prefix: raw.length >= 4 ? raw.slice(0, 4) : '',
-    suffix: raw.length >= 4 ? raw.slice(-4) : '',
-  };
+// Segredo do webhook da Evolution. Vai na URL registrada (?token=...) e é
+// conferido em cada chamada. Sem ele, qualquer pessoa podia forjar mensagens,
+// leads e confirmações de consulta para qualquer clínica.
+// WEBHOOK_URL continua sem o segredo para uso em logs e respostas da API.
+const EVOLUTION_WEBHOOK_SECRET = String(process.env.EVOLUTION_WEBHOOK_SECRET || '').trim();
+function webhookTokenForInstance(instanceName) {
+  return createHmac('sha256', EVOLUTION_WEBHOOK_SECRET).update(String(instanceName || '')).digest('hex').slice(0, 48);
+}
+
+function webhookRegisterUrlFor(instanceName) {
+  if (!EVOLUTION_WEBHOOK_SECRET) return WEBHOOK_URL;
+  return `${WEBHOOK_URL}${WEBHOOK_URL.includes('?') ? '&' : '?'}token=${webhookTokenForInstance(instanceName)}`;
+}
+
+if (!EVOLUTION_WEBHOOK_SECRET) {
+  console.warn('⚠️ EVOLUTION_WEBHOOK_SECRET não definida — o webhook do WhatsApp aceita chamadas sem autenticação. Defina no .env da VPS.');
+}
+
+function isValidEvolutionWebhookRequest(req, instanceName) {
+  if (!EVOLUTION_WEBHOOK_SECRET) return true; // modo de compatibilidade até configurar
+  if (!instanceName) return false;
+  const provided = String(req.query?.token || req.headers['x-webhook-token'] || '');
+  const expected = webhookTokenForInstance(instanceName);
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+// Nunca devolver o token do webhook ao navegador nem gravá-lo em log.
+function redactWebhookToken(data) {
+  if (data == null) return data;
+  try {
+    return JSON.parse(JSON.stringify(data).replace(/token=[A-Za-z0-9%._~-]+/g, 'token=***'));
+  } catch {
+    return data;
+  }
 }
 
 // ─── Web Push (VAPID) Config ────────────────────────────────
@@ -751,22 +779,25 @@ async function sendPushToAll(payload, tenantId) {
 }
 
 // ─── Auto-register webhook on Evolution API instance ─────────
-function webhookFindHasExpectedUrl(data) {
+function webhookFindHasExpectedUrl(data, instanceName) {
   if (!data) return false;
-  return JSON.stringify(data).includes(WEBHOOK_URL);
+  const raw = JSON.stringify(data);
+  // Com segredo, só conta como registrado se a URL já tiver o token desta instância.
+  if (!EVOLUTION_WEBHOOK_SECRET) return raw.includes(WEBHOOK_URL);
+  return raw.includes(WEBHOOK_URL) && raw.includes(webhookTokenForInstance(instanceName));
 }
 
 async function verifyWebhookRegistration(instanceName) {
   const check = await evolutionFetch(`/webhook/find/${instanceName}`);
   if (!check.ok) return { ok: false, data: check.data, status: check.status };
-  return { ok: webhookFindHasExpectedUrl(check.data), data: check.data, status: check.status };
+  return { ok: webhookFindHasExpectedUrl(check.data, instanceName), data: redactWebhookToken(check.data), status: check.status };
 }
 
 async function registerWebhook(instanceName) {
   try {
     const webhookConfig = {
       enabled: true,
-      url: WEBHOOK_URL,
+      url: webhookRegisterUrlFor(instanceName),
       // Evolution API v2 expects these exact property names. Keep legacy
       // aliases too so older deployments do not break during rolling updates.
       byEvents: false,
@@ -809,10 +840,10 @@ async function registerWebhook(instanceName) {
     if (result.ok && (verified?.ok || verified?.status === 404 || verified?.status === 405)) {
       console.log(`✅ Webhook registered for ${instanceName} → ${WEBHOOK_URL}${verified?.ok ? ' (verified)' : ''}`);
     } else {
-      console.error(`⚠️ Webhook registration failed/not verified for ${instanceName} (${WEBHOOK_URL}):`, {
+      console.error(`⚠️ Webhook registration failed/not verified for ${instanceName} (${WEBHOOK_URL}):`, redactWebhookToken({
         set: result.data,
         verify: verified?.data || verified?.error,
-      });
+      }));
     }
     return result.ok ? { ...result, verified: !!verified?.ok } : result;
   } catch (err) {
@@ -2270,6 +2301,13 @@ async function evolutionFetch(path, options = {}) {
     };
   }
 
+  // Defesa contra "path traversal": um nome de instância como "abc/../outra"
+  // seria normalizado pelo fetch para a instância de outra clínica.
+  const pathOnly = String(path || '').split('?')[0];
+  if (pathOnly.includes('\\') || pathOnly.split('/').some(seg => seg === '..' || seg === '.')) {
+    console.warn(`[evolutionFetch] caminho recusado: ${pathOnly.slice(0, 120)}`);
+    return { ok: false, status: 400, data: { error: 'Nome de instância inválido' } };
+  }
   const url = `${EVOLUTION_API_URL}${path}`;
   const timeoutMs = Number(options.timeoutMs || process.env.EVOLUTION_API_REQUEST_TIMEOUT_MS || 15000);
   const controller = new AbortController();
@@ -2287,7 +2325,7 @@ async function evolutionFetch(path, options = {}) {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      console.warn(`⚠️ Evolution API ${res.status} for ${path}:`, JSON.stringify(data).slice(0, 500));
+      console.warn(`⚠️ Evolution API ${res.status} for ${path}:`, JSON.stringify(redactWebhookToken(data)).slice(0, 500));
     }
     return { ok: res.ok, status: res.status, data };
   } catch (err) {
@@ -3431,6 +3469,92 @@ async function sendWhatsAppAudioWithFallback(instance, cleanNumber, base64Audio,
 }
 
 // List instances
+// ─── Isolamento de instâncias do WhatsApp por clínica ─────────────────────
+// Dono "estrito" de uma instância: só o mapeamento gravado em whatsapp_instances
+// ou o prefixo do tenant no nome (`<tenant_id[0:8]>-...`). Diferente de
+// getTenantIdByInstance, nunca cria mapeamento nem usa heurísticas por telefone.
+async function getStrictInstanceOwner(instanceName) {
+  if (!instanceName) return null;
+  try {
+    const { rows } = await pool.query(
+      'SELECT tenant_id FROM whatsapp_instances WHERE instance_name = $1 LIMIT 1',
+      [instanceName]
+    );
+    if (rows[0]?.tenant_id) return String(rows[0].tenant_id);
+  } catch (e) {
+    console.error('[wa-owner] lookup failed:', e.message);
+  }
+  return null;
+}
+
+function instanceNameMatchesTenantPrefix(instanceName, tenantId) {
+  if (!instanceName || !tenantId) return false;
+  return String(instanceName).toLowerCase().startsWith(`${String(tenantId).slice(0, 8).toLowerCase()}-`);
+}
+
+async function userOwnsInstance(user, instanceName) {
+  if (!user) return false;
+  if (user.is_super_admin) return true;
+  if (!user.tenant_id) return false;
+  const owner = await getStrictInstanceOwner(instanceName);
+  if (owner) return owner === String(user.tenant_id);
+  return instanceNameMatchesTenantPrefix(instanceName, user.tenant_id);
+}
+
+// Rotas /api/whatsapp/<ação>/:instance (o nome vem no caminho)
+const WA_PATH_INSTANCE_ACTIONS = new Set([
+  'connect', 'sync-chat', 'state', 'logout', 'instances', 'restart', 'register-webhook', 'webhook',
+]);
+
+// Nome de instância aceitável: sem barra, contrabarra, "..", ?, #, % ou controle.
+function isSafeInstanceName(name) {
+  const v = String(name || '');
+  return v.length > 0 && v.length <= 100 && !v.includes('..') && !/[\/\\?#%\u0000-\u001f]/.test(v);
+}
+
+function extractWhatsAppInstanceFromRequest(req) {
+  const parts = String(req.path || '').split('/').filter(Boolean); // relativo a /api/whatsapp
+  // Listar/criar instância: a rota aplica o prefixo do tenant ao nome novo.
+  if (parts.length === 1 && parts[0] === 'instances') return null;
+  // Status de job de mídia: checado na própria rota pelo tenant do job.
+  if (parts[0] === 'send-media-status') return null;
+  if (parts.length >= 2 && WA_PATH_INSTANCE_ACTIONS.has(parts[0])) {
+    // req.path ainda vem codificado; parts.length > 2 indica "/" extra no nome
+    if (parts.length > 2) return { invalid: true };
+    try { return decodeURIComponent(parts[1]); } catch { return { invalid: true }; }
+  }
+  const body = req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body) ? req.body : {};
+  const names = [body.instance, body.newInstance, body.instanceName, req.query?.instance]
+    .filter(v => v !== undefined && v !== null && v !== '');
+  if (!names.length) return null;
+  return names.length === 1 ? names[0] : { many: names };
+}
+
+// Garante que a clínica do usuário é dona da instância usada em QUALQUER rota
+// /api/whatsapp/*. Sem isso, um usuário de uma clínica podia conectar, importar
+// conversas, desconectar ou enviar pelo número de outra clínica.
+app.use('/api/whatsapp', async (req, res, next) => {
+  const extracted = extractWhatsAppInstanceFromRequest(req);
+  if (!extracted) return next();
+  const instanceNames = typeof extracted === 'string' ? [extracted] : (extracted.many || []);
+  if (!instanceNames.length || instanceNames.some(n => typeof n !== 'string' || !isSafeInstanceName(n))) {
+    return res.status(400).json({ error: 'Nome de instância inválido' });
+  }
+  const instanceName = instanceNames.join(',');
+  try {
+    const { user } = await verifyUser(req);
+    let allOwned = true;
+    for (const n of instanceNames) {
+      if (!(await userOwnsInstance(user, n))) { allOwned = false; break; }
+    }
+    if (allOwned) return next();
+    console.warn(`[wa-guard] bloqueado: user=${user?.id} tenant=${user?.tenant_id} instance=${instanceName} ${req.method} ${req.path}`);
+    return res.status(403).json({ error: 'Este número de WhatsApp não pertence à sua clínica.' });
+  } catch (error) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+});
+
 app.get('/api/whatsapp/instances', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
@@ -3490,7 +3614,10 @@ app.get('/api/whatsapp/instances', async (req, res) => {
 app.post('/api/whatsapp/instances', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
-    const { instanceName } = req.body;
+    const { instanceName } = req.body || {};
+    if (!instanceName || typeof instanceName !== 'string' || !isSafeInstanceName(instanceName)) {
+      return res.status(400).json({ error: 'Nome do número inválido. Use letras, números, hífen ou sublinhado.' });
+    }
     
     // Isolation: prepend tenant prefix if not present
     let finalName = instanceName;
@@ -3585,10 +3712,11 @@ app.get('/api/whatsapp/connect/:instance', async (req, res) => {
       await pool.query(
         `INSERT INTO whatsapp_instances (instance_name, tenant_id)
          VALUES ($1, $2)
-         ON CONFLICT (instance_name) DO UPDATE SET tenant_id = EXCLUDED.tenant_id`,
+         ON CONFLICT (instance_name) DO NOTHING`,
         [instanceName, user.tenant_id]
       ).catch(e => console.error('Failed to save instance mapping on connect:', e.message));
-      setCachedTenantId(instanceName, user.tenant_id);
+      const realOwner = await getStrictInstanceOwner(instanceName);
+      if (realOwner) setCachedTenantId(instanceName, realOwner);
     }
     const result = await evolutionFetch(`/instance/connect/${instanceName}`);
 
@@ -3614,16 +3742,20 @@ app.post('/api/whatsapp/sync-chat/:instance', async (req, res) => {
     await pool.query(
       `INSERT INTO whatsapp_instances (instance_name, tenant_id)
        VALUES ($1, $2)
-       ON CONFLICT (instance_name) DO UPDATE SET tenant_id = EXCLUDED.tenant_id`,
+       ON CONFLICT (instance_name) DO NOTHING`,
       [instanceName, user.tenant_id]
     );
-    setCachedTenantId(instanceName, user.tenant_id);
+    const realOwner = await getStrictInstanceOwner(instanceName);
+    if (realOwner) setCachedTenantId(instanceName, realOwner);
+    if (realOwner && realOwner !== String(user.tenant_id) && !user.is_super_admin) {
+      return res.status(403).json({ error: 'Este número de WhatsApp não pertence à sua clínica.' });
+    }
     await registerWebhook(instanceName).catch(() => undefined);
 
     const end = new Date();
     const start = new Date(end.getTime() - days * 86400000);
     const result = await importWhatsAppMessagesForTenant({
-      tenantId: user.tenant_id,
+      tenantId: realOwner || user.tenant_id,
       requestedInstances: [instanceName],
       start,
       end,
@@ -3689,7 +3821,7 @@ app.post('/api/whatsapp/register-webhook/:instance', async (req, res) => {
   try {
     await verifyAdmin(req);
     const result = await registerWebhook(req.params.instance);
-    res.json({ success: true, webhookUrl: WEBHOOK_URL, result: result?.data });
+    res.json({ success: true, webhookUrl: WEBHOOK_URL, result: redactWebhookToken(result?.data) });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -3699,8 +3831,8 @@ app.post('/api/whatsapp/register-webhook/:instance', async (req, res) => {
 app.get('/api/whatsapp/webhook/:instance', async (req, res) => {
   try {
     await verifyUser(req);
-    const result = await evolutionFetch(`/webhook/find/${req.params.instance}`);
-    res.json(result.data);
+    const result = await evolutionFetch(`/webhook/find/${encodeURIComponent(req.params.instance)}`);
+    res.json(redactWebhookToken(result.data));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -4092,7 +4224,7 @@ app.post('/api/whatsapp/send-media', async (req, res) => {
 app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '64mb' }), async (req, res) => {
   let jobId;
   try {
-    await verifyUser(req);
+    const { user: jobUser } = await verifyUser(req);
     const { instance, number, mediaType, fileName, caption, mimeType } = req.query;
 
     if (!instance || !number || !mediaType) {
@@ -4115,6 +4247,7 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '6
     mediaSendJobs.set(jobId, {
       status: 'processing',
       createdAt: Date.now(),
+      tenantId: jobUser?.tenant_id ? String(jobUser.tenant_id) : null,
       instance: String(instance),
       number: cleanNumber,
       mediaType: String(mediaType),
@@ -4303,12 +4436,14 @@ app.post('/api/whatsapp/send-media-upload', express.raw({ type: '*/*', limit: '6
 
 app.get('/api/whatsapp/send-media-status/:jobId', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
     const job = mediaSendJobs.get(req.params.jobId);
-    if (!job) {
+    const sameTenant = user.is_super_admin || (job && job.tenantId && job.tenantId === String(user.tenant_id || ''));
+    if (!job || !sameTenant) {
       return res.status(404).json({ error: 'Job não encontrado' });
     }
-    res.json(job);
+    const { tenantId: _tenantId, ...publicJob } = job;
+    res.json(publicJob);
   } catch (error) {
     res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
   }
@@ -7158,6 +7293,7 @@ async function reactivationOriginsByPaciente(safeQuery) {
 
 // Constrói lista de pacientes inativos que satisfazem a regra
 async function reactivationFetchMatching(rule) {
+  if (!isValidTenantId(rule?.tenant_id)) return [];
   const safe = async (sql, params = []) => {
     try { return await pool.query(sql, params); }
     catch (err) {
@@ -7173,6 +7309,7 @@ async function reactivationFetchMatching(rule) {
        SELECT a.paciente_id, MAX(a.data) AS ultima_visita
          FROM agendamentos a
         WHERE a.status IN ('concluido','finalizado','atendido','realizado')
+          AND a.tenant_id = $2
         GROUP BY a.paciente_id
      )
      SELECT p.id, p.nome, p.telefone, p.email, p.created_at,
@@ -7183,12 +7320,14 @@ async function reactivationFetchMatching(rule) {
        FROM pacientes p
        LEFT JOIN ult ON ult.paciente_id = p.id
        LEFT JOIN crm_leads l
-              ON (p.telefone IS NOT NULL AND regexp_replace(p.telefone,'\\D','','g') = regexp_replace(l.telefone,'\\D','','g'))
-              OR (p.email IS NOT NULL AND LOWER(p.email) = LOWER(l.email))
-      WHERE (CURRENT_DATE - COALESCE(ult.ultima_visita, p.created_at::date)) >= $1
+              ON l.tenant_id = p.tenant_id AND (
+                 (p.telefone IS NOT NULL AND regexp_replace(p.telefone,'\\D','','g') = regexp_replace(l.telefone,'\\D','','g'))
+              OR (p.email IS NOT NULL AND LOWER(p.email) = LOWER(l.email)))
+      WHERE p.tenant_id = $2
+        AND (CURRENT_DATE - COALESCE(ult.ultima_visita, p.created_at::date)) >= $1
       ORDER BY dias_inativo DESC
       LIMIT 500`,
-    [rule.inactive_days]
+    [rule.inactive_days, rule.tenant_id]
   );
 
   let rows = r.rows;
@@ -7201,13 +7340,15 @@ async function reactivationFetchMatching(rule) {
 // Lista regras
 app.get('/api/reativacao/rules', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
     const { rows } = await pool.query(
       `SELECT r.*,
               (SELECT COUNT(*)::int FROM reactivation_sends s WHERE s.rule_id = r.id) AS sent_count,
               (SELECT COUNT(*)::int FROM reactivation_sends s WHERE s.rule_id = r.id AND s.status = 'respondido') AS responded_count
          FROM reactivation_rules r
-        ORDER BY r.created_at DESC`
+        WHERE r.tenant_id = $1
+        ORDER BY r.created_at DESC`,
+      [user.tenant_id || null]
     );
 
     // matched count (pode ser custoso → calcular sob demanda apenas para regras ativas/rascunho)
@@ -7259,9 +7400,9 @@ app.post('/api/reativacao/rules', async (req, res) => {
     const st = REACTIVATION_VALID_STATUS.includes(status) ? status : 'rascunho';
 
     const { rows } = await pool.query(
-      `INSERT INTO reactivation_rules (name, inactive_days, origin, message_template, status, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-      [String(name).slice(0, 200), days, orig, String(messageTemplate).slice(0, 4000), st, user.id]
+      `INSERT INTO reactivation_rules (name, inactive_days, origin, message_template, status, created_by, tenant_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [String(name).slice(0, 200), days, orig, String(messageTemplate).slice(0, 4000), st, user.id, user.tenant_id || null]
     );
     res.status(201).json(rows[0]);
   } catch (error) {
@@ -7272,7 +7413,7 @@ app.post('/api/reativacao/rules', async (req, res) => {
 // Atualiza regra (incl. status)
 app.put('/api/reativacao/rules/:id', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
     const { name, inactiveDays, origin, messageTemplate, status } = req.body || {};
     const sets = []; const params = [];
     if (name !== undefined) { params.push(String(name).slice(0, 200)); sets.push(`name=$${params.length}`); }
@@ -7299,12 +7440,12 @@ app.put('/api/reativacao/rules/:id', async (req, res) => {
       params.push(status); sets.push(`status=$${params.length}`);
     }
     if (!sets.length) return res.status(400).json({ error: 'Nada para atualizar' });
-    params.push(req.params.id);
+    params.push(req.params.id, user.tenant_id || null);
     await pool.query(
-      `UPDATE reactivation_rules SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length}`,
+      `UPDATE reactivation_rules SET ${sets.join(', ')}, updated_at=NOW() WHERE id=$${params.length - 1} AND tenant_id=$${params.length}`,
       params
     );
-    const { rows } = await pool.query('SELECT * FROM reactivation_rules WHERE id=$1', [req.params.id]);
+    const { rows } = await pool.query('SELECT * FROM reactivation_rules WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id || null]);
     if (!rows[0]) return res.status(404).json({ error: 'Regra não encontrada' });
     res.json(rows[0]);
   } catch (error) {
@@ -7315,8 +7456,8 @@ app.put('/api/reativacao/rules/:id', async (req, res) => {
 // Remove regra
 app.delete('/api/reativacao/rules/:id', async (req, res) => {
   try {
-    await verifyUser(req);
-    const r = await pool.query('DELETE FROM reactivation_rules WHERE id=$1', [req.params.id]);
+    const { user } = await verifyUser(req);
+    const r = await pool.query('DELETE FROM reactivation_rules WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id || null]);
     if (r.rowCount === 0) return res.status(404).json({ error: 'Regra não encontrada' });
     res.json({ success: true });
   } catch (error) {
@@ -7327,8 +7468,10 @@ app.delete('/api/reativacao/rules/:id', async (req, res) => {
 // Lista pacientes que satisfazem a regra
 app.get('/api/reativacao/rules/:id/patients', async (req, res) => {
   try {
-    await verifyUser(req);
-    const { rows: rulRows } = await pool.query('SELECT * FROM reactivation_rules WHERE id=$1', [req.params.id]);
+    const { user } = await verifyUser(req);
+    const { rows: rulRows } = await pool.query(
+      'SELECT * FROM reactivation_rules WHERE id=$1 AND tenant_id=$2', [req.params.id, user.tenant_id || null]
+    );
     const rule = rulRows[0];
     if (!rule) return res.status(404).json({ error: 'Regra não encontrada' });
 
@@ -7354,17 +7497,21 @@ app.get('/api/reativacao/rules/:id/patients', async (req, res) => {
 // body: { patientIds: string[] }   (se vazio → todos os matched)
 app.post('/api/reativacao/rules/:id/send', async (req, res) => {
   try {
-    await verifyUser(req);
-    const { rows: rulRows } = await pool.query('SELECT * FROM reactivation_rules WHERE id=$1', [req.params.id]);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const tenantId = String(user.tenant_id);
+    const { rows: rulRows } = await pool.query(
+      'SELECT * FROM reactivation_rules WHERE id=$1 AND tenant_id=$2', [req.params.id, tenantId]
+    );
     const rule = rulRows[0];
     if (!rule) return res.status(404).json({ error: 'Regra não encontrada' });
     if (rule.status === 'pausado') {
       return res.status(400).json({ error: 'Regra está pausada' });
     }
 
-    const instance = await getDefaultInstance();
+    const instance = await getTenantDefaultInstance(tenantId);
     if (!instance) {
-      return res.status(400).json({ error: 'Nenhuma instância WhatsApp ativa configurada' });
+      return res.status(400).json({ error: 'Nenhum WhatsApp da sua clínica está conectado. Conecte em Canais.' });
     }
 
     const requested = Array.isArray(req.body?.patientIds) ? req.body.patientIds : [];
@@ -7373,13 +7520,23 @@ app.post('/api/reativacao/rules/:id/send', async (req, res) => {
       const set = new Set(requested);
       matches = matches.filter(m => set.has(m.id));
     }
+    // Só pacientes da própria clínica (não depende do RLS).
+    if (matches.length) {
+      const { rows: own } = await pool.query(
+        'SELECT id FROM pacientes WHERE tenant_id = $1 AND id = ANY($2::uuid[])',
+        [tenantId, matches.map(m => m.id).filter(Boolean)]
+      ).catch(() => ({ rows: [] }));
+      const ownIds = new Set(own.map(r => String(r.id)));
+      matches = matches.filter(m => ownIds.has(String(m.id)));
+    }
     if (!matches.length) {
       return res.status(400).json({ error: 'Nenhum paciente para enviar' });
     }
 
-    let sent = 0, failed = 0;
+    // Não envia na hora: entra na fila anti-bloqueio, que espaça os envios,
+    // respeita horário, limites do número e quem pediu para sair.
+    let queued = 0, failed = 0, skippedOptOut = 0;
     const errors = [];
-
     for (const m of matches) {
       const phone = reactivationNormalizePhone(m.telefone);
       const message = reactivationFillTemplate(rule.message_template, {
@@ -7387,7 +7544,6 @@ app.post('/api/reativacao/rules/:id/send', async (req, res) => {
         tratamento: '',
         dias_inativo: m.dias_inativo,
       });
-
       if (!phone) {
         failed++;
         await pool.query(
@@ -7398,44 +7554,23 @@ app.post('/api/reativacao/rules/:id/send', async (req, res) => {
         errors.push({ pacienteId: m.id, error: 'Telefone ausente' });
         continue;
       }
-
-      try {
-        await evolutionFetch(`/message/sendText/${instance}`, {
-          method: 'POST',
-          body: JSON.stringify({ number: phone, text: message }),
-        });
-        sent++;
-        await pool.query(
-          `INSERT INTO reactivation_sends (rule_id, paciente_id, lead_id, phone, message, status)
-           VALUES ($1,$2,$3,$4,$5,'enviado')`,
-          [rule.id, m.id, m.lead_id, phone, message]
-        ).catch(() => {});
-
-        // Move o lead correspondente para a fase 'reativacao' do CRM (se existir)
-        if (m.lead_id) {
-          await pool.query(
-            `UPDATE crm_leads SET kanban_stage='reativacao', status='reativacao', updated_at=NOW() WHERE id=$1`,
-            [m.lead_id]
-          ).catch(() => {});
-        }
-      } catch (err) {
-        failed++;
-        const errMsg = String(err?.message || err).slice(0, 500);
-        await pool.query(
-          `INSERT INTO reactivation_sends (rule_id, paciente_id, lead_id, phone, message, status, error_message)
-           VALUES ($1,$2,$3,$4,$5,'falhou',$6)`,
-          [rule.id, m.id, m.lead_id, phone, message, errMsg]
-        ).catch(() => {});
-        errors.push({ pacienteId: m.id, error: errMsg });
-      }
+      if (await isWhatsAppOptedOut(tenantId, phone)) { skippedOptOut++; continue; }
+      await enqueueWhatsAppJob({
+        tenantId, instance, phone, message, category: 'marketing',
+        flowId: `reactivation_${rule.id}`, flowName: rule.name || 'Reativação',
+        patientName: m.nome || '', triggerEvent: 'reactivation',
+        variables: { ruleId: rule.id, pacienteId: m.id, leadId: m.lead_id || null },
+      });
+      queued++;
     }
 
     await pool.query(
-      `UPDATE reactivation_rules SET last_run_at=NOW(), status=CASE WHEN status='rascunho' THEN 'ativo' ELSE status END, updated_at=NOW() WHERE id=$1`,
-      [rule.id]
+      `UPDATE reactivation_rules SET last_run_at=NOW(), status=CASE WHEN status='rascunho' THEN 'ativo' ELSE status END, updated_at=NOW() WHERE id=$1 AND tenant_id=$2`,
+      [rule.id, tenantId]
     );
 
-    res.json({ success: true, sent, failed, total: matches.length, errors: errors.slice(0, 20) });
+    // `sent` mantido por compatibilidade com o frontend: agora significa "na fila".
+    res.json({ success: true, queued: true, sent: queued, failed, skippedOptOut, total: matches.length, errors: errors.slice(0, 20) });
   } catch (error) {
     res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
   }
@@ -7444,7 +7579,8 @@ app.post('/api/reativacao/rules/:id/send', async (req, res) => {
 // KPIs agregados
 app.get('/api/reativacao/kpis', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    const tenantId = user.tenant_id || null;
     const safe = async (sql, params = []) => {
       try { return await pool.query(sql, params); }
       catch (err) {
@@ -7454,12 +7590,12 @@ app.get('/api/reativacao/kpis', async (req, res) => {
     };
 
     const [activeRules, sendsAgg, ruleList] = await Promise.all([
-      safe(`SELECT COUNT(*)::int AS total FROM reactivation_rules WHERE status='ativo'`),
+      safe(`SELECT COUNT(*)::int AS total FROM reactivation_rules WHERE status='ativo' AND tenant_id = $1`, [tenantId]),
       safe(`SELECT
               COUNT(*) FILTER (WHERE status='enviado')::int AS sent,
               COUNT(*) FILTER (WHERE status='respondido')::int AS responded
-            FROM reactivation_sends`),
-      safe(`SELECT * FROM reactivation_rules`),
+            FROM reactivation_sends WHERE tenant_id = $1`, [tenantId]),
+      safe(`SELECT * FROM reactivation_rules WHERE tenant_id = $1`, [tenantId]),
     ]);
 
     let totalMatched = 0;
@@ -8358,6 +8494,13 @@ async function ensureWaitingSessionForIncomingLead({ lead, phone, queueId = null
 }
 
 app.post('/api/webhook/evolution', async (req, res) => {
+  const authBody = Array.isArray(req.body) ? req.body[0] : req.body;
+  let authInstance = null;
+  try { authInstance = extractEvolutionInstanceName(authBody || {}); } catch { authInstance = null; }
+  if (!isValidEvolutionWebhookRequest(req, authInstance)) {
+    console.warn(`[webhook] chamada rejeitada (token inválido) de ${req.ip}`);
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
   try {
     // Evolution must receive a response quickly. Some message paths do extra
     // work (media download, avatar lookup, queue menu) after the DB save; make
@@ -8802,6 +8945,36 @@ app.post('/api/webhook/evolution', async (req, res) => {
       return res.json({ processed: true, fromMe: true, leadId: lead.id });
     }
 
+    // ─── Opt-out: paciente respondeu SAIR / PARAR / STOP ───
+    // Registra o descadastro da clínica, cancela o que estava na fila e
+    // confirma uma única vez. Não aciona menu, boas-vindas nem automações.
+    if (tenantId && msgType === 'text' && isWhatsAppOptOutText(msgContent)) {
+      const isNewOptOut = await recordWhatsAppOptOut(tenantId, resolvedPhone, { source: 'whatsapp', keyword: String(msgContent).trim().slice(0, 40) });
+      if (lead) {
+        await persistIncomingMessage({
+          msgId, leadId: lead.id, content: resolvedContent, msgType, phone: resolvedPhone, instance, pushName,
+          remoteJid, rawType, mediaUrl, fileName: mediaFileName, mimeType: mediaMimeType, tenantId,
+          messageTimestamp: message?.messageTimestamp || message?.timestamp || body?.date_time || null,
+        }).catch(e => console.error('[opt-out] persist failed:', e.message));
+        broadcastIncomingMessage({
+          msgId, phone: resolvedPhone, pushName, leadId: lead.id, leadName: lead.name, content: resolvedContent,
+          msgType, instance, queueId: lead.queue_id || null, queueName: lead.queue_name || null,
+          queueColor: lead.queue_color || null, mediaUrl, fileName: mediaFileName, mimeType: mediaMimeType, tenantId,
+        });
+      }
+      if (isNewOptOut) {
+        await evolutionFetch(`/message/sendText/${instance}`, {
+          method: 'POST',
+          body: JSON.stringify({
+            number: resolvedPhone,
+            text: 'Pronto! Você não receberá mais mensagens automáticas da clínica. Se precisar falar com a gente, é só mandar uma mensagem por aqui.',
+          }),
+        });
+      }
+      console.log(`🚫 Opt-out registrado (tenant ${tenantId}, final ${String(resolvedPhone).slice(-4)})`);
+      return res.json({ processed: true, optOut: true, leadId: lead?.id || null });
+    }
+
     // ─── New contact: create lead + contato + check hours + send menu ───
     if (!lead) {
       const newId = crypto.randomUUID();
@@ -8814,7 +8987,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
       console.log(`🆕 New lead created: ${pushName} (${resolvedPhone})`);
 
       // 🤖 Trigger "Lead entrou no CRM" automation
-      triggerAutomationFlows('Lead entrou no CRM', { name: pushName, phone }).catch(() => {});
+      triggerAutomationFlows('Lead entrou no CRM', { name: pushName, phone, tenantId }).catch(() => {});
 
       // Auto-save to contatos table (skip if phone already exists)
       try {
@@ -9225,19 +9398,20 @@ app.post('/api/webhook/evolution', async (req, res) => {
           `SELECT aj.id, aj.flow_id FROM automation_jobs aj
            WHERE aj.trigger_event = 'appointment_reminder'
              AND aj.status = 'sent'
+             AND aj.tenant_id = $2
              AND aj.patient_phone LIKE $1
              AND aj.sent_at >= NOW() - INTERVAL '48 hours'
            ORDER BY aj.sent_at DESC LIMIT 1`,
-          [`%${phoneSuffix}`]
+          [`%${phoneSuffix}`, tenantId]
         );
 
         if (reminderJobs.length > 0) {
           const reminderId = reminderJobs[0].flow_id.replace('reminder_', '');
-          // Update appointment status to confirmed
+          // Só confirma consulta da mesma clínica que recebeu a resposta
           const { rowCount } = await pool.query(
             `UPDATE agendamentos SET status = 'confirmado', updated_at = NOW()
-             WHERE id = $1 AND status NOT IN ('finalizado', 'realizado', 'cancelado')`,
-            [reminderId]
+             WHERE id::text = $1 AND tenant_id = $2 AND status NOT IN ('finalizado', 'realizado', 'cancelado')`,
+            [reminderId, tenantId]
           );
 
           if (rowCount > 0) {
@@ -9543,9 +9717,8 @@ async function triggerFollowupAutomation(leadId, toStage) {
   if (!followupAutomationConfig.stages.includes(toStage)) return;
 
   try {
-    // Get lead data
     const { rows: leads } = await pool.query(
-      'SELECT id, nome, telefone FROM crm_leads WHERE id = $1', [leadId]
+      'SELECT id, nome, telefone, tenant_id FROM crm_leads WHERE id = $1', [leadId]
     );
     if (leads.length === 0) return;
     const lead = leads[0];
@@ -9553,61 +9726,28 @@ async function triggerFollowupAutomation(leadId, toStage) {
       console.log(`⚠️ Follow-up automation: lead ${leadId} has no phone number`);
       return;
     }
-
-    // Get message template
-    const template = followupAutomationConfig.messages[toStage];
-    if (!template) return;
-
-    // Replace variables
-    const message = template.replace(/\{\{nome\}\}/g, lead.nome || 'Paciente');
-
-    // Find first connected WhatsApp instance
-    const instResult = await evolutionFetch('/instance/fetchInstances');
-    const instances = instResult.data || [];
-    const connected = instances.find(i => i.status === 'open' || i.connectionStatus === 'open');
-    if (!connected) {
-      console.log('⚠️ Follow-up automation: no connected WhatsApp instance');
+    if (!isValidTenantId(lead.tenant_id)) {
+      console.warn(`⚠️ Follow-up automation: lead ${leadId} sem clínica, envio ignorado`);
       return;
     }
 
-    const instanceName = connected.instanceName || connected.instance?.instanceName;
-    const phone = lead.telefone.replace(/\D/g, '');
+    const template = followupAutomationConfig.messages[toStage];
+    if (!template) return;
+    const message = template.replace(/\{\{nome\}\}/g, (lead.nome || 'Paciente').split(' ')[0]);
 
-    console.log(`🤖 Follow-up automation: sending message to ${phone} via ${instanceName} (stage: ${toStage})`);
-
-    // Calculate total delay: delayDays + delaySeconds
     const stageDays = (followupAutomationConfig.delayDays && followupAutomationConfig.delayDays[toStage]) || 0;
     const totalDelayMs = (stageDays * 86400000) + ((followupAutomationConfig.delaySeconds || 30) * 1000);
 
-    console.log(`🤖 Follow-up automation: scheduling message to ${phone} via ${instanceName} (stage: ${toStage}, delay: ${stageDays}d + ${followupAutomationConfig.delaySeconds}s)`);
-
-    // Send with delay
-    setTimeout(async () => {
-      try {
-        // Re-check if lead is still in the same stage (may have been moved/replied)
-        const { rows: checkLead } = await pool.query('SELECT kanban_stage FROM crm_leads WHERE id = $1', [leadId]);
-        if (checkLead.length === 0 || checkLead[0].kanban_stage !== toStage) {
-          console.log(`⏭️ Follow-up automation: lead ${leadId} no longer in ${toStage}, skipping send`);
-          return;
-        }
-
-        await evolutionFetch(`/message/sendText/${instanceName}`, {
-          method: 'POST',
-          body: JSON.stringify({ number: phone, text: message }),
-        });
-        console.log(`✅ Follow-up automation: message sent to ${lead.nome} (${phone})`);
-
-        // Log in kanban_movements
-        await pool.query(
-          `INSERT INTO kanban_movements (lead_id, from_stage, to_stage, moved_by_name, reason)
-           VALUES ($1, $2, $2, $3, $4)`,
-          [leadId, toStage, 'Sistema (Automação)', `Follow-up automático enviado via WhatsApp`]
-        ).catch(() => {});
-      } catch (err) {
-        console.error(`❌ Follow-up automation: failed to send to ${phone}:`, err.message);
-      }
-    }, totalDelayMs);
-
+    // Antes: setTimeout de até 7 dias em memória (perdido a cada restart do PM2)
+    // e pela primeira instância aberta de qualquer clínica. Agora vai para a
+    // fila, que confere no envio se o lead ainda está na mesma etapa.
+    await enqueueWhatsAppJob({
+      tenantId: String(lead.tenant_id), phone: lead.telefone, message, category: 'transactional',
+      flowId: `followup_${toStage}`, flowName: `Follow-up ${toStage}`, patientName: lead.nome || '',
+      triggerEvent: 'followup_stage', scheduledAt: new Date(Date.now() + totalDelayMs),
+      variables: { leadId, requireStage: toStage },
+    });
+    console.log(`🤖 Follow-up automation: enfileirado para lead ${leadId} (etapa ${toStage}, em ${stageDays}d)`);
   } catch (err) {
     console.error('❌ Follow-up automation error:', err.message);
   }
@@ -9658,10 +9798,11 @@ app.put('/api/automations/followup', async (req, res) => {
 // List all automation flows
 app.get('/api/automations/flows', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
     const { rows } = await pool.query(
       `SELECT id, name, description, type, active, trigger_event as trigger, steps, stats, created_at, updated_at
-       FROM automation_flows ORDER BY created_at DESC`
+       FROM automation_flows WHERE tenant_id = $1 ORDER BY created_at DESC`,
+      [user.tenant_id || null]
     );
     const flows = rows.map(r => ({
       ...r,
@@ -9682,13 +9823,14 @@ app.post('/api/automations/flows', async (req, res) => {
     const { user } = await verifyUser(req);
     const { id, name, description, type, active, trigger, steps, stats } = req.body;
     if (!name) return res.status(400).json({ error: 'name obrigatório' });
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const flowId = id || `af${Date.now()}`;
 
     await pool.query(
-      `INSERT INTO automation_flows (id, name, description, type, active, trigger_event, steps, stats, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      `INSERT INTO automation_flows (id, name, description, type, active, trigger_event, steps, stats, created_by, tenant_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
       [flowId, name, description || '', type || 'custom', active || false, trigger || 'Personalizado',
-       JSON.stringify(steps || []), JSON.stringify(stats || {sent:0,responded:0,converted:0}), user.id]
+       JSON.stringify(steps || []), JSON.stringify(stats || {sent:0,responded:0,converted:0}), user.id, user.tenant_id]
     );
     res.json({ success: true, id: flowId });
   } catch (error) {
@@ -9699,7 +9841,7 @@ app.post('/api/automations/flows', async (req, res) => {
 // Update automation flow
 app.put('/api/automations/flows/:id', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
     const { id } = req.params;
     const { name, description, type, active, trigger, steps } = req.body;
 
@@ -9717,10 +9859,11 @@ app.put('/api/automations/flows/:id', async (req, res) => {
 
     if (sets.length === 1) return res.json({ success: true }); // only updated_at
 
-    vals.push(id);
-    await pool.query(
-      `UPDATE automation_flows SET ${sets.join(', ')} WHERE id = $${idx}`, vals
+    vals.push(id, user.tenant_id || null);
+    const { rowCount } = await pool.query(
+      `UPDATE automation_flows SET ${sets.join(', ')} WHERE id = $${idx} AND tenant_id = $${idx + 1}`, vals
     );
+    if (!rowCount) return res.status(404).json({ error: 'Fluxo não encontrado' });
     res.json({ success: true });
   } catch (error) {
     res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
@@ -9730,9 +9873,10 @@ app.put('/api/automations/flows/:id', async (req, res) => {
 // Delete automation flow
 app.delete('/api/automations/flows/:id', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
     const { id } = req.params;
-    await pool.query('DELETE FROM automation_flows WHERE id = $1', [id]);
+    const { rowCount } = await pool.query('DELETE FROM automation_flows WHERE id = $1 AND tenant_id = $2', [id, user.tenant_id || null]);
+    if (!rowCount) return res.status(404).json({ error: 'Fluxo não encontrado' });
     res.json({ success: true });
   } catch (error) {
     res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
@@ -9742,10 +9886,11 @@ app.delete('/api/automations/flows/:id', async (req, res) => {
 // Toggle automation flow active status
 app.patch('/api/automations/flows/:id/toggle', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
     const { id } = req.params;
     const { rows } = await pool.query(
-      `UPDATE automation_flows SET active = NOT active, updated_at = NOW() WHERE id = $1 RETURNING active`, [id]
+      `UPDATE automation_flows SET active = NOT active, updated_at = NOW() WHERE id = $1 AND tenant_id = $2 RETURNING active`,
+      [id, user.tenant_id || null]
     );
     if (rows.length === 0) return res.status(404).json({ error: 'Fluxo não encontrado' });
     res.json({ success: true, active: rows[0].active });
@@ -9880,15 +10025,497 @@ function replaceVariables(message, variables) {
   return out;
 }
 
-// Helper: get first connected WhatsApp instance
-async function getDefaultInstance() {
-  try {
-    const result = await evolutionFetch('/instance/fetchInstances');
-    const instances = Array.isArray(result.data) ? result.data : [];
-    const connected = instances.find(i => (i.connectionStatus || i.status) === 'open');
-    return connected ? (connected.name || connected.instanceName) : null;
-  } catch { return null; }
+// ═══════════════════════════════════════════════════════════════════════════
+// Fila central de envio automático do WhatsApp — regras anti-bloqueio
+// Todo envio automático (lembretes, automações, campanhas, reativação,
+// follow-ups) entra em automation_jobs via enqueueWhatsAppJob() e só sai
+// por processAutomationJobs(), que aplica: número da própria clínica,
+// opt-out (SAIR), janela de horário (America/Sao_Paulo), limites por hora e
+// por dia conforme a idade do número, intervalo aleatório entre envios,
+// "digitando..." antes de enviar e pausa automática quando há muitas falhas.
+// Regras e números: docs/whatsapp/diagnostico.md.
+// ═══════════════════════════════════════════════════════════════════════════
+const WA_TZ = 'America/Sao_Paulo';
+
+// Janela de envio automático (respostas de atendimento não passam por aqui).
+// 0 = domingo ... 6 = sábado. null = não envia no dia.
+const WA_SEND_WINDOWS = {
+  0: null,
+  1: [8 * 60, 20 * 60],
+  2: [8 * 60, 20 * 60],
+  3: [8 * 60, 20 * 60],
+  4: [8 * 60, 20 * 60],
+  5: [8 * 60, 20 * 60],
+  6: [8 * 60, 13 * 60],
+};
+
+// Limites por número conforme a idade (dias desde o cadastro da instância).
+const WA_RATE_TIERS = [
+  { maxAgeDays: 3, perHour: 20, perDay: 50 },
+  { maxAgeDays: 7, perHour: 30, perDay: 100 },
+  { maxAgeDays: 14, perHour: 40, perDay: 200 },
+  { maxAgeDays: 30, perHour: 60, perDay: 350 },
+  { maxAgeDays: Infinity, perHour: 80, perDay: 500 },
+];
+
+const WA_GAP_MIN_MS = 8_000;          // intervalo mínimo entre envios do mesmo número
+const WA_GAP_MAX_MS = 25_000;         // intervalo máximo
+const WA_BREAK_EVERY_MIN = 15;        // pausa longa a cada 15–25 envios
+const WA_BREAK_EVERY_MAX = 25;
+const WA_BREAK_MIN_MS = 3 * 60_000;   // pausa longa de 3–8 min
+const WA_BREAK_MAX_MS = 8 * 60_000;
+const WA_CLAIM_TIMEOUT_SQL = "INTERVAL '10 minutes'";
+const WA_FAILURE_WINDOW_MS = 60 * 60_000;
+const WA_FAILURE_MIN_COUNT = 5;       // pausa o número com 5+ falhas e >30% de falha na última hora
+const WA_FAILURE_RATE = 0.3;
+const WA_FAILURE_PAUSE_MS = 2 * 60 * 60_000;
+
+const randomBetween = (min, max) => Math.floor(min + Math.random() * (max - min + 1));
+
+function spClock(date = new Date()) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone: WA_TZ, weekday: 'short', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(date).map(p => [p.type, p.value]));
+  const weekday = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(parts.weekday);
+  const hour = Number(parts.hour) % 24;
+  return { weekday, minutes: hour * 60 + Number(parts.minute), day: `${parts.year}-${parts.month}-${parts.day}` };
 }
+
+function isWithinWhatsAppSendWindow(date = new Date()) {
+  const { weekday, minutes } = spClock(date);
+  const win = WA_SEND_WINDOWS[weekday];
+  return !!win && minutes >= win[0] && minutes < win[1];
+}
+
+// Próximo início de janela, procurando em passos de 15 min por até 8 dias.
+function nextWhatsAppSendWindowStart(date = new Date()) {
+  const step = 15 * 60_000;
+  let t = Math.ceil(date.getTime() / step) * step;
+  for (let i = 0; i < 8 * 96; i++, t += step) {
+    if (isWithinWhatsAppSendWindow(new Date(t))) return new Date(t);
+  }
+  return new Date(date.getTime() + 24 * 60 * 60_000);
+}
+
+// Chave de telefone tolerante ao 9º dígito brasileiro: DDD + 8 últimos dígitos.
+function waPhoneKey(phone) {
+  let digits = String(phone || '').replace(/\D/g, '');
+  if (digits.startsWith('55') && digits.length === 13) digits = digits.slice(0, 4) + digits.slice(5);
+  if (digits.startsWith('55') && digits.length === 12) return digits.slice(2);
+  return digits.slice(-10);
+}
+
+// Pedido de descadastro: só quando a mensagem inteira é a palavra-chave, para
+// não confundir "quero cancelar a consulta" com opt-out. "Cancelar" fica de fora
+// porque responde a lembrete de consulta.
+const WA_OPT_OUT_PHRASES = new Set([
+  'sair', 'parar', 'pare', 'stop', 'descadastrar', 'descadastre', 'remover',
+  'nao quero', 'nao quero mais', 'nao quero receber', 'nao quero receber mensagens',
+  'nao envie mais', 'nao mande mais', 'parar mensagens', 'sair da lista',
+]);
+
+function isWhatsAppOptOutText(text) {
+  const normalized = String(text || '')
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+  return normalized.length > 0 && normalized.length <= 40 && WA_OPT_OUT_PHRASES.has(normalized);
+}
+
+async function isWhatsAppOptedOut(tenantId, phone) {
+  if (!tenantId || !phone) return false;
+  const { rows } = await pool.query(
+    'SELECT 1 FROM whatsapp_opt_outs WHERE tenant_id = $1 AND phone_key = $2 LIMIT 1',
+    [tenantId, waPhoneKey(phone)]
+  );
+  return rows.length > 0;
+}
+
+async function recordWhatsAppOptOut(tenantId, phone, { source = 'whatsapp', keyword = null } = {}) {
+  if (!tenantId || !phone) return false;
+  const key = waPhoneKey(phone);
+  const { rowCount } = await pool.query(
+    `INSERT INTO whatsapp_opt_outs (tenant_id, phone_key, phone, source, keyword)
+     VALUES ($1, $2, $3, $4, $5) ON CONFLICT (tenant_id, phone_key) DO NOTHING`,
+    [tenantId, key, String(phone).replace(/\D/g, ''), source, keyword]
+  );
+  // Cancela o que estava na fila para esse telefone nesta clínica.
+  await pool.query(
+    `UPDATE automation_jobs SET status = 'cancelled', error = 'Cancelado: paciente pediu para não receber (SAIR)', claimed_at = NULL
+      WHERE status = 'pending' AND tenant_id = $1
+        AND RIGHT(regexp_replace(patient_phone, '\\D', '', 'g'), 8) = RIGHT($2, 8)`,
+    [tenantId, key]
+  ).catch(e => console.error('[opt-out] cancel jobs failed:', e.message));
+  return rowCount > 0;
+}
+
+// Instâncias abertas na Evolution (cache curto para não martelar a API).
+let waOpenInstancesCache = { at: 0, names: new Set() };
+async function getOpenEvolutionInstances() {
+  if (Date.now() - waOpenInstancesCache.at < 60_000) return waOpenInstancesCache.names;
+  const result = await evolutionFetch('/instance/fetchInstances');
+  const list = Array.isArray(result.data) ? result.data : [];
+  const names = new Set(
+    list.filter(i => (i.connectionStatus || i.status || i.instance?.state) === 'open')
+      .map(i => i.name || i.instanceName || i.instance?.instanceName)
+      .filter(Boolean)
+  );
+  // Em falha, guarda o resultado vazio por ~30 s (cache negativo) para não
+  // repetir a espera de timeout a cada mensagem enfileirada.
+  waOpenInstancesCache = result.ok ? { at: Date.now(), names } : { at: Date.now() - 30_000, names: waOpenInstancesCache.names };
+  return waOpenInstancesCache.names;
+}
+
+async function getTenantIdByInstancePrefix(instanceName) {
+  const m = String(instanceName || '').match(/^([0-9a-f]{8})-/i);
+  if (!m) return null;
+  const { rows } = await pool.query(
+    'SELECT id FROM tenants WHERE id::text LIKE $1 LIMIT 2', [`${m[1].toLowerCase()}%`]
+  ).catch(() => ({ rows: [] }));
+  return rows.length === 1 ? String(rows[0].id) : null;
+}
+
+async function resolveInstanceTenant(instanceName) {
+  return (await getStrictInstanceOwner(instanceName)) || (await getTenantIdByInstancePrefix(instanceName));
+}
+
+// Número conectado da própria clínica (substitui o antigo getDefaultInstance,
+// que devolvia a primeira instância aberta de QUALQUER clínica).
+async function getTenantDefaultInstance(tenantId) {
+  if (!isValidTenantId(tenantId)) return null;
+  const open = await getOpenEvolutionInstances();
+  const { rows } = await pool.query(
+    'SELECT instance_name FROM whatsapp_instances WHERE tenant_id = $1 ORDER BY created_at ASC NULLS LAST',
+    [tenantId]
+  ).catch(() => ({ rows: [] }));
+  const mapped = rows.map(r => r.instance_name).find(n => open.has(n));
+  if (mapped) return mapped;
+  for (const name of open) {
+    if (instanceNameMatchesTenantPrefix(name, tenantId) && !(await getStrictInstanceOwner(name))) return name;
+  }
+  return null;
+}
+
+async function enqueueWhatsAppJob({
+  tenantId, instance = null, phone, message, category = 'transactional',
+  flowId = null, flowName = '', stepIndex = 0, patientName = '', variables = null,
+  scheduledAt = new Date(), triggerEvent = 'manual', id = null, expiresAt = null,
+}) {
+  if (!isValidTenantId(tenantId)) throw new Error('enqueueWhatsAppJob: tenantId obrigatório');
+  const cleanPhone = normalizeWhatsappNumber(phone || '');
+  if (!cleanPhone || !message) return null;
+  // Já fixa o número da clínica, para o ritmo por número valer desde o início.
+  const resolvedInstance = instance || await getTenantDefaultInstance(tenantId).catch(() => null);
+  // Mensagem automática perde o sentido depois de um tempo (número desconectado
+  // por dias, fila parada): marketing vale 3 dias, o resto 7, se não informado.
+  const start = new Date(scheduledAt || Date.now()).getTime();
+  const validity = expiresAt || new Date(start + (category === 'marketing' ? 3 : 7) * 86_400_000);
+  const cols = ['tenant_id', 'instance', 'patient_phone', 'message', 'category', 'flow_id', 'flow_name',
+    'step_index', 'patient_name', 'variables', 'channel', 'status', 'scheduled_at', 'trigger_event', 'expires_at'];
+  const vals = [tenantId, resolvedInstance || null, cleanPhone, message, category, flowId, flowName,
+    stepIndex, patientName || '', variables ? JSON.stringify(variables) : null, 'whatsapp', 'pending', scheduledAt, triggerEvent, validity];
+  if (id) { cols.unshift('id'); vals.unshift(id); }
+  const { rows } = await pool.query(
+    `INSERT INTO automation_jobs (${cols.join(', ')}) VALUES (${vals.map((_, i) => `$${i + 1}`).join(', ')}) RETURNING id`,
+    vals
+  );
+  return rows[0]?.id || null;
+}
+
+// Estado em memória por número: ritmo e falhas recentes.
+const waPacing = new Map();   // instance -> { nextAt, sinceBreak, breakEvery }
+const waOutcomes = new Map(); // instance -> [{ at, ok }]
+
+function scheduleNextWhatsAppSend(instance) {
+  const p = waPacing.get(instance) || { nextAt: 0, sinceBreak: 0, breakEvery: randomBetween(WA_BREAK_EVERY_MIN, WA_BREAK_EVERY_MAX) };
+  p.sinceBreak += 1;
+  let gap = randomBetween(WA_GAP_MIN_MS, WA_GAP_MAX_MS);
+  if (p.sinceBreak >= p.breakEvery) {
+    gap += randomBetween(WA_BREAK_MIN_MS, WA_BREAK_MAX_MS);
+    p.sinceBreak = 0;
+    p.breakEvery = randomBetween(WA_BREAK_EVERY_MIN, WA_BREAK_EVERY_MAX);
+  }
+  p.nextAt = Date.now() + gap;
+  waPacing.set(instance, p);
+}
+
+async function recordWhatsAppOutcome(instance, tenantId, ok) {
+  const now = Date.now();
+  const list = (waOutcomes.get(instance) || []).filter(o => now - o.at < WA_FAILURE_WINDOW_MS);
+  list.push({ at: now, ok });
+  waOutcomes.set(instance, list);
+  const failures = list.filter(o => !o.ok).length;
+  if (!ok && failures >= WA_FAILURE_MIN_COUNT && failures / list.length > WA_FAILURE_RATE) {
+    const until = new Date(now + WA_FAILURE_PAUSE_MS);
+    await pool.query(
+      `INSERT INTO whatsapp_instances (instance_name, tenant_id, paused_until, pause_reason)
+       VALUES ($1, $4, $2, $3)
+       ON CONFLICT (instance_name) DO UPDATE SET paused_until = EXCLUDED.paused_until, pause_reason = EXCLUDED.pause_reason`,
+      [instance, until, `Pausa automática: ${failures} falhas de ${list.length} envios na última hora`, tenantId]
+    ).catch(e => console.error('[wa-breaker]', e.message));
+    waOutcomes.set(instance, []);
+    console.warn(`⛔ WhatsApp ${instance} (tenant ${tenantId}) pausado até ${until.toISOString()} por excesso de falhas`);
+  }
+}
+
+function getRateTier(instanceCreatedAt) {
+  const ageDays = instanceCreatedAt ? (Date.now() - new Date(instanceCreatedAt).getTime()) / 86_400_000 : Infinity;
+  return WA_RATE_TIERS.find(t => ageDays <= t.maxAgeDays) || WA_RATE_TIERS[WA_RATE_TIERS.length - 1];
+}
+
+// Tempo de "digitando..." proporcional ao texto (Evolution mostra a presença durante o delay).
+function typingDelayMs(text) {
+  const base = Math.min(8000, Math.max(1500, String(text || '').length * 50));
+  return Math.round(base * (0.8 + Math.random() * 0.4));
+}
+
+async function runWhatsAppJobHooks(job, ok, errorMessage) {
+  let vars = job.variables;
+  if (typeof vars === 'string') { try { vars = JSON.parse(vars); } catch { vars = {}; } }
+  vars = vars || {};
+  if (job.trigger_event === 'reactivation') {
+    await pool.query(
+      `INSERT INTO reactivation_sends (rule_id, paciente_id, lead_id, phone, message, status, error_message, tenant_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [vars.ruleId || null, vars.pacienteId || null, vars.leadId || null, job.patient_phone, job.message,
+        ok ? 'enviado' : 'falhou', ok ? null : String(errorMessage || '').slice(0, 500), job.tenant_id || null]
+    ).catch(e => console.error('[reactivation hook]', e.message));
+    if (ok && vars.leadId) {
+      await pool.query(
+        `UPDATE crm_leads SET kanban_stage='reativacao', status='reativacao', updated_at=NOW() WHERE id=$1 AND tenant_id=$2`,
+        [vars.leadId, job.tenant_id]
+      ).catch(() => {});
+    }
+  }
+  if (job.trigger_event === 'followup_stage' && ok && vars.leadId) {
+    await pool.query(
+      `INSERT INTO kanban_movements (lead_id, from_stage, to_stage, moved_by_name, reason, tenant_id)
+       VALUES ($1, $2, $2, $3, $4, $5)`,
+      [vars.leadId, vars.requireStage || null, 'Sistema (Automação)', 'Follow-up automático enviado via WhatsApp', job.tenant_id || null]
+    ).catch(() => {});
+  }
+}
+
+async function processOneWhatsAppJob(candidate, openInstances, usedInstances) {
+  if (candidate.instance) {
+    const pacing = waPacing.get(candidate.instance);
+    if ((pacing && pacing.nextAt > Date.now()) || usedInstances.has(candidate.instance)) return;
+  }
+
+  const { rows: [job] } = await pool.query(
+    `UPDATE automation_jobs SET claimed_at = NOW(), attempts = COALESCE(attempts, 0) + 1
+      WHERE id = $1 AND status = 'pending' AND (claimed_at IS NULL OR claimed_at < NOW() - ${WA_CLAIM_TIMEOUT_SQL})
+      RETURNING *`,
+    [candidate.id]
+  );
+  if (!job) return;
+
+  const release = (scheduledAt, note) => pool.query(
+    `UPDATE automation_jobs SET claimed_at = NULL, scheduled_at = COALESCE($2, scheduled_at), error = COALESCE($3, error) WHERE id = $1`,
+    [job.id, scheduledAt || null, note || null]
+  );
+  const fail = async (message) => {
+    await pool.query(
+      `UPDATE automation_jobs SET status = 'failed', error = $2, claimed_at = NULL WHERE id = $1`,
+      [job.id, String(message).slice(0, 500)]
+    );
+    await runWhatsAppJobHooks(job, false, message);
+  };
+
+  // 0) Validade
+  if (job.expires_at && new Date(job.expires_at) < new Date()) {
+    return fail('Expirado: a mensagem não saiu a tempo (WhatsApp desconectado ou fila parada)');
+  }
+
+  // 1) Clínica dona do envio
+  let tenantId = job.tenant_id ? String(job.tenant_id) : null;
+  if (!tenantId && job.instance) tenantId = await resolveInstanceTenant(job.instance);
+  if (!tenantId) return fail('Envio sem clínica definida (instância não mapeada)');
+
+  // 2) Número da própria clínica
+  let instance = job.instance;
+  if (instance) {
+    const owner = await resolveInstanceTenant(instance);
+    if (owner && owner !== tenantId) return fail('Bloqueado: o número de envio pertence a outra clínica');
+    if (!owner) instance = null;
+  }
+  if (!instance) instance = await getTenantDefaultInstance(tenantId);
+  if (!instance) {
+    const ageMs = Date.now() - new Date(job.created_at || job.scheduled_at || Date.now()).getTime();
+    if (ageMs > 3 * 86_400_000) return fail('Nenhum WhatsApp da clínica conectado há mais de 3 dias');
+    return release(new Date(Date.now() + 15 * 60_000), 'Aguardando WhatsApp da clínica conectar');
+  }
+  if (instance !== job.instance || String(job.tenant_id || '') !== tenantId) {
+    await pool.query('UPDATE automation_jobs SET instance = $2, tenant_id = $3 WHERE id = $1', [job.id, instance, tenantId]);
+    job.instance = instance; job.tenant_id = tenantId;
+  }
+  if (!openInstances.has(instance)) return release(new Date(Date.now() + 10 * 60_000), 'WhatsApp desconectado; nova tentativa em 10 min');
+
+  // Ritmo por número: no máximo um envio por número por ciclo e respeitando o
+  // intervalo aleatório. A reserva é feita antes de qualquer await seguinte.
+  const pacingNow = waPacing.get(instance);
+  if (usedInstances.has(instance) || (pacingNow && pacingNow.nextAt > Date.now())) return release(null, null);
+  usedInstances.add(instance);
+
+  const { rows: [inst] } = await pool.query(
+    'SELECT created_at, paused_until FROM whatsapp_instances WHERE instance_name = $1', [instance]
+  ).catch(() => ({ rows: [] }));
+  if (inst?.paused_until && new Date(inst.paused_until) > new Date()) {
+    return release(new Date(inst.paused_until), 'Número em pausa automática');
+  }
+
+  // 3) Opt-out e duplicidade
+  if (await isWhatsAppOptedOut(tenantId, job.patient_phone)) {
+    return fail('Paciente pediu para não receber mensagens (SAIR)');
+  }
+  const { rows: dup } = await pool.query(
+    `SELECT 1 FROM automation_jobs
+      WHERE tenant_id = $1 AND status = 'sent' AND id <> $2 AND message = $3
+        AND RIGHT(regexp_replace(patient_phone, '\\D', '', 'g'), 8) = RIGHT(regexp_replace($4, '\\D', '', 'g'), 8)
+        AND sent_at > NOW() - INTERVAL '24 hours' LIMIT 1`,
+    [tenantId, job.id, job.message, job.patient_phone]
+  );
+  if (dup.length) return fail('Mensagem idêntica já enviada a este paciente nas últimas 24h');
+
+  // 4) Janela de horário (não vale para respostas de atendimento)
+  if (job.category !== 'service' && !isWithinWhatsAppSendWindow()) {
+    const next = nextWhatsAppSendWindowStart();
+    return release(new Date(next.getTime() + randomBetween(0, 20) * 60_000), 'Fora do horário de envio');
+  }
+
+  // 5) Limites por número
+  const tier = getRateTier(inst?.created_at);
+  const { rows: [counts] } = await pool.query(
+    `SELECT COUNT(*) FILTER (WHERE sent_at > NOW() - INTERVAL '1 hour')::int AS last_hour,
+            COUNT(*) FILTER (WHERE (sent_at AT TIME ZONE '${WA_TZ}')::date = (NOW() AT TIME ZONE '${WA_TZ}')::date)::int AS today
+       FROM automation_jobs WHERE instance = $1 AND status = 'sent' AND sent_at > NOW() - INTERVAL '26 hours'`,
+    [instance]
+  );
+  if (counts.today >= tier.perDay) {
+    const tomorrow = nextWhatsAppSendWindowStart(new Date(Date.now() + 6 * 60 * 60_000));
+    return release(new Date(tomorrow.getTime() + randomBetween(0, 30) * 60_000), `Limite diário do número (${tier.perDay})`);
+  }
+  if (counts.last_hour >= tier.perHour) {
+    return release(new Date(Date.now() + randomBetween(15, 30) * 60_000), `Limite por hora do número (${tier.perHour})`);
+  }
+
+  // 6) Condições específicas do job
+  let vars = job.variables;
+  if (typeof vars === 'string') { try { vars = JSON.parse(vars); } catch { vars = {}; } }
+  if (vars?.requireStage && vars?.leadId) {
+    const { rows: lead } = await pool.query('SELECT kanban_stage FROM crm_leads WHERE id = $1 AND tenant_id = $2', [vars.leadId, tenantId]);
+    if (!lead.length || lead[0].kanban_stage !== vars.requireStage) {
+      return fail(`Cancelado: lead saiu da etapa ${vars.requireStage}`);
+    }
+  }
+
+  // 7) Envio com "digitando..."
+  scheduleNextWhatsAppSend(instance);
+  const phone = normalizeWhatsappNumber(job.patient_phone);
+  const result = await evolutionFetch(`/message/sendText/${encodeURIComponent(instance)}`, {
+    method: 'POST',
+    body: JSON.stringify({
+      number: phone.includes('@') ? phone : `${phone}@s.whatsapp.net`,
+      text: job.message,
+      delay: typingDelayMs(job.message),
+    }),
+    timeoutMs: 45_000, // > tempo de "digitando" + margem; evita falso "falhou"
+  });
+  const ok = result.ok && !!(result.data?.key?.id || result.data?.message?.key?.id);
+  await recordWhatsAppOutcome(instance, tenantId, ok);
+  if (ok) {
+    await pool.query(`UPDATE automation_jobs SET status = 'sent', sent_at = NOW(), claimed_at = NULL, error = NULL WHERE id = $1`, [job.id]);
+    await runWhatsAppJobHooks(job, true);
+    console.log(`   ✅ WhatsApp ${job.trigger_event || 'job'} → ${String(phone).slice(-4).padStart(8, '*')} via ${instance}`);
+  } else {
+    const errMsg = friendlyEvolutionErrorMessage(result.data, `Falha no envio (HTTP ${result.status})`);
+    await fail(errMsg);
+    console.error(`   ❌ WhatsApp job ${job.id} via ${instance}: ${errMsg}`);
+  }
+}
+
+let waQueueRunning = false;
+async function processAutomationJobs() {
+  if (waQueueRunning) return; // nunca roda dois ciclos ao mesmo tempo
+  waQueueRunning = true;
+  try {
+    await pool.query(
+      `UPDATE automation_jobs SET status = 'failed', error = 'Canal "' || channel || '" não suportado ainda'
+        WHERE status = 'pending' AND scheduled_at <= NOW() AND COALESCE(channel, 'whatsapp') <> 'whatsapp'`
+    );
+    // Um candidato por número (ou por clínica, quando o job ainda não tem número).
+    const { rows: candidates } = await pool.query(
+      `SELECT DISTINCT ON (COALESCE(NULLIF(instance, ''), 'tenant:' || COALESCE(tenant_id::text, 'none'))) *
+         FROM automation_jobs
+        WHERE status = 'pending' AND scheduled_at <= NOW() AND COALESCE(channel, 'whatsapp') = 'whatsapp'
+          AND (claimed_at IS NULL OR claimed_at < NOW() - ${WA_CLAIM_TIMEOUT_SQL})
+        ORDER BY COALESCE(NULLIF(instance, ''), 'tenant:' || COALESCE(tenant_id::text, 'none')), scheduled_at ASC
+        LIMIT 200`
+    );
+    if (!candidates.length) return;
+    const open = await getOpenEvolutionInstances();
+    const usedInstances = new Set();
+    const CONCURRENCY = 5;
+    for (let i = 0; i < candidates.length; i += CONCURRENCY) {
+      await Promise.all(candidates.slice(i, i + CONCURRENCY).map(job =>
+        processOneWhatsAppJob({ ...job, instance: job.instance || null }, open, usedInstances)
+          .catch(err => console.error(`❌ WhatsApp job ${job.id} error:`, err.message))
+      ));
+    }
+  } catch (err) {
+    console.error('❌ WhatsApp queue error:', err.message);
+  } finally {
+    waQueueRunning = false;
+  }
+}
+
+// Esquema da fila (idempotente; também em migration-whatsapp-fase1.sql).
+async function ensureWhatsAppQueueSchema() {
+  const statements = [
+    `ALTER TABLE IF EXISTS automation_jobs ADD COLUMN IF NOT EXISTS tenant_id UUID`,
+    `ALTER TABLE IF EXISTS automation_jobs ADD COLUMN IF NOT EXISTS category TEXT DEFAULT 'transactional'`,
+    `ALTER TABLE IF EXISTS automation_jobs ADD COLUMN IF NOT EXISTS attempts INT DEFAULT 0`,
+    `ALTER TABLE IF EXISTS automation_jobs ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ`,
+    `ALTER TABLE IF EXISTS automation_jobs ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ`,
+    `CREATE INDEX IF NOT EXISTS idx_automation_jobs_tenant_sent ON automation_jobs (tenant_id, sent_at) WHERE status = 'sent'`,
+    `CREATE INDEX IF NOT EXISTS idx_automation_jobs_due ON automation_jobs (status, scheduled_at)`,
+    `CREATE INDEX IF NOT EXISTS idx_automation_jobs_instance_sent ON automation_jobs (instance, sent_at)`,
+    `CREATE INDEX IF NOT EXISTS idx_automation_jobs_tenant ON automation_jobs (tenant_id)`,
+    `ALTER TABLE IF EXISTS automation_flows ADD COLUMN IF NOT EXISTS tenant_id UUID`,
+    `ALTER TABLE IF EXISTS broadcast_campaigns ADD COLUMN IF NOT EXISTS tenant_id UUID`,
+    `ALTER TABLE IF EXISTS whatsapp_instances ADD COLUMN IF NOT EXISTS paused_until TIMESTAMPTZ`,
+    `ALTER TABLE IF EXISTS whatsapp_instances ADD COLUMN IF NOT EXISTS pause_reason TEXT`,
+    `CREATE TABLE IF NOT EXISTS whatsapp_opt_outs (
+       tenant_id UUID NOT NULL,
+       phone_key TEXT NOT NULL,
+       phone TEXT,
+       source TEXT,
+       keyword TEXT,
+       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+       PRIMARY KEY (tenant_id, phone_key)
+     )`,
+    // Preenche a clínica de registros antigos (criados antes do isolamento).
+    `UPDATE automation_flows f SET tenant_id = p.tenant_id FROM profiles p
+      WHERE f.tenant_id IS NULL AND p.id::text = f.created_by::text AND p.tenant_id IS NOT NULL`,
+    `UPDATE broadcast_campaigns c SET tenant_id = p.tenant_id FROM profiles p
+      WHERE c.tenant_id IS NULL AND p.id::text = c.created_by::text AND p.tenant_id IS NOT NULL`,
+    `UPDATE automation_jobs j SET tenant_id = w.tenant_id FROM whatsapp_instances w
+      WHERE j.tenant_id IS NULL AND w.instance_name = j.instance AND w.tenant_id IS NOT NULL`,
+    // Jobs pendentes antigos ganham validade de 7 dias a partir do agendamento
+    `UPDATE automation_jobs SET expires_at = scheduled_at + INTERVAL '7 days'
+      WHERE status = 'pending' AND expires_at IS NULL`,
+  ];
+  for (const sql of statements) {
+    await pool.query(sql).catch(e => console.error('[wa-schema]', e.message, '→', sql.split('\n')[0].slice(0, 90)));
+  }
+}
+
+// Gatilhos de prospecção/retorno: contam como marketing (opt-out obrigatório, dedupe).
+const AUTOMATION_MARKETING_TRIGGERS = new Set([
+  'Paciente inativo há 60+ dias', 'Paciente inativo há 90+ dias', 'Paciente inativo há 180+ dias',
+  'Data de aniversário do paciente', 'Orçamento criado e não fechado', 'Orçamento criado e não aprovado',
+  'Lead entrou no CRM',
+]);
 
 // Map trigger_event strings to automation types
 const TRIGGER_MAP = {
@@ -9912,18 +10539,22 @@ const TRIGGER_MAP = {
 };
 
 // Core: enqueue all steps of matching flows for a given trigger event
+// patientData.tenantId é obrigatório: só fluxos e número da própria clínica.
 async function triggerAutomationFlows(triggerEvent, patientData) {
   try {
+    const tenantId = patientData?.tenantId || patientData?.tenant_id || null;
+    if (!isValidTenantId(tenantId)) {
+      console.warn(`⚠️ Automation trigger "${triggerEvent}" ignorado: clínica não informada`);
+      return;
+    }
     const { rows: flows } = await pool.query(
-      `SELECT * FROM automation_flows WHERE active = true AND trigger_event = $1`, [triggerEvent]
+      `SELECT * FROM automation_flows WHERE active = true AND trigger_event = $1 AND tenant_id = $2`,
+      [triggerEvent, tenantId]
     );
     if (flows.length === 0) return;
 
-    const instanceName = await getDefaultInstance();
-    if (!instanceName) {
-      console.warn('⚠️ Automation trigger: no connected WhatsApp instance');
-      return;
-    }
+    // O número é escolhido pela fila no momento do envio (sempre da clínica).
+    const instanceName = await getTenantDefaultInstance(tenantId);
 
     const phone = normalizeWhatsappNumber(patientData.phone || patientData.telefone || '');
     if (!phone) return;
@@ -9948,10 +10579,20 @@ async function triggerAutomationFlows(triggerEvent, patientData) {
 
       // Check if we already have pending jobs for this flow+phone (avoid duplicates)
       const { rows: existing } = await pool.query(
-        `SELECT 1 FROM automation_jobs WHERE flow_id = $1 AND patient_phone = $2 AND status = 'pending' LIMIT 1`,
-        [flow.id, phone]
+        `SELECT 1 FROM automation_jobs WHERE flow_id = $1 AND patient_phone = $2 AND status = 'pending' AND tenant_id = $3 LIMIT 1`,
+        [flow.id, phone, tenantId]
       );
       if (existing.length > 0) continue;
+      if (await isWhatsAppOptedOut(tenantId, phone)) continue;
+      if (AUTOMATION_MARKETING_TRIGGERS.has(triggerEvent)) {
+        const { rows: recent } = await pool.query(
+          `SELECT 1 FROM automation_jobs WHERE flow_id = $1 AND tenant_id = $2
+             AND RIGHT(regexp_replace(patient_phone, '\\D', '', 'g'), 8) = RIGHT($3, 8)
+             AND created_at > NOW() - INTERVAL '30 days' LIMIT 1`,
+          [flow.id, tenantId, phone]
+        );
+        if (recent.length > 0) continue;
+      }
 
       const now = new Date();
       for (let i = 0; i < steps.length; i++) {
@@ -9960,11 +10601,20 @@ async function triggerAutomationFlows(triggerEvent, patientData) {
         const scheduledAt = new Date(now.getTime() + delayMs);
         const finalMessage = replaceVariables(step.message, vars);
 
-        await pool.query(
-          `INSERT INTO automation_jobs (flow_id, flow_name, step_index, patient_name, patient_phone, instance, variables, message, channel, scheduled_at, trigger_event)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-          [flow.id, flow.name, i, vars.nome, phone, instanceName, JSON.stringify(vars), finalMessage, step.channel || 'whatsapp', scheduledAt, triggerEvent]
-        );
+        if ((step.channel || 'whatsapp') === 'whatsapp') {
+          await enqueueWhatsAppJob({
+            tenantId, instance: instanceName, phone, message: finalMessage,
+            category: AUTOMATION_MARKETING_TRIGGERS.has(triggerEvent) ? 'marketing' : 'transactional',
+            flowId: flow.id, flowName: flow.name, stepIndex: i, patientName: vars.nome,
+            variables: vars, scheduledAt, triggerEvent,
+          });
+        } else {
+          await pool.query(
+            `INSERT INTO automation_jobs (tenant_id, flow_id, flow_name, step_index, patient_name, patient_phone, instance, variables, message, channel, scheduled_at, trigger_event, expires_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, $11::timestamptz + INTERVAL '7 days')`,
+            [tenantId, flow.id, flow.name, i, vars.nome, phone, instanceName, JSON.stringify(vars), finalMessage, step.channel, scheduledAt, triggerEvent]
+          );
+        }
         totalJobs++;
       }
 
@@ -9990,7 +10640,9 @@ app.post('/api/automations/enqueue', async (req, res) => {
     const { flowId, patientName, patientPhone, variables, instance } = req.body;
     if (!flowId || !patientPhone) return res.status(400).json({ error: 'flowId e patientPhone obrigatórios' });
 
-    const { rows: flowRows } = await pool.query('SELECT * FROM automation_flows WHERE id = $1', [flowId]);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const tenantId = String(user.tenant_id);
+    const { rows: flowRows } = await pool.query('SELECT * FROM automation_flows WHERE id = $1 AND tenant_id = $2', [flowId, tenantId]);
     if (flowRows.length === 0) return res.status(404).json({ error: 'Fluxo não encontrado' });
     const flow = flowRows[0];
     if (!flow.active) return res.status(400).json({ error: 'Fluxo está desativado' });
@@ -9998,10 +10650,16 @@ app.post('/api/automations/enqueue', async (req, res) => {
     const steps = typeof flow.steps === 'string' ? JSON.parse(flow.steps) : flow.steps;
     if (!steps || steps.length === 0) return res.status(400).json({ error: 'Fluxo sem etapas' });
 
-    const instanceName = instance || await getDefaultInstance();
-    if (!instanceName) return res.status(400).json({ error: 'Nenhuma instância WhatsApp conectada' });
+    if (instance && !(await userOwnsInstance(user, instance))) {
+      return res.status(403).json({ error: 'Este número de WhatsApp não pertence à sua clínica.' });
+    }
+    const instanceName = instance || await getTenantDefaultInstance(tenantId);
+    if (!instanceName) return res.status(400).json({ error: 'Nenhum WhatsApp da sua clínica está conectado' });
 
     const phone = normalizeWhatsappNumber(patientPhone);
+    if (await isWhatsAppOptedOut(tenantId, phone)) {
+      return res.status(409).json({ error: 'Este paciente pediu para não receber mensagens (SAIR).' });
+    }
     const vars = { nome: patientName || '', telefone: phone, ...(variables || {}) };
     const now = new Date();
     const jobIds = [];
@@ -10013,9 +10671,9 @@ app.post('/api/automations/enqueue', async (req, res) => {
       const finalMessage = replaceVariables(step.message, vars);
 
       const { rows } = await pool.query(
-        `INSERT INTO automation_jobs (flow_id, flow_name, step_index, patient_name, patient_phone, instance, variables, message, channel, scheduled_at, trigger_event)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'manual') RETURNING id`,
-        [flow.id, flow.name, i, patientName || '', phone, instanceName, JSON.stringify(vars), finalMessage, step.channel || 'whatsapp', scheduledAt]
+        `INSERT INTO automation_jobs (tenant_id, category, flow_id, flow_name, step_index, patient_name, patient_phone, instance, variables, message, channel, scheduled_at, trigger_event, expires_at)
+         VALUES ($1,'transactional',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'manual', $11::timestamptz + INTERVAL '7 days') RETURNING id`,
+        [tenantId, flow.id, flow.name, i, patientName || '', phone, instanceName, JSON.stringify(vars), finalMessage, step.channel || 'whatsapp', scheduledAt]
       );
       jobIds.push(rows[0].id);
     }
@@ -10035,11 +10693,12 @@ app.post('/api/automations/enqueue', async (req, res) => {
 // List automation jobs
 app.get('/api/automations/jobs', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
     const { status, flowId, limit } = req.query;
     let sql = 'SELECT * FROM automation_jobs';
     const vals = [];
     const where = [];
+    if (!user.is_super_admin) { vals.push(user.tenant_id || null); where.push(`tenant_id = $${vals.length}`); }
     if (status) { vals.push(status); where.push(`status = $${vals.length}`); }
     if (flowId) { vals.push(flowId); where.push(`flow_id = $${vals.length}`); }
     if (where.length) sql += ' WHERE ' + where.join(' AND ');
@@ -10055,10 +10714,12 @@ app.get('/api/automations/jobs', async (req, res) => {
 // Cancel pending jobs
 app.delete('/api/automations/jobs/cancel', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
     const { flowId, patientPhone } = req.body || {};
     let sql = `UPDATE automation_jobs SET status = 'cancelled' WHERE status = 'pending'`;
     const vals = [];
+    if (!user.is_super_admin) { vals.push(user.tenant_id || null); sql += ` AND tenant_id = $${vals.length}`; }
+    else if (!flowId && !patientPhone) return res.status(400).json({ error: 'Informe flowId ou patientPhone' });
     if (flowId) { vals.push(flowId); sql += ` AND flow_id = $${vals.length}`; }
     if (patientPhone) { vals.push(normalizeWhatsappNumber(patientPhone)); sql += ` AND patient_phone = $${vals.length}`; }
     const { rowCount } = await pool.query(sql, vals);
@@ -10151,35 +10812,39 @@ app.get('/api/automations/stats', async (req, res) => {
 // ═══════════════════════════════════════════════════════════════
 
 // List all campaigns
+function mapCampaignRow(r) {
+  return {
+    id: r.id,
+    nome: r.nome,
+    template: typeof r.template === 'string' ? JSON.parse(r.template) : r.template,
+    tipo: r.tipo,
+    diasSemana: typeof r.dias_semana === 'string' ? JSON.parse(r.dias_semana) : r.dias_semana,
+    horarioInicio: r.horario_inicio,
+    horarioFim: r.horario_fim,
+    dataInicio: r.data_inicio,
+    dataFim: r.data_fim,
+    campanhaPerpetua: r.campanha_perpetua,
+    usarHorarioClinica: r.usar_horario_clinica,
+    publico: r.publico,
+    filtroCustom: r.filtro_custom,
+    numeroEnvio: r.numero_envio,
+    contatosAlcancaveis: r.contatos_alcancaveis || 0,
+    capacidadeDiaria: r.capacidade_diaria || 232,
+    intervaloSpam: r.intervalo_spam || 7,
+    ativo: r.ativo,
+    stats: typeof r.stats === 'string' ? JSON.parse(r.stats) : r.stats,
+    criadoEm: r.created_at ? new Date(r.created_at).toLocaleDateString('pt-BR') : '',
+  };
+}
+
 app.get('/api/campaigns', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
     const { rows } = await pool.query(
-      `SELECT * FROM broadcast_campaigns ORDER BY created_at DESC`
+      `SELECT * FROM broadcast_campaigns WHERE tenant_id = $1 ORDER BY created_at DESC`,
+      [user.tenant_id || null]
     );
-    const campaigns = rows.map(r => ({
-      id: r.id,
-      nome: r.nome,
-      template: typeof r.template === 'string' ? JSON.parse(r.template) : r.template,
-      tipo: r.tipo,
-      diasSemana: typeof r.dias_semana === 'string' ? JSON.parse(r.dias_semana) : r.dias_semana,
-      horarioInicio: r.horario_inicio,
-      horarioFim: r.horario_fim,
-      dataInicio: r.data_inicio,
-      dataFim: r.data_fim,
-      campanhaPerpetua: r.campanha_perpetua,
-      usarHorarioClinica: r.usar_horario_clinica,
-      publico: r.publico,
-      filtroCustom: r.filtro_custom,
-      numeroEnvio: r.numero_envio,
-      contatosAlcancaveis: r.contatos_alcancaveis || 0,
-      capacidadeDiaria: r.capacidade_diaria || 232,
-      intervaloSpam: r.intervalo_spam || 7,
-      ativo: r.ativo,
-      stats: typeof r.stats === 'string' ? JSON.parse(r.stats) : r.stats,
-      criadoEm: r.created_at ? new Date(r.created_at).toLocaleDateString('pt-BR') : '',
-    }));
-    res.json(campaigns);
+    res.json(rows.map(mapCampaignRow));
   } catch (error) {
     res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
   }
@@ -10189,25 +10854,29 @@ app.get('/api/campaigns', async (req, res) => {
 app.post('/api/campaigns', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { nome, template, tipo, diasSemana, horarioInicio, horarioFim, dataInicio, dataFim,
       campanhaPerpetua, usarHorarioClinica, publico, filtroCustom, numeroEnvio,
       contatosAlcancaveis, capacidadeDiaria, intervaloSpam, ativo } = req.body;
 
     if (!nome) return res.status(400).json({ error: 'Nome obrigatório' });
+    if (numeroEnvio && !(await userOwnsInstance(user, numeroEnvio))) {
+      return res.status(403).json({ error: 'Este número de WhatsApp não pertence à sua clínica.' });
+    }
 
     const id = `camp_${Date.now()}`;
     await pool.query(
       `INSERT INTO broadcast_campaigns
         (id, nome, template, tipo, dias_semana, horario_inicio, horario_fim, data_inicio, data_fim,
          campanha_perpetua, usar_horario_clinica, publico, filtro_custom, numero_envio,
-         contatos_alcancaveis, capacidade_diaria, intervalo_spam, ativo, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
+         contatos_alcancaveis, capacidade_diaria, intervalo_spam, ativo, created_by, tenant_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
       [id, nome, JSON.stringify(template || {}), tipo || 'unico',
        JSON.stringify(diasSemana || []), horarioInicio, horarioFim, dataInicio, dataFim,
        campanhaPerpetua || false, usarHorarioClinica || false,
        publico || 'todos', filtroCustom, numeroEnvio,
        contatosAlcancaveis || 0, capacidadeDiaria || 232, intervaloSpam || 7,
-       ativo || false, user.id]
+       ativo || false, user.id, user.tenant_id]
     );
     res.json({ success: true, id });
   } catch (error) {
@@ -10218,12 +10887,16 @@ app.post('/api/campaigns', async (req, res) => {
 // Update campaign
 app.put('/api/campaigns/:id', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
     const { id } = req.params;
     const fields = req.body;
     const sets = [];
     const vals = [];
     let idx = 1;
+
+    if (fields.numeroEnvio && !(await userOwnsInstance(user, fields.numeroEnvio))) {
+      return res.status(403).json({ error: 'Este número de WhatsApp não pertence à sua clínica.' });
+    }
 
     const fieldMap = {
       nome: 'nome', tipo: 'tipo', publico: 'publico', filtroCustom: 'filtro_custom',
@@ -10255,8 +10928,11 @@ app.put('/api/campaigns/:id', async (req, res) => {
 
     if (sets.length === 0) return res.json({ success: true });
     sets.push(`updated_at = NOW()`);
-    vals.push(id);
-    await pool.query(`UPDATE broadcast_campaigns SET ${sets.join(', ')} WHERE id = $${idx}`, vals);
+    vals.push(id, user.tenant_id || null);
+    const { rowCount } = await pool.query(
+      `UPDATE broadcast_campaigns SET ${sets.join(', ')} WHERE id = $${idx} AND tenant_id = $${idx + 1}`, vals
+    );
+    if (!rowCount) return res.status(404).json({ error: 'Campanha não encontrada' });
     res.json({ success: true });
   } catch (error) {
     res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
@@ -10266,9 +10942,18 @@ app.put('/api/campaigns/:id', async (req, res) => {
 // Delete campaign
 app.delete('/api/campaigns/:id', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
     const { id } = req.params;
-    await pool.query('DELETE FROM broadcast_campaigns WHERE id = $1', [id]);
+    const { rowCount } = await pool.query(
+      'DELETE FROM broadcast_campaigns WHERE id = $1 AND tenant_id = $2', [id, user.tenant_id || null]
+    );
+    if (!rowCount) return res.status(404).json({ error: 'Campanha não encontrada' });
+    // Mensagens ainda na fila desta campanha não devem sair depois de excluída.
+    await pool.query(
+      `UPDATE automation_jobs SET status = 'cancelled', error = 'Campanha excluída'
+        WHERE flow_id = $1 AND trigger_event = 'campaign' AND status = 'pending' AND tenant_id = $2`,
+      [id, user.tenant_id || null]
+    ).catch(() => {});
     res.json({ success: true });
   } catch (error) {
     res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
@@ -10278,12 +10963,20 @@ app.delete('/api/campaigns/:id', async (req, res) => {
 // Toggle campaign active
 app.patch('/api/campaigns/:id/toggle', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
     const { id } = req.params;
     const { rows } = await pool.query(
-      `UPDATE broadcast_campaigns SET ativo = NOT ativo, updated_at = NOW() WHERE id = $1 RETURNING ativo`, [id]
+      `UPDATE broadcast_campaigns SET ativo = NOT ativo, updated_at = NOW() WHERE id = $1 AND tenant_id = $2 RETURNING ativo`,
+      [id, user.tenant_id || null]
     );
     if (rows.length === 0) return res.status(404).json({ error: 'Campanha não encontrada' });
+    if (!rows[0].ativo) {
+      await pool.query(
+        `UPDATE automation_jobs SET status = 'cancelled', error = 'Campanha pausada'
+          WHERE flow_id = $1 AND trigger_event = 'campaign' AND status = 'pending' AND tenant_id = $2`,
+        [id, user.tenant_id || null]
+      ).catch(() => {});
+    }
     res.json({ success: true, ativo: rows[0].ativo });
   } catch (error) {
     res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
@@ -10293,9 +10986,11 @@ app.patch('/api/campaigns/:id/toggle', async (req, res) => {
 // Duplicate campaign
 app.post('/api/campaigns/:id/duplicate', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
     const { id } = req.params;
-    const { rows } = await pool.query('SELECT * FROM broadcast_campaigns WHERE id = $1', [id]);
+    const { rows } = await pool.query(
+      'SELECT * FROM broadcast_campaigns WHERE id = $1 AND tenant_id = $2', [id, user.tenant_id || null]
+    );
     if (rows.length === 0) return res.status(404).json({ error: 'Campanha não encontrada' });
     const orig = rows[0];
     const newId = `camp_${Date.now()}`;
@@ -10303,13 +10998,13 @@ app.post('/api/campaigns/:id/duplicate', async (req, res) => {
       `INSERT INTO broadcast_campaigns
         (id, nome, template, tipo, dias_semana, horario_inicio, horario_fim, data_inicio, data_fim,
          campanha_perpetua, usar_horario_clinica, publico, filtro_custom, numero_envio,
-         contatos_alcancaveis, capacidade_diaria, intervalo_spam, ativo, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
+         contatos_alcancaveis, capacidade_diaria, intervalo_spam, ativo, created_by, tenant_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
       [newId, orig.nome + ' (cópia)', orig.template, orig.tipo, orig.dias_semana,
        orig.horario_inicio, orig.horario_fim, orig.data_inicio, orig.data_fim,
        orig.campanha_perpetua, orig.usar_horario_clinica, orig.publico, orig.filtro_custom,
        orig.numero_envio, orig.contatos_alcancaveis, orig.capacidade_diaria,
-       orig.intervalo_spam, false, orig.created_by]
+       orig.intervalo_spam, false, user.id, orig.tenant_id]
     );
     res.json({ success: true, id: newId });
   } catch (error) {
@@ -10317,109 +11012,113 @@ app.post('/api/campaigns/:id/duplicate', async (req, res) => {
   }
 });
 
+// Público da campanha — sempre só contatos da clínica dona da campanha.
+async function resolveCampaignAudience(camp, tenantId) {
+  const limit = Math.min(Number(camp.capacidade_diaria) || 232, 500);
+  const publico = camp.publico || 'todos';
+  const run = async (sql) => {
+    try {
+      const { rows } = await pool.query(sql, [limit, tenantId]);
+      return rows;
+    } catch (err) {
+      console.error(`[campaign audience:${publico}]`, err.message);
+      return [];
+    }
+  };
+  if (publico === 'ativos') {
+    return run(`SELECT DISTINCT cl.nome, cl.telefone FROM crm_leads cl
+       INNER JOIN chat_messages cm ON cm.phone = cl.telefone AND cm.tenant_id = cl.tenant_id
+       WHERE cl.tenant_id = $2 AND cl.telefone IS NOT NULL AND cl.telefone != '' AND cm.timestamp > NOW() - INTERVAL '180 days'
+       LIMIT $1`);
+  }
+  if (publico === 'inativos') {
+    return run(`SELECT DISTINCT cl.nome, cl.telefone FROM crm_leads cl
+       LEFT JOIN chat_messages cm ON cm.phone = cl.telefone AND cm.tenant_id = cl.tenant_id AND cm.timestamp > NOW() - INTERVAL '90 days'
+       WHERE cl.tenant_id = $2 AND cl.telefone IS NOT NULL AND cl.telefone != '' AND cm.id IS NULL
+       LIMIT $1`);
+  }
+  if (publico === 'aniversariantes') {
+    return run(`SELECT nome, telefone FROM contatos
+       WHERE tenant_id = $2 AND telefone IS NOT NULL AND telefone != ''
+         AND EXTRACT(MONTH FROM data_nascimento) = EXTRACT(MONTH FROM NOW())
+       LIMIT $1`);
+  }
+  return run(`SELECT DISTINCT COALESCE(c.nome, cl.nome) AS nome, COALESCE(c.telefone, cl.telefone) AS telefone
+     FROM crm_leads cl LEFT JOIN contatos c ON c.telefone = cl.telefone AND c.tenant_id = cl.tenant_id
+     WHERE cl.tenant_id = $2 AND COALESCE(c.telefone, cl.telefone) IS NOT NULL AND COALESCE(c.telefone, cl.telefone) != ''
+     LIMIT $1`);
+}
+
+// Coloca a campanha na fila anti-bloqueio. A fila decide quando cada mensagem
+// sai (horário, limites do número, intervalo aleatório, SAIR).
+async function enqueueCampaignForTenant(camp, tenantId) {
+  const template = typeof camp.template === 'string' ? JSON.parse(camp.template) : camp.template;
+  const message = template?.mensagem || template?.message || '';
+  if (!message) return { error: 'Template sem mensagem configurada', status: 400 };
+
+  let instance = camp.numero_envio || null;
+  if (instance && (await resolveInstanceTenant(instance)) !== tenantId) instance = null;
+  if (!instance) instance = await getTenantDefaultInstance(tenantId);
+  if (!instance) return { error: 'Nenhum WhatsApp da sua clínica está conectado', status: 400 };
+
+  const contacts = await resolveCampaignAudience(camp, tenantId);
+  if (contacts.length === 0) return { enqueued: 0, total: 0, skipped: 0, message: 'Nenhum contato encontrado para este público' };
+
+  const spamDays = camp.intervalo_spam || 7;
+  const { rows: recentlySent } = await pool.query(
+    `SELECT DISTINCT patient_phone FROM automation_jobs
+      WHERE trigger_event = 'campaign' AND status IN ('sent', 'pending') AND tenant_id = $3
+        AND COALESCE(sent_at, created_at) > NOW() - INTERVAL '1 day' * $1 AND flow_id = $2`,
+    [spamDays, camp.id, tenantId]
+  );
+  const recentKeys = new Set(recentlySent.map(r => waPhoneKey(r.patient_phone)));
+
+  let enqueued = 0, optedOut = 0;
+  for (const contact of contacts) {
+    const phone = normalizeWhatsappNumber(contact.telefone);
+    if (!phone || recentKeys.has(waPhoneKey(phone))) continue;
+    if (await isWhatsAppOptedOut(tenantId, phone)) { optedOut++; continue; }
+    recentKeys.add(waPhoneKey(phone));
+    const personalizedMsg = message
+      .replace(/\{\{nome\}\}/gi, (contact.nome || 'Cliente').split(' ')[0])
+      .replace(/\{\{telefone\}\}/gi, contact.telefone || '');
+    await enqueueWhatsAppJob({
+      tenantId, instance, phone, message: personalizedMsg, category: 'marketing',
+      flowId: camp.id, flowName: camp.nome, patientName: contact.nome || '', triggerEvent: 'campaign',
+    });
+    enqueued++;
+  }
+
+  if (enqueued > 0) {
+    await pool.query(
+      `UPDATE broadcast_campaigns SET
+         stats = jsonb_set(COALESCE(stats, '{}'::jsonb), '{enviadas}', to_jsonb(COALESCE((stats->>'enviadas')::int, 0) + $1)),
+         contatos_alcancaveis = $2, updated_at = NOW()
+       WHERE id = $3 AND tenant_id = $4`,
+      [enqueued, contacts.length, camp.id, tenantId]
+    );
+  }
+  return { enqueued, total: contacts.length, skipped: contacts.length - enqueued, optedOut };
+}
+
 // Execute campaign — resolve contacts by audience, enqueue jobs
 app.post('/api/campaigns/:id/execute', async (req, res) => {
   try {
-    await verifyUser(req);
-    const { id } = req.params;
-
-    const { rows: campRows } = await pool.query('SELECT * FROM broadcast_campaigns WHERE id = $1', [id]);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rows: campRows } = await pool.query(
+      'SELECT * FROM broadcast_campaigns WHERE id = $1 AND tenant_id = $2', [req.params.id, user.tenant_id]
+    );
     if (campRows.length === 0) return res.status(404).json({ error: 'Campanha não encontrada' });
     const camp = campRows[0];
-    const template = typeof camp.template === 'string' ? JSON.parse(camp.template) : camp.template;
-    const message = template?.mensagem || template?.message || '';
-    if (!message) return res.status(400).json({ error: 'Template sem mensagem configurada' });
-
-    // Resolve instance
-    let instance = camp.numero_envio;
-    if (!instance) {
-      try {
-        const instResult = await evolutionFetch('/instance/fetchInstances');
-        const connected = (Array.isArray(instResult.data) ? instResult.data : [])
-          .filter(i => (i.connectionStatus || i.status) === 'open');
-        if (connected.length > 0) instance = connected[0].name || connected[0].instanceName;
-      } catch {}
-    }
-    if (!instance) return res.status(400).json({ error: 'Nenhuma instância WhatsApp conectada' });
-
-    // Resolve contacts by audience type
-    let contacts = [];
-    const publico = camp.publico || 'todos';
-
-    if (publico === 'todos') {
-      const { rows } = await pool.query(
-        `SELECT DISTINCT COALESCE(c.nome, cl.nome) AS nome, COALESCE(c.telefone, cl.telefone) AS telefone
-         FROM crm_leads cl LEFT JOIN contatos c ON c.telefone = cl.telefone
-         WHERE COALESCE(c.telefone, cl.telefone) IS NOT NULL AND COALESCE(c.telefone, cl.telefone) != ''
-         LIMIT $1`, [camp.capacidade_diaria || 232]);
-      contacts = rows;
-    } else if (publico === 'ativos') {
-      const { rows } = await pool.query(
-        `SELECT DISTINCT cl.nome, cl.telefone FROM crm_leads cl
-         INNER JOIN chat_messages cm ON cm.phone = cl.telefone
-         WHERE cl.telefone IS NOT NULL AND cl.telefone != '' AND cm.timestamp > NOW() - INTERVAL '180 days'
-         LIMIT $1`, [camp.capacidade_diaria || 232]);
-      contacts = rows;
-    } else if (publico === 'inativos') {
-      const { rows } = await pool.query(
-        `SELECT DISTINCT cl.nome, cl.telefone FROM crm_leads cl
-         LEFT JOIN chat_messages cm ON cm.phone = cl.telefone AND cm.timestamp > NOW() - INTERVAL '90 days'
-         WHERE cl.telefone IS NOT NULL AND cl.telefone != '' AND cm.id IS NULL
-         LIMIT $1`, [camp.capacidade_diaria || 232]);
-      contacts = rows;
-    } else if (publico === 'aniversariantes') {
-      const { rows } = await pool.query(
-        `SELECT nome, telefone FROM contatos
-         WHERE telefone IS NOT NULL AND telefone != '' AND EXTRACT(MONTH FROM data_nascimento) = EXTRACT(MONTH FROM NOW())
-         LIMIT $1`, [camp.capacidade_diaria || 232]);
-      contacts = rows;
-    } else {
-      const { rows } = await pool.query(
-        `SELECT DISTINCT COALESCE(c.nome, cl.nome) AS nome, COALESCE(c.telefone, cl.telefone) AS telefone
-         FROM crm_leads cl LEFT JOIN contatos c ON c.telefone = cl.telefone
-         WHERE COALESCE(c.telefone, cl.telefone) IS NOT NULL AND COALESCE(c.telefone, cl.telefone) != ''
-         LIMIT $1`, [camp.capacidade_diaria || 232]);
-      contacts = rows;
-    }
-
-    if (contacts.length === 0) return res.json({ success: true, enqueued: 0, message: 'Nenhum contato encontrado para este público' });
-
-    // Anti-spam: skip contacts that received this campaign within intervalo_spam days
-    const spamDays = camp.intervalo_spam || 7;
-    const { rows: recentlySent } = await pool.query(
-      `SELECT DISTINCT patient_phone FROM automation_jobs
-       WHERE trigger_event = 'campaign' AND status = 'sent' AND sent_at > NOW() - INTERVAL '1 day' * $1 AND flow_id = $2`,
-      [spamDays, id]);
-    const recentPhones = new Set(recentlySent.map(r => normalizeWhatsappNumber(r.patient_phone)));
-
-    // Enqueue jobs with 2s stagger
-    let enqueued = 0;
-    const now = new Date();
-    for (const contact of contacts) {
-      const phone = normalizeWhatsappNumber(contact.telefone);
-      if (recentPhones.has(phone)) continue;
-
-      const personalizedMsg = message
-        .replace(/\{\{nome\}\}/gi, contact.nome || 'Cliente')
-        .replace(/\{\{telefone\}\}/gi, contact.telefone || '');
-
-      const scheduledAt = new Date(now.getTime() + enqueued * 2000);
-      await pool.query(
-        `INSERT INTO automation_jobs (flow_id, flow_name, step_index, patient_name, patient_phone, instance, message, channel, status, scheduled_at, trigger_event)
-         VALUES ($1, $2, 0, $3, $4, $5, $6, 'whatsapp', 'pending', $7, 'campaign')`,
-        [id, camp.nome, contact.nome, phone, instance, personalizedMsg, scheduledAt]);
-      enqueued++;
-    }
-
-    // Update campaign stats
+    const result = await enqueueCampaignForTenant(camp, String(user.tenant_id));
+    if (result.error) return res.status(result.status || 400).json({ error: result.error });
     await pool.query(
-      `UPDATE broadcast_campaigns SET ativo = true,
-        stats = jsonb_set(stats, '{enviadas}', to_jsonb(COALESCE((stats->>'enviadas')::int, 0) + $1)),
-        contatos_alcancaveis = $2, updated_at = NOW()
-       WHERE id = $3`, [enqueued, contacts.length, id]);
-
-    console.log(`📢 Campaign "${camp.nome}" executed: ${enqueued} enqueued (${contacts.length - enqueued} skipped by spam filter)`);
-    res.json({ success: true, enqueued, total: contacts.length, skipped: contacts.length - enqueued });
+      `UPDATE broadcast_campaigns SET ativo = true, updated_at = NOW() WHERE id = $1 AND tenant_id = $2`,
+      [camp.id, user.tenant_id]
+    );
+    console.log(`📢 Campaign "${camp.nome}" enfileirada: ${result.enqueued} (${result.skipped} ignorados)`);
+    res.json({ success: true, queued: true, ...result });
   } catch (error) {
     console.error('❌ Campaign execute error:', error.message);
     res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
@@ -10429,31 +11128,34 @@ app.post('/api/campaigns/:id/execute', async (req, res) => {
 // Campaign job stats
 app.get('/api/campaigns/:id/jobs', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
     const { id } = req.params;
+    const tenantId = user.tenant_id || null;
     const { rows: summary } = await pool.query(
-      `SELECT status, COUNT(*)::int AS count FROM automation_jobs WHERE flow_id = $1 AND trigger_event = 'campaign' GROUP BY status`, [id]);
+      `SELECT status, COUNT(*)::int AS count FROM automation_jobs
+        WHERE flow_id = $1 AND trigger_event = 'campaign' AND tenant_id = $2 GROUP BY status`, [id, tenantId]);
     const { rows: recent } = await pool.query(
       `SELECT patient_name, patient_phone, status, sent_at, error, scheduled_at
-       FROM automation_jobs WHERE flow_id = $1 AND trigger_event = 'campaign' ORDER BY created_at DESC LIMIT 50`, [id]);
+       FROM automation_jobs WHERE flow_id = $1 AND trigger_event = 'campaign' AND tenant_id = $2
+       ORDER BY created_at DESC LIMIT 50`, [id, tenantId]);
     res.json({ summary: Object.fromEntries(summary.map(s => [s.status, s.count])), recent });
   } catch (error) {
     res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
   }
 });
 
-// Campaign scheduler — auto-execute recurrent campaigns
+// Campaign scheduler — auto-execute recurrent campaigns (horário de Brasília)
 let campaignSchedulerInterval = null;
 
 async function processCampaignScheduler() {
   try {
     const { rows: activeCampaigns } = await pool.query(
-      `SELECT * FROM broadcast_campaigns WHERE ativo = true AND tipo = 'recorrente'`);
+      `SELECT * FROM broadcast_campaigns WHERE ativo = true AND tipo = 'recorrente' AND tenant_id IS NOT NULL`);
     if (activeCampaigns.length === 0) return;
 
-    const now = new Date();
-    const currentDay = ['DOM', 'SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SAB'][now.getDay()];
-    const currentTime = now.toTimeString().slice(0, 5);
+    const { weekday, minutes, day } = spClock();
+    const currentDay = ['DOM', 'SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SAB'][weekday];
+    const currentTime = `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
 
     for (const camp of activeCampaigns) {
       const diasSemana = typeof camp.dias_semana === 'string' ? JSON.parse(camp.dias_semana) : (camp.dias_semana || []);
@@ -10461,85 +11163,17 @@ async function processCampaignScheduler() {
       if (camp.horario_inicio && currentTime < camp.horario_inicio) continue;
       if (camp.horario_fim && currentTime > camp.horario_fim) continue;
 
-      // Skip if already executed today
+      // Uma execução por dia (dia de Brasília)
       const { rows: todayJobs } = await pool.query(
-        `SELECT 1 FROM automation_jobs WHERE flow_id = $1 AND trigger_event = 'campaign' AND created_at::date = CURRENT_DATE LIMIT 1`, [camp.id]);
+        `SELECT 1 FROM automation_jobs WHERE flow_id = $1 AND trigger_event = 'campaign' AND tenant_id = $2
+           AND (created_at AT TIME ZONE '${WA_TZ}')::date = $3::date LIMIT 1`,
+        [camp.id, camp.tenant_id, day]
+      );
       if (todayJobs.length > 0) continue;
 
-      console.log(`📢 Auto-executing campaign "${camp.nome}" (${currentDay} ${currentTime})`);
       try {
-        const template = typeof camp.template === 'string' ? JSON.parse(camp.template) : camp.template;
-        const message = template?.mensagem || template?.message || '';
-        if (!message) continue;
-
-        let instance = camp.numero_envio;
-        if (!instance) {
-          const instResult = await evolutionFetch('/instance/fetchInstances');
-          const connected = (Array.isArray(instResult.data) ? instResult.data : [])
-            .filter(i => (i.connectionStatus || i.status) === 'open');
-          if (connected.length > 0) instance = connected[0].name || connected[0].instanceName;
-        }
-        if (!instance) continue;
-
-        let contacts = [];
-        const publico = camp.publico || 'todos';
-        const limit = [camp.capacidade_diaria || 232];
-
-        if (publico === 'ativos') {
-          const { rows } = await pool.query(
-            `SELECT DISTINCT cl.nome, cl.telefone FROM crm_leads cl
-             INNER JOIN chat_messages cm ON cm.phone = cl.telefone
-             WHERE cl.telefone IS NOT NULL AND cl.telefone != '' AND cm.timestamp > NOW() - INTERVAL '180 days'
-             LIMIT $1`, limit);
-          contacts = rows;
-        } else if (publico === 'inativos') {
-          const { rows } = await pool.query(
-            `SELECT DISTINCT cl.nome, cl.telefone FROM crm_leads cl
-             LEFT JOIN chat_messages cm ON cm.phone = cl.telefone AND cm.timestamp > NOW() - INTERVAL '90 days'
-             WHERE cl.telefone IS NOT NULL AND cl.telefone != '' AND cm.id IS NULL LIMIT $1`, limit);
-          contacts = rows;
-        } else if (publico === 'aniversariantes') {
-          const { rows } = await pool.query(
-            `SELECT nome, telefone FROM contatos
-             WHERE telefone IS NOT NULL AND telefone != '' AND EXTRACT(MONTH FROM data_nascimento) = EXTRACT(MONTH FROM NOW())
-             LIMIT $1`, limit);
-          contacts = rows;
-        } else {
-          const { rows } = await pool.query(
-            `SELECT DISTINCT COALESCE(c.nome, cl.nome) AS nome, COALESCE(c.telefone, cl.telefone) AS telefone
-             FROM crm_leads cl LEFT JOIN contatos c ON c.telefone = cl.telefone
-             WHERE COALESCE(c.telefone, cl.telefone) IS NOT NULL AND COALESCE(c.telefone, cl.telefone) != ''
-             LIMIT $1`, limit);
-          contacts = rows;
-        }
-
-        const spamDays = camp.intervalo_spam || 7;
-        const { rows: recentlySent } = await pool.query(
-          `SELECT DISTINCT patient_phone FROM automation_jobs
-           WHERE trigger_event = 'campaign' AND status = 'sent' AND sent_at > NOW() - INTERVAL '1 day' * $1 AND flow_id = $2`,
-          [spamDays, camp.id]);
-        const recentPhones = new Set(recentlySent.map(r => normalizeWhatsappNumber(r.patient_phone)));
-
-        let enqueued = 0;
-        const enqueueTime = new Date();
-        for (const contact of contacts) {
-          const phone = normalizeWhatsappNumber(contact.telefone);
-          if (recentPhones.has(phone)) continue;
-          const personalizedMsg = message.replace(/\{\{nome\}\}/gi, contact.nome || 'Cliente').replace(/\{\{telefone\}\}/gi, contact.telefone || '');
-          const scheduledAt = new Date(enqueueTime.getTime() + enqueued * 2000);
-          await pool.query(
-            `INSERT INTO automation_jobs (flow_id, flow_name, step_index, patient_name, patient_phone, instance, message, channel, status, scheduled_at, trigger_event)
-             VALUES ($1, $2, 0, $3, $4, $5, $6, 'whatsapp', 'pending', $7, 'campaign')`,
-            [camp.id, camp.nome, contact.nome, phone, instance, personalizedMsg, scheduledAt]);
-          enqueued++;
-        }
-
-        if (enqueued > 0) {
-          await pool.query(
-            `UPDATE broadcast_campaigns SET stats = jsonb_set(stats, '{enviadas}', to_jsonb(COALESCE((stats->>'enviadas')::int, 0) + $1)), updated_at = NOW() WHERE id = $2`,
-            [enqueued, camp.id]);
-          console.log(`   ✅ Campaign "${camp.nome}" auto-enqueued ${enqueued} messages`);
-        }
+        const result = await enqueueCampaignForTenant(camp, String(camp.tenant_id));
+        if (result.enqueued > 0) console.log(`   ✅ Campaign "${camp.nome}" auto-enfileirada: ${result.enqueued}`);
       } catch (campErr) {
         console.error(`   ❌ Campaign "${camp.nome}" auto-execute error:`, campErr.message);
       }
@@ -10551,94 +11185,63 @@ async function processCampaignScheduler() {
 
 let automationSchedulerInterval = null;
 
-async function processAutomationJobs() {
-  try {
-    const { rows: dueJobs } = await pool.query(
-      `SELECT * FROM automation_jobs WHERE status = 'pending' AND scheduled_at <= NOW() ORDER BY scheduled_at ASC LIMIT 20`
-    );
-    if (dueJobs.length === 0) return;
-
-    console.log(`🤖 Scheduler: processing ${dueJobs.length} due jobs`);
-
-    for (const job of dueJobs) {
-      try {
-        if (job.channel === 'whatsapp') {
-          const phone = normalizeWhatsappNumber(job.patient_phone);
-          const whatsappNumber = phone.includes('@') ? phone : `${phone}@s.whatsapp.net`;
-
-          const result = await evolutionFetch(`/message/sendText/${job.instance}`, {
-            method: 'POST',
-            body: JSON.stringify({ number: whatsappNumber, text: job.message }),
-          });
-
-          if (result.ok) {
-            await pool.query(`UPDATE automation_jobs SET status = 'sent', sent_at = NOW() WHERE id = $1`, [job.id]);
-            console.log(`   ✅ Sent step ${job.step_index} to ${job.patient_phone} (${job.flow_name})`);
-          } else {
-            const errMsg = JSON.stringify(result.data).slice(0, 200);
-            await pool.query(`UPDATE automation_jobs SET status = 'failed', error = $1 WHERE id = $2`, [errMsg, job.id]);
-            console.error(`   ❌ Failed step ${job.step_index} to ${job.patient_phone}: ${errMsg}`);
-          }
-        } else {
-          await pool.query(
-            `UPDATE automation_jobs SET status = 'failed', error = $1 WHERE id = $2`,
-            [`Canal "${job.channel}" não suportado ainda`, job.id]
-          );
-        }
-      } catch (jobErr) {
-        await pool.query(
-          `UPDATE automation_jobs SET status = 'failed', error = $1 WHERE id = $2`,
-          [jobErr.message.slice(0, 500), job.id]
-        );
-        console.error(`   ❌ Job ${job.id} error:`, jobErr.message);
-      }
-    }
-  } catch (err) {
-    console.error('❌ Automation scheduler error:', err.message);
-  }
-}
-
 // ─── Cron: Appointment Reminders 24h (runs every 1h) ────────
 let appointmentReminderInterval = null;
 
 async function processAppointmentReminders() {
   try {
-    const instanceName = await getDefaultInstance();
-    if (!instanceName) return;
-
-    // Find appointments scheduled for tomorrow that haven't been reminded yet
+    // Consultas de amanhã (dia de Brasília) ainda sem lembrete. Cada lembrete
+    // sai pelo WhatsApp da própria clínica; a fila segura até o horário de envio.
     const { rows: appointments } = await pool.query(`
-      SELECT a.id, a.paciente_id, a.paciente_nome, a.dentista_nome, a.data, a.hora, a.procedimento, a.duracao,
+      SELECT a.id, a.tenant_id, a.paciente_id, a.paciente_nome, a.dentista_nome, a.data, a.hora, a.procedimento, a.duracao,
              p.telefone
       FROM agendamentos a
-      LEFT JOIN pacientes p ON p.id = a.paciente_id
-      WHERE a.data = (CURRENT_DATE + INTERVAL '1 day')::date
+      LEFT JOIN pacientes p ON p.id = a.paciente_id AND p.tenant_id = a.tenant_id
+      WHERE a.tenant_id IS NOT NULL
+        AND a.tenant_id <> '00000000-0000-0000-0000-000000000001'
+        AND a.data = ((NOW() AT TIME ZONE '${WA_TZ}')::date + 1)
         AND a.status NOT IN ('cancelado', 'desmarcado', 'faltou', 'finalizado', 'realizado')
-        AND a.id NOT IN (
-          SELECT REPLACE(flow_id, 'reminder_', '') FROM automation_jobs
-          WHERE trigger_event = 'appointment_reminder' AND status IN ('pending', 'sent')
+        AND NOT EXISTS (
+          SELECT 1 FROM automation_jobs aj
+           WHERE aj.trigger_event = 'appointment_reminder'
+             AND aj.flow_id = 'reminder_' || a.id::text
+             AND aj.created_at > NOW() - INTERVAL '3 days'
         )
     `);
 
     if (appointments.length === 0) return;
     console.log(`🔔 Reminder: ${appointments.length} consultas amanhã para lembrar`);
 
+    const WEEKDAYS = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
     for (const appt of appointments) {
-      const phone = normalizeWhatsappNumber(appt.telefone || '');
-      if (!phone) continue;
+      try {
+        const phone = normalizeWhatsappNumber(appt.telefone || '');
+        if (!phone) continue;
 
-      const [y, m, d] = (appt.data instanceof Date ? appt.data.toISOString().split('T')[0] : String(appt.data)).split('-');
-      const dataBR = `${d}/${m}/${y}`;
-      const firstName = (appt.paciente_nome || '').split(' ')[0];
+        const isoDate = appt.data instanceof Date ? appt.data.toISOString().split('T')[0] : String(appt.data).slice(0, 10);
+        const [y, m, d] = isoDate.split('-');
+        const dataBR = `${d}/${m}/${y}`;
+        const weekday = WEEKDAYS[new Date(`${isoDate}T12:00:00Z`).getUTCDay()] || '';
+        const firstName = (appt.paciente_nome || '').split(' ')[0];
+        const hora = String(appt.hora || '').slice(0, 5);
 
-      const message = `🔔 *Lembrete de Consulta*\n\nOlá, ${firstName}! 👋\n\nLembramos que você tem uma consulta agendada para *amanhã*:\n\n📅 *Data:* ${dataBR}\n⏰ *Horário:* ${appt.hora}\n🦷 *Procedimento:* ${appt.procedimento || 'Consulta'}\n👨‍⚕️ *Profissional:* ${appt.dentista_nome || '—'}\n\nPor favor, confirme sua presença respondendo *SIM* ou entre em contato para reagendar.\n\n_Odonto Connect_`;
+        // Data explícita em vez de "amanhã": o lembrete pode sair só no dia
+        // seguinte à criação (fila fora do horário de envio).
+        const message = `🔔 *Lembrete de Consulta*\n\nOlá, ${firstName}! 👋\n\nLembramos que você tem uma consulta agendada:\n\n📅 *Data:* ${weekday}, ${dataBR}\n⏰ *Horário:* ${hora || appt.hora}\n🦷 *Procedimento:* ${appt.procedimento || 'Consulta'}\n👨‍⚕️ *Profissional:* ${appt.dentista_nome || '—'}\n\nPor favor, confirme sua presença respondendo *SIM* ou entre em contato para reagendar.\n\n_Odonto Connect_`;
 
-      await pool.query(
-        `INSERT INTO automation_jobs (flow_id, flow_name, step_index, patient_name, patient_phone, instance, message, channel, scheduled_at, trigger_event, status)
-         VALUES ($1, $2, 0, $3, $4, $5, $6, 'whatsapp', NOW(), 'appointment_reminder', 'pending')`,
-        [`reminder_${appt.id}`, 'Lembrete 24h', appt.paciente_nome, phone, instanceName, message]
-      );
-      console.log(`   📩 Lembrete enfileirado para ${appt.paciente_nome} (${phone})`);
+        // Validade: até o horário da consulta (horário de Brasília).
+        let expiresAt = new Date(`${isoDate}T${/^\d{2}:\d{2}$/.test(hora) ? hora : '23:59'}:00-03:00`);
+        if (Number.isNaN(expiresAt.getTime())) expiresAt = null;
+
+        await enqueueWhatsAppJob({
+          tenantId: String(appt.tenant_id), phone, message, category: 'transactional',
+          flowId: `reminder_${appt.id}`, flowName: 'Lembrete 24h', patientName: appt.paciente_nome,
+          triggerEvent: 'appointment_reminder', expiresAt,
+        });
+        console.log(`   📩 Lembrete enfileirado (consulta ${appt.id})`);
+      } catch (apptErr) {
+        console.error(`   ❌ Lembrete da consulta ${appt.id}:`, apptErr.message);
+      }
     }
   } catch (err) {
     console.error('❌ Appointment reminder cron error:', err.message);
@@ -10666,14 +11269,27 @@ async function checkInactivePatientsTrigger() {
 
       // Find inactive leads (no message in X days)
       const { rows: inactiveLeads } = await pool.query(
-        `SELECT DISTINCT cl.id, cl.nome, cl.telefone FROM crm_leads cl
-         LEFT JOIN chat_messages cm ON cm.phone = cl.telefone AND cm.timestamp > NOW() - INTERVAL '${days} days'
-         WHERE cl.telefone IS NOT NULL AND cl.telefone != '' AND cm.id IS NULL
-         LIMIT 50`
+        `SELECT DISTINCT cl.id, cl.tenant_id, cl.nome, cl.telefone FROM crm_leads cl
+         LEFT JOIN chat_messages cm ON cm.phone = cl.telefone AND cm.tenant_id = cl.tenant_id
+                                   AND cm.timestamp > NOW() - INTERVAL '${days} days'
+         WHERE cl.tenant_id IS NOT NULL AND cl.telefone IS NOT NULL AND cl.telefone != '' AND cm.id IS NULL
+           AND EXISTS (
+             SELECT 1 FROM automation_flows f
+              WHERE f.tenant_id = cl.tenant_id AND f.active = true AND f.trigger_event = $1)
+           AND NOT EXISTS (
+             SELECT 1 FROM whatsapp_opt_outs o
+              WHERE o.tenant_id = cl.tenant_id
+                AND RIGHT(o.phone_key, 8) = RIGHT(regexp_replace(cl.telefone, '\\D', '', 'g'), 8))
+           AND NOT EXISTS (
+             SELECT 1 FROM automation_jobs aj
+              WHERE aj.tenant_id = cl.tenant_id AND aj.trigger_event = $1
+                AND RIGHT(regexp_replace(aj.patient_phone, '\\D', '', 'g'), 8) = RIGHT(regexp_replace(cl.telefone, '\\D', '', 'g'), 8)
+                AND aj.created_at > NOW() - INTERVAL '30 days')
+         LIMIT 50`, [trigger]
       );
 
       for (const lead of inactiveLeads) {
-        await triggerAutomationFlows(trigger, { name: lead.nome, phone: lead.telefone });
+        await triggerAutomationFlows(trigger, { name: lead.nome, phone: lead.telefone, tenantId: lead.tenant_id });
       }
 
       if (inactiveLeads.length > 0) {
@@ -10726,7 +11342,7 @@ async function processSolutionTriggers() {
     const solutionQueries = [
       {
         trigger: 'Agendamento criado sem confirmação',
-        query: `SELECT DISTINCT p.id, p.nome, p.telefone, a.procedimento, a.data::text, a.hora::text as horario,
+        query: `SELECT DISTINCT p.id, p.tenant_id, p.nome, p.telefone, a.procedimento, a.data::text, a.hora::text as horario,
                   d.nome as dentista
                 FROM agendamentos a
                 JOIN pacientes p ON a.paciente_id = p.id
@@ -10748,7 +11364,7 @@ async function processSolutionTriggers() {
       },
       {
         trigger: 'Consulta desmarcada pelo paciente',
-        query: `SELECT DISTINCT p.id, p.nome, p.telefone, a.procedimento
+        query: `SELECT DISTINCT p.id, p.tenant_id, p.nome, p.telefone, a.procedimento
                 FROM agendamentos a
                 JOIN pacientes p ON a.paciente_id = p.id
                 WHERE a.status IN ('desmarcado','cancelado')
@@ -10759,7 +11375,7 @@ async function processSolutionTriggers() {
       },
       {
         trigger: 'Paciente não compareceu à consulta',
-        query: `SELECT DISTINCT p.id, p.nome, p.telefone, a.procedimento
+        query: `SELECT DISTINCT p.id, p.tenant_id, p.nome, p.telefone, a.procedimento
                 FROM agendamentos a
                 JOIN pacientes p ON a.paciente_id = p.id
                 WHERE a.status = 'faltou'
@@ -10770,7 +11386,7 @@ async function processSolutionTriggers() {
       },
       {
         trigger: 'Paciente faltou à primeira consulta',
-        query: `SELECT DISTINCT p.id, p.nome, p.telefone, a.procedimento
+        query: `SELECT DISTINCT p.id, p.tenant_id, p.nome, p.telefone, a.procedimento
                 FROM agendamentos a
                 JOIN pacientes p ON a.paciente_id = p.id
                 WHERE a.status = 'faltou'
@@ -10786,7 +11402,7 @@ async function processSolutionTriggers() {
       },
       {
         trigger: 'Parcela ou pagamento em atraso',
-        query: `SELECT DISTINCT p.id, p.nome, p.telefone, o.valor_total::text as valor
+        query: `SELECT DISTINCT p.id, p.tenant_id, p.nome, p.telefone, o.valor_total::text as valor
                 FROM orcamentos o
                 JOIN pacientes p ON o.paciente_id = p.id
                 WHERE o.status = 'aprovado'
@@ -10800,7 +11416,7 @@ async function processSolutionTriggers() {
       },
       {
         trigger: 'Orçamento criado e não aprovado',
-        query: `SELECT DISTINCT p.id, p.nome, p.telefone,
+        query: `SELECT DISTINCT p.id, p.tenant_id, p.nome, p.telefone,
                   (o.itens::jsonb->0->>'procedimento')::text as procedimento,
                   ('R$ ' || o.valor_total::text) as valor
                 FROM orcamentos o
@@ -10813,7 +11429,7 @@ async function processSolutionTriggers() {
       },
       {
         trigger: 'Tratamento ativo sem agendamento futuro',
-        query: `SELECT DISTINCT p.id, p.nome, p.telefone, t.descricao as procedimento
+        query: `SELECT DISTINCT p.id, p.tenant_id, p.nome, p.telefone, t.descricao as procedimento
                 FROM tratamentos t
                 JOIN pacientes p ON t.paciente_id = p.id
                 WHERE t.status IN ('planejado','em_andamento','ativo')
@@ -10849,13 +11465,15 @@ async function processSolutionTriggers() {
           `SELECT 1 FROM automation_jobs
            WHERE patient_phone LIKE '%' || $1 || '%'
            AND trigger_event = $2
+           AND tenant_id = $3
            AND created_at > NOW() - INTERVAL '24 hours'
            LIMIT 1`,
-          [patient.telefone.replace(/\D/g, '').slice(-11), sol.trigger]
+          [patient.telefone.replace(/\D/g, '').slice(-11), sol.trigger, patient.tenant_id]
         );
         if (recent.length > 0) continue;
 
         await triggerAutomationFlows(sol.trigger, {
+          tenantId: patient.tenant_id,
           name: patient.nome,
           phone: patient.telefone,
           procedimento: patient.procedimento || '',
@@ -10915,16 +11533,16 @@ app.patch('/api/crm/leads/:id/stage', async (req, res) => {
     // 🤖 Trigger automation flows based on stage change
     const leadForAutomation = rows[0];
     if (leadForAutomation) {
-      const { rows: leadDetail } = await pool.query('SELECT nome, telefone FROM crm_leads WHERE id = $1', [req.params.id]).catch(() => ({ rows: [] }));
+      const { rows: leadDetail } = await pool.query('SELECT nome, telefone, tenant_id FROM crm_leads WHERE id = $1', [req.params.id]).catch(() => ({ rows: [] }));
       const ld = leadDetail[0];
       if (ld?.telefone) {
         // Orçamento stage → trigger budget follow-up
         if (stage === 'orcamento' || stage === 'orcamento_enviado') {
-          triggerAutomationFlows('Orçamento criado e não fechado', { name: ld.nome, phone: ld.telefone }).catch(() => {});
+          triggerAutomationFlows('Orçamento criado e não fechado', { name: ld.nome, phone: ld.telefone, tenantId: ld.tenant_id }).catch(() => {});
         }
         // Lead entering CRM stage
         if (stage === 'lead' && fromStage !== 'lead') {
-          triggerAutomationFlows('Lead entrou no CRM', { name: ld.nome, phone: ld.telefone }).catch(() => {});
+          triggerAutomationFlows('Lead entrou no CRM', { name: ld.nome, phone: ld.telefone, tenantId: ld.tenant_id }).catch(() => {});
         }
       }
     }
@@ -11211,15 +11829,17 @@ app.post('/api/sessions/close', async (req, res) => {
       `UPDATE attendance_sessions SET 
          closed_at = NOW(), status = 'closed',
          duration_seconds = EXTRACT(EPOCH FROM (NOW() - COALESCE(assigned_at, started_waiting_at)))::INTEGER
-       WHERE lead_id = $1 AND status = 'active'
+       WHERE lead_id = $1 AND status = 'active' AND tenant_id = $2
        RETURNING id, duration_seconds, attendant_id, attendant_name`,
-      [leadId]
+      [leadId, user.tenant_id || null]
     );
 
     const session = result.rows[0];
+    const ownsSurveyInstance = session && instance ? await userOwnsInstance(user, instance) : false;
+    const surveyOptedOut = leadPhone ? await isWhatsAppOptedOut(user.tenant_id, leadPhone).catch(() => false) : false;
 
-    // Send satisfaction survey via WhatsApp buttons
-    if (leadPhone && instance && EVOLUTION_API_KEY) {
+    // Send satisfaction survey via WhatsApp buttons (só pelo número da clínica)
+    if (session && leadPhone && instance && ownsSurveyInstance && !surveyOptedOut && isSafeInstanceName(instance) && EVOLUTION_API_KEY) {
       const phone = leadPhone.replace(/\D/g, '');
       try {
         // Try buttons first
@@ -11265,8 +11885,8 @@ app.post('/api/sessions/close', async (req, res) => {
       // Get lead name from DB
       const { rows: leadRows } = await pool.query('SELECT nome FROM crm_leads WHERE id = $1', [leadId]).catch(() => ({ rows: [] }));
       const name = leadRows[0]?.nome || leadId;
-      triggerAutomationFlows('Após consulta finalizada', { name, phone: leadPhone }).catch(() => {});
-      triggerAutomationFlows('Atendimento finalizado sem agendamento', { name, phone: leadPhone }).catch(() => {});
+      triggerAutomationFlows('Após consulta finalizada', { name, phone: leadPhone, tenantId: user.tenant_id }).catch(() => {});
+      triggerAutomationFlows('Atendimento finalizado sem agendamento', { name, phone: leadPhone, tenantId: user.tenant_id }).catch(() => {});
     }
 
     res.json({ success: true, sessionId: session?.id, duration: session?.duration_seconds });
@@ -12118,13 +12738,18 @@ app.get('/api/sessions/active/:leadId', async (req, res) => {
 // ─── Switch Primary WhatsApp Instance ───────────────────────
 app.post('/api/whatsapp/switch-primary', async (req, res) => {
   try {
-    await verifyUser(req);
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const tenantId = String(user.tenant_id);
     const { newInstance, message } = req.body;
     if (!newInstance || typeof newInstance !== 'string') {
       return res.status(400).json({ error: 'newInstance é obrigatório' });
     }
     if (!message || typeof message !== 'string' || message.trim().length < 10) {
       return res.status(400).json({ error: 'Mensagem deve ter no mínimo 10 caracteres' });
+    }
+    if (!isSafeInstanceName(newInstance) || !(await userOwnsInstance(user, newInstance))) {
+      return res.status(403).json({ error: 'Este número de WhatsApp não pertence à sua clínica.' });
     }
 
     // 1. Find open attendances for the CURRENT tenant
@@ -12135,9 +12760,9 @@ app.post('/api/whatsapp/switch-primary', async (req, res) => {
          AND c.instance != $1
          AND c.created_at > NOW() - INTERVAL '7 days'
          AND c.phone IS NOT NULL
-         AND (is_super_admin() OR c.tenant_id = get_current_tenant_id())
+         AND c.tenant_id = $2
        ORDER BY c.phone`,
-      [newInstance]
+      [newInstance, tenantId]
     );
 
     // Also check attendance queue for the CURRENT tenant
@@ -12145,7 +12770,8 @@ app.post('/api/whatsapp/switch-primary', async (req, res) => {
       `SELECT DISTINCT lead_phone as phone FROM attendance_sessions
        WHERE status IN ('waiting', 'active')
          AND lead_phone IS NOT NULL
-         AND (is_super_admin() OR tenant_id = get_current_tenant_id())`
+         AND tenant_id = $1`,
+      [tenantId]
     );
 
     // Merge unique phone numbers
@@ -12160,17 +12786,17 @@ app.post('/api/whatsapp/switch-primary', async (req, res) => {
     let failed = 0;
     const errors = [];
 
-    // 2. Send message to each patient via the NEW instance
+    // 2. Aviso pelo NOVO número, pela fila anti-bloqueio (antes: rajada de
+    //    envios a cada 0,5 s, que é exatamente o padrão que bloqueia número novo).
     for (const phone of phones) {
       try {
-        await evolutionFetch(`/message/sendText/${newInstance}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY },
-          body: JSON.stringify({ number: phone, text: message.trim() }),
+        if (await isWhatsAppOptedOut(tenantId, phone)) continue;
+        await enqueueWhatsAppJob({
+          tenantId, instance: newInstance, phone, message: message.trim(), category: 'transactional',
+          flowId: `switch_primary_${newInstance}`, flowName: 'Troca de número principal',
+          triggerEvent: 'switch_primary',
         });
         sent++;
-        // Small delay to avoid rate limiting
-        await new Promise(resolve => setTimeout(resolve, 500));
       } catch (err) {
         failed++;
         errors.push({ phone, error: err.message });
@@ -12188,6 +12814,7 @@ app.post('/api/whatsapp/switch-primary', async (req, res) => {
 
     res.json({
       success: true,
+      queued: true,
       newInstance,
       totalPatients: phones.length,
       sent,
@@ -13425,16 +14052,13 @@ app.post('/api/ai/schedule-followup', async (req, res) => {
       return res.status(400).json({ error: 'reportId, patientPhone e messages são obrigatórios' });
     }
 
-    // Resolve instance — use first connected if not provided
-    let instanceName = instance;
-    if (!instanceName && EVOLUTION_API_KEY) {
-      try {
-        const instResult = await evolutionFetch('/instance/fetchInstances');
-        const instances = Array.isArray(instResult.data) ? instResult.data : [];
-        const connected = instances.find(i => (i.connectionStatus || i.status) === 'open');
-        if (connected) instanceName = connected.name || connected.instanceName;
-      } catch {}
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const tenantId = String(user.tenant_id);
+    // Só um número da própria clínica (antes: o primeiro aberto de qualquer clínica).
+    if (instance && !(await userOwnsInstance(user, instance))) {
+      return res.status(403).json({ error: 'Este número de WhatsApp não pertence à sua clínica.' });
     }
+    const instanceName = instance || await getTenantDefaultInstance(tenantId);
 
     const flowId = `followup-report-${reportId}`;
     const flowName = `Follow-up IA: ${patientName || patientPhone}`;
@@ -13442,9 +14066,10 @@ app.post('/api/ai/schedule-followup', async (req, res) => {
 
     // Create a temporary automation flow for tracking
     await pool.query(`
-      INSERT INTO automation_flows (id, name, description, type, active, trigger_event, steps, stats, created_by)
-      VALUES ($1, $2, $3, 'pos_consulta', true, 'Relatório clínico IA', $4, '{"sent":0,"responded":0,"converted":0}', $5)
+      INSERT INTO automation_flows (id, name, description, type, active, trigger_event, steps, stats, created_by, tenant_id)
+      VALUES ($1, $2, $3, 'pos_consulta', true, 'Relatório clínico IA', $4, '{"sent":0,"responded":0,"converted":0}', $5, $6)
       ON CONFLICT (id) DO UPDATE SET steps = EXCLUDED.steps, updated_at = NOW()
+        WHERE automation_flows.tenant_id = EXCLUDED.tenant_id
     `, [
       flowId, flowName,
       `Follow-up automático gerado pela IA baseado no relatório clínico ${reportId}`,
@@ -13457,6 +14082,7 @@ app.post('/api/ai/schedule-followup', async (req, res) => {
         variables: ['nome'],
       }))),
       user.id,
+      tenantId,
     ]);
 
     // Schedule automation jobs
@@ -13470,16 +14096,13 @@ app.post('/api/ai/schedule-followup', async (req, res) => {
       const personalizedMsg = (msg.text || '').replace(/\{\{nome\}\}/g, patientName || 'Paciente');
 
       const jobId = randomUUID();
-      await pool.query(`
-        INSERT INTO automation_jobs (id, flow_id, flow_name, step_index, patient_name, patient_phone, instance, variables, message, channel, status, scheduled_at, trigger_event)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'whatsapp', 'pending', $10, 'clinical_report_followup')
-      `, [
-        jobId, flowId, flowName, i,
-        patientName || '', formattedPhone,
-        instanceName || '',
-        JSON.stringify({ nome: patientName || 'Paciente', reportId }),
-        personalizedMsg, scheduledAt,
-      ]);
+      await enqueueWhatsAppJob({
+        id: jobId, tenantId, instance: instanceName || null, phone: formattedPhone,
+        message: personalizedMsg, category: 'transactional',
+        flowId, flowName, stepIndex: i, patientName: patientName || '',
+        variables: { nome: patientName || 'Paciente', reportId },
+        scheduledAt, triggerEvent: 'clinical_report_followup',
+      });
       jobIds.push({ id: jobId, scheduled_at: scheduledAt, delay_days: msg.delay_days, message: personalizedMsg });
     }
 
@@ -14695,14 +15318,15 @@ if (process.env.NODE_ENV !== 'test') {
   try {
     const result = await evolutionFetch('/instance/fetchInstances');
     const instances = Array.isArray(result.data) ? result.data : [];
-    const connected = instances.filter(i => (i.connectionStatus || i.status) === 'open');
-    for (const inst of connected) {
-      const name = inst.name || inst.instanceName;
-      if (name) await registerWebhook(name);
-    }
-    if (connected.length > 0) {
-      console.log(`   📡 Webhook registrado em ${connected.length} instância(s) conectada(s)`);
-    }
+    // Todas as instâncias (não só as abertas): uma instância que reconecta
+    // sozinha precisa já ter a URL com o token, senão o webhook dá 401.
+    const names = instances.map(inst => inst.name || inst.instanceName).filter(n => n && isSafeInstanceName(n));
+    (async () => {
+      for (let i = 0; i < names.length; i += 5) {
+        await Promise.all(names.slice(i, i + 5).map(n => registerWebhook(n).catch(() => null)));
+      }
+      if (names.length > 0) console.log(`   📡 Webhook registrado em ${names.length} instância(s)`);
+    })().catch(err => console.error('⚠️ Webhook boot registration error:', err.message));
   } catch (err) {
     console.error('⚠️ Could not auto-register webhooks on startup:', err.message);
   }
@@ -14712,10 +15336,12 @@ if (process.env.NODE_ENV !== 'test') {
   syncInterval = setInterval(asSystemJob(syncWhatsAppContacts), 30 * 60 * 1000);
   console.log('   📇 Auto-sync de contatos WhatsApp ativo (a cada 30 min)');
 
-  // Start automation job scheduler (every 30s)
+  // Fila de envio do WhatsApp: garante o esquema e roda a cada 5 s
+  // (o intervalo real entre mensagens é controlado por número dentro da fila)
+  await asSystemJob(ensureWhatsAppQueueSchema)();
   asSystemJob(processAutomationJobs)();
-  automationSchedulerInterval = setInterval(asSystemJob(processAutomationJobs), 30 * 1000);
-  console.log('   🤖 Automation scheduler ativo (a cada 30s)');
+  automationSchedulerInterval = setInterval(asSystemJob(processAutomationJobs), 5 * 1000);
+  console.log('   🤖 Fila anti-bloqueio do WhatsApp ativa (ciclo de 5s)');
 
   // Start inactive patients cron (every 6h)
   asSystemJob(checkInactivePatientsTrigger)();

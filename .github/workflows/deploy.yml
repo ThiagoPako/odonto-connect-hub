@@ -89,6 +89,25 @@ jobs:
             # ─── Build frontend ────────────────────────────────────────────
             npm run build
 
+            # ─── Variáveis do backend (automático, sem copiar/colar) ──────
+            # Gera o segredo do webhook do WhatsApp uma única vez, direto na
+            # VPS (nunca passa pelo GitHub nem aparece no log), e fixa o fuso.
+            ENV_FILE=/root/odonto-connect/vps-api-server/.env
+            touch "$ENV_FILE"
+            if ! grep -qE '^EVOLUTION_WEBHOOK_SECRET=[A-Za-z0-9]{32,}' "$ENV_FILE"; then
+              sed -i '/^EVOLUTION_WEBHOOK_SECRET=/d' "$ENV_FILE"
+              printf '\nEVOLUTION_WEBHOOK_SECRET=%s\n' "$(openssl rand -hex 32)" >> "$ENV_FILE"
+              echo "EVOLUTION_WEBHOOK_SECRET gerado na VPS"
+            else
+              echo "EVOLUTION_WEBHOOK_SECRET já existe (mantido)"
+            fi
+            if grep -q '^TZ=' "$ENV_FILE"; then
+              sed -i 's|^TZ=.*|TZ=America/Sao_Paulo|' "$ENV_FILE"
+            else
+              printf 'TZ=America/Sao_Paulo\n' >> "$ENV_FILE"
+            fi
+            chmod 600 "$ENV_FILE"
+
             # ─── Run pending migrations BEFORE restarting services ────────
             cat /root/odonto-connect/vps-api-server/migration.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             cat /root/odonto-connect/vps-api-server/migration-chat-messages.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
@@ -102,6 +121,7 @@ jobs:
             cat /root/odonto-connect/vps-api-server/migration-clinicorp-user.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             cat /root/odonto-connect/vps-api-server/migration-saas.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             cat /root/odonto-connect/vps-api-server/migration-tenant-defaults.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
+            cat /root/odonto-connect/vps-api-server/migration-whatsapp-fase1.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             echo "=== Migrations applied ==="
 
             # ─── Pre-flight syntax check on server.mjs ─────────────────────

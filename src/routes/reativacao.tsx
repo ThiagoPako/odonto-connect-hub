@@ -181,7 +181,7 @@ function ReativacaoPage() {
     const { data, error: err } = await reativacaoApi.send(selectedRule.id, ids);
     setSending(false);
     if (err || !data) { toast.error(err || "Falha no envio"); return; }
-    toast.success(`Enviadas: ${data.sent} • Falhas: ${data.failed}`);
+    toast.success(`${data.sent} mensagem(ns) na fila de envio${data.failed ? ` • ${data.failed} sem telefone` : ''}. Elas saem aos poucos, em horário comercial, para proteger o número.`);
     setSelectedIds(new Set());
     await loadAll();
     // refresh patients
