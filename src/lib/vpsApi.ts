@@ -896,6 +896,15 @@ export const attendanceSettingsApi = {
   update: (body: unknown) => vpsApiFetch('/attendance-settings', { method: 'PUT', body }),
 };
 
+// ─── Privacidade do push (por clínica) ──────────────────────
+
+export interface PushPrivacidade { mostrarNome: boolean }
+
+export const pushPrivacidadeApi = {
+  get: () => vpsApiFetch<PushPrivacidade>('/push-privacidade', { background: true }),
+  update: (body: PushPrivacidade) => vpsApiFetch<PushPrivacidade & { success: boolean }>('/push-privacidade', { method: 'PUT', body }),
+};
+
 
 // ─── Attendance Queues ──────────────────────────────────────
 

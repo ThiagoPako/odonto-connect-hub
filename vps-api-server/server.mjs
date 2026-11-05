@@ -764,6 +764,28 @@ if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
   console.warn('⚠️ VAPID keys not set — push notifications disabled. Run: npx web-push generate-vapid-keys');
 }
 
+// ─── Payload do push de mensagem nova no chat ───────────────
+// A notificação aparece na tela bloqueada do celular/computador: não leva o
+// conteúdo da mensagem nem o telefone. O primeiro nome só entra se a clínica
+// ligar tenant_settings.push_privacidade.mostrarNome (padrão: desligado).
+function primeiroNomeSeguro(name) {
+  const first = String(name || '').trim().split(/\s+/)[0] || '';
+  // Nome com dígito pode ser o próprio telefone (pushName vazio vira número).
+  if (!first || /\d/.test(first)) return '';
+  return first.slice(0, 30);
+}
+
+function buildChatPushPayload({ leadId, name, mostrarNome = false }) {
+  const primeiro = mostrarNome ? primeiroNomeSeguro(name) : '';
+  return {
+    title: primeiro ? `Nova mensagem de ${primeiro}` : 'Nova mensagem',
+    body: 'Abra o Odonto Connect para ler',
+    tag: leadId ? `msg-${leadId}` : 'odonto-msg',
+    url: leadId ? `/chat?lead=${encodeURIComponent(leadId)}` : '/chat',
+    leadId: leadId || null,
+  };
+}
+
 // ─── Send push to all subscriptions ─────────────────────────
 async function sendPushToAll(payload, tenantId) {
   if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return;
@@ -8574,6 +8596,31 @@ app.put('/api/attendance-settings', async (req, res) => {
   }
 });
 
+// Configuração da clínica: mostrar ou não o primeiro nome no push.
+app.get('/api/push-privacidade', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!isValidTenantId(user.tenant_id)) return res.json({ mostrarNome: false });
+    const cfg = await getTenantSetting(user.tenant_id, 'push_privacidade');
+    res.json({ mostrarNome: cfg?.mostrarNome === true });
+  } catch (error) {
+    res.status(tenantSettingsErrorStatus(error)).json({ error: error.message === 'Unauthorized' ? 'Unauthorized' : 'Erro ao carregar a configuração' });
+  }
+});
+
+app.put('/api/push-privacidade', async (req, res) => {
+  try {
+    const { user } = await verifyAdmin(req);
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const mostrarNome = req.body?.mostrarNome === true;
+    await setTenantSetting(user.tenant_id, 'push_privacidade', { mostrarNome });
+    res.json({ success: true, mostrarNome });
+  } catch (error) {
+    const status = tenantSettingsErrorStatus(error);
+    res.status(status).json({ error: status === 500 ? 'Erro ao salvar a configuração' : error.message });
+  }
+});
+
 // Helper: send WhatsApp button menu with active queues
 async function sendQueueMenu(instance, phone, tenantId) {
   const { rows: queues } = await pool.query(
@@ -9730,14 +9777,16 @@ app.post('/api/webhook/evolution', async (req, res) => {
 
     console.log(`💬 New message from ${maskPhone(phone)} → saved + broadcast to ${sseClients.size} clients`);
 
-    // Send Web Push notification to all subscribed attendants
-    sendPushToAll({
-      title: `💬 ${pushName || phone}`,
-      body: msgContent || `[${msgType}]`,
-      tag: `msg-${lead.id}`,
-      url: `/chat?lead=${encodeURIComponent(lead.id)}`,
-      leadId: lead.id,
-    }, tenantId);
+    // Web Push para os atendentes: aparece na tela bloqueada, então nunca leva o
+    // texto da mensagem nem o telefone (LGPD art. 11). Ver buildChatPushPayload.
+    (async () => {
+      let mostrarNome = false;
+      try {
+        const cfg = await getTenantSetting(tenantId, 'push_privacidade');
+        mostrarNome = cfg?.mostrarNome === true;
+      } catch { /* padrão: sem nome */ }
+      await sendPushToAll(buildChatPushPayload({ leadId: lead.id, name: lead.name || pushName, mostrarNome }), tenantId);
+    })().catch(() => {});
 
     if (lead && !lead.avatar_url) {
       (async () => {
@@ -14264,8 +14313,9 @@ app.get('/api/ai/settings', async (req, res) => {
       api_key: r.api_key ? (user.is_super_admin ? '...' + r.api_key.slice(-4) : '...configurada') : '',
       editable: !!user.is_super_admin,
     }));
-    // Meta Ads (provider 'manus'): o token é da clínica, não da plataforma
-    if (!user.is_super_admin) {
+    // Meta Ads (provider 'manus'): o token é sempre da clínica, inclusive para super-admin
+    // (não existe mais token global de Meta Ads).
+    {
       let own = null;
       if (user.tenant_id) {
         try {
@@ -14310,7 +14360,7 @@ app.post('/api/ai/settings', async (req, res) => {
     if (!provider) return res.status(400).json({ error: 'Provider é obrigatório' });
 
     // Meta Ads (provider 'manus'): token por clínica, gravado pelo admin da própria clínica
-    if (provider === 'manus' && !user.is_super_admin) {
+    if (provider === 'manus') {
       if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
       const isNewTenantKey = api_key && !String(api_key).includes('...');
       const tenantConfig = config && typeof config === 'object' && !Array.isArray(config) ? JSON.stringify(config) : null;
@@ -15050,9 +15100,8 @@ async function metaAdsUpsert(table, tenantId, keys, values) {
   }
 }
 
-// Token do Meta Ads da clínica (tenant_ai_settings). A configuração global (ai_settings)
-// só é usada como fallback para super-admin.
-async function getManusSettings(tenantId, allowGlobalFallback = false) {
+// Token do Meta Ads da clínica (tenant_ai_settings). Não há token global.
+async function getManusSettings(tenantId) {
   if (tenantId) {
     try {
       const { rows } = await pool.query(
@@ -15065,21 +15114,20 @@ async function getManusSettings(tenantId, allowGlobalFallback = false) {
       console.warn('[meta-ads] tenant_ai_settings não existe — aplique a migração de segurança P0');
     }
   }
-  if (!allowGlobalFallback) return null;
-  const result = await pool.query(`SELECT * FROM ai_settings WHERE provider = 'manus' AND enabled = true`);
-  return result.rows[0] ? { ...result.rows[0], _source: 'global' } : null;
+  return null;
 }
 
 /**
  * Helper: call Meta Graph API with access token from Manus config
  */
+// O token vai no header Authorization (aceito pela Graph API), não na URL, para não
+// aparecer em logs de proxy nem em mensagens de erro.
 async function metaGraphFetch(path, accessToken, params = {}) {
   const url = new URL(`https://graph.facebook.com/v19.0${path}`);
-  url.searchParams.set('access_token', accessToken);
   for (const [k, v] of Object.entries(params)) {
     url.searchParams.set(k, String(v));
   }
-  const resp = await fetch(url.toString());
+  const resp = await fetch(url.toString(), { headers: { Authorization: `Bearer ${accessToken}` } });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({}));
     throw new Error(`Meta API ${resp.status}: ${JSON.stringify(err.error || err)}`);
@@ -15124,7 +15172,7 @@ app.get('/api/ai/meta-ads/overview', async (req, res) => {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
 
-    const manus = await getManusSettings(user.tenant_id, false);
+    const manus = await getManusSettings(user.tenant_id);
     const connected = !!manus?.api_key;
 
     // Try to get cached insights from DB
@@ -15205,7 +15253,7 @@ app.post('/api/ai/meta-ads/sync', async (req, res) => {
     const { user } = await verifyAdmin(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
 
-    const manus = await getManusSettings(user.tenant_id, false);
+    const manus = await getManusSettings(user.tenant_id);
     if (!manus?.api_key) {
       return res.status(400).json({ error: 'Manus AI não configurado. Vá em Configurações → IA e adicione a API key.' });
     }
@@ -15224,17 +15272,11 @@ app.post('/api/ai/meta-ads/sync', async (req, res) => {
       if (meData.data && meData.data.length > 0) {
         adAccountId = meData.data[0].id;
         adAccountName = meData.data[0].name || adAccountId;
-        // Guarda a conta descoberta na configuração de quem forneceu o token
-        if (manus._source === 'global') {
-          await pool.query(`UPDATE ai_settings SET config = config || $1::jsonb WHERE provider = 'manus'`, [
-            JSON.stringify({ ad_account_id: adAccountId }),
-          ]);
-        } else {
-          await pool.query(
-            `UPDATE tenant_ai_settings SET config = COALESCE(config, '{}'::jsonb) || $1::jsonb WHERE tenant_id = $2 AND provider = 'manus'`,
-            [JSON.stringify({ ad_account_id: adAccountId }), user.tenant_id]
-          ).catch(e => { if (e.code !== '42703') throw e; });
-        }
+        // Guarda a conta descoberta na configuração da clínica
+        await pool.query(
+          `UPDATE tenant_ai_settings SET config = COALESCE(config, '{}'::jsonb) || $1::jsonb WHERE tenant_id = $2 AND provider = 'manus'`,
+          [JSON.stringify({ ad_account_id: adAccountId }), user.tenant_id]
+        ).catch(e => { if (e.code !== '42703') throw e; });
       } else {
         return res.status(400).json({ error: 'Nenhuma conta de anúncio encontrada. Verifique o token de acesso.' });
       }
@@ -15358,7 +15400,7 @@ app.get('/api/ai/meta-ads/insight', async (req, res) => {
 
 // ═══════════════════════════════════════════════════════════════
 // CLINICORP INTEGRATION
-import { registerClinicorp, reconciliationTick } from './clinicorp.mjs';
+import { registerClinicorp, reconciliationTick, hashWebhookSecret, generateWebhookSecret, WEBHOOK_SECRET_GRACE_HOURS } from './clinicorp.mjs';
 registerClinicorp(app, pool, { verifyUser });
 
 // ── Per-user Clinicorp credentials (SaaS multi-tenant) ─────────
@@ -15372,6 +15414,21 @@ async function clinicorpUserOf(req) {
   return user;
 }
 
+// Alterar ou remover as credenciais e gerar o segredo do webhook: só admin da clínica.
+async function clinicorpAdminOf(req, res) {
+  try {
+    const { user } = await verifyAdmin(req);
+    return user;
+  } catch (e) {
+    if (e.message === 'Admin access required') {
+      res.status(403).json({ error: 'Apenas o administrador da clínica pode alterar a integração com a Clinicorp' });
+    } else {
+      res.status(401).json({ error: 'Unauthorized' });
+    }
+    return null;
+  }
+}
+
 app.get('/api/clinicorp/my-settings', async (req, res) => {
   let user;
   try { user = await clinicorpUserOf(req); }
@@ -15380,22 +15437,28 @@ app.get('/api/clinicorp/my-settings', async (req, res) => {
     const { rows } = await pool.query(
       `SELECT enabled, subscriber_id, base_url,
               api_token IS NOT NULL AND api_token <> '' AS has_api_token,
-              webhook_secret IS NOT NULL AND webhook_secret <> '' AS has_webhook_secret,
-              CASE WHEN webhook_secret IS NOT NULL AND length(webhook_secret) >= 8
-                   THEN substring(webhook_secret from 1 for 4) || '…' || substring(webhook_secret from length(webhook_secret) - 3)
-                   ELSE '' END AS webhook_secret_preview,
+              webhook_secret_hash IS NOT NULL AS has_webhook_secret,
+              CASE WHEN webhook_secret_anterior_hash IS NOT NULL AND anterior_expira_em > NOW()
+                   THEN anterior_expira_em END AS previous_secret_expires_at,
               last_sync_at, last_sync_status, last_sync_error, sync_progress, updated_at
          FROM clinicorp_user_settings WHERE user_id = $1`,
       [user.id]
     );
     const s = rows[0] || {};
+    // Mesma regra do verifyAdmin, sem o aviso de segurança no log (a tela consulta isto em polling).
+    const canManage = Boolean(user.is_super_admin || user.role === 'admin') || (await pool.query(
+      'SELECT 1 FROM user_roles WHERE user_id = $1 AND role = $2', [user.id, 'admin']
+    ).then(r => r.rows.length > 0, () => false));
     res.json({
       enabled: s.enabled ?? false,
       subscriber_id: s.subscriber_id || '',
       base_url: s.base_url || CLINICORP_DEFAULT_BASE_URL,
       has_api_token: Boolean(s.has_api_token),
       has_webhook_secret: Boolean(s.has_webhook_secret),
-      webhook_secret_preview: s.webhook_secret_preview || '',
+      // O segredo não fica guardado em claro: a tela só mostra que existe.
+      webhook_secret_preview: s.has_webhook_secret ? '••••••••' : '',
+      previous_secret_expires_at: s.previous_secret_expires_at || null,
+      can_manage: canManage,
       last_sync_at: s.last_sync_at || null,
       last_sync_status: s.last_sync_status || null,
       last_sync_error: s.last_sync_error || null,
@@ -15405,14 +15468,13 @@ app.get('/api/clinicorp/my-settings', async (req, res) => {
     });
   } catch (e) {
     console.error('[clinicorp my-settings GET]', e.message);
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: 'Erro ao carregar as credenciais da Clinicorp' });
   }
 });
 
 app.put('/api/clinicorp/my-settings', async (req, res) => {
-  let user;
-  try { user = await clinicorpUserOf(req); }
-  catch { return res.status(401).json({ error: 'Unauthorized' }); }
+  const user = await clinicorpAdminOf(req, res);
+  if (!user) return;
   try {
     const { enabled, api_token, subscriber_id, webhook_secret, base_url } = req.body || {};
 
@@ -15430,49 +15492,83 @@ app.put('/api/clinicorp/my-settings', async (req, res) => {
         return res.status(400).json({ error: 'api_token inválido (8–2048 chars)' });
       }
     }
+    // O segredo do webhook é gerado só pelo servidor (POST /my-settings/rotate-secret).
     if (webhook_secret !== undefined && webhook_secret !== '' && webhook_secret !== null) {
-      if (typeof webhook_secret !== 'string' || webhook_secret.length < 8 || webhook_secret.length > 256) {
-        return res.status(400).json({ error: 'webhook_secret inválido (8–256 chars)' });
-      }
+      return res.status(400).json({ error: 'O segredo do webhook é gerado pelo sistema. Use "Gerar novo segredo".' });
     }
 
     await pool.query(
-      `INSERT INTO clinicorp_user_settings (user_id, enabled, api_token, subscriber_id, webhook_secret, base_url, updated_at)
-       VALUES ($1, COALESCE($2, FALSE), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), COALESCE(NULLIF($6, ''), '${CLINICORP_DEFAULT_BASE_URL}'), NOW())
+      `INSERT INTO clinicorp_user_settings (user_id, enabled, api_token, subscriber_id, base_url, updated_at)
+       VALUES ($1, COALESCE($2, FALSE), NULLIF($3, ''), NULLIF($4, ''), COALESCE(NULLIF($5, ''), '${CLINICORP_DEFAULT_BASE_URL}'), NOW())
        ON CONFLICT (user_id) DO UPDATE SET
          enabled = COALESCE($2, clinicorp_user_settings.enabled),
          api_token = COALESCE(NULLIF($3, ''), clinicorp_user_settings.api_token),
          subscriber_id = COALESCE(NULLIF($4, ''), clinicorp_user_settings.subscriber_id),
-         webhook_secret = COALESCE(NULLIF($5, ''), clinicorp_user_settings.webhook_secret),
-         base_url = COALESCE(NULLIF($6, ''), clinicorp_user_settings.base_url),
+         base_url = COALESCE(NULLIF($5, ''), clinicorp_user_settings.base_url),
          updated_at = NOW()`,
       [
         user.id,
         typeof enabled === 'boolean' ? enabled : null,
         typeof api_token === 'string' ? api_token.trim().replace(/^Bearer\s+/i, '') : '',
         typeof subscriber_id === 'string' ? subscriber_id.trim() : '',
-        webhook_secret ?? '',
         base_url ?? '',
       ]
     );
     res.json({ ok: true });
   } catch (e) {
-    // webhook_secret é usado para achar o tenant do webhook: precisa ser único.
-    if (e.code === '23505') return res.status(409).json({ error: 'Este webhook secret já está em uso. Gere outro.' });
     console.error('[clinicorp my-settings PUT]', e.message);
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: 'Erro ao salvar as credenciais da Clinicorp' });
+  }
+});
+
+// Gera um segredo novo para o webhook. Só o sha256 é gravado; o valor em claro
+// volta nesta resposta e não pode ser consultado depois. O segredo anterior
+// continua aceito por WEBHOOK_SECRET_GRACE_HOURS para dar tempo de trocar na Clinicorp.
+app.post('/api/clinicorp/my-settings/rotate-secret', async (req, res) => {
+  const user = await clinicorpAdminOf(req, res);
+  if (!user) return;
+  if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+  try {
+    // Colisão de 32 bytes aleatórios é improvável; o índice único garante e aqui só tentamos de novo.
+    for (let tentativa = 1; tentativa <= 3; tentativa++) {
+      const secret = generateWebhookSecret();
+      try {
+        await pool.query(
+          `INSERT INTO clinicorp_user_settings (user_id, enabled, base_url, webhook_secret_hash, updated_at)
+           VALUES ($1, FALSE, $3, $2, NOW())
+           ON CONFLICT (user_id) DO UPDATE SET
+             webhook_secret_anterior_hash = COALESCE(
+               clinicorp_user_settings.webhook_secret_hash,
+               CASE WHEN clinicorp_user_settings.webhook_secret <> ''
+                    THEN encode(sha256(convert_to(clinicorp_user_settings.webhook_secret, 'UTF8')), 'hex') END),
+             anterior_expira_em = NOW() + make_interval(hours => $4::int),
+             webhook_secret_hash = EXCLUDED.webhook_secret_hash,
+             webhook_secret = NULL,
+             updated_at = NOW()`,
+          [user.id, hashWebhookSecret(secret), CLINICORP_DEFAULT_BASE_URL, WEBHOOK_SECRET_GRACE_HOURS]
+        );
+        res.set('Cache-Control', 'no-store');
+        return res.json({ ok: true, webhook_secret: secret, previous_valid_hours: WEBHOOK_SECRET_GRACE_HOURS });
+      } catch (e) {
+        if (e.code === '23505' && tentativa < 3) continue;
+        throw e;
+      }
+    }
+  } catch (e) {
+    console.error('[clinicorp rotate-secret]', e.message);
+    res.status(500).json({ error: 'Não foi possível gerar o segredo. Tente de novo.' });
   }
 });
 
 app.delete('/api/clinicorp/my-settings', async (req, res) => {
-  let user;
-  try { user = await clinicorpUserOf(req); }
-  catch { return res.status(401).json({ error: 'Unauthorized' }); }
+  const user = await clinicorpAdminOf(req, res);
+  if (!user) return;
   try {
     await pool.query('DELETE FROM clinicorp_user_settings WHERE user_id = $1', [user.id]);
     res.json({ ok: true });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    console.error('[clinicorp my-settings DELETE]', e.message);
+    res.status(500).json({ error: 'Erro ao remover as credenciais da Clinicorp' });
   }
 });
 
@@ -15930,7 +16026,7 @@ if (process.env.NODE_ENV !== 'test') {
   console.log(`🦷 Odonto Connect API running on port ${PORT}`);
   console.log(`   Health: http://localhost:${PORT}/api/health`);
   console.log(`   Webhook URL: ${WEBHOOK_URL}`);
-  console.log(`   Clinicorp webhook: ${APP_URL}/api/webhook/clinicorp?user_api=<secret>`);
+  console.log(`   Clinicorp webhook: ${APP_URL}/api/webhook/clinicorp (header x-user-api)`);
 
   // ─── Auto-migration: ensure required columns/tables exist ───
   let checkedStatements = 0;
@@ -16356,4 +16452,5 @@ export { app, pool };
 // Exportados só para os testes de jobs (tests/jobs-metricas-isolamento.test.js).
 export { processSolutionTriggers, runWhatsAppJobHooks, ensureTenantConfigSchema, triggerFollowupAutomation };
 export function clearTenantSettingsCacheForTests() { tenantSettingsCache.clear(); }
+export { buildChatPushPayload };
 

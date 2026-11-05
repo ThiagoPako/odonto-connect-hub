@@ -2,10 +2,12 @@
  * Clinicorp integration module
  * - REST API client (https://api.clinicorp.com/rest/v1)
  * - Sync helpers (clinics, professionals, patients, appointments, estimates...)
- * - Webhook receiver (validated by ?user_api=<webhook_secret>)
+ * - Webhook receiver (validado pelo header x-user-api = segredo do webhook)
  *
  * Mounted by server.mjs via registerClinicorp(app, pool).
  */
+
+import { createHash, randomBytes } from 'crypto';
 
 const DEFAULT_BASE_URL = 'https://api.clinicorp.com/rest/v1';
 
@@ -2207,6 +2209,21 @@ async function processWebhookEvent(pool, event, tenantId) {
   return { handled: false, reason: 'tipo de evento desconhecido' };
 }
 
+// ─── Segredo do webhook ───────────────────────────────────────
+// O segredo é gerado no servidor e só o sha256 fica no banco; o valor em claro
+// é mostrado uma única vez ao admin da clínica.
+export function hashWebhookSecret(secret) {
+  return createHash('sha256').update(String(secret), 'utf8').digest('hex');
+}
+
+export function generateWebhookSecret() {
+  return randomBytes(32).toString('base64url');
+}
+
+// Depois de gerar um segredo novo, o anterior continua aceito por este prazo,
+// para dar tempo de atualizar o painel da Clinicorp.
+export const WEBHOOK_SECRET_GRACE_HOURS = 24;
+
 // ─── Express routes ───────────────────────────────────────────
 export function registerClinicorp(app, pool, { verifyUser } = {}) {
   // Colunas usadas pela integração na VPS (idempotente; antes ficavam só no
@@ -2218,6 +2235,15 @@ export function registerClinicorp(app, pool, { verifyUser } = {}) {
       `ALTER TABLE clinicorp_webhook_events ADD COLUMN IF NOT EXISTS tenant_id UUID`,
       `ALTER TABLE clinicorp_conflicts ADD COLUMN IF NOT EXISTS tenant_id UUID`,
       `CREATE INDEX IF NOT EXISTS idx_clinicorp_push_log_tenant ON clinicorp_push_log(tenant_id, created_at DESC)`,
+      // Segredo do webhook só como hash (mesma definição da migration-clinicorp-segredo.sql)
+      `ALTER TABLE clinicorp_user_settings ADD COLUMN IF NOT EXISTS webhook_secret_hash TEXT`,
+      `ALTER TABLE clinicorp_user_settings ADD COLUMN IF NOT EXISTS webhook_secret_anterior_hash TEXT`,
+      `ALTER TABLE clinicorp_user_settings ADD COLUMN IF NOT EXISTS anterior_expira_em TIMESTAMPTZ`,
+      `UPDATE clinicorp_user_settings
+          SET webhook_secret_hash = encode(sha256(convert_to(webhook_secret, 'UTF8')), 'hex')
+        WHERE webhook_secret_hash IS NULL AND webhook_secret IS NOT NULL AND webhook_secret <> ''`,
+      `CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS uq_clinicorp_user_settings_webhook_secret_hash
+         ON clinicorp_user_settings (webhook_secret_hash) WHERE webhook_secret_hash IS NOT NULL`,
     ]) {
       try { await pool.query(sql); }
       catch (e) { console.warn('[clinicorp] schema:', e.message); }
@@ -2230,29 +2256,40 @@ export function registerClinicorp(app, pool, { verifyUser } = {}) {
     return Object.fromEntries(Object.entries(headers).filter(([k]) => !omit.has(String(k).toLowerCase())));
   };
 
-  // ── Webhook receiver (público; protegido por ?user_api=<webhook_secret>) ──
+  // ── Webhook receiver (público; protegido pelo segredo do webhook) ──
+  // O segredo vem no header x-user-api. A query ?user_api= ainda é aceita por
+  // compatibilidade (o painel da Clinicorp pode não permitir header), com aviso no log.
   app.post('/api/webhook/clinicorp', async (req, res) => {
     const startedAt = Date.now();
     let eventId = null;
     try {
-      const userApi = (req.query.user_api || req.headers['x-user-api'] || '').toString();
-      if (!userApi || userApi.length < 8) {
-        return res.status(401).json({ error: 'unauthorized: missing or invalid user_api' });
+      const fromHeader = req.headers['x-user-api'];
+      let userApi = typeof fromHeader === 'string' ? fromHeader : '';
+      if (!userApi && typeof req.query.user_api === 'string' && req.query.user_api) {
+        userApi = req.query.user_api;
+        console.warn('[clinicorp webhook] segredo recebido na URL (?user_api=); prefira o header x-user-api');
+      }
+      if (!userApi || userApi.length < 8 || userApi.length > 512) {
+        return res.status(401).json({ error: 'Unauthorized' });
       }
 
-      // Resolvido: busca as configurações do usuário SaaS pelo webhook_secret (user_api)
+      // Compara o hash do segredo recebido com o atual ou com o anterior ainda válido.
+      const secretHash = hashWebhookSecret(userApi);
       const { rows } = await pool.query(
         `SELECT s.user_id, s.api_token, s.subscriber_id, s.base_url, p.tenant_id
          FROM clinicorp_user_settings s
          JOIN profiles p ON p.id = s.user_id
-         WHERE s.webhook_secret = $1 AND s.enabled = true
+         WHERE s.enabled = true
+           AND (s.webhook_secret_hash = $1
+                OR (s.webhook_secret_anterior_hash = $1 AND s.anterior_expira_em > NOW()))
+         ORDER BY (s.webhook_secret_hash = $1) DESC
          LIMIT 1`,
-        [userApi]
+        [secretHash]
       );
       const settings = rows[0];
 
-      if (!settings) {
-        return res.status(401).json({ error: 'unauthorized: valid subscriber not found for this secret' });
+      if (!settings || !settings.tenant_id) {
+        return res.status(401).json({ error: 'Unauthorized' });
       }
 
       const payload = req.body || {};
@@ -2277,18 +2314,18 @@ export function registerClinicorp(app, pool, { verifyUser } = {}) {
           [result.handled ? 'processed' : 'ignored', eventId]
         );
       } catch (procErr) {
-        console.error('[clinicorp webhook] processing error', procErr);
+        console.error('[clinicorp webhook] processing error', procErr?.message);
         await pool.query(
           `UPDATE clinicorp_webhook_events SET status = 'error', error_message = $1, processed_at = NOW() WHERE id = $2`,
           [procErr.message, eventId]
         );
-        return res.status(200).json({ ok: true, stored: true, processed: false, error: procErr.message });
+        return res.status(200).json({ ok: true, stored: true, processed: false });
       }
 
       res.json({ ok: true, eventId, ...result, latencyMs: Date.now() - startedAt });
     } catch (err) {
-      console.error('[clinicorp webhook] fatal', err);
-      res.status(500).json({ error: err.message });
+      console.error('[clinicorp webhook] fatal', err?.message);
+      res.status(500).json({ error: 'Erro interno' });
     }
   });
 
@@ -2303,7 +2340,7 @@ export function registerClinicorp(app, pool, { verifyUser } = {}) {
   // do tenant do admin original para todos os usuários novos).
   // Todas as rotas /api/clinicorp/* exigem um token verificado (assinatura
   // checada por verifyUser). O webhook usa outro prefixo e continua público,
-  // protegido pelo user_api.
+  // protegido pelo segredo do webhook.
   app.use('/api/clinicorp', async (req, res, next) => {
     if (typeof verifyUser !== 'function') {
       return res.status(503).json({ error: 'Autenticação indisponível' });
