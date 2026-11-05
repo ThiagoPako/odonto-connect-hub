@@ -33,6 +33,8 @@ CREATE TABLE IF NOT EXISTS procedimentos_catalogo_versoes (
   id TEXT PRIMARY KEY, procedimento_id TEXT, versao INT, codigo TEXT, nome TEXT, categoria TEXT, valor_particular NUMERIC, valor_convenio NUMERIC,
   duracao_minutos INT, cor TEXT, requer_dente BOOLEAN, requer_face BOOLEAN, descricao TEXT, motivo TEXT, alterado_por TEXT,
   tenant_id UUID, created_at TIMESTAMPTZ DEFAULT NOW());
+ALTER TABLE procedimentos_catalogo_versoes ADD COLUMN IF NOT EXISTS valido_desde TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE procedimentos_catalogo_versoes ADD COLUMN IF NOT EXISTS valido_ate TIMESTAMPTZ;
 CREATE TABLE IF NOT EXISTS assinaturas_eletronicas (
   id TEXT PRIMARY KEY, paciente_id UUID, dentista_id UUID, contexto TEXT, assinatura_base64 TEXT, latitude NUMERIC, longitude NUMERIC, accuracy_m NUMERIC,
   ip_address TEXT, user_agent TEXT, verificacao_canal TEXT, verificacao_codigo TEXT, verificacao_em TIMESTAMPTZ, consentimento_aceito BOOLEAN,
@@ -64,3 +66,10 @@ ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS como_conheceu TEXT;
 -- O frontend (routeAccess.ts) usa o papel 'comercial', mas o enum app_role dos arquivos do repo é {admin,dentista,recepcionista,user}.
 -- Sem isto o login de um usuário 'comercial' volta como role='user' (acesso mínimo). Confirmar o que existe em produção.
 ALTER TYPE app_role ADD VALUE IF NOT EXISTS 'comercial';
+-- orcamentos: colunas usadas por POST /api/orcamentos (server.mjs:6464) sem nenhuma migration no repositório.
+ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS titulo TEXT;
+ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS print_config JSONB;
+ALTER TABLE orcamentos ADD COLUMN IF NOT EXISTS odontograma_snapshot JSONB;
+-- reativacao: server.mjs:7679/7734 usa tenant_id em reactivation_rules/sends, ausente em migration-reativacao.sql.
+ALTER TABLE reactivation_rules ADD COLUMN IF NOT EXISTS tenant_id UUID;
+ALTER TABLE reactivation_sends ADD COLUMN IF NOT EXISTS tenant_id UUID;

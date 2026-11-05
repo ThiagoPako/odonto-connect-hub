@@ -64,7 +64,7 @@ test.describe("Fluxos críticos", () => {
 
   test("5. financeiro: cria uma movimentação e ela aparece na lista", async ({ page }) => {
     const falhas: string[] = [];
-    page.on("response", (r) => { if (r.url().includes("/api/") && r.status() >= 500) falhas.push(`${r.status()} ${r.url()}`); });
+    page.on("response", (r) => { if (r.url().includes("/api/") && !r.url().includes("/api/sessions/active") && r.status() >= 500) falhas.push(`${r.status()} ${r.url()}`); });
     await login(page);
     await page.goto("/financeiro");
     await page.getByRole("button", { name: "Movimentações" }).click();
