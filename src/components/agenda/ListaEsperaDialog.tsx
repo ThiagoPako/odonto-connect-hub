@@ -82,7 +82,7 @@ export function ListaEsperaDialog({ open, onOpenChange, professionals }: {
         <DialogHeader>
           <DialogTitle>Lista de espera</DialogTitle>
           <DialogDescription>
-            Quando um paciente cancela ou pede para remarcar, a agenda mostra quem da lista serve para o horário. A oferta só sai quando a recepção clica em "Oferecer horário".
+            Adicione só quem pediu para entrar na lista. Ele vai receber a oferta pelo WhatsApp da clínica. Quando a recepção desmarca ou cancela um horário, a agenda mostra quem da lista serve para ele. A oferta só sai quando a recepção clica em "Oferecer horário".
           </DialogDescription>
         </DialogHeader>
 

@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { listaEsperaApi, type EncaixeInfo } from "@/lib/vpsApi";
 
-// Horários liberados (paciente pediu remarcação ou cancelou). A oferta só sai pelo
+// Horários liberados (a recepção desmarcou ou cancelou). A oferta só sai pelo
 // clique da recepção, para um paciente por vez, pela fila do WhatsApp da clínica.
 // "remarcar" não libera: o paciente foi avisado de que o horário continua reservado.
 const STATUS_LIBERADOS = new Set(["cancelado", "desmarcado"]);
