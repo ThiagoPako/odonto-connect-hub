@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -6,11 +6,16 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
-import { Clock, Save, MessageSquareText, PenLine } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Clock, Save, MessageSquareText, PenLine, Loader2, AlertCircle, Lock } from "lucide-react";
 import { toast } from "sonner";
 import { attendanceSettingsApi } from "@/lib/vpsApi";
+import { saasApi } from "@/lib/saasApi";
+import { useAuth } from "@/hooks/useAuth";
 
-const STORAGE_KEY = "odonto_attendance_settings";
+// Chave antiga: as configurações ficavam só no navegador. Hoje vêm do servidor (por clínica).
+const LEGACY_STORAGE_KEY = "odonto_attendance_settings";
 
 export interface DaySchedule {
   enabled: boolean;
@@ -23,7 +28,7 @@ export interface AttendanceSettings {
   offHoursMessage: string;
   welcomeMessage: string;
   signatureEnabled: boolean;
-  signatureTemplate: string; // e.g. "— {name}, Odonto Connect"
+  signatureTemplate: string; // e.g. "{name}:"
   autoGreetingEnabled: boolean;
   quickReplies: QuickReply[];
   closingMessage: string;
@@ -50,56 +55,82 @@ const DAYS = [
   { key: "sun", label: "Domingo" },
 ];
 
-const defaultSettings: AttendanceSettings = {
-  businessHours: {
-    mon: { enabled: true, openTime: "08:00", closeTime: "18:00" },
-    tue: { enabled: true, openTime: "08:00", closeTime: "18:00" },
-    wed: { enabled: true, openTime: "08:00", closeTime: "18:00" },
-    thu: { enabled: true, openTime: "08:00", closeTime: "18:00" },
-    fri: { enabled: true, openTime: "08:00", closeTime: "18:00" },
-    sat: { enabled: true, openTime: "08:00", closeTime: "12:00" },
-    sun: { enabled: false, openTime: "08:00", closeTime: "12:00" },
-  },
-  offHoursMessage:
-    "Olá! 👋 Nosso horário de atendimento é de segunda a sexta, das 8h às 18h, e sábados das 8h às 12h.\n\nDeixe sua mensagem que retornaremos assim que possível! 😊",
-  welcomeMessage:
-    "Olá! 👋 Seja bem-vindo(a) à *Odonto Connect*! Como podemos ajudá-lo(a) hoje?",
-  signatureEnabled: true,
-  signatureTemplate: "{name}:",
-  autoGreetingEnabled: true,
-  quickReplies: [
-    { id: "qr1", title: "Agendamento", content: "Claro! Para agendar uma consulta, preciso de algumas informações:\n\n1️⃣ Nome completo\n2️⃣ Telefone\n3️⃣ Procedimento desejado\n4️⃣ Preferência de horário", category: "Agendamento" },
-    { id: "qr2", title: "Valores", content: "Os valores variam de acordo com o procedimento. Posso agendar uma *avaliação gratuita* para que o dentista possa elaborar um orçamento personalizado! 😊", category: "Financeiro" },
-    { id: "qr3", title: "Convênios", content: "Trabalhamos com os seguintes convênios:\n✅ Amil Dental\n✅ Bradesco Saúde\n✅ SulAmérica\n✅ Porto Seguro\n\nQual é o seu?", category: "Convênio" },
-    { id: "qr4", title: "Localização", content: "📍 Estamos localizados na Av. Paulista, 1000 - Bela Vista, São Paulo.\n\n🕐 Seg-Sex: 8h às 18h\n🕐 Sáb: 8h às 12h", category: "Geral" },
-    { id: "qr5", title: "Emergência", content: "Entendo que é urgente! 🚨\n\nPor favor, informe:\n1️⃣ O que está sentindo?\n2️⃣ Há quanto tempo?\n3️⃣ Está com dor intensa?\n\nVamos encontrar o melhor horário para atendê-lo(a) o mais rápido possível.", category: "Emergência" },
-  ],
-  closingMessage: "Obrigado pelo contato! Se precisar de algo mais, estamos à disposição. 😊\n\n⭐ Avalie nosso atendimento!",
-  closingMessageEnabled: true,
-  inactivityTimeout: 30,
-  inactivityMessage: "Olá! Notamos que você ficou um tempo sem responder. Posso ajudar em algo mais? Caso contrário, vou encerrar este atendimento. 😊",
-  inactivityMessageEnabled: false,
-};
+const FALLBACK_CLINIC_NAME = "nossa clínica";
 
-export function getAttendanceSettings(): AttendanceSettings {
-  if (typeof window === "undefined") return defaultSettings;
-  const stored = localStorage.getItem(STORAGE_KEY);
-  if (stored) {
-    try {
-      return { ...defaultSettings, ...JSON.parse(stored) };
-    } catch {
-      return defaultSettings;
-    }
+/** Padrão para uma clínica que ainda não salvou nada. Usa o nome da própria clínica. */
+export function buildDefaultAttendanceSettings(clinicName?: string | null): AttendanceSettings {
+  const nome = (clinicName || "").trim() || FALLBACK_CLINIC_NAME;
+  return {
+    businessHours: {
+      mon: { enabled: true, openTime: "08:00", closeTime: "18:00" },
+      tue: { enabled: true, openTime: "08:00", closeTime: "18:00" },
+      wed: { enabled: true, openTime: "08:00", closeTime: "18:00" },
+      thu: { enabled: true, openTime: "08:00", closeTime: "18:00" },
+      fri: { enabled: true, openTime: "08:00", closeTime: "18:00" },
+      sat: { enabled: true, openTime: "08:00", closeTime: "12:00" },
+      sun: { enabled: false, openTime: "08:00", closeTime: "12:00" },
+    },
+    offHoursMessage:
+      `Olá! Aqui é da ${nome}. 👋 Nosso atendimento está fechado agora.\n\nDeixe sua mensagem que respondemos assim que abrirmos! 😊`,
+    welcomeMessage: `Olá! 👋 Seja bem-vindo(a) à *${nome}*! Como podemos ajudar hoje?`,
+    signatureEnabled: true,
+    signatureTemplate: "{name}:",
+    autoGreetingEnabled: true,
+    // Sem endereço, convênios ou preços inventados: a clínica preenche os dela.
+    quickReplies: [
+      { id: "qr1", title: "Agendamento", content: "Claro! Para agendar uma consulta, preciso de algumas informações:\n\n1️⃣ Nome completo\n2️⃣ Telefone\n3️⃣ Procedimento desejado\n4️⃣ Preferência de horário", category: "Agendamento" },
+      { id: "qr2", title: "Valores", content: "Os valores variam de acordo com o procedimento. Posso agendar uma avaliação para que o dentista elabore um orçamento personalizado! 😊", category: "Financeiro" },
+      { id: "qr5", title: "Emergência", content: "Entendo que é urgente! 🚨\n\nPor favor, informe:\n1️⃣ O que está sentindo?\n2️⃣ Há quanto tempo?\n3️⃣ Está com dor intensa?\n\nVamos encontrar o melhor horário para atendê-lo(a) o mais rápido possível.", category: "Emergência" },
+    ],
+    closingMessage: "Obrigado pelo contato! Se precisar de algo mais, estamos à disposição. 😊",
+    closingMessageEnabled: true,
+    inactivityTimeout: 30,
+    inactivityMessage: "Olá! Notamos que você ficou um tempo sem responder. Posso ajudar em algo mais? Caso contrário, vou encerrar este atendimento. 😊",
+    inactivityMessageEnabled: false,
+  };
+}
+
+function clearLegacyStorage() {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
+  } catch {
+    /* navegador sem localStorage: nada a limpar */
   }
-  return defaultSettings;
 }
 
-export function saveAttendanceSettings(settings: AttendanceSettings) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+/**
+ * Lê as configurações de atendimento da clínica no servidor (GET /attendance-settings)
+ * e completa com o padrão, assinado com o nome da clínica. Nunca lança.
+ */
+export async function fetchAttendanceSettings(): Promise<{
+  settings: AttendanceSettings;
+  saved: boolean;
+  error: string | null;
+}> {
+  clearLegacyStorage();
+  const [settingsRes, tenantRes] = await Promise.all([
+    attendanceSettingsApi.get(),
+    saasApi.myTenant(),
+  ]);
+  const defaults = buildDefaultAttendanceSettings(tenantRes.data?.tenant?.nome);
+  if (settingsRes.error) return { settings: defaults, saved: false, error: settingsRes.error };
+  const stored = (settingsRes.data && typeof settingsRes.data === "object" ? settingsRes.data : {}) as Partial<AttendanceSettings>;
+  const saved = Object.keys(stored).length > 0;
+  return {
+    settings: {
+      ...defaults,
+      ...stored,
+      businessHours: { ...defaults.businessHours, ...(stored.businessHours || {}) },
+      quickReplies: Array.isArray(stored.quickReplies) ? stored.quickReplies : defaults.quickReplies,
+    },
+    saved,
+    error: null,
+  };
 }
 
-export function isWithinBusinessHours(settings?: AttendanceSettings): boolean {
-  const s = settings || getAttendanceSettings();
+export function isWithinBusinessHours(settings: AttendanceSettings): boolean {
+  const s = settings;
   const now = new Date();
   const dayKeys = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
   const dayKey = dayKeys[now.getDay()];
@@ -119,23 +150,61 @@ export function formatSignature(template: string, userName: string): string {
   return template.replace("{name}", userName);
 }
 
+function isForbiddenError(error: string) {
+  return /admin access required|HTTP 403|sem clínica/i.test(error);
+}
+
 // ─── Settings Panel Component ───
 
+type LoadState = "loading" | "ready" | "error";
+
 export function AttendanceSettingsPanel() {
-  const [settings, setSettings] = useState<AttendanceSettings>(defaultSettings);
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin" || !!user?.is_super_admin;
+  const [settings, setSettings] = useState<AttendanceSettings>(() => buildDefaultAttendanceSettings());
+  const [loadState, setLoadState] = useState<LoadState>("loading");
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [savedOnServer, setSavedOnServer] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [forbidden, setForbidden] = useState(false);
   const [activeSection, setActiveSection] = useState<"hours" | "messages" | "quick" | "automation">("hours");
 
-  useEffect(() => {
-    setSettings(getAttendanceSettings());
+  const load = useCallback(async () => {
+    setLoadState("loading");
+    setLoadError(null);
+    const { settings: loaded, saved, error } = await fetchAttendanceSettings();
+    if (error) {
+      setLoadError(error);
+      setLoadState("error");
+      return;
+    }
+    setSettings(loaded);
+    setSavedOnServer(saved);
+    setLoadState("ready");
   }, []);
 
-  const handleSave = () => {
-    saveAttendanceSettings(settings);
-    // Sync to VPS so webhook can use settings
-    attendanceSettingsApi.update(settings).then(({ error }) => {
-      if (error) console.error("Erro ao sincronizar settings com VPS:", error);
-    });
-    toast.success("Configurações de atendimento salvas!");
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const readOnly = !isAdmin || forbidden;
+
+  const handleSave = async () => {
+    if (readOnly || saving) return;
+    setSaving(true);
+    const { error } = await attendanceSettingsApi.update(settings);
+    setSaving(false);
+    if (error) {
+      if (isForbiddenError(error)) {
+        setForbidden(true);
+        toast.error("Só o administrador da clínica pode alterar estas configurações.");
+      } else {
+        toast.error(`Não foi possível salvar: ${error}`);
+      }
+      return;
+    }
+    setSavedOnServer(true);
+    toast.success("Configurações de atendimento salvas.");
   };
 
   const updateDay = (dayKey: string, field: keyof DaySchedule, value: string | boolean) => {
@@ -195,13 +264,62 @@ export function AttendanceSettingsPanel() {
         </div>
       </CardHeader>
       <CardContent>
+        {loadState === "loading" && (
+          <div className="space-y-3" aria-busy="true" aria-live="polite">
+            <p className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> Carregando as configurações da clínica...
+            </p>
+            <Skeleton className="h-9 w-full" />
+            <Skeleton className="h-9 w-full" />
+            <Skeleton className="h-9 w-2/3" />
+          </div>
+        )}
+
+        {loadState === "error" && (
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>Não foi possível carregar as configurações de atendimento</AlertTitle>
+            <AlertDescription className="space-y-3">
+              <p>{loadError}</p>
+              <p>Nada foi alterado. Tente de novo para não sobrescrever o que a clínica já salvou.</p>
+              <Button variant="outline" size="sm" onClick={() => void load()}>
+                Tentar novamente
+              </Button>
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {loadState === "ready" && (
+        <>
+        {readOnly && (
+          <Alert className="mb-4">
+            <Lock className="h-4 w-4" />
+            <AlertTitle>Somente leitura</AlertTitle>
+            <AlertDescription>
+              Só o administrador da clínica pode alterar estas configurações. Peça a ele se precisar mudar algo.
+            </AlertDescription>
+          </Alert>
+        )}
+        {!readOnly && !savedOnServer && (
+          <Alert className="mb-4">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>Ainda não salvo</AlertTitle>
+            <AlertDescription>
+              Estes são textos sugeridos. Revise e clique em salvar para que passem a valer no WhatsApp da clínica.
+            </AlertDescription>
+          </Alert>
+        )}
+
         {/* Section Tabs */}
-        <div className="flex gap-1 mb-5 border-b border-border">
+        <div className="flex gap-1 mb-5 border-b border-border overflow-x-auto" role="tablist">
           {sections.map((s) => (
             <button
               key={s.key}
+              type="button"
+              role="tab"
+              aria-selected={activeSection === s.key}
               onClick={() => setActiveSection(s.key)}
-              className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
+              className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap px-3 py-2 text-sm font-medium border-b-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
                 activeSection === s.key
                   ? "border-primary text-primary"
                   : "border-transparent text-muted-foreground hover:text-foreground"
@@ -213,6 +331,7 @@ export function AttendanceSettingsPanel() {
           ))}
         </div>
 
+        <fieldset disabled={readOnly} className="min-w-0">
         {/* ─── Business Hours ─── */}
         {activeSection === "hours" && (
           <div className="space-y-3">
@@ -222,7 +341,7 @@ export function AttendanceSettingsPanel() {
             {DAYS.map((day) => {
               const schedule = settings.businessHours[day.key];
               return (
-                <div key={day.key} className="flex items-center gap-3">
+                <div key={day.key} className="flex flex-wrap items-center gap-x-3 gap-y-1">
                   <Switch
                     checked={schedule?.enabled ?? false}
                     onCheckedChange={(v) => updateDay(day.key, "enabled", v)}
@@ -339,7 +458,7 @@ export function AttendanceSettingsPanel() {
                 onChange={(e) => setSettings((p) => ({ ...p, signatureTemplate: e.target.value }))}
                 maxLength={100}
                 disabled={!settings.signatureEnabled}
-                placeholder="— {name} | Odonto Connect"
+                placeholder="— {name}"
               />
               {settings.signatureEnabled && (
                 <div className="mt-2 rounded-lg border bg-muted/50 p-3">
@@ -388,6 +507,7 @@ export function AttendanceSettingsPanel() {
                     size="sm"
                     className="h-8 text-destructive hover:text-destructive"
                     onClick={() => removeQuickReply(qr.id)}
+                    aria-label={`Remover resposta rápida ${qr.title || "sem título"}`}
                   >
                     ✕
                   </Button>
@@ -442,12 +562,19 @@ export function AttendanceSettingsPanel() {
           </div>
         )}
 
-        <Separator className="my-5" />
+        </fieldset>
 
-        <Button onClick={handleSave} className="w-full">
-          <Save className="h-4 w-4 mr-2" />
-          Salvar Configurações de Atendimento
-        </Button>
+        {!readOnly && (
+          <>
+            <Separator className="my-5" />
+            <Button onClick={() => void handleSave()} className="w-full" disabled={saving}>
+              {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
+              {saving ? "Salvando..." : "Salvar configurações de atendimento"}
+            </Button>
+          </>
+        )}
+        </>
+        )}
       </CardContent>
     </Card>
   );

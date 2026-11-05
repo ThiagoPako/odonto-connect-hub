@@ -4,7 +4,7 @@ import { Send, Paperclip, Smile, Image, MapPin, UserCircle, BarChart3, FileText,
 import { toast } from "sonner";
 import { AudioRecorder } from "./AudioRecorder";
 import { getClinicLocation } from "@/components/ClinicLocationPanel";
-import { getAttendanceSettings, type QuickReply } from "@/components/AttendanceSettingsPanel";
+import { buildDefaultAttendanceSettings, fetchAttendanceSettings, type AttendanceSettings, type QuickReply } from "@/components/AttendanceSettingsPanel";
 import type { MessageType, ChatMessage, LocationData, ContactData, PollData, ReplyData, ListData } from "@/data/chatMockData";
 
 const CRM_STAGES = [
@@ -53,7 +53,17 @@ export function MessageInput({ onSendMessage, onPresenceChange, disabled, replyi
   const videoInputRef = useRef<HTMLInputElement>(null);
   const presenceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const attendanceSettings = useMemo(() => getAttendanceSettings(), []);
+  // Respostas rápidas e assinatura da clínica, lidas do servidor (não do navegador).
+  const [attendanceSettings, setAttendanceSettings] = useState<AttendanceSettings>(() => buildDefaultAttendanceSettings());
+  useEffect(() => {
+    let active = true;
+    void fetchAttendanceSettings().then(({ settings, error }) => {
+      if (active && !error) setAttendanceSettings(settings);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
   const quickReplies = attendanceSettings.quickReplies;
 
   const filteredQuickReplies = useMemo(() => {
