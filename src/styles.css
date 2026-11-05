@@ -3,6 +3,29 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* Tokens fixos do sistema (não mudam com o tema). Ver DESIGN.md › 10. Tokens.
+   Cada um vira utilitário do Tailwind: text-caption, h-touch, shadow-overlay, ease-out-soft… */
+@theme {
+  /* Escala tipográfica do app em rem (acompanha o zoom e a fonte do navegador). Mínimo: 12 px. */
+  --text-caption: 0.75rem;      --text-caption--line-height: 1rem;        /* 12 legenda, selo, horário */
+  --text-footnote: 0.8125rem;   --text-footnote--line-height: 1.125rem;   /* 13 rótulo, menu, tabela densa */
+  --text-body: 0.875rem;        --text-body--line-height: 1.25rem;        /* 14 texto do app */
+  --text-callout: 0.9375rem;    --text-callout--line-height: 1.375rem;    /* 15 título de cartão/seção */
+  --text-title-3: 1.125rem;     --text-title-3--line-height: 1.5rem;      /* 18 título da página */
+  --text-title-2: 1.5rem;       --text-title-2--line-height: 2rem;        /* 24 valor de KPI */
+  --text-title-1: 1.75rem;      --text-title-1--line-height: 2.25rem;     /* 28 saudação, título de tela vazia */
+
+  /* Alvo de toque mínimo (HIG 44 pt → 44 px). Ex.: size-touch, min-h-touch. */
+  --spacing-touch: 2.75rem;
+
+  /* Elevação: só o que flutua tem sombra. */
+  --shadow-raised: 0 1px 2px hsl(222 47% 13% / 0.04), 0 4px 12px hsl(222 47% 13% / 0.05);
+  --shadow-overlay: 0 8px 24px hsl(222 47% 13% / 0.12), 0 2px 6px hsl(222 47% 13% / 0.08);
+
+  /* Movimento: saída rápida, sem quique. Durações em :root (--duration-*). */
+  --ease-out-soft: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
 @theme inline {
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
@@ -56,6 +79,7 @@
   --color-stage: var(--stage);
   --color-stage-foreground: var(--stage-foreground);
   --color-stage-muted: var(--stage-muted);
+  --color-scrim: var(--scrim);
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-heading: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
 
@@ -111,8 +135,14 @@
   --chart-1: hsl(189, 88%, 33%);
   --chart-2: hsl(217, 91%, 45%);
   --chart-3: hsl(152, 70%, 27%);
-  --chart-4: hsl(38, 92%, 50%);
+  --chart-4: hsl(32, 95%, 40%); /* antes 38 92% 50%: 2,1:1 no cartão; agora 3,8:1 */
   --chart-5: hsl(0, 72%, 45%);
+  /* Véu atrás de diálogo e gaveta (antes bg-black/80, pesado demais no claro) */
+  --scrim: hsl(222 47% 8% / 0.55);
+  /* Durações: interação 120–200 ms, painel até 300 ms */
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+  --duration-panel: 300ms;
   /* Sidebar — white bg, cyan accent */
   --sidebar: hsl(0, 0%, 100%);
   --sidebar-foreground: hsl(222, 30%, 22%);
@@ -164,6 +194,7 @@
   --chart-3: hsl(152, 60%, 48%);
   --chart-4: hsl(38, 92%, 55%);
   --chart-5: hsl(0, 85%, 65%);
+  --scrim: hsl(0 0% 0% / 0.7);
   --sidebar: hsl(220, 20%, 8%);
   --sidebar-foreground: hsl(220, 10%, 90%);
   --sidebar-primary: hsl(187, 80%, 52%);
@@ -263,9 +294,7 @@
   }
 
   .shadow-card {
-    box-shadow:
-      0 1px 2px hsl(0 0% 0% / 0.03),
-      0 4px 12px hsl(0 0% 0% / 0.04);
+    box-shadow: var(--shadow-raised);
   }
 
   .shadow-card-hover {
