@@ -50,6 +50,9 @@ jobs:
                 npm ci 2>/dev/null || npm install
               fi
 
+              echo "Reinstalling backend dependencies for rollback commit..."
+              (cd vps-api-server && { npm ci --omit=dev || npm install --omit=dev; }) || echo "WARNING: backend deps reinstall failed on rollback"
+
               echo "Rebuilding frontend for rollback commit..."
               npm run build || echo "WARNING: rollback build failed — keeping previous dist if present"
 
@@ -85,6 +88,9 @@ jobs:
             else
               npm ci 2>/dev/null || npm install
             fi
+
+            # ─── Dependências do backend (vps-api-server tem package.json próprio) ──
+            (cd vps-api-server && npm ci --omit=dev)
 
             # ─── Build frontend ────────────────────────────────────────────
             npm run build
@@ -124,6 +130,8 @@ jobs:
             cat /root/odonto-connect/vps-api-server/migration-whatsapp-fase1.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             cat /root/odonto-connect/vps-api-server/migration-seguranca-p0.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             cat /root/odonto-connect/vps-api-server/migration-contatos-recuperacao.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
+            # Colunas usadas por agendamentos (idempotente; ausentes em produção)
+            sudo -u postgres psql -p 5433 -d odonto_db -c "ALTER TABLE IF EXISTS agendamentos ADD COLUMN IF NOT EXISTS paciente_nome TEXT, ADD COLUMN IF NOT EXISTS dentista_nome TEXT;" 2>&1 || true
             echo "=== Migrations applied ==="
 
             # ─── Pre-flight syntax check on server.mjs ─────────────────────
