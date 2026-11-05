@@ -1,3 +1,4 @@
+import { escapeHtml } from "@/lib/safeHtml";
 /**
  * Gera um relatório PDF consolidado de relatórios clínicos via janela de impressão.
  */
@@ -39,7 +40,7 @@ export function exportarRelatoriosClinicosPdf(reports: ReportRow[], filters: Exp
   if (filters.status && filters.status !== 'todos') {
     filterLabels.push(`Status: ${filters.status === 'com_prescricao' ? 'Com prescrição' : 'Sem prescrição'}`);
   }
-  if (filters.paciente) filterLabels.push(`Paciente: ${filters.paciente}`);
+  if (filters.paciente) filterLabels.push(`Paciente: ${escapeHtml(filters.paciente)}`);
 
   const rowsHtml = reports.map((r, i) => {
     const presc = Array.isArray(r.prescricoes) ? r.prescricoes : (typeof r.prescricoes === 'string' ? JSON.parse(r.prescricoes || '[]') : []);
@@ -51,11 +52,11 @@ export function exportarRelatoriosClinicosPdf(reports: ReportRow[], filters: Exp
     return `
       <tr style="border-bottom:1px solid #e2e8f0;${i % 2 === 1 ? 'background:#f8fafb;' : ''}">
         <td style="padding:8px 10px;font-size:11px;color:#444;">${data}<br/><span style="color:#888;">${hora}</span></td>
-        <td style="padding:8px 10px;font-size:11px;font-weight:600;color:#1a1a2e;">${r.patient_name || '-'}</td>
-        <td style="padding:8px 10px;font-size:11px;color:#444;">${r.attendant_name || '-'}</td>
-        <td style="padding:8px 10px;font-size:11px;color:#444;">${r.queixa_principal || '-'}</td>
-        <td style="padding:8px 10px;font-size:11px;color:#444;">${r.procedimento || '-'}</td>
-        <td style="padding:8px 10px;font-size:11px;color:#444;text-align:center;">${r.dente_regiao || '-'}</td>
+        <td style="padding:8px 10px;font-size:11px;font-weight:600;color:#1a1a2e;">${escapeHtml(r.patient_name || '-')}</td>
+        <td style="padding:8px 10px;font-size:11px;color:#444;">${escapeHtml(r.attendant_name || '-')}</td>
+        <td style="padding:8px 10px;font-size:11px;color:#444;">${escapeHtml(r.queixa_principal || '-')}</td>
+        <td style="padding:8px 10px;font-size:11px;color:#444;">${escapeHtml(r.procedimento || '-')}</td>
+        <td style="padding:8px 10px;font-size:11px;color:#444;text-align:center;">${escapeHtml(r.dente_regiao || '-')}</td>
         <td style="padding:8px 10px;font-size:11px;color:#444;text-align:center;">${dur} min</td>
         <td style="padding:8px 10px;text-align:center;">
           <span style="display:inline-block;padding:2px 8px;border-radius:9999px;font-size:10px;font-weight:600;background:${presc.length > 0 ? '#0d948815' : '#94a3b815'};color:${presc.length > 0 ? '#0d9488' : '#64748b'};border:1px solid ${presc.length > 0 ? '#0d948830' : '#94a3b830'};">${presc.length} Rx</span>
