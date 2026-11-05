@@ -5,7 +5,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2 } from "lucide-react";
 import { useState } from "react";
-import { mascaraTelefoneBR, erroTelefoneBR } from "@/lib/mascaraTelefone";
+import { mascaraTelefoneBR, erroTelefoneBR, telefoneParaServidor } from "@/lib/mascaraTelefone";
 import { contatosApi, type Contato } from "@/lib/vpsApi";
 
 interface Props {
@@ -25,7 +25,8 @@ export function CreateContatoDialog({ open, onOpenChange, onCreated }: Props) {
     if (telErro) return setError(telErro);
     setLoading(true);
     setError(null);
-    const { data, error: apiError } = await contatosApi.create(form);
+    // Máscara só na tela: o servidor recebe 55 + DDD + número, só dígitos.
+    const { data, error: apiError } = await contatosApi.create({ ...form, telefone: telefoneParaServidor(form.telefone) });
     setLoading(false);
     if (apiError) return setError(apiError);
     if (data) {

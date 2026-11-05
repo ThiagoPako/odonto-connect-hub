@@ -5,7 +5,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2 } from "lucide-react";
 import { useState, useEffect } from "react";
-import { mascaraTelefoneBR, erroTelefoneBR } from "@/lib/mascaraTelefone";
+import { mascaraTelefoneBR, erroTelefoneBR, telefoneParaServidor } from "@/lib/mascaraTelefone";
 import { contatosApi, type Contato } from "@/lib/vpsApi";
 
 interface Props {
@@ -38,11 +38,17 @@ export function EditContatoDialog({ open, onOpenChange, contato, onUpdated }: Pr
 
   const handleSubmit = async () => {
     if (!form.nome.trim()) return setError("Informe o nome do contato.");
-    const telErro = erroTelefoneBR(form.telefone);
+    // Só valida/normaliza se a pessoa mexeu no telefone: um número salvo antes (outro DDI,
+    // formato antigo) continua como está.
+    const telefoneMudou = form.telefone !== (contato.telefone || "");
+    const telErro = telefoneMudou ? erroTelefoneBR(form.telefone) : null;
     if (telErro) return setError(telErro);
     setLoading(true);
     setError(null);
-    const { data, error: apiError } = await contatosApi.update(contato.id, form);
+    const { data, error: apiError } = await contatosApi.update(contato.id, {
+      ...form,
+      telefone: telefoneMudou ? telefoneParaServidor(form.telefone) : form.telefone,
+    });
     setLoading(false);
     if (apiError) return setError(apiError);
     if (data) onUpdated(data);
@@ -63,7 +69,7 @@ export function EditContatoDialog({ open, onOpenChange, contato, onUpdated }: Pr
             <div className="space-y-2">
               <Label htmlFor="editar-contato-tel">Telefone</Label>
               <Input id="editar-contato-tel" type="tel" inputMode="tel" value={form.telefone} onChange={(e) => setForm({ ...form, telefone: mascaraTelefoneBR(e.target.value) })}
-                aria-invalid={!!erroTelefoneBR(form.telefone)} />
+                aria-invalid={form.telefone !== (contato.telefone || "") && !!erroTelefoneBR(form.telefone)} />
             </div>
             <div className="space-y-2">
               <Label htmlFor="editar-contato-email">Email</Label>
