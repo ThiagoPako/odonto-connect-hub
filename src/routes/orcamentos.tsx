@@ -102,13 +102,14 @@ function OrcamentosPage() {
   const [pacienteCache, setPacienteCache] = useState<Record<string, any>>({});
   const [dentistaCache, setDentistaCache] = useState<Record<string, any>>({});
 
+  const [loadError, setLoadError] = useState<string | null>(null);
+
   const loadAll = useCallback(async () => {
-    try {
-      const res = await orcamentosApi.list();
-      const data = (res as any).data || res || [];
-      setOrcamentos(Array.isArray(data) ? data.map(mapOrcamento) : []);
-    } catch (err) { console.error(err); }
-    finally { setLoading(false); }
+    const { data, error } = await orcamentosApi.list();
+    setLoadError(error);
+    if (error) toast.error("Não foi possível carregar os orçamentos: " + error);
+    else setOrcamentos(Array.isArray(data) ? data.map(mapOrcamento) : []);
+    setLoading(false);
   }, []);
 
   useEffect(() => { loadAll(); }, [loadAll]);
@@ -116,13 +117,15 @@ function OrcamentosPage() {
   // Pré-carrega pacientes/dentistas para enriquecer o print preview
   useEffect(() => {
     Promise.all([pacientesApi.list(), dentistasApi.list()]).then(([p, d]) => {
-      const pacs = ((p as any).data || p || []) as any[];
-      const dens = ((d as any).data || d || []) as any[];
+      // Só enriquece a impressão; sem os dados a impressão sai sem endereço/CRO
+      if (p.error || d.error) toast.error("Dados de paciente/dentista para impressão não carregaram: " + (p.error || d.error));
+      const pacs = (Array.isArray(p.data) ? p.data : []) as any[];
+      const dens = (Array.isArray(d.data) ? d.data : []) as any[];
       const pMap: Record<string, any> = {}; pacs.forEach(x => { pMap[x.id] = x; });
       const dMap: Record<string, any> = {}; dens.forEach(x => { dMap[x.id] = x; });
       setPacienteCache(pMap);
       setDentistaCache(dMap);
-    }).catch(() => {});
+    });
   }, []);
 
   const handleExcluir = async (id: string) => {
@@ -236,7 +239,13 @@ function OrcamentosPage() {
                 </div>
               );
             })}
-            {filtered.length === 0 && <p className="text-xs text-muted-foreground text-center py-8">Nenhum orçamento encontrado</p>}
+            {loadError && (
+              <div role="alert" className="flex flex-col items-center gap-2 py-8 text-center">
+                <p className="text-xs text-destructive">Não foi possível carregar os orçamentos. {loadError}</p>
+                <Button size="sm" variant="outline" onClick={loadAll}>Tentar de novo</Button>
+              </div>
+            )}
+            {!loadError && filtered.length === 0 && <p className="text-xs text-muted-foreground text-center py-8">Nenhum orçamento encontrado</p>}
           </div>
 
           {/* Budget detail */}

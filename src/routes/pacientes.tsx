@@ -93,13 +93,15 @@ function PacientesPage() {
   const [filterIdadeMin, setFilterIdadeMin] = useState("");
   const [filterIdadeMax, setFilterIdadeMax] = useState("");
   const [usingDemo, setUsingDemo] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const loadPacientes = useCallback(async () => {
     setLoading(true);
     try {
       const { data, error } = await pacientesApi.list();
+      setLoadError(error);
       if (error) {
-        setPacientes([]);
+        toast.error("Não foi possível carregar os pacientes: " + error);
         setUsingDemo(false);
       } else if (Array.isArray(data)) {
         setPacientes(data);
@@ -114,7 +116,7 @@ function PacientesPage() {
       }
     } catch (err) {
       console.error("[pacientes] load error:", err);
-      setPacientes([]);
+      setLoadError("Erro inesperado ao carregar.");
       setUsingDemo(false);
     } finally {
       setLoading(false);
@@ -359,9 +361,17 @@ function PacientesPage() {
           </div>
         )}
 
-        {!loading && filtered.length === 0 && (
+        {!loading && loadError && (
+          <ErroCarregar mensagem={`Não foi possível carregar os pacientes. ${loadError}`} onRetry={loadPacientes} />
+        )}
+
+        {!loading && !loadError && filtered.length === 0 && (
           <div className="text-center py-16">
-            <p className="text-sm text-muted-foreground">Nenhum paciente encontrado.</p>
+            <p className="text-sm text-muted-foreground">
+              {pacientes.length === 0
+                ? "Nenhum paciente cadastrado ainda. Use \"Novo Paciente\" para cadastrar o primeiro."
+                : "Nenhum paciente encontrado com essa busca ou filtros."}
+            </p>
           </div>
         )}
 
@@ -409,7 +419,21 @@ function NovoPacienteModal({ onClose, onSaved }: { onClose: () => void; onSaved:
     observacoes: "",
   });
 
-  // Collect all CRM leads from all stages
+  // Leads do CRM (todas as etapas), carregados ao abrir a busca
+  const [leadsKanban, setLeadsKanban] = useState<Record<string, KanbanLead[]> | null>(null);
+  const [leadsLoading, setLeadsLoading] = useState(false);
+  const [leadsError, setLeadsError] = useState<string | null>(null);
+  const loadLeads = useCallback(async () => {
+    setLeadsLoading(true);
+    const { data, error } = await crmApi.kanban();
+    setLeadsLoading(false);
+    setLeadsError(error);
+    if (!error) setLeadsKanban((data as Record<string, KanbanLead[]>) || {});
+  }, []);
+  useEffect(() => {
+    if (showLeadPicker && !leadsKanban && !leadsLoading) loadLeads();
+  }, [showLeadPicker, leadsKanban, leadsLoading, loadLeads]);
+
   const allLeads = useMemo(() => {
     const leads: { id: string; name: string; phone: string; origin: string; initials: string }[] = [];
     const seen = new Set<string>();
@@ -423,8 +447,9 @@ function NovoPacienteModal({ onClose, onSaved }: { onClose: () => void; onSaved:
         })
       );
     };
+    if (leadsKanban) addLeads(leadsKanban);
     return leads;
-  }, []);
+  }, [leadsKanban]);
 
   const filteredLeads = useMemo(() => {
     if (!leadSearch.trim()) return allLeads;
@@ -479,18 +504,14 @@ function NovoPacienteModal({ onClose, onSaved }: { onClose: () => void; onSaved:
       toast.success(`${form.nome} cadastrado com sucesso!`);
       // Move lead to "Orçamento Aprovado" in CRM
       if (selectedLeadId) {
-        try {
-          await crmApi.updateStage(selectedLeadId, "orcamento_aprovado", "Convertido em paciente");
-          toast.success("Lead movido para 'Orçamento Aprovado' no CRM");
-        } catch {
-          toast.info("Lead vinculado ao paciente");
-        }
+        const { error: stageError } = await crmApi.updateStage(selectedLeadId, "orcamento_aprovado", "Convertido em paciente");
+        if (stageError) toast.error("Paciente cadastrado, mas o lead não foi movido no CRM: " + stageError);
+        else toast.success("Lead movido para 'Orçamento Aprovado' no CRM");
       }
       onSaved();
     } catch (err) {
       console.error("[pacientes] create error:", err);
       toast.error("Erro inesperado ao salvar. Verifique sua conexão.");
-      onSaved();
     } finally {
       setSaving(false);
     }
@@ -542,7 +563,18 @@ function NovoPacienteModal({ onClose, onSaved }: { onClose: () => void; onSaved:
                   className="w-full h-9 px-3 rounded-lg bg-background border border-border/60 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
                 />
                 <div className="max-h-40 overflow-y-auto space-y-1 scrollbar-thin">
-                  {filteredLeads.length === 0 && (
+                  {leadsLoading && (
+                    <p className="text-[11px] text-muted-foreground text-center py-3 flex items-center justify-center gap-2">
+                      <Loader2 className="h-3 w-3 animate-spin" /> Carregando leads...
+                    </p>
+                  )}
+                  {!leadsLoading && leadsError && (
+                    <div role="alert" className="text-[11px] text-destructive text-center py-3">
+                      Não foi possível carregar os leads. {leadsError}{" "}
+                      <button type="button" onClick={loadLeads} className="underline font-semibold">Tentar de novo</button>
+                    </div>
+                  )}
+                  {!leadsLoading && !leadsError && filteredLeads.length === 0 && (
                     <p className="text-[11px] text-muted-foreground text-center py-3">Nenhum lead encontrado</p>
                   )}
                   {filteredLeads.map((lead) => (
@@ -762,9 +794,7 @@ function PacienteDetailModal({
         onUpdated?.();
       }
     } catch {
-      toast.success("Paciente atualizado!");
-      setEditing(false);
-      onUpdated?.();
+      toast.error("Erro inesperado ao atualizar. Verifique sua conexão.");
     } finally {
       setSaving(false);
     }
@@ -1039,12 +1069,15 @@ function AnamneseTab({ pacienteId }: { pacienteId: string }) {
   const [doencasText, setDoencasText] = useState("");
   const [cirurgiasText, setCirurgiasText] = useState("");
 
+  const [loadError, setLoadError] = useState<string | null>(null);
+
   const loadAnamnese = useCallback(async () => {
     setLoading(true);
     try {
       const { data, error } = await pacientesApi.getAnamnese(pacienteId);
+      setLoadError(error);
       if (error) {
-        toast.error("Erro ao carregar anamnese");
+        toast.error("Erro ao carregar anamnese: " + error);
       } else if (data) {
         setAnamnese(data as AnamneseData);
         setForm(data as AnamneseData);
@@ -1113,6 +1146,11 @@ function AnamneseTab({ pacienteId }: { pacienteId: string }) {
         <span className="ml-2 text-sm text-muted-foreground">Carregando anamnese...</span>
       </div>
     );
+  }
+
+  // Sem carregar não deixa editar: salvar por cima apagaria alergias e alertas já registrados
+  if (loadError) {
+    return <ErroCarregar mensagem={`Não foi possível carregar a anamnese. ${loadError}`} onRetry={loadAnamnese} />;
   }
 
   const inputClass = "w-full h-9 px-3 rounded-lg bg-background border border-border/60 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30";
@@ -1322,11 +1360,16 @@ function OdontogramaTab({ pacienteId }: { pacienteId: string }) {
   const [dentes, setDentes] = useState(allTeeth);
   const [obs, setObs] = useState("");
 
+  const [loadError, setLoadError] = useState<string | null>(null);
+
   const loadOdontograma = useCallback(async () => {
     setLoading(true);
     try {
-      const { data: result } = await pacientesApi.getOdontograma(pacienteId);
-      if (result) {
+      const { data: result, error } = await pacientesApi.getOdontograma(pacienteId);
+      setLoadError(error);
+      if (error) {
+        toast.error("Erro ao carregar odontograma: " + error);
+      } else if (result) {
         const d = result as OdontogramaDBData;
         setData(d);
         const parsedDentes = typeof d.dentes === "string" ? JSON.parse(d.dentes) : d.dentes;
@@ -1338,7 +1381,7 @@ function OdontogramaTab({ pacienteId }: { pacienteId: string }) {
         setObs(d.observacoes || "");
       }
     } catch {
-      // No odontograma yet
+      setLoadError("Erro inesperado ao carregar.");
     } finally {
       setLoading(false);
     }
@@ -1374,6 +1417,11 @@ function OdontogramaTab({ pacienteId }: { pacienteId: string }) {
         <span className="ml-2 text-sm text-muted-foreground">Carregando odontograma...</span>
       </div>
     );
+  }
+
+  // Sem carregar não deixa editar: salvar por cima apagaria o odontograma registrado
+  if (loadError) {
+    return <ErroCarregar mensagem={`Não foi possível carregar o odontograma. ${loadError}`} onRetry={loadOdontograma} />;
   }
 
   if (!editingOdonto) {
@@ -1466,15 +1514,18 @@ const statusColors: Record<string, { bg: string; text: string; label: string }> 
 function HistoricoTab({ pacienteId }: { pacienteId: string }) {
   const [consultas, setConsultas] = useState<HistoricoConsulta[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const { data, error } = await pacientesApi.getHistorico(pacienteId);
+      setLoadError(error);
       if (error) setConsultas([]);
       else if (data) setConsultas(data);
     } catch {
       setConsultas([]);
+      setLoadError("Erro inesperado ao carregar.");
     } finally {
       setLoading(false);
     }
@@ -1489,6 +1540,10 @@ function HistoricoTab({ pacienteId }: { pacienteId: string }) {
         <span className="ml-2 text-sm text-muted-foreground">Carregando histórico...</span>
       </div>
     );
+  }
+
+  if (loadError) {
+    return <ErroCarregar mensagem={`Não foi possível carregar o histórico. ${loadError}`} onRetry={load} />;
   }
 
   if (consultas.length === 0) {
@@ -1559,6 +1614,22 @@ function ListCard({ label, icon: Icon, items, color }: { label: string; icon: ty
       ) : (
         <p className="text-xs text-muted-foreground">Nenhum(a)</p>
       )}
+    </div>
+  );
+}
+
+function ErroCarregar({ mensagem, onRetry }: { mensagem: string; onRetry: () => void }) {
+  return (
+    <div role="alert" className="flex flex-col items-center gap-3 rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-8 text-center animate-fade-in">
+      <AlertTriangle className="h-6 w-6 text-destructive" />
+      <p className="text-sm text-destructive">{mensagem}</p>
+      <button
+        type="button"
+        onClick={onRetry}
+        className="px-4 py-2 rounded-xl border border-border/60 bg-card text-xs font-semibold text-foreground hover:bg-muted/60 transition-colors"
+      >
+        Tentar de novo
+      </button>
     </div>
   );
 }

@@ -110,8 +110,12 @@ export function NovoAgendamentoModal({
       setDentistaId(defaultDentistaId);
       setSelectedDentistasIds([defaultDentistaId]);
     }
-    pacientesApi.list().then(({ data }) => Array.isArray(data) && setPacientes(data as Paciente[]));
-    dentistasApi.list().then(({ data }) => {
+    pacientesApi.list().then(({ data, error }) => {
+      if (error) toast.error("Não foi possível carregar a lista de pacientes: " + error);
+      else if (Array.isArray(data)) setPacientes(data as Paciente[]);
+    });
+    dentistasApi.list().then(({ data, error }) => {
+      if (error) { toast.error("Não foi possível carregar os profissionais: " + error); return; }
       if (Array.isArray(data) && data.length > 0) {
         setDentistas(data as Dentista[]);
         if (!dentistaId && !defaultDentistaId) setDentistaId((data[0] as Dentista).id);
@@ -261,6 +265,7 @@ export function NovoAgendamentoModal({
       const idsToCreate = isClinica ? [null] : selectedDentistasIds;
       
       let successCount = 0;
+      let lastError = "";
       for (const profId of idsToCreate) {
         const profName = profId ? dentistas.find((d) => d.id === profId)?.nome || "Profissional" : "Clínica";
         
@@ -281,13 +286,16 @@ export function NovoAgendamentoModal({
         } as Partial<AgendamentoVPS>);
         
         if (!error) successCount++;
+        else lastError = error;
       }
 
+      const failCount = idsToCreate.length - successCount;
       if (successCount > 0) {
         toast.success(`${tab === "compromisso" ? "Compromisso" : "Evento"} criado (${successCount} profissional/ais)`);
+        if (failCount > 0) toast.error(`Não foi criado para ${failCount} profissional(is): ${lastError}`);
         await handleCreatedSuccess();
       } else {
-        toast.error("Erro ao criar agendamento(s)");
+        toast.error("Erro ao criar agendamento(s): " + lastError);
       }
     } finally {
       setSaving(false);

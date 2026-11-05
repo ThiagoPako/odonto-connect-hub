@@ -96,10 +96,17 @@ export function NovoOrcamentoModal({
         dentistasApi.list(),
         procedimentosCatalogoApi.list(),
       ]);
-      setPacientes(((p as any).data || p || []) as any[]);
-      setDentistas(((d as any).data || d || []) as any[]);
-      const cat = ((c as any).data || c || []) as ProcedimentoCatalogo[];
-      setProcedimentos(cat);
+      // vpsApiFetch não lança: cada lista que falhar vira aviso, sem trocar a lista por um objeto
+      const falhas = [
+        p.error && `pacientes (${p.error})`,
+        d.error && `dentistas (${d.error})`,
+        c.error && `procedimentos (${c.error})`,
+      ].filter(Boolean);
+      if (falhas.length) toast.error("Não foi possível carregar: " + falhas.join(", "));
+      if (!p.error) setPacientes(Array.isArray(p.data) ? (p.data as any[]) : []);
+      if (!d.error) setDentistas(Array.isArray(d.data) ? (d.data as any[]) : []);
+      const cat = !c.error && Array.isArray(c.data) ? (c.data as ProcedimentoCatalogo[]) : [];
+      if (!c.error) setProcedimentos(cat);
       // Pré-seleciona o primeiro
       if (cat.length > 0 && !procedimentoAtivoId) {
         setProcedimentoAtivoId(cat[0].id);

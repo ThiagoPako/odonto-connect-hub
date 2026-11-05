@@ -76,7 +76,10 @@ export function SendWhatsAppDialog({
         if (connected.length === 1) setSelectedInstance(connected[0].instanceName);
         else setSelectedInstance("");
       })
-      .catch(() => setInstances([]))
+      .catch((err: Error) => {
+        setInstances([]);
+        toast.error("Não foi possível carregar os números de WhatsApp: " + err.message);
+      })
       .finally(() => setLoadingInstances(false));
   }, [open]);
 
