@@ -110,6 +110,10 @@ function PacientesPage() {
           const found = data.find((p: PacienteAPI) => p.id === pacienteId);
           if (found) setSelectedPaciente(found);
         }
+        // Ficha aberta: troca pelos dados recém-salvos para não exibir a versão antiga
+        setSelectedPaciente((prev) =>
+          prev ? (data.find((p: PacienteAPI) => p.id === prev.id) ?? prev) : prev,
+        );
       } else {
         setPacientes([]);
         setUsingDemo(false);
@@ -491,7 +495,9 @@ function NovoPacienteModal({ onClose, onSaved }: { onClose: () => void; onSaved:
         telefone: form.telefone.trim() || null,
         email: form.email.trim() || null,
         data_nascimento: form.data_nascimento || null,
-        logradouro: form.endereco.trim() || null, // Mapeado para logradouro
+        sexo: form.sexo || null,
+        convenio: form.convenio.trim() || null,
+        endereco: form.endereco.trim() || null,
         observacoes: form.observacoes.trim() || null,
       });
 
@@ -783,7 +789,7 @@ function PacienteDetailModal({
         data_nascimento: form.data_nascimento || null,
         sexo: form.sexo || null,
         convenio: form.convenio.trim() || null,
-        logradouro: form.endereco.trim() || null, // Mapeado para logradouro
+        endereco: form.endereco.trim() || null,
         observacoes: form.observacoes.trim() || null,
       });
       if (error) {

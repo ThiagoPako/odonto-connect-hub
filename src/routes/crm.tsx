@@ -14,7 +14,7 @@ import {
   Search, Plus, Filter, Phone, Mail, Calendar, DollarSign,
   ChevronRight, MoreHorizontal, UserPlus, ExternalLink,
   Clock, MessageSquare, GripVertical, RefreshCw, RotateCcw,
-  TrendingUp, Target, Loader2, UserCheck, Link2, History,
+  TrendingUp, Target, Loader2, UserCheck, Link2, History, X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { whatsappApi } from "@/lib/vpsApi";
@@ -61,10 +61,10 @@ function SyncAvatarsButton() {
 
 function CrmPage() {
   return (
-    <div className="flex-1 flex flex-col min-h-screen">
+    <div className="flex-1 flex flex-col min-h-screen min-w-0 max-w-full">
       <DashboardHeader title="CRM — Pacientes & Funil" />
-      <Tabs defaultValue="kanban_vendas" className="flex-1 flex flex-col overflow-hidden">
-        <div className="px-4 pt-3 border-b border-border bg-card">
+      <Tabs defaultValue="kanban_vendas" className="flex-1 flex flex-col overflow-hidden min-w-0">
+        <div className="px-4 pt-3 border-b border-border bg-card overflow-x-auto">
           <TabsList>
             <TabsTrigger value="kanban_vendas" className="gap-1.5">
               <TrendingUp className="h-3.5 w-3.5" /> Funil de Vendas
@@ -75,13 +75,13 @@ function CrmPage() {
             <TabsTrigger value="tabela">Lista de Pacientes</TabsTrigger>
           </TabsList>
         </div>
-        <TabsContent value="kanban_vendas" className="flex-1 flex flex-col overflow-hidden mt-0">
+        <TabsContent value="kanban_vendas" className="flex-1 flex flex-col overflow-hidden mt-0 min-w-0">
           <SalesKanbanView />
         </TabsContent>
-        <TabsContent value="kanban_recuperacao" className="flex-1 flex flex-col overflow-hidden mt-0">
+        <TabsContent value="kanban_recuperacao" className="flex-1 flex flex-col overflow-hidden mt-0 min-w-0">
           <RecoveryKanbanView />
         </TabsContent>
-        <TabsContent value="tabela" className="flex-1 flex overflow-hidden mt-0">
+        <TabsContent value="tabela" className="flex-1 flex overflow-hidden mt-0 min-w-0">
           <PatientTableView />
         </TabsContent>
       </Tabs>
@@ -114,27 +114,15 @@ function GenericKanbanBoard<T extends string>({
   const handleDragStart = (lead: KanbanLead, fromStage: T) => setDraggedLead({ lead, fromStage });
   const handleDragOver = (e: React.DragEvent) => e.preventDefault();
 
-  const handleDrop = (toStage: T) => {
-    if (!draggedLead || draggedLead.fromStage === toStage) return;
-    const movedLead = draggedLead.lead;
-    const fromStage = draggedLead.fromStage;
+  // Move o lead de etapa (usado pelo arrastar e soltar e pelo menu "Mover para etapa", que funciona no toque)
+  const moveLead = (movedLead: KanbanLead, fromStage: T, toStage: T) => {
+    if (fromStage === toStage) return;
     setLeads((prev) => {
       const updated = { ...prev };
       updated[fromStage] = prev[fromStage].filter((l) => l.id !== movedLead.id);
       updated[toStage] = [...prev[toStage], movedLead];
       return updated;
     });
-    setDraggedLead(null);
-
-    // Conversão automática de campanha quando lead chega em "orcamento_aprovado"
-    if ((toStage as string) === "orcamento_aprovado") {
-      const affected = markLeadConverted(movedLead.id, movedLead.value);
-      if (affected.length > 0) {
-        toast.success(`Conversão registrada em ${affected.length} campanha(s)`, {
-          description: `${movedLead.name} → R$ ${(movedLead.value || 0).toLocaleString("pt-BR")}`,
-        });
-      }
-    }
 
     // Persist to API
     crmApi.updateStage(movedLead.id, toStage as string).then(({ error }) => {
@@ -147,10 +135,27 @@ function GenericKanbanBoard<T extends string>({
           updated[fromStage] = [...prev[fromStage], movedLead];
           return updated;
         });
-      } else {
-        toast.success(`${movedLead.name} movido para ${stages.find(s => s.id === toStage)?.label || toStage}`);
+        return;
+      }
+      toast.success(`${movedLead.name} movido para ${stages.find(s => s.id === toStage)?.label || toStage}`);
+      // Conversão de campanha só depois que o servidor confirmou a mudança de etapa.
+      // A atribuição ainda fica só neste navegador (campanhasStore em localStorage).
+      if ((toStage as string) === "orcamento_aprovado") {
+        const affected = markLeadConverted(movedLead.id, movedLead.value);
+        if (affected.length > 0) {
+          toast.info(`Conversão marcada em ${affected.length} campanha(s) neste navegador`, {
+            description: `${movedLead.name} → R$ ${(movedLead.value || 0).toLocaleString("pt-BR")}. Ainda não fica salva no servidor nem aparece em outros computadores.`,
+          });
+        }
       }
     });
+  };
+
+  const handleDrop = (toStage: T) => {
+    if (!draggedLead || draggedLead.fromStage === toStage) return;
+    const { lead, fromStage } = draggedLead;
+    setDraggedLead(null);
+    moveLead(lead, fromStage, toStage);
   };
 
   const filteredLeads = assignedFilter === "Todos"
@@ -164,7 +169,7 @@ function GenericKanbanBoard<T extends string>({
 
   return (
     <>
-      <div className="flex items-center justify-between px-6 py-3 border-b border-border bg-card flex-wrap gap-3">
+      <div className="flex items-center justify-between px-4 sm:px-6 py-3 border-b border-border bg-card flex-wrap gap-3">
         <div className="flex items-center gap-6">
           <div>
             <span className="text-xs text-muted-foreground">Total no funil</span>
@@ -175,10 +180,10 @@ function GenericKanbanBoard<T extends string>({
             <p className="text-lg font-bold text-foreground">R$ {totalValue.toLocaleString("pt-BR")}</p>
           </div>
         </div>
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <UserPlus className="h-4 w-4 text-muted-foreground" />
-            <div className="flex items-center gap-1">
+        <div className="flex items-center gap-3 flex-wrap min-w-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <UserPlus className="h-4 w-4 text-muted-foreground shrink-0" />
+            <div className="flex items-center gap-1 flex-wrap">
               {assignees.map((a) => (
                 <button key={a} onClick={() => setAssignedFilter(a)}
                   className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors whitespace-nowrap ${
@@ -194,12 +199,12 @@ function GenericKanbanBoard<T extends string>({
         </div>
       </div>
 
-      <div className="flex-1 flex gap-3 p-4 overflow-x-auto">
+      <div className="flex-1 flex gap-3 p-4 overflow-x-auto min-w-0">
         {stages.map((stage) => {
           const stageLeads = filteredLeads[stage.id] || [];
           const stageValue = stageLeads.reduce((sum, l) => sum + l.value, 0);
           return (
-            <div key={stage.id} className="flex flex-col w-[280px] shrink-0 bg-muted/30 rounded-xl border border-border/40 shadow-card hover:shadow-card-hover transition-all duration-300"
+            <div key={stage.id} className="flex flex-col w-[85vw] max-w-[280px] sm:w-[280px] shrink-0 bg-muted/30 rounded-xl border border-border/40 shadow-card hover:shadow-card-hover transition-all duration-300"
               onDragOver={handleDragOver} onDrop={() => handleDrop(stage.id)}>
               <div className="flex items-center gap-2 px-3 py-3 border-b border-border/50">
                 <div className={`h-2.5 w-2.5 rounded-full ${stage.color}`} />
@@ -221,6 +226,8 @@ function GenericKanbanBoard<T extends string>({
                     lead={lead}
                     stageId={stage.id}
                     onDragStart={() => handleDragStart(lead, stage.id)}
+                    moveTargets={stages.filter((s) => s.id !== stage.id).map((s) => ({ id: s.id as string, label: s.label }))}
+                    onMove={(toStage) => moveLead(lead, stage.id, toStage as T)}
                     onLeadAssigned={(leadId, userName, userInitials, avatarUrl) => {
                       // Move lead to em_atendimento and update assigned info
                       setLeads((prev) => {
@@ -249,6 +256,18 @@ function GenericKanbanBoard<T extends string>({
 
 /* ── Sales Kanban ────────────────────────────────── */
 
+function KanbanLoadError({ error, onRetry }: { error: string; onRetry: () => void }) {
+  return (
+    <div role="alert" className="flex-1 flex flex-col items-center justify-center gap-3 p-6 text-center">
+      <p className="text-sm text-destructive">Não foi possível carregar o funil. {error}</p>
+      <button type="button" onClick={onRetry}
+        className="h-9 px-4 rounded-lg border border-border text-sm font-medium text-foreground hover:bg-muted transition-colors">
+        Tentar de novo
+      </button>
+    </div>
+  );
+}
+
 function normalizeLead(raw: any): KanbanLead {
   return {
     ...raw,
@@ -265,10 +284,12 @@ function SalesKanbanView() {
   };
   const [leads, setLeads] = useState<Record<SalesStage, KanbanLead[]>>(emptyStages);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const loadData = useCallback(() => {
     setLoading(true);
     crmApi.kanban().then(({ data, error }) => {
+      setLoadError(error);
       if (!error && data && typeof data === 'object') {
         const raw = data as Record<string, any[]>;
         const result = { ...emptyStages };
@@ -283,6 +304,7 @@ function SalesKanbanView() {
       }
       setLoading(false);
     }).catch(() => {
+      setLoadError("Erro de conexão.");
       setLeads(emptyStages);
       setLoading(false);
     });
@@ -291,6 +313,7 @@ function SalesKanbanView() {
   useEffect(() => { loadData(); }, [loadData]);
 
   if (loading) return <div className="flex-1 flex items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
+  if (loadError) return <KanbanLoadError error={loadError} onRetry={loadData} />;
   return <GenericKanbanBoard stages={salesStages} leads={leads} setLeads={setLeads} title="Funil de Vendas" onRefresh={loadData} />;
 }
 
@@ -302,10 +325,12 @@ function RecoveryKanbanView() {
   };
   const [leads, setLeads] = useState<Record<RecoveryStage, KanbanLead[]>>(emptyStages);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const loadData = useCallback(() => {
     setLoading(true);
     crmApi.kanban().then(({ data, error }) => {
+      setLoadError(error);
       if (!error && data && typeof data === 'object') {
         const raw = data as Record<string, any[]>;
         const result = { ...emptyStages };
@@ -320,6 +345,7 @@ function RecoveryKanbanView() {
       }
       setLoading(false);
     }).catch(() => {
+      setLoadError("Erro de conexão.");
       setLeads(emptyStages);
       setLoading(false);
     });
@@ -328,12 +354,20 @@ function RecoveryKanbanView() {
   useEffect(() => { loadData(); }, [loadData]);
 
   if (loading) return <div className="flex-1 flex items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
+  if (loadError) return <KanbanLoadError error={loadError} onRetry={loadData} />;
   return <GenericKanbanBoard stages={recoveryStages} leads={leads} setLeads={setLeads} title="Recuperação de Vendas" onRefresh={loadData} />;
 }
 
 /* ── Kanban Card ─────────────────────────────────── */
 
-function KanbanCard({ lead, stageId, onDragStart, onLeadAssigned }: { lead: KanbanLead; stageId: string; onDragStart: () => void; onLeadAssigned?: (leadId: string, userName: string, userInitials: string, avatarUrl?: string | null) => void }) {
+function KanbanCard({ lead, stageId, onDragStart, onLeadAssigned, moveTargets = [], onMove }: {
+  lead: KanbanLead;
+  stageId: string;
+  onDragStart: () => void;
+  onLeadAssigned?: (leadId: string, userName: string, userInitials: string, avatarUrl?: string | null) => void;
+  moveTargets?: { id: string; label: string }[];
+  onMove?: (toStage: string) => void;
+}) {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [showLevelMenu, setShowLevelMenu] = useState(false);
@@ -409,8 +443,8 @@ function KanbanCard({ lead, stageId, onDragStart, onLeadAssigned }: { lead: Kanb
 
   const handleCall = (e: React.MouseEvent) => {
     e.stopPropagation();
-    const cleanPhone = lead.phone.replace(/\D/g, "");
-    const phoneWithPlus = cleanPhone.startsWith("55") ? `+${cleanPhone}` : `+55${cleanPhone}`;
+    const phoneWithPlus = toBrE164(lead.phone);
+    if (!phoneWithPlus) { toast.error("Este lead não tem telefone cadastrado."); return; }
     window.location.href = `tel:${phoneWithPlus}`;
     toast.success(`Ligando para ${lead.name}...`, { description: lead.phone });
   };
@@ -508,11 +542,13 @@ function KanbanCard({ lead, stageId, onDragStart, onLeadAssigned }: { lead: Kanb
           </div>
         </div>
         <div className="relative" ref={cardMenuRef}>
-          <button onClick={(e) => { e.stopPropagation(); setShowMenu(!showMenu); }} className="p-1 rounded hover:bg-muted transition-colors text-muted-foreground">
-            <MoreHorizontal className="h-3.5 w-3.5" />
+          <button onClick={(e) => { e.stopPropagation(); setShowMenu(!showMenu); }}
+            aria-label={`Ações de ${lead.name}`} aria-expanded={showMenu}
+            className="h-8 w-8 flex items-center justify-center rounded hover:bg-muted transition-colors text-muted-foreground">
+            <MoreHorizontal className="h-4 w-4" />
           </button>
           {showMenu && (
-            <div className="absolute z-50 right-0 top-full mt-1 bg-popover border border-border rounded-lg shadow-lg py-1 w-52 animate-scale-in">
+            <div className="absolute z-50 right-0 top-full mt-1 bg-popover border border-border rounded-lg shadow-lg py-1 w-52 max-h-[60vh] overflow-y-auto animate-scale-in">
               <button
                 onClick={handleConvertToPatient}
                 disabled={converting}
@@ -528,6 +564,22 @@ function KanbanCard({ lead, stageId, onDragStart, onLeadAssigned }: { lead: Kanb
                 <MessageSquare className="h-3.5 w-3.5 text-chart-2" />
                 Abrir conversa
               </button>
+              {onMove && moveTargets.length > 0 && (
+                <>
+                  <div className="my-1 h-px bg-border" />
+                  <p className="px-3 pt-1 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Mover para etapa</p>
+                  {moveTargets.map((t) => (
+                    <button
+                      key={t.id}
+                      onClick={(e) => { e.stopPropagation(); setShowMenu(false); onMove(t.id); }}
+                      className="flex items-center gap-2 w-full px-3 py-2 text-xs hover:bg-muted transition-colors text-left text-foreground"
+                    >
+                      <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+                      {t.label}
+                    </button>
+                  ))}
+                </>
+              )}
             </div>
           )}
         </div>
@@ -623,7 +675,7 @@ function KanbanCard({ lead, stageId, onDragStart, onLeadAssigned }: { lead: Kanb
                   cancelado: "text-muted-foreground",
                   desmarcado: "text-warning",
                 };
-                const dataBR = appt.data ? new Date(appt.data + "T12:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }) : "—";
+                const dataBR = appt.data ? new Date(String(appt.data).slice(0, 10) + "T12:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }) : "—";
                 return (
                   <div key={appt.id} className="flex items-center gap-2 px-2 py-1.5">
                     <Calendar className="h-3 w-3 text-muted-foreground shrink-0" />
@@ -768,7 +820,8 @@ function PatientTableView() {
           status: r.status === 'em_contato' ? 'ativo' : (r.status === 'novo' ? 'lead' : r.status) as Patient["status"],
           lastVisit: r.updated_at ? new Date(r.updated_at) : undefined,
           createdAt: new Date(r.created_at),
-          totalSpent: 0,
+          // Valor em negociação do lead (l.valor), o mesmo mostrado no card do funil. Não é faturamento.
+          totalSpent: Number(r.valor) || 0,
           avatarColor: 'bg-chart-1',
           avatarUrl: r.avatar_url,
         })));
@@ -795,7 +848,7 @@ function PatientTableView() {
 
   return (
     <main className="flex-1 flex overflow-hidden">
-      <div className={`flex flex-col border-r border-border bg-card ${selectedPatient ? "w-[55%]" : "flex-1"}`}>
+      <div className={`flex-col border-r border-border bg-card ${selectedPatient ? "hidden md:flex md:w-[55%]" : "flex flex-1"}`}>
         <div className="flex items-center gap-3 px-4 py-3 border-b border-border">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -841,7 +894,7 @@ function PatientTableView() {
           )}
         </div>
 
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-auto">
           {loading && (
             <div className="flex items-center justify-center py-12">
               <Loader2 className="h-6 w-6 animate-spin text-primary" />
@@ -860,14 +913,14 @@ function PatientTableView() {
             </div>
           )}
           {!loading && patients.length > 0 && (
-          <table className="w-full">
+          <table className="w-full min-w-[560px]">
             <thead className="sticky top-0 bg-card">
               <tr className="border-b border-border text-left">
                 {([
                   ["nome", "Paciente"],
                   ["origem", "Origem"],
                   ["status", "Status"],
-                  ["valor", "Faturamento"],
+                  ["valor", "Valor do lead"],
                   ["updated_at", "Última Visita"],
                 ] as const).map(([col, label]) => (
                   <th
@@ -980,10 +1033,60 @@ function PatientTableView() {
 
 /* ── Patient Detail ──────────────────────────────── */
 
+/** Número em E.164 (+55...). Só considera que já tem o código do país com 12 ou 13 dígitos começando com 55;
+ *  com 10 ou 11 dígitos (DDD + número, inclusive DDD 55) acrescenta +55. */
+function toBrE164(phone: string): string | null {
+  const digits = phone.replace(/\D/g, "");
+  if (!digits) return null;
+  if ((digits.length === 12 || digits.length === 13) && digits.startsWith("55")) return `+${digits}`;
+  return `+55${digits}`;
+}
+
+type LeadHistoryItem = { id: string; data: string; hora: string; procedimento: string; status: string; dentista_nome: string };
+
 function PatientDetail({ patient, onClose }: { patient: Patient; onClose: () => void }) {
+  const [history, setHistory] = useState<LeadHistoryItem[] | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+
+  // Descarta respostas antigas: só a última requisição (do paciente atual) atualiza a tela.
+  // Só busca o histórico quando o lead está ligado a um paciente: sem isso o servidor
+  // procura pelo final do telefone e pode trazer consultas de outra pessoa.
+  const hasLinkedPatient = Boolean(patient.pacienteId);
+  const historyReqRef = useRef(0);
+  const loadHistory = useCallback(() => {
+    const reqId = ++historyReqRef.current;
+    if (!hasLinkedPatient) {
+      setHistory(null);
+      setHistoryError(null);
+      setHistoryLoading(false);
+      return;
+    }
+    setHistoryLoading(true);
+    setHistoryError(null);
+    setHistory(null);
+    crmApi.history(patient.id).then(({ data, error }) => {
+      if (reqId !== historyReqRef.current) return;
+      setHistoryError(error);
+      setHistory(error ? null : data || []);
+      setHistoryLoading(false);
+    });
+  }, [patient.id, hasLinkedPatient]);
+
+  useEffect(() => {
+    loadHistory();
+    const reqCounter = historyReqRef;
+    // Ao trocar de paciente ou fechar, invalida a requisição em andamento.
+    return () => { reqCounter.current++; };
+  }, [loadHistory]);
+
+  const telNumber = toBrE164(patient.phone);
+  const telHref = telNumber ? `tel:${telNumber}` : null;
+  const mailHref = patient.email ? `mailto:${patient.email}` : null;
+
   return (
-    <div className="w-[45%] flex flex-col bg-background overflow-y-auto">
-      <div className="p-6 space-y-6">
+    <div className="w-full md:w-[45%] flex flex-col bg-background overflow-y-auto">
+      <div className="p-4 sm:p-6 space-y-6">
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-4">
             <LeadAvatar initials={patient.initials} avatarUrl={patient.avatarUrl} avatarColor={patient.avatarColor} size="lg" />
@@ -1001,25 +1104,37 @@ function PatientDetail({ patient, onClose }: { patient: Patient; onClose: () => 
               </span>
             </div>
           </div>
-          <button onClick={onClose} className="p-2 rounded-lg hover:bg-muted text-muted-foreground">
-            <MoreHorizontal className="h-5 w-5" />
+          <button onClick={onClose} aria-label="Fechar detalhe e voltar para a lista" title="Voltar para a lista" className="h-9 w-9 flex items-center justify-center rounded-lg hover:bg-muted text-muted-foreground">
+            <X className="h-5 w-5" />
           </button>
         </div>
 
         <div className="flex gap-2">
-          <button className="flex-1 flex items-center justify-center gap-2 h-10 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors">
-            <Phone className="h-4 w-4" /> Ligar
-          </button>
-          <button className="flex-1 flex items-center justify-center gap-2 h-10 rounded-lg border border-border text-sm font-medium text-foreground hover:bg-muted transition-colors">
-            <Mail className="h-4 w-4" /> E-mail
-          </button>
+          {telHref ? (
+            <a href={telHref} className="flex-1 flex items-center justify-center gap-2 h-10 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors">
+              <Phone className="h-4 w-4" /> Ligar
+            </a>
+          ) : (
+            <button type="button" disabled title="Sem telefone cadastrado" className="flex-1 flex items-center justify-center gap-2 h-10 rounded-lg bg-primary text-primary-foreground text-sm font-medium opacity-50 cursor-not-allowed">
+              <Phone className="h-4 w-4" /> Ligar
+            </button>
+          )}
+          {mailHref ? (
+            <a href={mailHref} className="flex-1 flex items-center justify-center gap-2 h-10 rounded-lg border border-border text-sm font-medium text-foreground hover:bg-muted transition-colors">
+              <Mail className="h-4 w-4" /> E-mail
+            </a>
+          ) : (
+            <button type="button" disabled title="Sem e-mail cadastrado" className="flex-1 flex items-center justify-center gap-2 h-10 rounded-lg border border-border text-sm font-medium text-foreground opacity-50 cursor-not-allowed">
+              <Mail className="h-4 w-4" /> E-mail
+            </button>
+          )}
         </div>
 
         <div className="grid grid-cols-2 gap-3">
-          <InfoCard icon={Phone} label="Telefone" value={patient.phone} />
-          <InfoCard icon={Mail} label="E-mail" value={patient.email} />
+          <InfoCard icon={Phone} label="Telefone" value={patient.phone || "—"} />
+          <InfoCard icon={Mail} label="E-mail" value={patient.email || "—"} />
           <InfoCard icon={Calendar} label="Cadastro" value={patient.createdAt.toLocaleDateString("pt-BR")} />
-          <InfoCard icon={DollarSign} label="Faturamento" value={`R$ ${patient.totalSpent.toLocaleString("pt-BR")}`} />
+          <InfoCard icon={DollarSign} label="Valor do lead" value={`R$ ${patient.totalSpent.toLocaleString("pt-BR")}`} />
         </div>
 
         <div className="bg-card rounded-xl border border-border p-4">
@@ -1028,23 +1143,50 @@ function PatientDetail({ patient, onClose }: { patient: Patient; onClose: () => 
         </div>
 
         <div>
-          <h3 className="text-sm font-semibold text-foreground mb-3">Histórico</h3>
-          <div className="space-y-3">
-            {[
-              { action: "Consulta de avaliação", date: "Há 7 dias" },
-              { action: "Orçamento enviado — Implante", date: "Há 7 dias" },
-              { action: "Mensagem enviada via WhatsApp", date: "Há 5 dias" },
-              { action: `Lead cadastrado via ${patient.origin}`, date: patient.createdAt.toLocaleDateString("pt-BR") },
-            ].map((item, i) => (
-              <div key={i} className="flex items-start gap-3">
+          <h3 className="text-sm font-semibold text-foreground mb-3">Histórico de consultas</h3>
+          {!hasLinkedPatient ? (
+            <p className="text-sm text-muted-foreground py-2">
+              Este lead ainda não está ligado a um paciente cadastrado. As consultas aparecem aqui depois que ele virar paciente.
+            </p>
+          ) : historyLoading ? (
+            <div className="flex items-center gap-2 py-3 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> Carregando histórico...
+            </div>
+          ) : historyError ? (
+            <div role="alert" className="space-y-2 py-2">
+              <p className="text-sm text-destructive">Não foi possível carregar o histórico. {historyError}</p>
+              <button type="button" onClick={loadHistory} className="text-xs font-semibold underline">Tentar de novo</button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {(history || []).map((appt) => (
+                <div key={appt.id} className="flex items-start gap-3">
+                  <div className="mt-1 h-2 w-2 rounded-full bg-primary/40 shrink-0" />
+                  <div>
+                    <p className="text-sm text-foreground">
+                      {appt.procedimento || "Consulta"}
+                      {appt.status && <span className="text-muted-foreground"> · <span className="capitalize">{appt.status}</span></span>}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground">
+                      {appt.data ? new Date(String(appt.data).slice(0, 10) + "T12:00:00").toLocaleDateString("pt-BR") : "—"}
+                      {appt.hora ? ` às ${appt.hora}` : ""}
+                      {appt.dentista_nome ? ` · ${appt.dentista_nome}` : ""}
+                    </p>
+                  </div>
+                </div>
+              ))}
+              {(history || []).length === 0 && (
+                <p className="text-sm text-muted-foreground">Nenhuma consulta encontrada.</p>
+              )}
+              <div className="flex items-start gap-3">
                 <div className="mt-1 h-2 w-2 rounded-full bg-primary/40 shrink-0" />
                 <div>
-                  <p className="text-sm text-foreground">{item.action}</p>
-                  <p className="text-[11px] text-muted-foreground">{item.date}</p>
+                  <p className="text-sm text-foreground">Lead cadastrado via {patient.origin}</p>
+                  <p className="text-[11px] text-muted-foreground">{patient.createdAt.toLocaleDateString("pt-BR")}</p>
                 </div>
               </div>
-            ))}
-          </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

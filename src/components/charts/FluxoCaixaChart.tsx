@@ -3,9 +3,13 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
 import { ClientOnly } from "@/components/ClientOnly";
 import { chartTooltipStyle, chartTickFill, chartGridStroke } from "@/lib/chartTheme";
 
-const fluxoData: any[] = [];
+export interface FluxoMesPonto {
+  mes: string;
+  entradas: number;
+  saidas: number;
+}
 
-function FluxoCaixaChartInner() {
+function FluxoCaixaChartInner({ data }: { data: FluxoMesPonto[] }) {
   const ref = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
 
@@ -27,10 +31,10 @@ function FluxoCaixaChartInner() {
   return (
     <div ref={ref} style={{ width: "100%", height: 220 }}>
       {size && (
-        <BarChart width={size.w} height={size.h} data={fluxoData} margin={{ left: 0, right: 8, top: 4, bottom: 0 }}>
+        <BarChart width={size.w} height={size.h} data={data} margin={{ left: 0, right: 8, top: 4, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke={chartGridStroke} strokeOpacity={0.5} />
           <XAxis dataKey="mes" tick={{ fontSize: 11, fill: chartTickFill }} axisLine={false} tickLine={false} />
-          <YAxis tick={{ fontSize: 10, fill: chartTickFill }} axisLine={false} tickLine={false} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} width={40} />
+          <YAxis tick={{ fontSize: 10, fill: chartTickFill }} axisLine={false} tickLine={false} tickFormatter={(v: number) => (Math.abs(v) >= 1000 ? `${(v / 1000).toFixed(0)}k` : `${v}`)} width={40} />
           <Tooltip
             contentStyle={chartTooltipStyle}
             formatter={(value: number, name: string) => [`R$ ${value.toLocaleString("pt-BR")}`, name === "entradas" ? "Entradas" : "Saídas"]}
@@ -43,14 +47,21 @@ function FluxoCaixaChartInner() {
   );
 }
 
-export function FluxoCaixaChart() {
+export function FluxoCaixaChart({ data }: { data: FluxoMesPonto[] }) {
+  const vazio = data.every((d) => d.entradas === 0 && d.saidas === 0);
   return (
     <div className="bg-card rounded-xl border border-border p-5">
       <h3 className="text-sm font-semibold text-card-foreground mb-1">Fluxo de Caixa</h3>
       <p className="text-[11px] text-muted-foreground mb-4">Entradas vs saídas — últimos 7 meses</p>
-      <ClientOnly fallback={<div style={{ width: "100%", height: 220 }} className="animate-pulse bg-muted/30 rounded-lg" />}>
-        <FluxoCaixaChartInner />
-      </ClientOnly>
+      {vazio ? (
+        <div className="h-[220px] flex items-center justify-center text-xs text-muted-foreground text-center">
+          Nenhuma movimentação nos últimos meses
+        </div>
+      ) : (
+        <ClientOnly fallback={<div style={{ width: "100%", height: 220 }} className="animate-pulse bg-muted/30 rounded-lg" />}>
+          <FluxoCaixaChartInner data={data} />
+        </ClientOnly>
+      )}
       <div className="flex items-center gap-4 mt-3 text-[11px] text-muted-foreground">
         <div className="flex items-center gap-1.5">
           <span className="h-2 w-2 rounded-full bg-success" />

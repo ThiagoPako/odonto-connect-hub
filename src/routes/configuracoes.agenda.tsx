@@ -57,20 +57,24 @@ function HorariosEditor({
   onChange: (h: HorariosSemana) => void;
   disabled?: boolean;
 }) {
+  // A clínica pode ainda não ter horário salvo (horarios null ou dia faltando): usa o padrão
+  const semana: HorariosSemana = { ...DEFAULT_HORARIOS, ...(horarios || {}) };
   const set = (dia: DiaSemana, patch: Partial<HorariosSemana[DiaSemana]>) => {
-    onChange({ ...horarios, [dia]: { ...horarios[dia], ...patch } });
+    onChange({ ...semana, [dia]: { ...semana[dia], ...patch } });
   };
   return (
     <div className="space-y-2">
       {DIAS.map(({ key, label }) => {
-        const h = horarios[key];
+        const h = semana[key];
         return (
           <div
             key={key}
-            className="grid grid-cols-[120px_60px_1fr_auto_1fr] items-center gap-3 rounded-md border border-border/60 bg-card/50 px-3 py-2"
+            className="grid grid-cols-[minmax(96px,1fr)_auto_minmax(96px,1fr)] sm:grid-cols-[120px_60px_1fr_auto_1fr] items-center gap-x-3 gap-y-2 rounded-md border border-border/60 bg-card/50 px-3 py-2"
           >
-            <Label className="font-medium">{label}</Label>
+            <Label className="font-medium col-span-2 sm:col-span-1">{label}</Label>
             <Switch
+              aria-label={`Atender ${label.toLowerCase()}`}
+              className="justify-self-end sm:justify-self-auto"
               checked={h.ativo}
               onCheckedChange={(v) => set(key, { ativo: v })}
               disabled={disabled}
@@ -80,7 +84,7 @@ function HorariosEditor({
               value={h.inicio}
               onChange={(e) => set(key, { inicio: e.target.value })}
               disabled={disabled || !h.ativo}
-              className="h-9"
+              className="h-9 min-w-[96px]"
             />
             <span className="text-sm text-muted-foreground">até</span>
             <Input
@@ -88,7 +92,7 @@ function HorariosEditor({
               value={h.fim}
               onChange={(e) => set(key, { fim: e.target.value })}
               disabled={disabled || !h.ativo}
-              className="h-9"
+              className="h-9 min-w-[96px]"
             />
           </div>
         );
@@ -105,7 +109,7 @@ function ClinicaTab() {
   useEffect(() => {
     clinicaApi.getConfig().then(({ data, error }) => {
       if (error) toast.error("Erro ao carregar config: " + error);
-      else if (data) setConfig(data);
+      else if (data) setConfig({ ...data, horarios: { ...DEFAULT_HORARIOS, ...(data.horarios || {}) } });
       setLoading(false);
     });
   }, []);

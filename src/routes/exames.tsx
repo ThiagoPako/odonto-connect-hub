@@ -24,6 +24,8 @@ const STATUS_ORDER: ExameStatus[] = ["novo","em_andamento","aguardando_laudo","c
 function ExamesPage() {
   const [exames, setExames] = useState<Exame[]>([]);
   const [tipos, setTipos] = useState<ExameTipo[]>([]);
+  const [tiposCarregados, setTiposCarregados] = useState(false);
+  const [tiposErro, setTiposErro] = useState<string | null>(null);
   const [pacientes, setPacientes] = useState<Array<{ id: string; nome: string }>>([]);
   const [stats, setStats] = useState<ExameStats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -57,24 +59,37 @@ function ExamesPage() {
     finally { setLoading(false); }
   }
 
+  async function carregarTipos() {
+    setTiposErro(null);
+    try {
+      const t = await exameTiposApi.list();
+      setTipos(t);
+    } catch (e) {
+      const msg = (e as Error)?.message || "erro";
+      setTiposErro(msg);
+      toast.error("Não foi possível carregar os tipos de exame: " + msg);
+    } finally {
+      setTiposCarregados(true);
+    }
+  }
+
   useEffect(() => {
+    // Tipos e pacientes carregam separados: a falha de um não esconde o outro
+    carregarTipos();
     (async () => {
-      try {
-        const [t, p] = await Promise.all([exameTiposApi.list(), pacientesApi.list()]);
-        setTipos(t);
-        if (p.error) toast.error("Não foi possível carregar a lista de pacientes: " + p.error);
-        const pData = p.data;
-        setPacientes(Array.isArray(pData) ? (pData as Array<{ id: string; nome: string }>) : []);
-      } catch (e) {
-        toast.error("Não foi possível carregar os tipos de exame: " + ((e as Error)?.message || "erro"));
-      }
+      const p = await pacientesApi.list();
+      if (p.error) toast.error("Não foi possível carregar a lista de pacientes: " + p.error);
+      const pData = p.data;
+      setPacientes(Array.isArray(pData) ? (pData as Array<{ id: string; nome: string }>) : []);
     })();
   }, []);
 
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [statusFilter]);
 
   async function handleCreate() {
-    if (!form.tipo_nome) return toast.error("Selecione o tipo de exame");
+    if (!form.tipo_nome.trim()) {
+      return toast.error(tipos.length === 0 ? "Digite o nome do exame" : "Selecione o tipo de exame");
+    }
     setSaving(true);
     try {
       await examesApi.create({
@@ -206,7 +221,33 @@ function ExamesPage() {
           <DialogHeader><DialogTitle>Novo exame</DialogTitle></DialogHeader>
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2">
-              <Label>Tipo de exame *</Label>
+              <Label htmlFor={tipos.length === 0 ? "novo-exame-tipo-livre" : undefined}>
+                {tipos.length === 0 ? "Nome do exame *" : "Tipo de exame *"}
+              </Label>
+              {tipos.length === 0 && tiposCarregados ? (
+                <>
+                  <Input
+                    id="novo-exame-tipo-livre"
+                    placeholder="Ex.: Panorâmica, Tomografia, Periapical"
+                    value={form.tipo_nome}
+                    onChange={(e) => setForm(f => ({ ...f, tipo_exame_id: "", tipo_nome: e.target.value }))}
+                  />
+                  {tiposErro ? (
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                      <p className="text-xs text-destructive">
+                        Não foi possível carregar os tipos de exame. Digite o nome ou tente de novo.
+                      </p>
+                      <Button type="button" variant="outline" size="sm" className="h-8" onClick={() => carregarTipos()}>
+                        Tentar de novo
+                      </Button>
+                    </div>
+                  ) : (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Esta clínica ainda não tem tipos de exame cadastrados. Digite o nome do exame.
+                    </p>
+                  )}
+                </>
+              ) : (
               <Select
                 value={form.tipo_exame_id}
                 onValueChange={(v) => {
@@ -219,6 +260,7 @@ function ExamesPage() {
                   {tipos.map(t => <SelectItem key={t.id} value={t.id}>{t.nome}{t.categoria ? ` · ${t.categoria}` : ""}</SelectItem>)}
                 </SelectContent>
               </Select>
+              )}
             </div>
             <div className="col-span-2">
               <Label>Paciente</Label>
