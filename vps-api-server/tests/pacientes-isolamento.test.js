@@ -66,6 +66,13 @@ describe('Isolamento entre clínicas — rotas /api/pacientes/:id', () => {
         return Promise.resolve({ rows: [], rowCount: ok ? 1 : 0 });
       }
       // consentimento v2.0: a clínica B tem encarregado de dados cadastrado
+      // termo completo exige CNPJ e endereço da clínica (LGPD art. 9º III)
+      if (/SELECT nome, cnpj FROM tenants/.test(text)) {
+        return Promise.resolve({ rows: [{ nome: 'Clínica B', cnpj: '00.000.000/0001-00' }], rowCount: 1 });
+      }
+      if (/FROM tenant_settings/.test(text) && params[1] === 'clinic_location') {
+        return Promise.resolve({ rows: [{ value: { address: 'Rua B, 1' } }], rowCount: 1 });
+      }
       if (/FROM tenant_settings/.test(text) && params[1] === 'lgpd_encarregado') {
         const ok = params[0] === tenantB;
         return Promise.resolve({ rows: ok ? [{ value: { nome: 'DPO B', contato: 'dpo@b' } }] : [], rowCount: ok ? 1 : 0 });

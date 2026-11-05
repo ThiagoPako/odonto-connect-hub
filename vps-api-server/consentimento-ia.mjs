@@ -10,19 +10,30 @@ export const CONSENT_TIPO_GRAVACAO_IA = 'gravacao_transcricao_ia';
 export const CONSENT_VERSAO_ATUAL = '2.0';
 export const CONSENT_VERSAO_MINIMA = '2.0';
 
-// Retenção no provedor (decisão e conta do dono do SaaS: retenção zero contratada ou não).
-// Configurável por OPENAI_RETENCAO_TEXTO; padrão "por até 30 dias".
+// Retenção no provedor: valor fechado OPENAI_RETENCAO = 30d | zero (decisão e conta do dono do SaaS,
+// conforme a retenção zero esteja contratada). Cada valor tem a sua frase inteira, da Helena: nada de
+// texto livre de variável de ambiente no meio de um documento jurídico. Valor desconhecido → 30d.
+export const RETENCAO_VALORES = ['30d', 'zero'];
 export function retencaoProvedor(env = process.env) {
-  const t = String(env.OPENAI_RETENCAO_TEXTO || '').trim();
-  return t || 'por até 30 dias';
+  const v = String(env.OPENAI_RETENCAO || '').trim().toLowerCase();
+  return RETENCAO_VALORES.includes(v) ? v : '30d';
 }
+
+const FRASE_RETENCAO_CURTA = {
+  '30d': 'A OpenAI mantém registros técnicos de segurança por até 30 dias e não usa seus dados para treinar a IA.',
+  zero: 'A OpenAI não guarda o conteúdo depois de processar e não usa seus dados para treinar a IA.',
+};
+const FRASE_RETENCAO_COMPLETA = {
+  '30d': 'o provedor mantém registros técnicos por até 30 dias, para segurança e prevenção de abuso, e depois os apaga. Ele não usa o conteúdo para treinar modelos de IA.',
+  zero: 'o provedor não guarda o conteúdo depois de processar e não o usa para treinar modelos de IA.',
+};
 
 const CURTA_2_0 = `Gravação da consulta e transcrição por inteligência artificial
 
 Para ajudar o dentista a registrar sua consulta, a {clinica} pode gravar o áudio do atendimento. O áudio é transformado em texto e organizado em um rascunho de relatório por um serviço de inteligência artificial da OpenAI, com servidores nos Estados Unidos.
 
-- Para quê: só para o registro clínico. O dentista revisa o texto antes de salvar no seu prontuário.
-- O que fica guardado: o áudio é apagado logo depois da transcrição. O texto revisado faz parte do prontuário. A OpenAI {retencao} mantém registros para segurança e não usa seus dados para treinar a IA.
+- Para quê: só para o registro clínico. O dentista revisa e aprova o texto antes de ele entrar no seu prontuário.
+- O que fica guardado: o áudio é apagado logo depois da transcrição. O texto aprovado pelo dentista faz parte do prontuário. {frase_retencao}
 - Você escolhe: se não quiser a gravação, o atendimento acontece normalmente, sem nenhum prejuízo.
 - Você pode mudar de ideia a qualquer momento, na recepção ou por mensagem para a clínica.
 
@@ -32,25 +43,26 @@ const COMPLETA_2_0 = `Autorização para gravação e transcrição por intelig�
 
 1. Quem é responsável pelos seus dados. A {clinica} ({cnpj}, {endereco}) é a controladora: é ela quem decide como seus dados são usados. Contato do encarregado de dados: {contato_encarregado}.
 
-2. Quem trata os dados em nome da clínica. A clínica usa o sistema Odonto Connect, que trata os dados como operador, seguindo as instruções da clínica. Para a transcrição, o Odonto Connect usa a OpenAI como suboperadora, contratada para essa função.
+2. Quem trata os dados em nome da clínica. A clínica usa o sistema Odonto Connect, que trata os dados como operador, seguindo as instruções da clínica. Para transcrever o áudio e preparar o rascunho do relatório, o Odonto Connect usa a OpenAI como suboperadora, contratada para essa função.
 
 3. O que é feito e para quê. Com a sua autorização:
 (a) o áudio da consulta é gravado no aparelho da clínica;
 (b) o áudio é enviado à OpenAI, que o transforma em texto;
-(c) o texto é enviado novamente à OpenAI para ser organizado em um rascunho de relatório clínico;
-(d) o cirurgião-dentista lê, corrige e decide o que entra no seu prontuário.
-A finalidade é exclusivamente o registro clínico do seu atendimento. Nada disso é usado para propaganda, venda de dados ou qualquer outro fim. Nenhuma decisão sobre você é tomada pela IA, porque o dentista revisa tudo.
+(c) o texto, junto com as anotações do dentista sobre a consulta (queixa, procedimento, região e prescrições), é enviado à OpenAI, sem o seu nome, para ser organizado em um rascunho de relatório clínico;
+(d) o cirurgião-dentista lê, corrige e aprova o que entra no seu prontuário. Enquanto não é aprovado, o rascunho não faz parte do prontuário.
+A finalidade é exclusivamente o registro clínico do seu atendimento. Nada disso é usado para propaganda, venda de dados ou qualquer outro fim. Nenhuma decisão sobre você é tomada pela IA: o dentista revisa e aprova tudo.
 
 4. Transferência para fora do Brasil. Os servidores da OpenAI ficam nos Estados Unidos. A transferência é feita com base nesta autorização específica (Lei nº 13.709/2018, art. 33, VIII) e nas garantias contratuais firmadas com o provedor.
 
 5. Por quanto tempo.
 - Áudio: não fica guardado no sistema da clínica. É apagado logo depois da transcrição.
-- Na OpenAI: o provedor {retencao} mantém registros técnicos para segurança e prevenção de abuso. Depois disso, eles são apagados. O provedor não usa o conteúdo para treinar modelos de IA.
-- Texto revisado: passa a fazer parte do seu prontuário odontológico, que a lei manda guardar por no mínimo 20 anos desde o último registro (Lei nº 13.787/2018, art. 6º).
+- Transcrição completa (o texto de tudo o que foi dito): é apagada quando o dentista aprova o relatório, a não ser que a clínica tenha escolhido guardá-la no prontuário.
+- Na OpenAI: {frase_retencao_completa}
+- Relatório aprovado: passa a fazer parte do seu prontuário odontológico, que a lei manda guardar por no mínimo 20 anos desde o último registro (Lei nº 13.787/2018, art. 6º).
 
 6. Você não é obrigado(a). Autorizar é opcional. Se não autorizar, você é atendido(a) normalmente, e o dentista registra a consulta da forma tradicional.
 
-7. Como mudar de ideia (revogar). Você pode revogar a qualquer momento, sem custo e sem explicar o motivo: na recepção, com o dentista ou por mensagem para a clínica. A partir da revogação, nenhuma consulta é gravada. O que já foi registrado no prontuário continua lá, porque faz parte do seu histórico clínico. Os registros técnicos já enviados ao provedor são apagados no prazo do item 5.
+7. Como mudar de ideia (revogar). Você pode revogar a qualquer momento, sem custo e sem explicar o motivo: na recepção, com o dentista ou por mensagem para a clínica. A partir da revogação, nenhuma consulta é gravada. O que já foi aprovado no prontuário continua lá, porque faz parte do seu histórico clínico. Os registros técnicos já enviados ao provedor seguem o prazo do item 5.
 
 8. Crianças e adolescentes. Para pacientes menores de 12 anos, a autorização é dada por um dos pais ou pelo responsável legal (Lei nº 13.709/2018, art. 14, §1º). Para pacientes de 12 a 17 anos, o responsável autoriza e o adolescente também é informado e pode recusar.
 
@@ -69,7 +81,9 @@ export const CONSENT_CATALOGO = {
   },
 };
 
-const VARIAVEIS = ['clinica', 'cnpj', 'endereco', 'contato_encarregado', 'retencao', 'paciente'];
+const VARIAVEIS = ['clinica', 'cnpj', 'endereco', 'contato_encarregado', 'frase_retencao', 'frase_retencao_completa', 'paciente'];
+// Identificação do controlador e do encarregado (LGPD art. 9º III e IV): sem elas o termo não vale.
+export const VARIAVEIS_OBRIGATORIAS = ['clinica', 'cnpj', 'endereco', 'contato_encarregado'];
 
 function preencher(template, vars) {
   let out = template;
@@ -79,26 +93,39 @@ function preencher(template, vars) {
   return out;
 }
 
+const vazio = (v) => !String(v ?? '').trim();
+
 /**
- * Monta o texto exibido (curta + completa + as duas opções) de uma versão do catálogo,
- * com as variáveis da clínica, e o SHA-256 desse texto exato. Retorna null se a versão não existe.
+ * Monta o texto (curta + opções + completa) de uma versão do catálogo e o SHA-256 desse texto.
+ * - Versão inexistente → null.
+ * - Falta algum dado obrigatório (clínica, CNPJ, endereço, encarregado) → { faltando: [...] } sem
+ *   texto completo: o servidor NÃO monta o termo e a autorização fica bloqueada. Nada de substituto.
+ * - A versão curta (que só usa clínica, retenção e paciente) sai sempre, para a tela e para registrar
+ *   uma recusa; o hash da recusa sem termo completo é o da curta + opções.
  */
 export function montarTextoConsentimento(tipo, versao, vars) {
   const v = CONSENT_CATALOGO[tipo]?.[versao];
   if (!v) return null;
+  const retencao = RETENCAO_VALORES.includes(vars.retencao) ? vars.retencao : retencaoProvedor();
   const valores = {
-    clinica: vars.clinica || 'clínica',
-    cnpj: vars.cnpj || 'CNPJ não informado',
-    endereco: vars.endereco || 'endereço não informado',
-    contato_encarregado: vars.contato_encarregado || '',
-    retencao: vars.retencao || retencaoProvedor(),
-    paciente: vars.paciente || 'o paciente',
+    clinica: vars.clinica,
+    cnpj: vars.cnpj,
+    endereco: vars.endereco,
+    contato_encarregado: vars.contato_encarregado,
+    frase_retencao: FRASE_RETENCAO_CURTA[retencao],
+    frase_retencao_completa: FRASE_RETENCAO_COMPLETA[retencao],
+    paciente: vazio(vars.paciente) ? 'o paciente' : vars.paciente,
   };
-  const curta = preencher(v.curta, valores);
-  const completa = preencher(v.completa, valores);
+  const faltando = VARIAVEIS_OBRIGATORIAS.filter((k) => vazio(valores[k]));
+  const curta = vazio(valores.clinica) ? null : preencher(v.curta, valores);
   const opcoes = { autorizo: preencher(v.opcoes.autorizo, valores), nao_autorizo: preencher(v.opcoes.nao_autorizo, valores) };
-  const texto = [curta, '', `( ) ${opcoes.autorizo}`, `( ) ${opcoes.nao_autorizo}`, '', '---', '', completa].join('\n');
-  return { versao, curta, completa, opcoes, texto, hash: sha256(texto) };
+  const blocoCurto = curta ? [curta, '', `( ) ${opcoes.autorizo}`, `( ) ${opcoes.nao_autorizo}`].join('\n') : null;
+  if (faltando.length) {
+    return { versao, retencao, faltando, curta, completa: null, opcoes, texto: blocoCurto, hash: blocoCurto ? sha256(blocoCurto) : null };
+  }
+  const completa = preencher(v.completa, valores);
+  const texto = [blocoCurto, '', '---', '', completa].join('\n');
+  return { versao, retencao, faltando: [], curta, completa, opcoes, texto, hash: sha256(texto) };
 }
 
 export function sha256(texto) {

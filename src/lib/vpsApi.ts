@@ -1296,10 +1296,14 @@ export interface ConsentimentoPaciente {
 /** Texto do consentimento montado pelo servidor (catálogo de versões), com o hash SHA-256. */
 export interface ConsentimentoTexto {
   versao: string;
-  curta: string;
-  completa: string;
+  /** null se o cadastro está sem o nome da clínica. */
+  curta: string | null;
+  /** null se falta CNPJ, endereço ou encarregado: aí só a recusa pode ser registrada. */
+  completa: string | null;
   opcoes: { autorizo: string; nao_autorizo: string };
-  hash: string;
+  hash: string | null;
+  faltando: string[];
+  faltando_rotulos: string[];
   encarregado_cadastrado: boolean;
   idade: number | null;
 }

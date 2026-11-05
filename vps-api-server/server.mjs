@@ -14487,6 +14487,14 @@ const consentError = (res, err, ctx) => {
   return res.status(500).json({ error: 'Não foi possível concluir agora. Tente de novo.' });
 };
 
+// O que falta no cadastro para o termo valer, em português, para a tela e para o 409.
+const CONSENT_FALTANDO_ROTULO = {
+  clinica: 'nome da clínica',
+  cnpj: 'CNPJ da clínica (Minha Assinatura / cadastro da clínica)',
+  endereco: 'endereço da clínica (Configurações > Clínica)',
+  contato_encarregado: 'encarregado de dados (LGPD art. 41)',
+};
+
 // Encarregado de dados (LGPD art. 41 §1º): sem ele, a gravação fica bloqueada.
 app.get('/api/lgpd/encarregado', async (req, res) => {
   try {
@@ -14524,6 +14532,10 @@ app.get('/api/consentimentos/texto', async (req, res) => {
       completa: montado.completa,
       opcoes: montado.opcoes,
       hash: montado.hash,
+      // Sem CNPJ, endereço ou encarregado o termo completo não é montado e só a recusa pode ser
+      // registrada (LGPD art. 9º III e IV). A tela mostra o que falta.
+      faltando: montado.faltando,
+      faltando_rotulos: montado.faltando.map((k) => CONSENT_FALTANDO_ROTULO[k] || k),
       encarregado_cadastrado: !!encarregado,
       idade: subject?.dataNascimento ? idadeEmAnos(subject.dataNascimento) : null,
     });
@@ -14717,14 +14729,17 @@ app.post('/api/pacientes/:id/consentimentos', async (req, res) => {
     const subject = await loadConsentSubject(user.tenant_id, req.params.id);
     if (!subject) return res.status(404).json({ error: 'Paciente não encontrado' });
 
-    const { montado, encarregado } = await buildConsentTextFor(user.tenant_id, subject);
-    // Só a autorização exige o encarregado (o texto precisa do contato dele). A recusa nunca é barrada.
-    if (!encarregado && decisao === 'autorizo') {
+    const { montado } = await buildConsentTextFor(user.tenant_id, subject);
+    // Só a autorização exige o termo completo (CNPJ, endereço e encarregado: LGPD art. 9º III e IV).
+    // A recusa nunca é barrada: fica registrada com o hash da versão curta.
+    if (decisao === 'autorizo' && montado.faltando.length) {
       return res.status(409).json({
-        error: 'A clínica ainda não cadastrou o encarregado de dados (LGPD art. 41). Peça ao administrador para cadastrar antes de gravar.',
-        code: 'ENCARREGADO_REQUIRED',
+        error: `A gravação está bloqueada: falta no cadastro da clínica ${montado.faltando.map((k) => CONSENT_FALTANDO_ROTULO[k] || k).join(', ')}. Peça ao administrador para completar.`,
+        code: montado.faltando.length === 1 && montado.faltando[0] === 'contato_encarregado' ? 'ENCARREGADO_REQUIRED' : 'CADASTRO_INCOMPLETO',
+        faltando: montado.faltando,
       });
     }
+    if (!montado.hash) return res.status(409).json({ error: 'O cadastro da clínica está sem nome.', code: 'CADASTRO_INCOMPLETO', faltando: ['clinica'] });
     // O texto que vale é o que o servidor montou. Se a tela mostrou outro (versão antiga em cache,
     // dados da clínica alterados), pede para recarregar em vez de registrar um texto diferente.
     if (b.texto_hash && String(b.texto_hash) !== montado.hash) {

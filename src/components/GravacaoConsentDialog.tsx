@@ -56,7 +56,7 @@ function imprimirCopia(texto: ConsentimentoTexto, pacienteNome?: string) {
   const esc = (t: string) => t.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c] as string);
   w.document.write(`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Autorização — ${esc(pacienteNome || "paciente")}</title>
     <style>body{font:14px/1.5 system-ui,sans-serif;max-width:680px;margin:24px auto;padding:0 16px;white-space:pre-wrap}small{color:#555}</style></head>
-    <body>${esc(texto.curta)}\n\n${esc(texto.completa)}\n\n<small>Versão ${esc(texto.versao)} · Código do texto (SHA-256): ${esc(texto.hash)}</small></body></html>`);
+    <body>${esc(texto.curta || "")}\n\n${esc(texto.completa || "")}\n\n<small>Versão ${esc(texto.versao)} · Código do texto (SHA-256): ${esc(texto.hash || "")}</small></body></html>`);
   w.document.close();
   w.focus();
   w.print();
@@ -120,6 +120,7 @@ export function GravacaoConsentDialog({ open, pacienteId, pacienteNome, recusaEm
     void load();
   }, [open, load]);
 
+  const incompleto = !!texto && texto.faltando.length > 0;
   const idade = texto?.idade ?? (idadeInformada.trim() !== "" && Number.isFinite(Number(idadeInformada)) ? Number(idadeInformada) : null);
   const menor = idade != null && idade < 18;
   const menorDe12 = idade != null && idade < 12;
@@ -143,7 +144,7 @@ export function GravacaoConsentDialog({ open, pacienteId, pacienteNome, recusaEm
   };
 
   const registrar = async () => {
-    if (!texto || !pacienteId || saving) return;
+    if (!texto || !texto.hash || !pacienteId || saving) return;
     setErro(null);
     if (idade == null) return setErro("Informe a idade do paciente.");
     if (!decisao) return setErro("Marque \"Autorizo\" ou \"Não autorizo\".");
@@ -180,15 +181,17 @@ export function GravacaoConsentDialog({ open, pacienteId, pacienteNome, recusaEm
     onDone(data.consent, decisao);
   };
 
-  const opcao = (valor: Decisao, rotulo: string) => {
+  const opcao = (valor: Decisao, rotulo: string, desabilitada = false) => {
     const ativo = decisao === valor;
     return (
       <button
         type="button"
         role="radio"
         aria-checked={ativo}
+        aria-disabled={desabilitada}
+        disabled={desabilitada}
         onClick={() => setDecisao(valor)}
-        className={`flex-1 rounded-xl border-2 p-3 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+        className={`flex-1 rounded-xl border-2 p-3 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 ${
           ativo ? "border-primary bg-primary/10 text-foreground" : "border-border bg-card text-foreground hover:bg-muted/50"
         }`}
       >
@@ -229,14 +232,17 @@ export function GravacaoConsentDialog({ open, pacienteId, pacienteNome, recusaEm
           </div>
         )}
 
-        {texto && !texto.encarregado_cadastrado && (
+        {texto && incompleto && (
           <div role="alert" className="rounded-lg border border-warning/50 bg-warning/10 p-3 text-sm space-y-3">
             <p className="flex items-start gap-2 text-foreground">
               <Lock className="h-4 w-4 mt-0.5 shrink-0" aria-hidden="true" />
-              A gravação está bloqueada: a clínica ainda não cadastrou o encarregado de dados (LGPD, art. 41),
-              cujo contato precisa constar na autorização.
+              <span>
+                A gravação está bloqueada: a autorização precisa identificar a clínica e o encarregado de dados
+                (LGPD, art. 9º, III e IV). Falta: {texto.faltando_rotulos.join("; ")}.
+                {" "}O paciente ainda pode registrar que não autoriza.
+              </span>
             </p>
-            {isAdmin ? (
+            {isAdmin && texto.faltando.includes("contato_encarregado") && (
               <div className="grid gap-2 sm:grid-cols-2">
                 <div className="space-y-1">
                   <Label htmlFor="enc-nome">Nome do encarregado</Label>
@@ -250,13 +256,14 @@ export function GravacaoConsentDialog({ open, pacienteId, pacienteNome, recusaEm
                   {encSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Salvar encarregado
                 </Button>
               </div>
-            ) : (
-              <p className="text-xs text-muted-foreground">Peça ao administrador da clínica para cadastrar o encarregado de dados.</p>
+            )}
+            {!isAdmin && (
+              <p className="text-xs text-muted-foreground">Peça ao administrador da clínica para completar o cadastro.</p>
             )}
           </div>
         )}
 
-        {texto && texto.encarregado_cadastrado && (
+        {texto && texto.curta && (
           <div className="space-y-4">
             {recusaEm && (
               <p className="rounded-md bg-muted/60 p-2 text-xs text-muted-foreground">
@@ -284,7 +291,7 @@ export function GravacaoConsentDialog({ open, pacienteId, pacienteNome, recusaEm
               {texto.curta}
             </div>
 
-            <div>
+            {texto.completa && <div>
               <button
                 type="button"
                 onClick={() => setSaibaMais((v) => !v)}
@@ -298,10 +305,10 @@ export function GravacaoConsentDialog({ open, pacienteId, pacienteNome, recusaEm
                   {texto.completa}
                 </div>
               )}
-            </div>
+            </div>}
 
             <div role="radiogroup" aria-label="Decisão sobre a gravação" className="flex flex-col gap-2 sm:flex-row">
-              {opcao("autorizo", texto.opcoes.autorizo)}
+              {opcao("autorizo", texto.opcoes.autorizo, incompleto)}
               {opcao("nao_autorizo", texto.opcoes.nao_autorizo)}
             </div>
 
@@ -366,7 +373,7 @@ export function GravacaoConsentDialog({ open, pacienteId, pacienteNome, recusaEm
                     <Checkbox checked={copiaOferecida} onCheckedChange={(v) => setCopiaOferecida(v === true)} />
                     Ofereci uma cópia ao paciente
                   </label>
-                  <Button type="button" size="sm" variant="outline" onClick={() => imprimirCopia(texto, pacienteNome)}>
+                  <Button type="button" size="sm" variant="outline" onClick={() => imprimirCopia(texto, pacienteNome)} disabled={!texto.completa}>
                     <Printer className="h-4 w-4 mr-1.5" aria-hidden="true" /> Imprimir cópia
                   </Button>
                 </div>
@@ -378,7 +385,7 @@ export function GravacaoConsentDialog({ open, pacienteId, pacienteNome, recusaEm
             )}
 
             <p className="text-[11px] text-muted-foreground">
-              Versão {texto.versao} · código do texto {texto.hash.slice(0, 12)}…
+              Versão {texto.versao} · código do texto {texto.hash?.slice(0, 12)}…
             </p>
           </div>
         )}
@@ -387,7 +394,7 @@ export function GravacaoConsentDialog({ open, pacienteId, pacienteNome, recusaEm
           <Button variant="outline" onClick={() => onDone(null, null)} disabled={saving}>
             Voltar
           </Button>
-          {texto?.encarregado_cadastrado && (
+          {texto?.hash && (
             <Button
               onClick={() => void registrar()}
               disabled={saving || !decisao || (decisao === "autorizo" && !temAssinatura)}

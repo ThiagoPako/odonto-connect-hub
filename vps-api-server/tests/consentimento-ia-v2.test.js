@@ -62,6 +62,7 @@ beforeEach(() => {
     if (/SELECT nome, cnpj FROM tenants/.test(t)) return ok([{ nome: 'Clínica Sorriso', cnpj: '12.345.678/0001-90' }]);
     if (/FROM tenant_settings/.test(t)) {
       if (params[1] === 'lgpd_encarregado') return ok(params[0] === tenantA && db.encarregado ? [{ value: db.encarregado }] : []);
+      if (params[1] === 'clinic_location') return ok([{ value: { name: 'Clínica Sorriso', address: 'Rua A, 10', city: 'Campinas', state: 'SP' } }]);
       return ok([]);
     }
     if (/FROM consentimentos_pacientes/.test(t)) {
@@ -87,24 +88,48 @@ const adulto = { decisao: 'autorizo', assinante_tipo: 'paciente', assinante_nome
 const insert = () => sqlLog.find((q) => /INSERT INTO consentimentos_pacientes/.test(q.text));
 
 describe('catálogo e regras (consentimento-ia.mjs)', () => {
-  test('texto montado tem as variáveis da clínica e hash SHA-256 estável', () => {
-    const vars = { clinica: 'Clínica X', cnpj: '1', endereco: 'Rua A', contato_encarregado: 'Carla (c@x)', paciente: 'Ana' };
-    const a = ci.montarTextoConsentimento('gravacao_transcricao_ia', '2.0', vars);
-    const b = ci.montarTextoConsentimento('gravacao_transcricao_ia', '2.0', vars);
+  const vars = { clinica: 'Clínica X', cnpj: '12.345.678/0001-90', endereco: 'Rua A, 10', contato_encarregado: 'Carla (c@x)', paciente: 'Ana' };
+
+  test('texto final da Helena com as variáveis da clínica e hash SHA-256 estável', () => {
+    const a = ci.montarTextoConsentimento('gravacao_transcricao_ia', '2.0', { ...vars, retencao: '30d' });
+    const b = ci.montarTextoConsentimento('gravacao_transcricao_ia', '2.0', { ...vars, retencao: '30d' });
+    expect(a.faltando).toEqual([]);
     expect(a.hash).toMatch(/^[0-9a-f]{64}$/);
     expect(a.hash).toBe(b.hash);
     expect(a.hash).toBe(ci.sha256(a.texto));
-    expect(a.texto).toContain('Clínica X');
+    expect(a.texto).toContain('A Clínica X (12.345.678/0001-90, Rua A, 10) é a controladora');
+    expect(a.texto).toContain('Contato do encarregado de dados: Carla (c@x).');
     expect(a.texto).toContain('consultas de Ana');
-    // Sem o item 3(e): o follow-up pós-consulta usa modelos fixos, sem IA (#79).
+    expect(a.texto).toContain('O dentista revisa e aprova o texto antes de ele entrar no seu prontuário.');
+    expect(a.texto).toContain('Para transcrever o áudio e preparar o rascunho do relatório');
+    expect(a.texto).toContain('é enviado à OpenAI, sem o seu nome,');
+    expect(a.texto).toContain('Transcrição completa (o texto de tudo o que foi dito)');
+    // sem o item 3(e): o follow-up pós-consulta usa modelos fixos, sem IA (#79)
+    expect(a.texto).not.toContain('(e) ');
     expect(a.texto).not.toContain('orientações pós-consulta');
-    expect(a.texto).not.toContain('(e) se a clínica usar');
-    expect(a.texto).not.toMatch(/\{(clinica|cnpj|endereco|contato_encarregado|retencao|paciente)\}/);
+    expect(a.texto).not.toMatch(/\{[a-z_]+\}/);
+    expect(a.texto).not.toMatch(/não informado/i);
   });
 
-  test('retenção configurável, padrão "por até 30 dias"', () => {
-    expect(ci.retencaoProvedor({})).toBe('por até 30 dias');
-    expect(ci.retencaoProvedor({ OPENAI_RETENCAO_TEXTO: 'não guarda' })).toBe('não guarda');
+  test('retenção por valor fechado, com uma frase inteira por opção', () => {
+    const d30 = ci.montarTextoConsentimento('gravacao_transcricao_ia', '2.0', { ...vars, retencao: '30d' });
+    const zero = ci.montarTextoConsentimento('gravacao_transcricao_ia', '2.0', { ...vars, retencao: 'zero' });
+    expect(d30.curta).toContain('A OpenAI mantém registros técnicos de segurança por até 30 dias e não usa seus dados para treinar a IA.');
+    expect(d30.completa).toContain('Na OpenAI: o provedor mantém registros técnicos por até 30 dias, para segurança e prevenção de abuso, e depois os apaga.');
+    expect(zero.curta).toContain('A OpenAI não guarda o conteúdo depois de processar e não usa seus dados para treinar a IA.');
+    expect(zero.completa).toContain('Na OpenAI: o provedor não guarda o conteúdo depois de processar e não o usa para treinar modelos de IA.');
+    expect(zero.hash).not.toBe(d30.hash);
+    expect(ci.retencaoProvedor({})).toBe('30d');
+    expect(ci.retencaoProvedor({ OPENAI_RETENCAO: 'zero' })).toBe('zero');
+    expect(ci.retencaoProvedor({ OPENAI_RETENCAO: 'não guarda nada' })).toBe('30d'); // texto livre não entra
+  });
+
+  test.each(['cnpj', 'endereco', 'contato_encarregado'])('sem %s o termo completo não é montado (nada de substituto)', (campo) => {
+    const m = ci.montarTextoConsentimento('gravacao_transcricao_ia', '2.0', { ...vars, [campo]: '  ' });
+    expect(m.faltando).toEqual([campo]);
+    expect(m.completa).toBeNull();
+    expect(m.texto).not.toContain('controladora');
+    expect(m.hash).toBe(ci.sha256(m.texto)); // hash da versão curta, para registrar a recusa
   });
 
   test('versões comparadas como números', () => {
@@ -130,6 +155,8 @@ describe('GET /api/consentimentos/texto', () => {
     expect(res.body.completa).toContain('Carla DPO (dpo@clinica-a.com)');
     expect(res.body.hash).toMatch(/^[0-9a-f]{64}$/);
     expect(res.body.encarregado_cadastrado).toBe(true);
+    expect(res.body.faltando).toEqual([]);
+    expect(res.body.completa).toContain('(12.345.678/0001-90, Rua A, 10, Campinas - SP)');
     expect(res.body.idade).toBeGreaterThan(30);
   });
 
@@ -156,6 +183,28 @@ describe('POST /api/pacientes/:id/consentimentos', () => {
     const res = await registrar({ decisao: 'nao_autorizo', assinante_tipo: 'paciente', assinante_nome: 'Ana Souza' }, token({ tenant_id: tenantC }));
     expect(res.status).toBe(200);
     expect(insert().params[6]).toBe('nao_autorizo');
+  });
+
+  test('sem CNPJ → 409 CADASTRO_INCOMPLETO para autorizar; recusa continua registrada', async () => {
+    querySpy.mockImplementation((sql, params = []) => {
+      const t = String(sql);
+      sqlLog.push({ text: t, params });
+      const ok = (rows) => Promise.resolve({ rows, rowCount: rows.length });
+      if (/FROM pacientes WHERE id::text/.test(t)) return ok([db.paciente]);
+      if (/SELECT nome, cnpj FROM tenants/.test(t)) return ok([{ nome: 'Clínica Sorriso', cnpj: null }]);
+      if (/FROM tenant_settings/.test(t) && params[1] === 'lgpd_encarregado') return ok([{ value: db.encarregado }]);
+      if (/FROM tenant_settings/.test(t) && params[1] === 'clinic_location') return ok([{ value: { address: 'Rua A' } }]);
+      if (/INSERT INTO consentimentos_pacientes/.test(t)) return ok([{ id: 'novo', decisao: params[6] }]);
+      return ok([]);
+    });
+    const res = await registrar(adulto);
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('CADASTRO_INCOMPLETO');
+    expect(res.body.faltando).toEqual(['cnpj']);
+    expect(insert()).toBeUndefined();
+    const recusa = await registrar({ decisao: 'nao_autorizo', assinante_tipo: 'paciente', assinante_nome: 'Ana Souza' });
+    expect(recusa.status).toBe(200);
+    expect(insert().params[4]).not.toContain('controladora');
   });
 
   test('sem encarregado cadastrado → 409 e nada gravado', async () => {
