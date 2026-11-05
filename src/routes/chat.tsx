@@ -5,10 +5,10 @@ import { LeadListItem } from "@/components/chat/LeadListItem";
 import { ConversationView } from "@/components/chat/ConversationView";
 import { MessageInput } from "@/components/chat/MessageInput";
 import { ChatHeader } from "@/components/chat/ChatHeader";
+import { OptOutAviso } from "@/components/chat/OptOutAviso";
 import { Users, MessageSquare, Inbox, Filter, Kanban, UserPlus, Wifi, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { NewChatFromContactDialog } from "@/components/chat/NewChatFromContactDialog";
-import { SatisfactionSurveyDialog } from "@/components/chat/SatisfactionSurveyDialog";
 import { ImportMessagesDialog } from "@/components/contatos/ImportMessagesDialog";
 import { ImportWhatsAppDialog } from "@/components/contatos/ImportWhatsAppDialog";
 import type { Contato } from "@/lib/vpsApi";
@@ -167,7 +167,6 @@ function ChatPage() {
   const [isLeadTyping, setIsLeadTyping] = useState(false);
   const [syncingPhotos, setSyncingPhotos] = useState(false);
   const [availableQueues, setAvailableQueues] = useState<AttendanceQueue[]>([]);
-  const [surveyLead, setSurveyLead] = useState<Lead | null>(null);
   const [historyHasMore, setHistoryHasMore] = useState<Record<string, boolean>>({});
   const [historyLoading, setHistoryLoading] = useState(false);
   const [presenceMap, setPresenceMap] = useState<Record<string, { status: "online" | "offline" | "typing" | "recording"; lastSeen: Date | null }>>({});
@@ -1284,11 +1283,13 @@ function ChatPage() {
       handleSendMessage(farewellMessage, "text");
     }
 
-    const instanceName = connectedInstances[0]?.instanceName || "teste";
+    // Número em que o paciente falou; sem ele, o backend usa o número padrão da clínica.
+    const conversationInstance = lead.instance
+      || [...(messages[lead.id] || [])].reverse().find((message) => message.instance)?.instance;
     sessionsApi.close({
       leadId: lead.id,
-      leadPhone: lead.phone,
-      instance: instanceName,
+      outcome: outcome || "atendido",
+      ...(conversationInstance ? { instance: conversationInstance } : {}),
     }).then(({ data, error }) => {
       if (error) {
         toast.error("Erro ao finalizar atendimento");
@@ -1303,9 +1304,32 @@ function ChatPage() {
       };
       const outcomeLabel = outcomeLabels[outcome || "atendido"] || "Finalizado";
 
+      // A pesquisa de satisfação é enviada só pelo backend (fila de envio, número da clínica).
       toast.success(`Atendimento finalizado — ${outcomeLabel}`, {
-        description: `${lead.name} — Duração: ${durationMin}min`,
+        description: data?.surveyQueued
+          ? `${lead.name} — Duração: ${durationMin}min · Pesquisa de satisfação na fila de envio`
+          : `${lead.name} — Duração: ${durationMin}min`,
       });
+      if (data?.surveyQueued) {
+        setMessages((prev) => {
+          const updated = {
+            ...prev,
+            [lead.id]: [
+              ...(prev[lead.id] || []),
+              {
+                id: `sys-nps-${Date.now()}`,
+                leadId: lead.id,
+                content: "📊 Pesquisa de satisfação na fila de envio",
+                sender: "attendant" as const,
+                type: "text" as const,
+                timestamp: new Date(),
+              },
+            ],
+          };
+          conversationArchiveRef.current[lead.id] = updated[lead.id];
+          return updated;
+        });
+      }
     });
 
     // ── Auto-move lead in CRM Kanban based on outcome ──
@@ -1369,53 +1393,6 @@ function ChatPage() {
     if (selectedLead?.id === lead.id) {
       setSelectedLead(null);
     }
-
-    // Open satisfaction survey dialog only for "atendido"
-    if (outcome === "atendido" || !outcome) {
-      setSurveyLead(lead);
-    }
-  };
-
-  const handleSendSurvey = (lead: Lead, rating: number, comment: string) => {
-    const stars = "⭐".repeat(rating);
-    const labels = ["Péssimo", "Ruim", "Regular", "Bom", "Excelente"];
-    let surveyMsg = `Olá ${lead.name}! 😊\n\nGostaríamos de saber como foi seu atendimento.\n\nSua avaliação: ${stars} (${labels[rating - 1]})\n\nPor favor, responda com uma nota de 1 a 5 para avaliar nosso atendimento.\n\n1 ⭐ Péssimo\n2 ⭐⭐ Ruim\n3 ⭐⭐⭐ Regular\n4 ⭐⭐⭐⭐ Bom\n5 ⭐⭐⭐⭐⭐ Excelente`;
-    if (comment) {
-      surveyMsg += `\n\n${comment}`;
-    }
-
-    // Send via WhatsApp
-    if (connectedInstances.length > 0 && lead.phone) {
-      const instanceName = connectedInstances[0].instanceName;
-      whatsappApi.sendText(instanceName, lead.phone, surveyMsg).catch(() => {
-        toast.error("Erro ao enviar pesquisa de satisfação");
-      });
-    }
-
-    // Add system message to archived conversation
-    setMessages((prev) => {
-      const updated = {
-        ...prev,
-        [lead.id]: [
-          ...(prev[lead.id] || []),
-          {
-            id: `sys-nps-${Date.now()}`,
-            leadId: lead.id,
-            content: `📊 Pesquisa de satisfação enviada (${stars} ${labels[rating - 1]})`,
-            sender: "attendant" as const,
-            type: "text" as const,
-            timestamp: new Date(),
-          },
-        ],
-      };
-      conversationArchiveRef.current[lead.id] = updated[lead.id];
-      return updated;
-    });
-
-    toast.success("Pesquisa de satisfação enviada!", {
-      description: `${lead.name} — ${stars}`,
-    });
-    setSurveyLead(null);
   };
 
   const handleReturnToQueue = (lead: Lead) => {
@@ -1864,6 +1841,7 @@ function ChatPage() {
           {selectedLead ? (
             <>
               <ChatHeader lead={selectedLead} onClose={() => setSelectedLead(null)} onTransfer={handleTransfer} onFinishAttendance={handleFinishAttendance} onReturnToQueue={handleReturnToQueue} messages={currentMessages} presence={presenceMap[selectedLead.id]?.status ?? "offline"} lastSeen={presenceMap[selectedLead.id]?.lastSeen ?? null} crmStage={crmStages[selectedLead.id]} onStageChange={(leadId, stage) => setCrmStages((prev) => ({ ...prev, [leadId]: stage }))} />
+              <OptOutAviso leadId={selectedLead.id} />
               <ConversationView
                 messages={currentMessages}
                 leadName={selectedLead.name}
@@ -1944,16 +1922,6 @@ function ChatPage() {
         onOpenChange={setNewChatOpen}
         onSelectContact={handleNewChatFromContact}
       />
-
-      {surveyLead && (
-        <SatisfactionSurveyDialog
-          leadName={surveyLead.name}
-          open={!!surveyLead}
-          onClose={() => setSurveyLead(null)}
-          onSend={(rating, comment) => handleSendSurvey(surveyLead, rating, comment)}
-          onSkip={() => setSurveyLead(null)}
-        />
-      )}
 
       <ImportMessagesDialog 
         open={importMessagesOpen}
