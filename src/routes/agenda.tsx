@@ -46,6 +46,7 @@ function AgendaPage() {
   const [appointments, setAppointments] = useState<AgendamentoVPS[]>([]);
   const [config, setConfig] = useState<ClinicaConfig | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [showNovo, setShowNovo] = useState(false);
   const [novoDefaults, setNovoDefaults] = useState<{ hora?: string; dentistaId?: string }>({});
   const [popoverApt, setPopoverApt] = useState<AgendamentoVPS | null>(null);
@@ -55,17 +56,25 @@ function AgendaPage() {
   // Load profs + config
   useEffect(() => {
     dentistasApi.list()
-      .then(({ data }) => {
+      .then(({ data, error }) => {
+        if (error) {
+          toast.error("Não foi possível carregar os profissionais: " + error);
+          return;
+        }
         if (Array.isArray(data)) {
           const list = (data as Prof[]).filter((p) => p?.id);
           setProfs(list);
           setSelectedProfs((prev) => Array.from(new Set([...prev, ...list.map((p) => p.id)])));
         }
       })
-      .catch((err) => console.error("[agenda] dentistas:", err));
     clinicaApi.getConfig()
-      .then(({ data }) => data && setConfig(data))
-      .catch((err) => console.error("[agenda] config:", err));
+      .then(({ data, error }) => {
+        if (error) {
+          toast.error("Não foi possível carregar o horário da clínica (usando 08:00–19:00): " + error);
+          return;
+        }
+        if (data) setConfig(data);
+      });
   }, []);
 
   // Load appointments for current date
@@ -78,8 +87,15 @@ function AgendaPage() {
     agendaApi.list({ data_inicio: requested, data_fim: requested })
       .then(({ data, error }) => {
         if (requested !== currentDateRef.current) return;
-        if (error) toast.error("Erro ao carregar agenda: " + error);
-        else if (Array.isArray(data)) {
+        if (error) {
+          // Não deixa na tela os agendamentos de outro dia
+          setAppointments([]);
+          setLoadError(error);
+          toast.error("Erro ao carregar agenda: " + error);
+          return;
+        }
+        setLoadError(null);
+        if (Array.isArray(data)) {
           setAppointments(data);
           setProfs((current) => {
             const merged = new Map<string, Prof>();
@@ -176,8 +192,9 @@ function AgendaPage() {
       const result = await clinicorpApi.reproject();
       toast.success(`Dados enviados! ${result.appointments} agendamentos, ${result.patients} pacientes e ${result.professionals} profissionais sincronizados.`, { id: toastId });
       loadAppointments();
-      const { data } = await dentistasApi.list();
-      if (Array.isArray(data)) {
+      const { data, error } = await dentistasApi.list();
+      if (error) toast.error("Não foi possível atualizar os profissionais: " + error);
+      else if (Array.isArray(data)) {
         setProfs((current) => {
           const merged = new Map(current.map((p) => [p.id, p] as const));
           for (const p of data) if (p.id) merged.set(p.id, p);
@@ -195,11 +212,11 @@ function AgendaPage() {
     <div className="flex-1 flex flex-col min-h-screen bg-background/50 animate-fade-in">
       <DashboardHeader title="Agenda" />
       <main className="flex-1 p-4 overflow-hidden">
-        <div className="flex items-center justify-between gap-3 mb-4">
-          <div className="flex items-center gap-2">
-            <Button size="sm" variant="outline" onClick={goPrev}><ChevronLeft className="h-4 w-4" /></Button>
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="outline" onClick={goPrev} aria-label="Dia anterior"><ChevronLeft className="h-4 w-4" /></Button>
             <Button size="sm" variant="outline" onClick={goToday}>Hoje</Button>
-            <Button size="sm" variant="outline" onClick={goNext}><ChevronRight className="h-4 w-4" /></Button>
+            <Button size="sm" variant="outline" onClick={goNext} aria-label="Próximo dia"><ChevronRight className="h-4 w-4" /></Button>
             
             <Popover>
               <PopoverTrigger asChild>
@@ -228,7 +245,7 @@ function AgendaPage() {
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border bg-card/50 glass-card">
               <Clock className="h-3.5 w-3.5 text-primary" />
               <Select value={String(intervalo)} onValueChange={(v) => setIntervalo(Number(v))}>
@@ -264,7 +281,7 @@ function AgendaPage() {
               <Send className={cn("h-4 w-4 mr-2 text-primary", isReprojecting && "animate-pulse")} />
               Enviar Dados
             </Button>
-            <Button size="sm" variant="outline" className="rounded-xl glass-card hover:bg-primary/10 transition-colors" onClick={loadAppointments} disabled={loading}>
+            <Button size="sm" variant="outline" className="rounded-xl glass-card hover:bg-primary/10 transition-colors" onClick={loadAppointments} disabled={loading} aria-label="Recarregar agenda">
               <RefreshCw className={`h-4 w-4 text-primary ${loading ? "animate-spin" : ""}`} />
             </Button>
             <Link to="/configuracoes/agenda">
@@ -277,6 +294,13 @@ function AgendaPage() {
             </Button>
           </div>
         </div>
+
+        {loadError && (
+          <div role="alert" className="mb-3 flex items-center justify-between gap-3 rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-2 text-sm text-destructive">
+            <span>Não foi possível carregar a agenda deste dia. {loadError}</span>
+            <Button size="sm" variant="outline" onClick={loadAppointments} disabled={loading}>Tentar de novo</Button>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-6 h-[calc(100vh-220px)]">
           <aside className="space-y-3 overflow-y-auto">

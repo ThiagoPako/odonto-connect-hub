@@ -77,10 +77,14 @@ function TratamentosPage() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
+  const [loadError, setLoadError] = useState<string | null>(null);
+
   const loadAll = useCallback(async () => {
     try {
       const res = await tratamentosApi.list();
-      const data = (res as any).data || res || [];
+      setLoadError(res.error);
+      if (res.error) { toast.error("Não foi possível carregar os tratamentos: " + res.error); return; }
+      const data: any = res.data || [];
       setTratamentos(Array.isArray(data) ? data.map((r: any) => ({
         id: r.id,
         paciente_id: r.paciente_id || '',
@@ -110,7 +114,8 @@ function TratamentosPage() {
   const loadEtapas = useCallback(async (tratId: string) => {
     try {
       const res = await tratamentosApi.getEtapas(tratId);
-      const data = (res as any).data || res || [];
+      if (res.error) { toast.error("Não foi possível carregar as etapas: " + res.error); return; }
+      const data: any = res.data || [];
       setEtapas(Array.isArray(data) ? data.map((r: any) => ({
         id: r.id,
         tratamento_id: r.tratamento_id,
@@ -145,19 +150,22 @@ function TratamentosPage() {
     if (error) { toast.error("Erro ao criar tratamento: " + error); return; }
 
     const tratId = created?.id || (created as any)?.rows?.[0]?.id;
+    let etapasFalhas = 0;
     if (tratId && data.etapas.length > 0) {
       for (let i = 0; i < data.etapas.length; i++) {
         const et = data.etapas[i];
-        await tratamentosApi.addEtapa(tratId, {
+        const { error: etapaError } = await tratamentosApi.addEtapa(tratId, {
           descricao: et.descricao,
           dente: et.dente,
           valor: Number(et.valor) || 0,
           ordem: i + 1,
           status: 'pendente',
         });
+        if (etapaError) etapasFalhas++;
       }
     }
-    toast.success("Tratamento criado com sucesso!");
+    if (etapasFalhas > 0) toast.error(`Tratamento criado, mas ${etapasFalhas} etapa(s) não foram salvas. Confira e adicione de novo.`);
+    else toast.success("Tratamento criado com sucesso!");
     setShowAddModal(false);
     loadAll();
   };
@@ -247,7 +255,13 @@ function TratamentosPage() {
                   </button>
                 );
               })}
-              {filtered.length === 0 && <p className="text-xs text-muted-foreground text-center py-8">Nenhum tratamento encontrado</p>}
+              {loadError && (
+                <div role="alert" className="text-center py-8 space-y-2">
+                  <p className="text-xs text-destructive">Não foi possível carregar os tratamentos. {loadError}</p>
+                  <button type="button" onClick={loadAll} className="text-xs font-semibold underline">Tentar de novo</button>
+                </div>
+              )}
+              {!loadError && filtered.length === 0 && <p className="text-xs text-muted-foreground text-center py-8">Nenhum tratamento encontrado</p>}
             </div>
           </div>
 
@@ -413,8 +427,9 @@ function AddTratamentoModal({
     (async () => {
       try {
         const [dRes, pRes] = await Promise.all([dentistasApi.list(), pacientesApi.list()]);
-        const dData = (dRes as any).data || dRes || [];
-        const pData = (pRes as any).data || pRes || [];
+        if (dRes.error || pRes.error) toast.error("Não foi possível carregar " + (pRes.error ? "pacientes" : "dentistas") + ": " + (pRes.error || dRes.error));
+        const dData: any = dRes.data || [];
+        const pData: any = pRes.data || [];
         const dList = Array.isArray(dData) ? dData.map((d: any) => ({ id: d.id, nome: d.nome, especialidade: d.especialidade || '' })) : [];
         const pList = Array.isArray(pData) ? pData.map((p: any) => ({ id: p.id, nome: p.nome })) : [];
         setDentistas(dList);

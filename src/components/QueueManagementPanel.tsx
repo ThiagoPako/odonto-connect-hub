@@ -121,7 +121,8 @@ export function QueueManagementPanel() {
   const toggleActive = async (id: string) => {
     const queue = queues.find((q) => q.id === id);
     if (!queue) return;
-    await queuesApi.update(id, { active: !queue.active });
+    const { error } = await queuesApi.update(id, { active: !queue.active });
+    if (error) { toast.error("Erro ao " + (queue.active ? "desativar" : "ativar") + " a fila: " + error); return; }
     loadQueues();
   };
 

@@ -33,3 +33,8 @@ dist-ssr
 
 # Saída das ferramentas de design (inspetor/capturas locais)
 .taste-skill/
+
+# Segredos: nunca versionar arquivos de ambiente (só os exemplos)
+.env
+.env.*
+!.env.example

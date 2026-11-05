@@ -16,6 +16,8 @@ import { DespesasCategoriaChart } from "@/components/charts/DespesasCategoriaCha
 import {
   finBanksApi, finEmployeesApi, finPayrollsApi, finBillsApi, finMovementsApi, finOverdueApi,
 } from "@/lib/vpsApi";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
 import type { FinanceMovement, BankAccount, Employee, Payroll, Bill } from "@/data/financeiroMockData";
 
 
@@ -68,53 +70,40 @@ function FinanceiroPage() {
   const [showAddEmployee, setShowAddEmployee] = useState(false);
   const [showAddBank, setShowAddBank] = useState(false);
 
+  const [loadErrors, setLoadErrors] = useState<string[]>([]);
+
   const loadAll = useCallback(async () => {
     setLoading(true);
-    try {
-      const [banksRes, empsRes, payRes, billsRes, movsRes, overdueRes] = await Promise.all([
-        finBanksApi.list(),
-        finEmployeesApi.list(),
-        finPayrollsApi.list(),
-        finBillsApi.list(),
-        finMovementsApi.list(),
-        finOverdueApi.list(),
-      ]);
-      const bk = ((banksRes as any).data || banksRes || []).map(mapBank);
-      const em = ((empsRes as any).data || empsRes || []).map(mapEmployee);
-      const py = ((payRes as any).data || payRes || []).map(mapPayroll);
-      const bl = ((billsRes as any).data || billsRes || []).map(mapBill);
-      const mv = ((movsRes as any).data || movsRes || []).map(mapMovement);
-      const od = ((overdueRes as any).data || overdueRes || []).map((r: any) => ({ patient: r.patient, value: Number(r.value) || 0, daysLate: r.days_late || 0, procedure: r.procedure || '' }));
-
-      // Check if API returned real data
-      if (bk.length > 0 || mv.length > 0 || em.length > 0 || py.length > 0 || bl.length > 0 || od.length > 0) {
-        setBanks(bk);
-        setEmployees(em);
-        setPayrolls(py);
-        setBills(bl);
-        setMovements(mv);
-        setOverdue(od);
-      } else {
-        // Empty state
-        setBanks([]);
-        setEmployees([]);
-        setPayrolls([]);
-        setBills([]);
-        setMovements([]);
-        setOverdue([]);
-      }
-    } catch (err) {
-      console.error("[financeiro] load error:", err);
-      // API error — show empty state
-      setBanks([]);
-      setEmployees([]);
-      setPayrolls([]);
-      setBills([]);
-      setMovements([]);
-      setOverdue([]);
-    } finally {
-      setLoading(false);
-    }
+    const [banksRes, empsRes, payRes, billsRes, movsRes, overdueRes] = await Promise.all([
+      finBanksApi.list(),
+      finEmployeesApi.list(),
+      finPayrollsApi.list(),
+      finBillsApi.list(),
+      finMovementsApi.list(),
+      finOverdueApi.list(),
+    ]);
+    // vpsApiFetch nunca lança: cada parte que falhar é listada no aviso da tela
+    // e mantém os dados que já estavam carregados.
+    const errors: string[] = [];
+    const rows = (res: { data: unknown; error: string | null }, label: string): any[] | null => {
+      if (res.error) { errors.push(`${label}: ${res.error}`); return null; }
+      return Array.isArray(res.data) ? res.data : [];
+    };
+    const bk = rows(banksRes, "Bancos");
+    const em = rows(empsRes, "Funcionários");
+    const py = rows(payRes, "Folha de pagamento");
+    const bl = rows(billsRes, "Contas a pagar");
+    const mv = rows(movsRes, "Movimentações");
+    const od = rows(overdueRes, "Inadimplência");
+    if (bk) setBanks(bk.map(mapBank));
+    if (em) setEmployees(em.map(mapEmployee));
+    if (py) setPayrolls(py.map(mapPayroll));
+    if (bl) setBills(bl.map(mapBill));
+    if (mv) setMovements(mv.map(mapMovement));
+    if (od) setOverdue(od.map((r: any) => ({ patient: r.patient, value: Number(r.value) || 0, daysLate: r.days_late || 0, procedure: r.procedure || '' })));
+    setLoadErrors(errors);
+    if (errors.length) toast.error("Parte do financeiro não carregou. Os valores podem estar incompletos.");
+    setLoading(false);
   }, []);
 
   useEffect(() => { loadAll(); }, [loadAll]);
@@ -131,98 +120,107 @@ function FinanceiroPage() {
   const handlePayBill = async (billId: string, bankAccountId: string) => {
     const bill = bills.find((b) => b.id === billId);
     if (!bill) return;
+    if (!bankAccountId) { toast.error("Cadastre ou escolha uma conta bancária antes de pagar."); return; }
     const bank = banks.find((bk) => bk.id === bankAccountId);
     const now = new Date().toLocaleDateString("pt-BR");
-    try {
-      await finBillsApi.update(billId, { status: 'pago', bank_account_id: bankAccountId, payment_date: now });
-      await finMovementsApi.create({
-        type: 'saida', description: bill.description, category: bill.category,
-        value: bill.value, date: now, bank_account_id: bankAccountId,
-        bank_name: bank?.bank ?? '—', bill_id: bill.id,
-      });
-      await loadAll();
-    } catch (err) { console.error('Erro ao pagar conta:', err); }
+    const upd = await finBillsApi.update(billId, { status: 'pago', bank_account_id: bankAccountId, payment_date: now });
+    if (upd.error) { toast.error("Erro ao pagar conta: " + upd.error); return; }
+    const mov = await finMovementsApi.create({
+      type: 'saida', description: bill.description, category: bill.category,
+      value: bill.value, date: now, bank_account_id: bankAccountId,
+      bank_name: bank?.bank ?? '—', bill_id: bill.id,
+    });
+    if (mov.error) toast.error("Conta marcada como paga, mas a saída não foi lançada nas movimentações: " + mov.error);
+    else toast.success("Conta paga e lançada nas movimentações");
+    await loadAll();
   };
 
   // Pagar folha
   const handlePayPayroll = async (payrollId: string, bankAccountId: string) => {
     const pr = payrolls.find((p) => p.id === payrollId);
     if (!pr) return;
+    if (!bankAccountId) { toast.error("Cadastre ou escolha uma conta bancária antes de pagar."); return; }
     const bank = banks.find((bk) => bk.id === bankAccountId);
     const now = new Date().toLocaleDateString("pt-BR");
-    try {
-      await finPayrollsApi.update(payrollId, { status: 'pago', bank_account_id: bankAccountId, payment_date: now });
-      await finMovementsApi.create({
-        type: 'saida', description: `Folha Pgto — ${pr.employeeName} (${pr.month})`,
-        category: 'salario', value: pr.netSalary, date: now,
-        bank_account_id: bankAccountId, bank_name: bank?.bank ?? '—', payroll_id: pr.id,
-      });
-      await loadAll();
-    } catch (err) { console.error('Erro ao pagar folha:', err); }
+    const upd = await finPayrollsApi.update(payrollId, { status: 'pago', bank_account_id: bankAccountId, payment_date: now });
+    if (upd.error) { toast.error("Erro ao pagar folha: " + upd.error); return; }
+    const mov = await finMovementsApi.create({
+      type: 'saida', description: `Folha Pgto — ${pr.employeeName} (${pr.month})`,
+      category: 'salario', value: pr.netSalary, date: now,
+      bank_account_id: bankAccountId, bank_name: bank?.bank ?? '—', payroll_id: pr.id,
+    });
+    if (mov.error) toast.error("Folha marcada como paga, mas a saída não foi lançada nas movimentações: " + mov.error);
+    else toast.success("Folha paga e lançada nas movimentações");
+    await loadAll();
   };
 
-  // Adicionar movimento manual
-  const handleAddMovement = async (mov: Omit<FinanceMovement, "id">) => {
-    try {
-      await finMovementsApi.create({
-        type: mov.type, description: mov.description, category: mov.category,
-        value: mov.value, date: mov.date, bank_account_id: mov.bankAccountId,
-        bank_name: mov.bankName, patient: mov.patient || null,
-      });
-      await loadAll();
-      setShowAddMovement(false);
-    } catch (err) { console.error('Erro ao adicionar movimentação:', err); }
+  // Adicionar movimento manual — devolve true se salvou (o formulário só limpa nesse caso)
+  const handleAddMovement = async (mov: Omit<FinanceMovement, "id">): Promise<boolean> => {
+    const { error } = await finMovementsApi.create({
+      type: mov.type, description: mov.description, category: mov.category,
+      value: mov.value, date: mov.date, bank_account_id: mov.bankAccountId,
+      bank_name: mov.bankName, patient: mov.patient || null,
+    });
+    if (error) { toast.error("Erro ao salvar movimentação: " + error); return false; }
+    toast.success("Movimentação lançada");
+    setShowAddMovement(false);
+    await loadAll();
+    return true;
   };
 
   // Adicionar conta a pagar
-  const handleAddBill = async (bill: Omit<Bill, "id">) => {
-    try {
-      await finBillsApi.create({
-        description: bill.description, category: bill.category, value: bill.value,
-        due_date: bill.dueDate, status: 'pendente', supplier: bill.supplier || null,
-        recurrent: bill.recurrent,
-      });
-      await loadAll();
-      setShowAddBill(false);
-    } catch (err) { console.error('Erro ao adicionar conta:', err); }
+  const handleAddBill = async (bill: Omit<Bill, "id">): Promise<boolean> => {
+    const { error } = await finBillsApi.create({
+      description: bill.description, category: bill.category, value: bill.value,
+      due_date: bill.dueDate, status: 'pendente', supplier: bill.supplier || null,
+      recurrent: bill.recurrent,
+    });
+    if (error) { toast.error("Erro ao salvar conta: " + error); return false; }
+    toast.success("Conta a pagar cadastrada");
+    setShowAddBill(false);
+    await loadAll();
+    return true;
   };
 
   // Adicionar funcionário
-  const handleAddEmployee = async (emp: Omit<Employee, "id">) => {
-    try {
-      const created = await finEmployeesApi.create({
-        name: emp.name, role: emp.role, cpf: emp.cpf,
-        admission_date: new Date().toLocaleDateString("pt-BR"),
-        salary: emp.salary, benefits: emp.benefits,
-        bank_account_id: banks[0]?.id || null,
-      }) as any;
-      // Criar folha pendente do mês atual
-      const deductions = Math.round(emp.salary * 0.15);
-      await finPayrollsApi.create({
-        employee_id: created.id, employee_name: emp.name,
-        month: `${String(new Date().getMonth() + 1).padStart(2, '0')}/${new Date().getFullYear()}`,
-        gross_salary: emp.salary, benefits: emp.benefits,
-        deductions, net_salary: emp.salary + emp.benefits - deductions,
-        status: 'pendente',
-      });
-      await loadAll();
-      setShowAddEmployee(false);
-    } catch (err) { console.error('Erro ao adicionar funcionário:', err); }
+  const handleAddEmployee = async (emp: Omit<Employee, "id">): Promise<boolean> => {
+    const created = await finEmployeesApi.create({
+      name: emp.name, role: emp.role, cpf: emp.cpf,
+      admission_date: new Date().toLocaleDateString("pt-BR"),
+      salary: emp.salary, benefits: emp.benefits,
+      bank_account_id: banks[0]?.id || null,
+    });
+    if (created.error) { toast.error("Erro ao cadastrar funcionário: " + created.error); return false; }
+    // Criar folha pendente do mês atual
+    const deductions = Math.round(emp.salary * 0.15);
+    const folha = await finPayrollsApi.create({
+      employee_id: (created.data as any)?.id ?? null, employee_name: emp.name,
+      month: `${String(new Date().getMonth() + 1).padStart(2, '0')}/${new Date().getFullYear()}`,
+      gross_salary: emp.salary, benefits: emp.benefits,
+      deductions, net_salary: emp.salary + emp.benefits - deductions,
+      status: 'pendente',
+    });
+    if (folha.error) toast.error("Funcionário cadastrado, mas a folha do mês não foi criada: " + folha.error);
+    else toast.success("Funcionário cadastrado");
+    setShowAddEmployee(false);
+    await loadAll();
+    return true;
   };
 
   // Adicionar banco
-  const handleAddBank = async (bank: Omit<BankAccount, "id">) => {
-    try {
-      await finBanksApi.create({
-        name: bank.name, bank: bank.bank, agency: bank.agency, account: bank.account,
-        type: bank.type, balance: bank.balance, color: bank.color,
-      });
-      await loadAll();
-      setShowAddBank(false);
-    } catch (err) { console.error('Erro ao adicionar banco:', err); }
+  const handleAddBank = async (bank: Omit<BankAccount, "id">): Promise<boolean> => {
+    const { error } = await finBanksApi.create({
+      name: bank.name, bank: bank.bank, agency: bank.agency, account: bank.account,
+      type: bank.type, balance: bank.balance, color: bank.color,
+    });
+    if (error) { toast.error("Erro ao salvar conta bancária: " + error); return false; }
+    toast.success("Conta bancária cadastrada");
+    setShowAddBank(false);
+    await loadAll();
+    return true;
   };
 
-  if (loading) {
+  if (loading && loadErrors.length === 0 && banks.length === 0 && movements.length === 0) {
     return (
       <div className="flex-1 flex flex-col min-h-screen">
         <DashboardHeader title="Financeiro" />
@@ -261,6 +259,20 @@ function FinanceiroPage() {
         </div>
 
         <div className="p-6 space-y-6">
+          {loadErrors.length > 0 && (
+            <div role="alert" className="flex items-start justify-between gap-3 rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+              <div>
+                <p className="font-semibold">Parte do financeiro não carregou — os totais abaixo podem estar incompletos.</p>
+                <ul className="mt-1 list-disc pl-5 text-xs">
+                  {loadErrors.map((e) => <li key={e}>{e}</li>)}
+                </ul>
+              </div>
+              <Button size="sm" variant="outline" onClick={loadAll} disabled={loading}>
+                {loading && <Loader2 className="mr-2 h-3 w-3 animate-spin" />}
+                Tentar de novo
+              </Button>
+            </div>
+          )}
           {activeTab === "visao-geral" && (
             <TabVisaoGeral
               totalEntradas={totalEntradas}
@@ -428,7 +440,7 @@ function TabMovimentacoes({
   movements, showAdd, setShowAdd, onAdd, banks,
 }: {
   movements: FinanceMovement[]; showAdd: boolean; setShowAdd: (v: boolean) => void;
-  onAdd: (m: Omit<FinanceMovement, "id">) => void; banks: BankAccount[];
+  onAdd: (m: Omit<FinanceMovement, "id">) => Promise<boolean>; banks: BankAccount[];
 }) {
   const [form, setForm] = useState({
     type: "entrada" as "entrada" | "saida",
@@ -436,16 +448,16 @@ function TabMovimentacoes({
     bankAccountId: banks[0]?.id ?? "", patient: "",
   });
 
-  const handleSubmit = () => {
-    if (!form.description || !form.value) return;
+  const handleSubmit = async () => {
+    if (!form.description || !form.value) { toast.error("Preencha descrição e valor."); return; }
     const bank = banks.find((b) => b.id === form.bankAccountId);
-    onAdd({
+    const ok = await onAdd({
       type: form.type, description: form.description, category: form.category,
       value: parseFloat(form.value), date: new Date().toLocaleDateString("pt-BR"),
       bankAccountId: form.bankAccountId, bankName: bank?.bank ?? "—",
       patient: form.patient || undefined,
     });
-    setForm({ type: "entrada", description: "", category: "consulta", value: "", bankAccountId: banks[0]?.id ?? "", patient: "" });
+    if (ok) setForm({ type: "entrada", description: "", category: "consulta", value: "", bankAccountId: banks[0]?.id ?? "", patient: "" });
   };
 
   return (
@@ -561,7 +573,7 @@ function TabContasPagar({
   bills, showAdd, setShowAdd, onAdd, onPay, banks,
 }: {
   bills: Bill[]; showAdd: boolean; setShowAdd: (v: boolean) => void;
-  onAdd: (b: Omit<Bill, "id">) => void; onPay: (billId: string, bankId: string) => void; banks: BankAccount[];
+  onAdd: (b: Omit<Bill, "id">) => Promise<boolean>; onPay: (billId: string, bankId: string) => void; banks: BankAccount[];
 }) {
   const [form, setForm] = useState({
     description: "", category: "aluguel" as FinanceCategory, value: "",
@@ -573,14 +585,14 @@ function TabContasPagar({
   const pendentes = bills.filter((b) => b.status === "pendente" || b.status === "vencido");
   const pagos = bills.filter((b) => b.status === "pago");
 
-  const handleSubmit = () => {
-    if (!form.description || !form.value || !form.dueDate) return;
-    onAdd({
+  const handleSubmit = async () => {
+    if (!form.description || !form.value || !form.dueDate) { toast.error("Preencha descrição, valor e vencimento."); return; }
+    const ok = await onAdd({
       description: form.description, category: form.category, value: parseFloat(form.value),
       dueDate: form.dueDate, status: "pendente", supplier: form.supplier || undefined,
       recurrent: form.recurrent,
     });
-    setForm({ description: "", category: "aluguel", value: "", dueDate: "", supplier: "", recurrent: false });
+    if (ok) setForm({ description: "", category: "aluguel", value: "", dueDate: "", supplier: "", recurrent: false });
   };
 
   return (
@@ -717,7 +729,7 @@ function TabFuncionarios({
 }: {
   employees: Employee[]; payrolls: Payroll[];
   showAdd: boolean; setShowAdd: (v: boolean) => void;
-  onAdd: (e: Omit<Employee, "id">) => void;
+  onAdd: (e: Omit<Employee, "id">) => Promise<boolean>;
   onPayPayroll: (id: string, bankId: string) => void; banks: BankAccount[];
 }) {
   const [form, setForm] = useState({ name: "", role: "", cpf: "", salary: "", benefits: "" });
@@ -727,15 +739,15 @@ function TabFuncionarios({
   const currentMonth = `${String(new Date().getMonth() + 1).padStart(2, '0')}/${new Date().getFullYear()}`;
   const folhaMesAtual = payrolls.filter((p) => p.month === currentMonth);
 
-  const handleSubmit = () => {
-    if (!form.name || !form.role || !form.salary) return;
-    onAdd({
+  const handleSubmit = async () => {
+    if (!form.name || !form.role || !form.salary) { toast.error("Preencha nome, cargo e salário."); return; }
+    const ok = await onAdd({
       name: form.name, role: form.role, cpf: form.cpf,
       admissionDate: new Date().toLocaleDateString("pt-BR"),
       salary: parseFloat(form.salary), benefits: parseFloat(form.benefits || "0"),
       bankAccountId: banks[0]?.id ?? "", active: true,
     });
-    setForm({ name: "", role: "", cpf: "", salary: "", benefits: "" });
+    if (ok) setForm({ name: "", role: "", cpf: "", salary: "", benefits: "" });
   };
 
   return (
@@ -877,19 +889,19 @@ function TabBancos({
 }: {
   banks: BankAccount[]; movements: FinanceMovement[];
   showAdd: boolean; setShowAdd: (v: boolean) => void;
-  onAdd: (b: Omit<BankAccount, "id">) => void;
+  onAdd: (b: Omit<BankAccount, "id">) => Promise<boolean>;
 }) {
   const [form, setForm] = useState({ name: "", bank: "", agency: "", account: "", type: "corrente" as BankAccount["type"], balance: "" });
   const colors = ["hsl(152, 60%, 42%)", "hsl(270, 60%, 55%)", "hsl(38, 92%, 50%)", "hsl(187, 85%, 43%)", "hsl(0, 72%, 51%)"];
 
-  const handleSubmit = () => {
-    if (!form.name || !form.bank) return;
-    onAdd({
+  const handleSubmit = async () => {
+    if (!form.name || !form.bank) { toast.error("Preencha nome e banco."); return; }
+    const ok = await onAdd({
       name: form.name, bank: form.bank, agency: form.agency, account: form.account,
       type: form.type, balance: parseFloat(form.balance || "0"),
       color: colors[banks.length % colors.length],
     });
-    setForm({ name: "", bank: "", agency: "", account: "", type: "corrente", balance: "" });
+    if (ok) setForm({ name: "", bank: "", agency: "", account: "", type: "corrente", balance: "" });
   };
 
   const saldoTotal = banks.reduce((s, b) => s + b.balance, 0);
