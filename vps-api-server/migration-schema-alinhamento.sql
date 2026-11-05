@@ -57,9 +57,22 @@ ALTER TABLE IF EXISTS tenants ADD COLUMN IF NOT EXISTS termos_aceite_ip TEXT;
 -- Clinicorp: resumo mensal e log de push gravam tenant_id (clinicorp.mjs:1207, 1860, 2099).
 -- O upsert do resumo usa ON CONFLICT (source, period_month, business_id, tenant_id), que precisa
 -- deste índice único (o boot cria, mas falha em produção). A constraint antiga em 3 colunas
--- não é removida aqui (seria DROP); com uma clínica só no Clinicorp ela não conflita.
+-- não é removida aqui (seria DROP). Linhas antigas com tenant_id NULL fariam o upsert novo bater
+-- nela; por isso preenchemos tenant_id pelo business_id, só quando ele pertence a UMA clínica
+-- (derivado de clinicorp_appointments/financial_entries). Business sem dono único fica NULL.
 ALTER TABLE IF EXISTS clinicorp_monthly_summary ADD COLUMN IF NOT EXISTS tenant_id UUID;
 ALTER TABLE IF EXISTS clinicorp_push_log        ADD COLUMN IF NOT EXISTS tenant_id UUID;
+UPDATE clinicorp_monthly_summary s
+   SET tenant_id = m.tenant_id
+  FROM (
+    SELECT business_id, (array_agg(DISTINCT tenant_id))[1] AS tenant_id
+      FROM (SELECT business_id, tenant_id FROM clinicorp_appointments WHERE tenant_id IS NOT NULL AND business_id IS NOT NULL
+            UNION
+            SELECT business_id, tenant_id FROM clinicorp_financial_entries WHERE tenant_id IS NOT NULL AND business_id IS NOT NULL) x
+     GROUP BY business_id
+    HAVING COUNT(DISTINCT tenant_id) = 1
+  ) m
+ WHERE s.tenant_id IS NULL AND s.business_id = m.business_id;
 DO $$
 BEGIN
   IF to_regclass('public.clinicorp_monthly_summary') IS NOT NULL THEN
