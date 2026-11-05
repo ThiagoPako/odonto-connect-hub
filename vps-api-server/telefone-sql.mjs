@@ -28,14 +28,24 @@ export function sqlFoneIgual(colExpr, outroExpr) {
 
 // Mesmos candidatos calculados no Node, para usar como parâmetro ($n::text[]).
 // semDdd (busca em pacientes, que antes casava pelo sufixo de 8 dígitos): inclui
-// também o número sem o 55 (fixo salvo sem 55 no cadastro) e os 9 e 8 últimos
-// dígitos (cadastro salvo sem DDD).
+// também o número sem o 55 (fixo salvo sem 55 no cadastro), os 9 e 8 últimos
+// dígitos (cadastro salvo sem DDD) e as duas formas do celular com e sem o 9º
+// dígito (o WhatsApp às vezes manda o número antigo, sem o 9):
+//   DDD + 8 dígitos começando em 6–9  →  + DDD + '9' + 8
+//   DDD + '9' + 8                     →  + DDD + 8 e '5' + DDD + 8 (o 55 + DDD + 8)
 export function candidatosFone(telefone, { semDdd = false } = {}) {
   const d = String(telefone || '').replace(/\D/g, '');
   if (!d) return [];
   const c = [d.slice(-11), `55${d}`.slice(-11)];
   if (semDdd) {
-    if (d.startsWith('55') && (d.length === 12 || d.length === 13)) c.push(d.slice(2).slice(-11));
+    const nacional = d.startsWith('55') && (d.length === 12 || d.length === 13) ? d.slice(2) : d;
+    if (nacional !== d) c.push(nacional);
+    if (nacional.length === 10 && /^[6-9]$/.test(nacional[2])) {
+      c.push(`${nacional.slice(0, 2)}9${nacional.slice(2)}`);
+    } else if (nacional.length === 11 && nacional[2] === '9') {
+      const semNove = `${nacional.slice(0, 2)}${nacional.slice(3)}`;
+      c.push(semNove, `5${semNove}`);
+    }
     if (d.length >= 10) c.push(d.slice(-9), d.slice(-8));
   }
   return [...new Set(c)];

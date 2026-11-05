@@ -35,8 +35,13 @@ describe('candidatosFone', () => {
     expect(candidatosFone(null)).toEqual([]);
     expect(candidatosFone('sem número')).toEqual([]);
   });
-  test('semDdd: número sem o 55 e os 9 e 8 últimos dígitos', () => {
+  test('semDdd: número sem o 55 e os 9 e 8 últimos dígitos (fixo não ganha o 9)', () => {
     expect(candidatosFone('551133334444', { semDdd: true })).toEqual(['51133334444', '1133334444', '133334444', '33334444']);
+  });
+  test('semDdd: celular com e sem o 9º dígito', () => {
+    expect(candidatosFone('(11) 98765-4321', { semDdd: true })).toEqual(expect.arrayContaining(['11987654321', '1187654321', '51187654321']));
+    expect(candidatosFone('1187654321', { semDdd: true })).toEqual(expect.arrayContaining(['1187654321', '11987654321']));
+    expect(candidatosFone('551187654321', { semDdd: true })).toEqual(expect.arrayContaining(['51187654321', '1187654321', '11987654321']));
   });
 });
 
@@ -102,6 +107,17 @@ describe('Postgres: resultado igual ao LIKE antigo e uso do índice', () => {
     }
     expect(await novo('98765-4321', '+55 (11) 98765-4321')).toBe(true); // paciente salvo sem DDD
     expect(await novo('3333-4444', '551133334444')).toBe(true);
+    // 9º dígito: lead vindo do WhatsApp sem o 9, ou cadastro antigo sem o 9 (casos da revisão).
+    expect(await novo('551187654321', '(11) 98765-4321')).toBe(true);
+    expect(await novo('553187654321', '(31) 98765-4321')).toBe(true);
+    expect(await novo('5511987654321', '1187654321')).toBe(true);
+    // e nos dois sentidos
+    expect(await novo('(11) 98765-4321', '551187654321')).toBe(true);
+    expect(await novo('(31) 98765-4321', '553187654321')).toBe(true);
+    expect(await novo('1187654321', '5511987654321')).toBe(true);
+    // Fixo (começa em 2 a 5) não ganha o 9; outro DDD continua não casando.
+    expect(await novo('11933334444', '1133334444')).toBe(false);
+    expect(await novo('551187654321', '(21) 98765-4321')).toBe(false);
     // Outro DDD com os mesmos 8 últimos dígitos: o antigo dava conflito falso; o novo não.
     expect(await novo('21987654321', '11987654321')).toBe(false);
     for (const p of TODOS) for (const l of TODOS) {
