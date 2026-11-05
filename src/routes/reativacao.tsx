@@ -186,7 +186,8 @@ function ReativacaoPage() {
     await loadAll();
     // refresh patients
     const r = await reativacaoApi.patients(selectedRule.id);
-    setPatients(r.data || []);
+    if (r.error) toast.error("Mensagens enviadas para a fila, mas a lista de pacientes não atualizou: " + r.error);
+    else setPatients(r.data || []);
   };
 
   const totalActive = kpis?.activeRules ?? 0;

@@ -212,11 +212,11 @@ function AgendaPage() {
     <div className="flex-1 flex flex-col min-h-screen bg-background/50 animate-fade-in">
       <DashboardHeader title="Agenda" />
       <main className="flex-1 p-4 overflow-hidden">
-        <div className="flex items-center justify-between gap-3 mb-4">
-          <div className="flex items-center gap-2">
-            <Button size="sm" variant="outline" onClick={goPrev}><ChevronLeft className="h-4 w-4" /></Button>
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="outline" onClick={goPrev} aria-label="Dia anterior"><ChevronLeft className="h-4 w-4" /></Button>
             <Button size="sm" variant="outline" onClick={goToday}>Hoje</Button>
-            <Button size="sm" variant="outline" onClick={goNext}><ChevronRight className="h-4 w-4" /></Button>
+            <Button size="sm" variant="outline" onClick={goNext} aria-label="Próximo dia"><ChevronRight className="h-4 w-4" /></Button>
             
             <Popover>
               <PopoverTrigger asChild>
@@ -245,7 +245,7 @@ function AgendaPage() {
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border bg-card/50 glass-card">
               <Clock className="h-3.5 w-3.5 text-primary" />
               <Select value={String(intervalo)} onValueChange={(v) => setIntervalo(Number(v))}>
@@ -281,7 +281,7 @@ function AgendaPage() {
               <Send className={cn("h-4 w-4 mr-2 text-primary", isReprojecting && "animate-pulse")} />
               Enviar Dados
             </Button>
-            <Button size="sm" variant="outline" className="rounded-xl glass-card hover:bg-primary/10 transition-colors" onClick={loadAppointments} disabled={loading}>
+            <Button size="sm" variant="outline" className="rounded-xl glass-card hover:bg-primary/10 transition-colors" onClick={loadAppointments} disabled={loading} aria-label="Recarregar agenda">
               <RefreshCw className={`h-4 w-4 text-primary ${loading ? "animate-spin" : ""}`} />
             </Button>
             <Link to="/configuracoes/agenda">

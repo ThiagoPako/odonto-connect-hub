@@ -250,7 +250,9 @@ function PedidoExamePage() {
       let pacienteId: string | null = null;
       const cpfTrim = cpf.trim();
       if (cpfTrim) {
-        const { data: lista } = await pacientesApi.list();
+        const { data: lista, error: listaError } = await pacientesApi.list();
+        // Sem a lista, não dá para saber se o paciente já existe: parar evita cadastro duplicado
+        if (listaError) throw new Error("Não foi possível verificar se o paciente já está cadastrado: " + listaError);
         const existente = Array.isArray(lista) ? (lista as Array<{ id: string; cpf?: string | null }>).find((p) => p.cpf === cpfTrim) : undefined;
         if (existente?.id) pacienteId = existente.id;
       }
@@ -297,10 +299,6 @@ function PedidoExamePage() {
     }
   };
 
-  const handleEnviar = () => {
-    if (!paciente) return toast.error("Informe o nome do paciente");
-    toast.success("Pedido enviado para o laboratório");
-  };
 
   // Tooth positions over the odontograma image
   type T = { n: number; x: number; y: number };
@@ -373,8 +371,9 @@ function PedidoExamePage() {
             <Button variant="outline" size="sm" onClick={handleSalvar} disabled={saving}>
               <FileDown className="size-4 mr-1" /> {saving ? "Salvando..." : "Cadastrar"}
             </Button>
-            <Button size="sm" className="bg-orange-500 hover:bg-orange-600" onClick={handleEnviar}>
-              <Send className="size-4 mr-1" /> Enviar
+            {/* O envio ao laboratório ainda não existe: antes o botão só mostrava "enviado" */}
+            <Button size="sm" className="bg-orange-500 hover:bg-orange-600" disabled title="Envio direto ao laboratório ainda não está disponível. Use Cadastrar e imprima o pedido.">
+              <Send className="size-4 mr-1" /> Enviar (em breve)
             </Button>
           </div>
         </div>

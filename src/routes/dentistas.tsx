@@ -142,7 +142,7 @@ function DentistasPage() {
   return (
     <div className="flex-1 flex flex-col min-h-screen">
       <DashboardHeader title="Gestão de Dentistas" />
-      <main className="flex-1 p-8 space-y-6 overflow-auto">
+      <main className="flex-1 p-4 sm:p-8 space-y-6 overflow-auto">
         {loadError && (
           <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
             <span>Não foi possível carregar os dentistas. {loadError}</span>
@@ -170,7 +170,7 @@ function DentistasPage() {
         </div>
 
         {/* Actions */}
-        <div className="flex items-center justify-between gap-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
           <div className="relative flex-1 max-w-md">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <input
@@ -235,7 +235,7 @@ function DentistasPage() {
                     </td>
                     <td className="px-6 py-4 text-right">
                       <div className="relative inline-block">
-                        <button onClick={() => setMenuOpen(menuOpen === dentista.id ? null : dentista.id)} className="p-2 rounded-lg hover:bg-muted/60 transition-colors">
+                        <button onClick={() => setMenuOpen(menuOpen === dentista.id ? null : dentista.id)} aria-label={`Ações de ${dentista.nome}`} className="p-2 rounded-lg hover:bg-muted/60 transition-colors">
                           <MoreVertical className="h-4 w-4 text-muted-foreground" />
                         </button>
                         {menuOpen === dentista.id && (
