@@ -2168,16 +2168,8 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     const profile = rows[0];
     console.log(`🔑 [RESET REQUEST] "${profile.name}" (${email}) solicitou recuperação de senha em ${new Date().toISOString()}`);
 
-    // Store notification for admin
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS password_reset_requests (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        user_id UUID REFERENCES profiles(id) ON DELETE CASCADE NOT NULL,
-        email TEXT NOT NULL,
-        status TEXT DEFAULT 'pending',
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      )
-    `);
+    // Store notification for admin. A tabela vem de migration-force-rls.sql: o
+    // usuário da API (odonto_app) não é dono e não pode rodar CREATE TABLE aqui.
     await pool.query(
       'INSERT INTO password_reset_requests (user_id, email) VALUES ($1, $2)',
       [profile.id, email.toLowerCase().trim()]

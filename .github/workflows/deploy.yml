@@ -122,6 +122,9 @@ jobs:
             cat /root/odonto-connect/vps-api-server/migration-saas.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             cat /root/odonto-connect/vps-api-server/migration-tenant-defaults.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             cat /root/odonto-connect/vps-api-server/migration-whatsapp-fase1.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
+            # M0: só aditivo (tenant_id + índice + preenchimento por pai + tenant_settings). Seguro sozinho.
+            # migration-force-rls.sql NÃO entra aqui ainda: é incluída na janela da virada (docs/banco/plano-virada-rls.md).
+            cat /root/odonto-connect/vps-api-server/migration-tenant-m0.sql | sudo -u postgres psql -p 5433 -d odonto_db 2>&1 || true
             echo "=== Migrations applied ==="
 
             # ─── Pre-flight syntax check on server.mjs ─────────────────────
