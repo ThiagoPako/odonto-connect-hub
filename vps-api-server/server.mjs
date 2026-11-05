@@ -702,6 +702,13 @@ if (!EVOLUTION_API_KEY) {
 // Ensure the webhook URL points to the backend API endpoint
 const WEBHOOK_URL = WEBHOOK_PUBLIC_URL || (isLocalAppUrl ? `${APP_URL.replace(/:\d+$/, `:${PORT}`)}/api/webhook/evolution` : `https://backend.odontoconnect.tech/api/webhook/evolution`);
 
+// Metadados de credencial para logs/diagnóstico: só diz se existe e o tamanho,
+// nunca trechos do valor. Usado em sendEvolutionTextMessage e /api/debug/config.
+function getCredentialDebugMeta(value) {
+  const raw = String(value || '');
+  return { present: raw.length > 0, length: raw.length };
+}
+
 // Segredo do webhook da Evolution. Vai na URL registrada (?token=...) e é
 // conferido em cada chamada. Sem ele, qualquer pessoa podia forjar mensagens,
 // leads e confirmações de consulta para qualquer clínica.
