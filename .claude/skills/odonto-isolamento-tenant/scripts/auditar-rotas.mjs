@@ -28,7 +28,7 @@ for (const r of routes) {
   if (filtroRota && !r.path.includes(filtroRota)) continue;
   const b = r.body;
   const flags = [];
-  const auth = /verifyUser\(|verifyAdmin\(|verifySuperAdmin\(|requireSuperAdmin/.test(b);
+  const auth = /verifyUser\(|verifyAdmin\(|verifyAdminScope\(|verifySuperAdmin\(|requireSuperAdmin/.test(b);
   const webhookToken = /webhook/i.test(r.path) && /(token|secret|signature|user_api)/i.test(b);
   const publico = /^\/api\/(health|auth\/(login|signup|refresh|forgot|reset)|public)/.test(r.path);
   if (!auth && !webhookToken && !publico) flags.push('SEM-AUTH');
@@ -39,7 +39,7 @@ for (const r of routes) {
     const t = m[1].toLowerCase();
     if (!GLOBAL.has(t) && !['select', 'set', 'values', 'lateral'].includes(t)) tables.add(t);
   }
-  const usaTenant = /tenant_id/.test(b);
+  const usaTenant = /tenant_id|tenantId|getManageableProfile\(/.test(b);
   if (tables.size && !usaTenant) flags.push('SQL-SEM-tenant_id');
 
   // Recurso por id na URL sem filtro de tenant na mesma query.
