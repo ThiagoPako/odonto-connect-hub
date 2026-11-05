@@ -8040,11 +8040,10 @@ app.patch('/api/orcamentos/:id/status', async (req, res) => {
 app.get('/api/queues', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
+    if (!isValidTenantId(user.tenant_id)) return res.json([]);
     const { rows } = await pool.query(
-      `SELECT * FROM attendance_queues
-        WHERE $1::uuid IS NULL OR tenant_id = $1 OR tenant_id IS NULL
-        ORDER BY name ASC`,
-      [isValidTenantId(user.tenant_id) ? user.tenant_id : null]
+      `SELECT * FROM attendance_queues WHERE tenant_id = $1 ORDER BY name ASC`,
+      [user.tenant_id]
     );
     res.json(rows);
   } catch (error) {
@@ -8056,6 +8055,7 @@ app.post('/api/queues', async (req, res) => {
   try {
     const { user } = await verifyAdmin(req);
     const { name, color, icon, description, whatsapp_button_label, contact_numbers, team_member_ids } = req.body;
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
     if (!name) return res.status(400).json({ error: 'Nome é obrigatório' });
     const id = crypto.randomUUID();
     await pool.query(
@@ -8073,14 +8073,16 @@ app.put('/api/queues/:id', async (req, res) => {
   try {
     const { user } = await verifyAdmin(req);
     const { name, color, icon, description, whatsapp_button_label, contact_numbers, team_member_ids, active } = req.body;
-    await pool.query(
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rowCount } = await pool.query(
       `UPDATE attendance_queues SET name=COALESCE($1,name), color=COALESCE($2,color), icon=COALESCE($3,icon),
        description=COALESCE($4,description), whatsapp_button_label=COALESCE($5,whatsapp_button_label),
        contact_numbers=COALESCE($6,contact_numbers), team_member_ids=COALESCE($7,team_member_ids),
        active=COALESCE($8,active), updated_at=NOW()
-       WHERE id=$9 AND ($10::uuid IS NULL OR tenant_id = $10 OR tenant_id IS NULL)`,
-      [name, color, icon, description, whatsapp_button_label, contact_numbers ? JSON.stringify(contact_numbers) : null, team_member_ids ? JSON.stringify(team_member_ids) : null, active, req.params.id, isValidTenantId(user.tenant_id) ? user.tenant_id : null]
+       WHERE id=$9 AND tenant_id = $10`,
+      [name, color, icon, description, whatsapp_button_label, contact_numbers ? JSON.stringify(contact_numbers) : null, team_member_ids ? JSON.stringify(team_member_ids) : null, active, req.params.id, user.tenant_id]
     );
+    if (!rowCount) return res.status(404).json({ error: 'Fila não encontrada' });
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -8090,10 +8092,12 @@ app.put('/api/queues/:id', async (req, res) => {
 app.delete('/api/queues/:id', async (req, res) => {
   try {
     const { user } = await verifyAdmin(req);
-    await pool.query(
-      'DELETE FROM attendance_queues WHERE id = $1 AND ($2::uuid IS NULL OR tenant_id = $2 OR tenant_id IS NULL)',
-      [req.params.id, isValidTenantId(user.tenant_id) ? user.tenant_id : null]
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { rowCount } = await pool.query(
+      'DELETE FROM attendance_queues WHERE id = $1 AND tenant_id = $2',
+      [req.params.id, user.tenant_id]
     );
+    if (!rowCount) return res.status(404).json({ error: 'Fila não encontrada' });
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -8443,60 +8447,85 @@ app.get('/api/events', async (req, res) => {
 // WEBHOOK — Evolution API (queue routing + real-time)
 // ═══════════════════════════════════════════════════════════════
 
-// Helper: check if currently within business hours
+// Helper: check if currently within business hours (relógio de São Paulo, não o do servidor)
 function isWithinBusinessHours(settings) {
   if (!settings?.businessHours) return true; // default: always open
-  const now = new Date();
+  const clock = spClock();
   const dayKeys = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
-  const dayKey = dayKeys[now.getDay()];
+  const dayKey = dayKeys[clock.weekday];
   const schedule = settings.businessHours[dayKey];
   if (!schedule?.enabled) return false;
 
-  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  const currentMinutes = clock.minutes;
   const [openH, openM] = schedule.openTime.split(':').map(Number);
   const [closeH, closeM] = schedule.closeTime.split(':').map(Number);
   return currentMinutes >= (openH * 60 + openM) && currentMinutes <= (closeH * 60 + closeM);
 }
 
-// ─── Attendance Settings (persisted in PostgreSQL) ──────────
-let attendanceSettingsCache = null;
+// ─── Configurações por clínica (tabela tenant_settings, criada pela migration-tenant-m0.sql) ───
+// Antes ficavam numa linha única global (app_settings/system_settings): a configuração
+// de uma clínica valia para todas. Sem registro da clínica, vale o padrão do sistema
+// (nunca o valor de outra clínica).
+const tenantSettingsCache = new Map(); // `${tenantId}:${key}` -> { value, at }
+const TENANT_SETTINGS_TTL_MS = 60_000;
 
-async function loadAttendanceSettings() {
+async function getTenantSetting(tenantId, key) {
+  if (!isValidTenantId(tenantId)) return null;
+  const cacheKey = `${tenantId}:${key}`;
+  const hit = tenantSettingsCache.get(cacheKey);
+  if (hit && Date.now() - hit.at < TENANT_SETTINGS_TTL_MS) return hit.value;
+  let value = null;
   try {
-    const { rows } = await pool.query("SELECT value FROM app_settings WHERE key = 'attendance_settings'");
-    attendanceSettingsCache = rows.length > 0 ? rows[0].value : null;
+    const { rows } = await pool.query(
+      'SELECT value FROM tenant_settings WHERE tenant_id = $1 AND key = $2 LIMIT 1', [tenantId, key]
+    );
+    value = rows[0]?.value ?? null;
+    if (typeof value === 'string') { try { value = JSON.parse(value); } catch { /* texto simples */ } }
   } catch (err) {
-    console.error('⚠️ Could not load attendance settings from DB:', err.message);
+    // 42P01: tabela ainda não criada (migração M0 não rodou) → padrão do sistema.
+    if (err.code !== '42P01') console.error(`⚠️ tenant_settings ${key}:`, err.message);
   }
+  tenantSettingsCache.set(cacheKey, { value, at: Date.now() });
+  return value;
 }
 
-// Load on startup
-loadAttendanceSettings();
+async function setTenantSetting(tenantId, key, value) {
+  if (!isValidTenantId(tenantId)) throw new Error('Usuário sem clínica');
+  await pool.query(
+    `INSERT INTO tenant_settings (tenant_id, key, value, updated_at) VALUES ($1, $2, $3, NOW())
+     ON CONFLICT (tenant_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+    [tenantId, key, JSON.stringify(value)]
+  );
+  tenantSettingsCache.set(`${tenantId}:${key}`, { value, at: Date.now() });
+}
+
+function tenantSettingsErrorStatus(error) {
+  if (error.message === 'Unauthorized') return 401;
+  if (error.message === 'Admin access required') return 403;
+  if (error.code === '42P01') return 503; // migração M0 ainda não aplicada
+  return 500;
+}
 
 app.get('/api/attendance-settings', async (req, res) => {
   try {
-    await verifyUser(req);
-    if (!attendanceSettingsCache) await loadAttendanceSettings();
-    res.json(attendanceSettingsCache || {});
+    const { user } = await verifyUser(req);
+    if (!isValidTenantId(user.tenant_id)) return res.json({});
+    res.json((await getTenantSetting(user.tenant_id, 'attendance_settings')) || {});
   } catch (error) {
-    res.status(401).json({ error: error.message });
+    res.status(tenantSettingsErrorStatus(error)).json({ error: error.message });
   }
 });
 
 app.put('/api/attendance-settings', async (req, res) => {
   try {
-    await verifyAdmin(req);
-    const settings = req.body;
-    await pool.query(
-      `INSERT INTO app_settings (key, value, updated_at) VALUES ('attendance_settings', $1, NOW())
-       ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()`,
-      [JSON.stringify(settings)]
-    );
-    attendanceSettingsCache = settings;
-    console.log('⚙️ Attendance settings saved to database');
+    const { user } = await verifyAdmin(req);
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const settings = req.body && typeof req.body === 'object' ? req.body : {};
+    await setTenantSetting(user.tenant_id, 'attendance_settings', settings);
+    console.log(`⚙️ Attendance settings salvas (clínica ${String(user.tenant_id).slice(0, 8)})`);
     res.json({ success: true });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(tenantSettingsErrorStatus(error)).json({ error: error.message });
   }
 });
 
@@ -8505,8 +8534,7 @@ async function sendQueueMenu(instance, phone, tenantId) {
   const { rows: queues } = await pool.query(
     `SELECT id, name, icon, whatsapp_button_label
        FROM attendance_queues
-      WHERE active = true
-        AND ($1::uuid IS NULL OR tenant_id = $1 OR tenant_id IS NULL)
+      WHERE active = true AND tenant_id = $1
       ORDER BY name ASC`,
     [isValidTenantId(tenantId) ? tenantId : null]
   );
@@ -8564,6 +8592,7 @@ async function matchQueue(content, tenantId) {
   if (!content) return null;
   const trimmed = content.trim();
   const tenantParam = isValidTenantId(tenantId) ? tenantId : null;
+  if (!tenantParam) return null;
 
   // Match by button ID (queue_UUID)
   if (trimmed.startsWith('queue_')) {
@@ -8572,7 +8601,7 @@ async function matchQueue(content, tenantId) {
       `SELECT * FROM attendance_queues
         WHERE id = $1
           AND active = true
-          AND ($2::uuid IS NULL OR tenant_id = $2 OR tenant_id IS NULL)`,
+          AND tenant_id = $2`,
       [queueId, tenantParam]
     );
     return rows[0] || null;
@@ -8583,8 +8612,7 @@ async function matchQueue(content, tenantId) {
   if (!isNaN(num) && num > 0) {
     const { rows } = await pool.query(
       `SELECT * FROM attendance_queues
-        WHERE active = true
-          AND ($1::uuid IS NULL OR tenant_id = $1 OR tenant_id IS NULL)
+        WHERE active = true AND tenant_id = $1
         ORDER BY name ASC`,
       [tenantParam]
     );
@@ -8594,8 +8622,7 @@ async function matchQueue(content, tenantId) {
   // Match by name (fuzzy)
   const { rows } = await pool.query(
     `SELECT * FROM attendance_queues
-      WHERE active = true
-        AND ($1::uuid IS NULL OR tenant_id = $1 OR tenant_id IS NULL)`,
+      WHERE active = true AND tenant_id = $1`,
     [tenantParam]
   );
   const lower = trimmed.toLowerCase();
@@ -9277,6 +9304,8 @@ app.post('/api/webhook/evolution', async (req, res) => {
 
     // ─── New contact: create lead + contato + check hours + send menu ───
     if (!lead) {
+      // Boas-vindas e fora de horário da clínica dona do número (não de outra clínica).
+      const attendanceSettingsCache = await getTenantSetting(tenantId, 'attendance_settings');
       const newId = crypto.randomUUID();
       await pool.query(
         `INSERT INTO crm_leads (id, nome, telefone, origem, status, kanban_stage, awaiting_queue_selection, tenant_id)
@@ -9511,7 +9540,8 @@ app.post('/api/webhook/evolution', async (req, res) => {
     }
 
     // ─── Check for satisfaction rating response ───
-    const ratingKey = `awaiting_rating_${phone}`;
+    // Chave com a clínica: o mesmo paciente pode ser atendido por duas clínicas.
+    const ratingKey = `awaiting_rating_${tenantId}_${phone}`;
     const { rows: ratingCheck } = await pool.query("SELECT value FROM app_settings WHERE key = $1", [ratingKey]);
     if (ratingCheck.length > 0 && (msgType === 'text' || msgType === 'button_response')) {
       let rating = null;
@@ -9553,7 +9583,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
     }
 
     // ─── Auto-return from recovery stage to queue with priority ───
-    if (followupAutomationConfig.returnToQueueOnReply) {
+    if ((await getFollowupConfig(tenantId)).returnToQueueOnReply) {
       try {
         const { rows: leadStage } = await pool.query('SELECT kanban_stage FROM crm_leads WHERE id = $1', [lead.id]);
         const currentStage = leadStage[0]?.kanban_stage;
@@ -9985,7 +10015,7 @@ const RECOVERY_STAGES = ['followup', 'followup_2', 'followup_3', 'sem_resposta',
 const ALL_KANBAN_STAGES = [...SALES_STAGES, ...RECOVERY_STAGES];
 const VALID_CONSCIOUSNESS = ['inconsciente', 'consciente_problema', 'consciente_solucao', 'consciente_produto', 'consciente_total'];
 
-// ─── Follow-up Automation Config (in-memory, persisted to DB) ───
+// ─── Follow-up Automation: padrão do sistema; cada clínica sobrescreve em tenant_settings ───
 let followupAutomationConfig = {
   enabled: true,
   stages: ['followup', 'followup_2', 'followup_3'],
@@ -9999,26 +10029,18 @@ let followupAutomationConfig = {
   returnToQueueOnReply: true, // when client replies from recovery, return to queue with priority
 };
 
-// Load config from DB on startup
-(async () => {
-  try {
-    const { rows } = await pool.query(
-      `SELECT value FROM system_settings WHERE key = 'followup_automation' LIMIT 1`
-    );
-    if (rows.length > 0) {
-      followupAutomationConfig = { ...followupAutomationConfig, ...JSON.parse(rows[0].value) };
-      console.log('✅ Follow-up automation config loaded from DB');
-    }
-  } catch {
-    console.log('ℹ️ No follow-up automation config in DB, using defaults');
-  }
-})();
+async function getFollowupConfig(tenantId) {
+  const saved = (await getTenantSetting(tenantId, 'followup_automation')) || {};
+  const base = followupAutomationConfig;
+  return {
+    ...base, ...saved,
+    messages: { ...base.messages, ...(saved.messages || {}) },
+    delayDays: { ...base.delayDays, ...(saved.delayDays || {}) },
+  };
+}
 
 // Helper: send follow-up WhatsApp message when lead enters a follow-up stage
 async function triggerFollowupAutomation(leadId, toStage) {
-  if (!followupAutomationConfig.enabled) return;
-  if (!followupAutomationConfig.stages.includes(toStage)) return;
-
   try {
     const { rows: leads } = await pool.query(
       'SELECT id, nome, telefone, tenant_id FROM crm_leads WHERE id = $1', [leadId]
@@ -10033,6 +10055,9 @@ async function triggerFollowupAutomation(leadId, toStage) {
       console.warn(`⚠️ Follow-up automation: lead ${leadId} sem clínica, envio ignorado`);
       return;
     }
+    // Configuração da clínica do lead (o nome local sobrepõe o padrão do módulo).
+    const followupAutomationConfig = await getFollowupConfig(lead.tenant_id);
+    if (!followupAutomationConfig.enabled || !followupAutomationConfig.stages.includes(toStage)) return;
 
     const template = followupAutomationConfig.messages[toStage];
     if (!template) return;
@@ -10059,38 +10084,31 @@ async function triggerFollowupAutomation(leadId, toStage) {
 // GET/PUT follow-up automation settings
 app.get('/api/automations/followup', async (req, res) => {
   try {
-    await verifyUser(req);
-    res.json(followupAutomationConfig);
+    const { user } = await verifyUser(req);
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
+    res.json(await getFollowupConfig(user.tenant_id));
   } catch (error) {
-    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+    res.status(tenantSettingsErrorStatus(error)).json({ error: error.message });
   }
 });
 
 app.put('/api/automations/followup', async (req, res) => {
   try {
-    await verifyAdmin(req);
+    const { user } = await verifyAdmin(req);
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { enabled, messages, stages, delaySeconds, delayDays, returnToQueueOnReply } = req.body;
-    if (typeof enabled === 'boolean') followupAutomationConfig.enabled = enabled;
-    if (messages && typeof messages === 'object') {
-      followupAutomationConfig.messages = { ...followupAutomationConfig.messages, ...messages };
-    }
-    if (Array.isArray(stages)) followupAutomationConfig.stages = stages;
-    if (typeof delaySeconds === 'number') followupAutomationConfig.delaySeconds = delaySeconds;
-    if (delayDays && typeof delayDays === 'object') {
-      followupAutomationConfig.delayDays = { ...followupAutomationConfig.delayDays, ...delayDays };
-    }
-    if (typeof returnToQueueOnReply === 'boolean') followupAutomationConfig.returnToQueueOnReply = returnToQueueOnReply;
+    const cfg = await getFollowupConfig(user.tenant_id);
+    if (typeof enabled === 'boolean') cfg.enabled = enabled;
+    if (messages && typeof messages === 'object') cfg.messages = { ...cfg.messages, ...messages };
+    if (Array.isArray(stages)) cfg.stages = stages.filter(st => RECOVERY_STAGES.includes(st));
+    if (typeof delaySeconds === 'number') cfg.delaySeconds = delaySeconds;
+    if (delayDays && typeof delayDays === 'object') cfg.delayDays = { ...cfg.delayDays, ...delayDays };
+    if (typeof returnToQueueOnReply === 'boolean') cfg.returnToQueueOnReply = returnToQueueOnReply;
 
-    // Persist to DB
-    await pool.query(
-      `INSERT INTO system_settings (key, value) VALUES ('followup_automation', $1)
-       ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()`,
-      [JSON.stringify(followupAutomationConfig)]
-    ).catch(err => console.error('Failed to persist followup automation config:', err.message));
-
-    res.json(followupAutomationConfig);
+    await setTenantSetting(user.tenant_id, 'followup_automation', cfg);
+    res.json(cfg);
   } catch (error) {
-    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+    res.status(tenantSettingsErrorStatus(error)).json({ error: error.message });
   }
 });
 
@@ -10298,30 +10316,51 @@ app.get('/api/automations/solution-counts', async (req, res) => {
 // AUTOMATION SOLUTION HOURS CONFIG
 // ═══════════════════════════════════════════════════════════════
 
+const SOLUTION_HOURS_DEFAULT = { inicio: '08:00', fim: '18:00', diasSemana: ['SEG','TER','QUA','QUI','SEX'] };
+const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+const SOLUTION_DAYS = ['DOM','SEG','TER','QUA','QUI','SEX','SAB'];
+
+async function getSolutionHours(tenantId) {
+  return (await getTenantSetting(tenantId, 'solution_hours')) || SOLUTION_HOURS_DEFAULT;
+}
+
+// Horário em que os gatilhos automáticos podem enfileirar (relógio de São Paulo).
+function isWithinSolutionHours(cfg, date = new Date()) {
+  const clock = spClock(date);
+  const hhmm = `${String(Math.floor(clock.minutes / 60)).padStart(2, '0')}:${String(clock.minutes % 60).padStart(2, '0')}`;
+  if (cfg?.inicio && hhmm < cfg.inicio) return false;
+  if (cfg?.fim && hhmm > cfg.fim) return false;
+  if (Array.isArray(cfg?.diasSemana) && cfg.diasSemana.length > 0 && !cfg.diasSemana.includes(SOLUTION_DAYS[clock.weekday])) return false;
+  return true;
+}
+
 app.get('/api/automations/solution-hours', async (req, res) => {
   try {
-    await verifyUser(req);
-    const { rows } = await pool.query(`SELECT value FROM app_settings WHERE key = 'solution_hours'`);
-    const defaults = { inicio: '08:00', fim: '18:00', diasSemana: ['SEG','TER','QUA','QUI','SEX'] };
-    res.json(rows.length > 0 ? rows[0].value : defaults);
+    const { user } = await verifyUser(req);
+    if (!isValidTenantId(user.tenant_id)) return res.json(SOLUTION_HOURS_DEFAULT);
+    res.json(await getSolutionHours(user.tenant_id));
   } catch (error) {
-    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+    res.status(tenantSettingsErrorStatus(error)).json({ error: error.message });
   }
 });
 
 app.put('/api/automations/solution-hours', async (req, res) => {
   try {
-    await verifyUser(req);
-    const { inicio, fim, diasSemana } = req.body;
-    const config = { inicio: inicio || '08:00', fim: fim || '18:00', diasSemana: diasSemana || ['SEG','TER','QUA','QUI','SEX'] };
-    await pool.query(
-      `INSERT INTO app_settings (key, value, updated_at) VALUES ('solution_hours', $1, NOW())
-       ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()`,
-      [JSON.stringify(config)]
-    );
+    const { user } = await verifyAdmin(req);
+    if (!isValidTenantId(user.tenant_id)) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { inicio, fim, diasSemana } = req.body || {};
+    if ((inicio && !HHMM_RE.test(inicio)) || (fim && !HHMM_RE.test(fim))) {
+      return res.status(400).json({ error: 'Horário inválido (use HH:MM)' });
+    }
+    const config = {
+      inicio: inicio || SOLUTION_HOURS_DEFAULT.inicio,
+      fim: fim || SOLUTION_HOURS_DEFAULT.fim,
+      diasSemana: Array.isArray(diasSemana) ? diasSemana.filter(d => SOLUTION_DAYS.includes(d)) : SOLUTION_HOURS_DEFAULT.diasSemana,
+    };
+    await setTenantSetting(user.tenant_id, 'solution_hours', config);
     res.json(config);
   } catch (error) {
-    res.status(error.message === 'Unauthorized' ? 401 : 500).json({ error: error.message });
+    res.status(tenantSettingsErrorStatus(error)).json({ error: error.message });
   }
 });
 
@@ -10859,6 +10898,9 @@ async function ensureTenantConfigSchema() {
     `UPDATE agenda_marcadores SET tenant_id = (SELECT id FROM tenants LIMIT 1)
       WHERE tenant_id IS NULL AND (SELECT COUNT(*) FROM tenants) = 1`,
     `UPDATE procedimentos_catalogo SET tenant_id = (SELECT id FROM tenants LIMIT 1)
+      WHERE tenant_id IS NULL AND (SELECT COUNT(*) FROM tenants) = 1`,
+    // Filas sem clínica deixam de aparecer no menu de todas as clínicas.
+    `UPDATE attendance_queues SET tenant_id = (SELECT id FROM tenants LIMIT 1)
       WHERE tenant_id IS NULL AND (SELECT COUNT(*) FROM tenants) = 1`,
   ];
   for (const sql of statements) {
@@ -11670,26 +11712,7 @@ let solutionCronInterval = null;
 
 async function processSolutionTriggers() {
   try {
-    // Check business hours config
-    const { rows: settingsRows } = await pool.query(
-      `SELECT value FROM app_settings WHERE key = 'solution_hours'`
-    );
-    const hoursConfig = settingsRows.length > 0 ? settingsRows[0].value : { inicio: '08:00', fim: '18:00', diasSemana: ['SEG','TER','QUA','QUI','SEX'] };
-
     const now = new Date();
-    const currentTime = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/Sao_Paulo' });
-    const currentDay = ['DOM','SEG','TER','QUA','QUI','SEX','SAB'][now.getDay()];
-
-    if (hoursConfig.inicio && currentTime < hoursConfig.inicio) {
-      return; // Before business hours
-    }
-    if (hoursConfig.fim && currentTime > hoursConfig.fim) {
-      return; // After business hours
-    }
-    if (hoursConfig.diasSemana && hoursConfig.diasSemana.length > 0 && !hoursConfig.diasSemana.includes(currentDay)) {
-      return; // Not a business day
-    }
-
     const today = now.toISOString().slice(0, 10);
 
     // Cada gatilho roda separado por clínica: $1 é sempre o tenant_id. Antes a
@@ -11820,6 +11843,8 @@ async function processSolutionTriggers() {
       );
       for (const { tenant_id: solTenantId } of tenantRows) {
       if (!isValidTenantId(solTenantId)) continue;
+      // Horário de gatilhos da própria clínica.
+      if (!isWithinSolutionHours(await getSolutionHours(solTenantId), now)) continue;
       const { rows: patients } = await pool.query(sol.query, [solTenantId, ...sol.params]);
       if (patients.length === 0) continue;
       let tenantTriggered = 0;
@@ -12252,7 +12277,7 @@ app.post('/api/sessions/close', async (req, res) => {
       await pool.query(
         `INSERT INTO app_settings (key, value, updated_at) 
          VALUES ($1, $2, NOW()) ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
-        [`awaiting_rating_${phone}`, JSON.stringify({ leadId, sessionId: session?.id, attendantId: session?.attendant_id, attendantName: session?.attendant_name })]
+        [`awaiting_rating_${user.tenant_id}_${phone}`, JSON.stringify({ leadId, sessionId: session?.id, attendantId: session?.attendant_id, attendantName: session?.attendant_name })]
       );
     }
 
@@ -16088,4 +16113,5 @@ if (process.env.NODE_ENV !== 'test') {
 export { app, pool };
 // Exportados só para os testes de jobs (tests/jobs-metricas-isolamento.test.js).
 export { processSolutionTriggers, runWhatsAppJobHooks };
+export function clearTenantSettingsCacheForTests() { tenantSettingsCache.clear(); }
 
