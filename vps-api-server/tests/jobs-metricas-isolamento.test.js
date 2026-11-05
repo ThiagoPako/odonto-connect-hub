@@ -11,7 +11,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.join(__dirname, '../.env') });
 
-const { pool, processSolutionTriggers, runWhatsAppJobHooks } = await import('../server.mjs');
+const { pool, processSolutionTriggers, runWhatsAppJobHooks, clearTenantSettingsCacheForTests } = await import('../server.mjs');
 
 const tenantA = '11111111-1111-1111-1111-111111111111';
 const tenantB = '22222222-2222-2222-2222-222222222222';
@@ -29,6 +29,7 @@ describe('Jobs e métricas — isolamento por clínica', () => {
   });
 
   beforeEach(() => {
+    clearTenantSettingsCacheForTests();
     sqlLog = [];
     handler = () => null;
     querySpy = jest.spyOn(pool, 'query').mockImplementation((sql, params = []) => {
@@ -37,7 +38,7 @@ describe('Jobs e métricas — isolamento por clínica', () => {
       const custom = handler(text, params);
       if (custom) return Promise.resolve(custom);
       // Horário de envio aberto o dia todo, para o teste não depender do relógio.
-      if (/FROM app_settings WHERE key = 'solution_hours'/.test(text)) {
+      if (/FROM tenant_settings WHERE tenant_id = \$1 AND key = \$2/.test(text) && params[1] === 'solution_hours') {
         return Promise.resolve({ rows: [{ value: { inicio: '00:00', fim: '23:59', diasSemana: [] } }], rowCount: 1 });
       }
       return Promise.resolve({ rows: [], rowCount: 0 });
