@@ -11878,6 +11878,7 @@ let automationSchedulerInterval = null;
 let appointmentReminderInterval = null;
 
 // Antecedência do pedido de confirmação (coluna confirmacao_quando do agendamento).
+// 'nao' = confirmação desligada (agendamento salvo sem telefone do paciente).
 // Sem valor, ou valor antigo ('_none', 'agora', '1d'), vale a véspera: o lembrete
 // sempre existiu para toda consulta e não deve sumir de agendamentos antigos.
 const APPT_CONFIRMATION_LEAD_DAYS_SQL = `CASE a.confirmacao_quando WHEN '2d' THEN 2 WHEN '3d' THEN 3 WHEN '7d' THEN 7 ELSE 1 END`;
@@ -11909,6 +11910,7 @@ async function processAppointmentReminders() {
         AND a.tenant_id <> '00000000-0000-0000-0000-000000000001'
         AND a.data = ((NOW() AT TIME ZONE '${WA_TZ}')::date + ${APPT_CONFIRMATION_LEAD_DAYS_SQL})
         AND COALESCE(a.status, 'agendado') <> ALL($1::text[])
+        AND COALESCE(a.confirmacao_quando, '') <> 'nao'
         AND NOT EXISTS (
           SELECT 1 FROM automation_jobs aj
            WHERE aj.tenant_id = a.tenant_id

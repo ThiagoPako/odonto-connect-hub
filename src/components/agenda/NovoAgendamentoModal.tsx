@@ -177,10 +177,12 @@ export function NovoAgendamentoModal({
     if (duracao < 5 || duracao > 480) return "Duração entre 5 e 480 minutos.";
     if (multiplo && (qtdSessoes < 2 || qtdSessoes > 52)) return "Quantidade de sessões entre 2 e 52.";
     if (multiplo && (intervaloDias < 1 || intervaloDias > 180)) return "Intervalo entre 1 e 180 dias.";
-    if (confirmacaoCanal === "whatsapp" && confirmacaoQuando && !telefone.replace(/\D/g, ""))
-      return "Informe o telefone para enviar confirmação por WhatsApp.";
     return null;
   };
+
+  // Sem telefone o agendamento é salvo com a confirmação desligada ("nao"), em vez de recusar.
+  const semTelefone = !!pacienteId && !telefone.replace(/\D/g, "");
+  const confirmacaoQuandoEnvio = semTelefone ? "nao" : confirmacaoQuando;
 
   const handleCreatedSuccess = async () => {
     onOpenChange(false);
@@ -240,8 +242,8 @@ export function NovoAgendamentoModal({
           categoria,
           categoria_cor: cat?.cor,
           primeira_consulta: primeiraConsulta,
-          confirmacao_canal: confirmacaoQuando ? confirmacaoCanal : "",
-          confirmacao_quando: confirmacaoQuando,
+          confirmacao_canal: confirmacaoQuandoEnvio && !semTelefone ? confirmacaoCanal : "",
+          confirmacao_quando: confirmacaoQuandoEnvio,
           sala,
           observacoes,
         });
@@ -262,8 +264,8 @@ export function NovoAgendamentoModal({
           primeira_consulta: primeiraConsulta,
           categoria,
           categoria_cor: cat?.cor,
-          confirmacao_canal: confirmacaoQuando ? confirmacaoCanal : null,
-          confirmacao_quando: confirmacaoQuando || null,
+          confirmacao_canal: confirmacaoQuandoEnvio && !semTelefone ? confirmacaoCanal : null,
+          confirmacao_quando: confirmacaoQuandoEnvio || null,
           alerta_retorno_canal: retornoQuando ? retornoCanal : null,
           alerta_retorno_quando: retornoQuando || null,
           marcadores: marcadores.length ? marcadores : undefined,
@@ -551,12 +553,16 @@ export function NovoAgendamentoModal({
                   <Select
                     value={["2d", "3d", "7d"].includes(confirmacaoQuando) ? confirmacaoQuando : "1d"}
                     onValueChange={(v) => setConfirmacaoQuando(v === "1d" ? "" : v)}
+                    disabled={semTelefone}
                   >
                     <SelectTrigger id="confirmacao-quando" aria-label="Quando pedir confirmação"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       {CONFIRMACAO_OPCOES.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
                     </SelectContent>
                   </Select>
+                  {semTelefone && (
+                    <p role="status" className="mt-1 text-[11px] text-warning">Sem telefone — a confirmação não será enviada</p>
+                  )}
                 </div>
                 <div>
                   <Label className="mb-1 flex items-center gap-1.5 text-xs text-muted-foreground">

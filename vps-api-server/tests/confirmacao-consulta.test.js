@@ -138,6 +138,7 @@ describe('Confirmação de consulta pelo WhatsApp', () => {
       expect(q.text).toMatch(/d\.tenant_id = a\.tenant_id/);
       expect(q.text).toMatch(/aj\.tenant_id = a\.tenant_id/);
       expect(q.text).toMatch(/apptDate/);
+      expect(q.text).toMatch(/COALESCE\(a\.confirmacao_quando, ''\) <> 'nao'/); // salvo sem telefone: desligada
       expect(q.params[0]).toEqual(expect.arrayContaining(['confirmado', 'remarcar', 'cancelado']));
     });
 
