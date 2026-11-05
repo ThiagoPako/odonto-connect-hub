@@ -394,6 +394,47 @@ export interface AgendamentoVPS {
 
 // ─── Financeiro / Estoque / Tratamentos / Comissões / Prontuários / Dentistas / Comercial
 
+// Contas a receber de paciente (tabela financeiro, tipo receita)
+export type SituacaoReceber = 'aberto' | 'vencido' | 'pago' | 'cancelado' | 'todos';
+export type FormaRecebimento = 'dinheiro' | 'pix' | 'cartao_credito' | 'cartao_debito' | 'boleto' | 'transferencia' | 'outro';
+export interface ContaReceber {
+  id: string;
+  paciente_id: string | null;
+  paciente_nome: string | null;
+  descricao: string | null;
+  valor: number;
+  status: string;
+  vencimento: string;
+  pago_em: string | null;
+  forma_pagamento: string | null;
+  parcela_atual: number | null;
+  parcelas: number | null;
+  orcamento_id: string | null;
+  cobranca_pausada_em: string | null;
+  responsavel_nome: string | null;
+  responsavel_telefone: string | null;
+  vencida: boolean;
+}
+export interface ContasReceberResposta {
+  contas: ContaReceber[];
+  totais: { aVencer: number; vencido: number; recebidoMes: number };
+  hoje: string;
+}
+export interface ParcelaGerada { parcela: number; valor: number; vencimento: string }
+
+export const contasReceberApi = {
+  list: (situacao: SituacaoReceber) => vpsApiFetch<ContasReceberResposta>('/contas-receber', { params: { situacao } }),
+  baixa: (id: string, body: { pago_em: string; forma_pagamento: FormaRecebimento }) =>
+    vpsApiFetch<{ success: boolean }>(`/contas-receber/${id}/baixa`, { method: 'POST', body }),
+  cancelar: (id: string) => vpsApiFetch<{ success: boolean }>(`/contas-receber/${id}/cancelar`, { method: 'POST' }),
+  retomarCobranca: (id: string) => vpsApiFetch<{ success: boolean }>(`/billing-reminder/contas/${id}/retomar`, { method: 'POST' }),
+  salvarResponsavel: (pacienteId: string, body: { nome: string; telefone: string }) =>
+    vpsApiFetch<{ success: boolean }>(`/pacientes/${pacienteId}/responsavel-financeiro`, { method: 'PUT', body }),
+  parcelasDoOrcamento: (orcamentoId: string) => vpsApiFetch<ContaReceber[]>(`/orcamentos/${orcamentoId}/parcelas`),
+  gerarParcelas: (orcamentoId: string, body: { parcelas: number; primeiro_vencimento: string; entrada?: number }) =>
+    vpsApiFetch<{ success: boolean; parcelas: ParcelaGerada[] }>(`/orcamentos/${orcamentoId}/parcelas`, { method: 'POST', body }),
+};
+
 export const financeiroApi = {
   list: (params?: Record<string, string>) => vpsApiFetch('/financeiro', { params }),
   create: (body: unknown) => vpsApiFetch('/financeiro', { method: 'POST', body }),

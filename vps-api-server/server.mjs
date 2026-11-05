@@ -5715,6 +5715,262 @@ app.delete('/api/financeiro/:id', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
+// CONTAS A RECEBER DE PACIENTE (tabela financeiro, tipo 'receita')
+// Em aberto: status pendente/atrasado/vencido (BILLING_OPEN_STATUSES). Baixa grava
+// status 'pago', pago_em e forma_pagamento e tira a cobrança da fila (régua).
+// ═══════════════════════════════════════════════════════════════
+const RECEBER_FORMAS = ['dinheiro', 'pix', 'cartao_credito', 'cartao_debito', 'boleto', 'transferencia', 'outro'];
+
+// 'aaaa-mm-dd' ou 'dd/mm/aaaa' → 'aaaa-mm-dd' de uma data que existe; senão null.
+function parseDataReceber(v) {
+  const iso = billingDateIso(v);
+  if (!iso) return null;
+  const [y, m, d] = iso.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== m - 1 || dt.getUTCDate() !== d) return null;
+  if (y < 2000 || y > 2100) return null;
+  return iso;
+}
+
+// Soma meses mantendo o dia (31/01 + 1 mês → 28 ou 29/02).
+function addMesesIso(iso, meses) {
+  const [y, m, d] = iso.split('-').map(Number);
+  const alvo = new Date(Date.UTC(y, m - 1 + meses, 1));
+  const ultimo = new Date(Date.UTC(alvo.getUTCFullYear(), alvo.getUTCMonth() + 1, 0)).getUTCDate();
+  alvo.setUTCDate(Math.min(d, ultimo));
+  return alvo.toISOString().slice(0, 10);
+}
+
+// Divide em centavos: parcelas iguais e a última leva a diferença.
+function dividirEmParcelasCentavos(totalCentavos, n) {
+  const base = Math.floor(totalCentavos / n);
+  const lista = Array.from({ length: n }, () => base);
+  lista[n - 1] = totalCentavos - base * (n - 1);
+  return lista;
+}
+
+const reaisParaCentavos = (v) => Math.round(Number(v) * 100);
+const centavosParaReais = (c) => (c / 100).toFixed(2);
+
+function receberErroStatus(error) {
+  if (error.message === 'Unauthorized') return 401;
+  if (error.code === '42703') return 503; // colunas novas ainda não criadas (boot)
+  return 500;
+}
+
+app.get('/api/contas-receber', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const hoje = spClock().day;
+    const situacao = String(req.query.situacao || 'aberto');
+    const params = [user.tenant_id, hoje, BILLING_OPEN_STATUSES];
+    let filtro = '';
+    if (situacao === 'aberto') filtro = `AND LOWER(COALESCE(f.status,'')) = ANY($3::text[]) AND f.vencimento >= $2::date`;
+    else if (situacao === 'vencido') filtro = `AND LOWER(COALESCE(f.status,'')) = ANY($3::text[]) AND f.vencimento < $2::date`;
+    else if (situacao === 'pago') filtro = `AND LOWER(COALESCE(f.status,'')) = 'pago'`;
+    else if (situacao === 'cancelado') filtro = `AND LOWER(COALESCE(f.status,'')) = 'cancelado'`;
+    else if (situacao !== 'todos') return res.status(400).json({ error: 'Situação inválida' });
+    if (req.query.paciente_id) {
+      if (!PACIENTE_UUID_RE.test(String(req.query.paciente_id))) return res.status(400).json({ error: 'Paciente inválido' });
+      params.push(String(req.query.paciente_id)); filtro += ` AND f.paciente_id = $${params.length}`;
+    }
+    const { rows } = await pool.query(
+      `SELECT f.id, f.paciente_id, p.nome AS paciente_nome, f.descricao, f.valor, f.status,
+              to_char(f.vencimento, 'YYYY-MM-DD') AS vencimento, to_char(f.pago_em, 'YYYY-MM-DD') AS pago_em,
+              f.forma_pagamento, f.parcela_atual, f.parcelas, f.orcamento_id,
+              f.cobranca_pausada_em, p.responsavel_nome, p.responsavel_telefone,
+              (LOWER(COALESCE(f.status,'')) = ANY($3::text[]) AND f.vencimento < $2::date) AS vencida
+         FROM financeiro f
+         LEFT JOIN pacientes p ON p.id = f.paciente_id AND p.tenant_id = f.tenant_id
+        WHERE f.tenant_id = $1 AND f.tipo = 'receita' AND f.vencimento IS NOT NULL ${filtro}
+        ORDER BY f.vencimento ASC, f.parcela_atual ASC NULLS FIRST
+        LIMIT 1000`,
+      params
+    );
+    const { rows: [tot] } = await pool.query(
+      `SELECT
+         COALESCE(SUM(valor) FILTER (WHERE LOWER(COALESCE(status,'')) = ANY($3::text[]) AND vencimento >= $2::date), 0)::numeric AS a_vencer,
+         COALESCE(SUM(valor) FILTER (WHERE LOWER(COALESCE(status,'')) = ANY($3::text[]) AND vencimento < $2::date), 0)::numeric AS vencido,
+         COALESCE(SUM(valor) FILTER (WHERE LOWER(COALESCE(status,'')) = 'pago'
+           AND date_trunc('month', pago_em) = date_trunc('month', $2::date)), 0)::numeric AS recebido_mes
+         FROM financeiro WHERE tenant_id = $1 AND tipo = 'receita' AND vencimento IS NOT NULL`,
+      [user.tenant_id, hoje, BILLING_OPEN_STATUSES]
+    );
+    res.json({
+      contas: rows.map(r => ({ ...r, valor: Number(r.valor || 0) })),
+      totais: {
+        aVencer: Number(tot?.a_vencer || 0),
+        vencido: Number(tot?.vencido || 0),
+        recebidoMes: Number(tot?.recebido_mes || 0),
+      },
+      hoje,
+    });
+  } catch (error) {
+    console.error('[receber] GET:', error.message);
+    res.status(receberErroStatus(error)).json({ error: error.message === 'Unauthorized' ? 'Unauthorized' : 'Erro ao carregar contas a receber' });
+  }
+});
+
+// Conta avulsa (sem orçamento).
+app.post('/api/contas-receber', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { paciente_id, descricao } = req.body || {};
+    const centavos = reaisParaCentavos(req.body?.valor);
+    const vencimento = parseDataReceber(req.body?.vencimento);
+    if (!Number.isFinite(centavos) || centavos <= 0) return res.status(400).json({ error: 'Valor inválido' });
+    if (!vencimento) return res.status(400).json({ error: 'Vencimento inválido' });
+    const refErro = await validarReferenciasDoTenant(user.tenant_id, { pacienteId: paciente_id });
+    if (refErro || !paciente_id) return res.status(400).json({ error: refErro || 'Paciente obrigatório' });
+    const { rows } = await pool.query(
+      `INSERT INTO financeiro (id, tipo, descricao, valor, data, vencimento, categoria, paciente_id, status, parcela_atual, parcelas, tenant_id)
+       VALUES ($1, 'receita', $2, $3, $4, $5, 'conta_receber', $6, 'pendente', 1, 1, $7) RETURNING id`,
+      [crypto.randomUUID(), String(descricao || 'Conta a receber').slice(0, 200), centavosParaReais(centavos), spClock().day, vencimento, paciente_id, user.tenant_id]
+    );
+    res.json({ success: true, id: rows[0]?.id });
+  } catch (error) {
+    console.error('[receber] POST:', error.message);
+    res.status(receberErroStatus(error)).json({ error: error.message === 'Unauthorized' ? 'Unauthorized' : 'Erro ao criar conta' });
+  }
+});
+
+// Baixa: pagamento recebido.
+app.post('/api/contas-receber/:id/baixa', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    if (!PACIENTE_UUID_RE.test(String(req.params.id))) return res.status(404).json({ error: 'Conta não encontrada' });
+    const pagoEm = parseDataReceber(req.body?.pago_em || spClock().day);
+    const forma = String(req.body?.forma_pagamento || '');
+    if (!pagoEm || pagoEm > spClock().day) return res.status(400).json({ error: 'Data de pagamento inválida (não pode ser futura)' });
+    if (!RECEBER_FORMAS.includes(forma)) return res.status(400).json({ error: 'Forma de pagamento inválida' });
+    const { rows } = await pool.query(
+      `UPDATE financeiro SET status = 'pago', pago_em = $3, forma_pagamento = $4, updated_at = NOW()
+        WHERE id = $1 AND tenant_id = $2 AND tipo = 'receita' AND LOWER(COALESCE(status,'')) = ANY($5::text[])
+        RETURNING id`,
+      [req.params.id, user.tenant_id, pagoEm, forma, BILLING_OPEN_STATUSES]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Conta em aberto não encontrada' });
+    await cancelPendingBillingJobs(user.tenant_id, req.params.id, 'Cancelado: conta paga');
+    res.json({ success: true });
+  } catch (error) {
+    console.error('[receber] baixa:', error.message);
+    res.status(receberErroStatus(error)).json({ error: error.message === 'Unauthorized' ? 'Unauthorized' : 'Erro ao registrar pagamento' });
+  }
+});
+
+app.post('/api/contas-receber/:id/cancelar', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    if (!PACIENTE_UUID_RE.test(String(req.params.id))) return res.status(404).json({ error: 'Conta não encontrada' });
+    const { rows } = await pool.query(
+      `UPDATE financeiro SET status = 'cancelado', updated_at = NOW()
+        WHERE id = $1 AND tenant_id = $2 AND tipo = 'receita' AND LOWER(COALESCE(status,'')) = ANY($3::text[])
+        RETURNING id`,
+      [req.params.id, user.tenant_id, BILLING_OPEN_STATUSES]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Conta em aberto não encontrada' });
+    await cancelPendingBillingJobs(user.tenant_id, req.params.id, 'Cancelado: conta cancelada');
+    res.json({ success: true });
+  } catch (error) {
+    console.error('[receber] cancelar:', error.message);
+    res.status(receberErroStatus(error)).json({ error: error.message === 'Unauthorized' ? 'Unauthorized' : 'Erro ao cancelar conta' });
+  }
+});
+
+// Parcelas já geradas para um orçamento.
+app.get('/api/orcamentos/:id/parcelas', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    if (!PACIENTE_UUID_RE.test(String(req.params.id))) return res.status(404).json({ error: 'Orçamento não encontrado' });
+    const { rows } = await pool.query(
+      `SELECT id, valor, status, parcela_atual, parcelas, to_char(vencimento, 'YYYY-MM-DD') AS vencimento,
+              to_char(pago_em, 'YYYY-MM-DD') AS pago_em
+         FROM financeiro WHERE tenant_id = $1 AND orcamento_id = $2 AND tipo = 'receita'
+        ORDER BY parcela_atual ASC`,
+      [user.tenant_id, req.params.id]
+    );
+    res.json(rows.map(r => ({ ...r, valor: Number(r.valor || 0) })));
+  } catch (error) {
+    console.error('[receber] parcelas GET:', error.message);
+    res.status(receberErroStatus(error)).json({ error: error.message === 'Unauthorized' ? 'Unauthorized' : 'Erro ao carregar parcelas' });
+  }
+});
+
+// Gera as parcelas de um orçamento aprovado: entrada opcional (parcela 0, vence hoje)
+// + N parcelas mensais a partir do primeiro vencimento. Cálculo em centavos.
+app.post('/api/orcamentos/:id/parcelas', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    if (!PACIENTE_UUID_RE.test(String(req.params.id))) return res.status(404).json({ error: 'Orçamento não encontrado' });
+    const n = Number(req.body?.parcelas);
+    if (!Number.isInteger(n) || n < 1 || n > 48) return res.status(400).json({ error: 'Número de parcelas: de 1 a 48' });
+    const primeiro = parseDataReceber(req.body?.primeiro_vencimento);
+    if (!primeiro) return res.status(400).json({ error: 'Primeiro vencimento inválido' });
+    const entradaC = req.body?.entrada ? reaisParaCentavos(req.body.entrada) : 0;
+    if (!Number.isFinite(entradaC) || entradaC < 0) return res.status(400).json({ error: 'Entrada inválida' });
+
+    const { rows: [orc] } = await pool.query(
+      `SELECT o.id, o.paciente_id, o.valor_total, o.desconto, o.status
+         FROM orcamentos o
+         JOIN pacientes p ON p.id = o.paciente_id AND p.tenant_id = o.tenant_id
+        WHERE o.id = $1 AND o.tenant_id = $2`,
+      [req.params.id, user.tenant_id]
+    );
+    if (!orc) return res.status(404).json({ error: 'Orçamento não encontrado' });
+    if (!['aprovado', 'em_tratamento', 'finalizado'].includes(orc.status)) {
+      return res.status(400).json({ error: 'Só orçamento aprovado gera parcelas' });
+    }
+    const totalC = reaisParaCentavos(orc.valor_total) - reaisParaCentavos(orc.desconto || 0);
+    if (!(totalC > 0)) return res.status(400).json({ error: 'Orçamento sem valor a receber' });
+    if (entradaC >= totalC) return res.status(400).json({ error: 'A entrada precisa ser menor que o total' });
+    const { rows: existentes } = await pool.query(
+      `SELECT 1 FROM financeiro WHERE tenant_id = $1 AND orcamento_id = $2 AND tipo = 'receita'
+          AND LOWER(COALESCE(status,'')) <> 'cancelado' LIMIT 1`,
+      [user.tenant_id, orc.id]
+    );
+    if (existentes.length) return res.status(409).json({ error: 'Este orçamento já tem parcelas geradas' });
+
+    const hoje = spClock().day;
+    const valores = dividirEmParcelasCentavos(totalC - entradaC, n);
+    const linhas = [];
+    if (entradaC > 0) linhas.push({ parcela: 0, centavos: entradaC, vencimento: hoje, descricao: 'Entrada do orçamento' });
+    valores.forEach((c, i) => linhas.push({
+      parcela: i + 1, centavos: c, vencimento: addMesesIso(primeiro, i), descricao: `Orçamento — parcela ${i + 1}/${n}`,
+    }));
+
+    const params = [];
+    const values = linhas.map((l) => {
+      const base = params.length;
+      params.push(crypto.randomUUID(), l.descricao, centavosParaReais(l.centavos), hoje, l.vencimento,
+        orc.paciente_id, l.parcela, n, orc.id, user.tenant_id);
+      const p = (k) => `$${base + k}`;
+      return `(${p(1)}, 'receita', ${p(2)}, ${p(3)}, ${p(4)}, ${p(5)}, 'orcamento', ${p(6)}, 'pendente', ${p(7)}, ${p(8)}, ${p(9)}, ${p(10)})`;
+    });
+    // Um único INSERT: todas as parcelas entram ou nenhuma entra.
+    await pool.query(
+      `INSERT INTO financeiro (id, tipo, descricao, valor, data, vencimento, categoria, paciente_id, status,
+                               parcela_atual, parcelas, orcamento_id, tenant_id)
+       VALUES ${values.join(', ')}`,
+      params
+    );
+    res.json({
+      success: true,
+      parcelas: linhas.map(l => ({ parcela: l.parcela, valor: Number(centavosParaReais(l.centavos)), vencimento: l.vencimento })),
+    });
+  } catch (error) {
+    if (error.code === '23505') return res.status(409).json({ error: 'Este orçamento já tem parcelas geradas' });
+    console.error('[receber] gerar parcelas:', error.message);
+    res.status(receberErroStatus(error)).json({ error: error.message === 'Unauthorized' ? 'Unauthorized' : 'Erro ao gerar parcelas' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
 // FINANCEIRO — BANK ACCOUNTS
 // ═══════════════════════════════════════════════════════════════
 
@@ -16677,6 +16933,11 @@ if (process.env.NODE_ENV !== 'test') {
       `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS clinicorp_appointment_id TEXT`,
       `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS last_clinicorp_sync_at TIMESTAMPTZ`,
       `ALTER TABLE agendamentos ADD COLUMN IF NOT EXISTS keep_local BOOLEAN DEFAULT false`,
+      // Contas a receber (migration-contas-receber.sql)
+      `ALTER TABLE financeiro ADD COLUMN IF NOT EXISTS orcamento_id UUID`,
+      `ALTER TABLE financeiro ADD COLUMN IF NOT EXISTS pago_em DATE`,
+      `CREATE INDEX IF NOT EXISTS idx_financeiro_receber ON financeiro (tenant_id, tipo, status, vencimento)`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS ux_financeiro_orcamento_parcela ON financeiro (tenant_id, orcamento_id, parcela_atual) WHERE orcamento_id IS NOT NULL AND status <> 'cancelado'`,
       // Régua de cobrança (migration-regua-cobranca.sql)
       `ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS responsavel_nome TEXT`,
       `ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS responsavel_telefone TEXT`,
@@ -16818,5 +17079,6 @@ export { app, pool };
 // Exportados só para os testes de jobs (tests/jobs-metricas-isolamento.test.js).
 export { processSolutionTriggers, runWhatsAppJobHooks, ensureTenantConfigSchema, triggerFollowupAutomation };
 export { processBillingReminders, billingReminderBlockReason, validateBillingReminderConfig, renderBillingMessage, isFeriadoNacional, isBillingContestText, pauseBillingForPhone };
+export { dividirEmParcelasCentavos, addMesesIso, parseDataReceber };
 export function clearTenantSettingsCacheForTests() { tenantSettingsCache.clear(); }
 

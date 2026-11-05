@@ -48,6 +48,7 @@ import { Route as AtendimentoRouteImport } from './routes/atendimento'
 import { Route as AnalyticsRouteImport } from './routes/analytics'
 import { Route as AgendaRouteImport } from './routes/agenda'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as FinanceiroReceberRouteImport } from './routes/financeiro_.receber'
 import { Route as ConfiguracoesCobrancaRouteImport } from './routes/configuracoes.cobranca'
 import { Route as ConfiguracoesAgendaRouteImport } from './routes/configuracoes.agenda'
 
@@ -246,6 +247,11 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const FinanceiroReceberRoute = FinanceiroReceberRouteImport.update({
+  id: '/financeiro_/receber',
+  path: '/financeiro/receber',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ConfiguracoesCobrancaRoute = ConfiguracoesCobrancaRouteImport.update({
   id: '/cobranca',
   path: '/cobranca',
@@ -299,6 +305,7 @@ export interface FileRoutesByFullPath {
   '/usuarios': typeof UsuariosRoute
   '/configuracoes/agenda': typeof ConfiguracoesAgendaRoute
   '/configuracoes/cobranca': typeof ConfiguracoesCobrancaRoute
+  '/financeiro/receber': typeof FinanceiroReceberRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -342,6 +349,7 @@ export interface FileRoutesByTo {
   '/usuarios': typeof UsuariosRoute
   '/configuracoes/agenda': typeof ConfiguracoesAgendaRoute
   '/configuracoes/cobranca': typeof ConfiguracoesCobrancaRoute
+  '/financeiro/receber': typeof FinanceiroReceberRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -386,6 +394,7 @@ export interface FileRoutesById {
   '/usuarios': typeof UsuariosRoute
   '/configuracoes/agenda': typeof ConfiguracoesAgendaRoute
   '/configuracoes/cobranca': typeof ConfiguracoesCobrancaRoute
+  '/financeiro_/receber': typeof FinanceiroReceberRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -431,6 +440,7 @@ export interface FileRouteTypes {
     | '/usuarios'
     | '/configuracoes/agenda'
     | '/configuracoes/cobranca'
+    | '/financeiro/receber'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -474,6 +484,7 @@ export interface FileRouteTypes {
     | '/usuarios'
     | '/configuracoes/agenda'
     | '/configuracoes/cobranca'
+    | '/financeiro/receber'
   id:
     | '__root__'
     | '/'
@@ -517,6 +528,7 @@ export interface FileRouteTypes {
     | '/usuarios'
     | '/configuracoes/agenda'
     | '/configuracoes/cobranca'
+    | '/financeiro_/receber'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -559,6 +571,7 @@ export interface RootRouteChildren {
   TermosRoute: typeof TermosRoute
   TratamentosRoute: typeof TratamentosRoute
   UsuariosRoute: typeof UsuariosRoute
+  FinanceiroReceberRoute: typeof FinanceiroReceberRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -836,6 +849,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/financeiro_/receber': {
+      id: '/financeiro_/receber'
+      path: '/financeiro/receber'
+      fullPath: '/financeiro/receber'
+      preLoaderRoute: typeof FinanceiroReceberRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/configuracoes/cobranca': {
       id: '/configuracoes/cobranca'
       path: '/cobranca'
@@ -907,6 +927,7 @@ const rootRouteChildren: RootRouteChildren = {
   TermosRoute: TermosRoute,
   TratamentosRoute: TratamentosRoute,
   UsuariosRoute: UsuariosRoute,
+  FinanceiroReceberRoute: FinanceiroReceberRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
