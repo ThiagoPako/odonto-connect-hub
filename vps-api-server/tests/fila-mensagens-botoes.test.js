@@ -233,6 +233,7 @@ describe('Fila: mensagens com botões e envios automáticos restantes', () => {
       expect(jobCol(ins, 'trigger_event')).toBe('auto_reply');
       expect(jobVars(ins).kind).toBe('opt_out_confirmation');
       expect(jobCol(ins, 'message')).toMatch(/Clínica A não vai mais enviar/);
+      expect(jobCol(ins, 'message')).toMatch(/Se quiser voltar a receber, é só pedir para a nossa equipe/); // parecer T7
       expect(sends()).toHaveLength(0);
     });
 
@@ -293,10 +294,13 @@ describe('Fila: mensagens com botões e envios automáticos restantes', () => {
       expect(jobCol(ins, 'instance')).toBe(instA);
       expect(jobCol(ins, 'trigger_event')).toBe('satisfaction_survey');
       expect(jobCol(ins, 'category')).toBe('transactional');
-      expect(jobCol(ins, 'message')).toMatch(/Responda com o número da sua avaliação/);
+      expect(jobCol(ins, 'message')).toMatch(/1 - Ruim\n2 - Abaixo do esperado\n3 - Regular\n4 - Bom\n5 - Ótimo/);
       const v = jobVars(ins);
       expect(v.interactive.endpoint).toBe('sendButtons');
-      expect(v.interactive.payload.buttons.map(b => b.buttonId)).toEqual([`rating_${leadA}_5`, `rating_${leadA}_4`, `rating_${leadA}_3`]);
+      expect(v.interactive.payload.buttons.map(b => b.buttonId)).toEqual([`rating_${leadA}_5`, `rating_${leadA}_3`, `rating_${leadA}_1`]);
+      // Parecer T10 + achado do Davi: há opção negativa e nenhuma estrela antes de o paciente avaliar.
+      expect(v.interactive.payload.buttons.map(b => b.buttonText.displayText)).toEqual(['Ótimo (5)', 'Regular (3)', 'Ruim (1)']);
+      expect(JSON.stringify(v.interactive.payload) + jobCol(ins, 'message')).not.toMatch(/⭐/);
       expect(v).toMatchObject({ leadId: leadA, sessionId: 'sess-1', attendantName: 'Ana' });
       // A flag de avaliação só é gravada quando a pesquisa sair (hook), não ao enfileirar.
       expect(sqlLog.some(q => /INSERT INTO app_settings/.test(q.text))).toBe(false);

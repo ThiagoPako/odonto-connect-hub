@@ -176,7 +176,7 @@ describe('Confirmação de consulta pelo WhatsApp', () => {
       ['1', 'confirmado'], ['Sim', 'confirmado'], ['confirmar!', 'confirmado'], ['2', 'remarcar'],
       ['Preciso remarcar', 'remarcar'], [`appt_confirm_${agendA}`, 'confirmado'], [`appt_reschedule_${agendA}`, 'remarcar'],
     ])('%s → %s', (txt, action) => expect(parseAppointmentReminderReply(txt).action).toBe(action));
-    test.each(['quero cancelar a consulta', '3', 'oi', ''])('"%s" não é resposta', (txt) => expect(parseAppointmentReminderReply(txt)).toBeNull());
+    test.each(['quero cancelar a consulta', '3', 'oi', '', 'ok', 'OK!'])('"%s" não é resposta', (txt) => expect(parseAppointmentReminderReply(txt)).toBeNull());
   });
 
   describe('webhook', () => {
@@ -209,7 +209,9 @@ describe('Confirmação de consulta pelo WhatsApp', () => {
       const [upd] = await waitFor(() => (statusUpdates().length ? statusUpdates() : null));
       expect(upd.params).toEqual([agendA, tenantA, 'remarcar']);
       const [rep] = await waitFor(() => (replyJobs().length ? replyJobs() : null));
-      expect(jobCol(rep, 'message')).toMatch(/pedido para remarcar/);
+      expect(jobCol(rep, 'message')).toMatch(/pedido para remarcar a consulta de 10\/03\/2099 às 14:30/);
+      expect(jobCol(rep, 'message')).toMatch(/no horário de atendimento/);
+      expect(jobCol(rep, 'message')).toMatch(/seu horário atual continua reservado/); // parecer T5
       const q = sqlLog.find(s => /trigger_event = 'appointment_reminder' AND aj.status = 'sent'/.test(s.text));
       expect(q.params[2]).toBe(`reminder_${agendA}`);
     });
