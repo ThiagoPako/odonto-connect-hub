@@ -33,6 +33,7 @@ import {
 import { OdontogramaInterativo, type FaceSelection, type Face } from "./OdontogramaInterativo";
 import { DEFAULT_PRINT_CONFIG, type OrcamentoItemEstruturado, type PrintConfig } from "./types";
 import { OrcamentoPrintPreview } from "./OrcamentoPrintPreview";
+import { centavos } from "@/lib/formatos";
 
 interface OrcamentoEdit {
   id: string;
@@ -278,7 +279,7 @@ export function NovoOrcamentoModal({
     setItens((cur) =>
       cur.map((it) =>
         it.id === id
-          ? { ...it, quantidade: q, valor_total: q * it.valor_unitario }
+          ? { ...it, quantidade: q, valor_total: centavos(q * (Number(it.valor_unitario) || 0)) }
           : it
       )
     );
@@ -287,19 +288,20 @@ export function NovoOrcamentoModal({
     setItens((cur) =>
       cur.map((it) =>
         it.id === id
-          ? { ...it, valor_unitario: v, valor_total: it.quantidade * v }
+          ? { ...it, valor_unitario: centavos(v), valor_total: centavos(it.quantidade * v) }
           : it
       )
     );
 
-  const subtotal = itens.reduce((acc, it) => acc + (Number(it.valor_total) || 0), 0);
+  const subtotal = centavos(itens.reduce((acc, it) => acc + (Number(it.valor_total) || 0), 0));
   const total = Math.max(0, subtotal - desconto);
 
   const pacienteSelecionado = pacientes.find((p) => p.id === pacienteId);
   const dentistaSelecionado = dentistas.find((d) => d.id === dentistaId);
 
   const erroDesconto = desconto < 0 ? "O desconto não pode ser negativo."
-    : desconto > subtotal && subtotal > 0 ? `O desconto passa do subtotal (${fmt(subtotal)}).` : null;
+    // Vale também com subtotal 0: senão o servidor gravava total negativo (0 − desconto)
+    : desconto > subtotal ? (subtotal > 0 ? `O desconto passa do subtotal (${fmt(subtotal)}).` : "Sem itens com valor, o desconto precisa ser 0.") : null;
   // Fechar sem querer (Esc, clique fora) perdia o plano montado no odontograma
   const temAlteracao = !orcamentoEditar && (itens.length > 0 || observacoes.trim() !== "" || desconto > 0);
   const pedirFechar = (v: boolean) => {
