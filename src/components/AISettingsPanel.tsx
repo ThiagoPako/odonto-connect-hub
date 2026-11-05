@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
 import { Bot, Key, Save, Eye, EyeOff, Check, X, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { vpsApiFetch } from "@/lib/vpsApi";
+import { aiApi, vpsApiFetch } from "@/lib/vpsApi";
+import { Switch } from "@/components/ui/switch";
 
 interface AIProvider {
   provider: string;
@@ -39,10 +40,28 @@ export function AISettingsPanel() {
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  // Transcrição bruta da consulta: padrão é apagar quando o dentista aprova o relatório (LGPD art. 6º III)
+  const [manterTranscricao, setManterTranscricao] = useState<boolean | null>(null);
+  const [salvandoTranscricao, setSalvandoTranscricao] = useState(false);
 
   useEffect(() => {
     loadSettings();
+    aiApi.getClinicSettings().then(({ data }) => setManterTranscricao(data?.manter_transcricao ?? false));
   }, []);
+
+  async function alterarManterTranscricao(valor: boolean) {
+    setSalvandoTranscricao(true);
+    const { data, error } = await aiApi.saveClinicSettings({ manter_transcricao: valor });
+    setSalvandoTranscricao(false);
+    if (error || !data) {
+      toast.error(error || "Não foi possível salvar a configuração");
+      return;
+    }
+    setManterTranscricao(data.manter_transcricao);
+    toast.success(data.manter_transcricao
+      ? "A transcrição será mantida junto do relatório aprovado"
+      : "A transcrição será apagada quando o dentista aprovar o relatório");
+  }
 
   async function loadSettings() {
     setLoading(true);
@@ -225,6 +244,24 @@ export function AISettingsPanel() {
           )}
         </div>
       ))}
+
+      <div className="bg-card rounded-xl border border-border/60 p-4 flex items-start justify-between gap-4">
+        <div>
+          <label htmlFor="manter-transcricao" className="text-sm font-semibold text-foreground">
+            Manter a transcrição da consulta depois da aprovação
+          </label>
+          <p className="text-xs text-muted-foreground mt-1">
+            Desligado (recomendado): a transcrição bruta, com tudo o que foi dito na consulta, é apagada quando o
+            dentista aprova o relatório. Ligue só se a clínica quiser guardá-la como parte do prontuário.
+          </p>
+        </div>
+        <Switch
+          id="manter-transcricao"
+          checked={manterTranscricao === true}
+          disabled={manterTranscricao === null || salvandoTranscricao}
+          onCheckedChange={alterarManterTranscricao}
+        />
+      </div>
 
       <div className="bg-muted/30 rounded-lg p-3 border border-border/30">
         <p className="text-[11px] text-muted-foreground">

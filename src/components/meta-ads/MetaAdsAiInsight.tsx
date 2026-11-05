@@ -8,7 +8,8 @@ export function MetaAdsAiInsight({ insight }: { insight: string }) {
           <Bot className="h-4 w-4 text-primary" />
         </div>
         <div>
-          <p className="text-xs font-semibold text-primary mb-1">Análise Manus AI</p>
+          <p className="text-xs font-semibold text-primary mb-1">Análise gerada por IA (OpenAI)</p>
+          <p className="text-[11px] text-muted-foreground mb-1">Feita a partir dos números das campanhas. Confira os dados antes de decidir.</p>
           <p className="text-sm text-foreground leading-relaxed whitespace-pre-line">{insight}</p>
         </div>
       </div>

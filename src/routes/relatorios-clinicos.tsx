@@ -15,6 +15,8 @@ import { ptBR } from "date-fns/locale";
 import { exportarRelatoriosClinicosPdf } from "@/lib/relatoriosClinicosPdfExport";
 import { toast } from "sonner";
 import { simpleMarkdownToHtml } from "@/lib/safeHtml";
+import { useAuth } from "@/hooks/useAuth";
+import { AprovarRelatorioIA, AvisoDecisaoClinica, RotuloRelatorioIA, relatorioAprovado } from "@/components/RelatorioIaRevisao";
 
 export const Route = createFileRoute("/relatorios-clinicos")({
   ssr: false,
@@ -29,6 +31,9 @@ type StatusFilter = 'todos' | 'com_prescricao' | 'sem_prescricao';
 const LIMITE_PACIENTES = 1000;
 
 function RelatoriosClinicosPage() {
+  const { user } = useAuth();
+  // Exportação em massa é só do admin (o servidor também bloqueia e registra cada exportação)
+  const isAdmin = user?.role === "admin";
   const [busca, setBusca] = useState("");
   const [reports, setReports] = useState<ClinicalReportApi[]>([]);
   const [stats, setStats] = useState({ total: 0, com_prescricao: 0, sem_prescricao: 0, pacientes_unicos: 0, duracao_total_min: 0 });
@@ -181,7 +186,7 @@ function RelatoriosClinicosPage() {
                   Relatórios Clínicos IA
                 </h1>
                 <p className="text-sm text-primary-foreground/80 max-w-md">
-                  Filtre por período, status e paciente. Exporte em PDF ou CSV.
+                  Filtre por período, status e paciente. Revise e aprove os rascunhos gerados por IA.
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -191,12 +196,15 @@ function RelatoriosClinicosPage() {
                 >
                   <FileDown className="h-3.5 w-3.5" /> Exportar PDF
                 </button>
-                <button
-                  onClick={exportarCsv}
-                  className="h-9 px-3 rounded-lg bg-white/15 hover:bg-white/25 text-primary-foreground text-xs font-semibold inline-flex items-center gap-1.5 transition-colors backdrop-blur"
-                >
-                  <Download className="h-3.5 w-3.5" /> Exportar CSV
-                </button>
+                {isAdmin && (
+                  <button
+                    onClick={exportarCsv}
+                    title="Só o administrador exporta; cada exportação fica registrada"
+                    className="h-9 px-3 rounded-lg bg-white/15 hover:bg-white/25 text-primary-foreground text-xs font-semibold inline-flex items-center gap-1.5 transition-colors backdrop-blur"
+                  >
+                    <Download className="h-3.5 w-3.5" /> Exportar CSV
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -424,6 +432,12 @@ function RelatoriosClinicosPage() {
                             )}
                             <span className={cn(
                               "px-2 py-0.5 rounded-full text-[10px] font-medium",
+                              relatorioAprovado(r) ? "bg-success/10 text-success" : "bg-warning/15 text-foreground"
+                            )}>
+                              {relatorioAprovado(r) ? "Aprovado" : r.origem_ia_sem_revisao ? "Não revisado" : "Rascunho IA"}
+                            </span>
+                            <span className={cn(
+                              "px-2 py-0.5 rounded-full text-[10px] font-medium",
                               prescricoes.length > 0 ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"
                             )}>
                               {prescricoes.length > 0 ? `${prescricoes.length} Rx` : 'Sem Rx'}
@@ -490,16 +504,35 @@ function RelatoriosClinicosPage() {
                             </details>
                           )}
 
-                          <div className="bg-card border border-primary/20 rounded-xl p-5">
-                            <p className="text-xs font-semibold text-foreground mb-3 flex items-center gap-1.5">
+                          <div className="bg-card border border-primary/20 rounded-xl p-5 space-y-3">
+                            <p className="text-xs font-semibold text-foreground flex items-center gap-1.5">
                               <Bot className="h-3.5 w-3.5 text-primary" /> Relatório Clínico IA
                             </p>
-                            <div
-                              className="prose prose-sm max-w-none text-foreground text-xs leading-relaxed"
-                              dangerouslySetInnerHTML={{
-                                __html: simpleMarkdownToHtml(r.report || ""),
-                              }}
-                            />
+                            <RotuloRelatorioIA report={r} />
+                            {relatorioAprovado(r) ? (
+                              <div
+                                className="prose prose-sm max-w-none text-foreground text-xs leading-relaxed"
+                                dangerouslySetInnerHTML={{
+                                  __html: simpleMarkdownToHtml(r.report || ""),
+                                }}
+                              />
+                            ) : (
+                              <AprovarRelatorioIA
+                                key={r.id}
+                                reportId={r.id}
+                                textoInicial={r.report || ""}
+                                onAprovado={(aprovacao, textoAprovado) => setReports(prev => prev.map(x => x.id === r.id ? {
+                                  ...x,
+                                  report: textoAprovado,
+                                  status: 'aprovado',
+                                  aprovado_por_nome: aprovacao.aprovado_por_nome,
+                                  aprovado_em: aprovacao.aprovado_em,
+                                  transcricao_apagada_em: aprovacao.transcricao_apagada_em,
+                                  transcription: aprovacao.transcricao_mantida ? x.transcription : '',
+                                } : x))}
+                              />
+                            )}
+                            <AvisoDecisaoClinica />
                           </div>
                         </div>
                       )}

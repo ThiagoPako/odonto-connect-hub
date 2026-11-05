@@ -1756,6 +1756,8 @@ const REQUIRED_SCHEMA = [
   { migration: 'migration-user-preferences.sql',  table: 'user_preferences' },
   { migration: 'migration-ai-settings.sql',       table: 'ai_settings' },
   { migration: 'migration-ai-settings.sql',       table: 'clinical_reports' },
+  { migration: 'migration-ia-revisao-humana.sql', table: 'clinical_reports', column: 'status' },
+  { migration: 'migration-ia-revisao-humana.sql', table: 'exportacoes_relatorios_ia' },
   { migration: 'migration-reativacao.sql',        table: 'reactivation_rules' },
   { migration: 'migration-reativacao.sql',        table: 'reactivation_sends' },
   { migration: 'migration-finance-multitenant.sql', table: 'clinicorp_financial_entries', column: 'tenant_id' },
@@ -14410,6 +14412,105 @@ async function findActiveConsent(tenantId, pacienteId, tipo) {
   return rows[0] || null;
 }
 
+// Ponto único da checagem de consentimento para os recursos de IA clínica (LGPD art. 11, I e 33, VIII).
+// TODO(consentimento v2.0, branch feat/consentimento-ia-v2): trocar o corpo pela checagem da v2.0,
+// que cobre o relatório. Até lá vale o consentimento atual de gravação/transcrição por IA.
+async function exigeConsentimentoIA(tenantId, pacienteId) {
+  if (!isValidTenantId(tenantId) || !pacienteId) return null;
+  return findActiveConsent(tenantId, pacienteId, 'gravacao_transcricao_ia');
+}
+
+// ─── IA clínica: revisão humana, papéis e texto das mensagens ───
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+async function userTemPapel(user, papeis) {
+  if (papeis.includes(user.role)) return true;
+  if (!user.id) return false;
+  const { rows } = await pool.query(
+    'SELECT 1 FROM user_roles WHERE user_id = $1 AND role::text = ANY($2::text[]) LIMIT 1',
+    [user.id, papeis]
+  );
+  return rows.length > 0;
+}
+
+// O paciente do relatório (id do cadastro ou do agendamento, como a tela de atendimento envia),
+// sempre da clínica do usuário. Devolve { id, nome, telefone } do cadastro, ou null.
+async function findPacienteDoAtendimento(tenantId, pacienteOuAgendamentoId) {
+  const ref = String(pacienteOuAgendamentoId || '');
+  if (!isValidTenantId(tenantId) || !UUID_RE.test(ref)) return null;
+  const { rows } = await pool.query(
+    `SELECT p.id, p.nome, p.telefone FROM pacientes p
+      WHERE p.tenant_id = $2
+        AND (p.id = $1::uuid
+             OR p.id = (SELECT a.paciente_id FROM agendamentos a WHERE a.id = $1::uuid AND a.tenant_id = $2))
+      LIMIT 1`,
+    [ref, tenantId]
+  );
+  return rows[0] || null;
+}
+
+async function pacienteOuAgendamentoDaClinica(tenantId, ref) {
+  if (!isValidTenantId(tenantId) || !UUID_RE.test(String(ref || ''))) return false;
+  const { rows } = await pool.query(
+    `SELECT 1 FROM pacientes WHERE id = $1::uuid AND tenant_id = $2
+     UNION ALL SELECT 1 FROM agendamentos WHERE id = $1::uuid AND tenant_id = $2 LIMIT 1`,
+    [String(ref), tenantId]
+  );
+  return rows.length > 0;
+}
+
+// Mensagens de acompanhamento pós-consulta: modelos fixos, sem IA. O relatório e o nome
+// do paciente não saem do servidor (LGPD art. 6º III). São mensagens de cuidado (transacionais).
+const FOLLOWUP_MODELOS = [
+  { delay_days: 1, text: 'Olá, {{nome}}! Aqui é da {{clinica}}. Passando para saber como você está depois da sua consulta. Se tiver qualquer dúvida, é só responder esta mensagem.' },
+  { delay_days: 3, text: 'Oi, {{nome}}! Aqui é da {{clinica}}. Lembre-se de seguir as orientações que você recebeu. Qualquer dúvida, fale com a gente por aqui.' },
+  { delay_days: 7, text: 'Olá, {{nome}}! Aqui é da {{clinica}}. Esperamos que esteja tudo bem. Se precisar de algo ou quiser marcar seu retorno, é só nos chamar.' },
+];
+const FOLLOWUP_MAX_MENSAGENS = 5;
+const FOLLOWUP_MAX_TEXTO = 500;
+// A mensagem aparece na tela do celular: nada de procedimento, dente, sintoma, medicamento,
+// diagnóstico, preço ou promoção (LGPD art. 11; CFO). Texto comparado sem acento e em minúsculas.
+const FOLLOWUP_FORBIDDEN_TERMS = /\b(procediment\w*|tratament\w*|diagnostic\w*|hipotese\w*|canal|extrac\w*|extrai\w*|implante\w*|cirurgi\w*|ortodon\w*|aparelho\w*|protese\w*|clareament\w*|restaurac\w*|carie\w*|faceta\w*|enxerto\w*|periodont\w*|endodont\w*|siso|dentes?|gengiv\w*|raspagem|limpeza|anestesi\w*|dor|dores|sangr\w*|inflam\w*|infecc\w*|pus|abscess\w*|medicament\w*|remedio\w*|antibiotic\w*|analgesic\w*|anti-?inflamatori\w*|amoxicilina|ibuprofeno|dipirona|paracetamol|nimesulida|nimesulide|cetoprofeno|azitromicina|clindamicina|comprimid\w*|capsula\w*|posologia|prescri\w*|receita\w*|preco\w*|valor\w*|reais|desconto\w*|promoc\w*|promo|oferta\w*|gratis|gratuit\w*|brinde\w*|cupom|parcel\w*|orcament\w*|pagament\w*)\b|r\$|\d+\s*mg\b|\d+\s*%/;
+
+function followupTextoErro(texto) {
+  const t = String(texto || '').trim();
+  if (!t) return 'Mensagem vazia';
+  if (t.length > FOLLOWUP_MAX_TEXTO) return `A mensagem passa de ${FOLLOWUP_MAX_TEXTO} caracteres`;
+  for (const m of t.matchAll(/\{\{\s*([^{}]*?)\s*\}\}/g)) {
+    if (!['nome', 'clinica'].includes(m[1])) return `Variável não permitida: {{${m[1]}}}. Use só {{nome}} e {{clinica}}`;
+  }
+  if (/https?:\/\/|www\./i.test(t)) return 'Não use links na mensagem de acompanhamento';
+  const norm = t.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  const termo = norm.match(FOLLOWUP_FORBIDDEN_TERMS);
+  if (termo) {
+    return `A mensagem não pode citar "${termo[0]}": ela aparece na tela do celular do paciente. Não inclua procedimento, medicamento, diagnóstico, preço nem promoção`;
+  }
+  return null;
+}
+
+// Valida a lista de mensagens recebida. Devolve { mensagens } ou { erro }.
+function validarMensagensFollowup(messages) {
+  if (!Array.isArray(messages) || messages.length === 0) return { erro: 'Inclua pelo menos uma mensagem' };
+  if (messages.length > FOLLOWUP_MAX_MENSAGENS) return { erro: `No máximo ${FOLLOWUP_MAX_MENSAGENS} mensagens` };
+  const mensagens = [];
+  for (const [i, m] of messages.entries()) {
+    const dias = Number(m?.delay_days);
+    if (!Number.isInteger(dias) || dias < 1 || dias > 30) return { erro: `Mensagem ${i + 1}: dias entre 1 e 30` };
+    const erro = followupTextoErro(m?.text);
+    if (erro) return { erro: `Mensagem ${i + 1}: ${erro}` };
+    mensagens.push({ delay_days: dias, text: String(m.text).trim() });
+  }
+  return { mensagens };
+}
+
+// Configuração da clínica para a IA clínica (tenant_settings). Padrão: apagar a transcrição
+// bruta quando o dentista aprova o relatório (LGPD art. 6º III e 16).
+const IA_CLINICA_SETTINGS_KEY = 'ia_relatorio_clinico';
+async function getIaClinicaConfig(tenantId) {
+  const v = await getTenantSetting(tenantId, IA_CLINICA_SETTINGS_KEY);
+  return { manter_transcricao: v?.manter_transcricao === true };
+}
+
 app.get('/api/pacientes/:id/consentimentos', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
@@ -14546,13 +14647,48 @@ app.post('/api/ai/transcribe', express.raw({ type: ['audio/*', 'application/octe
   }
 });
 
-// ─── Generate clinical report via OpenAI GPT ────────────────
+// ─── Rascunho de relatório clínico via OpenAI GPT ───────────
+// O texto da IA nasce como rascunho (status 'rascunho', gerado_por_ia) e só fica oficial
+// quando o dentista revisa e aprova (POST /api/ai/reports/:id/aprovar). Lei 13.787 art. 2º;
+// LGPD art. 20 (revisão humana). Exige consentimento do paciente no servidor (art. 11, I).
+const RELATORIO_IA_SYSTEM_PROMPT = `Você ajuda um cirurgião-dentista a redigir o RASCUNHO de um registro de consulta, que ele vai revisar, corrigir e aprovar. Escreva em português do Brasil, em Markdown, com estas seções:
+
+1. **Resumo da consulta** — o que foi conversado e feito, em poucas linhas
+2. **Queixa relatada pelo paciente**
+3. **Achados mencionados pelo dentista**
+4. **Procedimento realizado**
+5. **Prescrições informadas**
+6. **Orientações dadas ao paciente**
+7. **Próximos passos mencionados**
+
+Regras obrigatórias:
+- Use só o que foi dito na transcrição e no contexto informado. Se uma seção não foi mencionada, escreva apenas "não mencionado".
+- Não invente achados, exames, sintomas, dentes nem procedimentos.
+- Não formule diagnóstico nem hipótese diagnóstica. Não acrescente plano de tratamento que não tenha sido dito.
+- Em "Prescrições informadas", repita somente a lista de prescrições do contexto, sem alterar. Se a lista estiver vazia, escreva "não mencionado". Nunca sugira medicamento, dose, posologia ou duração.
+- Ignore conversas alheias ao atendimento e falas de terceiros que não sejam sobre a consulta.
+- Não use o nome do paciente.`;
+
 app.post('/api/ai/clinical-report', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
-    const { transcription, queixaPrincipal, procedimento, dente, prescricoes, patientId, patientName, durationSeconds } = req.body;
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    if (!(await userTemPapel(user, ['admin', 'dentista']))) {
+      return res.status(403).json({ error: 'Só o dentista ou o administrador da clínica gera o relatório clínico.' });
+    }
+    const { transcription, queixaPrincipal, procedimento, dente, prescricoes, patientId, patientName, durationSeconds } = req.body || {};
 
-    if (!transcription) return res.status(400).json({ error: 'Transcrição é obrigatória' });
+    if (!transcription || typeof transcription !== 'string') return res.status(400).json({ error: 'Transcrição é obrigatória' });
+    if (!(await pacienteOuAgendamentoDaClinica(user.tenant_id, patientId))) {
+      return res.status(404).json({ error: 'Paciente não encontrado' });
+    }
+    const consent = await exigeConsentimentoIA(user.tenant_id, patientId);
+    if (!consent) {
+      return res.status(403).json({
+        error: 'O paciente ainda não autorizou o uso de IA na consulta. Registre o consentimento antes de gerar o relatório.',
+        code: 'CONSENT_REQUIRED',
+      });
+    }
 
     // Get OpenAI settings
     const { rows } = await pool.query("SELECT api_key, model, enabled FROM ai_settings WHERE provider = 'openai' LIMIT 1");
@@ -14561,27 +14697,14 @@ app.post('/api/ai/clinical-report', async (req, res) => {
     }
 
     const { api_key: openaiKey, model } = rows[0];
-
-    const systemPrompt = `Você é um assistente clínico odontológico. Gere um relatório clínico estruturado e profissional baseado na transcrição da consulta. O relatório deve conter:
-
-1. **Resumo da Consulta** — breve parágrafo sobre o que foi discutido
-2. **Queixa do Paciente** — o que o paciente relatou
-3. **Exame Clínico** — achados durante o exame
-4. **Diagnóstico** — hipótese diagnóstica baseada na transcrição
-5. **Procedimento Realizado** — o que foi feito durante a consulta
-6. **Prescrições** — medicamentos prescritos (se houver)
-7. **Orientações ao Paciente** — recomendações pós-consulta
-8. **Plano de Tratamento** — próximos passos sugeridos
-9. **Follow-up Sugerido** — quando retornar e pontos a acompanhar
-
-Use linguagem técnica odontológica mas clara. Formato Markdown.`;
+    const listaPrescricoes = Array.isArray(prescricoes) ? prescricoes : [];
 
     const userMsg = `## Contexto do atendimento:
-- Queixa principal: ${queixaPrincipal || 'Não informada'}
-- Procedimento: ${procedimento || 'Não informado'}
-- Dente/Região: ${dente || 'Não especificado'}
-- Prescrições: ${prescricoes?.length > 0 ? prescricoes.map(p => `${p.medicamento} ${p.dosagem} ${p.posologia}`).join('; ') : 'Nenhuma'}
-- Duração: ${durationSeconds ? Math.round(durationSeconds / 60) + ' minutos' : 'Não informada'}
+- Queixa principal: ${queixaPrincipal || 'não mencionado'}
+- Procedimento: ${procedimento || 'não mencionado'}
+- Dente/Região: ${dente || 'não mencionado'}
+- Prescrições: ${listaPrescricoes.length > 0 ? listaPrescricoes.map(p => `${p?.medicamento || ''} ${p?.dosagem || ''} ${p?.posologia || ''} ${p?.duracao || ''}`.trim()).join('; ') : 'nenhuma'}
+- Duração: ${durationSeconds ? Math.round(durationSeconds / 60) + ' minutos' : 'não informada'}
 
 ## Transcrição da consulta:
 ${transcription}`;
@@ -14595,38 +14718,117 @@ ${transcription}`;
       body: JSON.stringify({
         model: model || 'gpt-4o-mini',
         messages: [
-          { role: 'system', content: systemPrompt },
+          { role: 'system', content: RELATORIO_IA_SYSTEM_PROMPT },
           { role: 'user', content: userMsg },
         ],
-        temperature: 0.3,
+        temperature: 0.2,
         max_tokens: 2000,
       }),
     });
 
     if (!gptRes.ok) {
-      const errText = await gptRes.text();
-      console.error('GPT error:', gptRes.status, errText);
+      console.error('GPT error:', gptRes.status);
       return res.status(500).json({ error: `Erro ao gerar relatório: ${gptRes.status}` });
     }
 
     const gptData = await gptRes.json();
-    const report = gptData.choices?.[0]?.message?.content || 'Erro: relatório vazio';
+    const report = gptData.choices?.[0]?.message?.content;
+    if (!report) return res.status(502).json({ error: 'A IA devolveu um relatório vazio. Tente novamente.' });
 
-    // Save to DB
+    // Rascunho: guarda o texto original da IA; o aprovado vai para `report` na aprovação.
     const reportId = randomUUID();
+    const attendantName = await getProfileDisplayName(user.id, '');
     await pool.query(`
-      INSERT INTO clinical_reports (id, patient_id, patient_name, attendant_id, attendant_name, transcription, report, queixa_principal, procedimento, dente_regiao, prescricoes, duration_seconds, tenant_id)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-    `, [reportId, patientId || 'unknown', patientName || '', user.id, '', transcription, report, queixaPrincipal || '', procedimento || '', dente || '', JSON.stringify(prescricoes || []), durationSeconds || 0, user.tenant_id]);
+      INSERT INTO clinical_reports (id, patient_id, patient_name, attendant_id, attendant_name, transcription, report, report_ia_original, status, gerado_por_ia, queixa_principal, procedimento, dente_regiao, prescricoes, duration_seconds, tenant_id)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $7, 'rascunho', true, $8, $9, $10, $11, $12, $13)
+    `, [reportId, String(patientId), patientName || '', user.id, attendantName, transcription, report, queixaPrincipal || '', procedimento || '', dente || '', JSON.stringify(listaPrescricoes), durationSeconds || 0, user.tenant_id]);
 
-    res.json({ id: reportId, report, transcription });
+    res.json({ id: reportId, report, transcription, status: 'rascunho' });
   } catch (err) {
-    console.error('Clinical report error:', err);
-    res.status(500).json({ error: err.message });
+    if (err.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('Clinical report error:', err.message);
+    res.status(500).json({ error: 'Erro ao gerar o relatório' });
   }
 });
 
-// ─── Get clinical reports for a patient ─────────────────────
+// ─── Aprovar o rascunho (revisão humana) ────────────────────
+// O dentista pode editar o texto antes de aprovar; grava quem aprovou e quando. O texto
+// original da IA fica em report_ia_original. A transcrição bruta é apagada na aprovação,
+// a não ser que a clínica tenha escolhido mantê-la (configuração ia_relatorio_clinico).
+// Vale também para relatórios antigos, gravados sem revisão (origem_ia_sem_revisao).
+app.post('/api/ai/reports/:id/aprovar', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    if (!UUID_RE.test(req.params.id)) return res.status(404).json({ error: 'Relatório não encontrado' });
+    const isAdmin = await userTemPapel(user, ['admin']);
+    if (!isAdmin && !(await userTemPapel(user, ['dentista']))) {
+      return res.status(403).json({ error: 'Só o dentista ou o administrador da clínica aprova o relatório.' });
+    }
+    const texto = typeof req.body?.report === 'string' ? req.body.report.trim() : '';
+    if (!texto) return res.status(400).json({ error: 'O texto do relatório não pode ficar vazio' });
+    if (texto.length > 20000) return res.status(400).json({ error: 'Relatório muito longo' });
+
+    const { manter_transcricao: manter } = await getIaClinicaConfig(user.tenant_id);
+    const aprovadorNome = await getProfileDisplayName(user.id, user.email || 'Dentista');
+    // Dentista só aprova o que ele mesmo gerou; o admin da clínica aprova qualquer um.
+    const params = [texto, user.id, aprovadorNome, manter, req.params.id, user.tenant_id];
+    let donoSql = '';
+    if (!isAdmin) { params.push(String(user.id)); donoSql = ` AND attendant_id = $${params.length}`; }
+    const { rows } = await pool.query(
+      `UPDATE clinical_reports
+          SET report = $1, status = 'aprovado', aprovado_por = $2, aprovado_por_nome = $3, aprovado_em = NOW(),
+              report_ia_original = COALESCE(report_ia_original, report),
+              transcription = CASE WHEN $4::boolean THEN transcription ELSE NULL END,
+              transcricao_apagada_em = CASE WHEN $4::boolean OR transcription IS NULL THEN transcricao_apagada_em ELSE NOW() END
+        WHERE id = $5 AND tenant_id = $6 AND status = 'rascunho'${donoSql}
+        RETURNING id, status, aprovado_por_nome, aprovado_em, transcricao_apagada_em, origem_ia_sem_revisao`,
+      params
+    );
+    if (!rows.length) {
+      const { rows: atual } = await pool.query(
+        'SELECT status FROM clinical_reports WHERE id = $1 AND tenant_id = $2 LIMIT 1', [req.params.id, user.tenant_id]);
+      if (atual[0]?.status === 'aprovado') return res.status(409).json({ error: 'Este relatório já foi aprovado' });
+      return res.status(404).json({ error: 'Relatório não encontrado' });
+    }
+    res.json({ success: true, ...rows[0], transcricao_mantida: manter });
+  } catch (err) {
+    if (err.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('[ai:aprovar-relatorio]', err.message);
+    res.status(500).json({ error: 'Erro ao aprovar o relatório' });
+  }
+});
+
+// ─── Configuração da IA clínica por clínica ─────────────────
+app.get('/api/ai/clinic-settings', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    res.json(await getIaClinicaConfig(user.tenant_id));
+  } catch (err) {
+    if (err.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    res.status(500).json({ error: 'Erro interno' });
+  }
+});
+
+app.put('/api/ai/clinic-settings', async (req, res) => {
+  try {
+    const { user } = await verifyAdmin(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const cfg = { manter_transcricao: req.body?.manter_transcricao === true };
+    await setTenantSetting(user.tenant_id, IA_CLINICA_SETTINGS_KEY, cfg);
+    res.json(cfg);
+  } catch (err) {
+    if (err.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    if (err.message === 'Admin access required') return res.status(403).json({ error: 'Só o administrador da clínica pode alterar' });
+    console.error('[ai:clinic-settings]', err.message);
+    res.status(500).json({ error: 'Erro interno' });
+  }
+});
+
+// ─── Get clinical reports for a patient (prontuário) ────────
+// Só o que é oficial: aprovado pelo dentista, ou antigo (gravado antes da revisão obrigatória,
+// com o aviso origem_ia_sem_revisao). Rascunho novo não entra no prontuário.
 app.get('/api/ai/reports/:patientId', async (req, res, next) => {
   // export.csv tem rota própria (registrada depois); sem isto ela nunca era alcançada
   if (req.params.patientId === 'export.csv') return next();
@@ -14635,7 +14837,11 @@ app.get('/api/ai/reports/:patientId', async (req, res, next) => {
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { patientId } = req.params;
     const { rows } = await pool.query(
-      'SELECT id, patient_name, transcription, report, queixa_principal, procedimento, dente_regiao, prescricoes, duration_seconds, created_at FROM clinical_reports WHERE patient_id = $1 AND tenant_id = $2 ORDER BY created_at DESC LIMIT 50',
+      `SELECT id, patient_name, transcription, report, queixa_principal, procedimento, dente_regiao, prescricoes, duration_seconds, created_at,
+              status, gerado_por_ia, aprovado_por_nome, aprovado_em, origem_ia_sem_revisao, transcricao_apagada_em
+         FROM clinical_reports
+        WHERE patient_id = $1 AND tenant_id = $2 AND (status = 'aprovado' OR origem_ia_sem_revisao = true)
+        ORDER BY created_at DESC LIMIT 50`,
       [patientId, user.tenant_id]
     );
     res.json(rows);
@@ -14679,7 +14885,8 @@ app.get('/api/ai/reports', async (req, res) => {
     const sql = `
       SELECT id, patient_id, patient_name, attendant_id, attendant_name,
              transcription, report, queixa_principal, procedimento, dente_regiao,
-             prescricoes, duration_seconds, created_at
+             prescricoes, duration_seconds, created_at,
+             status, gerado_por_ia, aprovado_por_nome, aprovado_em, origem_ia_sem_revisao, transcricao_apagada_em
       FROM clinical_reports
       ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
       ORDER BY created_at DESC
@@ -14712,13 +14919,15 @@ app.get('/api/ai/reports', async (req, res) => {
 
 // ─── Export clinical reports as CSV ─────────────────────────
 // GET /api/ai/reports/export.csv?from=&to=&status=&patientId=&attendantId=&token=<JWT>
+// Exportação em massa de dado de saúde: só o admin da clínica, e cada exportação fica registrada
+// (quem, quando, quantos) — LGPD arts. 6º III, 37 e 46; Lei 13.787 art. 2º.
 app.get('/api/ai/reports/export.csv', async (req, res) => {
   try {
     // Allow token via query string for direct browser download links
     if (req.query.token && !req.headers.authorization) {
       req.headers.authorization = `Bearer ${req.query.token}`;
     }
-    const { user } = await verifyUser(req);
+    const { user } = await verifyAdmin(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
     const { from, to, status, patientId, attendantId, q } = req.query;
 
@@ -14736,26 +14945,48 @@ app.get('/api/ai/reports/export.csv', async (req, res) => {
     }
     if (status === 'com_prescricao') where.push(`jsonb_array_length(COALESCE(prescricoes, '[]'::jsonb)) > 0`);
     if (status === 'sem_prescricao') where.push(`(prescricoes IS NULL OR jsonb_array_length(COALESCE(prescricoes, '[]'::jsonb)) = 0)`);
-    if (user.role !== 'admin' && user.role !== 'gerente') {
-      where.push(`attendant_id = $${idx++}`);
-      params.push(user.id);
-    }
 
     const sql = `
-      SELECT created_at, patient_name, attendant_name, queixa_principal, procedimento,
-             dente_regiao, duration_seconds, prescricoes
+      SELECT created_at, patient_id, patient_name, attendant_name, queixa_principal, procedimento,
+             dente_regiao, duration_seconds, prescricoes, status, aprovado_por_nome, aprovado_em, origem_ia_sem_revisao
       FROM clinical_reports
       ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
       ORDER BY created_at DESC LIMIT 5000
     `;
     const { rows } = await pool.query(sql, params);
 
+    // Registro da exportação antes de entregar o arquivo; sem registro, não exporta.
+    const filtros = { from: from || null, to: to || null, status: status || null, patientId: patientId || null, attendantId: attendantId || null, busca: q ? true : null };
+    try {
+      await pool.query(
+        `INSERT INTO exportacoes_relatorios_ia (tenant_id, usuario_id, usuario_email, quantidade, filtros, formato)
+         VALUES ($1, $2, $3, $4, $5, 'csv')`,
+        [user.tenant_id, user.id || null, user.email || null, rows.length, JSON.stringify(filtros)]
+      );
+    } catch (logErr) {
+      console.error('[ai:export-csv] registro da exportação falhou:', logErr.message);
+      return res.status(503).json({ error: 'Não foi possível registrar a exportação. Tente novamente em instantes.' });
+    }
+    // Também no registro de acesso ao prontuário (PR #59), se a tabela já existir.
+    const pacienteIds = [...new Set(rows.map(r => r.patient_id).filter(Boolean).map(String))];
+    if (pacienteIds.length) {
+      await pool.query(
+        `INSERT INTO acessos_prontuario (tenant_id, usuario_id, paciente_id, recurso, acao)
+         SELECT $1, $2, unnest($3::text[]), 'relatorio_clinico_ia', 'exportar'`,
+        [user.tenant_id, UUID_RE.test(String(user.id || '')) ? user.id : null, pacienteIds]
+      ).catch(e => { if (e?.code !== '42P01') console.error('[ai:export-csv] acessos_prontuario:', e.message); });
+    }
+
     const esc = (v) => {
       if (v === null || v === undefined) return '';
-      const s = String(v).replace(/"/g, '""').replace(/\r?\n/g, ' ');
+      let s = String(v).replace(/"/g, '""').replace(/\r?\n/g, ' ');
+      if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`; // evita fórmula ao abrir na planilha
       return `"${s}"`;
     };
-    const header = ['Data', 'Hora', 'Paciente', 'Dentista', 'Queixa', 'Procedimento', 'Dente/Região', 'Duração (min)', 'Nº Prescrições'].map(esc).join(',');
+    const statusCsv = (r) => r.status === 'aprovado'
+      ? `Aprovado por ${r.aprovado_por_nome || 'dentista'} em ${r.aprovado_em ? new Date(r.aprovado_em).toLocaleDateString('pt-BR') : ''}`
+      : (r.origem_ia_sem_revisao ? 'Gerado por IA sem revisão (antigo)' : 'Rascunho gerado por IA (não revisado)');
+    const header = ['Data', 'Hora', 'Paciente', 'Dentista', 'Queixa', 'Procedimento', 'Dente/Região', 'Duração (min)', 'Nº Prescrições', 'Revisão'].map(esc).join(',');
     const lines = rows.map(r => {
       const d = new Date(r.created_at);
       const presc = Array.isArray(r.prescricoes) ? r.prescricoes : (typeof r.prescricoes === 'string' ? JSON.parse(r.prescricoes || '[]') : []);
@@ -14769,6 +15000,7 @@ app.get('/api/ai/reports/export.csv', async (req, res) => {
         r.dente_regiao || '',
         Math.round((r.duration_seconds || 0) / 60),
         presc.length,
+        statusCsv(r),
       ].map(esc).join(',');
     });
 
@@ -14778,8 +15010,9 @@ app.get('/api/ai/reports/export.csv', async (req, res) => {
     res.send(csv);
   } catch (err) {
     if (err.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    if (err.message === 'Admin access required') return res.status(403).json({ error: 'Só o administrador da clínica pode exportar os relatórios' });
     console.error('❌ Export CSV error:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Erro ao exportar' });
   }
 });
 
@@ -14848,112 +15081,72 @@ app.get('/api/consultations/:patientId', async (req, res) => {
   }
 });
 
-// ─── Generate AI follow-up messages based on clinical report ─
+// ─── Mensagens de acompanhamento pós-consulta ───────────────
+// Modelos fixos, sem IA: o relatório e o nome do paciente não saem mais para a OpenAI
+// (LGPD art. 6º III). A equipe revisa e edita antes de agendar.
 app.post('/api/ai/followup-messages', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
-    const { reportId, patientName, patientPhone } = req.body;
+    const { reportId } = req.body || {};
     if (!reportId) return res.status(400).json({ error: 'reportId é obrigatório' });
+    if (!UUID_RE.test(String(reportId))) return res.status(404).json({ error: 'Relatório não encontrado' });
 
-    // Fetch the clinical report
     const { rows: reports } = await pool.query(
-      'SELECT report, queixa_principal, procedimento, dente_regiao, prescricoes FROM clinical_reports WHERE id = $1 AND tenant_id = $2 LIMIT 1',
+      'SELECT id FROM clinical_reports WHERE id = $1 AND tenant_id = $2 LIMIT 1',
       [reportId, user.tenant_id]
     );
     if (reports.length === 0) return res.status(404).json({ error: 'Relatório não encontrado' });
-    const report = reports[0];
 
-    // Get OpenAI settings
-    const { rows: aiRows } = await pool.query("SELECT api_key, model, enabled FROM ai_settings WHERE provider = 'openai' LIMIT 1");
-    if (aiRows.length === 0 || !aiRows[0].api_key || !aiRows[0].enabled) {
-      return res.status(400).json({ error: 'OpenAI não está configurada.' });
-    }
-    const { api_key: openaiKey, model } = aiRows[0];
-
-    const systemPrompt = `Você é um assistente de follow-up odontológico. Baseado no relatório clínico de uma consulta, gere 3 mensagens de follow-up personalizadas para enviar ao paciente via WhatsApp.
-
-As mensagens devem:
-- Ser calorosas, empáticas e profissionais
-- NÃO citar procedimento, dente, região, medicamento, prescrição, diagnóstico ou valor
-  (a mensagem aparece na tela do celular e pode ser lida por outra pessoa)
-- Referir-se apenas a "seu atendimento" ou "sua consulta"
-- Orientações clínicas: só "siga as orientações que recebeu; qualquer dúvida, fale com a gente"
-- Não oferecer desconto, promoção, brinde ou avaliação gratuita
-- Ser curtas (máx 200 caracteres) e usar no máximo 1 emoji
-- Identificar a clínica como {{clinica}}
-
-Retorne em formato JSON:
-{
-  "messages": [
-    {"delay_days": 1, "text": "mensagem 1 - pós-consulta imediato, verificar se está tudo bem"},
-    {"delay_days": 3, "text": "mensagem 2 - acompanhamento, reforçar orientações"},
-    {"delay_days": 7, "text": "mensagem 3 - follow-up final, lembrar próximo retorno"}
-  ],
-  "summary": "breve resumo do que o follow-up aborda"
-}`;
-
-    const userMsg = `## Relatório Clínico:
-${report.report}
-
-## Dados:
-- Paciente: ${patientName || 'Não informado'}
-- Queixa: ${report.queixa_principal || 'N/A'}
-- Procedimento: ${report.procedimento || 'N/A'}
-- Região: ${report.dente_regiao || 'N/A'}
-- Prescrições: ${JSON.stringify(report.prescricoes || [])}
-
-Gere as mensagens de follow-up personalizadas. Use {{nome}} como variável para o nome do paciente.`;
-
-    const gptRes = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${openaiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: model || 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userMsg },
-        ],
-        temperature: 0.7,
-        max_tokens: 1000,
-        response_format: { type: 'json_object' },
-      }),
+    res.json({
+      messages: FOLLOWUP_MODELOS.map(m => ({ ...m })),
+      summary: 'Modelos de acompanhamento da clínica. Revise e edite antes de agendar.',
+      fonte: 'modelo_fixo',
     });
-
-    if (!gptRes.ok) {
-      const errText = await gptRes.text();
-      console.error('GPT followup error:', gptRes.status, errText);
-      return res.status(500).json({ error: `Erro ao gerar mensagens: ${gptRes.status}` });
-    }
-
-    const gptData = await gptRes.json();
-    const content = gptData.choices?.[0]?.message?.content || '{}';
-    let parsed;
-    try { parsed = JSON.parse(content); } catch { parsed = { messages: [], summary: '' }; }
-
-    res.json(parsed);
   } catch (err) {
     if (err.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
-    console.error('Followup messages error:', err);
-    res.status(500).json({ error: err.message });
+    console.error('Followup messages error:', err.message);
+    res.status(500).json({ error: 'Erro ao montar as mensagens' });
   }
 });
 
 // ─── Schedule follow-up from clinical report ────────────────
+// O telefone e o nome vêm do cadastro do paciente do relatório (desta clínica), nunca do corpo.
+// O texto passa pelo filtro de termos proibidos e o envio vai pela fila central (opt-out,
+// janela de horário, ritmo). Mensagem de cuidado pós-atendimento: categoria transacional.
 app.post('/api/ai/schedule-followup', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
-    const { reportId, patientName, patientPhone, messages, instance } = req.body;
-
-    if (!reportId || !patientPhone || !messages || !Array.isArray(messages) || messages.length === 0) {
-      return res.status(400).json({ error: 'reportId, patientPhone e messages são obrigatórios' });
-    }
-
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    if (!(await userTemPapel(user, ['admin', 'dentista']))) {
+      return res.status(403).json({ error: 'Só o dentista ou o administrador da clínica agenda o acompanhamento.' });
+    }
+    const { reportId, messages, instance, revisado } = req.body || {};
+
+    if (!reportId || !Array.isArray(messages) || messages.length === 0) {
+      return res.status(400).json({ error: 'reportId e messages são obrigatórios' });
+    }
+    if (revisado !== true) {
+      return res.status(400).json({ error: 'Confirme que revisou as mensagens antes de agendar.' });
+    }
+    const { mensagens, erro } = validarMensagensFollowup(messages);
+    if (erro) return res.status(400).json({ error: erro });
+    if (!UUID_RE.test(String(reportId))) return res.status(404).json({ error: 'Relatório não encontrado' });
+
     const tenantId = String(user.tenant_id);
+    const { rows: reports } = await pool.query(
+      'SELECT id, patient_id FROM clinical_reports WHERE id = $1 AND tenant_id = $2 LIMIT 1',
+      [reportId, tenantId]
+    );
+    if (!reports.length) return res.status(404).json({ error: 'Relatório não encontrado' });
+
+    const paciente = await findPacienteDoAtendimento(tenantId, reports[0].patient_id);
+    const formattedPhone = normalizeWhatsappNumber(paciente?.telefone || '');
+    if (!paciente || !formattedPhone) {
+      return res.status(422).json({ error: 'O paciente não tem telefone no cadastro. Atualize o cadastro para agendar o acompanhamento.' });
+    }
+    const patientName = String(paciente.nome || '').trim();
+
     // Só um número da própria clínica (antes: o primeiro aberto de qualquer clínica).
     if (instance && !(await userOwnsInstance(user, instance))) {
       return res.status(403).json({ error: 'Este número de WhatsApp não pertence à sua clínica.' });
@@ -14961,7 +15154,7 @@ app.post('/api/ai/schedule-followup', async (req, res) => {
     const instanceName = instance || await getTenantDefaultInstance(tenantId);
 
     const flowId = `followup-report-${reportId}`;
-    const flowName = `Follow-up IA: ${patientName || patientPhone}`;
+    const flowName = `Acompanhamento pós-consulta: ${patientName || 'paciente'}`;
     const now = new Date();
 
     // Create a temporary automation flow for tracking
@@ -14972,8 +15165,8 @@ app.post('/api/ai/schedule-followup', async (req, res) => {
         WHERE automation_flows.tenant_id = EXCLUDED.tenant_id
     `, [
       flowId, flowName,
-      `Follow-up automático gerado pela IA baseado no relatório clínico ${reportId}`,
-      JSON.stringify(messages.map((m, i) => ({
+      `Acompanhamento pós-consulta revisado pela equipe (relatório ${reportId})`,
+      JSON.stringify(mensagens.map((m, i) => ({
         id: `s-${Date.now()}-${i}`,
         delay: `${m.delay_days} dia(s)`,
         delayMinutes: m.delay_days * 1440,
@@ -14985,24 +15178,20 @@ app.post('/api/ai/schedule-followup', async (req, res) => {
       tenantId,
     ]);
 
-    // Schedule automation jobs
     const jobIds = [];
-    const phone = patientPhone.replace(/\D/g, '');
-    const formattedPhone = phone.startsWith('55') ? phone : `55${phone}`;
-
     const clinicaNome = await getTenantClinicName(tenantId);
-    for (let i = 0; i < messages.length; i++) {
-      const msg = messages[i];
+    for (let i = 0; i < mensagens.length; i++) {
+      const msg = mensagens[i];
       const scheduledAt = new Date(now.getTime() + (msg.delay_days * 86400000));
-      const personalizedMsg = (msg.text || '')
-        .replace(/\{\{nome\}\}/g, patientName || 'Paciente')
-        .replace(/\{\{clinica\}\}/g, clinicaNome);
+      const personalizedMsg = msg.text
+        .replace(/\{\{\s*nome\s*\}\}/g, patientName || 'Paciente')
+        .replace(/\{\{\s*clinica\s*\}\}/g, clinicaNome);
 
       const jobId = randomUUID();
       await enqueueWhatsAppJob({
         id: jobId, tenantId, instance: instanceName || null, phone: formattedPhone,
         message: personalizedMsg, category: 'transactional',
-        flowId, flowName, stepIndex: i, patientName: patientName || '',
+        flowId, flowName, stepIndex: i, patientName,
         variables: { nome: patientName || 'Paciente', reportId },
         scheduledAt, triggerEvent: 'clinical_report_followup',
       });
@@ -15012,15 +15201,15 @@ app.post('/api/ai/schedule-followup', async (req, res) => {
     // Link report to follow-up
     await pool.query(`
       UPDATE clinical_reports SET metadata = jsonb_set(COALESCE(metadata, '{}'), '{followup_flow_id}', $1)
-      WHERE id = $2
-    `, [JSON.stringify(flowId), reportId]);
+      WHERE id = $2 AND tenant_id = $3
+    `, [JSON.stringify(flowId), reportId, tenantId]);
 
-    console.log(`🤖 Follow-up IA agendado: ${jobIds.length} mensagens para ${maskPhone(formattedPhone)}`);
+    console.log(`🤖 Acompanhamento agendado: ${jobIds.length} mensagens para ${maskPhone(formattedPhone)}`);
     res.json({ success: true, flowId, jobs: jobIds });
   } catch (err) {
     if (err.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
-    console.error('Schedule followup error:', err);
-    res.status(500).json({ error: err.message });
+    console.error('Schedule followup error:', err.message);
+    res.status(500).json({ error: 'Erro ao agendar o acompanhamento' });
   }
 });
 
@@ -16270,6 +16459,42 @@ if (process.env.NODE_ENV !== 'test') {
       `ALTER TABLE consentimentos_pacientes ENABLE ROW LEVEL SECURITY`,
       `DROP POLICY IF EXISTS tenant_isolation_policy ON consentimentos_pacientes`,
       `CREATE POLICY tenant_isolation_policy ON consentimentos_pacientes FOR ALL
+         USING (is_super_admin() OR tenant_id = get_current_tenant_id())
+         WITH CHECK (is_super_admin() OR tenant_id = get_current_tenant_id())`,
+
+      // ─── IA clínica com revisão humana (mesmo conteúdo de migration-ia-revisao-humana.sql) ───
+      `ALTER TABLE IF EXISTS clinical_reports ADD COLUMN IF NOT EXISTS status TEXT`,
+      `ALTER TABLE IF EXISTS clinical_reports ADD COLUMN IF NOT EXISTS gerado_por_ia BOOLEAN NOT NULL DEFAULT true`,
+      `ALTER TABLE IF EXISTS clinical_reports ADD COLUMN IF NOT EXISTS report_ia_original TEXT`,
+      `ALTER TABLE IF EXISTS clinical_reports ADD COLUMN IF NOT EXISTS aprovado_por TEXT`,
+      `ALTER TABLE IF EXISTS clinical_reports ADD COLUMN IF NOT EXISTS aprovado_por_nome TEXT`,
+      `ALTER TABLE IF EXISTS clinical_reports ADD COLUMN IF NOT EXISTS aprovado_em TIMESTAMPTZ`,
+      `ALTER TABLE IF EXISTS clinical_reports ADD COLUMN IF NOT EXISTS origem_ia_sem_revisao BOOLEAN NOT NULL DEFAULT false`,
+      `ALTER TABLE IF EXISTS clinical_reports ADD COLUMN IF NOT EXISTS transcricao_apagada_em TIMESTAMPTZ`,
+      // Relatórios antigos (sem status) entraram no prontuário sem revisão: marca, não apaga.
+      `UPDATE clinical_reports SET status = 'rascunho', origem_ia_sem_revisao = true,
+              report_ia_original = COALESCE(report_ia_original, report)
+        WHERE status IS NULL`,
+      `DO $$ BEGIN
+         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'clinical_reports_status_check') THEN
+           ALTER TABLE clinical_reports ADD CONSTRAINT clinical_reports_status_check CHECK (status IN ('rascunho', 'aprovado'));
+         END IF;
+       END $$`,
+      `CREATE INDEX IF NOT EXISTS idx_clinical_reports_tenant_status ON clinical_reports (tenant_id, status, created_at DESC)`,
+      `CREATE TABLE IF NOT EXISTS exportacoes_relatorios_ia (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        tenant_id UUID NOT NULL DEFAULT get_current_tenant_id() REFERENCES tenants(id) ON DELETE CASCADE,
+        usuario_id TEXT,
+        usuario_email TEXT,
+        quantidade INTEGER NOT NULL DEFAULT 0,
+        filtros JSONB,
+        formato TEXT NOT NULL DEFAULT 'csv',
+        em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_exportacoes_relatorios_ia_tenant ON exportacoes_relatorios_ia (tenant_id, em DESC)`,
+      `ALTER TABLE exportacoes_relatorios_ia ENABLE ROW LEVEL SECURITY`,
+      `DROP POLICY IF EXISTS tenant_isolation_policy ON exportacoes_relatorios_ia`,
+      `CREATE POLICY tenant_isolation_policy ON exportacoes_relatorios_ia FOR ALL
          USING (is_super_admin() OR tenant_id = get_current_tenant_id())
          WITH CHECK (is_super_admin() OR tenant_id = get_current_tenant_id())`
     ];

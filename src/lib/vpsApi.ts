@@ -1226,6 +1226,24 @@ export interface ClinicalReportApi {
   prescricoes: Array<{ medicamento: string; dosagem: string; posologia: string; duracao: string }> | string;
   duration_seconds: number;
   created_at: string;
+  /** rascunho = texto da IA ainda não revisado; aprovado = revisado e aprovado pelo dentista */
+  status?: 'rascunho' | 'aprovado' | null;
+  gerado_por_ia?: boolean;
+  aprovado_por_nome?: string | null;
+  aprovado_em?: string | null;
+  /** relatório gravado antes da revisão obrigatória (entrou no prontuário sem aprovação) */
+  origem_ia_sem_revisao?: boolean;
+  transcricao_apagada_em?: string | null;
+}
+
+export interface AprovacaoRelatorioApi {
+  success: boolean;
+  id: string;
+  status: 'aprovado';
+  aprovado_por_nome: string;
+  aprovado_em: string;
+  transcricao_apagada_em: string | null;
+  transcricao_mantida: boolean;
 }
 
 // ─── Consentimentos LGPD por paciente ───────────────────────
@@ -1287,7 +1305,15 @@ export const aiApi = {
     patientId?: string;
     patientName?: string;
     durationSeconds?: number;
-  }) => vpsApiFetch<{ id: string; report: string; transcription: string }>('/ai/clinical-report', { method: 'POST', body }),
+  }) => vpsApiFetch<{ id: string; report: string; transcription: string; status: 'rascunho' }>('/ai/clinical-report', { method: 'POST', body }),
+
+  /** "Revisei e aprovo": grava o texto revisado (pode ter sido editado), quem aprovou e quando. */
+  approveReport: (reportId: string, report: string) =>
+    vpsApiFetch<AprovacaoRelatorioApi>(`/ai/reports/${encodeURIComponent(reportId)}/aprovar`, { method: 'POST', body: { report } }),
+
+  getClinicSettings: () => vpsApiFetch<{ manter_transcricao: boolean }>('/ai/clinic-settings'),
+  saveClinicSettings: (body: { manter_transcricao: boolean }) =>
+    vpsApiFetch<{ manter_transcricao: boolean }>('/ai/clinic-settings', { method: 'PUT', body }),
 
   getReports: (patientId: string) =>
     vpsApiFetch<ClinicalReportApi[]>(`/ai/reports/${encodeURIComponent(patientId)}`),
@@ -1326,14 +1352,15 @@ export const aiApi = {
     return `${VPS_API_BASE}/ai/reports/export.csv?${params.toString()}`;
   },
 
-  generateFollowupMessages: (body: { reportId: string; patientName?: string; patientPhone?: string }) =>
+  /** Modelos fixos de acompanhamento (sem IA). */
+  generateFollowupMessages: (body: { reportId: string }) =>
     vpsApiFetch<{ messages: Array<{ delay_days: number; text: string }>; summary: string }>('/ai/followup-messages', { method: 'POST', body }),
 
+  /** O telefone e o nome vêm do cadastro do paciente no servidor; `revisado` é a caixa "Revisei as mensagens". */
   scheduleFollowup: (body: {
     reportId: string;
-    patientName?: string;
-    patientPhone?: string;
     messages: Array<{ delay_days: number; text: string }>;
+    revisado: boolean;
     instance?: string;
   }) => vpsApiFetch<{ success: boolean; flowId: string; jobs: Array<{ id: string; scheduled_at: string; delay_days: number; message: string }> }>('/ai/schedule-followup', { method: 'POST', body }),
 
