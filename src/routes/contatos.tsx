@@ -41,14 +41,17 @@ function ContatosPage() {
   const [importOpen, setImportOpen] = useState(false);
   const [importMsgOpen, setImportMsgOpen] = useState(false);
 
+  const [loadError, setLoadError] = useState<string | null>(null);
+
   const loadContatos = useCallback(async () => {
     setLoading(true);
     const params: Record<string, string> = {};
     if (search.trim()) params.search = search.trim();
     if (tipoFilter) params.tipo = tipoFilter;
     const { data, error } = await contatosApi.list(params);
-    if (data) setContatos(data);
-    if (error) toast.error(error);
+    setLoadError(error);
+    if (error) toast.error("Não foi possível carregar os contatos: " + error);
+    else setContatos(Array.isArray(data) ? data : []);
     setLoading(false);
   }, [search, tipoFilter]);
 
@@ -59,14 +62,14 @@ function ContatosPage() {
 
   const handleToggleFavorito = async (id: string) => {
     const { data, error } = await contatosApi.toggleFavorito(id);
-    if (error) return toast.error(error);
+    if (error) return toast.error("Erro ao favoritar: " + error);
     setContatos((prev) => prev.map((c) => (c.id === id && data ? data : c)));
   };
 
   const handleDelete = async (id: string) => {
     if (!confirm("Excluir este contato?")) return;
     const { error } = await contatosApi.delete(id);
-    if (error) return toast.error(error);
+    if (error) return toast.error("Erro ao excluir contato: " + error);
     setContatos((prev) => prev.filter((c) => c.id !== id));
     toast.success("Contato excluído");
   };
@@ -138,6 +141,11 @@ function ContatosPage() {
         {loading ? (
           <div className="flex items-center justify-center py-16">
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          </div>
+        ) : loadError && contatos.length === 0 ? (
+          <div role="alert" className="flex flex-col items-center justify-center py-16 gap-3 text-center">
+            <p className="text-sm text-destructive">Não foi possível carregar os contatos. {loadError}</p>
+            <Button size="sm" variant="outline" onClick={() => void loadContatos()}>Tentar de novo</Button>
           </div>
         ) : contatos.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 gap-3">

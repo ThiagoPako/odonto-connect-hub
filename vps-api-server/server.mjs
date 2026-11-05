@@ -5349,7 +5349,8 @@ app.put('/api/agenda/:id', async (req, res) => {
             : '—';
           const firstName = (updated.paciente_nome || '').split(' ')[0] || 'Paciente';
 
-          const msg = `📋 *Consulta Reagendada*\n\nOlá, ${firstName}! 👋\n\nSua consulta foi reagendada:\n\n📅 *Nova data:* ${dataFormatted}\n⏰ *Horário:* ${updated.hora || '—'}\n🦷 *Procedimento:* ${updated.procedimento || 'Consulta'}\n👨‍⚕️ *Profissional:* ${updated.dentista_nome || '—'}\n\nCaso precise reagendar novamente, entre em contato.\n\n_Odonto Connect_`;
+          const clinica = await getTenantClinicName(user.tenant_id);
+          const msg = `📋 *Consulta reagendada — ${clinica}*\n\nOlá, ${firstName}!\n\nSua consulta foi reagendada:\n📅 ${dataFormatted}\n⏰ ${updated.hora || '—'}\n👩‍⚕️ ${updated.dentista_nome || 'Equipe da clínica'}\n\nSe precisar remarcar de novo, é só mandar uma mensagem aqui.`;
 
           await evolutionFetch(`/message/sendText/${instName}`, {
             method: 'POST',
@@ -7554,6 +7555,7 @@ function reactivationFillTemplate(tpl, ctx) {
   if (!tpl) return '';
   return String(tpl)
     .replaceAll('{nome}', ctx.nome || '')
+    .replaceAll('{clinica}', ctx.clinica || 'nossa clínica')
     .replaceAll('{tratamento}', ctx.tratamento || '')
     .replaceAll('{dias_inativo}', String(ctx.dias_inativo || 0));
 }
@@ -7832,11 +7834,13 @@ app.post('/api/reativacao/rules/:id/send', async (req, res) => {
     // Não envia na hora: entra na fila anti-bloqueio, que espaça os envios,
     // respeita horário, limites do número e quem pediu para sair.
     let queued = 0, failed = 0, skippedOptOut = 0;
+    const clinica = await getTenantClinicName(tenantId);
     const errors = [];
     for (const m of matches) {
       const phone = reactivationNormalizePhone(m.telefone);
       const message = reactivationFillTemplate(rule.message_template, {
         nome: (m.nome || '').split(/\s+/)[0],
+        clinica,
         tratamento: '',
         dias_inativo: m.dias_inativo,
       });
@@ -8512,6 +8516,7 @@ async function sendQueueMenu(instance, phone, tenantId) {
   );
   if (queues.length === 0) return; // No queues configured
 
+  const clinica = await getTenantClinicName(tenantId);
   // Evolution API: sendButtons (Baileys)
   const buttons = queues.map((q, i) => ({
     buttonId: `queue_${q.id}`,
@@ -8523,8 +8528,8 @@ async function sendQueueMenu(instance, phone, tenantId) {
   const buttonPayload = {
     number: phone,
     title: '',
-    description: 'Olá! 👋 Selecione o setor desejado para ser atendido:',
-    footer: 'Odonto Connect',
+    description: `Olá! 👋 Aqui é da ${clinica}. Selecione o setor para ser atendido:`,
+    footer: clinica,
     buttons,
   };
 
@@ -8536,7 +8541,7 @@ async function sendQueueMenu(instance, phone, tenantId) {
   // Fallback: if buttons not supported, send numbered list as text
   if (!btnResult.ok) {
     console.log('⚠️ Buttons not supported, falling back to text list');
-    const lines = ['Olá! 👋 Selecione o setor desejado:', ''];
+    const lines = [`Olá! 👋 Aqui é da ${clinica}. Selecione o setor desejado:`, ''];
     queues.forEach((q, i) => {
       lines.push(`*${i + 1}* - ${q.whatsapp_button_label || `${q.icon} ${q.name}`}`);
     });
@@ -9267,7 +9272,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
           method: 'POST',
           body: JSON.stringify({
             number: resolvedPhone,
-            text: 'Pronto! Você não receberá mais mensagens automáticas da clínica. Se precisar falar com a gente, é só mandar uma mensagem por aqui.',
+            text: `Pronto! A ${await getTenantClinicName(tenantId)} não vai mais enviar mensagens automáticas para este número, inclusive lembretes de consulta. Se precisar falar com a gente, é só mandar uma mensagem por aqui.`,
           }),
         });
       }
@@ -9306,7 +9311,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
       // Check business hours
       if (!isFromMe && !isWithinBusinessHours(attendanceSettingsCache)) {
         const offMsg = attendanceSettingsCache?.offHoursMessage ||
-          'Olá! Nosso horário de atendimento encerrou. Deixe sua mensagem que retornaremos assim que possível! 😊';
+          `Olá! Aqui é da ${await getTenantClinicName(tenantId)}. Nosso atendimento está fechado agora. Deixe sua mensagem que respondemos assim que abrirmos. 😊`;
         await evolutionFetch(`/message/sendText/${instance}`, {
           method: 'POST',
           body: JSON.stringify({ number: resolvedPhone, text: offMsg }),
@@ -9724,7 +9729,7 @@ app.post('/api/webhook/evolution', async (req, res) => {
             ).catch(() => {});
 
             // Send confirmation reply
-            const confirmMsg = `✅ *Presença confirmada!*\n\nObrigado por confirmar. Aguardamos você na data agendada. 😊\n\n_Odonto Connect_`;
+            const confirmMsg = `✅ *Presença confirmada!*\n\nObrigado por confirmar. A ${await getTenantClinicName(tenantId)} aguarda você na data agendada. 😊`;
             await evolutionFetch(`/message/sendText/${instance}`, {
               method: 'POST',
               body: JSON.stringify({ number: `${phone}@s.whatsapp.net`, text: confirmMsg }),
@@ -9990,9 +9995,9 @@ let followupAutomationConfig = {
   enabled: true,
   stages: ['followup', 'followup_2', 'followup_3'],
   messages: {
-    followup: 'Olá {{nome}}! 😊 Obrigado pelo seu contato com a Odonto Connect. Gostaríamos de saber: podemos ajudar com mais alguma informação sobre o tratamento que conversamos? Estamos à disposição!',
-    followup_2: '{{nome}}, passando para dar um oi! 👋 Ainda temos condições especiais para o procedimento que conversamos. Quer saber mais? Responda esta mensagem!',
-    followup_3: 'Oi {{nome}}, última chamada! 🦷 Seu orçamento ainda está disponível e temos horários esta semana. Posso agendar uma avaliação para você?',
+    followup: 'Olá, {{nome}}! Aqui é da {{clinica}}. Ficou alguma dúvida sobre o que conversamos? É só responder esta mensagem. Responda SAIR para não receber mais.',
+    followup_2: '{{nome}}, tudo bem? Aqui é da {{clinica}}. Se quiser retomar a conversa ou marcar uma avaliação, estamos por aqui. Responda SAIR para não receber mais.',
+    followup_3: 'Oi, {{nome}}! Esta é a nossa última mensagem sobre esse assunto. Quando quiser agendar, é só chamar a {{clinica}} por aqui. Responda SAIR para não receber mais.',
   },
   delaySeconds: 30, // delay before sending (gives time to cancel)
   delayDays: { followup: 0, followup_2: 3, followup_3: 7 }, // days after stage entry before sending
@@ -10036,7 +10041,10 @@ async function triggerFollowupAutomation(leadId, toStage) {
 
     const template = followupAutomationConfig.messages[toStage];
     if (!template) return;
-    const message = template.replace(/\{\{nome\}\}/g, (lead.nome || 'Paciente').split(' ')[0]);
+    const clinica = await getTenantClinicName(lead.tenant_id);
+    const message = template
+      .replace(/\{\{nome\}\}/g, (lead.nome || 'Paciente').split(' ')[0])
+      .replace(/\{\{clinica\}\}/g, clinica);
 
     const stageDays = (followupAutomationConfig.delayDays && followupAutomationConfig.delayDays[toStage]) || 0;
     const totalDelayMs = (stageDays * 86400000) + ((followupAutomationConfig.delaySeconds || 30) * 1000);
@@ -10045,7 +10053,8 @@ async function triggerFollowupAutomation(leadId, toStage) {
     // e pela primeira instância aberta de qualquer clínica. Agora vai para a
     // fila, que confere no envio se o lead ainda está na mesma etapa.
     await enqueueWhatsAppJob({
-      tenantId: String(lead.tenant_id), phone: lead.telefone, message, category: 'transactional',
+      // Follow-up de venda/recuperação é marketing (LGPD art. 6º I e II): ganha o rodapé SAIR.
+      tenantId: String(lead.tenant_id), phone: lead.telefone, message, category: 'marketing',
       flowId: `followup_${toStage}`, flowName: `Follow-up ${toStage}`, patientName: lead.nome || '',
       triggerEvent: 'followup_stage', scheduledAt: new Date(Date.now() + totalDelayMs),
       variables: { leadId, requireStage: toStage },
@@ -10120,6 +10129,13 @@ app.get('/api/automations/flows', async (req, res) => {
   }
 });
 
+const MARKETING_HEALTH_VARS_ERROR =
+  'Mensagens de marketing não podem usar {{procedimento}} nem {{valor}}: são dados de saúde do paciente.';
+function marketingFlowHasHealthVars(trigger, steps) {
+  if (!AUTOMATION_MARKETING_TRIGGERS.has(trigger)) return false;
+  return (Array.isArray(steps) ? steps : []).some(st => WA_MARKETING_FORBIDDEN_VARS.test(String(st?.message || '')));
+}
+
 // Create automation flow
 app.post('/api/automations/flows', async (req, res) => {
   try {
@@ -10127,6 +10143,7 @@ app.post('/api/automations/flows', async (req, res) => {
     const { id, name, description, type, active, trigger, steps, stats } = req.body;
     if (!name) return res.status(400).json({ error: 'name obrigatório' });
     if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    if (marketingFlowHasHealthVars(trigger, steps)) return res.status(400).json({ error: MARKETING_HEALTH_VARS_ERROR });
     const flowId = id || `af${Date.now()}`;
 
     await pool.query(
@@ -10147,6 +10164,15 @@ app.put('/api/automations/flows/:id', async (req, res) => {
     const { user } = await verifyUser(req);
     const { id } = req.params;
     const { name, description, type, active, trigger, steps } = req.body;
+    if (steps !== undefined || trigger !== undefined) {
+      const { rows: cur } = await pool.query(
+        'SELECT trigger_event, steps FROM automation_flows WHERE id = $1 AND tenant_id = $2', [id, user.tenant_id || null]
+      ).catch(() => ({ rows: [] }));
+      const curSteps = typeof cur[0]?.steps === 'string' ? JSON.parse(cur[0].steps) : cur[0]?.steps;
+      if (marketingFlowHasHealthVars(trigger ?? cur[0]?.trigger_event, steps ?? curSteps)) {
+        return res.status(400).json({ error: MARKETING_HEALTH_VARS_ERROR });
+      }
+    }
 
     const sets = [];
     const vals = [];
@@ -10509,6 +10535,31 @@ async function getTenantDefaultInstance(tenantId) {
   return null;
 }
 
+// Nome da clínica (controladora) para assinar as mensagens automáticas — LGPD art. 9º III.
+// Cache curto: o nome muda raramente e o lembrete roda em lote.
+const tenantClinicNameCache = new Map(); // tenantId -> { nome, at }
+async function getTenantClinicName(tenantId) {
+  if (!isValidTenantId(tenantId)) return 'nossa clínica';
+  const hit = tenantClinicNameCache.get(String(tenantId));
+  if (hit && Date.now() - hit.at < 10 * 60_000) return hit.nome;
+  const { rows } = await pool.query('SELECT nome FROM tenants WHERE id = $1 LIMIT 1', [tenantId]).catch(() => ({ rows: [] }));
+  const nome = String(rows[0]?.nome || '').trim() || 'nossa clínica';
+  tenantClinicNameCache.set(String(tenantId), { nome, at: Date.now() });
+  return nome;
+}
+
+// Marketing sempre diz como sair (LGPD art. 8º §5º e 18 §2º; política do WhatsApp).
+const WA_MARKETING_OPT_OUT_FOOTER = 'Responda SAIR para não receber mais.';
+function withMarketingOptOutFooter(message) {
+  const text = String(message || '').trimEnd();
+  if (!text || /\bSAIR\b/i.test(text)) return text;
+  return `${text}\n\n${WA_MARKETING_OPT_OUT_FOOTER}`;
+}
+
+// Variáveis que revelam dado de saúde ou valor de tratamento: proibidas em marketing
+// (LGPD art. 5º II, 6º III e 11 I).
+const WA_MARKETING_FORBIDDEN_VARS = /\{\{\s*(procedimento|valor)\s*\}\}|\{tratamento\}/i;
+
 async function enqueueWhatsAppJob({
   tenantId, instance = null, phone, message, category = 'transactional',
   flowId = null, flowName = '', stepIndex = 0, patientName = '', variables = null,
@@ -10517,6 +10568,7 @@ async function enqueueWhatsAppJob({
   if (!isValidTenantId(tenantId)) throw new Error('enqueueWhatsAppJob: tenantId obrigatório');
   const cleanPhone = normalizeWhatsappNumber(phone || '');
   if (!cleanPhone || !message) return null;
+  if (category === 'marketing') message = withMarketingOptOutFooter(message);
   // Já fixa o número da clínica, para o ritmo por número valer desde o início.
   const resolvedInstance = instance || await getTenantDefaultInstance(tenantId).catch(() => null);
   // Mensagem automática perde o sentido depois de um tempo (número desconectado
@@ -10599,6 +10651,22 @@ async function runWhatsAppJobHooks(job, ok, errorMessage) {
         [vars.leadId, job.tenant_id]
       ).catch(() => {});
     }
+  }
+  // Estatísticas contam o resultado real do envio, não o enfileiramento.
+  if (job.trigger_event === 'campaign' && job.flow_id) {
+    const key = ok ? 'enviadas' : 'erros';
+    await pool.query(
+      `UPDATE broadcast_campaigns SET
+         stats = jsonb_set(COALESCE(stats, '{}'::jsonb), ARRAY[$3::text], to_jsonb(COALESCE((stats->>$3)::int, 0) + 1))
+       WHERE id::text = $1 AND tenant_id = $2`,
+      [String(job.flow_id), job.tenant_id, key]
+    ).catch(e => console.error('[campaign stats]', e.message));
+  } else if (ok && job.flow_id) {
+    await pool.query(
+      `UPDATE automation_flows SET stats = jsonb_set(COALESCE(stats, '{}'::jsonb), '{sent}', to_jsonb(COALESCE((stats->>'sent')::int, 0) + 1))
+        WHERE id = $1 AND tenant_id = $2`,
+      [String(job.flow_id), job.tenant_id]
+    ).catch(e => console.error('[flow stats]', e.message));
   }
   if (job.trigger_event === 'followup_stage' && ok && vars.leadId) {
     await pool.query(
@@ -10908,9 +10976,11 @@ async function triggerAutomationFlows(triggerEvent, patientData) {
       horario: patientData.horario || '',
       data: patientData.data || '',
       dentista: patientData.dentista || '',
-      clinica: 'Odonto Connect',
+      clinica: await getTenantClinicName(tenantId),
       link_agendamento: patientData.link_agendamento || '',
     };
+    // Fluxo de marketing nunca revela procedimento nem valor (LGPD art. 11 I).
+    if (AUTOMATION_MARKETING_TRIGGERS.has(triggerEvent)) { vars.procedimento = ''; vars.valor = ''; }
 
     let totalJobs = 0;
     for (const flow of flows) {
@@ -10958,11 +11028,7 @@ async function triggerAutomationFlows(triggerEvent, patientData) {
         totalJobs++;
       }
 
-      // Update flow stats
-      await pool.query(
-        `UPDATE automation_flows SET stats = jsonb_set(stats, '{sent}', to_jsonb(COALESCE((stats->>'sent')::int, 0) + $1)) WHERE id = $2`,
-        [steps.length, flow.id]
-      ).catch(() => {});
+      // "sent" do fluxo é somado em runWhatsAppJobHooks, quando a mensagem sai de fato.
     }
 
     if (totalJobs > 0) {
@@ -11416,6 +11482,7 @@ async function enqueueCampaignForTenant(camp, tenantId) {
   const recentKeys = new Set(recentlySent.map(r => waPhoneKey(r.patient_phone)));
 
   let enqueued = 0, optedOut = 0;
+  const clinica = await getTenantClinicName(tenantId);
   for (const contact of contacts) {
     const phone = normalizeWhatsappNumber(contact.telefone);
     if (!phone || recentKeys.has(waPhoneKey(phone))) continue;
@@ -11423,7 +11490,9 @@ async function enqueueCampaignForTenant(camp, tenantId) {
     recentKeys.add(waPhoneKey(phone));
     const personalizedMsg = message
       .replace(/\{\{nome\}\}/gi, (contact.nome || 'Cliente').split(' ')[0])
-      .replace(/\{\{telefone\}\}/gi, contact.telefone || '');
+      .replace(/\{\{telefone\}\}/gi, contact.telefone || '')
+      .replace(/\{\{clinica\}\}/gi, clinica)
+      .replace(/\{\{\s*(procedimento|valor)\s*\}\}/gi, '');
     await enqueueWhatsAppJob({
       tenantId, instance, phone, message: personalizedMsg, category: 'marketing',
       flowId: camp.id, flowName: camp.nome, patientName: contact.nome || '', triggerEvent: 'campaign',
@@ -11434,7 +11503,7 @@ async function enqueueCampaignForTenant(camp, tenantId) {
   if (enqueued > 0) {
     await pool.query(
       `UPDATE broadcast_campaigns SET
-         stats = jsonb_set(COALESCE(stats, '{}'::jsonb), '{enviadas}', to_jsonb(COALESCE((stats->>'enviadas')::int, 0) + $1)),
+         stats = jsonb_set(COALESCE(stats, '{}'::jsonb), '{enfileiradas}', to_jsonb(COALESCE((stats->>'enfileiradas')::int, 0) + $1)),
          contatos_alcancaveis = $2, updated_at = NOW()
        WHERE id = $3 AND tenant_id = $4`,
       [enqueued, contacts.length, camp.id, tenantId]
@@ -11569,7 +11638,9 @@ async function processAppointmentReminders() {
 
         // Data explícita em vez de "amanhã": o lembrete pode sair só no dia
         // seguinte à criação (fila fora do horário de envio).
-        const message = `🔔 *Lembrete de Consulta*\n\nOlá, ${firstName}! 👋\n\nLembramos que você tem uma consulta agendada:\n\n📅 *Data:* ${weekday}, ${dataBR}\n⏰ *Horário:* ${hora || appt.hora}\n🦷 *Procedimento:* ${appt.procedimento || 'Consulta'}\n👨‍⚕️ *Profissional:* ${appt.dentista_nome || '—'}\n\nPor favor, confirme sua presença respondendo *SIM* ou entre em contato para reagendar.\n\n_Odonto Connect_`;
+        // Sem o procedimento: a mensagem aparece na tela bloqueada (LGPD art. 6º III e 46).
+        const clinica = await getTenantClinicName(appt.tenant_id);
+        const message = `🔔 *Lembrete de consulta — ${clinica}*\n\nOlá, ${firstName}!\n\nVocê tem uma consulta marcada:\n📅 ${weekday}, ${dataBR}\n⏰ ${hora || appt.hora}\n👩‍⚕️ ${appt.dentista_nome || 'Equipe da clínica'}\n\nResponda *SIM* para confirmar ou mande uma mensagem aqui para remarcar.`;
 
         // Validade: até o horário da consulta (horário de Brasília).
         let expiresAt = new Date(`${isoDate}T${/^\d{2}:\d{2}$/.test(hora) ? hora : '23:59'}:00-03:00`);
@@ -11680,16 +11751,19 @@ async function processSolutionTriggers() {
 
     const today = now.toISOString().slice(0, 10);
 
-    // Map each solution trigger to its query
+    // Cada gatilho roda separado por clínica: $1 é sempre o tenant_id. Antes a
+    // query era global (LIMIT 100 dividido entre todas as clínicas) e o JOIN não
+    // exigia que agendamento e paciente fossem da mesma clínica.
     const solutionQueries = [
       {
         trigger: 'Agendamento criado sem confirmação',
         query: `SELECT DISTINCT p.id, p.tenant_id, p.nome, p.telefone, a.procedimento, a.data::text, a.hora::text as horario,
                   d.nome as dentista
                 FROM agendamentos a
-                JOIN pacientes p ON a.paciente_id = p.id
+                JOIN pacientes p ON a.paciente_id = p.id AND p.tenant_id = a.tenant_id
                 LEFT JOIN dentistas d ON a.dentista_id = d.id
-                WHERE a.data >= $1 AND a.data <= ($1::date + INTERVAL '2 days')
+                WHERE a.tenant_id = $1
+                AND a.data >= $2 AND a.data <= ($2::date + INTERVAL '2 days')
                 AND a.status = 'agendado'
                 AND p.telefone IS NOT NULL AND p.telefone != ''
                 LIMIT 100`,
@@ -11697,8 +11771,9 @@ async function processSolutionTriggers() {
       },
       {
         trigger: 'Data de aniversário do paciente',
-        query: `SELECT id, nome, telefone FROM pacientes
-                WHERE EXTRACT(MONTH FROM data_nascimento) = EXTRACT(MONTH FROM CURRENT_DATE)
+        query: `SELECT id, tenant_id, nome, telefone FROM pacientes
+                WHERE tenant_id = $1
+                AND EXTRACT(MONTH FROM data_nascimento) = EXTRACT(MONTH FROM CURRENT_DATE)
                 AND EXTRACT(DAY FROM data_nascimento) = EXTRACT(DAY FROM CURRENT_DATE)
                 AND telefone IS NOT NULL AND telefone != ''
                 LIMIT 100`,
@@ -11708,8 +11783,9 @@ async function processSolutionTriggers() {
         trigger: 'Consulta desmarcada pelo paciente',
         query: `SELECT DISTINCT p.id, p.tenant_id, p.nome, p.telefone, a.procedimento
                 FROM agendamentos a
-                JOIN pacientes p ON a.paciente_id = p.id
-                WHERE a.status IN ('desmarcado','cancelado')
+                JOIN pacientes p ON a.paciente_id = p.id AND p.tenant_id = a.tenant_id
+                WHERE a.tenant_id = $1
+                AND a.status IN ('desmarcado','cancelado')
                 AND a.updated_at >= NOW() - INTERVAL '24 hours'
                 AND p.telefone IS NOT NULL AND p.telefone != ''
                 LIMIT 100`,
@@ -11719,8 +11795,9 @@ async function processSolutionTriggers() {
         trigger: 'Paciente não compareceu à consulta',
         query: `SELECT DISTINCT p.id, p.tenant_id, p.nome, p.telefone, a.procedimento
                 FROM agendamentos a
-                JOIN pacientes p ON a.paciente_id = p.id
-                WHERE a.status = 'faltou'
+                JOIN pacientes p ON a.paciente_id = p.id AND p.tenant_id = a.tenant_id
+                WHERE a.tenant_id = $1
+                AND a.status = 'faltou'
                 AND a.data >= CURRENT_DATE - INTERVAL '1 day'
                 AND p.telefone IS NOT NULL AND p.telefone != ''
                 LIMIT 100`,
@@ -11730,13 +11807,14 @@ async function processSolutionTriggers() {
         trigger: 'Paciente faltou à primeira consulta',
         query: `SELECT DISTINCT p.id, p.tenant_id, p.nome, p.telefone, a.procedimento
                 FROM agendamentos a
-                JOIN pacientes p ON a.paciente_id = p.id
-                WHERE a.status = 'faltou'
+                JOIN pacientes p ON a.paciente_id = p.id AND p.tenant_id = a.tenant_id
+                WHERE a.tenant_id = $1
+                AND a.status = 'faltou'
                 AND a.data >= CURRENT_DATE - INTERVAL '1 day'
                 AND p.telefone IS NOT NULL AND p.telefone != ''
                 AND NOT EXISTS (
                   SELECT 1 FROM agendamentos b
-                  WHERE b.paciente_id = a.paciente_id
+                  WHERE b.paciente_id = a.paciente_id AND b.tenant_id = a.tenant_id
                   AND b.status IN ('realizado','confirmado','atendido')
                 )
                 LIMIT 100`,
@@ -11747,7 +11825,8 @@ async function processSolutionTriggers() {
         query: `SELECT DISTINCT p.id, p.tenant_id, p.nome, p.telefone, o.valor_total::text as valor
                 FROM orcamentos o
                 JOIN pacientes p ON o.paciente_id = p.id
-                WHERE o.status = 'aprovado'
+                WHERE p.tenant_id = $1
+                AND o.status = 'aprovado'
                 AND p.telefone IS NOT NULL AND p.telefone != ''
                 AND NOT EXISTS (
                   SELECT 1 FROM financeiro f
@@ -11763,7 +11842,8 @@ async function processSolutionTriggers() {
                   ('R$ ' || o.valor_total::text) as valor
                 FROM orcamentos o
                 JOIN pacientes p ON o.paciente_id = p.id
-                WHERE o.status = 'pendente'
+                WHERE p.tenant_id = $1
+                AND o.status = 'pendente'
                 AND o.created_at >= NOW() - INTERVAL '30 days'
                 AND p.telefone IS NOT NULL AND p.telefone != ''
                 LIMIT 100`,
@@ -11774,12 +11854,13 @@ async function processSolutionTriggers() {
         query: `SELECT DISTINCT p.id, p.tenant_id, p.nome, p.telefone, t.descricao as procedimento
                 FROM tratamentos t
                 JOIN pacientes p ON t.paciente_id = p.id
-                WHERE t.status IN ('planejado','em_andamento','ativo')
+                WHERE p.tenant_id = $1
+                AND t.status IN ('planejado','em_andamento','ativo')
                 AND p.telefone IS NOT NULL AND p.telefone != ''
                 AND NOT EXISTS (
                   SELECT 1 FROM agendamentos a
-                  WHERE a.paciente_id = t.paciente_id
-                  AND a.data >= $1
+                  WHERE a.paciente_id = t.paciente_id AND a.tenant_id = p.tenant_id
+                  AND a.data >= $2
                   AND a.status NOT IN ('cancelado','desmarcado','faltou')
                 )
                 LIMIT 100`,
@@ -11790,18 +11871,20 @@ async function processSolutionTriggers() {
     let totalTriggered = 0;
 
     for (const sol of solutionQueries) {
-      // Check if there's an active flow using this trigger
-      const { rows: activeFlows } = await pool.query(
-        `SELECT 1 FROM automation_flows WHERE active = true AND trigger_event = $1 LIMIT 1`,
+      // Só as clínicas que têm fluxo ativo com este gatilho.
+      const { rows: tenantRows } = await pool.query(
+        `SELECT DISTINCT tenant_id FROM automation_flows
+          WHERE active = true AND trigger_event = $1 AND tenant_id IS NOT NULL`,
         [sol.trigger]
       );
-      if (activeFlows.length === 0) continue;
-
-      // Run the query to find matching patients
-      const { rows: patients } = await pool.query(sol.query, sol.params);
+      for (const { tenant_id: solTenantId } of tenantRows) {
+      if (!isValidTenantId(solTenantId)) continue;
+      const { rows: patients } = await pool.query(sol.query, [solTenantId, ...sol.params]);
       if (patients.length === 0) continue;
+      let tenantTriggered = 0;
 
       for (const patient of patients) {
+        if (String(patient.tenant_id) !== String(solTenantId)) continue;
         // Check cooldown: don't re-trigger same patient+trigger within 24h
         const { rows: recent } = await pool.query(
           `SELECT 1 FROM automation_jobs
@@ -11825,10 +11908,10 @@ async function processSolutionTriggers() {
           dentista: patient.dentista || '',
         });
         totalTriggered++;
+        tenantTriggered++;
       }
 
-      if (patients.length > 0) {
-        console.log(`🤖 Solution "${sol.trigger}": ${patients.length} pacientes encontrados, ${totalTriggered} triggered`);
+      console.log(`🤖 Solution "${sol.trigger}" (clínica ${String(solTenantId).slice(0, 8)}): ${patients.length} pacientes, ${tenantTriggered} enfileirados`);
       }
     }
 
@@ -12073,6 +12156,61 @@ app.get('/api/crm/leads/:id/movements', async (req, res) => {
 });
 
 // List all CRM leads (with optional kanban grouping + server-side pagination)
+// Cadastro manual de lead (botão "Novo lead" do CRM). Sempre na clínica do usuário.
+app.post('/api/crm/leads', async (req, res) => {
+  try {
+    const { user } = await verifyUser(req);
+    if (!user.tenant_id) return res.status(403).json({ error: 'Usuário sem clínica' });
+    const { nome, telefone, email, origem, stage, value } = req.body || {};
+
+    const nomeLimpo = typeof nome === 'string' ? nome.trim() : '';
+    if (!nomeLimpo) return res.status(400).json({ error: 'Nome é obrigatório' });
+    if (nomeLimpo.length > 200) return res.status(400).json({ error: 'Nome muito longo' });
+
+    const telefoneLimpo = typeof telefone === 'string' && telefone.trim() ? telefone.trim() : null;
+    const digitos = telefoneLimpo ? telefoneLimpo.replace(/\D/g, '') : '';
+    if (telefoneLimpo && (digitos.length < 8 || digitos.length > 15)) {
+      return res.status(400).json({ error: 'Telefone inválido' });
+    }
+    const emailLimpo = typeof email === 'string' && email.trim() ? email.trim().toLowerCase() : null;
+    if (emailLimpo && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailLimpo)) {
+      return res.status(400).json({ error: 'E-mail inválido' });
+    }
+    const etapa = stage === undefined || stage === null || stage === '' ? 'lead' : stage;
+    if (!ALL_KANBAN_STAGES.includes(etapa)) return res.status(400).json({ error: 'Etapa inválida' });
+    const valor = value === undefined || value === null || value === '' ? 0 : Number(value);
+    if (!Number.isFinite(valor) || valor < 0) return res.status(400).json({ error: 'Valor inválido' });
+    const origemLimpa = typeof origem === 'string' && origem.trim() ? origem.trim().slice(0, 60) : 'Manual';
+
+    // O WhatsApp associa conversas ao lead pelo final do telefone: evita duplicar na mesma clínica.
+    if (digitos) {
+      const { rows: existente } = await pool.query(
+        `SELECT id FROM crm_leads
+          WHERE tenant_id = $1
+            AND REGEXP_REPLACE(COALESCE(telefone, ''), '\\D', '', 'g') LIKE '%' || $2
+          LIMIT 1`,
+        [user.tenant_id, digitos.slice(-11)]
+      );
+      if (existente[0]) {
+        return res.status(409).json({ error: 'Já existe um lead com este telefone', id: existente[0].id });
+      }
+    }
+
+    const id = randomUUID();
+    const { rows } = await pool.query(
+      `INSERT INTO crm_leads (id, nome, telefone, email, origem, status, kanban_stage, valor, awaiting_queue_selection, tenant_id)
+       VALUES ($1, $2, $3, $4, $5, 'novo', $6, $7, false, $8)
+       RETURNING id, nome, telefone, email, origem, status, kanban_stage, valor, created_at`,
+      [id, nomeLimpo, telefoneLimpo, emailLimpo, origemLimpa, etapa, valor, user.tenant_id]
+    );
+    res.status(201).json(rows[0] || { id });
+  } catch (error) {
+    if (error.message === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('[crm:leads:create]', error.message);
+    res.status(500).json({ error: 'Erro ao criar lead' });
+  }
+});
+
 app.get('/api/crm/leads', async (req, res) => {
   try {
     const { user } = await verifyUser(req);
@@ -14596,10 +14734,13 @@ app.post('/api/ai/followup-messages', async (req, res) => {
 
 As mensagens devem:
 - Ser calorosas, empáticas e profissionais
-- Referenciar detalhes específicos da consulta (procedimento, orientações)
-- Usar emojis de forma moderada
-- Ser curtas (máx 200 caracteres cada)
-- Incluir chamada para ação quando apropriado
+- NÃO citar procedimento, dente, região, medicamento, prescrição, diagnóstico ou valor
+  (a mensagem aparece na tela do celular e pode ser lida por outra pessoa)
+- Referir-se apenas a "seu atendimento" ou "sua consulta"
+- Orientações clínicas: só "siga as orientações que recebeu; qualquer dúvida, fale com a gente"
+- Não oferecer desconto, promoção, brinde ou avaliação gratuita
+- Ser curtas (máx 200 caracteres) e usar no máximo 1 emoji
+- Identificar a clínica como {{clinica}}
 
 Retorne em formato JSON:
 {
@@ -14708,10 +14849,13 @@ app.post('/api/ai/schedule-followup', async (req, res) => {
     const phone = patientPhone.replace(/\D/g, '');
     const formattedPhone = phone.startsWith('55') ? phone : `55${phone}`;
 
+    const clinicaNome = await getTenantClinicName(tenantId);
     for (let i = 0; i < messages.length; i++) {
       const msg = messages[i];
       const scheduledAt = new Date(now.getTime() + (msg.delay_days * 86400000));
-      const personalizedMsg = (msg.text || '').replace(/\{\{nome\}\}/g, patientName || 'Paciente');
+      const personalizedMsg = (msg.text || '')
+        .replace(/\{\{nome\}\}/g, patientName || 'Paciente')
+        .replace(/\{\{clinica\}\}/g, clinicaNome);
 
       const jobId = randomUUID();
       await enqueueWhatsAppJob({
@@ -16062,4 +16206,6 @@ if (process.env.NODE_ENV !== 'test') {
 
 
 export { app, pool };
+// Exportados só para os testes de jobs (tests/jobs-metricas-isolamento.test.js).
+export { processSolutionTriggers, runWhatsAppJobHooks };
 

@@ -8,7 +8,11 @@ const __dirname = path.dirname(__filename);
 
 dotenv.config({ path: path.join(__dirname, '.env') });
 
-const JWT_SECRET = process.env.JWT_SECRET || 'CHANGE_ME_IN_PRODUCTION';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  console.error('Defina JWT_SECRET (ex.: no .env) antes de rodar este script.');
+  process.exit(1);
+}
 const API_URL = 'http://localhost:3002/api';
 
 async function testSecurity() {
