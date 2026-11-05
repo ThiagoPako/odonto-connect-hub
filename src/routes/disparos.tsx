@@ -86,6 +86,12 @@ function DisparosPage() {
     const { data, error } = await campaignsApi.execute(disparo.id);
     setExecutingId(null);
     if (error) { toast.error("Erro ao executar: " + error); return; }
+    if (data?.agendada) {
+      const [y, m, d] = String(data.inicio || "").split("-");
+      toast.success(`Campanha ativada. Os envios começam em ${d && m ? `${d}/${m}/${y}` : "a data de início"}.`);
+      loadCampaigns();
+      return;
+    }
     if (data) {
       toast.success(`${data.enqueued} mensagens na fila (${data.skipped} ignoradas: já receberam ou pediram para sair). O envio é gradual, em horário comercial.`);
       loadCampaigns();
