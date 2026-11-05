@@ -204,7 +204,7 @@ export function AppSidebar() {
           <Menu className="h-5 w-5" />
         </button>
         <img src={logoImg} alt="" className="h-6 w-12 rounded object-cover" />
-        <span className="text-[0.9375rem] font-semibold tracking-tight font-heading text-sidebar-foreground">Odonto Connect</span>
+        <span className="text-callout font-semibold tracking-tight font-heading text-sidebar-foreground">Odonto Connect</span>
       </div>
       <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
         <SheetContent side="left" className="md:hidden w-[288px] max-w-[85vw] p-0 flex flex-col bg-sidebar text-sidebar-foreground gap-0">
@@ -212,7 +212,7 @@ export function AppSidebar() {
           <SheetDescription className="sr-only">Navegação do Odonto Connect</SheetDescription>
           <div className="flex items-center gap-2.5 px-4 h-14 border-b border-sidebar-border shrink-0">
             <img src={logoImg} alt="" className="h-6 w-12 rounded object-cover" />
-            <span className="text-[0.9375rem] font-semibold tracking-tight font-heading">Odonto Connect</span>
+            <span className="text-callout font-semibold tracking-tight font-heading">Odonto Connect</span>
           </div>
           {nav(true)}
           <SidebarUserFooter expanded />
@@ -236,7 +236,7 @@ export function AppSidebar() {
             <img src={logoImg} alt="Odonto Connect" className="h-6 w-12 rounded object-cover shrink-0" />
             {expanded && (
               <>
-                <span className="flex-1 min-w-0 text-[0.9375rem] font-semibold tracking-tight text-sidebar-foreground font-heading truncate">
+                <span className="flex-1 min-w-0 text-callout font-semibold tracking-tight text-sidebar-foreground font-heading truncate">
                   Odonto Connect
                 </span>
                 <button
@@ -323,7 +323,7 @@ function CollapsibleSection({
                 key={item.title}
                 to={item.url}
                 aria-current={isActive ? "page" : undefined}
-                className={`flex items-center gap-3 h-11 md:h-9 px-2.5 rounded-md text-sm md:text-[0.8125rem] transition-colors ${
+                className={`flex items-center gap-3 h-11 md:h-9 px-2.5 rounded-md text-sm md:text-footnote transition-colors ${
                   isActive
                     ? "bg-sidebar-accent text-sidebar-accent-foreground font-semibold"
                     : "text-sidebar-foreground font-medium hover:bg-sidebar-accent"
@@ -400,7 +400,7 @@ function SidebarUserFooter({ expanded }: { expanded: boolean }) {
       <Link to="/perfil" className="flex flex-1 min-w-0 items-center gap-2.5 px-2 min-h-11 md:min-h-0 md:py-1.5 rounded-md hover:bg-sidebar-accent transition-colors" title="Meu perfil">
         {avatar}
         <div className="flex-1 min-w-0">
-          <p className="text-[0.8125rem] font-semibold text-sidebar-foreground leading-tight truncate">{user?.name ?? "Usuário"}</p>
+          <p className="text-footnote font-semibold text-sidebar-foreground leading-tight truncate">{user?.name ?? "Usuário"}</p>
           <p className="text-xs text-muted-foreground capitalize truncate">{roleLabel}</p>
         </div>
       </Link>

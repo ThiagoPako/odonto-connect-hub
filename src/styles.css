@@ -15,12 +15,22 @@
   --text-title-2: 1.5rem;       --text-title-2--line-height: 2rem;        /* 24 valor de KPI */
   --text-title-1: 1.75rem;      --text-title-1--line-height: 2.25rem;     /* 28 saudação, título de tela vazia */
 
+  /* Escala das páginas públicas (landing, entrada): números = px a 16 px de base. */
+  --text-display-26: 1.625rem;  --text-display-26--line-height: 1.1;     /* título de seção no celular */
+  --text-display-32: 2rem;      --text-display-32--line-height: 1.15;    /* título da tela de entrada */
+  --text-display-34: 2.125rem;  --text-display-34--line-height: 1.1;     /* título de seção no tablet */
+  --text-display-40: 2.5rem;    --text-display-40--line-height: 1.1;     /* título de seção no computador, número grande */
+  --text-display-48: 3rem;      --text-display-48--line-height: 1.05;    /* título principal no tablet, chamada final */
+  --text-display-56: 3.5rem;    --text-display-56--line-height: 1.1;     /* nomes dos planos */
+  --text-hero: clamp(3rem, 4vw, 3.75rem); --text-hero--line-height: 1.04; /* título principal no computador */
+
   /* Alvo de toque mínimo (HIG 44 pt → 44 px). Ex.: size-touch, min-h-touch. */
   --spacing-touch: 2.75rem;
 
   /* Elevação: só o que flutua tem sombra. */
   --shadow-raised: 0 1px 2px hsl(222 47% 13% / 0.04), 0 4px 12px hsl(222 47% 13% / 0.05);
   --shadow-overlay: 0 8px 24px hsl(222 47% 13% / 0.12), 0 2px 6px hsl(222 47% 13% / 0.08);
+  --shadow-stage: 0 24px 60px -20px hsl(0 0% 0% / 0.45); /* peça de interface sobre o palco escuro */
 
   /* Movimento: saída rápida, sem quique. Durações em :root (--duration-*). */
   --ease-out-soft: cubic-bezier(0.16, 1, 0.3, 1);

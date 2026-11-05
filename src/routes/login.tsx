@@ -197,7 +197,7 @@ function LoginPage() {
             </button>
           </div>
         </div>
-        <Button type="submit" className="w-full h-11 text-[0.9375rem]" disabled={loading} aria-busy={loading || undefined}>
+        <Button type="submit" className="w-full h-11 text-callout" disabled={loading} aria-busy={loading || undefined}>
           {loading && <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />}
           {loading ? "Entrando…" : "Entrar"}
         </Button>

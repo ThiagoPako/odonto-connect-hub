@@ -30,7 +30,7 @@ export function AuthShell({
 
         <main className="flex-1 flex items-center py-10">
           <div className="w-full max-w-[400px] mx-auto lg:mx-0 animate-slide-up">
-            <h1 className="text-[1.75rem] sm:text-[2rem] leading-tight font-semibold tracking-tight text-foreground">
+            <h1 className="text-title-1 sm:text-display-32 leading-tight font-semibold tracking-tight text-foreground">
               {title}
             </h1>
             {description && <p className="mt-2 text-base text-muted-foreground">{description}</p>}
@@ -46,10 +46,10 @@ export function AuthShell({
         aria-label="Prévia do sistema"
       >
         <div className="max-w-[460px]">
-          <p className="text-[1.75rem] xl:text-[2rem] leading-[1.15] font-heading font-semibold tracking-tight">
+          <p className="text-title-1 xl:text-display-32 leading-[1.15] font-heading font-semibold tracking-tight">
             A rotina da clínica, do primeiro contato ao pagamento.
           </p>
-          <p className="mt-4 text-[0.9375rem] text-stage-muted leading-relaxed">
+          <p className="mt-4 text-callout text-stage-muted leading-relaxed">
             Agenda, prontuário, orçamentos, WhatsApp e financeiro no mesmo lugar.
           </p>
         </div>
