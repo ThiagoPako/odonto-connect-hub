@@ -213,10 +213,12 @@ que dá 3,8:1.
 | | `text-title-3` | 18/24 | título da página (cabeçalho) |
 | | `text-title-2` | 24/32 | valor de KPI |
 | | `text-title-1` | 28/36 | saudação, título de estado vazio |
+| Texto (páginas públicas) | `text-display-26` · `-32` · `-34` · `-40` · `-48` · `-56` · `text-hero` | 26–56 px; hero `clamp(48, 4vw, 60)` | títulos da landing e das telas de entrada (§4); texto corrido usa `text-base`/`text-lg` |
 | Toque | `size-touch`, `min-h-touch`, `h-touch` | 44 px | alvo mínimo em tela de toque |
 | Espaço | escala do Tailwind (`1` = 4 px) | 4/8 | §8 › Grade |
 | Raio | `rounded` · `rounded-md` · `rounded-lg` · `rounded-full` | 4–6 · 8 · 10 · círculo | selo · botão/campo · cartão · avatar |
 | Sombra | `shadow-raised` | 2 camadas leves | cartão que se destaca (`.shadow-card` usa o mesmo valor) |
+| | `shadow-stage` | 24/60 forte | peça de interface sobre o palco escuro (landing, login) |
 | | `shadow-overlay` | 8/24 + 2/6 | menu, popover, diálogo, gaveta |
 | Véu | `bg-scrim` | claro `hsl(222 47% 8% / .55)` · escuro `#000 / .7` | atrás de diálogo e gaveta (antes `bg-black/80`) |
 | Movimento | `ease-out-soft` | `cubic-bezier(0.16, 1, 0.3, 1)` | toda transição de entrada |

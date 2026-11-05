@@ -176,11 +176,11 @@ function SignupPage() {
           />
           {erro("password-erro", errors.password)}
         </div>
-        <Button type="submit" disabled={loading} aria-busy={loading || undefined} className="w-full h-11 text-[0.9375rem]">
+        <Button type="submit" disabled={loading} aria-busy={loading || undefined} className="w-full h-11 text-callout">
           {loading && <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />}
           {loading ? "Criando conta…" : "Criar conta"}
         </Button>
-        <p className="text-[0.8125rem] leading-relaxed text-muted-foreground">
+        <p className="text-footnote leading-relaxed text-muted-foreground">
           Ao criar a conta, você concorda com os{" "}
           <Link to="/termos" target="_blank" className="text-primary underline underline-offset-4">Termos de Uso</Link> e a{" "}
           <Link to="/privacidade" target="_blank" className="text-primary underline underline-offset-4">Política de Privacidade</Link>.

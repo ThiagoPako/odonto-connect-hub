@@ -106,12 +106,12 @@ export function AgendaFragment({ compact = false, className = "" }: { compact?: 
   return (
     <div
       data-ui
-      className={`bg-card text-card-foreground rounded-lg border border-border shadow-[0_24px_60px_-20px_rgba(0,0,0,0.45)] overflow-hidden text-left ${className}`}
+      className={`bg-card text-card-foreground rounded-lg border border-border shadow-stage overflow-hidden text-left ${className}`}
     >
       <div className="flex items-start justify-between gap-4 px-4 pt-4 pb-3 border-b border-border">
         <div className="min-w-0">
-          <p className="text-[0.9375rem] font-semibold leading-tight">Agenda</p>
-          <p className="text-[0.8125rem] text-muted-foreground first-letter:uppercase truncate">{hoje}</p>
+          <p className="text-callout font-semibold leading-tight">Agenda</p>
+          <p className="text-footnote text-muted-foreground first-letter:uppercase truncate">{hoje}</p>
         </div>
         <div className="flex gap-4 text-right shrink-0" aria-live="polite">
           <div>
@@ -144,9 +144,9 @@ export function AgendaFragment({ compact = false, className = "" }: { compact?: 
                   className="group w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-muted/70 focus-visible:bg-muted/70 transition-colors"
                   aria-label={`${c.hora}, ${c.paciente}, ${ROTULO[c.status]}. Clique para avançar o status.`}
                 >
-                  <span className="text-[0.8125rem] font-medium tabular-nums text-muted-foreground w-11 shrink-0">{c.hora}</span>
+                  <span className="text-footnote font-medium tabular-nums text-muted-foreground w-11 shrink-0">{c.hora}</span>
                   <span className="flex-1 min-w-0">
-                    <span className="block text-[0.875rem] font-medium leading-tight truncate">{c.paciente}</span>
+                    <span className="block text-body font-medium leading-tight truncate">{c.paciente}</span>
                     <span className="block text-xs text-muted-foreground leading-tight truncate mt-0.5">
                       {c.procedimento} · {c.dentista}
                     </span>
