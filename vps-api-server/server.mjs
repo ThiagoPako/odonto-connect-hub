@@ -1009,7 +1009,10 @@ async function getProfileByEmail(email) {
   }
 }
 
-async function listProfilesWithRoles() {
+async function listProfilesWithRoles(tenantId = null) {
+  // tenantId null = visão global (só super-admin chega aqui sem tenant; ver verifyAdminScope).
+  const params = tenantId ? [tenantId] : [];
+  const where = tenantId ? 'WHERE p.tenant_id = $1 AND COALESCE(p.is_super_admin, false) = false' : '';
   try {
     const { rows } = await pool.query(`
       SELECT p.id, p.name, p.email, p.avatar_url, p.created_at, p.updated_at,
@@ -1017,8 +1020,9 @@ async function listProfilesWithRoles() {
              COALESCE(ur.role::text, p.role::text, 'user') as role
       FROM profiles p
       LEFT JOIN user_roles ur ON ur.user_id = p.id
+      ${where}
       ORDER BY p.created_at DESC
-    `);
+    `, params);
 
     return rows;
   } catch (error) {
@@ -1030,11 +1034,49 @@ async function listProfilesWithRoles() {
              COALESCE(ur.role::text, p.role::text, 'user') as role
       FROM profiles p
       LEFT JOIN user_roles ur ON ur.user_id = p.id
+      ${tenantId ? 'WHERE p.tenant_id = $1' : ''}
       ORDER BY p.created_at DESC
-    `);
+    `, params);
 
     return rows;
   }
+}
+
+// Rotas administrativas legadas (/api/auth/users*, create-user, reset de senha):
+// admin de clínica só vê e altera usuários da própria clínica e nunca um super-admin;
+// super-admin mantém a visão global.
+const TENANT_USER_ROLES = ['admin', 'dentista', 'recepcionista', 'comercial', 'user'];
+
+async function verifyAdminScope(req) {
+  const { user } = await verifyAdmin(req);
+  if (user.is_super_admin) return { user, tenantId: null };
+  if (!user.tenant_id) throw new Error('Admin access required');
+  return { user, tenantId: user.tenant_id };
+}
+
+/** Perfil alvo que este admin pode gerenciar, ou null (responder 404, sem revelar existência). */
+async function getManageableProfile(user, targetId) {
+  if (!targetId || typeof targetId !== 'string') return null;
+  const { rows } = await pool.query(
+    'SELECT id, tenant_id, COALESCE(is_super_admin, false) AS is_super_admin FROM profiles WHERE id = $1 LIMIT 1',
+    [targetId]
+  );
+  const target = rows[0];
+  if (!target) return null;
+  if (user.is_super_admin) return target;
+  if (target.is_super_admin) return null;
+  if (!user.tenant_id || String(target.tenant_id) !== String(user.tenant_id)) return null;
+  return target;
+}
+
+function sendAdminRouteError(res, error, contexto) {
+  const msg = error?.message;
+  if (msg === 'Unauthorized') return res.status(401).json({ error: 'Unauthorized' });
+  if (msg === 'Admin access required' || msg === 'Super admin access required') {
+    return res.status(403).json({ error: msg });
+  }
+  console.error(`[${contexto}]`, msg);
+  return res.status(500).json({ error: 'Erro interno' });
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1554,9 +1596,8 @@ app.get('/api/super-admin/stats', async (req, res) => {
 // ─── Diagnostic Route ──────────────────────────────────────
 app.get('/api/debug/config', async (req, res) => {
   try {
-    const { user } = await verifyUser(req);
-    if (user.role !== 'admin') return res.status(403).json({ error: 'Admin required' });
-    
+    await verifySuperAdmin(req);
+
     res.json({
       environment: process.env.NODE_ENV,
       evolution_url: EVOLUTION_API_URL,
@@ -1573,7 +1614,7 @@ app.get('/api/debug/config', async (req, res) => {
       time: new Date().toISOString()
     });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    sendAdminRouteError(res, e, 'debug:config');
   }
 });
 
@@ -2041,10 +2082,13 @@ app.get('/api/auth/me', async (req, res) => {
 
 app.post('/api/auth/create-user', async (req, res) => {
   try {
-    await verifyAdmin(req);
-    const { name, email, password, role } = req.body;
+    const { user } = await verifyAdminScope(req);
+    const { name, email, password, role } = req.body || {};
     if (!name || !email || !password) return res.status(400).json({ error: 'Nome, email e senha obrigatórios' });
     if (password.length < 6) return res.status(400).json({ error: 'Senha mínima de 6 caracteres' });
+    // Todo usuário criado pertence a uma clínica: a do admin (ou a escolhida pelo super-admin via x-tenant-id).
+    if (!user.tenant_id) return res.status(400).json({ error: 'Selecione a clínica do novo usuário' });
+    if (role !== undefined && !TENANT_USER_ROLES.includes(role)) return res.status(400).json({ error: 'Perfil inválido' });
 
     const { rows: existing } = await pool.query('SELECT id FROM profiles WHERE email = $1', [email.toLowerCase().trim()]);
     if (existing.length > 0) return res.status(409).json({ error: 'Email já cadastrado' });
@@ -2053,13 +2097,16 @@ app.post('/api/auth/create-user', async (req, res) => {
     const hash = await bcrypt.hash(password, 12);
     const userRole = role || 'user';
 
-    await pool.query('INSERT INTO profiles (id, name, email, role, password_hash) VALUES ($1, $2, $3, $4, $5)', [id, name, email.toLowerCase().trim(), userRole, hash]);
+    await pool.query(
+      `INSERT INTO profiles (id, name, email, role, password_hash, active, tenant_id, is_super_admin)
+       VALUES ($1, $2, $3, $4, $5, true, $6, false)`,
+      [id, name, email.toLowerCase().trim(), userRole, hash, user.tenant_id]
+    );
     await pool.query('INSERT INTO user_roles (user_id, role) VALUES ($1, $2)', [id, userRole]);
 
     res.json({ success: true, user: { id, name, email: email.toLowerCase().trim(), role: userRole } });
   } catch (error) {
-    console.error('Create user error:', error);
-    res.status(500).json({ error: error.message });
+    sendAdminRouteError(res, error, 'auth:create-user');
   }
 });
 
@@ -2200,49 +2247,49 @@ app.post('/api/auth/forgot-password', async (req, res) => {
 // ─── Admin: list password reset requests ────────────────────
 app.get('/api/auth/reset-requests', async (req, res) => {
   try {
-    await verifyAdmin(req);
+    const { tenantId } = await verifyAdminScope(req);
     const { rows } = await pool.query(`
       SELECT r.*, p.name as user_name FROM password_reset_requests r
       JOIN profiles p ON r.user_id = p.id
+      ${tenantId ? 'WHERE p.tenant_id = $1 AND COALESCE(p.is_super_admin, false) = false' : ''}
       ORDER BY r.created_at DESC LIMIT 50
-    `);
+    `, tenantId ? [tenantId] : []);
     res.json(rows);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    sendAdminRouteError(res, error, 'auth:reset-requests');
   }
 });
 
 // ─── Admin: reset user password ─────────────────────────────
 app.post('/api/auth/admin-reset-password', async (req, res) => {
   try {
-    await verifyAdmin(req);
-    const { userId, newPassword } = req.body;
+    const { user } = await verifyAdminScope(req);
+    const { userId, newPassword } = req.body || {};
     if (!userId || !newPassword) return res.status(400).json({ error: 'userId e newPassword obrigatórios' });
     if (newPassword.length < 6) return res.status(400).json({ error: 'Senha mínima de 6 caracteres' });
+    if (!(await getManageableProfile(user, userId))) return res.status(404).json({ error: 'Usuário não encontrado' });
 
     const hash = await bcrypt.hash(newPassword, 12);
     await pool.query('UPDATE profiles SET password_hash = $1, updated_at = NOW() WHERE id = $2', [hash, userId]);
     await pool.query("UPDATE password_reset_requests SET status = 'resolved' WHERE user_id = $1 AND status = 'pending'", [userId]);
     res.json({ success: true });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    sendAdminRouteError(res, error, 'auth:admin-reset-password');
   }
 });
 
 // ─── Admin: upload avatar for any user ──────────────────────
 app.post('/api/auth/users/:userId/avatar', async (req, res) => {
   try {
-    await verifyAdmin(req);
+    const { user } = await verifyAdminScope(req);
     const { userId } = req.params;
-    const { avatar } = req.body;
+    const { avatar } = req.body || {};
 
     if (!avatar) return res.status(400).json({ error: 'Imagem é obrigatória' });
     if (!avatar.startsWith('data:image/')) return res.status(400).json({ error: 'Formato inválido. Envie uma imagem.' });
     if (avatar.length > 7 * 1024 * 1024) return res.status(400).json({ error: 'Imagem deve ter no máximo 5MB' });
 
-    // Verify user exists
-    const { rows: users } = await pool.query('SELECT id FROM profiles WHERE id = $1', [userId]);
-    if (users.length === 0) return res.status(404).json({ error: 'Usuário não encontrado' });
+    if (!(await getManageableProfile(user, userId))) return res.status(404).json({ error: 'Usuário não encontrado' });
 
     const avatarUrl = await saveMediaToDisk(avatar, null, 'avatar.jpg');
     if (!avatarUrl) return res.status(500).json({ error: 'Erro ao salvar imagem' });
@@ -2250,27 +2297,30 @@ app.post('/api/auth/users/:userId/avatar', async (req, res) => {
     await pool.query('UPDATE profiles SET avatar_url = $1, updated_at = NOW() WHERE id = $2', [avatarUrl, userId]);
     res.json({ avatar_url: avatarUrl });
   } catch (error) {
-    console.error('Admin avatar upload error:', error);
-    res.status(error.message === 'Admin access required' ? 403 : 500).json({ error: error.message });
+    sendAdminRouteError(res, error, 'auth:user-avatar');
   }
 });
 
 app.get('/api/auth/users', async (req, res) => {
   try {
-    await verifyAdmin(req);
-    const rows = await listProfilesWithRoles();
+    const { tenantId } = await verifyAdminScope(req);
+    const rows = await listProfilesWithRoles(tenantId);
     res.json(rows);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    sendAdminRouteError(res, error, 'auth:users');
   }
 });
 
 // ─── Admin: update user ─────────────────────────────────────
 app.put('/api/auth/users/:id', async (req, res) => {
   try {
-    await verifyAdmin(req);
+    const { user } = await verifyAdminScope(req);
     const { id } = req.params;
-    const { name, email, role, active } = req.body;
+    const { name, email, role, active } = req.body || {};
+    if (!(await getManageableProfile(user, id))) return res.status(404).json({ error: 'Usuário não encontrado' });
+    if (role !== undefined && !user.is_super_admin && !TENANT_USER_ROLES.includes(role)) {
+      return res.status(400).json({ error: 'Perfil inválido' });
+    }
 
     const updates = [];
     const values = [];
@@ -2292,7 +2342,7 @@ app.put('/api/auth/users/:id', async (req, res) => {
 
     res.json({ success: true });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    sendAdminRouteError(res, error, 'auth:update-user');
   }
 });
 
