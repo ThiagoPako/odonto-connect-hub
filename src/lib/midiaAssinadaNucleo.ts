@@ -6,6 +6,13 @@ export const MIDIA_LOTE_MAX = 20;
 /** Renova antes de vencer: 2 min de folga. */
 export const MIDIA_MARGEM_S = 120;
 const ESPERA_LOTE_MS = 30;
+/**
+ * Link novo fica no cache pelo menos este tempo, mesmo que o relógio do computador diga que
+ * já está perto de vencer. Relógio adiantado (~1 h é comum em Windows com horário de verão
+ * antigo) faria todo link novo nascer "vencido" e a tela renovaria sem parar, para cada
+ * mídia. Quem valida o link é o servidor; aqui só limitamos a 1 renovação por minuto.
+ */
+export const MIDIA_CACHE_MIN_MS = 60_000;
 
 type RenovarLinks = (paths: string[]) => Promise<Record<string, string>>;
 let renovarLinks: RenovarLinks = async () => ({});
@@ -90,7 +97,7 @@ export function renovarLinkMidia(url: string): Promise<string | null> {
     else {
       const exp = expiracaoDoLink(novo);
       const vence = exp ? exp * 1000 - MIDIA_MARGEM_S * 1000 - Date.now() : 0;
-      const t = setTimeout(() => { if (emCurso.get(caminho) === promessa) emCurso.delete(caminho); }, Math.max(0, vence));
+      const t = setTimeout(() => { if (emCurso.get(caminho) === promessa) emCurso.delete(caminho); }, Math.max(MIDIA_CACHE_MIN_MS, vence));
       (t as unknown as { unref?: () => void }).unref?.();
     }
     return novo;

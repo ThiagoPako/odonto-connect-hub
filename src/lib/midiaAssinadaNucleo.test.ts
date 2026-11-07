@@ -59,3 +59,19 @@ test("URL que não é nossa não vai ao servidor", async () => {
   assert.equal(await renovarLinkMidia("https://pps.whatsapp.net/v/foto.jpg"), null);
   assert.equal(chamadas.length, 0);
 });
+
+test("relógio do computador adiantado: link novo que já nasce 'perto de vencer' não é pedido de novo", async () => {
+  // Servidor devolve exp = agora (pelo relógio local, o link já está dentro da margem de 2 min).
+  configurarRenovacaoDeMidia(async (paths) => {
+    chamadas.push(paths);
+    return Object.fromEntries(paths.map((p) => [p, `${p}?exp=${agoraS() + 5}&sig=${"b".repeat(64)}`]));
+  });
+  const primeiro = await renovarLinkMidia(midia(7, "?exp=1&sig=velho"));
+  assert.ok(primeiro && linkPertoDeVencer(primeiro));
+  // A tela troca o src e, vendo o link "perto de vencer", pede de novo várias vezes.
+  for (let i = 0; i < 5; i++) {
+    await new Promise((r) => setTimeout(r, 40)); // a tela re-renderiza entre um pedido e outro
+    assert.equal(await renovarLinkMidia(primeiro), primeiro);
+  }
+  assert.equal(chamadas.length, 1);
+});
